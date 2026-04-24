@@ -1,0 +1,12 @@
+﻿Apps:
+	Cli: entry point, commands, config
+	Benchmarks: performance, accuracy, throughput
+	Samples: usage examples, notebooks
+Runtime:
+	Inference: sampling, kv-cache, generation loop
+	Training: optimizer, scheduler, checkpointing
+Model:
+	Model: transformer, attention, FFN, norms
+	Tokenizer: BPE, vocab builder, encode/decode
+Data: sources, cleaning, formating, batching, dataset loaders
+Core: tensors, matrix math, memeory, activations

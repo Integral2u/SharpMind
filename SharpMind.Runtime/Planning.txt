@@ -1,0 +1,3 @@
+﻿Runtime:
+	Inference: sampling, kv-cache, generation loop
+	Training: optimizer, scheduler, checkpointing

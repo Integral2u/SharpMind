@@ -1,0 +1,19 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Folder Include="Inference\" />
+    <Folder Include="Training\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SharpMind.Data\SharpMind.Data.csproj" />
+    <ProjectReference Include="..\SharpMind.Model\SharpMind.Model.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,79 @@
+﻿Core: tensors, matrix math, memeory, activations
+
+public int Length => _dims.Length; has been Added to TensorShape to allow implicit index support, is this correct?
+
+With Activations and TensorOps i'm thinking these should be called using a factory pattern and utilize the JigSawDotNet library to build classes.
+This will mean we have have more consice methods without additional checks and branching for Fma.IsSupported or Avx2.IsSupported, this will also allow adding code variants later easier.
+JigSawDotNet libray accepts static methods and PuzzlePeices we can still have static mthods like public static Tensor<T> ReLU<T>(Tensor<T> x) that could be called directly
+Options could be set in a Root Project SharpMind 
+Need to consider if we would be using differnt types of ActivationFunctions in any one LLM instance or for differnt purposes which would require different Factories for those use cases 
+
+Potential Activation Adds
+SwiGLU (Swish-Gated Linear Unit)
+SiLU (Sigmoid Linear Unit) / Swish
+
+I did not like the implemntation of PuzzleCornerPiece, it should be a pull not push model as in a Corner knows whats next left or right.
+Also this elimiates potential for injection.
+See updated implementation 
+
+public abstract class MathOps
+    {
+        [PuzzleCornerPiece("Add", "AddExternal", "JigSawDotNet.Tests.ExternalMath.Add", "AddInternal", "AddInternal")]
+        public abstract int Add(int a, int b);
+        public static int AddInternal(int a, int b) => a + b;
+    }
+
+    and Tests
+
+    [Fact]
+        public void CreateInstance_CornerPeice_Local()
+        {
+            var ops = Assembler.CreateInstance<MathOps>(
+                new Dictionary<string, string> { ["Add"] = "AddInternal" });
+
+            Assert.Equal(5, ops.Add(2, 3));
+        }
+        [Fact]
+        public void CreateInstance_CornerPeice_External()
+        {
+            var ops = Assembler.CreateInstance<MathOps>(
+                new Dictionary<string, string> { ["Add"] = "AddExternal" });
+
+            Assert.Equal(5, ops.Add(2, 3));
+        }
+
+
+No changes are need to Assembler, please just use as is as it's being maintained as a sperate package.
+To define a PuzzleCornerPeice ise the pattern 
+[PuzzleCornerPiece("Add", "AddExternal", "JigSawDotNet.Tests.ExternalMath.Add", "AddInternal", "AddInternal")]
+public abstract int Add(int a, int b);
+The first param is the Pointer as normal and each subseqent params are pairs, the option and location of the method, this acts s a PuzzlePlace that defines it's PuzzlePeices.
+PuzzlePlace is only on abstract methods and require PuzzlePeice(s), PuzzleCornerPiece is only on Abstract Mehtods and Define Methods that can be it's Peices.
+
+What we need to go back to this part and implement changes to work with the new JigSawDotNet implmentation With Activations and TensorOps i'm thinking these should be called using a factory pattern and utilize the JigSawDotNet library to build classes.
+This will mean we have have more consice methods without additional checks and branching for Fma.IsSupported or Avx2.IsSupported, this will also allow adding code variants later easier.
+JigSawDotNet libray accepts static methods and PuzzlePeices we can still have static mthods like public static Tensor<T> ReLU<T>(Tensor<T> x) that could be called directly
+Options could be set in a Root Project SharpMind 
+Need to consider if we would be using differnt types of ActivationFunctions in any one LLM instance or for differnt purposes which would require different Factories for those use cases 
+Potential Activation Adds
+SwiGLU (Swish-Gated Linear Unit)
+SiLU (Sigmoid Linear Unit) / Swish
+
+What i noticed is for the likes of RMSNormRow_AVX2 condition checks are still being made, example if (Avx2.IsSupported).
+This should not be the case as Avx2.IsSupported should have been checked in config,
+If not available fall back to next fastest which in this case would be Scalar implementation.
+The point of JigSawDotNet is to negate need for such checks.
+
+CreateInstanceForSystem now works with PuzzleCornerPiece
+
+See updated files, i wanted to remove as much hard coding as possible.
+Going forward no Console.WriteLine, or Log, alo not a fan of undercores in names.
+ArgProvider is throwing error Cannot implicity convert tyepe 'System.Span<float> to 'object;
+
+Have we finished with SharpMind.Core, is there anything we need to flesh out more, optimize priofile, test before we move onto Data.
+Is SharpMindConfig definitions naming concise enough. 
+I want to make sure as many builing blocks are covered, later layers I want to be as flexible and adaptable to LLM design concepts as possible, embedings, MoE, Attention etc 
+
+TensorOps gaps — BatchedMatMul is the most critical missing piece. Attention is [Batch, Heads, SeqLen, HeadDim] @ [Batch, Heads, HeadDim, SeqLen] — a 4D batched operation that the current 2D matmul can't express directly. Everything else (Subtract, Multiply, MaskedFill, ArgTopK, public Transpose) is straightforward to add. MatMulInner_AVX2 also still has a Fma.IsSupported branch inside it — that needs to split into two separate kernel methods.
+Missing modules — EmbeddingTable (integer index → float vector) and RoPE are non-negotiable before the Model layer. Without RoPE, LLaMA-family models can't be built. Dropout, CrossEntropyLoss, and LogSoftmax are training-only so they can come in parallel with the training layer rather than blocking Data.
+MoE — only Gather, Scatter, and TopK belong in Core. Everything else (expert dispatch, router logic) lives in the Model layer. Don't over-build Core for MoE now.
