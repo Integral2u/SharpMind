@@ -1,1 +1,6 @@
 ﻿Data: sources, cleaning, formating, batching, dataset loaders
+
+should bulitinstages contain
+Blacklists
+Hate, Abuse, and Profanity 
+Deidentification/Masking: Redacting PII

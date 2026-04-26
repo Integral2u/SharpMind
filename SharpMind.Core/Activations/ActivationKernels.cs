@@ -19,7 +19,7 @@ internal static class ActivationKernels
     // ReLU
     // ═══════════════════════════════════════════════════════════════════════
 
-    internal static unsafe void ReLU_AVX2(ReadOnlySpan<float> src, Span<float> dst)
+    internal static unsafe void ReLUAVX2(ReadOnlySpan<float> src, Span<float> dst)
     {
         fixed (float* pS = src, pD = dst)
         {
@@ -32,7 +32,7 @@ internal static class ActivationKernels
         }
     }
 
-    internal static void ReLU_Scalar(ReadOnlySpan<float> src, Span<float> dst)
+    internal static void ReLUScalar(ReadOnlySpan<float> src, Span<float> dst)
     {
         for (int i = 0; i < src.Length; i++)
             dst[i] = src[i] < 0f ? 0f : src[i];
@@ -43,7 +43,7 @@ internal static class ActivationKernels
     // 0.5 * x * (1 + tanh(√(2/π) * (x + 0.044715 * x³)))
     // ═══════════════════════════════════════════════════════════════════════
 
-    internal static void GELU_Scalar(ReadOnlySpan<float> src, Span<float> dst)
+    internal static void GELUScalar(ReadOnlySpan<float> src, Span<float> dst)
     {
         for (int i = 0; i < src.Length; i++)
         {
@@ -58,7 +58,7 @@ internal static class ActivationKernels
     // No AVX2 exp path in .NET intrinsics — JIT auto-vectorises the scalar loop
     // ═══════════════════════════════════════════════════════════════════════
 
-    internal static void SiLU_Scalar(ReadOnlySpan<float> src, Span<float> dst)
+    internal static void SiLUScalar(ReadOnlySpan<float> src, Span<float> dst)
     {
         for (int i = 0; i < src.Length; i++)
         {
@@ -71,7 +71,7 @@ internal static class ActivationKernels
     // SwiGLU  silu(gate) * up
     // ═══════════════════════════════════════════════════════════════════════
 
-    internal static void SwiGLU_Scalar(ReadOnlySpan<float> gate, ReadOnlySpan<float> up, Span<float> dst)
+    internal static void SwiGLUScalar(ReadOnlySpan<float> gate, ReadOnlySpan<float> up, Span<float> dst)
     {
         for (int i = 0; i < dst.Length; i++)
         {
@@ -84,7 +84,7 @@ internal static class ActivationKernels
     // GeGLU  gelu(gate) * up
     // ═══════════════════════════════════════════════════════════════════════
 
-    internal static void GeGLU_Scalar(ReadOnlySpan<float> gate, ReadOnlySpan<float> up, Span<float> dst)
+    internal static void GeGLUScalar(ReadOnlySpan<float> gate, ReadOnlySpan<float> up, Span<float> dst)
     {
         for (int i = 0; i < dst.Length; i++)
         {
@@ -121,7 +121,7 @@ internal static class ActivationKernels
     // rmsInv is pre-computed by the Tensor-level wrapper — not computed here
     // ═══════════════════════════════════════════════════════════════════════
 
-    internal static unsafe void RMSNormRow_AVX2(
+    internal static unsafe void RMSNormRowAVX2(
         ReadOnlySpan<float> src, ReadOnlySpan<float> weight, Span<float> dst, float rmsInv)
     {
         fixed (float* pS = src, pW = weight, pD = dst)
@@ -137,7 +137,7 @@ internal static class ActivationKernels
         }
     }
 
-    internal static void RMSNormRow_Scalar(
+    internal static void RMSNormRowScalar(
         ReadOnlySpan<float> src, ReadOnlySpan<float> weight, Span<float> dst, float rmsInv)
     {
         for (int i = 0; i < dst.Length; i++)
@@ -153,7 +153,7 @@ internal static class ActivationKernels
     //   Scalar → portable fallback, JIT auto-vectorises this loop on most platforms
     // ═══════════════════════════════════════════════════════════════════════
 
-    internal static unsafe void MatMulInner_FMA(float* a, float* bt, float* c, int M, int K, int N)
+    internal static unsafe void MatMulInnerFMA(float* a, float* bt, float* c, int M, int K, int N)
     {
         for (int i = 0; i < M; i++)
         {
@@ -176,7 +176,7 @@ internal static class ActivationKernels
         }
     }
 
-    internal static unsafe void MatMulInner_AVX2(float* a, float* bt, float* c, int M, int K, int N)
+    internal static unsafe void MatMulInnerAVX2(float* a, float* bt, float* c, int M, int K, int N)
     {
         for (int i = 0; i < M; i++)
         {
@@ -198,7 +198,7 @@ internal static class ActivationKernels
         }
     }
 
-    internal static unsafe void MatMulInner_Scalar(float* a, float* bt, float* c, int M, int K, int N)
+    internal static unsafe void MatMulInnerScalar(float* a, float* bt, float* c, int M, int K, int N)
     {
         for (int i = 0; i < M; i++)
         {

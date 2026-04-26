@@ -43,7 +43,7 @@ namespace SharpMind.Tests.Core
             using var r = _gpt.Softmax(x);
             float sum = r.Data.ToArray().Sum();
             Assert.Equal(1f, sum, precision: 4);
-            Assert.True(!float.IsNaN(r[0]));
+            Assert.False(float.IsNaN(r[0]));
         }
 
         [Fact]

@@ -137,9 +137,6 @@ public sealed class EmbeddingTable : IDisposable
     // ── Helpers ───────────────────────────────────────────────────────────
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private void ThrowIfDisposed()
-    {
-        if (_disposed) throw new ObjectDisposedException(nameof(EmbeddingTable));
-    }
+    private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, nameof(EmbeddingTable));
 
 }

@@ -11,7 +11,7 @@ namespace SharpMind.Tests.Core
             var rope = new RoPE(headDim: 8, maxSeqLen: 16);
             using var x = Tensor<float>.Ones(4, 2, 8);   // [SeqLen=4, NumHeads=2, HeadDim=8]
             rope.Apply(x);
-            Assert.Equal(new[] { 4, 2, 8 }, x.Shape.Dims.ToArray());
+            Assert.Equal([4, 2, 8], x.Shape.Dims.ToArray());
         }
 
         [Fact]

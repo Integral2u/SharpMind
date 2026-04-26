@@ -16,6 +16,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\SharpMind.Core\SharpMind.Core.csproj" />
+    <ProjectReference Include="..\SharpMind.Data\SharpMind.Data.csproj" />
     <ProjectReference Include="..\SharpMind\SharpMind.csproj" />
   </ItemGroup>
 

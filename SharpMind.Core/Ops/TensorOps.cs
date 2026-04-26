@@ -41,9 +41,9 @@ public abstract class TensorOps
     // ═══════════════════════════════════════════════════════════════════════
 
     [PuzzleCornerPiece(SharpMindConfig.MapActivationKeyMatMul,
-        SharpMindConfig.MapActivationKernelFMA,    $"{NS}.{nameof(ActivationKernels.MatMulInner_FMA)}",
-        SharpMindConfig.MapActivationKernelAVX2,   $"{NS}.{nameof(ActivationKernels.MatMulInner_AVX2)}",
-        SharpMindConfig.MapActivationKernelScalar, $"{NS}.{nameof(ActivationKernels.MatMulInner_Scalar)}")]
+        SharpMindConfig.MapActivationKernelFMA,    $"{NS}.{nameof(ActivationKernels.MatMulInnerFMA)}",
+        SharpMindConfig.MapActivationKernelAVX2,   $"{NS}.{nameof(ActivationKernels.MatMulInnerAVX2)}",
+        SharpMindConfig.MapActivationKernelScalar, $"{NS}.{nameof(ActivationKernels.MatMulInnerScalar)}")]
     public abstract unsafe void MatMulInner(float* a, float* bt, float* c, int M, int K, int N);
 
     // ═══════════════════════════════════════════════════════════════════════

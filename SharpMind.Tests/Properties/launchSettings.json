@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "SharpMind.Tests": {
+      "commandName": "Project",
+      "environmentVariables": {
+        "HF_API_KEY": "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"
+      }
+    }
+  }
+}

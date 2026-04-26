@@ -16,7 +16,7 @@ namespace SharpMind.Tests.Core
             ]);
 
             using var r = table.Forward([2, 0, 3]);
-            Assert.Equal(new[] { 3, 3 }, r.Shape.Dims.ToArray());
+            Assert.Equal([3, 3], r.Shape.Dims.ToArray());
             Assert.Equal([7f, 8f, 9f], r.RowSpan(0).ToArray());
             Assert.Equal([1f, 2f, 3f], r.RowSpan(1).ToArray());
             Assert.Equal([10f, 11f, 12f], r.RowSpan(2).ToArray());

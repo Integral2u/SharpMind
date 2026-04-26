@@ -119,7 +119,6 @@ public sealed class RoPE
         int seqLen  = x.Shape[1];
         int numHead = x.Shape[2];
         int dim     = x.Shape[3];
-        int sliceSize = seqLen * numHead * dim;
 
         // Each batch item is an independent [SeqLen, NumHeads, HeadDim] slice
         for (int b = 0; b < batch; b++)

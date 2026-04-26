@@ -48,7 +48,7 @@ namespace SharpMind.Tests.Core
             using var a = Tensor<float>.From([1f, 2f, 3f, 4f, 5f, 6f], 2, 3);   // [2,3]
             using var b = Tensor<float>.From([1f, 2f, 3f, 4f, 5f, 6f], 3, 2);   // [3,2]
             using var c = _ops.MatMul(a, b);
-            Assert.Equal(new[] { 2, 2 }, c.Shape.Dims.ToArray());
+            Assert.Equal([2, 2], c.Shape.Dims.ToArray());
             Assert.Equal(22f, c[0, 0]);  // 1+4+9
             Assert.Equal(28f, c[0, 1]);  // 2+8+16 → actually 1*2+2*4+3*6=2+8+18=28
             Assert.Equal(49f, c[1, 0]);  // 4*1+5*3+6*5=4+15+30=49
@@ -71,7 +71,7 @@ namespace SharpMind.Tests.Core
             using var a = Tensor<float>.Ones(2, 3, 4);   // [B=2, M=3, K=4]
             using var b = Tensor<float>.Ones(2, 4, 5);   // [B=2, K=4, N=5]
             using var c = _ops.BatchedMatMul(a, b);
-            Assert.Equal(new[] { 2, 3, 5 }, c.Shape.Dims.ToArray());
+            Assert.Equal([2, 3, 5], c.Shape.Dims.ToArray());
         }
 
         [Fact]
@@ -209,7 +209,7 @@ namespace SharpMind.Tests.Core
         {
             using var a = Tensor<float>.From([1f, 2f, 3f, 4f, 5f, 6f], 2, 3);
             using var t = TensorOps.Transpose(a);
-            Assert.Equal(new[] { 3, 2 }, t.Shape.Dims.ToArray());
+            Assert.Equal([3, 2], t.Shape.Dims.ToArray());
             Assert.Equal(1f, t[0, 0]);
             Assert.Equal(4f, t[0, 1]);
             Assert.Equal(2f, t[1, 0]);

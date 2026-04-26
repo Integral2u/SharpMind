@@ -26,18 +26,18 @@ public sealed record SharpMindConfig
     public const string MapActivationKeyMatMul = "matmul";
 
     // ── Kernel values ─────────────────────────────────────────────────────
-    public const string MapActivationKernelReLUAVX2 = "relu_avx2";
-    public const string MapActivationKernelReLUScalar = "relu_scalar";
-    public const string MapActivationKernelGELUScalar = "gelu_scalar";
-    public const string MapActivationKernelGELUAVX2 = "gelu_avx2";
-    public const string MapActivationKernelSiLUScalar = "silu_scalar";
-    public const string MapActivationKernelSiLUAVX2 = "silu_avx2";
-    public const string MapActivationKernelSwiGLUScalar = "swiglu_scalar";
-    public const string MapActivationKernelSwiGLUAVX2 = "swiglu_avx2";
-    public const string MapActivationKernelGeGLUScalar = "geglu_scalar";
-    public const string MapActivationKernelGeGLUAVX2 = "geglu_avx2";
-    public const string MapActivationKernelNoneScalar = "none_scalar";
-    public const string MapActivationKernelNoneAVX2 = "none_avx2";
+    public const string MapActivationKernelReLUAVX2 = "reluavx2";
+    public const string MapActivationKernelReLUScalar = "reluscalar";
+    public const string MapActivationKernelGELUScalar = "geluscalar";
+    public const string MapActivationKernelGELUAVX2 = "geluavx2";
+    public const string MapActivationKernelSiLUScalar = "siluscalar";
+    public const string MapActivationKernelSiLUAVX2 = "siluavx2";
+    public const string MapActivationKernelSwiGLUScalar = "swigluscalar";
+    public const string MapActivationKernelSwiGLUAVX2 = "swigluavx2";
+    public const string MapActivationKernelGeGLUScalar = "gegluscalar";
+    public const string MapActivationKernelGeGLUAVX2 = "gegluavx2";
+    public const string MapActivationKernelNoneScalar = "nonescalar";
+    public const string MapActivationKernelNoneAVX2 = "noneavx2";
     public const string MapActivationKernelScalar = "scalar";
     public const string MapActivationKernelAVX2 = "avx2";
     public const string MapActivationKernelFMA = "fma";
@@ -94,8 +94,8 @@ public sealed record SharpMindConfig
 
         return new Dictionary<string, string>
         {
-            [MapActivationKeyPointWise] = $"{act}_{hw}",
-            [MapActivationKeyGate] = $"{gate}_{hw}",
+            [MapActivationKeyPointWise] = $"{act}{hw}",
+            [MapActivationKeyGate] = $"{gate}{hw}",
             [MapActivationKeySoftMax] = hw,
             [MapActivationKeyRMSNorm] = hw,
             [MapActivationKeyMatMul] = MatMulHwKey,

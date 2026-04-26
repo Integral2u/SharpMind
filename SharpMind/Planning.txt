@@ -10,3 +10,23 @@ Model:
 	Tokenizer: BPE, vocab builder, encode/decode
 Data: sources, cleaning, formating, batching, dataset loaders
 Core: tensors, matrix math, memeory, activations
+
+Can we ustilize ILGpu? possibly amend JIgSawDotNet to allow CornerPuzzlePeice to allow ExternalStaticPuzzlePeice(would be new) be nice if injection of malicious code was pssible, handshake put pice and pointer name.
+
+Would like to introduce 
+
+LLM lobotomy
+Take a model and strip it of all but necessity for becoming an expert wich could be re-merge for MOE type LLM  
+
+LLM size refinement
+Quantization: This reduces the precision of model weights (e.g., from 16-bit floating point to 8-bit or 4-bit integers), significantly decreasing memory requirements and improving inference speed
+Knowledge Distillation: A smaller "student" model is trained to mimic the behavior of a larger "teacher" model, allowing the smaller model to achieve higher accuracy than if it were trained from scratch
+Pruning: Less important weights are removed from the neural network, resulting in a lighter model. 
+LoRA (Low-Rank Adaptation): A fine-tuning technique that keeps base model weights frozen while training a smaller number of parameters, making fine-tuning more resource-efficient
+
+LLM weight merging
+Weighted Averaging/Linear Merge: Takes a weighted average of the parameters from multiple models
+SLERP (Spherical Linear Interpolation): Better than linear interpolation for high-dimensional spaces, as it preserves the magnitude of weights, reducing the loss of performance often seen in simple averagin
+TIES-Merging (TrIm, Elect, Sign, and Merge): Designed to handle interference between models by only merging the most significant weight updates and resolving sign disagreements
+DARE (Drop And REscale): Drops redundant weights and re-scales the remaining weights to create a "soups" of models, reducing task interference.
+Task Arithmetic: Creates "task vectors" by subtracting the base model weights from the fine-tuned model weights, allowing these vectors to be added or subtracted to modify model behavior.
