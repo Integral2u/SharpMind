@@ -7,11 +7,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Folder Include="Model\" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <ProjectReference Include="..\SharpMind.Core\SharpMind.Core.csproj" />
+    <PackageReference Include="ILGPU.Algorithms" Version="1.5.3" />
+    <PackageReference Include="JigSawDotNet" Version="1.0.5" />
   </ItemGroup>
 
 </Project>

@@ -11,7 +11,9 @@ Model:
 Data: sources, cleaning, formating, batching, dataset loaders
 Core: tensors, matrix math, memeory, activations
 
-Can we ustilize ILGpu? possibly amend JIgSawDotNet to allow CornerPuzzlePeice to allow ExternalStaticPuzzlePeice(would be new) be nice if injection of malicious code was pssible, handshake put pice and pointer name.
+Can we ustilize ILGpu for any operations? We can use JigSawDotNet to implement PuzzlePeice, PuzzlePlace and PuzzleCornerPiece.
+I have created a Project SharpMind.ILGPU where implmentaiotns can go.
+Ignore StarpMind.Model project at this point
 
 Would like to introduce 
 
