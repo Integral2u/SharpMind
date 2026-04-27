@@ -61,20 +61,14 @@ public sealed class BpeTrainer
         _progressCallback = progressCallback;
     }
 
-    // ── Synchronous training ──────────────────────────────────────────────
-
-    /// <summary>Trains from any in-memory or lazily-evaluated string sequence.</summary>
-    public BpeModel Train(IEnumerable<string> documents)
-    {
-        var wordFreqs = CountWords(documents);
-        return RunBpe(wordFreqs);
-    }
-
-    // ── Async training ────────────────────────────────────────────────────
+    // ── Training ──────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Trains from an async stream — plugs directly into a
-    /// <c>SharpMind.Data</c> pipeline node's <c>ReadAsync()</c>.
+    /// Trains from an async document stream.
+    /// Plugs directly into a <c>SharpMind.Data</c> pipeline:
+    /// <code>
+    /// var model = await trainer.TrainAsync(pipeline.ReadAsync());
+    /// </code>
     /// </summary>
     public async Task<BpeModel> TrainAsync(
         IAsyncEnumerable<string> documents,
@@ -129,15 +123,6 @@ public sealed class BpeTrainer
     }
 
     // ── Word frequency counting ───────────────────────────────────────────
-
-    private Dictionary<string, int> CountWords(IEnumerable<string> documents)
-    {
-        var counts = new Dictionary<string, int>(StringComparer.Ordinal);
-        foreach (string doc in documents)
-            foreach (string word in _preTokeniser.PreTokenise(doc))
-                counts[word] = counts.GetValueOrDefault(word) + 1;
-        return counts;
-    }
 
     private async Task<Dictionary<string, int>> CountWordsAsync(
         IAsyncEnumerable<string> documents,
@@ -196,9 +181,9 @@ public sealed class BpeTrainer
         foreach (var ((left, right), count) in pairCounts)
         {
             if (count > bestCount ||
-               count == bestCount &&
+               (count == bestCount &&
                 string.Compare(left + right, bestLeft + bestRight,
-                    StringComparison.Ordinal) < 0)
+                    StringComparison.Ordinal) < 0))
             {
                 bestLeft = left;
                 bestRight = right;
