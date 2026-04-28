@@ -129,25 +129,50 @@ public static class GPUActivationKernels
         output[index] = geluG * up[index];
     }
 
-    [PuzzlePeice(nameof(ActivationOps.ApplySoftmaxRow), GPUSharpMindConfig.MapActivationKeyGate, GPUSharpMindConfig.MapActivationKernelSoftMax)]
+    [PuzzlePeice(nameof(ActivationOps.ApplySoftmaxRow), GPUSharpMindConfig.MapActivationKeySoftMax, GPUSharpMindConfig.MapActivationKernelSoftMax)]
     public static void SoftmaxRowGPU(ReadOnlySpan<float> src, Span<float> dst)
     {
         var acc = SharedAccelerator;
         using var bufSrc = acc.Allocate1D(src.ToArray());
-        using var bufDst = acc.Allocate1D<float>(dst.Length);
-        var kernel = acc.LoadAutoGroupedStreamKernel<Index1D, ArrayView<float>, ArrayView<float>>(SoftmaxKernel);
-        kernel(dst.Length, bufDst.View, bufSrc.View);
+        using var bufExp = acc.Allocate1D<float>(dst.Length);
+
+        float maxVal = bufSrc.GetAsArray1D().Max();
+        var maxArray = new float[dst.Length];
+        for (int i = 0; i < dst.Length; i++) maxArray[i] = maxVal;
+        using var bufMax = acc.Allocate1D(maxArray);
+
+        var expKernel = acc.LoadAutoGroupedStreamKernel<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>>(SoftmaxExpKernel);
+        expKernel(dst.Length, bufExp.View, bufSrc.View, bufMax.View);
         acc.Synchronize();
-        var gpuData = bufDst.GetAsArray1D();
+
+        float sum = 0f;
+        var expData = bufExp.GetAsArray1D();
+        for (int i = 0; i < dst.Length; i++) sum += expData[i];
+
+        float invSum = 1f / sum;
+        var invArray = new float[dst.Length];
+        for (int i = 0; i < dst.Length; i++) invArray[i] = invSum;
+        using var bufInv = acc.Allocate1D(invArray);
+
+        var normKernel = acc.LoadAutoGroupedStreamKernel<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>>(SoftmaxNormKernel);
+        normKernel(dst.Length, bufExp.View, bufExp.View, bufInv.View);
+        acc.Synchronize();
+
+        var gpuData = bufExp.GetAsArray1D();
         for (int i = 0; i < dst.Length; i++) dst[i] = gpuData[i];
     }
 
-    private static void SoftmaxKernel(Index1D index, ArrayView<float> output, ArrayView<float> input)
+    private static void SoftmaxExpKernel(Index1D index, ArrayView<float> output, ArrayView<float> input, ArrayView<float> max)
     {
-        output[index] = MathF.Exp(input[index]);
+        output[index] = MathF.Exp(input[index] - max[index]);
     }
 
-    [PuzzlePeice(nameof(ActivationOps.ApplyRMSNormRow), GPUSharpMindConfig.MapActivationKeyGate, GPUSharpMindConfig.MapActivationKernelRMSNorm)]
+    private static void SoftmaxNormKernel(Index1D index, ArrayView<float> output, ArrayView<float> exp, ArrayView<float> invSum)
+    {
+        output[index] = exp[index] * invSum[index];
+    }
+
+    [PuzzlePeice(nameof(ActivationOps.ApplyRMSNormRow), GPUSharpMindConfig.MapActivationKeyRMSNorm, GPUSharpMindConfig.MapActivationKernelRMSNorm)]
     public static void RMSNormRowGPU(ReadOnlySpan<float> src, ReadOnlySpan<float> weight, Span<float> dst, float rmsInv)
     {
         var acc = SharedAccelerator;
