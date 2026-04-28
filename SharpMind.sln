@@ -23,7 +23,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SharpMind.Tests", "SharpMin
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SandBox", "SandBox\SandBox.csproj", "{DB598A60-CDDA-4CB9-B218-FA6C81749006}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SharpMind.ILGPU", "SharpMind.ILGPU\SharpMind.ILGPU.csproj", "{4202AB54-8BD1-4E24-A966-AD2CE7E623BA}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SharpMind.GPU", "SharpMind.GPU\SharpMind.GPU.csproj", "{7AEE28F0-3A11-3136-2DA8-39B07754A3C7}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -71,10 +71,10 @@ Global
 		{DB598A60-CDDA-4CB9-B218-FA6C81749006}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{DB598A60-CDDA-4CB9-B218-FA6C81749006}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{DB598A60-CDDA-4CB9-B218-FA6C81749006}.Release|Any CPU.Build.0 = Release|Any CPU
-		{4202AB54-8BD1-4E24-A966-AD2CE7E623BA}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{4202AB54-8BD1-4E24-A966-AD2CE7E623BA}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{4202AB54-8BD1-4E24-A966-AD2CE7E623BA}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{4202AB54-8BD1-4E24-A966-AD2CE7E623BA}.Release|Any CPU.Build.0 = Release|Any CPU
+		{7AEE28F0-3A11-3136-2DA8-39B07754A3C7}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7AEE28F0-3A11-3136-2DA8-39B07754A3C7}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7AEE28F0-3A11-3136-2DA8-39B07754A3C7}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7AEE28F0-3A11-3136-2DA8-39B07754A3C7}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
