@@ -40,7 +40,7 @@ public abstract class TensorOps
     // the public wrapper handles allocation and B-transpose.
     // ═══════════════════════════════════════════════════════════════════════
 
-    [PuzzleCornerPiece(SharpMindConfig.MapActivationKeyMatMul,
+    [PuzzleCornerPiece(SharpMindConfig.MapActivationKeyMatMul, true, null,
         SharpMindConfig.MapActivationKernelFMA,    $"{NS}.{nameof(ActivationKernels.MatMulInnerFMA)}",
         SharpMindConfig.MapActivationKernelAVX2,   $"{NS}.{nameof(ActivationKernels.MatMulInnerAVX2)}",
         SharpMindConfig.MapActivationKernelScalar, $"{NS}.{nameof(ActivationKernels.MatMulInnerScalar)}")]

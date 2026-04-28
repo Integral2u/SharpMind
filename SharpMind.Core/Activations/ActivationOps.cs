@@ -36,7 +36,7 @@ public abstract class ActivationOps
     // Pointwise activation — act type + hw tier combined
     // ═══════════════════════════════════════════════════════════════════════
 
-    [PuzzleCornerPiece(SharpMindConfig.MapActivationKeyPointWise,
+    [PuzzleCornerPiece(SharpMindConfig.MapActivationKeyPointWise, true, null,
         SharpMindConfig.MapActivationKernelReLUAVX2, $"{NS}.{nameof(ActivationKernels.ReLUAVX2)}",
         SharpMindConfig.MapActivationKernelReLUScalar, $"{NS}.{nameof(ActivationKernels.ReLUScalar)}",
         SharpMindConfig.MapActivationKernelGELUScalar, $"{NS}.{nameof(ActivationKernels.GELUScalar)}",
@@ -49,7 +49,7 @@ public abstract class ActivationOps
     // Gated activation — gate type + hw tier combined
     // ═══════════════════════════════════════════════════════════════════════
 
-    [PuzzleCornerPiece(SharpMindConfig.MapActivationKeyGate,
+    [PuzzleCornerPiece(SharpMindConfig.MapActivationKeyGate, true, null,
         SharpMindConfig.MapActivationKernelSwiGLUScalar, $"{NS}.{nameof(ActivationKernels.SwiGLUScalar)}",
         SharpMindConfig.MapActivationKernelSwiGLUAVX2, $"{NS}.{nameof(ActivationKernels.SwiGLUScalar)}",  // SiLU inside SwiGLU: same caveat
         SharpMindConfig.MapActivationKernelGeGLUScalar, $"{NS}.{nameof(ActivationKernels.GeGLUScalar)}",
@@ -62,7 +62,7 @@ public abstract class ActivationOps
     // Softmax — hw tier only (exp bottleneck makes both paths equivalent)
     // ═══════════════════════════════════════════════════════════════════════
 
-    [PuzzleCornerPiece(SharpMindConfig.MapActivationKeySoftMax,
+    [PuzzleCornerPiece(SharpMindConfig.MapActivationKeySoftMax, true, null,
         SharpMindConfig.MapActivationKernelScalar, $"{NS}.{nameof(ActivationKernels.SoftmaxRow_Scalar)}",
         SharpMindConfig.MapActivationKernelAVX2, $"{NS}.{nameof(ActivationKernels.SoftmaxRow_Scalar)}")]
     public abstract void ApplySoftmaxRow(ReadOnlySpan<float> src, Span<float> dst);
@@ -71,7 +71,7 @@ public abstract class ActivationOps
     // RMSNorm row — hw tier only (pure multiply, AVX2 gives real gain here)
     // ═══════════════════════════════════════════════════════════════════════
 
-    [PuzzleCornerPiece(SharpMindConfig.MapActivationKeyRMSNorm,
+    [PuzzleCornerPiece(SharpMindConfig.MapActivationKeyRMSNorm, true, null,
         SharpMindConfig.MapActivationKernelAVX2, $"{NS}.{nameof(ActivationKernels.RMSNormRowAVX2)}",
         SharpMindConfig.MapActivationKernelScalar, $"{NS}.{nameof(ActivationKernels.RMSNormRowScalar)}")]
     public abstract void ApplyRMSNormRow(
