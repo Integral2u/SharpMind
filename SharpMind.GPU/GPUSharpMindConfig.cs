@@ -1,7 +1,6 @@
 using ILGPU;
 using ILGPU.Runtime.Cuda;
 using ILGPU.Runtime.OpenCL;
-using System.Reflection.Metadata;
 
 namespace SharpMind.GPU;
 

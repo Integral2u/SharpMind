@@ -3,7 +3,7 @@ using ILGPU.Runtime;
 using JigSawDotNet;
 using SharpMind.Core.Activations;
 
-namespace SharpMind.GPU.Kernels;
+namespace SharpMind.GPU;
 
 public static class GPUActivationKernels
 {
@@ -104,7 +104,7 @@ public static class GPUActivationKernels
     private static void SwiGLUKernel(Index1D index, ArrayView<float> output, ArrayView<float> gate, ArrayView<float> up)
     {
         float g = gate[index];
-        output[index] = (g / (1f + MathF.Exp(-g))) * up[index];
+        output[index] = g / (1f + MathF.Exp(-g)) * up[index];
     }
 
     [PuzzlePeice(nameof(ActivationOps.ApplyGate), GPUSharpMindConfig.MapActivationKeyGate, GPUSharpMindConfig.MapActivationKernelGeGLU)]
