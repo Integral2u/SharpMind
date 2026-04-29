@@ -1,10 +1,10 @@
-﻿using SharpMind.Model.Tokenizer.Vocab;
-using SharpMind.Model.Tokenizer.Bpe;
-using SharpMind.Model.Tokenizer.PreTokeniser;
-using System.Text.Json;
+﻿using System.Text.Json;
 using System.Text.Json.Nodes;
+using SharpMind.Tokenizer.Vocab;
+using SharpMind.Tokenizer.PreTokeniser;
+using SharpMind.Tokenizer.Bpe;
 
-namespace SharpMind.Model.Tokenizer.Serialisation;
+namespace SharpMind.Tokenizer.Serialisation;
 
 /// <summary>
 /// Saves and loads SharpMind native tokenizer JSON files.
@@ -53,15 +53,13 @@ public static class TokenizerFile
                 ["eos"] = model.Vocab.Specials.Eos,
                 ["pad"] = model.Vocab.Specials.Pad,
                 ["additional"] = new JsonArray(
-                    model.Vocab.Specials.Additional
-                         .Select(t => JsonValue.Create(t)!).ToArray()),
+                    [.. model.Vocab.Specials.Additional.Select(t => JsonValue.Create(t)!)]),
             },
             ["vocab"] = BuildVocabObject(model.Vocab),
             ["merges"] = new JsonArray(
-                model.Merges
+                [.. model.Merges
                      .OrderBy(m => m.Rank)
-                     .Select(m => JsonValue.Create($"{m.Left} {m.Right}")!)
-                     .ToArray()),
+                     .Select(m => JsonValue.Create($"{m.Left} {m.Right}")!)]),
         };
 
         Directory.CreateDirectory(Path.GetDirectoryName(path) ?? ".");
@@ -83,7 +81,7 @@ public static class TokenizerFile
         // Special tokens
         var st = root.GetProperty("special_tokens");
         var additional = st.TryGetProperty("additional", out var addEl)
-            ? addEl.EnumerateArray().Select(e => e.GetString()!).ToList()
+            ? [.. addEl.EnumerateArray().Select(e => e.GetString()!)]
             : (IReadOnlyList<string>)[];
 
         var specials = new SpecialTokens(

@@ -1,9 +1,9 @@
 using System.Text.Json;
-using SharpMind.Model.Tokenizer.Bpe;
-using SharpMind.Model.Tokenizer.PreTokeniser;
-using SharpMind.Model.Tokenizer.Vocab;
+using SharpMind.Tokenizer.Bpe;
+using SharpMind.Tokenizer.PreTokeniser;
+using SharpMind.Tokenizer.Vocab;
 
-namespace SharpMind.Model.Tokenizer.Serialisation;
+namespace SharpMind.Tokenizer.Serialisation;
 
 /// <summary>
 /// Converts GPT-2 tokenizer files to a SharpMind <see cref="BpeModel"/>.

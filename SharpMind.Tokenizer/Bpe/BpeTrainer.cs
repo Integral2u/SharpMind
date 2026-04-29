@@ -1,7 +1,7 @@
-﻿using SharpMind.Model.Tokenizer.PreTokeniser;
-using SharpMind.Model.Tokenizer.Vocab;
+﻿using SharpMind.Tokenizer.PreTokeniser;
+using SharpMind.Tokenizer.Vocab;
 
-namespace SharpMind.Model.Tokenizer.Bpe;
+namespace SharpMind.Tokenizer.Bpe;
 
 /// <summary>
 /// Trains a BPE vocabulary from a text corpus.
@@ -102,20 +102,20 @@ public sealed class BpeTrainer
             if (pairCounts.Count == 0) break;
 
             // Find the best pair (highest frequency, ties broken by lexicographic order)
-            var best = FindBestPair(pairCounts);
-            if (best.count < _minFrequency) break;
+            var (left, right, count) = FindBestPair(pairCounts);
+            if (count < _minFrequency) break;
 
             // Create the merged token
-            string merged = best.left + best.right;
+            string merged = left + right;
             int mergeId = vocab.AddToken(merged);
-            merges.Add(new MergeRule(best.left, best.right, merged, step));
+            merges.Add(new MergeRule(left, right, merged, step));
 
             // Apply the merge to all word sequences
-            ApplyMerge(wordTokens, best.left, best.right, merged);
+            ApplyMerge(wordTokens, left, right, merged);
 
             if (step % 1000 == 0)
                 _progressCallback?.Invoke(
-                    $"Merge {step + 1}/{mergesNeeded}: '{best.left}' + '{best.right}' → '{merged}' (freq={best.count})");
+                    $"Merge {step + 1}/{mergesNeeded}: '{left}' + '{right}' → '{merged}' (freq={count})");
         }
 
         _progressCallback?.Invoke($"Training complete. Vocab size: {vocab.Size}");
@@ -145,8 +145,8 @@ public sealed class BpeTrainer
         foreach (string word in wordFreqs.Keys)
         {
             var tokens = new List<string>(_byteLevel
-                ? vocab.ByteTokenise(word).ToList()
-                : word.Select(c => c.ToString()).ToList());
+                ? Vocabulary.ByteTokenise(word)
+                : word.Select(c => c.ToString()));
             result[word] = tokens;
         }
         return result;

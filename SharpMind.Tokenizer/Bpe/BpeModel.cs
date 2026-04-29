@@ -1,12 +1,13 @@
-﻿using SharpMind.Model.Tokenizer.PreTokeniser;
-using SharpMind.Model.Tokenizer.Vocab;
+﻿using SharpMind.Tokenizer.PreTokeniser;
+using SharpMind.Tokenizer.Serialisation;
+using SharpMind.Tokenizer.Vocab;
 
-namespace SharpMind.Model.Tokenizer.Bpe;
+namespace SharpMind.Tokenizer.Bpe;
 
 /// <summary>
 /// The result of BPE training — a fully trained model ready for encoding.
 /// Holds the vocabulary, ordered merge rules, and a pre-configured encoder.
-/// Passed to <see cref="Serialisation.TokenizerFile.Save"/> or directly to
+/// Passed to <see cref="TokenizerFile.Save"/> or directly to
 /// <see cref="Tokenizer"/>.
 /// </summary>
 public sealed class BpeModel

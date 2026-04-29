@@ -1,6 +1,6 @@
 ﻿using System.Runtime.CompilerServices;
 
-namespace SharpMind.Model.Tokenizer.Vocab;
+namespace SharpMind.Tokenizer.Vocab;
 
 /// <summary>
 /// Bidirectional map between token strings and integer IDs.
@@ -43,7 +43,7 @@ public sealed class Vocabulary
     internal Vocabulary(IReadOnlyList<string> tokens, SpecialTokens specials)
     {
         Specials = specials;
-        _idToToken = new List<string>(tokens);
+        _idToToken = [.. tokens];
         _tokenToId = new Dictionary<string, int>(tokens.Count, StringComparer.Ordinal);
         for (int i = 0; i < tokens.Count; i++)
             _tokenToId[tokens[i]] = i;
@@ -108,7 +108,7 @@ public sealed class Vocabulary
     }
 
     /// <summary>Encodes a string to byte tokens using the byte-level fallback.</summary>
-    public IEnumerable<string> ByteTokenise(string text)
+    public static IEnumerable<string> ByteTokenise(string text)
     {
         foreach (byte b in System.Text.Encoding.UTF8.GetBytes(text))
             yield return ByteTokenString(b);

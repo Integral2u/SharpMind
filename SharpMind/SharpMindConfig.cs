@@ -4,7 +4,10 @@ namespace SharpMind;
 
 public enum ActivationKind { GELU, SiLU, ReLU }
 public enum GateKind       { None, SwiGLU, GeGLU }
-
+public enum FfnKind { Dense, Gated, MoE }
+public enum AttentionKind { MHA, GQA, MQA }
+public enum NormKind { RMSNorm, LayerNorm }
+public enum ArchKind { Decoder, Encoder }
 /// <summary>
 /// Hardware tier for SIMD kernel selection.
 /// <see cref="Auto"/> detects at factory time — the check happens once,
@@ -24,6 +27,10 @@ public sealed record SharpMindConfig
     public const string MapActivationKeyRMSNorm = "rmsnorm";
     public const string MapActivationKeySoftMax = "softmax";
     public const string MapActivationKeyMatMul = "matmul";
+    public const string MapAttentionKey = "attention";
+    public const string MapFfnKey = "ffn";
+    public const string MapNormKey = "norm";
+    public const string MapArchKey = "arch";
 
     // ── Kernel values ─────────────────────────────────────────────────────
     public const string MapActivationKernelReLUAVX2 = "reluavx2";
@@ -42,18 +49,74 @@ public sealed record SharpMindConfig
     public const string MapActivationKernelAVX2 = "avx2";
     public const string MapActivationKernelFMA = "fma";
 
+    // ── Kernel values — attention (variant_hw) ────────────────────────────
+    public const string MapAttentionKernelMhaAvx2 = "mhaavx2";
+    public const string MapAttentionKernelMhaScalar = "mhascalar";
+    public const string MapAttentionKernelGqaAvx2 = "gqaavx2";
+    public const string MapAttentionKernelGqaScalar = "gqascalar";
+    public const string MapAttentionKernelMqaAvx2 = "mqaavx2";
+    public const string MapAttentionKernelMqaScalar = "mqascalar";
+
+    // ── Kernel values — ffn ───────────────────────────────────────────────
+    public const string KernelFfnDense = "dense";
+    public const string KernelFfnGated = "gated";
+    public const string KernelFfnMoE = "moe";
+
+    // ── Kernel values — norm ──────────────────────────────────────────────
+    public const string KernelNormRMS = "rmsnorm";
+    public const string KernelNormRMSAVX2 = "rmsnormavx2";
+    public const string KernelNormRMSScalar = "rmsnormscalar";
+    public const string KernelNormLayer = "layernorm";
+    public const string KernelNormLayerAVX2 = "layernormavx2";
+    public const string KernelNormLayerScalar = "layernormscalar";
+
+    // ── Kernel values — arch ──────────────────────────────────────────────
+    public const string KernelDecoder = "decoder";
+    public const string KernelEncoder = "encoder";
+
     public ActivationKind Activation { get; init; } = ActivationKind.GELU;
     public GateKind       Gate       { get; init; } = GateKind.None;
+    public FfnKind Ffn { get; init; } = FfnKind.Dense;
+    public AttentionKind Attention { get; init; } = AttentionKind.MHA;
+    public NormKind Norm { get; init; } = NormKind.RMSNorm;
+    public ArchKind Arch { get; init; } = ArchKind.Decoder;
     public HardwareTier   Hardware   { get; init; } = HardwareTier.Auto;
 
     // ── Pre-built presets ─────────────────────────────────────────────────
 
-    /// <summary>GPT-2 / BERT: GELU, no gate.</summary>
-    public static SharpMindConfig Gpt   => new() { Activation = ActivationKind.GELU, Gate = GateKind.None  };
+    /// <summary>GPT-2: GELU, dense FFN, MHA, LayerNorm, decoder.</summary>
+    public static SharpMindConfig Gpt => new()
+    {
+        Activation = ActivationKind.GELU,
+        Gate = GateKind.None,
+        Ffn = FfnKind.Dense,
+        Attention = AttentionKind.MHA,
+        Norm = NormKind.LayerNorm,
+        Arch = ArchKind.Decoder,
+    };
 
-    /// <summary>LLaMA 2/3 / Mistral: SiLU activation, SwiGLU gate.</summary>
-    public static SharpMindConfig Llama => new() { Activation = ActivationKind.SiLU, Gate = GateKind.SwiGLU };
+    /// <summary>LLaMA 2/3 / Mistral: SiLU, SwiGLU gated FFN, GQA, RMSNorm, decoder.</summary>
+    public static SharpMindConfig Llama => new()
+    {
+        Activation = ActivationKind.SiLU,
+        Gate = GateKind.SwiGLU,
+        Ffn = FfnKind.Gated,
+        Attention = AttentionKind.GQA,
+        Norm = NormKind.RMSNorm,
+        Arch = ArchKind.Decoder,
+    };
 
+    /// <summary>BERT: GELU, dense FFN, MHA, LayerNorm, encoder.</summary>
+    public static SharpMindConfig Bert => new()
+    {
+        Activation = ActivationKind.GELU,
+        Gate = GateKind.None,
+        Ffn = FfnKind.Dense,
+        Attention = AttentionKind.MHA,
+        Norm = NormKind.LayerNorm,
+        Arch = ArchKind.Encoder,
+    };
+    
     // ── JigSaw mapping ────────────────────────────────────────────────────
 
     /// <summary>
@@ -94,11 +157,18 @@ public sealed record SharpMindConfig
 
         return new Dictionary<string, string>
         {
+            // ── Activation kernels ──────────────────────────────────────
             [MapActivationKeyPointWise] = $"{act}{hw}",
             [MapActivationKeyGate] = $"{gate}{hw}",
             [MapActivationKeySoftMax] = hw,
             [MapActivationKeyRMSNorm] = hw,
             [MapActivationKeyMatMul] = MatMulHwKey,
+
+            // ── Model layer kernels ─────────────────────────────────────
+            [MapAttentionKey] = $"{Attention.ToString().ToLowerInvariant()}{hw}",
+            [MapFfnKey] = Ffn.ToString().ToLowerInvariant(),
+            [MapNormKey] = Norm == NormKind.RMSNorm ? KernelNormRMS : KernelNormLayer,
+            [MapArchKey] = Arch == ArchKind.Decoder ? KernelDecoder : KernelEncoder,
         };
     }
 }

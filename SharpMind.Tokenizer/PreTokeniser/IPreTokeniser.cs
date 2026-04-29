@@ -1,4 +1,4 @@
-﻿namespace SharpMind.Model.Tokenizer.PreTokeniser;
+﻿namespace SharpMind.Tokenizer.PreTokeniser;
 
 /// <summary>
 /// Splits raw text into "words" before BPE is applied.

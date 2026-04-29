@@ -25,6 +25,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SandBox", "SandBox\SandBox.
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SharpMind.GPU", "SharpMind.GPU\SharpMind.GPU.csproj", "{7AEE28F0-3A11-3136-2DA8-39B07754A3C7}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SharpMind.Tokenizer", "SharpMind.Tokenizer\SharpMind.Tokenizer.csproj", "{415FEBA9-79F3-46EB-AC93-F385AB38E2EE}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -75,6 +77,10 @@ Global
 		{7AEE28F0-3A11-3136-2DA8-39B07754A3C7}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{7AEE28F0-3A11-3136-2DA8-39B07754A3C7}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{7AEE28F0-3A11-3136-2DA8-39B07754A3C7}.Release|Any CPU.Build.0 = Release|Any CPU
+		{415FEBA9-79F3-46EB-AC93-F385AB38E2EE}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{415FEBA9-79F3-46EB-AC93-F385AB38E2EE}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{415FEBA9-79F3-46EB-AC93-F385AB38E2EE}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{415FEBA9-79F3-46EB-AC93-F385AB38E2EE}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

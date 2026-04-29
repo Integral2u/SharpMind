@@ -1,9 +1,8 @@
-﻿using SharpMind.Model.Tokenizer.Serialisation;
-using SharpMind.Model.Tokenizer.Vocab;
-using SharpMind.Model.Tokenizer.Bpe;
-using SharpMind.Model.Tokenizer.PreTokeniser;
+﻿using SharpMind.Tokenizer.Vocab;
+using SharpMind.Tokenizer.Serialisation;
+using SharpMind.Tokenizer.Bpe;
 
-namespace SharpMind.Model.Tokenizer;
+namespace SharpMind.Tokenizer;
 
 /// <summary>
 /// Top-level tokenizer. Wraps a trained <see cref="BpeModel"/> and exposes

@@ -1,5 +1,7 @@
 using SharpMind.Core.Activations;
 using SharpMind.Core.Tensors;
+using SharpMind.Core.Ops;
+using SharpMind;
 using SharpMind.GPU;
 
 namespace SharpMind.Tests.GPU
@@ -173,6 +175,37 @@ namespace SharpMind.Tests.GPU
             _gpuOps.ApplyRMSNormRow(src.Data, w.Data, gpuDst, rmsInv);
 
             for (int i = 0; i < data.Length; i++)
+                Assert.Equal(cpuDst[i], gpuDst[i], precision: 4);
+        }
+
+        [Fact]
+        public void MatMul_CPUAndGPU_ProduceSameResults()
+        {
+            var a = new float[] { 1f, 0f, 0f, 1f };
+            var b = new float[] { 1f, 0f, 0f, 1f };
+            using var aTensor = Tensor<float>.From(a, 2, 2);
+            using var bTensor = Tensor<float>.From(b, 2, 2);
+
+            var cpuOps = TensorOpsFactory.Create(SharpMindConfig.Gpt with { Hardware = HardwareTier.Scalar });
+
+            var cpuDst = new float[4];
+            var cTensor = new Tensor<float>(2, 2);
+            cpuOps.MatMulInto(aTensor, bTensor, cTensor);
+            cTensor.Data.CopyTo(cpuDst);
+
+            var gpuDst = new float[4];
+            var gpuCTensor = new Tensor<float>(2, 2);
+            unsafe
+            {
+                GPUActivationKernels.MatMulInnerGPU(
+                    aTensor.DataPtr,
+                    bTensor.DataPtr,
+                    gpuCTensor.DataPtr,
+                    2, 2, 2);
+            }
+            gpuCTensor.Data.CopyTo(gpuDst);
+
+            for (int i = 0; i < 4; i++)
                 Assert.Equal(cpuDst[i], gpuDst[i], precision: 4);
         }
     }

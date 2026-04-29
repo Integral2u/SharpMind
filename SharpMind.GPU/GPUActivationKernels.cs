@@ -191,6 +191,27 @@ public static class GPUActivationKernels
         output[index] = src[index] * rmsInv * weight[index];
     }
 
+    [PuzzlePeice("MatMulInner", SharpMindConfig.MapActivationKeyMatMul, GPUSharpMindConfig.MapActivationKernelMatMul)]
+    public static unsafe void MatMulInnerGPU(float* a, float* bt, float* c, int M, int K, int N)
+    {
+        var acc = SharedAccelerator;
+        var aArr = new float[M * K];
+        var btArr = new float[N * K];
+        for (int i = 0; i < M * K; i++) aArr[i] = a[i];
+        for (int i = 0; i < N * K; i++) btArr[i] = bt[i];
+        using var bufA = acc.Allocate1D<float>(M * K);
+        using var bufBT = acc.Allocate1D<float>(N * K);
+        using var bufC = acc.Allocate1D<float>(M * N);
+        bufA.CopyFromCPU(aArr);
+        bufBT.CopyFromCPU(btArr);
+        var kernel = acc.LoadAutoGroupedStreamKernel<Index2D, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int>(MatMulKernel);
+        kernel(new Index2D(M, N), bufC.View, bufA.View, bufBT.View, M, K, N);
+        acc.Synchronize();
+        var gpuData = bufC.GetAsArray1D();
+        for (int i = 0; i < M * N; i++) c[i] = gpuData[i];
+    }
+
+    [PuzzlePeice("MatMulInner", SharpMindConfig.MapActivationKeyMatMul, GPUSharpMindConfig.MapActivationKernelMatMul)]
     public static unsafe void MatMulGPU(float* a, float* bt, float* c, int M, int K, int N)
     {
         var acc = SharedAccelerator;

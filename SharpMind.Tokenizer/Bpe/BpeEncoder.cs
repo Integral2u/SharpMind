@@ -1,7 +1,7 @@
-﻿using SharpMind.Model.Tokenizer.PreTokeniser;
-using SharpMind.Model.Tokenizer.Vocab;
+﻿using SharpMind.Tokenizer.PreTokeniser;
+using SharpMind.Tokenizer.Vocab;
 
-namespace SharpMind.Model.Tokenizer.Bpe;
+namespace SharpMind.Tokenizer.Bpe;
 
 /// <summary>
 /// Encodes strings to token ID sequences by applying BPE merge rules.

@@ -1,9 +1,9 @@
 using System.Text.Json;
-using SharpMind.Model.Tokenizer.Bpe;
-using SharpMind.Model.Tokenizer.PreTokeniser;
-using SharpMind.Model.Tokenizer.Vocab;
+using SharpMind.Tokenizer.Bpe;
+using SharpMind.Tokenizer.PreTokeniser;
+using SharpMind.Tokenizer.Vocab;
 
-namespace SharpMind.Model.Tokenizer.Serialisation;
+namespace SharpMind.Tokenizer.Serialisation;
 
 /// <summary>
 /// Converts LLaMA 2 / LLaMA 3 tokenizer files to a SharpMind <see cref="BpeModel"/>.
@@ -98,13 +98,12 @@ public static class LlamaConverter
     }
 
     private static List<MergeRule> BuildMerges(JsonElement root)
-        => root.GetProperty("model")
+        => [.. root.GetProperty("model")
                .GetProperty("merges")
                .EnumerateArray()
                .Select((el, rank) =>
                {
                    string[] parts = el.GetString()!.Split(' ', 2);
                    return new MergeRule(parts[0], parts[1], parts[0] + parts[1], rank);
-               })
-               .ToList();
+               })];
 }
