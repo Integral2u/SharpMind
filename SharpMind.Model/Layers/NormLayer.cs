@@ -32,14 +32,14 @@ public abstract class NormLayer : IDisposable
 
     // ── PuzzleCornerPieces ────────────────────────────────────────────────
 
-    [PuzzleCornerPiece(SharpMindConfig.MapNormKey,
-        SharpMindConfig.KernelNormRMSAVX2,
+    [PuzzleCornerPiece(SharpMindConfig.KeyNorm,
+        SharpMindConfig.ValNormRMSAvx2,
             NS + "." + nameof(NormKernels.RMSNormRowAVX2),
-        SharpMindConfig.KernelNormRMSScalar,
+        SharpMindConfig.ValNormRMSScalar,
             NS + "." + nameof(NormKernels.RMSNormRowScalar),
-        SharpMindConfig.KernelNormLayerAVX2,
+        SharpMindConfig.ValNormLayerAvx2,
             NS + "." + nameof(NormKernels.LayerNormRowAVX2),
-        SharpMindConfig.KernelNormLayerScalar,
+        SharpMindConfig.ValNormLayerScalar,
             NS + "." + nameof(NormKernels.LayerNormRowScalar))]
     public abstract void ApplyRow(
         ReadOnlySpan<float> src,
@@ -80,11 +80,22 @@ public abstract class NormLayer : IDisposable
 
     public void Dispose()
     {
-        if (_disposed) return;
-        _disposed = true;
-        Weight.Dispose();
-        Bias?.Dispose();
+        Dispose(true);
+        GC.SuppressFinalize(this);
     }
+
+    protected virtual void Dispose(bool disposing)
+    {
+        if (_disposed) return;
+        if (disposing)
+        {
+            Weight.Dispose();
+            Bias?.Dispose();
+        }
+        _disposed = true;
+    }
+
+    ~NormLayer() => Dispose(false);
 
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, nameof(NormLayer));
 }

@@ -4,10 +4,6 @@ using ILGPU.Runtime.OpenCL;
 
 namespace SharpMind.GPU;
 
-/// <summary>
-/// Hardware backend for ILGPU acceleration.
-/// Preference order: CUDA → OpenCL → CPU.
-/// </summary>
 public enum GPUMode
 {
     Cpu,
@@ -15,28 +11,24 @@ public enum GPUMode
     Cuda
 }
 
-/// <summary>
-/// GPU-accelerated configuration helpers.
-/// Mirrors SharpMindConfig value conventions with "ilgpu" suffixes.
-/// </summary>
 public static class GPUSharpMindConfig
 {
-    // Mapping keys
-    public const string MapActivationKeyPointWise = SharpMindConfig.MapActivationKeyPointWise;
-    public const string MapActivationKeyGate = SharpMindConfig.MapActivationKeyGate;
-    public const string MapActivationKeySoftMax = SharpMindConfig.MapActivationKeySoftMax;
-    public const string MapActivationKeyRMSNorm = SharpMindConfig.MapActivationKeyRMSNorm;
-    public const string MapActivationKeyMatMul = SharpMindConfig.MapActivationKeyMatMul;
+    // Mapping keys (linked to SharpMindConfig)
+    public const string KeyPointWise = SharpMindConfig.KeyPointWise;
+    public const string KeyGate = SharpMindConfig.KeyGate;
+    public const string KeySoftmax = SharpMindConfig.KeySoftmax;
+    public const string KeyRMSNorm = SharpMindConfig.KeyRMSNorm;
+    public const string KeyMatMul = SharpMindConfig.KeyMatMul;
 
-    // Mapping values (ILGPU suffix)
-    public const string MapActivationKernelReLU = "relugpu";
-    public const string MapActivationKernelGELU = "gelugpu";
-    public const string MapActivationKernelSiLU = "silugpu";
-    public const string MapActivationKernelSwiGLU = "swiglutilgpu";
-    public const string MapActivationKernelGeGLU = "geglugpu";
-    public const string MapActivationKernelSoftMax = "softmaxgpu";
-    public const string MapActivationKernelRMSNorm = "rmsnormgpu";
-    public const string MapActivationKernelMatMul = "matmulgpu";
+    // Mapping values (GPU suffix)
+    public const string ValReLU = "relugpu";
+    public const string ValGELU = "gelugpu";
+    public const string ValSiLU = "silugpu";
+    public const string ValSwiGLU = "swiglugpu";
+    public const string ValGeGLU = "geglugpu";
+    public const string ValSoftmax = "softmaxgpu";
+    public const string ValRMSNorm = "rmsnormgpu";
+    public const string ValMatMul = "matmulgpu";
 
     private static GPUMode? _backend;
 
@@ -46,7 +38,6 @@ public static class GPUSharpMindConfig
 
     private static GPUMode DetectBestBackend()
     {
-        // Check for CUDA/OpenCL availability
         using var ctx = Context.CreateDefault();
         if (ctx.GetCudaDevices().Count > 0) return GPUMode.Cuda;
         if (ctx.GetCLDevices().Count > 0) return GPUMode.OpenCL;
@@ -55,10 +46,10 @@ public static class GPUSharpMindConfig
 
     public static void AddGPUMappings(Dictionary<string, string> mapping)
     {
-        mapping[MapActivationKeyPointWise] = MapActivationKernelReLU;
-        mapping[MapActivationKeyGate] = MapActivationKernelGeGLU;
-        mapping[MapActivationKeySoftMax] = MapActivationKernelSoftMax;
-        mapping[MapActivationKeyRMSNorm] = MapActivationKernelRMSNorm;
-        mapping[MapActivationKeyMatMul]  = MapActivationKernelMatMul;
+        mapping[KeyPointWise] = ValReLU;
+        mapping[KeyGate] = ValGeGLU;
+        mapping[KeySoftmax] = ValSoftmax;
+        mapping[KeyRMSNorm] = ValRMSNorm;
+        mapping[KeyMatMul]  = ValMatMul;
     }
 }

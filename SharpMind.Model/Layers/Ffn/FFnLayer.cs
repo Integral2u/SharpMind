@@ -67,10 +67,10 @@ public abstract class FfnLayer : IDisposable
 
     // ── PuzzleCornerPieces ────────────────────────────────────────────────
 
-    [PuzzleCornerPiece(SharpMindConfig.MapFfnKey,
-        SharpMindConfig.KernelFfnDense, NS + "." + nameof(FfnKernels.Dense),
-        SharpMindConfig.KernelFfnGated, NS + "." + nameof(FfnKernels.Gated),
-        SharpMindConfig.KernelFfnMoE, NS + "." + nameof(FfnKernels.MoE))]
+    [PuzzleCornerPiece(SharpMindConfig.KeyFfn,
+        SharpMindConfig.ValFfnDense, NS + "." + nameof(FfnKernels.Dense),
+        SharpMindConfig.ValFfnGated, NS + "." + nameof(FfnKernels.Gated),
+        SharpMindConfig.ValFfnMoE, NS + "." + nameof(FfnKernels.MoE))]
     public abstract Tensor<float> ApplyFfn(Tensor<float> x);
 
     // ── Public API ────────────────────────────────────────────────────────
@@ -83,15 +83,26 @@ public abstract class FfnLayer : IDisposable
 
     public void Dispose()
     {
-        if (_disposed) return;
-        _disposed = true;
-        W1?.Dispose(); W2?.Dispose();
-        WGate?.Dispose(); WUp?.Dispose(); WDown?.Dispose();
-        Router?.Dispose();
-        if (ExpertGate is not null) foreach (var l in ExpertGate) l.Dispose();
-        if (ExpertUp is not null) foreach (var l in ExpertUp) l.Dispose();
-        if (ExpertDown is not null) foreach (var l in ExpertDown) l.Dispose();
+        Dispose(true);
+        GC.SuppressFinalize(this);
     }
+
+    protected virtual void Dispose(bool disposing)
+    {
+        if (_disposed) return;
+        if (disposing)
+        {
+            W1?.Dispose(); W2?.Dispose();
+            WGate?.Dispose(); WUp?.Dispose(); WDown?.Dispose();
+            Router?.Dispose();
+            if (ExpertGate is not null) foreach (var l in ExpertGate) l.Dispose();
+            if (ExpertUp is not null) foreach (var l in ExpertUp) l.Dispose();
+            if (ExpertDown is not null) foreach (var l in ExpertDown) l.Dispose();
+        }
+        _disposed = true;
+    }
+
+    ~FfnLayer() => Dispose(false);
 
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, nameof(FfnLayer));
 }

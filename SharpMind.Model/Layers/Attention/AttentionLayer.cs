@@ -43,18 +43,18 @@ public abstract class AttentionLayer : IDisposable
 
     // ── PuzzleCornerPieces — attention variant × hw ───────────────────────
 
-    [PuzzleCornerPiece(SharpMindConfig.MapAttentionKey,
-        SharpMindConfig.MapAttentionKernelMhaAvx2,
+    [PuzzleCornerPiece(SharpMindConfig.KeyAttention,
+        SharpMindConfig.ValMhaAvx2,
             NS + "." + nameof(AttentionKernels.ScaledDotProductAVX2),
-        SharpMindConfig.MapAttentionKernelMhaScalar,
+        SharpMindConfig.ValMhaScalar,
             NS + "." + nameof(AttentionKernels.ScaledDotProductScalar),
-        SharpMindConfig.MapAttentionKernelGqaAvx2,
+        SharpMindConfig.ValGqaAvx2,
             NS + "." + nameof(AttentionKernels.ScaledDotProductAVX2),
-        SharpMindConfig.MapAttentionKernelGqaScalar,
+        SharpMindConfig.ValGqaScalar,
             NS + "." + nameof(AttentionKernels.ScaledDotProductScalar),
-        SharpMindConfig.MapAttentionKernelMqaAvx2,
+        SharpMindConfig.ValMqaAvx2,
             NS + "." + nameof(AttentionKernels.ScaledDotProductAVX2),
-        SharpMindConfig.MapAttentionKernelMqaScalar,
+        SharpMindConfig.ValMqaScalar,
             NS + "." + nameof(AttentionKernels.ScaledDotProductScalar))]
     public abstract unsafe void ScaledDotProduct(
         float* q, float* k, float* v, float* output,
@@ -126,10 +126,21 @@ public abstract class AttentionLayer : IDisposable
 
     public void Dispose()
     {
-        if (_disposed) return;
-        _disposed = true;
-        Wq.Dispose(); Wk.Dispose(); Wv.Dispose(); Wo.Dispose();
+        Dispose(true);
+        GC.SuppressFinalize(this);
     }
+
+    protected virtual void Dispose(bool disposing)
+    {
+        if (_disposed) return;
+        if (disposing)
+        {
+            Wq.Dispose(); Wk.Dispose(); Wv.Dispose(); Wo.Dispose();
+        }
+        _disposed = true;
+    }
+
+    ~AttentionLayer() => Dispose(false);
 
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, nameof(AttentionLayer));
 }

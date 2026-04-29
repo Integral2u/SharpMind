@@ -40,10 +40,10 @@ public abstract class TensorOps
     // the public wrapper handles allocation and B-transpose.
     // ═══════════════════════════════════════════════════════════════════════
 
-    [PuzzleCornerPiece(SharpMindConfig.MapActivationKeyMatMul, true, null,
-        SharpMindConfig.MapActivationKernelFMA,    $"{NS}.{nameof(ActivationKernels.MatMulInnerFMA)}",
-        SharpMindConfig.MapActivationKernelAVX2,   $"{NS}.{nameof(ActivationKernels.MatMulInnerAVX2)}",
-        SharpMindConfig.MapActivationKernelScalar, $"{NS}.{nameof(ActivationKernels.MatMulInnerScalar)}")]
+    [PuzzleCornerPiece(SharpMindConfig.KeyMatMul, true, null,
+        SharpMindConfig.ValFma, $"{NS}.{nameof(ActivationKernels.MatMulInnerFMA)}",
+        SharpMindConfig.ValAvx2, $"{NS}.{nameof(ActivationKernels.MatMulInnerAVX2)}",
+        SharpMindConfig.ValScalar, $"{NS}.{nameof(ActivationKernels.MatMulInnerScalar)}")]
     public abstract unsafe void MatMulInner(float* a, float* bt, float* c, int M, int K, int N);
 
     // ═══════════════════════════════════════════════════════════════════════

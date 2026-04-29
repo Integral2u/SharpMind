@@ -24,7 +24,7 @@ public static class GPUActivationKernels
         }
     }
 
-    [PuzzlePeice(nameof(ActivationOps.ApplyPointwise), GPUSharpMindConfig.MapActivationKeyPointWise, GPUSharpMindConfig.MapActivationKernelReLU)]
+    [PuzzlePeice(nameof(ActivationOps.ApplyPointwise), SharpMindConfig.KeyPointWise, GPUSharpMindConfig.ValReLU)]
     public static void ReLUGPU(ReadOnlySpan<float> src, Span<float> dst)
     {
         var acc = SharedAccelerator;
@@ -42,7 +42,7 @@ public static class GPUActivationKernels
         output[index] = input[index] < 0f ? 0f : input[index];
     }
 
-    [PuzzlePeice(nameof(ActivationOps.ApplyPointwise), GPUSharpMindConfig.MapActivationKeyPointWise, GPUSharpMindConfig.MapActivationKernelGELU)]
+    [PuzzlePeice(nameof(ActivationOps.ApplyPointwise), SharpMindConfig.KeyPointWise, GPUSharpMindConfig.ValGELU)]
     public static void GELUGPU(ReadOnlySpan<float> src, Span<float> dst)
     {
         var acc = SharedAccelerator;
@@ -68,7 +68,7 @@ public static class GPUActivationKernels
         return (e2z - 1f) / (e2z + 1f);
     }
 
-    [PuzzlePeice(nameof(ActivationOps.ApplyPointwise), GPUSharpMindConfig.MapActivationKeyPointWise, GPUSharpMindConfig.MapActivationKernelSiLU)]
+    [PuzzlePeice(nameof(ActivationOps.ApplyPointwise), SharpMindConfig.KeyPointWise, GPUSharpMindConfig.ValSiLU)]
     public static void SiLUGPU(ReadOnlySpan<float> src, Span<float> dst)
     {
         var acc = SharedAccelerator;
@@ -87,7 +87,7 @@ public static class GPUActivationKernels
         output[index] = x / (1f + MathF.Exp(-x));
     }
 
-    [PuzzlePeice(nameof(ActivationOps.ApplyGate), GPUSharpMindConfig.MapActivationKeyGate, GPUSharpMindConfig.MapActivationKernelSwiGLU)]
+    [PuzzlePeice(nameof(ActivationOps.ApplyGate), SharpMindConfig.KeyGate, GPUSharpMindConfig.ValSwiGLU)]
     public static void SwiGLUGPU(ReadOnlySpan<float> gate, ReadOnlySpan<float> up, Span<float> dst)
     {
         var acc = SharedAccelerator;
@@ -107,7 +107,7 @@ public static class GPUActivationKernels
         output[index] = g / (1f + MathF.Exp(-g)) * up[index];
     }
 
-    [PuzzlePeice(nameof(ActivationOps.ApplyGate), GPUSharpMindConfig.MapActivationKeyGate, GPUSharpMindConfig.MapActivationKernelGeGLU)]
+    [PuzzlePeice(nameof(ActivationOps.ApplyGate), SharpMindConfig.KeyGate, GPUSharpMindConfig.ValGeGLU)]
     public static void GeGLUGPU(ReadOnlySpan<float> gate, ReadOnlySpan<float> up, Span<float> dst)
     {
         var acc = SharedAccelerator;
@@ -129,7 +129,7 @@ public static class GPUActivationKernels
         output[index] = geluG * up[index];
     }
 
-    [PuzzlePeice(nameof(ActivationOps.ApplySoftmaxRow), GPUSharpMindConfig.MapActivationKeySoftMax, GPUSharpMindConfig.MapActivationKernelSoftMax)]
+    [PuzzlePeice(nameof(ActivationOps.ApplySoftmaxRow), SharpMindConfig.KeySoftmax, GPUSharpMindConfig.ValSoftmax)]
     public static void SoftmaxRowGPU(ReadOnlySpan<float> src, Span<float> dst)
     {
         var acc = SharedAccelerator;
@@ -172,7 +172,7 @@ public static class GPUActivationKernels
         output[index] = exp[index] * invSum[index];
     }
 
-    [PuzzlePeice(nameof(ActivationOps.ApplyRMSNormRow), GPUSharpMindConfig.MapActivationKeyRMSNorm, GPUSharpMindConfig.MapActivationKernelRMSNorm)]
+    [PuzzlePeice(nameof(ActivationOps.ApplyRMSNormRow), SharpMindConfig.KeyRMSNorm, GPUSharpMindConfig.ValRMSNorm)]
     public static void RMSNormRowGPU(ReadOnlySpan<float> src, ReadOnlySpan<float> weight, Span<float> dst, float rmsInv)
     {
         var acc = SharedAccelerator;
@@ -191,7 +191,7 @@ public static class GPUActivationKernels
         output[index] = src[index] * rmsInv * weight[index];
     }
 
-    [PuzzlePeice("MatMulInner", SharpMindConfig.MapActivationKeyMatMul, GPUSharpMindConfig.MapActivationKernelMatMul)]
+    [PuzzlePeice("MatMulInner", SharpMindConfig.KeyMatMul, GPUSharpMindConfig.ValMatMul)]
     public static unsafe void MatMulInnerGPU(float* a, float* bt, float* c, int M, int K, int N)
     {
         var acc = SharedAccelerator;
@@ -211,7 +211,7 @@ public static class GPUActivationKernels
         for (int i = 0; i < M * N; i++) c[i] = gpuData[i];
     }
 
-    [PuzzlePeice("MatMulInner", SharpMindConfig.MapActivationKeyMatMul, GPUSharpMindConfig.MapActivationKernelMatMul)]
+    [PuzzlePeice("MatMulInner", SharpMindConfig.KeyMatMul, GPUSharpMindConfig.ValMatMul)]
     public static unsafe void MatMulGPU(float* a, float* bt, float* c, int M, int K, int N)
     {
         var acc = SharedAccelerator;

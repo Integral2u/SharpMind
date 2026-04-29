@@ -104,7 +104,7 @@ internal static class ActivationKernels
     // exp is the bottleneck — no benefit from AVX2 here
     // ═══════════════════════════════════════════════════════════════════════
 
-    internal static void SoftmaxRow_Scalar(ReadOnlySpan<float> src, Span<float> dst)
+    internal static void SoftmaxRowScalar(ReadOnlySpan<float> src, Span<float> dst)
     {
         float max = src[0];
         for (int i = 1; i < src.Length; i++) if (src[i] > max) max = src[i];

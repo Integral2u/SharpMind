@@ -36,44 +36,44 @@ public abstract class ActivationOps
     // Pointwise activation — act type + hw tier combined
     // ═══════════════════════════════════════════════════════════════════════
 
-    [PuzzleCornerPiece(SharpMindConfig.MapActivationKeyPointWise, true, null,
-        SharpMindConfig.MapActivationKernelReLUAVX2, $"{NS}.{nameof(ActivationKernels.ReLUAVX2)}",
-        SharpMindConfig.MapActivationKernelReLUScalar, $"{NS}.{nameof(ActivationKernels.ReLUScalar)}",
-        SharpMindConfig.MapActivationKernelGELUScalar, $"{NS}.{nameof(ActivationKernels.GELUScalar)}",
-        SharpMindConfig.MapActivationKernelGELUAVX2, $"{NS}.{nameof(ActivationKernels.GELUScalar)}",   // GELU: tanh dominates, no AVX2 gain
-        SharpMindConfig.MapActivationKernelSiLUScalar, $"{NS}.{nameof(ActivationKernels.SiLUScalar)}",
-        SharpMindConfig.MapActivationKernelSiLUAVX2, $"{NS}.{nameof(ActivationKernels.SiLUScalar)}")]  // SiLU: exp dominates, no AVX2 gain
+    [PuzzleCornerPiece(SharpMindConfig.KeyPointWise, true, null,
+        SharpMindConfig.ValReLUAvx2, $"{NS}.{nameof(ActivationKernels.ReLUAVX2)}",
+        SharpMindConfig.ValReLU, $"{NS}.{nameof(ActivationKernels.ReLUScalar)}",
+        SharpMindConfig.ValGELU, $"{NS}.{nameof(ActivationKernels.GELUScalar)}",
+        SharpMindConfig.ValGELUAvx2, $"{NS}.{nameof(ActivationKernels.GELUScalar)}",
+        SharpMindConfig.ValSiLU, $"{NS}.{nameof(ActivationKernels.SiLUScalar)}",
+        SharpMindConfig.ValSiLUAvx2, $"{NS}.{nameof(ActivationKernels.SiLUScalar)}")]
     public abstract void ApplyPointwise(ReadOnlySpan<float> src, Span<float> dst);
 
     // ═══════════════════════════════════════════════════════════════════════
     // Gated activation — gate type + hw tier combined
     // ═══════════════════════════════════════════════════════════════════════
 
-    [PuzzleCornerPiece(SharpMindConfig.MapActivationKeyGate, true, null,
-        SharpMindConfig.MapActivationKernelSwiGLUScalar, $"{NS}.{nameof(ActivationKernels.SwiGLUScalar)}",
-        SharpMindConfig.MapActivationKernelSwiGLUAVX2, $"{NS}.{nameof(ActivationKernels.SwiGLUScalar)}",  // SiLU inside SwiGLU: same caveat
-        SharpMindConfig.MapActivationKernelGeGLUScalar, $"{NS}.{nameof(ActivationKernels.GeGLUScalar)}",
-        SharpMindConfig.MapActivationKernelGeGLUAVX2, $"{NS}.{nameof(ActivationKernels.GeGLUScalar)}",
-        SharpMindConfig.MapActivationKernelNoneScalar, $"{NS}.{nameof(ActivationKernels.CopyGate)}",
-        SharpMindConfig.MapActivationKernelNoneAVX2, $"{NS}.{nameof(ActivationKernels.CopyGate)}")]
+    [PuzzleCornerPiece(SharpMindConfig.KeyGate, true, null,
+        SharpMindConfig.ValSwiGLU, $"{NS}.{nameof(ActivationKernels.SwiGLUScalar)}",
+        SharpMindConfig.ValSwiGLUAvx2, $"{NS}.{nameof(ActivationKernels.SwiGLUScalar)}",
+        SharpMindConfig.ValGeGLU, $"{NS}.{nameof(ActivationKernels.GeGLUScalar)}",
+        SharpMindConfig.ValGeGLUAvx2, $"{NS}.{nameof(ActivationKernels.GeGLUScalar)}",
+        SharpMindConfig.ValNone, $"{NS}.{nameof(ActivationKernels.CopyGate)}",
+        SharpMindConfig.ValNoneAvx2, $"{NS}.{nameof(ActivationKernels.CopyGate)}")]
     public abstract void ApplyGate(ReadOnlySpan<float> gate, ReadOnlySpan<float> up, Span<float> dst);
 
     // ═══════════════════════════════════════════════════════════════════════
     // Softmax — hw tier only (exp bottleneck makes both paths equivalent)
     // ═══════════════════════════════════════════════════════════════════════
 
-    [PuzzleCornerPiece(SharpMindConfig.MapActivationKeySoftMax, true, null,
-        SharpMindConfig.MapActivationKernelScalar, $"{NS}.{nameof(ActivationKernels.SoftmaxRow_Scalar)}",
-        SharpMindConfig.MapActivationKernelAVX2, $"{NS}.{nameof(ActivationKernels.SoftmaxRow_Scalar)}")]
+    [PuzzleCornerPiece(SharpMindConfig.KeySoftmax, true, null,
+        SharpMindConfig.ValScalar, $"{NS}.{nameof(ActivationKernels.SoftmaxRowScalar)}",
+        SharpMindConfig.ValAvx2, $"{NS}.{nameof(ActivationKernels.SoftmaxRowScalar)}")]
     public abstract void ApplySoftmaxRow(ReadOnlySpan<float> src, Span<float> dst);
 
     // ═══════════════════════════════════════════════════════════════════════
     // RMSNorm row — hw tier only (pure multiply, AVX2 gives real gain here)
     // ═══════════════════════════════════════════════════════════════════════
 
-    [PuzzleCornerPiece(SharpMindConfig.MapActivationKeyRMSNorm, true, null,
-        SharpMindConfig.MapActivationKernelAVX2, $"{NS}.{nameof(ActivationKernels.RMSNormRowAVX2)}",
-        SharpMindConfig.MapActivationKernelScalar, $"{NS}.{nameof(ActivationKernels.RMSNormRowScalar)}")]
+    [PuzzleCornerPiece(SharpMindConfig.KeyRMSNorm, true, null,
+        SharpMindConfig.ValAvx2, $"{NS}.{nameof(ActivationKernels.RMSNormRowAVX2)}",
+        SharpMindConfig.ValScalar, $"{NS}.{nameof(ActivationKernels.RMSNormRowScalar)}")]
     public abstract void ApplyRMSNormRow(
         ReadOnlySpan<float> src,
         ReadOnlySpan<float> weight,

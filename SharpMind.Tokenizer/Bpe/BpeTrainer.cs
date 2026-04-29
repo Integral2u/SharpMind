@@ -86,7 +86,7 @@ public sealed class BpeTrainer
         var merges = new List<MergeRule>();
 
         // Represent each word as a list of byte-level tokens
-        var wordTokens = BuildInitialWordTokens(wordFreqs, vocab);
+        var wordTokens = BuildInitialWordTokens(wordFreqs);
 
         int mergesNeeded = _targetVocabSize - vocab.Size;
         if (mergesNeeded <= 0)
@@ -138,8 +138,7 @@ public sealed class BpeTrainer
     // ── Initial word → byte token representation ──────────────────────────
 
     private Dictionary<string, List<string>> BuildInitialWordTokens(
-        Dictionary<string, int> wordFreqs,
-        Vocabulary vocab)
+        Dictionary<string, int> wordFreqs)
     {
         var result = new Dictionary<string, List<string>>(StringComparer.Ordinal);
         foreach (string word in wordFreqs.Keys)
