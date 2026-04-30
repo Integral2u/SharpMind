@@ -37,7 +37,7 @@ public sealed unsafe class Tensor<T> : IDisposable
     public Tensor(TensorShape shape)
     {
         Shape   = shape;
-        _buffer = new NativeBuffer<T>(shape.ElementCount);
+        _buffer = NativeBufferPool<T>.Rent(shape.ElementCount);
         _offset = 0;
     }
 
@@ -201,5 +201,8 @@ public sealed unsafe class Tensor<T> : IDisposable
     /// Releases this tensor's reference to the backing buffer.
     /// The native memory is freed only when all views are disposed.
     /// </summary>
-    public void Dispose() => _buffer.Dispose();
+    public void Dispose()
+    {
+        _buffer.Dispose();
+    }
 }

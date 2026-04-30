@@ -314,9 +314,13 @@ public abstract class TensorOps
         int R = src.Shape.Rows, C = src.Shape.Cols;
         var dst = new Tensor<float>(C, R);
         float* pS = src.DataPtr, pD = dst.DataPtr;
-        for (int r = 0; r < R; r++)
+
+        System.Threading.Tasks.Parallel.For(0, R, r =>
+        {
             for (int c = 0; c < C; c++)
                 pD[(long)c * R + r] = pS[(long)r * C + c];
+        });
+
         return dst;
     }
     /// <summary>
