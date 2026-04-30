@@ -12,9 +12,7 @@ public sealed class DataLoaderIntegrationTests : IDisposable
     public void Dispose() => _dir.Dispose();
 
     private static int[] Tokenise(string s) =>
-        s.Split(' ', StringSplitOptions.RemoveEmptyEntries)
-         .Select(w => Math.Abs(w.GetHashCode()) % 500)
-         .ToArray();
+        [.. s.Split(' ', StringSplitOptions.RemoveEmptyEntries).Select(w => Math.Abs(w.GetHashCode()) % 500)];
 
     [Fact]
     public async Task EndToEnd_TextFile_CleanPipeline_PackedBatches()

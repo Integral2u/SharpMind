@@ -6,15 +6,14 @@ public sealed class PackingBatcherTests
 {
     // Trivial tokeniser: splits on spaces, returns word indices from a fixed vocab
     private static int[] Tokenise(string s) =>
-        s.Split(' ', StringSplitOptions.RemoveEmptyEntries)
-         .Select(w => Math.Abs(w.GetHashCode()) % 1000)
-         .ToArray();
+        [.. s.Split(' ', StringSplitOptions.RemoveEmptyEntries).Select(w => Math.Abs(w.GetHashCode()) % 1000)];
 
     private static async Task<List<TrainingBatch>> CollectBatches(
         IEnumerable<string> docs, PackingBatcher batcher)
     {
         async IAsyncEnumerable<string> Source()
         {
+            await Task.CompletedTask;
             foreach (string d in docs) yield return d;
         }
 

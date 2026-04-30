@@ -102,7 +102,7 @@ public sealed class CleaningPipelineTests : IDisposable
     }
 
     [Fact]
-    public async Task Describe_IncludesAllStageNames()
+    public void Describe_IncludesAllStageNames()
     {
         var node = PipelineFrom("x")
             .Pipe(new NormaliseWhitespace())

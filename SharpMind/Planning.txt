@@ -11,17 +11,11 @@ Model:
 Data: sources, cleaning, formating, batching, dataset loaders
 Core: tensors, matrix math, memeory, activations
 
-Refactor changes and dectected issues.
-SharpMind.Model.Tokenizer has been moved to SharpMind.Tokenizer.
-BpeTrainer.BuildInitialWordTokens is passed BuildInitialWordTokens vocab but never used.
-should these the Dispose methods in NormLayer, FfnLayer, AttentionLayer follow the pattern.
-public void Dispose(){ Dispose(true); GC.SuppressFinalize(this); }
-protected virtual void Dispose(bool disposing){if (disposing){ ... original code block.
-Im not happy with the naming conventions in SharpMindConfig, i have attached the dull code base for review,
-Please no undersores "_" in method names or strings. the pattern should be optimized and logical,
-if its related to a JigSawDotNet reference const strings in SharMindConfig and GPUSharpMindConfig should idenitfy names indicating Pointer Key or Value.
-Where pssoble there should be no hard coded cosst string references but references to nameof or $"{nameof(...)}" to actually break when any breaking refactor occours.
-Names should be combinational or genral based on hardware names FMA, AVX2, GPU(for case if Sharpmind.GPU) and scalar should possibly be stripped so name genration can have a default + hardware
+this code has not been released yet so there is plenty of time to improve, 
+can you see any glaring issues but more importanlty you can see the intent is to allow improvments in AI conept and design/implemtantion in the most effecient way possible.
+First consider simple bugs issues, next is there anthing here that restricts new methodologies or restrcicts advancement? consider a mid end result.
+the potential for an AI builder that can take many possible routes and functional execution implementations but allows new impmentations to be added.
+Final result and AI could understand the API and add kernals or flows that can improve its own model via external (Kernals or Flows) without a brand new specific code base is the gaol
 
 private const string NS = 
 
