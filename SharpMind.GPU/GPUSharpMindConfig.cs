@@ -28,7 +28,9 @@ public static class GPUSharpMindConfig
     public const string ValGeGLU = "geglugpu";
     public const string ValSoftmax = "softmaxgpu";
     public const string ValRMSNorm = "rmsnormgpu";
-    public const string ValMatMul = "matmulgpu";
+    public const string ValMatMulNaive = "matmulgpunaive";
+    public const string ValMatMulTiled = "matmulgputiled";
+    public const string ValMatMulAdvanced = "matmulgpuadvanced";
 
     private static GPUMode? _backend;
 
@@ -46,10 +48,10 @@ public static class GPUSharpMindConfig
 
     public static void AddGPUMappings(Dictionary<string, string> mapping)
     {
-        mapping[KeyPointWise] = ValReLU;
-        mapping[KeyGate] = ValGeGLU;
-        mapping[KeySoftmax] = ValSoftmax;
-        mapping[KeyRMSNorm] = ValRMSNorm;
-        mapping[KeyMatMul]  = ValMatMul;
+        mapping[SharpMindConfig.KeyPointWise] = ValReLU;
+        mapping[SharpMindConfig.KeyGate] = ValGeGLU;
+        mapping[SharpMindConfig.KeySoftmax] = ValSoftmax;
+        mapping[SharpMindConfig.KeyRMSNorm] = ValRMSNorm;
+        mapping[SharpMindConfig.KeyMatMul]  = ValMatMulNaive;
     }
 }

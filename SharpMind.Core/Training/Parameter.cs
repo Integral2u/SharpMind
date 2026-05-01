@@ -1,6 +1,6 @@
 using SharpMind.Core.Tensors;
 
-namespace SharpMind.Training.Autograd;
+namespace SharpMind.Core.Training;
 
 /// <summary>
 /// A named trainable tensor with a paired gradient buffer of the same shape.

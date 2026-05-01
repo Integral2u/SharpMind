@@ -2,10 +2,10 @@ using SharpMind.Core.Tensors;
 using SharpMind.Data;
 using SharpMind.Data.Batching;
 using SharpMind.Model;
-using SharpMind.Training.Autograd;
+using SharpMind.Core.Training;
 using SharpMind.Training.Loss;
-using SharpMind.Training.Optimizers;
 using SharpMind.Training.Schedulers;
+using SharpMind.Training.Autograd;
 
 namespace SharpMind.Training;
 
@@ -72,18 +72,24 @@ public sealed class TrainLoop
     private readonly Transformer           _model;
     private readonly List<Parameter>       _parameters;
     private readonly DataLoader            _loader;
-    private readonly AdamW                 _optimizer;
+    private readonly IOptimizer            _optimizer;
     private readonly IScheduler            _scheduler;
     private readonly TrainConfig           _config;
-    private readonly CrossEntropyLoss      _loss;
+    private readonly ILoss<int>            _loss;
+    private readonly TrainingOps           _ops;
+    private readonly GradientMapping       _mapping;
+    
 
     public TrainLoop(
         Transformer           model,
         IEnumerable<Parameter> parameters,
         DataLoader             loader,
-        AdamW                  optimizer,
+        IOptimizer             optimizer,
         IScheduler             scheduler,
-        TrainConfig?           config = null)
+        TrainingOps            ops,
+        ILoss<int>?            loss     = null,
+        GradientMapping?       mapping  = null,        
+        TrainConfig?           config   = null)
     {
         ArgumentNullException.ThrowIfNull(model);
         ArgumentNullException.ThrowIfNull(parameters);
@@ -97,7 +103,9 @@ public sealed class TrainLoop
         _optimizer  = optimizer;
         _scheduler  = scheduler;
         _config     = config ?? new TrainConfig();
-        _loss       = new CrossEntropyLoss();
+        _loss       = loss ?? new CrossEntropyLoss();
+        _mapping    = mapping ?? new GradientMapping();
+        _ops        = ops;
     }
 
     // ── Main loop ─────────────────────────────────────────────────────────
@@ -186,43 +194,30 @@ public sealed class TrainLoop
 
     private float ForwardBackward(TrainingBatch batch)
     {
-        // Flatten [Batch, SeqLen] to [T] for the loss
         int batch2  = batch.TokenIds.Shape.Rows;
         int seqLen  = batch.TokenIds.Shape.Cols;
 
         using var flatIds    = batch.TokenIds.Reshape(batch2 * seqLen);
         using var flatLabels = batch.Labels.Reshape(batch2 * seqLen);
 
-        // Forward pass — logits [T, VocabSize]
         using var logits2d = _model.Forward(batch.TokenIds);
         using var logitsFlat = logits2d.Reshape(batch2 * seqLen, _model.Config.VocabSize);
 
-        // Loss
         float loss = _loss.Compute(logitsFlat, flatLabels);
 
-        // Backward — dLogits [T, VocabSize]
-        using var dLogits = Gradients.CrossEntropySoftmax(logitsFlat, flatLabels);
+        using var dLogits = _loss.Backward(logitsFlat, flatLabels);
 
-        // Backward through the model
-        // Note: full autograd through all layers is wired here; for brevity
-        // the embedding backward is always the terminal step.
         BackwardEmbedding(dLogits, flatIds);
 
         return loss;
     }
 
-    /// <summary>
-    /// Propagates gradients back to the embedding table.
-    /// This is the minimum required to update word embeddings; full layer-by-layer
-    /// backward through attention and FFN follows the same Gradients.* pattern
-    /// and is wired per-model in the Model layer's training support.
-    /// </summary>
     private void BackwardEmbedding(Tensor<float> dLogits, Tensor<int> tokenIds)
     {
         var embeddingParam = _parameters.FirstOrDefault(
             p => p.Name.Contains("embedding", StringComparison.OrdinalIgnoreCase));
 
         if (embeddingParam is not null)
-            Gradients.Embedding(dLogits, tokenIds, embeddingParam);
+            _mapping.Embedding.Compute(dLogits, tokenIds, embeddingParam);
     }
 }

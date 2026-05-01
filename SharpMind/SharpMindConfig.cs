@@ -24,18 +24,22 @@ public sealed record SharpMindConfig
     public const string PtrNorm = "ApplyRow";
     public const string PtrArch = "Forward";
 
-    // ── JigSaw Keys ────────────────────────────────────────────────────────
+    // ── Activation Keys ────────────────────────────────────────────────────────
     public const string KeyPointWise = "pointwise";
     public const string KeyGate = "gate";
     public const string KeyRMSNorm = "rmsnorm";
     public const string KeySoftmax = "softmax";
     public const string KeyMatMul = "matmul";
+    // ── Model Layer Keys ────────────────────────────────────────────────────────
     public const string KeyAttention = "attention";
     public const string KeyFfn = "ffn";
     public const string KeyNorm = "norm";
     public const string KeyArch = "arch";
+    // ── Training Keys ────────────────────────────────────────────────────────
+    public const string MapKeyAdamW = "adamw";
+    public const string MapKeyGradNorm = "gradnorm";
 
-    // ── JigSaw Values ──────────────────────────────────────────────────────
+    // ── Activation Values ──────────────────────────────────────────────────────
     public const string ValReLU = "relu";
     public const string ValReLUAvx2 = "reluavx2";
     public const string ValGELU = "gelu";
@@ -48,11 +52,13 @@ public sealed record SharpMindConfig
     public const string ValGeGLUAvx2 = "gegluavx2";
     public const string ValNone = "none";
     public const string ValNoneAvx2 = "noneavx2";
-    
+
+    // ── Hardware Values ──────────────────────────────────────────────────────
     public const string ValScalar = "scalar";
     public const string ValAvx2 = "avx2";
     public const string ValFma = "fma";
 
+    // ── Attention Values ──────────────────────────────────────────────────────
     public const string ValMhaAvx2 = "mhaavx2";
     public const string ValMhaScalar = "mhascalar";
     public const string ValGqaAvx2 = "gqaavx2";
@@ -60,10 +66,12 @@ public sealed record SharpMindConfig
     public const string ValMqaAvx2 = "mqaavx2";
     public const string ValMqaScalar = "mqascalar";
 
+    // ── Ffn Values ──────────────────────────────────────────────────────
     public const string ValFfnDense = "dense";
     public const string ValFfnGated = "gated";
     public const string ValFfnMoE = "moe";
 
+    // ── Norm Values ──────────────────────────────────────────────────────
     public const string ValNormRMS = "rmsnorm";
     public const string ValNormRMSAvx2 = "rmsnormavx2";
     public const string ValNormRMSScalar = "rmsnormscalar";
@@ -71,6 +79,7 @@ public sealed record SharpMindConfig
     public const string ValNormLayerAvx2 = "layernormavx2";
     public const string ValNormLayerScalar = "layernormscalar";
 
+    // ── Arch Values ──────────────────────────────────────────────────────
     public const string ValDecoder = "decoder";
     public const string ValEncoder = "encoder";
 
@@ -116,36 +125,14 @@ public sealed record SharpMindConfig
     {
         HardwareTier.Auto => Fma.IsSupported ? HardwareTier.FMA :
                              Avx2.IsSupported ? HardwareTier.AVX2 :
-                                                HardwareTier.Scalar,
+                                                 HardwareTier.Scalar,
         _ => Hardware
-    };
-
-    private string ActHwKey => ResolvedHardware == HardwareTier.Scalar ? "" : ValAvx2;
-
-    private string MatMulHwKey => ResolvedHardware switch
-    {
-        HardwareTier.FMA => ValFma,
-        HardwareTier.AVX2 => ValAvx2,
-        _ => ValScalar
     };
 
     public Dictionary<string, string> ToJigSawMapping()
     {
-        string hw = ActHwKey;
-        string act = Activation.ToString().ToLowerInvariant();
-        string gate = Gate.ToString().ToLowerInvariant();
-
-        return new Dictionary<string, string>
-        {
-            [KeyPointWise] = $"{act}{hw}",
-            [KeyGate] = $"{gate}{hw}",
-            [KeySoftmax] = hw,
-            [KeyRMSNorm] = hw,
-            [KeyMatMul] = MatMulHwKey,
-            [KeyAttention] = $"{Attention.ToString().ToLowerInvariant()}{hw}",
-            [KeyFfn] = Ffn.ToString().ToLowerInvariant(),
-            [KeyNorm] = Norm == NormKind.RMSNorm ? ValNormRMS : ValNormLayer,
-            [KeyArch] = Arch == ArchKind.Decoder ? ValDecoder : ValEncoder,
-        };
+        return new MappingBuilder(ResolvedHardware)
+            .ApplyPreset(this)
+            .Build();
     }
 }

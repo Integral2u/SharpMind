@@ -1,4 +1,5 @@
 using SharpMind.Core.Tensors;
+using SharpMind.Core.Training;
 using SharpMind.Training.Autograd;
 
 namespace SharpMind.Training.Loss;
@@ -21,7 +22,7 @@ namespace SharpMind.Training.Loss;
 ///   dL/dLogits[t, v] = (softmax(logits[t])[v] - 1{v == label[t]}) / N
 /// which is what <see cref="Backward"/> returns.
 /// </summary>
-public sealed class CrossEntropyLoss
+public sealed class CrossEntropyLoss : ILoss<int>
 {
     public int IgnoreId { get; }
 
@@ -79,7 +80,7 @@ public sealed class CrossEntropyLoss
 /// Mean squared error loss: L = mean((predictions - targets)²).
 /// Used for regression tasks and distillation targets.
 /// </summary>
-public sealed class MSELoss
+public sealed class MSELoss : ILoss<float>
 {
     public float Compute(Tensor<float> predictions, Tensor<float> targets)
     {

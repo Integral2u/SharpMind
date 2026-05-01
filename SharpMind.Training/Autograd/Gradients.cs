@@ -1,4 +1,5 @@
 using SharpMind.Core.Tensors;
+using SharpMind.Core.Training;
 
 namespace SharpMind.Training.Autograd;
 
@@ -413,15 +414,48 @@ public static class Gradients
     /// Clips the global gradient norm to <paramref name="maxNorm"/> in-place.
     /// Returns the pre-clip norm for logging.
     /// </summary>
-    public static float ClipGlobalNorm(IEnumerable<Parameter> parameters, float maxNorm)
+    public static float ClipGlobalNorm(
+        IEnumerable<Parameter> parameters,
+        float maxNorm)
     {
-        float totalNorm = 0f;
+        float totalNormSq = 0f;
         foreach (var p in parameters)
         {
             var grad = p.Grad.Data;
-            for (int i = 0; i < grad.Length; i++) totalNorm += grad[i] * grad[i];
+            foreach (float g in grad) totalNormSq += g * g;
         }
-        totalNorm = MathF.Sqrt(totalNorm);
+
+        float totalNorm = MathF.Sqrt(totalNormSq);
+
+        if (totalNorm > maxNorm)
+        {
+            float scale = maxNorm / totalNorm;
+            foreach (var p in parameters)
+            {
+                var grad = p.Grad.Data;
+                for (int i = 0; i < grad.Length; i++) grad[i] *= scale;
+            }
+        }
+
+        return totalNorm;
+    }
+
+    /// <summary>
+    /// Clips the global gradient norm to <paramref name="maxNorm"/> in-place.
+    /// Uses the JigSaw-assembled <paramref name="ops"/> for the L2 norm accumulation
+    /// so the AVX2 or scalar path is selected at factory time, not here.
+    /// Returns the pre-clip norm for logging.
+    /// </summary>
+    public static float ClipGlobalNorm(
+        IEnumerable<Parameter> parameters,
+        float maxNorm,
+        TrainingOps ops)
+    {
+        float totalNormSq = 0f;
+        foreach (var p in parameters)
+            totalNormSq += ops.L2NormSq(p.Grad.Data);
+
+        float totalNorm = MathF.Sqrt(totalNormSq);
 
         if (totalNorm > maxNorm)
         {
