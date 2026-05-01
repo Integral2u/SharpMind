@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using SharpMind.Core.Tensors;
 
 namespace SharpMind.Core.Training;
@@ -58,6 +59,7 @@ public sealed class Parameter : IDisposable
     }
 
     /// <summary>Zeroes the gradient buffer. Call once per optimizer step.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void ZeroGrad() => Grad.Fill(0f);
 
     // ── Disposal ──────────────────────────────────────────────────────────

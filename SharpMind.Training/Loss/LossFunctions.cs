@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using SharpMind.Core.Tensors;
 using SharpMind.Core.Training;
 using SharpMind.Training.Autograd;
@@ -30,9 +31,8 @@ public sealed class CrossEntropyLoss : ILoss<int>
 
     /// <summary>
     /// Computes the scalar loss.
-    /// logits: [Batch, SeqLen, VocabSize] or [T, VocabSize] (flat).
-    /// labels: [Batch, SeqLen] or [T] (flat), same element count as logits rows.
     /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public float Compute(Tensor<float> logits, Tensor<int> labels)
     {
         int T = logits.Shape.Rows;

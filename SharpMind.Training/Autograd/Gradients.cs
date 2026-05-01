@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using SharpMind.Core.Tensors;
 using SharpMind.Core.Training;
 
@@ -24,14 +25,8 @@ public static class Gradients
 
     /// <summary>
     /// Computes dL/dLogits for the combined softmax + cross-entropy loss.
-    ///
-    /// For each non-ignored position t and vocab index v:
-    ///   dL/dLogits[t,v] = (p[t,v] - 1{v == label[t]}) / numRealTokens
-    ///
-    /// where p[t] = softmax(logits[t]) and positions where label == -100 are ignored.
-    ///
-    /// Returns dLogits: [Batch × SeqLen, VocabSize] — already divided by token count.
     /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static Tensor<float> CrossEntropySoftmax(
         Tensor<float> logits,  // [T, VocabSize] flat
         Tensor<int>   labels,  // [T] flat
@@ -82,6 +77,7 @@ public static class Gradients
     /// <summary>
     /// Returns dInput [B, InFeatures] and accumulates gradients into weight/bias parameters.
     /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static unsafe Tensor<float> Linear(
         Tensor<float> dOutput,   // [B, OutFeatures]
         Tensor<float> input,     // [B, InFeatures]

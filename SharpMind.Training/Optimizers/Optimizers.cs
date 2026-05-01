@@ -1,4 +1,5 @@
 using System.IO;
+using System.Runtime.CompilerServices;
 using SharpMind.Core.Training;
 
 namespace SharpMind.Training.Optimizers;
@@ -144,6 +145,8 @@ public sealed class SGD : IOptimizer
     public float LearningRate { get => _lr; set => _lr = value; }
     public int Step => _step;
 
+    /// <summary>Applies one SGD update step.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Update()
     {
         _step++;

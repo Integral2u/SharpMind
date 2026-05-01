@@ -148,7 +148,7 @@ internal static class TrainingKernels
 public abstract class TrainingOps
 {
     private const string NS = $"{nameof(SharpMind)}.{nameof(Training)}.{nameof(TrainingKernels)}";
-    [PuzzleCornerPiece(SharpMindConfig.MapKeyAdamW,
+    [PuzzleCornerPiece(SharpMindConfig.KeyAdamW,
         SharpMindConfig.ValAvx2,   NS + "." + nameof(TrainingKernels.AdamWUpdate_AVX2),
         SharpMindConfig.ValScalar, NS + "." + nameof(TrainingKernels.AdamWUpdate_Scalar))]
     public abstract void AdamWUpdate(
@@ -159,7 +159,7 @@ public abstract class TrainingOps
         float lr,      float epsilon,
         float decay);
 
-    [PuzzleCornerPiece(SharpMindConfig.MapKeyGradNorm,
+    [PuzzleCornerPiece(SharpMindConfig.KeyGradNorm,
         SharpMindConfig.ValAvx2,   NS + "." + nameof(TrainingKernels.L2NormSq_AVX2),
         SharpMindConfig.ValScalar, NS + "." + nameof(TrainingKernels.L2NormSq_Scalar))]
     public abstract float L2NormSq(ReadOnlySpan<float> data);
