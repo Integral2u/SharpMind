@@ -5,9 +5,9 @@
 Runtime:
 	Inference: sampling, kv-cache, generation loop
 	Training: optimizer, scheduler, checkpointing
-Model:
-	Model: transformer, attention, FFN, norms
-	Tokenizer: BPE, vocab builder, encode/decode
+
+Model: transformer, attention, FFN, norms
+Tokenizer: BPE, vocab builder, encode/decode
 Data: sources, cleaning, formating, batching, dataset loaders
 Core: tensors, matrix math, memeory, activations
 
@@ -43,13 +43,14 @@ TIES-Merging (TrIm, Elect, Sign, and Merge): Designed to handle interference bet
 DARE (Drop And REscale): Drops redundant weights and re-scales the remaining weights to create a "soups" of models, reducing task interference.
 Task Arithmetic: Creates "task vectors" by subtracting the base model weights from the fine-tuned model weights, allowing these vectors to be added or subtracted to modify model behavior.
 
+2. Architectural Restrictions (The "Mid-End" Result)
+A -> is this actully the case? using JigSawDotNet and the same pratice used with SharpMind.GPU the rquirment to modify base code can be negated.
+what may need to happend is accomadate some flexibility, and withing the SharpMindConfig potentially add name bulder methods to use options based on mtheod and hw options, use of tern scalar may need to be removed as it the default and should require no expixt naming convention.
+B -> Given we can provide extranl static methods could calls to required mehtods not be organized to utilize JigSayDotNet and then external Mehtod options.
+c -> uctally this makes sense so yes a way of implenting a hybrid approch sound like a good idea
 
 
-1. Simple Bugs & Immediate Issues (The "Low Hanging Fruit")
-The "Transpose" Overhead: In TensorOps.MatMul, you call TransposeInternal(b). If this creates a new tensor every time, it's a massive bottleneck for LLM workloads.
-Fix: Implement "Virtual Transpose" (Stride manipulation). The kernel should simply be told the tensor is transposed, rather than physically moving memory.
-Memory Fragmentation: You are using ReadOnlySpan and Span heavily, which is great, but the Tensor class seems to rely on NativeBuffer. Ensure you have a proper Buffer Pool. Allocating/Freeing large tensors during a forward pass will kill performance on an old laptop.
-Softmax Precision: As noted, the GPU Softmax is a stub. For "Learning" purposes, implementing the Online Softmax algorithm (one-pass) would be a great addition.
+
 2. Architectural Restrictions (The "Mid-End" Result)
 If the goal is to allow "new methodologies" to be added easily, there are three current bottlenecks:
 
