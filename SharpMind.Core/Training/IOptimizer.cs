@@ -1,5 +1,3 @@
-using SharpMind.Core.Tensors;
-
 namespace SharpMind.Core.Training;
 
 /// <summary>
@@ -22,18 +20,3 @@ public interface IOptimizer : IDisposable
     /// </summary>
     void LoadState(BinaryReader reader, int step);
 }
-
-/// <summary>
-/// Base interface for a loss function.
-/// </summary>
-public interface ILoss<TLabel> where TLabel : unmanaged, System.Numerics.INumber<TLabel>
-{
-    float Compute(Tensor<float> predictions, Tensor<TLabel> labels);
-    Tensor<float> Backward(Tensor<float> predictions, Tensor<TLabel> labels);
-}
-
-/// <summary>
-/// Base interface for a gradient computation kernel.
-/// Implementation should be a PuzzlePiece.
-/// </summary>
-public interface IGradientKernel { }

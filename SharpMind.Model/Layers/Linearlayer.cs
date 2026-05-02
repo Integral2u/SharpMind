@@ -25,7 +25,7 @@ public sealed class LinearLayer : IDisposable
 
         InFeatures = inFeatures;
         OutFeatures = outFeatures;
-        _weight = new Tensor<float>(outFeatures, inFeatures);
+        _weight = new Tensor<float>(inFeatures, outFeatures);  // [in, out] for x @ W
         _bias = bias ? new Tensor<float>(outFeatures) : null;
     }
 
@@ -45,18 +45,16 @@ public sealed class LinearLayer : IDisposable
     /// Input:  [*, InFeatures]  — any leading batch dimensions.
     /// Output: [*, OutFeatures]
     /// </summary>
-    public Tensor<float> Forward(Tensor<float> input, TensorOps ops)
+public Tensor<float> Forward(Tensor<float> input, TensorOps ops)
     {
         ThrowIfDisposed();
 
         // Flatten all batch dims to 2D for matmul, then restore shape
         bool needReshape = input.Rank > 2;
         int batchSize = input.ElementCount / input.Shape[^1];
-
         var flat = needReshape ? input.Reshape(batchSize, InFeatures) : input;
-
-        // out = input @ weight^T  (weight is [OutFeatures, InFeatures])
-        // TensorOps.MatMul transposes B internally so this gives [batch, OutFeatures]
+        
+        // out = input @ weight  (weight is [InFeatures, OutFeatures])
         var output = ops.MatMul(flat, _weight);
 
         if (_bias is not null)

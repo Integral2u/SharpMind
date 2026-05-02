@@ -77,8 +77,9 @@ public sealed class Transformer : IDisposable
         int seqLen = tokenIds.Shape.Cols;
         int hidden2 = _config.HiddenDim;
 
-        using var normedFlat = normed.Reshape(batch * seqLen, hidden2);
-        var logits = _ops.MatMul(normedFlat, _embedding.Weight);
+using var normedFlat = normed.Reshape(batch * seqLen, hidden2);
+        using var embedT = TensorOps.Transpose(_embedding.Weight);
+        var logits = _ops.MatMul(normedFlat, embedT);
 
         // Restore [Batch, SeqLen, VocabSize]
         var result = logits.Reshape(batch, seqLen, _config.VocabSize);

@@ -1,6 +1,6 @@
-using System.Runtime.CompilerServices;
 using SharpMind.Data.Pipeline;
-using SharpMind.Data.Batching;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 
 namespace SharpMind.Data.Sources.PseudoLanguage;
 
@@ -23,20 +23,21 @@ public sealed class PseudoLanguagePipeline : PipelineNode
 
         _sequences = level switch
         {
-            ComplexityLevel.Options => _generator.GenerateOptions(sequenceCount).ToList(),
-            ComplexityLevel.Patterns => _generator.GeneratePatterns(sequenceCount).ToList(),
-            ComplexityLevel.Syntactic => _generator.GenerateSyntacticSequences(sequenceCount).ToList(),
-            _ => _generator.GenerateSyntacticSequences(sequenceCount).ToList(),
+            ComplexityLevel.Options => [.. _generator.GenerateOptions(sequenceCount)],
+            ComplexityLevel.Patterns => [.. _generator.GeneratePatterns(sequenceCount)],
+            ComplexityLevel.Syntactic => [.. _generator.GenerateSyntacticSequences(sequenceCount)],
+            _ => [.. _generator.GenerateSyntacticSequences(sequenceCount)],
         };
     }
 
     public PseudoLanguageGenerator Generator => _generator;
 
-    public override async IAsyncEnumerable<string> ReadAsync(CancellationToken cancellationToken = default)
+    public override async IAsyncEnumerable<string> ReadAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        await Task.CompletedTask;
         foreach (var seq in _sequences)
         {
-            if (cancellationToken.IsCancellationRequested) yield break;
+            cancellationToken.ThrowIfCancellationRequested();
             _index++;
             yield return seq.RawText;
         }
@@ -44,28 +45,4 @@ public sealed class PseudoLanguagePipeline : PipelineNode
 
     public override string Describe(int depth = 0)
         => new string(' ', depth * 2) + $"PseudoLanguage({_level}, vocab={_generator.VocabSize}, n={_sequenceCount})";
-}
-
-public static class PseudoLanguageExtensions
-{
-    public static DataLoader ToDataLoader(
-        this PseudoLanguagePipeline pipeline,
-        int batchSize,
-        int maxSeqLen,
-        int eosTokenId = 2,
-        int padTokenId = 0)
-    {
-        var generator = pipeline.Generator;
-
-        int[] Tokenize(string text)
-        {
-            return text.Split(' ', StringSplitOptions.RemoveEmptyEntries)
-                .Select(word => generator.TextToId(word))
-                .Where(id => id >= 0)
-                .ToArray();
-        }
-
-        var batcher = new PackingBatcher(batchSize, maxSeqLen, eosTokenId, padTokenId);
-        return new DataLoader(pipeline, Tokenize, batcher);
-    }
 }

@@ -171,6 +171,30 @@ public sealed unsafe class Tensor<T> : IDisposable
     /// <summary>Row as a <see cref="Span{T}"/> — slightly cheaper than <see cref="RowView"/>.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public Span<T> RowSpan(int i) => Data.Slice(i * Shape.Cols, Shape.Cols);
+    
+    /// <summary>
+    /// Returns a view into dimensions [dim1, dim2, ...] starting at the given indices.
+    /// For example, given [B,S,H,D], Slice(0,startPos,0,0) returns [S,H,D].
+    /// </summary>
+    public Tensor<T> Slice(params int[] startIndices)
+    {
+        if (startIndices.Length >= Rank)
+            throw new ArgumentException($"Slice requires at most {Rank} indices.");
+        
+        int offset = 0;
+        for (int i = 0; i < startIndices.Length; i++)
+        {
+            offset += startIndices[i] * Shape.Strides[i];
+        }
+        
+        int[] newDimsArray = new int[Shape.Rank - startIndices.Length];
+        for (int i = 0; i < newDimsArray.Length; i++)
+        {
+            newDimsArray[i] = Shape.Dims[startIndices.Length + i];
+        }
+        
+        return new Tensor<T>(new TensorShape(newDimsArray), _buffer, _offset + offset);
+    }
 
     // ── diagnostics ────────────────────────────────────────────────────────
 

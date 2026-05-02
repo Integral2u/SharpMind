@@ -123,10 +123,7 @@ public sealed class RoPE
         // Each batch item is an independent [SeqLen, NumHeads, HeadDim] slice
         for (int b = 0; b < batch; b++)
         {
-            // Zero-copy view into the batch slice
-            using var slice = x.Reshape(batch, seqLen, numHead, dim)
-                               .RowView(b)                         // not correct for rank>2
-                               .Reshape(seqLen, numHead, dim);     // reshaping the 3D sub-block
+            using var slice = x.Slice(b);  // [SeqLen, NumHeads, HeadDim]
             Apply(slice, positionOffset);
         }
     }

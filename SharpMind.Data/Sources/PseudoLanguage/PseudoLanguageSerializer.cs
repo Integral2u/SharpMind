@@ -36,13 +36,13 @@ public static class PseudoLanguageSerializer
             var entry = new JsonObject
             {
                 ["text"] = seq.RawText,
-                ["token_ids"] = new JsonArray(seq.TokenIds.Select(i => JsonValue.Create(i)).ToArray()),
+                ["token_ids"] = new JsonArray([.. seq.TokenIds.Select(i => JsonValue.Create(i))]),
             };
             
             if (includeGroundTruth)
             {
                 entry["ground_truth_text"] = seq.GroundTruthText;
-                entry["ground_truth_ids"] = new JsonArray(seq.GroundTruthIds.Select(i => JsonValue.Create(i)).ToArray());
+                entry["ground_truth_ids"] = new JsonArray([.. seq.GroundTruthIds.Select(i => JsonValue.Create(i))]);
             }
             
             writer.WriteLine(entry.ToJsonString());

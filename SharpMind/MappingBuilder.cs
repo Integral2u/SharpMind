@@ -30,7 +30,9 @@ public class MappingBuilder
         _mapping[SharpMindConfig.KeySoftmax] = hw;
         _mapping[SharpMindConfig.KeyRMSNorm] = hw;
         _mapping[SharpMindConfig.KeyMatMul] = GetMatMulHwKey();
-        _mapping[SharpMindConfig.KeyAttention] = $"{config.Attention.ToString().ToLowerInvariant()}{hw}";
+        _mapping[SharpMindConfig.KeyAttention] = string.IsNullOrEmpty(hw)
+            ? $"{config.Attention.ToString().ToLowerInvariant()}scalar"
+            : $"{config.Attention.ToString().ToLowerInvariant()}{hw}";
         _mapping[SharpMindConfig.KeyFfn] = config.Ffn.ToString().ToLowerInvariant();
         _mapping[SharpMindConfig.KeyNorm] = config.Norm == NormKind.RMSNorm ? SharpMindConfig.ValNormRMS : SharpMindConfig.ValNormLayer;
         _mapping[SharpMindConfig.KeyArch] = config.Arch == ArchKind.Decoder ? SharpMindConfig.ValDecoder : SharpMindConfig.ValEncoder;
@@ -51,11 +53,11 @@ public class MappingBuilder
 
     public Dictionary<string, string> Build() => new(_mapping);
 
-    private string GetHwSuffix() => _hardware switch
+private string GetHwSuffix() => _hardware switch
     {
-        HardwareTier.FMA => "fma", // Or "avx2" depending on kernel support
+        HardwareTier.FMA => "fma",
         HardwareTier.AVX2 => "avx2",
-        _ => "" // Scalar is the default, stripped from name
+        _ => ""
     };
 
     private string GetMatMulHwKey() => _hardware switch

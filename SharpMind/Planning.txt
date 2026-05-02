@@ -14,9 +14,6 @@ Core: tensors, matrix math, memeory, activations
 Config files hould be human readable
 SharpMind.Training.Checkpoint.Save using a JsonObject should this be a stongly typed object instead.
 
-Syntetic data, create a Lipsum generator that will produce a random sytantical language so we can create immaginary languages as training data but we can use that to determin how accurate predictions(Inference) are.  this can be used to syntisize training for profiling and or determing model size requriments for languages with a complexity of x 
-
-
 Would like to introduce 
 
 LLM lobotomy

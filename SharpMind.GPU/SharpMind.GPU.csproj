@@ -9,7 +9,7 @@
 
   <ItemGroup>
     <PackageReference Include="ILGPU" Version="1.5.3" />
-    <PackageReference Include="JigSawDotNet" Version="1.0.5" />
+    <PackageReference Include="JigSawDotNet" Version="1.0.8" />
   </ItemGroup>
 
   <ItemGroup>

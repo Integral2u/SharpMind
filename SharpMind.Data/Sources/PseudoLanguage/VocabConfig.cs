@@ -14,10 +14,3 @@ public sealed record VocabConfig
     public static VocabConfig Large => new() { VocabSize = 20_000, RootMorphemes = 800, Affixes = 30 };
     public static VocabConfig Huge => new() { VocabSize = 100_000, RootMorphemes = 2_000, Affixes = 50 };
 }
-
-public enum ComplexityLevel
-{
-    Options,
-    Patterns,
-    Syntactic,
-}

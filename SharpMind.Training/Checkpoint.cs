@@ -1,9 +1,6 @@
-using System.IO;
-using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using SharpMind.Core.Training;
-using SharpMind.Training.Optimizers;
 
 namespace SharpMind.Training;
 
@@ -167,13 +164,4 @@ public static class Checkpoint
 
         return meta;
     }
-}
-
-/// <summary>Metadata returned when loading a checkpoint.</summary>
-public sealed record CheckpointMeta
-{
-    public int      Step     { get; init; }
-    public float    Loss     { get; init; } = float.NaN;
-    public string?  Note     { get; init; }
-    public DateTime SavedUtc { get; init; }
 }

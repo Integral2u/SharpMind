@@ -1,5 +1,3 @@
-using System.IO;
-
 namespace SharpMind.Data.Sources.PseudoLanguage;
 
 public sealed class PseudoLanguageGenerator : IDisposable
@@ -82,14 +80,14 @@ public sealed class PseudoLanguageGenerator : IDisposable
             var ordered = variants.OrderBy(_ => _random.Next()).ToList();
             var nextIndex = _random.Next(1, ordered.Count);
             var sequence = ordered.Take(nextIndex).Select(v => v.id).ToArray();
-            var next = ordered[nextIndex];
+            var (text, id) = ordered[nextIndex];
 
             yield return new GeneratedSequence
             {
                 TokenIds = sequence,
                 RawText = string.Join(" ", sequence.Select(IdToText)),
-                GroundTruthIds = [next.id],
-                GroundTruthText = next.text,
+                GroundTruthIds = [id],
+                GroundTruthText = text,
                 Complexity = ComplexityLevel.Patterns,
             };
         }
@@ -119,9 +117,9 @@ public sealed class PseudoLanguageGenerator : IDisposable
 
     private PseudoWord? GetRandomWord(MorphemeCategory? category = null)
     {
-        var words = category.HasValue
-            ? _vocabBuilder.Words.Where(w => w.BaseCategory == category.Value).ToList()
-            : _vocabBuilder.Words.ToList();
+        var words = (category.HasValue
+            ? _vocabBuilder.Words.Where(w => w.BaseCategory == category.Value)
+            : _vocabBuilder.Words).ToList();
 
         if (words.Count == 0) return null;
         return words[_random.Next(words.Count)];
@@ -197,7 +195,7 @@ public sealed class PseudoLanguageGenerator : IDisposable
         };
     }
 
-    private long ComputeParameterCount(int vocab)
+    private static long ComputeParameterCount(int vocab)
     {
         var emb = vocab * (int)Math.Ceiling(Math.Sqrt(vocab));
         var ffn = (vocab / 8) * 4 * (vocab / 4);
@@ -211,25 +209,4 @@ public sealed class PseudoLanguageGenerator : IDisposable
         if (_disposed) return;
         _disposed = true;
     }
-}
-
-public sealed record GeneratedSequence
-{
-    public required int[] TokenIds { get; init; }
-    public required string RawText { get; init; }
-    public required int[] GroundTruthIds { get; init; }
-    public required string GroundTruthText { get; init; }
-    public required ComplexityLevel Complexity { get; init; }
-}
-
-public sealed record ModelSizeRecommendation
-{
-    public int VocabSize { get; init; }
-    public int EmbeddingDim { get; init; }
-    public int HiddenDim { get; init; }
-    public int NumLayers { get; init; }
-    public int HeadDim { get; init; }
-    public int NumHeads { get; init; }
-    public int FfnDim { get; init; }
-    public long EstimatedParams { get; init; }
 }

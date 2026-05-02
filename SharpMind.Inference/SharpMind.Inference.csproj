@@ -6,9 +6,4 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
-  <ItemGroup>
-    <ProjectReference Include="..\SharpMind.Data\SharpMind.Data.csproj" />
-    <ProjectReference Include="..\SharpMind.Model\SharpMind.Model.csproj" />
-  </ItemGroup>
-
 </Project>

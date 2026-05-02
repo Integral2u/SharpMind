@@ -1,7 +1,7 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
-VisualStudioVersion = 17.14.36623.8 d17.14
+VisualStudioVersion = 17.14.36623.8
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SharpMind", "SharpMind\SharpMind.csproj", "{FC7E84ED-99D7-48B0-A885-F2BCB5F88BF4}"
 EndProject
@@ -15,8 +15,6 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SharpMind.Core", "SharpMind
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SharpMind.Data", "SharpMind.Data\SharpMind.Data.csproj", "{E8BAD013-F9E0-4865-9A73-2E43543A7E6A}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SharpMind.Runtime", "SharpMind.Runtime\SharpMind.Runtime.csproj", "{861547A7-8CD0-4715-BE8E-81D73267C8DD}"
-EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SharpMind.Model", "SharpMind.Model\SharpMind.Model.csproj", "{5FE94B30-DF6A-46EE-A338-A93ED222925D}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SharpMind.Tests", "SharpMind.Tests\SharpMind.Tests.csproj", "{33A6FE2C-DA48-4718-80F0-07B331F71260}"
@@ -28,6 +26,8 @@ EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SharpMind.Tokenizer", "SharpMind.Tokenizer\SharpMind.Tokenizer.csproj", "{415FEBA9-79F3-46EB-AC93-F385AB38E2EE}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SharpMind.Training", "SharpMind.Training\SharpMind.Training.csproj", "{E9D00D0B-0605-4535-9835-51FFDE115592}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SharpMind.Inference", "SharpMind.Inference\SharpMind.Inference.csproj", "{ECB2DC09-D735-4B6A-B1AB-EBAF826ED29E}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -59,10 +59,6 @@ Global
 		{E8BAD013-F9E0-4865-9A73-2E43543A7E6A}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{E8BAD013-F9E0-4865-9A73-2E43543A7E6A}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{E8BAD013-F9E0-4865-9A73-2E43543A7E6A}.Release|Any CPU.Build.0 = Release|Any CPU
-		{861547A7-8CD0-4715-BE8E-81D73267C8DD}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{861547A7-8CD0-4715-BE8E-81D73267C8DD}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{861547A7-8CD0-4715-BE8E-81D73267C8DD}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{861547A7-8CD0-4715-BE8E-81D73267C8DD}.Release|Any CPU.Build.0 = Release|Any CPU
 		{5FE94B30-DF6A-46EE-A338-A93ED222925D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{5FE94B30-DF6A-46EE-A338-A93ED222925D}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{5FE94B30-DF6A-46EE-A338-A93ED222925D}.Release|Any CPU.ActiveCfg = Release|Any CPU
@@ -87,6 +83,10 @@ Global
 		{E9D00D0B-0605-4535-9835-51FFDE115592}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{E9D00D0B-0605-4535-9835-51FFDE115592}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{E9D00D0B-0605-4535-9835-51FFDE115592}.Release|Any CPU.Build.0 = Release|Any CPU
+		{ECB2DC09-D735-4B6A-B1AB-EBAF826ED29E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{ECB2DC09-D735-4B6A-B1AB-EBAF826ED29E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{ECB2DC09-D735-4B6A-B1AB-EBAF826ED29E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{ECB2DC09-D735-4B6A-B1AB-EBAF826ED29E}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

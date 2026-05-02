@@ -1,6 +1,5 @@
 using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
-using SharpMind.Core.Memory;
 
 namespace SharpMind.Core.Memory;
 

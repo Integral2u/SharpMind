@@ -2,15 +2,13 @@
 
 /// <summary>
 /// RMSNorm concrete subclass — overrides <see cref="NormLayer.ComputeScalarParam"/>
-/// to compute rmsInv. The JigSaw-assembled <see cref="NormLayer.ApplyRow"/> handles
-/// the kernel dispatch.
+/// to compute rmsInv. Uses the kernel from <see cref="NormKernels"/>.
 /// </summary>
 public sealed class RmsNormLayer(int dim, float eps = 1e-5f) : NormLayer(dim, hasBias: false, eps)
 {
     public override void ApplyRow(ReadOnlySpan<float> src, ReadOnlySpan<float> weight,
                                   Span<float> dst, float rmsInv)
-        => throw new InvalidOperationException(
-            "ApplyRow must be overridden by the JigSaw-assembled type.");
+        => NormKernels.RMSNormRowScalar(src, weight, dst, rmsInv);
 
     protected override float ComputeScalarParam(ReadOnlySpan<float> row)
     {

@@ -1,17 +1,6 @@
 namespace SharpMind.Training.Schedulers;
 
 /// <summary>
-/// Computes learning rate for a given step. The scheduler is stateless —
-/// it computes the rate from the step number rather than tracking it internally.
-/// Call <see cref="GetLr"/> then assign the result to the optimizer's
-/// <c>LearningRate</c> property before each <c>Update()</c>.
-/// </summary>
-public interface IScheduler
-{
-    float GetLr(int step);
-}
-
-/// <summary>
 /// Cosine decay with linear warmup — the standard LLM training schedule.
 ///
 /// Three phases:
@@ -65,27 +54,4 @@ public sealed class CosineWithWarmup : IScheduler
         float cosine   = 0.5f * (1f + MathF.Cos(MathF.PI * progress));
         return _minLr + cosine * (_maxLr - _minLr);
     }
-}
-
-/// <summary>
-/// Constant learning rate. No warmup or decay.
-/// Useful for fine-tuning with a pre-warmed optimizer state.
-/// </summary>
-public sealed class ConstantScheduler(float lr) : IScheduler
-{
-    private readonly float _lr = lr;
-
-    public float GetLr(int step) => _lr;
-}
-
-/// <summary>
-/// Linear warmup only — holds at maxLr after warmup completes.
-/// </summary>
-public sealed class LinearWarmup(float maxLr, int warmupSteps) : IScheduler
-{
-    private readonly float _maxLr = maxLr;
-    private readonly int _warmupSteps = warmupSteps;
-
-    public float GetLr(int step)
-        => step < _warmupSteps ? _maxLr * step / _warmupSteps : _maxLr;
 }

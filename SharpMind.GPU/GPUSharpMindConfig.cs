@@ -4,13 +4,6 @@ using ILGPU.Runtime.OpenCL;
 
 namespace SharpMind.GPU;
 
-public enum GPUMode
-{
-    Cpu,
-    OpenCL,
-    Cuda
-}
-
 public static class GPUSharpMindConfig
 {
     // Mapping keys (linked to SharpMindConfig)

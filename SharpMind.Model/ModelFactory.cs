@@ -95,14 +95,14 @@ public static class ModelFactory
     // ── Norm construction ─────────────────────────────────────────────────
 
     private static NormLayer BuildNorm(int dim, SharpMindConfig sharpConfig, Dictionary<string, string> mapping)
-        => sharpConfig.Norm switch
+    {
+        // Direct instantiation - norm implementations are now in the concrete classes
+        return sharpConfig.Norm switch
         {
-            NormKind.RMSNorm => (NormLayer)Activator.CreateInstance(
-                                     Assembler.Assemble<RmsNormLayer>(mapping), dim)!,
-            NormKind.LayerNorm => (NormLayer)Activator.CreateInstance(
-                                     Assembler.Assemble<LayerNormLayer>(mapping), dim)!,
-            _ => throw new NotSupportedException(
-                                     $"Unknown NormKind: {sharpConfig.Norm}")
+            NormKind.RMSNorm => new RmsNormLayer(dim),
+            NormKind.LayerNorm => new LayerNormLayer(dim),
+            _ => throw new NotSupportedException($"Unknown NormKind: {sharpConfig.Norm}")
         };
+    }
 
 }
