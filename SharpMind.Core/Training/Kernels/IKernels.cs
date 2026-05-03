@@ -1,7 +1,6 @@
 using SharpMind.Core.Tensors;
-using SharpMind.Core.Training;
 
-namespace SharpMind.Training.Kernels;
+namespace SharpMind.Core.Training.Kernels;
 
 public interface ILinearBackward : IGradientKernel
 {

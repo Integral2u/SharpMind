@@ -1,6 +1,5 @@
 using SharpMind.Data.Pipeline;
 using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
 
 namespace SharpMind.Data.Sources.PseudoLanguage;
 
@@ -10,7 +9,6 @@ public sealed class PseudoLanguagePipeline : PipelineNode
     private readonly ComplexityLevel _level;
     private readonly int _sequenceCount;
     private readonly List<GeneratedSequence> _sequences;
-    private int _index;
 
     public PseudoLanguagePipeline(
         VocabConfig config,
@@ -38,7 +36,6 @@ public sealed class PseudoLanguagePipeline : PipelineNode
         foreach (var seq in _sequences)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            _index++;
             yield return seq.RawText;
         }
     }

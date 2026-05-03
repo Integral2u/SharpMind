@@ -15,10 +15,9 @@ public static class PseudoLanguageExtensions
 
         int[] Tokenize(string text)
         {
-            return text.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            return [.. text.Split(' ', StringSplitOptions.RemoveEmptyEntries)
                 .Select(word => generator.TextToId(word))
-                .Where(id => id >= 0)
-                .ToArray();
+                .Where(id => id >= 0)];
         }
 
         var batcher = new PackingBatcher(batchSize, maxSeqLen, eosTokenId, padTokenId);

@@ -1,24 +1,15 @@
 namespace SharpMind.Data.Sources.PseudoLanguage;
 
-public sealed class PseudoLanguageGenerator : IDisposable
+public sealed class PseudoLanguageGenerator(VocabConfig config, Random? random = null) : IDisposable
 {
-    private readonly VocabConfig _config;
-    private readonly MorphemeDictionary _morphemes;
-    private readonly VocabularyBuilder _vocabBuilder;
-    private readonly Random _random;
+    private readonly VocabConfig _config = config;
+    private readonly VocabularyBuilder _vocabBuilder = new VocabularyBuilder(config, random).Build();
+    private readonly Random _random = random ?? Random.Shared;
     private bool _disposed;
 
     public IReadOnlyList<PseudoWord> Vocabulary => _vocabBuilder.Words;
     public VocabConfig Config => _config;
     public int VocabSize => _vocabBuilder.Words.Count;
-
-    public PseudoLanguageGenerator(VocabConfig config, Random? random = null)
-    {
-        _config = config;
-        _random = random ?? Random.Shared;
-        _morphemes = new MorphemeDictionary();
-        _vocabBuilder = new VocabularyBuilder(config, random).Build();
-    }
 
     public IEnumerable<GeneratedSequence> GenerateSyntactic(int count, ComplexityLevel level)
     {
@@ -36,17 +27,22 @@ public sealed class PseudoLanguageGenerator : IDisposable
         for (int i = 0; i < count; i++)
         {
             var subject = GetRandomWord([MorphemeCategory.Agent, MorphemeCategory.Root]);
+            if (subject == null) continue;
+
             var options = new List<(string text, int id)>();
 
             var correctWord = GetRandomWordInFamily(subject.Text);
+            if (correctWord == null) continue;
             options.Add((correctWord.Text, correctWord.TokenId));
 
             for (int j = 0; j < 3; j++)
             {
                 var wrong = GetRandomWord();
-                if (wrong.TokenId != subject.TokenId && !options.Any(o => o.id == wrong.TokenId))
+                if (wrong != null && wrong.TokenId != subject.TokenId && !options.Any(o => o.id == wrong.TokenId))
                     options.Add((wrong.Text, wrong.TokenId));
             }
+
+            if (options.Count < 2) continue;
 
             var shuffle = options.OrderBy(_ => _random.Next()).ToList();
             var correctIndex = shuffle.FindIndex(o => o.text == correctWord.Text);
@@ -67,6 +63,8 @@ public sealed class PseudoLanguageGenerator : IDisposable
         for (int i = 0; i < count; i++)
         {
             var root = GetRandomWord(MorphemeCategory.Root);
+            if (root == null) continue;
+
             var variants = new List<(string text, int id)>();
 
             var family = GetWordFamily(root.Text);
@@ -101,8 +99,12 @@ public sealed class PseudoLanguageGenerator : IDisposable
             var verb = GetRandomWord([MorphemeCategory.Verb, MorphemeCategory.Root]);
             var obj = GetRandomWord([MorphemeCategory.Noun, MorphemeCategory.Adjective]);
 
+            if (subject == null || verb == null || obj == null) continue;
+
             var tokenIds = new[] { subject.TokenId, verb.TokenId, obj.TokenId };
             var continuation = GetRandomWord(MorphemeCategory.Adjective);
+
+            if (continuation == null) continue;
 
             yield return new GeneratedSequence
             {

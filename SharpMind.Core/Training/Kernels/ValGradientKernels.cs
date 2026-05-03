@@ -1,7 +1,6 @@
 using SharpMind.Core.Tensors;
 using SharpMind.Core.Training;
 using JigSawDotNet;
-using SharpMind.Training.Kernels;
 
 namespace SharpMind.Core.Training.Kernels;
 

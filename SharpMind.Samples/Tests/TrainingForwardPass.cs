@@ -9,6 +9,7 @@ public static class TrainingForwardPass
 {
     public static async void Run()
     {
+        await Task.CompletedTask;
         Console.WriteLine("=== Training Test ===");
 
         var modelConfig = ModelConfig.Tiny;

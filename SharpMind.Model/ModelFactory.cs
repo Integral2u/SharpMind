@@ -55,7 +55,7 @@ public static class ModelFactory
         };
 
         // ── Final norm ────────────────────────────────────────────────────
-        var finalNorm = BuildNorm(modelConfig.HiddenDim, sharpConfig, mapping);
+        var finalNorm = BuildNorm(modelConfig.HiddenDim, sharpConfig);
 
         return new Transformer(modelConfig, embedding, arch, finalNorm, ops);
     }
@@ -71,8 +71,8 @@ public static class ModelFactory
     {
         var attention = Assembler.CreateInstance<AttentionLayer>(mapping, modelConfig);
         var ffn = BuildFfn(modelConfig, sharpConfig, acts, ops);
-        var norm1 = BuildNorm(modelConfig.HiddenDim, sharpConfig, mapping);
-        var norm2 = BuildNorm(modelConfig.HiddenDim, sharpConfig, mapping);
+        var norm1 = BuildNorm(modelConfig.HiddenDim, sharpConfig);
+        var norm2 = BuildNorm(modelConfig.HiddenDim, sharpConfig);
 
         return new TransformerBlock(attention, ffn, norm1, norm2, ops);
     }
@@ -94,9 +94,8 @@ public static class ModelFactory
 
     // ── Norm construction ─────────────────────────────────────────────────
 
-    private static NormLayer BuildNorm(int dim, SharpMindConfig sharpConfig, Dictionary<string, string> mapping)
+    private static NormLayer BuildNorm(int dim, SharpMindConfig sharpConfig)
     {
-        // Direct instantiation - norm implementations are now in the concrete classes
         return sharpConfig.Norm switch
         {
             NormKind.RMSNorm => new RmsNormLayer(dim),

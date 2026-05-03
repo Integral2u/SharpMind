@@ -58,8 +58,8 @@ public sealed class MorphemeDictionary
             ["ly"] = MorphemeCategory.Adverb,
         };
 
-        _roots = new()
-        {
+        _roots =
+        [
             // Locomotion
             "walk", "run", "jump", "swim", "fly", "crawl", "climb", "dance", "slide", "glide",
             "hop", "skip", "leap", "dash", "sprint",
@@ -105,7 +105,7 @@ public sealed class MorphemeDictionary
 
             // Time
             "wait", "stay", "remain", "last", "endure", "continue", "persist", "last", "age", "date",
-        };
+        ];
     }
 
     public bool TryGetPrefixCategory(string prefix, out MorphemeCategory category)

@@ -1,6 +1,5 @@
 using SharpMind.Core.Training.Kernels;
 using JigSawDotNet;
-using SharpMind.Training.Kernels;
 
 namespace SharpMind.Core.Training;
 

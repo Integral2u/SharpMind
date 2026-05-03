@@ -1,31 +1,24 @@
 namespace SharpMind.Data.Sources.PseudoLanguage;
 
-public sealed class VocabularyBuilder
+public sealed class VocabularyBuilder(VocabConfig config, Random? random = null)
 {
-    private readonly MorphemeDictionary _morphemes;
-    private readonly VocabConfig _config;
-    private readonly Random _random;
-    private readonly HashSet<string> _usedWords;
-    private readonly List<PseudoWord> _words;
+    private readonly MorphemeDictionary _morphemes = new();
+    private readonly VocabConfig _config = config;
+    private readonly Random _random = random ?? Random.Shared;
+    private readonly HashSet<string> _usedWords = [];
+    private readonly List<PseudoWord> _words = new(config.VocabSize);
 
     public IReadOnlyList<PseudoWord> Words => _words;
-
-    public VocabularyBuilder(VocabConfig config, Random? random = null)
-    {
-        _config = config;
-        _random = random ?? Random.Shared;
-        _morphemes = new MorphemeDictionary();
-        _usedWords = new HashSet<string>();
-        _words = new List<PseudoWord>(config.VocabSize);
-    }
 
     public VocabularyBuilder Build()
     {
         foreach (var root in _morphemes.Roots)
         {
             if (_words.Count >= _config.VocabSize) break;
-            var family = new List<(string, MorphemeCategory)>();
-            family.Add((root, MorphemeCategory.Root));
+            var family = new List<(string, MorphemeCategory)>
+            {
+                (root, MorphemeCategory.Root)
+            };
             AddWord(root, MorphemeCategory.Root, family);
         }
 
@@ -43,8 +36,10 @@ public sealed class VocabularyBuilder
             if (!string.IsNullOrEmpty(suffix))
             {
                 var word = root + suffix;
-                var family = new List<(string, MorphemeCategory)>();
-                family.Add((root, MorphemeCategory.Root));
+                var family = new List<(string, MorphemeCategory)>
+                {
+                    (root, MorphemeCategory.Root)
+                };
                 _morphemes.TryGetSuffixCategory(suffix, out var cat);
                 AddWord(word, cat, family);
             }
@@ -64,8 +59,10 @@ public sealed class VocabularyBuilder
             {
                 if (_words.Count >= _config.VocabSize) break;
                 var word = root + suffix;
-                var family = new List<(string, MorphemeCategory)>();
-                family.Add((root, MorphemeCategory.Root));
+                var family = new List<(string, MorphemeCategory)>
+                {
+                    (root, MorphemeCategory.Root)
+                };
                 _morphemes.TryGetSuffixCategory(suffix, out var cat);
                 AddWord(word, cat, family);
             }
@@ -75,8 +72,10 @@ public sealed class VocabularyBuilder
             {
                 if (_words.Count >= _config.VocabSize) break;
                 var word = prefix + root;
-                var family = new List<(string, MorphemeCategory)>();
-                family.Add((root, MorphemeCategory.Root));
+                var family = new List<(string, MorphemeCategory)>
+                {
+                    (root, MorphemeCategory.Root)
+                };
                 _morphemes.TryGetPrefixCategory(prefix, out var cat);
                 AddWord(word, cat, family);
             }
@@ -87,8 +86,10 @@ public sealed class VocabularyBuilder
                 foreach (var word in combos)
                 {
                     if (_words.Count >= _config.VocabSize) break;
-                    var family = new List<(string, MorphemeCategory)>();
-                    family.Add((root, MorphemeCategory.Root));
+                    var family = new List<(string, MorphemeCategory)>
+                    {
+                        (root, MorphemeCategory.Root)
+                    };
                     AddWord(word, MorphemeCategory.Negation, family);
                 }
             }
@@ -106,8 +107,10 @@ public sealed class VocabularyBuilder
             {
                 if (_words.Count >= _config.VocabSize) break;
                 var negWord = prefix + wordItem.Text;
-                var family = new List<(string, MorphemeCategory)>();
-                family.Add((wordItem.Text, wordItem.BaseCategory));
+                var family = new List<(string, MorphemeCategory)>
+                {
+                    (wordItem.Text, wordItem.BaseCategory)
+                };
                 AddWord(negWord, MorphemeCategory.Negation, family);
             }
         }
@@ -125,7 +128,7 @@ public sealed class VocabularyBuilder
             Text = text,
             TokenId = _words.Count,
             BaseCategory = category,
-            WordFamily = family.ToArray(),
+            WordFamily = [.. family],
         };
         _words.Add(pseudoWord);
     }

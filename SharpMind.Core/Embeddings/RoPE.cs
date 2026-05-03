@@ -115,15 +115,11 @@ public sealed class RoPE
             throw new ArgumentException(
                 $"ApplyBatched expects rank-4 [Batch, SeqLen, NumHeads, HeadDim], got rank {x.Rank}.");
 
-        int batch   = x.Shape[0];
-        int seqLen  = x.Shape[1];
-        int numHead = x.Shape[2];
-        int dim     = x.Shape[3];
+        int batch = x.Shape[0];
 
-        // Each batch item is an independent [SeqLen, NumHeads, HeadDim] slice
         for (int b = 0; b < batch; b++)
         {
-            using var slice = x.Slice(b);  // [SeqLen, NumHeads, HeadDim]
+            using var slice = x.Slice(b);
             Apply(slice, positionOffset);
         }
     }
