@@ -362,3 +362,8 @@ MigrationBackup/
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
 /SandBox/SandBox.csproj
+/ExternalAssets/ExternalAssets.csproj
+/ExternalAssets/ExternalAssets.csproj
+/ExternalAssets/TinyLlama-1.1B-Chat-v1.0.Q4_K_M.gguf
+/ExternalAssets/model.safetensors
+/ExternalAssets/App.config
