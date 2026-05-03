@@ -3,6 +3,6 @@
 //Add functions here
 await Task.Run(SharpMind.Samples.Tests.PseudoLanguage.Run);
 await Task.Run(SharpMind.Samples.Tests.TrainingForwardPass.Run);
-await Task.Run(SharpMind.Samples.Tests.TrainingForwardPass.Run);
+await Task.Run(SharpMind.Samples.Tests.FullTraining.Run);
 
 Console.In.ReadLine();
