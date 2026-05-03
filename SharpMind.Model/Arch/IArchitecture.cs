@@ -1,4 +1,5 @@
 ﻿using SharpMind.Core.Tensors;
+using SharpMind.Core.Training;
 
 namespace SharpMind.Model.Arch;
 
@@ -10,13 +11,7 @@ namespace SharpMind.Model.Arch;
 /// </summary>
 public interface IArchitecture : IDisposable
 {
-    /// <summary>
-    /// Runs the full forward pass through all transformer blocks.
-    /// Input:  [Batch, SeqLen, HiddenDim]
-    /// Output: [Batch, SeqLen, HiddenDim]
-    /// </summary>
     Tensor<float> Forward(Tensor<float> hiddenStates, int positionOffset = 0);
-
-    /// <summary>Number of transformer blocks.</summary>
     int NumLayers { get; }
+    IEnumerable<Parameter> Parameters();
 }

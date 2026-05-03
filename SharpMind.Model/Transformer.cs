@@ -1,6 +1,7 @@
 ﻿using SharpMind.Core.Embeddings;
 using SharpMind.Core.Ops;
 using SharpMind.Core.Tensors;
+using SharpMind.Core.Training;
 using SharpMind.Model.Arch;
 using SharpMind.Model.Config;
 using SharpMind.Model.Layers;
@@ -47,6 +48,18 @@ public sealed class Transformer : IDisposable
     }
 
     public ModelConfig Config => _config;
+
+    public IEnumerable<Parameter> Parameters()
+    {
+        foreach (var p in _embedding.Parameters())
+            yield return p;
+
+        foreach (var p in _arch.Parameters())
+            yield return p;
+
+        foreach (var p in _finalNorm.Parameters())
+            yield return p;
+    }
 
     // ── Forward ───────────────────────────────────────────────────────────
 

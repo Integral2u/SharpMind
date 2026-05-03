@@ -2,6 +2,7 @@
 using SharpMind.Core.Embeddings;
 using SharpMind.Core.Ops;
 using SharpMind.Core.Tensors;
+using SharpMind.Core.Training;
 using SharpMind.Model.Config;
 
 namespace SharpMind.Model.Layers.Attention;
@@ -122,6 +123,18 @@ public abstract class AttentionLayer : IDisposable
         var projected = Wo.Forward(output, ops);
         output.Dispose();
         return projected;
+    }
+
+    public IEnumerable<Parameter> Parameters()
+    {
+        foreach (var p in Wq.Parameters())
+            yield return p;
+        foreach (var p in Wk.Parameters())
+            yield return p;
+        foreach (var p in Wv.Parameters())
+            yield return p;
+        foreach (var p in Wo.Parameters())
+            yield return p;
     }
 
     public void Dispose()

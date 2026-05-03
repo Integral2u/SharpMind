@@ -1,4 +1,5 @@
 ﻿using SharpMind.Core.Tensors;
+using SharpMind.Core.Training;
 using SharpMind.Model.Layers;
 
 namespace SharpMind.Model.Arch;
@@ -25,6 +26,13 @@ public sealed class DecoderArch : IArchitecture
     }
 
     public int NumLayers => _blocks.Length;
+
+    public IEnumerable<Parameter> Parameters()
+    {
+        foreach (var block in _blocks)
+            foreach (var p in block.Parameters())
+                yield return p;
+    }
 
     /// <summary>
     /// Passes hidden states through all blocks with causal masking.

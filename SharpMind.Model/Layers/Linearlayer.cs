@@ -1,5 +1,6 @@
 ﻿using SharpMind.Core.Ops;
 using SharpMind.Core.Tensors;
+using SharpMind.Core.Training;
 
 namespace SharpMind.Model.Layers;
 
@@ -37,6 +38,13 @@ public sealed class LinearLayer : IDisposable
 
     public Tensor<float> Weight => _weight;
     public Tensor<float>? Bias => _bias;
+
+    public IEnumerable<Parameter> Parameters()
+    {
+        yield return new Parameter($"{nameof(LinearLayer)}.weight", _weight);
+        if (_bias is not null)
+            yield return new Parameter($"{nameof(LinearLayer)}.bias", _bias);
+    }
 
     // ── Forward pass ──────────────────────────────────────────────────────
 

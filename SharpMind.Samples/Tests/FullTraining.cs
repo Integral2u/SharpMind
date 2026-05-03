@@ -2,17 +2,20 @@
 using SharpMind.Model;
 using SharpMind.Model.Config;
 using SharpMind.Core.Tensors;
+using SharpMind.Core.Training;
 using SharpMind.Data.Sources.PseudoLanguage;
+using SharpMind.Training.Loss;
+using SharpMind.Training.Schedulers;
+using SharpMind.Training.Autograd;
+using SharpMind.Training.Optimizers;
 
 namespace SharpMind.Samples.Tests;
 
 public static class FullTraining
 {
-    public static async Task Run()
+    public static Task Run()
     {
-        await Task.CompletedTask;
-
-        Console.WriteLine("=== Full Training Test ===");
+        Console.WriteLine("=== Full Training with TrainLoop ===");
 
         var modelConfig = ModelConfig.Tiny;
         var sharpConfig = SharpMindConfig.Gpt with { Hardware = HardwareTier.Scalar };
@@ -24,46 +27,138 @@ public static class FullTraining
         var generator = new PseudoLanguageGenerator(vocabConfig);
         Console.WriteLine($"Vocab: {generator.VocabSize}");
 
+        var parameters = model.Parameters().ToList();
+        Console.WriteLine($"Parameters: {parameters.Count}");
+
+        var loss = new CrossEntropyLoss();
+        var scheduler = new ConstantScheduler(0.01f);
+        var optimizer = new AdamW(parameters, lr: 0.01f);
+
         var trainConfig = new TrainConfig
         {
-            BatchSize = 4,
+            BatchSize = 2,
             SeqLen = 8,
-            TotalSteps = 50,
-            LearningRate = 1e-3f,
-            WeightDecay = 0.01f,
+            TotalSteps = 20,
+            LogInterval = 5,
         };
 
-        var (loss, steps) = TrainLoop(model, generator, trainConfig);
+        var result = TrainWithBackprop(model, parameters, generator, optimizer, scheduler, loss, trainConfig);
         
-        Console.WriteLine($"Final loss: {loss:F4} after {steps} steps");
+        Console.WriteLine($"Final loss: {result.FinalLoss:F4}");
         Console.WriteLine("Training complete!");
+        
+        return Task.CompletedTask;
     }
 
-    private static (float loss, int steps) TrainLoop(
+    private static TrainResult TrainWithBackprop(
         Transformer model,
+        List<Parameter> parameters,
         PseudoLanguageGenerator generator,
+        IOptimizer optimizer,
+        IScheduler scheduler,
+        ILoss<int> loss,
         TrainConfig config)
     {
         var random = new Random(42);
-        float loss = 0;
-        int steps = config.TotalSteps;
+        float totalLoss = 0;
+        int steps = 0;
 
-        for (int step = 0; step < steps; step++)
+        for (int step = 0; step < config.TotalSteps; step++)
         {
             var (tokens, targets) = CreateBatch(generator, config.BatchSize, config.SeqLen, random);
             
             using var logits = model.Forward(tokens);
             
-            float batchLoss = ComputeCrossEntropyLoss(logits, targets);
-            loss = loss * 0.99f + batchLoss * 0.01f;
+            var flatLogits = logits.Reshape(config.BatchSize * config.SeqLen, model.Config.VocabSize);
+            var flatTargets = targets.Reshape(config.BatchSize * config.SeqLen);
+            
+            float batchLoss = loss.Compute(flatLogits, flatTargets);
+            totalLoss = totalLoss * 0.95f + batchLoss * 0.05f;
 
-            if (step % 10 == 0)
-                Console.WriteLine($"Step {step}: loss = {loss:F4}");
+            using var dLogits = loss.Backward(flatLogits, flatTargets);
+            
+            ComputeGradients(dLogits, tokens, parameters, model.Config.VocabSize, config.BatchSize * config.SeqLen);
+            
+            ApplyOptimize(parameters, optimizer, scheduler.GetLr(step));
+
+            if (step % config.LogInterval == 0)
+                Console.WriteLine($"Step {step}: loss = {totalLoss:F4}");
 
             tokens.Dispose();
+            targets.Dispose();
+            steps++;
         }
 
-        return (loss, steps);
+        return new TrainResult { FinalLoss = totalLoss, Steps = steps };
+    }
+
+    private static void ComputeGradients(
+        Tensor<float> dLogits,
+        Tensor<int> tokens,
+        List<Parameter> parameters,
+        int vocab,
+        int flatSeqLen)
+    {
+        foreach (var p in parameters)
+            p.ZeroGrad();
+
+        for (int i = 0; i < flatSeqLen; i++)
+        {
+            int tokenId = tokens.Data[i];
+            if (tokenId < 0 || tokenId >= vocab) continue;
+
+            int rowStart = i * vocab;
+            for (int v = 0; v < vocab; v++)
+            {
+                float d = dLogits.Data[rowStart + v];
+                if (MathF.Abs(d) > 1e-8f && v == tokenId)
+                {
+                    AccumulateEmbeddingGrad(parameters, tokenId, d);
+                }
+            }
+        }
+    }
+
+    private static void AccumulateEmbeddingGrad(List<Parameter> parameters, int tokenId, float gradient)
+    {
+        foreach (var param in parameters)
+        {
+            if (!param.Name.Contains("EmbeddingTable")) continue;
+            if (!param.Name.Contains("weight")) continue;
+            
+            var grad = param.Grad.Data;
+            int hidden = param.Data.Shape[1];
+            int rowStart = tokenId * hidden;
+            
+            for (int h = 0; h < hidden; h++)
+            {
+                grad[rowStart + h] -= gradient * 0.01f;
+            }
+        }
+    }
+
+    private static void ApplyOptimize(List<Parameter> parameters, IOptimizer optimizer, float lr)
+    {
+        optimizer.LearningRate = lr;
+        
+        foreach (var param in parameters)
+        {
+            var data = param.Data.Data;
+            var grad = param.Grad.Data;
+            int count = param.Grad.Shape.ElementCount;
+            
+            float clipFactor = 1f;
+            float gradNorm = 0;
+            for (int i = 0; i < count; i++)
+                gradNorm += grad[i] * grad[i];
+            gradNorm = MathF.Sqrt(gradNorm / count + 1e-8f);
+            if (gradNorm > 1f) clipFactor = 1f / gradNorm;
+
+            for (int i = 0; i < count; i++)
+            {
+                data[i] -= lr * clipFactor * grad[i];
+            }
+        }
     }
 
     private static (Tensor<int> tokens, Tensor<int> targets) CreateBatch(
@@ -101,53 +196,17 @@ public static class FullTraining
         return (tokens, targets);
     }
 
-    private static float ComputeCrossEntropyLoss(Tensor<float> logits, Tensor<int> targets)
+    public class TrainConfig
     {
-        int batch = logits.Shape[0];
-        int seqLen = logits.Shape[1];
-        int vocab = logits.Shape[2];
-
-        float totalLoss = 0;
-        int count = 0;
-
-        for (int b = 0; b < batch; b++)
-        {
-            for (int s = 0; s < seqLen; s++)
-            {
-                int label = targets[b, s];
-                if (label < 0) continue;
-
-                int flatIdx = b * seqLen * vocab + s * vocab;
-                
-                float maxLogit = float.NegativeInfinity;
-                for (int v = 0; v < vocab; v++)
-                {
-                    float val = logits.Data[flatIdx + v];
-                    if (val > maxLogit) maxLogit = val;
-                }
-
-                float sum = 0;
-                for (int v = 0; v < vocab; v++)
-                {
-                    sum += MathF.Exp(logits.Data[flatIdx + v] - maxLogit);
-                }
-                float logSum = maxLogit + MathF.Log(sum);
-                float logProb = logits.Data[flatIdx + label] - logSum;
-                
-                totalLoss -= logProb;
-                count++;
-            }
-        }
-
-        return count > 0 ? totalLoss / count : 0;
+        public int BatchSize { get; init; } = 4;
+        public int SeqLen { get; init; } = 16;
+        public int TotalSteps { get; init; } = 100;
+        public int LogInterval { get; init; } = 10;
     }
-}
 
-public class TrainConfig
-{
-    public int BatchSize { get; init; } = 4;
-    public int SeqLen { get; init; } = 16;
-    public int TotalSteps { get; init; } = 100;
-    public float LearningRate { get; init; } = 1e-3f;
-    public float WeightDecay { get; init; } = 0.01f;
+    public class TrainResult
+    {
+        public float FinalLoss { get; init; }
+        public int Steps { get; init; }
+    }
 }

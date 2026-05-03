@@ -1,5 +1,6 @@
 ﻿using SharpMind.Core.Ops;
 using SharpMind.Core.Tensors;
+using SharpMind.Core.Training;
 using SharpMind.Model.Layers.Attention;
 using SharpMind.Model.Layers.Ffn;
 
@@ -70,6 +71,18 @@ public sealed class TransformerBlock : IDisposable
 
         // Residual: out = h + ffn(norm(h))
         return TensorOps.Add(h, ffnOut);
+    }
+
+    public IEnumerable<Parameter> Parameters()
+    {
+        foreach (var p in _attention.Parameters())
+            yield return p;
+        foreach (var p in _ffn.Parameters())
+            yield return p;
+        foreach (var p in _norm1.Parameters())
+            yield return p;
+        foreach (var p in _norm2.Parameters())
+            yield return p;
     }
 
     public void Dispose()

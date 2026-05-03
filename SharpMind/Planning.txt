@@ -11,8 +11,18 @@ Tokenizer: BPE, vocab builder, encode/decode
 Data: sources, cleaning, formating, batching, dataset loaders
 Core: tensors, matrix math, memeory, activations
 
+ContinuousBbatch why string result = await request.Result; in SubmitAsync
+
+
 Config files hould be human readable
-SharpMind.Training.Checkpoint.Save using a JsonObject should this be a stongly typed object instead.
+Skills.MD
+Read Safetensors and GGUF for model weights
+IDatasource additions
+Read Parquet
+Read CSV 
+should PseudoLanguageSerializer have SaveTo txt or csv
+
+Use of JsonObject, preffer stronly typed class where possible.
 
 Would like to introduce 
 

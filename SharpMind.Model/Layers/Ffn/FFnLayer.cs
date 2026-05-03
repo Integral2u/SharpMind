@@ -2,6 +2,7 @@
 using SharpMind.Core.Activations;
 using SharpMind.Core.Ops;
 using SharpMind.Core.Tensors;
+using SharpMind.Core.Training;
 using SharpMind.Model.Config;
 
 namespace SharpMind.Model.Layers.Ffn;
@@ -103,6 +104,19 @@ public abstract class FfnLayer : IDisposable
     }
 
     ~FfnLayer() => Dispose(false);
+
+    public IEnumerable<Parameter> Parameters()
+    {
+        if (W1 is not null) foreach (var p in W1.Parameters()) yield return p;
+        if (W2 is not null) foreach (var p in W2.Parameters()) yield return p;
+        if (WGate is not null) foreach (var p in WGate.Parameters()) yield return p;
+        if (WUp is not null) foreach (var p in WUp.Parameters()) yield return p;
+        if (WDown is not null) foreach (var p in WDown.Parameters()) yield return p;
+        if (Router is not null) foreach (var p in Router.Parameters()) yield return p;
+        if (ExpertGate is not null) foreach (var l in ExpertGate) foreach (var p in l.Parameters()) yield return p;
+        if (ExpertUp is not null) foreach (var l in ExpertUp) foreach (var p in l.Parameters()) yield return p;
+        if (ExpertDown is not null) foreach (var l in ExpertDown) foreach (var p in l.Parameters()) yield return p;
+    }
 
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, nameof(FfnLayer));
 }

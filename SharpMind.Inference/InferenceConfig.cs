@@ -1,0 +1,101 @@
+namespace SharpMind.Inference;
+
+/// <summary>
+/// Inference-specific kernel and execution configuration.
+/// Extends <see cref="SharpMindConfig"/> with slots that only make sense
+/// during inference — flash attention, quantization, decode mode.
+/// </summary>
+public enum AttentionAlgo { Standard, Flash }
+public enum QuantKind     { None, Int8, Int4 }
+public enum BatchMode     { Single, Continuous }
+
+public sealed record InferenceConfig
+{
+    // ── JigSaw Pointer names ──────────────────────────────────────────────
+    public const string PtrDecodeAttention  = "DecodeAttention";
+    public const string PtrPrefillAttention = "PrefillAttention";
+    public const string PtrQuantMatMul      = "QuantMatMul";
+
+    // ── JigSaw Keys ───────────────────────────────────────────────────────
+    public const string KeyDecodeAttention  = "decode_attn";
+    public const string KeyPrefillAttention = "prefill_attn";
+    public const string KeyQuantMatMul      = "quant_matmul";
+
+    // ── Values: attention algo ────────────────────────────────────────────
+    public const string ValStandardAvx2  = "standardavx2";
+    public const string ValStandardScalar = "standardscalar";
+    public const string ValFlashAvx2     = "flashavx2";
+    public const string ValFlashScalar   = "flashscalar";
+
+    // ── Values: quantization ──────────────────────────────────────────────
+    public const string ValQuantNone = "fp32";
+    public const string ValQuantInt8 = "int8";
+    public const string ValQuantInt4 = "int4";
+
+    // ── Config properties ─────────────────────────────────────────────────
+
+    public AttentionAlgo Attention   { get; init; } = AttentionAlgo.Standard;
+    public QuantKind     Quant       { get; init; } = QuantKind.None;
+    public BatchMode     Batching    { get; init; } = BatchMode.Single;
+
+    /// <summary>
+    /// KV-cache sliding window size. 0 = no sliding window (full context).
+    /// When set, the oldest tokens are evicted when the cache fills.
+    /// </summary>
+    public int SlidingWindowSize { get; init; } = 0;
+
+    // ── Presets ───────────────────────────────────────────────────────────
+
+    /// <summary>Standard float32 inference — maximum compatibility.</summary>
+    public static InferenceConfig Default => new();
+
+    /// <summary>Flash Attention float32 — faster prefill on long contexts.</summary>
+    public static InferenceConfig Fast => new()
+    {
+        Attention = AttentionAlgo.Flash,
+    };
+
+    /// <summary>INT8 weight quantization with Flash Attention.</summary>
+    public static InferenceConfig Quantized => new()
+    {
+        Attention = AttentionAlgo.Flash,
+        Quant     = QuantKind.Int8,
+    };
+
+    /// <summary>Continuous batching for serving multiple requests.</summary>
+    public static InferenceConfig Serving => new()
+    {
+        Attention = AttentionAlgo.Flash,
+        Batching  = BatchMode.Continuous,
+    };
+
+    // ── Mapping ───────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Builds the JigSaw mapping for inference ops.
+    /// Merged with the base <see cref="SharpMindConfig.ToJigSawMapping"/>
+    /// in <see cref="InferenceOpsFactory"/>.
+    /// </summary>
+    public Dictionary<string, string> ToJigSawMapping(HardwareTier hw)
+    {
+        string hwSuffix = hw == HardwareTier.Scalar ? "scalar" : "avx2";
+
+        string attnVal = Attention switch
+        {
+            AttentionAlgo.Flash    => $"flash{hwSuffix}",
+            _                      => $"standard{hwSuffix}",
+        };
+
+        return new Dictionary<string, string>
+        {
+            [KeyDecodeAttention]  = attnVal,
+            [KeyPrefillAttention] = attnVal,
+            [KeyQuantMatMul]      = Quant switch
+            {
+                QuantKind.Int8 => ValQuantInt8,
+                QuantKind.Int4 => ValQuantInt4,
+                _              => ValQuantNone,
+            },
+        };
+    }
+}

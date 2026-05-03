@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using SharpMind.Core.Tensors;
+using SharpMind.Core.Training;
 
 namespace SharpMind.Core.Embeddings;
 
@@ -36,6 +37,11 @@ public sealed class EmbeddingTable : IDisposable
 
     /// <summary>Raw weight tensor [VocabSize, EmbeddingDim]. Writable for init and training.</summary>
     public Tensor<float> Weight => _weight;
+
+    public IEnumerable<Parameter> Parameters()
+    {
+        yield return new Parameter($"{nameof(EmbeddingTable)}.weight", _weight);
+    }
 
     // ── Forward pass ──────────────────────────────────────────────────────
 

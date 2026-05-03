@@ -1,5 +1,6 @@
 ﻿using JigSawDotNet;
 using SharpMind.Core.Tensors;
+using SharpMind.Core.Training;
 
 namespace SharpMind.Model.Layers;
 
@@ -76,6 +77,13 @@ public abstract class NormLayer : IDisposable
     {
         if (Bias is null) throw new InvalidOperationException("This norm has no bias.");
         data.CopyTo(Bias.Data);
+    }
+
+    public IEnumerable<Parameter> Parameters()
+    {
+        yield return new Parameter($"{GetType().Name}.weight", Weight);
+        if (Bias is not null)
+            yield return new Parameter($"{GetType().Name}.bias", Bias);
     }
 
     public void Dispose()
