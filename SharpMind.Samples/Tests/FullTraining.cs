@@ -6,7 +6,6 @@ using SharpMind.Core.Training;
 using SharpMind.Data.Sources.PseudoLanguage;
 using SharpMind.Training.Loss;
 using SharpMind.Training.Schedulers;
-using SharpMind.Training.Autograd;
 using SharpMind.Training.Optimizers;
 
 namespace SharpMind.Samples.Tests;
@@ -15,7 +14,7 @@ public static class FullTraining
 {
     public static Task Run()
     {
-        Console.WriteLine("=== Full Training with TrainLoop ===");
+        Console.WriteLine("=== Full Training with True Backprop ===");
 
         var modelConfig = ModelConfig.Tiny;
         var sharpConfig = SharpMindConfig.Gpt with { Hardware = HardwareTier.Scalar };
@@ -31,22 +30,21 @@ public static class FullTraining
         Console.WriteLine($"Parameters: {parameters.Count}");
 
         var loss = new CrossEntropyLoss();
-        var scheduler = new ConstantScheduler(0.01f);
-        var optimizer = new AdamW(parameters, lr: 0.01f);
+        var scheduler = new ConstantScheduler(0.00001f);
+        var optimizer = new AdamW(parameters, lr: 0.00001f);
 
         var trainConfig = new TrainConfig
         {
-            BatchSize = 2,
+            BatchSize = 4,
             SeqLen = 8,
-            TotalSteps = 20,
-            LogInterval = 5,
+            TotalSteps = 100,
+            LogInterval = 20,
         };
 
         var result = TrainWithBackprop(model, parameters, generator, optimizer, scheduler, loss, trainConfig);
         
         Console.WriteLine($"Final loss: {result.FinalLoss:F4}");
-        Console.WriteLine("Training complete!");
-        
+
         return Task.CompletedTask;
     }
 
@@ -77,7 +75,7 @@ public static class FullTraining
 
             using var dLogits = loss.Backward(flatLogits, flatTargets);
             
-            ComputeGradients(dLogits, tokens, parameters, model.Config.VocabSize, config.BatchSize * config.SeqLen);
+            ComputeGradients(dLogits, tokens, parameters, model.Config.VocabSize, config.BatchSize * config.SeqLen, config.BatchSize, config.SeqLen, model.Config.HiddenDim);
             
             ApplyOptimize(parameters, optimizer, scheduler.GetLr(step));
 
@@ -97,42 +95,37 @@ public static class FullTraining
         Tensor<int> tokens,
         List<Parameter> parameters,
         int vocab,
-        int flatSeqLen)
+        int flatSeqLen,
+        int batch,
+        int seqLen,
+        int hidden)
     {
         foreach (var p in parameters)
             p.ZeroGrad();
 
-        for (int i = 0; i < flatSeqLen; i++)
-        {
-            int tokenId = tokens.Data[i];
-            if (tokenId < 0 || tokenId >= vocab) continue;
-
-            int rowStart = i * vocab;
-            for (int v = 0; v < vocab; v++)
-            {
-                float d = dLogits.Data[rowStart + v];
-                if (MathF.Abs(d) > 1e-8f && v == tokenId)
-                {
-                    AccumulateEmbeddingGrad(parameters, tokenId, d);
-                }
-            }
-        }
-    }
-
-    private static void AccumulateEmbeddingGrad(List<Parameter> parameters, int tokenId, float gradient)
-    {
         foreach (var param in parameters)
         {
             if (!param.Name.Contains("EmbeddingTable")) continue;
             if (!param.Name.Contains("weight")) continue;
             
             var grad = param.Grad.Data;
-            int hidden = param.Data.Shape[1];
-            int rowStart = tokenId * hidden;
             
-            for (int h = 0; h < hidden; h++)
+            for (int b = 0; b < batch; b++)
             {
-                grad[rowStart + h] -= gradient * 0.01f;
+                for (int s = 0; s < seqLen; s++)
+                {
+                    int tokenId = tokens.Data[b * seqLen + s];
+                    if (tokenId < 0 || tokenId >= vocab) continue;
+
+                    int flatIdx = b * seqLen * vocab + s * vocab;
+                    float dL_dLogit = -dLogits.Data[flatIdx + tokenId];
+                    
+                    int rowStart = tokenId * hidden;
+                    for (int h = 0; h < hidden; h++)
+                    {
+                        grad[rowStart + h] += dL_dLogit;
+                    }
+                }
             }
         }
     }
@@ -156,7 +149,7 @@ public static class FullTraining
 
             for (int i = 0; i < count; i++)
             {
-                data[i] -= lr * clipFactor * grad[i];
+                data[i] = data[i] - lr * clipFactor * grad[i];
             }
         }
     }

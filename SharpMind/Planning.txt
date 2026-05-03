@@ -11,7 +11,20 @@ Tokenizer: BPE, vocab builder, encode/decode
 Data: sources, cleaning, formating, batching, dataset loaders
 Core: tensors, matrix math, memeory, activations
 
-ContinuousBbatch why string result = await request.Result; in SubmitAsync
+in this topic "With real training data and more steps" PseudoLanguageGenerator was intended to be a clss to produce an imaginary language with syntax and human like composition so could that be improved to be used to as a test of performance.
+It may not be read world but concept cand be ammended designed to be a proof of correctness/working.
+or bring in and alphabet from Kaggel to test for clissification. What real training data would you reccoment and 
+should we add Read Safetensors and GGUF for model weights now or can this be later, training a larger model may be an issue on this device but if smaller ones suffice for now thats fine.
+
+Next Actions
+Inference/decoding - Add generate/predict methods for autoregressive sampling  
+Inference project started will need work
+
+Evaluation - Add perplexity, accuracy metrics
+Checkpointing - Save/load model weights
+New feature - Something else you're interested in?
+
+
 
 
 Config files hould be human readable

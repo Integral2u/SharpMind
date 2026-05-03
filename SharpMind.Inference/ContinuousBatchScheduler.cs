@@ -90,7 +90,6 @@ public sealed class ContinuousBatchScheduler : IAsyncDisposable
             cancellationToken);
 
         await _requestChannel.Writer.WriteAsync(request, cancellationToken);
-        string result = await request.Result;
 
         return _tokenizer.Decode([.. request.GeneratedIds], skipSpecials: true);
     }
