@@ -11,10 +11,21 @@ Tokenizer: BPE, vocab builder, encode/decode
 Data: sources, cleaning, formating, batching, dataset loaders
 Core: tensors, matrix math, memeory, activations
 
-in this topic "With real training data and more steps" PseudoLanguageGenerator was intended to be a clss to produce an imaginary language with syntax and human like composition so could that be improved to be used to as a test of performance.
-It may not be read world but concept cand be ammended designed to be a proof of correctness/working.
-or bring in and alphabet from Kaggel to test for clissification. What real training data would you reccoment and 
-should we add Read Safetensors and GGUF for model weights now or can this be later, training a larger model may be an issue on this device but if smaller ones suffice for now thats fine.
+Ensure these are done, Remeber implementing the JigSawDotNet pattern may be applicable for options
+Model Compression, Quantization (4-bit/8-bit/2-bit/1-bit/1.58-bit), Distillation, Pruning/Sparsity
+Inference Speed Optimizations, Flash Attention, Speculative Decoding is Fused Kernels pratical, TurboQuant.
+Memory & Context Optimizations, Key-Value (KV) Caching, PagedAttention, Grouped-Query Attention (GQA
+
+Can we use the EMNIST dataset to test builing of a model and testing?
+The EMNIST dataset is a set of handwritten character digits derived from the NIST Special Database 19  and converted to a 28x28 pixel image format and dataset structure that directly matches the MNIST dataset
+I have the MatLab or Gzip files downloaded that i can dd to ExternalAssests
+
+Please cite the following paper when using or referencing the dataset:
+Cohen, G., Afshar, S., Tapson, J., & van Schaik, A. (2017). EMNIST: an extension of MNIST to handwritten letters. Retrieved from http://arxiv.org/abs/1702.05373
+
+Unify Configs in SharpMind.Core and flesh our MappingBuilder
+
+ChatSession design (async), tool, input types, status(Thinking/Updating/Executing/Responding/Waiting)
 
 Next Actions
 Inference/decoding - Add generate/predict methods for autoregressive sampling  

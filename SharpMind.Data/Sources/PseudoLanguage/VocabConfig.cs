@@ -13,4 +13,11 @@ public sealed record VocabConfig
     public static VocabConfig Medium => new() { VocabSize = 5_000, RootMorphemes = 300, Affixes = 20 };
     public static VocabConfig Large => new() { VocabSize = 20_000, RootMorphemes = 800, Affixes = 30 };
     public static VocabConfig Huge => new() { VocabSize = 100_000, RootMorphemes = 2_000, Affixes = 50 };
+
+    public static VocabConfig Learnable => new() 
+    { 
+        VocabSize = 6, 
+        RootMorphemes = 6, 
+        Affixes = 0,
+    };
 }

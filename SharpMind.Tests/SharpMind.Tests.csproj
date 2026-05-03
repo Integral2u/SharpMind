@@ -26,6 +26,7 @@
     <ProjectReference Include="..\SharpMind.Data\SharpMind.Data.csproj" />
     <ProjectReference Include="..\SharpMind\SharpMind.csproj" />
     <ProjectReference Include="..\SharpMind.GPU\SharpMind.GPU.csproj" />
+    <ProjectReference Include="..\SharpMind.Model\SharpMind.Model.csproj" />
   </ItemGroup>
 
   <ItemGroup>
@@ -34,6 +35,10 @@
 
   <ItemGroup>
     <Folder Include="GPU\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Folder Include="ModelFormat\" />
   </ItemGroup>
 
 </Project>

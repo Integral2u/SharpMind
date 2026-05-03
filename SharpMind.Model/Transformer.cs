@@ -7,17 +7,7 @@ using SharpMind.Model.Config;
 using SharpMind.Model.Layers;
 
 namespace SharpMind.Model;
-/// <summary>
-/// Full transformer model: embedding → architecture → norm → LM head.
-///
-/// Forward output:
-///   Logits: [Batch, SeqLen, VocabSize] — unnormalised log-probabilities.
-///   Apply softmax for probabilities; use log-softmax + cross-entropy for training loss.
-///
-/// Tied weights: the LM head weight matrix is the transpose of the embedding
-/// table (weight tying). This halves the parameter count at the output layer
-/// and is used by GPT-2, LLaMA, and most modern LLMs.
-/// </summary>
+
 public sealed class Transformer : IDisposable
 {
     private readonly ModelConfig _config;
@@ -95,7 +85,7 @@ using var normedFlat = normed.Reshape(batch * seqLen, hidden2);
         var logits = _ops.MatMul(normedFlat, embedT);
 
         // Restore [Batch, SeqLen, VocabSize]
-        var result = logits.Reshape(batch, seqLen, _config.VocabSize);
+var result = logits.Reshape(batch, seqLen, _config.VocabSize);
         logits.Dispose();
         return result;
     }

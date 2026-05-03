@@ -129,4 +129,16 @@ public sealed record ModelConfig
         FfnDim = 256,
         MaxSeqLen = 128,
     };
+
+    /// <summary>Minimal learnable config for training validation.</summary>
+    public static ModelConfig Learnable => new()
+    {
+        VocabSize = 32,
+        HiddenDim = 16,
+        NumLayers = 1,
+        NumHeads = 2,
+        NumKvHeads = 2,
+        FfnDim = 32,
+        MaxSeqLen = 16,
+    };
 }
