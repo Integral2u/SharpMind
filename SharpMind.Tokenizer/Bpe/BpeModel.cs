@@ -8,7 +8,7 @@ namespace SharpMind.Tokenizer.Bpe;
 /// The result of BPE training — a fully trained model ready for encoding.
 /// Holds the vocabulary, ordered merge rules, and a pre-configured encoder.
 /// Passed to <see cref="TokenizerFile.Save"/> or directly to
-/// <see cref="Tokenizer"/>.
+/// <see cref="Tokenization"/>.
 /// </summary>
 public sealed class BpeModel
 {

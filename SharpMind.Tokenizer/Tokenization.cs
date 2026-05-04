@@ -37,11 +37,11 @@ namespace SharpMind.Tokenizer;
 ///                   padTokenId: tokenizer.PadId));
 /// </code>
 /// </summary>
-public sealed class Tokenizer
+public sealed class Tokenization
 {
     private readonly BpeModel _model;
 
-    public Tokenizer(BpeModel model)
+    public Tokenization(BpeModel model)
     {
         ArgumentNullException.ThrowIfNull(model);
         _model = model;
@@ -88,7 +88,7 @@ public sealed class Tokenizer
     // ── Factory: SharpMind native ─────────────────────────────────────────
 
     /// <summary>Loads a SharpMind native tokenizer JSON file.</summary>
-    public static Tokenizer FromFile(string path)
+    public static Tokenization FromFile(string path)
         => new(TokenizerFile.Load(path));
 
     // ── Factory: model-family converters ──────────────────────────────────
@@ -98,20 +98,20 @@ public sealed class Tokenizer
     /// <paramref name="encoderJsonPath"/> = <c>encoder.json</c>
     /// <paramref name="vocabBpePath"/>    = <c>vocab.bpe</c>
     /// </summary>
-    public static Tokenizer FromGpt2(string encoderJsonPath, string vocabBpePath)
+    public static Tokenization FromGpt2(string encoderJsonPath, string vocabBpePath)
         => new(Gpt2Converter.Convert(encoderJsonPath, vocabBpePath));
 
     /// <summary>
     /// Loads a LLaMA 2 or LLaMA 3 tokenizer from a HuggingFace
     /// <c>tokenizer.json</c> file.
     /// </summary>
-    public static Tokenizer FromLlama(string tokenizerJsonPath)
+    public static Tokenization FromLlama(string tokenizerJsonPath)
         => new(LlamaConverter.Convert(tokenizerJsonPath));
 
     /// <summary>
     /// Loads a Mistral tokenizer from a HuggingFace <c>tokenizer.json</c> file.
     /// Handles both v0.1 (LLaMA-compatible) and v0.3+ (extended vocab) formats.
     /// </summary>
-    public static Tokenizer FromMistral(string tokenizerJsonPath)
+    public static Tokenization FromMistral(string tokenizerJsonPath)
         => new(MistralConverter.Convert(tokenizerJsonPath));
 }

@@ -23,7 +23,7 @@ namespace SharpMind.Inference;
 public sealed class ContinuousBatchScheduler : IAsyncDisposable
 {
     private readonly Model.Transformer _model;
-    private readonly Tokenizer.Tokenizer _tokenizer;
+    private readonly Tokenizer.Tokenization _tokenizer;
     private readonly InferenceOps                _ops;
     private readonly int                         _maxConcurrent;
     private readonly System.Threading.Channels.Channel<InferenceRequest>   _requestChannel;
@@ -36,7 +36,7 @@ public sealed class ContinuousBatchScheduler : IAsyncDisposable
 
     public ContinuousBatchScheduler(
         SharpMind.Model.Transformer       model,
-        SharpMind.Tokenizer.Tokenizer     tokenizer,
+        SharpMind.Tokenizer.Tokenization     tokenizer,
         InferenceOps                      ops,
         int                               maxConcurrent = 8)
     {

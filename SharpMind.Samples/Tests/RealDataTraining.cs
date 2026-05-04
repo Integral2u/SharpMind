@@ -29,7 +29,7 @@ public static class RealDataTraining
         Console.WriteLine("Training BPE tokenizer on a subset of data...");
         var trainer = new SharpMind.Tokenizer.Bpe.BpeTrainer(targetVocabSize: size);
         var model = await trainer.TrainAsync(source.ReadAsync());
-        var tokenizer = new Tokenizer.Tokenizer(model);
+        var tokenizer = new Tokenizer.Tokenization(model);
         Console.WriteLine($"Tokenizer trained. Vocab size: {tokenizer.VocabSize}");
 
         var modelConfig = ModelConfig.Learnable;

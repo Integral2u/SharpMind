@@ -49,7 +49,7 @@ public static class ModelSizer
         Console.WriteLine($"Sampled {sampleTexts.Count} documents. Training BPE...");
         var trainer = new BpeTrainer(targetVocabSize: 1024);
         var bpeModel = await trainer.TrainAsync(SampleToAsyncEnumerable(sampleTexts));
-        var tokenizer = new SharpMind.Tokenizer.Tokenizer(bpeModel);
+        var tokenizer = new SharpMind.Tokenizer.Tokenization(bpeModel);
         int vocabSize = tokenizer.VocabSize;
 
         // 2. Grid search over hyperparameters
@@ -97,7 +97,7 @@ public static class ModelSizer
         return bestConfig;
     }
 
-    private static async Task<float> EvaluateConfigAsync(ModelConfig config, SharpMind.Tokenizer.Tokenizer tokenizer, List<string> samples, int steps)
+    private static async Task<float> EvaluateConfigAsync(ModelConfig config, SharpMind.Tokenizer.Tokenization tokenizer, List<string> samples, int steps)
     {
         var sharpConfig = SharpMindConfig.Gpt with { Hardware = HardwareTier.Scalar };
         var model = ModelFactory.Create(config, sharpConfig);
