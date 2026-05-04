@@ -11,6 +11,8 @@ Tokenizer: BPE, vocab builder, encode/decode
 Data: sources, cleaning, formating, batching, dataset loaders
 Core: tensors, matrix math, memory, activations
 
+MUST DO
+rename SharpMind.Tokenizer.Tokenizer
 BpeTrainer needs massive optimization, See RealDataTraining line 76.
 
 Ensure these are done, Remeber implementing the JigSawDotNet pattern may be applicable for options
