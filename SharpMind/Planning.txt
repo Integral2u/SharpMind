@@ -11,7 +11,7 @@ Tokenizer: BPE, vocab builder, encode/decode
 Data: sources, cleaning, formating, batching, dataset loaders
 Core: tensors, matrix math, memory, activations
 
-BpeTrainer needs massive optimization
+BpeTrainer needs massive optimization, See RealDataTraining line 76.
 
 Ensure these are done, Remeber implementing the JigSawDotNet pattern may be applicable for options
 Model Compression, Quantization (4-bit/8-bit/2-bit/1-bit/1.58-bit), Distillation, Pruning/Sparsity

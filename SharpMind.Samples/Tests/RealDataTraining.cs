@@ -73,6 +73,7 @@ public static class RealDataTraining
             var tokensTensor = Tensor<int>.From(flatTokens, batchSize, seqLen);
             var targetsTensor = CreateTargets(flatTokens, batchSize, seqLen);
 
+            // This when _cachedEmbedding = _embedding.Forward(tokenIds); is calls cause VS to crash
             using var logits = modelInstance.Forward(tokensTensor);
             var flatLogits = logits.Reshape(batchSize * seqLen, modelInstance.Config.VocabSize);
             var flatTargets = targetsTensor.Reshape(batchSize * seqLen);
