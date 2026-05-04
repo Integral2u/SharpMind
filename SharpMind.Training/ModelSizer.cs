@@ -1,17 +1,16 @@
-using SharpMind;
 using SharpMind.Model;
 using SharpMind.Model.Config;
 using SharpMind.Core.Tensors;
 using SharpMind.Core.Training;
 using SharpMind.Data.Sources;
-using SharpMind.Tokenizer;
-using SharpMind.Tokenizer.Bpe;
+using SharpMind.Tokenization;
+using SharpMind.Tokenization.Bpe;
 using SharpMind.Training.Loss;
 using SharpMind.Training.Schedulers;
 using SharpMind.Training.Optimizers;
 using System.Text;
 
-namespace SharpMind.Training.Sizing;
+namespace SharpMind.Training;
 
 public record SizingConstraints(
     int MinHiddenDim = 16,
@@ -30,8 +29,8 @@ public static class ModelSizer
 {
     public static async Task<ModelConfig> DetermineOptimalConfigAsync(
         IDataSource source, 
-        SizingConstraints constraints = null, 
-        SizingBudget budget = null)
+        SizingConstraints? constraints = null, 
+        SizingBudget? budget = null)
     {
         constraints ??= new SizingConstraints();
         budget ??= new SizingBudget();
@@ -46,15 +45,17 @@ public static class ModelSizer
             if (sampleTexts.Count >= budget.SampleSize) break;
         }
 
+        if (sampleTexts.Count == 0)
+            throw new InvalidOperationException("Source yielded no documents. Cannot determine optimal size.");
+
         Console.WriteLine($"Sampled {sampleTexts.Count} documents. Training BPE...");
         var trainer = new BpeTrainer(targetVocabSize: 1024);
         var bpeModel = await trainer.TrainAsync(SampleToAsyncEnumerable(sampleTexts));
-        var tokenizer = new SharpMind.Tokenizer.Tokenization(bpeModel);
+        var tokenizer = new Tokenizer(bpeModel);
         int vocabSize = tokenizer.VocabSize;
 
         // 2. Grid search over hyperparameters
-        var bestConfig = (ModelConfig)null;
-        float bestEfficiency = float.NegativeInfinity;
+        var configsAndLosses = new List<(ModelConfig Config, float Loss, long Params)>();
 
         for (int h = constraints.MinHiddenDim; h <= constraints.MaxHiddenDim; h += constraints.HiddenStep)
         {
@@ -65,42 +66,56 @@ public static class ModelSizer
                     VocabSize = vocabSize,
                     HiddenDim = h,
                     NumLayers = l,
-                    NumHeads = 4, // Fixed for sizing
+                    NumHeads = 4,
                     NumKvHeads = 4,
                     FfnDim = h * 4,
                     MaxSeqLen = 128,
                 };
 
-                if (h % 4 != 0) continue; // Ensure divisible by NumHeads
+                if (h % 4 != 0) continue;
 
                 long paramCount = CalculateParamCount(config);
                 if (paramCount > budget.MaxTotalParameters) continue;
 
-                float loss = await EvaluateConfigAsync(config, tokenizer, sampleTexts, budget.StepsPerConfig);
+                // Use Task.Run to avoid async warnings and run on background thread
+                float loss = await Task.Run(() => EvaluateConfig(config, tokenizer, sampleTexts, budget.StepsPerConfig));
                 
-                // Efficiency = (Loss Reduction / Parameter Count)
-                // Since we don't have a baseline, we use a simple score: -Loss / log(Params)
-                // A better way is to compare against the smallest model.
-                float efficiency = -loss / MathF.Log10(paramCount + 1);
-
-                Console.WriteLine($"Testing: H={h}, L={l}, Params={paramCount:N0}, Loss={loss:F4}, Eff={efficiency:F4}");
-
-                if (efficiency > bestEfficiency)
-                {
-                    bestEfficiency = efficiency;
-                    bestConfig = config;
-                }
+                configsAndLosses.Add((config, loss, paramCount));
+                Console.WriteLine($"Tested: H={h}, L={l}, Params={paramCount:N0}, Loss={loss:F4}");
             }
         }
 
-        Console.WriteLine($"--- Sizing Complete. Optimal Config: Hidden={bestConfig?.HiddenDim}, Layers={bestConfig?.NumLayers} ---");
+        // 3. Elbow Point Analysis
+        // Sort by parameter count
+        var sorted = configsAndLosses.OrderBy(x => x.Params).ToList();
+        if (sorted.Count == 0) throw new Exception("No valid configurations were tested.");
+
+        float baselineLoss = sorted[0].Loss;
+        float minLoss = sorted.Min(x => x.Loss);
+        float totalImprovement = baselineLoss - minLoss;
+
+        ModelConfig bestConfig = sorted[0].Config;
+        
+        // Find the smallest model that achieves at least 90% of the maximum improvement
+        foreach (var (config, loss, paramsCount) in sorted)
+        {
+            float improvement = baselineLoss - loss;
+            if (improvement >= 0.9f * totalImprovement)
+            {
+                bestConfig = config;
+                break;
+            }
+        }
+
+        Console.WriteLine($"--- Sizing Complete. Recommended Config: Hidden={bestConfig.HiddenDim}, Layers={bestConfig.NumLayers} ---");
         return bestConfig;
     }
 
-    private static async Task<float> EvaluateConfigAsync(ModelConfig config, SharpMind.Tokenizer.Tokenization tokenizer, List<string> samples, int steps)
+    private static float EvaluateConfig(ModelConfig config, Tokenizer tokenizer, List<string> samples, int steps)
     {
         var sharpConfig = SharpMindConfig.Gpt with { Hardware = HardwareTier.Scalar };
-        var model = ModelFactory.Create(config, sharpConfig);
+        using var model = ModelFactory.Create(config, sharpConfig);
+        
         var parameters = model.Parameters().ToList();
         var lossFn = new CrossEntropyLoss();
         var scheduler = new ConstantScheduler(0.01f);
@@ -112,7 +127,6 @@ public static class ModelSizer
 
         for (int step = 0; step < steps; step++)
         {
-            // Random batch from samples
             var batchStrings = new List<string>();
             for (int i = 0; i < batchSize; i++)
                 batchStrings.Add(samples[Random.Shared.Next(samples.Count)]);
@@ -128,20 +142,23 @@ public static class ModelSizer
             for (int i = 0; i < batchSize; i++)
                 Array.Copy(tokenIds[i], 0, flatTokens, i * seqLen, seqLen);
 
-            var tokensTensor = Tensor<int>.From(flatTokens, batchSize, seqLen);
-            var targetsTensor = CreateTargets(flatTokens, batchSize, seqLen);
+            using var tokensTensor = Tensor<int>.From(flatTokens, batchSize, seqLen);
+            using var targetsTensor = CreateTargets(flatTokens, batchSize, seqLen);
 
             using var logits = model.Forward(tokensTensor);
-            var flatLogits = logits.Reshape(batchSize * seqLen, config.VocabSize);
-            var flatTargets = targetsTensor.Reshape(batchSize * seqLen);
+            using var flatLogits = logits.Reshape(batchSize * seqLen, config.VocabSize);
+            using var flatTargets = targetsTensor.Reshape(batchSize * seqLen);
 
             float batchLoss = lossFn.Compute(flatLogits, flatTargets);
             totalLoss = totalLoss * 0.9f + batchLoss * 0.1f;
 
-            ApplyOptimize(parameters, optimizer, scheduler.GetLr(step));
-
-            tokensTensor.Dispose();
-            targetsTensor.Dispose();
+            // Proper Backward pass
+            using var dLogits = lossFn.Backward(flatLogits, flatTargets);
+            
+            // The gradients are now in param.Grad. We apply the optimizer.
+            // Zero grads for next step
+            optimizer.Update();
+            optimizer.ZeroGrad();
         }
 
         return totalLoss;
@@ -149,9 +166,8 @@ public static class ModelSizer
 
     private static long CalculateParamCount(ModelConfig config)
     {
-        // Very rough approximation of params
         long embedding = (long)config.VocabSize * config.HiddenDim;
-        long block = (long)config.NumLayers * (config.HiddenDim * config.HiddenDim * 12); // Attn + FFN
+        long block = (long)config.NumLayers * (config.HiddenDim * config.HiddenDim * 12); 
         return embedding + block;
     }
 
@@ -173,18 +189,6 @@ public static class ModelSizer
             targets[b * seqLen + seqLen - 1] = -100;
         }
         return Tensor<int>.From(targets, batchSize, seqLen);
-    }
-
-    private static void ApplyOptimize(List<Parameter> parameters, IOptimizer optimizer, float lr)
-    {
-        optimizer.LearningRate = lr;
-        foreach (var param in parameters)
-        {
-            var data = param.Data.Data;
-            var grad = param.Grad.Data;
-            for (int i = 0; i < data.Length; i++)
-                data[i] -= lr * grad[i];
-        }
     }
 
     private static async IAsyncEnumerable<string> SampleToAsyncEnumerable(List<string> samples)

@@ -1,4 +1,4 @@
-﻿namespace SharpMind.Tokenizer.Bpe;
+﻿namespace SharpMind.Tokenization.Bpe;
 
 /// <summary>
 /// A single BPE merge rule: the pair (<see cref="Left"/>, <see cref="Right"/>)

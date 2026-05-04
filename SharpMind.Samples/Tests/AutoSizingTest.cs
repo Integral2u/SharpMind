@@ -1,8 +1,8 @@
 using SharpMind.Model;
 using SharpMind.Model.Config;
-using SharpMind.Training.Sizing;
 using SharpMind.Data.Parquet.Sources;
 using SharpMind.Data.Sources;
+using SharpMind.Training;
 
 namespace SharpMind.Samples.Tests;
 
@@ -12,8 +12,9 @@ public static class AutoSizingTest
     {
         Console.WriteLine("=== Testing Auto-Sizer with Parquet Data ===");
         
-        IDataSource source = new FusechatSource(
-            @"C:\Integral2u\source\repos\SharpMind\ExternalAssets\fusechat_v1\*.json");
+        IDataSource source = new ParquetSource(
+            @"C:\Integral2u\source\repos\SharpMind\ExternalAssets\open-perfectblend\train-*.parquet", 
+            "source");
 
         var constraints = new SizingConstraints(
             MinHiddenDim: 16, 

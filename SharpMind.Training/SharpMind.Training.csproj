@@ -11,7 +11,7 @@
     <ProjectReference Include="..\SharpMind.Core\SharpMind.Core.csproj" />
     <ProjectReference Include="..\SharpMind.Data\SharpMind.Data.csproj" />
     <ProjectReference Include="..\SharpMind.Model\SharpMind.Model.csproj" />
-    <ProjectReference Include="..\SharpMind.Tokenizer\SharpMind.Tokenizer.csproj" />
+    <ProjectReference Include="..\SharpMind.Tokenization\SharpMind.Tokenization.csproj" />
   </ItemGroup>
 
 </Project>

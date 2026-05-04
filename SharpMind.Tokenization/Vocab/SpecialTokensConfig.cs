@@ -1,4 +1,4 @@
-﻿namespace SharpMind.Tokenizer.Vocab;
+﻿namespace SharpMind.Tokenization.Vocab;
 
 /// <summary>
 /// Configuration passed to <see cref="SpecialTokens"/> constructor.

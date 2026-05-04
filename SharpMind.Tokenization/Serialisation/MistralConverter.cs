@@ -1,9 +1,9 @@
 using System.Text.Json;
-using SharpMind.Tokenizer.Bpe;
-using SharpMind.Tokenizer.PreTokeniser;
-using SharpMind.Tokenizer.Vocab;
+using SharpMind.Tokenization.Bpe;
+using SharpMind.Tokenization.PreTokeniser;
+using SharpMind.Tokenization.Vocab;
 
-namespace SharpMind.Tokenizer.Serialisation;
+namespace SharpMind.Tokenization.Serialisation;
 
 /// <summary>
 /// Converts Mistral tokenizer files to a SharpMind <see cref="BpeModel"/>.

@@ -1,9 +1,9 @@
 using System.Text.Json;
-using SharpMind.Tokenizer.Bpe;
-using SharpMind.Tokenizer.PreTokeniser;
-using SharpMind.Tokenizer.Vocab;
+using SharpMind.Tokenization.Bpe;
+using SharpMind.Tokenization.PreTokeniser;
+using SharpMind.Tokenization.Vocab;
 
-namespace SharpMind.Tokenizer.Serialisation;
+namespace SharpMind.Tokenization.Serialisation;
 
 /// <summary>
 /// Converts LLaMA 2 / LLaMA 3 tokenizer files to a SharpMind <see cref="BpeModel"/>.

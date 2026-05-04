@@ -1,4 +1,4 @@
-﻿namespace SharpMind.Tokenizer.Vocab;
+﻿namespace SharpMind.Tokenization.Vocab;
 
 /// <summary>
 /// Holds the special token strings and their IDs.

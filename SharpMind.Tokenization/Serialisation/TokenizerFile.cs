@@ -1,10 +1,10 @@
 ﻿using System.Text.Json;
 using System.Text.Json.Nodes;
-using SharpMind.Tokenizer.Vocab;
-using SharpMind.Tokenizer.PreTokeniser;
-using SharpMind.Tokenizer.Bpe;
+using SharpMind.Tokenization.Vocab;
+using SharpMind.Tokenization.PreTokeniser;
+using SharpMind.Tokenization.Bpe;
 
-namespace SharpMind.Tokenizer.Serialisation;
+namespace SharpMind.Tokenization.Serialisation;
 
 /// <summary>
 /// Saves and loads SharpMind native tokenizer JSON files.

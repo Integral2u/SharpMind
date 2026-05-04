@@ -52,30 +52,37 @@ public sealed class ParquetSource : IDataSource
 
             using var stream = File.OpenRead(path);
             using var reader = await ParquetReader.CreateAsync(stream, null, true, cancellationToken);
-
-            // Find the field by name
-            var field = reader.Schema.DataFields.FirstOrDefault(f => f.Name == _textField);
-            if (field == null) continue;
-
-            // Parquet files are divided into row groups. We must read each one.
+            
             for (int i = 0; i < reader.RowGroupCount; i++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
                 using var rowGroupReader = reader.OpenRowGroupReader(i);
-                DataColumn column = await rowGroupReader.ReadColumnAsync(field, cancellationToken);
+                DataColumn[] columns = await reader.ReadEntireRowGroupAsync(i);
+                
+                var fromCol = columns.FirstOrDefault(c => c.Field.Name == "from");
+                var valueCol = columns.FirstOrDefault(c => c.Field.Name == "value");
+                var sourceCol = columns.FirstOrDefault(c => c.Field.Name == "source");
 
-                for (int j = 0; j < column.Data.Length; j++)
+                if (fromCol != null && valueCol != null)
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
+                    var froms = (string[])fromCol.Data;
+                    var values = (string[])valueCol.Data;
 
-                    object? value = column.Data.GetValue(j);
-                    if (value == null) continue;
-
-                    string? text = FormatValue(value);
-                    if (!string.IsNullOrWhiteSpace(text))
+                    for (int j = 0; j < froms.Length; j++)
                     {
-                        yield return text;
+                        cancellationToken.ThrowIfCancellationRequested();
+                        yield return $"{froms[j]}: {values[j]}";
+                    }
+                }
+                else if (_textField == "source" && sourceCol != null)
+                {
+                    var sources = (string[])sourceCol.Data;
+                    foreach (var s in sources)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        if (!string.IsNullOrWhiteSpace(s))
+                            yield return s;
                     }
                 }
             }
@@ -85,8 +92,6 @@ public sealed class ParquetSource : IDataSource
     private static string? FormatValue(object value)
     {
         if (value is string s) return s;
-
-        // Handle lists/arrays (e.g. conversations)
         if (value is System.Collections.IEnumerable enumerable)
         {
             var sb = new System.Text.StringBuilder();
@@ -97,8 +102,7 @@ public sealed class ParquetSource : IDataSource
             }
             return sb.ToString().TrimEnd();
         }
-
-        return value.ToString();
+        return value?.ToString();
     }
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;

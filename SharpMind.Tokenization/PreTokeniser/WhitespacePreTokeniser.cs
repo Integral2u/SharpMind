@@ -1,4 +1,4 @@
-﻿namespace SharpMind.Tokenizer.PreTokeniser;
+﻿namespace SharpMind.Tokenization.PreTokeniser;
 
 /// <summary>
 /// Splits on whitespace. Fast, correct for many languages, but merges

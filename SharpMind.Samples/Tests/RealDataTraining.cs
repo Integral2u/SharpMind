@@ -7,6 +7,7 @@ using SharpMind.Data.Parquet.Sources;
 using SharpMind.Training.Loss;
 using SharpMind.Training.Schedulers;
 using SharpMind.Training.Optimizers;
+using SharpMind.Tokenization;
 
 namespace SharpMind.Samples.Tests;
 
@@ -27,9 +28,9 @@ public static class RealDataTraining
     private static async Task Train(IDataSource source, int size)
     {
         Console.WriteLine("Training BPE tokenizer on a subset of data...");
-        var trainer = new SharpMind.Tokenizer.Bpe.BpeTrainer(targetVocabSize: size);
+        var trainer = new SharpMind.Tokenization.Bpe.BpeTrainer(targetVocabSize: size);
         var model = await trainer.TrainAsync(source.ReadAsync());
-        var tokenizer = new Tokenizer.Tokenization(model);
+        var tokenizer = new Tokenizer(model);
         Console.WriteLine($"Tokenizer trained. Vocab size: {tokenizer.VocabSize}");
 
         var modelConfig = ModelConfig.Learnable;

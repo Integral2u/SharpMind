@@ -1,7 +1,7 @@
-﻿using SharpMind.Tokenizer.PreTokeniser;
-using SharpMind.Tokenizer.Vocab;
+﻿using SharpMind.Tokenization.PreTokeniser;
+using SharpMind.Tokenization.Vocab;
 
-namespace SharpMind.Tokenizer.Bpe;
+namespace SharpMind.Tokenization.Bpe;
 
 /// <summary>
 /// Trains a BPE vocabulary from a text corpus.

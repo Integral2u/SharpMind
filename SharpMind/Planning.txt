@@ -13,7 +13,6 @@ Core: tensors, matrix math, memory, activations
 
 MUST DO
 
-SizingBench
 BpeTrainer needs massive optimization, See RealDataTraining line 76.
 
 Ensure these are done, Remeber implementing the JigSawDotNet pattern may be applicable for options

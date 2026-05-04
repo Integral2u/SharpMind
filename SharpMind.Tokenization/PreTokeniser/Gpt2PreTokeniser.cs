@@ -1,6 +1,6 @@
 ﻿using System.Text.RegularExpressions;
 
-namespace SharpMind.Tokenizer.PreTokeniser;
+namespace SharpMind.Tokenization.PreTokeniser;
 
 /// <summary>
 /// GPT-2 / RoBERTa-style pre-tokeniser.

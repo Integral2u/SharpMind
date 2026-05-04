@@ -23,8 +23,6 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SandBox", "SandBox\SandBox.
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SharpMind.GPU", "SharpMind.GPU\SharpMind.GPU.csproj", "{7AEE28F0-3A11-3136-2DA8-39B07754A3C7}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SharpMind.Tokenizer", "SharpMind.Tokenizer\SharpMind.Tokenizer.csproj", "{415FEBA9-79F3-46EB-AC93-F385AB38E2EE}"
-EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SharpMind.Training", "SharpMind.Training\SharpMind.Training.csproj", "{E9D00D0B-0605-4535-9835-51FFDE115592}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SharpMind.Inference", "SharpMind.Inference\SharpMind.Inference.csproj", "{ECB2DC09-D735-4B6A-B1AB-EBAF826ED29E}"
@@ -32,6 +30,8 @@ EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ExternalAssets", "ExternalAssets\ExternalAssets.csproj", "{2877C705-D9DB-4862-886E-ADE82A030CF4}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SharpMind.Data.Parquet", "SharpMind.Data.Parquet\SharpMind.Data.Parquet.csproj", "{A2DA5708-7DEE-462A-B36E-C77AF086D48B}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SharpMind.Tokenization", "SharpMind.Tokenization\SharpMind.Tokenization.csproj", "{B80693C1-AF0C-68B5-7593-88A7065FC26B}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -79,10 +79,6 @@ Global
 		{7AEE28F0-3A11-3136-2DA8-39B07754A3C7}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{7AEE28F0-3A11-3136-2DA8-39B07754A3C7}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{7AEE28F0-3A11-3136-2DA8-39B07754A3C7}.Release|Any CPU.Build.0 = Release|Any CPU
-		{415FEBA9-79F3-46EB-AC93-F385AB38E2EE}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{415FEBA9-79F3-46EB-AC93-F385AB38E2EE}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{415FEBA9-79F3-46EB-AC93-F385AB38E2EE}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{415FEBA9-79F3-46EB-AC93-F385AB38E2EE}.Release|Any CPU.Build.0 = Release|Any CPU
 		{E9D00D0B-0605-4535-9835-51FFDE115592}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{E9D00D0B-0605-4535-9835-51FFDE115592}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{E9D00D0B-0605-4535-9835-51FFDE115592}.Release|Any CPU.ActiveCfg = Release|Any CPU
@@ -99,6 +95,10 @@ Global
 		{A2DA5708-7DEE-462A-B36E-C77AF086D48B}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{A2DA5708-7DEE-462A-B36E-C77AF086D48B}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{A2DA5708-7DEE-462A-B36E-C77AF086D48B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B80693C1-AF0C-68B5-7593-88A7065FC26B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B80693C1-AF0C-68B5-7593-88A7065FC26B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B80693C1-AF0C-68B5-7593-88A7065FC26B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B80693C1-AF0C-68B5-7593-88A7065FC26B}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

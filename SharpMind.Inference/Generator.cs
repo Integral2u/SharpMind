@@ -23,7 +23,7 @@ namespace SharpMind.Inference;
 public sealed class Generator : IDisposable
 {
     private readonly Transformer  _model;
-    private readonly SharpMind.Tokenizer.Tokenization _tokenizer;
+    private readonly SharpMind.Tokenization.Tokenizer _tokenizer;
     private readonly InferenceOps _ops;
     private readonly KvCache      _cache;
     private readonly Random       _defaultRng;
@@ -31,7 +31,7 @@ public sealed class Generator : IDisposable
 
     public Generator(
         Transformer   model,
-        SharpMind.Tokenizer.Tokenization tokenizer,
+        SharpMind.Tokenization.Tokenizer tokenizer,
         InferenceOps  ops,
         int?          seed = null)
     {

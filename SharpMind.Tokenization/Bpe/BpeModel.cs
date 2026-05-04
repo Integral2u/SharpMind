@@ -1,8 +1,8 @@
-﻿using SharpMind.Tokenizer.PreTokeniser;
-using SharpMind.Tokenizer.Serialisation;
-using SharpMind.Tokenizer.Vocab;
+﻿using SharpMind.Tokenization.PreTokeniser;
+using SharpMind.Tokenization.Serialisation;
+using SharpMind.Tokenization.Vocab;
 
-namespace SharpMind.Tokenizer.Bpe;
+namespace SharpMind.Tokenization.Bpe;
 
 /// <summary>
 /// The result of BPE training — a fully trained model ready for encoding.

@@ -1,6 +1,6 @@
 ﻿using System.Runtime.CompilerServices;
 
-namespace SharpMind.Tokenizer.Vocab;
+namespace SharpMind.Tokenization.Vocab;
 
 /// <summary>
 /// Bidirectional map between token strings and integer IDs.
