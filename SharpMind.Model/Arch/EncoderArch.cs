@@ -57,6 +57,11 @@ public sealed class EncoderArch : IArchitecture
         return current;
     }
 
+    public void Backward(Tensor<float> dOutput)
+    {
+        ThrowIfDisposed();
+    }
+
     public void Dispose()
     {
         if (_disposed) return;

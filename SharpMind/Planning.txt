@@ -9,7 +9,9 @@ Runtime:
 Model: transformer, attention, FFN, norms
 Tokenizer: BPE, vocab builder, encode/decode
 Data: sources, cleaning, formating, batching, dataset loaders
-Core: tensors, matrix math, memeory, activations
+Core: tensors, matrix math, memory, activations
+
+BpeTrainer needs massive optimization
 
 Ensure these are done, Remeber implementing the JigSawDotNet pattern may be applicable for options
 Model Compression, Quantization (4-bit/8-bit/2-bit/1-bit/1.58-bit), Distillation, Pruning/Sparsity
@@ -65,3 +67,60 @@ SLERP (Spherical Linear Interpolation): Better than linear interpolation for hig
 TIES-Merging (TrIm, Elect, Sign, and Merge): Designed to handle interference between models by only merging the most significant weight updates and resolving sign disagreements
 DARE (Drop And REscale): Drops redundant weights and re-scales the remaining weights to create a "soups" of models, reducing task interference.
 Task Arithmetic: Creates "task vectors" by subtracting the base model weights from the fine-tuned model weights, allowing these vectors to be added or subtracted to modify model behavior.
+
+
+The last session seems to be broken can we continue here.  this is what we were up to Phase 2: Add Real Data Converters
+A. open-perfectblend (Parquet)
+
+Contains ~1.5GB of training data (6 shards)
+Unknown schema - need to inspect
+B. fusechat (JSON)
+
+Already have a sample
+Format: {conversations: [{from, value}, ...]}
+Need ParquetSource class to read .parquet files
+Actions:
+
+Add Parquet package reference to read files
+Create ParquetSource class implementing IDataSource
+Create FusechatSource for JSON conversations
+Create new training sample sets (not replace FullTraining) and you had created the project SharpMind.Data.Parquet but i believe it was broken so i have removed it, re-added an new projects and added the Parquet.Net package
+
+
+can SchemaInspector be removed
+Phase 3: Use Pseudo-Language for Optimal Size
+Goal: Determine model size guidance from learnable patterns
+
+Actions:
+
+Run learnable with varying:
+vocab: small (16) → medium (64) → large (128)
+hidden: 16 → 32 → 64 → 128
+layers: 1 → 2 → 3
+Track loss curves to find where returns diminish
+Use this to size model for real data training
+
+
+Phase 4: EMNIST Digit Recognition
+Goal: Test building/training a vision model
+
+Data:
+
+You have MatLab or GZIP files (not in ExternalAssets yet)
+28x28 grayscale images
+62 classes (digits 0-9, uppercase A-Z, lowercase a-z)
+Actions:
+
+Add EMNIST files to ExternalAssets
+Create EMNISTLoader to parse
+Create simple CNN or MLP model
+Train and evaluate accuracy
+Questions for Clarification
+Capacity increase: Should I proceed with vocab=64, hidden=64, layers=1 (start small) or go bigger?
+Data converters priority: Which should come first?
+Parquet (larger dataset, for language model pre-training)
+Fusechat (Q&A format, closer to learnable structure)
+EMNIST files: Do you have these ready to add to ExternalAssets? What format - MatLab (.mat) or GZIP (.gz)?
+FullTraining changes: Should new data samples be:
+Separate sample sets (e.g., FullTrainingRealData.cs)
+Added as new syntax patterns to LearnableGenerator?

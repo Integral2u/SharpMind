@@ -31,6 +31,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SharpMind.Inference", "Shar
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ExternalAssets", "ExternalAssets\ExternalAssets.csproj", "{2877C705-D9DB-4862-886E-ADE82A030CF4}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SharpMind.Data.Parquet", "SharpMind.Data.Parquet\SharpMind.Data.Parquet.csproj", "{A2DA5708-7DEE-462A-B36E-C77AF086D48B}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -93,6 +95,10 @@ Global
 		{2877C705-D9DB-4862-886E-ADE82A030CF4}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{2877C705-D9DB-4862-886E-ADE82A030CF4}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{2877C705-D9DB-4862-886E-ADE82A030CF4}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A2DA5708-7DEE-462A-B36E-C77AF086D48B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A2DA5708-7DEE-462A-B36E-C77AF086D48B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A2DA5708-7DEE-462A-B36E-C77AF086D48B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A2DA5708-7DEE-462A-B36E-C77AF086D48B}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

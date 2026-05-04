@@ -133,12 +133,12 @@ public sealed record ModelConfig
     /// <summary>Minimal learnable config for training validation.</summary>
     public static ModelConfig Learnable => new()
     {
-        VocabSize = 32,
-        HiddenDim = 16,
+        VocabSize = 64,
+        HiddenDim = 32,
         NumLayers = 1,
-        NumHeads = 2,
-        NumKvHeads = 2,
-        FfnDim = 32,
+        NumHeads = 4,
+        NumKvHeads = 4,
+        FfnDim = 64,
         MaxSeqLen = 16,
     };
 }

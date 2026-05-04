@@ -17,6 +17,10 @@ public sealed class Transformer : IDisposable
     private readonly TensorOps _ops;
     private bool _disposed;
 
+    private Tensor<float>? _cachedEmbedding;
+    private Tensor<float>? _cachedHidden;
+    private Tensor<float>? _cachedNormed;
+
     public Transformer(
         ModelConfig config,
         EmbeddingTable embedding,
@@ -62,14 +66,19 @@ public sealed class Transformer : IDisposable
     {
         ThrowIfDisposed();
 
+        DisposeCache();
+
         // 1. Token embeddings → [Batch, SeqLen, HiddenDim]
-        using var embedded = _embedding.Forward(tokenIds);
+        _cachedEmbedding = _embedding.Forward(tokenIds);
+        using var embedded = _cachedEmbedding;
 
         // 2. Architecture (stack of transformer blocks)
-        using var hidden = _arch.Forward(embedded, positionOffset);
+        _cachedHidden = _arch.Forward(embedded, positionOffset);
+        using var hidden = _cachedHidden;
 
         // 3. Final normalisation
-        using var normed = _finalNorm.Forward(hidden);
+        _cachedNormed = _finalNorm.Forward(hidden);
+        using var normed = _cachedNormed;
 
         // 4. LM head: [Batch, SeqLen, HiddenDim] @ EmbeddingWeight^T
         //    → [Batch, SeqLen, VocabSize]
@@ -80,14 +89,24 @@ public sealed class Transformer : IDisposable
         int seqLen = tokenIds.Shape.Cols;
         int hidden2 = _config.HiddenDim;
 
-using var normedFlat = normed.Reshape(batch * seqLen, hidden2);
+        using var normedFlat = normed.Reshape(batch * seqLen, hidden2);
         using var embedT = TensorOps.Transpose(_embedding.Weight);
         var logits = _ops.MatMul(normedFlat, embedT);
 
         // Restore [Batch, SeqLen, VocabSize]
-var result = logits.Reshape(batch, seqLen, _config.VocabSize);
+        var result = logits.Reshape(batch, seqLen, _config.VocabSize);
         logits.Dispose();
         return result;
+    }
+
+    private void DisposeCache()
+    {
+        _cachedEmbedding?.Dispose();
+        _cachedHidden?.Dispose();
+        _cachedNormed?.Dispose();
+        _cachedEmbedding = null;
+        _cachedHidden = null;
+        _cachedNormed = null;
     }
 
     // ── Diagnostics ───────────────────────────────────────────────────────

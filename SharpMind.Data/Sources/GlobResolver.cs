@@ -5,9 +5,9 @@
 /// Supports * (single directory) and ** (recursive) wildcards.
 /// Results are always returned in lexicographic order for reproducibility.
 /// </summary>
-internal static class GlobResolver
+public static class GlobResolver
 {
-    internal static string[] Resolve(string pattern)
+    public static string[] Resolve(string pattern)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(pattern);
 
@@ -30,7 +30,7 @@ internal static class GlobResolver
             : [];
     }
 
-    internal static string[] ResolveMany(IEnumerable<string> paths)
+    public static string[] ResolveMany(IEnumerable<string> paths)
         => [.. paths.SelectMany(p => Resolve(p)).Distinct().Order()];
 
     private static string GetRoot(string pattern)

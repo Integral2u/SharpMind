@@ -22,6 +22,13 @@ public sealed class TransformerBlock : IDisposable
     private readonly TensorOps _ops;
     private bool _disposed;
 
+    private Tensor<float>? _cachedInput;
+    private Tensor<float>? _cachedNormed1;
+    private Tensor<float>? _cachedAttnOut;
+    private Tensor<float>? _cachedHidden;
+    private Tensor<float>? _cachedNormed2;
+    private Tensor<float>? _cachedFfnOut;
+
     public TransformerBlock(
         AttentionLayer attention,
         FfnLayer ffn,
@@ -57,20 +64,46 @@ public sealed class TransformerBlock : IDisposable
     public Tensor<float> Forward(Tensor<float> x, int positionOffset = 0, bool causal = true)
     {
         ThrowIfDisposed();
-
+        DisposeCache();
+        
+        _cachedInput = x;
+        
         // ── Attention sub-layer ──────────────────────────────────────────
-        using var normed1 = _norm1.Forward(x);
-        using var attnOut = _attention.Forward(normed1, _ops, positionOffset, causal);
+        _cachedNormed1 = _norm1.Forward(x);
+        using var normed1 = _cachedNormed1;
+        
+        _cachedAttnOut = _attention.Forward(normed1, _ops, positionOffset, causal);
+        using var attnOut = _cachedAttnOut;
 
         // Residual: h = x + attn(norm(x))
-        using var h = TensorOps.Add(x, attnOut);
+        _cachedHidden = TensorOps.Add(x, attnOut);
+        using var h = _cachedHidden;
 
         // ── FFN sub-layer ────────────────────────────────────────────────
-        using var normed2 = _norm2.Forward(h);
-        using var ffnOut = _ffn.Forward(normed2);
+        _cachedNormed2 = _norm2.Forward(h);
+        using var normed2 = _cachedNormed2;
+        
+        _cachedFfnOut = _ffn.Forward(normed2);
+        using var ffnOut = _cachedFfnOut;
 
         // Residual: out = h + ffn(norm(h))
         return TensorOps.Add(h, ffnOut);
+    }
+    
+    private void DisposeCache()
+    {
+        _cachedInput?.Dispose();
+        _cachedNormed1?.Dispose();
+        _cachedAttnOut?.Dispose();
+        _cachedHidden?.Dispose();
+        _cachedNormed2?.Dispose();
+        _cachedFfnOut?.Dispose();
+        _cachedInput = null;
+        _cachedNormed1 = null;
+        _cachedAttnOut = null;
+        _cachedHidden = null;
+        _cachedNormed2 = null;
+        _cachedFfnOut = null;
     }
 
     public IEnumerable<Parameter> Parameters()
