@@ -9,20 +9,7 @@ using SharpMind.Model.Layers.Attention;
 using SharpMind.Model.Layers.Ffn;
 
 namespace SharpMind.Model;
-/// <summary>
-/// Assembles a <see cref="Transformer"/> from a <see cref="ModelConfig"/>
-/// and a <see cref="SharpMindConfig"/>.
-///
-/// All JigSaw-assembled layers (attention, FFN, norm) are created here
-/// using the unified mapping from <see cref="SharpMindConfig.ToJigSawMapping"/>.
-/// JigSaw caches assembled types — creating two models with the same config
-/// reuses the compiled types for free.
-///
-/// Usage:
-/// <code>
-/// var model = ModelFactory.Create(ModelConfig.Llama3_8B, SharpMindConfig.Llama);
-/// </code>
-/// </summary>
+
 public static class ModelFactory
 {
     public static Transformer Create(ModelConfig modelConfig, SharpMindConfig sharpConfig)
@@ -33,34 +20,53 @@ public static class ModelFactory
 
         var mapping = sharpConfig.ToJigSawMapping();
 
-        // ── Assembled singleton ops ───────────────────────────────────────
         var acts = Assembler.CreateInstance<ActivationOps>(mapping);
         var ops = TensorOpsFactory.Create(sharpConfig);
 
-        // ── Embedding table ───────────────────────────────────────────────
         var embedding = new EmbeddingTable(modelConfig.VocabSize, modelConfig.HiddenDim);
         embedding.InitNormal(std: 0.02f);
 
-        // ── Transformer blocks ────────────────────────────────────────────
         var blocks = Enumerable.Range(0, modelConfig.NumLayers)
             .Select(_ => BuildBlock(modelConfig, sharpConfig, mapping, acts, ops));
 
-        // ── Architecture wrapper ──────────────────────────────────────────
         IArchitecture arch = sharpConfig.Arch switch
         {
             ArchKind.Decoder => new DecoderArch(blocks),
             ArchKind.Encoder => new EncoderArch(blocks),
-            _ => throw new NotSupportedException(
-                                    $"Unknown ArchKind: {sharpConfig.Arch}")
+            _ => throw new NotSupportedException($"Unknown ArchKind: {sharpConfig.Arch}")
         };
 
-        // ── Final norm ────────────────────────────────────────────────────
         var finalNorm = BuildNorm(modelConfig.HiddenDim, sharpConfig);
 
         return new Transformer(modelConfig, embedding, arch, finalNorm, ops);
     }
 
-    // ── Block construction ────────────────────────────────────────────────
+    public static Transformer CreateSafe(
+        ModelConfig config, 
+        SharpMindConfig sharpConfig, 
+        SharpMind.Tokenization.Tokenizer tokenizer, 
+        int trainingSeqLen = 128)
+    {
+        bool vocabMismatch = config.VocabSize < tokenizer.VocabSize;
+        bool seqMismatch = config.MaxSeqLen < trainingSeqLen;
+
+        if (vocabMismatch || seqMismatch)
+        {
+            Console.WriteLine("[ModelFactory] Config mismatch - auto-adjusting...");
+            if (vocabMismatch) 
+                Console.WriteLine($"  VocabSize: {config.VocabSize} -> {tokenizer.VocabSize}");
+            if (seqMismatch) 
+                Console.WriteLine($"  MaxSeqLen: {config.MaxSeqLen} -> {trainingSeqLen}");
+
+            config = config with 
+            {
+                VocabSize = Math.Max(config.VocabSize, tokenizer.VocabSize),
+                MaxSeqLen = Math.Max(config.MaxSeqLen, trainingSeqLen)
+            };
+        }
+
+        return Create(config, sharpConfig);
+    }
 
     private static TransformerBlock BuildBlock(
         ModelConfig modelConfig,
@@ -77,8 +83,6 @@ public static class ModelFactory
         return new TransformerBlock(attention, ffn, norm1, norm2, ops);
     }
 
-    // ── FFN construction ──────────────────────────────────────────────────
-
     private static FfnLayer BuildFfn(
         ModelConfig modelConfig,
         SharpMindConfig sharpConfig,
@@ -92,8 +96,6 @@ public static class ModelFactory
             _ => throw new NotSupportedException($"Unknown FfnKind: {sharpConfig.Ffn}")
         };
 
-    // ── Norm construction ─────────────────────────────────────────────────
-
     private static NormLayer BuildNorm(int dim, SharpMindConfig sharpConfig)
     {
         return sharpConfig.Norm switch
@@ -103,5 +105,4 @@ public static class ModelFactory
             _ => throw new NotSupportedException($"Unknown NormKind: {sharpConfig.Norm}")
         };
     }
-
 }

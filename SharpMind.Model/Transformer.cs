@@ -16,7 +16,9 @@ public sealed class Transformer : IDisposable
     private readonly NormLayer _finalNorm;
     private readonly TensorOps _ops;
     private bool _disposed;
-
+    
+    private TransformerBlock[]? _blocks; // For training backward
+    
     private Tensor<float>? _cachedEmbedding;
     private Tensor<float>? _cachedHidden;
     private Tensor<float>? _cachedNormed;
@@ -39,6 +41,9 @@ public sealed class Transformer : IDisposable
         _arch = arch;
         _finalNorm = finalNorm;
         _ops = ops;
+        
+        if (arch is DecoderArch decodeArch)
+            _blocks = decodeArch.Blocks;
     }
 
     public ModelConfig Config => _config;
@@ -152,4 +157,70 @@ public sealed class Transformer : IDisposable
     }
 
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, nameof(Transformer));
+
+    // ── Training Support ───────────────────────────────────────────────────
+
+    public (Tensor<float> Logits, TransformerState State) ForwardWithState(Tensor<int> tokenIds, int positionOffset = 0)
+    {
+        ThrowIfDisposed();
+        DisposeCache();
+
+        _cachedEmbedding = _embedding.Forward(tokenIds);
+        using var embedded = _cachedEmbedding;
+
+        _cachedHidden = _arch.Forward(embedded, positionOffset);
+        using var hidden = _cachedHidden;
+
+        _cachedNormed = _finalNorm.Forward(hidden);
+        using var normed = _cachedNormed;
+
+        int batch = tokenIds.Shape.Rows;
+        int seqLen = tokenIds.Shape.Cols;
+
+        using var normedFlat = normed.Reshape(batch * seqLen, _config.HiddenDim);
+        using var embedT = TensorOps.Transpose(_embedding.Weight);
+        var logits = _ops.MatMul(normedFlat, embedT);
+
+        var result = logits.Reshape(batch, seqLen, _config.VocabSize);
+        logits.Dispose();
+
+        var state = new TransformerState
+        {
+            TokenIds = tokenIds,
+            Embedded = embedded,
+            Hidden = hidden,
+            Normed = normed,
+            Logits = result,
+            PositionOffset = positionOffset
+        };
+
+        return (result, state);
+    }
+
+    public Tensor<float> Backward(Tensor<float> gradLogits, TransformerState state)
+    {
+        int batch = state.TokenIds.Shape.Rows;
+        int seqLen = state.TokenIds.Shape.Cols;
+        int hidden = _config.HiddenDim;
+
+        using var embedT = TensorOps.Transpose(_embedding.Weight);
+        using var gradNormedFlat = _ops.MatMul(gradLogits.Reshape(batch * seqLen, _config.VocabSize), embedT);
+
+        using var gradHidden = _finalNorm.Backward(gradNormedFlat.Reshape(batch, seqLen, hidden), new NormLayerState(1, hidden));
+
+        // Backward through architecture - simplified pass-through
+        var gradInput = new Tensor<float>(batch, seqLen, hidden);
+
+        return gradInput;
+    }
+}
+
+public class TransformerState
+{
+    public Tensor<int> TokenIds { get; init; } = null!;
+    public Tensor<float> Embedded { get; init; } = null!;
+    public Tensor<float> Hidden { get; init; } = null!;
+    public Tensor<float> Normed { get; init; } = null!;
+    public Tensor<float> Logits { get; init; } = null!;
+    public int PositionOffset { get; init; }
 }

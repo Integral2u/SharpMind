@@ -9,6 +9,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\SharpMind.Core\SharpMind.Core.csproj" />
+    <ProjectReference Include="..\SharpMind.Tokenization\SharpMind.Tokenization.csproj" />
   </ItemGroup>
 
 </Project>

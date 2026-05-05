@@ -1,3 +1,3 @@
 ﻿using SharpMind.Samples.Tests;
 
-await AutoSizingTest.Run();
+await RealDataTraining.RunPixelChar();

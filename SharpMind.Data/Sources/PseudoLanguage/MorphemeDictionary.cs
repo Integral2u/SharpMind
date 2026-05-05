@@ -8,7 +8,7 @@ public sealed class MorphemeDictionary
 
     public IReadOnlyList<string> Roots => _roots;
 
-    public MorphemeDictionary()
+    public MorphemeDictionary(int targetVocabSize = 0)
     {
         _prefixes = new()
         {
@@ -60,52 +60,63 @@ public sealed class MorphemeDictionary
 
         _roots =
         [
-            // Locomotion
             "walk", "run", "jump", "swim", "fly", "crawl", "climb", "dance", "slide", "glide",
             "hop", "skip", "leap", "dash", "sprint",
-
-            // Communication
             "speak", "talk", "say", "tell", "ask", "shout", "whisper", "call", "write", "read",
-
-            // Creation
             "build", "make", "create", "form", "shape", "craft", "design", "draw", "paint", "compose",
-
-            // Discovery
             "find", "search", "seek", "explore", "discover", "learn", "study", "examine", "probe", "hunt",
-
-            // Movement (abstract)
             "start", "stop", "begin", "end", "move", "change", "turn", "shift", "drive", "push",
-
-            // Perception
             "see", "look", "watch", "hear", "listen", "feel", "touch", "sense", "notice", "observe",
-
-            // Emotion
-            "love", "hate", "fear", "hope", "wish", "dream", "feel", "laugh", "cry", "smile",
-
-            // Cognition
+            "love", "hate", "fear", "hope", "wish", "dream", "laugh", "cry", "smile",
             "think", "know", "believe", "understand", "remember", "forget", "decide", "choose", "plan", "imagine",
-
-            // Action (general)
             "do", "make", "act", "work", "play", "try", "use", "get", "give", "take",
-
-            // State
             "be", "have", "hold", "keep", "stay", "remain", "exist", "live", "grow", "become",
-
-            // Transfer
             "give", "take", "get", "receive", "accept", "reject", "offer", "pass", "send", "bring",
-
-            // Assistance
             "help", "aid", "assist", "support", "back", "save", "rescue", "protect", "defend", "guard",
-
-            // Comparison
             "compare", "match", "fit", "suit", "equal", "like", "love", "prefer", "choose", "select",
-
-            // Measurement
             "measure", "count", "weigh", "size", "rate", "grade", "rank", "score", "assess", "value",
-
-            // Time
-            "wait", "stay", "remain", "last", "endure", "continue", "persist", "last", "age", "date",
+            "wait", "stay", "remain", "last", "endure", "continue", "persist", "age", "date",
         ];
+
+        if (targetVocabSize > 0)
+        {
+            ExpandTo(targetVocabSize);
+        }
+    }
+
+    private void ExpandTo(int targetSize)
+    {
+        if (targetSize <= _roots.Count) return;
+
+        // Estimate roots needed
+        int currentRoots = _roots.Count;
+        int needed = targetSize - currentRoots;
+        
+        // Generate unique roots: r000, r001 ... r999, ra0 ...
+        int toAdd = Math.Min(needed, 1000); // Keep adding until we have enough
+        
+        for (int i = 0; i < toAdd; i++)
+        {
+            string root = i < 100 ? $"r{i.ToString().PadLeft(3, '0')}" : $"r{i}";
+            if (!_roots.Contains(root))
+            {
+                _roots.Add(root);
+            }
+        }
+        
+        // Add any remaining if still needed (extend format)
+        while (_roots.Count < targetSize)
+        {
+            int idx = _roots.Count;
+            string root = $"root{idx}";
+            if (!_roots.Contains(root))
+            {
+                _roots.Add(root);
+            }
+        }
+        
+        // Ensure we have enough prefixes/suffixes too
+        // (Already have ~15 each, which is likely enough for combinations)
     }
 
     public bool TryGetPrefixCategory(string prefix, out MorphemeCategory category)

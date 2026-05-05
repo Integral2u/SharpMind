@@ -13,21 +13,11 @@ Core: tensors, matrix math, memory, activations
 
 async returns of IAsyncEnumerable and IAsyncEnumerator are they optimized for intention where they can be
 
-MUST DO
-
-BpeTrainer needs massive optimization, See RealDataTraining line 76.
 
 Ensure these are done, Remeber implementing the JigSawDotNet pattern may be applicable for options
 Model Compression, Quantization (4-bit/8-bit/2-bit/1-bit/1.58-bit), Distillation, Pruning/Sparsity
 Inference Speed Optimizations, Flash Attention, Speculative Decoding is Fused Kernels pratical, TurboQuant.
 Memory & Context Optimizations, Key-Value (KV) Caching, PagedAttention, Grouped-Query Attention (GQA
-
-Can we use the EMNIST dataset to test builing of a model and testing?
-The EMNIST dataset is a set of handwritten character digits derived from the NIST Special Database 19  and converted to a 28x28 pixel image format and dataset structure that directly matches the MNIST dataset
-I have the MatLab or Gzip files downloaded that i can dd to ExternalAssests
-
-Please cite the following paper when using or referencing the dataset:
-Cohen, G., Afshar, S., Tapson, J., & van Schaik, A. (2017). EMNIST: an extension of MNIST to handwritten letters. Retrieved from http://arxiv.org/abs/1702.05373
 
 
 ChatSession design (async), tool, input types, status(Thinking/Updating/Executing/Responding/Waiting)
@@ -45,11 +35,8 @@ New feature - Something else you're interested in?
 
 Config files hould be human readable
 Skills.MD
-Read Safetensors and GGUF for model weights
 IDatasource additions
-Read Parquet
 Read CSV 
-should PseudoLanguageSerializer have SaveTo txt or csv
 
 Use of JsonObject, preffer stronly typed class where possible.
 
@@ -70,37 +57,3 @@ SLERP (Spherical Linear Interpolation): Better than linear interpolation for hig
 TIES-Merging (TrIm, Elect, Sign, and Merge): Designed to handle interference between models by only merging the most significant weight updates and resolving sign disagreements
 DARE (Drop And REscale): Drops redundant weights and re-scales the remaining weights to create a "soups" of models, reducing task interference.
 Task Arithmetic: Creates "task vectors" by subtracting the base model weights from the fine-tuned model weights, allowing these vectors to be added or subtracted to modify model behavior.
-
-FullTraining.ComputeGradientsLearnable dLogits and hidden are not used is this an error or should the parameters be removed
-SafetensorsLoader.ParseLayerIdx suffix is not used is this an error or should the parameter be removed
-
-Can we use the EMNIST dataset to test builing of a model and testing?
-The EMNIST dataset is a set of handwritten character digits derived from the NIST Special Database 19  and converted to a 28x28 pixel image format and dataset structure that directly matches the MNIST dataset
-I have the MatLab or Gzip files downloaded that i can dd to ExternalAssests
-
-Please cite the following paper when using or referencing the dataset:
-Cohen, G., Afshar, S., Tapson, J., & van Schaik, A. (2017). EMNIST: an extension of MNIST to handwritten letters. Retrieved from http://arxiv.org/abs/1702.05373
-
-Phase 4: EMNIST Digit Recognition
-Goal: Test building/training a vision model
-
-Data:
-
-You have MatLab or GZIP files (not in ExternalAssets yet)
-28x28 grayscale images
-62 classes (digits 0-9, uppercase A-Z, lowercase a-z)
-Actions:
-
-Add EMNIST files to ExternalAssets
-Create EMNISTLoader to parse
-Create simple CNN or MLP model
-Train and evaluate accuracy
-Questions for Clarification
-Capacity increase: Should I proceed with vocab=64, hidden=64, layers=1 (start small) or go bigger?
-Data converters priority: Which should come first?
-Parquet (larger dataset, for language model pre-training)
-Fusechat (Q&A format, closer to learnable structure)
-EMNIST files: Do you have these ready to add to ExternalAssets? What format - MatLab (.mat) or GZIP (.gz)?
-FullTraining changes: Should new data samples be:
-Separate sample sets (e.g., FullTrainingRealData.cs)
-Added as new syntax patterns to LearnableGenerator?

@@ -28,6 +28,7 @@ public sealed class DecoderArch : IArchitecture
     }
 
     public int NumLayers => _blocks.Length;
+    public TransformerBlock[] Blocks => _blocks;
 
     public IEnumerable<Parameter> Parameters()
     {
