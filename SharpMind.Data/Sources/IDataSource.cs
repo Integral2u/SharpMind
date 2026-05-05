@@ -10,7 +10,7 @@
 /// Sources are intentionally dumb: they read and yield, nothing more.
 /// Cleaning, filtering, and tokenisation happen downstream.
 /// </summary>
-public interface IDataSource : IAsyncDisposable
+public interface IDataSource : IAsyncEnumerable<string>, IAsyncDisposable
 {
     /// <summary>
     /// Streams documents from this source.
