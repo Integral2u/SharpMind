@@ -11,6 +11,7 @@ Tokenizer: BPE, vocab builder, encode/decode
 Data: sources, cleaning, formating, batching, dataset loaders
 Core: tensors, matrix math, memory, activations
 
+Maybe check with claude
 async returns of IAsyncEnumerable and IAsyncEnumerator are they optimized for intention where they can be
 
 

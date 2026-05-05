@@ -1,6 +1,8 @@
 ﻿using System.Runtime.CompilerServices;
+using System.Threading.Channels;
 
 namespace SharpMind.Data.Sources;
+
 /// <summary>
 /// Combines multiple <see cref="IDataSource"/> instances into one stream.
 ///
@@ -66,27 +68,57 @@ public sealed class CompositeSource : IDataSource
     private async IAsyncEnumerable<string> RoundRobinAsync(
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        // Materialise one enumerator per source and advance them in rotation
-        var enumerators = _sources
-            .Select(s => s.ReadAsync(cancellationToken).GetAsyncEnumerator(cancellationToken))
-            .ToList();
+        // Create a buffer (channel) for each source to pre-fetch the next item in parallel
+        var channels = _sources.Select(_ => Channel.CreateBounded<string>(new BoundedChannelOptions(1)
+        {
+            FullMode = BoundedChannelFullMode.Wait,
+            SingleReader = true,
+            SingleWriter = true
+        })).ToArray();
 
-        var active = new bool[enumerators.Count];
+        // Start producers for each source
+        var tasks = _sources.Select(async (source, i) =>
+        {
+            try
+            {
+                await foreach (var doc in source.ReadAsync(cancellationToken))
+                {
+                    await channels[i].Writer.WriteAsync(doc, cancellationToken);
+                }
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception ex)
+            {
+                channels[i].Writer.TryComplete(ex);
+            }
+            finally
+            {
+                channels[i].Writer.TryComplete();
+            }
+        }).ToArray();
+
+        // Background task to ensure all producers are awaited eventually
+        _ = Task.WhenAll(tasks);
+
+        var active = new bool[_sources.Length];
         Array.Fill(active, true);
-        int remaining = enumerators.Count;
+        int remaining = _sources.Length;
 
         try
         {
             while (remaining > 0)
             {
-                for (int i = 0; i < enumerators.Count; i++)
+                for (int i = 0; i < _sources.Length; i++)
                 {
                     if (!active[i]) continue;
-                    cancellationToken.ThrowIfCancellationRequested();
 
-                    if (await enumerators[i].MoveNextAsync().ConfigureAwait(false))
+                    // Wait for the next item from this specific source (preserving order)
+                    if (await channels[i].Reader.WaitToReadAsync(cancellationToken))
                     {
-                        yield return enumerators[i].Current;
+                        if (channels[i].Reader.TryRead(out var doc))
+                        {
+                            yield return doc;
+                        }
                     }
                     else
                     {
@@ -98,8 +130,7 @@ public sealed class CompositeSource : IDataSource
         }
         finally
         {
-            foreach (var e in enumerators)
-                await e.DisposeAsync().ConfigureAwait(false);
+            // Cleanup is handled by the producers completing their channels
         }
     }
 }
