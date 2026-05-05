@@ -17,6 +17,7 @@ public interface IDataSource : IAsyncDisposable
 
     /// <summary>Human-readable description for logging and diagnostics.</summary>
     string Description { get; }
+    
     /// <summary>
     /// Streams documents from this source.
     /// The caller controls cancellation via <paramref name="cancellationToken"/>.

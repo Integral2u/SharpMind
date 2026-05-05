@@ -30,8 +30,8 @@ public class ModelConverterTests
 
         var parameters = new List<Parameter>
         {
-            new Parameter("embedding.weight", tensor1),
-            new Parameter("final_norm.weight", tensor2),
+            new("embedding.weight", tensor1),
+            new("final_norm.weight", tensor2),
         };
 
         var config = new SharpMind.Model.Format.SharpMindConfig
@@ -84,10 +84,9 @@ public class ModelConverterTests
     public void FormatDetection_Works()
     {
         // Test that format detection uses file extension
-        var result1 = SharpMind.Model.Format.ModelConverter.DetectFormat("model.safetensors");
-        var result2 = SharpMind.Model.Format.ModelConverter.DetectFormat("model.gguf");
-        
-        // These don't throw - just verify API works
-        Assert.True(true);
+        var result1 = ModelConverter.DetectFormat("model.safetensors");
+        var result2 = ModelConverter.DetectFormat("model.gguf");
+        Assert.Equal(ModelConverter.ModelFormat.SafeTensors,result1);
+        Assert.Equal(ModelConverter.ModelFormat.Gguf, result2);
     }
 }

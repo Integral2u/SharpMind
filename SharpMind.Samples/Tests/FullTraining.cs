@@ -89,7 +89,7 @@ public static class FullTraining
 
             using var dLogits = loss.Backward(flatLogits, flatTargets);
             
-            ComputeGradientsLearnable(dLogits, tokens, parameters, model.Config.VocabSize, config.BatchSize, maxSeqLen, model.Config.HiddenDim, model);
+            ComputeGradientsLearnable(tokens, parameters, model.Config.VocabSize, config.BatchSize, maxSeqLen, model);
             
             ApplyOptimize(parameters, optimizer, scheduler.GetLr(step));
 
@@ -123,13 +123,11 @@ public static class FullTraining
     }
 
     private static void ComputeGradientsLearnable(
-        Tensor<float> dLogits,
         Tensor<int> tokens,
         List<Parameter> parameters,
         int vocab,
         int batch,
         int seqLen,
-        int hidden,
         Transformer model)
     {
         foreach (var p in parameters)
@@ -217,42 +215,6 @@ public static class FullTraining
         
         return total > 0 ? loss / total : 0f;
     }
-
-    private static float ComputeAccuracyQandA(Tensor<float> logits, GenerateResult batch, LearnableGenerator generator)
-    {
-        int vocab = logits.Shape[2];
-        int batchSize = batch.BatchSize;
-        int seqLen = logits.Shape[1];
-        
-        int correct = 0;
-        int total = 0;
-        
-        for (int b = 0; b < batchSize; b++)
-        {
-            int lastPosToken = batch.TokenIds[b * seqLen + seqLen - 1];
-            if (lastPosToken < 0 || lastPosToken >= vocab) continue;
-            
-            float maxLogit = float.NegativeInfinity;
-            int predToken = -1;
-            
-            int idx = (b * seqLen + seqLen - 1) * vocab;
-            for (int v = 0; v < vocab; v++)
-            {
-                if (logits.Data[idx + v] > maxLogit)
-                {
-                    maxLogit = logits.Data[idx + v];
-                    predToken = v;
-                }
-            }
-            
-            if (predToken == lastPosToken)
-                correct++;
-            total++;
-        }
-        
-        return total > 0 ? (float)correct / total : 0f;
-    }
-
     private static float ComputeAccuracy(Tensor<float> logits, GenerateResult batch)
     {
         int batchSize = batch.BatchSize;

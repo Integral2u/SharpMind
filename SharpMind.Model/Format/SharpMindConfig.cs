@@ -41,7 +41,17 @@ public sealed class SharpMindConfig
     
     /// <summary>Tokenizer type and vocab file.</summary>
     public TokenizerInfo? Tokenizer { get; set; }
-    
+
+    private static readonly JsonSerializerOptions JsonSerializerOptionsSavePolicy = new()
+    {
+        WriteIndented = true,
+        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    };
+    private static readonly JsonSerializerOptions JsonSerializerOptionsLoadPolicy = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+    };
     /// <summary>Convert from ModelConfig.</summary>
     public static SharpMindConfig FromModelConfig(ModelConfig config, string? source = null)
     {
@@ -74,31 +84,13 @@ public sealed class SharpMindConfig
             RopeTheta = RopeTheta,
         };
     }
-    
+
     /// <summary>Save config to JSON file.</summary>
-    public void Save(string path)
-    {
-        var options = new JsonSerializerOptions
-        {
-            WriteIndented = true,
-            PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
-            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-        };
-        string json = JsonSerializer.Serialize(this, options);
-        File.WriteAllText(path, json);
-    }
-    
+    public void Save(string path) => File.WriteAllText(path, JsonSerializer.Serialize(this, JsonSerializerOptionsSavePolicy));
+
     /// <summary>Load config from JSON file.</summary>
-    public static SharpMindConfig Load(string path)
-    {
-        string json = File.ReadAllText(path);
-        var options = new JsonSerializerOptions
-        {
-            PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
-        };
-        return JsonSerializer.Deserialize<SharpMindConfig>(json, options) 
+    public static SharpMindConfig Load(string path) => JsonSerializer.Deserialize<SharpMindConfig>(File.ReadAllText(path), JsonSerializerOptionsLoadPolicy)
             ?? throw new InvalidDataException("Failed to deserialize config.json");
-    }
 }
 
 /// <summary>

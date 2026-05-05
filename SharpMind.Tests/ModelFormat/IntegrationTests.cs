@@ -20,19 +20,10 @@ public class IntegrationTests
     private const string GgufFileName = "TinyLlama-1.1B-Chat-v1.0.Q4_K_M.gguf";
     private const string SafetensorsFileName = "model.safetensors";
 
-    private bool TryGetFile(string filename, out string path)
+    private static bool TryGetFile(string filename, out string path)
     {
         path = Path.Combine(ExternalAssetsPath, filename);
         return File.Exists(path);
-    }
-
-    private void WarnIfFileNotFound(string filename, Action<string> warn)
-    {
-        var fullPath = Path.Combine(ExternalAssetsPath, filename);
-        if (!File.Exists(fullPath))
-        {
-            warn($"External asset not found: {fullPath}. Tests requiring external model files will be skipped.");
-        }
     }
 
     [Fact]

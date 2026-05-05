@@ -11,12 +11,8 @@ Tokenizer: BPE, vocab builder, encode/decode
 Data: sources, cleaning, formating, batching, dataset loaders
 Core: tensors, matrix math, memory, activations
 
+async returns of IAsyncEnumerable and IAsyncEnumerator are they optimized for intention where they can be
 
-In ProductionTraining var sharpConfig = SharpMindConfig.Gpt with { Hardware = HardwareTier.Gpu }; fails as HardwareTier has no Gpu value.
-MappingBuilder needs extension methods from SharpMind.GPU and existing confinguration systems unified into SharpMind.
-Also PipelineNode had no Static From method and should IDataSource extend  IAsyncEnumerable<string>
-
-TokenizationPipeline
 MUST DO
 
 BpeTrainer needs massive optimization, See RealDataTraining line 76.
@@ -33,7 +29,6 @@ I have the MatLab or Gzip files downloaded that i can dd to ExternalAssests
 Please cite the following paper when using or referencing the dataset:
 Cohen, G., Afshar, S., Tapson, J., & van Schaik, A. (2017). EMNIST: an extension of MNIST to handwritten letters. Retrieved from http://arxiv.org/abs/1702.05373
 
-Unify Configs in SharpMind.Core and flesh our MappingBuilder
 
 ChatSession design (async), tool, input types, status(Thinking/Updating/Executing/Responding/Waiting)
 
@@ -76,38 +71,15 @@ TIES-Merging (TrIm, Elect, Sign, and Merge): Designed to handle interference bet
 DARE (Drop And REscale): Drops redundant weights and re-scales the remaining weights to create a "soups" of models, reducing task interference.
 Task Arithmetic: Creates "task vectors" by subtracting the base model weights from the fine-tuned model weights, allowing these vectors to be added or subtracted to modify model behavior.
 
+FullTraining.ComputeGradientsLearnable dLogits and hidden are not used is this an error or should the parameters be removed
+SafetensorsLoader.ParseLayerIdx suffix is not used is this an error or should the parameter be removed
 
-The last session seems to be broken can we continue here.  this is what we were up to Phase 2: Add Real Data Converters
-A. open-perfectblend (Parquet)
+Can we use the EMNIST dataset to test builing of a model and testing?
+The EMNIST dataset is a set of handwritten character digits derived from the NIST Special Database 19  and converted to a 28x28 pixel image format and dataset structure that directly matches the MNIST dataset
+I have the MatLab or Gzip files downloaded that i can dd to ExternalAssests
 
-Contains ~1.5GB of training data (6 shards)
-Unknown schema - need to inspect
-B. fusechat (JSON)
-
-Already have a sample
-Format: {conversations: [{from, value}, ...]}
-Need ParquetSource class to read .parquet files
-Actions:
-
-Add Parquet package reference to read files
-Create ParquetSource class implementing IDataSource
-Create FusechatSource for JSON conversations
-Create new training sample sets (not replace FullTraining) and you had created the project SharpMind.Data.Parquet but i believe it was broken so i have removed it, re-added an new projects and added the Parquet.Net package
-
-
-can SchemaInspector be removed
-Phase 3: Use Pseudo-Language for Optimal Size
-Goal: Determine model size guidance from learnable patterns
-
-Actions:
-
-Run learnable with varying:
-vocab: small (16) → medium (64) → large (128)
-hidden: 16 → 32 → 64 → 128
-layers: 1 → 2 → 3
-Track loss curves to find where returns diminish
-Use this to size model for real data training
-
+Please cite the following paper when using or referencing the dataset:
+Cohen, G., Afshar, S., Tapson, J., & van Schaik, A. (2017). EMNIST: an extension of MNIST to handwritten letters. Retrieved from http://arxiv.org/abs/1702.05373
 
 Phase 4: EMNIST Digit Recognition
 Goal: Test building/training a vision model

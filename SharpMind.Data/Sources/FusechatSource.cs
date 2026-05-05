@@ -79,7 +79,7 @@ public sealed class FusechatSource : IDataSource
         }
     }
 
-    private string FormatConversations(JsonElement conversations)
+    private static string FormatConversations(JsonElement conversations)
     {
         var sb = new StringBuilder();
         foreach (JsonElement turn in conversations.EnumerateArray())

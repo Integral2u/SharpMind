@@ -78,7 +78,7 @@ public static class ModelConverter
             FfnDim = (int)meta.GetLong("ffn_dim", 11008),
             MaxSeqLen = (int)meta.GetLong("context_length", 2048),
             RopeTheta = meta.GetFloat("rope_theta", 10000f),
-            Source = meta.GetString("arch", null),
+            Source = meta.GetString("arch", string.Empty),
         };
         
         return ConvertWeights(weights, mapper, config);
