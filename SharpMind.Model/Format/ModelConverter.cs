@@ -13,6 +13,7 @@ namespace SharpMind.Model.Format;
 /// </summary>
 public static class ModelConverter
 {
+    private static readonly JsonSerializerOptions IndentedJsonSerializerOptions = new() { WriteIndented = true };
     /// <summary>Supported external model formats.</summary>
     public enum ModelFormat
     {
@@ -202,7 +203,7 @@ public static class ModelConverter
         };
         
         string manifestPath = Path.Combine(outputDir, "manifest.json");
-        File.WriteAllText(manifestPath, JsonSerializer.Serialize(manifest, new JsonSerializerOptions { WriteIndented = true }));
+        File.WriteAllText(manifestPath, JsonSerializer.Serialize(manifest, IndentedJsonSerializerOptions));
     }
     
     private static void SaveWeightsBinary(IEnumerable<Parameter> parameters, string path)

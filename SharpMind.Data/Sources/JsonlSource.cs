@@ -48,6 +48,9 @@ public sealed class JsonlSource : IDataSource
             ? $"Jsonl({Path.GetFileName(_paths[0])}, field={string.Join('.', _fieldPath)})"
             : $"Jsonl({_paths.Length} files, field={string.Join('.', _fieldPath)})";
 
+    public IAsyncEnumerator<string> GetAsyncEnumerator(CancellationToken cancellationToken = default)
+        => ReadAsync(cancellationToken).GetAsyncEnumerator(cancellationToken);
+
     public async IAsyncEnumerable<string> ReadAsync(
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {

@@ -10,21 +10,16 @@
 /// Sources are intentionally dumb: they read and yield, nothing more.
 /// Cleaning, filtering, and tokenisation happen downstream.
 /// </summary>
-public interface IDataSource : IAsyncEnumerable<string>, IAsyncDisposable
+public interface IDataSource : IAsyncDisposable
 {
+    /// <summary>Estimated document count, if known without a full scan.</summary>
+    long? EstimatedCount { get; }
+
+    /// <summary>Human-readable description for logging and diagnostics.</summary>
+    string Description { get; }
     /// <summary>
     /// Streams documents from this source.
     /// The caller controls cancellation via <paramref name="cancellationToken"/>.
     /// </summary>
     IAsyncEnumerable<string> ReadAsync(CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// Estimated document count, if known without a full scan.
-    /// Null when the source cannot determine this cheaply (e.g. a live stream).
-    /// Used by the DataLoader to report progress.
-    /// </summary>
-    long? EstimatedCount { get; }
-
-    /// <summary>Human-readable description for logging and diagnostics.</summary>
-    string Description { get; }
 }

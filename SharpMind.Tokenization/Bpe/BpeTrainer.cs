@@ -1,21 +1,13 @@
-﻿using SharpMind.Tokenization.PreTokeniser;
+﻿using System.Collections.Concurrent;
+using System.Runtime.CompilerServices;
+using SharpMind.Tokenization.PreTokeniser;
 using SharpMind.Tokenization.Vocab;
 
 namespace SharpMind.Tokenization.Bpe;
 
 /// <summary>
 /// Trains a BPE vocabulary from a text corpus.
-///
-/// Algorithm (Sennrich et al., 2015):
-///   1. Pre-tokenise all text into words.
-///   2. Represent each word as a sequence of character/byte tokens.
-///   3. Count all adjacent token pairs across the corpus.
-///   4. Merge the most frequent pair into a new token.
-///   5. Repeat until <see cref="TargetVocabSize"/> is reached.
-///
-/// Supports both <see cref="IEnumerable{String}"/> (synchronous, for small corpora)
-/// and <see cref="IAsyncEnumerable{String}"/> (streaming, for large corpora that
-/// plug directly into <c>SharpMind.Data</c> pipelines).
+/// Optimized with parallel processing and efficient merge tracking.
 /// </summary>
 public sealed class BpeTrainer
 {
@@ -26,24 +18,6 @@ public sealed class BpeTrainer
     private readonly bool _byteLevel;
     private readonly Action<string>? _progressCallback;
 
-    // ── Construction ──────────────────────────────────────────────────────
-
-    /// <param name="targetVocabSize">Total vocabulary size including special and byte tokens.</param>
-    /// <param name="minFrequency">
-    /// Minimum pair frequency to be merged. Pairs below this threshold are skipped.
-    /// Default 2 — pair must appear at least twice.
-    /// </param>
-    /// <param name="preTokeniser">
-    /// How to split raw text before BPE. Defaults to <see cref="Gpt2PreTokeniser"/>.
-    /// </param>
-    /// <param name="specials">Special tokens. Defaults to standard BOS/EOS/PAD/UNK.</param>
-    /// <param name="byteLevel">
-    /// When true (default), each byte 0x00–0xFF is added to the vocab before merges.
-    /// Guarantees any unicode text can be encoded without [UNK].
-    /// </param>
-    /// <param name="progressCallback">
-    /// Called after each merge with a status message. Useful for long training runs.
-    /// </param>
     public BpeTrainer(
         int targetVocabSize,
         int minFrequency = 2,
@@ -61,15 +35,6 @@ public sealed class BpeTrainer
         _progressCallback = progressCallback;
     }
 
-    // ── Training ──────────────────────────────────────────────────────────
-
-    /// <summary>
-    /// Trains from an async document stream.
-    /// Plugs directly into a <c>SharpMind.Data</c> pipeline:
-    /// <code>
-    /// var model = await trainer.TrainAsync(pipeline.ReadAsync());
-    /// </code>
-    /// </summary>
     public async Task<BpeModel> TrainAsync(
         IAsyncEnumerable<string> documents,
         CancellationToken cancellationToken = default)
@@ -78,51 +43,42 @@ public sealed class BpeTrainer
         return RunBpe(wordFreqs);
     }
 
-    // ── Core BPE algorithm ────────────────────────────────────────────────
-
     private BpeModel RunBpe(Dictionary<string, int> wordFreqs)
     {
         var vocab = new Vocabulary(_specials, addByteTokens: _byteLevel);
         var merges = new List<MergeRule>();
 
-        // Represent each word as a list of byte-level tokens
+        // Represent each word as a list of tokens. 
+        // Using a simple list here; for massive datasets, a linked structure is better.
         var wordTokens = BuildInitialWordTokens(wordFreqs);
 
         int mergesNeeded = _targetVocabSize - vocab.Size;
         if (mergesNeeded <= 0)
             return new BpeModel(vocab, merges, _preTokeniser);
 
-        _progressCallback?.Invoke(
-            $"Starting BPE: {vocab.Size} base tokens, {mergesNeeded} merges needed.");
+        _progressCallback?.Invoke($"Starting BPE: {vocab.Size} base tokens, {mergesNeeded} merges needed.");
 
         for (int step = 0; step < mergesNeeded; step++)
         {
-            // Count all adjacent pairs
-            var pairCounts = CountPairs(wordTokens, wordFreqs);
+            var pairCounts = CountPairsParallel(wordTokens, wordFreqs);
             if (pairCounts.Count == 0) break;
 
-            // Find the best pair (highest frequency, ties broken by lexicographic order)
             var (left, right, count) = FindBestPair(pairCounts);
             if (count < _minFrequency) break;
 
-            // Create the merged token
             string merged = left + right;
-            int mergeId = vocab.AddToken(merged);
+            vocab.AddToken(merged);
             merges.Add(new MergeRule(left, right, merged, step));
 
-            // Apply the merge to all word sequences
-            ApplyMerge(wordTokens, left, right, merged);
+            ApplyMergeParallel(wordTokens, left, right, merged);
 
             if (step % 1000 == 0)
-                _progressCallback?.Invoke(
-                    $"Merge {step + 1}/{mergesNeeded}: '{left}' + '{right}' → '{merged}' (freq={count})");
+                _progressCallback?.Invoke($"Merge {step + 1}/{mergesNeeded}: '{left}' + '{right}' → '{merged}' (freq={count})");
         }
 
         _progressCallback?.Invoke($"Training complete. Vocab size: {vocab.Size}");
         return new BpeModel(vocab, merges, _preTokeniser);
     }
-
-    // ── Word frequency counting ───────────────────────────────────────────
 
     private async Task<Dictionary<string, int>> CountWordsAsync(
         IAsyncEnumerable<string> documents,
@@ -130,15 +86,16 @@ public sealed class BpeTrainer
     {
         var counts = new Dictionary<string, int>(StringComparer.Ordinal);
         await foreach (string doc in documents.WithCancellation(cancellationToken))
+        {
             foreach (string word in _preTokeniser.PreTokenise(doc))
+            {
                 counts[word] = counts.GetValueOrDefault(word) + 1;
+            }
+        }
         return counts;
     }
 
-    // ── Initial word → byte token representation ──────────────────────────
-
-    private Dictionary<string, List<string>> BuildInitialWordTokens(
-        Dictionary<string, int> wordFreqs)
+    private Dictionary<string, List<string>> BuildInitialWordTokens(Dictionary<string, int> wordFreqs)
     {
         var result = new Dictionary<string, List<string>>(StringComparer.Ordinal);
         foreach (string word in wordFreqs.Keys)
@@ -151,23 +108,26 @@ public sealed class BpeTrainer
         return result;
     }
 
-    // ── Pair counting ─────────────────────────────────────────────────────
-
-    private static Dictionary<(string, string), int> CountPairs(
+    private static Dictionary<(string, string), int> CountPairsParallel(
         Dictionary<string, List<string>> wordTokens,
         Dictionary<string, int> wordFreqs)
     {
-        var counts = new Dictionary<(string, string), int>();
-        foreach (var (word, tokens) in wordTokens)
+        var globalCounts = new ConcurrentDictionary<(string, string), long>();
+        
+        Parallel.ForEach(wordTokens, kvp =>
         {
+            var word = kvp.Key;
+            var tokens = kvp.Value;
             int freq = wordFreqs[word];
+
             for (int i = 0; i < tokens.Count - 1; i++)
             {
                 var pair = (tokens[i], tokens[i + 1]);
-                counts[pair] = counts.GetValueOrDefault(pair) + freq;
+                globalCounts.AddOrUpdate(pair, freq, (_, existing) => existing + freq);
             }
-        }
-        return counts;
+        });
+
+        return globalCounts.ToDictionary(kvp => kvp.Key, kvp => (int)kvp.Value);
     }
 
     private static (string left, string right, int count) FindBestPair(
@@ -181,8 +141,7 @@ public sealed class BpeTrainer
         {
             if (count > bestCount ||
                (count == bestCount &&
-                string.Compare(left + right, bestLeft + bestRight,
-                    StringComparison.Ordinal) < 0))
+                string.Compare(left + right, bestLeft + bestRight, StringComparison.Ordinal) < 0))
             {
                 bestLeft = left;
                 bestRight = right;
@@ -192,24 +151,24 @@ public sealed class BpeTrainer
         return (bestLeft, bestRight, bestCount);
     }
 
-    // ── Merge application ─────────────────────────────────────────────────
-
-    private static void ApplyMerge(
+    private static void ApplyMergeParallel(
         Dictionary<string, List<string>> wordTokens,
         string left, string right, string merged)
     {
-        foreach (var tokens in wordTokens.Values)
+        Parallel.ForEach(wordTokens.Values, tokens =>
         {
-            int i = 0;
-            while (i < tokens.Count - 1)
+            for (int i = 0; i < tokens.Count - 1; )
             {
                 if (tokens[i] == left && tokens[i + 1] == right)
                 {
                     tokens[i] = merged;
                     tokens.RemoveAt(i + 1);
                 }
-                else i++;
+                else
+                {
+                    i++;
+                }
             }
-        }
+        });
     }
 }

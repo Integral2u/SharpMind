@@ -38,6 +38,9 @@ public sealed class FusechatSource : IDataSource
             ? $"Fusechat({Path.GetFileName(_paths[0])})"
             : $"Fusechat({_paths.Length} files)";
 
+    public IAsyncEnumerator<string> GetAsyncEnumerator(CancellationToken cancellationToken = default)
+        => ReadAsync(cancellationToken).GetAsyncEnumerator(cancellationToken);
+
     public async IAsyncEnumerable<string> ReadAsync(
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {

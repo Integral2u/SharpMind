@@ -1,4 +1,6 @@
-﻿namespace SharpMind.Data.Pipeline;
+﻿using SharpMind.Data.Sources;
+
+namespace SharpMind.Data.Pipeline;
 /// <summary>
 /// A node in the cleaning DAG. Produced by <see cref="CleaningPipeline"/>.
 /// Chain further stages via <see cref="Pipe"/>, <see cref="Branch"/>,
@@ -6,7 +8,12 @@
 /// </summary>
 public abstract class PipelineNode
 {
+    /// <summary>Starts a new cleaning pipeline from a raw data source.</summary>
+    public static PipelineNode From(IDataSource source)
+        => new SourceNode(source);
+
     // ── Fluent builders ───────────────────────────────────────────────────
+
 
     /// <summary>Appends a stage that transforms every document.</summary>
     public PipelineNode Pipe(ICleaningStage stage)

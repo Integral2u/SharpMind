@@ -11,6 +11,12 @@ Tokenizer: BPE, vocab builder, encode/decode
 Data: sources, cleaning, formating, batching, dataset loaders
 Core: tensors, matrix math, memory, activations
 
+
+In ProductionTraining var sharpConfig = SharpMindConfig.Gpt with { Hardware = HardwareTier.Gpu }; fails as HardwareTier has no Gpu value.
+MappingBuilder needs extension methods from SharpMind.GPU and existing confinguration systems unified into SharpMind.
+Also PipelineNode had no Static From method and should IDataSource extend  IAsyncEnumerable<string>
+
+TokenizationPipeline
 MUST DO
 
 BpeTrainer needs massive optimization, See RealDataTraining line 76.

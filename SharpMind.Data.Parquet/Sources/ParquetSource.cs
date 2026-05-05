@@ -58,7 +58,7 @@ public sealed class ParquetSource : IDataSource
                 cancellationToken.ThrowIfCancellationRequested();
 
                 using var rowGroupReader = reader.OpenRowGroupReader(i);
-                DataColumn[] columns = await reader.ReadEntireRowGroupAsync(i);
+                DataColumn[] columns = await reader.ReadEntireRowGroupAsync(i, cancellationToken);
                 
                 var fromCol = columns.FirstOrDefault(c => c.Field.Name == "from");
                 var valueCol = columns.FirstOrDefault(c => c.Field.Name == "value");
@@ -106,4 +106,5 @@ public sealed class ParquetSource : IDataSource
     }
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+
 }
