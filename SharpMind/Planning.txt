@@ -14,6 +14,7 @@ Core: tensors, matrix math, memory, activations
 Maybe check with claude
 async returns of IAsyncEnumerable and IAsyncEnumerator are they optimized for intention where they can be
 
+KVCache used to take ModelConfig
 
 Ensure these are done, Remeber implementing the JigSawDotNet pattern may be applicable for options
 Model Compression, Quantization (4-bit/8-bit/2-bit/1-bit/1.58-bit), Distillation, Pruning/Sparsity
@@ -60,164 +61,45 @@ TIES-Merging (TrIm, Elect, Sign, and Merge): Designed to handle interference bet
 DARE (Drop And REscale): Drops redundant weights and re-scales the remaining weights to create a "soups" of models, reducing task interference.
 Task Arithmetic: Creates "task vectors" by subtracting the base model weights from the fine-tuned model weights, allowing these vectors to be added or subtracted to modify model behavior.
 
-Should KVCache be put back in SharpMind.Inference
 
 
-using SharpMind.Core.Tensors;
-using SharpMind.Model.Config;
+1. Model Compression & Quantization
+Current State: Everything is Tensor<float>. JigSaw Implementation: Instead of making LinearLayer a complex class with if-statements for quantization, we can define LinearKernel corner pieces.
 
-namespace SharpMind.Inference;
+Quantization (INT8, FP8, NF4, 1.58-bit): Create specific kernels for QuantizedMatMul. The LinearLayer would remain a high-level coordinator, while the Assembler picks the kernel based on the weight's dtype.
+Pruning/Sparsity: Implement SparsityMask kernels. The JigSaw pattern could switch between a DenseMatMul and a SparsityAwareMatMul based on the sparsity ratio.
+2. Model Optimization (RoPE & MoE)
+Current State: RoPE is implemented; MoE exists as a stub. JigSaw Implementation:
 
-/// <summary>
-/// Per-layer key/value cache for incremental (autoregressive) decoding.
-///
-/// Without a KV-cache, generating each new token requires a full forward pass
-/// over the entire sequence history — O(SeqLen²) total cost. With the cache,
-/// only the new token's Q attends to all cached K/V — O(SeqLen) per step.
-///
-/// Layout: each layer stores K and V as growing [CacheLen, NumKvHeads, HeadDim]
-/// tensors. On each decode step the new K/V are appended before attention runs.
-///
-/// The cache is pre-allocated to <see cref="ModelConfig.MaxSeqLen"/> to avoid
-/// reallocation during generation. <see cref="Length"/> tracks how many tokens
-/// have been cached.
-/// </summary>
-public sealed class KvCache : IDisposable
-{
-    private readonly Tensor<float>[] _k;   // one per layer [MaxSeq, NumKvHeads, HeadDim]
-    private readonly Tensor<float>[] _v;
-    private bool _disposed;
+RoPE Improvements: RoPE is currently a single implementation. We can implement LongRoPE or YaRN as alternative Rope.Apply kernels, swappable via SharpMindConfig.
+Dense to MoE: Since FfnLayer already has FfnKind.MoE, we can implement the MoEFfnLayer logic properly. The "JigSaw" part would be the Router. We can implement different routing strategies (Top-K, Expert Choice, Sigmoid) as swappable corner pieces.
+3. Inference Speed Optimizations
+Current State: Basic ScaledDotProduct kernels. JigSaw Implementation:
 
-    public KvCache(ModelConfig config)
-    {
-        ArgumentNullException.ThrowIfNull(config);
+Flash Attention: This is the "Holy Grail" of attention. We can implement a FlashAttentionKernel that handles the tiling and softmax in a single fused pass. The AttentionLayer would simply call the assembled kernel.
+Fused Kernels: This is where the JigSaw pattern shines. We can fuse RMSNorm + Linear or SiLU + MatMul into a single kernel to reduce memory bandwidth bottlenecks.
+Speculative Decoding: This is a high-level orchestrator. It would involve running a "Draft" model (smaller Transformer) and a "Verify" model (larger Transformer) in tandem.
+4. Memory & Context Optimizations
+Current State: Full re-computation of the KV sequence for every token. JigSaw Implementation:
 
-        NumLayers  = config.NumLayers;
-        MaxSeqLen  = config.MaxSeqLen;
-        NumKvHeads = config.NumKvHeads;
-        HeadDim    = config.HeadDim;
-        Length     = 0;
+KV Caching: This is the most urgent need. We need to modify Transformer.Forward to accept and update a KVCache object.
+PagedAttention: Instead of a contiguous tensor for the KV cache, we implement a Block-based Page Table. The AttentionKernel would then be updated to index into these pages.
+Grouped-Query Attention (GQA): The structure is already there (NumKvHeads), but we can optimize the kernels to use a single load for multiple Q-heads.
+Strategic Implementation Roadmap (The "JigSaw" Way)
+If we want to implement these without breaking the system, I propose this sequence:
 
-        _k = new Tensor<float>[NumLayers];
-        _v = new Tensor<float>[NumLayers];
-        for (int i = 0; i < NumLayers; i++)
-        {
-            _k[i] = new Tensor<float>(MaxSeqLen, NumKvHeads, HeadDim);
-            _v[i] = new Tensor<float>(MaxSeqLen, NumKvHeads, HeadDim);
-        }
-    }
+Phase 1: The "Efficiency" Foundation (Urgent)
+KV Caching: Implement the KVCache store. This is the prerequisite for almost all inference speedups.
+Fused Kernels: Use the JigSaw pattern to implement a fused RMSNorm and Linear pass to reduce memory trips.
+GQA Optimization: Optimize the ScaledDotProduct kernels to actually leverage the reduced KV head count.
+Phase 2: The "Compression" Layer (Complexity)
+Quantization Framework: Introduce QuantizedTensor and implement INT8 and FP8 kernels.
+MoE Implementation: Move the MoEFfnLayer from a stub to a fully functional gated mixture of experts.
+Phase 3: The "Cutting Edge" (Advanced)
+PagedAttention: Transition the KV cache from contiguous tensors to a paged memory system.
+Flash Attention: Implement the tiling-based attention kernel to handle massive contexts.
+Speculative Decoding: Implement the draft-verify loop at the Generator level.
+Conclusion: Is it practical?
+Yes, and it's highly elegant. Because you are using the JigSawDotNet pattern, you can maintain a "Scalar" (slow but compatible) version of every feature alongside a "Hardware-Optimized" (AVX512/CUDA/Flash) version. The user just changes a string in the config, and the Assembler wires the fastest possible kernel for their hardware.
 
-    // ── Properties ────────────────────────────────────────────────────────
-
-    public int NumLayers  { get; }
-    public int MaxSeqLen  { get; }
-    public int NumKvHeads { get; }
-    public int HeadDim    { get; }
-
-    /// <summary>Number of tokens currently in the cache.</summary>
-    public int Length { get; private set; }
-
-    public bool IsFull => Length >= MaxSeqLen;
-
-    // ── Read / Write ──────────────────────────────────────────────────────
-
-    /// <summary>
-    /// Appends new K and V slices for <paramref name="layer"/> at the current cache position.
-    /// K and V must be [SeqLen, NumKvHeads, HeadDim] — the tokens generated in this step.
-    /// </summary>
-    public void Append(int layer, Tensor<float> k, Tensor<float> v)
-    {
-        ThrowIfDisposed();
-        ValidateLayer(layer);
-
-        int newTokens = k.Shape[0];
-        if (Length + newTokens > MaxSeqLen)
-            throw new InvalidOperationException(
-                $"KV cache overflow: {Length} + {newTokens} > MaxSeqLen {MaxSeqLen}. " +
-                "Truncate the context or increase MaxSeqLen.");
-
-        int stride = NumKvHeads * HeadDim;
-        k.Data.CopyTo(_k[layer].Data.Slice(Length * stride, newTokens * stride));
-        v.Data.CopyTo(_v[layer].Data.Slice(Length * stride, newTokens * stride));
-
-        // Only advance Length on the first layer — all layers get the same tokens
-        if (layer == 0) Length += newTokens;
-    }
-
-    /// <summary>
-    /// Returns a span view over the cached K values for <paramref name="layer"/>,
-    /// up to <see cref="Length"/> tokens. Shape: [Length, NumKvHeads, HeadDim].
-    /// </summary>
-    public ReadOnlySpan<float> GetK(int layer)
-    {
-        ThrowIfDisposed();
-        ValidateLayer(layer);
-        return _k[layer].Data[..(Length * NumKvHeads * HeadDim)];
-    }
-
-    public ReadOnlySpan<float> GetV(int layer)
-    {
-        ThrowIfDisposed();
-        ValidateLayer(layer);
-        return _v[layer].Data[..(Length * NumKvHeads * HeadDim)];
-    }
-
-    /// <summary>
-    /// Resets the cache to empty without reallocating.
-    /// Call between independent generation requests.
-    /// </summary>
-    public void Reset()
-    {
-        ThrowIfDisposed();
-        Length = 0;
-    }
-
-    /// <summary>
-    /// Trims the cache to the last <paramref name="keepTokens"/> tokens.
-    /// Used to implement a sliding window when <see cref="IsFull"/>.
-    /// </summary>
-    public void TrimToLast(int keepTokens)
-    {
-        ThrowIfDisposed();
-        if (keepTokens >= Length) return;
-
-        int drop   = Length - keepTokens;
-        int stride = NumKvHeads * HeadDim;
-
-        for (int layer = 0; layer < NumLayers; layer++)
-        {
-            var kData = _k[layer].Data;
-            var vData = _v[layer].Data;
-            kData.Slice(drop * stride, keepTokens * stride).CopyTo(kData);
-            vData.Slice(drop * stride, keepTokens * stride).CopyTo(vData);
-        }
-
-        Length = keepTokens;
-    }
-
-    // ── Disposal ──────────────────────────────────────────────────────────
-
-    public void Dispose()
-    {
-        Dispose(true);
-        GC.SuppressFinalize(this);
-    }
-
-    private void Dispose(bool disposing)
-    {
-        if (_disposed) return;
-        _disposed = true;
-        if (!disposing) return;
-        foreach (var t in _k) t.Dispose();
-        foreach (var t in _v) t.Dispose();
-    }
-
-    private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, nameof(KvCache));
-
-    private void ValidateLayer(int layer)
-    {
-        if ((uint)layer >= (uint)NumLayers)
-            throw new ArgumentOutOfRangeException(nameof(layer),
-                $"Layer {layer} is out of range [0, {NumLayers}).");
-    }
-}
+Would you like me to start with Phase 1 (KV Caching and GQA optimization)?
