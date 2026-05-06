@@ -56,11 +56,23 @@ public abstract class InferenceOps
 
     // ── Quantized matmul ──────────────────────────────────────────────────
 
+    private const string QuantNS = $"{nameof(SharpMind)}.{nameof(Inference)}.{nameof(QuantKernels)}";
+
     [PuzzleCornerPiece(InferenceConfig.PtrQuantMatMul,
         InferenceConfig.ValQuantNone,
             NS + "." + nameof(InferenceKernels.QuantMatMul_FP32),
         InferenceConfig.ValQuantInt8,
-            NS + "." + nameof(InferenceKernels.QuantMatMul_Int8))]
+            NS + "." + nameof(InferenceKernels.QuantMatMul_Int8),
+        InferenceConfig.ValQuantInt4,
+            QuantNS + "." + nameof(QuantKernels.QuantMatMul_Int4),
+        InferenceConfig.ValQuantInt2,
+            QuantNS + "." + nameof(QuantKernels.QuantMatMul_Int2),
+        InferenceConfig.ValQuantInt1,
+            QuantNS + "." + nameof(QuantKernels.QuantMatMul_Int1),
+        InferenceConfig.ValQuantTernary,
+            QuantNS + "." + nameof(QuantKernels.QuantMatMul_Ternary),
+        InferenceConfig.ValQuantFP8,
+            QuantNS + "." + nameof(QuantKernels.QuantMatMul_FP8))]
     public abstract unsafe void QuantMatMul(
         float* input, float* weights, float* output,
         float* scales, int inFeatures, int outFeatures);

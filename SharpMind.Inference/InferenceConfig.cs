@@ -1,12 +1,14 @@
 namespace SharpMind.Inference;
 
+using SharpMind;
+
 /// <summary>
 /// Inference-specific kernel and execution configuration.
 /// Extends <see cref="SharpMindConfig"/> with slots that only make sense
 /// during inference — flash attention, quantization, decode mode.
 /// </summary>
 public enum AttentionAlgo { Standard, Flash }
-public enum QuantKind     { None, Int8, Int4 }
+public enum QuantKind     { None, Int8, Int4, Int2, Int1, Ternary, FP8 }
 public enum BatchMode     { Single, Continuous }
 
 public sealed record InferenceConfig
@@ -31,6 +33,10 @@ public sealed record InferenceConfig
     public const string ValQuantNone = "fp32";
     public const string ValQuantInt8 = "int8";
     public const string ValQuantInt4 = "int4";
+    public const string ValQuantInt2 = "int2";
+    public const string ValQuantInt1 = "int1";
+    public const string ValQuantTernary = "ternary";
+    public const string ValQuantFP8 = "fp8";
 
     // ── Config properties ─────────────────────────────────────────────────
 
@@ -60,6 +66,34 @@ public sealed record InferenceConfig
     {
         Attention = AttentionAlgo.Flash,
         Quant     = QuantKind.Int8,
+    };
+
+    /// <summary>INT4 weight quantization — 4× memory savings.</summary>
+    public static InferenceConfig QuantizedInt4 => new()
+    {
+        Attention = AttentionAlgo.Flash,
+        Quant     = QuantKind.Int4,
+    };
+
+    /// <summary>INT2 weight quantization — 8× memory savings.</summary>
+    public static InferenceConfig QuantizedInt2 => new()
+    {
+        Attention = AttentionAlgo.Flash,
+        Quant     = QuantKind.Int2,
+    };
+
+    /// <summary>Ternary (1.58-bit) quantization — ~16× memory savings.</summary>
+    public static InferenceConfig QuantizedTernary => new()
+    {
+        Attention = AttentionAlgo.Flash,
+        Quant     = QuantKind.Ternary,
+    };
+
+    /// <summary>FP8 (E4M3) quantization — 4× memory savings.</summary>
+    public static InferenceConfig QuantizedFP8 => new()
+    {
+        Attention = AttentionAlgo.Flash,
+        Quant     = QuantKind.FP8,
     };
 
     /// <summary>Continuous batching for serving multiple requests.</summary>
@@ -94,7 +128,11 @@ public sealed record InferenceConfig
             {
                 QuantKind.Int8 => ValQuantInt8,
                 QuantKind.Int4 => ValQuantInt4,
-                _              => ValQuantNone,
+                QuantKind.Int2 => ValQuantInt2,
+                QuantKind.Int1 => ValQuantInt1,
+                QuantKind.Ternary => ValQuantTernary,
+                QuantKind.FP8 => ValQuantFP8,
+                _ => ValQuantNone,
             },
         };
     }
