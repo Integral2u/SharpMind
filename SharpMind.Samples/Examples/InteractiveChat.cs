@@ -16,14 +16,20 @@ public static class InteractiveChat
 
         var hardware = DetectBestHardware();
         Console.WriteLine($"Detected Hardware: {hardware}");
-
-        var sharpConfigModel = CreateTinyLlamaConfig();
-        Console.WriteLine($"Model: TinyLlama-1.1B-Chat ({sharpConfigModel.NumLayers} layers, {sharpConfigModel.HiddenDim} hidden)");
         Console.WriteLine();
 
-        Console.WriteLine("Building model with optimal kernels...");
-        var modelConfig = sharpConfigModel.ToModelConfig();
-        
+        // TinyLlama config from known values
+        var modelConfig = ModelConfig.Tiny with
+        {
+            VocabSize = 128256,
+            HiddenDim = 2048,
+            NumLayers = 22,
+            NumHeads = 32,
+            NumKvHeads = 4,
+            FfnDim = 5632,
+            MaxSeqLen = 2048,
+        };
+
         var sharpConfig = new SharpMindConfig
         {
             Activation = ActivationKind.SiLU,
@@ -35,67 +41,51 @@ public static class InteractiveChat
             Hardware = hardware,
         };
 
+        Console.WriteLine("Model: TinyLlama-1.1B-Chat");
+        Console.WriteLine($"  VocabSize: {modelConfig.VocabSize}");
+        Console.WriteLine($"  HiddenDim: {modelConfig.HiddenDim}");
+        Console.WriteLine($"  NumLayers: {modelConfig.NumLayers}");
+        Console.WriteLine($"  NumHeads: {modelConfig.NumHeads}");
+        Console.WriteLine($"  MaxSeqLen: {modelConfig.MaxSeqLen}");
+        Console.WriteLine();
+
+        Console.WriteLine("Building model...");
+        
         var model = ModelFactory.Create(modelConfig, sharpConfig);
+        
         Console.WriteLine($"Model parameters: {model.ParameterCount / 1_000_000.0:F1}M");
         Console.WriteLine();
 
-        Console.WriteLine("=== Interactive Generation ===");
-        Console.WriteLine("Note: Using random weights - output will be noise");
-        Console.Write("Enter prompt (or press Enter for default): ");
-        var input = Console.ReadLine();
+        Console.WriteLine("=== Generation Test ===");
+        Console.Write("Enter prompt: ");
         
-        if (string.IsNullOrWhiteSpace(input))
-            input = "Hello";
+        // Simple forward pass test
+        using var input = Tensor<int>.From([1], 1, 1);
+        using var logits = model.Forward(input);
         
-        Console.WriteLine($"Input: {input}");
+        Console.WriteLine($"Logits shape: [{logits.Shape.Rows}, {logits.Shape.Cols}, {logits.Shape[2]}]");
         
-        // Simple token generation using greedy sampling
-        Console.WriteLine("\nTesting single forward pass...");
+        // Get top tokens
+        var vocabSize = logits.Shape[2];
+        var slice = logits.Data.Slice(0, Math.Min(100, vocabSize)).ToArray();
         
-        using var testInput = Tensor<int>.From([1], 1, 1);
-        using var testLogits = model.Forward(testInput);
-        
-        Console.WriteLine($"Logits shape: [{testLogits.Shape.Rows}, {testLogits.Shape.Cols}, {testLogits.Shape[2]}]");
-        
-        var slice = testLogits.Data.Slice(0, Math.Min(10, testLogits.Shape[2])).ToArray();
-        Console.WriteLine($"First 10 logits: [{string.Join(", ", slice.Select(x => x.ToString("F2")))}]");
-        
+        var topIndices = Enumerable.Range(0, slice.Length)
+            .OrderByDescending(i => slice[i])
+            .Take(5)
+            .ToList();
+            
+        Console.WriteLine("Top 5 token logits:");
+        foreach (var i in topIndices)
+        {
+            Console.WriteLine($"  Token {i}: {slice[i]:F2}");
+        }
+
+        Console.WriteLine();
+        Console.WriteLine("Note: Model uses random weights (not trained).");
+        Console.WriteLine("GGUF loading in progress - need trained weights for chat.");
         Console.WriteLine("\nDemo complete!");
         
         return Task.CompletedTask;
-    }
-
-    private static int[] GenerateTokens(Transformer model, int inputLen)
-    {
-        var generated = new List<int>();
-        var input = Tensor<int>.From([1], 1, 1);
-        
-        try
-        {
-            // Just generate 3 tokens for demo
-            for (int i = 0; i < 3; i++)
-            {
-                using var logits = model.Forward(input);
-                
-                // Greedy sample
-                var vocabSize = logits.Shape[2];
-                var slice = logits.Data.Slice(0, vocabSize).ToArray();
-                int next = Array.IndexOf(slice, slice.Max());
-                
-                generated.Add(next);
-                Console.Write(".");
-                
-                // Use the sampled token as next input
-                input.Dispose();
-                input = Tensor<int>.From([next], 1, 1);
-            }
-        }
-        finally
-        {
-            input.Dispose();
-        }
-        
-        return generated.ToArray();
     }
 
     private static HardwareTier DetectBestHardware()
@@ -103,26 +93,5 @@ public static class InteractiveChat
         if (Avx2.IsSupported) return HardwareTier.AVX2;
         if (Fma.IsSupported) return HardwareTier.FMA;
         return HardwareTier.Scalar;
-    }
-
-    private static Model.Format.SharpMindConfig CreateTinyLlamaConfig()
-    {
-        return new Model.Format.SharpMindConfig
-        {
-            VocabSize = 128256,
-            HiddenDim = 2048,
-            NumLayers = 22,
-            NumHeads = 32,
-            NumKvHeads = 4,
-            FfnDim = 5632,
-            MaxSeqLen = 2048,
-            RopeTheta = 500000f,
-            Architecture = "decoder",
-            Activation = "silu",
-            Gate = "swiglu",
-            Ffn = "gated",
-            Norm = "rmsnorm",
-            Attention = "gqa",
-        };
     }
 }
