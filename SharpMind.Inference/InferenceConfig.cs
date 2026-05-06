@@ -122,17 +122,17 @@ public sealed record InferenceConfig
 
         return new Dictionary<string, string>
         {
-            [KeyDecodeAttention]  = attnVal,
-            [KeyPrefillAttention] = attnVal,
-            [KeyQuantMatMul]      = Quant switch
+            [PtrDecodeAttention]  = attnVal,
+            [PtrPrefillAttention] = attnVal,
+            [PtrQuantMatMul]      = Quant switch
             {
-                QuantKind.Int8 => ValQuantInt8,
-                QuantKind.Int4 => ValQuantInt4,
-                QuantKind.Int2 => ValQuantInt2,
-                QuantKind.Int1 => ValQuantInt1,
-                QuantKind.Ternary => ValQuantTernary,
-                QuantKind.FP8 => ValQuantFP8,
-                _ => ValQuantNone,
+                QuantKind.Int8 => "Int8",
+                QuantKind.Int4 => "Int4",
+                QuantKind.Int2 => "Int2",
+                QuantKind.Int1 => "Int1",
+                QuantKind.Ternary => "Ternary",
+                QuantKind.FP8 => "FP8",
+                _ => "FP32",
             },
         };
     }

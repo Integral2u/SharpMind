@@ -11,6 +11,8 @@ Tokenizer: BPE, vocab builder, encode/decode
 Data: sources, cleaning, formating, batching, dataset loaders
 Core: tensors, matrix math, memory, activations
 
+Ooops
+SharpMind.Evaluation prject was never created but EvaluationKernels.cs was, rather than add where should it go. 
 Follow-ups
 async returns of IAsyncEnumerable and IAsyncEnumerator are they optimized for intention where they can be
 KVCache used to take ModelConfig shoudl we check config usage/builder

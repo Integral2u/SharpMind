@@ -1,3 +1,3 @@
-﻿using SharpMind.Samples.Tests;
+﻿using SharpMind.Samples.Examples;
 
-await TinyLlamaChat.RunAsync(); // need example not just a test
+await InteractiveChat.RunAsync();
