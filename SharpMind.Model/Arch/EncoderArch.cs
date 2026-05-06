@@ -42,13 +42,19 @@ public sealed class EncoderArch : IArchitecture
     /// </summary>
     public Tensor<float> Forward(Tensor<float> hiddenStates, int positionOffset = 0)
     {
+        return Forward(hiddenStates, null, positionOffset);
+    }
+
+    public Tensor<float> Forward(Tensor<float> hiddenStates, KVCache[] caches, int positionOffset = 0)
+    {
         ThrowIfDisposed();
         var current = hiddenStates;
         bool ownsLast = false;
 
         for (int i = 0; i < _blocks.Length; i++)
         {
-            var next = _blocks[i].Forward(current, positionOffset, causal: false);
+            // Encoders typically don't use KV caches, but we support the API
+            var next = _blocks[i].Forward(current, caches != null ? caches[i] : null, positionOffset, causal: false);
             if (ownsLast) current.Dispose();
             current = next;
             ownsLast = true;

@@ -39,7 +39,12 @@ public abstract class AttentionLayer : IDisposable
         SharpMindConfig.ValMqaScalar, NS + "." + nameof(AttentionKernels.ScaledDotProductScalar))]
     public abstract unsafe void ScaledDotProduct(float* q, float* k, float* v, float* o, int seqLen, int kvLen, int headDim, float scale, bool causal);
 
-    public Tensor<float> Forward(Tensor<float> x, TensorOps ops, int positionOffset = 0, bool causal = true)
+    public Tensor<float> Forward(
+        Tensor<float> x,
+        TensorOps ops,
+        int positionOffset = 0,
+        bool causal = true,
+        KVCache? cache = null)
     {
         ThrowIfDisposed();
         int batch = x.Shape[0];
@@ -60,7 +65,14 @@ public abstract class AttentionLayer : IDisposable
         Rope.ApplyBatched(qr, positionOffset);
         Rope.ApplyBatched(kr, positionOffset);
 
+        if (cache != null)
+        {
+            cache.Update(k, v, numKv, headDim);
+        }
+
         var output = new Tensor<float>(batch, seqLen, hidden);
+        int effectiveKvLen = cache != null ? cache.CurrentPosition : seqLen;
+
         unsafe
         {
             for (int b = 0; b < batch; b++)
@@ -69,10 +81,20 @@ public abstract class AttentionLayer : IDisposable
                 {
                     int kvHead = h / Config.KvGroupSize;
                     float* pQ = qr.DataPtr + (long)(b * seqLen * numH + h) * headDim;
-                    float* pK = kr.DataPtr + (long)(b * seqLen * numKv + kvHead) * headDim;
-                    float* pV = v.DataPtr + (long)(b * seqLen * kvDim + kvHead * headDim);
+                    
+                    float* pK = cache != null 
+                        ? cache.Keys.DataPtr + (long)b * (numKv * Config.MaxSeqLen * headDim) 
+                                            + (long)kvHead * (Config.MaxSeqLen * headDim)
+                        : kr.DataPtr + (long)(b * seqLen * numKv + kvHead) * headDim;
+                    
+                    float* pV = cache != null 
+                        ? cache.Values.DataPtr + (long)b * (numKv * Config.MaxSeqLen * headDim) 
+                                              + (long)kvHead * (Config.MaxSeqLen * headDim)
+                        : v.DataPtr + (long)(b * seqLen * kvDim + kvHead * headDim);
+                        
                     float* pO = output.DataPtr + (long)(b * seqLen * hidden + h * headDim);
-                    ScaledDotProduct(pQ, pK, pV, pO, seqLen, seqLen, headDim, scale, causal);
+                    
+                    ScaledDotProduct(pQ, pK, pV, pO, seqLen, effectiveKvLen, headDim, scale, causal);
                 }
             }
         }

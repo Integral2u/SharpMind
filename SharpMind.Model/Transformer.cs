@@ -69,6 +69,11 @@ public sealed class Transformer : IDisposable
     /// </summary>
     public unsafe Tensor<float> Forward(Tensor<int> tokenIds, int positionOffset = 0)
     {
+        return Forward(tokenIds, null, positionOffset);
+    }
+
+    public unsafe Tensor<float> Forward(Tensor<int> tokenIds, KVCache[] caches, int positionOffset = 0)
+    {
         ThrowIfDisposed();
 
         DisposeCache();
@@ -78,7 +83,7 @@ public sealed class Transformer : IDisposable
         using var embedded = _cachedEmbedding;
 
         // 2. Architecture (stack of transformer blocks)
-        _cachedHidden = _arch.Forward(embedded, positionOffset);
+        _cachedHidden = _arch.Forward(embedded, caches, positionOffset);
         using var hidden = _cachedHidden;
 
         // 3. Final normalisation
@@ -86,10 +91,6 @@ public sealed class Transformer : IDisposable
         using var normed = _cachedNormed;
 
         // 4. LM head: [Batch, SeqLen, HiddenDim] @ EmbeddingWeight^T
-        //    → [Batch, SeqLen, VocabSize]
-        //    Weight tying: reuse embedding table rows as the projection matrix.
-        //    EmbeddingWeight is [VocabSize, HiddenDim]; we need [HiddenDim, VocabSize]
-        //    TensorOps.MatMul transposes B internally so this is correct.
         int batch = tokenIds.Shape.Rows;
         int seqLen = tokenIds.Shape.Cols;
         int hidden2 = _config.HiddenDim;

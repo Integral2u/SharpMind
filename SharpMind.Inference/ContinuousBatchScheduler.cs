@@ -1,5 +1,9 @@
 namespace SharpMind.Inference;
 
+using SharpMind.Core.Tensors;
+using SharpMind.Model;
+using SharpMind.Model.Config;
+
 /// <summary>
 /// Continuous batching scheduler — processes multiple requests in parallel
 /// by batching their current decode tokens into a single forward pass.
@@ -32,7 +36,8 @@ public sealed class ContinuousBatchScheduler : IAsyncDisposable
     private bool                                 _disposed;
 
     // Per-request KV-cache slices — pre-allocated pool
-    private readonly KvCache[] _cachePool;
+    // Each entry is KVCache[] (one per transformer layer)
+    private readonly KVCache[][] _cachePool;
 
     public ContinuousBatchScheduler(
         SharpMind.Model.Transformer       model,
@@ -56,7 +61,18 @@ public sealed class ContinuousBatchScheduler : IAsyncDisposable
                 SingleReader = true,
             });
 
-        _cachePool = [.. Enumerable.Range(0, maxConcurrent).Select(_ => new KvCache(model.Config))];
+        _cachePool = new KVCache[maxConcurrent][];
+        for (int i = 0; i < maxConcurrent; i++)
+        {
+            int numLayers = model.Config.NumLayers;
+            int maxSeqLen = model.Config.MaxSeqLen;
+            int numKvHeads = model.Config.NumKvHeads;
+            int headDim   = model.Config.HeadDim;
+
+            _cachePool[i] = new KVCache[numLayers];
+            for (int j = 0; j < numLayers; j++)
+                _cachePool[i][j] = new KVCache(1, numKvHeads, maxSeqLen, headDim);
+        }
     }
 
     // ── Public API ────────────────────────────────────────────────────────
@@ -109,7 +125,8 @@ public sealed class ContinuousBatchScheduler : IAsyncDisposable
             {
                 if (freeCache.Count == 0) break;
                 int cacheIdx = freeCache.Pop();
-                _cachePool[cacheIdx].Reset();
+                for (int j = 0; j < _cachePool[cacheIdx].Length; j++)
+                    _cachePool[cacheIdx][j].Reset();
                 active.Add((newReq, cacheIdx));
             }
 
@@ -122,7 +139,8 @@ public sealed class ContinuousBatchScheduler : IAsyncDisposable
                     if (freeCache.Count > 0)
                     {
                         int idx = freeCache.Pop();
-                        _cachePool[idx].Reset();
+                        for (int j = 0; j < _cachePool[idx].Length; j++)
+                            _cachePool[idx][j].Reset();
                         active.Add((next, idx));
                     }
                 }
@@ -149,9 +167,9 @@ public sealed class ContinuousBatchScheduler : IAsyncDisposable
                     : req.GeneratedIds[^1];
 
                 // Single-token forward — use decode attention path
-                using var input   = SharpMind.Core.Tensors.Tensor<int>.From([currentToken], 1, 1);
+                using var input   = Tensor<int>.From([currentToken], 1, 1);
                 int        pos    = req.PositionOffset + req.PromptIds.Length + req.StepCount - 1;
-                using var logits  = _model.Forward(input, pos);
+                using var logits  = _model.Forward(input, _cachePool[cacheIdx], pos);
 
                 int vocabSize = logits.Shape[2];
                 var logitSpan = logits.Data[..vocabSize];
@@ -191,7 +209,11 @@ public sealed class ContinuousBatchScheduler : IAsyncDisposable
         if (_runLoop is not null)
             await _runLoop.ConfigureAwait(false);
 
-        foreach (var cache in _cachePool) cache.Dispose();
+        foreach (var requestCaches in _cachePool)
+        {
+            foreach (var layerCache in requestCaches)
+                layerCache.Dispose();
+        }
         _cts?.Dispose();
     }
 

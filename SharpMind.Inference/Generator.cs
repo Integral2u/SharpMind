@@ -1,6 +1,7 @@
 using System.Runtime.CompilerServices;
 using SharpMind.Core.Tensors;
 using SharpMind.Model;
+using SharpMind.Model.Config;
 
 namespace SharpMind.Inference;
 
@@ -25,7 +26,7 @@ public sealed class Generator : IDisposable
     private readonly Transformer  _model;
     private readonly SharpMind.Tokenization.Tokenizer _tokenizer;
     private readonly InferenceOps _ops;
-    private readonly KvCache      _cache;
+    private readonly KVCache[]     _caches;
     private readonly Random       _defaultRng;
     private bool                  _disposed;
 
@@ -42,7 +43,16 @@ public sealed class Generator : IDisposable
         _model      = model;
         _tokenizer  = tokenizer;
         _ops        = ops;
-        _cache      = new KvCache(model.Config);
+
+        int numLayers = model.Config.NumLayers;
+        int maxSeqLen = model.Config.MaxSeqLen;
+        int numKvHeads = model.Config.NumKvHeads;
+        int headDim   = model.Config.HeadDim;
+
+        _caches = new KVCache[numLayers];
+        for (int i = 0; i < numLayers; i++)
+            _caches[i] = new KVCache(1, numKvHeads, maxSeqLen, headDim);
+
         _defaultRng = seed.HasValue ? new Random(seed.Value) : Random.Shared;
     }
 
@@ -73,9 +83,9 @@ public sealed class Generator : IDisposable
         // ── Prefill ───────────────────────────────────────────────────────
         // Run the full prompt through the model. The PrefillAttention kernel
         // sees the full [SeqLen, SeqLen] attention pattern.
-        int posOffset = _cache.Length;
+        int posOffset = _caches[0].Length;
         using var prefillInput  = Tensor<int>.From(promptIds, 1, promptIds.Length);
-        using var prefillLogits = _model.Forward(prefillInput, posOffset);
+        using var prefillLogits = _model.Forward(prefillInput, _caches, posOffset);
 
         // Sample from the last prompt token's logits
         int vocabSize    = prefillLogits.Shape[2];
@@ -125,18 +135,19 @@ public sealed class Generator : IDisposable
 
             if (hitStop) break;
 
-            if (_cache.IsFull)
+            if (_caches[0].IsFull)
             {
                 int keep = genCfg is { SlidingWindowSize: > 0 }
                     ? genCfg.SlidingWindowSize
-                    : _cache.MaxSeqLen / 2;
-                _cache.TrimToLast(keep);
+                    : _caches[0].MaxSeqLen / 2;
+                for (int i = 0; i < _caches.Length; i++)
+                    _caches[i].TrimToLast(keep);
             }
 
             // Decode step — single token forward, uses DecodeAttention kernel
             int newPos = posOffset + promptIds.Length + step;
             using var stepInput  = Tensor<int>.From([nextId], 1, 1);
-            using var stepLogits = _model.Forward(stepInput, newPos);
+            using var stepLogits = _model.Forward(stepInput, _caches, newPos);
 
             logitsSlice = stepLogits.Data[..vocabSize];
         }
@@ -164,10 +175,14 @@ public sealed class Generator : IDisposable
     }
 
     /// <summary>Resets the KV-cache between independent generation requests.</summary>
-    public void ResetCache() => _cache.Reset();
+    public void ResetCache()
+    {
+        for (int i = 0; i < _caches.Length; i++)
+            _caches[i].Reset();
+    }
 
     /// <summary>KV-cache fill as a fraction of maximum capacity.</summary>
-    public float CacheFillRatio => (float)_cache.Length / _cache.MaxSeqLen;
+    public float CacheFillRatio => (float)_caches[0].Length / _caches[0].MaxSeqLen;
 
     // ── Repetition penalty ────────────────────────────────────────────────
 
@@ -204,7 +219,8 @@ public sealed class Generator : IDisposable
         if (_disposed) return;
         _disposed = true;
         if (!disposing) return;
-        _cache.Dispose();
+        for (int i = 0; i < _caches.Length; i++)
+            _caches[i].Dispose();
     }
 
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, nameof(Generator));

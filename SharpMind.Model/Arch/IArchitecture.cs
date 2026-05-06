@@ -12,6 +12,7 @@ namespace SharpMind.Model.Arch;
 public interface IArchitecture : IDisposable
 {
     Tensor<float> Forward(Tensor<float> hiddenStates, int positionOffset = 0);
+    Tensor<float> Forward(Tensor<float> hiddenStates, KVCache[] caches, int positionOffset = 0);
     int NumLayers { get; }
     IEnumerable<Parameter> Parameters();
     

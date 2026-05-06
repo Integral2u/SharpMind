@@ -63,6 +63,11 @@ public sealed class TransformerBlock : IDisposable
     /// <param name="causal">Apply causal (lower-triangular) attention mask.</param>
     public Tensor<float> Forward(Tensor<float> x, int positionOffset = 0, bool causal = true)
     {
+        return Forward(x, null, positionOffset, causal);
+    }
+
+    public Tensor<float> Forward(Tensor<float> x, KVCache? cache, int positionOffset = 0, bool causal = true)
+    {
         ThrowIfDisposed();
         DisposeCache();
         
@@ -72,7 +77,7 @@ public sealed class TransformerBlock : IDisposable
         _cachedNormed1 = _norm1.Forward(x);
         using var normed1 = _cachedNormed1;
         
-        _cachedAttnOut = _attention.Forward(normed1, _ops, positionOffset, causal);
+        _cachedAttnOut = _attention.Forward(normed1, _ops, positionOffset, causal, cache);
         using var attnOut = _cachedAttnOut;
 
         // Residual: h = x + attn(norm(x))
