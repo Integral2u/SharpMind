@@ -16,8 +16,7 @@ public sealed class SharpMindConfig
     /// <summary>Architecture type: decoder, encoder, encoder-decoder.</summary>
     public string Architecture { get; set; } = "decoder";
     
-    // ── Model dimensions (mirrors ModelConfig) ───────────────────────────────
-    
+    // ── Model dimensions (mirrors ModelConfig) ─────────────────────────────
     public int VocabSize { get; set; }
     public int HiddenDim { get; set; }
     public int NumLayers { get; set; }
@@ -27,19 +26,19 @@ public sealed class SharpMindConfig
     public int MaxSeqLen { get; set; }
     public float RopeTheta { get; set; } = 10000f;
     
-    // ── Quantization settings ────────────────────────────────────────────
+    // ── Activation settings ─────────────────────────────────────────────
+    public string Activation { get; set; } = "silu";
+    public string Gate { get; set; } = "swiglu";
+    public string Ffn { get; set; } = "gated";
+    public string Norm { get; set; } = "rmsnorm";
+    public string Attention { get; set; } = "gqa";
     
+    // ── Quantization settings ────────────────────────────────────────────
     public QuantConfig? Quantization { get; set; }
     
-    // ── Metadata ──────────────────────────────────────────────────────
-    
-    /// <summary>Original model source (e.g. "llama-3.1-8b", "gpt2").</summary>
+    // ── Metadata ─────────────────────────────────────────────────────
     public string? Source { get; set; }
-    
-    /// <summary>SHA256 hash of weights.bin for integrity.</summary>
     public string? Checksum { get; set; }
-    
-    /// <summary>Tokenizer type and vocab file.</summary>
     public TokenizerInfo? Tokenizer { get; set; }
 
     private static readonly JsonSerializerOptions JsonSerializerOptionsSavePolicy = new()
@@ -52,7 +51,7 @@ public sealed class SharpMindConfig
     {
         PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
     };
-    /// <summary>Convert from ModelConfig.</summary>
+
     public static SharpMindConfig FromModelConfig(ModelConfig config, string? source = null)
     {
         return new SharpMindConfig
@@ -69,7 +68,6 @@ public sealed class SharpMindConfig
         };
     }
     
-    /// <summary>Convert to ModelConfig for model creation.</summary>
     public ModelConfig ToModelConfig()
     {
         return new ModelConfig
@@ -85,25 +83,58 @@ public sealed class SharpMindConfig
         };
     }
 
-    /// <summary>Save config to JSON file.</summary>
+    public global::SharpMind.SharpMindConfig ToJigSawConfig()
+    {
+        return new global::SharpMind.SharpMindConfig
+        {
+            Activation = Activation?.ToLowerInvariant() switch
+            {
+                "silu" => global::SharpMind.ActivationKind.SiLU,
+                "gelu" => global::SharpMind.ActivationKind.GELU,
+                "relu" => global::SharpMind.ActivationKind.ReLU,
+                _ => global::SharpMind.ActivationKind.SiLU
+            },
+            Gate = Gate?.ToLowerInvariant() switch
+            {
+                "swiglu" => global::SharpMind.GateKind.SwiGLU,
+                "geglu" => global::SharpMind.GateKind.GeGLU,
+                _ => global::SharpMind.GateKind.None
+            },
+            Ffn = Ffn?.ToLowerInvariant() switch
+            {
+                "gated" => global::SharpMind.FfnKind.Gated,
+                "moe" => global::SharpMind.FfnKind.MoE,
+                _ => global::SharpMind.FfnKind.Dense
+            },
+            Attention = Attention?.ToLowerInvariant() switch
+            {
+                "gqa" => global::SharpMind.AttentionKind.GQA,
+                "mqa" => global::SharpMind.AttentionKind.MQA,
+                _ => global::SharpMind.AttentionKind.MHA
+            },
+            Norm = Norm?.ToLowerInvariant() switch
+            {
+                "rmsnorm" => global::SharpMind.NormKind.RMSNorm,
+                "layernorm" => global::SharpMind.NormKind.LayerNorm,
+                _ => global::SharpMind.NormKind.RMSNorm
+            },
+            Arch = Architecture?.ToLowerInvariant() switch
+            {
+                "encoder" => global::SharpMind.ArchKind.Encoder,
+                _ => global::SharpMind.ArchKind.Decoder
+            },
+        };
+    }
+
     public void Save(string path) => File.WriteAllText(path, JsonSerializer.Serialize(this, JsonSerializerOptionsSavePolicy));
 
-    /// <summary>Load config from JSON file.</summary>
     public static SharpMindConfig Load(string path) => JsonSerializer.Deserialize<SharpMindConfig>(File.ReadAllText(path), JsonSerializerOptionsLoadPolicy)
             ?? throw new InvalidDataException("Failed to deserialize config.json");
 }
 
-/// <summary>
-/// Tokenizer information in SharpMind format.
-/// </summary>
 public sealed class TokenizerInfo
 {
-    /// <summary>Tokenizer type: bpe, unigram, wordpiece.</summary>
     public string Type { get; set; } = "bpe";
-    
-    /// <summary>Path to vocab file (relative to model dir).</summary>
     public string? VocabFile { get; set; }
-    
-    /// <summary>Special tokens map.</summary>
     public Dictionary<string, string>? SpecialTokens { get; set; }
 }

@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Runtime.CompilerServices;
 using SharpMind.Core.Tensors;
 
 namespace SharpMind.Model.Format;
@@ -11,6 +12,31 @@ public static class GgufLoader
 {
     /// <summary>GGUF magic number.</summary>
     private const uint Magic = 0x46554747; // "GGUF"
+    
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static uint ReadUint32Varint(BinaryReader reader)
+    {
+        uint result = 0;
+        int shift = 0;
+        while (true)
+        {
+            byte b = reader.ReadByte();
+            result |= (uint)(b & 0x7F) << shift;
+            if ((b & 0x80) == 0) break;
+            shift += 7;
+        }
+        return result;
+    }
+    
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static string ReadString(this BinaryReader reader)
+    {
+        // GGUF uses varint (LEB128) for string length
+        var len = ReadUint32Varint(reader);
+        if (len == 0) return string.Empty;
+        var bytes = reader.ReadBytes((int)len);
+        return System.Text.Encoding.UTF8.GetString(bytes);
+    }
     
     /// <summary>GGUF tensor types.</summary>
     public enum GgufDtype : uint
@@ -132,6 +158,7 @@ public static class GgufLoader
                 Shape = shape,
                 Offset = (long)offset
             });
+            if (i < 5) Console.WriteLine($"[GgufLoader] Tensor[{i}]: {name}, shape=[{string.Join(",", shape)}], dtype={dtype}");
         }
         
         return meta;

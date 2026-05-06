@@ -1,3 +1,3 @@
 ﻿using SharpMind.Samples.Tests;
 
-await RealDataTraining.RunPixelChar();
+await TinyLlamaChat.RunAsync(); // need example not just a test
