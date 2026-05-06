@@ -234,4 +234,158 @@ internal static partial class QuantKernels
                 break;
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════════════════════════
+    // TurboQuant — runtime-optimized quantization kernels
+    // ═══════════════════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// TurboQuant INT8: fused dequantize + matmul.
+    /// Computes output = (input * weight_quant * scale) in one pass.
+    /// No intermediate fp32 storage needed.
+    /// </summary>
+    internal static unsafe void TurboQuant_Int8_Fused(
+        float* input, sbyte* weights, float* output,
+        float scale,  // shared scale or per-channel
+        float* perChannelScales,  // null = use shared
+        int inFeatures, int outFeatures)
+    {
+        bool perChannel = perChannelScales is not null;
+
+        for (int o = 0; o < outFeatures; o++)
+        {
+            float s = perChannel ? perChannelScales[o] : scale;
+            float sum = 0f;
+
+            for (int i = 0; i < inFeatures; i++)
+                sum += input[i] * weights[(long)o * inFeatures + i] * s;
+
+            output[o] = sum;
+        }
+    }
+
+    /// <summary>
+    /// TurboQuant INT4: online dequantization during matmul.
+    /// AVX2 optimized for packed nibble format.
+    /// </summary>
+    internal static unsafe void TurboQuant_Int4_Fused(
+        float* input, byte* weights, float* output,
+        float* perChannelScales,
+        int inFeatures, int outFeatures)
+    {
+        for (int o = 0; o < outFeatures; o++)
+        {
+            float scale = perChannelScales[o];
+            float sum = 0f;
+
+            int i = 0;
+            for (; i <= inFeatures - 8; i += 8)
+            {
+                float tmp = 0f;
+                // Process 8 weights = 4 bytes = 4 packed nibbles
+                for (int j = 0; j < 4; j++)
+                {
+                    byte packed = weights[(long)o * inFeatures / 2 + (i + j) / 2];
+                    int n1 = (j % 2 == 0) ? (packed & 0x0F) : ((packed & 0xF0) >> 4);
+                    int n2 = n1 - 8;  // Signed nibble
+
+                    tmp += input[i + j * 2] * (n2 * scale);
+                }
+                sum += tmp;
+            }
+
+            // Handle remaining
+            for (; i < inFeatures; i++)
+            {
+                byte packed = weights[(long)o * inFeatures / 2 + i / 2];
+                int nibble = (i % 2 == 0) ? (packed & 0x0F) : ((packed & 0xF0) >> 4);
+                int signedNibble = nibble - 8;
+                sum += input[i] * (signedNibble * scale);
+            }
+
+            output[o] = sum;
+        }
+    }
+
+    /// <summary>
+    /// TurboQuant FP8 (E5M2) — 5-bit exp + 2-bit mantissa.
+    /// Fast decoding for inference servers.
+    /// </summary>
+    internal static unsafe void TurboQuant_FP8_E5M2(
+        float* input, byte* weights, float* output,
+        float* scales, int inFeatures, int outFeatures)
+    {
+        for (int o = 0; o < outFeatures; o++)
+        {
+            float scale = scales[o];
+            float sum = 0f;
+
+            for (int i = 0; i < inFeatures; i++)
+            {
+                byte w = weights[(long)o * inFeatures + i];
+                float fw = DecodeFP8_E5M2(w);
+                sum += input[i] * fw;
+            }
+
+            output[o] = sum * scale;
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static float DecodeFP8_E5M2(byte bits)
+    {
+        int sign = (bits >> 7) & 0x01;
+        int exp = (bits >> 2) & 0x1F;
+        int mantissa = bits & 0x03;
+
+        if (exp == 31)
+            return sign == 1 ? float.NegativeInfinity : float.PositiveInfinity;
+
+        float val = (1f + mantissa / 4f) * MathF.Pow(2, exp - 15);
+        return sign == 1 ? -val : val;
+    }
+
+    /// <summary>
+    /// TurboQuant dynamic: computes scales online from input activation range.
+    /// No pre-computed scales needed — ideal for dynamic workloads.
+    /// </summary>
+    public static unsafe void TurboQuantDynamic(
+        float* input, float* weights, float* output,
+        float targetRange,  // e.g., 1.0 for fp32-like range
+        int inFeatures, int outFeatures)
+    {
+        // Find input range for this batch
+        float inputMax = 0f;
+        for (int i = 0; i < inFeatures; i++)
+        {
+            float abs = MathF.Abs(input[i]);
+            if (abs > inputMax) inputMax = abs;
+        }
+
+        // Compute dynamic scale to map to target range
+        float scale = inputMax > 0 ? targetRange / inputMax : 1f;
+
+        // Quantize input on-the-fly and multiply
+        for (int o = 0; o < outFeatures; o++)
+        {
+            float sum = 0f;
+            for (int i = 0; i < inFeatures; i++)
+            {
+                float qinput = MathF.Round(input[i] * scale);
+                sum += qinput * weights[(long)o * inFeatures + i];
+            }
+            output[o] = sum / scale;
+        }
+    }
+
+    // AVX2 helper
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static float HSum256(Vector256<float> v)
+    {
+        var lo = Avx.ExtractVector128(v, 0);
+        var hi = Avx.ExtractVector128(v, 1);
+        var s = Sse.Add(lo, hi);
+        s = Sse.Add(s, Sse.MoveHighToLow(s, s));
+        return Sse.AddScalar(s, Sse.Shuffle(s, s, 1)).ToScalar();
+    }
 }

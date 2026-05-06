@@ -11,48 +11,25 @@ Tokenizer: BPE, vocab builder, encode/decode
 Data: sources, cleaning, formating, batching, dataset loaders
 Core: tensors, matrix math, memory, activations
 
-Maybe check with claude
+Follow-ups
 async returns of IAsyncEnumerable and IAsyncEnumerator are they optimized for intention where they can be
+KVCache used to take ModelConfig shoudl we check config usage/builder
+Use of JsonObject, preffer stronly typed class where possible.
+Config files hould be human readable
 
-KVCache used to take ModelConfig
-
-Ensure these are done, Remeber implementing the JigSawDotNet pattern may be applicable for options
-Model Compression, Quantization (4-bit/8-bit/2-bit/1-bit/1.58-bit), Distillation, Pruning/Sparsity
-Model optimization Rope, convert dense to MoE
-Inference Speed Optimizations, Flash Attention, Speculative Decoding is Fused Kernels pratical, TurboQuant.
-Memory & Context Optimizations, Key-Value (KV) Caching, PagedAttention, Grouped-Query Attention (GQA)
-
+Should we work on 
 
 ChatSession design (async), tool, input types, status(Thinking/Updating/Executing/Responding/Waiting)
-
-Next Actions
-Inference/decoding - Add generate/predict methods for autoregressive sampling  
-Inference project started will need work
-
-Evaluation - Add perplexity, accuracy metrics
-Checkpointing - Save/load model weights
-New feature - Something else you're interested in?
-
-
-
-
-Config files hould be human readable
 Skills.MD
-IDatasource additions
-Read CSV 
 
-Use of JsonObject, preffer stronly typed class where possible.
+
+
 
 Would like to introduce 
 
 LLM lobotomy
 Take a model and strip it of all but necessity for becoming an expert wich could be re-merge for MOE type LLM  
 
-LLM size refinement
-Quantization: This reduces the precision of model weights (e.g., from 16-bit floating point to 8-bit or 4-bit integers), significantly decreasing memory requirements and improving inference speed
-Knowledge Distillation: A smaller "student" model is trained to mimic the behavior of a larger "teacher" model, allowing the smaller model to achieve higher accuracy than if it were trained from scratch
-Pruning: Less important weights are removed from the neural network, resulting in a lighter model. 
-LoRA (Low-Rank Adaptation): A fine-tuning technique that keeps base model weights frozen while training a smaller number of parameters, making fine-tuning more resource-efficient
 
 LLM weight merging
 Weighted Averaging/Linear Merge: Takes a weighted average of the parameters from multiple models
@@ -61,45 +38,3 @@ TIES-Merging (TrIm, Elect, Sign, and Merge): Designed to handle interference bet
 DARE (Drop And REscale): Drops redundant weights and re-scales the remaining weights to create a "soups" of models, reducing task interference.
 Task Arithmetic: Creates "task vectors" by subtracting the base model weights from the fine-tuned model weights, allowing these vectors to be added or subtracted to modify model behavior.
 
-
-
-1. Model Compression & Quantization
-Current State: Everything is Tensor<float>. JigSaw Implementation: Instead of making LinearLayer a complex class with if-statements for quantization, we can define LinearKernel corner pieces.
-
-Quantization (INT8, FP8, NF4, 1.58-bit): Create specific kernels for QuantizedMatMul. The LinearLayer would remain a high-level coordinator, while the Assembler picks the kernel based on the weight's dtype.
-Pruning/Sparsity: Implement SparsityMask kernels. The JigSaw pattern could switch between a DenseMatMul and a SparsityAwareMatMul based on the sparsity ratio.
-2. Model Optimization (RoPE & MoE)
-Current State: RoPE is implemented; MoE exists as a stub. JigSaw Implementation:
-
-RoPE Improvements: RoPE is currently a single implementation. We can implement LongRoPE or YaRN as alternative Rope.Apply kernels, swappable via SharpMindConfig.
-Dense to MoE: Since FfnLayer already has FfnKind.MoE, we can implement the MoEFfnLayer logic properly. The "JigSaw" part would be the Router. We can implement different routing strategies (Top-K, Expert Choice, Sigmoid) as swappable corner pieces.
-3. Inference Speed Optimizations
-Current State: Basic ScaledDotProduct kernels. JigSaw Implementation:
-
-Flash Attention: This is the "Holy Grail" of attention. We can implement a FlashAttentionKernel that handles the tiling and softmax in a single fused pass. The AttentionLayer would simply call the assembled kernel.
-Fused Kernels: This is where the JigSaw pattern shines. We can fuse RMSNorm + Linear or SiLU + MatMul into a single kernel to reduce memory bandwidth bottlenecks.
-Speculative Decoding: This is a high-level orchestrator. It would involve running a "Draft" model (smaller Transformer) and a "Verify" model (larger Transformer) in tandem.
-4. Memory & Context Optimizations
-Current State: Full re-computation of the KV sequence for every token. JigSaw Implementation:
-
-KV Caching: This is the most urgent need. We need to modify Transformer.Forward to accept and update a KVCache object.
-PagedAttention: Instead of a contiguous tensor for the KV cache, we implement a Block-based Page Table. The AttentionKernel would then be updated to index into these pages.
-Grouped-Query Attention (GQA): The structure is already there (NumKvHeads), but we can optimize the kernels to use a single load for multiple Q-heads.
-Strategic Implementation Roadmap (The "JigSaw" Way)
-If we want to implement these without breaking the system, I propose this sequence:
-
-Phase 1: The "Efficiency" Foundation (Urgent)
-KV Caching: Implement the KVCache store. This is the prerequisite for almost all inference speedups.
-Fused Kernels: Use the JigSaw pattern to implement a fused RMSNorm and Linear pass to reduce memory trips.
-GQA Optimization: Optimize the ScaledDotProduct kernels to actually leverage the reduced KV head count.
-Phase 2: The "Compression" Layer (Complexity)
-Quantization Framework: Introduce QuantizedTensor and implement INT8 and FP8 kernels.
-MoE Implementation: Move the MoEFfnLayer from a stub to a fully functional gated mixture of experts.
-Phase 3: The "Cutting Edge" (Advanced)
-PagedAttention: Transition the KV cache from contiguous tensors to a paged memory system.
-Flash Attention: Implement the tiling-based attention kernel to handle massive contexts.
-Speculative Decoding: Implement the draft-verify loop at the Generator level.
-Conclusion: Is it practical?
-Yes, and it's highly elegant. Because you are using the JigSawDotNet pattern, you can maintain a "Scalar" (slow but compatible) version of every feature alongside a "Hardware-Optimized" (AVX512/CUDA/Flash) version. The user just changes a string in the config, and the Assembler wires the fastest possible kernel for their hardware.
-
-Would you like me to start with Phase 1 (KV Caching and GQA optimization)?
