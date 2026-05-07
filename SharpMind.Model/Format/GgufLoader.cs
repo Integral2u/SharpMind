@@ -1,36 +1,11 @@
 using System.Buffers.Binary;
-using System.Runtime.CompilerServices;
 using SharpMind.Core.Tensors;
 
 namespace SharpMind.Model.Format;
 
 public static class GgufLoader
 {
-    private const uint Magic = 0x46554747; // "GGUF"
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static uint ReadUint32Varint(BinaryReader reader)
-    {
-        uint result = 0;
-        int shift = 0;
-        while (true)
-        {
-            byte b = reader.ReadByte();
-            result |= (uint)(b & 0x7F) << shift;
-            if ((b & 0x80) == 0) break;
-            shift += 7;
-        }
-        return result;
-    }
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static string ReadString(BinaryReader reader)
-    {
-        var len = ReadUint32Varint(reader);
-        if (len == 0) return string.Empty;
-        var bytes = reader.ReadBytes((int)len);
-        return System.Text.Encoding.UTF8.GetString(bytes);
-    }
+    private const uint Magic = 0x46554747;
 
     public enum GgufDtype : uint
     {
@@ -39,26 +14,14 @@ public static class GgufLoader
         Q5_K = 13, Q6_K = 14, Q8_K = 15,
     }
 
-    private enum GGUFValueType : byte
+    private enum GGUFValueType : uint
     {
-        UINT8 = 0, INT8 = 1, UINT32 = 2, INT32 = 3, FLOAT32 = 4,
-        BOOL = 5, STRING = 6, ARRAY = 7, UINT64 = 8, INT64 = 9,
-        FLOAT64 = 10, FLOAT8_1 = 11, FLOAT8_N = 12,
+        UINT8 = 0, INT8 = 1, UINT16 = 2, INT16 = 3, UINT32 = 4, INT32 = 5, FLOAT32 = 6,
+        BOOL = 7, STRING = 8, ARRAY = 9, UINT64 = 10, INT64 = 11, FLOAT64 = 12,
     }
 
-    public readonly struct KvPair
-    {
-        public required string Key { get; init; }
-        public required object Value { get; init; }
-    }
-
-    public readonly struct TensorInfo
-    {
-        public required string Name { get; init; }
-        public required GgufDtype Dtype { get; init; }
-        public required int[] Shape { get; init; }
-        public required long Offset { get; init; }
-    }
+    public readonly struct KvPair { public required string Key { get; init; } public required object Value { get; init; } }
+    public readonly struct TensorInfo { public required string Name { get; init; } public required GgufDtype Dtype { get; init; } public required int[] Shape { get; init; } public required long Offset { get; init; } }
 
     public sealed class GgufMeta
     {
@@ -67,29 +30,44 @@ public static class GgufLoader
         public long KvCount { get; set; }
         public List<KvPair> KvPairs { get; set; } = [];
         public List<TensorInfo> Tensors { get; set; } = [];
+        public long GetLong(string key, long defaultValue = 0) { var kv = KvPairs.FirstOrDefault(k => k.Key == key); return kv.Value is long l ? l : defaultValue; }
+        public float GetFloat(string key, float defaultValue = 0) { var kv = KvPairs.FirstOrDefault(k => k.Key == key); return kv.Value is float f ? f : defaultValue; }
+        public string GetString(string key, string defaultValue = "") { var kv = KvPairs.FirstOrDefault(k => k.Key == key); return kv.Value is string s ? s : defaultValue; }
+    }
 
-        public long GetLong(string key, long defaultValue = 0)
-        {
-            var kv = KvPairs.FirstOrDefault(k => k.Key == key);
-            return kv.Value is long l ? l : defaultValue;
-        }
+    private static long SkipValue(BinaryReader reader, int valType) => valType switch
+    {
+        0 => 1, 1 => 1, 2 => 2, 3 => 2, 4 => 4, 5 => 4, 6 => 4, 7 => 1, 10 => 8, 11 => 8, 12 => 8, _ => 1
+    };
 
-        public float GetFloat(string key, float defaultValue = 0)
-        {
-            var kv = KvPairs.FirstOrDefault(k => k.Key == key);
-            return kv.Value is float f ? f : defaultValue;
-        }
+    private static (ulong len, string str) ReadString(BinaryReader reader)
+    {
+        var len = reader.ReadUInt64();
+        if (len > 10000) return (len, "");
+        var bytes = reader.ReadBytes((int)len);
+        return (len, System.Text.Encoding.UTF8.GetString(bytes));
+    }
 
-        public string GetString(string key, string defaultValue = "")
+    private static void SkipStringValue(BinaryReader reader)
+    {
+        var len = reader.ReadUInt64();
+        reader.BaseStream.Position += (long)len;
+    }
+
+    private static void SkipArrayValue(BinaryReader reader)
+    {
+        var elemType = reader.ReadUInt32();
+        var arrLen = reader.ReadUInt64();
+        int elemSize = elemType switch
         {
-            var kv = KvPairs.FirstOrDefault(k => k.Key == key);
-            return kv.Value is string s ? s : defaultValue;
-        }
+            0 => 1, 1 => 1, 2 => 2, 3 => 2, 4 => 4, 5 => 4, 6 => 4, 7 => 1, 10 => 8, 11 => 8, 12 => 8, _ => 1
+        };
+        reader.BaseStream.Position += (long)(arrLen * (ulong)elemSize);
     }
 
     public static GgufMeta LoadMeta(string path)
     {
-        Console.WriteLine($"[GgufLoader] Loading: {path}");
+        Console.WriteLine("[GgufLoader] Loading: " + path);
 
         using var stream = File.OpenRead(path);
         using var reader = new BinaryReader(stream);
@@ -97,49 +75,84 @@ public static class GgufLoader
         var meta = new GgufMeta();
 
         uint magic = reader.ReadUInt32();
-        if (magic != Magic)
-            throw new InvalidDataException($"Not a GGUF file: magic {magic:X8}");
+        if (magic != Magic) throw new InvalidDataException("Not GGUF: " + magic.ToString("X8"));
 
         meta.Version = reader.ReadUInt32();
         meta.TensorCount = reader.ReadInt64();
         meta.KvCount = reader.ReadInt64();
 
-        Console.WriteLine($"[GgufLoader] Version: {meta.Version}, Tensors: {meta.TensorCount}, KV: {meta.KvCount}");
+        Console.WriteLine("[GgufLoader] Ver={0}, Tensors={1}, KV={2}", meta.Version, meta.TensorCount, meta.KvCount);
 
-        for (long i = 0; i < meta.KvCount; i++)
+        // Read KV pairs: uint64 keyLen + key + uint32 type + value
+        for (int i = 0; i < meta.KvCount; i++)
         {
-            var key = ReadString(reader);
-            var type = (GGUFValueType)reader.ReadByte();
-            var value = ReadValue(reader, type, out bool isArray);
-            meta.KvPairs.Add(new KvPair { Key = key, Value = value });
+            var (keyLen, key) = ReadString(reader);
+            uint valType = reader.ReadUInt32();
 
-            if (i < 10) Console.WriteLine($"[GgufLoader] KV[{i}]: {key} = {value} (type={type})");
+            // Handle value based on type
+            switch (valType)
+            {
+                case 8: // STRING: uint64 len + bytes
+                    var strLen = reader.ReadUInt64();
+                    reader.BaseStream.Position += (long)strLen;
+                    break;
+                case 9: // ARRAY: uint32 elemType + uint64 count + elements
+                    var elemType = reader.ReadUInt32();
+                    var arrLen = reader.ReadUInt64();
+                    
+                    if (elemType == 8) // Array of strings
+                    {
+                        for (ulong j = 0; j < arrLen; j++)
+                        {
+                            var sLen = reader.ReadUInt64();
+                            reader.BaseStream.Position += (long)sLen;
+                        }
+                    }
+                    else
+                    {
+                        int elemSize = elemType switch { 0 => 1, 1 => 1, 2 => 2, 3 => 2, 4 => 4, 5 => 4, 6 => 4, 7 => 1, 10 => 8, 11 => 8, 12 => 8, _ => 1 };
+                        reader.BaseStream.Position += (long)(arrLen * (ulong)elemSize);
+                    }
+                    break;
+                default:
+                    reader.BaseStream.Position += SkipValue(reader, (int)valType);
+                    break;
+            }
+
+            meta.KvPairs.Add(new KvPair { Key = key, Value = valType.ToString() });
         }
 
-        Console.WriteLine($"[GgufLoader] Reading {meta.TensorCount} tensors...");
+        Console.WriteLine("[GgufLoader] KV end at {0}, reading tensors...", reader.BaseStream.Position);
 
-        for (long i = 0; i < meta.TensorCount; i++)
+        // Read tensors: uint64 nameLen + name + uint32 nDims + [nDims x uint64] + uint32 dtype + uint64 offset
+        for (int i = 0; i < meta.TensorCount; i++)
         {
-            var name = ReadString(reader);
-            var nDims = reader.ReadUInt32();
-            var shape = new int[nDims];
-            for (int j = 0; j < nDims; j++)
-                shape[j] = (int)reader.ReadUInt64();
+            try
+            {
+                var (nameLen, name) = ReadString(reader);
+                if (nameLen == 0 || nameLen > 500) { Console.WriteLine("[GgufLoader] Tensor[{0}] bad nameLen={1}", i, nameLen); break; }
 
-            var dtype = (GgufDtype)reader.ReadUInt32();
-            var offset = reader.ReadUInt64();
+                var nDims = reader.ReadUInt32();
+                if (nDims > 10) { Console.WriteLine("[GgufLoader] Tensor[{0}] bad nDims={1}", i, nDims); break; }
 
-            meta.Tensors.Add(new TensorInfo { Name = name, Dtype = dtype, Shape = shape, Offset = (long)offset });
-            if (i < 3) Console.WriteLine($"[GgufLoader] Tensor[{i}]: {name}, shape=[{string.Join(",", shape)}], dtype={dtype}");
+                var shape = new int[nDims];
+                for (int j = 0; j < nDims; j++) shape[j] = (int)reader.ReadUInt64();
+
+                var dtype = (GgufDtype)reader.ReadUInt32();
+                var offset = reader.ReadUInt64();
+
+                meta.Tensors.Add(new TensorInfo { Name = name, Dtype = dtype, Shape = shape, Offset = (long)offset });
+            }
+            catch (Exception ex) { Console.WriteLine("[GgufLoader] Tensor[{0}] error: {1}", i, ex.Message); break; }
         }
 
+        Console.WriteLine("[GgufLoader] Loaded {0} tensors", meta.Tensors.Count);
         return meta;
     }
 
     public static Dictionary<string, Tensor<float>> LoadWeights(string path)
     {
         var meta = LoadMeta(path);
-
         using var stream = File.OpenRead(path);
         using var reader = new BinaryReader(stream);
         var result = new Dictionary<string, Tensor<float>>();
@@ -150,85 +163,119 @@ public static class GgufLoader
             var tensor = ReadTensor(reader, info.Dtype, info.Shape);
             result[info.Name] = tensor;
         }
-
         return result;
-    }
-
-    private static object ReadValue(BinaryReader reader, GGUFValueType type, out bool isArray)
-    {
-        isArray = false;
-
-        try
-        {
-            if (type == GGUFValueType.ARRAY)
-            {
-                isArray = true;
-                var arrayLen = reader.ReadUInt64();
-                var elementType = (GGUFValueType)reader.ReadByte();
-
-                var items = new object[(int)arrayLen];
-                for (int i = 0; i < (int)arrayLen; i++)
-                {
-                    items[i] = ReadValue(reader, elementType, out _);
-                }
-                return items;
-            }
-
-            return type switch
-            {
-                GGUFValueType.UINT8 => reader.ReadByte(),
-                GGUFValueType.INT8 => (sbyte)reader.ReadByte(),
-                GGUFValueType.UINT32 => reader.ReadUInt32(),
-                GGUFValueType.INT32 => reader.ReadInt32(),
-                GGUFValueType.FLOAT32 => reader.ReadSingle(),
-                GGUFValueType.BOOL => reader.ReadByte() != 0,
-                GGUFValueType.STRING => ReadString(reader),
-                GGUFValueType.UINT64 => reader.ReadUInt64(),
-                GGUFValueType.INT64 => reader.ReadInt64(),
-                GGUFValueType.FLOAT64 => reader.ReadDouble(),
-                GGUFValueType.FLOAT8_1 => reader.ReadBytes(1),
-                GGUFValueType.FLOAT8_N => reader.ReadBytes(1),
-                _ => reader.ReadBytes(1)
-            };
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[GgufLoader] ReadValue error: {ex.Message}");
-            return null!;
-        }
     }
 
     private static Tensor<float> ReadTensor(BinaryReader stream, GgufDtype dtype, int[] shape)
     {
-        int count = 1;
-        foreach (int d in shape) count *= d;
-
+        int count = 1; foreach (int d in shape) count *= d;
         var result = new Tensor<float>(shape);
 
-        switch (dtype)
+        try
         {
-            case GgufDtype.F32:
-                for (int i = 0; i < count; i++)
-                    result.Data[i] = stream.ReadSingle();
-                break;
-
-            case GgufDtype.F16:
-                Console.WriteLine("[GgufLoader] F16 not fully supported, treating as F32");
-                for (int i = 0; i < count; i++)
-                    result.Data[i] = stream.ReadSingle();
-                break;
-
-            case GgufDtype.Q8_0:
-            case GgufDtype.Q8_1:
-                for (int i = 0; i < count; i++)
-                    result.Data[i] = stream.ReadSByte();
-                break;
-
-            default:
-                Console.WriteLine($"[GgufLoader] Unsupported dtype: {dtype}, filling zeros");
-                break;
+            switch (dtype)
+            {
+                case GgufDtype.F32:
+                    for (int i = 0; i < count; i++) result.Data[i] = stream.ReadSingle();
+                    break;
+                case GgufDtype.F16:
+                    for (int i = 0; i < count; i++) result.Data[i] = HalfToFloat(stream.ReadUInt16());
+                    break;
+                case GgufDtype.Q4_K:
+                case GgufDtype.Q6_K:
+                case GgufDtype.Q8_0:
+                case GgufDtype.Q5_K:
+                case GgufDtype.Q3_K:
+                case GgufDtype.Q2_K:
+                    Console.WriteLine("[GgufLoader] Skipping quantized tensor: " + dtype);
+                    break;
+                default:
+                    Console.WriteLine("[GgufLoader] Unsupported dtype: " + dtype);
+                    break;
+            }
         }
-
+        catch (Exception ex)
+        {
+            Console.WriteLine("[GgufLoader] ReadTensor error: " + ex.Message);
+        }
         return result;
+    }
+
+    private static float HalfToFloat(ushort half)
+    {
+        int sign = (half >> 15) & 0x1;
+        int exp = (half >> 10) & 0x1F;
+        int mant = half & 0x3FF;
+        
+        if (exp == 0)
+        {
+            if (mant == 0) return sign == 0 ? 0f : -0f;
+            mant = 0;
+            exp = 1;
+        }
+        else if (exp == 31) return mant == 0 
+            ? (sign == 0 ? float.PositiveInfinity : float.NegativeInfinity) 
+            : float.NaN;
+        
+        float f = (float)((sign == 0 ? 1 : -1) * (float)Math.Pow(2, exp - 15) * (1 + mant / 1024f));
+        return f;
+    }
+
+    private static void ReadQ4K(BinaryReader reader, Span<float> data, int n)
+    {
+        int blockSize = 32;
+        int nBlocks = (n + blockSize - 1) / blockSize;
+        
+        for (int b = 0; b < nBlocks; b++)
+        {
+            int blockStart = b * blockSize;
+            int blockEnd = Math.Min(blockStart + blockSize, n);
+            int blockCount = blockEnd - blockStart;
+            
+            // Q4_K: 4 bits per value, 2 blocks of 16
+            // Scale (float) + offset (float) + quants (uint8_t[16]) + quants (uint8_t[16])
+            var scales = new float[2];
+            scales[0] = reader.ReadSingle();
+            scales[1] = reader.ReadSingle();
+            
+            var mins = new float[2];
+            mins[0] = reader.ReadSingle();
+            mins[1] = reader.ReadSingle();
+            
+            // Read 32 bytes of quantized data per block
+            for (int i = 0; i < blockCount; i++)
+            {
+                int q = i / 16;
+                int idx = i % 16;
+                byte qb = reader.ReadByte();
+                int low = (qb & 0x0F) - 8;
+                int high = ((qb >> 4) & 0x0F) - 8;
+                
+                data[blockStart + i] = (low * scales[q] + mins[q]);
+            }
+        }
+    }
+
+    private static void ReadQ6K(BinaryReader reader, Span<float> data, int n)
+    {
+        int blockSize = 64;
+        int nBlocks = (n + blockSize - 1) / blockSize;
+        
+        for (int b = 0; b < nBlocks; b++)
+        {
+            int blockStart = b * blockSize;
+            int blockEnd = Math.Min(blockStart + blockSize, n);
+            int blockCount = blockEnd - blockStart;
+            
+            // Q6_K: 6 bits per value
+            var scale = reader.ReadSingle();
+            var q6 = new byte[blockCount];
+            for (int i = 0; i < blockCount; i++) q6[i] = reader.ReadByte();
+            
+            for (int i = 0; i < blockCount; i++)
+            {
+                data[blockStart + i] = ((q6[i] - 32) * 0.25f) * scale;
+            }
+        }
     }
 }
