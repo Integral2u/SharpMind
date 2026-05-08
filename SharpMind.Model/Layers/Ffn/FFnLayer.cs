@@ -47,21 +47,21 @@ public abstract class FfnLayer : IDisposable
         switch (kind)
         {
             case FfnKind.Dense:
-                W1 = new LinearLayer(config.HiddenDim, config.FfnDim);
-                W2 = new LinearLayer(config.FfnDim, config.HiddenDim);
+                W1 = new LinearLayer("ffn_gate", config.HiddenDim, config.FfnDim);
+                W2 = new LinearLayer("ffn_down", config.FfnDim, config.HiddenDim);
                 break;
 
             case FfnKind.Gated:
-                WGate = new LinearLayer(config.HiddenDim, config.FfnDim);
-                WUp = new LinearLayer(config.HiddenDim, config.FfnDim);
-                WDown = new LinearLayer(config.FfnDim, config.HiddenDim);
+                WGate = new LinearLayer("ffn_gate", config.HiddenDim, config.FfnDim);
+                WUp = new LinearLayer("ffn_up", config.HiddenDim, config.FfnDim);
+                WDown = new LinearLayer("ffn_down", config.FfnDim, config.HiddenDim);
                 break;
 
             case FfnKind.MoE:
-                Router = new LinearLayer(config.HiddenDim, config.NumExperts);
-                ExpertGate = [.. Enumerable.Range(0, config.NumExperts).Select(_ => new LinearLayer(config.HiddenDim, config.FfnDim))];
-                ExpertUp = [.. Enumerable.Range(0, config.NumExperts).Select(_ => new LinearLayer(config.HiddenDim, config.FfnDim))];
-                ExpertDown = [.. Enumerable.Range(0, config.NumExperts).Select(_ => new LinearLayer(config.FfnDim, config.HiddenDim))];
+                Router = new LinearLayer("ffn_router", config.HiddenDim, config.NumExperts);
+                ExpertGate = [.. Enumerable.Range(0, config.NumExperts).Select(i => new LinearLayer($"ffn_expert_{i}_gate", config.HiddenDim, config.FfnDim))];
+                ExpertUp = [.. Enumerable.Range(0, config.NumExperts).Select(i => new LinearLayer($"ffn_expert_{i}_up", config.HiddenDim, config.FfnDim))];
+                ExpertDown = [.. Enumerable.Range(0, config.NumExperts).Select(i => new LinearLayer($"ffn_expert_{i}_down", config.FfnDim, config.HiddenDim))];
                 break;
         }
     }

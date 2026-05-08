@@ -37,6 +37,23 @@ public sealed class DecoderArch : IArchitecture
                 yield return p;
     }
 
+    public void LoadWeight(string name, ReadOnlySpan<float> data)
+    {
+        var lower = name.ToLower();
+        
+        for (int i = 0; i < _blocks.Length; i++)
+        {
+            if (lower.Contains($".{i}.") || lower.Contains($"blk.{i}") || lower.Contains($"layer_{i}"))
+            {
+                _blocks[i].LoadWeight(name, data);
+                return;
+            }
+        }
+        
+        if (_blocks.Length > 0)
+            _blocks[0].LoadWeight(name, data);
+    }
+
     /// <summary>
     /// Passes hidden states through all blocks with causal masking.
     /// <paramref name="positionOffset"/> supports KV-cache decode:

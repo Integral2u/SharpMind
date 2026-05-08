@@ -182,12 +182,19 @@ public static class GgufLoader
                     for (int i = 0; i < count; i++) result.Data[i] = HalfToFloat(stream.ReadUInt16());
                     break;
                 case GgufDtype.Q4_K:
+                    ReadQ4K(stream, result.Data, count);
+                    break;
                 case GgufDtype.Q6_K:
+                    ReadQ6K(stream, result.Data, count);
+                    break;
                 case GgufDtype.Q8_0:
+                    ReadQ8_0(stream, result.Data, count);
+                    break;
                 case GgufDtype.Q5_K:
+                    ReadQ5_K(stream, result.Data, count);
+                    break;
                 case GgufDtype.Q3_K:
-                case GgufDtype.Q2_K:
-                    Console.WriteLine("[GgufLoader] Skipping quantized tensor: " + dtype);
+                    ReadQ3_K(stream, result.Data, count);
                     break;
                 default:
                     Console.WriteLine("[GgufLoader] Unsupported dtype: " + dtype);
@@ -275,6 +282,97 @@ public static class GgufLoader
             for (int i = 0; i < blockCount; i++)
             {
                 data[blockStart + i] = ((q6[i] - 32) * 0.25f) * scale;
+            }
+        }
+    }
+
+    private static void ReadQ8_0(BinaryReader reader, Span<float> data, int n)
+    {
+        int blockSize = 32;
+        for (int i = 0; i < n; i += blockSize)
+        {
+            var scale = reader.ReadSingle();
+            for (int j = 0; j < blockSize && i + j < n; j++)
+            {
+                var q = reader.ReadByte();
+                data[i + j] = (q - 128) * scale;
+            }
+        }
+    }
+    
+    private static void ReadQ3_K(BinaryReader reader, Span<float> data, int n)
+    {
+        // Q3_K: 3-bit quantization with 32 values per block
+        // Uses 2 scales (d1, d2) for 2 groups of 16 values
+        int blockSize = 64;
+        for (int i = 0; i < n; i += blockSize)
+        {
+            float d1 = reader.ReadSingle();
+            float d2 = reader.ReadSingle();
+            
+            int count = Math.Min(blockSize, n - i);
+            int half = count / 2;
+            
+            for (int j = 0; j < count; j++)
+            {
+                // Read bytes as needed
+                if (j == 0 || j == half)
+                {
+                    byte b = reader.ReadByte();
+                    for (int k = 0; k < 8 && j + k < count && (j < half ? k < 8 : k < 8 + half - 16); k++)
+                    {
+                        int idx = j + k;
+                        int qval;
+                        if (j < half)
+                            qval = ((b >> k) & 0x7);
+                        else
+                            qval = ((b >> (k - half + 16)) & 0x7);
+                        float scale = idx < half ? d1 : d2;
+                        data[i + idx] = (qval - 4) * scale;
+                    }
+                }
+            }
+        }
+    }
+    
+    private static void ReadQ5_K(BinaryReader reader, Span<float> data, int n)
+    {
+        // Q5_K: 5-bit quantization, 32 values per block
+        // Uses 5 scales (d1-d5) for 5 groups of values
+        int blockSize = 32;
+        for (int i = 0; i < n; i += blockSize)
+        {
+            // Read 5 scales
+            float d1 = reader.ReadSingle();
+            float d2 = reader.ReadSingle();
+            float d3 = reader.ReadSingle();
+            float d4 = reader.ReadSingle();
+            float d5 = reader.ReadSingle();
+            var scales = new[] { d1, d2, d3, d4, d5 };
+            
+            int count = Math.Min(blockSize, n - i);
+            int groupSize = (count + 4) / 5;
+            
+            for (int j = 0; j < count; j++)
+            {
+                // Each 5-bit value = (val - 16) * scale
+                int groupIdx = j / groupSize;
+                if (groupIdx > 4) groupIdx = 4;
+                float scale = scales[groupIdx];
+                
+                // Read 2 bytes per value (high/low nibble)
+                if (j % 2 == 0)
+                {
+                    byte b = reader.ReadByte();
+                    int q = ((b >> 0) & 0x1F);
+                    data[i + j] = (q - 16) * scale;
+                }
+                else if (j + 1 < count)
+                {
+                    byte b = reader.ReadByte();
+                    int q = ((b >> 4) & 0x1F);
+                    data[i + j] = (q - 16) * scale;
+                }
             }
         }
     }

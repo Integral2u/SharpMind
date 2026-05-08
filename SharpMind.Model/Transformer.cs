@@ -48,6 +48,28 @@ public sealed class Transformer : IDisposable
 
     public ModelConfig Config => _config;
 
+    public void LoadWeight(string name, ReadOnlySpan<float> data)
+    {
+        var lower = name.ToLower();
+        
+        // GGUF weight name variations mapping
+        if (lower.Contains("embed") || lower.Contains("token") || lower.Contains(" emb")
+            || lower.Contains("wte") || lower.Contains("model.embed"))
+            _embedding.LoadWeights(data);
+        else if (lower.Contains("output_norm") || lower.Contains("norm") && lower.Contains("output"))
+            _finalNorm.LoadWeight(data);
+        else if (lower.Contains("lm_head") || lower.Contains("head.") || lower.Contains(" output."))
+            _finalNorm.LoadWeight(data);
+        else
+            LoadDecoderWeight(name, data);
+    }
+    
+    private void LoadDecoderWeight(string name, ReadOnlySpan<float> data)
+    {
+        if (_arch is DecoderArch dec)
+            dec.LoadWeight(name, data);
+    }
+
     public IEnumerable<Parameter> Parameters()
     {
         foreach (var p in _embedding.Parameters())

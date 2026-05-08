@@ -123,6 +123,36 @@ public sealed class TransformerBlock : IDisposable
             yield return p;
     }
 
+    public void LoadWeight(string name, ReadOnlySpan<float> data)
+    {
+        var lower = name.ToLower();
+        
+        // Try to load into any matching parameter
+        foreach (var p in Parameters())
+        {
+            var pName = p.Name.ToLower();
+            if (p.Data.ElementCount == data.Length)
+            {
+                bool match = lower.Contains("q") && pName.Contains("q") ||
+                           lower.Contains("k") && pName.Contains("k") ||
+                           lower.Contains("v") && pName.Contains("v") ||
+                           lower.Contains("attn_output") && pName.Contains("output") ||
+                           lower.Contains("o_proj") && pName.Contains("output") ||
+                           lower.Contains("gate") && pName.Contains("gate") ||
+                           lower.Contains("up") && pName.Contains("up") ||
+                           lower.Contains("w3") && pName.Contains("up") ||
+                           lower.Contains("down") && pName.Contains("down") ||
+                           lower.Contains("w2") && pName.Contains("down") ||
+                           lower.Contains("norm") && pName.Contains("norm");
+                if (match)
+                {
+                    data.CopyTo(p.Data.Data);
+                    return;
+                }
+            }
+        }
+    }
+
     public void Dispose()
     {
         if (_disposed) return;

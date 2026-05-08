@@ -33,6 +33,8 @@ public enum ChatStatus
     Responding,
     /// <summary>Waiting for input or tool results.</summary>
     Waiting,
+    /// <summary>That chat was interrupted, cancelled or failed.</summary>
+    Interrupted,
     /// <summary>Completed.</summary>
     Complete
 }

@@ -11,6 +11,13 @@ Tokenizer: BPE, vocab builder, encode/decode
 Data: sources, cleaning, formating, batching, dataset loaders
 Core: tensors, matrix math, memory, activations
 
+//Needs to be fast, text llm only, any multi modal type interations to be impemnted thought tools.
+//Tools actaul class methods with atrribute, desc. the schema is resolvable by method info
+//while using GGUF for no this is only testing eventual end production should use .SM(uncompressed) or .SMP(sharp mind package(compressed variant)) qantization should be part of this to define how model data is stored.
+//End result is we should be able to have a builder class for model building and inference to make it simple easy create an instance and launch using a ChatSession
+//Part of this must include using option for methods and means to process(JigSawDotNet) be it default config, custom or detection for optimal operation performance or precision including exteral JigSawPeices(See SharpMind.GPU)
+//Let me reiterate this has to be as fast as possible
+
 Ooops
 SharpMind.Evaluation prject was never created but EvaluationKernels.cs was, rather than add where should it go. 
 Follow-ups
@@ -40,3 +47,26 @@ TIES-Merging (TrIm, Elect, Sign, and Merge): Designed to handle interference bet
 DARE (Drop And REscale): Drops redundant weights and re-scales the remaining weights to create a "soups" of models, reducing task interference.
 Task Arithmetic: Creates "task vectors" by subtracting the base model weights from the fine-tuned model weights, allowing these vectors to be added or subtracted to modify model behavior.
 
+
+
+var builder = await AIHostFactory.CreateHostBuilder(HostAdaptors.LOCAL_GUFF);
+if (builder == null) return;
+using var talkingPotatos = await builder.CreateHostAsync();
+if (talkingPotatos == null) return;
+Console.ForegroundColor = ConsoleColor.DarkBlue;
+Console.WriteLine("Ready");
+var history = await talkingPotatos.StartChatAsync(cancellationTokenSource.Token, Prompt, Response);
+
+void Response(string text)
+{
+    Console.ForegroundColor = ConsoleColor.Blue;
+    Console.Write(text);
+}
+
+string Prompt()
+{
+    Console.ForegroundColor = ConsoleColor.Yellow;
+    string userInput = Console.ReadLine() ?? "";
+    if (userInput == "exit") cancellationTokenSource.Cancel();
+    return userInput;
+}

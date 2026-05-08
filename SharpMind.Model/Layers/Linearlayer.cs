@@ -10,27 +10,34 @@ public sealed class LinearLayer : IDisposable
     private readonly Tensor<float>? _bias;
     private bool _disposed;
 
-    public LinearLayer(int inFeatures, int outFeatures, bool bias = false)
+    public LinearLayer(string name, int inFeatures, int outFeatures, bool bias = false)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(inFeatures);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(outFeatures);
+        Name = name;
         InFeatures = inFeatures;
         OutFeatures = outFeatures;
         _weight = new Tensor<float>(inFeatures, outFeatures);
         _bias = bias ? new Tensor<float>(outFeatures) : null;
     }
 
+    public LinearLayer(int inFeatures, int outFeatures, bool bias = false)
+        : this($"Linear.{Guid.NewGuid():N}", inFeatures, outFeatures, bias)
+    {
+    }
+
     public int InFeatures { get; }
     public int OutFeatures { get; }
     public bool HasBias => _bias is not null;
+    public string Name { get; }
     public Tensor<float> Weight => _weight;
     public Tensor<float>? Bias => _bias;
 
     public IEnumerable<Parameter> Parameters()
     {
-        yield return new Parameter($"{nameof(LinearLayer)}.weight", _weight);
+        yield return new Parameter($"{Name}.weight", _weight);
         if (_bias is not null)
-            yield return new Parameter($"{nameof(LinearLayer)}.bias", _bias);
+            yield return new Parameter($"{Name}.bias", _bias);
     }
 
     public Tensor<float> Forward(Tensor<float> input, TensorOps ops)

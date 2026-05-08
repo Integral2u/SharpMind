@@ -23,10 +23,10 @@ public abstract class AttentionLayer : IDisposable
     {
         Config = config;
         int kvDim = config.NumKvHeads * config.HeadDim;
-        Wq = new LinearLayer(config.HiddenDim, config.HiddenDim);
-        Wk = new LinearLayer(config.HiddenDim, kvDim);
-        Wv = new LinearLayer(config.HiddenDim, kvDim);
-        Wo = new LinearLayer(config.HiddenDim, config.HiddenDim);
+        Wq = new LinearLayer("attn_q", config.HiddenDim, config.HiddenDim);
+        Wk = new LinearLayer("attn_k", config.HiddenDim, kvDim);
+        Wv = new LinearLayer("attn_v", config.HiddenDim, kvDim);
+        Wo = new LinearLayer("attn_output", config.HiddenDim, config.HiddenDim);
         Rope = new RoPE(config.HeadDim, config.MaxSeqLen, config.RopeTheta);
     }
 
