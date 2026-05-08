@@ -408,3 +408,4 @@ FodyWeavers.xsd
 /ExternalAssets/SharpMind/manifest.json
 /ExternalAssets/SharpMind/weights.bin
 /ExternalAssets/TinyLlama_Native/weights.bin
+/ExternalAssets/DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M.gguf
