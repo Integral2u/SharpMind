@@ -1,4 +1,5 @@
-﻿using SharpMind.Core.Tensors;
+﻿using System.Text.RegularExpressions;
+using SharpMind.Core.Tensors;
 using SharpMind.Core.Training;
 using SharpMind.Model.Layers;
 
@@ -37,21 +38,40 @@ public sealed class DecoderArch : IArchitecture
                 yield return p;
     }
 
-    public void LoadWeight(string name, ReadOnlySpan<float> data)
+    public bool LoadWeight(string name, ReadOnlySpan<float> data)
     {
         var lower = name.ToLower();
         
+        // Extract layer index from name - GGUF uses patterns like blk.7, layer.7, blk.7.attn_
+        int layerIdx = -1;
+        var match7 = Regex.Match(name, @"\.(\d+)\.");  // .7. pattern
+        if (!match7.Success)
+            match7 = Regex.Match(name, @"blk\.(\d+)");   // blk.7 pattern
+        if (!match7.Success)
+            match7 = Regex.Match(name, @"layer_(\d+)"); // layer_7 pattern
+        if (match7.Success && int.TryParse(match7.Groups[1].Value, out var idx))
+            layerIdx = idx;
+        
+        // Route to correct block - if index matches, load directly
+        if (layerIdx >= 0 && layerIdx < _blocks.Length)
+        {
+            return _blocks[layerIdx].LoadWeight(name, data);
+        }
+        
+        // Try to find by component name prefix - e.g., "blk.7.attn_q" -> layer 7
         for (int i = 0; i < _blocks.Length; i++)
         {
             if (lower.Contains($".{i}.") || lower.Contains($"blk.{i}") || lower.Contains($"layer_{i}"))
             {
-                _blocks[i].LoadWeight(name, data);
-                return;
+                if (_blocks[i].LoadWeight(name, data)) return true;
             }
         }
         
+        // Fallback to first block
         if (_blocks.Length > 0)
-            _blocks[0].LoadWeight(name, data);
+            return _blocks[0].LoadWeight(name, data);
+            
+        return false;
     }
 
     /// <summary>

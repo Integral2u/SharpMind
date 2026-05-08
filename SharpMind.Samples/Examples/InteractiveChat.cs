@@ -33,7 +33,7 @@ public static class InteractiveChat
         int ffnDim = 6144;
         int maxSeqLen = 2048;
         
-        Dictionary<string, Tensor<float>> weights = new();
+        GgufLoader.GgufMeta meta = null!;
         
         if (File.Exists(ggufPath))
         {
@@ -43,7 +43,7 @@ public static class InteractiveChat
             
             try
             {
-                var meta = GgufLoader.LoadMeta(ggufPath);
+                meta = GgufLoader.LoadMeta(ggufPath);
                 Console.WriteLine($"  Loaded metadata: {meta.TensorCount} tensors");
                 
                 hiddenDim = (int)meta.GetLong("llama.embedding_length", 1536);
@@ -53,26 +53,19 @@ public static class InteractiveChat
                 ffnDim = (int)meta.GetLong("llama.feed_forward_length", 6144);
                 maxSeqLen = (int)meta.GetLong("llama.context_length", 2048);
                 
-                // Need to scan tensors to find vocab size from embedding shape
-                weights = GgufLoader.LoadWeights(ggufPath);
-                Console.WriteLine($"  Loaded {weights.Count} tensors");
-                
                 // Find embedding layer to get vocab size - shape may be [vocab, hidden] or [hidden, vocab]
-                var embd = weights.FirstOrDefault(t => t.Key.Contains("token_embd") && t.Key.Contains("weight"));
-                if (embd.Value is not null)
+                var embdInfo = meta.Tensors.FirstOrDefault(t => t.Name.Contains("token_embd") && t.Name.Contains("weight"));
+                if (!string.IsNullOrEmpty(embdInfo.Name))
                 {
-                    var shape = embd.Value.Shape;
-                    var total = embd.Value.ElementCount;
-                    if (shape.Length >= 2)
+                    var shape = embdInfo.Shape;
+                    if (shape != null && shape.Length >= 2)
                     {
                         var dim0 = shape[0];
                         var dim1 = shape[1];
                         var hiddenFromMeta = (int)meta.GetLong("llama.embedding_length", 0);
                         
-                        // dim0 * dim1 should equal total
-                        if (dim0 * dim1 == total)
+                        if (dim0 * dim1 == (long)dim0 * dim1) // Just a sanity check
                         {
-                            // If hidden from metadata matches one of dims, use the other as vocab
                             if (dim0 == hiddenFromMeta)
                             {
                                 vocabSize = dim1;
@@ -85,16 +78,13 @@ public static class InteractiveChat
                             }
                             else
                             {
-                                // Fallback: larger dim is vocab (vocab >> hidden for most models)
                                 vocabSize = Math.Max(dim0, dim1);
                                 hiddenDim = Math.Min(dim0, dim1);
                             }
-                            Console.WriteLine($"  Detected: vocab={vocabSize}, hidden={hiddenDim}, elements={total}");
+                            Console.WriteLine($"  Detected: vocab={vocabSize}, hidden={hiddenDim}");
                         }
                     }
                 }
-                
-                Console.WriteLine($"  Config: vocab={vocabSize}, hidden={hiddenDim}, layers={numLayers}");
                 
                 Console.WriteLine($"  Config: vocab={vocabSize}, hidden={hiddenDim}, layers={numLayers}");
                 Console.WriteLine($"  Heads: {numHeads}, kv={numKvHeads}, ffn={ffnDim}");
@@ -140,20 +130,16 @@ public static class InteractiveChat
         var model = ModelFactory.Create(modelConfig, sharpConfig);
         Console.WriteLine($"Model: {model.ParameterCount / 1_000_000.0:F1}M params");
         
-        if (weights.Count > 0)
-        {
-            Console.WriteLine("Loading weights into model...");
-            var sw = System.Diagnostics.Stopwatch.StartNew();
-            LoadWeightsToModel(model, weights);
-            sw.Stop();
-            Console.WriteLine($"Weights loaded in {sw.ElapsedMilliseconds}ms!");
-        }
-        else
-        {
-            Console.WriteLine("WARNING: No weights loaded - using random initialization");
-        }
+        Console.WriteLine("Loading weights into model...");
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        GgufLoader.LoadWeightsToModel(ggufPath, meta, model);
+        sw.Stop();
+        Console.WriteLine($"Weights loaded in {sw.ElapsedMilliseconds}ms!");
         
-        var session = new SimpleChatSession(model, vocabSize);
+        string systemPrompt = File.Exists("System.md") ? File.ReadAllText("System.md") : "";
+        string agentPrompt = File.Exists("Agent.md") ? File.ReadAllText("Agent.md") : "";
+        
+        var session = new SimpleChatSession(model, vocabSize, systemPrompt, agentPrompt);
         
         Console.WriteLine();
         Console.WriteLine("Chat ready! Say hello.");
@@ -165,53 +151,16 @@ public static class InteractiveChat
             var input = Console.ReadLine();
             if (string.IsNullOrWhiteSpace(input)) continue;
             if (input.ToLower() == "quit") break;
-
+            
             var response = session.Chat(input);
             Console.WriteLine($"Bot: {response}");
             Console.WriteLine();
         }
-
-        foreach (var w in weights.Values)
-            w.Dispose();
         
         Console.WriteLine("Chat ended.");
         return Task.CompletedTask;
     }
-
-    private static void LoadWeightsToModel(Transformer model, Dictionary<string, Tensor<float>> weights)
-    {
-        var loaded = 0;
-        var missing = 0;
-        var sampleMissing = new List<string>();
-        var sampleLoaded = new List<string>();
-        
-        foreach (var kvp in weights)
-        {
-            var name = kvp.Key;
-            var tensor = kvp.Value;
-            
-            try
-            {
-                model.LoadWeight(name, tensor.Data);
-                loaded++;
-                if (loaded <= 3)
-                    sampleLoaded.Add(name);
-            }
-            catch
-            {
-                missing++;
-                if (missing <= 5)
-                    sampleMissing.Add(name);
-            }
-        }
-        
-        Console.WriteLine($"  Loaded {loaded} weights, {missing} not matched");
-        if (sampleLoaded.Count > 0)
-            Console.WriteLine($"  Sample loaded: {string.Join(", ", sampleLoaded)}");
-        if (sampleMissing.Count > 0)
-            Console.WriteLine($"  Sample missing: {string.Join(", ", sampleMissing)}");
-    }
-
+    
     private static HardwareTier DetectBestHardware()
     {
         if (Avx2.IsSupported) return HardwareTier.AVX2;
@@ -225,6 +174,8 @@ public sealed class SimpleChatSession
     private readonly Transformer _model;
     private readonly int _vocabSize;
     private readonly List<int> _context = new();
+    private readonly string _systemPrompt;
+    private readonly string _agentPrompt;
     
     private static readonly Dictionary<string, int> CharToId = new();
     private static readonly List<string> IdToChar = new();
@@ -239,10 +190,12 @@ public sealed class SimpleChatSession
         }
     }
     
-    public SimpleChatSession(Transformer model, int vocabSize)
+    public SimpleChatSession(Transformer model, int vocabSize, string systemPrompt, string agentPrompt)
     {
         _model = model;
         _vocabSize = vocabSize;
+        _systemPrompt = systemPrompt;
+        _agentPrompt = agentPrompt;
     }
     
     public string Chat(string input, int maxTokens = 64)

@@ -1,5 +1,7 @@
 using System.Buffers.Binary;
+using System.IO.MemoryMappedFiles;
 using SharpMind.Core.Tensors;
+using SharpMind.Model;
 
 namespace SharpMind.Model.Format;
 
@@ -153,7 +155,8 @@ public static class GgufLoader
     public static Dictionary<string, Tensor<float>> LoadWeights(string path)
     {
         var meta = LoadMeta(path);
-        using var stream = File.OpenRead(path);
+        using var mmf = MemoryMappedFile.CreateFromFile(path, FileMode.Open, null, 0, MemoryMappedFileAccess.Read);
+        using var stream = mmf.CreateViewStream(0, 0, MemoryMappedFileAccess.Read);
         using var reader = new BinaryReader(stream);
         var result = new Dictionary<string, Tensor<float>>();
 
@@ -166,35 +169,76 @@ public static class GgufLoader
         return result;
     }
 
+    public static void LoadWeightsToModel(string path, GgufMeta meta, Transformer model)
+    {
+        using var mmf = MemoryMappedFile.CreateFromFile(path, FileMode.Open, null, 0, MemoryMappedFileAccess.Read);
+        using var stream = mmf.CreateViewStream(0, 0, MemoryMappedFileAccess.Read);
+        using var reader = new BinaryReader(stream);
+
+        int loaded = 0;
+        int missing = 0;
+        float[] reuseBuffer = null;
+
+        foreach (var info in meta.Tensors)
+        {
+            stream.Position = info.Offset;
+            
+            int count = 1; foreach (int d in info.Shape) count *= d;
+            
+            if (reuseBuffer == null || reuseBuffer.Length < count)
+                reuseBuffer = new float[count];
+            
+            ReadTensorInto(reader, info.Dtype, info.Shape, reuseBuffer.AsSpan(0, count));
+            
+            if (model.LoadWeight(info.Name, reuseBuffer.AsSpan(0, count)))
+            {
+                loaded++;
+            }
+            else
+            {
+                missing++;
+            }
+        }
+        Console.WriteLine($"[GgufLoader] LoadWeightsToModel: Loaded {loaded} weights, {missing} not matched.");
+    }
+
     private static Tensor<float> ReadTensor(BinaryReader stream, GgufDtype dtype, int[] shape)
     {
         int count = 1; foreach (int d in shape) count *= d;
         var result = new Tensor<float>(shape);
+        ReadTensorInto(stream, dtype, shape, result.Data);
+        return result;
+    }
+
+    private static void ReadTensorInto(BinaryReader stream, GgufDtype dtype, int[] shape, Span<float> destination)
+    {
+        int count = 1; foreach (int d in shape) count *= d;
+        if (destination.Length < count) throw new ArgumentException($"Destination buffer too small: {destination.Length} < {count}");
 
         try
         {
             switch (dtype)
             {
                 case GgufDtype.F32:
-                    for (int i = 0; i < count; i++) result.Data[i] = stream.ReadSingle();
+                    for (int i = 0; i < count; i++) destination[i] = stream.ReadSingle();
                     break;
                 case GgufDtype.F16:
-                    for (int i = 0; i < count; i++) result.Data[i] = HalfToFloat(stream.ReadUInt16());
+                    for (int i = 0; i < count; i++) destination[i] = HalfToFloat(stream.ReadUInt16());
                     break;
                 case GgufDtype.Q4_K:
-                    ReadQ4K(stream, result.Data, count);
+                    ReadQ4K(stream, destination, count);
                     break;
                 case GgufDtype.Q6_K:
-                    ReadQ6K(stream, result.Data, count);
+                    ReadQ6K(stream, destination, count);
                     break;
                 case GgufDtype.Q8_0:
-                    ReadQ8_0(stream, result.Data, count);
+                    ReadQ8_0(stream, destination, count);
                     break;
                 case GgufDtype.Q5_K:
-                    ReadQ5_K(stream, result.Data, count);
+                    ReadQ5_K(stream, destination, count);
                     break;
                 case GgufDtype.Q3_K:
-                    ReadQ3_K(stream, result.Data, count);
+                    ReadQ3_K(stream, destination, count);
                     break;
                 default:
                     Console.WriteLine("[GgufLoader] Unsupported dtype: " + dtype);
@@ -203,9 +247,8 @@ public static class GgufLoader
         }
         catch (Exception ex)
         {
-            Console.WriteLine("[GgufLoader] ReadTensor error: " + ex.Message);
+            Console.WriteLine("[GgufLoader] ReadTensorInto error: " + ex.Message);
         }
-        return result;
     }
 
     private static float HalfToFloat(ushort half)

@@ -1,4 +1,5 @@
-﻿using SharpMind.Core.Ops;
+﻿using System.Text.RegularExpressions;
+using SharpMind.Core.Ops;
 using SharpMind.Core.Tensors;
 using SharpMind.Core.Training;
 using SharpMind.Model.Layers.Attention;
@@ -20,6 +21,7 @@ public sealed class TransformerBlock : IDisposable
     private readonly NormLayer _norm1;   // pre-attention norm
     private readonly NormLayer _norm2;   // pre-FFN norm
     private readonly TensorOps _ops;
+    private readonly int _layerIdx;
     private bool _disposed;
 
     private Tensor<float>? _cachedInput;
@@ -30,6 +32,7 @@ public sealed class TransformerBlock : IDisposable
     private Tensor<float>? _cachedFfnOut;
 
     public TransformerBlock(
+        int layerIdx,
         AttentionLayer attention,
         FfnLayer ffn,
         NormLayer norm1,
@@ -42,6 +45,7 @@ public sealed class TransformerBlock : IDisposable
         ArgumentNullException.ThrowIfNull(norm2);
         ArgumentNullException.ThrowIfNull(ops);
 
+        _layerIdx = layerIdx;
         _attention = attention;
         _ffn = ffn;
         _norm1 = norm1;
@@ -123,34 +127,46 @@ public sealed class TransformerBlock : IDisposable
             yield return p;
     }
 
-    public void LoadWeight(string name, ReadOnlySpan<float> data)
+    public bool LoadWeight(string name, ReadOnlySpan<float> data)
     {
         var lower = name.ToLower();
         
-        // Try to load into any matching parameter
+        // Extract component type from GGUF name
+        string compType = "";
+        if (lower.Contains("attn_q")) compType = "attn_q";
+        else if (lower.Contains("attn_k")) compType = "attn_k";
+        else if (lower.Contains("attn_v")) compType = "attn_v";
+        else if (lower.Contains("attn_output")) compType = "attn_output";
+        else if (lower.Contains("ffn_gate")) compType = "ffn_gate";
+        else if (lower.Contains("ffn_up")) compType = "ffn_up";
+        else if (lower.Contains("ffn_down")) compType = "ffn_down";
+        else if (lower.Contains("attn_norm")) compType = "attn_norm";
+        else if (lower.Contains("ffn_norm")) compType = "ffn_norm";
+        
+        // Try to load into matching parameter
         foreach (var p in Parameters())
         {
             var pName = p.Name.ToLower();
-            if (p.Data.ElementCount == data.Length)
+            if (p.Data.ElementCount != data.Length) continue;
+            
+            string ourType = "";
+            if (pName.Contains("attn_q")) ourType = "attn_q";
+            else if (pName.Contains("attn_k")) ourType = "attn_k";
+            else if (pName.Contains("attn_v")) ourType = "attn_v";
+            else if (pName.Contains("attn_output")) ourType = "attn_output";
+            else if (pName.Contains("ffn_gate")) ourType = "ffn_gate";
+            else if (pName.Contains("ffn_up")) ourType = "ffn_up";
+            else if (pName.Contains("ffn_down")) ourType = "ffn_down";
+            else if (pName.Contains("attn_norm")) ourType = "attn_norm";
+            else if (pName.Contains("ffn_norm")) ourType = "ffn_norm";
+            
+            if (compType == ourType)
             {
-                bool match = lower.Contains("q") && pName.Contains("q") ||
-                           lower.Contains("k") && pName.Contains("k") ||
-                           lower.Contains("v") && pName.Contains("v") ||
-                           lower.Contains("attn_output") && pName.Contains("output") ||
-                           lower.Contains("o_proj") && pName.Contains("output") ||
-                           lower.Contains("gate") && pName.Contains("gate") ||
-                           lower.Contains("up") && pName.Contains("up") ||
-                           lower.Contains("w3") && pName.Contains("up") ||
-                           lower.Contains("down") && pName.Contains("down") ||
-                           lower.Contains("w2") && pName.Contains("down") ||
-                           lower.Contains("norm") && pName.Contains("norm");
-                if (match)
-                {
-                    data.CopyTo(p.Data.Data);
-                    return;
-                }
+                data.CopyTo(p.Data.Data);
+                return true;
             }
         }
+        return false;
     }
 
     public void Dispose()

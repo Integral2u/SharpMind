@@ -48,6 +48,7 @@ DARE (Drop And REscale): Drops redundant weights and re-scales the remaining wei
 Task Arithmetic: Creates "task vectors" by subtracting the base model weights from the fine-tuned model weights, allowing these vectors to be added or subtracted to modify model behavior.
 
 
+SharpMind.Inference.Chat.ChatSession needs to utilize ChatStaus.Interrupted
 
 var builder = await AIHostFactory.CreateHostBuilder(HostAdaptors.LOCAL_GUFF);
 if (builder == null) return;

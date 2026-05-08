@@ -27,7 +27,7 @@ public static class ModelFactory
         embedding.InitNormal(std: 0.02f);
 
         var blocks = Enumerable.Range(0, modelConfig.NumLayers)
-            .Select(_ => BuildBlock(modelConfig, sharpConfig, mapping, acts, ops));
+            .Select(i => BuildBlock(i, modelConfig, sharpConfig, mapping, acts, ops));
 
         IArchitecture arch = sharpConfig.Arch switch
         {
@@ -69,6 +69,7 @@ public static class ModelFactory
     }
 
     private static TransformerBlock BuildBlock(
+        int layerIdx,
         ModelConfig modelConfig,
         SharpMindConfig sharpConfig,
         Dictionary<string, string> mapping,
@@ -80,7 +81,7 @@ public static class ModelFactory
         var norm1 = BuildNorm(modelConfig.HiddenDim, sharpConfig);
         var norm2 = BuildNorm(modelConfig.HiddenDim, sharpConfig);
 
-        return new TransformerBlock(attention, ffn, norm1, norm2, ops);
+        return new TransformerBlock(layerIdx, attention, ffn, norm1, norm2, ops);
     }
 
     private static FfnLayer BuildFfn(
