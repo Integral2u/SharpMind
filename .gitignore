@@ -407,3 +407,4 @@ FodyWeavers.xsd
 /ExternalAssets/SharpMind/config.json
 /ExternalAssets/SharpMind/manifest.json
 /ExternalAssets/SharpMind/weights.bin
+/ExternalAssets/TinyLlama_Native/weights.bin
