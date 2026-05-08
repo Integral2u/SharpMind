@@ -404,3 +404,6 @@ FodyWeavers.xsd
 /ExternalAssets/EMNIST/emnist-mnist-test-labels-idx1-ubyte.gz
 /ExternalAssets/EMNIST/emnist-mnist-train-images-idx3-ubyte.gz
 /ExternalAssets/EMNIST/emnist-mnist-train-labels-idx1-ubyte.gz
+/ExternalAssets/SharpMind/config.json
+/ExternalAssets/SharpMind/manifest.json
+/ExternalAssets/SharpMind/weights.bin
