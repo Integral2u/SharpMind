@@ -49,6 +49,24 @@ public class IntegrationTests
     }
 
     [Fact]
+    public void LoadQwen_Tensors_Succeeds()
+    {
+        var path = @"C:\Integral2u\source\repos\SharpMind\ExternalAssets\qwen2-0_5b-instruct-q4_k_m.gguf";
+        if (!File.Exists(path))
+        {
+            Assert.True(true, $"WARNING: Qwen file not found at {path} - test skipped");
+            return;
+        }
+
+        var meta = GgufLoader.LoadMeta(path);
+        foreach (var t in meta.Tensors.Take(10))
+        {
+            Console.WriteLine($"  Tensor: {t.Name}, Shape: [{string.Join(",", t.Shape)}]");
+        }
+        Assert.NotNull(meta);
+    }
+
+    [Fact]
     public void LoadSafetensors_Succeeds()
     {
         if (!TryGetFile(SafetensorsFileName, out var path))

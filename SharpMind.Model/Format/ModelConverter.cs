@@ -70,15 +70,15 @@ public static class ModelConverter
         
         var config = new SharpMindConfig
         {
-            VocabSize = (int)meta.GetLong("token_embd.weight", 32000),
-            HiddenDim = (int)meta.GetLong("embedding", 4096),
-            NumLayers = (int)meta.GetLong("block_count", 32),
-            NumHeads = (int)meta.GetLong("attention.head_count", 32),
-            NumKvHeads = (int)meta.GetLong("attention.head_count_kv", 32),
-            FfnDim = (int)meta.GetLong("ffn_dim", 11008),
-            MaxSeqLen = (int)meta.GetLong("context_length", 2048),
-            RopeTheta = meta.GetFloat("rope_theta", 10000f),
-            Source = meta.GetString("arch", string.Empty),
+            VocabSize = (int)meta.GetLong("tokenizer.ggml.bos_token_id", 32000), // Approximate
+            HiddenDim = (int)meta.GetLong("llama.embedding_length", meta.GetLong("embedding", 4096)),
+            NumLayers = (int)meta.GetLong("llama.block_count", meta.GetLong("block_count", 32)),
+            NumHeads = (int)meta.GetLong("llama.attention.head_count", meta.GetLong("attention.head_count", 32)),
+            NumKvHeads = (int)meta.GetLong("llama.attention.head_count_kv", meta.GetLong("attention.head_count_kv", 32)),
+            FfnDim = (int)meta.GetLong("llama.feed_forward_length", meta.GetLong("ffn_dim", 11008)),
+            MaxSeqLen = (int)meta.GetLong("llama.context_length", meta.GetLong("context_length", 2048)),
+            RopeTheta = meta.GetFloat("llama.rope.freq_base", meta.GetFloat("rope_theta", 10000f)),
+            Source = meta.GetString("general.architecture", "llama") + "/" + meta.GetString("general.name", "model"),
         };
         
         return ConvertWeights(weights, mapper, config);

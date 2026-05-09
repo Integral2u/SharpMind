@@ -1,68 +1,33 @@
 using SharpMind.Core.Tensors;
 using SharpMind.Model;
 using SharpMind.Model.Config;
+using SharpMind.Model.Format;
+using Xunit;
 
 namespace SharpMind.Samples.Tests;
 
 /// <summary>
 /// Loads TinyLlama from GGUF and runs a chat session demo.
 /// </summary>
-public static class TinyLlamaChat
+public class TinyLlamaChatTests
 {
-    public static Task RunAsync()
+    [Fact]
+    public void RunDemo()
+    {
+        RunAsync().Wait();
+    }
+    
+    public Task RunAsync()
     {
         Console.WriteLine("=== TinyLlama ChatSession Demo ===");
-        Console.WriteLine();
-
-        // Use TinyLlama config directly
-        var sharpConfigModel = new Model.Format.SharpMindConfig
+        var ggufPath = @"C:\Integral2u\source\repos\SharpMind\ExternalAssets\qwen2-0_5b-instruct-q4_k_m.gguf";
+        var meta = GgufLoader.LoadMeta(ggufPath);
+        
+        foreach (var t in meta.Tensors.Take(10))
         {
-            VocabSize = 128256,
-            HiddenDim = 2048,
-            NumLayers = 22,
-            NumHeads = 32,
-            NumKvHeads = 4,
-            FfnDim = 5632,
-            MaxSeqLen = 2048,
-            RopeTheta = 500000f,
-            Architecture = "decoder",
-            Activation = "silu",
-            Gate = "swiglu",
-            Ffn = "gated",
-            Norm = "rmsnorm",
-            Attention = "gqa",
-        };
-        
-        Console.WriteLine("Using TinyLlama-1.1B-Chat config:");
-        Console.WriteLine($"  VocabSize: {sharpConfigModel.VocabSize}");
-        Console.WriteLine($"  HiddenDim: {sharpConfigModel.HiddenDim}");
-        Console.WriteLine($"  NumLayers: {sharpConfigModel.NumLayers}");
-        Console.WriteLine($"  NumHeads: {sharpConfigModel.NumHeads}");
-        Console.WriteLine($"  MaxSeqLen: {sharpConfigModel.MaxSeqLen}");
-        Console.WriteLine();
+            Console.WriteLine($"  Tensor: {t.Name}, Shape: [{string.Join(",", t.Shape)}]");
+        }
 
-        // Create model config
-        var modelConfig = sharpConfigModel.ToModelConfig();
-
-        // Build JigSaw config
-        var sharpConfig = sharpConfigModel.ToJigSawConfig();
-        
-        // Force scalar hardware for compatibility
-        var sharpConfigWithHardware = sharpConfig with { Hardware = HardwareTier.Scalar };
-
-        // Build transformer (random weights)
-        Console.WriteLine("Building Transformer...");
-        var model = ModelFactory.Create(modelConfig, sharpConfigWithHardware);
-        
-        Console.WriteLine($"Model: {model.ParameterCount / 1_000_000.0:F1}M parameters");
-        Console.WriteLine();
-
-        // Test the generation flow
-        TestGenerationFlow(model);
-
-        Console.WriteLine();
-        Console.WriteLine("Demo complete!");
-        
         return Task.CompletedTask;
     }
 

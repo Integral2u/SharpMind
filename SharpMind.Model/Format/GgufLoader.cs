@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.IO.MemoryMappedFiles;
+using System.Buffers;
 using SharpMind.Core.Tensors;
 using SharpMind.Model;
 
@@ -37,10 +38,24 @@ public static class GgufLoader
         public string GetString(string key, string defaultValue = "") { var kv = KvPairs.FirstOrDefault(k => k.Key == key); return kv.Value is string s ? s : defaultValue; }
     }
 
-    private static long SkipValue(BinaryReader reader, int valType) => valType switch
+    private static object ReadValue(BinaryReader reader, uint valType)
     {
-        0 => 1, 1 => 1, 2 => 2, 3 => 2, 4 => 4, 5 => 4, 6 => 4, 7 => 1, 10 => 8, 11 => 8, 12 => 8, _ => 1
-    };
+        return valType switch
+        {
+            0 => reader.ReadByte(),
+            1 => reader.ReadSByte(),
+            2 => reader.ReadUInt16(),
+            3 => reader.ReadInt16(),
+            4 => reader.ReadUInt32(),
+            5 => reader.ReadInt32(),
+            6 => reader.ReadSingle(),
+            7 => reader.ReadBoolean(),
+            10 => reader.ReadUInt64(),
+            11 => reader.ReadInt64(),
+            12 => reader.ReadDouble(),
+            _ => throw new InvalidDataException("Unknown scalar type: " + valType)
+        };
+    }
 
     private static (ulong len, string str) ReadString(BinaryReader reader)
     {
@@ -50,21 +65,34 @@ public static class GgufLoader
         return (len, System.Text.Encoding.UTF8.GetString(bytes));
     }
 
-    private static void SkipStringValue(BinaryReader reader)
+    private static string ReadStringValue(BinaryReader reader)
     {
         var len = reader.ReadUInt64();
-        reader.BaseStream.Position += (long)len;
+        var bytes = reader.ReadBytes((int)len);
+        return System.Text.Encoding.UTF8.GetString(bytes);
     }
 
     private static void SkipArrayValue(BinaryReader reader)
     {
         var elemType = reader.ReadUInt32();
         var arrLen = reader.ReadUInt64();
-        int elemSize = elemType switch
+
+        if (elemType == 8) // String array
         {
-            0 => 1, 1 => 1, 2 => 2, 3 => 2, 4 => 4, 5 => 4, 6 => 4, 7 => 1, 10 => 8, 11 => 8, 12 => 8, _ => 1
-        };
-        reader.BaseStream.Position += (long)(arrLen * (ulong)elemSize);
+            for (ulong i = 0; i < arrLen; i++)
+            {
+                var sLen = reader.ReadUInt64();
+                reader.BaseStream.Position += (long)sLen;
+            }
+        }
+        else
+        {
+            int elemSize = elemType switch
+            {
+                0 => 1, 1 => 1, 2 => 2, 3 => 2, 4 => 4, 5 => 4, 6 => 4, 7 => 1, 10 => 8, 11 => 8, 12 => 8, _ => 1
+            };
+            reader.BaseStream.Position += (long)(arrLen * (ulong)elemSize);
+        }
     }
 
     public static GgufMeta LoadMeta(string path)
@@ -90,38 +118,24 @@ public static class GgufLoader
         {
             var (keyLen, key) = ReadString(reader);
             uint valType = reader.ReadUInt32();
-
+            object val;
+            
             // Handle value based on type
             switch (valType)
             {
-                case 8: // STRING: uint64 len + bytes
-                    var strLen = reader.ReadUInt64();
-                    reader.BaseStream.Position += (long)strLen;
+                case 8: // STRING
+                    val = ReadStringValue(reader);
                     break;
-                case 9: // ARRAY: uint32 elemType + uint64 count + elements
-                    var elemType = reader.ReadUInt32();
-                    var arrLen = reader.ReadUInt64();
-                    
-                    if (elemType == 8) // Array of strings
-                    {
-                        for (ulong j = 0; j < arrLen; j++)
-                        {
-                            var sLen = reader.ReadUInt64();
-                            reader.BaseStream.Position += (long)sLen;
-                        }
-                    }
-                    else
-                    {
-                        int elemSize = elemType switch { 0 => 1, 1 => 1, 2 => 2, 3 => 2, 4 => 4, 5 => 4, 6 => 4, 7 => 1, 10 => 8, 11 => 8, 12 => 8, _ => 1 };
-                        reader.BaseStream.Position += (long)(arrLen * (ulong)elemSize);
-                    }
+                case 9: // ARRAY
+                    SkipArrayValue(reader);
+                    val = null;
                     break;
                 default:
-                    reader.BaseStream.Position += SkipValue(reader, (int)valType);
+                    val = ReadValue(reader, valType);
                     break;
             }
 
-            meta.KvPairs.Add(new KvPair { Key = key, Value = valType.ToString() });
+            meta.KvPairs.Add(new KvPair { Key = key, Value = val });
         }
 
         Console.WriteLine("[GgufLoader] KV end at {0}, reading tensors...", reader.BaseStream.Position);
@@ -177,7 +191,6 @@ public static class GgufLoader
 
         int loaded = 0;
         int missing = 0;
-        float[] reuseBuffer = null;
 
         foreach (var info in meta.Tensors)
         {
@@ -185,18 +198,23 @@ public static class GgufLoader
             
             int count = 1; foreach (int d in info.Shape) count *= d;
             
-            if (reuseBuffer == null || reuseBuffer.Length < count)
-                reuseBuffer = new float[count];
-            
-            ReadTensorInto(reader, info.Dtype, info.Shape, reuseBuffer.AsSpan(0, count));
-            
-            if (model.LoadWeight(info.Name, reuseBuffer.AsSpan(0, count)))
+            float[] buffer = ArrayPool<float>.Shared.Rent(count);
+            try
             {
-                loaded++;
+                ReadTensorInto(reader, info.Dtype, info.Shape, buffer.AsSpan(0, count));
+                
+                if (model.LoadWeight(info.Name, buffer.AsSpan(0, count)))
+                {
+                    loaded++;
+                }
+                else
+                {
+                    missing++;
+                }
             }
-            else
+            finally
             {
-                missing++;
+                ArrayPool<float>.Shared.Return(buffer);
             }
         }
         Console.WriteLine($"[GgufLoader] LoadWeightsToModel: Loaded {loaded} weights, {missing} not matched.");

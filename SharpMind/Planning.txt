@@ -17,6 +17,7 @@ Core: tensors, matrix math, memory, activations
 //End result is we should be able to have a builder class for model building and inference to make it simple easy create an instance and launch using a ChatSession
 //Part of this must include using option for methods and means to process(JigSawDotNet) be it default config, custom or detection for optimal operation performance or precision including exteral JigSawPeices(See SharpMind.GPU)
 //Let me reiterate this has to be as fast as possible
+//Model loading need an early fail if the model file is not found
 
 Ooops
 SharpMind.Evaluation prject was never created but EvaluationKernels.cs was, rather than add where should it go. 
