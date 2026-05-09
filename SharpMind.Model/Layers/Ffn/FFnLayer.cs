@@ -32,6 +32,14 @@ public abstract class FfnLayer : IDisposable
     protected readonly LinearLayer? WUp;    // [FfnDim,    HiddenDim]
     protected readonly LinearLayer? WDown;  // [HiddenDim, FfnDim]
 
+    public void LoadWeights(string name, ReadOnlySpan<float> data)
+    {
+        var lower = name.ToLower();
+        if (lower.Contains("gate")) { data.CopyTo(WGate.Weight.Data); }
+        else if (lower.Contains("up")) { data.CopyTo(WUp.Weight.Data); }
+        else if (lower.Contains("down")) { data.CopyTo(WDown.Weight.Data); }
+    }
+
     // ── MoE weights ───────────────────────────────────────────────────────
     protected readonly LinearLayer? Router;     // [NumExperts, HiddenDim]
     protected readonly LinearLayer[]? ExpertGate;

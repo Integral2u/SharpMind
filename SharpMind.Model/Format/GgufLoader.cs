@@ -191,6 +191,8 @@ public static class GgufLoader
 
         int loaded = 0;
         int missing = 0;
+        int total = meta.Tensors.Count;
+        int processed = 0;
 
         foreach (var info in meta.Tensors)
         {
@@ -216,8 +218,11 @@ public static class GgufLoader
             {
                 ArrayPool<float>.Shared.Return(buffer);
             }
+            
+            processed++;
         }
-        Console.WriteLine($"[GgufLoader] LoadWeightsToModel: Loaded {loaded} weights, {missing} not matched.");
+        var mb = GC.GetTotalMemory(false) / 1_000_000.0;
+        Console.WriteLine($"[GgufLoader] Loaded {loaded}/{total} weights, {missing} not matched. Memory: {mb:F1} MB");
     }
 
     private static Tensor<float> ReadTensor(BinaryReader stream, GgufDtype dtype, int[] shape)

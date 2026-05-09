@@ -15,12 +15,12 @@ namespace SharpMind.Samples.Examples;
 /// real BPE tokenizer ? KV-cached transformer ? streaming token output.
 ///
 /// Replaces the former <c>SimpleChatSession</c> which used a fake ASCII-level
-/// tokenizer, re-ran the full context on every decode step (O(n²)), and
+/// tokenizer, re-ran the full context on every decode step (O(nï¿½)), and
 /// silently discarded the agent prompt.
 ///
 /// Commands during chat:
-///   quit   – exit
-///   clear  – wipe conversation history, re-add system messages
+///   quit   ï¿½ exit
+///   clear  ï¿½ wipe conversation history, re-add system messages
 /// </summary>
 public static class InteractiveChat
 {
@@ -124,7 +124,7 @@ public static class InteractiveChat
             Hardware   = hardware,
         };
 
-        Console.WriteLine("\nBuilding model...");
+Console.WriteLine("\nBuilding model...");
         GC.Collect(); GC.WaitForPendingFinalizers();
         var model = ModelFactory.Create(modelConfig, sharpConfig);
         Console.WriteLine($"  {model.ParameterCount / 1_000_000.0:F1}M parameters");
@@ -133,15 +133,13 @@ public static class InteractiveChat
         GC.Collect(); GC.WaitForPendingFinalizers();
         var sw = System.Diagnostics.Stopwatch.StartNew();
         GgufLoader.LoadWeightsToModel(ggufPath, meta, model);
+        sw.Stop();
         Console.WriteLine($"  Done in {sw.ElapsedMilliseconds}ms");
 
         // -- Load tokenizer ------------------------------------------------
-        // tokenizer.json ships alongside the model on HuggingFace.
-        // Qwen and most recent open models use the same HF format as LLaMA,
-        // so Tokenizer.FromLlama handles them correctly.
         if (!File.Exists(tokenizerPath))
         {
-            Console.WriteLine($"\n[Error] tokenizer.json not found at: {tokenizerPath}");
+            Console.WriteLine($"[Error] tokenizer.json not found at: {tokenizerPath}");
             Console.WriteLine("  Download it from the model's HuggingFace page and place it");
             Console.WriteLine("  in the same folder as the GGUF file.");
             return;
@@ -152,6 +150,7 @@ public static class InteractiveChat
         Console.WriteLine($"  Vocab size: {tokenizer.VocabSize}");
 
         // -- Create inference ops and chat session -------------------------
+        Console.WriteLine("Creating inference ops...");
         var inferOps = InferenceOpsFactory.Create(sharpConfig, InferenceConfig.Default);
 
         await using var session = new ChatSession(model, tokenizer, inferOps)
@@ -162,20 +161,12 @@ public static class InteractiveChat
             TopP        = 0.9f,
         };
 
-        // System.md  ? overall behaviour  ("You are a polite, creative AI assistant.")
-        // Agent.md   ? identity & style   ("Your name is Delta. Be concise.")
-        // Both are merged into one system message; either may be absent.
         string systemPrompt  = File.Exists("System.md") ? File.ReadAllText("System.md").Trim() : "";
         string agentPrompt   = File.Exists("Agent.md")  ? File.ReadAllText("Agent.md").Trim()  : "";
         string combinedSystem = BuildSystemPrompt(systemPrompt, agentPrompt);
 
-        void SeedSystemMessages()
-        {
-            if (!string.IsNullOrEmpty(combinedSystem))
-                session.AddMessage(ChatRole.System, combinedSystem);
-        }
-
-        SeedSystemMessages();
+        if (!string.IsNullOrEmpty(combinedSystem))
+            session.AddMessage(ChatRole.System, combinedSystem);
 
         Console.WriteLine("\nChat ready! Say hello.\n");
 
@@ -188,14 +179,15 @@ public static class InteractiveChat
             if (string.IsNullOrWhiteSpace(input))
                 continue;
 
-            switch (input.Trim().ToLowerInvariant())
+switch (input.Trim().ToLowerInvariant())
             {
                 case "quit":
                     goto done;
 
                 case "clear":
                     session.ClearHistory();
-                    SeedSystemMessages();
+                    if (!string.IsNullOrEmpty(combinedSystem))
+                        session.AddMessage(ChatRole.System, combinedSystem);
                     Console.WriteLine("[Context cleared]\n");
                     continue;
             }

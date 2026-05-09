@@ -11,6 +11,12 @@ Tokenizer: BPE, vocab builder, encode/decode
 Data: sources, cleaning, formating, batching, dataset loaders
 Core: tensors, matrix math, memory, activations
 
+Before release check mutilple models with interactive chat
+
+
+Model/Tokenizer load could be async with progress
+build small native model for testing
+system and agent.md refinement.  caw we say somthing like adaptive if the user is asking question be more helpful if asking for action be concise
 //Needs to be fast, text llm only, any multi modal type interations to be impemnted thought tools.
 //Tools actaul class methods with atrribute, desc. the schema is resolvable by method info
 //while using GGUF for no this is only testing eventual end production should use .SM(uncompressed) or .SMP(sharp mind package(compressed variant)) qantization should be part of this to define how model data is stored.
@@ -72,3 +78,5 @@ string Prompt()
     if (userInput == "exit") cancellationTokenSource.Cancel();
     return userInput;
 }
+
+

@@ -30,6 +30,15 @@ public abstract class AttentionLayer : IDisposable
         Rope = new RoPE(config.HeadDim, config.MaxSeqLen, config.RopeTheta);
     }
 
+    public void LoadWeights(string name, ReadOnlySpan<float> data)
+    {
+        var lower = name.ToLower();
+        if (lower.Contains("q") && !lower.Contains("output")) { data.CopyTo(Wq.Weight.Data); }
+        else if (lower.Contains("k") && !lower.Contains("output")) { data.CopyTo(Wk.Weight.Data); }
+        else if (lower.Contains("v") && !lower.Contains("output")) { data.CopyTo(Wv.Weight.Data); }
+        else if (lower.Contains("o") || lower.Contains("output")) { data.CopyTo(Wo.Weight.Data); }
+    }
+
     [PuzzleCornerPiece(SharpMindConfig.KeyAttention,
         SharpMindConfig.ValMhaAvx2, NS + "." + nameof(AttentionKernels.ScaledDotProductAVX2),
         SharpMindConfig.ValMhaScalar, NS + "." + nameof(AttentionKernels.ScaledDotProductScalar),

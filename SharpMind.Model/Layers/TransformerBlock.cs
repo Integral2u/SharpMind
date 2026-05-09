@@ -131,41 +131,53 @@ public sealed class TransformerBlock : IDisposable
     {
         var lower = name.ToLower();
         
-        // Extract component type from GGUF name
-        string compType = "";
-        if (lower.Contains("attn_q")) compType = "attn_q";
-        else if (lower.Contains("attn_k")) compType = "attn_k";
-        else if (lower.Contains("attn_v")) compType = "attn_v";
-        else if (lower.Contains("attn_output")) compType = "attn_output";
-        else if (lower.Contains("ffn_gate")) compType = "ffn_gate";
-        else if (lower.Contains("ffn_up")) compType = "ffn_up";
-        else if (lower.Contains("ffn_down")) compType = "ffn_down";
-        else if (lower.Contains("attn_norm")) compType = "attn_norm";
-        else if (lower.Contains("ffn_norm")) compType = "ffn_norm";
-        
-        // Try to load into matching parameter
-        foreach (var p in Parameters())
+        // Direct name-based load using layer public methods
+        if (lower.Contains("attn_q"))
         {
-            var pName = p.Name.ToLower();
-            if (p.Data.ElementCount != data.Length) continue;
-            
-            string ourType = "";
-            if (pName.Contains("attn_q")) ourType = "attn_q";
-            else if (pName.Contains("attn_k")) ourType = "attn_k";
-            else if (pName.Contains("attn_v")) ourType = "attn_v";
-            else if (pName.Contains("attn_output")) ourType = "attn_output";
-            else if (pName.Contains("ffn_gate")) ourType = "ffn_gate";
-            else if (pName.Contains("ffn_up")) ourType = "ffn_up";
-            else if (pName.Contains("ffn_down")) ourType = "ffn_down";
-            else if (pName.Contains("attn_norm")) ourType = "attn_norm";
-            else if (pName.Contains("ffn_norm")) ourType = "ffn_norm";
-            
-            if (compType == ourType)
-            {
-                data.CopyTo(p.Data.Data);
-                return true;
-            }
+            _attention.LoadWeights(name, data);
+            return true;
         }
+        if (lower.Contains("attn_k"))
+        {
+            _attention.LoadWeights(name, data);
+            return true;
+        }
+        if (lower.Contains("attn_v"))
+        {
+            _attention.LoadWeights(name, data);
+            return true;
+        }
+        if (lower.Contains("attn_output") || lower.Contains("attn_o"))
+        {
+            _attention.LoadWeights(name, data);
+            return true;
+        }
+        if (lower.Contains("ffn_gate"))
+        {
+            _ffn.LoadWeights(name, data);
+            return true;
+        }
+        if (lower.Contains("ffn_up"))
+        {
+            _ffn.LoadWeights(name, data);
+            return true;
+        }
+        if (lower.Contains("ffn_down"))
+        {
+            _ffn.LoadWeights(name, data);
+            return true;
+        }
+        if (lower.Contains("attn_norm"))
+        {
+            _norm1.LoadWeight(data);
+            return true;
+        }
+        if (lower.Contains("ffn_norm"))
+        {
+            _norm2.LoadWeight(data);
+            return true;
+        }
+        
         return false;
     }
 
