@@ -258,6 +258,9 @@ public static class GgufLoader
                 case GgufDtype.Q3_K:
                     ReadQ3_K(stream, destination, count);
                     break;
+                case GgufDtype.Q5_0:
+                    ReadQ5_0(stream, destination, count);
+                    break;
                 default:
                     Console.WriteLine("[GgufLoader] Unsupported dtype: " + dtype);
                     break;
@@ -434,6 +437,25 @@ public static class GgufLoader
                     int q = ((b >> 4) & 0x1F);
                     data[i + j] = (q - 16) * scale;
                 }
+            }
+        }
+    }
+
+    private static void ReadQ5_0(BinaryReader reader, Span<float> data, int n)
+    {
+        // GGUF Q5_0 quantization: block_q5_0 struct
+        int blockSize = 32;
+        for (int i = 0; i < n; i += blockSize)
+        {
+            float d = HalfToFloat(reader.ReadUInt16());
+            uint qh = reader.ReadUInt32();
+            
+            for (int j = 0; j < blockSize && i + j < n; j++)
+            {
+                sbyte qs = reader.ReadSByte();
+                // Combine high bit from qh and low 4 bits from qs
+                int q = (int)qs | (int)(((qh >> j) & 1) << 4);
+                data[i + j] = q * d;
             }
         }
     }
