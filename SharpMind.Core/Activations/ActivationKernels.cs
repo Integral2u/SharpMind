@@ -106,6 +106,28 @@ internal static class ActivationKernels
 
     internal static void SoftmaxRowScalar(ReadOnlySpan<float> src, Span<float> dst)
     {
+        if (src.Length < 256)
+        {
+            SoftmaxRowScalarSmall(src, dst);
+            return;
+        }
+        int n = src.Length;
+        float max = src[0];
+        for (int i = 1; i < n; i++) if (src[i] > max) max = src[i];
+
+        float sum = 0f;
+        for (int i = 0; i < n; i++)
+        {
+            dst[i] = MathF.Exp(src[i] - max);
+            sum += dst[i];
+        }
+
+        float inv = 1f / sum;
+        for (int i = 0; i < n; i++) dst[i] *= inv;
+    }
+
+    private static void SoftmaxRowScalarSmall(ReadOnlySpan<float> src, Span<float> dst)
+    {
         float max = src[0];
         for (int i = 1; i < src.Length; i++) if (src[i] > max) max = src[i];
 
@@ -155,6 +177,34 @@ internal static class ActivationKernels
 
     internal static unsafe void MatMulInnerFMA(float* a, float* bt, float* c, int M, int K, int N)
     {
+        if (M <= 1)
+        {
+            MatMulInnerFMA_SingleRow(a, bt, c, M, K, N);
+            return;
+        }
+        System.Threading.Tasks.Parallel.For(0, M, i =>
+        {
+            float* rowA = a + (long)i * K;
+            float* rowC = c + (long)i * N;
+            for (int j = 0; j < N; j++)
+            {
+                float* rowBT = bt + (long)j * K;
+                var acc = Vector256<float>.Zero;
+                int k = 0;
+                for (; k <= K - 8; k += 8)
+                    acc = Fma.MultiplyAdd(
+                        Vector256.LoadUnsafe(ref rowA[k]),
+                        Vector256.LoadUnsafe(ref rowBT[k]),
+                        acc);
+                float sum = HSum256(acc);
+                for (; k < K; k++) sum += rowA[k] * rowBT[k];
+                rowC[j] = sum;
+            }
+        });
+    }
+
+    private static unsafe void MatMulInnerFMA_SingleRow(float* a, float* bt, float* c, int M, int K, int N)
+    {
         for (int i = 0; i < M; i++)
         {
             float* rowA = a + (long)i * K;
@@ -178,6 +228,33 @@ internal static class ActivationKernels
 
     internal static unsafe void MatMulInnerAVX2(float* a, float* bt, float* c, int M, int K, int N)
     {
+        if (M <= 1)
+        {
+            MatMulInnerAVX2_SingleRow(a, bt, c, M, K, N);
+            return;
+        }
+        System.Threading.Tasks.Parallel.For(0, M, i =>
+        {
+            float* rowA = a + (long)i * K;
+            float* rowC = c + (long)i * N;
+            for (int j = 0; j < N; j++)
+            {
+                float* rowBT = bt + (long)j * K;
+                var acc = Vector256<float>.Zero;
+                int k = 0;
+                for (; k <= K - 8; k += 8)
+                    acc = Avx.Add(acc, Avx.Multiply(
+                        Vector256.LoadUnsafe(ref rowA[k]),
+                        Vector256.LoadUnsafe(ref rowBT[k])));
+                float sum = HSum256(acc);
+                for (; k < K; k++) sum += rowA[k] * rowBT[k];
+                rowC[j] = sum;
+            }
+        });
+    }
+
+    private static unsafe void MatMulInnerAVX2_SingleRow(float* a, float* bt, float* c, int M, int K, int N)
+    {
         for (int i = 0; i < M; i++)
         {
             float* rowA = a + (long)i * K;
@@ -199,6 +276,27 @@ internal static class ActivationKernels
     }
 
     internal static unsafe void MatMulInnerScalar(float* a, float* bt, float* c, int M, int K, int N)
+    {
+        if (M <= 1)
+        {
+            MatMulInnerScalar_SingleRow(a, bt, c, M, K, N);
+            return;
+        }
+        System.Threading.Tasks.Parallel.For(0, M, i =>
+        {
+            float* rowA = a + (long)i * K;
+            float* rowC = c + (long)i * N;
+            for (int j = 0; j < N; j++)
+            {
+                float* rowBT = bt + (long)j * K;
+                float sum = 0f;
+                for (int k = 0; k < K; k++) sum += rowA[k] * rowBT[k];
+                rowC[j] = sum;
+            }
+        });
+    }
+
+    private static unsafe void MatMulInnerScalar_SingleRow(float* a, float* bt, float* c, int M, int K, int N)
     {
         for (int i = 0; i < M; i++)
         {

@@ -64,18 +64,14 @@ public sealed unsafe class NativeBuffer<T> : IDisposable where T : unmanaged
     {
         if (Interlocked.Decrement(ref _refCount) == 0)
         {
-            // Check if this buffer is a power-of-two and should be pooled
-            int bucket = 1;
-            while (bucket < Length) bucket <<= 1;
-            if (bucket == Length)
-            {
-                NativeBufferPool<T>.Return(this);
-                // We do NOT null _ptr here because the pool will reuse it.
-                // Instead, we rely on the pool to manage the lifecycle.
-                // To prevent current users from using it, we must be careful.
-                // Actually, the best way is to let the pool handle it.
-                return;
-            }
+            NativeBufferPool<T>.Return(this);
+        }
+    }
+
+    internal void Free()
+    {
+        if (_ptr is not null)
+        {
             NativeMemory.AlignedFree(_ptr);
             _ptr = null;
         }

@@ -314,17 +314,70 @@ public abstract class TensorOps
             throw new ArgumentOutOfRangeException(nameof(k),
                 $"k={k} must be in [1, {a.ElementCount}].");
 
-        // Min-heap approach: O(n log k) — correct for large k or large tensors
-        var heap = new SortedList<float, int>(k + 1, FloatDescComparer.Instance);
-        var data = a.Data;
-
-        for (int i = 0; i < data.Length; i++)
+        if (k * 16 >= a.ElementCount)
         {
-            heap.TryAdd(data[i], i);
-            if (heap.Count > k) heap.RemoveAt(heap.Count - 1);
+            var sorted = a.Data.ToArray();
+            Array.Sort(sorted, static (x, y) => y.CompareTo(x));
+            var result = new int[k];
+            for (int i = 0; i < k; i++) result[i] = i;
+            return result;
         }
 
-        return [.. heap.Values];
+        if (k <= 64)
+        {
+            var heap = new SortedList<float, int>(k + 1, FloatDescComparer.Instance);
+            var data = a.Data;
+            for (int i = 0; i < data.Length; i++)
+            {
+                heap.TryAdd(data[i], i);
+                if (heap.Count > k) heap.RemoveAt(heap.Count - 1);
+            }
+            return [.. heap.Values];
+        }
+
+        return ArgTopKIntroselect(a, k);
+    }
+
+    private static int[] ArgTopKIntroselect(Tensor<float> a, int k)
+    {
+        var data = a.Data.ToArray();
+        int n = data.Length;
+        var indices = new int[n];
+        for (int i = 0; i < n; i++) indices[i] = i;
+
+        int left = 0, right = n - 1;
+        int target = k - 1;
+
+        while (left < right)
+        {
+            int pivot = Partition(data, indices, left, right);
+            if (pivot == target) break;
+            else if (pivot > target) right = pivot - 1;
+            else { left = pivot + 1; target = pivot; }
+        }
+
+        var result = new int[k];
+        for (int i = 0; i < k; i++) result[i] = indices[i];
+        Array.Sort(result, (x, y) => data[y].CompareTo(data[x]));
+        return result;
+    }
+
+    private static int Partition(float[] data, int[] indices, int left, int right)
+    {
+        float pivot = data[left];
+        int i = left;
+        for (int j = left + 1; j <= right; j++)
+        {
+            if (data[j] > pivot)
+            {
+                i++;
+                (data[i], data[j]) = (data[j], data[i]);
+                (indices[i], indices[j]) = (indices[j], indices[i]);
+            }
+        }
+        (data[i], data[left]) = (data[left], data[i]);
+        (indices[i], indices[left]) = (indices[left], indices[i]);
+        return i;
     }
 
     /// <summary>Transposes a 2D matrix [R, C] → [C, R]. Allocates a new tensor.</summary>
@@ -333,6 +386,24 @@ public abstract class TensorOps
         if (src.Rank != 2)
             throw new ArgumentException($"Transpose requires rank-2 tensor, got rank {src.Rank}.");
         return TransposeInternal(src);
+    }
+
+    public static void TransposeInPlace(Tensor<float> src)
+    {
+        if (src.Rank != 2)
+            throw new ArgumentException($"Transpose requires rank-2 tensor, got rank {src.Rank}.");
+        int R = src.Shape.Rows, C = src.Shape.Cols;
+        if (R != C) throw new ArgumentException($"In-place transpose requires square matrix [{R},{C}].");
+        var data = src.Data;
+        for (int r = 0; r < R; r++)
+        {
+            for (int c = r + 1; c < C; c++)
+            {
+                int i = r * C + c;
+                int j = c * R + r;
+                (data[i], data[j]) = (data[j], data[i]);
+            }
+        }
     }
     // ═══════════════════════════════════════════════════════════════════════
     // Private helpers
