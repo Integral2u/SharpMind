@@ -75,11 +75,11 @@ public static class LlamaConverter
             bool    special = t.TryGetProperty("special", out var s) && s.GetBoolean();
             if (content is null || !special) continue;
 
-            // Match both LLaMA 2 SentencePiece format and LLaMA 3 format
-            if (content is "<unk>" or "[UNK]") unk = content;
-            else if (content is "<s>" or "[BOS]" or "<|begin_of_text|>") bos = content;
-            else if (content is "</s>" or "[EOS]" or "<|end_of_text|>") eos = content;
-            else if (content is "<pad>" or "[PAD]") pad = content;
+            // Match both LLaMA 2 SentencePiece format, LLaMA 3 format, and Qwen format
+            if (content is "<unk>" or "[UNK]" or "<|unk|>") unk = content;
+            else if (content is "<s>" or "[BOS]" or "<|begin_of_text|>" or "<|im_start|>") bos = content;
+            else if (content is "</s>" or "[EOS]" or "<|end_of_text|>" or "<|im_end|>") eos = content;
+            else if (content is "<pad>" or "[PAD]" or "<|endoftext|>") pad = content;
             else additional.Add(content);
         }
 
@@ -94,6 +94,14 @@ public static class LlamaConverter
                           .OrderBy(p => p.Value.GetInt32())
                           .Select(p => p.Name)
                           .ToList();
+
+        // Add special tokens to vocabulary if they're not already there
+        foreach (string token in specials.All)
+        {
+            if (!ordered.Contains(token))
+                ordered.Add(token);
+        }
+
         return new Vocabulary(ordered, specials);
     }
 
