@@ -411,3 +411,5 @@ FodyWeavers.xsd
 /ExternalAssets/DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M.gguf
 /ExternalAssets/qwen2-0_5b-instruct-q4_k_m.gguf
 /ExternalAssets/qwen2-0_5b-instruct-q4_k_m.json
+/ExternalAssets/model (1).safetensors
+/ExternalAssets/qwen2-0_5b-instruct-q4_k_m.safetensors
