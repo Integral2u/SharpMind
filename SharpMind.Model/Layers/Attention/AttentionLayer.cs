@@ -98,10 +98,14 @@ public abstract class AttentionLayer : IDisposable
                         float* pV;
                         if (cache != null)
                         {
-                            pK = cache.Keys.DataPtr + (long)b * (numKv * Config.MaxSeqLen * headDim)
-                                               + (long)kvHead * (Config.MaxSeqLen * headDim);
-                            pV = cache.Values.DataPtr + (long)b * (numKv * Config.MaxSeqLen * headDim)
-                                                 + (long)kvHead * (Config.MaxSeqLen * headDim);
+                            // Use AllocatedCapacity (the actual tensor stride) not Config.MaxSeqLen.
+                            // These are equal when the cache is fully pre-allocated, but differ when
+                            // the cache starts small and grows on demand.
+                            int cacheStride = cache.AllocatedCapacity;
+                            pK = cache.Keys.DataPtr + (long)b * (numKv * cacheStride * headDim)
+                                               + (long)kvHead * (cacheStride * headDim);
+                            pV = cache.Values.DataPtr + (long)b * (numKv * cacheStride * headDim)
+                                                 + (long)kvHead * (cacheStride * headDim);
                         }
                         else
                         {

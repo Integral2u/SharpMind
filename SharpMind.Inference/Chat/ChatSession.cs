@@ -168,15 +168,24 @@ public sealed class ChatSession : IAsyncDisposable
         if (promptLen == 0)
             throw new InvalidOperationException("Prompt produced no token IDs; cannot generate.");
 
-        var posOffset = _caches[0].Length;
+        // BuildPrompt() always re-encodes the entire conversation history from scratch.
+        // Re-using a stale KV cache from a previous turn would write into already-occupied
+        // positions (posOffset = old cache length, but the full prompt is passed again),
+        // corrupting both the cache content and position encodings.
+        // Resetting here is correct: the full prompt encodes all context the model needs.
+        ResetCaches();
+        var posOffset = 0;
 
         using var input = Tensor<int>.From(promptToks, 1, promptLen);
 
-        Tensor<float>? logitsTensor = _model.Forward(input, _caches, posOffset);
+        // ForwardLastLogits returns [batch, vocabSize] — just the last token's logits.
+        // This avoids allocating and slicing the full [batch, seqLen, vocab] tensor
+        // that Forward() returns, and removes the step==0 / step>0 branch below.
+        Tensor<float>? logitsTensor = _model.ForwardLastLogits(input, _caches, posOffset);
 
         try
         {
-            int vocabSize = logitsTensor.Shape[2];
+            int vocabSize = logitsTensor.Shape[1];
             var response = new System.Text.StringBuilder();
 
             var samplingCfg = new SamplingConfig
@@ -190,9 +199,8 @@ public sealed class ChatSession : IAsyncDisposable
             {
                 if (ct.IsCancellationRequested) break;
 
-                ReadOnlySpan<float> logitsSlice = step == 0
-                    ? logitsTensor.Data.Slice((promptLen - 1) * vocabSize, vocabSize)
-                    : logitsTensor.Data[..vocabSize];
+                // logitsTensor is always [1, vocabSize] — same layout on every step.
+                ReadOnlySpan<float> logitsSlice = logitsTensor.Data[..vocabSize];
 
                 int nextId = Sampler.Sample(logitsSlice, samplingCfg, Random.Shared);
 
@@ -216,7 +224,7 @@ public sealed class ChatSession : IAsyncDisposable
 
                 prev.Dispose();
                 using var nextInput = Tensor<int>.From(_decodeTokenScratch.AsSpan(0, 1), 1, 1);
-                logitsTensor = _model.Forward(nextInput, _caches, newPos);
+                logitsTensor = _model.ForwardLastLogits(nextInput, _caches, newPos);
             }
 
             // One consolidated agent message avoids O(tokens) retained chat rows and prompt blow-ups.
@@ -290,6 +298,11 @@ public sealed class ChatSession : IAsyncDisposable
             };
             sb.AppendLine(prefix + msg.Content);
         }
+
+        // Prime the model to generate an assistant turn.
+        // Without this cue the model sees "user: <input>\n" as an incomplete
+        // user utterance and echoes/continues user text instead of replying.
+        sb.Append("assistant: ");
 
         return sb.ToString();
     }

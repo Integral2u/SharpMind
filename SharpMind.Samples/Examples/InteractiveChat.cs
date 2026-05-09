@@ -1,301 +1,247 @@
 using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
 using SharpMind;
-using SharpMind.Core.Tensors;
+using SharpMind.Inference;
+using SharpMind.Inference.Chat;
 using SharpMind.Model;
 using SharpMind.Model.Config;
 using SharpMind.Model.Format;
+using SharpMind.Tokenization;
 
 namespace SharpMind.Samples.Examples;
 
+/// <summary>
+/// Interactive CLI chat using the full <see cref="ChatSession"/> pipeline:
+/// real BPE tokenizer ? KV-cached transformer ? streaming token output.
+///
+/// Replaces the former <c>SimpleChatSession</c> which used a fake ASCII-level
+/// tokenizer, re-ran the full context on every decode step (O(n²)), and
+/// silently discarded the agent prompt.
+///
+/// Commands during chat:
+///   quit   – exit
+///   clear  – wipe conversation history, re-add system messages
+/// </summary>
 public static class InteractiveChat
 {
-    private const string GgufFileName = "qwen2-0_5b-instruct-q4_k_m.gguf";// "TinyLlama-1.1B-Chat-v1.0.Q4_K_M.gguf"; // qwen2-0_5b-instruct-q4_k_m.gguf";// DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M.gguf";
+    private const string GgufModelName = "qwen2-0_5b-instruct-q4_k_m";
 
-    public static Task RunAsync()
+    public static async Task RunAsync()
     {
         Console.WriteLine("=== SharpMind Interactive Chat ===");
-        Console.WriteLine("Type 'quit' to exit");
+        Console.WriteLine("Commands: 'quit', 'clear'");
         Console.WriteLine();
 
         var hardware = DetectBestHardware();
         Console.WriteLine($"Hardware: {hardware}");
-        Console.WriteLine();
 
-        var baseDir = "C:\\Integral2u\\source\\repos\\SharpMind\\ExternalAssets";
-        var ggufPath = Path.Combine(baseDir, GgufFileName);
+        var baseDir       = @"C:\Integral2u\source\repos\SharpMind\ExternalAssets";
+        var ggufPath      = Path.Combine(baseDir, $"{GgufModelName}.gguf");
+        var tokenizerPath = Path.Combine(baseDir, $"{GgufModelName}.json");
 
-        int vocabSize = 128256;
-        int hiddenDim = 1536;
-        int numLayers = 24;
-        int numHeads = 12;
-        int numKvHeads = 12;
-        int ffnDim = 6144;
-        int maxSeqLen = 2048;
-
-        GgufLoader.GgufMeta meta = null!;
-
+        // -- GGUF existence check ------------------------------------------
         if (!File.Exists(ggufPath))
         {
             Console.WriteLine($"GGUF not found: {ggufPath}");
-            Console.WriteLine();
-            return Task.CompletedTask;
+            return;
         }
 
+        // -- Load metadata -------------------------------------------------
         var fileInfo = new FileInfo(ggufPath);
-        Console.WriteLine($"GGUF: {ggufPath}");
-        Console.WriteLine($"  Size: {fileInfo.Length / 1_000_000.0:F1} MB");
+        Console.WriteLine($"\nGGUF: {ggufPath}  ({fileInfo.Length / 1_000_000.0:F1} MB)");
+
+        int vocabSize = 128256, hiddenDim = 1536, numLayers = 24;
+        int numHeads = 12, numKvHeads = 12, ffnDim = 6144, maxSeqLen = 2048;
+        GgufLoader.GgufMeta meta;
 
         try
         {
             meta = GgufLoader.LoadMeta(ggufPath);
             Console.WriteLine($"  Loaded metadata: {meta.TensorCount} tensors");
 
-            // Find embedding layer to get vocab size/hidden dim
-            var embdInfo = meta.Tensors.FirstOrDefault(t => t.Name.Contains("token_embd") && t.Name.Contains("weight"));
-            if (embdInfo.Shape != null && embdInfo.Shape.Length >= 2)
+            var embdInfo = meta.Tensors.FirstOrDefault(t =>
+                t.Name.Contains("token_embd") && t.Name.Contains("weight"));
+
+            if (embdInfo.Shape is { Length: >= 2 })
             {
-                // GGUF stores weight as [hidden_dim, vocab_size] or [vocab_size, hidden_dim]
-                var dim0 = embdInfo.Shape[0];
-                var dim1 = embdInfo.Shape[1];
-                if (dim0 > dim1) { vocabSize = dim0; hiddenDim = dim1; }
-                else { vocabSize = dim1; hiddenDim = dim0; }
-                Console.WriteLine($"  Detected from tensor: vocab={vocabSize}, hidden={hiddenDim}");
+                long d0 = embdInfo.Shape[0], d1 = embdInfo.Shape[1];
+                if (d0 > d1) { vocabSize = (int)d0; hiddenDim = (int)d1; }
+                else         { vocabSize = (int)d1; hiddenDim = (int)d0; }
             }
             else
             {
                 hiddenDim = (int)meta.GetLong("llama.embedding_length", 1536);
-                vocabSize = (int)meta.GetLong("vocab_size", 32000); // Fallback
+                vocabSize = (int)meta.GetLong("vocab_size", 32000);
             }
 
-            numLayers = (int)meta.GetLong("llama.block_count", 24);
-            numHeads = (int)meta.GetLong("llama.attention.head_count", 12);
+            numLayers  = (int)meta.GetLong("llama.block_count", 24);
+            numHeads   = (int)meta.GetLong("llama.attention.head_count", 12);
             numKvHeads = (int)meta.GetLong("llama.attention.head_count_kv", 12);
-            ffnDim = (int)meta.GetLong("llama.feed_forward_length", 6144);
-            maxSeqLen = (int)meta.GetLong("llama.context_length", 2048);
+            ffnDim     = (int)meta.GetLong("llama.feed_forward_length", 6144);
+            maxSeqLen  = (int)meta.GetLong("llama.context_length", 2048);
 
             Console.WriteLine($"  Config: vocab={vocabSize}, hidden={hiddenDim}, layers={numLayers}");
-            Console.WriteLine($"  Heads: {numHeads}, kv={numKvHeads}, ffn={ffnDim}");
-
-            Console.WriteLine();
-            Console.WriteLine("Loading weights...");
+            Console.WriteLine($"  Heads: {numHeads} (kv={numKvHeads}), ffn={ffnDim}, ctx={maxSeqLen}");
         }
-
         catch (Exception ex)
         {
-            Console.WriteLine($"  Error: {ex.Message}");
-            Console.WriteLine(ex.StackTrace);
+            Console.WriteLine($"  Error loading metadata: {ex.Message}");
+            return;
         }
 
-        // Fixup: Ensure HiddenDim is divisible by NumHeads
+        // -- Head alignment fixups -----------------------------------------
         if (hiddenDim % numHeads != 0)
         {
-            Console.WriteLine($"[Warning] HiddenDim ({hiddenDim}) not divisible by NumHeads ({numHeads}). Adjusting NumHeads...");
+            Console.WriteLine($"[Warning] HiddenDim ({hiddenDim}) not divisible by NumHeads ({numHeads}). Adjusting...");
             for (int h = numHeads; h > 0; h--)
-            {
-                if (hiddenDim % h == 0)
-                {
-                    numHeads = h;
-                    break;
-                }
-            }
+                if (hiddenDim % h == 0) { numHeads = h; break; }
             Console.WriteLine($"[Warning] Adjusted NumHeads to: {numHeads}");
         }
-
-        // Fixup: Ensure NumHeads is divisible by NumKvHeads
         if (numHeads % numKvHeads != 0)
         {
-            Console.WriteLine($"[Warning] NumHeads ({numHeads}) not divisible by NumKvHeads ({numKvHeads}). Adjusting NumKvHeads...");
+            Console.WriteLine($"[Warning] NumHeads ({numHeads}) not divisible by NumKvHeads ({numKvHeads}). Adjusting...");
             for (int kv = numKvHeads; kv > 0; kv--)
-            {
-                if (numHeads % kv == 0)
-                {
-                    numKvHeads = kv;
-                    break;
-                }
-            }
+                if (numHeads % kv == 0) { numKvHeads = kv; break; }
             Console.WriteLine($"[Warning] Adjusted NumKvHeads to: {numKvHeads}");
         }
 
-
-        Console.WriteLine();
-
+        // -- Build model ---------------------------------------------------
         var modelConfig = new ModelConfig
         {
-            VocabSize = vocabSize,
-            HiddenDim = hiddenDim,
-            NumLayers = numLayers,
-            NumHeads = numHeads,
-            NumKvHeads = numKvHeads,
-            FfnDim = ffnDim,
-            MaxSeqLen = maxSeqLen,
+            VocabSize  = vocabSize,  HiddenDim  = hiddenDim,
+            NumLayers  = numLayers,  NumHeads   = numHeads,
+            NumKvHeads = numKvHeads, FfnDim     = ffnDim,
+            MaxSeqLen  = maxSeqLen,
         };
-
         var sharpConfig = new SharpMindConfig
         {
             Activation = ActivationKind.SiLU,
-            Gate = GateKind.SwiGLU,
-            Ffn = FfnKind.Gated,
-            Attention = AttentionKind.MQA,
-            Norm = NormKind.RMSNorm,
-            Arch = ArchKind.Decoder,
-            Hardware = hardware,
+            Gate       = GateKind.SwiGLU,
+            Ffn        = FfnKind.Gated,
+            Attention  = AttentionKind.MQA,
+            Norm       = NormKind.RMSNorm,
+            Arch       = ArchKind.Decoder,
+            Hardware   = hardware,
         };
 
-        Console.WriteLine("Building model...");
-        GC.Collect();
-        GC.WaitForPendingFinalizers();
+        Console.WriteLine("\nBuilding model...");
+        GC.Collect(); GC.WaitForPendingFinalizers();
         var model = ModelFactory.Create(modelConfig, sharpConfig);
-        Console.WriteLine($"Model: {model.ParameterCount / 1_000_000.0:F1}M params");
+        Console.WriteLine($"  {model.ParameterCount / 1_000_000.0:F1}M parameters");
 
-        Console.WriteLine("Loading weights into model...");
-        GC.Collect();
-        GC.WaitForPendingFinalizers();
+        Console.WriteLine("Loading weights...");
+        GC.Collect(); GC.WaitForPendingFinalizers();
         var sw = System.Diagnostics.Stopwatch.StartNew();
         GgufLoader.LoadWeightsToModel(ggufPath, meta, model);
-        sw.Stop();
-        Console.WriteLine($"Weights loaded in {sw.ElapsedMilliseconds}ms!");
+        Console.WriteLine($"  Done in {sw.ElapsedMilliseconds}ms");
 
-        string systemPrompt = File.Exists("System.md") ? File.ReadAllText("System.md") : "";
-        string agentPrompt = File.Exists("Agent.md") ? File.ReadAllText("Agent.md") : "";
+        // -- Load tokenizer ------------------------------------------------
+        // tokenizer.json ships alongside the model on HuggingFace.
+        // Qwen and most recent open models use the same HF format as LLaMA,
+        // so Tokenizer.FromLlama handles them correctly.
+        if (!File.Exists(tokenizerPath))
+        {
+            Console.WriteLine($"\n[Error] tokenizer.json not found at: {tokenizerPath}");
+            Console.WriteLine("  Download it from the model's HuggingFace page and place it");
+            Console.WriteLine("  in the same folder as the GGUF file.");
+            return;
+        }
 
-        var session = new SimpleChatSession(model, vocabSize, systemPrompt, agentPrompt);
+        Console.WriteLine("Loading tokenizer...");
+        var tokenizer = Tokenizer.FromLlama(tokenizerPath);
+        Console.WriteLine($"  Vocab size: {tokenizer.VocabSize}");
 
-        Console.WriteLine();
-        Console.WriteLine("Chat ready! Say hello.");
-        Console.WriteLine();
+        // -- Create inference ops and chat session -------------------------
+        var inferOps = InferenceOpsFactory.Create(sharpConfig, InferenceConfig.Default);
 
+        await using var session = new ChatSession(model, tokenizer, inferOps)
+        {
+            MaxTokens   = 512,
+            Temperature = 0.7f,
+            TopK        = 40,
+            TopP        = 0.9f,
+        };
+
+        // System.md  ? overall behaviour  ("You are a polite, creative AI assistant.")
+        // Agent.md   ? identity & style   ("Your name is Delta. Be concise.")
+        // Both are merged into one system message; either may be absent.
+        string systemPrompt  = File.Exists("System.md") ? File.ReadAllText("System.md").Trim() : "";
+        string agentPrompt   = File.Exists("Agent.md")  ? File.ReadAllText("Agent.md").Trim()  : "";
+        string combinedSystem = BuildSystemPrompt(systemPrompt, agentPrompt);
+
+        void SeedSystemMessages()
+        {
+            if (!string.IsNullOrEmpty(combinedSystem))
+                session.AddMessage(ChatRole.System, combinedSystem);
+        }
+
+        SeedSystemMessages();
+
+        Console.WriteLine("\nChat ready! Say hello.\n");
+
+        // -- Chat loop -----------------------------------------------------
         while (true)
         {
             Console.Write("You: ");
             var input = Console.ReadLine();
-            if (string.IsNullOrWhiteSpace(input)) continue;
-            if (input.ToLower() == "quit") break;
 
-            var response = session.Chat(input);
-            Console.WriteLine($"Bot: {response}");
+            if (string.IsNullOrWhiteSpace(input))
+                continue;
+
+            switch (input.Trim().ToLowerInvariant())
+            {
+                case "quit":
+                    goto done;
+
+                case "clear":
+                    session.ClearHistory();
+                    SeedSystemMessages();
+                    Console.WriteLine("[Context cleared]\n");
+                    continue;
+            }
+
+            Console.Write("Bot: ");
+            sw.Restart();
+            int tokensGenerated = 0;
+
+            await foreach (var entry in session.GetResponseStreamAsync(input))
+            {
+                if (entry.TextDelta is { Length: > 0 } delta)
+                {
+                    Console.Write(delta);
+                    tokensGenerated++;
+                }
+            }
+
+            double elapsedSec = sw.Elapsed.TotalSeconds;
+            Console.WriteLine();
+            Console.WriteLine(
+                $"  [{tokensGenerated} tokens, {elapsedSec:F1}s, " +
+                $"{tokensGenerated / Math.Max(elapsedSec, 0.001):F1} tok/s]");
             Console.WriteLine();
         }
 
+        done:
         Console.WriteLine("Chat ended.");
-        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Combines system and agent prompts into a single system message.
+    /// Either may be empty; if both are present they are separated by a blank line.
+    /// </summary>
+    private static string BuildSystemPrompt(string system, string agent)
+    {
+        if (string.IsNullOrEmpty(system) && string.IsNullOrEmpty(agent))
+            return string.Empty;
+        if (string.IsNullOrEmpty(agent))  return system;
+        if (string.IsNullOrEmpty(system)) return agent;
+        return system + "\n\n" + agent;
     }
 
     private static HardwareTier DetectBestHardware()
     {
         if (Avx2.IsSupported) return HardwareTier.AVX2;
-        if (Fma.IsSupported) return HardwareTier.FMA;
+        if (Fma.IsSupported)  return HardwareTier.FMA;
         return HardwareTier.Scalar;
-    }
-}
-
-public sealed class SimpleChatSession
-{
-    private readonly Transformer _model;
-    private readonly int _vocabSize;
-    private readonly List<int> _context = new();
-    private readonly string _systemPrompt;
-    private readonly string _agentPrompt;
-
-    private static readonly Dictionary<string, int> CharToId = new();
-    private static readonly List<string> IdToChar = new();
-
-    static SimpleChatSession()
-    {
-        for (int i = 0; i < 128; i++)
-        {
-            var c = (char)i;
-            IdToChar.Add(c.ToString());
-            CharToId[c.ToString()] = i;
-        }
-    }
-
-    public SimpleChatSession(Transformer model, int vocabSize, string systemPrompt, string agentPrompt)
-    {
-        _model = model;
-        _vocabSize = vocabSize;
-        _systemPrompt = systemPrompt;
-        _agentPrompt = agentPrompt;
-    }
-
-    public string Chat(string input, int maxTokens = 64)
-    {
-        var inputIds = Encode(input);
-        _context.AddRange(inputIds);
-
-        if (_context.Count > _model.Config.MaxSeqLen - maxTokens)
-            _context.RemoveRange(0, _context.Count - (_model.Config.MaxSeqLen - maxTokens));
-
-        var generated = Generate(maxTokens);
-
-        var newTokens = generated.Skip(_context.Count - inputIds.Length).ToList();
-        _context.AddRange(newTokens);
-
-        return Decode(newTokens);
-    }
-
-    private int[] Encode(string text)
-    {
-        var result = new List<int> { 1 };
-        foreach (var c in text)
-        {
-            var s = c.ToString();
-            result.Add(CharToId.TryGetValue(s, out var id) ? id : 0);
-        }
-        result.Add(2);
-        return result.ToArray();
-    }
-
-    private string Decode(List<int> tokens)
-    {
-        var result = new System.Text.StringBuilder();
-        foreach (var t in tokens.Take(200))
-        {
-            if (t < IdToChar.Count)
-                result.Append(IdToChar[t][0]);
-        }
-        return result.ToString();
-    }
-
-    private List<int> Generate(int maxTokens)
-    {
-        var result = new List<int>(_context);
-
-        for (int i = 0; i < maxTokens; i++)
-        {
-            using var input = Tensor<int>.From(result.ToArray(), 1, result.Count);
-            using var output = _model.Forward(input);
-
-            var logits = output.Data;
-            var offset = (result.Count - 1) * _vocabSize;
-            var lastLogits = logits.Slice(offset, _vocabSize);
-
-            var nextToken = SampleGreedy(lastLogits);
-
-            if (nextToken <= 3) break;
-
-            result.Add(nextToken);
-
-            if (result.Count >= _model.Config.MaxSeqLen) break;
-
-            if (nextToken == 2 || nextToken == 3) break;
-        }
-
-        return result;
-    }
-
-    private int SampleGreedy(ReadOnlySpan<float> logits)
-    {
-        int best = 0;
-        float maxLog = float.MinValue;
-        for (int i = 0; i < logits.Length; i++)
-        {
-            if (logits[i] > maxLog)
-            {
-                maxLog = logits[i];
-                best = i;
-            }
-        }
-        return best;
     }
 }
