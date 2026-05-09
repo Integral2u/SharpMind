@@ -28,16 +28,17 @@ public sealed class KVCache : IDisposable
 
     public void TrimToLast(int keep)
     {
+        if (keep < 0)
+            throw new ArgumentOutOfRangeException(nameof(keep));
         if (keep >= CurrentPosition) return;
+
         int offset = CurrentPosition - keep;
-        
-        // Shift data back to the start
-        // This is a simple shift, in a real system we might use a ring buffer
         unsafe
         {
             int batchSize = Keys.Shape[0];
             int numKvHeads = Keys.Shape[1];
             int headDim = Keys.Shape[3];
+            long tokenStride = (long)headDim * sizeof(float);
             
             for (int b = 0; b < batchSize; b++)
             {
@@ -47,14 +48,17 @@ public sealed class KVCache : IDisposable
                                               + (long)h * (MaxSeqLen * headDim);
                     float* vPtr = Values.DataPtr + (long)b * (numKvHeads * MaxSeqLen * headDim) 
                                               + (long)h * (MaxSeqLen * headDim);
-                    
-                    // Shift values
+
+                    // Move the retained window [offset, offset+keep) to [0, keep).
                     for (int i = 0; i < keep; i++)
                     {
-                        float kvK = kPtr[(long)(CurrentPosition + i) * headDim];
-                        float kvV = vPtr[(long)(CurrentPosition + i) * headDim];
-                        // This is tricky because we shift across the whole MaxSeqLen
-                        // For simplicity, we just move the window
+                        float* srcK = kPtr + (long)(offset + i) * headDim;
+                        float* dstK = kPtr + (long)i * headDim;
+                        Buffer.MemoryCopy(srcK, dstK, tokenStride, tokenStride);
+
+                        float* srcV = vPtr + (long)(offset + i) * headDim;
+                        float* dstV = vPtr + (long)i * headDim;
+                        Buffer.MemoryCopy(srcV, dstV, tokenStride, tokenStride);
                     }
                 }
             }
@@ -66,6 +70,9 @@ public sealed class KVCache : IDisposable
     {
         int batch = k.Shape[0];
         int seqLen = k.Shape[1];
+        if (CurrentPosition + seqLen > MaxSeqLen)
+            throw new InvalidOperationException(
+                $"KVCache overflow: position {CurrentPosition} + seqLen {seqLen} exceeds capacity {MaxSeqLen}.");
 
         for (int b = 0; b < batch; b++)
         {

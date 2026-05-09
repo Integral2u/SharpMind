@@ -60,6 +60,35 @@ public abstract class TensorOps
         unsafe { MatMulInner(a.DataPtr, bt.DataPtr, c.DataPtr, M, K, N); }
         return c;
     }
+
+    /// <summary>
+    /// Computes C = A @ B where <paramref name="bt"/> is already stored as B-transposed.
+    /// </summary>
+    /// <remarks>
+    /// This is a memory-critical fast path: the inner kernel consumes B in transposed layout
+    /// (<c>[N, K]</c>) so we can avoid allocating a temporary transpose tensor.
+    /// Shapes: A=[M,K], BT=[N,K] → C=[M,N].
+    /// </remarks>
+    public Tensor<float> MatMulWithBT(Tensor<float> a, Tensor<float> bt)
+    {
+        AssertMatMulWithBTCompatible(a.Shape, bt.Shape);
+        int M = a.Shape.Rows, K = a.Shape.Cols, N = bt.Shape.Rows;
+        var c = new Tensor<float>(M, N);
+        unsafe { MatMulInner(a.DataPtr, bt.DataPtr, c.DataPtr, M, K, N); }
+        return c;
+    }
+
+    /// <summary>
+    /// Computes C = A @ B into a pre-allocated output tensor, with B provided in transposed layout.
+    /// </summary>
+    public void MatMulWithBTInto(Tensor<float> a, Tensor<float> bt, Tensor<float> c)
+    {
+        AssertMatMulWithBTCompatible(a.Shape, bt.Shape);
+        if (c.Rank != 2 || c.Shape.Rows != a.Shape.Rows || c.Shape.Cols != bt.Shape.Rows)
+            throw new ArgumentException($"Output shape must be [{a.Shape.Rows}, {bt.Shape.Rows}], got {c.Shape}.");
+        int M = a.Shape.Rows, K = a.Shape.Cols, N = bt.Shape.Rows;
+        unsafe { MatMulInner(a.DataPtr, bt.DataPtr, c.DataPtr, M, K, N); }
+    }
     /// <summary>Computes C = A @ B into a pre-allocated output tensor.</summary>
     public void MatMulInto(Tensor<float> a, Tensor<float> b, Tensor<float> c)
     {
@@ -359,6 +388,18 @@ public abstract class TensorOps
             if (a[i] != b[i])
                 throw new ArgumentException(
                     $"BatchedMatMul batch dim {i} mismatch: {a[i]} ≠ {b[i]}.");
+    }
+
+    private static void AssertMatMulWithBTCompatible(TensorShape a, TensorShape bt)
+    {
+        if (a.Rank != 2 || bt.Rank != 2)
+            throw new ArgumentException($"MatMulWithBT requires rank-2 tensors, got {a} and {bt}.");
+        int M = a.Rows;
+        int K = a.Cols;
+        int N = bt.Rows;
+        int K2 = bt.Cols;
+        if (K != K2)
+            throw new ArgumentException($"MatMulWithBT inner dim mismatch: A is [{M},{K}] but BT is [{N},{K2}].");
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

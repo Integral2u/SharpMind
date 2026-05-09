@@ -130,13 +130,50 @@ public sealed class Transformer : IDisposable
         int hidden2 = _config.HiddenDim;
 
         using var normedFlat = normed.Reshape(batch * seqLen, hidden2);
-        using var embedT = TensorOps.Transpose(_embedding.Weight);
-        var logits = _ops.MatMul(normedFlat, embedT);
+        // _embedding.Weight is laid out as [VocabSize, HiddenDim] which is exactly B-transposed ([N,K])
+        // for the matmul kernel. Avoid materializing a huge transpose tensor.
+        var logits = _ops.MatMulWithBT(normedFlat, _embedding.Weight);
 
         // Restore [Batch, SeqLen, VocabSize]
         var result = logits.Reshape(batch, seqLen, _config.VocabSize);
         logits.Dispose();
         return result;
+    }
+
+    /// <summary>
+    /// Inference fast path that returns logits only for the final token in each batch row.
+    /// Input:  token IDs [Batch, SeqLen]
+    /// Output: logits    [Batch, VocabSize]
+    /// </summary>
+    public unsafe Tensor<float> ForwardLastLogits(Tensor<int> tokenIds, KVCache[] caches, int positionOffset = 0)
+    {
+        ThrowIfDisposed();
+        DisposeCache();
+
+        _cachedEmbedding = _embedding.Forward(tokenIds);
+        using var embedded = _cachedEmbedding;
+
+        _cachedHidden = _arch.Forward(embedded, caches, positionOffset);
+        using var hidden = _cachedHidden;
+
+        _cachedNormed = _finalNorm.Forward(hidden);
+        using var normed = _cachedNormed;
+
+        int batch = tokenIds.Shape.Rows;
+        int seqLen = tokenIds.Shape.Cols;
+        int hiddenDim = _config.HiddenDim;
+
+        var lastTokenNormed = new Tensor<float>(batch, hiddenDim);
+        for (int b = 0; b < batch; b++)
+        {
+            int srcOffset = (b * seqLen + (seqLen - 1)) * hiddenDim;
+            int dstOffset = b * hiddenDim;
+            normed.Data.Slice(srcOffset, hiddenDim).CopyTo(lastTokenNormed.Data.Slice(dstOffset, hiddenDim));
+        }
+
+        var logits = _ops.MatMulWithBT(lastTokenNormed, _embedding.Weight);
+        lastTokenNormed.Dispose();
+        return logits;
     }
 
     private void DisposeCache()
@@ -213,8 +250,7 @@ public sealed class Transformer : IDisposable
         int seqLen = tokenIds.Shape.Cols;
 
         using var normedFlat = normed.Reshape(batch * seqLen, _config.HiddenDim);
-        using var embedT = TensorOps.Transpose(_embedding.Weight);
-        var logits = _ops.MatMul(normedFlat, embedT);
+        var logits = _ops.MatMulWithBT(normedFlat, _embedding.Weight);
 
         var result = logits.Reshape(batch, seqLen, _config.VocabSize);
         logits.Dispose();
@@ -238,8 +274,8 @@ public sealed class Transformer : IDisposable
         int seqLen = state.TokenIds.Shape.Cols;
         int hidden = _config.HiddenDim;
 
-        using var embedT = TensorOps.Transpose(_embedding.Weight);
-        using var gradNormedFlat = _ops.MatMul(gradLogits.Reshape(batch * seqLen, _config.VocabSize), embedT);
+        // gradLogitsFlat [M, Vocab] @ W [Vocab, Hidden] → gradNormedFlat [M, Hidden]
+        using var gradNormedFlat = _ops.MatMul(gradLogits.Reshape(batch * seqLen, _config.VocabSize), _embedding.Weight);
 
         using var gradHidden = _finalNorm.Backward(gradNormedFlat.Reshape(batch, seqLen, hidden), new NormLayerState(1, hidden));
 

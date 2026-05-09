@@ -89,11 +89,11 @@ public sealed class Generator : IDisposable
         // ── Prefill ───────────────────────────────────────────────────────
         int posOffset = _caches[0].Length;
         using var prefillInput = Tensor<int>.From(promptIds, 1, promptIds.Length);
-        Tensor<float>? logitsTensor = _model.Forward(prefillInput, _caches, posOffset);
+        Tensor<float>? logitsTensor = _model.ForwardLastLogits(prefillInput, _caches, posOffset);
 
         try
         {
-            int vocabSize = logitsTensor.Shape[2];
+            int vocabSize = logitsTensor.Shape[1];
             int promptLen = promptIds.Length;
 
             var generatedIds = new List<int>(genCfg.MaxNewTokens);
@@ -106,9 +106,7 @@ public sealed class Generator : IDisposable
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                ReadOnlySpan<float> logitsSlice = step == 0
-                    ? logitsTensor.Data.Slice((promptLen - 1) * vocabSize, vocabSize)
-                    : logitsTensor.Data[..vocabSize];
+                ReadOnlySpan<float> logitsSlice = logitsTensor.Data.Slice(0, vocabSize);
 
                 int nextId;
                 if (genCfg.RepetitionPenalty != 1.0f)
@@ -169,7 +167,7 @@ public sealed class Generator : IDisposable
 
                 prevTensor.Dispose();
                 using var stepInput = Tensor<int>.From(_decodeTokenScratch.AsSpan(0, 1), 1, 1);
-                logitsTensor = _model.Forward(stepInput, _caches, newPos);
+                logitsTensor = _model.ForwardLastLogits(stepInput, _caches, newPos);
             }
 
             if (!genCfg.Stream)

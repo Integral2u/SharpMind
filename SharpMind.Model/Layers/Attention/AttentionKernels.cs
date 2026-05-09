@@ -1,5 +1,6 @@
 ﻿using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
+using System.Buffers;
 
 namespace SharpMind.Model.Layers.Attention;
 
@@ -20,17 +21,20 @@ internal static class AttentionKernels
         float* q, float* k, float* v, float* output,
         int seqLen, int kvLen, int headDim, float scale, bool causal)
     {
-        // Allocate scores [seqLen, kvLen] on stack for small sequences, heap for large
-        var scores = new float[seqLen * kvLen];
-        fixed (float* pS = scores)
+        float[] rented = ArrayPool<float>.Shared.Rent(kvLen);
+        try
         {
-            // scores = Q @ K^T * scale
+            Span<float> scoreRow = rented.AsSpan(0, kvLen);
             for (int i = 0; i < seqLen; i++)
             {
                 float* qi = q + (long)i * headDim;
                 for (int j = 0; j < kvLen; j++)
                 {
-                    if (causal && j > i) { pS[i * kvLen + j] = float.NegativeInfinity; continue; }
+                    if (causal && j > i)
+                    {
+                        scoreRow[j] = float.NegativeInfinity;
+                        continue;
+                    }
                     float* kj = k + (long)j * headDim;
                     var acc = Vector256<float>.Zero;
                     int d = 0;
@@ -40,21 +44,23 @@ internal static class AttentionKernels
                             : Avx.Add(acc, Avx.Multiply(Vector256.LoadUnsafe(ref qi[d]), Vector256.LoadUnsafe(ref kj[d])));
                     float dot = HSum256(acc);
                     for (; d < headDim; d++) dot += qi[d] * kj[d];
-                    pS[i * kvLen + j] = dot * scale;
+                    scoreRow[j] = dot * scale;
                 }
-            }
-            // Softmax rows then weight V
-            for (int i = 0; i < seqLen; i++)
-            {
-                SoftmaxInPlace(new Span<float>(pS + i * kvLen, kvLen));
+
+                SoftmaxInPlace(scoreRow);
                 float* outI = output + (long)i * headDim;
                 for (int d = 0; d < headDim; d++)
                 {
                     float sum = 0f;
-                    for (int j = 0; j < kvLen; j++) sum += pS[i * kvLen + j] * v[(long)j * headDim + d];
+                    for (int j = 0; j < kvLen; j++)
+                        sum += scoreRow[j] * v[(long)j * headDim + d];
                     outI[d] = sum;
                 }
             }
+        }
+        finally
+        {
+            ArrayPool<float>.Shared.Return(rented);
         }
     }
 
@@ -62,32 +68,40 @@ internal static class AttentionKernels
         float* q, float* k, float* v, float* output,
         int seqLen, int kvLen, int headDim, float scale, bool causal)
     {
-        var scores = new float[seqLen * kvLen];
-        fixed (float* pS = scores)
+        float[] rented = ArrayPool<float>.Shared.Rent(kvLen);
+        try
         {
+            Span<float> scoreRow = rented.AsSpan(0, kvLen);
             for (int i = 0; i < seqLen; i++)
             {
                 float* qi = q + (long)i * headDim;
                 for (int j = 0; j < kvLen; j++)
                 {
-                    if (causal && j > i) { pS[i * kvLen + j] = float.NegativeInfinity; continue; }
+                    if (causal && j > i)
+                    {
+                        scoreRow[j] = float.NegativeInfinity;
+                        continue;
+                    }
                     float* kj = k + (long)j * headDim;
                     float dot = 0f;
                     for (int d = 0; d < headDim; d++) dot += qi[d] * kj[d];
-                    pS[i * kvLen + j] = dot * scale;
+                    scoreRow[j] = dot * scale;
                 }
-            }
-            for (int i = 0; i < seqLen; i++)
-            {
-                SoftmaxInPlace(new Span<float>(pS + i * kvLen, kvLen));
+
+                SoftmaxInPlace(scoreRow);
                 float* outI = output + (long)i * headDim;
                 for (int d = 0; d < headDim; d++)
                 {
                     float sum = 0f;
-                    for (int j = 0; j < kvLen; j++) sum += pS[i * kvLen + j] * v[(long)j * headDim + d];
+                    for (int j = 0; j < kvLen; j++)
+                        sum += scoreRow[j] * v[(long)j * headDim + d];
                     outI[d] = sum;
                 }
             }
+        }
+        finally
+        {
+            ArrayPool<float>.Shared.Return(rented);
         }
     }
 

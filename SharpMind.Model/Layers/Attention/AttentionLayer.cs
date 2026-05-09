@@ -80,21 +80,65 @@ public abstract class AttentionLayer : IDisposable
                 for (int h = 0; h < numH; h++)
                 {
                     int kvHead = h / Config.KvGroupSize;
-                    float* pQ = qr.DataPtr + (long)(b * seqLen * numH + h) * headDim;
-                    
-                    float* pK = cache != null 
-                        ? cache.Keys.DataPtr + (long)b * (numKv * Config.MaxSeqLen * headDim) 
-                                            + (long)kvHead * (Config.MaxSeqLen * headDim)
-                        : kr.DataPtr + (long)(b * seqLen * numKv + kvHead) * headDim;
-                    
-                    float* pV = cache != null 
-                        ? cache.Values.DataPtr + (long)b * (numKv * Config.MaxSeqLen * headDim) 
-                                              + (long)kvHead * (Config.MaxSeqLen * headDim)
-                        : v.DataPtr + (long)(b * seqLen * kvDim + kvHead * headDim);
-                        
-                    float* pO = output.DataPtr + (long)(b * seqLen * hidden + h * headDim);
-                    
-                    ScaledDotProduct(pQ, pK, pV, pO, seqLen, effectiveKvLen, headDim, scale, causal);
+                    using var qHead = new Tensor<float>(seqLen, headDim);
+                    using var oHead = new Tensor<float>(seqLen, headDim);
+                    Tensor<float>? kHead = null;
+                    Tensor<float>? vHead = null;
+                    try
+                    {
+                        // Pack Q head into contiguous [SeqLen, HeadDim] buffer.
+                        for (int s = 0; s < seqLen; s++)
+                        {
+                            float* srcQ = qr.DataPtr + (long)((b * seqLen + s) * numH + h) * headDim;
+                            float* dstQ = qHead.DataPtr + (long)s * headDim;
+                            for (int d = 0; d < headDim; d++) dstQ[d] = srcQ[d];
+                        }
+
+                        float* pK;
+                        float* pV;
+                        if (cache != null)
+                        {
+                            pK = cache.Keys.DataPtr + (long)b * (numKv * Config.MaxSeqLen * headDim)
+                                               + (long)kvHead * (Config.MaxSeqLen * headDim);
+                            pV = cache.Values.DataPtr + (long)b * (numKv * Config.MaxSeqLen * headDim)
+                                                 + (long)kvHead * (Config.MaxSeqLen * headDim);
+                        }
+                        else
+                        {
+                            // Pack K/V heads into contiguous [SeqLen, HeadDim] buffers.
+                            kHead = new Tensor<float>(effectiveKvLen, headDim);
+                            vHead = new Tensor<float>(effectiveKvLen, headDim);
+                            for (int s = 0; s < effectiveKvLen; s++)
+                            {
+                                float* srcK = kr.DataPtr + (long)((b * seqLen + s) * numKv + kvHead) * headDim;
+                                float* srcV = v.DataPtr + (long)(b * seqLen * kvDim + s * kvDim + kvHead * headDim);
+                                float* dstK = kHead.DataPtr + (long)s * headDim;
+                                float* dstV = vHead.DataPtr + (long)s * headDim;
+                                for (int d = 0; d < headDim; d++)
+                                {
+                                    dstK[d] = srcK[d];
+                                    dstV[d] = srcV[d];
+                                }
+                            }
+                            pK = kHead.DataPtr;
+                            pV = vHead.DataPtr;
+                        }
+
+                        ScaledDotProduct(qHead.DataPtr, pK, pV, oHead.DataPtr, seqLen, effectiveKvLen, headDim, scale, causal);
+
+                        // Scatter contiguous head output back into [B, SeqLen, Hidden].
+                        for (int s = 0; s < seqLen; s++)
+                        {
+                            float* srcO = oHead.DataPtr + (long)s * headDim;
+                            float* dstO = output.DataPtr + (long)(b * seqLen * hidden + s * hidden + h * headDim);
+                            for (int d = 0; d < headDim; d++) dstO[d] = srcO[d];
+                        }
+                    }
+                    finally
+                    {
+                        kHead?.Dispose();
+                        vHead?.Dispose();
+                    }
                 }
             }
         }
