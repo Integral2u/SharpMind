@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using SharpMind.Core.Tensors;
 using SharpMind.Model;
 using SharpMind.Model.Config;
@@ -23,6 +24,7 @@ public sealed class SpeculativeGenerator : IDisposable
     private readonly InferenceOps _ops;
     private readonly KVCache[] _caches;
     private readonly Random _defaultRng;
+    private readonly int[] _decodeTokenScratch = new int[1];
     private bool _disposed;
 
     private const int DefaultMaxDraftTokens = 4;
@@ -70,14 +72,16 @@ public sealed class SpeculativeGenerator : IDisposable
 
         int posOffset = _caches[0].Length;
         using var prefillInput = Tensor<int>.From(promptIds, 1, promptIds.Length);
-        using var prefillLogits = _model.Forward(prefillInput, _caches, posOffset);
+        Tensor<float>? logitsTensor = _model.Forward(prefillInput, _caches, posOffset);
 
-        int vocabSize = prefillLogits.Shape[2];
+        try
+        {
+        int vocabSize = logitsTensor.Shape[2];
         int lastPromptPos = promptIds.Length - 1;
-        var logitsSlice = prefillLogits.Data.Slice(lastPromptPos * vocabSize, vocabSize);
+        ReadOnlySpan<float> logitsRow = logitsTensor.Data.Slice(lastPromptPos * vocabSize, vocabSize);
 
         var generatedIds = new List<int>(genCfg.MaxNewTokens);
-        var decodedSoFar = string.Empty;
+        var decodedSoFar = new System.Text.StringBuilder();
         var rng = sampleCfg.Seed.HasValue
             ? new Random(sampleCfg.Seed.Value)
             : _defaultRng;
@@ -88,24 +92,13 @@ public sealed class SpeculativeGenerator : IDisposable
         {
             cancellationToken.ThrowIfCancellationRequested();
 
+            if (maxDraftTokens < 1)
+                break;
+
             var draftTokens = new int[maxDraftTokens];
-            int draftCount = 0;
-
-            for (int d = 0; d < maxDraftTokens && generatedIds.Count + d < genCfg.MaxNewTokens; d++)
-            {
-                var slice = logitsSlice.Slice(d * vocabSize, vocabSize).ToArray();
-                draftTokens[d] = Sampler.Sample(slice, sampleCfg, rng);
-                
-                if (genCfg.StopTokenIds.Contains(draftTokens[d]))
-                {
-                    draftTokens[d] = draftTokens[d];
-                    draftCount = d + 1;
-                    break;
-                }
-                draftCount = d + 1;
-            }
-
-            if (draftCount == 0) break;
+            // One row of logits = one position — true multi-token drafting needs extra model calls or a draft model.
+            draftTokens[0] = Sampler.Sample(logitsRow, sampleCfg, rng);
+            const int draftCount = 1;
 
             var verifiedTokens = VerifyDraftTokens(draftTokens, draftCount, currentPos, vocabSize, sampleCfg, rng);
 
@@ -114,13 +107,14 @@ public sealed class SpeculativeGenerator : IDisposable
                 int tokenId = verifiedTokens.Tokens[i];
                 generatedIds.Add(tokenId);
 
-                string fragment = _tokenizer.Decode([tokenId], skipSpecials: true);
-                decodedSoFar += fragment;
+                _decodeTokenScratch[0] = tokenId;
+                string fragment = _tokenizer.Decode(_decodeTokenScratch.AsSpan(0, 1), skipSpecials: true);
+                decodedSoFar.Append(fragment);
 
                 bool hitStop = false;
                 foreach (string stop in genCfg.StopStrings)
                 {
-                    if (decodedSoFar.Contains(stop, StringComparison.Ordinal))
+                    if (StringBuilderContains(decodedSoFar, stop))
                     {
                         hitStop = true;
                         break;
@@ -141,8 +135,9 @@ public sealed class SpeculativeGenerator : IDisposable
                 var correctionToken = verifiedTokens.CorrectionToken;
                 generatedIds.Add(correctionToken);
 
-                string fragment = _tokenizer.Decode([correctionToken], skipSpecials: true);
-                decodedSoFar += fragment;
+                _decodeTokenScratch[0] = correctionToken;
+                string fragment = _tokenizer.Decode(_decodeTokenScratch.AsSpan(0, 1), skipSpecials: true);
+                decodedSoFar.Append(fragment);
 
                 if (genCfg.Stream && fragment.Length > 0)
                     yield return fragment;
@@ -156,13 +151,38 @@ public sealed class SpeculativeGenerator : IDisposable
             if (generatedIds.Count >= genCfg.MaxNewTokens)
                 break;
 
-            using var nextInput = Tensor<int>.From([generatedIds[^1]], 1, 1);
-            using var nextLogits = _model.Forward(nextInput, _caches, currentPos);
-            logitsSlice = nextLogits.Data[..vocabSize];
+            Tensor<float>? prevLogits = logitsTensor;
+            logitsTensor = null;
+            _decodeTokenScratch[0] = generatedIds[^1];
+            prevLogits.Dispose();
+            using var nextInput = Tensor<int>.From(_decodeTokenScratch.AsSpan(0, 1), 1, 1);
+            logitsTensor = _model.Forward(nextInput, _caches, currentPos);
+            logitsRow = logitsTensor.Data[..vocabSize];
         }
 
         if (!genCfg.Stream && decodedSoFar.Length > 0)
-            yield return _tokenizer.Decode([.. generatedIds], skipSpecials: true);
+            yield return _tokenizer.Decode(CollectionsMarshal.AsSpan(generatedIds), skipSpecials: true);
+        }
+        finally
+        {
+            logitsTensor?.Dispose();
+        }
+    }
+
+    private static bool StringBuilderContains(System.Text.StringBuilder sb, ReadOnlySpan<char> value)
+    {
+        if (value.IsEmpty) return true;
+        if (sb.Length < value.Length) return false;
+        for (int i = 0; i <= sb.Length - value.Length; i++)
+        {
+            bool match = true;
+            for (int j = 0; j < value.Length; j++)
+            {
+                if (sb[i + j] != value[j]) { match = false; break; }
+            }
+            if (match) return true;
+        }
+        return false;
     }
 
     private (int[] Tokens, int AcceptedCount, bool NeedsCorrection, int CorrectionToken) VerifyDraftTokens(
@@ -181,11 +201,11 @@ public sealed class SpeculativeGenerator : IDisposable
         for (int i = 0; i < draftCount; i++)
         {
             int pos = position + i;
-            using var input = Tensor<int>.From([draftTokens[i]], 1, 1);
+            _decodeTokenScratch[0] = draftTokens[i];
+            using var input = Tensor<int>.From(_decodeTokenScratch.AsSpan(0, 1), 1, 1);
             using var logits = _model.Forward(input, _caches, pos);
 
-            var tokenLogits = logits.Data[..vocabSize].ToArray();
-            int verifiedToken = Sampler.Sample(tokenLogits, cfg, rng);
+            int verifiedToken = Sampler.Sample(logits.Data[..vocabSize], cfg, rng);
 
             if (verifiedToken == draftTokens[i])
             {

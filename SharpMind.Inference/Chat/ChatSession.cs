@@ -1,6 +1,7 @@
 using System.Runtime.CompilerServices;
 using SharpMind.Core.Tensors;
 using SharpMind.Model;
+using SharpMind.Model.Config;
 using SharpMind.Tokenization;
 
 namespace SharpMind.Inference.Chat;
@@ -105,6 +106,8 @@ public sealed class ChatSession : IAsyncDisposable
     private readonly InferenceOps _ops;
     private readonly KVCache[] _caches;
     private readonly List<ChatMessage> _history = [];
+    /// <summary>Reused single-token decode buffer (avoids a new int[] each step).</summary>
+    private readonly int[] _decodeTokenScratch = new int[1];
     private bool _disposed;
 
     public ChatSession(
@@ -156,51 +159,73 @@ public sealed class ChatSession : IAsyncDisposable
         yield return new ChatStreamEntry { Status = ChatStatus.Responding, IsComplete = false };
 
         var prompt = BuildPrompt();
-        var promptIds = _tokenizer.Encode(prompt, addBos: true, addEos: false);
+        var encoded = _tokenizer.Encode(prompt, addBos: true, addEos: false);
+        ReadOnlySpan<int> promptToks = encoded;
+        if (encoded.Length > MaxTokens)
+            promptToks = encoded.AsSpan(encoded.Length - MaxTokens);
+
+        int promptLen = promptToks.Length;
+        if (promptLen == 0)
+            throw new InvalidOperationException("Prompt produced no token IDs; cannot generate.");
+
         var posOffset = _caches[0].Length;
 
-        using var input = Tensor<int>.From(promptIds, 1, promptIds.Length);
+        using var input = Tensor<int>.From(promptToks, 1, promptLen);
 
-        if (promptIds.Length > MaxTokens)
+        Tensor<float>? logitsTensor = _model.Forward(input, _caches, posOffset);
+
+        try
         {
-            promptIds = promptIds.TakeLast(MaxTokens).ToArray();
-            input.Dispose();
-        }
+            int vocabSize = logitsTensor.Shape[2];
+            var response = new System.Text.StringBuilder();
 
-        using var logits = _model.Forward(input, _caches, posOffset);
-        var vocabSize = logits.Shape.Cols;
-
-        int generated = 0;
-        var response = new System.Text.StringBuilder();
-
-        while (generated < MaxTokens)
-        {
-            if (ct.IsCancellationRequested) break;
-
-            var lastLogits = logits.Data.Slice((promptIds.Length - 1) * vocabSize, vocabSize);
-            var nextId = Sample(lastLogits.ToArray());
-
-            if (nextId == _tokenizer.EosId) break;
-
-            var token = _tokenizer.Decode([nextId]);
-            response.Append(token);
-
-            var chatToken = ChatMessage.Agent(token);
-            _history.Add(chatToken);
-
-            yield return new ChatStreamEntry
+            var samplingCfg = new SamplingConfig
             {
-                Status = ChatStatus.Responding,
-                TextDelta = token,
-                IsComplete = false
+                Temperature = Temperature,
+                TopK        = TopK,
+                TopP        = TopP
             };
 
-            using var nextInput = Tensor<int>.From([nextId], 1, 1);
-            int newPos = posOffset + promptIds.Length + generated + 1;
-            using var nextLogits = _model.Forward(nextInput, _caches, newPos);
+            for (int step = 0; step < MaxTokens; step++)
+            {
+                if (ct.IsCancellationRequested) break;
 
-            promptIds = [.. promptIds, nextId];
-            generated++;
+                ReadOnlySpan<float> logitsSlice = step == 0
+                    ? logitsTensor.Data.Slice((promptLen - 1) * vocabSize, vocabSize)
+                    : logitsTensor.Data[..vocabSize];
+
+                int nextId = Sampler.Sample(logitsSlice, samplingCfg, Random.Shared);
+
+                if (nextId == _tokenizer.EosId) break;
+
+                _decodeTokenScratch[0] = nextId;
+                var token = _tokenizer.Decode(_decodeTokenScratch.AsSpan(0, 1));
+
+                response.Append(token);
+
+                yield return new ChatStreamEntry
+                {
+                    Status      = ChatStatus.Responding,
+                    TextDelta   = token,
+                    IsComplete  = false
+                };
+
+                Tensor<float>? prev = logitsTensor;
+                logitsTensor = null;
+                int newPos = posOffset + promptLen + step;
+
+                prev.Dispose();
+                using var nextInput = Tensor<int>.From(_decodeTokenScratch.AsSpan(0, 1), 1, 1);
+                logitsTensor = _model.Forward(nextInput, _caches, newPos);
+            }
+
+            // One consolidated agent message avoids O(tokens) retained chat rows and prompt blow-ups.
+            if (response.Length > 0)
+                _history.Add(ChatMessage.Agent(response.ToString()));
+        }
+        finally
+        {
+            logitsTensor?.Dispose();
         }
 
         yield return new ChatStreamEntry { Status = ChatStatus.Complete, IsComplete = true };
@@ -267,18 +292,6 @@ public sealed class ChatSession : IAsyncDisposable
         }
 
         return sb.ToString();
-    }
-
-    private int Sample(float[] logits)
-    {
-        var cfg = new SamplingConfig
-        {
-            Temperature = Temperature,
-            TopK = TopK,
-            TopP = TopP
-        };
-
-        return Sampler.Sample(logits, cfg, Random.Shared);
     }
 
     public async ValueTask DisposeAsync()

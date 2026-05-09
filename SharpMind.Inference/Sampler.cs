@@ -1,4 +1,4 @@
-using SharpMind.Core.Tensors;
+using System.Buffers;
 
 namespace SharpMind.Inference;
 
@@ -19,22 +19,31 @@ public static class Sampler
         if (config.Temperature <= 0f)
             return Argmax(logits);
 
-        // Work on a copy so we don't mutate the model output
-        float[] probs = logits.ToArray();
+        // Work on a copy so we don't mutate the model output — ArrayPool avoids a per-step GC allocation.
+        int n = logits.Length;
+        float[] rented = ArrayPool<float>.Shared.Rent(n);
+        try
+        {
+            Span<float> probs = rented.AsSpan(0, n);
+            logits.CopyTo(probs);
 
-        ApplyTemperature(probs, config.Temperature);
-        Softmax(probs);
+            ApplyTemperature(probs, config.Temperature);
+            Softmax(probs);
 
-        if (config.MinP > 0f)           ApplyMinP(probs, config.MinP);
-        if (config.TopK > 0)            ApplyTopK(probs, config.TopK);
-        if (config.TopP < 1.0f)         ApplyTopP(probs, config.TopP);
+            if (config.MinP > 0f) ApplyMinP(probs, config.MinP);
+            if (config.TopK > 0) ApplyTopK(probs, config.TopK);
+            if (config.TopP < 1.0f) ApplyTopP(probs, config.TopP);
 
-        // Renormalise after filtering
-        Normalise(probs);
+            Normalise(probs);
 
-        return SampleFromProbs(probs, rng ?? (config.Seed.HasValue
-            ? new Random(config.Seed.Value)
-            : Random.Shared));
+            return SampleFromProbs(probs, rng ?? (config.Seed.HasValue
+                ? new Random(config.Seed.Value)
+                : Random.Shared));
+        }
+        finally
+        {
+            ArrayPool<float>.Shared.Return(rented);
+        }
     }
 
     // ── Greedy ────────────────────────────────────────────────────────────

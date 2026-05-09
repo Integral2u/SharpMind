@@ -1,4 +1,6 @@
+using System.Buffers;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using SharpMind.Core.Tensors;
 using SharpMind.Model;
 using SharpMind.Model.Config;
@@ -28,6 +30,8 @@ public sealed class Generator : IDisposable
     private readonly InferenceOps _ops;
     private readonly KVCache[]     _caches;
     private readonly Random       _defaultRng;
+    /// <summary>Reused decode step (<c>[1]</c>) to avoid allocating a new <see cref="int"/>[] each token.</summary>
+    private readonly int[]       _decodeTokenScratch = new int[1];
     private bool                  _disposed;
 
     public Generator(
@@ -79,81 +83,102 @@ public sealed class Generator : IDisposable
         var genCfg    = generation ?? GenerationConfig.Default;
 
         int[] promptIds = _tokenizer.Encode(prompt, addBos: true, addEos: false);
+        if (promptIds.Length == 0)
+            throw new InvalidOperationException("Prompt produced no token IDs; cannot generate.");
 
         // ── Prefill ───────────────────────────────────────────────────────
-        // Run the full prompt through the model. The PrefillAttention kernel
-        // sees the full [SeqLen, SeqLen] attention pattern.
         int posOffset = _caches[0].Length;
-        using var prefillInput  = Tensor<int>.From(promptIds, 1, promptIds.Length);
-        using var prefillLogits = _model.Forward(prefillInput, _caches, posOffset);
+        using var prefillInput = Tensor<int>.From(promptIds, 1, promptIds.Length);
+        Tensor<float>? logitsTensor = _model.Forward(prefillInput, _caches, posOffset);
 
-        // Sample from the last prompt token's logits
-        int vocabSize    = prefillLogits.Shape[2];
-        int lastPromptPos = promptIds.Length - 1;
-        var logitsSlice  = prefillLogits.Data.Slice(lastPromptPos * vocabSize, vocabSize);
-
-        var  generatedIds = new List<int>(genCfg.MaxNewTokens);
-        var  decodedSoFar = string.Empty;
-        var  rng          = sampleCfg.Seed.HasValue
-                                ? new Random(sampleCfg.Seed.Value)
-                                : _defaultRng;
-
-        // ── Decode loop ───────────────────────────────────────────────────
-        // Each step runs a single-token forward pass. The DecodeAttention
-        // kernel receives Q=[1,HeadDim] against cached K/V=[CacheLen,HeadDim].
-        for (int step = 0; step < genCfg.MaxNewTokens; step++)
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
+            int vocabSize = logitsTensor.Shape[2];
+            int promptLen = promptIds.Length;
 
-            float[] logits = logitsSlice.ToArray();
+            var generatedIds = new List<int>(genCfg.MaxNewTokens);
+            var decodedSoFar = new System.Text.StringBuilder();
+            var rng = sampleCfg.Seed.HasValue
+                ? new Random(sampleCfg.Seed.Value)
+                : _defaultRng;
 
-            if (genCfg.RepetitionPenalty != 1.0f)
-                ApplyRepetitionPenalty(logits, promptIds, generatedIds,
-                    genCfg.RepetitionPenalty, genCfg.RepetitionWindow);
-
-            int nextId = Sampler.Sample(logits, sampleCfg, rng);
-            generatedIds.Add(nextId);
-
-            if (genCfg.StopTokenIds.Contains(nextId)) break;
-
-            string fragment = _tokenizer.Decode([nextId], skipSpecials: true);
-            decodedSoFar   += fragment;
-
-            bool hitStop = false;
-            foreach (string stop in genCfg.StopStrings)
+            for (int step = 0; step < genCfg.MaxNewTokens; step++)
             {
-                if (decodedSoFar.Contains(stop, StringComparison.Ordinal))
+                cancellationToken.ThrowIfCancellationRequested();
+
+                ReadOnlySpan<float> logitsSlice = step == 0
+                    ? logitsTensor.Data.Slice((promptLen - 1) * vocabSize, vocabSize)
+                    : logitsTensor.Data[..vocabSize];
+
+                int nextId;
+                if (genCfg.RepetitionPenalty != 1.0f)
                 {
-                    hitStop  = true;
-                    fragment = string.Empty;
-                    break;
+                    float[] rented = ArrayPool<float>.Shared.Rent(vocabSize);
+                    try
+                    {
+                        Span<float> logits = rented.AsSpan(0, vocabSize);
+                        logitsSlice.CopyTo(logits);
+                        ApplyRepetitionPenalty(logits, promptIds, generatedIds,
+                            genCfg.RepetitionPenalty, genCfg.RepetitionWindow);
+                        nextId = Sampler.Sample(logits, sampleCfg, rng);
+                    }
+                    finally
+                    {
+                        ArrayPool<float>.Shared.Return(rented);
+                    }
                 }
+                else
+                    nextId = Sampler.Sample(logitsSlice, sampleCfg, rng);
+
+                generatedIds.Add(nextId);
+
+                if (genCfg.StopTokenIds.Contains(nextId)) break;
+
+                _decodeTokenScratch[0] = nextId;
+                string fragment = _tokenizer.Decode(_decodeTokenScratch.AsSpan(0, 1), skipSpecials: true);
+                decodedSoFar.Append(fragment);
+
+                bool hitStop = false;
+                foreach (string stop in genCfg.StopStrings)
+                {
+                    if (StringBuilderContains(decodedSoFar, stop))
+                    {
+                        hitStop = true;
+                        fragment = string.Empty;
+                        break;
+                    }
+                }
+
+                if (genCfg.Stream && fragment.Length > 0)
+                    yield return fragment;
+
+                if (hitStop) break;
+
+                if (_caches[0].IsFull)
+                {
+                    int keep = genCfg is { SlidingWindowSize: > 0 }
+                        ? genCfg.SlidingWindowSize
+                        : _caches[0].MaxSeqLen / 2;
+                    for (int i = 0; i < _caches.Length; i++)
+                        _caches[i].TrimToLast(keep);
+                }
+
+                Tensor<float>? prevTensor = logitsTensor;
+                logitsTensor = null;
+                int newPos = posOffset + promptLen + step;
+
+                prevTensor.Dispose();
+                using var stepInput = Tensor<int>.From(_decodeTokenScratch.AsSpan(0, 1), 1, 1);
+                logitsTensor = _model.Forward(stepInput, _caches, newPos);
             }
 
-            if (genCfg.Stream && fragment.Length > 0)
-                yield return fragment;
-
-            if (hitStop) break;
-
-            if (_caches[0].IsFull)
-            {
-                int keep = genCfg is { SlidingWindowSize: > 0 }
-                    ? genCfg.SlidingWindowSize
-                    : _caches[0].MaxSeqLen / 2;
-                for (int i = 0; i < _caches.Length; i++)
-                    _caches[i].TrimToLast(keep);
-            }
-
-            // Decode step — single token forward, uses DecodeAttention kernel
-            int newPos = posOffset + promptIds.Length + step;
-            using var stepInput  = Tensor<int>.From([nextId], 1, 1);
-            using var stepLogits = _model.Forward(stepInput, _caches, newPos);
-
-            logitsSlice = stepLogits.Data[..vocabSize];
+            if (!genCfg.Stream)
+                yield return _tokenizer.Decode(CollectionsMarshal.AsSpan(generatedIds), skipSpecials: true);
         }
-
-        if (!genCfg.Stream)
-            yield return _tokenizer.Decode([.. generatedIds], skipSpecials: true);
+        finally
+        {
+            logitsTensor?.Dispose();
+        }
     }
 
     /// <summary>
@@ -187,23 +212,46 @@ public sealed class Generator : IDisposable
     // ── Repetition penalty ────────────────────────────────────────────────
 
     private static void ApplyRepetitionPenalty(
-        float[]   logits,
-        int[]     promptIds,
+        Span<float> logits,
+        ReadOnlySpan<int> promptIds,
         List<int> generatedIds,
-        float     penalty,
-        int       window)
+        float penalty,
+        int window)
     {
-        IEnumerable<int> context = window > 0
-            ? generatedIds.TakeLast(window)
-            : promptIds.Concat(generatedIds);
-
-        foreach (int id in context)
+        static void ScaleId(Span<float> lg, int id, float pen)
         {
-            if ((uint)id >= (uint)logits.Length) continue;
-            logits[id] = logits[id] >= 0f
-                ? logits[id] / penalty
-                : logits[id] * penalty;
+            if ((uint)id >= (uint)lg.Length) return;
+            lg[id] = lg[id] >= 0f ? lg[id] / pen : lg[id] * pen;
         }
+
+        if (window > 0)
+        {
+            int start = Math.Max(0, generatedIds.Count - window);
+            for (int i = start; i < generatedIds.Count; i++)
+                ScaleId(logits, generatedIds[i], penalty);
+            return;
+        }
+
+        foreach (int id in promptIds)
+            ScaleId(logits, id, penalty);
+        for (int i = 0; i < generatedIds.Count; i++)
+            ScaleId(logits, generatedIds[i], penalty);
+    }
+
+    private static bool StringBuilderContains(System.Text.StringBuilder sb, ReadOnlySpan<char> value)
+    {
+        if (value.IsEmpty) return true;
+        if (sb.Length < value.Length) return false;
+        for (int i = 0; i <= sb.Length - value.Length; i++)
+        {
+            bool match = true;
+            for (int j = 0; j < value.Length; j++)
+            {
+                if (sb[i + j] != value[j]) { match = false; break; }
+            }
+            if (match) return true;
+        }
+        return false;
     }
 
     // ── Disposal ──────────────────────────────────────────────────────────
