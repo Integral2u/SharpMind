@@ -414,3 +414,11 @@ FodyWeavers.xsd
 /ExternalAssets/model (1).safetensors
 /ExternalAssets/qwen2-0_5b-instruct-q4_k_m.safetensors
 /ExternalAssets/TinyLlama-1.1B-Chat-v1.0.Q4_K_M.json
+/ExternalAssets/SmolLM-135M.Q4_K_M.gguf
+/ExternalAssets/SmolLM-135M.Q4_K_M.json
+/ExternalAssets/tinyllama-1.1b-chat-v1.0.Q8_0.gguf
+/ExternalAssets/tinyllama-1.1b-chat-v1.0.Q8_0.json
+/ExternalAssets/qwen2-0_5b-instruct-q8_0.gguf
+/ExternalAssets/qwen2-0_5b-instruct-q8_0.json
+/ExternalAssets/qwen2-0_5b-instruct-fp16.gguf
+/ExternalAssets/qwen2-0_5b-instruct-fp16.json
