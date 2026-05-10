@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using System.IO.MemoryMappedFiles;
 using System.Buffers;
+using System.Linq;
 using SharpMind.Core.Tensors;
 using SharpMind.Model;
 
@@ -33,9 +34,36 @@ public static class GgufLoader
         public long KvCount { get; set; }
         public List<KvPair> KvPairs { get; set; } = [];
         public List<TensorInfo> Tensors { get; set; } = [];
-        public long GetLong(string key, long defaultValue = 0) { var kv = KvPairs.FirstOrDefault(k => k.Key == key); return kv.Value is long l ? l : defaultValue; }
-        public float GetFloat(string key, float defaultValue = 0) { var kv = KvPairs.FirstOrDefault(k => k.Key == key); return kv.Value is float f ? f : defaultValue; }
-        public string GetString(string key, string defaultValue = "") { var kv = KvPairs.FirstOrDefault(k => k.Key == key); return kv.Value is string s ? s : defaultValue; }
+        public long GetLong(string key, long defaultValue = 0) 
+        { 
+            var kv = KvPairs.FirstOrDefault(k => k.Key == key); 
+            if (kv.Value == null) {
+                return defaultValue; 
+            }
+            // GGUF stores integers as UINT32 (uint), INT32 (int), INT64 (long) - handle all
+            if (kv.Value is long l) return l;
+            if (kv.Value is int i) return i;
+            if (kv.Value is uint ui) return ui;
+            if (kv.Value is short s) return s;
+            if (kv.Value is ushort us) return us;
+            if (kv.Value is sbyte sb) return sb;
+            if (kv.Value is byte b) return b;
+            return defaultValue; 
+        }
+        public float GetFloat(string key, float defaultValue = 0) 
+        { 
+            var kv = KvPairs.FirstOrDefault(k => k.Key == key); 
+            if (kv.Value is float f) return f;
+            if (kv.Value is double d) return (float)d;
+            if (kv.Value is int i) return i;
+            if (kv.Value is uint ui) return ui;
+            return defaultValue; 
+        }
+        public string GetString(string key, string defaultValue = "") 
+        { 
+            var kv = KvPairs.FirstOrDefault(k => k.Key == key); 
+            return kv.Value is string s ? s : defaultValue; 
+        }
     }
 
     private static object ReadValue(BinaryReader reader, uint valType)
@@ -194,9 +222,31 @@ public static class GgufLoader
         int total = meta.Tensors.Count;
         int processed = 0;
 
+        Console.WriteLine($"[DEBUG] Starting weight load, {total} tensors...");
+        Console.WriteLine($"[DEBUG] First 3 tensor names: {meta.Tensors[0].Name}, {meta.Tensors[1].Name}, {meta.Tensors[2].Name}");
+        Console.WriteLine($"[DEBUG] First 3 dtype VALUES (uint): {(uint)meta.Tensors[0].Dtype}, {(uint)meta.Tensors[1].Dtype}, {(uint)meta.Tensors[2].Dtype}");
+        Console.WriteLine($"[DEBUG] First 3 dtypes: {meta.Tensors[0].Dtype}, {meta.Tensors[1].Dtype}, {meta.Tensors[2].Dtype}");
+        Console.WriteLine($"[DEBUG] First 3 offsets: {meta.Tensors[0].Offset}, {meta.Tensors[1].Offset}, {meta.Tensors[2].Offset}");
+        
+        // Raw bytes test showed data at file position 0 = 13649.82 (correct Q8 scale)
+        // So offsets stored in metadata ARE absolute. Don't modify!
+
         foreach (var info in meta.Tensors)
         {
-            stream.Position = info.Offset;
+            // CRITICAL FIX: Use stored offset directly! Don't rely on sequential read
+            long targetOffset = info.Offset;
+            if (targetOffset >= stream.Length)
+            {
+                Console.WriteLine($"[ERROR] Offset {targetOffset} exceeds file length {stream.Length} for {info.Name}");
+                continue;
+            }
+            stream.Position = targetOffset;
+            
+            if (processed < 1)
+            {
+                Console.WriteLine($"[DEBUG] File length: {stream.Length}");
+                Console.WriteLine($"[DEBUG] Reading {info.Name} at position: {stream.Position}");
+            }
             
             int count = 1; foreach (int d in info.Shape) count *= d;
             
@@ -205,6 +255,21 @@ public static class GgufLoader
             {
                 ReadTensorInto(reader, info.Dtype, info.Shape, buffer.AsSpan(0, count));
                 
+                // DEBUG raw file bytes at offset 0 vs actual tensor offset
+        if (processed < 1)
+        {
+            Console.WriteLine($"[DEBUG] File length: {stream.Length}");
+            Console.WriteLine($"[DEBUG] About to read token_embd at position: {stream.Position}");
+            
+            // Read first few bytes raw to see what they are
+            var rawBytes = new byte[32];
+            long savedPos = stream.Position;
+            stream.Position = 0;
+            stream.Read(rawBytes, 0, 32);
+            stream.Position = savedPos;
+            Console.WriteLine($"[DEBUG] Raw bytes at offset 0: {BitConverter.ToSingle(rawBytes, 0):F2}, {BitConverter.ToSingle(rawBytes, 4):F2}, {BitConverter.ToSingle(rawBytes, 8):F2}, {BitConverter.ToSingle(rawBytes, 12):F2}");
+        }
+
                 if (model.LoadWeight(info.Name, buffer.AsSpan(0, count)))
                 {
                     loaded++;

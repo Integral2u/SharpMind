@@ -13,7 +13,7 @@ Core: tensors, matrix math, memory, activations
 
 Before release check mutilple models with interactive chat
 
-
+AirLLM stream in model layers sound interesting
 Model/Tokenizer load could be async with progress
 build small native model for testing
 system and agent.md refinement.  caw we say somthing like adaptive if the user is asking question be more helpful if asking for action be concise

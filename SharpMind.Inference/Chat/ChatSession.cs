@@ -1,8 +1,12 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using SharpMind.Core.Tensors;
 using SharpMind.Model;
 using SharpMind.Model.Config;
 using SharpMind.Tokenization;
+using SharpMind.Inference;
 
 namespace SharpMind.Inference.Chat;
 
@@ -139,9 +143,11 @@ public sealed class ChatSession : IAsyncDisposable
     public IReadOnlyList<ChatMessage> History => _history;
 
     public int MaxTokens { get; set; } = 2048;
-    public float Temperature { get; set; } = 0.7f;
-    public int TopK { get; set; } = 40;
-    public float TopP { get; set; } = 0.9f;
+    public float Temperature { get; set; } = 0.5f;
+    public int TopK { get; set; } = 20;
+    public float TopP { get; set; } = 0.85f;
+    public float RepetitionPenalty { get; set; } = 2.0f;
+    public int RepetitionWindow { get; set; } = 32;
 
     public async IAsyncEnumerable<ChatStreamEntry> GetResponseStreamAsync(
         string userInput,
@@ -160,9 +166,17 @@ public sealed class ChatSession : IAsyncDisposable
 
         var prompt = BuildPrompt();
         var encoded = _tokenizer.Encode(prompt, addBos: true, addEos: false);
-        ReadOnlySpan<int> promptToks = encoded;
+        int[] promptToks;
         if (encoded.Length > MaxTokens)
-            promptToks = encoded.AsSpan(encoded.Length - MaxTokens);
+        {
+            promptToks = encoded.ToArray();
+            ArraySegment<int> subset = new(encoded.ToArray(), encoded.Length - MaxTokens, MaxTokens);
+            promptToks = subset.ToArray();
+        }
+        else
+        {
+            promptToks = encoded.ToArray();
+        }
 
         int promptLen = promptToks.Length;
         if (promptLen == 0)
@@ -178,7 +192,7 @@ public sealed class ChatSession : IAsyncDisposable
 
         using var input = Tensor<int>.From(promptToks, 1, promptLen);
 
-        // ForwardLastLogits returns [batch, vocabSize] — just the last token's logits.
+        // ForwardLastLogits returns [batch, vocabSize] ï¿½ just the last token's logits.
         // This avoids allocating and slicing the full [batch, seqLen, vocab] tensor
         // that Forward() returns, and removes the step==0 / step>0 branch below.
         Tensor<float>? logitsTensor = _model.ForwardLastLogits(input, _caches, posOffset);
@@ -188,23 +202,65 @@ public sealed class ChatSession : IAsyncDisposable
             int vocabSize = logitsTensor.Shape[1];
             var response = new System.Text.StringBuilder();
 
-            var samplingCfg = new SamplingConfig
+var samplingCfg = new SamplingConfig
             {
                 Temperature = Temperature,
                 TopK        = TopK,
                 TopP        = TopP
             };
 
+            var generatedIds = new List<int>();
+
             for (int step = 0; step < MaxTokens; step++)
             {
                 if (ct.IsCancellationRequested) break;
 
-                // logitsTensor is always [1, vocabSize] — same layout on every step.
+                // logitsTensor is always [1, vocabSize] â€” same layout on every step.
                 ReadOnlySpan<float> logitsSlice = logitsTensor.Data[..vocabSize];
 
-                int nextId = Sampler.Sample(logitsSlice, samplingCfg, Random.Shared);
+                // DEBUG: Log top-5 logits
+                if (step < 2)
+                {
+                    var top5 = new List<(int id, float logit)>();
+                    for (int i = 0; i < Math.Min(1000, vocabSize); i++)
+                        top5.Add((i, logitsSlice[i]));
+                    top5.Sort((a, b) => b.logit.CompareTo(a.logit));
+                    Console.WriteLine($"[DEBUG] Step {step} top5 logits: {string.Join(", ", top5.Take(5).Select(t => $"id={t.id}({_tokenizer.Decode(new[]{t.id})})={t.logit:F2}"))}");
+                }
+
+                float[]? logitsCopy = null;
+                Span<float> logitsSpan;
+                if (RepetitionPenalty != 1.0f && generatedIds.Count > 0)
+                {
+                    logitsCopy = System.Buffers.ArrayPool<float>.Shared.Rent(vocabSize);
+                    logitsSlice.CopyTo(logitsCopy);
+                    logitsSpan = logitsCopy.AsSpan(0, vocabSize);
+                    ApplyRepetitionPenalty(logitsSpan, promptToks, generatedIds, RepetitionPenalty, RepetitionWindow);
+                }
+                else
+                {
+                    logitsSpan = logitsSlice.ToArray().AsSpan();
+                }
+
+int nextId = Sampler.Sample(logitsSpan, samplingCfg, Random.Shared);
+                generatedIds.Add(nextId);
 
                 if (nextId == _tokenizer.EosId) break;
+                
+                // Safety: detect repetition loop and stop
+                if (step > 4)
+                {
+                    string last4 = response.ToString().Substring(response.Length - 4);
+                    if (response.Length >= 8)
+                    {
+                        string last8 = response.ToString().Substring(response.Length - 8);
+                        if (last8 == last4 + last4)
+                        {
+                            // Detected repetition loop
+                            break;
+                        }
+                    }
+                }
 
                 _decodeTokenScratch[0] = nextId;
                 var token = _tokenizer.Decode(_decodeTokenScratch.AsSpan(0, 1));
@@ -223,6 +279,7 @@ public sealed class ChatSession : IAsyncDisposable
                 int newPos = posOffset + promptLen + step;
 
                 prev.Dispose();
+                
                 using var nextInput = Tensor<int>.From(_decodeTokenScratch.AsSpan(0, 1), 1, 1);
                 logitsTensor = _model.ForwardLastLogits(nextInput, _caches, newPos);
             }
@@ -319,4 +376,31 @@ public sealed class ChatSession : IAsyncDisposable
 
     private void ThrowIfDisposed()
         => ObjectDisposedException.ThrowIf(_disposed, nameof(ChatSession));
+
+    private static void ApplyRepetitionPenalty(
+        Span<float> logits,
+        ReadOnlySpan<int> promptIds,
+        List<int> generatedIds,
+        float penalty,
+        int window)
+    {
+        static void ScaleId(Span<float> lg, int id, float pen)
+        {
+            if ((uint)id >= (uint)lg.Length) return;
+            lg[id] = lg[id] >= 0f ? lg[id] / pen : lg[id] * pen;
+        }
+
+        if (window > 0)
+        {
+            int start = Math.Max(0, generatedIds.Count - window);
+            for (int i = start; i < generatedIds.Count; i++)
+                ScaleId(logits, generatedIds[i], penalty);
+            return;
+        }
+
+        foreach (int id in promptIds)
+            ScaleId(logits, id, penalty);
+        for (int i = 0; i < generatedIds.Count; i++)
+            ScaleId(logits, generatedIds[i], penalty);
+    }
 }

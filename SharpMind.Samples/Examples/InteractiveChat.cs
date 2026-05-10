@@ -15,25 +15,27 @@ namespace SharpMind.Samples.Examples;
 /// real BPE tokenizer ? KV-cached transformer ? streaming token output.
 ///
 /// Replaces the former <c>SimpleChatSession</c> which used a fake ASCII-level
-/// tokenizer, re-ran the full context on every decode step (O(n�)), and
+/// tokenizer, re-ran the full context on every decode step (O(n²)), and
 /// silently discarded the agent prompt.
 ///
 /// Commands during chat:
-///   quit   � exit
-///   clear  � wipe conversation history, re-add system messages
+///   quit   – exit
+///   clear  – wipe conversation history, re-add system messages
 /// </summary>
 public static class InteractiveChat
 {
-    private const string GgufModelName = "qwen2-0_5b-instruct-q4_k_m";
+    private static readonly string GgufModelName = "qwen2-0_5b-instruct-fp16";
+    private static void Log(string msg) => Console.WriteLine(msg);
 
     public static async Task RunAsync()
     {
-        Console.WriteLine("=== SharpMind Interactive Chat ===");
+        
+        Log("=== SharpMind Interactive Chat ===");
         Console.WriteLine("Commands: 'quit', 'clear'");
         Console.WriteLine();
 
         var hardware = DetectBestHardware();
-        Console.WriteLine($"Hardware: {hardware}");
+Log($"Hardware: {hardware}");
 
         var baseDir       = @"C:\Integral2u\source\repos\SharpMind\ExternalAssets";
         var ggufPath      = Path.Combine(baseDir, $"{GgufModelName}.gguf");
@@ -42,13 +44,13 @@ public static class InteractiveChat
         // -- GGUF existence check ------------------------------------------
         if (!File.Exists(ggufPath))
         {
-            Console.WriteLine($"GGUF not found: {ggufPath}");
+            Log($"GGUF not found: {ggufPath}");
             return;
         }
 
         // -- Load metadata -------------------------------------------------
         var fileInfo = new FileInfo(ggufPath);
-        Console.WriteLine($"\nGGUF: {ggufPath}  ({fileInfo.Length / 1_000_000.0:F1} MB)");
+        Log($"\nGGUF: {ggufPath}  ({fileInfo.Length / 1_000_000.0:F1} MB)");
 
         int vocabSize = 128256, hiddenDim = 1536, numLayers = 24;
         int numHeads = 12, numKvHeads = 12, ffnDim = 6144, maxSeqLen = 2048;
@@ -57,7 +59,23 @@ public static class InteractiveChat
         try
         {
             meta = GgufLoader.LoadMeta(ggufPath);
-            Console.WriteLine($"  Loaded metadata: {meta.TensorCount} tensors");
+            Log($"  Loaded metadata: {meta.TensorCount} tensors");
+
+            // DEBUG: Print all GGUF KV pairs to discover actual key names
+            Console.WriteLine("[DEBUG] === GGUF METADATA KV PAIRS ===");
+            foreach (var kv in meta.KvPairs)
+                Console.WriteLine($"  {kv.Key} = {kv.Value}");
+            Console.WriteLine("[DEBUG] === END KV PAIRS ===");
+
+            // DEBUG: Print all tensor names and shapes - first 30 tensors for layout analysis
+            Console.WriteLine("[DEBUG] === GGUF TENSOR SHAPES (first 30) ===");
+            for (int i = 0; i < Math.Min(30, meta.Tensors.Count); i++)
+            {
+                var t = meta.Tensors[i];
+                string shape = t.Shape != null ? string.Join("x", t.Shape) : "null";
+                Console.WriteLine($"  [{i}] {t.Name}  dtype={t.Dtype}  shape={shape}");
+            }
+            Console.WriteLine("[DEBUG] === END TENSOR SHAPES ===");
 
             var embdInfo = meta.Tensors.FirstOrDefault(t =>
                 t.Name.Contains("token_embd") && t.Name.Contains("weight"));
@@ -75,35 +93,67 @@ public static class InteractiveChat
             }
 
             numLayers  = (int)meta.GetLong("llama.block_count", 24);
-            numHeads   = (int)meta.GetLong("llama.attention.head_count", 12);
-            numKvHeads = (int)meta.GetLong("llama.attention.head_count_kv", 12);
-            ffnDim     = (int)meta.GetLong("llama.feed_forward_length", 6144);
-            maxSeqLen  = (int)meta.GetLong("llama.context_length", 2048);
+            // FIX: Check architecture-specific keys with fallbacks to llama.* and qwen2.*
+            string arch = meta.GetString("general.architecture", "llama");
+            string pref = arch + ".";  // "llama." or "qwen2." etc.
+            
+            // DEBUG: Print what GetLong returns
+            Console.WriteLine($"[DEBUG] GetLong(qwen2.embedding_length) = {meta.GetLong("qwen2.embedding_length", 0)}");
+            Console.WriteLine($"[DEBUG] GetLong(qwen2.attention.head_count) = {meta.GetLong("qwen2.attention.head_count", 0)}");
+            Console.WriteLine($"[DEBUG] GetLong(qwen2.attention.head_count_kv) = {meta.GetLong("qwen2.attention.head_count_kv", 0)}");
+            Console.WriteLine($"[DEBUG] GetLong(qwen2.feed_forward_length) = {meta.GetLong("qwen2.feed_forward_length", 0)}");
+            Console.WriteLine($"[DEBUG] arch from GetString = '{arch}'");
+            Console.WriteLine($"[DEBUG] pref = '{pref}'");
+            
+            // Try architecture-specific key, then llama., then tensor shape inference
+            hiddenDim = (int)meta.GetLong(pref + "embedding_length", 
+                meta.GetLong("llama.embedding_length", 
+                    meta.GetLong("embedding", hiddenDim)));
+            ffnDim = (int)meta.GetLong(pref + "feed_forward_length",
+                meta.GetLong("llama.feed_forward_length", ffnDim));
+            maxSeqLen = (int)meta.GetLong(pref + "context_length",
+                meta.GetLong("llama.context_length", maxSeqLen));
+            
+            // Heads - try architecture then fall back to calculated from hiddenDim
+            numHeads = (int)meta.GetLong(pref + "attention.head_count",
+                meta.GetLong("llama.attention.head_count", numHeads));
+            numKvHeads = (int)meta.GetLong(pref + "attention.head_count_kv",
+                meta.GetLong("llama.attention.head_count_kv", numKvHeads));
+            
+            // MaxSeqLen also from direct key
+            maxSeqLen = Math.Max(maxSeqLen, (int)meta.GetLong("llama.context_length", 2048));
 
-            Console.WriteLine($"  Config: vocab={vocabSize}, hidden={hiddenDim}, layers={numLayers}");
-            Console.WriteLine($"  Heads: {numHeads} (kv={numKvHeads}), ffn={ffnDim}, ctx={maxSeqLen}");
+            Log($"  Config: vocab={vocabSize}, hidden={hiddenDim}, layers={numLayers}");
+            Log($"  Heads: {numHeads} (kv={numKvHeads}), ffn={ffnDim}, ctx={maxSeqLen}");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"  Error loading metadata: {ex.Message}");
+            Log($"  Error loading metadata: {ex.Message}");
             return;
         }
 
-        // -- Head alignment fixups -----------------------------------------
+        // -- Head alignment fixups (only warn, don't auto-adjust - keep original values) ----
+        int origHeads = numHeads;
         if (hiddenDim % numHeads != 0)
         {
-            Console.WriteLine($"[Warning] HiddenDim ({hiddenDim}) not divisible by NumHeads ({numHeads}). Adjusting...");
+            Log($"[Warning] HiddenDim ({hiddenDim}) not divisible by NumHeads ({numHeads}).");
+            // Try to find a divisor for heuristic suggestion only
+            int suggested = numHeads;
             for (int h = numHeads; h > 0; h--)
-                if (hiddenDim % h == 0) { numHeads = h; break; }
-            Console.WriteLine($"[Warning] Adjusted NumHeads to: {numHeads}");
+                if (hiddenDim % h == 0) { suggested = h; break; }
+            Log($"[Warning] Suggested NumHeads: {suggested} (but using {numHeads})");
         }
         if (numHeads % numKvHeads != 0)
         {
-            Console.WriteLine($"[Warning] NumHeads ({numHeads}) not divisible by NumKvHeads ({numKvHeads}). Adjusting...");
+            Log($"[Warning] NumHeads ({numHeads}) not divisible by NumKvHeads ({numKvHeads}).");
+            int suggested = numKvHeads;
             for (int kv = numKvHeads; kv > 0; kv--)
-                if (numHeads % kv == 0) { numKvHeads = kv; break; }
-            Console.WriteLine($"[Warning] Adjusted NumKvHeads to: {numKvHeads}");
+                if (numHeads % kv == 0) { suggested = kv; break; }
+            Log($"[Warning] Suggested NumKvHeads: {suggested} (but using {numKvHeads})");
         }
+
+        // -- Log effective HeadDim -----------------------------------------------
+        Log($"  Effective: HeadDim={hiddenDim / numHeads}, KvGroupSize={numHeads / numKvHeads}");
 
         // -- Build model ---------------------------------------------------
         var modelConfig = new ModelConfig
@@ -113,6 +163,20 @@ public static class InteractiveChat
             NumKvHeads = numKvHeads, FfnDim     = ffnDim,
             MaxSeqLen  = maxSeqLen,
         };
+
+        // DEBUG: Print model config values and calculated derived values
+        Console.WriteLine("[DEBUG] === MODEL CONFIG ===");
+        Console.WriteLine($"  VocabSize = {vocabSize}");
+        Console.WriteLine($"  HiddenDim = {hiddenDim}");
+        Console.WriteLine($"  NumLayers = {numLayers}");
+        Console.WriteLine($"  NumHeads = {numHeads}");
+        Console.WriteLine($"  NumKvHeads = {numKvHeads}");
+        Console.WriteLine($"  FfnDim = {ffnDim}");
+        Console.WriteLine($"  MaxSeqLen = {maxSeqLen}");
+        Console.WriteLine($"  HeadDim = {hiddenDim / numHeads} (HiddenDim/NumHeads)");
+        Console.WriteLine($"  KvGroupSize = {numHeads / numKvHeads} (NumHeads/NumKvHeads)");
+        Console.WriteLine("[DEBUG] === END MODEL CONFIG ===");
+
         var sharpConfig = new SharpMindConfig
         {
             Activation = ActivationKind.SiLU,
@@ -124,33 +188,33 @@ public static class InteractiveChat
             Hardware   = hardware,
         };
 
-Console.WriteLine("\nBuilding model...");
+        Log("\nBuilding model...");
         GC.Collect(); GC.WaitForPendingFinalizers();
         var model = ModelFactory.Create(modelConfig, sharpConfig);
-        Console.WriteLine($"  {model.ParameterCount / 1_000_000.0:F1}M parameters");
+        Log($"  {model.ParameterCount / 1_000_000.0:F1}M parameters");
 
-        Console.WriteLine("Loading weights...");
+        Log("Loading weights...");
         GC.Collect(); GC.WaitForPendingFinalizers();
         var sw = System.Diagnostics.Stopwatch.StartNew();
         GgufLoader.LoadWeightsToModel(ggufPath, meta, model);
         sw.Stop();
-        Console.WriteLine($"  Done in {sw.ElapsedMilliseconds}ms");
+        Log($"  Done in {sw.ElapsedMilliseconds}ms");
 
         // -- Load tokenizer ------------------------------------------------
         if (!File.Exists(tokenizerPath))
         {
-            Console.WriteLine($"[Error] tokenizer.json not found at: {tokenizerPath}");
-            Console.WriteLine("  Download it from the model's HuggingFace page and place it");
-            Console.WriteLine("  in the same folder as the GGUF file.");
+            Log($"[Error] tokenizer.json not found at: {tokenizerPath}");
+            Log("  Download it from the model's HuggingFace page and place it");
+            Log("  in the same folder as the GGUF file.");
             return;
         }
 
-        Console.WriteLine("Loading tokenizer...");
+        Log("Loading tokenizer...");
         var tokenizer = Tokenizer.FromLlama(tokenizerPath);
-        Console.WriteLine($"  Vocab size: {tokenizer.VocabSize}");
+        Log($"  Vocab size: {tokenizer.VocabSize}");
 
         // -- Create inference ops and chat session -------------------------
-        Console.WriteLine("Creating inference ops...");
+        Log("Creating inference ops...");
         var inferOps = InferenceOpsFactory.Create(sharpConfig, InferenceConfig.Default);
 
         await using var session = new ChatSession(model, tokenizer, inferOps)
@@ -168,14 +232,13 @@ Console.WriteLine("\nBuilding model...");
         if (!string.IsNullOrEmpty(combinedSystem))
             session.AddMessage(ChatRole.System, combinedSystem);
 
-        Console.WriteLine("\nChat ready! Say hello.\n");
+        Log("\nChat ready! Say hello.\n");
 
         // -- Chat loop -----------------------------------------------------
         while (true)
         {
             Console.Write("You: ");
             var input = Console.ReadLine();
-
             if (string.IsNullOrWhiteSpace(input))
                 continue;
 
@@ -192,17 +255,26 @@ switch (input.Trim().ToLowerInvariant())
                     continue;
             }
 
-            Console.Write("Bot: ");
+Console.Write("Bot: ");
             sw.Restart();
             int tokensGenerated = 0;
 
-            await foreach (var entry in session.GetResponseStreamAsync(input))
+            try
             {
-                if (entry.TextDelta is { Length: > 0 } delta)
+                await foreach (var entry in session.GetResponseStreamAsync(input))
                 {
-                    Console.Write(delta);
-                    tokensGenerated++;
+                    if (entry.TextDelta is { Length: > 0 } delta)
+                    {
+                        Console.Write(delta);
+                        tokensGenerated++;
+                    }
                 }
+            }
+            catch (Exception ex)
+            {
+                var msg = $"\n[Error] {ex.GetType().Name}: {ex.Message}";
+                Console.WriteLine(msg);
+                File.AppendAllText("chat_error.log", msg + Environment.NewLine);
             }
 
             double elapsedSec = sw.Elapsed.TotalSeconds;

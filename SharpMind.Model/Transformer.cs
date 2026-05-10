@@ -51,27 +51,58 @@ public sealed class Transformer : IDisposable
     public bool LoadWeight(string name, ReadOnlySpan<float> data)
     {
         var lower = name.ToLower();
+        Console.WriteLine($"[DEBUG LoadWeight] Trying: {name}, got {data.Length} values");
         
         // GGUF weight name variations mapping
         if (lower.Contains("embed") || lower.Contains("token") || lower.Contains(" emb")
             || lower.Contains("wte") || lower.Contains("model.embed"))
         {
-            _embedding.LoadWeights(data);
+            // DEBUG: Show expected vs actual size
+            long expected = _config.VocabSize * _config.HiddenDim;
+            Console.WriteLine($"[DEBUG] Embedding: expected={expected}, got={data.Length}, match={expected == data.Length}");
+            
+            // GGUF stores as [HiddenDim, VocabSize], SharpMind expects [VocabSize, HiddenDim]
+            // We need to transpose: data is [Hidden, Vocab], we need [Vocab, Hidden]
+            if (expected == data.Length)
+            {
+                Console.WriteLine($"[DEBUG] Transposing embedding from [{_config.HiddenDim}, {_config.VocabSize}] to [{_config.VocabSize}, {_config.HiddenDim}]");
+                float[] transposed = new float[data.Length];
+                int vocab = _config.VocabSize;
+                int hidden = _config.HiddenDim;
+                for (int v = 0; v < vocab; v++)
+                {
+                    for (int h = 0; h < hidden; h++)
+                    {
+                        // data[h * vocab + v] -> transposed[v * hidden + h]
+                        transposed[v * hidden + h] = data[h * vocab + v];
+                    }
+                }
+                transposed.AsSpan().CopyTo(_embedding.Weight.Data);
+                Console.WriteLine($"[DEBUG] Embedding stored (transposed), first5: {_embedding.Weight.Data[0]}, {_embedding.Weight.Data[1]}, {_embedding.Weight.Data[2]}, {_embedding.Weight.Data[3]}, {_embedding.Weight.Data[4]}");
+            }
+            else
+            {
+                _embedding.LoadWeights(data);
+            }
             return true;
         }
         else if (lower.Contains("output_norm") || lower.Contains("norm") && lower.Contains("output"))
         {
+            Console.WriteLine($"[DEBUG] Matched output_norm: {name}");
             _finalNorm.LoadWeight(data);
             return true;
         }
         else if (lower.Contains("lm_head") || lower.Contains("head.") || lower.Contains(" output."))
         {
+            Console.WriteLine($"[DEBUG] Matched lm_head: {name}");
             _finalNorm.LoadWeight(data);
             return true;
         }
         else
         {
-            return LoadDecoderWeight(name, data);
+            var decResult = LoadDecoderWeight(name, data);
+            Console.WriteLine($"[DEBUG] Decoder result for {name}: {decResult}");
+            return decResult;
         }
     }
     
@@ -110,8 +141,6 @@ public sealed class Transformer : IDisposable
     {
         ThrowIfDisposed();
 
-        DisposeCache();
-
         // 1. Token embeddings → [Batch, SeqLen, HiddenDim]
         _cachedEmbedding = _embedding.Forward(tokenIds);
         using var embedded = _cachedEmbedding;
@@ -148,16 +177,45 @@ public sealed class Transformer : IDisposable
     public unsafe Tensor<float> ForwardLastLogits(Tensor<int> tokenIds, KVCache[] caches, int positionOffset = 0)
     {
         ThrowIfDisposed();
-        DisposeCache();
 
         _cachedEmbedding = _embedding.Forward(tokenIds);
         using var embedded = _cachedEmbedding;
+        
+        // DEBUG: Check embeddings
+        if (float.IsNaN(embedded.Data[0]))
+        {
+            Console.WriteLine("[DEBUG] NaN in embeddings!");
+        }
+        else if (float.IsInfinity(embedded.Data[0]))
+        {
+            Console.WriteLine("[DEBUG] Infinity in embeddings!");
+        }
 
         _cachedHidden = _arch.Forward(embedded, caches, positionOffset);
         using var hidden = _cachedHidden;
+        
+        // DEBUG: Check hidden after arch
+        if (float.IsNaN(hidden.Data[0]))
+        {
+            Console.WriteLine("[DEBUG] NaN after arch forward!");
+        }
+        else if (float.IsInfinity(hidden.Data[0]))
+        {
+            Console.WriteLine("[DEBUG] Infinity after arch forward!");
+        }
 
         _cachedNormed = _finalNorm.Forward(hidden);
         using var normed = _cachedNormed;
+
+        // DEBUG: Check normed
+        if (float.IsNaN(normed.Data[0]))
+        {
+            Console.WriteLine("[DEBUG] NaN after final norm!");
+        }
+        else if (float.IsInfinity(normed.Data[0]))
+        {
+            Console.WriteLine("[DEBUG] Infinity after final norm!");
+        }
 
         int batch = tokenIds.Shape.Rows;
         int seqLen = tokenIds.Shape.Cols;

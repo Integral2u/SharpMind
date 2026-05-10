@@ -70,33 +70,30 @@ public sealed class TransformerBlock : IDisposable
         return Forward(x, null, positionOffset, causal);
     }
 
-    public Tensor<float> Forward(Tensor<float> x, KVCache? cache, int positionOffset = 0, bool causal = true)
+public Tensor<float> Forward(Tensor<float> x, KVCache? cache, int positionOffset = 0, bool causal = true)
     {
         ThrowIfDisposed();
-        DisposeCache();
-        
-        _cachedInput = x;
         
         // ── Attention sub-layer ──────────────────────────────────────────
-        _cachedNormed1 = _norm1.Forward(x);
-        using var normed1 = _cachedNormed1;
-        
-        _cachedAttnOut = _attention.Forward(normed1, _ops, positionOffset, causal, cache);
-        using var attnOut = _cachedAttnOut;
+        var normed1 = _norm1.Forward(x);
+        using var attnOut = _attention.Forward(normed1, _ops, positionOffset, causal, cache);
+        normed1.Dispose();
 
         // Residual: h = x + attn(norm(x))
-        _cachedHidden = TensorOps.Add(x, attnOut);
-        using var h = _cachedHidden;
-
-        // ── FFN sub-layer ────────────────────────────────────────────────
-        _cachedNormed2 = _norm2.Forward(h);
-        using var normed2 = _cachedNormed2;
+        var hidden = TensorOps.Add(x, attnOut);
+        attnOut.Dispose();
         
-        _cachedFfnOut = _ffn.Forward(normed2);
-        using var ffnOut = _cachedFfnOut;
+        // ── FFN sub-layer ────────────────────────────────────────────────
+        var normed2 = _norm2.Forward(hidden);
+        using var ffnOut = _ffn.Forward(normed2);
+        normed2.Dispose();
 
         // Residual: out = h + ffn(norm(h))
-        return TensorOps.Add(h, ffnOut);
+        var output = TensorOps.Add(hidden, ffnOut);
+        hidden.Dispose();
+        ffnOut.Dispose();
+        
+        return output;
     }
     
     private void DisposeCache()
@@ -130,6 +127,8 @@ public sealed class TransformerBlock : IDisposable
     public bool LoadWeight(string name, ReadOnlySpan<float> data)
     {
         var lower = name.ToLower();
+        
+        Console.WriteLine($"[DEBUG Block{_layerIdx}] Loading {name}, got {data.Length} values");
         
         // Direct name-based load using layer public methods
         if (lower.Contains("attn_q"))

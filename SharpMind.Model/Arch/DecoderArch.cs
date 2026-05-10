@@ -87,7 +87,6 @@ public sealed class DecoderArch : IArchitecture
     public Tensor<float> Forward(Tensor<float> hiddenStates, KVCache[] caches, int positionOffset = 0)
     {
         ThrowIfDisposed();
-        DisposeCache();
         
         var current = hiddenStates;
 
@@ -95,11 +94,19 @@ public sealed class DecoderArch : IArchitecture
         {
             // Pass the cache for the current block
             var next = _blocks[i].Forward(current, caches != null ? caches[i] : null, positionOffset, causal: true);
-            if (i > 0) current.Dispose();
-            _cachedInputs.Add(current);
+            
+            // DEBUG: Check for NaN/Infinity after each block
+            if (float.IsNaN(next.Data[0]) || float.IsInfinity(next.Data[0]))
+            {
+                Console.WriteLine($"[DEBUG] Block {i} has {(float.IsNaN(next.Data[0]) ? "NaN" : "Infinity")}!");
+            }
+            
+            // Only dispose previous if it wasn't our input
+            if (i > 0 && !ReferenceEquals(current, hiddenStates))
+                current.Dispose();
+            
             current = next;
         }
-        _cachedInputs.Add(current);
 
         return current;
     }

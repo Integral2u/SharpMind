@@ -64,7 +64,8 @@ public sealed unsafe class NativeBuffer<T> : IDisposable where T : unmanaged
     {
         if (Interlocked.Decrement(ref _refCount) == 0)
         {
-            NativeBufferPool<T>.Return(this);
+            // Disable pooling for now - it causes reuse issues
+            Free();
         }
     }
 
