@@ -14,7 +14,7 @@ namespace SharpMind.Samples.Examples
         private static readonly string ModelPath = @"C:\Integral2u\source\repos\SharpMind\ExternalAssets";
         public static async Task RunAsync()
         {
-            CancellationTokenSource cancellationTokenSource = new CancellationTokenSource();
+            CancellationTokenSource cancellationTokenSource = new();
             var ggufPath = Path.Combine(ModelPath, $"{ModelName}.gguf");
             var tokenizerPath = Path.Combine(ModelPath, $"{ModelName}.json");
             if (!File.Exists(ggufPath))
@@ -23,7 +23,7 @@ namespace SharpMind.Samples.Examples
                 return;
             }
             Console.Out.WriteLine("Loading model detail...");
-            GgufLoader.LoadDetails(ggufPath, null, out GgufMeta meta, out ModelConfig modelConfig, out Tokenizer? tokenizer);
+            GgufLoader.Load(ggufPath, null, out GgufMeta meta, out ModelConfig modelConfig, out Tokenizer? tokenizer);
             if (tokenizer == null && File.Exists(tokenizerPath)) tokenizer = Tokenizer.FromQwen(tokenizerPath);
             if (tokenizer == null)
             {

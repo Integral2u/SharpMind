@@ -474,7 +474,7 @@ public static partial class GgufLoader
     /// Single-pass loader: loads GGUF file, extracts metadata, config, and optionally loads tokenizer.
     /// Special tokens and chat template are available via meta.GetSpecialTokenId() and meta.GetChatTemplate().
     /// </summary>
-    public static void LoadDetails(string ggufPath, string? tokenizerPath, out GgufMeta meta, out ModelConfig config, out Tokenizer? tokenizer)
+    public static void Load(string ggufPath, string? tokenizerPath, out GgufMeta meta, out ModelConfig config, out Tokenizer? tokenizer)
     {
         meta = LoadMeta(ggufPath);
         config = LoadConfig(meta)!;

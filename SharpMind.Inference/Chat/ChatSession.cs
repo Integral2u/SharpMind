@@ -1,5 +1,6 @@
 using SharpMind.Core.Tensors;
 using SharpMind.Model;
+using SharpMind.Model.Format;
 using SharpMind.Tokenization;
 using System.Runtime.CompilerServices;
 
@@ -8,27 +9,22 @@ namespace SharpMind.Inference.Chat;
 /// <summary>
 /// Main chat session - handles conversation with model.
 /// </summary>
-public sealed class ChatSession : IAsyncDisposable
+public sealed class ChatSession
 {
     private readonly Transformer _model;
-    private readonly Tokenization.Tokenizer _tokenizer;
+    private readonly Tokenizer _tokenizer;
     private readonly InferenceOps _ops;
     private readonly KVCache[] _caches;
     private readonly List<ChatMessage> _history = [];
     private readonly int[] _decodeTokenScratch = new int[1];
-    private bool _disposed;
-    
-    private readonly int? _bosTokenId;  // From GGUF metadata
-    private readonly int? _eosTokenId;
     private readonly string? _chatTemplate;
+    private bool _disposed;
 
     public ChatSession(
         Transformer model,
-        Tokenization.Tokenizer tokenizer,
+        Tokenizer tokenizer,
         InferenceOps ops,
-        int? bosTokenId = null,
-        int? eosTokenId = null,
-        string? chatTemplate = null)
+        GgufMeta? meta = null)
     {
         ArgumentNullException.ThrowIfNull(model);
         ArgumentNullException.ThrowIfNull(tokenizer);
@@ -37,9 +33,7 @@ public sealed class ChatSession : IAsyncDisposable
         _model = model;
         _tokenizer = tokenizer;
         _ops = ops;
-        _bosTokenId = bosTokenId;
-        _eosTokenId = eosTokenId;
-        _chatTemplate = chatTemplate;
+        _chatTemplate = meta?.GetChatTemplate();
 
         int nl = model.Config.NumLayers;
         int ms = model.Config.MaxSeqLen;
