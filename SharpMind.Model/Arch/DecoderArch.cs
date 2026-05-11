@@ -95,12 +95,6 @@ public sealed class DecoderArch : IArchitecture
             // Pass the cache for the current block
             var next = _blocks[i].Forward(current, caches != null ? caches[i] : null, positionOffset, causal: true);
             
-            // DEBUG: Check for NaN/Infinity after each block
-            if (float.IsNaN(next.Data[0]) || float.IsInfinity(next.Data[0]))
-            {
-                Console.WriteLine($"[DEBUG] Block {i} has {(float.IsNaN(next.Data[0]) ? "NaN" : "Infinity")}!");
-            }
-            
             // Only dispose previous if it wasn't our input
             if (i > 0 && !ReferenceEquals(current, hiddenStates))
                 current.Dispose();

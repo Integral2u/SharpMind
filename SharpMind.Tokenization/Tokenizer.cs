@@ -114,4 +114,11 @@ public sealed class Tokenizer
     /// </summary>
     public static Tokenizer FromMistral(string tokenizerJsonPath)
         => new(MistralConverter.Convert(tokenizerJsonPath));
+
+    /// <summary>
+    /// Loads a Qwen tokenizer from a HuggingFace <c>tokenizer.json</c> file.
+    /// Uses same format as LLaMA tokenizer.
+    /// </summary>
+    public static Tokenizer FromQwen(string tokenizerJsonPath)
+        => new(LlamaConverter.Convert(tokenizerJsonPath));
 }

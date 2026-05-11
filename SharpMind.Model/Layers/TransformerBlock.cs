@@ -128,9 +128,6 @@ public Tensor<float> Forward(Tensor<float> x, KVCache? cache, int positionOffset
     {
         var lower = name.ToLower();
         
-        Console.WriteLine($"[DEBUG Block{_layerIdx}] Loading {name}, got {data.Length} values");
-        
-        // Direct name-based load using layer public methods
         if (lower.Contains("attn_q"))
         {
             _attention.LoadWeights(name, data);

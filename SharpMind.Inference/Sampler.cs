@@ -69,10 +69,31 @@ public static class Sampler
 
     private static void Softmax(Span<float> x)
     {
+        // Guard: if any input has Infinity/NaN, replace with zeros to prevent cascade
+        bool hasBad = false;
+        for (int i = 0; i < x.Length; i++)
+        {
+            if (float.IsInfinity(x[i]) || float.IsNaN(x[i])) { hasBad = true; break; }
+        }
+        if (hasBad)
+        {
+            x.Clear();
+            if (x.Length > 0) x[0] = 1f;
+            return;
+        }
+        
         float max = x[0];
         foreach (float v in x) if (v > max) max = v;
         float sum = 0f;
-        for (int i = 0; i < x.Length; i++) { x[i] = MathF.Exp(x[i] - max); sum += x[i]; }
+        for (int i = 0; i < x.Length; i++) 
+        {
+            float expVal = x[i] - max;
+            // Guard against exp overflow
+            if (expVal > 80f) expVal = 80f;
+            else if (expVal < -80f) expVal = -80f;
+            x[i] = MathF.Exp(expVal); 
+            sum += x[i]; 
+        }
         float inv = 1f / sum;
         for (int i = 0; i < x.Length; i++) x[i] *= inv;
     }

@@ -11,6 +11,7 @@ Tokenizer: BPE, vocab builder, encode/decode
 Data: sources, cleaning, formating, batching, dataset loaders
 Core: tensors, matrix math, memory, activations
 
+Qwen model converter
 Before release check mutilple models with interactive chat
 
 AirLLM stream in model layers sound interesting
@@ -57,6 +58,121 @@ Task Arithmetic: Creates "task vectors" by subtracting the base model weights fr
 
 SharpMind.Inference.Chat.ChatSession needs to utilize ChatStaus.Interrupted
 
+
+public static class InteractiveQwenChatGuff
+{
+private static readonly string ModelName = "qwen2-0_5b-instruct-fp16";
+private static readonly string ModelPath = "C:\Integral2u\source\repos\SharpMind\ExternalAssets";
+public static async Task RunAsync()
+    {
+        var ggufPath      = Path.Combine(ModelPath, $"{ModelName}.gguf");
+        var tokenizerPath = Path.Combine(ModelPath, $"{ModelName}.json");
+        if (!File.Exists(ggufPath)) 
+        {
+        Console.Out.WriteLine($"GGUF not found: {ggufPath}");
+        return;
+        }
+        if (!File.Exists(tokenizerPath)) 
+        {
+        Console.Out.WriteLine($"Tokenizer not found: {tokenizerPath}");
+        return;
+        }
+        var sharpConfig = SharpMindConfig.Qwen with { Hardware = SharpMindConfig.ResolvedHardware };
+        Console.Out("Loading Model Config...");
+        var modelConfig = GgufLoader.LoadModel(ggufPath);
+        GC.Collect(); GC.WaitForPendingFinalizers();
+        Console.Out("\nBuilding model...");
+        var model = ModelFactory.Create(modelConfig, sharpConfig);
+        GC.Collect(); GC.WaitForPendingFinalizers();
+        Console.Out("Loading weights...");
+        GgufLoader.LoadWeightsToModel(ggufPath, meta, model);
+        Console.Out("Loading tokenizer...");
+        var tokenizer = Tokenizer.FromQwen(tokenizerPath);
+        Console.Out("Creating inference ops...");
+        var inferOps = InferenceOpsFactory.Create(sharpConfig, InferenceConfig.Default);
+        string systemPrompt = $"{SharpMind.PromptHelpers.DefaultSystemPrompt}\n\n{SharpMind.PromptHelpers.DefaultAgentPrompt}".Trim();
+
+        await using var session = new ChatSession(model, tokenizer, inferOps)
+        {
+            MaxTokens   = 512,
+            Temperature = 0.7f,
+            TopK        = 40,
+            TopP        = 0.9f,
+        };
+        if (!string.IsNullOrEmpty(systemPrompt)) session.AddMessage(ChatRole.System, combinedSystem);
+        Console.Out("\nChat ready! Say hello.\n");
+        var history = await talkingPotatos.StartChatAsync(cancellationTokenSource.Token, Prompt, Response);
+
+void Response(string text)
+{
+    Console.ForegroundColor = ConsoleColor.Blue;
+    Console.Write(text);
+}
+
+string Prompt()
+{
+    Console.ForegroundColor = ConsoleColor.Yellow;
+    string userInput = Console.ReadLine() ?? "";
+    if (userInput == "exit") cancellationTokenSource.Cancel();
+    return userInput;
+}
+        }
+
+}
+
+public static ModelConfig? GgufLoader.LoadModel(string ggufPath)
+{
+int vocabSize = 128256, hiddenDim = 1536, numLayers = 24;
+        int numHeads = 12, numKvHeads = 12, ffnDim = 6144, maxSeqLen = 2048;
+var meta = GgufLoader.LoadMeta(ggufPath);
+var embdInfo = meta.Tensors.FirstOrDefault(t => t.Name.Contains("token_embd") && t.Name.Contains("weight"));
+string arch = meta.GetString("general.architecture");
+            if (embdInfo.Shape is { Length: >= 2 })
+            {
+                long d0 = embdInfo.Shape[0], d1 = embdInfo.Shape[1];
+                if (d0 > d1) { vocabSize = (int)d0; hiddenDim = (int)d1; }
+                else         { vocabSize = (int)d1; hiddenDim = (int)d0; }
+            }
+            else
+            {
+                hiddenDim = (int)meta.GetLong($"{arch}.embedding_length", 1536);
+                vocabSize = (int)meta.GetLong("vocab_size", 32000);
+            }
+            
+            if(string.IsNullOrWhiteSpace(arch)) return null;            
+            hiddenDim = (int)meta.GetLong($"{arch}.embedding_length",
+                    meta.GetLong("embedding", hiddenDim)));
+            ffnDim = (int)meta.GetLong($"{arch}.feed_forward_length",ffnDim);
+            maxSeqLen = (int)meta.GetLong(pref + "context_length", maxSeqLen);            
+            // Heads - try architecture then fall back to calculated from hiddenDim
+            numHeads = (int)meta.GetLong($"{arch}.attention.head_count", numHeads);
+            numKvHeads = (int)meta.GetLong($"{arch}.attention.head_count_kv",numKvHeads);            
+            // MaxSeqLen also from direct key
+            maxSeqLen = Math.Max(maxSeqLen, (int)meta.GetLong("$"{arch}.context_length", 2048));
+
+            // -- Head alignment fixups (only warn, don't auto-adjust - keep original values) ----
+        int origHeads = numHeads;
+        if (hiddenDim % numHeads != 0)
+        {
+            // Try to find a divisor for heuristic suggestion only
+            int suggested = numHeads;
+            for (int h = numHeads; h > 0; h--)
+                if (hiddenDim % h == 0) { suggested = h; break; }
+        }
+        if (numHeads % numKvHeads != 0)
+        {
+            int suggested = numKvHeads;
+            for (int kv = numKvHeads; kv > 0; kv--)
+                if (numHeads % kv == 0) { suggested = kv; break; }
+        }
+        return new ModelConfig
+        {
+            VocabSize  = vocabSize,  HiddenDim  = hiddenDim,
+            NumLayers  = numLayers,  NumHeads   = numHeads,
+            NumKvHeads = numKvHeads, FfnDim     = ffnDim,
+            MaxSeqLen  = maxSeqLen,
+        };
+}
 var builder = await AIHostFactory.CreateHostBuilder(HostAdaptors.LOCAL_GUFF);
 if (builder == null) return;
 using var talkingPotatos = await builder.CreateHostAsync();

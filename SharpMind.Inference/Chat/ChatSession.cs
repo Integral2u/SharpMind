@@ -1,12 +1,7 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Runtime.CompilerServices;
 using SharpMind.Core.Tensors;
 using SharpMind.Model;
-using SharpMind.Model.Config;
 using SharpMind.Tokenization;
-using SharpMind.Inference;
+using System.Runtime.CompilerServices;
 
 namespace SharpMind.Inference.Chat;
 
@@ -138,7 +133,7 @@ public sealed class ChatSession : IAsyncDisposable
     }
 
     public Transformer Model => _model;
-    public Tokenization.Tokenizer Tokenizer => _tokenizer;
+    public Tokenizer Tokenizer => _tokenizer;
     public InferenceOps Ops => _ops;
     public IReadOnlyList<ChatMessage> History => _history;
 
@@ -200,16 +195,16 @@ public sealed class ChatSession : IAsyncDisposable
         try
         {
             int vocabSize = logitsTensor.Shape[1];
-            var response = new System.Text.StringBuilder();
 
-var samplingCfg = new SamplingConfig
+            var samplingCfg = new SamplingConfig
             {
                 Temperature = Temperature,
-                TopK        = TopK,
-                TopP        = TopP
+                TopK = TopK,
+                TopP = TopP
             };
 
             var generatedIds = new List<int>();
+            var response = new System.Text.StringBuilder();
 
             for (int step = 0; step < MaxTokens; step++)
             {
@@ -217,16 +212,6 @@ var samplingCfg = new SamplingConfig
 
                 // logitsTensor is always [1, vocabSize] — same layout on every step.
                 ReadOnlySpan<float> logitsSlice = logitsTensor.Data[..vocabSize];
-
-                // DEBUG: Log top-5 logits
-                if (step < 2)
-                {
-                    var top5 = new List<(int id, float logit)>();
-                    for (int i = 0; i < Math.Min(1000, vocabSize); i++)
-                        top5.Add((i, logitsSlice[i]));
-                    top5.Sort((a, b) => b.logit.CompareTo(a.logit));
-                    Console.WriteLine($"[DEBUG] Step {step} top5 logits: {string.Join(", ", top5.Take(5).Select(t => $"id={t.id}({_tokenizer.Decode(new[]{t.id})})={t.logit:F2}"))}");
-                }
 
                 float[]? logitsCopy = null;
                 Span<float> logitsSpan;
@@ -242,11 +227,11 @@ var samplingCfg = new SamplingConfig
                     logitsSpan = logitsSlice.ToArray().AsSpan();
                 }
 
-int nextId = Sampler.Sample(logitsSpan, samplingCfg, Random.Shared);
+                int nextId = Sampler.Sample(logitsSpan, samplingCfg, Random.Shared);
                 generatedIds.Add(nextId);
 
                 if (nextId == _tokenizer.EosId) break;
-                
+
                 // Safety: detect repetition loop and stop
                 if (step > 4)
                 {
@@ -269,9 +254,9 @@ int nextId = Sampler.Sample(logitsSpan, samplingCfg, Random.Shared);
 
                 yield return new ChatStreamEntry
                 {
-                    Status      = ChatStatus.Responding,
-                    TextDelta   = token,
-                    IsComplete  = false
+                    Status = ChatStatus.Responding,
+                    TextDelta = token,
+                    IsComplete = false
                 };
 
                 Tensor<float>? prev = logitsTensor;
@@ -279,7 +264,7 @@ int nextId = Sampler.Sample(logitsSpan, samplingCfg, Random.Shared);
                 int newPos = posOffset + promptLen + step;
 
                 prev.Dispose();
-                
+
                 using var nextInput = Tensor<int>.From(_decodeTokenScratch.AsSpan(0, 1), 1, 1);
                 logitsTensor = _model.ForwardLastLogits(nextInput, _caches, newPos);
             }
@@ -326,7 +311,11 @@ int nextId = Sampler.Sample(logitsSpan, samplingCfg, Random.Shared);
         ThrowIfDisposed();
         _history.Add(new ChatMessage { Role = role, Content = content });
     }
-
+    public void AddMessage(ChatMessage message)
+    {
+        ThrowIfDisposed();
+        _history.Add(message);
+    }
     public void ClearHistory()
     {
         _history.Clear();
@@ -403,4 +392,35 @@ int nextId = Sampler.Sample(logitsSpan, samplingCfg, Random.Shared);
         for (int i = 0; i < generatedIds.Count; i++)
             ScaleId(logits, generatedIds[i], penalty);
     }
+
+    public async Task<ChatMessage[]> StartChatAsync(CancellationToken token, Func<ChatMessage> prompt, Action<ChatStreamEntry> response)
+    {
+        while (!token.IsCancellationRequested)
+        {
+            var input = prompt();
+            if (string.IsNullOrWhiteSpace(input.Content))
+                continue;
+            try
+            {
+                await foreach (var entry in GetResponseStreamAsync(input.Content, token))
+                {
+                    if (entry.TextDelta is { Length: > 0 } delta) response(entry);
+
+                }
+            }
+            catch
+            {
+                response(new ChatStreamEntry { Status = ChatStatus.Interrupted });
+            }
+        }
+        return [.. _history];
+    }
+    public async Task<ChatMessage[]> StartChatAsync(CancellationToken token, Func<string> prompt, Action<string> response)
+    {
+        return await StartChatAsync(token, () => new ChatMessage { Content = prompt(), Role = ChatRole.User }, (e)=>
+        {
+            if (e.TextDelta is { Length: > 0 } delta) response(delta);
+        });
+    }
+
 }

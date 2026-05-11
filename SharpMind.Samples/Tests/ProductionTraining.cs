@@ -1,8 +1,5 @@
-using SharpMind;
 using SharpMind.Model;
 using SharpMind.Model.Config;
-using SharpMind.Core.Tensors;
-using SharpMind.Core.Training;
 using SharpMind.Data;
 using SharpMind.Data.Batching;
 using SharpMind.Data.Pipeline;

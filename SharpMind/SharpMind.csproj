@@ -7,4 +7,14 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <ItemGroup>
+    <None Remove="Agent.md" />
+    <None Remove="System.md" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Agent.md" />
+    <EmbeddedResource Include="System.md" />
+  </ItemGroup>
+
 </Project>

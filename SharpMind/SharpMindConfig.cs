@@ -125,7 +125,16 @@ public sealed record SharpMindConfig
         Norm = NormKind.LayerNorm,
         Arch = ArchKind.Encoder,
     };
-
+    public static SharpMindConfig Qwen => new()
+    {
+        Activation = ActivationKind.SiLU,
+        Gate = GateKind.SwiGLU,
+        Ffn = FfnKind.Gated,
+        Attention = AttentionKind.MQA,
+        Norm = NormKind.RMSNorm,
+        Arch = ArchKind.Decoder,
+    };
+   
     public HardwareTier ResolvedHardware => Hardware switch
     {
         HardwareTier.Auto => Fma.IsSupported ? HardwareTier.FMA :
@@ -133,6 +142,7 @@ public sealed record SharpMindConfig
                                                  HardwareTier.Scalar,
         _ => Hardware
     };
+
 
     public Dictionary<string, string> ToJigSawMapping()
     {

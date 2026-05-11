@@ -52,8 +52,22 @@ Log($"Hardware: {hardware}");
         var fileInfo = new FileInfo(ggufPath);
         Log($"\nGGUF: {ggufPath}  ({fileInfo.Length / 1_000_000.0:F1} MB)");
 
-        int vocabSize = 128256, hiddenDim = 1536, numLayers = 24;
-        int numHeads = 12, numKvHeads = 12, ffnDim = 6144, maxSeqLen = 2048;
+        // -- Load tokenizer FIRST to determine correct vocab size ----------
+        if (!File.Exists(tokenizerPath))
+        {
+            Log($"[Error] tokenizer.json not found at: {tokenizerPath}");
+            return;
+        }
+        
+        Log("Loading tokenizer...");
+        var tokenizer = Tokenizer.FromQwen(tokenizerPath);
+        int tokenizerVocab = tokenizer.VocabSize;
+        Log($"  Vocab size: {tokenizerVocab}");
+        
+        // Use tokenizer vocab - GGUF might report different but it's wrong (151936 vs 151647)
+        int vocabSize = tokenizerVocab;
+        int hiddenDim = 896, numLayers = 24;  // Override Qwen2 values
+        int numHeads = 14, numKvHeads = 2, ffnDim = 4864, maxSeqLen = 32768;
         GgufLoader.GgufMeta meta;
 
         try
@@ -155,12 +169,13 @@ Log($"Hardware: {hardware}");
         // -- Log effective HeadDim -----------------------------------------------
         Log($"  Effective: HeadDim={hiddenDim / numHeads}, KvGroupSize={numHeads / numKvHeads}");
 
-        // -- Build model ---------------------------------------------------
+        // -- Build model with tokenizer vocab (GGUF might report different value) ---
+        //vocabSize =   ;
         var modelConfig = new ModelConfig
         {
-            VocabSize  = vocabSize,  HiddenDim  = hiddenDim,
-            NumLayers  = numLayers,  NumHeads   = numHeads,
-            NumKvHeads = numKvHeads, FfnDim     = ffnDim,
+            VocabSize  = vocabSize, HiddenDim  = hiddenDim,
+            NumLayers = numLayers, NumHeads  = numHeads,
+            NumKvHeads = numKvHeads, FfnDim   = ffnDim,
             MaxSeqLen  = maxSeqLen,
         };
 
@@ -200,20 +215,7 @@ Log($"Hardware: {hardware}");
         sw.Stop();
         Log($"  Done in {sw.ElapsedMilliseconds}ms");
 
-        // -- Load tokenizer ------------------------------------------------
-        if (!File.Exists(tokenizerPath))
-        {
-            Log($"[Error] tokenizer.json not found at: {tokenizerPath}");
-            Log("  Download it from the model's HuggingFace page and place it");
-            Log("  in the same folder as the GGUF file.");
-            return;
-        }
-
-        Log("Loading tokenizer...");
-        var tokenizer = Tokenizer.FromLlama(tokenizerPath);
-        Log($"  Vocab size: {tokenizer.VocabSize}");
-
-        // -- Create inference ops and chat session -------------------------
+        // -- Create inference ops -------------------------
         Log("Creating inference ops...");
         var inferOps = InferenceOpsFactory.Create(sharpConfig, InferenceConfig.Default);
 
@@ -242,7 +244,7 @@ Log($"Hardware: {hardware}");
             if (string.IsNullOrWhiteSpace(input))
                 continue;
 
-switch (input.Trim().ToLowerInvariant())
+            switch (input.Trim().ToLowerInvariant())
             {
                 case "quit":
                     goto done;

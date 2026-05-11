@@ -18,8 +18,4 @@
     <ProjectReference Include="..\ExternalAssets\ExternalAssets.csproj" />
   </ItemGroup>
 
-  <ItemGroup>
-    <Folder Include="Examples\" />
-  </ItemGroup>
-
 </Project>

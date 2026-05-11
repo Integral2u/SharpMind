@@ -1,9 +1,7 @@
-using System.Buffers.Binary;
-using System.IO.MemoryMappedFiles;
-using System.Buffers;
-using System.Linq;
 using SharpMind.Core.Tensors;
-using SharpMind.Model;
+using SharpMind.Model.Config;
+using System.Buffers;
+using System.IO.MemoryMappedFiles;
 
 namespace SharpMind.Model.Format;
 
@@ -125,8 +123,6 @@ public static class GgufLoader
 
     public static GgufMeta LoadMeta(string path)
     {
-        Console.WriteLine("[GgufLoader] Loading: " + path);
-
         using var stream = File.OpenRead(path);
         using var reader = new BinaryReader(stream);
 
@@ -137,9 +133,7 @@ public static class GgufLoader
 
         meta.Version = reader.ReadUInt32();
         meta.TensorCount = reader.ReadInt64();
-        meta.KvCount = reader.ReadInt64();
-
-        Console.WriteLine("[GgufLoader] Ver={0}, Tensors={1}, KV={2}", meta.Version, meta.TensorCount, meta.KvCount);
+        meta.KvCount = reader.ReadInt64();       
 
         // Read KV pairs: uint64 keyLen + key + uint32 type + value
         for (int i = 0; i < meta.KvCount; i++)
@@ -164,9 +158,7 @@ public static class GgufLoader
             }
 
             meta.KvPairs.Add(new KvPair { Key = key, Value = val });
-        }
-
-        Console.WriteLine("[GgufLoader] KV end at {0}, reading tensors...", reader.BaseStream.Position);
+        }        
 
         // Read tensors: uint64 nameLen + name + uint32 nDims + [nDims x uint64] + uint32 dtype + uint64 offset
         for (int i = 0; i < meta.TensorCount; i++)
@@ -174,10 +166,10 @@ public static class GgufLoader
             try
             {
                 var (nameLen, name) = ReadString(reader);
-                if (nameLen == 0 || nameLen > 500) { Console.WriteLine("[GgufLoader] Tensor[{0}] bad nameLen={1}", i, nameLen); break; }
+                if (nameLen == 0 || nameLen > 500) { break; }
 
                 var nDims = reader.ReadUInt32();
-                if (nDims > 10) { Console.WriteLine("[GgufLoader] Tensor[{0}] bad nDims={1}", i, nDims); break; }
+                if (nDims > 10) { break; }
 
                 var shape = new int[nDims];
                 for (int j = 0; j < nDims; j++) shape[j] = (int)reader.ReadUInt64();
@@ -187,10 +179,8 @@ public static class GgufLoader
 
                 meta.Tensors.Add(new TensorInfo { Name = name, Dtype = dtype, Shape = shape, Offset = (long)offset });
             }
-            catch (Exception ex) { Console.WriteLine("[GgufLoader] Tensor[{0}] error: {1}", i, ex.Message); break; }
+            catch (Exception ex) { break; }
         }
-
-        Console.WriteLine("[GgufLoader] Loaded {0} tensors", meta.Tensors.Count);
         return meta;
     }
 
@@ -220,33 +210,15 @@ public static class GgufLoader
         int loaded = 0;
         int missing = 0;
         int total = meta.Tensors.Count;
-        int processed = 0;
-
-        Console.WriteLine($"[DEBUG] Starting weight load, {total} tensors...");
-        Console.WriteLine($"[DEBUG] First 3 tensor names: {meta.Tensors[0].Name}, {meta.Tensors[1].Name}, {meta.Tensors[2].Name}");
-        Console.WriteLine($"[DEBUG] First 3 dtype VALUES (uint): {(uint)meta.Tensors[0].Dtype}, {(uint)meta.Tensors[1].Dtype}, {(uint)meta.Tensors[2].Dtype}");
-        Console.WriteLine($"[DEBUG] First 3 dtypes: {meta.Tensors[0].Dtype}, {meta.Tensors[1].Dtype}, {meta.Tensors[2].Dtype}");
-        Console.WriteLine($"[DEBUG] First 3 offsets: {meta.Tensors[0].Offset}, {meta.Tensors[1].Offset}, {meta.Tensors[2].Offset}");
         
-        // Raw bytes test showed data at file position 0 = 13649.82 (correct Q8 scale)
-        // So offsets stored in metadata ARE absolute. Don't modify!
-
         foreach (var info in meta.Tensors)
         {
-            // CRITICAL FIX: Use stored offset directly! Don't rely on sequential read
             long targetOffset = info.Offset;
             if (targetOffset >= stream.Length)
             {
-                Console.WriteLine($"[ERROR] Offset {targetOffset} exceeds file length {stream.Length} for {info.Name}");
                 continue;
             }
             stream.Position = targetOffset;
-            
-            if (processed < 1)
-            {
-                Console.WriteLine($"[DEBUG] File length: {stream.Length}");
-                Console.WriteLine($"[DEBUG] Reading {info.Name} at position: {stream.Position}");
-            }
             
             int count = 1; foreach (int d in info.Shape) count *= d;
             
@@ -255,21 +227,6 @@ public static class GgufLoader
             {
                 ReadTensorInto(reader, info.Dtype, info.Shape, buffer.AsSpan(0, count));
                 
-                // DEBUG raw file bytes at offset 0 vs actual tensor offset
-        if (processed < 1)
-        {
-            Console.WriteLine($"[DEBUG] File length: {stream.Length}");
-            Console.WriteLine($"[DEBUG] About to read token_embd at position: {stream.Position}");
-            
-            // Read first few bytes raw to see what they are
-            var rawBytes = new byte[32];
-            long savedPos = stream.Position;
-            stream.Position = 0;
-            stream.Read(rawBytes, 0, 32);
-            stream.Position = savedPos;
-            Console.WriteLine($"[DEBUG] Raw bytes at offset 0: {BitConverter.ToSingle(rawBytes, 0):F2}, {BitConverter.ToSingle(rawBytes, 4):F2}, {BitConverter.ToSingle(rawBytes, 8):F2}, {BitConverter.ToSingle(rawBytes, 12):F2}");
-        }
-
                 if (model.LoadWeight(info.Name, buffer.AsSpan(0, count)))
                 {
                     loaded++;
@@ -283,11 +240,8 @@ public static class GgufLoader
             {
                 ArrayPool<float>.Shared.Return(buffer);
             }
-            
-            processed++;
         }
         var mb = GC.GetTotalMemory(false) / 1_000_000.0;
-        Console.WriteLine($"[GgufLoader] Loaded {loaded}/{total} weights, {missing} not matched. Memory: {mb:F1} MB");
     }
 
     private static Tensor<float> ReadTensor(BinaryReader stream, GgufDtype dtype, int[] shape)
@@ -332,13 +286,11 @@ public static class GgufLoader
                     ReadQ5_0(stream, destination, count);
                     break;
                 default:
-                    Console.WriteLine("[GgufLoader] Unsupported dtype: " + dtype);
                     break;
             }
         }
-        catch (Exception ex)
+        catch
         {
-            Console.WriteLine("[GgufLoader] ReadTensorInto error: " + ex.Message);
         }
     }
 
@@ -528,5 +480,60 @@ public static class GgufLoader
                 data[i + j] = q * d;
             }
         }
+    }
+    public static ModelConfig? LoadConfig(GgufMeta meta)
+    {
+        int vocabSize = 128256, hiddenDim = 1536, numLayers = 24;
+        int numHeads = 12, numKvHeads = 12, ffnDim = 6144, maxSeqLen = 2048;
+        var embdInfo = meta.Tensors.FirstOrDefault(t => t.Name.Contains("token_embd") && t.Name.Contains("weight"));
+        string arch = meta.GetString("general.architecture");
+        if (embdInfo.Shape is { Length: >= 2 })
+        {
+            long d0 = embdInfo.Shape[0], d1 = embdInfo.Shape[1];
+            if (d0 > d1) { vocabSize = (int)d0; hiddenDim = (int)d1; }
+            else { vocabSize = (int)d1; hiddenDim = (int)d0; }
+        }
+        else
+        {
+            hiddenDim = (int)meta.GetLong($"{arch}.embedding_length", 1536);
+            vocabSize = (int)meta.GetLong("vocab_size", 32000);
+        }
+
+        if (string.IsNullOrWhiteSpace(arch)) return null;
+        hiddenDim = (int)meta.GetLong($"{arch}.embedding_length",
+                meta.GetLong("embedding", hiddenDim));
+        ffnDim = (int)meta.GetLong($"{arch}.feed_forward_length", ffnDim);
+        maxSeqLen = (int)meta.GetLong($"{arch}.context_length", maxSeqLen);
+        // Heads - try architecture then fall back to calculated from hiddenDim
+        numHeads = (int)meta.GetLong($"{arch}.attention.head_count", numHeads);
+        numKvHeads = (int)meta.GetLong($"{arch}.attention.head_count_kv", numKvHeads);
+        // MaxSeqLen also from direct key
+        maxSeqLen = Math.Max(maxSeqLen, (int)meta.GetLong($"{arch}.context_length", 2048));
+
+            // -- Head alignment fixups (only warn, don't auto-adjust - keep original values) ----
+        int origHeads = numHeads;
+        if (hiddenDim % numHeads != 0)
+        {
+            // Try to find a divisor for heuristic suggestion only
+            int suggested = numHeads;
+            for (int h = numHeads; h > 0; h--)
+                if (hiddenDim % h == 0) { suggested = h; break; }
+        }
+        if (numHeads % numKvHeads != 0)
+        {
+            int suggested = numKvHeads;
+            for (int kv = numKvHeads; kv > 0; kv--)
+                if (numHeads % kv == 0) { suggested = kv; break; }
+        }
+        return new ModelConfig
+        {
+            VocabSize = vocabSize,
+            HiddenDim = hiddenDim,
+            NumLayers = numLayers,
+            NumHeads = numHeads,
+            NumKvHeads = numKvHeads,
+            FfnDim = ffnDim,
+            MaxSeqLen = maxSeqLen,
+        };
     }
 }
