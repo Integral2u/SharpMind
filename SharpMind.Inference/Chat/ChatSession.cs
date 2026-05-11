@@ -6,96 +6,6 @@ using System.Runtime.CompilerServices;
 namespace SharpMind.Inference.Chat;
 
 /// <summary>
-/// Chat roles for conversation participants.
-/// </summary>
-public enum ChatRole
-{
-    /// <summary>System prompt - sets behavior/instructions.</summary>
-    System,
-    /// <summary>AI assistant/agent responses.</summary>
-    Agent,
-    /// <summary>Human user input.</summary>
-    User
-}
-
-/// <summary>
-/// Status values during chat response generation.
-/// </summary>
-public enum ChatStatus
-{
-    /// <summary>Analyzing request, planning response.</summary>
-    Thinking,
-    /// <summary>Updating context/history.</summary>
-    Updating,
-    /// <summary>Executing tools/skills.</summary>
-    Executing,
-    /// <summary>Generating text response.</summary>
-    Responding,
-    /// <summary>Waiting for input or tool results.</summary>
-    Waiting,
-    /// <summary>That chat was interrupted, cancelled or failed.</summary>
-    Interrupted,
-    /// <summary>Completed.</summary>
-    Complete
-}
-
-/// <summary>
-/// A single message in the chat conversation.
-/// </summary>
-public sealed class ChatMessage
-{
-    public required ChatRole Role { get; init; }
-    public required string Content { get; init; }
-    public string? Name { get; init; }
-    public DateTime Timestamp { get; init; } = DateTime.UtcNow;
-
-    public static ChatMessage User(string content)
-        => new() { Role = ChatRole.User, Content = content };
-
-    public static ChatMessage System(string content)
-        => new() { Role = ChatRole.System, Content = content };
-
-    public static ChatMessage Agent(string content, string? name = null)
-        => new() { Role = ChatRole.Agent, Content = content, Name = name };
-}
-
-/// <summary>
-/// Result from chat response generation.
-/// Can be streamed as it's being generated.
-/// </summary>
-public sealed class ChatResult
-{
-    public ChatStatus Status { get; internal init; }
-    public string? Content { get; internal init; }
-    public List<ChatArtifact>? Artifacts { get; internal init; }
-    public bool IsStreaming { get; internal init; }
-    public bool IsComplete { get; internal init; }
-    public string? Error { get; internal init; }
-}
-
-/// <summary>
-/// Artifact attached to a chat response (images, code blocks, etc.).
-/// </summary>
-public sealed class ChatArtifact
-{
-    public required string Type { get; init; }  // "text", "image", "code", "json"
-    public required string Content { get; init; }
-    public string? Language { get; init; }
-    public string? FileName { get; init; }
-}
-
-/// <summary>
-/// Streaming response entry for real-time updates.
-/// </summary>
-public sealed class ChatStreamEntry
-{
-    public required ChatStatus Status { get; init; }
-    public string? TextDelta { get; init; }
-    public ChatArtifact? Artifact { get; init; }
-    public bool IsComplete { get; init; }
-}
-
-/// <summary>
 /// Main chat session - handles conversation with model.
 /// </summary>
 public sealed class ChatSession : IAsyncDisposable
@@ -105,14 +15,20 @@ public sealed class ChatSession : IAsyncDisposable
     private readonly InferenceOps _ops;
     private readonly KVCache[] _caches;
     private readonly List<ChatMessage> _history = [];
-    /// <summary>Reused single-token decode buffer (avoids a new int[] each step).</summary>
     private readonly int[] _decodeTokenScratch = new int[1];
     private bool _disposed;
+    
+    private readonly int? _bosTokenId;  // From GGUF metadata
+    private readonly int? _eosTokenId;
+    private readonly string? _chatTemplate;
 
     public ChatSession(
         Transformer model,
         Tokenization.Tokenizer tokenizer,
-        InferenceOps ops)
+        InferenceOps ops,
+        int? bosTokenId = null,
+        int? eosTokenId = null,
+        string? chatTemplate = null)
     {
         ArgumentNullException.ThrowIfNull(model);
         ArgumentNullException.ThrowIfNull(tokenizer);
@@ -121,6 +37,9 @@ public sealed class ChatSession : IAsyncDisposable
         _model = model;
         _tokenizer = tokenizer;
         _ops = ops;
+        _bosTokenId = bosTokenId;
+        _eosTokenId = eosTokenId;
+        _chatTemplate = chatTemplate;
 
         int nl = model.Config.NumLayers;
         int ms = model.Config.MaxSeqLen;
@@ -329,8 +248,15 @@ public sealed class ChatSession : IAsyncDisposable
             _caches[i].Reset();
     }
 
-    private string BuildPrompt()
+private string BuildPrompt()
     {
+        // If we have a chat template from GGUF, use it
+        if (!string.IsNullOrEmpty(_chatTemplate))
+        {
+            return ApplyChatTemplate(_chatTemplate, _history);
+        }
+        
+        // Fallback to simple format
         var sb = new System.Text.StringBuilder();
 
         foreach (var msg in _history)
@@ -345,12 +271,69 @@ public sealed class ChatSession : IAsyncDisposable
             sb.AppendLine(prefix + msg.Content);
         }
 
-        // Prime the model to generate an assistant turn.
-        // Without this cue the model sees "user: <input>\n" as an incomplete
-        // user utterance and echoes/continues user text instead of replying.
         sb.Append("assistant: ");
-
         return sb.ToString();
+    }
+
+    private string ApplyChatTemplate(string template, List<ChatMessage> history)
+    {
+        // If template contains Jinja-style {{, use it as Jinja template (simplified)
+        // Otherwise use model-specific format
+        if (template.Contains("{{"))
+        {
+            // Jinja template - simplified parsing for common patterns
+            return ApplyJinjaTemplate(template, history);
+        }
+        
+        // Default: use the template as-is with placeholders replaced
+        var result = template;
+        
+        // Replace common placeholders
+        foreach (var msg in history)
+        {
+            var role = msg.Role switch
+            {
+                ChatRole.System => "system",
+                ChatRole.Agent => "assistant", 
+                ChatRole.User => "user",
+                _ => "unknown"
+            };
+            
+            // Simple replacement for Qwen-style templates
+            result = result.Replace($"{{{{ {role}_message }}}}", msg.Content);
+            result = result.Replace($"{{{{ {role} }}}}", msg.Content);
+        }
+        
+        // Add assistant prompt
+        if (!result.EndsWith("assistant\n"))
+            result += "<|im_start|>assistant\n";
+            
+        return result;
+    }
+
+    private string ApplyJinjaTemplate(string template, List<ChatMessage> history)
+    {
+        // Process Jinja-style template - use the passed template parameter
+        var result = new System.Text.StringBuilder();
+        
+        // Check template type and format accordingly
+        // Qwen format: {% for message in messages %}<|im_start|>{{ message['role'] }}
+        // Also support: "{% for msg in messages %}{{ msg.content }}"
+        foreach (var msg in history)
+        {
+            var role = msg.Role switch
+            {
+                ChatRole.System => "system",
+                ChatRole.Agent => "assistant",
+                ChatRole.User => "user",
+                _ => "unknown"
+            };
+            
+            result.Append($"<|im_start|>{role}\n{msg.Content}<|im_end|>\n");
+        }
+        
+        result.Append("<|im_start|>assistant\n");
+        return result.ToString();
     }
 
     public async ValueTask DisposeAsync()

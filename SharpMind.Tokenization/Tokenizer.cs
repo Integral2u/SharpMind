@@ -117,8 +117,13 @@ public sealed class Tokenizer
 
     /// <summary>
     /// Loads a Qwen tokenizer from a HuggingFace <c>tokenizer.json</c> file.
-    /// Uses same format as LLaMA tokenizer.
+    /// Handles Qwen-specific special tokens like <|im_start|>, <|im_end|>.
     /// </summary>
     public static Tokenizer FromQwen(string tokenizerJsonPath)
-        => new(LlamaConverter.Convert(tokenizerJsonPath));
+    {
+        Console.WriteLine($"[Tokenizer] Loading Qwen tokenizer: {tokenizerJsonPath}");
+        var result = QwenConverter.Convert(tokenizerJsonPath);
+        Console.WriteLine($"[Tokenizer] Qwen converted: vocab={result.Vocab.Size}");
+        return new Tokenizer(result);
+    }
 }

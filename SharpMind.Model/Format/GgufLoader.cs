@@ -1,68 +1,16 @@
 using SharpMind.Core.Tensors;
 using SharpMind.Model.Config;
+using SharpMind.Tokenization;
 using System.Buffers;
 using System.IO.MemoryMappedFiles;
 
 namespace SharpMind.Model.Format;
-
-public static class GgufLoader
+public static partial class GgufLoader
 {
     private const uint Magic = 0x46554747;
 
-    public enum GgufDtype : uint
-    {
-        F32 = 0, F16 = 1, Q4_0 = 2, Q4_1 = 3, Q5_0 = 6, Q5_1 = 7,
-        Q8_0 = 8, Q8_1 = 9, Q2_K = 10, Q3_K = 11, Q4_K = 12,
-        Q5_K = 13, Q6_K = 14, Q8_K = 15,
-    }
-
-    private enum GGUFValueType : uint
-    {
-        UINT8 = 0, INT8 = 1, UINT16 = 2, INT16 = 3, UINT32 = 4, INT32 = 5, FLOAT32 = 6,
-        BOOL = 7, STRING = 8, ARRAY = 9, UINT64 = 10, INT64 = 11, FLOAT64 = 12,
-    }
-
     public readonly struct KvPair { public required string Key { get; init; } public required object Value { get; init; } }
-    public readonly struct TensorInfo { public required string Name { get; init; } public required GgufDtype Dtype { get; init; } public required int[] Shape { get; init; } public required long Offset { get; init; } }
-
-    public sealed class GgufMeta
-    {
-        public uint Version { get; set; }
-        public long TensorCount { get; set; }
-        public long KvCount { get; set; }
-        public List<KvPair> KvPairs { get; set; } = [];
-        public List<TensorInfo> Tensors { get; set; } = [];
-        public long GetLong(string key, long defaultValue = 0) 
-        { 
-            var kv = KvPairs.FirstOrDefault(k => k.Key == key); 
-            if (kv.Value == null) {
-                return defaultValue; 
-            }
-            // GGUF stores integers as UINT32 (uint), INT32 (int), INT64 (long) - handle all
-            if (kv.Value is long l) return l;
-            if (kv.Value is int i) return i;
-            if (kv.Value is uint ui) return ui;
-            if (kv.Value is short s) return s;
-            if (kv.Value is ushort us) return us;
-            if (kv.Value is sbyte sb) return sb;
-            if (kv.Value is byte b) return b;
-            return defaultValue; 
-        }
-        public float GetFloat(string key, float defaultValue = 0) 
-        { 
-            var kv = KvPairs.FirstOrDefault(k => k.Key == key); 
-            if (kv.Value is float f) return f;
-            if (kv.Value is double d) return (float)d;
-            if (kv.Value is int i) return i;
-            if (kv.Value is uint ui) return ui;
-            return defaultValue; 
-        }
-        public string GetString(string key, string defaultValue = "") 
-        { 
-            var kv = KvPairs.FirstOrDefault(k => k.Key == key); 
-            return kv.Value is string s ? s : defaultValue; 
-        }
-    }
+    public readonly struct TensorInfo { public required string Name { get; init; } public required GgufDtype Dtype { get; init; } public required int[] Shape { get; init; } public required long Offset { get; init; } }    
 
     private static object ReadValue(BinaryReader reader, uint valType)
     {
@@ -481,7 +429,7 @@ public static class GgufLoader
             }
         }
     }
-    public static ModelConfig? LoadConfig(GgufMeta meta)
+    public static ModelConfig LoadConfig(GgufMeta meta)
     {
         int vocabSize = 128256, hiddenDim = 1536, numLayers = 24;
         int numHeads = 12, numKvHeads = 12, ffnDim = 6144, maxSeqLen = 2048;
@@ -509,22 +457,7 @@ public static class GgufLoader
         numKvHeads = (int)meta.GetLong($"{arch}.attention.head_count_kv", numKvHeads);
         // MaxSeqLen also from direct key
         maxSeqLen = Math.Max(maxSeqLen, (int)meta.GetLong($"{arch}.context_length", 2048));
-
-            // -- Head alignment fixups (only warn, don't auto-adjust - keep original values) ----
-        int origHeads = numHeads;
-        if (hiddenDim % numHeads != 0)
-        {
-            // Try to find a divisor for heuristic suggestion only
-            int suggested = numHeads;
-            for (int h = numHeads; h > 0; h--)
-                if (hiddenDim % h == 0) { suggested = h; break; }
-        }
-        if (numHeads % numKvHeads != 0)
-        {
-            int suggested = numKvHeads;
-            for (int kv = numKvHeads; kv > 0; kv--)
-                if (numHeads % kv == 0) { suggested = kv; break; }
-        }
+        
         return new ModelConfig
         {
             VocabSize = vocabSize,
@@ -535,5 +468,28 @@ public static class GgufLoader
             FfnDim = ffnDim,
             MaxSeqLen = maxSeqLen,
         };
+    }
+
+    /// <summary>
+    /// Single-pass loader: loads GGUF file, extracts metadata, config, and optionally loads tokenizer.
+    /// Special tokens and chat template are available via meta.GetSpecialTokenId() and meta.GetChatTemplate().
+    /// </summary>
+    public static void LoadDetails(string ggufPath, string? tokenizerPath, out GgufMeta meta, out ModelConfig config, out Tokenizer? tokenizer)
+    {
+        meta = LoadMeta(ggufPath);
+        config = LoadConfig(meta)!;
+        
+        tokenizer = null;
+        if (!string.IsNullOrEmpty(tokenizerPath) && File.Exists(tokenizerPath))
+        {
+            try
+            {
+                tokenizer = Tokenizer.FromQwen(tokenizerPath);
+            }
+            catch
+            {
+                tokenizer = null;
+            }
+        }
     }
 }

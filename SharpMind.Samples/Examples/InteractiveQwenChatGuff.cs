@@ -1,6 +1,7 @@
 ﻿using SharpMind.Inference;
 using SharpMind.Inference.Chat;
 using SharpMind.Model;
+using SharpMind.Model.Config;
 using SharpMind.Model.Format;
 using SharpMind.Tokenization;
 using System.Runtime.Intrinsics.X86;
@@ -21,31 +22,23 @@ namespace SharpMind.Samples.Examples
                 Console.Out.WriteLine($"GGUF not found: {ggufPath}");
                 return;
             }
-            if (!File.Exists(tokenizerPath))
+            Console.Out.WriteLine("Loading model detail...");
+            GgufLoader.LoadDetails(ggufPath, null, out GgufMeta meta, out ModelConfig modelConfig, out Tokenizer? tokenizer);
+            if (tokenizer == null && File.Exists(tokenizerPath)) tokenizer = Tokenizer.FromQwen(tokenizerPath);
+            if (tokenizer == null)
             {
-                Console.Out.WriteLine($"Tokenizer not found: {tokenizerPath}");
+                Console.Out.WriteLine($"Tokenizer dat not found");
                 return;
             }
             var sharpConfig = SharpMindConfig.Qwen with { Hardware = DetectBestHardware() };
 
-            Console.Out.WriteLine("Loading tokenizer...");
-            var tokenizer = Tokenizer.FromQwen(tokenizerPath);
-
-            Console.Out.WriteLine("Loading Model Config...");
-            var meta = GgufLoader.LoadMeta(ggufPath);
-            var modelConfig = GgufLoader.LoadConfig(meta);
-            if (modelConfig == null)
-            {
-                Console.Out.WriteLine("Failed to load ModelConfig");
-                return;
-            }
             GC.Collect(); GC.WaitForPendingFinalizers();
-            Console.Out.WriteLine("\nBuilding model...");
+            Console.Out.WriteLine("Building model...");
             var model = ModelFactory.Create(modelConfig, sharpConfig);
             GC.Collect(); GC.WaitForPendingFinalizers();
             Console.Out.WriteLine("Loading weights...");
             GgufLoader.LoadWeightsToModel(ggufPath, meta, model);
-            
+
             Console.Out.WriteLine("Creating inference ops...");
             var inferOps = InferenceOpsFactory.Create(sharpConfig, InferenceConfig.Default);
             string systemPrompt = $"{PromptHelpers.DefaultSystemPrompt}\n\n{PromptHelpers.DefaultAgentPrompt}".Trim();

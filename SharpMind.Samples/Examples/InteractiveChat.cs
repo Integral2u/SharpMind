@@ -48,149 +48,28 @@ Log($"Hardware: {hardware}");
             return;
         }
 
-        // -- Load metadata -------------------------------------------------
-        var fileInfo = new FileInfo(ggufPath);
-        Log($"\nGGUF: {ggufPath}  ({fileInfo.Length / 1_000_000.0:F1} MB)");
-
-        // -- Load tokenizer FIRST to determine correct vocab size ----------
-        if (!File.Exists(tokenizerPath))
-        {
-            Log($"[Error] tokenizer.json not found at: {tokenizerPath}");
-            return;
-        }
-        
-        Log("Loading tokenizer...");
-        var tokenizer = Tokenizer.FromQwen(tokenizerPath);
-        int tokenizerVocab = tokenizer.VocabSize;
-        Log($"  Vocab size: {tokenizerVocab}");
-        
-        // Use tokenizer vocab - GGUF might report different but it's wrong (151936 vs 151647)
-        int vocabSize = tokenizerVocab;
-        int hiddenDim = 896, numLayers = 24;  // Override Qwen2 values
-        int numHeads = 14, numKvHeads = 2, ffnDim = 4864, maxSeqLen = 32768;
-        GgufLoader.GgufMeta meta;
+        // -- Single-pass loader: GGUF + optional tokenizer -------------------
+        GgufMeta meta;
+        ModelConfig modelConfig;
+        Tokenizer? tokenizer;
+        string? chatTemplate;
 
         try
         {
-            meta = GgufLoader.LoadMeta(ggufPath);
-            Log($"  Loaded metadata: {meta.TensorCount} tensors");
-
-            // DEBUG: Print all GGUF KV pairs to discover actual key names
-            Console.WriteLine("[DEBUG] === GGUF METADATA KV PAIRS ===");
-            foreach (var kv in meta.KvPairs)
-                Console.WriteLine($"  {kv.Key} = {kv.Value}");
-            Console.WriteLine("[DEBUG] === END KV PAIRS ===");
-
-            // DEBUG: Print all tensor names and shapes - first 30 tensors for layout analysis
-            Console.WriteLine("[DEBUG] === GGUF TENSOR SHAPES (first 30) ===");
-            for (int i = 0; i < Math.Min(30, meta.Tensors.Count); i++)
-            {
-                var t = meta.Tensors[i];
-                string shape = t.Shape != null ? string.Join("x", t.Shape) : "null";
-                Console.WriteLine($"  [{i}] {t.Name}  dtype={t.Dtype}  shape={shape}");
-            }
-            Console.WriteLine("[DEBUG] === END TENSOR SHAPES ===");
-
-            var embdInfo = meta.Tensors.FirstOrDefault(t =>
-                t.Name.Contains("token_embd") && t.Name.Contains("weight"));
-
-            if (embdInfo.Shape is { Length: >= 2 })
-            {
-                long d0 = embdInfo.Shape[0], d1 = embdInfo.Shape[1];
-                if (d0 > d1) { vocabSize = (int)d0; hiddenDim = (int)d1; }
-                else         { vocabSize = (int)d1; hiddenDim = (int)d0; }
-            }
-            else
-            {
-                hiddenDim = (int)meta.GetLong("llama.embedding_length", 1536);
-                vocabSize = (int)meta.GetLong("vocab_size", 32000);
-            }
-
-            numLayers  = (int)meta.GetLong("llama.block_count", 24);
-            // FIX: Check architecture-specific keys with fallbacks to llama.* and qwen2.*
-            string arch = meta.GetString("general.architecture", "llama");
-            string pref = arch + ".";  // "llama." or "qwen2." etc.
-            
-            // DEBUG: Print what GetLong returns
-            Console.WriteLine($"[DEBUG] GetLong(qwen2.embedding_length) = {meta.GetLong("qwen2.embedding_length", 0)}");
-            Console.WriteLine($"[DEBUG] GetLong(qwen2.attention.head_count) = {meta.GetLong("qwen2.attention.head_count", 0)}");
-            Console.WriteLine($"[DEBUG] GetLong(qwen2.attention.head_count_kv) = {meta.GetLong("qwen2.attention.head_count_kv", 0)}");
-            Console.WriteLine($"[DEBUG] GetLong(qwen2.feed_forward_length) = {meta.GetLong("qwen2.feed_forward_length", 0)}");
-            Console.WriteLine($"[DEBUG] arch from GetString = '{arch}'");
-            Console.WriteLine($"[DEBUG] pref = '{pref}'");
-            
-            // Try architecture-specific key, then llama., then tensor shape inference
-            hiddenDim = (int)meta.GetLong(pref + "embedding_length", 
-                meta.GetLong("llama.embedding_length", 
-                    meta.GetLong("embedding", hiddenDim)));
-            ffnDim = (int)meta.GetLong(pref + "feed_forward_length",
-                meta.GetLong("llama.feed_forward_length", ffnDim));
-            maxSeqLen = (int)meta.GetLong(pref + "context_length",
-                meta.GetLong("llama.context_length", maxSeqLen));
-            
-            // Heads - try architecture then fall back to calculated from hiddenDim
-            numHeads = (int)meta.GetLong(pref + "attention.head_count",
-                meta.GetLong("llama.attention.head_count", numHeads));
-            numKvHeads = (int)meta.GetLong(pref + "attention.head_count_kv",
-                meta.GetLong("llama.attention.head_count_kv", numKvHeads));
-            
-            // MaxSeqLen also from direct key
-            maxSeqLen = Math.Max(maxSeqLen, (int)meta.GetLong("llama.context_length", 2048));
-
-            Log($"  Config: vocab={vocabSize}, hidden={hiddenDim}, layers={numLayers}");
-            Log($"  Heads: {numHeads} (kv={numKvHeads}), ffn={ffnDim}, ctx={maxSeqLen}");
+            GgufLoader.LoadDetails(ggufPath, tokenizerPath, out meta, out modelConfig, out tokenizer);
+            chatTemplate = meta.GetChatTemplate();
+            Log("  Single-pass loader succeeded");
         }
         catch (Exception ex)
         {
-            Log($"  Error loading metadata: {ex.Message}");
+            Log($"Error loading: {ex.Message}");
             return;
         }
+        
+        int bosId = meta.GetSpecialTokenId("bos");
+        int eosId = meta.GetSpecialTokenId("eos");
 
-        // -- Head alignment fixups (only warn, don't auto-adjust - keep original values) ----
-        int origHeads = numHeads;
-        if (hiddenDim % numHeads != 0)
-        {
-            Log($"[Warning] HiddenDim ({hiddenDim}) not divisible by NumHeads ({numHeads}).");
-            // Try to find a divisor for heuristic suggestion only
-            int suggested = numHeads;
-            for (int h = numHeads; h > 0; h--)
-                if (hiddenDim % h == 0) { suggested = h; break; }
-            Log($"[Warning] Suggested NumHeads: {suggested} (but using {numHeads})");
-        }
-        if (numHeads % numKvHeads != 0)
-        {
-            Log($"[Warning] NumHeads ({numHeads}) not divisible by NumKvHeads ({numKvHeads}).");
-            int suggested = numKvHeads;
-            for (int kv = numKvHeads; kv > 0; kv--)
-                if (numHeads % kv == 0) { suggested = kv; break; }
-            Log($"[Warning] Suggested NumKvHeads: {suggested} (but using {numKvHeads})");
-        }
-
-        // -- Log effective HeadDim -----------------------------------------------
-        Log($"  Effective: HeadDim={hiddenDim / numHeads}, KvGroupSize={numHeads / numKvHeads}");
-
-        // -- Build model with tokenizer vocab (GGUF might report different value) ---
-        //vocabSize =   ;
-        var modelConfig = new ModelConfig
-        {
-            VocabSize  = vocabSize, HiddenDim  = hiddenDim,
-            NumLayers = numLayers, NumHeads  = numHeads,
-            NumKvHeads = numKvHeads, FfnDim   = ffnDim,
-            MaxSeqLen  = maxSeqLen,
-        };
-
-        // DEBUG: Print model config values and calculated derived values
-        Console.WriteLine("[DEBUG] === MODEL CONFIG ===");
-        Console.WriteLine($"  VocabSize = {vocabSize}");
-        Console.WriteLine($"  HiddenDim = {hiddenDim}");
-        Console.WriteLine($"  NumLayers = {numLayers}");
-        Console.WriteLine($"  NumHeads = {numHeads}");
-        Console.WriteLine($"  NumKvHeads = {numKvHeads}");
-        Console.WriteLine($"  FfnDim = {ffnDim}");
-        Console.WriteLine($"  MaxSeqLen = {maxSeqLen}");
-        Console.WriteLine($"  HeadDim = {hiddenDim / numHeads} (HiddenDim/NumHeads)");
-        Console.WriteLine($"  KvGroupSize = {numHeads / numKvHeads} (NumHeads/NumKvHeads)");
-        Console.WriteLine("[DEBUG] === END MODEL CONFIG ===");
+        Log($"  Effective: HeadDim={modelConfig.HeadDim}, KvGroupSize={modelConfig.NumHeads / modelConfig.NumKvHeads}");
 
         var sharpConfig = new SharpMindConfig
         {
@@ -219,7 +98,7 @@ Log($"Hardware: {hardware}");
         Log("Creating inference ops...");
         var inferOps = InferenceOpsFactory.Create(sharpConfig, InferenceConfig.Default);
 
-        await using var session = new ChatSession(model, tokenizer, inferOps)
+        await using var session = new ChatSession(model, tokenizer, inferOps, bosId, eosId, chatTemplate)
         {
             MaxTokens   = 512,
             Temperature = 0.7f,

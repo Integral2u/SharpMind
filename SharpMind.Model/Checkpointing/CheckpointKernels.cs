@@ -159,14 +159,8 @@ public static class CheckpointKernels
     }
 }
 
-public sealed class NamedTensor
+public sealed class NamedTensor(string name, Tensor<float> tensor)
 {
-    public string Name { get; }
-    public Tensor<float> Tensor { get; }
-
-    public NamedTensor(string name, Tensor<float> tensor)
-    {
-        Name = name;
-        Tensor = tensor;
-    }
+    public string Name { get; } = name;
+    public Tensor<float> Tensor { get; } = tensor;
 }
