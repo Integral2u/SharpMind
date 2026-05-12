@@ -259,20 +259,20 @@ public sealed class ChatSession
             return prompt;
         }
         
-        // Fallback to simple format
+        // Fallback: Use ChatML (Qwen/LLaMA style) as it's the industry standard for Instruct models
         var sb = new System.Text.StringBuilder();
         foreach (var msg in _history)
         {
-            var prefix = msg.Role switch
+            var role = msg.Role switch
             {
-                ChatRole.System => "system: ",
-                ChatRole.Agent => "assistant: ",
-                ChatRole.User => "user: ",
-                _ => ""
+                ChatRole.System => "system",
+                ChatRole.Agent => "assistant",
+                ChatRole.User => "user",
+                _ => "unknown"
             };
-            sb.AppendLine(prefix + msg.Content);
+            sb.Append($"<|im_start|>{role}\n{msg.Content}<|im_end|>\n");
         }
-        sb.Append("assistant: ");
+        sb.Append("<|im_start|>assistant\n");
         var fallback = sb.ToString();
         Console.WriteLine($"[DEBUG] ChatPrompt (fallback): {fallback}");
         return fallback;

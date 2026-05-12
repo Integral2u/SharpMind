@@ -1,4 +1,4 @@
 ﻿using SharpMind.Samples.Examples;
 
-//await InteractiveChat.RunAsync();
-await InteractiveQwenChatGuff.RunAsync();
+await InteractiveChat.RunAsync();
+//await InteractiveQwenChatGuff.RunAsync();
