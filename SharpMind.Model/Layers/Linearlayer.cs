@@ -132,6 +132,27 @@ public sealed class LinearLayer : IDisposable
         data.CopyTo(_weight.Data);
     }
 
+    public void LoadWeightTransposed(ReadOnlySpan<float> data)
+    {
+        ThrowIfDisposed();
+        if (data.Length != _weight.ElementCount)
+            throw new ArgumentException($"Expected {_weight.ElementCount} weight values, got {data.Length}.");
+
+        // GGUF: [Out, In] -> SharpMind: [In, Out]
+        int inF = InFeatures;
+        int outF = OutFeatures;
+        for (int o = 0; o < outF; o++)
+        {
+            for (int i = 0; i < inF; i++)
+            {
+                float val = data[o * inF + i];
+                if (float.IsInfinity(val) || float.IsNaN(val))
+                    val = 0f;
+                _weight.Data[i * outF + o] = val;
+            }
+        }
+    }
+
     public void LoadBias(ReadOnlySpan<float> data)
     {
         if (_bias is null) throw new InvalidOperationException("No bias.");

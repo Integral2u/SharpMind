@@ -15,6 +15,7 @@ public sealed class Transformer : IDisposable
     private readonly IArchitecture _arch;
     private readonly NormLayer _finalNorm;
     private readonly TensorOps _ops;
+    private Tensor<float>? _lmHead;
     private bool _disposed;
     
     private TransformerBlock[]? _blocks; // For training backward
@@ -51,32 +52,27 @@ public sealed class Transformer : IDisposable
     public bool LoadWeight(string name, ReadOnlySpan<float> data)
     {
         var lower = name.ToLower();
+        Console.WriteLine($"[DEBUG] Loading tensor: {name}");
         
         if (lower.Contains("embed") || lower.Contains("token") || lower.Contains(" emb")
             || lower.Contains("wte") || lower.Contains("model.embed"))
         {
-            long expected = _config.VocabSize * _config.HiddenDim;
+            long expected = (long)_config.VocabSize * _config.HiddenDim;
             
-            if (expected == data.Length)
-            {
-                // GGUF: [Hidden, Vocab], SharpMind: [Vocab, Hidden]
-                // Transpose: data[h*vocab+v] -> transposed[v*hidden+h]
-                float[] transposed = new float[data.Length];
-                int vocab = _config.VocabSize;
-                int hidden = _config.HiddenDim;
-                for (int v = 0; v < vocab; v++)
+                if (expected == data.Length)
                 {
-                    for (int h = 0; h < hidden; h++)
+                    // GGUF: [Vocab, Hidden], SharpMind: [Vocab, Hidden]
+                    // No transposition needed.
+                    float[] cleaned = new float[data.Length];
+                    for (int i = 0; i < data.Length; i++)
                     {
-                        float val = data[h * vocab + v];
-                        // Only zero individual bad values, don't corrupt entire table
+                        float val = data[i];
                         if (float.IsInfinity(val) || float.IsNaN(val))
                             val = 0f;
-                        transposed[v * hidden + h] = val;
+                        cleaned[i] = val;
                     }
+                    cleaned.AsSpan().CopyTo(_embedding.Weight.Data);
                 }
-                transposed.AsSpan().CopyTo(_embedding.Weight.Data);
-            }
             else
             {
                 _embedding.LoadWeights(data);
@@ -90,7 +86,32 @@ public sealed class Transformer : IDisposable
         }
         else if (lower.Contains("lm_head") || lower.Contains("head.") || lower.Contains(" output."))
         {
-            _finalNorm.LoadWeight(data);
+            long expected = (long)_config.VocabSize * _config.HiddenDim;
+            if (data.Length == expected)
+            {
+                Console.WriteLine($"[DEBUG] Loading LM head: {name} ({data.Length} elements)");
+                // GGUF layout is [HiddenDim, VocabSize] — same transposition as the embedding
+                float[] transposed = new float[data.Length];
+                int vocab  = _config.VocabSize;
+                int hidden = _config.HiddenDim;
+                for (int v = 0; v < vocab; v++)
+                    for (int h = 0; h < hidden; h++)
+                    {
+                        float val = data[h * vocab + v];
+                        if (float.IsInfinity(val) || float.IsNaN(val))
+                            val = 0f;
+                        transposed[v * hidden + h] = val;
+                    }
+                
+                _lmHead ??= new Tensor<float>(_config.VocabSize, _config.HiddenDim);
+                transposed.AsSpan().CopyTo(_lmHead.Data);
+            }
+            else
+            {
+                Console.WriteLine($"[DEBUG] LM head size mismatch: {name} ({data.Length} vs {expected})");
+                _lmHead ??= new Tensor<float>(_config.VocabSize, _config.HiddenDim);
+                data.CopyTo(_lmHead.Data);
+            }
             return true;
         }
         else
@@ -154,7 +175,8 @@ public sealed class Transformer : IDisposable
         using var normedFlat = normed.Reshape(batch * seqLen, hidden2);
         // _embedding.Weight is laid out as [VocabSize, HiddenDim] which is exactly B-transposed ([N,K])
         // for the matmul kernel. Avoid materializing a huge transpose tensor.
-        var logits = _ops.MatMulWithBT(normedFlat, _embedding.Weight);
+        var projectionWeight = _lmHead ?? _embedding.Weight;
+        var logits = _ops.MatMulWithBT(normedFlat, projectionWeight);
 
         // Restore [Batch, SeqLen, VocabSize]
         var result = logits.Reshape(batch, seqLen, _config.VocabSize);
@@ -192,7 +214,8 @@ public unsafe Tensor<float> ForwardLastLogits(Tensor<int> tokenIds, KVCache[] ca
             normed.Data.Slice(srcOffset, hiddenDim).CopyTo(lastTokenNormed.Data.Slice(dstOffset, hiddenDim));
         }
 
-        var logits = _ops.MatMulWithBT(lastTokenNormed, _embedding.Weight);
+        var projectionWeight = _lmHead ?? _embedding.Weight;
+        var logits = _ops.MatMulWithBT(lastTokenNormed, projectionWeight);
         lastTokenNormed.Dispose();
         return logits;
     }
@@ -247,6 +270,7 @@ public unsafe Tensor<float> ForwardLastLogits(Tensor<int> tokenIds, KVCache[] ca
         _embedding.Dispose();
         _arch.Dispose();
         _finalNorm.Dispose();
+        _lmHead?.Dispose();
     }
 
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, nameof(Transformer));
@@ -271,7 +295,8 @@ public unsafe Tensor<float> ForwardLastLogits(Tensor<int> tokenIds, KVCache[] ca
         int seqLen = tokenIds.Shape.Cols;
 
         using var normedFlat = normed.Reshape(batch * seqLen, _config.HiddenDim);
-        var logits = _ops.MatMulWithBT(normedFlat, _embedding.Weight);
+        var projectionWeight = _lmHead ?? _embedding.Weight;
+        var logits = _ops.MatMulWithBT(normedFlat, projectionWeight);
 
         var result = logits.Reshape(batch, seqLen, _config.VocabSize);
         logits.Dispose();

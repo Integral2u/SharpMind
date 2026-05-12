@@ -23,6 +23,9 @@ namespace SharpMind.Tokenization;
 /// var tokenizer = Tokenizer.FromGpt2("encoder.json", "vocab.bpe");
 /// var tokenizer = Tokenizer.FromLlama("tokenizer.json");
 /// var tokenizer = Tokenizer.FromMistral("tokenizer.json");
+///
+/// // Load directly from GGUF vocab data (model-family agnostic)
+/// var tokenizer = Tokenizer.FromGguf(tokens, merges, scores, tokenTypes, bosId, eosId);
 /// </code>
 ///
 /// Usage with SharpMind.Data:
@@ -90,6 +93,40 @@ public sealed class Tokenizer
     /// <summary>Loads a SharpMind native tokenizer JSON file.</summary>
     public static Tokenizer FromFile(string path)
         => new(TokenizerFile.Load(path));
+
+    // ── Factory: GGUF (model-family agnostic) ─────────────────────────────
+
+    /// <summary>
+    /// Builds a tokenizer directly from GGUF-embedded vocab data.
+    ///
+    /// This is the preferred loading path when a GGUF file is available:
+    /// the vocab stored in GGUF is always byte-for-byte identical to what
+    /// the model weights were trained against, so it can never produce the
+    /// token-ID out-of-bounds crashes that occur when an external
+    /// tokenizer.json has a mismatched vocab size.
+    ///
+    /// Works for any BPE model stored in GGUF regardless of model family
+    /// (LLaMA, Mistral, Qwen, Phi, etc.) — no per-family special-casing needed.
+    /// </summary>
+    /// <param name="tokens">Vocab strings in ID order (tokenizer.ggml.tokens).</param>
+    /// <param name="merges">Merge rules as "left right" strings (tokenizer.ggml.merges).</param>
+    /// <param name="scores">Per-token scores (tokenizer.ggml.scores). May be null.</param>
+    /// <param name="tokenTypes">Per-token type flags (tokenizer.ggml.token_type). May be null.</param>
+    /// <param name="bosId">BOS token ID (tokenizer.ggml.bos_token_id).</param>
+    /// <param name="eosId">EOS token ID (tokenizer.ggml.eos_token_id).</param>
+    public static Tokenizer FromGguf(
+        string[] tokens,
+        string[]? merges,
+        float[]? scores,
+        int[]? tokenTypes,
+        int bosId,
+        int eosId)
+    {
+        Console.WriteLine($"[Tokenizer] Building from GGUF vocab: {tokens.Length} tokens, {merges?.Length ?? 0} merges");
+        var model = GgufConverter.Convert(tokens, merges, scores, tokenTypes, bosId, eosId);
+        Console.WriteLine($"[Tokenizer] GGUF tokenizer ready: vocab={model.Vocab.Size}");
+        return new Tokenizer(model);
+    }
 
     // ── Factory: model-family converters ──────────────────────────────────
 

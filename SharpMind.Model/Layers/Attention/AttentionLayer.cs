@@ -33,10 +33,10 @@ public abstract class AttentionLayer : IDisposable
     public void LoadWeights(string name, ReadOnlySpan<float> data)
     {
         var lower = name.ToLower();
-        if (lower.Contains("q") && !lower.Contains("output")) { data.CopyTo(Wq.Weight.Data); }
-        else if (lower.Contains("k") && !lower.Contains("output")) { data.CopyTo(Wk.Weight.Data); }
-        else if (lower.Contains("v") && !lower.Contains("output")) { data.CopyTo(Wv.Weight.Data); }
-        else if (lower.Contains("o") || lower.Contains("output")) { data.CopyTo(Wo.Weight.Data); }
+        if (lower.Contains("q") && !lower.Contains("output")) { Wq.LoadWeightTransposed(data); }
+        else if (lower.Contains("k") && !lower.Contains("output")) { Wk.LoadWeightTransposed(data); }
+        else if (lower.Contains("v") && !lower.Contains("output")) { Wv.LoadWeightTransposed(data); }
+        else if (lower.Contains("o") || lower.Contains("output")) { Wo.LoadWeightTransposed(data); }
     }
 
     [PuzzleCornerPiece(SharpMindConfig.KeyAttention,

@@ -70,7 +70,7 @@ public sealed class TransformerBlock : IDisposable
         return Forward(x, null, positionOffset, causal);
     }
 
-public Tensor<float> Forward(Tensor<float> x, KVCache? cache, int positionOffset = 0, bool causal = true)
+    public Tensor<float> Forward(Tensor<float> x, KVCache? cache, int positionOffset = 0, bool causal = true)
     {
         ThrowIfDisposed();
         
@@ -78,7 +78,7 @@ public Tensor<float> Forward(Tensor<float> x, KVCache? cache, int positionOffset
         var normed1 = _norm1.Forward(x);
         using var attnOut = _attention.Forward(normed1, _ops, positionOffset, causal, cache);
         normed1.Dispose();
-
+        
         // Residual: h = x + attn(norm(x))
         var hidden = TensorOps.Add(x, attnOut);
         attnOut.Dispose();
@@ -87,7 +87,7 @@ public Tensor<float> Forward(Tensor<float> x, KVCache? cache, int positionOffset
         var normed2 = _norm2.Forward(hidden);
         using var ffnOut = _ffn.Forward(normed2);
         normed2.Dispose();
-
+        
         // Residual: out = h + ffn(norm(h))
         var output = TensorOps.Add(hidden, ffnOut);
         hidden.Dispose();

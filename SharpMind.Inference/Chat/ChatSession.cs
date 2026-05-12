@@ -73,7 +73,9 @@ public sealed class ChatSession
         yield return new ChatStreamEntry { Status = ChatStatus.Responding, IsComplete = false };
 
         var prompt = BuildPrompt();
+        Console.WriteLine($"[DEBUG] Prompt: {prompt}");
         var encoded = _tokenizer.Encode(prompt, addBos: true, addEos: false);
+        Console.WriteLine($"[DEBUG] Encoded tokens: {string.Join(", ", encoded)}");
         int[] promptToks;
         if (encoded.Length > MaxTokens)
         {
@@ -141,6 +143,11 @@ public sealed class ChatSession
                 }
 
                 int nextId = Sampler.Sample(logitsSpan, samplingCfg, Random.Shared);
+                if (step == 0)
+                {
+                    Console.WriteLine($"[DEBUG] Step 0 - NextId: {nextId}");
+                    Console.WriteLine($"[DEBUG] First 5 logits: {string.Join(", ", logitsSpan.Slice(0, Math.Min(5, logitsSpan.Length)).ToArray())}");
+                }
                 generatedIds.Add(nextId);
 
                 if (nextId == _tokenizer.EosId) break;
@@ -242,17 +249,18 @@ public sealed class ChatSession
             _caches[i].Reset();
     }
 
-private string BuildPrompt()
+    private string BuildPrompt()
     {
         // If we have a chat template from GGUF, use it
         if (!string.IsNullOrEmpty(_chatTemplate))
         {
-            return ApplyChatTemplate(_chatTemplate, _history);
+            var prompt = ApplyChatTemplate(_chatTemplate, _history);
+            Console.WriteLine($"[DEBUG] ChatPrompt (template): {prompt}");
+            return prompt;
         }
         
         // Fallback to simple format
         var sb = new System.Text.StringBuilder();
-
         foreach (var msg in _history)
         {
             var prefix = msg.Role switch
@@ -264,9 +272,10 @@ private string BuildPrompt()
             };
             sb.AppendLine(prefix + msg.Content);
         }
-
         sb.Append("assistant: ");
-        return sb.ToString();
+        var fallback = sb.ToString();
+        Console.WriteLine($"[DEBUG] ChatPrompt (fallback): {fallback}");
+        return fallback;
     }
 
     private string ApplyChatTemplate(string template, List<ChatMessage> history)
@@ -307,12 +316,29 @@ private string BuildPrompt()
 
     private string ApplyJinjaTemplate(string template, List<ChatMessage> history)
     {
-        // Process Jinja-style template - use the passed template parameter
-        var result = new System.Text.StringBuilder();
+        // Use the template if it contains known token markers, otherwise use Qwen format
+        // template from GGUF typically contains {% for message in messages %}<|im_start|>...
+        if (!template.Contains("<|im_start|>"))
+        {
+            // Template doesn't have Qwen markers, use Qwen format
+            var result = new System.Text.StringBuilder();
+            foreach (var msg in history)
+            {
+                var role = msg.Role switch
+                {
+                    ChatRole.System => "system",
+                    ChatRole.Agent => "assistant",
+                    ChatRole.User => "user",
+                    _ => "unknown"
+                };
+                result.Append($"<|im_start|>{role}\n{msg.Content}<|im_end|>\n");
+            }
+            result.Append("<|im_start|>assistant\n");
+            return result.ToString();
+        }
         
-        // Check template type and format accordingly
-        // Qwen format: {% for message in messages %}<|im_start|>{{ message['role'] }}
-        // Also support: "{% for msg in messages %}{{ msg.content }}"
+        // Template has Qwen markers - use the stored messages
+        var sb = new System.Text.StringBuilder();
         foreach (var msg in history)
         {
             var role = msg.Role switch
@@ -322,12 +348,10 @@ private string BuildPrompt()
                 ChatRole.User => "user",
                 _ => "unknown"
             };
-            
-            result.Append($"<|im_start|>{role}\n{msg.Content}<|im_end|>\n");
+            sb.Append($"<|im_start|>{role}\n{msg.Content}<|im_end|>\n");
         }
-        
-        result.Append("<|im_start|>assistant\n");
-        return result.ToString();
+        sb.Append("<|im_start|>assistant\n");
+        return sb.ToString();
     }
 
     public async ValueTask DisposeAsync()

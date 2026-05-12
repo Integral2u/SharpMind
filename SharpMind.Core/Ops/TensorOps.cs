@@ -305,42 +305,54 @@ public abstract class TensorOps
     // ═══════════════════════════════════════════════════════════════════════
 
     /// <summary>
-    /// Returns the flat indices of the top <paramref name="k"/> elements (unsorted).
+    /// Returns the flat indices of the top <paramref name="k"/> elements (sorted descending).
     /// Used for Top-K sampling and MoE expert routing.
     /// </summary>
     public static int[] ArgTopK(Tensor<float> a, int k)
     {
         if (k <= 0 || k > a.ElementCount)
-            throw new ArgumentOutOfRangeException(nameof(k),
-                $"k={k} must be in [1, {a.ElementCount}].");
+            throw new ArgumentOutOfRangeException(nameof(k), $"k={k} must be in [1, {a.ElementCount}].");
 
-        if (k * 16 >= a.ElementCount)
+        int n = a.ElementCount;
+        float[] data = a.Data.ToArray();
+
+        if (k >= n)
         {
-            var sorted = a.Data.ToArray();
-            Array.Sort(sorted, static (x, y) => y.CompareTo(x));
+            var indices = new int[n];
+            for (int i = 0; i < n; i++) indices[i] = i;
+            Array.Sort(indices, (x, y) => data[y].CompareTo(data[x]));
             var result = new int[k];
-            for (int i = 0; i < k; i++) result[i] = i;
+            Array.Copy(indices, result, k);
             return result;
         }
 
         if (k <= 64)
         {
-            var heap = new SortedList<float, int>(k + 1, FloatDescComparer.Instance);
-            var data = a.Data;
-            for (int i = 0; i < data.Length; i++)
+            var pq = new PriorityQueue<int, float>();
+            for (int i = 0; i < n; i++)
             {
-                heap.TryAdd(data[i], i);
-                if (heap.Count > k) heap.RemoveAt(heap.Count - 1);
+                float val = data[i];
+                if (pq.Count < k)
+                {
+                    pq.Enqueue(i, val);
+                }
+                else if (pq.TryPeek(out _, out float minPriority) && val > minPriority)
+                {
+                    pq.Dequeue();
+                    pq.Enqueue(i, val);
+                }
             }
-            return [.. heap.Values];
+            var result = new int[k];
+            for (int i = k - 1; i >= 0; i--) result[i] = pq.Dequeue();
+            return result;
         }
 
-        return ArgTopKIntroselect(a, k);
+        // For introselect, we need the array anyway
+        return ArgTopKIntroselectArray(data, k);
     }
 
-    private static int[] ArgTopKIntroselect(Tensor<float> a, int k)
+    private static int[] ArgTopKIntroselectArray(float[] data, int k)
     {
-        var data = a.Data.ToArray();
         int n = data.Length;
         var indices = new int[n];
         for (int i = 0; i < n; i++) indices[i] = i;
@@ -350,10 +362,10 @@ public abstract class TensorOps
 
         while (left < right)
         {
-            int pivot = Partition(data, indices, left, right);
+            int pivot = PartitionArray(data, indices, left, right);
             if (pivot == target) break;
-            else if (pivot > target) right = pivot - 1;
-            else { left = pivot + 1; target = pivot; }
+            if (pivot > target) right = pivot - 1;
+            else left = pivot + 1;
         }
 
         var result = new int[k];
@@ -362,20 +374,18 @@ public abstract class TensorOps
         return result;
     }
 
-    private static int Partition(float[] data, int[] indices, int left, int right)
+    private static int PartitionArray(float[] data, int[] indices, int left, int right)
     {
-        float pivot = data[left];
+        float pivot = data[indices[left]];
         int i = left;
         for (int j = left + 1; j <= right; j++)
         {
-            if (data[j] > pivot)
+            if (data[indices[j]] > pivot)
             {
                 i++;
-                (data[i], data[j]) = (data[j], data[i]);
                 (indices[i], indices[j]) = (indices[j], indices[i]);
             }
         }
-        (data[i], data[left]) = (data[left], data[i]);
         (indices[i], indices[left]) = (indices[left], indices[i]);
         return i;
     }

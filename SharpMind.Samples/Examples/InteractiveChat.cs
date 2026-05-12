@@ -8,7 +8,7 @@ using System.Runtime.Intrinsics.X86;
 
 namespace SharpMind.Samples.Examples
 {
-    public static class InteractiveGuff
+    public static class InteractiveChat
     {
         private static readonly string ModelName = "qwen2-0_5b-instruct-fp16";
         private static readonly string ModelPath = @"C:\Integral2u\source\repos\SharpMind\ExternalAssets";
@@ -43,7 +43,7 @@ namespace SharpMind.Samples.Examples
             var inferOps = InferenceOpsFactory.Create(sharpConfig, InferenceConfig.Default);
             string systemPrompt = $"{PromptHelpers.DefaultSystemPrompt}\n\n{PromptHelpers.DefaultAgentPrompt}".Trim();
 
-            await using var session = new ChatSession(model, tokenizer, inferOps)
+            await using var session = new ChatSession(model, tokenizer, inferOps, meta)
             {
                 MaxTokens = 512,
                 Temperature = 0.7f,
