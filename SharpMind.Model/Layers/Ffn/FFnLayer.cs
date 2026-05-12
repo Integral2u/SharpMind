@@ -35,9 +35,20 @@ public abstract class FfnLayer : IDisposable
     public void LoadWeights(string name, ReadOnlySpan<float> data)
     {
         var lower = name.ToLower();
-        if (lower.Contains("gate")) { WGate!.LoadWeightTransposed(data); }
-        else if (lower.Contains("up")) { WUp!.LoadWeightTransposed(data); }
-        else if (lower.Contains("down")) { WDown!.LoadWeightTransposed(data); }
+        bool isBias = lower.Contains("bias");
+
+        if (lower.Contains("gate"))
+        {
+            if (isBias) WGate!.LoadBias(data); else WGate!.LoadWeightTransposed(data);
+        }
+        else if (lower.Contains("up"))
+        {
+            if (isBias) WUp!.LoadBias(data); else WUp!.LoadWeightTransposed(data);
+        }
+        else if (lower.Contains("down"))
+        {
+            if (isBias) WDown!.LoadBias(data); else WDown!.LoadWeightTransposed(data);
+        }
     }
 
     // ── MoE weights ───────────────────────────────────────────────────────

@@ -151,7 +151,7 @@ public static partial class GgufLoader
                 case 8: // STRING
                     val = ReadStringValue(reader);
                     break;
-                case 9: // ARRAY — read all array types; tokenizer vocab lives here
+                case 9: // ARRAY ï¿½ read all array types; tokenizer vocab lives here
                     val = ReadArrayValue(reader);
                     break;
                 default:
@@ -192,7 +192,7 @@ public static partial class GgufLoader
         string arch = meta.GetString("general.architecture");
         if (string.IsNullOrWhiteSpace(arch)) return null;
 
-        // Derive vocab + hidden from the embedding tensor shape — most reliable source.
+        // Derive vocab + hidden from the embedding tensor shape ï¿½ most reliable source.
         int vocabSize = 32000, hiddenDim = 1536, numLayers = 28;
         int numHeads = 12, numKvHeads = 12, ffnDim = 6144, maxSeqLen = 2048;
 
@@ -206,7 +206,7 @@ public static partial class GgufLoader
             else { vocabSize = (int)d1; hiddenDim = (int)d0; }
         }
 
-        // Override with explicit meta keys where present — they are authoritative.
+        // Override with explicit meta keys where present ï¿½ they are authoritative.
         hiddenDim = (int)meta.GetLong($"{arch}.embedding_length", hiddenDim);
         ffnDim = (int)meta.GetLong($"{arch}.feed_forward_length", ffnDim);
         maxSeqLen = (int)meta.GetLong($"{arch}.context_length", maxSeqLen);
@@ -249,7 +249,7 @@ public static partial class GgufLoader
         var tokens = GetStringArray(meta, "tokenizer.ggml.tokens");
         if (tokens == null || tokens.Length == 0)
         {
-            Console.WriteLine("[GgufLoader] No tokenizer.ggml.tokens found in GGUF — tokenizer must be loaded from file.");
+            Console.WriteLine("[GgufLoader] No tokenizer.ggml.tokens found in GGUF ï¿½ tokenizer must be loaded from file.");
             return null;
         }
 
@@ -296,7 +296,7 @@ public static partial class GgufLoader
         Console.WriteLine($"[GgufLoader] Config: vocab={config.VocabSize}, hidden={config.HiddenDim}, " +
                           $"layers={config.NumLayers}, heads={config.NumHeads}, kvHeads={config.NumKvHeads}");
 
-        // Prefer GGUF-embedded tokenizer — its vocab size is guaranteed to match the weights.
+        // Prefer GGUF-embedded tokenizer ï¿½ its vocab size is guaranteed to match the weights.
         tokenizer = LoadTokenizerFromMeta(meta);
 
         // Fall back to file only when GGUF has no vocab data.
@@ -309,10 +309,22 @@ public static partial class GgufLoader
                 string arch = meta.GetString("general.architecture") ?? "";
                 string tokModel = meta.GetString("tokenizer.ggml.model") ?? "";
 
-                tokenizer = (arch.Contains("qwen", StringComparison.OrdinalIgnoreCase)
-                             || tokModel.Contains("qwen", StringComparison.OrdinalIgnoreCase))
-                    ? Tokenizer.FromQwen(tokenizerPath)
-                    : Tokenizer.FromFile(tokenizerPath);   // generic BPE/SentencePiece fallback
+                if (arch.Contains("qwen", StringComparison.OrdinalIgnoreCase) || tokModel.Contains("qwen", StringComparison.OrdinalIgnoreCase))
+                {
+                    tokenizer = Tokenizer.FromQwen(tokenizerPath);
+                }
+                else if (arch.Contains("llama", StringComparison.OrdinalIgnoreCase))
+                {
+                    tokenizer = Tokenizer.FromLlama(tokenizerPath);
+                }
+                else if (arch.Contains("mistral", StringComparison.OrdinalIgnoreCase))
+                {
+                    tokenizer = Tokenizer.FromMistral(tokenizerPath);
+                }
+                else
+                {
+                    tokenizer = Tokenizer.FromFile(tokenizerPath);   // generic BPE/SentencePiece fallback
+                }
             }
             catch (Exception ex)
             {
@@ -414,7 +426,7 @@ public static partial class GgufLoader
                 case GgufDtype.Q5_0: ReadQ5_0(stream, destination, count); break;
             }
         }
-        catch { /* partial tensor — leave zeros */ }
+        catch { /* partial tensor ï¿½ leave zeros */ }
     }
 
     private static float HalfToFloat(ushort half)
