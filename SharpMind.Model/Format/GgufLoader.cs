@@ -375,6 +375,12 @@ public static partial class GgufLoader
             try
             {
                 ReadTensorInto(reader, info.Dtype, info.Shape, buffer.AsSpan(0, count));
+                
+                // Diagnostic: print dtype and first few values for token_embd and output weights
+                if (info.Name.Contains("token_embd") || info.Name.Contains("output"))
+                {
+                    Console.WriteLine($"[DEBUG] Loading {info.Name}: dtype={info.Dtype}, shape=[{string.Join(",", info.Shape)}], first5=[{string.Join(",", buffer.Take(5).Select(v => v.ToString("G3")))}]");
+                }
 
                 if (model.LoadWeight(info.Name, buffer.AsSpan(0, count)))
                     loaded++;
