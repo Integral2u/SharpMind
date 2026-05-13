@@ -95,6 +95,14 @@ public sealed class DecoderArch : IArchitecture
             // Pass the cache for the current block
             var next = _blocks[i].Forward(current, caches != null ? caches[i] : null, positionOffset, causal: true);
             
+            // NaN check per block
+            int nanCount = CountNaN(next.Data);
+            if (nanCount > 0)
+            {
+                Console.WriteLine($"[DEBUG] NaN check: block {i}: {nanCount} NaN elements out of {next.ElementCount}");
+                Console.WriteLine($"[DEBUG] NaN check: block {i}: first 5 = {string.Join(", ", next.Data.Slice(0, Math.Min(5, next.ElementCount)).ToArray())}");
+            }
+            
             // Only dispose previous if it wasn't our input
             if (i > 0 && !ReferenceEquals(current, hiddenStates))
                 current.Dispose();
@@ -103,6 +111,14 @@ public sealed class DecoderArch : IArchitecture
         }
 
         return current;
+    }
+
+    private static int CountNaN(ReadOnlySpan<float> data)
+    {
+        int count = 0;
+        for (int i = 0; i < data.Length; i++)
+            if (float.IsNaN(data[i])) count++;
+        return count;
     }
     
     public void Backward(Tensor<float> dOutput)

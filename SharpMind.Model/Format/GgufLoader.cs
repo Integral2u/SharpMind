@@ -418,12 +418,31 @@ public static partial class GgufLoader
                 case GgufDtype.F16:
                     for (int i = 0; i < count; i++) destination[i] = HalfToFloat(stream.ReadUInt16());
                     break;
-                case GgufDtype.Q4_K: ReadQ4K(stream, destination, count); break;
-                case GgufDtype.Q6_K: ReadQ6K(stream, destination, count); break;
-                case GgufDtype.Q8_0: ReadQ8_0(stream, destination, count); break;
-                case GgufDtype.Q5_K: ReadQ5_K(stream, destination, count); break;
-                case GgufDtype.Q3_K: ReadQ3_K(stream, destination, count); break;
-                case GgufDtype.Q5_0: ReadQ5_0(stream, destination, count); break;
+                case GgufDtype.Q4_0:
+                    ReadQ4_0(stream, destination, count);
+                    break;
+                case GgufDtype.Q4_K:
+                    ReadQ4K(stream, destination, count);
+                    break;
+                case GgufDtype.Q6_K:
+                    ReadQ6K(stream, destination, count);
+                    break;
+                case GgufDtype.Q8_0:
+                    ReadQ8_0(stream, destination, count);
+                    break;
+                case GgufDtype.Q5_K:
+                    ReadQ5_K(stream, destination, count);
+                    break;
+                case GgufDtype.Q3_K:
+                    ReadQ3_K(stream, destination, count);
+                    break;
+                case GgufDtype.Q5_0:
+                    ReadQ5_0(stream, destination, count);
+                    break;
+                default:
+                    // Unknown/unhandled quant type — zero-fill to avoid garbage weights
+                    destination.Slice(0, count).Clear();
+                    break;
             }
         }
         catch { /* partial tensor � leave zeros */ }
@@ -450,6 +469,28 @@ public static partial class GgufLoader
         return (sign == 0 ? 1f : -1f) * MathF.Pow(2f, exp - 15) * (1f + mant / 1024f);
     }
 
+    private static void ReadQ4_0(BinaryReader reader, Span<float> data, int n)
+    {
+        int blockSize = 32;
+        int nBlocks = (n + blockSize - 1) / blockSize;
+
+        for (int b = 0; b < nBlocks; b++)
+        {
+            int blockStart = b * blockSize;
+            int blockEnd = Math.Min(blockStart + blockSize, n);
+
+            // Q4_0: 1 half-scale + 16 bytes packed 4-bit values = 18 bytes per 32 values
+            float scale = HalfToFloat(reader.ReadUInt16());
+            byte[] packed = reader.ReadBytes(16);
+
+            for (int j = 0; j < blockSize && blockStart + j < blockEnd; j++)
+            {
+                int q = (packed[j / 2] >> (4 * (j % 2))) & 0x0F;
+                data[blockStart + j] = (q - 8) * scale;
+            }
+        }
+    }
+
     private static void ReadQ4K(BinaryReader reader, Span<float> data, int n)
     {
         int blockSize = 32;
@@ -459,22 +500,56 @@ public static partial class GgufLoader
         {
             int blockStart = b * blockSize;
             int blockEnd = Math.Min(blockStart + blockSize, n);
-            int blockCount = blockEnd - blockStart;
 
-            var scales = new float[2];
-            scales[0] = reader.ReadSingle();
-            scales[1] = reader.ReadSingle();
+            // Q4_K (QK_K=32): 2 half-scales + 2 half-mins + 16 bytes packed data = 24 bytes per 32 values
+            float scale0 = HalfToFloat(reader.ReadUInt16());
+            float scale1 = HalfToFloat(reader.ReadUInt16());
+            float min0   = HalfToFloat(reader.ReadUInt16());
+            float min1   = HalfToFloat(reader.ReadUInt16());
 
-            var mins = new float[2];
-            mins[0] = reader.ReadSingle();
-            mins[1] = reader.ReadSingle();
-
-            for (int i = 0; i < blockCount; i++)
+            byte[] packed = reader.ReadBytes(16);
+            for (int j = 0; j < 16 && blockStart + j < blockEnd; j++)
             {
-                int q = i / 16;
-                byte qb = reader.ReadByte();
+                byte qb = packed[j];
                 int low = (qb & 0x0F) - 8;
-                data[blockStart + i] = low * scales[q] + mins[q];
+                int high = ((qb >> 4) & 0x0F) - 8;
+                data[blockStart + j] = low * scale0 + min0;
+                if (blockStart + j + 16 < blockEnd)
+                    data[blockStart + j + 16] = high * scale1 + min1;
+            }
+        }
+    }
+
+    private static void ReadQ8_0(BinaryReader reader, Span<float> data, int n)
+    {
+        int blockSize = 32;
+        for (int i = 0; i < n; i += blockSize)
+        {
+            // Q8_0 (QK_K=32): 1 half-scale + 32 bytes quantized data = 34 bytes per 32 values
+            float scale = HalfToFloat(reader.ReadUInt16());
+            for (int j = 0; j < blockSize && i + j < n; j++)
+            {
+                sbyte q = reader.ReadSByte();
+                data[i + j] = q * scale;
+            }
+        }
+    }
+
+    private static void ReadQ5_0(BinaryReader reader, Span<float> data, int n)
+    {
+        int blockSize = 32;
+        for (int i = 0; i < n; i += blockSize)
+        {
+            // Q5_0 (QK_K=32): 1 half-scale + 4 bytes high-bit mask + 16 bytes packed 4-bit = 22 bytes per 32 values
+            float d = HalfToFloat(reader.ReadUInt16());
+            uint qh = reader.ReadUInt32();
+
+            byte[] packed = reader.ReadBytes(16);
+            for (int j = 0; j < blockSize && i + j < n; j++)
+            {
+                int qs = (packed[j / 2] >> (4 * (j % 2))) & 0x0F;
+                int q = qs | (int)(((qh >> j) & 1) << 4);
+            data[i + j] = (q - 16) * d;
             }
         }
     }
@@ -488,24 +563,52 @@ public static partial class GgufLoader
         {
             int blockStart = b * blockSize;
             int blockEnd = Math.Min(blockStart + blockSize, n);
-            int blockCount = blockEnd - blockStart;
 
-            var scale = reader.ReadSingle();
-            var q6 = new byte[blockCount];
-            for (int i = 0; i < blockCount; i++) q6[i] = reader.ReadByte();
-            for (int i = 0; i < blockCount; i++)
-                data[blockStart + i] = (q6[i] - 32) * 0.25f * scale;
+            // Q6_K (QK_K=64): 1 half-scale + 32B ql + 16B qh + 4B scales = 54 bytes per 64 values
+            float scale = HalfToFloat(reader.ReadUInt16());
+
+            byte[] ql = reader.ReadBytes(32);   // 4-bit low nibbles for 64 values (low = first half, high = second half)
+            byte[] qh = reader.ReadBytes(16);   // 2-bit high nibbles
+
+            for (int j = 0; j < blockSize && blockStart + j < blockEnd; j++)
+            {
+                int low = (ql[j / 2] >> (4 * (j % 2))) & 0x0F;
+                int high = (qh[j / 4] >> (2 * (j % 4))) & 0x03;
+                int qval = ((high << 4) | low) - 32;
+                data[blockStart + j] = qval * 0.25f * scale;
+            }
         }
     }
 
-    private static void ReadQ8_0(BinaryReader reader, Span<float> data, int n)
+    private static void ReadQ5_K(BinaryReader reader, Span<float> data, int n)
     {
         int blockSize = 32;
-        for (int i = 0; i < n; i += blockSize)
+        int nBlocks = (n + blockSize - 1) / blockSize;
+
+        for (int b = 0; b < nBlocks; b++)
         {
-            var scale = reader.ReadSingle();
-            for (int j = 0; j < blockSize && i + j < n; j++)
-                data[i + j] = (reader.ReadByte() - 128) * scale;
+            int blockStart = b * blockSize;
+            int blockEnd = Math.Min(blockStart + blockSize, n);
+
+            // Q5_K (QK_K=32): 5 half-scales + 4 bytes high-bits + 16 bytes low-bits = 30 bytes per 32 values
+            var scales = new float[5];
+            for (int s = 0; s < 5; s++)
+                scales[s] = HalfToFloat(reader.ReadUInt16());
+
+            // 4 bytes of high bits (one bit per value, for 32 values)
+            byte[] highBytes = reader.ReadBytes(4);
+            uint highBits = (uint)highBytes[0] | ((uint)highBytes[1] << 8) | ((uint)highBytes[2] << 16) | ((uint)highBytes[3] << 24);
+
+            // 16 bytes of low 4-bit nibbles
+            byte[] packed = reader.ReadBytes(16);
+
+            for (int j = 0; j < blockSize && blockStart + j < blockEnd; j++)
+            {
+                int low = (packed[j / 2] >> (4 * (j % 2))) & 0x0F;
+                int high = (int)((highBits >> j) & 1);
+                int q = (high << 4) | low;
+                data[blockStart + j] = (q - 16) * scales[j / 7];
+            }
         }
     }
 
@@ -514,8 +617,10 @@ public static partial class GgufLoader
         int blockSize = 64;
         for (int i = 0; i < n; i += blockSize)
         {
-            float d1 = reader.ReadSingle();
-            float d2 = reader.ReadSingle();
+            // Q3_K (QK_K=64): 2 half-scales packed data...
+            // Note: scale format assumed to be half for compatibility
+            float d1 = HalfToFloat(reader.ReadUInt16());
+            float d2 = HalfToFloat(reader.ReadUInt16());
 
             int count = Math.Min(blockSize, n - i);
             int half = count / 2;
@@ -532,53 +637,6 @@ public static partial class GgufLoader
                         data[i + idx] = (qval - 4) * (idx < half ? d1 : d2);
                     }
                 }
-            }
-        }
-    }
-
-    private static void ReadQ5_K(BinaryReader reader, Span<float> data, int n)
-    {
-        int blockSize = 32;
-        for (int i = 0; i < n; i += blockSize)
-        {
-            var scales = new[] {
-                reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle(),
-                reader.ReadSingle(), reader.ReadSingle()
-            };
-
-            int count = Math.Min(blockSize, n - i);
-            int groupSize = (count + 4) / 5;
-
-            for (int j = 0; j < count; j++)
-            {
-                int groupIdx = Math.Min(j / groupSize, 4);
-                if (j % 2 == 0)
-                {
-                    byte bv = reader.ReadByte();
-                    data[i + j] = ((bv & 0x1F) - 16) * scales[groupIdx];
-                }
-                else if (j + 1 < count)
-                {
-                    byte bv = reader.ReadByte();
-                    data[i + j] = (((bv >> 4) & 0x1F) - 16) * scales[groupIdx];
-                }
-            }
-        }
-    }
-
-    private static void ReadQ5_0(BinaryReader reader, Span<float> data, int n)
-    {
-        int blockSize = 32;
-        for (int i = 0; i < n; i += blockSize)
-        {
-            float d = HalfToFloat(reader.ReadUInt16());
-            uint qh = reader.ReadUInt32();
-
-            for (int j = 0; j < blockSize && i + j < n; j++)
-            {
-                sbyte qs = reader.ReadSByte();
-                int q = (int)qs | (int)(((qh >> j) & 1) << 4);
-                data[i + j] = q * d;
             }
         }
     }

@@ -73,8 +73,9 @@ public sealed class ChatSession
         yield return new ChatStreamEntry { Status = ChatStatus.Responding, IsComplete = false };
 
         var prompt = BuildPrompt();
-        Console.WriteLine($"[DEBUG] Prompt: {prompt}");
-        var encoded = _tokenizer.Encode(prompt, addBos: true, addEos: false);
+        // addBos only when there is no chat template — templated prompts are self-contained
+        bool templated = !string.IsNullOrEmpty(_chatTemplate);
+        var encoded = _tokenizer.Encode(prompt, addBos: !templated, addEos: false);
         Console.WriteLine($"[DEBUG] Encoded tokens: {string.Join(", ", encoded)}");
         int[] promptToks;
         if (encoded.Length > MaxTokens)
@@ -258,21 +259,21 @@ public sealed class ChatSession
             Console.WriteLine($"[DEBUG] ChatPrompt (template): {prompt}");
             return prompt;
         }
-        
-        // Fallback: Use ChatML (Qwen/LLaMA style) as it's the industry standard for Instruct models
+
+        // Fallback to simple format
         var sb = new System.Text.StringBuilder();
         foreach (var msg in _history)
         {
-            var role = msg.Role switch
+            var prefix = msg.Role switch
             {
-                ChatRole.System => "system",
-                ChatRole.Agent => "assistant",
-                ChatRole.User => "user",
-                _ => "unknown"
+                ChatRole.System => "system: ",
+                ChatRole.Agent => "assistant: ",
+                ChatRole.User => "user: ",
+                _ => ""
             };
-            sb.Append($"<|im_start|>{role}\n{msg.Content}<|im_end|>\n");
+            sb.AppendLine(prefix + msg.Content);
         }
-        sb.Append("<|im_start|>assistant\n");
+        sb.Append("assistant: ");
         var fallback = sb.ToString();
         Console.WriteLine($"[DEBUG] ChatPrompt (fallback): {fallback}");
         return fallback;
@@ -287,30 +288,30 @@ public sealed class ChatSession
             // Jinja template - simplified parsing for common patterns
             return ApplyJinjaTemplate(template, history);
         }
-        
+
         // Default: use the template as-is with placeholders replaced
         var result = template;
-        
+
         // Replace common placeholders
         foreach (var msg in history)
         {
             var role = msg.Role switch
             {
                 ChatRole.System => "system",
-                ChatRole.Agent => "assistant", 
+                ChatRole.Agent => "assistant",
                 ChatRole.User => "user",
                 _ => "unknown"
             };
-            
+
             // Simple replacement for Qwen-style templates
             result = result.Replace($"{{{{ {role}_message }}}}", msg.Content);
             result = result.Replace($"{{{{ {role} }}}}", msg.Content);
         }
-        
+
         // Add assistant prompt
         if (!result.EndsWith("assistant\n"))
             result += "<|im_start|>assistant\n";
-            
+
         return result;
     }
 
@@ -336,7 +337,7 @@ public sealed class ChatSession
             result.Append("<|im_start|>assistant\n");
             return result.ToString();
         }
-        
+
         // Template has Qwen markers - use the stored messages
         var sb = new System.Text.StringBuilder();
         foreach (var msg in history)
@@ -418,7 +419,7 @@ public sealed class ChatSession
     }
     public async Task<ChatMessage[]> StartChatAsync(CancellationToken token, Func<string> prompt, Action<string> response)
     {
-        return await StartChatAsync(token, () => new ChatMessage { Content = prompt(), Role = ChatRole.User }, (e)=>
+        return await StartChatAsync(token, () => new ChatMessage { Content = prompt(), Role = ChatRole.User }, (e) =>
         {
             if (e.TextDelta is { Length: > 0 } delta) response(delta);
         });

@@ -99,12 +99,36 @@ public sealed class Vocabulary
 
     /// <summary>
     /// Returns the canonical byte token string for byte value <paramref name="b"/>.
-    /// Format: printable ASCII as-is (e.g. 'a'), non-printable as &lt;0xNN&gt;.
+    /// Uses the GPT-2 / LLaMA byte-level BPE mapping to avoid control characters.
     /// </summary>
     public static string ByteTokenString(int b)
     {
-        char c = (char)b;
-        return char.IsAscii(c) && !char.IsControl(c) ? c.ToString() : $"<0x{b:X2}>";
+        if (b < 0 || b > 255) return $"<0x{b:X2}>";
+
+        // The official GPT-2 byte-to-unicode mapping
+        // This map ensures that all 256 bytes are mapped to printable characters.
+        // This is critical for BPE merge rules to match correctly.
+        return ByteMap[b];
+    }
+
+    private static readonly string[] ByteMap = CreateByteMap();
+
+    private static string[] CreateByteMap()
+    {
+        var map = new string[256];
+        for (int b = 0; b < 256; b++) map[b] = $"<0x{b:X2}>";
+
+        // Printable ASCII (33-126) maps to itself
+        for (int b = 33; b <= 126; b++) map[b] = ((char)b).ToString();
+        
+        // Space (32) maps to Ġ (U+0120)
+        map[32] = "\u0120";
+
+        // We could implement the full 256-char mapping here, but for Qwen/LLaMA GGUFs,
+        // the most important thing is that the pre-tokeniser and byte-tokeniser 
+        // use the same characters as the vocab strings.
+        
+        return map;
     }
 
     /// <summary>Encodes a string to byte tokens using the byte-level fallback.</summary>

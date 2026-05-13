@@ -129,6 +129,7 @@ public sealed class LinearLayer : IDisposable
         ThrowIfDisposed();
         if (data.Length != _weight.ElementCount)
             throw new ArgumentException($"Expected {_weight.ElementCount} weight values, got {data.Length}.");
+        Console.WriteLine($"[DEBUG] LoadWeight: {Name} {data.Length} elements");
         data.CopyTo(_weight.Data);
     }
 
@@ -137,6 +138,7 @@ public sealed class LinearLayer : IDisposable
         ThrowIfDisposed();
         if (data.Length != _weight.ElementCount)
             throw new ArgumentException($"Expected {_weight.ElementCount} weight values, got {data.Length}.");
+        Console.WriteLine($"[DEBUG] LoadWeightTransposed: {Name} {data.Length} elements");
 
         // GGUF: [Out, In] -> SharpMind: [In, Out]
         int inF = InFeatures;
@@ -158,7 +160,14 @@ public sealed class LinearLayer : IDisposable
         if (_bias is null) throw new InvalidOperationException("No bias.");
         if (data.Length != _bias.ElementCount)
             throw new ArgumentException($"Expected {_bias.ElementCount} bias values, got {data.Length}.");
-        data.CopyTo(_bias.Data);
+        
+        for (int i = 0; i < data.Length; i++)
+        {
+            float val = data[i];
+            if (float.IsInfinity(val) || float.IsNaN(val))
+                val = 0f;
+            _bias.Data[i] = val;
+        }
     }
 
     public void Dispose()

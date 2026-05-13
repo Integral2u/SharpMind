@@ -7,10 +7,16 @@ namespace SharpMind.Tokenization.Bpe;
 /// Encodes strings to token ID sequences by applying BPE merge rules.
 ///
 /// Encoding pipeline:
-///   1. Pre-tokenise the string into words.
-///   2. Represent each word as a sequence of byte-level tokens.
-///   3. Apply merge rules greedily in priority (rank) order.
-///   4. Map the resulting tokens to their IDs in the vocabulary.
+///   1. Split input on special token boundaries (preserving them as atomic units).
+///   2. For each non-special segment, pre-tokenise into words.
+///   3. Represent each word as a sequence of byte-level tokens.
+///   4. Apply merge rules greedily in priority (rank) order.
+///   5. Map the resulting tokens to their IDs in the vocabulary.
+///
+/// Special tokens (e.g. &lt;|im_start|&gt;, &lt;|im_end|&gt;) are matched verbatim
+/// and emitted as their single vocab ID without going through BPE. This is
+/// critical: the Qwen/LLaMA pre-tokeniser regex would otherwise shred them
+/// into individual characters, producing wrong IDs and near-zero logits.
 /// </summary>
 public sealed class BpeEncoder
 {
@@ -18,8 +24,11 @@ public sealed class BpeEncoder
     private readonly IPreTokeniser _preTokeniser;
 
     // Merge lookup: (left, right) → (merged token, rank)
-    // Rank is used to apply the highest-priority merge at each step
     private readonly Dictionary<(string, string), (string Merged, int Rank)> _mergeIndex;
+
+    // Special tokens sorted longest-first so that longer patterns (e.g.
+    // "<|im_start|>") match before shorter prefixes (e.g. "<|im").
+    private readonly string[] _specialsSortedByLength;
 
     internal BpeEncoder(
         Vocabulary vocab,
@@ -31,14 +40,19 @@ public sealed class BpeEncoder
         _mergeIndex = new Dictionary<(string, string), (string, int)>(merges.Count);
         foreach (var rule in merges)
             _mergeIndex[(rule.Left, rule.Right)] = (rule.Merged, rule.Rank);
+
+        // Build sorted special-token list for fast scanning.
+        _specialsSortedByLength = [.. vocab.Specials.All
+            .Where(s => !string.IsNullOrEmpty(s))
+            .OrderByDescending(s => s.Length)];
     }
 
     // ── Encode ────────────────────────────────────────────────────────────
 
     /// <summary>
     /// Encodes a string to a sequence of token IDs.
-    /// Unknown characters fall back to byte-level tokens; with byte-level vocab
-    /// the result is always lossless (no [UNK] in the output).
+    /// Special tokens are matched verbatim and never passed through BPE.
+    /// Unknown characters fall back to byte-level tokens.
     /// </summary>
     public int[] Encode(string text, bool addBos = false, bool addEos = false)
     {
@@ -46,12 +60,23 @@ public sealed class BpeEncoder
 
         if (addBos) ids.Add(_vocab.BosId);
 
-        foreach (string word in _preTokeniser.PreTokenise(text))
+        // Split on special token boundaries, then BPE-encode the plain segments.
+        foreach (var segment in SplitOnSpecials(text))
         {
-            var tokens = ByteTokenise(word);
-            ApplyMerges(tokens);
-            foreach (string token in tokens)
-                ids.Add(_vocab.GetId(token));
+            if (segment.IsSpecial)
+            {
+                ids.Add(_vocab.GetId(segment.Text));
+            }
+            else
+            {
+                foreach (string word in _preTokeniser.PreTokenise(segment.Text))
+                {
+                    var tokens = ByteTokenise(word);
+                    ApplyMerges(tokens);
+                    foreach (string token in tokens)
+                        ids.Add(_vocab.GetId(token));
+                }
+            }
         }
 
         if (addEos) ids.Add(_vocab.EosId);
@@ -60,7 +85,6 @@ public sealed class BpeEncoder
 
     /// <summary>
     /// Encodes a batch of strings. Each string is encoded independently.
-    /// Returns a jagged array — sequences have different lengths.
     /// </summary>
     public int[][] EncodeBatch(IEnumerable<string> texts, bool addBos = false, bool addEos = false)
         => [.. texts.Select(t => Encode(t, addBos, addEos))];
@@ -89,7 +113,6 @@ public sealed class BpeEncoder
             }
             else
             {
-                // Multi-character merged token — encode as UTF-8
                 foreach (byte tb in System.Text.Encoding.UTF8.GetBytes(token))
                     bytes.Add(tb);
             }
@@ -98,13 +121,68 @@ public sealed class BpeEncoder
         return System.Text.Encoding.UTF8.GetString([.. bytes]);
     }
 
-    // ── BPE merge application ─────────────────────────────────────────────
+    // ── Special-token splitter ────────────────────────────────────────────
+
+    private readonly record struct Segment(string Text, bool IsSpecial);
 
     /// <summary>
-    /// Applies BPE merge rules to a mutable list of tokens in-place.
-    /// Uses the priority-queue approach: always finds and applies the
-    /// lowest-rank (highest-priority) merge available.
+    /// Splits <paramref name="text"/> into alternating plain / special segments.
+    /// Special tokens are matched longest-first so overlapping prefixes don't
+    /// cause false positives.
     /// </summary>
+    private IEnumerable<Segment> SplitOnSpecials(string text)
+    {
+        if (_specialsSortedByLength.Length == 0)
+        {
+            if (text.Length > 0) yield return new Segment(text, false);
+            yield break;
+        }
+
+        int pos = 0;
+        while (pos < text.Length)
+        {
+            // Try to match any special token at the current position.
+            string? matched = null;
+            foreach (string special in _specialsSortedByLength)
+            {
+                if (text.AsSpan(pos).StartsWith(special.AsSpan(), StringComparison.Ordinal))
+                {
+                    matched = special;
+                    break;
+                }
+            }
+
+            if (matched != null)
+            {
+                yield return new Segment(matched, true);
+                pos += matched.Length;
+            }
+            else
+            {
+                // Advance to the next potential special-token start (or end of string).
+                int next = pos + 1;
+                while (next < text.Length)
+                {
+                    bool startsSpecial = false;
+                    foreach (string special in _specialsSortedByLength)
+                    {
+                        if (text.AsSpan(next).StartsWith(special.AsSpan(), StringComparison.Ordinal))
+                        {
+                            startsSpecial = true;
+                            break;
+                        }
+                    }
+                    if (startsSpecial) break;
+                    next++;
+                }
+                yield return new Segment(text[pos..next], false);
+                pos = next;
+            }
+        }
+    }
+
+    // ── BPE merge application ─────────────────────────────────────────────
+
     private void ApplyMerges(List<string> tokens)
     {
         while (tokens.Count > 1)
@@ -124,7 +202,7 @@ public sealed class BpeEncoder
                 }
             }
 
-            if (bestIdx < 0) break; // no more merges applicable
+            if (bestIdx < 0) break;
 
             tokens[bestIdx] = bestMerge;
             tokens.RemoveAt(bestIdx + 1);

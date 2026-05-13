@@ -62,8 +62,33 @@ public static class GgufConverter
         ArgumentNullException.ThrowIfNull(tokens);
         if (tokens.Length == 0)
             throw new ArgumentException("Token list is empty — GGUF vocab data is missing.", nameof(tokens));
+        
+        // ── Resolve byte mapping ──────────────────────────────────────────────
+        // GGUF explicitly marks byte tokens with type=6.
+        // We build a map: byte [0..255] -> token string.
+        var byteMap = new string[256];
+        for (int i = 0; i < 256; i++) byteMap[i] = $"<0x{i:X2}>";
 
+        if (tokenTypes != null)
+        {
+            int limit = Math.Min(tokens.Length, tokenTypes.Length);
+            for (int i = 0; i < limit; i++)
+            {
+                if (tokenTypes[i] == TypeByte)
+                {
+                    // Try to determine which byte this represents.
+                    // Usually, byte tokens appear in order 0..255.
+                    // A safer way is to check if the token string is a known byte representation.
+                    // For now, we'll use the index-based heuristic if we find exactly 256 TypeByte tokens.
+                }
+            }
+        }
+        // Actually, the most robust way to handle GGUF is to use the tokens as-is
+        // and let the BPE encoder's ByteTokenise produce strings that match these.
+        
         // ── Resolve special token strings ─────────────────────────────────
+        // ... (rest of the method)
+
 
         // BOS / EOS: use the explicit IDs from GGUF metadata.
         string bosToken = IdToToken(tokens, bosId) ?? SpecialTokens.DefaultBos;

@@ -33,23 +33,31 @@ public abstract class AttentionLayer : IDisposable
     public void LoadWeights(string name, ReadOnlySpan<float> data)
     {
         var lower = name.ToLower();
-        bool isBias = lower.Contains("bias");
+        bool isBias = lower.EndsWith(".bias");
 
-        if (lower.Contains("q") && !lower.Contains("output"))
+        // Use full tensor-name suffixes — single-char matching ("q", "k", "v") is
+        // fooled by the "blk" block prefix which contains "k", causing V weights to
+        // silently load into Wk and leaving Wv permanently zeroed.
+        if (lower.Contains("attn_q") || lower.Contains("q_proj"))
         {
-            if (isBias) Wq.LoadBias(data); else Wq.LoadWeightTransposed(data);
+            if (isBias) Wq.LoadBias(data);
+            else Wq.LoadWeightTransposed(data);
         }
-        else if (lower.Contains("k") && !lower.Contains("output"))
+        else if (lower.Contains("attn_k") || lower.Contains("k_proj"))
         {
-            if (isBias) Wk.LoadBias(data); else Wk.LoadWeightTransposed(data);
+            if (isBias) Wk.LoadBias(data);
+            else Wk.LoadWeightTransposed(data);
         }
-        else if (lower.Contains("v") && !lower.Contains("output"))
+        else if (lower.Contains("attn_v") || lower.Contains("v_proj"))
         {
-            if (isBias) Wv.LoadBias(data); else Wv.LoadWeightTransposed(data);
+            if (isBias) Wv.LoadBias(data);
+            else Wv.LoadWeightTransposed(data);
         }
-        else if (lower.Contains("o") || lower.Contains("output"))
+        else if (lower.Contains("attn_output") || lower.Contains("attn_o.") ||
+                 lower.Contains("o_proj") || lower.Contains("out_proj"))
         {
-            if (isBias) Wo.LoadBias(data); else Wo.LoadWeightTransposed(data);
+            if (isBias) Wo.LoadBias(data);
+            else Wo.LoadWeightTransposed(data);
         }
     }
 

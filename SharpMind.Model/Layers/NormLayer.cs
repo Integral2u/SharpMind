@@ -83,8 +83,34 @@ public abstract class NormLayer : IDisposable
     protected abstract float ComputeScalarParam(ReadOnlySpan<float> row);
     protected abstract void ComputeBackward(float[] input, float[] output, ReadOnlySpan<float> dOutput, Span<float> dInput, int N, float eps, float storedParam);
 
-    public void LoadWeight(ReadOnlySpan<float> data) => data.CopyTo(Weight.Data);
-    public void LoadBias(ReadOnlySpan<float> data) { if (Bias is null) throw new InvalidOperationException("No bias."); data.CopyTo(Bias.Data); }
+    public void LoadWeight(ReadOnlySpan<float> data)
+    {
+        if (data.Length != Weight.ElementCount)
+            throw new ArgumentException($"Expected {Weight.ElementCount} weight values, got {data.Length}.");
+        
+        for (int i = 0; i < data.Length; i++)
+        {
+            float val = data[i];
+            if (float.IsInfinity(val) || float.IsNaN(val))
+                val = 0f;
+            Weight.Data[i] = val;
+        }
+    }
+
+    public void LoadBias(ReadOnlySpan<float> data)
+    {
+        if (Bias is null) throw new InvalidOperationException("No bias.");
+        if (data.Length != Bias.ElementCount)
+            throw new ArgumentException($"Expected {Bias.ElementCount} bias values, got {data.Length}.");
+        
+        for (int i = 0; i < data.Length; i++)
+        {
+            float val = data[i];
+            if (float.IsInfinity(val) || float.IsNaN(val))
+                val = 0f;
+            Bias.Data[i] = val;
+        }
+    }
 
     public IEnumerable<Parameter> Parameters()
     {
