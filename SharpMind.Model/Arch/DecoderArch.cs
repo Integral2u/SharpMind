@@ -103,6 +103,15 @@ public sealed class DecoderArch : IArchitecture
                 Console.WriteLine($"[DEBUG] NaN check: block {i}: first 5 = {string.Join(", ", next.Data.Slice(0, Math.Min(5, next.ElementCount)).ToArray())}");
             }
             
+            // Track non-zero dimension spread (count of elements with |val| > 0.01)
+            int nonZeroCount = 0;
+            int lastDim = next.Shape[^1];
+            int lastTokenBase = next.ElementCount - lastDim;
+            for (int d = 0; d < lastDim; d++)
+                if (Math.Abs(next.Data[lastTokenBase + d]) > 0.01f)
+                    nonZeroCount++;
+            Console.WriteLine($"[DEBUG] Block {i}: non-zero dims (last token) = {nonZeroCount}/{lastDim}, first5 = {string.Join(", ", next.Data.Slice(lastTokenBase, Math.Min(5, lastDim)).ToArray().Select(v => v.ToString("G3")))}");
+            
             // Only dispose previous if it wasn't our input
             if (i > 0 && !ReferenceEquals(current, hiddenStates))
                 current.Dispose();

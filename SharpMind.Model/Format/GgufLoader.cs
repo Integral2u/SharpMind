@@ -377,9 +377,9 @@ public static partial class GgufLoader
                 ReadTensorInto(reader, info.Dtype, info.Shape, buffer.AsSpan(0, count));
                 
                 // Diagnostic: print dtype and first few values for token_embd and output weights
-                if (info.Name.Contains("token_embd") || info.Name.Contains("output"))
+                if (info.Name.Contains("token_embd") || info.Name.Contains("output") || info.Name.Contains("attn_output"))
                 {
-                    Console.WriteLine($"[DEBUG] Loading {info.Name}: dtype={info.Dtype}, shape=[{string.Join(",", info.Shape)}], first5=[{string.Join(",", buffer.Take(5).Select(v => v.ToString("G3")))}]");
+                    Console.WriteLine($"[DEBUG] Loading {info.Name}: dtype={info.Dtype}, shape=[{string.Join(",", info.Shape)}], offset={info.Offset}, first5=[{string.Join(",", buffer.Take(5).Select(v => v.ToString("G3")))}]");
                 }
 
                 if (model.LoadWeight(info.Name, buffer.AsSpan(0, count)))
@@ -499,29 +499,33 @@ public static partial class GgufLoader
 
     private static void ReadQ4K(BinaryReader reader, Span<float> data, int n)
     {
-        int blockSize = 32;
+        const int QK_K = 256;
+        const int blockSize = QK_K;
         int nBlocks = (n + blockSize - 1) / blockSize;
 
         for (int b = 0; b < nBlocks; b++)
         {
             int blockStart = b * blockSize;
-            int blockEnd = Math.Min(blockStart + blockSize, n);
+            int remaining = Math.Min(blockSize, n - blockStart);
 
-            // Q4_K (QK_K=32): 2 half-scales + 2 half-mins + 16 bytes packed data = 24 bytes per 32 values
-            float scale0 = HalfToFloat(reader.ReadUInt16());
-            float scale1 = HalfToFloat(reader.ReadUInt16());
-            float min0   = HalfToFloat(reader.ReadUInt16());
-            float min1   = HalfToFloat(reader.ReadUInt16());
+            // Q4_K (QK_K=256): 8 half-scales + 8 half-mins + 128 bytes packed 4-bit = 160 bytes per 256 values
+            float[] d = new float[8];
+            float[] m = new float[8];
+            for (int i = 0; i < 8; i++) d[i] = HalfToFloat(reader.ReadUInt16());
+            for (int i = 0; i < 8; i++) m[i] = HalfToFloat(reader.ReadUInt16());
 
-            byte[] packed = reader.ReadBytes(16);
-            for (int j = 0; j < 16 && blockStart + j < blockEnd; j++)
+            byte[] packed = reader.ReadBytes(128);
+
+            for (int sub = 0; sub < 8 && sub * 32 < remaining; sub++)
             {
-                byte qb = packed[j];
-                int low = (qb & 0x0F) - 8;
-                int high = ((qb >> 4) & 0x0F) - 8;
-                data[blockStart + j] = low * scale0 + min0;
-                if (blockStart + j + 16 < blockEnd)
-                    data[blockStart + j + 16] = high * scale1 + min1;
+                float scale = d[sub];
+                float min = m[sub];
+                for (int j = 0; j < 32 && blockStart + sub * 32 + j < n; j++)
+                {
+                    int byteIdx = sub * 16 + j / 2;
+                    int q = (packed[byteIdx] >> (4 * (j % 2))) & 0x0F;
+                    data[blockStart + sub * 32 + j] = (q - 8) * scale + min;
+                }
             }
         }
     }
@@ -544,18 +548,30 @@ public static partial class GgufLoader
     private static void ReadQ5_0(BinaryReader reader, Span<float> data, int n)
     {
         int blockSize = 32;
-        for (int i = 0; i < n; i += blockSize)
+        int nBlocks = (n + blockSize - 1) / blockSize;
+
+        for (int bi = 0; bi < nBlocks; bi++)
         {
-            // Q5_0 (QK_K=32): 1 half-scale + 4 bytes high-bit mask + 16 bytes packed 4-bit = 22 bytes per 32 values
+            int blockStart = bi * blockSize;
+
+            // Q5_0: 1 half-scale + 4 bytes high-bit mask + 16 bytes packed 4-bit = 22 bytes per 32 values
             float d = HalfToFloat(reader.ReadUInt16());
             uint qh = reader.ReadUInt32();
 
             byte[] packed = reader.ReadBytes(16);
-            for (int j = 0; j < blockSize && i + j < n; j++)
+            
+            // Diagnostic: print raw first block
+            if (bi == 0 && n >= 32)
             {
-                int qs = (packed[j / 2] >> (4 * (j % 2))) & 0x0F;
-                int q = qs | (int)(((qh >> j) & 1) << 4);
-            data[i + j] = (q - 16) * d;
+                Console.WriteLine($"[DEBUG] Q5_0 block 0: d={d:G4}, qh=0x{qh:X8}, packed[0]={packed[0]:X2}");
+            }
+            
+            for (int j = 0; j < blockSize && blockStart + j < n; j++)
+            {
+                int xl = (packed[j / 2] >> (4 * (j % 2))) & 0x0F;
+                int xh = ((int)(qh >> j) & 1) << 4;
+                sbyte q = (sbyte)(xl | xh);
+                data[blockStart + j] = (q - 16) * d;
             }
         }
     }

@@ -25,12 +25,16 @@ internal static class AttentionKernels
         try
         {
             Span<float> scoreRow = rented.AsSpan(0, kvLen);
+            // During KV-cache decode, the query offset in the full KV sequence
+            // is kvLen - seqLen (the number of tokens before the current step).
+            int queryBase = causal ? kvLen - seqLen : 0;
             for (int i = 0; i < seqLen; i++)
             {
                 float* qi = q + (long)i * headDim;
+                int absQPos = queryBase + i;
                 for (int j = 0; j < kvLen; j++)
                 {
-                    if (causal && j > i)
+                    if (causal && j > absQPos)
                     {
                         scoreRow[j] = float.NegativeInfinity;
                         continue;
@@ -72,12 +76,14 @@ internal static class AttentionKernels
         try
         {
             Span<float> scoreRow = rented.AsSpan(0, kvLen);
+            int queryBase = causal ? kvLen - seqLen : 0;
             for (int i = 0; i < seqLen; i++)
             {
                 float* qi = q + (long)i * headDim;
+                int absQPos = queryBase + i;
                 for (int j = 0; j < kvLen; j++)
                 {
-                    if (causal && j > i)
+                    if (causal && j > absQPos)
                     {
                         scoreRow[j] = float.NegativeInfinity;
                         continue;

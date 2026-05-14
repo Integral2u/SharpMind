@@ -87,6 +87,16 @@ public abstract class NormLayer : IDisposable
     {
         if (data.Length != Weight.ElementCount)
             throw new ArgumentException($"Expected {Weight.ElementCount} weight values, got {data.Length}.");
+
+        // Check if weights appear corrupted (near-zero values for all elements)
+        // Normal norm weights should sum to roughly dim*1.0; near-zero sum indicates offset/data corruption
+        float sum = 0f;
+        for (int i = 0; i < data.Length; i++) sum += Math.Abs(data[i]);
+        if (sum < 1e-6f && data.Length > 0)
+        {
+            Console.WriteLine($"[DEBUG] Norm weight appears corrupted (sum={sum:G3}), keeping default ones initialization");
+            return;
+        }
         
         for (int i = 0; i < data.Length; i++)
         {

@@ -93,18 +93,7 @@ public sealed class Transformer : IDisposable
         }
         else if (lower.Contains("output_norm") || lower.Contains("norm") && lower.Contains("output"))
         {
-            // Check if the output norm weight appears to be near-zero (corrupted GGUF)
-            float sum = 0;
-            for (int i = 0; i < Math.Min(896, data.Length); i++) sum += Math.Abs(data[i]);
-            if (sum < 1e-10f && data.Length == _config.HiddenDim)
-            {
-                Console.WriteLine($"[DEBUG] Output norm weight appears corrupted (sum={sum:G3}), keeping default values (all 1.0)");
-                // Don't load the corrupted data - keep the default ones initialization
-            }
-            else
-            {
-                _finalNorm.LoadWeight(data);
-            }
+            _finalNorm.LoadWeight(data);
             return true;
         }
         else if (lower.Contains("lm_head") || lower.StartsWith("output."))
@@ -242,6 +231,8 @@ public sealed class Transformer : IDisposable
 
         var projectionWeight = _lmHead ?? _embedding.Weight;
         var logits = _ops.MatMulWithBT(lastTokenNormed, projectionWeight);
+        // Diagnostic: which projection weight is being used
+        Console.WriteLine($"[DEBUG] Projection weight: {(_lmHead != null ? "lm_head (loaded)" : "embedding (fallback)")}, first5 of lastTokenNormed={string.Join(",", lastTokenNormed.Data.Slice(0, Math.Min(5, lastTokenNormed.Data.Length)).ToArray().Select(v => v.ToString("G3")))}");
         lastTokenNormed.Dispose();
         return logits;
     }

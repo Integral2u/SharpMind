@@ -51,10 +51,10 @@ public sealed class ChatSession
     public IReadOnlyList<ChatMessage> History => _history;
 
     public int MaxTokens { get; set; } = 2048;
-    public float Temperature { get; set; } = 0.5f;
+    public float Temperature { get; set; } = 0.0f;
     public int TopK { get; set; } = 20;
     public float TopP { get; set; } = 0.85f;
-    public float RepetitionPenalty { get; set; } = 2.0f;
+    public float RepetitionPenalty { get; set; } = 1.1f;
     public int RepetitionWindow { get; set; } = 32;
 
     public async IAsyncEnumerable<ChatStreamEntry> GetResponseStreamAsync(
@@ -317,12 +317,23 @@ public sealed class ChatSession
 
     private string ApplyJinjaTemplate(string template, List<ChatMessage> history)
     {
-        // Use the template if it contains known token markers, otherwise use Qwen format
-        // template from GGUF typically contains {% for message in messages %}<|im_start|>...
-        if (!template.Contains("<|im_start|>"))
+        // Extract special token markers from the Jinja template using regex
+        var tokenMatches = System.Text.RegularExpressions.Regex.Matches(template, @"<\|[^|]+\|>");
+        var tokens = tokenMatches.Select(m => m.Value).Distinct().ToList();
+
+        // Detect format from tokens present in the template
+        string systemToken = tokens.FirstOrDefault(t => t.Contains("system") || t.Contains("im_start"), "<|im_start|>");
+        string userToken = tokens.FirstOrDefault(t => t.Contains("user") && !t.Contains("system"), systemToken);
+        string assistantToken = tokens.FirstOrDefault(t => t.Contains("assistant") && !t.Contains("user"), systemToken);
+        string endToken = tokens.FirstOrDefault(t => t.Contains("im_end") || t.Contains("/"), "<|im_end|>");
+
+        // Determine if it's ChatML style (im_start/im_end) or Zephyr style (<|system|>, <|/system|>)
+        bool isChatML = tokens.Any(t => t.Contains("im_start"));
+
+        var result = new System.Text.StringBuilder();
+        if (isChatML)
         {
-            // Template doesn't have Qwen markers, use Qwen format
-            var result = new System.Text.StringBuilder();
+            // ChatML: <|im_start|>role\ncontent<|im_end|>\n
             foreach (var msg in history)
             {
                 var role = msg.Role switch
@@ -335,24 +346,24 @@ public sealed class ChatSession
                 result.Append($"<|im_start|>{role}\n{msg.Content}<|im_end|>\n");
             }
             result.Append("<|im_start|>assistant\n");
-            return result.ToString();
         }
-
-        // Template has Qwen markers - use the stored messages
-        var sb = new System.Text.StringBuilder();
-        foreach (var msg in history)
+        else
         {
-            var role = msg.Role switch
+            // Zephyr/Llama style: <|role|>\ncontent<|/role|>\n
+            foreach (var msg in history)
             {
-                ChatRole.System => "system",
-                ChatRole.Agent => "assistant",
-                ChatRole.User => "user",
-                _ => "unknown"
-            };
-            sb.Append($"<|im_start|>{role}\n{msg.Content}<|im_end|>\n");
+                var role = msg.Role switch
+                {
+                    ChatRole.System => "system",
+                    ChatRole.Agent => "assistant",
+                    ChatRole.User => "user",
+                    _ => "unknown"
+                };
+                result.Append($"<|{role}|>\n{msg.Content}<|/{role}|>\n");
+            }
+            result.Append("<|assistant|>\n");
         }
-        sb.Append("<|im_start|>assistant\n");
-        return sb.ToString();
+        return result.ToString();
     }
 
     public async ValueTask DisposeAsync()
