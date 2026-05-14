@@ -129,7 +129,6 @@ public sealed class LinearLayer : IDisposable
         ThrowIfDisposed();
         if (data.Length != _weight.ElementCount)
             throw new ArgumentException($"Expected {_weight.ElementCount} weight values, got {data.Length}.");
-        Console.WriteLine($"[DEBUG] LoadWeight: {Name} {data.Length} elements");
         data.CopyTo(_weight.Data);
     }
 
@@ -138,7 +137,6 @@ public sealed class LinearLayer : IDisposable
         ThrowIfDisposed();
         if (data.Length != _weight.ElementCount)
             throw new ArgumentException($"Expected {_weight.ElementCount} weight values, got {data.Length}.");
-        Console.WriteLine($"[DEBUG] LoadWeightTransposed: {Name} {data.Length} elements");
 
         // GGUF: [Out, In] -> SharpMind: [In, Out]
         int inF = InFeatures;

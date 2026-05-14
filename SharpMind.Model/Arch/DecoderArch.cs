@@ -95,23 +95,6 @@ public sealed class DecoderArch : IArchitecture
             // Pass the cache for the current block
             var next = _blocks[i].Forward(current, caches != null ? caches[i] : null, positionOffset, causal: true);
             
-            // NaN check per block
-            int nanCount = CountNaN(next.Data);
-            if (nanCount > 0)
-            {
-                Console.WriteLine($"[DEBUG] NaN check: block {i}: {nanCount} NaN elements out of {next.ElementCount}");
-                Console.WriteLine($"[DEBUG] NaN check: block {i}: first 5 = {string.Join(", ", next.Data.Slice(0, Math.Min(5, next.ElementCount)).ToArray())}");
-            }
-            
-            // Track non-zero dimension spread (count of elements with |val| > 0.01)
-            int nonZeroCount = 0;
-            int lastDim = next.Shape[^1];
-            int lastTokenBase = next.ElementCount - lastDim;
-            for (int d = 0; d < lastDim; d++)
-                if (Math.Abs(next.Data[lastTokenBase + d]) > 0.01f)
-                    nonZeroCount++;
-            Console.WriteLine($"[DEBUG] Block {i}: non-zero dims (last token) = {nonZeroCount}/{lastDim}, first5 = {string.Join(", ", next.Data.Slice(lastTokenBase, Math.Min(5, lastDim)).ToArray().Select(v => v.ToString("G3")))}");
-            
             // Only dispose previous if it wasn't our input
             if (i > 0 && !ReferenceEquals(current, hiddenStates))
                 current.Dispose();
@@ -122,14 +105,6 @@ public sealed class DecoderArch : IArchitecture
         return current;
     }
 
-    private static int CountNaN(ReadOnlySpan<float> data)
-    {
-        int count = 0;
-        for (int i = 0; i < data.Length; i++)
-            if (float.IsNaN(data[i])) count++;
-        return count;
-    }
-    
     public void Backward(Tensor<float> dOutput)
     {
         ThrowIfDisposed();

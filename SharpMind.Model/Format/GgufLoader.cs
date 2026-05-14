@@ -375,12 +375,6 @@ public static partial class GgufLoader
             try
             {
                 ReadTensorInto(reader, info.Dtype, info.Shape, buffer.AsSpan(0, count));
-                
-                // Diagnostic: print dtype and first few values for token_embd and output weights
-                if (info.Name.Contains("token_embd") || info.Name.Contains("output") || info.Name.Contains("attn_output"))
-                {
-                    Console.WriteLine($"[DEBUG] Loading {info.Name}: dtype={info.Dtype}, shape=[{string.Join(",", info.Shape)}], offset={info.Offset}, first5=[{string.Join(",", buffer.Take(5).Select(v => v.ToString("G3")))}]");
-                }
 
                 if (model.LoadWeight(info.Name, buffer.AsSpan(0, count)))
                     loaded++;
@@ -559,13 +553,7 @@ public static partial class GgufLoader
             uint qh = reader.ReadUInt32();
 
             byte[] packed = reader.ReadBytes(16);
-            
-            // Diagnostic: print raw first block
-            if (bi == 0 && n >= 32)
-            {
-                Console.WriteLine($"[DEBUG] Q5_0 block 0: d={d:G4}, qh=0x{qh:X8}, packed[0]={packed[0]:X2}");
-            }
-            
+
             for (int j = 0; j < blockSize && blockStart + j < n; j++)
             {
                 int xl = (packed[j / 2] >> (4 * (j % 2))) & 0x0F;

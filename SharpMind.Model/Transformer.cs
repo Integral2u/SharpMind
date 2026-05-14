@@ -198,24 +198,11 @@ public sealed class Transformer : IDisposable
         _cachedEmbedding = _embedding.Forward(tokenIds);
         using var embedded = _cachedEmbedding;
 
-        // NaN check: embedding
-        int nanCount = CountNaN(embedded.Data);
-        if (nanCount > 0) Console.WriteLine($"[DEBUG] NaN check: after embedding: {nanCount} NaN elements");
-
         _cachedHidden = _arch.Forward(embedded, caches, positionOffset);
         using var hidden = _cachedHidden;
 
-        // NaN check: after architecture
-        nanCount = CountNaN(hidden.Data);
-        if (nanCount > 0) Console.WriteLine($"[DEBUG] NaN check: after arch: {nanCount} NaN elements");
-        else Console.WriteLine("[DEBUG] NaN check: after arch: OK");
-
         _cachedNormed = _finalNorm.Forward(hidden);
         using var normed = _cachedNormed;
-
-        // NaN check: after final norm
-        nanCount = CountNaN(normed.Data);
-        if (nanCount > 0) Console.WriteLine($"[DEBUG] NaN check: after final norm: {nanCount} NaN elements");
 
         int batch = tokenIds.Shape.Rows;
         int seqLen = tokenIds.Shape.Cols;
@@ -231,8 +218,6 @@ public sealed class Transformer : IDisposable
 
         var projectionWeight = _lmHead ?? _embedding.Weight;
         var logits = _ops.MatMulWithBT(lastTokenNormed, projectionWeight);
-        // Diagnostic: which projection weight is being used
-        Console.WriteLine($"[DEBUG] Projection weight: {(_lmHead != null ? "lm_head (loaded)" : "embedding (fallback)")}, first5 of lastTokenNormed={string.Join(",", lastTokenNormed.Data.Slice(0, Math.Min(5, lastTokenNormed.Data.Length)).ToArray().Select(v => v.ToString("G3")))}");
         lastTokenNormed.Dispose();
         return logits;
     }
