@@ -415,15 +415,12 @@ public static partial class GgufLoader
             switch (dtype)
             {
                 case GgufDtype.F32:
-                    // Some GGUF files store 1D weight tensors (norms) as F16 values
-                    // padded to F32 (each 2-byte F16 is stored in a 4-byte F32 slot).
-                    if (count <= 2048 && shape.Length == 1)
+                    // Norm weights and other 1D tensors may be stored as consecutive
+                    // F16 values with an F32 dtype tag. Read as half-floats to handle both.
+                    if (shape.Length == 1 && count <= 2048)
                     {
                         for (int i = 0; i < count; i++)
-                        {
-                            uint word = stream.ReadUInt32();
-                            destination[i] = HalfToFloat((ushort)(word & 0xFFFF));
-                        }
+                            destination[i] = HalfToFloat(stream.ReadUInt16());
                     }
                     else
                     {

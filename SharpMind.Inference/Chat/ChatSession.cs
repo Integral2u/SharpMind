@@ -76,7 +76,6 @@ public sealed class ChatSession
         // addBos only when there is no chat template — templated prompts are self-contained
         bool templated = !string.IsNullOrEmpty(_chatTemplate);
         var encoded = _tokenizer.Encode(prompt, addBos: !templated, addEos: false);
-        Console.WriteLine($"[DEBUG] Encoded tokens: {string.Join(", ", encoded)}");
         int[] promptToks;
         if (encoded.Length > MaxTokens)
         {
@@ -144,11 +143,6 @@ public sealed class ChatSession
                 }
 
                 int nextId = Sampler.Sample(logitsSpan, samplingCfg, Random.Shared);
-                if (step == 0)
-                {
-                    Console.WriteLine($"[DEBUG] Step 0 - NextId: {nextId}");
-                    Console.WriteLine($"[DEBUG] First 5 logits: {string.Join(", ", logitsSpan.Slice(0, Math.Min(5, logitsSpan.Length)).ToArray())}");
-                }
                 generatedIds.Add(nextId);
 
                 if (nextId == _tokenizer.EosId) break;
@@ -256,7 +250,6 @@ public sealed class ChatSession
         if (!string.IsNullOrEmpty(_chatTemplate))
         {
             var prompt = ApplyChatTemplate(_chatTemplate, _history);
-            Console.WriteLine($"[DEBUG] ChatPrompt (template): {prompt}");
             return prompt;
         }
 

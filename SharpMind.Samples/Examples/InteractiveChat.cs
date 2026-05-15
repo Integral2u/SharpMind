@@ -1,4 +1,4 @@
-using SharpMind.Inference;
+﻿using SharpMind.Inference;
 using SharpMind.Inference.Chat;
 using SharpMind.Model;
 using SharpMind.Model.Config;
@@ -10,7 +10,11 @@ namespace SharpMind.Samples.Examples
 {
     public static class InteractiveChat
     {
-        private static readonly string ModelName = "qwen2-0_5b-instruct-fp16";// Qwen2.5-1.5B-Instruct-f16";// 
+        // Set to true for one-shot test, false for interactive
+        private const bool TestMode = false;
+        private const string TestPrompt = "What is the capital of France?";
+
+        private static readonly string ModelName = "Qwen2.5-1.5B-Instruct-f16";
         private static readonly string ModelPath = @"C:\Integral2u\source\repos\SharpMind\ExternalAssets";
         public static async Task RunAsync()
         {
@@ -27,7 +31,7 @@ namespace SharpMind.Samples.Examples
             if (tokenizer == null && File.Exists(tokenizerPath)) tokenizer = Tokenizer.FromQwen(tokenizerPath);
             if (tokenizer == null)
             {
-                Console.Out.WriteLine($"Tokenizer dat not found");
+                Console.Out.WriteLine($"Tokenizer not found");
                 return;
             }
             var sharpConfig = SharpMindConfig.Qwen with { Hardware = DetectBestHardware() };
@@ -45,14 +49,37 @@ namespace SharpMind.Samples.Examples
 
             await using var session = new ChatSession(model, tokenizer, inferOps, meta)
             {
-                MaxTokens = 512,
-                Temperature = 0.7f,
-                TopK = 40,
-                TopP = 0.9f,
+                MaxTokens = TestMode ? 50 : 1024,
+                Temperature = TestMode ? 0.0f : 0.7f,
+                TopK = TestMode ? 1 : 40,
+                TopP = TestMode ? 0.0f : 0.9f,
+                RepetitionPenalty = 1.05f,
+                RepetitionWindow = 64,
             };
             if (!string.IsNullOrEmpty(systemPrompt)) session.AddMessage(ChatRole.System, systemPrompt);
-            Console.Out.WriteLine("\nChat ready! Say hello.\n");
-            var history = await session.StartChatAsync(cancellationTokenSource.Token, Prompt, Response);
+
+            if (TestMode)
+            {
+                Console.Out.WriteLine($"\nTest prompt: \"{TestPrompt}\"");
+                Console.Out.Write("Response: ");
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                await foreach (var entry in session.GetResponseStreamAsync(TestPrompt, cancellationTokenSource.Token))
+                {
+                    if (entry.TextDelta is { Length: > 0 } delta)
+                    {
+                        Console.ForegroundColor = ConsoleColor.Yellow;
+                        Console.Write(delta);
+                        Console.ResetColor();
+                    }
+                }
+                sw.Stop();
+                Console.Out.WriteLine($"\n--- Completed in {sw.Elapsed.TotalSeconds:F1}s ---");
+            }
+            else
+            {
+                Console.Out.WriteLine("\nChat ready! Say hello.\n");
+                var history = await session.StartChatAsync(cancellationTokenSource.Token, Prompt, Response);
+            }
 
             void Response(string text)
             {
