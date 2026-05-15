@@ -88,15 +88,15 @@ public abstract class NormLayer : IDisposable
         if (data.Length != Weight.ElementCount)
             throw new ArgumentException($"Expected {Weight.ElementCount} weight values, got {data.Length}.");
 
-        // Check if weights appear corrupted (near-zero values for all elements)
-        // Normal norm weights should sum to roughly dim*1.0; near-zero sum indicates offset/data corruption
+        // Check if weights appear corrupted (near-zero values for all elements).
+        // Normal norm weights should sum to roughly dim*1.0; near-zero sum indicates
+        // the data in the file is F16 stored as F32 (every other word is padding/next value).
         float sum = 0f;
-        for (int i = 0; i < data.Length; i++) sum += Math.Abs(data[i]);
+        int checkLen = Math.Min(data.Length, 64);
+        for (int i = 0; i < checkLen; i++) sum += Math.Abs(data[i]);
         if (sum < 1e-6f && data.Length > 0)
-        {
-            return;
-        }
-        
+            return;  // Keep default ones initialization
+
         for (int i = 0; i < data.Length; i++)
         {
             float val = data[i];

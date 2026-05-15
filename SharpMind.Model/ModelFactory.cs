@@ -36,7 +36,7 @@ public static class ModelFactory
             _ => throw new NotSupportedException($"Unknown ArchKind: {sharpConfig.Arch}")
         };
 
-        var finalNorm = BuildNorm(modelConfig.HiddenDim, sharpConfig);
+        var finalNorm = BuildNorm(modelConfig.HiddenDim, sharpConfig, modelConfig.NormEps);
 
         return new Transformer(modelConfig, embedding, arch, finalNorm, ops);
     }
@@ -78,8 +78,9 @@ public static class ModelFactory
     {
         var attention = Assembler.CreateInstance<AttentionLayer>(mapping, modelConfig);
         var ffn = BuildFfn(modelConfig, sharpConfig, acts, ops);
-        var norm1 = BuildNorm(modelConfig.HiddenDim, sharpConfig);
-        var norm2 = BuildNorm(modelConfig.HiddenDim, sharpConfig);
+        float eps = modelConfig.NormEps;
+        var norm1 = BuildNorm(modelConfig.HiddenDim, sharpConfig, eps);
+        var norm2 = BuildNorm(modelConfig.HiddenDim, sharpConfig, eps);
 
         return new TransformerBlock(layerIdx, attention, ffn, norm1, norm2, ops);
     }
@@ -97,12 +98,12 @@ public static class ModelFactory
             _ => throw new NotSupportedException($"Unknown FfnKind: {sharpConfig.Ffn}")
         };
 
-    private static NormLayer BuildNorm(int dim, SharpMindConfig sharpConfig)
+    private static NormLayer BuildNorm(int dim, SharpMindConfig sharpConfig, float eps = 1e-5f)
     {
         return sharpConfig.Norm switch
         {
-            NormKind.RMSNorm => new RmsNormLayer(dim),
-            NormKind.LayerNorm => new LayerNormLayer(dim),
+            NormKind.RMSNorm => new RmsNormLayer(dim, eps),
+            NormKind.LayerNorm => new LayerNormLayer(dim, eps),
             _ => throw new NotSupportedException($"Unknown NormKind: {sharpConfig.Norm}")
         };
     }

@@ -61,6 +61,11 @@ public sealed record ModelConfig
     /// </summary>
     public float RopeTheta { get; init; } = 10_000f;
 
+    // ── Normalisation ─────────────────────────────────────────────────────
+
+    /// <summary>Epsilon for RMS / LayerNorm. Qwen2 uses 1e-6; LLaMA 2 uses 1e-5.</summary>
+    public float NormEps { get; init; } = 1e-5f;
+
     // ── Derived ───────────────────────────────────────────────────────────
 
     /// <summary>Dimension per query head. Must equal HiddenDim / NumHeads.</summary>
