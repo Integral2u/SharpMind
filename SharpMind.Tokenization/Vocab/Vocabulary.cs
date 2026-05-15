@@ -53,10 +53,10 @@ public sealed class Vocabulary
 
     public SpecialTokens Specials { get; }
     public int Size => _idToToken.Count;
-    public int UnkId => _tokenToId[Specials.Unk];
-    public int BosId => _tokenToId[Specials.Bos];
-    public int EosId => _tokenToId[Specials.Eos];
-    public int PadId => _tokenToId[Specials.Pad];
+    public int UnkId => _tokenToId.TryGetValue(Specials.Unk, out int unk) ? unk : 0;
+    public int BosId => _tokenToId.TryGetValue(Specials.Bos, out int bos) ? bos : 1;
+    public int EosId => _tokenToId.TryGetValue(Specials.Eos, out int eos) ? eos : 2;
+    public int PadId => _tokenToId.TryGetValue(Specials.Pad, out int pad) ? pad : 0;
 
     // ── Lookup ────────────────────────────────────────────────────────────
 
