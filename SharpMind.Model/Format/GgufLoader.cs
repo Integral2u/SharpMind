@@ -445,7 +445,7 @@ public static partial class GgufLoader
                     break;
             }
         }
-        catch { /* partial tensor � leave zeros */ }
+        catch { }//partial tensor � leave zeros 
     }
 
     private static float HalfToFloat(ushort half)
