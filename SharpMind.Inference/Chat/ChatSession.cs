@@ -248,12 +248,9 @@ public sealed class ChatSession
     {
         // If we have a chat template from GGUF, use it
         if (!string.IsNullOrEmpty(_chatTemplate))
-        {
-            var prompt = ApplyChatTemplate(_chatTemplate, _history);
-            return prompt;
-        }
+            return ApplyChatTemplate(_chatTemplate, _history);
 
-        // Fallback to simple format
+        // Fallback to simple format for legacy models
         var sb = new System.Text.StringBuilder();
         foreach (var msg in _history)
         {
@@ -267,25 +264,30 @@ public sealed class ChatSession
             sb.AppendLine(prefix + msg.Content);
         }
         sb.Append("assistant: ");
-        var fallback = sb.ToString();
-        Console.WriteLine($"[DEBUG] ChatPrompt (fallback): {fallback}");
-        return fallback;
+        return sb.ToString();
     }
 
     private string ApplyChatTemplate(string template, List<ChatMessage> history)
     {
-        // If template contains Jinja-style {{, use it as Jinja template (simplified)
-        // Otherwise use model-specific format
-        if (template.Contains("{{"))
-        {
-            // Jinja template - simplified parsing for common patterns
-            return ApplyJinjaTemplate(template, history);
-        }
+        // Extract all special tokens from the Jinja template
+        var tokenMatches = System.Text.RegularExpressions.Regex.Matches(template, @"<\|[^|]+\|>");
+        var allTokens = tokenMatches.Select(m => m.Value).Distinct().ToList();
 
-        // Default: use the template as-is with placeholders replaced
-        var result = template;
+        // Detect format style from tokens
+        bool isChatML = allTokens.Any(t => t.Contains("im_start"));
+        bool isZephyr = allTokens.Any(t => t.Contains("/system") || t.Contains("/user") || t.Contains("/assistant"));
 
-        // Replace common placeholders
+        // Determine start and end tokens for each role
+        // ChatML: <|im_start|>role ... <|im_end|>
+        // Zephyr: <|role|> ... <|/role|>
+        string StartToken(string role) => isChatML ? "<|im_start|>" : $"<|{role}|>";
+        string EndToken(string role) => isChatML ? "<|im_end|>" : $"<|/{role}|>";
+        string AsstStart() => isChatML ? "<|im_start|>assistant" : "<|assistant|>";
+
+        // The template might use a different newline format; detect it
+        bool useNewlineBeforeContent = template.Contains($"'\\n'") || template.Contains("\n");
+
+        var result = new System.Text.StringBuilder();
         foreach (var msg in history)
         {
             var role = msg.Role switch
@@ -296,66 +298,26 @@ public sealed class ChatSession
                 _ => "unknown"
             };
 
-            // Simple replacement for Qwen-style templates
-            result = result.Replace($"{{{{ {role}_message }}}}", msg.Content);
-            result = result.Replace($"{{{{ {role} }}}}", msg.Content);
-        }
-
-        // Add assistant prompt
-        if (!result.EndsWith("assistant\n"))
-            result += "<|im_start|>assistant\n";
-
-        return result;
-    }
-
-    private string ApplyJinjaTemplate(string template, List<ChatMessage> history)
-    {
-        // Extract special token markers from the Jinja template using regex
-        var tokenMatches = System.Text.RegularExpressions.Regex.Matches(template, @"<\|[^|]+\|>");
-        var tokens = tokenMatches.Select(m => m.Value).Distinct().ToList();
-
-        // Detect format from tokens present in the template
-        string systemToken = tokens.FirstOrDefault(t => t.Contains("system") || t.Contains("im_start"), "<|im_start|>");
-        string userToken = tokens.FirstOrDefault(t => t.Contains("user") && !t.Contains("system"), systemToken);
-        string assistantToken = tokens.FirstOrDefault(t => t.Contains("assistant") && !t.Contains("user"), systemToken);
-        string endToken = tokens.FirstOrDefault(t => t.Contains("im_end") || t.Contains("/"), "<|im_end|>");
-
-        // Determine if it's ChatML style (im_start/im_end) or Zephyr style (<|system|>, <|/system|>)
-        bool isChatML = tokens.Any(t => t.Contains("im_start"));
-
-        var result = new System.Text.StringBuilder();
-        if (isChatML)
-        {
-            // ChatML: <|im_start|>role\ncontent<|im_end|>\n
-            foreach (var msg in history)
+            result.Append(StartToken(role));
+            if (useNewlineBeforeContent) result.Append('\n');
+            result.Append(msg.Content);
+            if (!string.IsNullOrEmpty(msg.Name) && msg.Role == ChatRole.Agent)
             {
-                var role = msg.Role switch
-                {
-                    ChatRole.System => "system",
-                    ChatRole.Agent => "assistant",
-                    ChatRole.User => "user",
-                    _ => "unknown"
-                };
-                result.Append($"<|im_start|>{role}\n{msg.Content}<|im_end|>\n");
+                // If agent has a name, prepend it (e.g., "Delta: Hello")
+                result.Append(EndToken(role));
+                result.Append('\n');
             }
-            result.Append("<|im_start|>assistant\n");
-        }
-        else
-        {
-            // Zephyr/Llama style: <|role|>\ncontent<|/role|>\n
-            foreach (var msg in history)
+            else
             {
-                var role = msg.Role switch
-                {
-                    ChatRole.System => "system",
-                    ChatRole.Agent => "assistant",
-                    ChatRole.User => "user",
-                    _ => "unknown"
-                };
-                result.Append($"<|{role}|>\n{msg.Content}<|/{role}|>\n");
+                result.Append(EndToken(role));
+                result.Append('\n');
             }
-            result.Append("<|assistant|>\n");
         }
+
+        // Add assistant generation prompt
+        result.Append(AsstStart());
+        result.Append('\n');
+
         return result.ToString();
     }
 

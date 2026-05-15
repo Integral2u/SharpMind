@@ -12,7 +12,7 @@ namespace SharpMind.Samples.Examples
     {
         // Set to true for one-shot test, false for interactive
         private const bool TestMode = false;
-        private const string TestPrompt = "What is the capital of France?";
+        private const string TestPrompt = "hello";
 
         private static readonly string ModelName = "Qwen2.5-1.5B-Instruct-f16";
         private static readonly string ModelPath = @"C:\Integral2u\source\repos\SharpMind\ExternalAssets";
