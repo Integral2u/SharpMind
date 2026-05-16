@@ -9,6 +9,7 @@ public sealed class GgufMeta
     public long KvCount { get; set; }
     public List<KvPair> KvPairs { get; set; } = [];
     public List<TensorInfo> Tensors { get; set; } = [];
+    public long DataOffset { get; set; }
     public long GetLong(string key, long defaultValue = 0)
     {
         var kv = KvPairs.FirstOrDefault(k => k.Key == key);

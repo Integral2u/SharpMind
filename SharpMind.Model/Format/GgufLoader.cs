@@ -184,6 +184,13 @@ public static partial class GgufLoader
             catch { break; }
         }
 
+        // Compute the data section start offset (aligned to 32 bytes by default).
+        // GGUF stores tensor offsets relative to this position, but we need absolute
+        // file offsets when seeking to each tensor's data.
+        uint alignment = (uint)meta.GetLong("general.alignment", 32);
+        long pos = stream.Position;
+        meta.DataOffset = (pos + alignment - 1) & ~(alignment - 1);
+
         return meta;
     }
 
@@ -355,7 +362,7 @@ public static partial class GgufLoader
 
         foreach (var info in meta.Tensors)
         {
-            stream.Position = info.Offset;
+            stream.Position = meta.DataOffset + info.Offset;
             var tensor = ReadTensor(reader, info.Dtype, info.Shape);
             result[info.Name] = tensor;
         }
@@ -372,7 +379,7 @@ public static partial class GgufLoader
 
         foreach (var info in meta.Tensors)
         {
-            long targetOffset = info.Offset;
+            long targetOffset = meta.DataOffset + info.Offset;
             if (targetOffset >= stream.Length) continue;
 
             stream.Position = targetOffset;
@@ -425,7 +432,7 @@ public static partial class GgufLoader
                     for (int i = 0; i < count; i++) destination[i] = stream.ReadSingle();
                     break;
                 case GgufDtype.F16:
-                    for (int i = 0; i < count; i++) destination[i] = HalfToFloat(stream.ReadUInt16());
+                    for (int i = 0; i < count; i++) { float v = HalfToFloat(stream.ReadUInt16()); destination[i] = float.IsNaN(v) ? 0f : v; }
                     break;
                 case GgufDtype.Q4_0:
                     ReadQ4_0(stream, destination, count);
@@ -504,6 +511,7 @@ public static partial class GgufLoader
             int blockStart = b * qk;
             // block_q5_0: half d + uint32_t qh + uint8_t qs[16]
             float d = HalfToFloat(reader.ReadUInt16());
+            if (float.IsNaN(d)) d = 0f;
             uint qh = reader.ReadUInt32();
             byte[] packed = reader.ReadBytes(16);
 
@@ -533,6 +541,7 @@ public static partial class GgufLoader
 
             // Q4_0: 1 half-scale + 16 bytes packed 4-bit values = 18 bytes per 32 values
             float scale = HalfToFloat(reader.ReadUInt16());
+            if (float.IsNaN(scale)) scale = 0f;
             byte[] packed = reader.ReadBytes(16);
 
             for (int j = 0; j < blockSize && blockStart + j < blockEnd; j++)
@@ -554,7 +563,9 @@ public static partial class GgufLoader
 
             // block_q4_K: half d, half dmin, uint8_t scales[16], uint8_t qs[128]
             float dSuper = HalfToFloat(reader.ReadUInt16());
+            if (float.IsNaN(dSuper)) dSuper = 0f;
             float minSuper = HalfToFloat(reader.ReadUInt16());
+            if (float.IsNaN(minSuper)) minSuper = 0f;
 
             byte[] scales = reader.ReadBytes(16);
             byte[] qs = reader.ReadBytes(128);
@@ -614,6 +625,7 @@ public static partial class GgufLoader
                 scales[s] = reader.ReadSByte();
 
             float d = HalfToFloat(reader.ReadUInt16());
+            if (float.IsNaN(d)) d = 0f;
 
             for (int i = 0; i < QK_K && blockStart + i < n; i++)
             {
@@ -638,8 +650,8 @@ public static partial class GgufLoader
             // Q5_K (QK_K=256): 8 half-d + 8 half-dmin + 32B qh + 128B qs = 192 bytes per 256 values
             float[] d = new float[8];
             float[] m = new float[8];
-            for (int i = 0; i < 8; i++) d[i] = HalfToFloat(reader.ReadUInt16());
-            for (int i = 0; i < 8; i++) m[i] = HalfToFloat(reader.ReadUInt16());
+            for (int i = 0; i < 8; i++) { d[i] = HalfToFloat(reader.ReadUInt16()); if (float.IsNaN(d[i])) d[i] = 0f; }
+            for (int i = 0; i < 8; i++) { m[i] = HalfToFloat(reader.ReadUInt16()); if (float.IsNaN(m[i])) m[i] = 0f; }
 
             byte[] qh = reader.ReadBytes(32);    // high bits (1 per value)
             byte[] packed = reader.ReadBytes(128); // low 4 bits
@@ -667,8 +679,8 @@ public static partial class GgufLoader
             // Q3_K (QK_K=256): 8 half-d + 8 half-dmin + 64B qk + 64B qs = 160 bytes per 256 values
             float[] d = new float[8];
             float[] m = new float[8];
-            for (int i = 0; i < 8; i++) d[i] = HalfToFloat(reader.ReadUInt16());
-            for (int i = 0; i < 8; i++) m[i] = HalfToFloat(reader.ReadUInt16());
+            for (int i = 0; i < 8; i++) { d[i] = HalfToFloat(reader.ReadUInt16()); if (float.IsNaN(d[i])) d[i] = 0f; }
+            for (int i = 0; i < 8; i++) { m[i] = HalfToFloat(reader.ReadUInt16()); if (float.IsNaN(m[i])) m[i] = 0f; }
 
             byte[] qk = reader.ReadBytes(64);   // high 1-bit
             byte[] qs = reader.ReadBytes(64);   // low 2 bits
