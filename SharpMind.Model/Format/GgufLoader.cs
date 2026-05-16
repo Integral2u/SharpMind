@@ -387,6 +387,20 @@ public static partial class GgufLoader
             int count = 1;
             foreach (int d in info.Shape) count *= d;
 
+            // Read raw quantized bytes before dequantizing (save stream position)
+            long savedPos = stream.Position;
+            if (IsQuantizedType(info.Dtype) && info.Shape.Length >= 2)
+            {
+                long rawSize = GetRawTensorByteCount(info.Shape, info.Dtype);
+                if (rawSize > 0 && savedPos + rawSize <= stream.Length)
+                {
+                    byte[] rawData = new byte[rawSize];
+                    stream.Read(rawData, 0, rawData.Length);
+                    stream.Position = savedPos; // seek back for dequant read
+                    model.SetRawWeight(info.Name, rawData, info.Dtype);
+                }
+            }
+
             float[] buffer = ArrayPool<float>.Shared.Rent(count);
             try
             {
@@ -404,6 +418,32 @@ public static partial class GgufLoader
         }
 
         Console.WriteLine($"[GgufLoader] Loaded weights: {loaded}/{total} tensors (missing: {missing})");
+    }
+
+    private static bool IsQuantizedType(GgufDtype dtype) => dtype switch
+    {
+        GgufDtype.Q3_K or GgufDtype.Q4_K or GgufDtype.Q5_K or GgufDtype.Q6_K => true,
+        _ => false
+    };
+
+    private static long GetRawTensorByteCount(int[] shape, GgufDtype dtype)
+    {
+        int nRows = shape[0];
+        int nCols = shape.Length > 1 ? shape[1] : 1;
+        int blockSize, bytesPerBlock;
+        switch (dtype)
+        {
+            case GgufDtype.Q3_K: blockSize = 256; bytesPerBlock = 110; break;  // hmask[32]+qs[64]+scales[12]+d[2]
+            case GgufDtype.Q4_K: blockSize = 256; bytesPerBlock = 144; break;  // d[2]+dmin[2]+scales[12]+qs[128]
+            case GgufDtype.Q5_K: blockSize = 256; bytesPerBlock = 176; break;  // d[2]+dmin[2]+scales[12]+qh[32]+qs[128]
+            case GgufDtype.Q6_K: blockSize = 256; bytesPerBlock = 210; break;  // ql[128]+qh[64]+scales[16]+d[2]
+            case GgufDtype.Q8_0: blockSize = 32;  bytesPerBlock = 34;  break;
+            case GgufDtype.Q5_0: blockSize = 32;  bytesPerBlock = 22;  break;
+            case GgufDtype.Q4_0: blockSize = 32;  bytesPerBlock = 18;  break;
+            default: return 0;
+        }
+        int nBlocks = (nCols + blockSize - 1) / blockSize;
+        return (long)nRows * nBlocks * bytesPerBlock;
     }
 
     // ?? Tensor reading ????????????????????????????????????????????????????
@@ -432,7 +472,7 @@ public static partial class GgufLoader
                     for (int i = 0; i < count; i++) destination[i] = stream.ReadSingle();
                     break;
                 case GgufDtype.F16:
-                    for (int i = 0; i < count; i++) { float v = HalfToFloat(stream.ReadUInt16()); destination[i] = float.IsNaN(v) ? 0f : v; }
+                    for (int i = 0; i < count; i++) destination[i] = HalfToFloat(stream.ReadUInt16());
                     break;
                 case GgufDtype.Q4_0:
                     ReadQ4_0(stream, destination, count);
@@ -473,16 +513,19 @@ public static partial class GgufLoader
         if (exp == 0)
         {
             if (mant == 0) return sign == 0 ? 0f : -0f;
-            // Denormal
             float val = mant / 1024f;
             return (sign == 0 ? 1f : -1f) * val * MathF.Pow(2f, -14f);
         }
         if (exp == 31)
-            return mant == 0
-                ? (sign == 0 ? float.PositiveInfinity : float.NegativeInfinity)
-                : float.NaN;
+            return 0f; // NaN and Inf from F16 → guarded to zero
 
         return (sign == 0 ? 1f : -1f) * MathF.Pow(2f, exp - 15) * (1f + mant / 1024f);
+    }
+
+    private static float SafeHalfToFloat(ushort half)
+    {
+        float v = HalfToFloat(half);
+        return float.IsNaN(v) || float.IsInfinity(v) ? 0f : v;
     }
 
     private static void ReadQ8_0(BinaryReader reader, Span<float> data, int n)
@@ -493,12 +536,8 @@ public static partial class GgufLoader
         {
             int blockStart = b * qk;
             float d = HalfToFloat(reader.ReadUInt16());
-            if (float.IsNaN(d)) d = 0f;
             for (int j = 0; j < qk && blockStart + j < n; j++)
-            {
-                float val = reader.ReadSByte() * d;
-                data[blockStart + j] = val;
-            }
+                data[blockStart + j] = reader.ReadSByte() * d;
         }
     }
 
@@ -509,9 +548,7 @@ public static partial class GgufLoader
         for (int b = 0; b < nBlocks; b++)
         {
             int blockStart = b * qk;
-            // block_q5_0: half d + uint32_t qh + uint8_t qs[16]
             float d = HalfToFloat(reader.ReadUInt16());
-            if (float.IsNaN(d)) d = 0f;
             uint qh = reader.ReadUInt32();
             byte[] packed = reader.ReadBytes(16);
 
@@ -541,7 +578,6 @@ public static partial class GgufLoader
 
             // Q4_0: 1 half-scale + 16 bytes packed 4-bit values = 18 bytes per 32 values
             float scale = HalfToFloat(reader.ReadUInt16());
-            if (float.IsNaN(scale)) scale = 0f;
             byte[] packed = reader.ReadBytes(16);
 
             for (int j = 0; j < blockSize && blockStart + j < blockEnd; j++)
@@ -561,13 +597,11 @@ public static partial class GgufLoader
         {
             int blockStart = b * QK_K;
 
-            // block_q4_K: half d, half dmin, uint8_t scales[16], uint8_t qs[128]
+            // block_q4_K: d[2] + dmin[2] + scales[12] + qs[128] = 144 bytes
             float dSuper = HalfToFloat(reader.ReadUInt16());
-            if (float.IsNaN(dSuper)) dSuper = 0f;
             float minSuper = HalfToFloat(reader.ReadUInt16());
-            if (float.IsNaN(minSuper)) minSuper = 0f;
 
-            byte[] scales = reader.ReadBytes(16);
+            byte[] scales = reader.ReadBytes(12);
             byte[] qs = reader.ReadBytes(128);
 
             int idx = 0;
@@ -625,7 +659,6 @@ public static partial class GgufLoader
                 scales[s] = reader.ReadSByte();
 
             float d = HalfToFloat(reader.ReadUInt16());
-            if (float.IsNaN(d)) d = 0f;
 
             for (int i = 0; i < QK_K && blockStart + i < n; i++)
             {
@@ -647,22 +680,37 @@ public static partial class GgufLoader
         {
             int blockStart = b * QK_K;
 
-            // Q5_K (QK_K=256): 8 half-d + 8 half-dmin + 32B qh + 128B qs = 192 bytes per 256 values
-            float[] d = new float[8];
-            float[] m = new float[8];
-            for (int i = 0; i < 8; i++) { d[i] = HalfToFloat(reader.ReadUInt16()); if (float.IsNaN(d[i])) d[i] = 0f; }
-            for (int i = 0; i < 8; i++) { m[i] = HalfToFloat(reader.ReadUInt16()); if (float.IsNaN(m[i])) m[i] = 0f; }
+            // block_q5_K: d[2] + dmin[2] + scales[12] + qh[32] + qs[128] = 176 bytes
+            float d = HalfToFloat(reader.ReadUInt16());
+            float min = HalfToFloat(reader.ReadUInt16());
+            byte[] scales = reader.ReadBytes(12);
+            byte[] qh = reader.ReadBytes(32);
+            byte[] qs = reader.ReadBytes(128);
 
-            byte[] qh = reader.ReadBytes(32);    // high bits (1 per value)
-            byte[] packed = reader.ReadBytes(128); // low 4 bits
-
-            for (int i = 0; i < QK_K && blockStart + i < n; i++)
+            int idx = 0;
+            int qIdx = 0;
+            byte u1 = 1, u2 = 2;
+            for (int j = 0; j < QK_K; j += 64)
             {
-                int ql = (packed[i / 2] >> (4 * (i % 2))) & 0x0F;
-                int qh_bit = (qh[i / 8] >> (i % 8)) & 1;
-                int q_val = (qh_bit << 4) | ql;
-                int sub = i / 32;
-                data[blockStart + i] = (q_val - 16) * d[sub] + m[sub];
+                byte sc0, m0, sc1, m1;
+                GetScaleMinK4(idx + 0, scales, out sc0, out m0);
+                GetScaleMinK4(idx + 1, scales, out sc1, out m1);
+                float d1 = d * sc0; float m1v = min * m0;
+                float d2 = d * sc1; float m2v = min * m1;
+
+                for (int l = 0; l < 32 && blockStart + j + l < n; l++)
+                {
+                    int val = (qs[qIdx + l] & 0x0F) + ((qh[l] & u1) != 0 ? 16 : 0);
+                    data[blockStart + j + l] = d1 * val - m1v;
+                }
+                for (int l = 0; l < 32 && blockStart + j + 32 + l < n; l++)
+                {
+                    int val = (qs[qIdx + l] >> 4) + ((qh[l] & u2) != 0 ? 16 : 0);
+                    data[blockStart + j + 32 + l] = d2 * val - m2v;
+                }
+                qIdx += 32;
+                idx += 2;
+                u1 <<= 2; u2 <<= 2;
             }
         }
     }
@@ -672,27 +720,55 @@ public static partial class GgufLoader
         const int QK_K = 256;
         int nBlocks = (n + QK_K - 1) / QK_K;
 
+        Span<byte> scaleBuf = stackalloc byte[16];
+
         for (int b = 0; b < nBlocks; b++)
         {
             int blockStart = b * QK_K;
 
-            // Q3_K (QK_K=256): 8 half-d + 8 half-dmin + 64B qk + 64B qs = 160 bytes per 256 values
-            float[] d = new float[8];
-            float[] m = new float[8];
-            for (int i = 0; i < 8; i++) { d[i] = HalfToFloat(reader.ReadUInt16()); if (float.IsNaN(d[i])) d[i] = 0f; }
-            for (int i = 0; i < 8; i++) { m[i] = HalfToFloat(reader.ReadUInt16()); if (float.IsNaN(m[i])) m[i] = 0f; }
+            // block_q3_K: hmask[32] + qs[64] + scales[12] + d[2] = 110 bytes (no dmin)
+            byte[] qh = reader.ReadBytes(32);    // high 1-bit per value
+            byte[] qs = reader.ReadBytes(64);    // low 2 bits per value
+            byte[] scalesRaw = reader.ReadBytes(12);
+            ushort dBits = reader.ReadUInt16();   // d at byte offset 108
+            float dAll = HalfToFloat(dBits);
 
-            byte[] qk = reader.ReadBytes(64);   // high 1-bit
-            byte[] qs = reader.ReadBytes(64);   // low 2 bits
+            // Scale buffer: only 12 scale bytes needed; aux[3] is overwritten by bit-unpack
+            for (int j = 0; j < 12; j++) scaleBuf[j] = scalesRaw[j];
+            // bytes 12-15 are unused (DecodeQ3KScales overwrites all 16 bytes)
+
+            int[] sc = DecodeQ3KScales(scaleBuf);
 
             for (int i = 0; i < QK_K && blockStart + i < n; i++)
             {
-                int qs_val = (qs[i / 2] >> (4 * (i % 2))) & 0x03;
-                int qk_bit = (qk[i / 8] >> (i % 8)) & 1;
-                int q_val = (qk_bit << 2) | qs_val;
+                // qs transposed: byte = (i/128)*32 + i%32, shift = ((i%128)/32)*2
+                int qsByte = (i / 128) * 32 + (i % 32);
+                int qsShift = ((i % 128) / 32) * 2;
+                int s2 = (qs[qsByte] >> qsShift) & 3;
+                int hBit = (qh[i % 32] >> (i / 32)) & 1;
+                int actual = s2 - (hBit == 0 ? 4 : 0);
                 int sub = i / 32;
-                data[blockStart + i] = (q_val - 4) * d[sub] + m[sub];
+                float val = dAll * sc[sub] * actual;
+                if (float.IsNaN(val) || float.IsInfinity(val)) val = 0f;
+                data[blockStart + i] = val;
             }
         }
+    }
+
+    private static unsafe int[] DecodeQ3KScales(Span<byte> buf16)
+    {
+        var sc = new int[16];
+        fixed (byte* p = buf16)
+        {
+            uint* aux = (uint*)p;
+            uint tmp = aux[2];
+            aux[2] = ((aux[0] >> 4) & 0x0f0f0f0fu) | (((tmp >> 4) & 0x03030303u) << 4);
+            aux[3] = ((aux[1] >> 4) & 0x0f0f0f0fu) | (((tmp >> 6) & 0x03030303u) << 4);
+            aux[0] = (aux[0] & 0x0f0f0f0fu) | (((tmp >> 0) & 0x03030303u) << 4);
+            aux[1] = (aux[1] & 0x0f0f0f0fu) | (((tmp >> 2) & 0x03030303u) << 4);
+            sbyte* sc8 = (sbyte*)p;
+            for (int j = 0; j < 16; j++) sc[j] = sc8[j] - 32;
+        }
+        return sc;
     }
 }

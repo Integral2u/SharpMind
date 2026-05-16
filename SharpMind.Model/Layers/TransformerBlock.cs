@@ -20,6 +20,11 @@ public sealed class TransformerBlock : IDisposable
     private readonly FfnLayer _ffn;
     private readonly NormLayer _norm1;   // pre-attention norm
     private readonly NormLayer _norm2;   // pre-FFN norm
+
+    public NormLayer Norm1 => _norm1;
+    public NormLayer Norm2 => _norm2;
+    public AttentionLayer Attention => _attention;
+    public FfnLayer Ffn => _ffn;
     private readonly TensorOps _ops;
     private readonly int _layerIdx;
     private bool _disposed;
@@ -174,6 +179,23 @@ public sealed class TransformerBlock : IDisposable
             return true;
         }
         
+        return false;
+    }
+
+    public bool SetRawWeight(string name, byte[] rawData, Format.GgufDtype dtype)
+    {
+        var lower = name.ToLower();
+        if (lower.Contains("attn_q") || lower.Contains("attn_k") || lower.Contains("attn_v") ||
+            lower.Contains("attn_output") || lower.Contains("attn_o"))
+        {
+            _attention.SetRawWeight(name, rawData, dtype);
+            return true;
+        }
+        if (lower.Contains("ffn_gate") || lower.Contains("ffn_up") || lower.Contains("ffn_down"))
+        {
+            _ffn.SetRawWeight(name, rawData, dtype);
+            return true;
+        }
         return false;
     }
 

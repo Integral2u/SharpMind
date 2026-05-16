@@ -28,9 +28,9 @@ public abstract class FfnLayer : IDisposable
     protected readonly LinearLayer? W2;   // [HiddenDim, FfnDim]
 
     // ── Gated weights ─────────────────────────────────────────────────────
-    protected readonly LinearLayer? WGate;  // [FfnDim,    HiddenDim]
-    protected readonly LinearLayer? WUp;    // [FfnDim,    HiddenDim]
-    protected readonly LinearLayer? WDown;  // [HiddenDim, FfnDim]
+    public readonly LinearLayer? WGate;  // [FfnDim,    HiddenDim]
+    public readonly LinearLayer? WUp;    // [FfnDim,    HiddenDim]
+    public readonly LinearLayer? WDown;  // [HiddenDim, FfnDim]
 
     public void LoadWeights(string name, ReadOnlySpan<float> data)
     {
@@ -49,6 +49,19 @@ public abstract class FfnLayer : IDisposable
         {
             if (isBias) WDown!.LoadBias(data); else WDown!.LoadWeightTransposed(data);
         }
+    }
+
+    public void SetRawWeight(string name, byte[] rawData, Format.GgufDtype dtype)
+    {
+        var lower = name.ToLower();
+        if (lower.Contains("bias")) return;
+
+        if (lower.Contains("gate"))
+            WGate!.SetRawWeight(rawData, dtype);
+        else if (lower.Contains("up"))
+            WUp!.SetRawWeight(rawData, dtype);
+        else if (lower.Contains("down"))
+            WDown!.SetRawWeight(rawData, dtype);
     }
 
     // ── MoE weights ───────────────────────────────────────────────────────

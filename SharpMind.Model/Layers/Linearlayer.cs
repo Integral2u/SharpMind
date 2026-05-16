@@ -1,6 +1,7 @@
 ﻿using SharpMind.Core.Ops;
 using SharpMind.Core.Tensors;
 using SharpMind.Core.Training;
+using SharpMind.Model.Format;
 
 namespace SharpMind.Model.Layers;
 
@@ -9,6 +10,11 @@ public sealed class LinearLayer : IDisposable
     private readonly Tensor<float> _weight;
     private readonly Tensor<float>? _bias;
     private bool _disposed;
+
+    // Raw GGUF quantized data for quantized matmul (null means use float32 path).
+    public byte[]? RawQuantizedData { get; set; }
+    public GgufDtype? QuantDtype { get; set; }
+    public bool UseQuantizedForward { get; set; }
 
     public LinearLayer(string name, int inFeatures, int outFeatures, bool bias = false)
     {
@@ -46,7 +52,17 @@ public sealed class LinearLayer : IDisposable
         bool needReshape = input.Rank > 2;
         int batchSize = input.ElementCount / input.Shape[^1];
         var flat = needReshape ? input.Reshape(batchSize, InFeatures) : input;
-        var output = ops.MatMul(flat, _weight);
+
+        Tensor<float> output;
+        if (UseQuantizedForward && RawQuantizedData != null && QuantDtype.HasValue)
+        {
+            output = QuantizedForward(flat, ops);
+        }
+        else
+        {
+            output = ops.MatMul(flat, _weight);
+        }
+
         if (_bias is not null)
             TensorOps.AddInPlace(output, BroadcastBias(batchSize));
         if (needReshape)
@@ -57,6 +73,241 @@ public sealed class LinearLayer : IDisposable
             return reshaped;
         }
         return output;
+    }
+
+    private Tensor<float> QuantizedForward(Tensor<float> input, TensorOps ops)
+    {
+        var dtype = QuantDtype!.Value;
+        var rawData = RawQuantizedData!;
+        int m = input.ElementCount / InFeatures;
+        var result = new Tensor<float>(m, OutFeatures);
+
+        unsafe
+        {
+            fixed (byte* pRaw = rawData)
+            {
+                int inF = InFeatures, outF = OutFeatures;
+                for (int row = 0; row < m; row++)
+                {
+                    float* pIn = input.DataPtr + (long)row * inF;
+                    float* pOut = result.DataPtr + (long)row * outF;
+                    for (int col = 0; col < outF; col++)
+                    {
+                        pOut[col] = VecDotQxK(pIn, pRaw, col, inF, dtype);
+                    }
+                }
+            }
+        }
+        return result;
+    }
+
+    private static unsafe float VecDotQxK(float* input, byte* rawWeights, int col, int inFeatures, GgufDtype dtype)
+    {
+        return dtype switch
+        {
+            GgufDtype.Q3_K => VecDotQ3K(input, rawWeights, col, inFeatures),
+            GgufDtype.Q4_K => VecDotQ4K(input, rawWeights, col, inFeatures),
+            GgufDtype.Q5_K => VecDotQ5K(input, rawWeights, col, inFeatures),
+            GgufDtype.Q6_K => VecDotQ6K(input, rawWeights, col, inFeatures),
+            _ => 0f
+        };
+    }
+
+    public void SetRawWeight(byte[] rawData, GgufDtype dtype)
+    {
+        RawQuantizedData = rawData;
+        QuantDtype = dtype;
+    }
+
+    // ── GGUF quantized dot product kernels (matching llama.cpp vec_dot) ──
+
+    private const int QK_K = 256;
+
+    private static unsafe float VecDotQ3K(float* input, byte* rawWeights, int col, int inFeatures)
+    {
+        const int BLOCK_BYTES = 110;
+        // block_q3_K: hmask[32] + qs[64] + scales[12] + d[2] = 110 bytes (no dmin)
+        int nBlocks = (inFeatures + QK_K - 1) / QK_K;
+        double sum = 0;
+        byte* scaleBuf = stackalloc byte[16];
+        for (int b = 0; b < nBlocks; b++)
+        {
+            byte* block = rawWeights + (long)col * nBlocks * BLOCK_BYTES + b * BLOCK_BYTES;
+            byte* qh = block;                  // hmask at offset 0 (32 bytes)
+            byte* qs = block + 32;             // qs at offset 32 (64 bytes)
+            float dAll = HalfToFloat(*(ushort*)(block + 108));
+
+            // Scale buffer: only 12 scale bytes needed; aux[3] overwritten by bit-unpack
+            for (int j = 0; j < 12; j++) scaleBuf[j] = block[96 + j];
+
+            uint* aux = (uint*)scaleBuf;
+            uint tmp = aux[2];
+            aux[2] = ((aux[0] >> 4) & 0x0f0f0f0fu) | (((tmp >> 4) & 0x03030303u) << 4);
+            aux[3] = ((aux[1] >> 4) & 0x0f0f0f0fu) | (((tmp >> 6) & 0x03030303u) << 4);
+            aux[0] = (aux[0] & 0x0f0f0f0fu) | (((tmp >> 0) & 0x03030303u) << 4);
+            aux[1] = (aux[1] & 0x0f0f0f0fu) | (((tmp >> 2) & 0x03030303u) << 4);
+            sbyte* sc8 = (sbyte*)scaleBuf;
+
+            int blockEnd = Math.Min(QK_K, inFeatures - b * QK_K);
+            for (int i = 0; i < blockEnd; i++)
+            {
+                // qs transposed: byte = (i/128)*32 + i%32, shift = ((i%128)/32)*2
+                int qsByte = (i / 128) * 32 + (i % 32);
+                int qsShift = ((i % 128) / 32) * 2;
+                int s2 = (qs[qsByte] >> qsShift) & 3;
+                int hBit = (qh[i % 32] >> (i / 32)) & 1;
+                int actual = s2 - (hBit == 0 ? 4 : 0);
+                int sub = i / 32;
+                float val = dAll * (sc8[sub] - 32) * actual;
+                sum += input[b * QK_K + i] * val;
+            }
+        }
+        return (float)sum;
+    }
+
+    private static unsafe float VecDotQ4K(float* input, byte* rawWeights, int col, int inFeatures)
+    {
+        const int BLOCK_BYTES = 144;  // d[2]+dmin[2]+scales[12]+qs[128]
+        int nBlocks = (inFeatures + QK_K - 1) / QK_K;
+        double sum = 0;
+        for (int b = 0; b < nBlocks; b++)
+        {
+            byte* block = rawWeights + (long)col * nBlocks * BLOCK_BYTES + b * BLOCK_BYTES;
+            float dSuper = HalfToFloat(*(ushort*)block);
+            float minSuper = HalfToFloat(*(ushort*)(block + 2));
+            byte* scales = block + 4;   // 12 bytes (8 sub-block scales packed)
+            byte* qs = block + 16;      // 128 bytes
+
+            int idx = 0;
+            for (int j = 0; j < QK_K; j += 64)
+            {
+                byte sc0 = GetScaleMinK4_Scale(idx + 0, scales);
+                byte m0 = GetScaleMinK4_Min(idx + 0, scales);
+                byte sc1 = GetScaleMinK4_Scale(idx + 1, scales);
+                byte m1 = GetScaleMinK4_Min(idx + 1, scales);
+                float d1 = dSuper * sc0;
+                float m1v = minSuper * m0;
+                float d2 = dSuper * sc1;
+                float m2v = minSuper * m1;
+
+                int qIdx = (j / 64) * 32;
+                int remaining = Math.Min(64, inFeatures - b * QK_K - j);
+                int halfRem = Math.Min(32, remaining);
+                for (int l = 0; l < halfRem; l++)
+                {
+                    int pos = b * QK_K + j + l;
+                    sum += input[pos] * (d1 * (qs[qIdx + l] & 0x0F) - m1v);
+                }
+                for (int l = 0; l < 32 && (32 + l) < remaining; l++)
+                {
+                    int pos = b * QK_K + j + 32 + l;
+                    sum += input[pos] * (d2 * (qs[qIdx + l] >> 4) - m2v);
+                }
+                idx += 2;
+            }
+        }
+        return (float)sum;
+    }
+
+    private static unsafe float VecDotQ5K(float* input, byte* rawWeights, int col, int inFeatures)
+    {
+        const int BLOCK_BYTES = 176;  // d[2]+dmin[2]+scales[12]+qh[32]+qs[128]
+        int nBlocks = (inFeatures + QK_K - 1) / QK_K;
+        double sum = 0;
+        for (int b = 0; b < nBlocks; b++)
+        {
+            byte* block = rawWeights + (long)col * nBlocks * BLOCK_BYTES + b * BLOCK_BYTES;
+            float d = HalfToFloat(*(ushort*)block);
+            float min = HalfToFloat(*(ushort*)(block + 2));
+            byte* scales = block + 4;   // 12 bytes
+            byte* qh = block + 16;      // 32 bytes
+            byte* qs = block + 48;      // 128 bytes
+
+            int idx = 0;
+            int qIdx = 0;
+            byte u1 = 1, u2 = 2;
+            for (int j = 0; j < QK_K; j += 64)
+            {
+                byte sc0 = GetScaleMinK4_Scale(idx + 0, scales);
+                byte m0 = GetScaleMinK4_Min(idx + 0, scales);
+                byte sc1 = GetScaleMinK4_Scale(idx + 1, scales);
+                byte m1 = GetScaleMinK4_Min(idx + 1, scales);
+                float d1 = d * sc0; float m1v = min * m0;
+                float d2 = d * sc1; float m2v = min * m1;
+
+                int remaining = Math.Min(64, inFeatures - b * QK_K - j);
+                int halfRem = Math.Min(32, remaining);
+                for (int l = 0; l < halfRem; l++)
+                {
+                    int pos = b * QK_K + j + l;
+                    int val = (qs[qIdx + l] & 0x0F) + ((qh[l] & u1) != 0 ? 16 : 0);
+                    sum += input[pos] * (d1 * val - m1v);
+                }
+                for (int l = 0; l < 32 && (32 + l) < remaining; l++)
+                {
+                    int pos = b * QK_K + j + 32 + l;
+                    int val = (qs[qIdx + l] >> 4) + ((qh[l] & u2) != 0 ? 16 : 0);
+                    sum += input[pos] * (d2 * val - m2v);
+                }
+                qIdx += 32;
+                idx += 2;
+                u1 <<= 2; u2 <<= 2;
+            }
+        }
+        return (float)sum;
+    }
+
+    private static unsafe float VecDotQ6K(float* input, byte* rawWeights, int col, int inFeatures)
+    {
+        const int BLOCK_BYTES = 210;
+        int nBlocks = (inFeatures + QK_K - 1) / QK_K;
+        double sum = 0;
+        for (int b = 0; b < nBlocks; b++)
+        {
+            byte* block = rawWeights + (long)col * nBlocks * BLOCK_BYTES + b * BLOCK_BYTES;
+            byte* ql = block;                          // 128 bytes
+            byte* qh = block + 128;                     // 64 bytes
+            sbyte* scales = (sbyte*)(block + 192);     // 16 bytes
+            float d = HalfToFloat(*(ushort*)(block + 208));
+
+            int blockEnd = Math.Min(QK_K, inFeatures - b * QK_K);
+            for (int i = 0; i < blockEnd; i++)
+            {
+                int ql_val = (ql[i / 2] >> (4 * (i % 2))) & 0x0F;
+                int qh_val = (qh[i / 4] >> (2 * (i % 4))) & 0x03;
+                int q_val = (qh_val << 4) | ql_val;
+                int sub = i / 16;
+                float val = d * scales[sub] * (q_val - 32);
+                sum += input[b * QK_K + i] * val;
+            }
+        }
+        return (float)sum;
+    }
+
+    private static unsafe byte GetScaleMinK4_Scale(int j, byte* scales)
+    {
+        if (j < 4)
+            return (byte)(scales[j] & 0x3F);
+        return (byte)((scales[j + 4] & 0x0F) | ((scales[j - 4] >> 6) << 4));
+    }
+
+    private static unsafe byte GetScaleMinK4_Min(int j, byte* scales)
+    {
+        if (j < 4)
+            return (byte)(scales[j + 4] & 0x3F);
+        return (byte)((scales[j + 4] >> 4) | ((scales[j] >> 6) << 4));
+    }
+
+    private static float HalfToFloat(ushort half)
+    {
+        int sign = (half >> 15) & 0x1;
+        int exp = (half >> 10) & 0x1F;
+        int mant = half & 0x3FF;
+        if (exp == 0)
+            return (sign == 0 ? 1f : -1f) * (mant / 1024f) * MathF.Pow(2f, -14f);
+        if (exp == 31)
+            return mant == 0 ? (sign == 0 ? float.PositiveInfinity : float.NegativeInfinity) : float.NaN;
+        return (sign == 0 ? 1f : -1f) * MathF.Pow(2f, exp - 15) * (1f + mant / 1024f);
     }
 
     public (Tensor<float> Output, LinearLayerState State) ForwardWithState(Tensor<float> input, TensorOps ops)
@@ -142,15 +393,8 @@ public sealed class LinearLayer : IDisposable
         int inF = InFeatures;
         int outF = OutFeatures;
         for (int o = 0; o < outF; o++)
-        {
             for (int i = 0; i < inF; i++)
-            {
-                float val = data[o * inF + i];
-                if (float.IsInfinity(val) || float.IsNaN(val))
-                    val = 0f;
-                _weight.Data[i * outF + o] = val;
-            }
-        }
+                _weight.Data[i * outF + o] = data[o * inF + i];
     }
 
     public void LoadBias(ReadOnlySpan<float> data)
@@ -158,34 +402,7 @@ public sealed class LinearLayer : IDisposable
         if (_bias is null) throw new InvalidOperationException("No bias.");
         if (data.Length != _bias.ElementCount)
             throw new ArgumentException($"Expected {_bias.ElementCount} bias values, got {data.Length}.");
-        
-        // Check for corrupted bias values (e.g., F16 stored as F32 gives extreme values)
-        bool bad = false;
-        int checkLen = Math.Min(data.Length, 16);
-        float maxVal = 0f;
-        for (int i = 0; i < checkLen; i++)
-        {
-            float v = data[i];
-            if (float.IsNaN(v) || float.IsInfinity(v)) { bad = true; break; }
-            float av = Math.Abs(v);
-            if (av > maxVal) maxVal = av;
-        }
-        if (!bad && maxVal > 100f)
-            bad = true;
-        if (bad)
-        {
-            // Zero out rather than letting extreme values cause NaN
-            _bias.Data.Clear();
-            return;
-        }
-
-        for (int i = 0; i < data.Length; i++)
-        {
-            float val = data[i];
-            if (float.IsInfinity(val) || float.IsNaN(val))
-                val = 0f;
-            _bias.Data[i] = val;
-        }
+        data.CopyTo(_bias.Data);
     }
 
     public void Dispose()

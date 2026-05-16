@@ -74,6 +74,34 @@ public sealed class DecoderArch : IArchitecture
         return false;
     }
 
+    public bool SetRawWeight(string name, byte[] rawData, Format.GgufDtype dtype)
+    {
+        var lower = name.ToLower();
+        int layerIdx = -1;
+        var match7 = Regex.Match(name, @"\.(\d+)\.");
+        if (!match7.Success)
+            match7 = Regex.Match(name, @"blk\.(\d+)");
+        if (!match7.Success)
+            match7 = Regex.Match(name, @"layer_(\d+)");
+        if (match7.Success && int.TryParse(match7.Groups[1].Value, out var idx))
+            layerIdx = idx;
+
+        if (layerIdx >= 0 && layerIdx < _blocks.Length)
+            return _blocks[layerIdx].SetRawWeight(name, rawData, dtype);
+
+        for (int i = 0; i < _blocks.Length; i++)
+        {
+            if (lower.Contains($".{i}.") || lower.Contains($"blk.{i}") || lower.Contains($"layer_{i}"))
+            {
+                if (_blocks[i].SetRawWeight(name, rawData, dtype)) return true;
+            }
+        }
+
+        if (_blocks.Length > 0)
+            return _blocks[0].SetRawWeight(name, rawData, dtype);
+        return false;
+    }
+
     /// <summary>
     /// Passes hidden states through all blocks with causal masking.
     /// <paramref name="positionOffset"/> supports KV-cache decode:

@@ -12,11 +12,11 @@ public abstract class AttentionLayer : IDisposable
     private const string NS = $"{nameof(SharpMind)}.{nameof(Model)}.{nameof(Layers)}.{nameof(Attention)}.{nameof(AttentionKernels)}";
 
     protected readonly ModelConfig Config;
-    protected readonly LinearLayer Wq;
-    protected readonly LinearLayer Wk;
-    protected readonly LinearLayer Wv;
-    protected readonly LinearLayer Wo;
-    protected readonly RoPE Rope;
+    public readonly LinearLayer Wq;
+    public readonly LinearLayer Wk;
+    public readonly LinearLayer Wv;
+    public readonly LinearLayer Wo;
+    public readonly RoPE Rope;
     private bool _disposed;
 
     protected AttentionLayer(ModelConfig config)
@@ -59,6 +59,23 @@ public abstract class AttentionLayer : IDisposable
             if (isBias) Wo.LoadBias(data);
             else Wo.LoadWeightTransposed(data);
         }
+    }
+
+    public void SetRawWeight(string weightName, byte[] rawData, Format.GgufDtype dtype)
+    {
+        var lower = weightName.ToLower();
+        bool isBias = lower.EndsWith(".bias");
+        if (isBias) return;
+
+        if (lower.Contains("attn_q") || lower.Contains("q_proj"))
+            Wq.SetRawWeight(rawData, dtype);
+        else if (lower.Contains("attn_k") || lower.Contains("k_proj"))
+            Wk.SetRawWeight(rawData, dtype);
+        else if (lower.Contains("attn_v") || lower.Contains("v_proj"))
+            Wv.SetRawWeight(rawData, dtype);
+        else if (lower.Contains("attn_output") || lower.Contains("attn_o.") ||
+                 lower.Contains("o_proj") || lower.Contains("out_proj"))
+            Wo.SetRawWeight(rawData, dtype);
     }
 
     [PuzzleCornerPiece(SharpMindConfig.KeyAttention,

@@ -52,6 +52,14 @@ public sealed class Transformer : IDisposable
 
     public ModelConfig Config => _config;
 
+    // ── Diagnostics accessors ──────────────────────────────────────────────
+    public NormLayer FinalNorm => _finalNorm;
+    public Tensor<float>? LmHead => _lmHead;
+    public Tensor<float> EmbeddingWeight => _embedding.Weight;
+    public Tensor<float> ForwardEmbedding(Tensor<int> tokenIds) => _embedding.Forward(tokenIds);
+    public TransformerBlock? GetBlock(int layer) => _blocks is not null && layer < _blocks.Length ? _blocks[layer] : null;
+    public TensorOps Ops => _ops;
+
     public bool LoadWeight(string name, ReadOnlySpan<float> data)
     {
         var lower = name.ToLower();
@@ -63,31 +71,15 @@ public sealed class Transformer : IDisposable
 
             if (expected == data.Length)
             {
-                // GGUF stores token_embd.weight as [HiddenDim, VocabSize] (hidden-major).
-                // Our EmbeddingTable expects [VocabSize, HiddenDim] (vocab-major).
-                // Transpose from hidden-major to vocab-major, filtering NaN/Inf values.
                 int vocab = _config.VocabSize;
                 int hidden = _config.HiddenDim;
                 for (int v = 0; v < vocab; v++)
-                {
                     for (int h = 0; h < hidden; h++)
-                    {
-                        float val = data[h * vocab + v];
-                        if (float.IsInfinity(val) || float.IsNaN(val))
-                            val = 0f;
-                        _embedding.Weight.Data[v * hidden + h] = val;
-                    }
-                }
+                        _embedding.Weight.Data[v * hidden + h] = data[h * vocab + v];
             }
             else
             {
-                for (int i = 0; i < data.Length; i++)
-                {
-                    float val = data[i];
-                    if (float.IsInfinity(val) || float.IsNaN(val))
-                        val = 0f;
-                    _embedding.Weight.Data[i] = val;
-                }
+                data.CopyTo(_embedding.Weight.Data);
             }
             return true;
         }
@@ -103,22 +95,15 @@ public sealed class Transformer : IDisposable
             // Falls back to the embedding at inference time if this weight is absent
             // (weight-tied models don't export it separately).
             long expected = (long)_config.VocabSize * _config.HiddenDim;
-            if (data.Length == expected)
-            {
-                _lmHead ??= new Tensor<float>(_config.VocabSize, _config.HiddenDim);
-                // GGUF "output.weight" has shape [HiddenDim, VocabSize] — same layout
-                // as token_embd.weight. Transpose to [VocabSize, HiddenDim].
-                int vocab = _config.VocabSize;
-                int hidden = _config.HiddenDim;
-                for (int v = 0; v < vocab; v++)
-                    for (int h = 0; h < hidden; h++)
-                    {
-                        float val = data[h * vocab + v];
-                        if (float.IsInfinity(val) || float.IsNaN(val))
-                            val = 0f;
-                        _lmHead.Data[v * hidden + h] = val;
-                    }
-            }
+                if (data.Length == expected)
+                {
+                    _lmHead ??= new Tensor<float>(_config.VocabSize, _config.HiddenDim);
+                    int vocab = _config.VocabSize;
+                    int hidden = _config.HiddenDim;
+                    for (int v = 0; v < vocab; v++)
+                        for (int h = 0; h < hidden; h++)
+                            _lmHead.Data[v * hidden + h] = data[h * vocab + v];
+                }
             return true;
         }
         else
@@ -132,6 +117,16 @@ public sealed class Transformer : IDisposable
         if (_arch is DecoderArch dec)
             return dec.LoadWeight(name, data);
         return false;
+    }
+
+    public void SetRawWeight(string name, byte[] rawData, Format.GgufDtype dtype)
+    {
+        var lower = name.ToLower();
+        if (lower.Contains("embed") || lower.Contains("token") || lower.Contains("wte") ||
+            lower.Contains("output_norm") || lower.Contains("lm_head") || lower.StartsWith("output."))
+            return;
+        if (_arch is DecoderArch dec)
+            dec.SetRawWeight(name, rawData, dtype);
     }
 
     public IEnumerable<Parameter> Parameters()
@@ -223,14 +218,6 @@ public sealed class Transformer : IDisposable
         var logits = _ops.MatMulWithBT(lastTokenNormed, projectionWeight);
         lastTokenNormed.Dispose();
         return logits;
-    }
-
-    private static int CountNaN(ReadOnlySpan<float> data)
-    {
-        int count = 0;
-        for (int i = 0; i < data.Length; i++)
-            if (float.IsNaN(data[i])) count++;
-        return count;
     }
 
     private void DisposeCache()

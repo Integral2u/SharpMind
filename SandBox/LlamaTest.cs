@@ -253,6 +253,160 @@ namespace SandBox
                 kv.Value.Dispose();
         }
 
+        /// <summary>
+        /// Layer-by-layer NaN tracer. Runs the forward pass manually,
+        /// checking for NaN after every operation, and reports where
+        /// NaN first appears.
+        /// </summary>
+        public static void TraceForwardPass()
+        {
+            string modelPath = Path.Combine(Assets, "DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M.gguf");
+            Console.WriteLine("═══ Trace Forward Pass NaN Cascade ═══");
+
+            GgufLoader.Load(modelPath, null, out GgufMeta meta, out ModelConfig modelConfig, out Tokenizer? tokenizer);
+            if (tokenizer == null) { Console.WriteLine("No tokenizer"); return; }
+
+            var sharpConfig = SharpMind.SharpMindConfig.Qwen with { Hardware = HardwareTier.AVX2 };
+            var model = ModelFactory.Create(modelConfig, sharpConfig);
+            GgufLoader.LoadWeightsToModel(modelPath, meta, model);
+
+            var prompt = GetDeepSeekPrompt(modelPath);
+            int[] tokens = tokenizer.Encode(prompt, addBos: false);
+            Console.WriteLine($"Prompt tokens: {string.Join(", ", tokens)}");
+
+            using var input = SharpMind.Core.Tensors.Tensor<int>.From(tokens, 1, tokens.Length);
+
+            // 1. Embedding
+            Console.WriteLine("Stage 1: Embedding...");
+            var embedded = model.ForwardEmbedding(input);
+            var embNaN = CountNaN(embedded.Data);
+            Console.WriteLine($"  Embedding NaN: {embNaN}/{embedded.Data.Length} ({100f * embNaN / embedded.Data.Length:F2}%)");
+            if (embNaN > 0) { Console.WriteLine("✗ NaN in embedding!"); return; }
+
+            // 2. Layer-by-layer
+            var hidden = embedded;
+            var caches = new KVCache[modelConfig.NumLayers];
+            for (int i = 0; i < modelConfig.NumLayers; i++)
+                caches[i] = new KVCache(1, modelConfig.NumKvHeads, 128, modelConfig.HeadDim);
+
+            for (int layer = 0; layer < modelConfig.NumLayers; layer++)
+            {
+                Console.Write($"Layer {layer}: ");
+                var block = model.GetBlock(layer);
+                if (block == null) { Console.WriteLine("null block"); return; }
+
+                var ops = model.Ops; // TensorOps
+
+                // Pre-attention norm
+                var normed1 = block.Norm1.Forward(hidden);
+                int n1 = CountNaN(normed1.Data);
+                if (n1 > 0) { Console.WriteLine($"✗ norm1 NaN: {n1}/{normed1.Data.Length}"); return; }
+
+                // ── Trace attention sub-steps ──
+                var attn = block.Attention;
+                var q = attn.Wq.Forward(normed1, ops);  int qn = CountNaN(q.Data);
+                var k = attn.Wk.Forward(normed1, ops);  int kn = CountNaN(k.Data);
+                var v = attn.Wv.Forward(normed1, ops);  int vn = CountNaN(v.Data);
+
+                if (qn > 0) { Console.WriteLine($"✗ Q NaN: {qn}"); normed1.Dispose(); q.Dispose(); k.Dispose(); v.Dispose(); return; }
+                if (kn > 0) { Console.WriteLine($"✗ K NaN: {kn}"); normed1.Dispose(); q.Dispose(); k.Dispose(); v.Dispose(); return; }
+                if (vn > 0) { Console.WriteLine($"✗ V NaN: {vn}"); normed1.Dispose(); q.Dispose(); k.Dispose(); v.Dispose(); return; }
+
+                // Check Q, K, V magnitudes
+                Console.Write($"(Q={MaxAbs(q.Data):G3} K={MaxAbs(k.Data):G3} V={MaxAbs(v.Data):G3}) ");
+
+                // Run full attention, then check Wo
+                var attnOut = block.Attention.Forward(normed1, ops, 0, true, caches[layer]);
+                q.Dispose(); k.Dispose(); v.Dispose();
+                int aNaN = CountNaN(attnOut.Data);
+                if (aNaN > 0) { Console.WriteLine($"✗ attention NaN: {aNaN}/{attnOut.Data.Length}"); normed1.Dispose(); attnOut.Dispose(); return; }
+
+                // Residual
+                var h1 = SharpMind.Core.Ops.TensorOps.Add(hidden, attnOut);
+                attnOut.Dispose();
+                hidden.Dispose();
+                normed1.Dispose();
+
+                // Pre-FFN norm
+                var normed2 = block.Norm2.Forward(h1);
+                int n2 = CountNaN(normed2.Data);
+                if (n2 > 0) { Console.WriteLine($"✗ norm2 NaN: {n2}/{normed2.Data.Length}"); return; }
+
+                // FFN
+                var ffnOut = block.Ffn.Forward(normed2);
+                int fNaN = CountNaN(ffnOut.Data);
+                normed2.Dispose();
+                if (fNaN > 0) { Console.WriteLine($"✗ FFN NaN: {fNaN}/{ffnOut.Data.Length}"); return; }
+
+                // Residual: out = h + ffn
+                var output = SharpMind.Core.Ops.TensorOps.Add(h1, ffnOut);
+                ffnOut.Dispose();
+                h1.Dispose();
+                hidden = output;
+
+                var oNaN = CountNaN(hidden.Data);
+                if (oNaN > 0) { Console.WriteLine($"✗ output NaN: {oNaN}/{hidden.Data.Length}"); return; }
+                Console.WriteLine($"ok (max={MaxAbs(hidden.Data):G4})");
+            }
+
+            // 3. Final norm
+            Console.Write("Final norm: ");
+            var finalNormed = model.FinalNorm.Forward(hidden);
+            int fnNaN = CountNaN(finalNormed.Data);
+            if (fnNaN > 0) { Console.WriteLine($"✗ NaN: {fnNaN}/{finalNormed.Data.Length}"); return; }
+            Console.WriteLine("ok");
+
+            // 4. LM head
+            Console.Write("LM head: ");
+            int lastPos = (tokens.Length - 1) * modelConfig.HiddenDim;
+            var lastNormed = new SharpMind.Core.Tensors.Tensor<float>(1, modelConfig.HiddenDim);
+            finalNormed.Data.Slice(lastPos, modelConfig.HiddenDim).CopyTo(lastNormed.Data);
+            Console.Write($"normed max={MaxAbs(lastNormed.Data):G3} ");
+
+            var projW = model.LmHead ?? model.EmbeddingWeight;
+            Console.Write($"projW shape=[{projW.Shape.Dims.ToArray()[0]}×{projW.Shape.Dims.ToArray()[1]}] ");
+
+            // Manual dot product for first 5 logits
+            Console.Write("manual:");
+            for (int j = 0; j < 5 && j < projW.Shape.Rows; j++)
+            {
+                double sum = 0;
+                for (int k = 0; k < modelConfig.HiddenDim; k++)
+                    sum += lastNormed.Data[k] * projW.Data[j * modelConfig.HiddenDim + k];
+                Console.Write($" {sum:G4}");
+            }
+
+            var logits = model.Ops.MatMulWithBT(lastNormed, projW);
+            int lNaN = CountNaN(logits.Data);
+            Console.WriteLine(lNaN > 0 ? $" ✗ NaN: {lNaN}/{logits.Data.Length}" : "");
+
+            var top10 = GetTopK(logits.Data, 10);
+            Console.WriteLine("Top-10 logits:");
+            foreach (var (id, val) in top10)
+                Console.WriteLine($"  [{id}] {tokenizer.IdToToken(id)} = {val:F4}");
+
+            finalNormed.Dispose();
+            lastNormed.Dispose();
+            logits.Dispose();
+            hidden.Dispose();
+            foreach (var c in caches) c.Dispose();
+            model.Dispose();
+        }
+
+        private static int CountNaN(ReadOnlySpan<float> data)
+        {
+            int c = 0;
+            for (int i = 0; i < data.Length; i++) if (float.IsNaN(data[i])) c++;
+            return c;
+        }
+
+        private static float MaxAbs(ReadOnlySpan<float> data)
+        {
+            float m = 0;
+            for (int i = 0; i < data.Length; i++) { float a = Math.Abs(data[i]); if (a > m) m = a; }
+            return m;
+        }
+
         // ── Helpers ──
 
         private static (GgufMeta, Tokenizer) LoadMetaAndTokenizer(string ggufPath)
