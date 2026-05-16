@@ -11,6 +11,9 @@ Tokenizer: BPE, vocab builder, encode/decode
 Data: sources, cleaning, formating, batching, dataset loaders
 Core: tensors, matrix math, memory, activations
 
+Todo
+End to End Test, Super Dumb Model Training Load and Test Logits valid output.
+
 
 Before release check mutilple models with interactive chat
 

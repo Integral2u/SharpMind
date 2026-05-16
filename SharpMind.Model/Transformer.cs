@@ -106,15 +106,18 @@ public sealed class Transformer : IDisposable
             if (data.Length == expected)
             {
                 _lmHead ??= new Tensor<float>(_config.VocabSize, _config.HiddenDim);
-                // GGUF "output.weight" is stored as [VocabSize, HiddenDim] — same layout
-                // as token_embd.weight. Copy directly, filtering any NaN/Inf values.
-                for (int i = 0; i < data.Length; i++)
-                {
-                    float val = data[i];
-                    if (float.IsInfinity(val) || float.IsNaN(val))
-                        val = 0f;
-                    _lmHead.Data[i] = val;
-                }
+                // GGUF "output.weight" has shape [HiddenDim, VocabSize] — same layout
+                // as token_embd.weight. Transpose to [VocabSize, HiddenDim].
+                int vocab = _config.VocabSize;
+                int hidden = _config.HiddenDim;
+                for (int v = 0; v < vocab; v++)
+                    for (int h = 0; h < hidden; h++)
+                    {
+                        float val = data[h * vocab + v];
+                        if (float.IsInfinity(val) || float.IsNaN(val))
+                            val = 0f;
+                        _lmHead.Data[v * hidden + h] = val;
+                    }
             }
             return true;
         }

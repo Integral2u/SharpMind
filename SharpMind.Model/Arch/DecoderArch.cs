@@ -92,10 +92,8 @@ public sealed class DecoderArch : IArchitecture
 
         for (int i = 0; i < _blocks.Length; i++)
         {
-            // Pass the cache for the current block
             var next = _blocks[i].Forward(current, caches != null ? caches[i] : null, positionOffset, causal: true);
             
-            // Only dispose previous if it wasn't our input
             if (i > 0 && !ReferenceEquals(current, hiddenStates))
                 current.Dispose();
             

@@ -159,6 +159,26 @@ public sealed class LinearLayer : IDisposable
         if (data.Length != _bias.ElementCount)
             throw new ArgumentException($"Expected {_bias.ElementCount} bias values, got {data.Length}.");
         
+        // Check for corrupted bias values (e.g., F16 stored as F32 gives extreme values)
+        bool bad = false;
+        int checkLen = Math.Min(data.Length, 16);
+        float maxVal = 0f;
+        for (int i = 0; i < checkLen; i++)
+        {
+            float v = data[i];
+            if (float.IsNaN(v) || float.IsInfinity(v)) { bad = true; break; }
+            float av = Math.Abs(v);
+            if (av > maxVal) maxVal = av;
+        }
+        if (!bad && maxVal > 100f)
+            bad = true;
+        if (bad)
+        {
+            // Zero out rather than letting extreme values cause NaN
+            _bias.Data.Clear();
+            return;
+        }
+
         for (int i = 0; i < data.Length; i++)
         {
             float val = data[i];

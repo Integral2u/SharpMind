@@ -88,12 +88,29 @@ public abstract class NormLayer : IDisposable
         if (data.Length != Weight.ElementCount)
             throw new ArgumentException($"Expected {Weight.ElementCount} weight values, got {data.Length}.");
 
-        // Safety check: if values contain NaN or Inf, skip loading
+        // Check if weights appear corrupted. Normal norm weights should be in the
+        // range 0.01–10 with a reasonable sum (≈ dim × 1.0). Extreme values (>100)
+        // or near-zero sums indicate data corruption (e.g., F16 stored as F32).
         bool bad = false;
         int checkLen = Math.Min(data.Length, 64);
+        float maxVal = 0f, sum = 0f;
         for (int i = 0; i < checkLen; i++)
-            if (float.IsNaN(data[i]) || float.IsInfinity(data[i])) { bad = true; break; }
-        if (bad) return;
+        {
+            float v = data[i];
+            if (float.IsNaN(v) || float.IsInfinity(v)) { bad = true; break; }
+            float av = Math.Abs(v);
+            maxVal = Math.Max(maxVal, av);
+            sum += av;
+        }
+        if (!bad)
+        {
+            // Detect corruption: near-zero values (F16-in-F32) OR extreme values (misaligned data)
+            float avg = sum / checkLen;
+            if (avg < 1e-6f || maxVal > 100f)
+                bad = true;
+        }
+        if (bad)
+            return;  // Keep default ones initialization
 
         for (int i = 0; i < data.Length; i++)
         {

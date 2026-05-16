@@ -422,26 +422,7 @@ public static partial class GgufLoader
             switch (dtype)
             {
                 case GgufDtype.F32:
-                    // Norm weights and other 1D tensors may be stored as consecutive
-                    // F16 values with an F32 dtype tag. Read as half-floats to handle both.
-                    // Check the first value: if F16 interpretation gives ~0.01-1.0 range
-                    // (reasonable for RMSNorm), prefer F16 reading.
-                    long savedPos = stream.BaseStream.Position;
-                    byte[] raw16 = stream.ReadBytes(Math.Min(8, count * 4));
-                    stream.BaseStream.Position = savedPos;
-
-                    float f16First = raw16.Length >= 2 ? HalfToFloat(BitConverter.ToUInt16(raw16, 0)) : 0f;
-                    bool useF16 = Math.Abs(f16First) > 0.005f && Math.Abs(f16First) < 5f;
-
-                    if (useF16)
-                    {
-                        for (int i = 0; i < count; i++)
-                            destination[i] = HalfToFloat(stream.ReadUInt16());
-                    }
-                    else
-                    {
-                        for (int i = 0; i < count; i++) destination[i] = stream.ReadSingle();
-                    }
+                    for (int i = 0; i < count; i++) destination[i] = stream.ReadSingle();
                     break;
                 case GgufDtype.F16:
                     for (int i = 0; i < count; i++) destination[i] = HalfToFloat(stream.ReadUInt16());
@@ -504,10 +485,13 @@ public static partial class GgufLoader
         for (int b = 0; b < nBlocks; b++)
         {
             int blockStart = b * qk;
-            // block_q8_0: half d + int8_t qs[32]
             float d = HalfToFloat(reader.ReadUInt16());
+            if (float.IsNaN(d)) d = 0f;
             for (int j = 0; j < qk && blockStart + j < n; j++)
-                data[blockStart + j] = reader.ReadSByte() * d;
+            {
+                float val = reader.ReadSByte() * d;
+                data[blockStart + j] = val;
+            }
         }
     }
 
