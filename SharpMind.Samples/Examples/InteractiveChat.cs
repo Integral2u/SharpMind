@@ -14,7 +14,7 @@ namespace SharpMind.Samples.Examples
         private const bool TestMode = false;
         private const string TestPrompt = "hello";
 
-        private static readonly string ModelName = "Qwen2.5-1.5B-Instruct-f16";
+        private static readonly string ModelName = "qwen2-0_5b-instruct-fp16";
         private static readonly string ModelPath = @"C:\Integral2u\source\repos\SharpMind\ExternalAssets";
         public static async Task RunAsync()
         {

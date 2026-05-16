@@ -1,4 +1,5 @@
 using SharpMind.Core.Tensors;
+using SharpMind.Inference.Chat.PromptFormatters;
 using SharpMind.Model;
 using SharpMind.Model.Format;
 using SharpMind.Tokenization;
@@ -6,9 +7,6 @@ using System.Runtime.CompilerServices;
 
 namespace SharpMind.Inference.Chat;
 
-/// <summary>
-/// Main chat session - handles conversation with model.
-/// </summary>
 public sealed class ChatSession
 {
     private readonly Transformer _model;
@@ -17,8 +15,12 @@ public sealed class ChatSession
     private readonly KVCache[] _caches;
     private readonly List<ChatMessage> _history = [];
     private readonly int[] _decodeTokenScratch = new int[1];
-    private readonly string? _chatTemplate;
+    private readonly IChatPromptFormatter? _formatter;
+    private readonly bool _addBos;
     private bool _disposed;
+
+    /// <summary>Legend delimiter used in debug output to separate prompt from generation.</summary>
+    private const string DebugLegend = "\n│ Prompt │\n";
 
     public ChatSession(
         Transformer model,
@@ -33,7 +35,8 @@ public sealed class ChatSession
         _model = model;
         _tokenizer = tokenizer;
         _ops = ops;
-        _chatTemplate = meta?.GetChatTemplate();
+        _formatter = ChatPromptFormatterFactory.Create(meta?.GetChatTemplate());
+        _addBos = meta?.GetLong("tokenizer.ggml.add_bos_token", 1) != 0;
 
         int nl = model.Config.NumLayers;
         int ms = model.Config.MaxSeqLen;
@@ -73,9 +76,7 @@ public sealed class ChatSession
         yield return new ChatStreamEntry { Status = ChatStatus.Responding, IsComplete = false };
 
         var prompt = BuildPrompt();
-        // addBos only when there is no chat template — templated prompts are self-contained
-        bool templated = !string.IsNullOrEmpty(_chatTemplate);
-        var encoded = _tokenizer.Encode(prompt, addBos: !templated, addEos: false);
+        var encoded = _tokenizer.Encode(prompt, addBos: false, addEos: false);
         int[] promptToks;
         if (encoded.Length > MaxTokens)
         {
@@ -231,6 +232,17 @@ public sealed class ChatSession
         ThrowIfDisposed();
         _history.Add(message);
     }
+    /// <summary>
+    /// Returns the formatted prompt string that would be sent to the model
+    /// for the current history. Useful for debugging and comparing against
+    /// reference implementations (LLamaSharp, llama.cpp).
+    /// </summary>
+    public string GetFormattedPrompt()
+    {
+        ThrowIfDisposed();
+        return BuildPrompt();
+    }
+
     public void ClearHistory()
     {
         _history.Clear();
@@ -246,12 +258,14 @@ public sealed class ChatSession
 
     private string BuildPrompt()
     {
-        // If we have a chat template from GGUF, use it
-        if (!string.IsNullOrEmpty(_chatTemplate))
-            return ApplyChatTemplate(_chatTemplate, _history);
+        if (_formatter is not null)
+            return _formatter.Format(_history, _tokenizer, _addBos);
 
-        // Fallback to simple format for legacy models
         var sb = new System.Text.StringBuilder();
+
+        if (_addBos && _tokenizer.BosId >= 0)
+            sb.Append(_tokenizer.IdToToken(_tokenizer.BosId));
+
         foreach (var msg in _history)
         {
             var prefix = msg.Role switch
@@ -261,64 +275,12 @@ public sealed class ChatSession
                 ChatRole.User => "user: ",
                 _ => ""
             };
-            sb.AppendLine(prefix + msg.Content);
+            sb.Append(prefix);
+            sb.Append(msg.Content);
+            sb.Append('\n');
         }
         sb.Append("assistant: ");
         return sb.ToString();
-    }
-
-    private string ApplyChatTemplate(string template, List<ChatMessage> history)
-    {
-        // Extract all special tokens from the Jinja template
-        var tokenMatches = System.Text.RegularExpressions.Regex.Matches(template, @"<\|[^|]+\|>");
-        var allTokens = tokenMatches.Select(m => m.Value).Distinct().ToList();
-
-        // Detect format style from tokens
-        bool isChatML = allTokens.Any(t => t.Contains("im_start"));
-        bool isZephyr = allTokens.Any(t => t.Contains("/system") || t.Contains("/user") || t.Contains("/assistant"));
-
-        // Determine start and end tokens for each role
-        // ChatML: <|im_start|>role ... <|im_end|>
-        // Zephyr: <|role|> ... <|/role|>
-        string StartToken(string role) => isChatML ? "<|im_start|>" : $"<|{role}|>";
-        string EndToken(string role) => isChatML ? "<|im_end|>" : $"<|/{role}|>";
-        string AsstStart() => isChatML ? "<|im_start|>assistant" : "<|assistant|>";
-
-        // The template might use a different newline format; detect it
-        bool useNewlineBeforeContent = template.Contains($"'\\n'") || template.Contains("\n");
-
-        var result = new System.Text.StringBuilder();
-        foreach (var msg in history)
-        {
-            var role = msg.Role switch
-            {
-                ChatRole.System => "system",
-                ChatRole.Agent => "assistant",
-                ChatRole.User => "user",
-                _ => "unknown"
-            };
-
-            result.Append(StartToken(role));
-            if (useNewlineBeforeContent) result.Append('\n');
-            result.Append(msg.Content);
-            if (!string.IsNullOrEmpty(msg.Name) && msg.Role == ChatRole.Agent)
-            {
-                // If agent has a name, prepend it (e.g., "Delta: Hello")
-                result.Append(EndToken(role));
-                result.Append('\n');
-            }
-            else
-            {
-                result.Append(EndToken(role));
-                result.Append('\n');
-            }
-        }
-
-        // Add assistant generation prompt
-        result.Append(AsstStart());
-        result.Append('\n');
-
-        return result.ToString();
     }
 
     public async ValueTask DisposeAsync()
