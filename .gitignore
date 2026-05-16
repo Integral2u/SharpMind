@@ -425,3 +425,5 @@ FodyWeavers.xsd
 /ExternalAssets/tinyllama-1.1b-chat-v1.0.f16.gguf
 /ExternalAssets/Qwen2.5-1.5B-Instruct-f16.gguf
 /ExternalAssets/qwen2.5-1.5b-instruct-q8_0.gguf
+/ExternalAssets/SmolLM2-135M-Instruct.Q4_K_M.gguf
+/ExternalAssets/llama-3.2-1b-instruct-q8_0.gguf
