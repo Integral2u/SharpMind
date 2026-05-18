@@ -14,7 +14,7 @@ namespace SharpMind.Samples.Examples
         private const bool TestMode = false;
         private const string TestPrompt = "hello";
 
-        private static readonly string ModelName = "qwen2-0_5b-instruct-fp16";
+        private static readonly string ModelName = "DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M";
         private static readonly string ModelPath = @"C:\Integral2u\source\repos\SharpMind\ExternalAssets";
         public static async Task RunAsync()
         {
@@ -49,9 +49,9 @@ namespace SharpMind.Samples.Examples
 
             await using var session = new ChatSession(model, tokenizer, inferOps, meta)
             {
-                MaxTokens = TestMode ? 50 : 1024,
+                MaxTokens = TestMode ? 50 : 256,
                 Temperature = TestMode ? 0.0f : 0.7f,
-                TopK = TestMode ? 1 : 40,
+                TopK = TestMode ? 1 : 35,
                 TopP = TestMode ? 0.0f : 0.9f,
                 RepetitionPenalty = 1.05f,
                 RepetitionWindow = 64,

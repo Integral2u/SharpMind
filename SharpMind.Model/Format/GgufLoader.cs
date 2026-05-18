@@ -422,7 +422,9 @@ public static partial class GgufLoader
 
     private static bool IsQuantizedType(GgufDtype dtype) => dtype switch
     {
-        GgufDtype.Q3_K or GgufDtype.Q4_K or GgufDtype.Q5_K or GgufDtype.Q6_K => true,
+        GgufDtype.Q2_K or GgufDtype.Q3_K or GgufDtype.Q4_K or GgufDtype.Q5_K or GgufDtype.Q6_K
+        or GgufDtype.Q4_0 or GgufDtype.Q4_1 or GgufDtype.Q5_0 or GgufDtype.Q5_1
+        or GgufDtype.Q8_0 or GgufDtype.Q8_1 or GgufDtype.Q8_K => true,
         _ => false
     };
 
@@ -437,9 +439,14 @@ public static partial class GgufLoader
             case GgufDtype.Q4_K: blockSize = 256; bytesPerBlock = 144; break;  // d[2]+dmin[2]+scales[12]+qs[128]
             case GgufDtype.Q5_K: blockSize = 256; bytesPerBlock = 176; break;  // d[2]+dmin[2]+scales[12]+qh[32]+qs[128]
             case GgufDtype.Q6_K: blockSize = 256; bytesPerBlock = 210; break;  // ql[128]+qh[64]+scales[16]+d[2]
+            case GgufDtype.Q2_K: blockSize = 256; bytesPerBlock = 84;  break;  // d[2]+dmin[2]+scales[16]+qs[64]
+            case GgufDtype.Q8_K: blockSize = 256; bytesPerBlock = 292; break;  // d[4]+qs[256]+bsums[32]
             case GgufDtype.Q8_0: blockSize = 32;  bytesPerBlock = 34;  break;
+            case GgufDtype.Q8_1: blockSize = 32;  bytesPerBlock = 36;  break;  // d[2]+s[2]+qs[32]
             case GgufDtype.Q5_0: blockSize = 32;  bytesPerBlock = 22;  break;
+            case GgufDtype.Q5_1: blockSize = 32;  bytesPerBlock = 24;  break;  // d[2]+m[2]+qh[4]+qs[16]
             case GgufDtype.Q4_0: blockSize = 32;  bytesPerBlock = 18;  break;
+            case GgufDtype.Q4_1: blockSize = 32;  bytesPerBlock = 20;  break;  // d[2]+m[2]+qs[16]
             default: return 0;
         }
         int nBlocks = (nCols + blockSize - 1) / blockSize;
@@ -492,6 +499,21 @@ public static partial class GgufLoader
                 case GgufDtype.Q3_K:
                     ReadQ3_K(stream, destination, count);
                     break;
+                case GgufDtype.Q4_1:
+                    ReadQ4_1(stream, destination, count);
+                    break;
+                case GgufDtype.Q5_1:
+                    ReadQ5_1(stream, destination, count);
+                    break;
+                case GgufDtype.Q8_1:
+                    ReadQ8_1(stream, destination, count);
+                    break;
+                case GgufDtype.Q2_K:
+                    ReadQ2K(stream, destination, count);
+                    break;
+                case GgufDtype.Q8_K:
+                    ReadQ8K(stream, destination, count);
+                    break;
                 case GgufDtype.Q5_0:
                     ReadQ5_0(stream, destination, count);
                     break;
@@ -528,7 +550,7 @@ public static partial class GgufLoader
         return float.IsNaN(v) || float.IsInfinity(v) ? 0f : v;
     }
 
-    private static void ReadQ8_0(BinaryReader reader, Span<float> data, int n)
+    internal static void ReadQ8_0(BinaryReader reader, Span<float> data, int n)
     {
         const int qk = 32;
         int nBlocks = (n + qk - 1) / qk;
@@ -541,7 +563,114 @@ public static partial class GgufLoader
         }
     }
 
-    private static void ReadQ5_0(BinaryReader reader, Span<float> data, int n)
+    internal static void ReadQ4_1(BinaryReader reader, Span<float> data, int n)
+    {
+        const int qk = 32;
+        int nBlocks = (n + qk - 1) / qk;
+        for (int b = 0; b < nBlocks; b++)
+        {
+            int blockStart = b * qk;
+            float d = HalfToFloat(reader.ReadUInt16());
+            float m = HalfToFloat(reader.ReadUInt16());
+            byte[] packed = reader.ReadBytes(16);
+            for (int j = 0; j < qk && blockStart + j < n; j++)
+            {
+                int q = (packed[j / 2] >> (4 * (j % 2))) & 0x0F;
+                data[blockStart + j] = q * d + m;
+            }
+        }
+    }
+
+    internal static void ReadQ5_1(BinaryReader reader, Span<float> data, int n)
+    {
+        const int qk = 32;
+        int nBlocks = (n + qk - 1) / qk;
+        for (int b = 0; b < nBlocks; b++)
+        {
+            int blockStart = b * qk;
+            float d = HalfToFloat(reader.ReadUInt16());
+            float m = HalfToFloat(reader.ReadUInt16());
+            uint qh = reader.ReadUInt32();
+            byte[] packed = reader.ReadBytes(16);
+            for (int i = 0; i < qk && blockStart + i < n; i++)
+            {
+                int j = i % 16;
+                int xh = i < 16
+                    ? (int)((qh >> (j + 0)) & 1) << 4
+                    : (int)((qh >> (j + 12)) & 1) << 4;
+                int q = ((packed[j / 2] >> (4 * (j % 2))) & 0x0F) | xh;
+                data[blockStart + i] = q * d + m;
+            }
+        }
+    }
+
+    internal static void ReadQ8_1(BinaryReader reader, Span<float> data, int n)
+    {
+        const int qk = 32;
+        int nBlocks = (n + qk - 1) / qk;
+        for (int b = 0; b < nBlocks; b++)
+        {
+            int blockStart = b * qk;
+            float d = HalfToFloat(reader.ReadUInt16());
+            reader.ReadUInt16(); // skip s (d * sum(qs)) - only used for dot-product optimization
+            for (int j = 0; j < qk && blockStart + j < n; j++)
+                data[blockStart + j] = reader.ReadSByte() * d;
+        }
+    }
+
+    internal static void ReadQ2K(BinaryReader reader, Span<float> data, int n)
+    {
+        const int QK_K = 256;
+        int nBlocks = (n + QK_K - 1) / QK_K;
+        for (int b = 0; b < nBlocks; b++)
+        {
+            int blockStart = b * QK_K;
+            float dSuper = HalfToFloat(reader.ReadUInt16());
+            float minSuper = HalfToFloat(reader.ReadUInt16());
+            byte[] scales = reader.ReadBytes(16);
+            byte[] qs = reader.ReadBytes(64);
+            int qOff = 0;
+            for (int n16 = 0; n16 < QK_K; n16 += 128)
+            {
+                int shift = 0;
+                for (int j = 0; j < 4; j++)
+                {
+                    int isc = (n16 / 128) * 8 + j * 2;
+                    byte sc0 = scales[isc];
+                    float dl = dSuper * (sc0 & 0x0F);
+                    float ml = minSuper * (sc0 >> 4);
+                    int base_ = blockStart + n16 + j * 32;
+                    for (int l = 0; l < 16 && base_ + l < n; l++)
+                        data[base_ + l] = dl * ((qs[qOff + l] >> shift) & 3) - ml;
+
+                    byte sc1 = scales[isc + 1];
+                    dl = dSuper * (sc1 & 0x0F);
+                    ml = minSuper * (sc1 >> 4);
+                    for (int l = 0; l < 16 && base_ + 16 + l < n; l++)
+                        data[base_ + 16 + l] = dl * ((qs[qOff + l + 16] >> shift) & 3) - ml;
+
+                    shift += 2;
+                }
+                qOff += 32;
+            }
+        }
+    }
+
+    internal static void ReadQ8K(BinaryReader reader, Span<float> data, int n)
+    {
+        const int QK_K = 256;
+        int nBlocks = (n + QK_K - 1) / QK_K;
+        for (int b = 0; b < nBlocks; b++)
+        {
+            int blockStart = b * QK_K;
+            float d = reader.ReadSingle();
+            for (int j = 0; j < QK_K && blockStart + j < n; j++)
+                data[blockStart + j] = reader.ReadSByte() * d;
+            reader.ReadBytes(QK_K / 16 * 2); // skip bsums[16] int16
+        }
+    }
+
+    internal static void ReadQ5_0(BinaryReader reader, Span<float> data, int n)
     {
         const int qk = 32;
         int nBlocks = (n + qk - 1) / qk;
@@ -566,7 +695,7 @@ public static partial class GgufLoader
         }
     }
 
-    private static void ReadQ4_0(BinaryReader reader, Span<float> data, int n)
+    internal static void ReadQ4_0(BinaryReader reader, Span<float> data, int n)
     {
         int blockSize = 32;
         int nBlocks = (n + blockSize - 1) / blockSize;
@@ -588,7 +717,7 @@ public static partial class GgufLoader
         }
     }
 
-    private static void ReadQ4K(BinaryReader reader, Span<float> data, int n)
+    internal static void ReadQ4K(BinaryReader reader, Span<float> data, int n)
     {
         const int QK_K = 256;
         int nBlocks = (n + QK_K - 1) / QK_K;
@@ -641,7 +770,7 @@ public static partial class GgufLoader
         }
     }
 
-    private static void ReadQ6K(BinaryReader reader, Span<float> data, int n)
+    internal static void ReadQ6K(BinaryReader reader, Span<float> data, int n)
     {
         const int QK_K = 256;
         int nBlocks = (n + QK_K - 1) / QK_K;
@@ -671,7 +800,7 @@ public static partial class GgufLoader
         }
     }
 
-    private static void ReadQ5_K(BinaryReader reader, Span<float> data, int n)
+    internal static void ReadQ5_K(BinaryReader reader, Span<float> data, int n)
     {
         const int QK_K = 256;
         int nBlocks = (n + QK_K - 1) / QK_K;
@@ -715,7 +844,7 @@ public static partial class GgufLoader
         }
     }
 
-    private static void ReadQ3_K(BinaryReader reader, Span<float> data, int n)
+    internal static void ReadQ3_K(BinaryReader reader, Span<float> data, int n)
     {
         const int QK_K = 256;
         int nBlocks = (n + QK_K - 1) / QK_K;
@@ -738,6 +867,7 @@ public static partial class GgufLoader
             // bytes 12-15 are unused (DecodeQ3KScales overwrites all 16 bytes)
 
             int[] sc = DecodeQ3KScales(scaleBuf);
+            // Console.WriteLine($"dAll={dAll} sc[0]={sc[0]}");
 
             for (int i = 0; i < QK_K && blockStart + i < n; i++)
             {
@@ -749,6 +879,9 @@ public static partial class GgufLoader
                 int actual = s2 - (hBit == 0 ? 4 : 0);
                 int sub = i / 32;
                 float val = dAll * sc[sub] * actual;
+                
+                // if (i == 0) Console.WriteLine($"i=0: dAll={dAll}, sc[sub]={sc[sub]}, s2={s2}, hBit={hBit}, actual={actual}, val={val}");
+
                 if (float.IsNaN(val) || float.IsInfinity(val)) val = 0f;
                 data[blockStart + i] = val;
             }
@@ -767,7 +900,10 @@ public static partial class GgufLoader
             aux[0] = (aux[0] & 0x0f0f0f0fu) | (((tmp >> 0) & 0x03030303u) << 4);
             aux[1] = (aux[1] & 0x0f0f0f0fu) | (((tmp >> 2) & 0x03030303u) << 4);
             sbyte* sc8 = (sbyte*)p;
-            for (int j = 0; j < 16; j++) sc[j] = sc8[j] - 32;
+            for (int j = 0; j < 16; j++) {
+                sc[j] = sc8[j] - 32;
+                // Console.WriteLine($"sc[{j}]={sc[j]}");
+            }
         }
         return sc;
     }

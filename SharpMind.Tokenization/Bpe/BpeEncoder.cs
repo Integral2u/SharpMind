@@ -219,17 +219,6 @@ public sealed class BpeEncoder
 
     private static bool TryDecodeByte(string token, out byte b)
     {
-        if (token.Length == 1 && char.IsAscii(token[0]) && !char.IsControl(token[0]))
-        {
-            b = (byte)token[0];
-            return true;
-        }
-        if (token.StartsWith("<0x", StringComparison.Ordinal) && token.EndsWith('>') &&
-            token.Length == 6 &&
-            byte.TryParse(token[3..5], System.Globalization.NumberStyles.HexNumber, null, out b))
-            return true;
-
-        b = 0;
-        return false;
+        return Vocabulary.TryDecodeByteToken(token, out b);
     }
 }

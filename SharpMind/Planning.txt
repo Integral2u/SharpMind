@@ -40,6 +40,8 @@ using System.IO.Abstractions;
 
 builder.Services.AddSingleton<IFileSystem, FileSystem>();
 
+Check quanitzation methid usages.
+
 Before release check mutilple models with interactive chat
 
 AirLLM stream in model layers sound interesting

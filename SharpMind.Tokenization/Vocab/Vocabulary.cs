@@ -1,4 +1,5 @@
-﻿using System.Runtime.CompilerServices;
+﻿using System.Linq;
+using System.Runtime.CompilerServices;
 
 namespace SharpMind.Tokenization.Vocab;
 
@@ -115,20 +116,56 @@ public sealed class Vocabulary
 
     private static string[] CreateByteMap()
     {
+        // Exact OpenAI GPT-2 byte-to-unicode mapping from
+        // https://github.com/openai/gpt-2/blob/master/src/encoder.py
+        var bs = new List<int>(256);
+        bs.AddRange(Enumerable.Range(33, 94));   // 33-126
+        bs.AddRange(Enumerable.Range(161, 12));  // 161-172
+        bs.AddRange(Enumerable.Range(174, 82));  // 174-255
+
+        var cs = new List<int>(bs);
+
+        int n = 0;
+        for (int b = 0; b < 256; b++)
+        {
+            if (!bs.Contains(b))
+            {
+                bs.Add(b);
+                cs.Add(256 + n);
+                n++;
+            }
+        }
+
         var map = new string[256];
-        for (int b = 0; b < 256; b++) map[b] = $"<0x{b:X2}>";
-
-        // Printable ASCII (33-126) maps to itself
-        for (int b = 33; b <= 126; b++) map[b] = ((char)b).ToString();
-        
-        // Space (32) maps to Ġ (U+0120)
-        map[32] = "\u0120";
-
-        // We could implement the full 256-char mapping here, but for Qwen/LLaMA GGUFs,
-        // the most important thing is that the pre-tokeniser and byte-tokeniser 
-        // use the same characters as the vocab strings.
-        
+        for (int i = 0; i < 256; i++)
+            map[bs[i]] = char.ConvertFromUtf32(cs[i]);
         return map;
+    }
+
+    private static readonly Dictionary<char, byte> ReverseByteMap = CreateReverseByteMap();
+
+    private static Dictionary<char, byte> CreateReverseByteMap()
+    {
+        var map = new Dictionary<char, byte>(256);
+        for (int b = 0; b < 256; b++)
+        {
+            string s = ByteMap[b];
+            if (s.Length == 1)
+                map[s[0]] = (byte)b;
+        }
+        return map;
+    }
+
+    internal static bool TryDecodeByteToken(string token, out byte b)
+    {
+        if (token.Length == 1 && ReverseByteMap.TryGetValue(token[0], out b))
+            return true;
+        if (token.StartsWith("<0x", StringComparison.Ordinal) && token.EndsWith('>') &&
+            token.Length == 6 &&
+            byte.TryParse(token[3..5], System.Globalization.NumberStyles.HexNumber, null, out b))
+            return true;
+        b = 0;
+        return false;
     }
 
     /// <summary>Encodes a string to byte tokens using the byte-level fallback.</summary>

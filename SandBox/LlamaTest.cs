@@ -25,6 +25,61 @@ namespace SandBox
             NativeLibraryConfig.All.WithAvx(Avx512F.IsSupported ? AvxLevel.Avx512 : Avx2.IsSupported ? AvxLevel.Avx2 : Avx.IsSupported ? AvxLevel.Avx : AvxLevel.None);
         }
 
+        public static async Task TestChat()
+        {
+            NativeLibraryConfig.All.WithLogCallback(delegate (LLamaLogLevel level, string message) { });
+            NativeLibraryConfig.All.WithAvx(Avx512F.IsSupported ? AvxLevel.Avx512 : Avx2.IsSupported ? AvxLevel.Avx2 : Avx.IsSupported ? AvxLevel.Avx : AvxLevel.None);
+
+            CancellationTokenSource cts = new();
+            string modelPath = @"C:\Integral2u\source\repos\SharpMind\ExternalAssets\DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M.gguf";
+
+            var parameters = new ModelParams(modelPath)
+            {
+                ContextSize = 1024,
+                GpuLayerCount = 0
+            };
+
+            using var weights = LLamaWeights.LoadFromFile(parameters);
+            using var context = weights.CreateContext(parameters);
+
+            var inferenceParams = new InferenceParams()
+            {
+                MaxTokens = 256,
+                AntiPrompts = ["User:", "<｜User｜>"],
+                SamplingPipeline = new DefaultSamplingPipeline()
+                {
+                    Temperature = 0.7f,
+                    TopP = 0.9f,
+                    TopK = 35,
+                }
+            };
+
+            string prompt = "<｜begin▁of▁sentence｜><｜User｜>hello<｜Assistant｜>\n";
+
+            // Test 1: InteractiveExecutor + manual prompt (WORKS)
+            Console.WriteLine("=== InteractiveExecutor + manual prompt ===");
+            var executor1 = new InteractiveExecutor(context);
+            Console.Out.Write("User: hello\nAssistant: ");
+            await foreach (var text in executor1.InferAsync(prompt, inferenceParams, cts.Token))
+                Console.Write(text);
+            Console.WriteLine("\n");
+
+            // Test 2: ChatSession + ChatHistory (BROKEN for DeepSeek)
+            Console.WriteLine("=== ChatSession + ChatHistory ===");
+            using var context2 = weights.CreateContext(parameters);
+            var executor2 = new InteractiveExecutor(context2);
+            var session = new LLama.ChatSession(executor2, new ChatHistory([
+                new(AuthorRole.System, "You are a helpful assistant.")
+            ]));
+            Console.Out.Write("User: hello\nAssistant: ");
+            await foreach (var text in session.ChatAsync(
+                new ChatHistory.Message(AuthorRole.User, "hello"),
+                inferenceParams, cts.Token))
+                Console.Write(text);
+            Console.WriteLine();
+
+            Console.ReadLine();
+        }
         /// <summary>Verifies SharpMind's prompt formatting for each model.</summary>
         public static void VerifyPromptFormatting()
         {
