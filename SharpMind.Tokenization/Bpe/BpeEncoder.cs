@@ -93,7 +93,7 @@ public sealed class BpeEncoder
 
     /// <summary>
     /// Decodes a sequence of token IDs back to a string.
-    /// Byte tokens are reconstructed from UTF-8 bytes.
+    /// Each token's GPT-2 byte-encoded characters are reverse-mapped to raw bytes.
     /// Special tokens are included unless <paramref name="skipSpecials"/> is true.
     /// </summary>
     public string Decode(ReadOnlySpan<int> ids, bool skipSpecials = true)
@@ -107,14 +107,12 @@ public sealed class BpeEncoder
             if (skipSpecials && _vocab.Specials.All.Contains(token))
                 continue;
 
-            if (TryDecodeByte(token, out byte b))
+            foreach (char c in token)
             {
-                bytes.Add(b);
-            }
-            else
-            {
-                foreach (byte tb in System.Text.Encoding.UTF8.GetBytes(token))
-                    bytes.Add(tb);
+                if (TryDecodeByte(c.ToString(), out byte b))
+                    bytes.Add(b);
+                else
+                    bytes.Add((byte)c); // ASCII-safe fallback
             }
         }
 
