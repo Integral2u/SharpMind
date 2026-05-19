@@ -377,6 +377,8 @@ public static partial class GgufLoader
 
         int loaded = 0, missing = 0, total = meta.Tensors.Count;
 
+        // Quiet mode: no verbose FFN tensor dump
+
         foreach (var info in meta.Tensors)
         {
             long targetOffset = meta.DataOffset + info.Offset;
@@ -877,7 +879,7 @@ public static partial class GgufLoader
                 int s2 = (qs[qsByte] >> qsShift) & 3;
                 int hBit = (qh[i % 32] >> (i / 32)) & 1;
                 int actual = s2 - (hBit == 0 ? 4 : 0);
-                int sub = i / 32;
+                int sub = i / 16;
                 float val = dAll * sc[sub] * actual;
                 
                 // if (i == 0) Console.WriteLine($"i=0: dAll={dAll}, sc[sub]={sc[sub]}, s2={s2}, hBit={hBit}, actual={actual}, val={val}");

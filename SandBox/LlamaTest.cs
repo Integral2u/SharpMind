@@ -157,6 +157,12 @@ namespace SandBox
             string prompt = GetDeepSeekPrompt(modelPath);
             Console.WriteLine($"Prompt: {prompt}");
 
+            // 0. Debug: check GGUF tensor shapes
+            var (dbgMeta, _) = LoadMetaAndTokenizer(modelPath);
+            foreach (var t in dbgMeta.Tensors)
+                if (t.Name.Contains("token_embd") || t.Name.Contains("output"))
+                    Console.WriteLine($"[{t.Name}] shape=[{string.Join(",", t.Shape)}] dtype={t.Dtype} offset={t.Offset}");
+
             // 2. Tokenize with SharpMind tokenizer
             var (meta, sharpTok) = LoadMetaAndTokenizer(modelPath);
             int[] sharpTokens = sharpTok.Encode(prompt, addBos: false);
@@ -187,14 +193,28 @@ namespace SandBox
             }
             if (tokensMatch) Console.WriteLine("✓ Tokens match perfectly!");
 
-            // 5. Run prefill in LLamaSharp and extract last-token logits
-            Console.WriteLine("\nRunning LLamaSharp prefill...");
+            // 5. Run prefill in LLamaSharp and extract all-token logits
+            Console.WriteLine("\nRunning LLamaSharp prefill (all logits)...");
             var batch = new LLamaBatch();
             for (int i = 0; i < llmTokens.Length; i++)
-                batch.Add(llmTokens[i], i, LLamaSeqId.Zero, logits: i == llmTokens.Length - 1);
+                batch.Add(llmTokens[i], i, LLamaSeqId.Zero, logits: true);
             context.NativeHandle.Decode(batch);
-            Span<float> llmLogits = context.NativeHandle.GetLogitsIth(llmTokens.Length - 1);
-            var llmTop10 = GetTopK(llmLogits, 10);
+
+            // Compare each token's logits
+            Console.WriteLine("\n═══ Token-by-token logit comparison ═══");
+            int[] checkToks = [71486, 32313, 9707, 13048, 40, 0, 1, 151646];
+            for (int t = 0; t < llmTokens.Length; t++)
+            {
+                Span<float> llmLogits = context.NativeHandle.GetLogitsIth(t);
+                Console.Write($"Token {t} (id={sharpTokens[t]}):");
+                foreach (int cid in checkToks)
+                    Console.Write($" [{cid}]={llmLogits[cid],8:G4}");
+                Console.WriteLine();
+            }
+
+            // Also get last-token top-10
+            Span<float> lastLlmLogits = context.NativeHandle.GetLogitsIth(llmTokens.Length - 1);
+            var llmTop10 = GetTopK(lastLlmLogits, 10);
             Console.WriteLine("LLamaSharp top-10 logits:");
             foreach (var (id, val) in llmTop10)
                 Console.WriteLine($"  [{id}] {sharpTok.IdToToken(id)} = {val:F4}");
@@ -232,18 +252,54 @@ namespace SandBox
         /// (norm guard triggered), all-zeros (bias guard / read error), or
         /// contain NaN/Inf values. Shows GGUF dtype to identify broken quantizers.
         /// </summary>
-        public static void WeightValidation()
+    public static void WeightValidation()
+    {
+        string modelPath = Path.Combine(Assets, "DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M.gguf");
+        Console.WriteLine("═══ Weight Validation: DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M ═══");
+
+        var meta = GgufLoader.LoadMeta(modelPath);
+        var weights = GgufLoader.LoadWeights(modelPath);
+        var tensorMap = meta.Tensors.ToDictionary(t => t.Name);
+
+        Console.WriteLine($"Total tensors: {weights.Count}\n");
+
+        // Check norm weights specifically
+        Console.WriteLine("═══ Norm Weights (ffn_norm) ═══");
+        foreach (var kv in weights.OrderBy(kv => kv.Key))
         {
-            string modelPath = Path.Combine(Assets, "DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M.gguf");
-            Console.WriteLine("═══ Weight Validation: DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M ═══");
+            if (!kv.Key.Contains("ffn_norm")) continue;
+            var data = kv.Value.Data;
+            float min = float.MaxValue, max = float.MinValue;
+            double sum = 0;
+            for (int i = 0; i < data.Length; i++)
+            {
+                float v = data[i];
+                if (v < min) min = v; if (v > max) max = v; sum += v;
+            }
+            int layer = int.Parse(System.Text.RegularExpressions.Regex.Match(kv.Key, @"\d+").Value);
+            if (layer <= 2)
+                Console.WriteLine($"{kv.Key,-45} min={min,8:G4} max={max,8:G4} mean={sum/data.Length,8:G4}");
+        }
 
-            var meta = GgufLoader.LoadMeta(modelPath);
-            var weights = GgufLoader.LoadWeights(modelPath);
-            var tensorMap = meta.Tensors.ToDictionary(t => t.Name);
+        // Also check attn_norm
+        Console.WriteLine("\n═══ Norm Weights (attn_norm) ═══");
+        foreach (var kv in weights.OrderBy(kv => kv.Key))
+        {
+            if (!kv.Key.Contains("attn_norm")) continue;
+            var data = kv.Value.Data;
+            float min = float.MaxValue, max = float.MinValue;
+            double sum = 0;
+            for (int i = 0; i < data.Length; i++)
+            {
+                float v = data[i];
+                if (v < min) min = v; if (v > max) max = v; sum += v;
+            }
+            int layer = int.Parse(System.Text.RegularExpressions.Regex.Match(kv.Key, @"\d+").Value);
+            if (layer <= 2)
+                Console.WriteLine($"{kv.Key,-45} min={min,8:G4} max={max,8:G4} mean={sum/data.Length,8:G4}");
+        }
 
-            Console.WriteLine($"Total tensors: {weights.Count}\n");
-
-            int f32 = 0, q3k = 0, q4k = 0, q5k = 0, q6k = 0, broken = 0;
+        int f32 = 0, q3k = 0, q4k = 0, q5k = 0, q6k = 0, broken = 0;
 
             foreach (var kv in weights.OrderBy(kv => kv.Key))
             {
@@ -321,6 +377,12 @@ namespace SandBox
             GgufLoader.Load(modelPath, null, out GgufMeta meta, out ModelConfig modelConfig, out Tokenizer? tokenizer);
             if (tokenizer == null) { Console.WriteLine("No tokenizer"); return; }
 
+            Console.WriteLine($"Architecture: {meta.GetString("general.architecture")}");
+            Console.WriteLine($"RopeTheta: {modelConfig.RopeTheta}");
+            Console.WriteLine($"NormEps: {modelConfig.NormEps}");
+            Console.WriteLine($"FfnDim: {modelConfig.FfnDim}");
+            Console.WriteLine($"MaxSeqLen: {modelConfig.MaxSeqLen}");
+
             var sharpConfig = SharpMind.SharpMindConfig.Qwen with { Hardware = HardwareTier.AVX2 };
             var model = ModelFactory.Create(modelConfig, sharpConfig);
             GgufLoader.LoadWeightsToModel(modelPath, meta, model);
@@ -367,14 +429,16 @@ namespace SandBox
                 if (kn > 0) { Console.WriteLine($"✗ K NaN: {kn}"); normed1.Dispose(); q.Dispose(); k.Dispose(); v.Dispose(); return; }
                 if (vn > 0) { Console.WriteLine($"✗ V NaN: {vn}"); normed1.Dispose(); q.Dispose(); k.Dispose(); v.Dispose(); return; }
 
-                // Check Q, K, V magnitudes
-                Console.Write($"(Q={MaxAbs(q.Data):G3} K={MaxAbs(k.Data):G3} V={MaxAbs(v.Data):G3}) ");
+                Console.Write($"(Q={MaxAbs(q.Data):G3} K={MaxAbs(k.Data):G3}");
+                Console.Write($" V={MaxAbs(v.Data):G3}) ");
+                Console.Write($"attn_in={MaxAbs(normed1.Data):G3} ");
 
-                // Run full attention, then check Wo
+                // Run full attention, then check output
                 var attnOut = block.Attention.Forward(normed1, ops, 0, true, caches[layer]);
                 q.Dispose(); k.Dispose(); v.Dispose();
                 int aNaN = CountNaN(attnOut.Data);
                 if (aNaN > 0) { Console.WriteLine($"✗ attention NaN: {aNaN}/{attnOut.Data.Length}"); normed1.Dispose(); attnOut.Dispose(); return; }
+                Console.Write($"attnOut={MaxAbs(attnOut.Data):G3} ");
 
                 // Residual
                 var h1 = SharpMind.Core.Ops.TensorOps.Add(hidden, attnOut);
@@ -390,8 +454,36 @@ namespace SandBox
                 // FFN
                 var ffnOut = block.Ffn.Forward(normed2);
                 int fNaN = CountNaN(ffnOut.Data);
+
+                if (layer <= 2)
+                {
+                    var wg = block.Ffn.WGate; var wu = block.Ffn.WUp;
+                    Console.Write($"nin={MaxAbs(normed2.Data):G3} h1max={MaxAbs(h1.Data):G3} ");
+                    int hd = modelConfig.HiddenDim;
+                    // Find position of max normed value
+                    int nTok = 0, nDim = 0; float maxN = 0;
+                    for (int t = 0; t < 5; t++)
+                        for (int d = 0; d < hd; d++)
+                        {
+                            float val = Math.Abs(normed2.Data[t * hd + d]);
+                            if (val > maxN) { maxN = val; nTok = t; nDim = d; }
+                        }
+                    // Compute RMS of h1 at that token
+                    double hss = 0; var hrow = h1.Data.Slice(nTok * hd, hd);
+                    for (int ii = 0; ii < hd; ii++) hss += hrow[ii] * hrow[ii];
+                    float hrms = (float)Math.Sqrt(hss / hd + 1e-5f);
+                    // weight = normed * h1_rms / h1
+                    float h1atN = Math.Abs(h1.Data[nTok * hd + nDim]);
+                    float wImplied = maxN * hrms / Math.Max(h1atN, 1e-10f);
+                    Console.Write($"maxNin@tok{nTok}d{nDim}: h1={h1atN:G3} h1rms={hrms:G3} w~={wImplied:G3} ");
+                    using var gate = wg.Forward(normed2, ops);
+                    using var up = wu.Forward(normed2, ops);
+                    Console.Write($"gateO={MaxAbs(gate.Data):G3} upO={MaxAbs(up.Data):G3} ");
+                }
+
                 normed2.Dispose();
                 if (fNaN > 0) { Console.WriteLine($"✗ FFN NaN: {fNaN}/{ffnOut.Data.Length}"); return; }
+                Console.Write($"ffnOut={MaxAbs(ffnOut.Data):G3} ");
 
                 // Residual: out = h + ffn
                 var output = SharpMind.Core.Ops.TensorOps.Add(h1, ffnOut);
@@ -401,7 +493,7 @@ namespace SandBox
 
                 var oNaN = CountNaN(hidden.Data);
                 if (oNaN > 0) { Console.WriteLine($"✗ output NaN: {oNaN}/{hidden.Data.Length}"); return; }
-                Console.WriteLine($"ok (max={MaxAbs(hidden.Data):G4})");
+                Console.WriteLine($"hidden={MaxAbs(hidden.Data):G3}");
             }
 
             // 3. Final norm
@@ -429,6 +521,17 @@ namespace SandBox
                 for (int k = 0; k < modelConfig.HiddenDim; k++)
                     sum += lastNormed.Data[k] * projW.Data[j * modelConfig.HiddenDim + k];
                 Console.Write($" {sum:G4}");
+            }
+
+            // Manual dot product for LLamaSharp's top tokens
+            int[] checkTokens = [71486, 32313, 9707, 13048, 11578, 40];
+            Console.Write(" checkTok:");
+            foreach (int t in checkTokens)
+            {
+                double sum = 0;
+                for (int k = 0; k < modelConfig.HiddenDim; k++)
+                    sum += lastNormed.Data[k] * projW.Data[t * modelConfig.HiddenDim + k];
+                Console.Write($" [{t}]={sum:G4}");
             }
 
             var logits = model.Ops.MatMulWithBT(lastNormed, projW);
@@ -462,6 +565,13 @@ namespace SandBox
             return m;
         }
 
+        private static float MeanAbs(ReadOnlySpan<float> data)
+        {
+            double sum = 0;
+            for (int i = 0; i < data.Length; i++) sum += Math.Abs(data[i]);
+            return (float)(sum / data.Length);
+        }
+
         // ── Helpers ──
 
         private static (GgufMeta, Tokenizer) LoadMetaAndTokenizer(string ggufPath)
@@ -488,18 +598,61 @@ namespace SandBox
                 GgufLoader.Load(modelPath, null, out GgufMeta meta, out ModelConfig modelConfig, out Tokenizer? tokenizer);
                 if (tokenizer == null) { Console.WriteLine("No tokenizer from GGUF"); return null; }
 
-                var sharpConfig = SharpMind.SharpMindConfig.Qwen with { Hardware = HardwareTier.AVX2 };
+                var sharpConfig = SharpMind.SharpMindConfig.Qwen with { Hardware = HardwareTier.Scalar };
                 var model = ModelFactory.Create(modelConfig, sharpConfig);
                 GgufLoader.LoadWeightsToModel(modelPath, meta, model);
                 var inferOps = InferenceOpsFactory.Create(sharpConfig, InferenceConfig.Default);
+
+                // Diagnostic: check LM head
+                var lmHead = model.LmHead;
+                Console.WriteLine($"LM head loaded: {(lmHead != null ? $"shape=[{lmHead.Shape.Rows},{lmHead.Shape.Cols}]" : "null (using embedding)")}");
+                
+                // Check token 71486 ("Alright") LM head weight
+                int checkToken = 71486;
+                if (lmHead != null)
+                {
+                    var row = lmHead.RowSpan(checkToken);
+                    float min = float.MaxValue, max = float.MinValue;
+                    for (int i = 0; i < row.Length; i++) { float v = row[i]; if (v < min) min = v; if (v > max) max = v; }
+                    double mean = 0; for (int i = 0; i < Math.Min(10, row.Length); i++) mean += row[i]; mean /= Math.Min(10, row.Length);
+                    Console.WriteLine($"  token {checkToken} weight: min={min:G4} max={max:G4} mean={mean:G4}");
+                }
+                else
+                {
+                    var embedWeight = model.EmbeddingWeight;
+                    var row = embedWeight.RowSpan(checkToken);
+                    float min = float.MaxValue, max = float.MinValue;
+                    for (int i = 0; i < row.Length; i++) { float v = row[i]; if (v < min) min = v; if (v > max) max = v; }
+                    Console.WriteLine($"  (embedding) token {checkToken} weight: min={min:G4} max={max:G4}");
+                }
 
                 var caches = new KVCache[modelConfig.NumLayers];
                 for (int i = 0; i < modelConfig.NumLayers; i++)
                     caches[i] = new KVCache(1, modelConfig.NumKvHeads, 128, modelConfig.HeadDim);
 
                 using var input = SharpMind.Core.Tensors.Tensor<int>.From(promptTokens, 1, promptTokens.Length);
-                using var logits = model.ForwardLastLogits(input, caches, 0);
-                return logits.Data[..Math.Min(logits.Data.Length, 151936)].ToArray();
+
+                // Forward returns [Batch=1, SeqLen, VocabSize]
+                using var logits = model.Forward(input, caches);
+                int seqLen = promptTokens.Length;
+                int vocabSize = Math.Min(logits.Data.Length / seqLen, 151936);
+
+                // Print per-token logits for comparison
+                int[] checkToks = [71486, 32313, 9707, 13048, 40, 0, 1, 151646];
+                Console.WriteLine("\nSharpMind per-token logits:");
+                for (int t = 0; t < seqLen; t++)
+                {
+                    int offset = t * vocabSize;
+                    Console.Write($"Token {t} (id={promptTokens[t]}):");
+                    foreach (int cid in checkToks)
+                        Console.Write($" [{cid}]={logits.Data[offset + cid],8:G4}");
+                    Console.WriteLine();
+                }
+
+                // Return last-token logits for top-K comparison
+                var lastLogits = new float[vocabSize];
+                logits.Data.Slice((seqLen - 1) * vocabSize, vocabSize).CopyTo(lastLogits);
+                return lastLogits;
             }
             catch (Exception ex)
             {

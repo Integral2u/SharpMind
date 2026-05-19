@@ -166,7 +166,7 @@ public sealed class LinearLayer : IDisposable
                 int s2 = (qs[qsByte] >> qsShift) & 3;
                 int hBit = (qh[i % 32] >> (i / 32)) & 1;
                 int actual = s2 - (hBit == 0 ? 4 : 0);
-                int sub = i / 32;
+                int sub = i / 16;
                 float val = dAll * (sc8[sub] - 32) * actual;
                 sum += input[b * QK_K + i] * val;
             }
