@@ -68,6 +68,16 @@ public sealed class Transformer : IDisposable
             || lower.Contains("wte") || lower.Contains("model.embed"))
         {
             long expected = (long)_config.VocabSize * _config.HiddenDim;
+            if (expected == data.Length)
+            {
+                // GGUF stores token_embd.weight as [vocab, hidden] in memory
+                // (shape [hidden, vocab] with hidden as innermost dim).
+                // Direct copy — no transposition needed or correct here.
+                data.CopyTo(_embedding.Weight.Data);         // ← replaces the nested loop
+            }
+            return true;
+            /*  ------Old
+            long expected = (long)_config.VocabSize * _config.HiddenDim;
 
             if (expected == data.Length)
             {
@@ -82,6 +92,7 @@ public sealed class Transformer : IDisposable
                 data.CopyTo(_embedding.Weight.Data);
             }
             return true;
+            */
         }
         else if (lower.Contains("output_norm") || lower.Contains("norm") && lower.Contains("output"))
         {
@@ -90,6 +101,14 @@ public sealed class Transformer : IDisposable
         }
         else if (lower.Contains("lm_head") || lower.StartsWith("output."))
         {
+            long expected = (long)_config.VocabSize * _config.HiddenDim;
+            if (data.Length == expected)
+            {
+                _lmHead ??= new Tensor<float>(_config.VocabSize, _config.HiddenDim);
+                data.CopyTo(_lmHead.Data);                   // ← replaces the nested loop
+            }
+            return true;
+            /* --- old
             // LM head projection weight (GGUF: "output.weight", HF: "lm_head.weight").
             // Loaded into a dedicated tensor so the embedding table is never overwritten.
             // Falls back to the embedding at inference time if this weight is absent
@@ -105,6 +124,7 @@ public sealed class Transformer : IDisposable
                             _lmHead.Data[v * hidden + h] = data[h * vocab + v];
                 }
             return true;
+            */
         }
         else
         {

@@ -432,9 +432,11 @@ public static partial class GgufLoader
 
     private static long GetRawTensorByteCount(int[] shape, GgufDtype dtype)
     {
+
         int nRows = shape[0];
         int nCols = shape.Length > 1 ? shape[1] : 1;
         int blockSize, bytesPerBlock;
+
         switch (dtype)
         {
             case GgufDtype.Q3_K: blockSize = 256; bytesPerBlock = 110; break;  // hmask[32]+qs[64]+scales[12]+d[2]
@@ -451,8 +453,16 @@ public static partial class GgufLoader
             case GgufDtype.Q4_1: blockSize = 32;  bytesPerBlock = 20;  break;  // d[2]+m[2]+qs[16]
             default: return 0;
         }
+        // Correct: outermost dim (shape[1]) is the number of quantized "rows";
+        // innermost dim (shape[0]) is what gets split into blocks.
+        int nQuantRows = shape.Length > 1 ? shape[1] : 1;
+        int nQuantCols = shape[0];
+        int nBlocks = (nQuantCols + blockSize - 1) / blockSize;
+        return (long)nQuantRows * nBlocks * bytesPerBlock;
+        /*  --old
         int nBlocks = (nCols + blockSize - 1) / blockSize;
         return (long)nRows * nBlocks * bytesPerBlock;
+        */
     }
 
     // ?? Tensor reading ????????????????????????????????????????????????????
@@ -780,10 +790,11 @@ public static partial class GgufLoader
         for (int b = 0; b < nBlocks; b++)
         {
             int blockStart = b * QK_K;
+            int valid = Math.Min(QK_K, n - blockStart);
 
             // Q6_K (QK_K=256): 128B ql + 64B qh + 16 int8 scales + 2B half d = 210 bytes per 256 values
-            byte[] ql = reader.ReadBytes(128);   // low 4 bits
-            byte[] qh = reader.ReadBytes(64);    // high 2 bits
+            byte[] ql = reader.ReadBytes(128);
+            byte[] qh = reader.ReadBytes(64);
 
             sbyte[] scales = new sbyte[16];
             for (int s = 0; s < 16; s++)
@@ -791,13 +802,40 @@ public static partial class GgufLoader
 
             float d = HalfToFloat(reader.ReadUInt16());
 
-            for (int i = 0; i < QK_K && blockStart + i < n; i++)
+            // Current ggml Q6_K: process 128 values at a time
+            for (int nOff = 0; nOff < valid; nOff += 128)
             {
-                int ql_val = (ql[i / 2] >> (4 * (i % 2))) & 0x0F;
-                int qh_val = (qh[i / 4] >> (2 * (i % 4))) & 0x03;
-                int q_val = (qh_val << 4) | ql_val;
-                int sub = i / 16;
-                data[blockStart + i] = d * scales[sub] * (q_val - 32);
+                int qlOff = nOff == 0 ? 0 : 64;
+                int qhOff = nOff == 0 ? 0 : 32;
+                int scOff = nOff == 0 ? 0 : 8;
+
+                int halfRem = Math.Min(128, valid - nOff);
+                for (int l = 0; l < 32 && l < halfRem; l++)
+                {
+                    int is_ = l / 16;
+                    int q1 = (ql[qlOff + l] & 0x0F) | ((qh[qhOff + l] & 0x03) << 4);
+                    int q2 = (ql[qlOff + l + 32] & 0x0F) | (((qh[qhOff + l] >> 2) & 0x03) << 4);
+                    int q3 = ((ql[qlOff + l] >> 4) & 0x0F) | (((qh[qhOff + l] >> 4) & 0x03) << 4);
+                    int q4 = ((ql[qlOff + l + 32] >> 4) & 0x0F) | (((qh[qhOff + l] >> 6) & 0x03) << 4);
+
+                    int idx1 = nOff + l;
+                    int idx2 = nOff + l + 32;
+
+                    if (idx2 >= valid)
+                    {
+                        if (idx1 < valid)
+                            data[blockStart + idx1] = d * scales[scOff + is_ + 0] * (q1 - 32);
+                        break;
+                    }
+
+                    int idx3 = nOff + l + 64;
+                    int idx4 = nOff + l + 96;
+
+                    data[blockStart + idx1] = d * scales[scOff + is_ + 0] * (q1 - 32);
+                    data[blockStart + idx2] = d * scales[scOff + is_ + 2] * (q2 - 32);
+                    data[blockStart + idx3] = d * scales[scOff + is_ + 4] * (q3 - 32);
+                    data[blockStart + idx4] = d * scales[scOff + is_ + 6] * (q4 - 32);
+                }
             }
         }
     }

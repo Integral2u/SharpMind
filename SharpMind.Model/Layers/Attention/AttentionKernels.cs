@@ -122,13 +122,8 @@ internal static class AttentionKernels
         return Sse.AddScalar(s, Sse.Shuffle(s, s, 1)).ToScalar();
     }
 
-    private static unsafe void SoftmaxInPlace(Span<float> row, float maxClip = 30f)
+    private static unsafe void SoftmaxInPlace(Span<float> row)
     {
-        // Clip scores before exp to prevent overflow (numerical stability)
-        for (int i = 0; i < row.Length; i++)
-            if (row[i] > maxClip) row[i] = maxClip;
-            else if (row[i] < -maxClip) row[i] = -maxClip;
-        
         float max = row[0];
         foreach (float v in row) if (v > max) max = v;
         float sum = 0f;

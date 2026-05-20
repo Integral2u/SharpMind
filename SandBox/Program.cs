@@ -3,8 +3,9 @@ using System;
 using System.IO;
 using System.Linq;
 
-await SandBox.LlamaTest.CompareLogits();
-//await SharpMind.Samples.Examples.InteractiveChat.RunAsync();
+//SandBox.LlamaTest.WeightValidation();
+//await SandBox.LlamaTest.CompareLogits();
+await SharpMind.Samples.Examples.InteractiveChat.RunAsync();
 
 return;
 var tokenizer = Tokenizer.FromFile(@"C:\Integral2u\source\repos\SharpMind\ExternalAssets\qwen2-0_5b-instruct-fp16.json");

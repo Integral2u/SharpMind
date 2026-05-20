@@ -279,15 +279,42 @@ public sealed class LinearLayer : IDisposable
             sbyte* scales = (sbyte*)(block + 192);     // 16 bytes
             float d = HalfToFloat(*(ushort*)(block + 208));
 
-            int blockEnd = Math.Min(QK_K, inFeatures - b * QK_K);
-            for (int i = 0; i < blockEnd; i++)
+            int valid = Math.Min(QK_K, inFeatures - b * QK_K);
+
+            // Current ggml Q6_K: process 128 values at a time
+            for (int nOff = 0; nOff < valid; nOff += 128)
             {
-                int ql_val = (ql[i / 2] >> (4 * (i % 2))) & 0x0F;
-                int qh_val = (qh[i / 4] >> (2 * (i % 4))) & 0x03;
-                int q_val = (qh_val << 4) | ql_val;
-                int sub = i / 16;
-                float val = d * scales[sub] * (q_val - 32);
-                sum += input[b * QK_K + i] * val;
+                byte* pql = ql + (nOff == 0 ? 0 : 64);
+                byte* pqh = qh + (nOff == 0 ? 0 : 32);
+                sbyte* psc = scales + (nOff == 0 ? 0 : 8);
+
+                int halfRem = Math.Min(128, valid - nOff);
+                for (int l = 0; l < 32 && l < halfRem; l++)
+                {
+                    int is_ = l / 16;
+                    int q1v = (pql[l] & 0x0F) | ((pqh[l] & 0x03) << 4);
+                    int q2v = (pql[l + 32] & 0x0F) | (((pqh[l] >> 2) & 0x03) << 4);
+                    int q3v = ((pql[l] >> 4) & 0x0F) | (((pqh[l] >> 4) & 0x03) << 4);
+                    int q4v = ((pql[l + 32] >> 4) & 0x0F) | (((pqh[l] >> 6) & 0x03) << 4);
+
+                    int i1 = b * QK_K + nOff + l;
+                    int i2 = b * QK_K + nOff + l + 32;
+
+                    if (i2 >= b * QK_K + valid)
+                    {
+                        if (i1 < b * QK_K + valid)
+                            sum += input[i1] * (d * psc[is_ + 0] * (q1v - 32));
+                        break;
+                    }
+
+                    int i3 = b * QK_K + nOff + l + 64;
+                    int i4 = b * QK_K + nOff + l + 96;
+
+                    sum += input[i1] * (d * psc[is_ + 0] * (q1v - 32));
+                    sum += input[i2] * (d * psc[is_ + 2] * (q2v - 32));
+                    sum += input[i3] * (d * psc[is_ + 4] * (q3v - 32));
+                    sum += input[i4] * (d * psc[is_ + 6] * (q4v - 32));
+                }
             }
         }
         return (float)sum;
