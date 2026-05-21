@@ -67,13 +67,22 @@ public sealed class Transformer : IDisposable
         if (lower.Contains("embed") || lower.Contains("token") || lower.Contains(" emb")
             || lower.Contains("wte") || lower.Contains("model.embed"))
         {
-            long expected = (long)_config.VocabSize * _config.HiddenDim;
+            int hidden = _config.HiddenDim;
+            long expected = (long)_config.VocabSize * hidden;
             if (expected == data.Length)
             {
-                // GGUF stores token_embd.weight as [vocab, hidden] in memory
-                // (shape [hidden, vocab] with hidden as innermost dim).
-                // Direct copy — no transposition needed or correct here.
-                data.CopyTo(_embedding.Weight.Data);         // ← replaces the nested loop
+                data.CopyTo(_embedding.Weight.Data);
+            }
+            else if (data.Length > 0 && data.Length % hidden == 0 && data.Length < expected)
+            {
+                // Partial fill: GGUF has fewer vocab rows than the current VocabSize
+                // (from injected special tokens). Copy existing rows, init new with mean.
+                int copyLen = data.Length;
+                data.CopyTo(_embedding.Weight.Data.Slice(0, copyLen));
+                double sum = 0;
+                for (int i = 0; i < copyLen; i++) sum += data[i];
+                float mean = (float)(sum / copyLen);
+                _embedding.Weight.Data.Slice(copyLen).Fill(mean);
             }
             return true;
             /*  ------Old
@@ -101,11 +110,20 @@ public sealed class Transformer : IDisposable
         }
         else if (lower.Contains("lm_head") || lower.StartsWith("output."))
         {
-            long expected = (long)_config.VocabSize * _config.HiddenDim;
+            int hidden = _config.HiddenDim;
+            long expected = (long)_config.VocabSize * hidden;
             if (data.Length == expected)
             {
-                _lmHead ??= new Tensor<float>(_config.VocabSize, _config.HiddenDim);
-                data.CopyTo(_lmHead.Data);                   // ← replaces the nested loop
+                _lmHead ??= new Tensor<float>(_config.VocabSize, hidden);
+                data.CopyTo(_lmHead.Data);
+            }
+            else if (data.Length > 0 && data.Length % hidden == 0 && data.Length < expected)
+            {
+                // Partial fill: GGUF has fewer vocab rows. Init new rows to zero.
+                _lmHead ??= new Tensor<float>(_config.VocabSize, hidden);
+                int copyLen = data.Length;
+                data.CopyTo(_lmHead.Data.Slice(0, copyLen));
+                _lmHead.Data.Slice(copyLen).Clear();
             }
             return true;
             /* --- old

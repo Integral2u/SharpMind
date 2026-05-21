@@ -88,6 +88,24 @@ public sealed class Tokenizer
     public string IdToToken(int id) => _model.Vocab.GetToken(id);
     public int TokenToId(string tok) => _model.Vocab.GetId(tok);
 
+    /// <summary>
+    /// Adds an additional special token at runtime (e.g., a token that was
+    /// missing from a GGUF's SentencePiece vocab but referenced in the chat
+    /// template). Returns the assigned token ID, or the existing ID if the
+    /// token was already in the vocabulary.
+    /// </summary>
+    public int AddAdditionalToken(string token)
+    {
+        bool isNew = !Vocab.Contains(token);
+        int id = Vocab.AddToken(token);
+        if (isNew)
+        {
+            Vocab.Specials.AddAdditional(token);
+            _model.Encoder.RefreshSpecials();
+        }
+        return id;
+    }
+
     // ── Factory: SharpMind native ─────────────────────────────────────────
 
     /// <summary>Loads a SharpMind native tokenizer JSON file.</summary>

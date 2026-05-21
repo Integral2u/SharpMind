@@ -15,7 +15,7 @@ public sealed class ChatMLFormatter : IChatPromptFormatter
         var allTokens = tokenMatches.Select(m => m.Value).Distinct().ToList();
 
         bool isChatML = allTokens.Any(t => t.Contains("im_start"));
-        bool isZephyr = allTokens.Any(t => t.Contains("/system") || t.Contains("/user") || t.Contains("/assistant"));
+        bool isZephyr = allTokens.Any(t => t == "<|system|>" || t == "<|user|>" || t == "<|assistant|>");
 
         if (isChatML)
         {
@@ -29,7 +29,7 @@ public sealed class ChatMLFormatter : IChatPromptFormatter
             _systemStart = "<|system|>\n";
             _userStart = "<|user|>\n";
             _assistantStart = "<|assistant|>\n";
-            _end = "";
+            _end = "</s>";
         }
         else
         {

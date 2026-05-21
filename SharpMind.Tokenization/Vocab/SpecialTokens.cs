@@ -26,10 +26,10 @@ public sealed class SpecialTokens
     public string Pad { get; }
 
     /// <summary>Additional user-defined special tokens in insertion order.</summary>
-    public IReadOnlyList<string> Additional { get; }
+    public IReadOnlyList<string> Additional { get; private set; }
 
     /// <summary>All special tokens in the order they are assigned IDs.</summary>
-    public IReadOnlyList<string> All { get; }
+    public IReadOnlyList<string> All => [Unk, Bos, Eos, Pad, .. Additional];
 
     public SpecialTokens(SpecialTokensConfig? config = null)
     {
@@ -37,8 +37,7 @@ public sealed class SpecialTokens
         Bos = config?.Bos ?? DefaultBos;
         Eos = config?.Eos ?? DefaultEos;
         Pad = config?.Pad ?? DefaultPad;
-        Additional = config?.Additional ?? [];
-        All = [Unk, Bos, Eos, Pad, .. Additional];
+        Additional = config?.Additional is List<string> list ? list : [.. (config?.Additional ?? [])];
     }
 
     /// <summary>
@@ -52,7 +51,16 @@ public sealed class SpecialTokens
         Bos = bos;
         Eos = eos;
         Pad = pad;
-        Additional = additional;
-        All = [unk, bos, eos, pad, .. additional];
+        Additional = additional is List<string> list ? list : [.. additional];
+    }
+
+    /// <summary>Adds an additional special token for runtime injection.</summary>
+    internal void AddAdditional(string token)
+    {
+        if (Additional is List<string> mutable)
+        {
+            if (!mutable.Contains(token))
+                mutable.Add(token);
+        }
     }
 }

@@ -11,10 +11,10 @@ namespace SharpMind.Samples.Examples
     public static class InteractiveChat
     {
         // Set to true for one-shot test, false for interactive
-        private const bool TestMode = false;
+        private const bool TestMode = true;
         private const string TestPrompt = "hello";
 
-        private static readonly string ModelName = "DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M";
+        private static readonly string ModelName = "TinyLlama-1.1B-Chat-v1.0.Q4_K_M";
         private static readonly string ModelPath = @"C:\Integral2u\source\repos\SharpMind\ExternalAssets";
         public static async Task RunAsync()
         {
@@ -34,7 +34,7 @@ namespace SharpMind.Samples.Examples
                 Console.Out.WriteLine($"Tokenizer not found");
                 return;
             }
-            var sharpConfig = SharpMindConfig.Qwen with { Hardware = DetectBestHardware() };
+            var sharpConfig = SharpMindConfig.ForModel(modelConfig.NumHeads, modelConfig.NumKvHeads, DetectBestHardware());
 
             GC.Collect(); GC.WaitForPendingFinalizers();
             Console.Out.WriteLine("Building model...");
@@ -45,7 +45,7 @@ namespace SharpMind.Samples.Examples
 
             Console.Out.WriteLine("Creating inference ops...");
             var inferOps = InferenceOpsFactory.Create(sharpConfig, InferenceConfig.Default);
-            string systemPrompt = $"{PromptHelpers.DefaultSystemPrompt}\n\n{PromptHelpers.DefaultAgentPrompt}".Trim();
+            string systemPrompt = "";
 
             await using var session = new ChatSession(model, tokenizer, inferOps, meta)
             {
@@ -53,7 +53,7 @@ namespace SharpMind.Samples.Examples
                 Temperature = TestMode ? 0.0f : 0.7f,
                 TopK = TestMode ? 1 : 35,
                 TopP = TestMode ? 0.0f : 0.9f,
-                RepetitionPenalty = 1.05f,
+                RepetitionPenalty = TestMode ? 1.0f : 1.1f,
                 RepetitionWindow = 64,
             };
             if (!string.IsNullOrEmpty(systemPrompt)) session.AddMessage(ChatRole.System, systemPrompt);

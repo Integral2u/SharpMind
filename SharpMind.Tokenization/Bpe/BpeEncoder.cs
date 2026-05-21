@@ -28,7 +28,7 @@ public sealed class BpeEncoder
 
     // Special tokens sorted longest-first so that longer patterns (e.g.
     // "<|im_start|>") match before shorter prefixes (e.g. "<|im").
-    private readonly string[] _specialsSortedByLength;
+    private string[] _specialsSortedByLength;
 
     internal BpeEncoder(
         Vocabulary vocab,
@@ -43,6 +43,14 @@ public sealed class BpeEncoder
 
         // Build sorted special-token list for fast scanning.
         _specialsSortedByLength = [.. vocab.Specials.All
+            .Where(s => !string.IsNullOrEmpty(s))
+            .OrderByDescending(s => s.Length)];
+    }
+
+    /// <summary>Refreshes the sorted specials cache after adding new special tokens.</summary>
+    internal void RefreshSpecials()
+    {
+        _specialsSortedByLength = [.. _vocab.Specials.All
             .Where(s => !string.IsNullOrEmpty(s))
             .OrderByDescending(s => s.Length)];
     }
@@ -107,12 +115,19 @@ public sealed class BpeEncoder
             if (skipSpecials && _vocab.Specials.All.Contains(token))
                 continue;
 
+            // Check for SentencePiece byte token (<0xNN> format) first
+            if (Vocabulary.TryDecodeByteToken(token, out byte bt))
+            {
+                bytes.Add(bt);
+                continue;
+            }
+
             foreach (char c in token)
             {
                 if (TryDecodeByte(c.ToString(), out byte b))
                     bytes.Add(b);
                 else
-                    bytes.Add((byte)c); // ASCII-safe fallback
+                    bytes.Add((byte)c);
             }
         }
 
@@ -207,11 +222,24 @@ public sealed class BpeEncoder
         }
     }
 
-    private static List<string> ByteTokenise(string word)
+    private List<string> ByteTokenise(string word)
     {
         var result = new List<string>();
         foreach (byte b in System.Text.Encoding.UTF8.GetBytes(word))
-            result.Add(Vocabulary.ByteTokenString(b));
+        {
+            string gpt2 = Vocabulary.ByteTokenString(b);
+            if (_vocab.Contains(gpt2))
+            {
+                result.Add(gpt2);
+            }
+            else
+            {
+                // SentencePiece stores byte tokens as "<0xNN>" rather than
+                // GPT-2 Unicode characters.  Try that format as a fallback.
+                string sp = $"<0x{b:X2}>";
+                result.Add(_vocab.Contains(sp) ? sp : gpt2);
+            }
+        }
         return result;
     }
 

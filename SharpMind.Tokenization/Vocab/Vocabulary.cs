@@ -81,7 +81,7 @@ public sealed class Vocabulary
     /// Adds a new token and returns its assigned ID.
     /// No-ops and returns the existing ID if the token is already present.
     /// </summary>
-    internal int AddToken(string token)
+    public int AddToken(string token)
     {
         if (_tokenToId.TryGetValue(token, out int existing))
             return existing;

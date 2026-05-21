@@ -16,11 +16,14 @@ public static class ChatPromptFormatterFactory
             return new DeepSeekFormatter();
 
         // ChatML: <|im_start|>role / <|im_end|>
-        // Zephyr: <|role|> / <|/role|>
+        // Zephyr: <|role|> / <|/role|> or {% if message['role'] == 'user' %} with <|user|>
         if (chatTemplate.Contains("im_start") ||
             chatTemplate.Contains("/system") ||
             chatTemplate.Contains("/user") ||
-            chatTemplate.Contains("/assistant"))
+            chatTemplate.Contains("/assistant") ||
+            chatTemplate.Contains("<|system|>") ||
+            chatTemplate.Contains("<|user|>") ||
+            chatTemplate.Contains("<|assistant|>"))
             return new ChatMLFormatter(chatTemplate);
 
         return new SimpleFormatter();

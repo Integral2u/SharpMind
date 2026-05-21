@@ -377,7 +377,7 @@ namespace SandBox
             Console.WriteLine($"FfnDim: {modelConfig.FfnDim}");
             Console.WriteLine($"MaxSeqLen: {modelConfig.MaxSeqLen}");
 
-            var sharpConfig = SharpMind.SharpMindConfig.Qwen with { Hardware = HardwareTier.AVX2 };
+            var sharpConfig = DeriveSharpMindConfig(modelConfig, HardwareTier.AVX2);
             var model = ModelFactory.Create(modelConfig, sharpConfig);
             GgufLoader.LoadWeightsToModel(modelPath, meta, model);
 
@@ -568,6 +568,188 @@ namespace SandBox
 
         // ── Helpers ──
 
+        /// <summary>
+        /// Derives the correct <see cref="SharpMindConfig"/> from the model's
+        /// GGUF-loaded <see cref="ModelConfig"/>.  Reads NumKvHeads vs NumHeads
+        /// to pick MHA / GQA / MQA so the caller never needs to hardcode an
+        /// architecture name.
+        /// </summary>
+        private static global::SharpMind.SharpMindConfig DeriveSharpMindConfig(ModelConfig config, HardwareTier hw)
+            => global::SharpMind.SharpMindConfig.ForModel(config.NumHeads, config.NumKvHeads, hw);
+
+        /// <summary>
+        /// Runs per-layer diagnostics on any model.
+        /// Loads the model with auto-detected config, runs forward pass for a
+        /// test prompt, and dumps hidden-state + logit stats after each layer.
+        /// </summary>
+        public static void RunDiagnostics(string modelPath)
+        {
+            Console.WriteLine($"═══ Diagnostics: {Path.GetFileName(modelPath)} ═══");
+
+            GgufLoader.Load(modelPath, null, out GgufMeta meta, out ModelConfig modelConfig, out Tokenizer? tokenizer);
+            if (tokenizer == null) { Console.WriteLine("No tokenizer"); return; }
+
+            string arch = meta.GetString("general.architecture") ?? "?";
+            string? chatTemplate = meta.GetChatTemplate();
+            Console.WriteLine($"Architecture: {arch}");
+            Console.WriteLine($"Chat template: {chatTemplate ?? "(none)"}");
+            Console.WriteLine($"HiddenDim={modelConfig.HiddenDim} NumLayers={modelConfig.NumLayers} " +
+                              $"NumHeads={modelConfig.NumHeads} NumKvHeads={modelConfig.NumKvHeads} " +
+                              $"HeadDim={modelConfig.HeadDim} FfnDim={modelConfig.FfnDim} " +
+                              $"RopeTheta={modelConfig.RopeTheta} NormEps={modelConfig.NormEps}");
+            Console.WriteLine($"VocabSize={modelConfig.VocabSize} MaxSeqLen={modelConfig.MaxSeqLen}");
+
+            var sharpConfig = DeriveSharpMindConfig(modelConfig, HardwareTier.AVX2);
+            Console.WriteLine($"SharpMindConfig: Attn={sharpConfig.Attention} Ffn={sharpConfig.Ffn} " +
+                              $"Act={sharpConfig.Activation} Norm={sharpConfig.Norm}");
+
+            var model = ModelFactory.Create(modelConfig, sharpConfig);
+            GgufLoader.LoadWeightsToModel(modelPath, meta, model);
+
+            // Build prompt using the model's chat template
+            var formatter = ChatPromptFormatterFactory.Create(meta.GetChatTemplate());
+            bool addBos = meta.GetLong("tokenizer.ggml.add_bos_token", 1) != 0;
+            string prompt = formatter.Format(
+                [new() { Role = ChatRole.User, Content = "hello" }], tokenizer, addBos);
+            Console.WriteLine($"Prompt ({prompt.Length} chars): {prompt.Replace("\n", "\\n")}");
+
+            int[] tokenIds = tokenizer.Encode(prompt, addBos: false);
+            Console.WriteLine($"Tokens ({tokenIds.Length}): {string.Join(", ", tokenIds.Take(32))}{(tokenIds.Length > 32 ? "..." : "")}");
+
+            using var input = SharpMind.Core.Tensors.Tensor<int>.From(tokenIds, 1, tokenIds.Length);
+            int hiddenDim = modelConfig.HiddenDim;
+            int seqLen = tokenIds.Length;
+
+            // Create KV caches
+            var caches = new KVCache[modelConfig.NumLayers];
+            for (int i = 0; i < modelConfig.NumLayers; i++)
+                caches[i] = new KVCache(1, modelConfig.NumKvHeads, 128, modelConfig.HeadDim);
+
+            // Embedding
+            Console.WriteLine("\n─── Embedding ───");
+            var hidden = model.ForwardEmbedding(input);
+            var embStats = TensorStats(hidden.Data, hiddenDim);
+            Console.WriteLine($"  hMax={embStats.maxAbs:G5} hMean={embStats.meanAbs:G5} NaN={embStats.nanCnt}");
+
+            var projW = model.LmHead ?? model.EmbeddingWeight;
+
+            // Check embedding-only logits
+            int[] checkTokens = [0, 1, 2, tokenizer.BosId, tokenizer.EosId];
+            var checkSet = new HashSet<int>(checkTokens);
+            // Add a few more likely tokens
+            for (int t = 3; t < 10 && t < modelConfig.VocabSize; t++) checkSet.Add(t);
+            checkTokens = [.. checkSet];
+
+            ReportLogits("Embedding", hidden, projW, checkTokens, hiddenDim, tokenizer);
+
+            // Per-layer loop
+            for (int layer = 0; layer < modelConfig.NumLayers; layer++)
+            {
+                var block = model.GetBlock(layer);
+                if (block == null) { Console.WriteLine($"  Layer {layer}: null block — aborting"); break; }
+
+                var normed1 = block.Norm1.Forward(hidden);
+                var attnOut = block.Attention.Forward(normed1, model.Ops, positionOffset: 0, causal: true, cache: caches[layer]);
+                normed1.Dispose();
+                var h1 = SharpMind.Core.Ops.TensorOps.Add(hidden, attnOut);
+                attnOut.Dispose();
+                var normed2 = block.Norm2.Forward(h1);
+                var ffnOut = block.Ffn.Forward(normed2);
+                normed2.Dispose();
+                var output = SharpMind.Core.Ops.TensorOps.Add(h1, ffnOut);
+                h1.Dispose();
+                ffnOut.Dispose();
+
+                if (layer > 0) hidden.Dispose();
+                hidden = output;
+
+                var stats = TensorStats(hidden.Data, hiddenDim);
+                Console.Write($"  L{layer:D2}: hMax={stats.maxAbs:G5} hMean={stats.meanAbs:G5} NaN={stats.nanCnt}");
+                if (stats.nanCnt > 0) { Console.WriteLine(" ✗ NaN detected! Stopping."); break; }
+                if (stats.allZero) { Console.WriteLine(" ✗ ALL ZERO! Stopping."); break; }
+
+                ReportLogits($"L{layer:D2}", hidden, projW, checkTokens, hiddenDim, tokenizer);
+            }
+
+            // Final norm
+            Console.WriteLine("\n─── Final Norm ───");
+            var finalNormed = model.FinalNorm.Forward(hidden);
+            var fnStats = TensorStats(finalNormed.Data, hiddenDim);
+            Console.WriteLine($"  fnMax={fnStats.maxAbs:G5} fnMean={fnStats.meanAbs:G5} NaN={fnStats.nanCnt}");
+
+            // LM head
+            Console.WriteLine("\n─── LM Head ───");
+            var lastNormed = finalNormed.Data.Slice((seqLen - 1) * hiddenDim, hiddenDim);
+            if (model.LmHead != null)
+            {
+                Console.Write("  Manual dot (first 5 logits):");
+                for (int j = 0; j < 5 && j < projW.Shape.Rows; j++)
+                {
+                    double sum = 0;
+                    for (int k = 0; k < hiddenDim; k++) sum += lastNormed[k] * projW.Data[j * hiddenDim + k];
+                    Console.Write($" {sum:G4}");
+                }
+                Console.WriteLine();
+            }
+
+            var logitsFlat = finalNormed.Reshape(seqLen, hiddenDim);
+            using var logits = model.Ops.MatMulWithBT(logitsFlat, projW);
+            int vocabSize = Math.Min(logits.Shape[1], modelConfig.VocabSize);
+            var lastLogits = logits.Data.Slice((seqLen - 1) * vocabSize, vocabSize);
+            var top10 = GetTopK(lastLogits, 10);
+            Console.WriteLine("  Top-10 logits:");
+            foreach (var (id, val) in top10)
+                Console.WriteLine($"    [{id}] {tokenizer.IdToToken(id) ?? "?"} = {val:F4}");
+
+            Console.WriteLine($"\n═══ Diagnostics complete ═══");
+
+            finalNormed.Dispose();
+            logitsFlat.Dispose();
+            hidden.Dispose();
+            foreach (var c in caches) c.Dispose();
+            model.Dispose();
+        }
+
+        private static void ReportLogits(string label, Tensor<float> hidden, Tensor<float> projW,
+            int[] checkTokens, int hiddenDim, Tokenizer? tokenizer)
+        {
+            int seqLen = hidden.Shape[1];
+            var lastToken = hidden.Data.Slice((seqLen - 1) * hiddenDim, hiddenDim);
+            Console.Write($"  {label} logits:");
+            foreach (int t in checkTokens)
+            {
+                if (t < 0 || t >= projW.Shape.Rows) continue;
+                double sum = 0;
+                for (int k = 0; k < hiddenDim; k++)
+                    sum += lastToken[k] * projW.Data[t * hiddenDim + k];
+                var tok = tokenizer?.IdToToken(t) ?? "?";
+                string display = tok.Length > 8 ? tok[..8] + "…" : tok;
+                Console.Write($" [{t}:{display}]={sum,8:G4}");
+            }
+            Console.WriteLine();
+        }
+
+        private static (float maxAbs, float meanAbs, int nanCnt, bool allZero) TensorStats(
+            ReadOnlySpan<float> data, int hiddenDim)
+        {
+            int seqLen = data.Length / hiddenDim;
+            var last = data.Slice((seqLen - 1) * hiddenDim, hiddenDim);
+            float maxAbs = 0, meanAbs = 0;
+            int nanCnt = 0;
+            bool allZero = true;
+            for (int i = 0; i < last.Length; i++)
+            {
+                float v = last[i];
+                if (float.IsNaN(v)) { nanCnt++; continue; }
+                float a = Math.Abs(v);
+                if (a > maxAbs) maxAbs = a;
+                meanAbs += a;
+                if (a > 1e-10f) allZero = false;
+            }
+            meanAbs /= last.Length;
+            return (maxAbs, meanAbs, nanCnt, allZero);
+        }
+
         private static (GgufMeta, Tokenizer) LoadMetaAndTokenizer(string ggufPath)
         {
             var meta = GgufLoader.LoadMeta(ggufPath);
@@ -592,7 +774,7 @@ namespace SandBox
                 GgufLoader.Load(modelPath, null, out GgufMeta meta, out ModelConfig modelConfig, out Tokenizer? tokenizer);
                 if (tokenizer == null) { Console.WriteLine("No tokenizer from GGUF"); return null; }
 
-                var sharpConfig = SharpMind.SharpMindConfig.Qwen with { Hardware = HardwareTier.Scalar };
+                var sharpConfig = DeriveSharpMindConfig(modelConfig, HardwareTier.Scalar);
                 var model = ModelFactory.Create(modelConfig, sharpConfig);
                 GgufLoader.LoadWeightsToModel(modelPath, meta, model);
                 var inferOps = InferenceOpsFactory.Create(sharpConfig, InferenceConfig.Default);

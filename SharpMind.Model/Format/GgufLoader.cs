@@ -3,6 +3,7 @@ using SharpMind.Model.Config;
 using SharpMind.Tokenization;
 using System.Buffers;
 using System.IO.MemoryMappedFiles;
+using System.Text.RegularExpressions;
 
 namespace SharpMind.Model.Format;
 public static partial class GgufLoader
@@ -290,6 +291,52 @@ public static partial class GgufLoader
         }
     }
 
+    // ?? Template token injection ????????????????????????????????????????
+
+    /// <summary>
+    /// Some GGUF files drop HuggingFace "added_tokens" during conversion
+    /// (common with SentencePiece models like TinyLlama). These tokens are
+    /// referenced in the chat template but aren't in the tokenizer vocab.
+    ///
+    /// We detect this: extract all {@code <...>} patterns from the template,
+    /// check each against the tokenizer, and inject missing ones as new
+    /// additional special tokens. The embedding/LM head get extended rows
+    /// (initialized to mean/zero) when weights are loaded.
+    ///
+    /// This is fully dynamic — no hardcoded model names or token strings.
+    /// </summary>
+    private static void InjectMissingTemplateTokens(
+        GgufMeta meta, ref ModelConfig config, Tokenizer tokenizer)
+    {
+        string? template = meta.GetChatTemplate();
+        if (string.IsNullOrEmpty(template)) return;
+
+        // Extract <...> patterns from the template
+        var candidates = new HashSet<string>();
+        foreach (Match m in Regex.Matches(template, @"<[^>]+>"))
+            candidates.Add(m.Value);
+
+        if (candidates.Count == 0) return;
+
+        var toAdd = new List<string>();
+        foreach (string token in candidates)
+        {
+            if (!tokenizer.Vocab.Contains(token))
+                toAdd.Add(token);
+        }
+
+        if (toAdd.Count == 0) return;
+
+        Console.WriteLine($"[GgufLoader] Injecting {toAdd.Count} missing special tokens from chat template:");
+        foreach (string token in toAdd)
+            Console.WriteLine($"  +  {token}");
+
+        foreach (string token in toAdd)
+            tokenizer.AddAdditionalToken(token);
+
+        config = config with { VocabSize = config.VocabSize + toAdd.Count };
+    }
+
     // ?? Main entry point ?????????????????????????????????????????????????
 
     /// <summary>
@@ -312,7 +359,7 @@ public static partial class GgufLoader
         Console.WriteLine($"[GgufLoader] Config: vocab={config.VocabSize}, hidden={config.HiddenDim}, " +
                           $"layers={config.NumLayers}, heads={config.NumHeads}, kvHeads={config.NumKvHeads}");
 
-        // Prefer GGUF-embedded tokenizer � its vocab size is guaranteed to match the weights.
+        // Prefer GGUF-embedded tokenizer ? its vocab size is guaranteed to match the weights.
         tokenizer = LoadTokenizerFromMeta(meta);
 
         // Fall back to file only when GGUF has no vocab data.
@@ -348,6 +395,12 @@ public static partial class GgufLoader
                 tokenizer = null;
             }
         }
+
+        // Detect and inject special tokens missing from the GGUF vocab
+        // (e.g. TinyLlama's <|user|>, <|assistant|> tokens dropped during conversion).
+        // This runs regardless of whether the tokenizer came from GGUF or a file.
+        if (tokenizer != null)
+            InjectMissingTemplateTokens(meta, ref config, tokenizer);
     }
 
     // ?? Weight loading ????????????????????????????????????????????????????

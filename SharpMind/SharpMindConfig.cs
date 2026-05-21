@@ -144,6 +144,32 @@ public sealed record SharpMindConfig
     };
 
 
+    /// <summary>
+    /// Creates the correct <see cref="SharpMindConfig"/> for a model by
+    /// deriving the attention kind from <c>NumKvHeads</c> vs <c>NumHeads</c>.
+    /// All modern decoder-only LLMs use SiLU + SwiGLU + Gated FFN + RMSNorm,
+    /// so only the attention variant needs to be inferred from the dimensions.
+    /// </summary>
+    public static SharpMindConfig ForModel(int numHeads, int numKvHeads, HardwareTier hw = HardwareTier.Auto)
+    {
+        var attn = numKvHeads switch
+        {
+            1 => AttentionKind.MQA,
+            _ when numKvHeads == numHeads => AttentionKind.MHA,
+            _ => AttentionKind.GQA
+        };
+        return new SharpMindConfig
+        {
+            Activation = ActivationKind.SiLU,
+            Gate = GateKind.SwiGLU,
+            Ffn = FfnKind.Gated,
+            Attention = attn,
+            Norm = NormKind.RMSNorm,
+            Arch = ArchKind.Decoder,
+            Hardware = hw
+        };
+    }
+
     public Dictionary<string, string> ToJigSawMapping()
     {
         return new MappingBuilder(ResolvedHardware)
