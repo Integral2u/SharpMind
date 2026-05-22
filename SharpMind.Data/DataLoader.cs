@@ -2,7 +2,6 @@
 using System.Threading.Channels;
 using SharpMind.Data.Batching;
 using SharpMind.Data.Pipeline;
-using SharpMind.Data.Sources;
 
 namespace SharpMind.Data;
 

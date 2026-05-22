@@ -1,5 +1,3 @@
-using SharpMind.Model;
-using SharpMind.Model.Config;
 using SharpMind.Data.Parquet.Sources;
 using SharpMind.Data.Sources;
 using SharpMind.Training;

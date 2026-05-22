@@ -53,5 +53,5 @@ public sealed class GgufMeta
         _ => 0
     };
 
-    public string? GetChatTemplate() => GetString("tokenizer.chat_template", null);
+    public string? GetChatTemplate() => GetString("tokenizer.chat_template");
 }

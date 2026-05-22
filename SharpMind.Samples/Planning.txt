@@ -1,1 +1,58 @@
 ﻿Samples: usage examples, notebooks
+
+Sample output 
+Testing llama-3.2-1b-instruct-q8_0
+hello
+ main
+  [2. (the "you
+[system, and
+
+Testing qwen2-0_5b-instruct-fp16
+hello
+??!????????????
+
+Testing qwen2-0_5b-instruct-q4_k_m
+hello
+??!???????????????????
+
+Testing qwen2-0_5b-instruct-q8_0
+hello
+??!????????????????????
+
+Testing SmolLM-135M.Q4_K_M
+hello
+1.
+The 3d, your
+t in the method with an
+Testing SmolLM2-135M-Instruct.Q4_K_M
+hello
+210.
+Youre-lace, and the one is to
+
+Testing Qwen2.5-1.5B-Instruct-f16
+hello
+ hello! how can I assist you today? ### Plan
+- listen to your
+
+Testing TinyLlama-1.1B-Chat-v1.0.Q4_K_M
+hello
+ttaeeecdussa.Aggeu?mug?S?g
+
+Testing tinyllama-1.1b-chat-v1.0.Q8_0
+hello
+andAssass?for??B?system?A?G?to,t
+
+Testing DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M
+hello
+ I'm just a general AI, but I can help you with many things.
+
+Testing tinyllama-1.1b-chat-v1.0.f16
+hello
+?W?egsg?GGSgat,?S.E?Muggs?Agg
+
+Testing qwen2.5-1.5b-instruct-q8_0
+hello
+ hello! how can I assist you today? user: i need some advice on
+
+
+Done!

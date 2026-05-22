@@ -283,12 +283,8 @@ public static class ModelConverter
     {
         public static void ToNative(string ggufPath, string outputDir)
         {
-            Console.WriteLine($"[Convert] Loading GGUF: {ggufPath}");
-            
             var meta = GgufLoader.LoadMeta(ggufPath);
             var weights = GgufLoader.LoadWeights(ggufPath);
-            
-            Console.WriteLine($"[Convert] GGUF v{meta.Version}: {meta.TensorCount} tensors");
             
             int vocabSize = 32000;
             if (meta.KvPairs.Any(k => k.Key == "tokenizer.ggml.tokens"))
@@ -310,21 +306,16 @@ public static class ModelConverter
                 Source = meta.GetString("general.architecture", "llama") + "/" + meta.GetString("general.name", "model"),
             };
             
-            Console.WriteLine($"[Convert] Config: vocab={config.VocabSize}, hidden={config.HiddenDim}, layers={config.NumLayers}");
-            
             var parameters = new List<SharpMind.Core.Training.Parameter>();
             foreach (var kvp in weights)
             {
                 var name = MapWeightName(kvp.Key);
                 if (name != null)
-                    parameters.Add(new SharpMind.Core.Training.Parameter(name, kvp.Value));
+                    parameters.Add(new Parameter(name, kvp.Value));
             }
-            
-            Console.WriteLine($"[Convert] Mapped {parameters.Count} parameters");
-            
+                  
             SaveSharpMind(parameters, config, outputDir);
-            Console.WriteLine($"[Convert] Done! Native format saved.");
-            
+          
             foreach (var w in weights)
                 w.Value.Dispose();
         }
@@ -336,10 +327,6 @@ public static class ModelConverter
             return ggufName.Replace(".", "_").Replace("-", "_");
         }
 
-        public static ConversionResult FromNative(string modelDir)
-        {
-            Console.WriteLine($"[Convert] Loading from native: {modelDir}");
-            return LoadSharpMind(modelDir);
-        }
+        public static ConversionResult FromNative(string modelDir) => LoadSharpMind(modelDir);
     }
 }

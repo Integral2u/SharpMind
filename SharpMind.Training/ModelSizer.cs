@@ -1,29 +1,14 @@
 using SharpMind.Model;
 using SharpMind.Model.Config;
 using SharpMind.Core.Tensors;
-using SharpMind.Core.Training;
 using SharpMind.Data.Sources;
 using SharpMind.Tokenization;
 using SharpMind.Tokenization.Bpe;
 using SharpMind.Training.Loss;
 using SharpMind.Training.Schedulers;
 using SharpMind.Training.Optimizers;
-using System.Text;
 
 namespace SharpMind.Training;
-
-public record SizingConstraints(
-    int MinHiddenDim = 16,
-    int MaxHiddenDim = 256,
-    int MinLayers = 1,
-    int MaxLayers = 8,
-    int HiddenStep = 16,
-    int LayerStep = 1);
-
-public record SizingBudget(
-    int MaxTotalParameters = 10_000_000,
-    int SampleSize = 1000,
-    int StepsPerConfig = 50);
 
 public static class ModelSizer
 {
@@ -33,9 +18,7 @@ public static class ModelSizer
         SizingBudget? budget = null)
     {
         constraints ??= new SizingConstraints();
-        budget ??= new SizingBudget();
-
-        Console.WriteLine($"--- Starting Auto-Sizing on source: {source.Description} ---");
+        budget ??= new SizingBudget();     
 
         // 1. Sample data and train a temporary tokenizer
         var sampleTexts = new List<string>();
@@ -48,7 +31,6 @@ public static class ModelSizer
         if (sampleTexts.Count == 0)
             throw new InvalidOperationException("Source yielded no documents. Cannot determine optimal size.");
 
-        Console.WriteLine($"Sampled {sampleTexts.Count} documents. Training BPE...");
         var trainer = new BpeTrainer(targetVocabSize: 1024);
         var bpeModel = await trainer.TrainAsync(SampleToAsyncEnumerable(sampleTexts));
         var tokenizer = new Tokenizer(bpeModel);
@@ -81,7 +63,6 @@ public static class ModelSizer
                 float loss = await Task.Run(() => EvaluateConfig(config, tokenizer, sampleTexts, budget.StepsPerConfig));
                 
                 configsAndLosses.Add((config, loss, paramCount));
-                Console.WriteLine($"Tested: H={h}, L={l}, Params={paramCount:N0}, Loss={loss:F4}");
             }
         }
 
@@ -107,7 +88,6 @@ public static class ModelSizer
             }
         }
 
-        Console.WriteLine($"--- Sizing Complete. Recommended Config: Hidden={bestConfig.HiddenDim}, Layers={bestConfig.NumLayers} ---");
         return bestConfig;
     }
 

@@ -144,7 +144,6 @@ public sealed class LinearLayer : IDisposable
             byte* qh = block;                  // hmask at offset 0 (32 bytes)
             byte* qs = block + 32;             // qs at offset 32 (64 bytes)
             float dAll = HalfToFloat(*(ushort*)(block + 108));
-            // Console.WriteLine($"dAll={dAll} scales[0]={block[96]}");
 
             // Scale buffer: only 12 scale bytes needed; aux[3] overwritten by bit-unpack
             for (int j = 0; j < 12; j++) scaleBuf[j] = block[96 + j];

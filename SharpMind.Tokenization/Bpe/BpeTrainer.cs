@@ -16,15 +16,13 @@ public sealed class BpeTrainer
     private readonly IPreTokeniser _preTokeniser;
     private readonly SpecialTokens _specials;
     private readonly bool _byteLevel;
-    private readonly Action<string>? _progressCallback;
 
     public BpeTrainer(
         int targetVocabSize,
         int minFrequency = 2,
         IPreTokeniser? preTokeniser = null,
         SpecialTokens? specials = null,
-        bool byteLevel = true,
-        Action<string>? progressCallback = null)
+        bool byteLevel = true)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(targetVocabSize);
         _targetVocabSize = targetVocabSize;
@@ -32,7 +30,6 @@ public sealed class BpeTrainer
         _preTokeniser = preTokeniser ?? new Gpt2PreTokeniser();
         _specials = specials ?? new SpecialTokens();
         _byteLevel = byteLevel;
-        _progressCallback = progressCallback;
     }
 
     public async Task<BpeModel> TrainAsync(
@@ -56,8 +53,6 @@ public sealed class BpeTrainer
         if (mergesNeeded <= 0)
             return new BpeModel(vocab, merges, _preTokeniser);
 
-        _progressCallback?.Invoke($"Starting BPE: {vocab.Size} base tokens, {mergesNeeded} merges needed.");
-
         for (int step = 0; step < mergesNeeded; step++)
         {
             var pairCounts = CountPairsParallel(wordTokens, wordFreqs);
@@ -71,12 +66,7 @@ public sealed class BpeTrainer
             merges.Add(new MergeRule(left, right, merged, step));
 
             ApplyMergeParallel(wordTokens, left, right, merged);
-
-            if (step % 1000 == 0)
-                _progressCallback?.Invoke($"Merge {step + 1}/{mergesNeeded}: '{left}' + '{right}' → '{merged}' (freq={count})");
         }
-
-        _progressCallback?.Invoke($"Training complete. Vocab size: {vocab.Size}");
         return new BpeModel(vocab, merges, _preTokeniser);
     }
 

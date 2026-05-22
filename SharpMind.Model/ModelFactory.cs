@@ -52,12 +52,6 @@ public static class ModelFactory
 
         if (vocabMismatch || seqMismatch)
         {
-            Console.WriteLine("[ModelFactory] Config mismatch - auto-adjusting...");
-            if (vocabMismatch) 
-                Console.WriteLine($"  VocabSize: {config.VocabSize} -> {tokenizer.VocabSize}");
-            if (seqMismatch) 
-                Console.WriteLine($"  MaxSeqLen: {config.MaxSeqLen} -> {trainingSeqLen}");
-
             config = config with 
             {
                 VocabSize = Math.Max(config.VocabSize, tokenizer.VocabSize),

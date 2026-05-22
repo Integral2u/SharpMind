@@ -86,13 +86,13 @@ namespace SandBox
             // DeepSeek
             Console.WriteLine("═══ DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M ═══");
             var (dsMeta, dsTok) = LoadMetaAndTokenizer(Path.Combine(Assets, "DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M.gguf"));
-            VerifyFormatter(dsMeta, dsTok, "DeepSeek");
+            VerifyFormatter(dsMeta, dsTok);
             Console.WriteLine();
 
             // Llama 3.2
             Console.WriteLine("═══ Llama-3.2-1B-Instruct-Q8_0 ═══");
             var (llamaMeta, llamaTok) = LoadMetaAndTokenizer(Path.Combine(Assets, "llama-3.2-1b-instruct-q8_0.gguf"));
-            VerifyFormatter(llamaMeta, llamaTok, "Llama 3.2");
+            VerifyFormatter(llamaMeta, llamaTok);
             Console.WriteLine();
 
             // Simple fallback
@@ -105,7 +105,7 @@ namespace SandBox
             Console.WriteLine();
         }
 
-        private static void VerifyFormatter(GgufMeta meta, Tokenizer tok, string label)
+        private static void VerifyFormatter(GgufMeta meta, Tokenizer tok)
         {
             var formatter = ChatPromptFormatterFactory.Create(meta.GetChatTemplate());
             bool addBos = meta.GetLong("tokenizer.ggml.add_bos_token", 1) != 0;
@@ -674,8 +674,8 @@ namespace SandBox
             // Final norm
             Console.WriteLine("\n─── Final Norm ───");
             var finalNormed = model.FinalNorm.Forward(hidden);
-            var fnStats = TensorStats(finalNormed.Data, hiddenDim);
-            Console.WriteLine($"  fnMax={fnStats.maxAbs:G5} fnMean={fnStats.meanAbs:G5} NaN={fnStats.nanCnt}");
+            var (maxAbs, meanAbs, nanCnt, allZero) = TensorStats(finalNormed.Data, hiddenDim);
+            Console.WriteLine($"  fnMax={maxAbs:G5} fnMean={meanAbs:G5} NaN={nanCnt}");
 
             // LM head
             Console.WriteLine("\n─── LM Head ───");
@@ -832,7 +832,7 @@ namespace SandBox
                 Console.WriteLine("\nEmbedding-only logits (no layers):");
                 var projWCheck = model.LmHead ?? model.EmbeddingWeight;
                 Console.Write($"  Manual dot for token 0: ");
-                var embRow0 = embedded.Data.Slice(0, hiddenDim);
+                var embRow0 = embedded.Data[..hiddenDim];
                 double[] checkVals = new double[checkToks.Length];
                 for (int ci = 0; ci < checkToks.Length; ci++)
                 {
@@ -852,7 +852,7 @@ namespace SandBox
                 using var embeddedFlat = embedded.Reshape(seqLen, hiddenDim);
                 using var embLogits = model.Ops.MatMulWithBT(embeddedFlat, projWCheck);
                 int evs = Math.Min(embLogits.Data.Length / seqLen, 151936);
-                var embTop5 = GetTopK(embLogits.Data.Slice(0, evs), 5);
+                var embTop5 = GetTopK(embLogits.Data[..evs], 5);
                 Console.WriteLine("  Embedding-only top-5:");
                 foreach (var (id, val) in embTop5)
                     Console.WriteLine($"    [{id}] {tokenizer?.IdToToken(id) ?? "?"} = {val:F4}");
@@ -1005,7 +1005,7 @@ namespace SandBox
             for (int i = 0; i < logits.Length; i++)
                 indexed[i] = (i, logits[i]);
             Array.Sort(indexed, (a, b) => b.val.CompareTo(a.val));
-            return indexed.Take(k).ToList();
+            return [.. indexed.Take(k)];
         }
     }
 }

@@ -296,8 +296,6 @@ public static class Gradients
                 }
         }
 
-        // dScores = softmax_backward(dProbs, probs)   [S, S]
-        // dScores[i,j] = probs[i,j] * (dProbs[i,j] - sum_k(probs[i,k]*dProbs[i,k]))
         var dScores = new Tensor<float>(S, S);
         for (int i = 0; i < S; i++)
         {

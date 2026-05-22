@@ -100,11 +100,11 @@ public sealed class SpeculativeGenerator : IDisposable
             draftTokens[0] = Sampler.Sample(logitsRow, sampleCfg, rng);
             const int draftCount = 1;
 
-            var verifiedTokens = VerifyDraftTokens(draftTokens, draftCount, currentPos, vocabSize, sampleCfg, rng);
+            var (Tokens, AcceptedCount, NeedsCorrection, CorrectionToken) = VerifyDraftTokens(draftTokens, draftCount, currentPos, vocabSize, sampleCfg, rng);
 
-            for (int i = 0; i < verifiedTokens.AcceptedCount; i++)
+            for (int i = 0; i < AcceptedCount; i++)
             {
-                int tokenId = verifiedTokens.Tokens[i];
+                int tokenId = Tokens[i];
                 generatedIds.Add(tokenId);
 
                 _decodeTokenScratch[0] = tokenId;
@@ -128,11 +128,11 @@ public sealed class SpeculativeGenerator : IDisposable
                     break;
             }
 
-            currentPos += verifiedTokens.AcceptedCount;
+            currentPos += AcceptedCount;
 
-            if (verifiedTokens.NeedsCorrection)
+            if (NeedsCorrection)
             {
-                var correctionToken = verifiedTokens.CorrectionToken;
+                var correctionToken = CorrectionToken;
                 generatedIds.Add(correctionToken);
 
                 _decodeTokenScratch[0] = correctionToken;

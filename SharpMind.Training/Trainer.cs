@@ -29,9 +29,7 @@ public sealed class Trainer(
     public async Task TrainAsync(int totalSteps, CancellationToken ct = default)
     {
         int currentStep = 0;
-        float runningLoss = 0;
-
-        Console.WriteLine($"Starting training for {totalSteps} steps...");
+        float runningLoss = 0;        
 
         await foreach (var batch in _loader.LoadAsync(ct))
         {
@@ -60,11 +58,6 @@ public sealed class Trainer(
             foreach (var p in _parameters) p.ZeroGrad();
 
             currentStep++;
-
-            if (currentStep % 10 == 0)
-            {
-                Console.WriteLine($"Step {currentStep}/{totalSteps} | Loss: {runningLoss:F4} | LR: {_scheduler.GetLr(currentStep):F6}");
-            }
         }
     }
 

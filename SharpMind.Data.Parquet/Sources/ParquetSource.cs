@@ -88,23 +88,6 @@ public sealed class ParquetSource : IDataSource
             }
         }
     }
-
-    private static string? FormatValue(object value)
-    {
-        if (value is string s) return s;
-        if (value is System.Collections.IEnumerable enumerable)
-        {
-            var sb = new System.Text.StringBuilder();
-            foreach (var item in enumerable)
-            {
-                if (item == null) continue;
-                sb.AppendLine(item.ToString());
-            }
-            return sb.ToString().TrimEnd();
-        }
-        return value?.ToString();
-    }
-
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
 }

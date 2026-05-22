@@ -10,7 +10,7 @@ namespace SharpMind.Samples.Examples
 {
     public static class InteractiveQwenChatGuff
     {
-        private static readonly string ModelName = "qwen2-0_5b-instruct-fp16";
+        private static readonly string ModelName = "DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M";
         private static readonly string ModelPath = @"C:\Integral2u\source\repos\SharpMind\ExternalAssets";
         public static async Task RunAsync()
         {

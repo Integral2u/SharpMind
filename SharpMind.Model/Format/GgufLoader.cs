@@ -145,21 +145,14 @@ public static partial class GgufLoader
         {
             var (keyLen, key) = ReadString(reader);
             uint valType = reader.ReadUInt32();
-            object? val;
-
-            switch (valType)
+            object? val = valType switch
             {
-                case 8: // STRING
-                    val = ReadStringValue(reader);
-                    break;
-                case 9: // ARRAY � read all array types; tokenizer vocab lives here
-                    val = ReadArrayValue(reader);
-                    break;
-                default:
-                    val = ReadValue(reader, valType);
-                    break;
-            }
-
+                // STRING
+                8 => ReadStringValue(reader),
+                // ARRAY � read all array types; tokenizer vocab lives here
+                9 => ReadArrayValue(reader),
+                _ => ReadValue(reader, valType),
+            };
             if (val != null)
                 meta.KvPairs.Add(new KvPair { Key = key, Value = val });
         }
@@ -264,11 +257,8 @@ public static partial class GgufLoader
     public static Tokenizer? LoadTokenizerFromMeta(GgufMeta meta)
     {
         var tokens = GetStringArray(meta, "tokenizer.ggml.tokens");
-        if (tokens == null || tokens.Length == 0)
-        {
-            Console.WriteLine("[GgufLoader] No tokenizer.ggml.tokens found in GGUF � tokenizer must be loaded from file.");
-            return null;
-        }
+        if (tokens == null || tokens.Length == 0) return null;
+        
 
         var scores = GetFloatArray(meta, "tokenizer.ggml.scores");
         var types = GetIntArray(meta, "tokenizer.ggml.token_type");
@@ -277,16 +267,12 @@ public static partial class GgufLoader
         int bosId = (int)meta.GetLong("tokenizer.ggml.bos_token_id", 1);
         int eosId = (int)meta.GetLong("tokenizer.ggml.eos_token_id", 2);
 
-        string tokModel = meta.GetString("tokenizer.ggml.model") ?? "bpe";
-        Console.WriteLine($"[GgufLoader] Building tokenizer from GGUF: model={tokModel}, vocab={tokens.Length}, bos={bosId}, eos={eosId}");
-
         try
         {
             return Tokenizer.FromGguf(tokens, merges, scores, types, bosId, eosId);
         }
-        catch (Exception ex)
+        catch
         {
-            Console.WriteLine($"[GgufLoader] Tokenizer.FromGguf failed: {ex.Message}");
             return null;
         }
     }
@@ -327,18 +313,13 @@ public static partial class GgufLoader
 
         if (toAdd.Count == 0) return;
 
-        Console.WriteLine($"[GgufLoader] Injecting {toAdd.Count} missing special tokens from chat template:");
-        foreach (string token in toAdd)
-            Console.WriteLine($"  +  {token}");
-
         foreach (string token in toAdd)
             tokenizer.AddAdditionalToken(token);
 
         config = config with { VocabSize = config.VocabSize + toAdd.Count };
     }
 
-    // ?? Main entry point ?????????????????????????????????????????????????
-
+ 
     /// <summary>
     /// Single-pass loader: extracts metadata, config, and tokenizer from GGUF.
     /// Tokenizer is built from GGUF vocab first (guaranteed to match weights).
@@ -356,16 +337,12 @@ public static partial class GgufLoader
         meta = LoadMeta(ggufPath);
         config = LoadConfig(meta)!;
 
-        Console.WriteLine($"[GgufLoader] Config: vocab={config.VocabSize}, hidden={config.HiddenDim}, " +
-                          $"layers={config.NumLayers}, heads={config.NumHeads}, kvHeads={config.NumKvHeads}");
-
         // Prefer GGUF-embedded tokenizer ? its vocab size is guaranteed to match the weights.
         tokenizer = LoadTokenizerFromMeta(meta);
 
         // Fall back to file only when GGUF has no vocab data.
         if (tokenizer == null && !string.IsNullOrEmpty(tokenizerPath) && File.Exists(tokenizerPath))
         {
-            Console.WriteLine($"[GgufLoader] Falling back to tokenizer file: {tokenizerPath}");
             try
             {
                 // Detect model architecture and use the appropriate factory.
@@ -389,9 +366,8 @@ public static partial class GgufLoader
                     tokenizer = Tokenizer.FromFile(tokenizerPath);   // generic BPE/SentencePiece fallback
                 }
             }
-            catch (Exception ex)
+            catch
             {
-                Console.WriteLine($"[GgufLoader] File tokenizer load failed: {ex.Message}");
                 tokenizer = null;
             }
         }
@@ -402,8 +378,6 @@ public static partial class GgufLoader
         if (tokenizer != null)
             InjectMissingTemplateTokens(meta, ref config, tokenizer);
     }
-
-    // ?? Weight loading ????????????????????????????????????????????????????
 
     public static Dictionary<string, Tensor<float>> LoadWeights(string path)
     {
@@ -471,8 +445,6 @@ public static partial class GgufLoader
                 ArrayPool<float>.Shared.Return(buffer);
             }
         }
-
-        Console.WriteLine($"[GgufLoader] Loaded weights: {loaded}/{total} tensors (missing: {missing})");
     }
 
     private static bool IsQuantizedType(GgufDtype dtype) => dtype switch
@@ -584,7 +556,7 @@ public static partial class GgufLoader
                     break;
                 default:
                     // Unknown/unhandled quant type — zero-fill to avoid garbage weights
-                    destination.Slice(0, count).Clear();
+                    destination[..count].Clear();
                     break;
             }
         }
@@ -801,9 +773,8 @@ public static partial class GgufLoader
             int idx = 0;
             for (int j = 0; j < QK_K; j += 64)
             {
-                byte sc0, m0, sc1, m1;
-                GetScaleMinK4(idx + 0, scales, out sc0, out m0);
-                GetScaleMinK4(idx + 1, scales, out sc1, out m1);
+                GetScaleMinK4(idx + 0, scales, out byte sc0, out byte m0);
+                GetScaleMinK4(idx + 1, scales, out byte sc1, out byte m1);
 
                 float d1 = dSuper * sc0;
                 float m1v = minSuper * m0;
@@ -914,9 +885,8 @@ public static partial class GgufLoader
             byte u1 = 1, u2 = 2;
             for (int j = 0; j < QK_K; j += 64)
             {
-                byte sc0, m0, sc1, m1;
-                GetScaleMinK4(idx + 0, scales, out sc0, out m0);
-                GetScaleMinK4(idx + 1, scales, out sc1, out m1);
+                GetScaleMinK4(idx + 0, scales, out byte sc0, out byte m0);
+                GetScaleMinK4(idx + 1, scales, out byte sc1, out byte m1);
                 float d1 = d * sc0; float m1v = min * m0;
                 float d2 = d * sc1; float m2v = min * m1;
 
@@ -960,7 +930,6 @@ public static partial class GgufLoader
             // bytes 12-15 are unused (DecodeQ3KScales overwrites all 16 bytes)
 
             int[] sc = DecodeQ3KScales(scaleBuf);
-            // Console.WriteLine($"dAll={dAll} sc[0]={sc[0]}");
 
             for (int i = 0; i < QK_K && blockStart + i < n; i++)
             {
@@ -973,8 +942,6 @@ public static partial class GgufLoader
                 int sub = i / 16;
                 float val = dAll * sc[sub] * actual;
                 
-                // if (i == 0) Console.WriteLine($"i=0: dAll={dAll}, sc[sub]={sc[sub]}, s2={s2}, hBit={hBit}, actual={actual}, val={val}");
-
                 if (float.IsNaN(val) || float.IsInfinity(val)) val = 0f;
                 data[blockStart + i] = val;
             }
@@ -995,7 +962,6 @@ public static partial class GgufLoader
             sbyte* sc8 = (sbyte*)p;
             for (int j = 0; j < 16; j++) {
                 sc[j] = sc8[j] - 32;
-                // Console.WriteLine($"sc[{j}]={sc[j]}");
             }
         }
         return sc;

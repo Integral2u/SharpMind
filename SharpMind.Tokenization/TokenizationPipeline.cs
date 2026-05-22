@@ -16,16 +16,10 @@ public static class TokenizationPipeline
         IDataSource source, 
         string savePath, 
         int targetVocabSize = 32_000)
-    {
-        Console.WriteLine($"Training production tokenizer (Vocab: {targetVocabSize})...");
-        
-        var trainer = new BpeTrainer(
-            targetVocabSize: targetVocabSize,
-            progressCallback: msg => Console.WriteLine($"[BPE] {msg}"));
+    {                
+        var trainer = new BpeTrainer(targetVocabSize);
 
         var model = await trainer.TrainAsync(source.ReadAsync());
-        
-        Console.WriteLine($"Saving tokenizer to {savePath}...");
         TokenizerFile.Save(model, savePath);
         
         return new Tokenizer(model);

@@ -191,7 +191,7 @@ public sealed class Transformer : IDisposable
         return Forward(tokenIds, null, positionOffset);
     }
 
-    public unsafe Tensor<float> Forward(Tensor<int> tokenIds, KVCache[] caches, int positionOffset = 0)
+    public unsafe Tensor<float> Forward(Tensor<int> tokenIds, KVCache[]? caches, int positionOffset = 0)
     {
         ThrowIfDisposed();
 

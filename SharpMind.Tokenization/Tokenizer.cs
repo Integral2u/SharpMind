@@ -139,10 +139,8 @@ public sealed class Tokenizer
         int[]? tokenTypes,
         int bosId,
         int eosId)
-    {
-        Console.WriteLine($"[Tokenizer] Building from GGUF vocab: {tokens.Length} tokens, {merges?.Length ?? 0} merges");
-        var model = GgufConverter.Convert(tokens, merges, scores, tokenTypes, bosId, eosId);
-        Console.WriteLine($"[Tokenizer] GGUF tokenizer ready: vocab={model.Vocab.Size}");
+    {        
+        var model = GgufConverter.Convert(tokens, merges, scores, tokenTypes, bosId, eosId);        
         return new Tokenizer(model);
     }
 
@@ -175,10 +173,8 @@ public sealed class Tokenizer
     /// Handles Qwen-specific special tokens like <|im_start|>, <|im_end|>.
     /// </summary>
     public static Tokenizer FromQwen(string tokenizerJsonPath)
-    {
-        Console.WriteLine($"[Tokenizer] Loading Qwen tokenizer: {tokenizerJsonPath}");
-        var result = QwenConverter.Convert(tokenizerJsonPath);
-        Console.WriteLine($"[Tokenizer] Qwen converted: vocab={result.Vocab.Size}");
+    {        
+        var result = QwenConverter.Convert(tokenizerJsonPath);        
         return new Tokenizer(result);
     }
 }

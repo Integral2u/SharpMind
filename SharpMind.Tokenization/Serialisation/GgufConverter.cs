@@ -120,15 +120,12 @@ public static class GgufConverter
             }
         }
 
-        Console.WriteLine($"[GgufConverter] Specials — unk='{unkToken}' bos='{bosToken}' eos='{eosToken}' pad='{padToken}' additional={additional.Count}");
-
         var specials = new SpecialTokens(unkToken, bosToken, eosToken, padToken, additional);
 
         // ── Vocabulary ────────────────────────────────────────────────────
         // GGUF tokens are already in ID order — pass the list directly to the
         // internal Vocabulary constructor that preserves the existing ordering.
         var vocab = new Vocabulary(tokens, specials);
-        Console.WriteLine($"[GgufConverter] Vocabulary size: {vocab.Size}");
 
         // ── Merge rules ───────────────────────────────────────────────────
         // Each entry is "left right" — same format as HuggingFace tokenizer.json.
@@ -141,8 +138,7 @@ public static class GgufConverter
                 if (parts.Length == 2)
                     mergeList.Add(new MergeRule(parts[0], parts[1], parts[0] + parts[1], rank));
             }
-        }
-        Console.WriteLine($"[GgufConverter] Merge rules: {mergeList.Count}");
+        }        
 
         // ── PreTokeniser ──────────────────────────────────────────────────
         // All BPE models in GGUF (LLaMA, Mistral, Qwen, Phi, etc.) use

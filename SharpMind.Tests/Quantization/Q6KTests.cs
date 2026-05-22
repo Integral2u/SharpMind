@@ -6,14 +6,9 @@ using Xunit.Abstractions;
 
 namespace SharpMind.Tests.Quantization;
 
-public class Q6KTests
+public class Q6KTests(ITestOutputHelper output)
 {
-    private readonly ITestOutputHelper _output;
-
-    public Q6KTests(ITestOutputHelper output)
-    {
-        _output = output;
-    }
+    private readonly ITestOutputHelper _output = output;
 
     [Fact]
     public void TestReadQ6K_ValidBlock()
