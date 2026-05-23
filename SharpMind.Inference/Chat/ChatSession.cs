@@ -3,6 +3,7 @@ using SharpMind.Inference.Chat.PromptFormatters;
 using SharpMind.Model;
 using SharpMind.Model.Format;
 using SharpMind.Tokenization;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 
 namespace SharpMind.Inference.Chat;
@@ -107,6 +108,8 @@ public sealed class ChatSession
         // This avoids allocating and slicing the full [batch, seqLen, vocab] tensor
         // that Forward() returns, and removes the step==0 / step>0 branch below.
         Tensor<float>? logitsTensor = _model.ForwardLastLogits(input, _caches, posOffset);
+        var rateTracker = new TokenRateTracker(windowSize: 10);
+        rateTracker.Start();
 
         try
         {
@@ -129,22 +132,18 @@ public sealed class ChatSession
                 // logitsTensor is always [1, vocabSize] — same layout on every step.
                 ReadOnlySpan<float> logitsSlice = logitsTensor.Data[..vocabSize];
 
-                float[]? logitsCopy = null;
-                Span<float> logitsSpan;
+                // Rent from pool to avoid allocating a new float[vocabSize] per token.
+                float[] logitsRented = System.Buffers.ArrayPool<float>.Shared.Rent(vocabSize);
+                Span<float> logitsSpan = logitsRented.AsSpan(0, vocabSize);
+                logitsSlice.CopyTo(logitsSpan);
                 if (RepetitionPenalty != 1.0f && generatedIds.Count > 0)
-                {
-                    logitsCopy = System.Buffers.ArrayPool<float>.Shared.Rent(vocabSize);
-                    logitsSlice.CopyTo(logitsCopy);
-                    logitsSpan = logitsCopy.AsSpan(0, vocabSize);
                     ApplyRepetitionPenalty(logitsSpan, promptToks, generatedIds, RepetitionPenalty, RepetitionWindow);
-                }
-                else
-                {
-                    logitsSpan = logitsSlice.ToArray().AsSpan();
-                }
 
                 int nextId = Sampler.Sample(logitsSpan, samplingCfg, Random.Shared);
+                System.Buffers.ArrayPool<float>.Shared.Return(logitsRented);
                 generatedIds.Add(nextId);
+
+                rateTracker.RecordToken();
 
                 if (nextId == _tokenizer.EosId) break;
 
@@ -172,7 +171,8 @@ public sealed class ChatSession
                 {
                     Status = ChatStatus.Responding,
                     TextDelta = token,
-                    IsComplete = false
+                    IsComplete = false,
+                    TokensPerSecond = rateTracker.RollingTokensPerSecond
                 };
 
                 Tensor<float>? prev = logitsTensor;
@@ -194,7 +194,12 @@ public sealed class ChatSession
             logitsTensor?.Dispose();
         }
 
-        yield return new ChatStreamEntry { Status = ChatStatus.Complete, IsComplete = true };
+        yield return new ChatStreamEntry
+        {
+            Status = ChatStatus.Complete,
+            IsComplete = true,
+            TokensPerSecond = rateTracker.CumulativeTokensPerSecond
+        };
     }
 
     public async Task<ChatResult> GetResponseAsync(

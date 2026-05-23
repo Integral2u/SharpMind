@@ -30,7 +30,7 @@ namespace SharpMind.Samples.Examples
                 Console.Out.WriteLine($"Tokenizer dat not found");
                 return;
             }
-            var sharpConfig = SharpMindConfig.Qwen with { Hardware = DetectBestHardware() };
+            var sharpConfig = modelConfig.ForModel(DetectBestHardware());
 
             GC.Collect(); GC.WaitForPendingFinalizers();
             Console.Out.WriteLine("Building model...");
@@ -43,7 +43,7 @@ namespace SharpMind.Samples.Examples
             var inferOps = InferenceOpsFactory.Create(sharpConfig, InferenceConfig.Default);
             string systemPrompt = $"{PromptHelpers.DefaultSystemPrompt}\n\n{PromptHelpers.DefaultAgentPrompt}".Trim();
 
-            await using var session = new ChatSession(model, tokenizer, inferOps)
+            await using var session = new ChatSession(model, tokenizer, inferOps, meta)
             {
                 MaxTokens = 512,
                 Temperature = 0.7f,

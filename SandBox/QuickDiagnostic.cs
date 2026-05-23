@@ -1,13 +1,118 @@
-using SharpMind.Model.Format;
+using SharpMind;
+using SharpMind.Core.Tensors;
+using SharpMind.Inference;
+using SharpMind.Inference.Chat;
+using SharpMind.Inference.Chat.PromptFormatters;
 using SharpMind.Model;
+using SharpMind.Model.Config;
+using SharpMind.Model.Format;
+using SharpMind.Tokenization;
 using System;
 using System.IO;
 using System.Linq;
+using System.Runtime.Intrinsics.X86;
 
 namespace SandBox;
 
 public static class QuickDiagnostic
 {
+    private static global::SharpMind.SharpMindConfig DeriveSharpMindConfig(ModelConfig mc, HardwareTier hw)
+    {
+        var attn = mc.NumKvHeads switch { 1 => AttentionKind.MQA, _ when mc.NumKvHeads == mc.NumHeads => AttentionKind.MHA, _ => AttentionKind.GQA };
+        return new global::SharpMind.SharpMindConfig { Activation = ActivationKind.SiLU, Gate = GateKind.SwiGLU, Ffn = FfnKind.Gated, Attention = attn, Norm = NormKind.RMSNorm, Arch = ArchKind.Decoder, Hardware = hw };
+    }
+
+    private static HardwareTier DetectBestHardware()
+    {
+        if (Avx2.IsSupported) return HardwareTier.AVX2;
+        if (Fma.IsSupported) return HardwareTier.FMA;
+        return HardwareTier.Scalar;
+    }
+
+    private static float MaxAbs(Span<float> data) { float m = 0f; for (int i = 0; i < data.Length; i++) { float a = Math.Abs(data[i]); if (a > m) m = a; } return m; }
+
+    public static void RunQwenDiagnostic()
+    {
+        string[] models = ["qwen2-0_5b-instruct-q8_0", "qwen2.5-1.5b-instruct-q8_0", "tinyllama-1.1b-chat-v1.0.f16"];
+
+        foreach (var modelName in models)
+        {
+            string path = Path.Combine(@"C:\Integral2u\source\repos\SharpMind\ExternalAssets", $"{modelName}.gguf");
+            if (!File.Exists(path)) { Console.WriteLine($"[SKIP] {modelName} not found"); continue; }
+
+            Console.WriteLine($"\n═══ {modelName} ═══");
+
+            GgufLoader.Load(path, null, out GgufMeta meta, out ModelConfig mc, out Tokenizer? tokenizer);
+            if (tokenizer == null) { Console.WriteLine("No tokenizer"); continue; }
+
+            var hw = DetectBestHardware();
+            var cfg = DeriveSharpMindConfig(mc, hw);
+            var model = ModelFactory.Create(mc, cfg);
+            GgufLoader.LoadWeightsToModel(path, meta, model);
+
+            // Build prompt via formatter
+            var formatter = ChatPromptFormatterFactory.Create(meta.GetChatTemplate());
+            bool addBos = meta.GetLong("tokenizer.ggml.add_bos_token", 1) != 0;
+            string prompt = formatter.Format(
+                [new() { Role = ChatRole.User, Content = "hello" }], tokenizer, addBos);
+            Console.WriteLine($"Prompt: {prompt.Replace("\n", "\\n")}");
+            Console.WriteLine($"Formatter: {formatter.GetType().Name}");
+
+            // Tokenize
+            var tokenIds = tokenizer.Encode(prompt, addBos: false);
+            Console.WriteLine($"Tokens ({tokenIds.Length}): {string.Join(", ", tokenIds.Take(48))}");
+            bool hasUnk = tokenIds.Any(t => t == 0);
+            Console.WriteLine($"UNK tokens: {(hasUnk ? "YES ✗" : "none ✓")}");
+
+            // Multi-step generation diagnostic
+            int hiddenDim = mc.HiddenDim;
+            using var input = Tensor<int>.From(tokenIds, 1, tokenIds.Length);
+            var caches = new KVCache[mc.NumLayers];
+            for (int i = 0; i < mc.NumLayers; i++)
+                caches[i] = new KVCache(1, mc.NumKvHeads, 256, mc.HeadDim);
+
+            int promptLen = tokenIds.Length;
+            var logits = model.ForwardLastLogits(input, caches, 0);
+            int vocabSize = logits.Shape[1];
+
+            Console.Write("Gen: ");
+            int[] genScratch = new int[1];
+            for (int step = 0; step < 8; step++)
+            {
+                int topId = 0; float topVal = float.NegativeInfinity;
+                for (int j = 0; j < vocabSize; j++) { if (logits.Data[j] > topVal) { topVal = logits.Data[j]; topId = j; } }
+                string tokenStr = tokenizer.Decode([topId], skipSpecials: false);
+                Console.Write($"[{topId}:{tokenStr.Trim()}] ");
+
+                if (step > 0)
+                {
+                    genScratch[0] = topId;
+                    logits.Dispose();
+                    int newPos = 0 + promptLen + step;
+                    using var nextInput = Tensor<int>.From(genScratch, 1, 1);
+                    logits = model.ForwardLastLogits(nextInput, caches, newPos);
+                }
+                else
+                {
+                    // First step: advance to next
+                    genScratch[0] = topId;
+                    logits.Dispose();
+                    int newPos = 0 + promptLen + 0;
+                    using var nextInput = Tensor<int>.From(genScratch, 1, 1);
+                    logits = model.ForwardLastLogits(nextInput, caches, newPos);
+                }
+
+                int nanCnt = 0; for (int j = 0; j < logits.Data.Length; j++) if (float.IsNaN(logits.Data[j])) nanCnt++;
+                if (nanCnt > 0) { Console.Write($"(NaN!={nanCnt}) "); break; }
+            }
+            Console.WriteLine();
+
+            logits.Dispose();
+            foreach (var c in caches) c.Dispose();
+            model.Dispose();
+        }
+    }
+
     public static void Run()
     {
         string modelPath = Path.Combine(

@@ -575,7 +575,7 @@ namespace SandBox
         /// architecture name.
         /// </summary>
         private static global::SharpMind.SharpMindConfig DeriveSharpMindConfig(ModelConfig config, HardwareTier hw)
-            => global::SharpMind.SharpMindConfig.ForModel(config.NumHeads, config.NumKvHeads, hw);
+            => config.ForModel(hw);
 
         /// <summary>
         /// Runs per-layer diagnostics on any model.

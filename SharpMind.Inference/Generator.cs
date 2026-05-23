@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using SharpMind.Core.Tensors;
@@ -6,6 +7,63 @@ using SharpMind.Model;
 using SharpMind.Model.Config;
 
 namespace SharpMind.Inference;
+
+/// <summary>
+/// Computes a live rolling average of tokens-per-second.
+/// Maintains a ring-buffer of recent token timestamps.
+/// </summary>
+internal sealed class TokenRateTracker
+{
+    private readonly double[] _timestamps;
+    private int _head;
+    private int _count;
+    private int _totalTokens;
+    private double _startTime;
+
+    public TokenRateTracker(int windowSize = 10)
+    {
+        _timestamps = new double[windowSize];
+        _startTime = double.NaN;
+    }
+
+    public void Start() { _startTime = Stopwatch.GetTimestamp(); }
+
+    public void RecordToken()
+    {
+        _totalTokens++;
+        double now = Stopwatch.GetTimestamp();
+        _timestamps[_head] = now;
+        _head = (_head + 1) % _timestamps.Length;
+        if (_count < _timestamps.Length) _count++;
+    }
+
+    /// <summary>Rolling average over the last N tokens, or cumulative if fewer than N tokens seen.</summary>
+    public float RollingTokensPerSecond
+    {
+        get
+        {
+            if (_count < 2) return 0f;
+            int oldestIdx = _head >= _count ? 0 : _head;
+            double oldest = _timestamps[oldestIdx];
+            double latest = _timestamps[(_head - 1 + _timestamps.Length) % _timestamps.Length];
+            double elapsedSec = (latest - oldest) / Stopwatch.Frequency;
+            if (elapsedSec <= 0) return 0f;
+            return (float)((_count - 1) / elapsedSec);
+        }
+    }
+
+    /// <summary>Cumulative tokens-per-second from the start.</summary>
+    public float CumulativeTokensPerSecond
+    {
+        get
+        {
+            if (_totalTokens == 0 || double.IsNaN(_startTime)) return 0f;
+            double elapsedSec = (Stopwatch.GetTimestamp() - _startTime) / Stopwatch.Frequency;
+            if (elapsedSec <= 0) return 0f;
+            return (float)(_totalTokens / elapsedSec);
+        }
+    }
+}
 
 /// <summary>
 /// Token generation loop using JigSaw-assembled <see cref="InferenceOps"/>.
@@ -102,6 +160,10 @@ public sealed class Generator : IDisposable
                 ? new Random(sampleCfg.Seed.Value)
                 : _defaultRng;
 
+            // ── Tokens-per-second tracking ─────────────────────────────────
+            var rateTracker = new TokenRateTracker(windowSize: 10);
+            rateTracker.Start();
+
             for (int step = 0; step < genCfg.MaxNewTokens; step++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -129,6 +191,10 @@ public sealed class Generator : IDisposable
                     nextId = Sampler.Sample(logitsSlice, sampleCfg, rng);
 
                 generatedIds.Add(nextId);
+
+                rateTracker.RecordToken();
+                TokensPerSecond = rateTracker.RollingTokensPerSecond;
+                CumulativeTokensPerSecond = rateTracker.CumulativeTokensPerSecond;
 
                 if (genCfg.StopTokenIds.Contains(nextId)) break;
 
@@ -206,6 +272,12 @@ public sealed class Generator : IDisposable
 
     /// <summary>KV-cache fill as a fraction of maximum capacity.</summary>
     public float CacheFillRatio => (float)_caches[0].Length / _caches[0].MaxSeqLen;
+
+    // ── Tokens-per-second ─────────────────────────────────────────────────
+    /// <summary>Rolling tokens-per-second over the last few decode steps.</summary>
+    public float TokensPerSecond { get; private set; }
+    /// <summary>Cumulative tokens-per-second from the start of the current generation.</summary>
+    public float CumulativeTokensPerSecond { get; private set; }
 
     // ── Repetition penalty ────────────────────────────────────────────────
 

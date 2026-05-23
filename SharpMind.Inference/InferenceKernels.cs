@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Runtime.CompilerServices;
 using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
@@ -22,7 +23,11 @@ internal static class InferenceKernels
         float* q, float* k, float* v, float* output,
         int cacheLen, int headDim, float scale)
     {
-        float[] scores = new float[cacheLen];
+        // Use stackalloc for small caches, ArrayPool for large — avoids GC allocations.
+        float[]? rentedScores = cacheLen > 256 ? ArrayPool<float>.Shared.Rent(cacheLen) : null;
+        Span<float> scores = rentedScores is not null
+            ? rentedScores.AsSpan(0, cacheLen)
+            : stackalloc float[cacheLen];
         fixed (float* pS = scores)
         {
             // scores[j] = dot(q, k[j]) * scale
@@ -42,7 +47,7 @@ internal static class InferenceKernels
                 pS[j] = dot * scale;
             }
 
-            SoftmaxInPlace(new Span<float>(pS, cacheLen));
+            SoftmaxInPlace(scores);
 
             // output = sum_j scores[j] * v[j]
             for (int d = 0; d < headDim; d++)
@@ -52,13 +57,18 @@ internal static class InferenceKernels
                 output[d] = sum;
             }
         }
+        if (rentedScores is not null) ArrayPool<float>.Shared.Return(rentedScores);
     }
 
     internal static unsafe void DecodeAttention_Standard_Scalar(
         float* q, float* k, float* v, float* output,
         int cacheLen, int headDim, float scale)
     {
-        float[] scores = new float[cacheLen];
+        float[]? rentedScores = cacheLen > 256 ? ArrayPool<float>.Shared.Rent(cacheLen) : null;
+        Span<float> scores = rentedScores is not null
+            ? rentedScores.AsSpan(0, cacheLen)
+            : stackalloc float[cacheLen];
+
         for (int j = 0; j < cacheLen; j++)
         {
             float dot = 0f;
@@ -73,6 +83,7 @@ internal static class InferenceKernels
             for (int j = 0; j < cacheLen; j++) sum += scores[j] * v[(long)j * headDim + d];
             output[d] = sum;
         }
+        if (rentedScores is not null) ArrayPool<float>.Shared.Return(rentedScores);
     }
 
     // ── Flash decode attention — tiled to avoid large score buffer ────────
@@ -95,76 +106,73 @@ internal static class InferenceKernels
     {
         const int TileSize = 64;
 
-        // Online softmax accumulators
-        float   mMax  = float.NegativeInfinity;
-        float   lSum  = 0f;
-        float[] oAcc  = new float[headDim];  // running weighted sum
+        // Online softmax accumulators — headDim is typically 64-128, safe for stackalloc.
+        float  mMax = float.NegativeInfinity;
+        float  lSum = 0f;
+        float* pO   = stackalloc float[headDim];
 
-        fixed (float* pO = oAcc)
+        for (int start = 0; start < cacheLen; start += TileSize)
         {
-            for (int start = 0; start < cacheLen; start += TileSize)
+            int end = Math.Min(start + TileSize, cacheLen);
+
+            // Compute scores for this tile — max tile size is 64, safe for stackalloc.
+            float  tileMax    = float.NegativeInfinity;
+            float* tileScores = stackalloc float[end - start];
+
+            for (int j = start; j < end; j++)
             {
-                int end = Math.Min(start + TileSize, cacheLen);
-
-                // Compute scores for this tile
-                float tileMax = float.NegativeInfinity;
-                float[] tileScores = new float[end - start];
-
-                for (int j = start; j < end; j++)
+                float* kj  = k + (long)j * headDim;
+                float  dot = 0f;
+                if (avx2)
                 {
-                    float* kj  = k + (long)j * headDim;
-                    float  dot = 0f;
-                    if (avx2)
-                    {
-                        var acc = Vector256<float>.Zero;
-                        int d = 0;
-                        for (; d <= headDim - 8; d += 8)
-                            acc = Avx.Add(acc, Avx.Multiply(
-                                Vector256.LoadUnsafe(ref q[d]),
-                                Vector256.LoadUnsafe(ref kj[d])));
-                        dot = HSum256(acc);
-                        for (; d < headDim; d++) dot += q[d] * kj[d];
-                    }
-                    else
-                    {
-                        for (int d = 0; d < headDim; d++) dot += q[d] * kj[d];
-                    }
-                    dot *= scale;
-                    tileScores[j - start] = dot;
-                    if (dot > tileMax) tileMax = dot;
+                    var acc = Vector256<float>.Zero;
+                    int d = 0;
+                    for (; d <= headDim - 8; d += 8)
+                        acc = Avx.Add(acc, Avx.Multiply(
+                            Vector256.LoadUnsafe(ref q[d]),
+                            Vector256.LoadUnsafe(ref kj[d])));
+                    dot = HSum256(acc);
+                    for (; d < headDim; d++) dot += q[d] * kj[d];
                 }
-
-                // Online softmax update
-                float newMax    = MathF.Max(mMax, tileMax);
-                float scaleOld  = MathF.Exp(mMax - newMax);
-                float scaleNew  = 0f;
-
-                for (int i = 0; i < tileScores.Length; i++)
+                else
                 {
-                    tileScores[i] = MathF.Exp(tileScores[i] - newMax);
-                    scaleNew += tileScores[i];
+                    for (int d = 0; d < headDim; d++) dot += q[d] * kj[d];
                 }
-
-                // Rescale accumulated output and add tile contribution
-                float newL = scaleOld * lSum + scaleNew;
-                for (int d = 0; d < headDim; d++)
-                    pO[d] *= scaleOld;
-
-                for (int i = 0; i < tileScores.Length; i++)
-                {
-                    float* vj = v + (long)(start + i) * headDim;
-                    for (int d = 0; d < headDim; d++)
-                        pO[d] += tileScores[i] * vj[d];
-                }
-
-                mMax = newMax;
-                lSum = newL;
+                dot *= scale;
+                tileScores[j - start] = dot;
+                if (dot > tileMax) tileMax = dot;
             }
 
-            // Normalise by accumulated sum
+            // Online softmax update
+            float newMax   = MathF.Max(mMax, tileMax);
+            float scaleOld = MathF.Exp(mMax - newMax);
+            float scaleNew = 0f;
+
+            for (int i = 0; i < end - start; i++)
+            {
+                tileScores[i] = MathF.Exp(tileScores[i] - newMax);
+                scaleNew += tileScores[i];
+            }
+
+            // Rescale accumulated output and add tile contribution
+            float newL = scaleOld * lSum + scaleNew;
             for (int d = 0; d < headDim; d++)
-                output[d] = lSum > 0f ? pO[d] / lSum : 0f;
+                pO[d] *= scaleOld;
+
+            for (int i = 0; i < end - start; i++)
+            {
+                float* vj = v + (long)(start + i) * headDim;
+                for (int d = 0; d < headDim; d++)
+                    pO[d] += tileScores[i] * vj[d];
+            }
+
+            mMax = newMax;
+            lSum = newL;
         }
+
+        // Normalise by accumulated sum
+        for (int d = 0; d < headDim; d++)
+            output[d] = lSum > 0f ? pO[d] / lSum : 0f;
     }
 
     // ── INT8 quantized matmul ─────────────────────────────────────────────

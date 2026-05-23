@@ -145,12 +145,16 @@ public sealed record SharpMindConfig
 
 
     /// <summary>
-    /// Creates the correct <see cref="SharpMindConfig"/> for a model by
-    /// deriving the attention kind from <c>NumKvHeads</c> vs <c>NumHeads</c>.
-    /// All modern decoder-only LLMs use SiLU + SwiGLU + Gated FFN + RMSNorm,
-    /// so only the attention variant needs to be inferred from the dimensions.
+    /// Creates the correct <see cref="SharpMindConfig"/> for a model by reading
+    /// model dimensions and an optional architecture name.
+    /// The attention kind is always derived from NumHeads vs NumKvHeads.
+    /// The <paramref name="architecture"/> string (e.g. "qwen2", "llama", "bert")
+    /// selects the correct activation, gate, FFN, norm, and arch-type preset.
     /// </summary>
-    public static SharpMindConfig ForModel(int numHeads, int numKvHeads, HardwareTier hw = HardwareTier.Auto)
+    public static SharpMindConfig ForModel(
+        int numHeads, int numKvHeads,
+        string? architecture = null,
+        HardwareTier hw = HardwareTier.Auto)
     {
         var attn = numKvHeads switch
         {
@@ -158,14 +162,23 @@ public sealed record SharpMindConfig
             _ when numKvHeads == numHeads => AttentionKind.MHA,
             _ => AttentionKind.GQA
         };
+
+        var (activation, gate, ffn, norm, arch) = architecture?.ToLowerInvariant() switch
+        {
+            "bert"                                       => (ActivationKind.GELU,    GateKind.None,   FfnKind.Dense, NormKind.LayerNorm, ArchKind.Encoder),
+            "gpt2" or "gptj" or "falcon" or "starcoder" => (ActivationKind.GELU,    GateKind.None,   FfnKind.Dense, NormKind.LayerNorm, ArchKind.Decoder),
+            "mixtral" or "qwen2moe" or "deepseek2"      => (ActivationKind.SiLU,    GateKind.SwiGLU, FfnKind.MoE,   NormKind.RMSNorm,   ArchKind.Decoder),
+            _                                             => (ActivationKind.SiLU,    GateKind.SwiGLU, FfnKind.Gated, NormKind.RMSNorm,   ArchKind.Decoder),
+        };
+
         return new SharpMindConfig
         {
-            Activation = ActivationKind.SiLU,
-            Gate = GateKind.SwiGLU,
-            Ffn = FfnKind.Gated,
+            Activation = activation,
+            Gate = gate,
+            Ffn = ffn,
             Attention = attn,
-            Norm = NormKind.RMSNorm,
-            Arch = ArchKind.Decoder,
+            Norm = norm,
+            Arch = arch,
             Hardware = hw
         };
     }

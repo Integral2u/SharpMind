@@ -34,7 +34,7 @@ namespace SharpMind.Samples.Examples
                 Console.Out.WriteLine($"Tokenizer not found");
                 return;
             }
-            var sharpConfig = SharpMindConfig.ForModel(modelConfig.NumHeads, modelConfig.NumKvHeads, DetectBestHardware());
+            var sharpConfig = modelConfig.ForModel(DetectBestHardware());
 
             GC.Collect(); GC.WaitForPendingFinalizers();
             Console.Out.WriteLine("Building model...");

@@ -122,16 +122,30 @@ public sealed class BpeEncoder
                 continue;
             }
 
-            foreach (char c in token)
+            // Try GPT-2 style: every character in the token maps to a byte
+            bool allGpt2 = true;
+            byte[] gpt2Bytes = new byte[token.Length];
+            for (int i = 0; i < token.Length; i++)
             {
-                if (TryDecodeByte(c.ToString(), out byte b))
-                    bytes.Add(b);
+                if (TryDecodeByte(token[i].ToString(), out byte b))
+                    gpt2Bytes[i] = b;
                 else
-                    bytes.Add((byte)c);
+                {
+                    allGpt2 = false;
+                    break;
+                }
             }
+
+            if (allGpt2)
+                bytes.AddRange(gpt2Bytes);
+            else
+                bytes.AddRange(System.Text.Encoding.UTF8.GetBytes(token));
         }
 
-        return System.Text.Encoding.UTF8.GetString([.. bytes]);
+        string result = System.Text.Encoding.UTF8.GetString([.. bytes]);
+        // SentencePiece uses ▁ (U+2581) to mark word boundaries — convert to regular space
+        result = result.Replace('\u2581', ' ');
+        return result;
     }
 
     // ── Special-token splitter ────────────────────────────────────────────

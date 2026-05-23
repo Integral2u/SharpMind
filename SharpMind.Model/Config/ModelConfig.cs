@@ -12,6 +12,15 @@
 /// </summary>
 public sealed record ModelConfig
 {
+    // ── Architecture ───────────────────────────────────────────────────
+
+    /// <summary>
+    /// GGUF architecture name (e.g. "qwen2", "llama", "bert", "gpt2").
+    /// Set during GGUF loading; used by SharpMindConfig.ForModel to select
+    /// the correct activation/gate/ffn/norm preset.
+    /// </summary>
+    public string? Architecture { get; init; }
+
     // ── Dimensions ────────────────────────────────────────────────────────
 
     /// <summary>Vocabulary size — must match the tokenizer.</summary>

@@ -233,6 +233,7 @@ public static partial class GgufLoader
 
         return new ModelConfig
         {
+            Architecture = arch,
             VocabSize = vocabSize,
             HiddenDim = hiddenDim,
             NumLayers = numLayers,
@@ -379,24 +380,29 @@ public static partial class GgufLoader
             InjectMissingTemplateTokens(meta, ref config, tokenizer);
     }
 
-    public static Dictionary<string, Tensor<float>> LoadWeights(string path)
+    public static Dictionary<string, Tensor<float>> LoadWeights(string path, IProgress<float>? progress = null)
     {
         var meta = LoadMeta(path);
         using var mmf = MemoryMappedFile.CreateFromFile(path, FileMode.Open, null, 0, MemoryMappedFileAccess.Read);
         using var stream = mmf.CreateViewStream(0, 0, MemoryMappedFileAccess.Read);
         using var reader = new BinaryReader(stream);
         var result = new Dictionary<string, Tensor<float>>();
+        int total = meta.Tensors.Count;
 
+        int idx = 0;
         foreach (var info in meta.Tensors)
         {
+            progress?.Report((float)idx / total);
             stream.Position = meta.DataOffset + info.Offset;
             var tensor = ReadTensor(reader, info.Dtype, info.Shape);
             result[info.Name] = tensor;
+            idx++;
         }
+        progress?.Report(1f);
         return result;
     }
 
-    public static void LoadWeightsToModel(string path, GgufMeta meta, Transformer model)
+    public static void LoadWeightsToModel(string path, GgufMeta meta, Transformer model, IProgress<float>? progress = null)
     {
         using var mmf = MemoryMappedFile.CreateFromFile(path, FileMode.Open, null, 0, MemoryMappedFileAccess.Read);
         using var stream = mmf.CreateViewStream(0, 0, MemoryMappedFileAccess.Read);
@@ -408,6 +414,8 @@ public static partial class GgufLoader
 
         foreach (var info in meta.Tensors)
         {
+            progress?.Report((float)loaded / total);
+
             long targetOffset = meta.DataOffset + info.Offset;
             if (targetOffset >= stream.Length) continue;
 
@@ -445,6 +453,8 @@ public static partial class GgufLoader
                 ArrayPool<float>.Shared.Return(buffer);
             }
         }
+
+        progress?.Report(1f);
     }
 
     private static bool IsQuantizedType(GgufDtype dtype) => dtype switch
