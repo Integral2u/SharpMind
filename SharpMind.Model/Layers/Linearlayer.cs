@@ -2,6 +2,8 @@
 using SharpMind.Core.Tensors;
 using SharpMind.Core.Training;
 using SharpMind.Model.Format;
+using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.X86;
 
 namespace SharpMind.Model.Layers;
 
@@ -83,20 +85,26 @@ public sealed class LinearLayer : IDisposable
         var rawData = RawQuantizedData!;
         int m = input.ElementCount / InFeatures;
         var result = new Tensor<float>(m, OutFeatures);
+        int inF = InFeatures, outF = OutFeatures;
 
-        unsafe
+        for (int row = 0; row < m; row++)
         {
-            fixed (byte* pRaw = rawData)
+            unsafe
             {
-                int inF = InFeatures, outF = OutFeatures;
-                for (int row = 0; row < m; row++)
+                float* pIn = input.DataPtr + (long)row * inF;
+                float* pOut = result.DataPtr + (long)row * outF;
+                fixed (byte* pRaw = rawData)
                 {
-                    float* pIn = input.DataPtr + (long)row * inF;
-                    float* pOut = result.DataPtr + (long)row * outF;
-                    for (int col = 0; col < outF; col++)
+                    IntPtr pInPtr = (IntPtr)pIn;
+                    IntPtr pOutPtr = (IntPtr)pOut;
+                    IntPtr pRawPtr = (IntPtr)pRaw;
+                    System.Threading.Tasks.Parallel.For(0, outF, col =>
                     {
-                        pOut[col] = VecDotQxK(pIn, pRaw, col, inF, dtype);
-                    }
+                        float* pInL = (float*)pInPtr;
+                        float* pOutL = (float*)pOutPtr;
+                        byte* pRawL = (byte*)pRawPtr;
+                        pOutL[col] = VecDotQxK(pInL, pRawL, col, inF, dtype);
+                    });
                 }
             }
         }
@@ -123,10 +131,18 @@ public sealed class LinearLayer : IDisposable
         };
     }
 
+    private static bool IsSupportedQuantDtype(GgufDtype dtype) => dtype switch
+    {
+        // Q8_0 is the only format with a SIMD+parallel kernel today
+        GgufDtype.Q8_0 => true,
+        _ => false
+    };
+
     public void SetRawWeight(byte[] rawData, GgufDtype dtype)
     {
         RawQuantizedData = rawData;
         QuantDtype = dtype;
+        UseQuantizedForward = IsSupportedQuantDtype(dtype);
     }
 
     // ── GGUF quantized dot product kernels (matching llama.cpp vec_dot) ──
@@ -321,20 +337,49 @@ public sealed class LinearLayer : IDisposable
         return (float)sum;
     }
 
+    private static unsafe float HSum256(Vector256<float> v)
+    {
+        var lo = v.GetLower();
+        var hi = v.GetUpper();
+        var s = Sse.Add(lo, hi);
+        var s2 = Sse3.HorizontalAdd(s, s);
+        return s2.GetElement(0) + s2.GetElement(1);
+    }
+
     internal static unsafe float VecDotQ8_0(float* input, byte* rawWeights, int col, int inFeatures)
     {
         const int BLOCK_BYTES = 34;
         const int QK = 32;
         int nBlocks = (inFeatures + QK - 1) / QK;
         double sum = 0;
+
         for (int b = 0; b < nBlocks; b++)
         {
             byte* block = rawWeights + (long)col * nBlocks * BLOCK_BYTES + b * BLOCK_BYTES;
             float d = HalfToFloat(*(ushort*)block);
             sbyte* values = (sbyte*)(block + 2);
             int blockEnd = Math.Min(QK, inFeatures - b * QK);
-            for (int i = 0; i < blockEnd; i++)
-                sum += input[b * QK + i] * (values[i] * d);
+            float* pIn = input + b * QK;
+
+            int i = 0;
+            if (Avx2.IsSupported && blockEnd >= 8)
+            {
+                var vacc = Vector256<float>.Zero;
+                var vd = Vector256.Create(d);
+                for (; i <= blockEnd - 8; i += 8)
+                {
+                    var vi = Vector256.LoadUnsafe(ref pIn[i]);
+                    var vw = Avx.ConvertToVector256Single(
+                        Avx2.ConvertToVector256Int32(values + i));
+                    var vs = Avx.Multiply(vw, vd);
+                    vacc = Fma.IsSupported
+                        ? Fma.MultiplyAdd(vi, vs, vacc)
+                        : Avx.Add(vacc, Avx.Multiply(vi, vs));
+                }
+                sum += HSum256(vacc);
+            }
+            for (; i < blockEnd; i++)
+                sum += pIn[i] * (values[i] * d);
         }
         return (float)sum;
     }
