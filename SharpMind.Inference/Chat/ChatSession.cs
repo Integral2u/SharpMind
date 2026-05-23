@@ -3,7 +3,6 @@ using SharpMind.Inference.Chat.PromptFormatters;
 using SharpMind.Model;
 using SharpMind.Model.Format;
 using SharpMind.Tokenization;
-using System.Diagnostics;
 using System.Runtime.CompilerServices;
 
 namespace SharpMind.Inference.Chat;
@@ -12,16 +11,11 @@ public sealed class ChatSession
 {
     private readonly Transformer _model;
     private readonly Tokenizer _tokenizer;
-    private readonly InferenceOps _ops;
-    private readonly KVCache[] _caches;
+    private readonly Generator _generator;
     private readonly List<ChatMessage> _history = [];
-    private readonly int[] _decodeTokenScratch = new int[1];
     private readonly IChatPromptFormatter? _formatter;
     private readonly bool _addBos;
     private bool _disposed;
-
-    /// <summary>Legend delimiter used in debug output to separate prompt from generation.</summary>
-    private const string DebugLegend = "\n│ Prompt │\n";
 
     public ChatSession(
         Transformer model,
@@ -35,23 +29,14 @@ public sealed class ChatSession
 
         _model = model;
         _tokenizer = tokenizer;
-        _ops = ops;
+        _generator = new Generator(model, tokenizer, ops);
         _formatter = ChatPromptFormatterFactory.Create(meta?.GetChatTemplate());
         _addBos = meta?.GetLong("tokenizer.ggml.add_bos_token", 1) != 0;
-
-        int nl = model.Config.NumLayers;
-        int ms = model.Config.MaxSeqLen;
-        int nk = model.Config.NumKvHeads;
-        int hd = model.Config.HeadDim;
-
-        _caches = new KVCache[nl];
-        for (int i = 0; i < nl; i++)
-            _caches[i] = new KVCache(1, nk, ms, hd);
     }
 
     public Transformer Model => _model;
     public Tokenizer Tokenizer => _tokenizer;
-    public InferenceOps Ops => _ops;
+    public Generator Generator => _generator;
     public IReadOnlyList<ChatMessage> History => _history;
 
     public int MaxTokens { get; set; } = 2048;
@@ -77,128 +62,70 @@ public sealed class ChatSession
         yield return new ChatStreamEntry { Status = ChatStatus.Responding, IsComplete = false };
 
         var prompt = BuildPrompt();
-        var encoded = _tokenizer.Encode(prompt, addBos: false, addEos: false);
-        int[] promptToks;
-        if (encoded.Length > MaxTokens)
+        int[] promptToks = _tokenizer.Encode(prompt, addBos: false, addEos: false);
+        if (promptToks.Length > MaxTokens)
         {
-            promptToks = encoded.ToArray();
-            ArraySegment<int> subset = new(encoded.ToArray(), encoded.Length - MaxTokens, MaxTokens);
-            promptToks = subset.ToArray();
-        }
-        else
-        {
-            promptToks = encoded.ToArray();
+            int start = promptToks.Length - MaxTokens;
+            var subset = new int[MaxTokens];
+            Array.Copy(promptToks, start, subset, 0, MaxTokens);
+            promptToks = subset;
         }
 
-        int promptLen = promptToks.Length;
-        if (promptLen == 0)
+        if (promptToks.Length == 0)
             throw new InvalidOperationException("Prompt produced no token IDs; cannot generate.");
 
-        // BuildPrompt() always re-encodes the entire conversation history from scratch.
-        // Re-using a stale KV cache from a previous turn would write into already-occupied
-        // positions (posOffset = old cache length, but the full prompt is passed again),
-        // corrupting both the cache content and position encodings.
-        // Resetting here is correct: the full prompt encodes all context the model needs.
-        ResetCaches();
-        var posOffset = 0;
+        _generator.ResetCache();
 
-        using var input = Tensor<int>.From(promptToks, 1, promptLen);
-
-        // ForwardLastLogits returns [batch, vocabSize] � just the last token's logits.
-        // This avoids allocating and slicing the full [batch, seqLen, vocab] tensor
-        // that Forward() returns, and removes the step==0 / step>0 branch below.
-        Tensor<float>? logitsTensor = _model.ForwardLastLogits(input, _caches, posOffset);
-        var rateTracker = new TokenRateTracker(windowSize: 10);
-        rateTracker.Start();
-
-        try
+        var sampleCfg = new SamplingConfig
         {
-            int vocabSize = logitsTensor.Shape[1];
+            Temperature = Temperature,
+            TopK = TopK,
+            TopP = TopP,
+        };
 
-            var samplingCfg = new SamplingConfig
+        var genCfg = new GenerationConfig
+        {
+            MaxNewTokens = MaxTokens,
+            RepetitionPenalty = RepetitionPenalty,
+            RepetitionWindow = RepetitionWindow,
+            StopTokenIds = [_tokenizer.EosId],
+            SlidingWindowSize = 0,
+            Stream = true,
+        };
+
+        var response = new System.Text.StringBuilder();
+
+        await foreach (var fragment in _generator.GenerateFromTokensAsync(promptToks, sampleCfg, genCfg, ct))
+        {
+            response.Append(fragment);
+
+            // Safety: detect repetition loop and stop
+            if (response.Length >= 8)
             {
-                Temperature = Temperature,
-                TopK = TopK,
-                TopP = TopP
-            };
-
-            var generatedIds = new List<int>();
-            var response = new System.Text.StringBuilder();
-
-            for (int step = 0; step < MaxTokens; step++)
-            {
-                if (ct.IsCancellationRequested) break;
-
-                // logitsTensor is always [1, vocabSize] — same layout on every step.
-                ReadOnlySpan<float> logitsSlice = logitsTensor.Data[..vocabSize];
-
-                // Rent from pool to avoid allocating a new float[vocabSize] per token.
-                float[] logitsRented = System.Buffers.ArrayPool<float>.Shared.Rent(vocabSize);
-                Span<float> logitsSpan = logitsRented.AsSpan(0, vocabSize);
-                logitsSlice.CopyTo(logitsSpan);
-                if (RepetitionPenalty != 1.0f && generatedIds.Count > 0)
-                    ApplyRepetitionPenalty(logitsSpan, promptToks, generatedIds, RepetitionPenalty, RepetitionWindow);
-
-                int nextId = Sampler.Sample(logitsSpan, samplingCfg, Random.Shared);
-                System.Buffers.ArrayPool<float>.Shared.Return(logitsRented);
-                generatedIds.Add(nextId);
-
-                rateTracker.RecordToken();
-
-                if (nextId == _tokenizer.EosId) break;
-
-                // Safety: detect repetition loop and stop
-                if (step > 4)
-                {
-                    string last4 = response.ToString().Substring(response.Length - 4);
-                    if (response.Length >= 8)
-                    {
-                        string last8 = response.ToString().Substring(response.Length - 8);
-                        if (last8 == last4 + last4)
-                        {
-                            // Detected repetition loop
-                            break;
-                        }
-                    }
-                }
-
-                _decodeTokenScratch[0] = nextId;
-                var token = _tokenizer.Decode(_decodeTokenScratch.AsSpan(0, 1));
-
-                response.Append(token);
-
-                yield return new ChatStreamEntry
-                {
-                    Status = ChatStatus.Responding,
-                    TextDelta = token,
-                    IsComplete = false,
-                    TokensPerSecond = rateTracker.RollingTokensPerSecond
-                };
-
-                Tensor<float>? prev = logitsTensor;
-                logitsTensor = null;
-                int newPos = posOffset + promptLen + step;
-
-                prev.Dispose();
-
-                using var nextInput = Tensor<int>.From(_decodeTokenScratch.AsSpan(0, 1), 1, 1);
-                logitsTensor = _model.ForwardLastLogits(nextInput, _caches, newPos);
+                int len = response.Length;
+                bool loop = true;
+                for (int i = 0; i < 4; i++)
+                    if (response[len - 4 + i] != response[len - 8 + i]) { loop = false; break; }
+                if (loop) break;
             }
 
-            // One consolidated agent message avoids O(tokens) retained chat rows and prompt blow-ups.
-            if (response.Length > 0)
-                _history.Add(ChatMessage.Agent(response.ToString()));
+            yield return new ChatStreamEntry
+            {
+                Status = ChatStatus.Responding,
+                TextDelta = fragment,
+                IsComplete = false,
+                TokensPerSecond = _generator.TokensPerSecond
+            };
         }
-        finally
-        {
-            logitsTensor?.Dispose();
-        }
+
+        if (response.Length > 0)
+            _history.Add(ChatMessage.Agent(response.ToString()));
 
         yield return new ChatStreamEntry
         {
             Status = ChatStatus.Complete,
             IsComplete = true,
-            TokensPerSecond = rateTracker.CumulativeTokensPerSecond
+            TokensPerSecond = _generator.CumulativeTokensPerSecond
         };
     }
 
@@ -237,11 +164,7 @@ public sealed class ChatSession
         ThrowIfDisposed();
         _history.Add(message);
     }
-    /// <summary>
-    /// Returns the formatted prompt string that would be sent to the model
-    /// for the current history. Useful for debugging and comparing against
-    /// reference implementations (LLamaSharp, llama.cpp).
-    /// </summary>
+
     public string GetFormattedPrompt()
     {
         ThrowIfDisposed();
@@ -251,14 +174,12 @@ public sealed class ChatSession
     public void ClearHistory()
     {
         _history.Clear();
-        for (int i = 0; i < _caches.Length; i++)
-            _caches[i].Reset();
+        _generator.ResetCache();
     }
 
     public void ResetCaches()
     {
-        for (int i = 0; i < _caches.Length; i++)
-            _caches[i].Reset();
+        _generator.ResetCache();
     }
 
     private string BuildPrompt()
@@ -292,41 +213,12 @@ public sealed class ChatSession
     {
         if (_disposed) return;
         _disposed = true;
-
         await Task.CompletedTask;
-        for (int i = 0; i < _caches.Length; i++)
-            _caches[i].Dispose();
+        _generator.Dispose();
     }
 
     private void ThrowIfDisposed()
         => ObjectDisposedException.ThrowIf(_disposed, nameof(ChatSession));
-
-    private static void ApplyRepetitionPenalty(
-        Span<float> logits,
-        ReadOnlySpan<int> promptIds,
-        List<int> generatedIds,
-        float penalty,
-        int window)
-    {
-        static void ScaleId(Span<float> lg, int id, float pen)
-        {
-            if ((uint)id >= (uint)lg.Length) return;
-            lg[id] = lg[id] >= 0f ? lg[id] / pen : lg[id] * pen;
-        }
-
-        if (window > 0)
-        {
-            int start = Math.Max(0, generatedIds.Count - window);
-            for (int i = start; i < generatedIds.Count; i++)
-                ScaleId(logits, generatedIds[i], penalty);
-            return;
-        }
-
-        foreach (int id in promptIds)
-            ScaleId(logits, id, penalty);
-        for (int i = 0; i < generatedIds.Count; i++)
-            ScaleId(logits, generatedIds[i], penalty);
-    }
 
     public async Task<ChatMessage[]> StartChatAsync(CancellationToken token, Func<ChatMessage> prompt, Action<ChatStreamEntry> response)
     {
@@ -357,5 +249,4 @@ public sealed class ChatSession
             if (e.TextDelta is { Length: > 0 } delta) response(delta);
         });
     }
-
 }

@@ -122,14 +122,25 @@ public sealed class Generator : IDisposable
 
     /// <summary>
     /// Generates tokens from <paramref name="prompt"/> as an async stream of
-    /// decoded text fragments. Each fragment is typically one decoded token.
-    ///
-    /// The prefill step uses <see cref="InferenceOps.PrefillAttention"/>;
-    /// each decode step uses <see cref="InferenceOps.DecodeAttention"/>.
-    /// Both kernels are selected at construction — no runtime switching.
+    /// decoded text fragments.
     /// </summary>
     public async IAsyncEnumerable<string> GenerateAsync(
         string                                    prompt,
+        SamplingConfig?                           sampling   = null,
+        GenerationConfig?                         generation = null,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        int[] promptIds = _tokenizer.Encode(prompt, addBos: true, addEos: false);
+        await foreach (var fragment in GenerateFromTokensAsync(promptIds, sampling, generation, cancellationToken))
+            yield return fragment;
+    }
+
+    /// <summary>
+    /// Generates tokens from already-encoded token IDs.
+    /// The caller is responsible for including any desired BOS token in the array.
+    /// </summary>
+    public async IAsyncEnumerable<string> GenerateFromTokensAsync(
+        int[]                                     promptIds,
         SamplingConfig?                           sampling   = null,
         GenerationConfig?                         generation = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
@@ -140,7 +151,6 @@ public sealed class Generator : IDisposable
         var sampleCfg = sampling   ?? SamplingConfig.Greedy;
         var genCfg    = generation ?? GenerationConfig.Default;
 
-        int[] promptIds = _tokenizer.Encode(prompt, addBos: true, addEos: false);
         if (promptIds.Length == 0)
             throw new InvalidOperationException("Prompt produced no token IDs; cannot generate.");
 

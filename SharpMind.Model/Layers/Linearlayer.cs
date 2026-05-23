@@ -8,6 +8,7 @@ namespace SharpMind.Model.Layers;
 public sealed class LinearLayer : IDisposable
 {
     private readonly Tensor<float> _weight;
+    private Tensor<float>? _weightBT;
     private readonly Tensor<float>? _bias;
     private bool _disposed;
 
@@ -60,7 +61,8 @@ public sealed class LinearLayer : IDisposable
         }
         else
         {
-            output = ops.MatMul(flat, _weight);
+            _weightBT ??= TensorOps.Transpose(_weight);
+            output = ops.MatMulWithBT(flat, _weightBT);
         }
 
         if (_bias is not null)
@@ -611,6 +613,7 @@ public sealed class LinearLayer : IDisposable
         if (data.Length != _weight.ElementCount)
             throw new ArgumentException($"Expected {_weight.ElementCount} weight values, got {data.Length}.");
         data.CopyTo(_weight.Data);
+        InvalidateCache();
     }
 
     public void LoadWeightTransposed(ReadOnlySpan<float> data)
@@ -625,6 +628,13 @@ public sealed class LinearLayer : IDisposable
         for (int o = 0; o < outF; o++)
             for (int i = 0; i < inF; i++)
                 _weight.Data[i * outF + o] = data[o * inF + i];
+        InvalidateCache();
+    }
+
+    private void InvalidateCache()
+    {
+        _weightBT?.Dispose();
+        _weightBT = null;
     }
 
     public void LoadBias(ReadOnlySpan<float> data)
@@ -640,6 +650,7 @@ public sealed class LinearLayer : IDisposable
         if (_disposed) return;
         _disposed = true;
         _weight.Dispose();
+        _weightBT?.Dispose();
         _bias?.Dispose();
     }
 

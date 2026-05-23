@@ -179,7 +179,21 @@ internal static class ActivationKernels
     {
         if (M <= 1)
         {
-            MatMulInnerFMA_SingleRow(a, bt, c, M, K, N);
+            if (M <= 0) return;
+            System.Threading.Tasks.Parallel.For(0, N, j =>
+            {
+                float* pBT = bt + (long)j * K;
+                var acc = Vector256<float>.Zero;
+                int k = 0;
+                for (; k <= K - 8; k += 8)
+                    acc = Fma.MultiplyAdd(
+                        Vector256.LoadUnsafe(ref a[k]),
+                        Vector256.LoadUnsafe(ref pBT[k]),
+                        acc);
+                float sum = HSum256(acc);
+                for (; k < K; k++) sum += a[k] * pBT[k];
+                c[j] = sum;
+            });
             return;
         }
         System.Threading.Tasks.Parallel.For(0, M, i =>
@@ -201,36 +215,26 @@ internal static class ActivationKernels
                 rowC[j] = sum;
             }
         });
-    }
-
-    private static unsafe void MatMulInnerFMA_SingleRow(float* a, float* bt, float* c, int M, int K, int N)
-    {
-        for (int i = 0; i < M; i++)
-        {
-            float* rowA = a + (long)i * K;
-            float* rowC = c + (long)i * N;
-            for (int j = 0; j < N; j++)
-            {
-                float* rowBT = bt + (long)j * K;
-                var acc = Vector256<float>.Zero;
-                int k = 0;
-                for (; k <= K - 8; k += 8)
-                    acc = Fma.MultiplyAdd(
-                        Vector256.LoadUnsafe(ref rowA[k]),
-                        Vector256.LoadUnsafe(ref rowBT[k]),
-                        acc);
-                float sum = HSum256(acc);
-                for (; k < K; k++) sum += rowA[k] * rowBT[k];
-                rowC[j] = sum;
-            }
-        }
     }
 
     internal static unsafe void MatMulInnerAVX2(float* a, float* bt, float* c, int M, int K, int N)
     {
         if (M <= 1)
         {
-            MatMulInnerAVX2_SingleRow(a, bt, c, M, K, N);
+            if (M <= 0) return;
+            System.Threading.Tasks.Parallel.For(0, N, j =>
+            {
+                float* pBT = bt + (long)j * K;
+                var acc = Vector256<float>.Zero;
+                int k = 0;
+                for (; k <= K - 8; k += 8)
+                    acc = Avx.Add(acc, Avx.Multiply(
+                        Vector256.LoadUnsafe(ref a[k]),
+                        Vector256.LoadUnsafe(ref pBT[k])));
+                float sum = HSum256(acc);
+                for (; k < K; k++) sum += a[k] * pBT[k];
+                c[j] = sum;
+            });
             return;
         }
         System.Threading.Tasks.Parallel.For(0, M, i =>
@@ -251,35 +255,20 @@ internal static class ActivationKernels
                 rowC[j] = sum;
             }
         });
-    }
-
-    private static unsafe void MatMulInnerAVX2_SingleRow(float* a, float* bt, float* c, int M, int K, int N)
-    {
-        for (int i = 0; i < M; i++)
-        {
-            float* rowA = a + (long)i * K;
-            float* rowC = c + (long)i * N;
-            for (int j = 0; j < N; j++)
-            {
-                float* rowBT = bt + (long)j * K;
-                var acc = Vector256<float>.Zero;
-                int k = 0;
-                for (; k <= K - 8; k += 8)
-                    acc = Avx.Add(acc, Avx.Multiply(
-                        Vector256.LoadUnsafe(ref rowA[k]),
-                        Vector256.LoadUnsafe(ref rowBT[k])));
-                float sum = HSum256(acc);
-                for (; k < K; k++) sum += rowA[k] * rowBT[k];
-                rowC[j] = sum;
-            }
-        }
     }
 
     internal static unsafe void MatMulInnerScalar(float* a, float* bt, float* c, int M, int K, int N)
     {
         if (M <= 1)
         {
-            MatMulInnerScalar_SingleRow(a, bt, c, M, K, N);
+            if (M <= 0) return;
+            System.Threading.Tasks.Parallel.For(0, N, j =>
+            {
+                float* pBT = bt + (long)j * K;
+                float sum = 0f;
+                for (int k = 0; k < K; k++) sum += a[k] * pBT[k];
+                c[j] = sum;
+            });
             return;
         }
         System.Threading.Tasks.Parallel.For(0, M, i =>
@@ -294,22 +283,6 @@ internal static class ActivationKernels
                 rowC[j] = sum;
             }
         });
-    }
-
-    private static unsafe void MatMulInnerScalar_SingleRow(float* a, float* bt, float* c, int M, int K, int N)
-    {
-        for (int i = 0; i < M; i++)
-        {
-            float* rowA = a + (long)i * K;
-            float* rowC = c + (long)i * N;
-            for (int j = 0; j < N; j++)
-            {
-                float* rowBT = bt + (long)j * K;
-                float sum = 0f;
-                for (int k = 0; k < K; k++) sum += rowA[k] * rowBT[k];
-                rowC[j] = sum;
-            }
-        }
     }
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static float HSum256(Vector256<float> v)

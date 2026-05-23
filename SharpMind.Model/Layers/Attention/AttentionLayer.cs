@@ -4,6 +4,7 @@ using SharpMind.Core.Ops;
 using SharpMind.Core.Tensors;
 using SharpMind.Core.Training;
 using SharpMind.Model.Config;
+using System.Threading.Tasks;
 
 namespace SharpMind.Model.Layers.Attention;
 
@@ -121,13 +122,15 @@ public abstract class AttentionLayer : IDisposable
         var output = new Tensor<float>(batch, seqLen, hidden);
         int effectiveKvLen = cache != null ? cache.CurrentPosition : seqLen;
 
-        unsafe
         {
-            for (int b = 0; b < batch; b++)
+            int totalHeads = batch * numH;
+            Parallel.For(0, totalHeads, bh =>
             {
-                for (int h = 0; h < numH; h++)
+                int b = bh / numH;
+                int h = bh % numH;
+                int kvHead = h / Config.KvGroupSize;
+                unsafe
                 {
-                    int kvHead = h / Config.KvGroupSize;
                     using var qHead = new Tensor<float>(seqLen, headDim);
                     using var oHead = new Tensor<float>(seqLen, headDim);
                     Tensor<float>? kHead = null;
@@ -146,9 +149,6 @@ public abstract class AttentionLayer : IDisposable
                         float* pV;
                         if (cache != null)
                         {
-                            // Use AllocatedCapacity (the actual tensor stride) not Config.MaxSeqLen.
-                            // These are equal when the cache is fully pre-allocated, but differ when
-                            // the cache starts small and grows on demand.
                             int cacheStride = cache.AllocatedCapacity;
                             pK = cache.Keys.DataPtr + (long)b * (numKv * cacheStride * headDim)
                                                + (long)kvHead * (cacheStride * headDim);
@@ -157,7 +157,6 @@ public abstract class AttentionLayer : IDisposable
                         }
                         else
                         {
-                            // Pack K/V heads into contiguous [SeqLen, HeadDim] buffers.
                             kHead = new Tensor<float>(effectiveKvLen, headDim);
                             vHead = new Tensor<float>(effectiveKvLen, headDim);
                             for (int s = 0; s < effectiveKvLen; s++)
@@ -178,7 +177,6 @@ public abstract class AttentionLayer : IDisposable
 
                         ScaledDotProduct(qHead.DataPtr, pK, pV, oHead.DataPtr, seqLen, effectiveKvLen, headDim, scale, causal);
 
-                        // Scatter contiguous head output back into [B, SeqLen, Hidden].
                         for (int s = 0; s < seqLen; s++)
                         {
                             float* srcO = oHead.DataPtr + (long)s * headDim;
@@ -192,7 +190,7 @@ public abstract class AttentionLayer : IDisposable
                         vHead?.Dispose();
                     }
                 }
-            }
+            });
         }
 
         var projected = Wo.Forward(output, ops);

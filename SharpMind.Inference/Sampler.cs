@@ -102,76 +102,96 @@ public static class Sampler
 
     /// <summary>
     /// Zeroes all but the top-k highest-probability tokens.
-    /// Uses a partial sort — O(n log k) rather than full sort O(n log n).
+    /// Collects non-zero entries, sorts by value (ascending),
+    /// then zeros the bottom (count - k) entries.
+    /// No per-call GC allocations — uses ArrayPool.
     /// </summary>
     private static void ApplyTopK(Span<float> probs, int k)
     {
         if (k >= probs.Length) return;
 
-        // Find the k-th largest value via a min-heap of size k
-        var heap = new SortedList<float, int>(k + 1, FloatDescComparer.Instance);
-        for (int i = 0; i < probs.Length; i++)
+        int n = probs.Length;
+        float[] rentedVals = ArrayPool<float>.Shared.Rent(n);
+        int[] rentedIdxs = ArrayPool<int>.Shared.Rent(n);
+        try
         {
-            if (probs[i] <= 0f) continue;
-            heap.TryAdd(probs[i], i);
-            if (heap.Count > k) heap.RemoveAt(heap.Count - 1);
-        }
+            Span<float> vals = rentedVals.AsSpan(0, n);
+            Span<int> idxs = rentedIdxs.AsSpan(0, n);
+            int count = 0;
 
-        // Zero everything not in the top-k set
-        var keep = new HashSet<int>(heap.Values);
-        for (int i = 0; i < probs.Length; i++)
-            if (!keep.Contains(i)) probs[i] = 0f;
+            for (int i = 0; i < n; i++)
+            {
+                float v = probs[i];
+                if (v > 0f) { vals[count] = v; idxs[count] = i; count++; }
+            }
+
+            if (count <= k) return;
+
+            // Sort ascending by value — O(n log n)
+            vals[..count].Sort(idxs[..count]);
+
+            // Zero the bottom (count - k) entries
+            int zeroEnd = count - k;
+            for (int i = 0; i < zeroEnd; i++)
+                probs[idxs[i]] = 0f;
+        }
+        finally
+        {
+            ArrayPool<float>.Shared.Return(rentedVals);
+            ArrayPool<int>.Shared.Return(rentedIdxs);
+        }
     }
 
     // ── Top-p (nucleus) ───────────────────────────────────────────────────
 
     /// <summary>
     /// Zeroes tokens outside the nucleus whose cumulative probability exceeds p.
-    /// Tokens are sorted descending; we keep until the running sum exceeds p.
+    /// Tokens are sorted descending (via ascending sort then reverse traversal);
+    /// we keep until the running sum exceeds p.
+    /// No per-call GC allocations — uses ArrayPool.
     /// </summary>
     private static void ApplyTopP(Span<float> probs, float p)
     {
-        if (p <= 0f || probs.IsEmpty) return;
+        if (p <= 0f || probs.Length == 0) return;
 
         int n = probs.Length;
-
-        // Build sorted indices list (descending by probability)
-        var indices = new List<int>(n);
-        for (int i = 0; i < n; i++)
+        float[] rentedVals = ArrayPool<float>.Shared.Rent(n);
+        int[] rentedIdxs = ArrayPool<int>.Shared.Rent(n);
+        try
         {
-            if (probs[i] > 0f)
+            Span<float> vals = rentedVals.AsSpan(0, n);
+            Span<int> idxs = rentedIdxs.AsSpan(0, n);
+            int count = 0;
+
+            for (int i = 0; i < n; i++)
             {
-                indices.Add(i);
+                float v = probs[i];
+                if (v > 0f) { vals[count] = v; idxs[count] = i; count++; }
             }
-        }
 
-        // Sort descending (simple bubble sort for clarity)
-        for (int i = 0; i < indices.Count; i++)
-        {
-            for (int j = i + 1; j < indices.Count; j++)
+            if (count == 0) return;
+
+            // Sort ascending by value — O(n log n)
+            vals[..count].Sort(idxs[..count]);
+
+            // Traverse descending (largest probability first)
+            float cumulative = 0f;
+            for (int i = count - 1; i >= 0; i--)
             {
-                if (probs[indices[i]] < probs[indices[j]])
+                cumulative += vals[i];
+                if (cumulative >= p)
                 {
-                    (indices[j], indices[i]) = (indices[i], indices[j]);
+                    // Zero everything below this threshold
+                    for (int j = i - 1; j >= 0; j--)
+                        probs[idxs[j]] = 0f;
+                    break;
                 }
             }
         }
-
-        // Keep only tokens within cumulative probability threshold
-        float cumulative = 0f;
-        for (int i = 0; i < indices.Count; i++)
+        finally
         {
-            int idx = indices[i];
-            cumulative += probs[idx];
-
-            if (cumulative >= p)
-            {
-                for (int j = i + 1; j < indices.Count; j++)
-                {
-                    probs[indices[j]] = 0f;
-                }
-                break;
-            }
+            ArrayPool<float>.Shared.Return(rentedVals);
+            ArrayPool<int>.Shared.Return(rentedIdxs);
         }
     }
 
@@ -218,9 +238,4 @@ public static class Sampler
         return 0;
     }
 
-    private sealed class FloatDescComparer : IComparer<float>
-    {
-        public static readonly FloatDescComparer Instance = new();
-        public int Compare(float x, float y) => y.CompareTo(x);
-    }
 }

@@ -1,1 +1,2 @@
-﻿SandBox.QuickDiagnostic.RunQwenDiagnostic();
+﻿//SandBox.QuickDiagnostic.RunQwenDiagnostic();
+await SharpMind.Samples.Examples.InteractiveQwenChatGuff.RunAsync();

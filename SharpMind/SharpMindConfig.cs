@@ -165,10 +165,13 @@ public sealed record SharpMindConfig
 
         var (activation, gate, ffn, norm, arch) = architecture?.ToLowerInvariant() switch
         {
-            "bert"                                       => (ActivationKind.GELU,    GateKind.None,   FfnKind.Dense, NormKind.LayerNorm, ArchKind.Encoder),
-            "gpt2" or "gptj" or "falcon" or "starcoder" => (ActivationKind.GELU,    GateKind.None,   FfnKind.Dense, NormKind.LayerNorm, ArchKind.Decoder),
-            "mixtral" or "qwen2moe" or "deepseek2"      => (ActivationKind.SiLU,    GateKind.SwiGLU, FfnKind.MoE,   NormKind.RMSNorm,   ArchKind.Decoder),
-            _                                             => (ActivationKind.SiLU,    GateKind.SwiGLU, FfnKind.Gated, NormKind.RMSNorm,   ArchKind.Decoder),
+            "bert"                                                        => (ActivationKind.GELU,    GateKind.None,   FfnKind.Dense, NormKind.LayerNorm, ArchKind.Encoder),
+            "gpt2" or "gptj" or "falcon" or "starcoder" or "starcoder2"
+                or "bloom" or "phi" or "phi2"                            => (ActivationKind.GELU,    GateKind.None,   FfnKind.Dense, NormKind.LayerNorm, ArchKind.Decoder),
+            "opt"                                                         => (ActivationKind.ReLU,    GateKind.None,   FfnKind.Dense, NormKind.LayerNorm, ArchKind.Decoder),
+            "gemma"                                                       => (ActivationKind.GELU,    GateKind.GeGLU,  FfnKind.Gated, NormKind.RMSNorm,   ArchKind.Decoder),
+            "mixtral" or "qwen2moe" or "deepseek2" or "dbrx"            => (ActivationKind.SiLU,    GateKind.SwiGLU, FfnKind.MoE,   NormKind.RMSNorm,   ArchKind.Decoder),
+            _                                                              => (ActivationKind.SiLU,    GateKind.SwiGLU, FfnKind.Gated, NormKind.RMSNorm,   ArchKind.Decoder),
         };
 
         return new SharpMindConfig
