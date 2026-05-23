@@ -15,7 +15,7 @@ public sealed class SimpleFormatter : IChatPromptFormatter
         {
             var prefix = msg.Role switch
             {
-                ChatRole.System => "system: ",
+                ChatRole.System => "user: ",
                 ChatRole.Agent => "assistant: ",
                 ChatRole.User => "user: ",
                 _ => ""
