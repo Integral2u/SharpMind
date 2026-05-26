@@ -5,7 +5,12 @@
     <TargetFramework>net9.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <ApplicationIcon>SharpMind.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Content Include="SharpMind.ico" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Parquet.Net" Version="5.6.0" />

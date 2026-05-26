@@ -44,6 +44,18 @@ public abstract class NormLayer : IDisposable
         return result;
     }
 
+    public void ForwardInPlace(Tensor<float> x)
+    {
+        ThrowIfDisposed();
+        if (x.Shape[^1] != Dim) throw new ArgumentException($"NormLayer expects last dim {Dim}, got {x.Shape[^1]}.");
+        int rows = x.ElementCount / Dim;
+        for (int i = 0; i < rows; i++)
+        {
+            float param = ComputeScalarParam(x.RowSpan(i));
+            ApplyRow(x.RowSpan(i), Weight.Data, x.RowSpan(i), param);
+        }
+    }
+
     public (Tensor<float> Output, NormLayerState State) ForwardWithState(Tensor<float> x)
     {
         ThrowIfDisposed();

@@ -51,6 +51,7 @@ public static class NativeBufferPool<T> where T : unmanaged
     public static void Return(NativeBuffer<T> buffer)
     {
         if (buffer is null) return;
+        buffer._refCount = 1;
         int bucket = GetBucket(buffer.Length);
         int byteSize;
         unsafe { byteSize = bucket * sizeof(T); }

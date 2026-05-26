@@ -11,29 +11,28 @@ public class VecDotTests
     [Fact]
     public unsafe void TestVecDotQ3K_ValidBlock()
     {
-        // 110-byte block: hmask(32) + qs(64) + scales(12) + d(2)
-        var block = new byte[110];
+        // 112-byte block: d[2] + dmin[2] + hmask[32] + qs[64] + scales[12]
+        var block = new byte[112];
         
         // d = 2.0 (F16: 0x4000) - little endian
-        block[108] = 0x00;
-        block[109] = 0x40;
+        block[0] = 0x00;
+        block[1] = 0x40;
         
         // scales[0..11] in bit-packed format that decodes to sc[0..15] = 0
-        // buf16[0..3] low nibble, buf16[4..7] low nibble, buf16[8..11] = 0xAA gives all p[j] = 0x20, sc = 0x20-32 = 0
-        for (int j = 0; j < 4; j++) block[96 + j] = 0x00;   // buf16[0..3]
-        for (int j = 0; j < 4; j++) block[100 + j] = 0x00;  // buf16[4..7]
-        for (int j = 0; j < 4; j++) block[104 + j] = 0xAA;  // buf16[8..11]
+        // buf[100..103] low nibble, buf[104..107] low nibble, buf[108..111] = 0xAA gives all p[j] = 0x20, sc = 0x20-32 = 0
+        for (int j = 0; j < 4; j++) block[100 + j] = 0x00;  // buf[100..103]
+        for (int j = 0; j < 4; j++) block[104 + j] = 0x00;  // buf[104..107]
+        for (int j = 0; j < 4; j++) block[108 + j] = 0xAA;  // buf[108..111]
 
         // qs[0] = 0x00 (all 0s, s2=0)
-        block[32] = 0x00;
+        block[36] = 0x00;
         
         // hmask[0] = 0x00 (all 0s, hBit=0 → actual = s2 - 4 = -4)
-        // val = d * sc * actual = 2.0 * 0 * -4 = 0.0
-        block[0] = 0x00;
+        block[4] = 0x00;
         
         var input = new float[] { 1.0f };
-        var weights = new byte[110];
-        Array.Copy(block, weights, 110);
+        var weights = new byte[112];
+        Array.Copy(block, weights, 112);
         
         fixed (float* pInput = input)
         fixed (byte* pWeights = weights)
@@ -46,7 +45,7 @@ public class VecDotTests
     [Fact]
     public unsafe void TestVecDotQ4K_ValidBlock()
     {
-        // 144-byte block: d[2] + dmin[2] + scales[12] + qs[128]
+        // 144-byte block: d[2] + dmin[2] + scales[K_SCALE_SIZE] + qs[128]
         var block = new byte[144];
 
         // d = 1.0 (0x3C00), min = 0.0 (0x0000)
@@ -77,7 +76,7 @@ public class VecDotTests
     [Fact]
     public unsafe void TestVecDotQ5K_ValidBlock()
     {
-        // 176-byte block: d[2] + dmin[2] + scales[12] + qh[32] + qs[128]
+        // 176-byte block: d[2] + dmin[2] + scales[K_SCALE_SIZE] + qh[32] + qs[128]
         var block = new byte[176];
 
         // d = 1.0 (0x3C00), min = 0.0 (0x0000)

@@ -5,7 +5,12 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <ApplicationIcon>SharpMind.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Content Include="SharpMind.ico" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="ILGPU" Version="1.5.3" />

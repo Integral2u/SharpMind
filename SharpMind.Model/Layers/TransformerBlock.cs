@@ -81,24 +81,23 @@ public sealed class TransformerBlock : IDisposable
         
         // ── Attention sub-layer ──────────────────────────────────────────
         var normed1 = _norm1.Forward(x);
-        using var attnOut = _attention.Forward(normed1, _ops, positionOffset, causal, cache);
+        var attnOut = _attention.Forward(normed1, _ops, positionOffset, causal, cache);
         normed1.Dispose();
         
-        // Residual: h = x + attn(norm(x))
-        var hidden = TensorOps.Add(x, attnOut);
+        // Residual: h = x + attn(norm(x)) — reuse x in-place
+        TensorOps.AddInPlace(x, attnOut);
         attnOut.Dispose();
         
         // ── FFN sub-layer ────────────────────────────────────────────────
-        var normed2 = _norm2.Forward(hidden);
-        using var ffnOut = _ffn.Forward(normed2);
+        var normed2 = _norm2.Forward(x);
+        var ffnOut = _ffn.Forward(normed2);
         normed2.Dispose();
         
-        // Residual: out = h + ffn(norm(h))
-        var output = TensorOps.Add(hidden, ffnOut);
-        hidden.Dispose();
+        // Residual: out = h + ffn(norm(h)) — reuse x in-place
+        TensorOps.AddInPlace(x, ffnOut);
         ffnOut.Dispose();
         
-        return output;
+        return x;
     }
     
     private void DisposeCache()
@@ -187,15 +186,9 @@ public sealed class TransformerBlock : IDisposable
         var lower = name.ToLower();
         if (lower.Contains("attn_q") || lower.Contains("attn_k") || lower.Contains("attn_v") ||
             lower.Contains("attn_output") || lower.Contains("attn_o"))
-        {
-            _attention.SetRawWeight(name, rawData, dtype);
-            return true;
-        }
+            return _attention.SetRawWeight(name, rawData, dtype);
         if (lower.Contains("ffn_gate") || lower.Contains("ffn_up") || lower.Contains("ffn_down"))
-        {
-            _ffn.SetRawWeight(name, rawData, dtype);
-            return true;
-        }
+            return _ffn.SetRawWeight(name, rawData, dtype);
         return false;
     }
 

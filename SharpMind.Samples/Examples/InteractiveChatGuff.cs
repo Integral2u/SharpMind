@@ -8,9 +8,9 @@ using System.Runtime.Intrinsics.X86;
 
 namespace SharpMind.Samples.Examples
 {
-    public static class InteractiveQwenChatGuff
+    public static class InteractiveChatGuff
     {
-        private static readonly string ModelName = "SmolLM-135M.Q4_K_M";
+        private static readonly string ModelName = "qwen2-0_5b-instruct-q4_k_m";//"SmolLM-135M.Q4_K_M";//"TinyLlama-1.1B-Chat-v1.0.Q4_K_M";// "qwen2-0_5b-instruct-q4_k_m";// SmolLM-135M.Q4_K_M"; //
         private static readonly string ModelPath = @"C:\Integral2u\source\repos\SharpMind\ExternalAssets";
         public static async Task RunAsync()
         {
@@ -23,8 +23,7 @@ namespace SharpMind.Samples.Examples
                 return;
             }
             Console.Out.WriteLine("Loading model detail...");
-            GgufLoader.Load(ggufPath, null, out GgufMeta meta, out ModelConfig modelConfig, out Tokenizer? tokenizer);
-            if (tokenizer == null && File.Exists(tokenizerPath)) tokenizer = Tokenizer.FromQwen(tokenizerPath);
+            GgufLoader.Load(ggufPath, null, out GgufMeta meta, out ModelConfig modelConfig, out Tokenizer? tokenizer);            
             if (tokenizer == null)
             {
                 Console.Out.WriteLine($"Tokenizer dat not found");

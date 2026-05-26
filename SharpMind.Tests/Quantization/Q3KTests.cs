@@ -18,26 +18,15 @@ public class Q3KTests
     [Fact]
     public void TestReadQ3K_ValidBlock()
     {
-        // 110-byte block: hmask(32) + qs(64) + scales(12) + d(2)
-        var block = new byte[110];
+        // 112-byte block: d[2] + dmin[2] + hmask[32] + qs[64] + scales[12]
+        var block = new byte[112];
         
-        // d = 1.0 (0x3C00) - little endian
-        block[108] = 0x00;
-        block[109] = 0x3C;
-        
-        // scales[0..11] in bit-packed format that decodes to sc[0..15] = 0
-        // buf16[0..3] low nibble, buf16[4..7] low nibble, buf16[8..11] = 0xAA gives all p[j] = 0x20, sc = 0x20-32 = 0
-        for (int j = 0; j < 4; j++) block[96 + j] = 0x00;   // buf16[0..3]
-        for (int j = 0; j < 4; j++) block[100 + j] = 0x00;  // buf16[4..7]
-        for (int j = 0; j < 4; j++) block[104 + j] = 0xAA;  // buf16[8..11]
-
-        // qs[0] = 0x00 (all 0s)
-        block[32] = 0x00;
-        
-        // hmask[0] = 0x00 (all 0s)
+        // d = 1.0 (0x3C00) at bytes 0-1
         block[0] = 0x00;
-
-        // Actual value = 1.0 * 0 * -4 = 0.0
+        block[1] = 0x3C;
+        
+        // All scales = 0, all qs = 0, all hmask = 0
+        // val = d * (0 - 32) * (0 - 4) = 1.0 * (-32) * (-4) = 128.0
         
         var ms = new MemoryStream(block);
         var reader = new BinaryReader(ms);
@@ -47,6 +36,6 @@ public class Q3KTests
         
         _output.WriteLine($"data[0]={data[0]}");
         
-        Assert.Equal(0.0f, data[0]);
+        Assert.Equal(128.0f, data[0]);
     }
 }

@@ -133,16 +133,16 @@ public sealed class LinearLayer : IDisposable
 
     private static bool IsSupportedQuantDtype(GgufDtype dtype) => dtype switch
     {
-        // Q8_0 is the only format with a SIMD+parallel kernel today
         GgufDtype.Q8_0 => true,
-        _ => false
+        _ => false    // TEMP: disabled K-quants to isolate VecDot vs dequant bug
     };
 
-    public void SetRawWeight(byte[] rawData, GgufDtype dtype)
+    public bool SetRawWeight(byte[] rawData, GgufDtype dtype)
     {
         RawQuantizedData = rawData;
         QuantDtype = dtype;
         UseQuantizedForward = IsSupportedQuantDtype(dtype);
+        return UseQuantizedForward;
     }
 
     // ── GGUF quantized dot product kernels (matching llama.cpp vec_dot) ──
@@ -151,20 +151,18 @@ public sealed class LinearLayer : IDisposable
 
     internal static unsafe float VecDotQ3K(float* input, byte* rawWeights, int col, int inFeatures)
     {
-        const int BLOCK_BYTES = 110;
-        // block_q3_K: hmask[32] + qs[64] + scales[12] + d[2] = 110 bytes (no dmin)
+        const int BLOCK_BYTES = 112;  // d[2]+dmin[2]+hmask[32]+qs[64]+scales[12]
         int nBlocks = (inFeatures + QK_K - 1) / QK_K;
         double sum = 0;
         byte* scaleBuf = stackalloc byte[16];
         for (int b = 0; b < nBlocks; b++)
         {
             byte* block = rawWeights + (long)col * nBlocks * BLOCK_BYTES + b * BLOCK_BYTES;
-            byte* qh = block;                  // hmask at offset 0 (32 bytes)
-            byte* qs = block + 32;             // qs at offset 32 (64 bytes)
-            float dAll = HalfToFloat(*(ushort*)(block + 108));
+            float dAll = HalfToFloat(*(ushort*)block);  // d @ offset 0
+            byte* hmask = block + 4;                     // hmask @ offset 4 (32 bytes)
+            byte* qs = block + 36;                       // qs @ offset 36 (64 bytes)
 
-            // Scale buffer: only 12 scale bytes needed; aux[3] overwritten by bit-unpack
-            for (int j = 0; j < 12; j++) scaleBuf[j] = block[96 + j];
+            for (int j = 0; j < 12; j++) scaleBuf[j] = block[100 + j]; // scales @ offset 100
 
             uint* aux = (uint*)scaleBuf;
             uint tmp = aux[2];
@@ -181,7 +179,7 @@ public sealed class LinearLayer : IDisposable
                 int qsByte = (i / 128) * 32 + (i % 32);
                 int qsShift = ((i % 128) / 32) * 2;
                 int s2 = (qs[qsByte] >> qsShift) & 3;
-                int hBit = (qh[i % 32] >> (i / 32)) & 1;
+                int hBit = (hmask[i % 32] >> (i / 32)) & 1;
                 int actual = s2 - (hBit == 0 ? 4 : 0);
                 int sub = i / 16;
                 float val = dAll * (sc8[sub] - 32) * actual;
@@ -193,7 +191,7 @@ public sealed class LinearLayer : IDisposable
 
     internal static unsafe float VecDotQ4K(float* input, byte* rawWeights, int col, int inFeatures)
     {
-        const int BLOCK_BYTES = 144;  // d[2]+dmin[2]+scales[12]+qs[128]
+        const int BLOCK_BYTES = 144;  // d[2]+dmin[2]+scales[K_SCALE_SIZE]+qs[128]
         int nBlocks = (inFeatures + QK_K - 1) / QK_K;
         double sum = 0;
         for (int b = 0; b < nBlocks; b++)
@@ -201,7 +199,7 @@ public sealed class LinearLayer : IDisposable
             byte* block = rawWeights + (long)col * nBlocks * BLOCK_BYTES + b * BLOCK_BYTES;
             float dSuper = HalfToFloat(*(ushort*)block);
             float minSuper = HalfToFloat(*(ushort*)(block + 2));
-            byte* scales = block + 4;   // 12 bytes (8 sub-block scales packed)
+            byte* scales = block + 4;   // K_SCALE_SIZE bytes (indices 0..11 used)
             byte* qs = block + 16;      // 128 bytes
 
             int idx = 0;
@@ -237,7 +235,7 @@ public sealed class LinearLayer : IDisposable
 
     internal static unsafe float VecDotQ5K(float* input, byte* rawWeights, int col, int inFeatures)
     {
-        const int BLOCK_BYTES = 176;  // d[2]+dmin[2]+scales[12]+qh[32]+qs[128]
+        const int BLOCK_BYTES = 176;  // d[2]+dmin[2]+scales[K_SCALE_SIZE]+qh[32]+qs[128]
         int nBlocks = (inFeatures + QK_K - 1) / QK_K;
         double sum = 0;
         for (int b = 0; b < nBlocks; b++)
@@ -245,7 +243,7 @@ public sealed class LinearLayer : IDisposable
             byte* block = rawWeights + (long)col * nBlocks * BLOCK_BYTES + b * BLOCK_BYTES;
             float d = HalfToFloat(*(ushort*)block);
             float min = HalfToFloat(*(ushort*)(block + 2));
-            byte* scales = block + 4;   // 12 bytes
+            byte* scales = block + 4;   // K_SCALE_SIZE bytes
             byte* qh = block + 16;      // 32 bytes
             byte* qs = block + 48;      // 128 bytes
 
@@ -442,11 +440,10 @@ public sealed class LinearLayer : IDisposable
             int blockEnd = Math.Min(QK, inFeatures - b * QK);
             for (int i = 0; i < blockEnd; i++)
             {
-                int j = i % 16;
-                int xh = i < 16
-                    ? ((int)((qh >> (j + 0)) & 1) << 4)
-                    : ((int)((qh >> (j + 12)) & 1) << 4);
-                int q = ((qs[j / 2] >> (4 * (j % 2))) & 0x0F) | xh;
+                int j = i / 2;
+                int h4 = ((int)(qh >> i) & 1) << 4;
+                int nib = (j % 2 == 0) ? (qs[j] & 0x0F) : (qs[j] >> 4);
+                int q = nib | h4;
                 sum += input[b * QK + i] * ((q - 16) * d);
             }
         }

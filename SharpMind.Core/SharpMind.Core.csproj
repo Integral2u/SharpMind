@@ -7,7 +7,12 @@
 		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 		<Description>Zero-dependency tensor primitives and math ops for SharpMind.</Description>
 		<Optimize>true</Optimize>
+		<ApplicationIcon>SharpMind.ico</ApplicationIcon>
 	</PropertyGroup>
+
+	<ItemGroup>
+	  <Content Include="SharpMind.ico" />
+	</ItemGroup>
 
 	<ItemGroup>
 	  <PackageReference Include="JigSawDotNet" Version="1.0.8" />

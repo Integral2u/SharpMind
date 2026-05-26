@@ -157,14 +157,13 @@ public sealed class Transformer : IDisposable
         return false;
     }
 
-    public void SetRawWeight(string name, byte[] rawData, Format.GgufDtype dtype)
+    public bool SetRawWeight(string name, byte[] rawData, Format.GgufDtype dtype)
     {
         var lower = name.ToLower();
         if (lower.Contains("embed") || lower.Contains("token") || lower.Contains("wte") ||
             lower.Contains("output_norm") || lower.Contains("lm_head") || lower.StartsWith("output."))
-            return;
-        if (_arch is DecoderArch dec)
-            dec.SetRawWeight(name, rawData, dtype);
+            return false;
+        return _arch is DecoderArch dec && dec.SetRawWeight(name, rawData, dtype);
     }
 
     public IEnumerable<Parameter> Parameters()
@@ -199,12 +198,12 @@ public sealed class Transformer : IDisposable
         _cachedEmbedding = _embedding.Forward(tokenIds);
         using var embedded = _cachedEmbedding;
 
-        // 2. Architecture (stack of transformer blocks)
+        // 2. Architecture (stack of transformer blocks).
+        //    Returns embedded (in-place residuals), so no separate using — embedded owns the buffer.
         _cachedHidden = _arch.Forward(embedded, caches, positionOffset);
-        using var hidden = _cachedHidden;
 
         // 3. Final normalisation
-        _cachedNormed = _finalNorm.Forward(hidden);
+        _cachedNormed = _finalNorm.Forward(embedded);
         using var normed = _cachedNormed;
 
         // 4. LM head: [Batch, SeqLen, HiddenDim] @ LmHead^T → [Batch, SeqLen, VocabSize]
@@ -235,14 +234,25 @@ public sealed class Transformer : IDisposable
         using var embedded = _cachedEmbedding;
 
         _cachedHidden = _arch.Forward(embedded, caches, positionOffset);
-        using var hidden = _cachedHidden;
-
-        _cachedNormed = _finalNorm.Forward(hidden);
-        using var normed = _cachedNormed;
 
         int batch = tokenIds.Shape.Rows;
         int seqLen = tokenIds.Shape.Cols;
         int hiddenDim = _config.HiddenDim;
+        var projectionWeight = _lmHead ?? _embedding.Weight;
+
+        // Single-token decode: normalise in-place, no allocation, no copy
+        // _cachedHidden may be the same tensor as embedded (in-place residuals),
+        // so we use embedded directly to avoid double-dispose of the shared buffer.
+        if (batch == 1 && seqLen == 1)
+        {
+            _finalNorm.ForwardInPlace(embedded);
+            using var flatEmbedded = embedded.Reshape(batch, hiddenDim);
+            return _ops.MatMulWithBT(flatEmbedded, projectionWeight);
+        }
+
+        // Prefill path: allocate full normed output, extract last token
+        _cachedNormed = _finalNorm.Forward(_cachedHidden);
+        using var normed = _cachedNormed;
 
         var lastTokenNormed = new Tensor<float>(batch, hiddenDim);
         for (int b = 0; b < batch; b++)
@@ -252,7 +262,6 @@ public sealed class Transformer : IDisposable
             normed.Data.Slice(srcOffset, hiddenDim).CopyTo(lastTokenNormed.Data.Slice(dstOffset, hiddenDim));
         }
 
-        var projectionWeight = _lmHead ?? _embedding.Weight;
         var logits = _ops.MatMulWithBT(lastTokenNormed, projectionWeight);
         lastTokenNormed.Dispose();
         return logits;

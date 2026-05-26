@@ -62,21 +62,22 @@ public abstract class AttentionLayer : IDisposable
         }
     }
 
-    public void SetRawWeight(string weightName, byte[] rawData, Format.GgufDtype dtype)
+    public bool SetRawWeight(string weightName, byte[] rawData, Format.GgufDtype dtype)
     {
         var lower = weightName.ToLower();
         bool isBias = lower.EndsWith(".bias");
-        if (isBias) return;
+        if (isBias) return false;
 
         if (lower.Contains("attn_q") || lower.Contains("q_proj"))
-            Wq.SetRawWeight(rawData, dtype);
-        else if (lower.Contains("attn_k") || lower.Contains("k_proj"))
-            Wk.SetRawWeight(rawData, dtype);
-        else if (lower.Contains("attn_v") || lower.Contains("v_proj"))
-            Wv.SetRawWeight(rawData, dtype);
-        else if (lower.Contains("attn_output") || lower.Contains("attn_o.") ||
-                 lower.Contains("o_proj") || lower.Contains("out_proj"))
-            Wo.SetRawWeight(rawData, dtype);
+            return Wq.SetRawWeight(rawData, dtype);
+        if (lower.Contains("attn_k") || lower.Contains("k_proj"))
+            return Wk.SetRawWeight(rawData, dtype);
+        if (lower.Contains("attn_v") || lower.Contains("v_proj"))
+            return Wv.SetRawWeight(rawData, dtype);
+        if (lower.Contains("attn_output") || lower.Contains("attn_o.") ||
+            lower.Contains("o_proj") || lower.Contains("out_proj"))
+            return Wo.SetRawWeight(rawData, dtype);
+        return false;
     }
 
     [PuzzleCornerPiece(SharpMindConfig.KeyAttention,

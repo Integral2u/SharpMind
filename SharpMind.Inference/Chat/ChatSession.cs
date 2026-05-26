@@ -45,6 +45,7 @@ public sealed class ChatSession
     public float TopP { get; set; } = 0.85f;
     public float RepetitionPenalty { get; set; } = 1.1f;
     public int RepetitionWindow { get; set; } = 32;
+    public float? TokensPerSecond { get; private set; }
 
     public async IAsyncEnumerable<ChatStreamEntry> GetResponseStreamAsync(
         string userInput,
@@ -232,12 +233,18 @@ public sealed class ChatSession
                 await foreach (var entry in GetResponseStreamAsync(input.Content, token))
                 {
                     if (entry.TextDelta is { Length: > 0 } delta) response(entry);
-
+                    TokensPerSecond = entry.TokensPerSecond;
                 }
             }
-            catch
+            catch (OperationCanceledException)
             {
                 response(new ChatStreamEntry { Status = ChatStatus.Interrupted });
+            }
+            catch (Exception ex)
+            {
+                response(new ChatStreamEntry { Status = ChatStatus.Interrupted });
+                await Console.Out.WriteLineAsync(ex.Message);
+                await Console.Out.WriteLineAsync(ex.StackTrace);
             }
         }
         return [.. _history];

@@ -8,7 +8,7 @@ using SharpMind.Core.Tensors;
 using System.Runtime.Intrinsics.X86;
 using System.Diagnostics;
 
-await SharpMind.Samples.Examples.InteractiveQwenChatGuff.RunAsync();
+await SharpMind.Samples.Examples.MultiTestInteractive.RunAsync("Hello");
 /*
 var modelPath = @"C:\Integral2u\source\repos\SharpMind\ExternalAssets";
 var ggufPath = Path.Combine(modelPath, "qwen2-0_5b-instruct-q8_0.gguf");

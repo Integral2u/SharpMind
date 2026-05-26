@@ -21,18 +21,18 @@ public class Q5KTests
         // 176-byte block: d[2] + dmin[2] + scales[12] + qh[32] + qs[128]
         var block = new byte[176];
         
-        // d=1.0 (0x3C00), min=0.0 (0x0000)
-        block[0] = 0x00; block[1] = 0x3C;
+        // d = 17.0 (fp16 0x4C40) at bytes 0-1, dmin = 0.0 at bytes 2-3
+        block[0] = 0x40; block[1] = 0x4C;
         block[2] = 0x00; block[3] = 0x00;
         
-        // scales[0] = 0x11 (sc=1, m=1)
+        // scales[0] = 0x11 → sc=17, scales[4] = 0x00 → m=0
         block[4] = 0x11;
         
-        // qh[0] = 0x00 (hBit=0 for first 8 values)
-        block[16] = 0x00;
+        // qh[0] bit 0 = 1 (u1=1 for first iteration)
+        block[16] = 0x01;
         
-        // qs[0] = 0x11 (val = 1)
-        block[48] = 0x11;
+        // qs[0] = 0x01 → low nibble = 1
+        block[48] = 0x01;
         
         var ms = new MemoryStream(block);
         var reader = new BinaryReader(ms);
@@ -42,13 +42,12 @@ public class Q5KTests
         
         _output.WriteLine($"data[0]={data[0]}");
         
-        // Actual formula: d1 * val - m1v
-        // d1 = dSuper * sc0 = 1.0 * 17 = 17.0
-        // val = (qs & 0xF) + (qh & u1 ? 16 : 0) = 1.0 + 0 = 1.0
-        // m1v = minSuper * m = 0.0 * 0 = 0.0
-        // val = 17.0 * 1 - 0.0 = 17.0
+        // Actual formula: d1 * qv - m1v
+        // d1 = d * sc0 = 17.0 * 17 = 289.0
+        // qv = (qs & 0x0F) + (qh & u1 ? 16 : 0) = 1 + 16 = 17
+        // data[0] = 289.0 * 17 - 0 = 4913.0
         
-        Assert.Equal(17.0f, data[0]);
+        Assert.Equal(4913.0f, data[0]);
 }
 
 }

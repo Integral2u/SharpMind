@@ -11,10 +11,45 @@ Tokenizer: BPE, vocab builder, encode/decode
 Data: sources, cleaning, formating, batching, dataset loaders
 Core: tensors, matrix math, memory, activations
 
+
+I think we need to move Quantizeation and other common methods to the JigSawDotNet pattern Kernal, Ops and Factory Classes like used in SharpMind.Core.Activations.
+LinearLayer could the call the the QuantizeationFactory to get the required QuantizeationOps 
+
+So VecDotQxK would change calls GgufDtype.Q3_K => VecDotQ3K(input, rawWeights, col, inFeatures) to GgufDtype.Q3_K => qOps.VecDotQ3K(input, rawWeights, col, inFeatures),
+Opps
+VecDotQ3K, VecDotQ4K,VecDotQ5K,VecDotQ6K,VecDotQ8_0,VecDotQ4_0,VecDotQ4_1,VecDotQ5_0,VecDotQ5_1,VecDotQ8_1,VecDotQ2K,VecDotQ8K
+and helpers
+HalfToFloat,GetScaleMinK4_Scale,GetScaleMinK4_Min and HSum256 
+Can have without brach coditions, Variants for AVX, FMA, SSE, SSE3 or Scalar implementations to usilize best available option given harware limitations
+
+Note HSum256 has a few replications
+LinearLay.HSum256  uses SSE/SSE3
+FusedKernals.AttentionKernals.HSum256, QuantKernals.HSum256 and AttentionKernals.HSum256 uses AVX, SSE
+
+QuantKernals could be moved to the new QuantizeationOps so consolidate into one location and reduce code duplication, these too could have AVX, FMA, SSE, SSE3 variants too where possible.
+
+Tests int SharpMind.Tests.Quantization will need to call the new method locations and for each variant we could iterate over each available hadware variant available from QuantizeationFactory,
+This will help test all variants work and match reguardless of hardware variant.
+
+The abstract QuantizeationOps method with [PuzzleCornerPiece] attributes should have AllowStaticExternal = true so later implimentations can be added, possibly by futer additions to SharpMind.GPU
+
+
+
 Todo
+Chat session interrupt, Recover rather than start again?
+
 End to End Test, Super Dumb Model Training Load and Test Logits valid output.
 Add progress out Func<float> to loading mothods.
 Add tokens per second to ChatSession 
+
+Testing SmolLM-135M.Q4_K_M
+Hello
+1   FAIL
+
+Testing SmolLM2-135M-Instruct.Q4_K_M
+Hello
+Hello PASS
+
 
 ChatSession should possibly have a contrcutor that takes user name and default agent name (string userName = "User", string agentName = "Delta")
 this can be used is responses and chat history may require modifying prompting

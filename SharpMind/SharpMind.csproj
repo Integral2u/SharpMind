@@ -5,11 +5,16 @@
     <ImplicitUsings>enable</ImplicitUsings>
 	<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <Nullable>enable</Nullable>
+    <ApplicationIcon>SharpMind.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
     <None Remove="Agent.md" />
     <None Remove="System.md" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="SharpMind.ico" />
   </ItemGroup>
 
   <ItemGroup>

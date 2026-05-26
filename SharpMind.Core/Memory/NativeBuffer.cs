@@ -19,8 +19,8 @@ public sealed unsafe class NativeBuffer<T> : IDisposable where T : unmanaged
     public const nuint Alignment = 32; // AVX2
 
     // ── fields ─────────────────────────────────────────────────────────────
-    private T* _ptr;
-    private int _refCount = 1;
+    internal T* _ptr;
+    internal int _refCount = 1;
 
     // ── construction ───────────────────────────────────────────────────────
 
@@ -64,8 +64,7 @@ public sealed unsafe class NativeBuffer<T> : IDisposable where T : unmanaged
     {
         if (Interlocked.Decrement(ref _refCount) == 0)
         {
-            // Disable pooling for now - it causes reuse issues
-            Free();
+            NativeBufferPool<T>.Return(this);
         }
     }
 

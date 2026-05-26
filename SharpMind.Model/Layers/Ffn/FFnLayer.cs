@@ -51,17 +51,18 @@ public abstract class FfnLayer : IDisposable
         }
     }
 
-    public void SetRawWeight(string name, byte[] rawData, Format.GgufDtype dtype)
+    public bool SetRawWeight(string name, byte[] rawData, Format.GgufDtype dtype)
     {
         var lower = name.ToLower();
-        if (lower.Contains("bias")) return;
+        if (lower.Contains("bias")) return false;
 
         if (lower.Contains("gate"))
-            WGate!.SetRawWeight(rawData, dtype);
-        else if (lower.Contains("up"))
-            WUp!.SetRawWeight(rawData, dtype);
-        else if (lower.Contains("down"))
-            WDown!.SetRawWeight(rawData, dtype);
+            return WGate!.SetRawWeight(rawData, dtype);
+        if (lower.Contains("up"))
+            return WUp!.SetRawWeight(rawData, dtype);
+        if (lower.Contains("down"))
+            return WDown!.SetRawWeight(rawData, dtype);
+        return false;
     }
 
     // ── MoE weights ───────────────────────────────────────────────────────
