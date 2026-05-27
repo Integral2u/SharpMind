@@ -133,7 +133,18 @@ public sealed class LinearLayer : IDisposable
 
     private static bool IsSupportedQuantDtype(GgufDtype dtype) => dtype switch
     {
+        GgufDtype.Q3_K => true,
+        GgufDtype.Q4_K => true,
+        GgufDtype.Q5_K => true,
+        GgufDtype.Q6_K => true,
+        GgufDtype.Q4_0 => true,
+        GgufDtype.Q4_1 => true,
+        GgufDtype.Q5_0 => true,
+        GgufDtype.Q5_1 => true,
         GgufDtype.Q8_0 => true,
+        GgufDtype.Q8_1 => true,
+        GgufDtype.Q2_K => true,
+        GgufDtype.Q8_K => true,
         _ => false    // TEMP: disabled K-quants to isolate VecDot vs dequant bug
     };
 
