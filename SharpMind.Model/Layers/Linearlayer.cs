@@ -151,7 +151,7 @@ public sealed class LinearLayer : IDisposable
 
     internal static unsafe float VecDotQ3K(float* input, byte* rawWeights, int col, int inFeatures)
     {
-        const int BLOCK_BYTES = 112;  // d[2]+dmin[2]+hmask[32]+qs[64]+scales[12]
+        const int BLOCK_BYTES = 110;  // d[2]+hmask[32]+qs[64]+scales[12]
         int nBlocks = (inFeatures + QK_K - 1) / QK_K;
         double sum = 0;
         byte* scaleBuf = stackalloc byte[16];
@@ -159,10 +159,10 @@ public sealed class LinearLayer : IDisposable
         {
             byte* block = rawWeights + (long)col * nBlocks * BLOCK_BYTES + b * BLOCK_BYTES;
             float dAll = HalfToFloat(*(ushort*)block);  // d @ offset 0
-            byte* hmask = block + 4;                     // hmask @ offset 4 (32 bytes)
-            byte* qs = block + 36;                       // qs @ offset 36 (64 bytes)
+            byte* hmask = block + 2;                     // hmask @ offset 2 (32 bytes)
+            byte* qs = block + 34;                       // qs @ offset 34 (64 bytes)
 
-            for (int j = 0; j < 12; j++) scaleBuf[j] = block[100 + j]; // scales @ offset 100
+            for (int j = 0; j < 12; j++) scaleBuf[j] = block[98 + j]; // scales @ offset 98
 
             uint* aux = (uint*)scaleBuf;
             uint tmp = aux[2];

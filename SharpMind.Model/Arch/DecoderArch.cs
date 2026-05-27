@@ -117,6 +117,18 @@ public sealed class DecoderArch : IArchitecture
         ThrowIfDisposed();
         
         var current = hiddenStates;
+/*
+#if DEBUG
+        {
+            double norm = 0;
+            var d = current.Data;
+            for (int j = 0; j < current.ElementCount; j++)
+                norm += d[j] * (double)d[j];
+            norm = System.Math.Sqrt(norm);
+            System.Console.Error.WriteLine($"  DEBUG Embedding norm: {norm:F4}");
+        }
+#endif
+*/
 
         for (int i = 0; i < _blocks.Length; i++)
         {
@@ -126,6 +138,17 @@ public sealed class DecoderArch : IArchitecture
                 current.Dispose();
             
             current = next;
+/*
+#if DEBUG
+            double norm = 0;
+            int nElem = current.ElementCount;
+            var d = current.Data;
+            for (int j = 0; j < nElem; j++)
+                norm += d[j] * (double)d[j];
+            norm = System.Math.Sqrt(norm);
+            System.Console.Error.WriteLine($"  DEBUG Layer {i} hidden norm: {norm:F4}");
+#endif
+            */
         }
 
         return current;

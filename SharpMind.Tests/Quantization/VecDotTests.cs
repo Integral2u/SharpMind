@@ -11,32 +11,33 @@ public class VecDotTests
     [Fact]
     public unsafe void TestVecDotQ3K_ValidBlock()
     {
-        // 112-byte block: d[2] + dmin[2] + hmask[32] + qs[64] + scales[12]
-        var block = new byte[112];
+        // 110-byte block: d[2] + hmask[32] + qs[64] + scales[12]
+        var block = new byte[110];
         
         // d = 2.0 (F16: 0x4000) - little endian
         block[0] = 0x00;
         block[1] = 0x40;
         
         // scales[0..11] in bit-packed format that decodes to sc[0..15] = 0
-        // buf[100..103] low nibble, buf[104..107] low nibble, buf[108..111] = 0xAA gives all p[j] = 0x20, sc = 0x20-32 = 0
-        for (int j = 0; j < 4; j++) block[100 + j] = 0x00;  // buf[100..103]
-        for (int j = 0; j < 4; j++) block[104 + j] = 0x00;  // buf[104..107]
-        for (int j = 0; j < 4; j++) block[108 + j] = 0xAA;  // buf[108..111]
+        // buf[98..101] low nibble, buf[102..105] low nibble, buf[106..109] = 0xAA gives all p[j] = 0x20, sc = 0x20-32 = 0
+        for (int j = 0; j < 4; j++) block[98 + j] = 0x00;  // buf[98..101]
+        for (int j = 0; j < 4; j++) block[102 + j] = 0x00;  // buf[102..105]
+        for (int j = 0; j < 4; j++) block[106 + j] = 0xAA;  // buf[106..109]
 
         // qs[0] = 0x00 (all 0s, s2=0)
-        block[36] = 0x00;
+        block[34] = 0x00;
         
-        // hmask[0] = 0x00 (all 0s, hBit=0 → actual = s2 - 4 = -4)
-        block[4] = 0x00;
+        // hmask[0] = 0x00 (all 0s, hmask byte 0 bit 0 = 0 → actual = s2 - 4 = -4)
+        block[2] = 0x00;
         
         var input = new float[] { 1.0f };
-        var weights = new byte[112];
-        Array.Copy(block, weights, 112);
+        var weights = new byte[110];
+        Array.Copy(block, weights, 110);
         
         fixed (float* pInput = input)
         fixed (byte* pWeights = weights)
         {
+            // All scales = 32 → dl = d * (32-32) = 0 → val = 0 → sum = 0
             float result = LinearLayer.VecDotQ3K(pInput, pWeights, 0, 1);
             Assert.Equal(0.0f, result, 5);
         }

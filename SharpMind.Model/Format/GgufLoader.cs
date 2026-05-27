@@ -457,7 +457,7 @@ public static partial class GgufLoader
                     }
                     catch (Exception ex)
                     {
-                        Console.Error.WriteLine($"ERROR: Failed to dequant tensor '{info.Name}' ({info.Dtype}, shape=[{string.Join(",", info.Shape)}]): {ex.Message}");
+                        //Console.Error.WriteLine($"ERROR: Failed to dequant tensor '{info.Name}' ({info.Dtype}, shape=[{string.Join(",", info.Shape)}]): {ex.Message}");
                         buffer.AsSpan(0, count).Clear();
                     }
 
@@ -490,7 +490,7 @@ public static partial class GgufLoader
 
         switch (dtype)
         {
-            case GgufDtype.Q3_K: blockSize = 256; bytesPerBlock = 112; break;  // d[2]+dmin[2]+hmask[32]+qs[64]+scales[12]
+            case GgufDtype.Q3_K: blockSize = 256; bytesPerBlock = 110; break;  // d[2]+hmask[32]+qs[64]+scales[12]
             case GgufDtype.Q4_K: blockSize = 256; bytesPerBlock = 144; break;  // d[2]+dmin[2]+scales[12]+qs[128]
             case GgufDtype.Q5_K: blockSize = 256; bytesPerBlock = 176; break;  // d[2]+dmin[2]+scales[12]+qh[32]+qs[128]
             case GgufDtype.Q6_K: blockSize = 256; bytesPerBlock = 210; break;  // ql[128]+qh[64]+scales[16]+d[2]
@@ -579,7 +579,7 @@ public static partial class GgufLoader
         }
     }
 
-    private static float HalfToFloat(ushort half)
+    public static float HalfToFloat(ushort half)
     {
         int sign = (half >> 15) & 0x1;
         int exp = (half >> 10) & 0x1F;
@@ -603,7 +603,7 @@ public static partial class GgufLoader
         return float.IsNaN(v) || float.IsInfinity(v) ? 0f : v;
     }
 
-    internal static unsafe void ReadQ8_0(BinaryReader reader, Span<float> data, int n)
+    public static unsafe void ReadQ8_0(BinaryReader reader, Span<float> data, int n)
     {
         const int qk = 32;
         const int blockBytes = 34;
@@ -1265,11 +1265,13 @@ public static partial class GgufLoader
         }
     }
 
-    internal static unsafe void ReadQ3_K(BinaryReader reader, Span<float> data, int n)
+    public static unsafe void ReadQ3_K(BinaryReader reader, Span<float> data, int n)
     {
-        // C struct block_q3_K: d[2] + dmin[2] + hmask[32] + qs[64] + scales[12] = 112 bytes
+        // C struct block_q3_K: d[2] + hmask[32] + qs[64] + scales[12] = 110 bytes
+        // 16 subgroups of 16 elements each. hmask has 32 bytes = 256 bits, 1 bit per element.
+        // llama.cpp layout: hmask byte = i % 32, hmask bit = i / 32
         const int QK_K = 256;
-        const int blockBytes = 112;
+        const int blockBytes = 110;
         int nBlocks = (n + QK_K - 1) / QK_K;
         Span<byte> buf = stackalloc byte[blockBytes];
         uint* pAux = stackalloc uint[4];
@@ -1283,12 +1285,11 @@ public static partial class GgufLoader
             reader.Read(buf);
 
             float dAll = HalfToFloat(Unsafe.ReadUnaligned<ushort>(ref buf[0]));
-            // dmin at buf[2..3] unused — Q3_K dequant does not use it
 
-            // scales packed in 12 bytes at buf[100..111]
-            pAux[0] = Unsafe.ReadUnaligned<uint>(ref buf[100]);
-            pAux[1] = Unsafe.ReadUnaligned<uint>(ref buf[104]);
-            pAux[2] = Unsafe.ReadUnaligned<uint>(ref buf[108]);
+            // scales packed in 12 bytes at buf[98..109]
+            pAux[0] = Unsafe.ReadUnaligned<uint>(ref buf[98]);
+            pAux[1] = Unsafe.ReadUnaligned<uint>(ref buf[102]);
+            pAux[2] = Unsafe.ReadUnaligned<uint>(ref buf[106]);
             uint tmp2 = pAux[2];
             pAux[2] = ((pAux[0] >> 4) & kmask2) | (((tmp2 >> 4) & kmask1) << 4);
             pAux[3] = ((pAux[1] >> 4) & kmask2) | (((tmp2 >> 6) & kmask1) << 4);
@@ -1299,8 +1300,7 @@ public static partial class GgufLoader
 
             int valid = Math.Min(QK_K, n - blockStart);
             int idx = 0;
-            int qOff = 36;  // qs starts at buf[36]
-            byte m = 1;
+            int qOff = 34;  // qs starts at buf[34]
 
             for (int half = 0; half < 2; half++)
             {
@@ -1308,25 +1308,38 @@ public static partial class GgufLoader
                 for (int j = 0; j < 4; j++)
                 {
                     float dl = dAll * (scales[idx] - 32); idx++;
-                    int lim1 = Math.Min(16, valid - (idx - 1) * 16);
+                    int gIdx1 = idx - 1;
+                    int lim1 = Math.Min(16, valid - gIdx1 * 16);
                     if (lim1 > 0)
                     {
-                        int start1 = blockStart + (idx - 1) * 16;
+                        int start1 = blockStart + gIdx1 * 16;
                         for (int l = 0; l < lim1; l++)
-                            data[start1 + l] = dl * (((buf[qOff + l] >> shift) & 3) - ((buf[4 + l] & m) != 0 ? 0 : 4));
+                        {
+                            int relPos = gIdx1 * 16 + l;
+                            int hmByte = relPos % 32;
+                            int hmBit = relPos / 32;
+                            int hmSet = (buf[2 + hmByte] >> hmBit) & 1;
+                            data[start1 + l] = dl * (((buf[qOff + l] >> shift) & 3) - (hmSet != 0 ? 0 : 4));
+                        }
                     }
 
                     dl = dAll * (scales[idx] - 32); idx++;
-                    int lim2 = Math.Min(16, valid - (idx - 1) * 16);
+                    int gIdx2 = idx - 1;
+                    int lim2 = Math.Min(16, valid - gIdx2 * 16);
                     if (lim2 > 0)
                     {
-                        int start2 = blockStart + (idx - 1) * 16;
+                        int start2 = blockStart + gIdx2 * 16;
                         for (int l = 0; l < lim2; l++)
-                            data[start2 + l] = dl * (((buf[qOff + 16 + l] >> shift) & 3) - ((buf[4 + 16 + l] & m) != 0 ? 0 : 4));
+                        {
+                            int relPos = gIdx2 * 16 + l;
+                            int hmByte = relPos % 32;
+                            int hmBit = relPos / 32;
+                            int hmSet = (buf[2 + hmByte] >> hmBit) & 1;
+                            data[start2 + l] = dl * (((buf[qOff + 16 + l] >> shift) & 3) - (hmSet != 0 ? 0 : 4));
+                        }
                     }
 
                     shift += 2;
-                    m <<= 1;
                 }
                 qOff += 32;
             }

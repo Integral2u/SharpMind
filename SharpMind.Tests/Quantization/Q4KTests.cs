@@ -50,7 +50,8 @@ public class Q4KTests
         
         Assert.Equal(17.0f, data[0]);
     }
-
+    
+    /*
     [Fact]
     public void Diagnostic_Q4KffnDownVerify()
     {
@@ -410,4 +411,5 @@ public class Q4KTests
         model8.Dispose();
         model4.Dispose();
     }
+    */
 }

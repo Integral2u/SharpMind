@@ -1,50 +1,51 @@
-﻿using SharpMind;
-using SharpMind.Inference;
-using SharpMind.Model;
-using SharpMind.Model.Config;
-using SharpMind.Model.Format;
-using SharpMind.Tokenization;
-using SharpMind.Core.Tensors;
-using System.Runtime.Intrinsics.X86;
-using System.Diagnostics;
+﻿using SharpMind.Model.Format;
 
-await SharpMind.Samples.Examples.MultiTestInteractive.RunAsync("Hello");
-/*
-var modelPath = @"C:\Integral2u\source\repos\SharpMind\ExternalAssets";
-var ggufPath = Path.Combine(modelPath, "qwen2-0_5b-instruct-q8_0.gguf");
-var hw = Avx2.IsSupported ? HardwareTier.AVX2 : HardwareTier.Scalar;
+await SharpMind.Samples.Examples.MultiTestInteractive.RunAsync("hello");
+return;
 
-Console.Write("Loading... "); Console.Out.Flush();
-GgufLoader.Load(ggufPath, null, out GgufMeta meta, out ModelConfig mc, out Tokenizer? tokenizer);
-if (tokenizer is null) return;
-var cfg = mc.ForModel(hw);
-GC.Collect(); GC.WaitForPendingFinalizers();
-var model = ModelFactory.Create(mc, cfg);
-GC.Collect(); GC.WaitForPendingFinalizers();
-GgufLoader.LoadWeightsToModel(ggufPath, meta, model);
-var ops = InferenceOpsFactory.Create(cfg, InferenceConfig.Default);
-Console.WriteLine("OK"); Console.Out.Flush();
+string assets = @"C:\Integral2u\source\repos\SharpMind\ExternalAssets";
+var dsPath = Path.Combine(assets, "DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M.gguf");
 
-// Warmup to trigger weight transpose
-using var gen = new Generator(model, tokenizer, ops);
-await foreach (var _ in gen.GenerateFromTokensAsync(
-    tokenizer.Encode("Hello", addBos: true, addEos: false),
-    SamplingConfig.Greedy, new GenerationConfig { MaxNewTokens = 3, Stream = true })) { }
+var meta = GgufLoader.LoadMeta(dsPath);
+var embInfo = meta.Tensors.First(t => t.Name == "token_embd.weight");
 
-// Single-step timing
-gen.ResetCache();
-int[] prompt = tokenizer.Encode("Hi!", addBos: true, addEos: false);
-
-// Do one prefill + first decode
-var sw = Stopwatch.StartNew();
-await foreach (var frag in gen.GenerateFromTokensAsync(
-    prompt, SamplingConfig.Greedy,
-    new GenerationConfig { MaxNewTokens = 5, Stream = true }))
+// Read first 100 blocks and dump min/max per block, plus raw d and scales
+using (var fs = File.OpenRead(dsPath))
 {
-    if (sw.Elapsed.TotalSeconds > 10) break;
-    Console.Write(frag); Console.Out.Flush();
+    fs.Position = meta.DataOffset + embInfo.Offset;
+    using var reader = new BinaryReader(fs);
+    var data = new float[256 * 100];
+    GgufLoader.ReadQ3_K(reader, data.AsSpan(), data.Length);
+    
+    double overallSumSq = 0;
+    float overallMin = float.MaxValue, overallMax = float.MinValue;
+    
+    // Go back and read raw d values
+    fs.Position = meta.DataOffset + embInfo.Offset;
+    
+    for (int b = 0; b < 100; b++)
+    {
+        // Read raw block
+        ushort dRaw = reader.ReadUInt16();
+        float d = GgufLoader.HalfToFloat(dRaw);
+        reader.BaseStream.Position += 108; // skip rest of block (hmask+qs+scales)
+        
+        int bo = b * 256;
+        float bmin = float.MaxValue, bmax = float.MinValue;
+        double bsumSq = 0;
+        for (int i = 0; i < 256; i++)
+        {
+            float v = data[bo + i];
+            bmin = Math.Min(bmin, v); bmax = Math.Max(bmax, v);
+            bsumSq += v * v;
+            overallMin = Math.Min(overallMin, v); overallMax = Math.Max(overallMax, v);
+        }
+        overallSumSq += bsumSq;
+        if (d > 10 || Math.Abs(bmax) > 1000 || Math.Abs(bmin) > 1000)
+            Console.WriteLine($"  Block {b,3}: d={d,10:G6} min={bmin,12:G6} max={bmax,12:G6} norm={Math.Sqrt(bsumSq),10:G6}");
+    }
+    Console.WriteLine($"Overall 100 blocks ({data.Length} elems): min={overallMin:G6} max={overallMax:G6} norm={Math.Sqrt(overallSumSq):G6}");
+    Console.Write("First 20: ");
+    for (int i = 0; i < 20; i++) Console.Write($"{data[i]:G6} ");
+    Console.WriteLine();
 }
-sw.Stop();
-Console.WriteLine($"\n{tokens} tokens in {sw.Elapsed.TotalSeconds:F2}s");
-model.Dispose();
-*/

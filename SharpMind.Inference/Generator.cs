@@ -205,7 +205,14 @@ public sealed class Generator : IDisposable
                 rateTracker.RecordToken();
                 TokensPerSecond = rateTracker.RollingTokensPerSecond;
                 CumulativeTokensPerSecond = rateTracker.CumulativeTokensPerSecond;
-
+/*
+#if DEBUG
+                string debugRaw = _tokenizer.Decode([nextId], skipSpecials: false);
+                string debugSkip = _tokenizer.Decode([nextId], skipSpecials: true);
+                bool isSpecial = debugRaw != debugSkip || genCfg.StopTokenIds.Contains(nextId);
+                System.Console.Error.WriteLine($"  DEBUG Token {step}: id={nextId}, raw='{EscapeForDebug(debugRaw)}', skip='{EscapeForDebug(debugSkip)}', stop={genCfg.StopTokenIds.Contains(nextId)}, special={isSpecial}");
+#endif
+*/
                 if (genCfg.StopTokenIds.Contains(nextId)) break;
 
                 _decodeTokenScratch[0] = nextId;
@@ -333,7 +340,25 @@ public sealed class Generator : IDisposable
         }
         return false;
     }
-
+/*
+#if DEBUG
+    private static string EscapeForDebug(string s)
+    {
+        if (string.IsNullOrEmpty(s)) return s;
+        var sb = new System.Text.StringBuilder(s.Length);
+        foreach (char c in s)
+        {
+            if (c < 0x20 || c == 0x7f)
+                sb.Append($"\\x{(int)c:X2}");
+            else if (c == '\u2581')
+                sb.Append('\u2581');
+            else
+                sb.Append(c);
+        }
+        return sb.ToString();
+    }
+#endif
+*/
     // ── Disposal ──────────────────────────────────────────────────────────
 
     public void Dispose()

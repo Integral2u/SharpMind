@@ -1,36 +1,19 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Reflection;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace SharpMind
 {
-    /// <summary>
-    /// Added to a class Method to identify a tool that can be used by the LLM.
-    /// </summary>
-    /// <param name="description">Description of the tool and how to use it.</param>
-    [AttributeUsage(AttributeTargets.Method, Inherited = false)]
-    public class AgentTool(string description) : Attribute
+    [AttributeUsage(AttributeTargets.Method | AttributeTargets.Parameter)]
+    public sealed class ToolDescAttribute(string text) : Attribute
     {
-        public string Description { get; init; } = description;
+        public string Text { get; } = text;
     }
-    /// <summary>
-    /// Method argument description.
-    /// </summary>
-    /// <param name="description">Desciption of this arguments purpose.</param>
-    [AttributeUsage(AttributeTargets.Parameter, Inherited = false)]
-    public class AgentToolArgument(string description) : Attribute
-    {
-        public string Description { get; init; } = description;
-    }
+   
     public class EchoTool
     {
-        [AgentTool("Use this if you want to simulate and echo in a canyon calling a persons name")]
-        public string Echo([AgentToolArgument("The name to be returned twice")]string name) => $"{name} {name}";
+        [ToolDesc("Simulates a canyon echo by repeating a person's name.")]
+        public string Echo([ToolDesc("The name to echo back twice.")]string name) => $"{name} {name}";
         
-        [AgentTool("Use this if you want to simulate and echo in a canyon calling a persons name")]
-        public async Task<string> EchoAsync([AgentToolArgument("The name to be returned twice")] string name) => await Task.Run(() => Echo(name));
+        [ToolDesc("Async canyon echo — same as Echo but non-blocking.")]
+        public async System.Threading.Tasks.Task<string> EchoAsync([ToolDesc("The name to echo back twice.")] string name) => await System.Threading.Tasks.Task.Run(() => Echo(name));
     }
 }
