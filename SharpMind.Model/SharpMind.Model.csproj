@@ -13,6 +13,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="JigSawDotNet" Version="1.0.9" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\SharpMind.Core\SharpMind.Core.csproj" />
     <ProjectReference Include="..\SharpMind.Tokenization\SharpMind.Tokenization.csproj" />
   </ItemGroup>

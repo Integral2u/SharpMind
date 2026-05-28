@@ -30,7 +30,7 @@ public sealed class ChatSession
         _model = model;
         _tokenizer = tokenizer;
         _generator = new Generator(model, tokenizer, ops);
-        _formatter = ChatPromptFormatterFactory.Create(meta?.GetChatTemplate());
+        _formatter = ChatPromptFormatterFactory.Create(meta?.GetChatTemplate(), meta?.GetString("general.name"));
         _addBos = meta?.GetLong("tokenizer.ggml.add_bos_token", 1) != 0;
     }
 

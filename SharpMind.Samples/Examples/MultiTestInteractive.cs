@@ -15,15 +15,15 @@ namespace SharpMind.Samples.Examples
         private static readonly string[] Models =
             [
 
-            "SmolLM-135M.Q4_K_M",
+            //"SmolLM-135M.Q4_K_M",
             //"SmolLM2-135M-Instruct.Q4_K_M",
             //"qwen2-0_5b-instruct-q4_k_m",
             //"qwen2-0_5b-instruct-q8_0", //Passing last token delay
-            //"qwen2-0_5b-instruct-fp16", //Passing last token delay
+            "qwen2-0_5b-instruct-fp16", //Passing last token delay
             
             
             "DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M",
-           //"TinyLlama-1.1B-Chat-v1.0.Q4_K_M",
+           "TinyLlama-1.1B-Chat-v1.0.Q4_K_M",
             //"llama-3.2-1b-instruct-q8_0", //Passing last token delay
             //"qwen2.5-1.5b-instruct-q8_0", //Passing last token delay
             
