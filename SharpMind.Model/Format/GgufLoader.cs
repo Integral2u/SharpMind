@@ -436,7 +436,7 @@ public static partial class GgufLoader
                 if (rawSize > 0 && savedPos + rawSize <= stream.Length)
                 {
                     byte[] rawData = new byte[rawSize];
-                    stream.Read(rawData, 0, rawData.Length);
+                    stream.ReadExactly(rawData);
                     stream.Position = savedPos; // seek back for dequant read
                     skipDequant = model.SetRawWeight(info.Name, rawData, info.Dtype);
                 }
@@ -456,8 +456,7 @@ public static partial class GgufLoader
                         ReadTensorInto(reader, info.Dtype, info.Shape, buffer.AsSpan(0, count));
                     }
                     catch (Exception ex)
-                    {
-                        //Console.Error.WriteLine($"ERROR: Failed to dequant tensor '{info.Name}' ({info.Dtype}, shape=[{string.Join(",", info.Shape)}]): {ex.Message}");
+                    {                        
                         buffer.AsSpan(0, count).Clear();
                     }
 
@@ -510,8 +509,6 @@ public static partial class GgufLoader
         int totalBlocks = (totalElements + blockSize - 1) / blockSize;
         return (long)totalBlocks * bytesPerBlock;
     }
-
-    // ?? Tensor reading ????????????????????????????????????????????????????
 
     private static Tensor<float> ReadTensor(BinaryReader stream, GgufDtype dtype, int[] shape)
     {
@@ -595,12 +592,6 @@ public static partial class GgufLoader
             return 0f; // NaN and Inf from F16 → guarded to zero
 
         return (sign == 0 ? 1f : -1f) * MathF.Pow(2f, exp - 15) * (1f + mant / 1024f);
-    }
-
-    private static float SafeHalfToFloat(ushort half)
-    {
-        float v = HalfToFloat(half);
-        return float.IsNaN(v) || float.IsInfinity(v) ? 0f : v;
     }
 
     public static unsafe void ReadQ8_0(BinaryReader reader, Span<float> data, int n)

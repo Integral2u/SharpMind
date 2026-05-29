@@ -40,7 +40,7 @@ namespace SharpMind.Tokenization;
 ///                   padTokenId: tokenizer.PadId));
 /// </code>
 /// </summary>
-public sealed class Tokenizer
+public class Tokenizer
 {
     private readonly BpeModel _model;
 

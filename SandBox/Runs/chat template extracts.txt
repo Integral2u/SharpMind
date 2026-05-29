@@ -1,0 +1,117 @@
+﻿Testing SmolLM-135M.Q4_K_M
+SmolLM-135M.Q4_K_M: No tokenizer.chat_template found!
+Testing SmolLM2-135M-Instruct.Q4_K_M
+SmolLM2-135M-Instruct.Q4_K_M: tokenizer.chat_template
+{% for message in messages %}{% if loop.first and messages[0]['role'] != 'system' %}{{ '<|im_start|>system
+You are a helpful AI assistant named SmolLM, trained by Hugging Face<|im_end|>
+' }}{% endif %}{{'<|im_start|>' + message['role'] + '
+' + message['content'] + '<|im_end|>' + '
+'}}{% endfor %}{% if add_generation_prompt %}{{ '<|im_start|>assistant
+' }}{% endif %}
+Testing qwen2-0_5b-instruct-q4_k_m
+qwen2-0_5b-instruct-q4_k_m: tokenizer.chat_template
+{% for message in messages %}{% if loop.first and messages[0]['role'] != 'system' %}{{ '<|im_start|>system
+You are a helpful assistant.<|im_end|>
+' }}{% endif %}{{'<|im_start|>' + message['role'] + '
+' + message['content'] + '<|im_end|>' + '
+'}}{% endfor %}{% if add_generation_prompt %}{{ '<|im_start|>assistant
+' }}{% endif %}
+Testing qwen2-0_5b-instruct-q8_0
+qwen2-0_5b-instruct-q8_0: tokenizer.chat_template
+{% for message in messages %}{% if loop.first and messages[0]['role'] != 'system' %}{{ '<|im_start|>system
+You are a helpful assistant.<|im_end|>
+' }}{% endif %}{{'<|im_start|>' + message['role'] + '
+' + message['content'] + '<|im_end|>' + '
+'}}{% endfor %}{% if add_generation_prompt %}{{ '<|im_start|>assistant
+' }}{% endif %}
+Testing qwen2-0_5b-instruct-fp16
+qwen2-0_5b-instruct-fp16: tokenizer.chat_template
+{% for message in messages %}{% if loop.first and messages[0]['role'] != 'system' %}{{ '<|im_start|>system
+You are a helpful assistant.<|im_end|>
+' }}{% endif %}{{'<|im_start|>' + message['role'] + '
+' + message['content'] + '<|im_end|>' + '
+'}}{% endfor %}{% if add_generation_prompt %}{{ '<|im_start|>assistant
+' }}{% endif %}
+Testing DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M
+DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M: tokenizer.chat_template
+{% if not add_generation_prompt is defined %}{% set add_generation_prompt = false %}{% endif %}{% set ns = namespace(is_first=false, is_tool=false, is_output_first=true, system_prompt='') %}{%- for message in messages %}{%- if message['role'] == 'system' %}{% set ns.system_prompt = message['content'] %}{%- endif %}{%- endfor %}{{bos_token}}{{ns.system_prompt}}{%- for message in messages %}{%- if message['role'] == 'user' %}{%- set ns.is_tool = false -%}{{'<|User|>' + message['content']}}{%- endif %}{%- if message['role'] == 'assistant' and message['content'] is none %}{%- set ns.is_tool = false -%}{%- for tool in message['tool_calls']%}{%- if not ns.is_first %}{{'<|Assistant|><|tool?calls?begin|><|tool?call?begin|>' + tool['type'] + '<|tool?sep|>' + tool['function']['name'] + '\n' + '```json' + '\n' + tool['function']['arguments'] + '\n' + '```' + '<|tool?call?end|>'}}{%- set ns.is_first = true -%}{%- else %}{{'\n' + '<|tool?call?begin|>' + tool['type'] + '<|tool?sep|>' + tool['function']['name'] + '\n' + '```json' + '\n' + tool['function']['arguments'] + '\n' + '```' + '<|tool?call?end|>'}}{{'<|tool?calls?end|><|end?of?sentence|>'}}{%- endif %}{%- endfor %}{%- endif %}{%- if message['role'] == 'assistant' and message['content'] is not none %}{%- if ns.is_tool %}{{'<|tool?outputs?end|>' + message['content'] + '<|end?of?sentence|>'}}{%- set ns.is_tool = false -%}{%- else %}{% set content = message['content'] %}{% if '</think>' in content %}{% set content = content.split('</think>')[-1] %}{% endif %}{{'<|Assistant|>' + content + '<|end?of?sentence|>'}}{%- endif %}{%- endif %}{%- if message['role'] == 'tool' %}{%- set ns.is_tool = true -%}{%- if ns.is_output_first %}{{'<|tool?outputs?begin|><|tool?output?begin|>' + message['content'] + '<|tool?output?end|>'}}{%- set ns.is_output_first = false %}{%- else %}{{'\n<|tool?output?begin|>' + message['content'] + '<|tool?output?end|>'}}{%- endif %}{%- endif %}{%- endfor -%}{% if ns.is_tool %}{{'<|tool?outputs?end|>'}}{% endif %}{% if add_generation_prompt and not ns.is_tool %}{{'<|Assistant|><think>\n'}}{% endif %}
+Testing TinyLlama-1.1B-Chat-v1.0.Q4_K_M
+TinyLlama-1.1B-Chat-v1.0.Q4_K_M: tokenizer.chat_template
+{% for message in messages %}
+{% if message['role'] == 'user' %}
+{{ '<|user|>
+' + message['content'] + eos_token }}
+{% elif message['role'] == 'system' %}
+{{ '<|system|>
+' + message['content'] + eos_token }}
+{% elif message['role'] == 'assistant' %}
+{{ '<|assistant|>
+'  + message['content'] + eos_token }}
+{% endif %}
+{% if loop.last and add_generation_prompt %}
+{{ '<|assistant|>' }}
+{% endif %}
+{% endfor %}
+Testing llama-3.2-1b-instruct-q8_0
+llama-3.2-1b-instruct-q8_0: tokenizer.chat_template
+{% set loop_messages = messages %}{% for message in loop_messages %}{% set content = '<|start_header_id|>' + message['role'] + '<|end_header_id|>
+
+'+ message['content'] | trim + '<|eot_id|>' %}{% if loop.index0 == 0 %}{% set content = bos_token + content %}{% endif %}{{ content }}{% endfor %}{{ '<|start_header_id|>assistant<|end_header_id|>
+
+' }}
+Testing qwen2.5-1.5b-instruct-q8_0
+qwen2.5-1.5b-instruct-q8_0: tokenizer.chat_template
+{%- if tools %}
+    {{- '<|im_start|>system\n' }}
+    {%- if messages[0]['role'] == 'system' %}
+        {{- messages[0]['content'] }}
+    {%- else %}
+        {{- 'You are Qwen, created by Alibaba Cloud. You are a helpful assistant.' }}
+    {%- endif %}
+    {{- "\n\n# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>" }}
+    {%- for tool in tools %}
+        {{- "\n" }}
+        {{- tool | tojson }}
+    {%- endfor %}
+    {{- "\n</tools>\n\nFor each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n<tool_call>\n{{\"name\": <function-name>, \"arguments\": <args-json-object>}}\n</tool_call><|im_end|>\n" }}
+{%- else %}
+    {%- if messages[0]['role'] == 'system' %}
+        {{- '<|im_start|>system\n' + messages[0]['content'] + '<|im_end|>\n' }}
+    {%- else %}
+        {{- '<|im_start|>system\nYou are Qwen, created by Alibaba Cloud. You are a helpful assistant.<|im_end|>\n' }}
+    {%- endif %}
+{%- endif %}
+{%- for message in messages %}
+    {%- if (message.role == "user") or (message.role == "system" and not loop.first) or (message.role == "assistant" and not message.tool_calls) %}
+        {{- '<|im_start|>' + message.role + '\n' + message.content + '<|im_end|>' + '\n' }}
+    {%- elif message.role == "assistant" %}
+        {{- '<|im_start|>' + message.role }}
+        {%- if message.content %}
+            {{- '\n' + message.content }}
+        {%- endif %}
+        {%- for tool_call in message.tool_calls %}
+            {%- if tool_call.function is defined %}
+                {%- set tool_call = tool_call.function %}
+            {%- endif %}
+            {{- '\n<tool_call>\n{"name": "' }}
+            {{- tool_call.name }}
+            {{- '", "arguments": ' }}
+            {{- tool_call.arguments | tojson }}
+            {{- '}\n</tool_call>' }}
+        {%- endfor %}
+        {{- '<|im_end|>\n' }}
+    {%- elif message.role == "tool" %}
+        {%- if (loop.index0 == 0) or (messages[loop.index0 - 1].role != "tool") %}
+            {{- '<|im_start|>user' }}
+        {%- endif %}
+        {{- '\n<tool_response>\n' }}
+        {{- message.content }}
+        {{- '\n</tool_response>' }}
+        {%- if loop.last or (messages[loop.index0 + 1].role != "tool") %}
+            {{- '<|im_end|>\n' }}
+        {%- endif %}
+    {%- endif %}
+{%- endfor %}
+{%- if add_generation_prompt %}
+    {{- '<|im_start|>assistant\n' }}
+{%- endif %}

@@ -1,0 +1,73 @@
+﻿Testing SmolLM-135M.Q4_K_M
+ModelFactory.Create executed in: 3.72s
+GgufLoader.LoadWeightsToModel executed in: 23.64s
+InferenceOpsFactory.Create executed in: 0.01s
+Prompt:hello
+Response:enos or port portern I either norussels but '', entryern - +/-
+Tokens per second: 1.6151183
+Testing SmolLM2-135M-Instruct.Q4_K_M
+ModelFactory.Create executed in: 3.06s
+GgufLoader.LoadWeightsToModel executed in: 0.82s
+InferenceOpsFactory.Create executed in: 0.01s
+Prompt:hello
+Response:ELTS on Globeinstead
+beccaeltary,,,,instead instead""", Gelcreat1
+Tokens per second: 2.0252984
+Testing qwen2-0_5b-instruct-q4_k_m
+ModelFactory.Create executed in: 14.93s
+GgufLoader.LoadWeightsToModel executed in: 4.89s
+InferenceOpsFactory.Create executed in: 0.02s
+Prompt:hello
+Response:???????? v?ng?ErrorResponse.QuadOVEadero???slideUp ????????????? IonicPage
+Tokens per second: 0.5602533
+Testing qwen2-0_5b-instruct-q8_0
+ModelFactory.Create executed in: 21.04s
+GgufLoader.LoadWeightsToModel executed in: 6.46s
+InferenceOpsFactory.Create executed in: 0.06s
+Prompt:hello
+Response:Hello! How can I assist you today?
+
+Tokens per second: 0
+Testing qwen2-0_5b-instruct-fp16
+ModelFactory.Create executed in: 16.74s
+GgufLoader.LoadWeightsToModel executed in: 133.70s
+InferenceOpsFactory.Create executed in: 0.04s
+Prompt:hello
+Response:Hello! How can I assist you today?
+
+Tokens per second: 0
+Testing DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M
+ModelFactory.Create executed in: 59.31s
+GgufLoader.LoadWeightsToModel executed in: 33.87s
+InferenceOpsFactory.Create executed in: 0.12s
+Prompt:hello
+Response:Okay, the user just said "hello." I should respond in a friendly and
+Tokens per second: 0.102905214
+Testing TinyLlama-1.1B-Chat-v1.0.Q4_K_M
+ModelFactory.Create executed in: 17.11s
+GgufLoader.LoadWeightsToModel executed in: 9.91s
+InferenceOpsFactory.Create executed in: 0.13s
+Prompt:hello
+Response:
+
+Tokens per second: 0
+Testing llama-3.2-1b-instruct-q8_0
+ModelFactory.Create executed in: 35.30s
+GgufLoader.LoadWeightsToModel executed in: 20.45s
+InferenceOpsFactory.Create executed in: 0.19s
+Prompt:hello
+Response:It seems like you'd like to provide information on the topic of which is not
+Tokens per second: 0.40994766
+Testing qwen2.5-1.5b-instruct-q8_0
+ModelFactory.Create executed in: 29.38s
+GgufLoader.LoadWeightsToModel executed in: 39.72s
+InferenceOpsFactory.Create executed in: 0.09s
+Prompt:hello
+Response:
+
+
+
+# 1. Write a Python program to check if the given
+Tokens per second: 0.31143394
+
+Done!
