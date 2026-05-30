@@ -101,28 +101,43 @@ internal static class InferenceKernels
         => DecodeAttention_Flash_Core(q, k, v, output, cacheLen, headDim, scale, avx2: false);
 
     private static unsafe void DecodeAttention_Flash_Core(
-        float* q, float* k, float* v, float* output,
-        int cacheLen, int headDim, float scale, bool avx2)
+    float* q, float* k, float* v, float* output,
+    int cacheLen, int headDim, float scale, bool avx2)
     {
+        // headDim is a runtime value — guard before touching the stack.
+        // All known configs produce headDim <= 128; 256 gives headroom for
+        // future models without risking overflow.
+        const int MaxHeadDim = 256;
+        if ((uint)headDim > MaxHeadDim)
+            throw new ArgumentOutOfRangeException(nameof(headDim),
+                $"headDim {headDim} exceeds MaxHeadDim {MaxHeadDim}.");
+
         const int TileSize = 64;
 
-        // Online softmax accumulators — headDim is typically 64-128, safe for stackalloc.
-        float  mMax = float.NegativeInfinity;
-        float  lSum = 0f;
-        float* pO   = stackalloc float[headDim];
+        float mMax = float.NegativeInfinity;
+        float lSum = 0f;
+
+        // Fixed-size allocation: headDim <= MaxHeadDim, allocated once.
+        float* pO = stackalloc float[MaxHeadDim];
+        for (int d = 0; d < headDim; d++) pO[d] = 0f;
+
+        // Hoisted outside the loop: TileSize is a compile-time constant, so this
+        // single allocation of 64*4 = 256 bytes is made once and reused each tile.
+        // Previously inside the loop, where unsafe stackalloc does NOT restore the
+        // stack pointer between iterations — causing unbounded stack growth with
+        // large cacheLen (e.g. 32K context × 256 B/iter = 8 MB of stack consumed).
+        float* tileScores = stackalloc float[TileSize];
 
         for (int start = 0; start < cacheLen; start += TileSize)
         {
             int end = Math.Min(start + TileSize, cacheLen);
+            int tileLen = end - start;
 
-            // Compute scores for this tile — max tile size is 64, safe for stackalloc.
-            float  tileMax    = float.NegativeInfinity;
-            float* tileScores = stackalloc float[end - start];
-
+            float tileMax = float.NegativeInfinity;
             for (int j = start; j < end; j++)
             {
-                float* kj  = k + (long)j * headDim;
-                float  dot = 0f;
+                float* kj = k + (long)j * headDim;
+                float dot = 0f;
                 if (avx2)
                 {
                     var acc = Vector256<float>.Zero;
@@ -143,34 +158,28 @@ internal static class InferenceKernels
                 if (dot > tileMax) tileMax = dot;
             }
 
-            // Online softmax update
-            float newMax   = MathF.Max(mMax, tileMax);
+            float newMax = MathF.Max(mMax, tileMax);
             float scaleOld = MathF.Exp(mMax - newMax);
             float scaleNew = 0f;
-
-            for (int i = 0; i < end - start; i++)
+            for (int i = 0; i < tileLen; i++)
             {
                 tileScores[i] = MathF.Exp(tileScores[i] - newMax);
                 scaleNew += tileScores[i];
             }
 
-            // Rescale accumulated output and add tile contribution
             float newL = scaleOld * lSum + scaleNew;
             for (int d = 0; d < headDim; d++)
                 pO[d] *= scaleOld;
-
-            for (int i = 0; i < end - start; i++)
+            for (int i = 0; i < tileLen; i++)
             {
                 float* vj = v + (long)(start + i) * headDim;
                 for (int d = 0; d < headDim; d++)
                     pO[d] += tileScores[i] * vj[d];
             }
-
             mMax = newMax;
             lSum = newL;
         }
 
-        // Normalise by accumulated sum
         for (int d = 0; d < headDim; d++)
             output[d] = lSum > 0f ? pO[d] / lSum : 0f;
     }
