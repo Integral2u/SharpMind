@@ -1,5 +1,3 @@
-using SharpMind;
-
 namespace SharpMind.GPU;
 
 public static class MappingBuilderExtensions

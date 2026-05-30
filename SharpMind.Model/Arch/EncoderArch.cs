@@ -40,10 +40,7 @@ public sealed class EncoderArch : IArchitecture
     /// positionOffset is accepted for API compatibility but is typically 0
     /// for encoders since they see the full sequence in one pass.
     /// </summary>
-    public Tensor<float> Forward(Tensor<float> hiddenStates, int positionOffset = 0)
-    {
-        return Forward(hiddenStates, null, positionOffset);
-    }
+    public Tensor<float> Forward(Tensor<float> hiddenStates, int positionOffset = 0) => Forward(hiddenStates, [], positionOffset);
 
     public Tensor<float> Forward(Tensor<float> hiddenStates, KVCache[] caches, int positionOffset = 0)
     {
@@ -54,7 +51,7 @@ public sealed class EncoderArch : IArchitecture
         for (int i = 0; i < _blocks.Length; i++)
         {
             // Encoders typically don't use KV caches, but we support the API
-            var next = _blocks[i].Forward(current, caches != null ? caches[i] : null, positionOffset, causal: false);
+            var next = _blocks[i].Forward(current, caches?[i], positionOffset, causal: false);
             if (ownsLast) current.Dispose();
             current = next;
             ownsLast = true;

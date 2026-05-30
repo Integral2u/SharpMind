@@ -21,7 +21,6 @@ public static class DistillationKernels
         float alpha)        // 0=hard only, 1=soft only
     {
         int batchSize = studentLogits.Shape.Rows;
-        int vocabSize = studentLogits.Shape.Cols;
         float loss = 0f;
 
         // Temperature-scaled soft target

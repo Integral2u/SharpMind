@@ -127,14 +127,13 @@ public abstract class NormLayer : IDisposable
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, nameof(NormLayer));
 }
 
-public sealed class NormLayerState
+public sealed class NormLayerState(int rows, int dim)
 {
-    private readonly float[][] _inputs;
-    private readonly float[][] _outputs;
-    private readonly float[] _scalarParams;
-    public int Rows { get; }
-    public int Dim { get; }
-    public NormLayerState(int rows, int dim) { Rows = rows; Dim = dim; _inputs = new float[rows][]; _outputs = new float[rows][]; _scalarParams = new float[rows]; }
+    private readonly float[][] _inputs = new float[rows][];
+    private readonly float[][] _outputs = new float[rows][];
+    private readonly float[] _scalarParams = new float[rows];
+    public int Rows { get; } = rows; public int Dim { get; } = dim;
+
     public void SaveRow(int row, ReadOnlySpan<float> input, ReadOnlySpan<float> output, float scalarParam) { _inputs[row] = input.ToArray(); _outputs[row] = output.ToArray(); _scalarParams[row] = scalarParam; }
     public float[] GetInput(int row) => _inputs[row];
     public float[] GetOutput(int row) => _outputs[row];

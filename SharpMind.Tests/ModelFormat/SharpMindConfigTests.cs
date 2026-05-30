@@ -6,7 +6,7 @@ using System.Collections.Generic;
 using System.Linq;
 using SharpMind.Model.Format;
 using SharpMind.Model.Config;
-using SharpMindConfig = SharpMind.Model.Format.SharpMindConfig;
+using SharpMindModelConfig = SharpMind.Model.Format.SharpMindModelConfig;
 using QuantConfig = SharpMind.Model.Format.QuantConfig;
 using Dtype = SharpMind.Model.Format.Dtype;
 using ModelConfig = SharpMind.Model.Config.ModelConfig;
@@ -24,7 +24,7 @@ public class SharpMindConfigTests
     [Fact]
     public void SaveAndLoad_Roundtrip()
     {
-        var config = new SharpMindConfig
+        var config = new SharpMindModelConfig
         {
             VocabSize = 32000,
             HiddenDim = 4096,
@@ -43,7 +43,7 @@ public class SharpMindConfigTests
 
         Assert.True(File.Exists(configPath));
 
-        var loaded = SharpMindConfig.Load(configPath);
+        var loaded = SharpMindModelConfig.Load(configPath);
 
         Assert.Equal(32000, loaded.VocabSize);
         Assert.Equal(4096, loaded.HiddenDim);
@@ -68,7 +68,7 @@ public class SharpMindConfigTests
             RopeTheta = 50000f,
         };
 
-        var sharpConfig = SharpMindConfig.FromModelConfig(modelConfig, "custom-source");
+        var sharpConfig = SharpMindModelConfig.FromModelConfig(modelConfig, "custom-source");
 
         Assert.Equal(30000, sharpConfig.VocabSize);
         Assert.Equal(2048, sharpConfig.HiddenDim);
@@ -84,7 +84,7 @@ public class SharpMindConfigTests
     [Fact]
     public void ToModelConfig_Roundtrip()
     {
-        var sharpConfig = new SharpMindConfig
+        var sharpConfig = new SharpMindModelConfig
         {
             VocabSize = 20000,
             HiddenDim = 1024,
@@ -112,7 +112,7 @@ public class SharpMindConfigTests
     [InlineData(true)]
     public void Save_WithOptionalFields(bool includeQuantization)
     {
-        var config = new SharpMindConfig
+        var config = new SharpMindModelConfig
         {
             VocabSize = 1000,
             HiddenDim = 128,
@@ -131,7 +131,7 @@ public class SharpMindConfigTests
         var configPath = Path.Combine(_testDir, "config2.json");
         config.Save(configPath);
 
-        var loaded = SharpMindConfig.Load(configPath);
+        var loaded = SharpMindModelConfig.Load(configPath);
         Assert.Equal(1000, loaded.VocabSize);
 
         if (includeQuantization)

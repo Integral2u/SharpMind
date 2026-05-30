@@ -4,7 +4,6 @@ using SharpMind.Core.Ops;
 using SharpMind.Core.Tensors;
 using SharpMind.Core.Training;
 using SharpMind.Model.Config;
-using System.Threading.Tasks;
 
 namespace SharpMind.Model.Layers.Attention;
 
@@ -115,10 +114,7 @@ public abstract class AttentionLayer : IDisposable
         Rope.ApplyBatched(qr, positionOffset);
         Rope.ApplyBatched(kr, positionOffset);
 
-        if (cache != null)
-        {
-            cache.Update(k, v, numKv, headDim);
-        }
+        cache?.Update(k, v, numKv, headDim);
 
         var output = new Tensor<float>(batch, seqLen, hidden);
         int effectiveKvLen = cache != null ? cache.CurrentPosition : seqLen;
@@ -206,7 +202,7 @@ public abstract class AttentionLayer : IDisposable
         return (output, state);
     }
 
-    public Tensor<float> Backward(Tensor<float> gradOutput, AttentionLayerState state, TensorOps ops)
+    public Tensor<float> Backward(Tensor<float> gradOutput, TensorOps ops)
     {
         // Simplified: propagate gradient through output projection
         // Full backward requires full attention kernel gradients - stub for now
@@ -237,10 +233,4 @@ public abstract class AttentionLayer : IDisposable
     }
     ~AttentionLayer() => Dispose(false);
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, nameof(AttentionLayer));
-}
-
-public class AttentionLayerState
-{
-    public Tensor<float> Input { get; init; } = null!;
-    public Tensor<float> Output { get; init; } = null!;
 }

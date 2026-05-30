@@ -54,7 +54,6 @@ public static class GgufConverter
     public static BpeModel Convert(
         string[]  tokens,
         string[]? merges,
-        float[]?  scores,
         int[]?    tokenTypes,
         int       bosId,
         int       eosId)

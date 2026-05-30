@@ -65,7 +65,6 @@ public sealed class JinjaTemplateFormatterTests
     private static readonly Tokenizer Tok = Tokenizer.FromGguf(
         tokens: ["[UNK]", "<s>", "</s>"],
         merges: null,
-        scores: null,
         tokenTypes: null,
         bosId: 1,
         eosId: 2);

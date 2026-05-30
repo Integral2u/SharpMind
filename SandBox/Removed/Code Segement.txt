@@ -19,3 +19,87 @@
 
         return Create(config, sharpConfig);
     }
+
+
+FFnLayer
+    /// <summary>Training state for Dense FFN.</summary>
+public sealed class DenseFfnState : FfnLayerState
+{
+    public LinearLayerState? W1State { get; init; }
+    public LinearLayerState? W2State { get; init; }
+}
+
+/// <summary>Training state for Gated FFN.</summary>
+public sealed class GatedFfnState : FfnLayerState
+{
+    public LinearLayerState? WGateState { get; init; }
+    public LinearLayerState? WUpState { get; init; }
+    public LinearLayerState? WDownState { get; init; }
+    public Tensor<float>? Activated { get; init; }
+}
+
+
+------------------
+ModelConverter
+    /// <summary>Load from Safetensors - requires config.json in same directory.</summary>
+    private static ConversionResult LoadSafeTensors(string path, WeightMapper mapper)
+    {
+        var dir = Path.GetDirectoryName(path) ?? ".";
+        var configPath = Path.Combine(dir, "config.json");
+        
+        var weights = SafetensorsLoader.LoadWeights(path);
+        
+        SharpMindConfig config;
+        if (File.Exists(configPath))
+        {
+            var hfConfig = JsonNode.Parse(File.ReadAllText(configPath));
+            
+            config = new SharpMindConfig
+            {
+                VocabSize = hfConfig?["vocab_size"]?.GetValue<int>() ?? 32000,
+                HiddenDim = hfConfig?["hidden_size"]?.GetValue<int>() ?? 4096,
+                NumLayers = hfConfig?["num_hidden_layers"]?.GetValue<int>() ?? 32,
+                NumHeads = hfConfig?["num_attention_heads"]?.GetValue<int>() ?? 32,
+                NumKvHeads = hfConfig?["num_key_value_heads"]?.GetValue<int>() ?? 32,
+                FfnDim = hfConfig?["intermediate_size"]?.GetValue<int>() ?? 11008,
+                MaxSeqLen = hfConfig?["max_position_embeddings"]?.GetValue<int>() ?? 2048,
+                RopeTheta = (float)(hfConfig?["rope_theta"]?.GetValue<double>() ?? 10000.0),
+            };
+        }
+        else
+        {
+            config = InferConfig(weights);
+        }
+        
+        return ConvertWeights(weights, mapper, config);
+    }
+    
+
+    ModelConverter
+        private static SharpMindModelConfig InferConfig(Dictionary<string, Tensor<float>> weights)
+    {
+        int maxLayer = 0;
+        
+        foreach (var name in weights.Keys)
+        {
+            if (name.Contains(".mlp.gate_proj.weight"))
+            {
+                var parts = name.Split('.');
+                if (parts.Length >= 3 && parts[1] == "layers" && int.TryParse(parts[2], out int layer))
+                    maxLayer = Math.Max(maxLayer, layer);
+            }
+        }
+        
+        return new SharpMindModelConfig
+        {
+            VocabSize = 32000,
+            HiddenDim = 4096,
+            NumLayers = maxLayer + 1,
+            NumHeads = 32,
+            NumKvHeads = 32,
+            FfnDim = 11008,
+            MaxSeqLen = 2048,
+            Tokenizer = new TokenizerInfo { Type = "bpe" },
+        };
+    }
+    

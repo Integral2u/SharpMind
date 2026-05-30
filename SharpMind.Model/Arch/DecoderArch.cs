@@ -109,7 +109,7 @@ public sealed class DecoderArch : IArchitecture
     /// </summary>
     public Tensor<float> Forward(Tensor<float> hiddenStates, int positionOffset = 0)
     {
-        return Forward(hiddenStates, null, positionOffset);
+        return Forward(hiddenStates, [], positionOffset);
     }
 
     public Tensor<float> Forward(Tensor<float> hiddenStates, KVCache[] caches, int positionOffset = 0)
@@ -132,7 +132,7 @@ public sealed class DecoderArch : IArchitecture
 
         for (int i = 0; i < _blocks.Length; i++)
         {
-            var next = _blocks[i].Forward(current, caches != null ? caches[i] : null, positionOffset, causal: true);
+            var next = _blocks[i].Forward(current, caches?[i], positionOffset, causal: true);
             
             if (i > 0 && !ReferenceEquals(current, hiddenStates))
                 current.Dispose();

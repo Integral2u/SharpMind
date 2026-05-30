@@ -8,8 +8,7 @@ using SharpMind.Core.Training;
 using SharpMind.Model.Config;
 using TensorF = SharpMind.Core.Tensors.Tensor<float>;
 using GgufLoader = SharpMind.Model.Format.GgufLoader;
-using SafetensorsLoader = SharpMind.Model.Format.SafetensorsLoader;
-using SharpMindConfig = SharpMind.Model.Format.SharpMindConfig;
+using SharpMindConfig = SharpMind.Model.Format.SharpMindModelConfig;
 using WeightMapper = SharpMind.Model.Format.WeightMapper;
 
 namespace SharpMind.Tests.ModelFormat;
@@ -64,34 +63,5 @@ public class IntegrationTests
             Console.WriteLine($"  Tensor: {t.Name}, Shape: [{string.Join(",", t.Shape)}]");
         }
         Assert.NotNull(meta);
-    }
-
-    [Fact]
-    public void LoadSafetensors_Succeeds()
-    {
-        if (!TryGetFile(SafetensorsFileName, out var path))
-        {
-            Assert.True(true, $"WARNING: Safetensors file not found at {Path.Combine(ExternalAssetsPath, SafetensorsFileName)} - test skipped");
-            return;
-        }
-
-        var weights = SafetensorsLoader.LoadWeights(path);
-
-        Assert.NotNull(weights);
-        Assert.True(weights.Count > 0);
-    }
-
-    [Fact]
-    public void LoadSafetensors_HasWeights()
-    {
-        if (!TryGetFile(SafetensorsFileName, out var path))
-        {
-            Assert.True(true, $"WARNING: Safetensors file not found at {Path.Combine(ExternalAssetsPath, SafetensorsFileName)} - test skipped");
-            return;
-        }
-
-        var weights = SafetensorsLoader.LoadWeights(path);
-
-        Assert.True(weights.Count > 0);
     }
 }

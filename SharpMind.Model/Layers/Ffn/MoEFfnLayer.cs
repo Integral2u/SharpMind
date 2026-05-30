@@ -17,9 +17,6 @@ public sealed class MoEFfnLayer(ModelConfig config, ActivationOps acts, TensorOp
         return (output, state);
     }
 
-    public override Tensor<float> Backward(Tensor<float> gradOutput, FfnLayerState state)
-    {
-        return gradOutput; // Stub - MoE backward is complex
-    }
+    public override Tensor<float> Backward(Tensor<float> gradOutput, FfnLayerState state) => gradOutput; // Stub - MoE backward is complex
 }
 

@@ -4,7 +4,6 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using SharpMind.Core.Tensors;
 using SharpMind.Model;
-using SharpMind.Model.Config;
 
 namespace SharpMind.Inference;
 
@@ -12,19 +11,13 @@ namespace SharpMind.Inference;
 /// Computes a live rolling average of tokens-per-second.
 /// Maintains a ring-buffer of recent token timestamps.
 /// </summary>
-internal sealed class TokenRateTracker
+internal sealed class TokenRateTracker(int windowSize = 10)
 {
-    private readonly double[] _timestamps;
+    private readonly double[] _timestamps = new double[windowSize];
     private int _head;
     private int _count;
     private int _totalTokens;
-    private double _startTime;
-
-    public TokenRateTracker(int windowSize = 10)
-    {
-        _timestamps = new double[windowSize];
-        _startTime = double.NaN;
-    }
+    private double _startTime = double.NaN;
 
     public void Start() { _startTime = Stopwatch.GetTimestamp(); }
 
@@ -178,7 +171,7 @@ public sealed class Generator : IDisposable
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                ReadOnlySpan<float> logitsSlice = logitsTensor.Data.Slice(0, vocabSize);
+                ReadOnlySpan<float> logitsSlice = logitsTensor.Data[..vocabSize];
 
                 int nextId;
                 if (genCfg.RepetitionPenalty != 1.0f)

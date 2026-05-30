@@ -31,10 +31,9 @@ public static class QwenConverter
         if (root.TryGetProperty("model", out var model) && 
             model.TryGetProperty("vocab", out var vocabElement))
         {
-            vocabList = vocabElement.EnumerateObject()
+            vocabList = [.. vocabElement.EnumerateObject()
                 .OrderBy(p => p.Value.GetInt32())
-                .Select(p => p.Name)
-                .ToList();
+                .Select(p => p.Name)];
 
             // Add special tokens not already in vocab (at the end)
             foreach (var token in specials.All)
@@ -49,7 +48,7 @@ public static class QwenConverter
         return new BpeModel(vocab, merges, new Gpt2PreTokeniser());
     }
 
-    private static (string? unk, string? bos, string? eos, string? pad, List<string> additional) QwenExtractSpecials(JsonElement root)
+    private static (string unk, string bos, string eos, string pad, List<string> additional) QwenExtractSpecials(JsonElement root)
     {
         // Qwen uses these special tokens
         string unk = "<|endoftext|>";

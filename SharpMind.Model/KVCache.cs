@@ -110,8 +110,7 @@ public sealed class KVCache : IDisposable
 
     public void TrimToLast(int keep)
     {
-        if (keep < 0)
-            throw new ArgumentOutOfRangeException(nameof(keep));
+        ArgumentOutOfRangeException.ThrowIfNegative(keep);
         if (keep >= CurrentPosition) return;
 
         int offset = CurrentPosition - keep;

@@ -1,5 +1,4 @@
 using System.Runtime.CompilerServices;
-using SharpMind.Data.Sources;
 
 namespace SharpMind.Data.Sources.Csv;
 
@@ -9,7 +8,6 @@ public sealed class CsvDataSource : IDataSource
     private readonly string _textColumn;
     private readonly bool _hasHeader;
     private readonly char _delimiter;
-    private readonly bool _disposed;
 
     public CsvDataSource(
         string path,
@@ -17,7 +15,7 @@ public sealed class CsvDataSource : IDataSource
         bool hasHeader = true,
         char delimiter = ',')
     {
-        ArgumentNullException.ThrowIfNullOrEmpty(path);
+        ArgumentException.ThrowIfNullOrEmpty(path);
         
         _path = path;
         _textColumn = textColumn;
@@ -99,7 +97,7 @@ public sealed class CsvDataSource : IDataSource
         }
         
         fields.Add(current.ToString());
-        return fields.ToArray();
+        return [.. fields];
     }
 
     public ValueTask DisposeAsync()
@@ -108,18 +106,9 @@ public sealed class CsvDataSource : IDataSource
     }
 }
 
-public sealed class CsvDataSource<T> : IDataSource
+public sealed class CsvDataSource<T>(string path) : IDataSource
 {
-    private readonly string _path;
-    private readonly Func<string, T>? _parser;
-    private readonly bool _disposed;
-
-    public CsvDataSource(string path, Func<string, T>? parser = null)
-    {
-        _path = path;
-        _parser = parser;
-    }
-
+    private readonly string _path = path;
     public long? EstimatedCount => null;
     public string Description => $"CSV<T>: {_path}";
 

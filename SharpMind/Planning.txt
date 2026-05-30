@@ -36,6 +36,9 @@ The abstract QuantizeationOps method with [PuzzleCornerPiece] attributes should 
 
 
 Todo
+FusedRMSNormLinear and FusedKernels were no longer used.  Revisit.
+Removed safetensor loader for now
+
 Chat session interrupt, Recover rather than start again?
 
 End to End Test, Super Dumb Model Training Load and Test Logits valid output.

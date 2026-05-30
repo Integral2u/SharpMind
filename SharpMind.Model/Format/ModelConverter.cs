@@ -1,35 +1,15 @@
 using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using SharpMind.Core.Tensors;
 using SharpMind.Core.Training;
-using SharpMind.Model.Config;
 
 namespace SharpMind.Model.Format;
-
 /// <summary>
 /// Model converter - converts between external formats and SharpMind native format.
 /// </summary>
-public static class ModelConverter
+public static partial class ModelConverter
 {
     private static readonly JsonSerializerOptions IndentedJsonSerializerOptions = new() { WriteIndented = true };
-    /// <summary>Supported external model formats.</summary>
-    public enum ModelFormat
-    {
-        Unknown,
-        SafeTensors,  // HuggingFace
-        Gguf,         // llama.cpp
-        Pytorch,      // PyTorch checkpoint
-    }
-    
-    /// <summary>Conversion result with parameters and config.</summary>
-    public sealed class ConversionResult
-    {
-        public required List<Parameter> Parameters { get; init; }
-        public required SharpMindConfig Config { get; init; }
-        public string? Warning { get; init; }
-    }
     
     /// <summary>Detect format from file extension.</summary>
     public static ModelFormat DetectFormat(string path)
@@ -37,7 +17,6 @@ public static class ModelConverter
         var ext = Path.GetExtension(path).ToLowerInvariant();
         return ext switch
         {
-            ".safetensors" => ModelFormat.SafeTensors,
             ".gguf" => ModelFormat.Gguf,
             ".bin" => ModelFormat.Gguf,
             ".pt" or ".pth" => ModelFormat.Pytorch,
@@ -56,7 +35,6 @@ public static class ModelConverter
         
         return format switch
         {
-            ModelFormat.SafeTensors => LoadSafeTensors(path, mapper),
             ModelFormat.Gguf => LoadGguf(path, mapper),
             _ => throw new NotSupportedException($"Unknown format: {path}")
         };
@@ -68,7 +46,7 @@ public static class ModelConverter
         var meta = GgufLoader.LoadMeta(path);
         var weights = GgufLoader.LoadWeights(path);
         
-        var config = new SharpMindConfig
+        var config = new SharpMindModelConfig
         {
             VocabSize = (int)meta.GetLong("tokenizer.ggml.bos_token_id", 32000), // Approximate
             HiddenDim = (int)meta.GetLong("llama.embedding_length", meta.GetLong("embedding", 4096)),
@@ -82,72 +60,11 @@ public static class ModelConverter
         };
         
         return ConvertWeights(weights, mapper, config);
-    }
-    
-    /// <summary>Load from Safetensors - requires config.json in same directory.</summary>
-    private static ConversionResult LoadSafeTensors(string path, WeightMapper mapper)
-    {
-        var dir = Path.GetDirectoryName(path) ?? ".";
-        var configPath = Path.Combine(dir, "config.json");
-        
-        var weights = SafetensorsLoader.LoadWeights(path);
-        
-        SharpMindConfig config;
-        if (File.Exists(configPath))
-        {
-            var hfConfig = JsonNode.Parse(File.ReadAllText(configPath));
-            
-            config = new SharpMindConfig
-            {
-                VocabSize = hfConfig?["vocab_size"]?.GetValue<int>() ?? 32000,
-                HiddenDim = hfConfig?["hidden_size"]?.GetValue<int>() ?? 4096,
-                NumLayers = hfConfig?["num_hidden_layers"]?.GetValue<int>() ?? 32,
-                NumHeads = hfConfig?["num_attention_heads"]?.GetValue<int>() ?? 32,
-                NumKvHeads = hfConfig?["num_key_value_heads"]?.GetValue<int>() ?? 32,
-                FfnDim = hfConfig?["intermediate_size"]?.GetValue<int>() ?? 11008,
-                MaxSeqLen = hfConfig?["max_position_embeddings"]?.GetValue<int>() ?? 2048,
-                RopeTheta = (float)(hfConfig?["rope_theta"]?.GetValue<double>() ?? 10000.0),
-            };
-        }
-        else
-        {
-            config = InferConfig(weights);
-        }
-        
-        return ConvertWeights(weights, mapper, config);
-    }
-    
-    private static SharpMindConfig InferConfig(Dictionary<string, Tensor<float>> weights)
-    {
-        int maxLayer = 0;
-        
-        foreach (var name in weights.Keys)
-        {
-            if (name.Contains(".mlp.gate_proj.weight"))
-            {
-                var parts = name.Split('.');
-                if (parts.Length >= 3 && parts[1] == "layers" && int.TryParse(parts[2], out int layer))
-                    maxLayer = Math.Max(maxLayer, layer);
-            }
-        }
-        
-        return new SharpMindConfig
-        {
-            VocabSize = 32000,
-            HiddenDim = 4096,
-            NumLayers = maxLayer + 1,
-            NumHeads = 32,
-            NumKvHeads = 32,
-            FfnDim = 11008,
-            MaxSeqLen = 2048,
-            Tokenizer = new TokenizerInfo { Type = "bpe" },
-        };
-    }
-    
+    }   
     private static ConversionResult ConvertWeights(
         Dictionary<string, Tensor<float>> weights,
         WeightMapper mapper,
-        SharpMindConfig config)
+        SharpMindModelConfig config)
     {
         var parameters = new List<Parameter>();
         var missing = new List<string>();
@@ -185,7 +102,7 @@ public static class ModelConverter
     /// <param name="parameters">Model parameters.</param>
     /// <param name="config">Model configuration.</param>
     /// <param name="outputDir">Output directory.</param>
-    public static void SaveSharpMind(IEnumerable<Parameter> parameters, SharpMindConfig config, string outputDir)
+    public static void SaveSharpMind(IEnumerable<Parameter> parameters, SharpMindModelConfig config, string outputDir)
     {
         Directory.CreateDirectory(outputDir);
         
@@ -232,7 +149,7 @@ public static class ModelConverter
         using var sha256 = SHA256.Create();
         using var stream = File.OpenRead(path);
         var hash = sha256.ComputeHash(stream);
-        return BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
+        return System.Convert.ToHexStringLower(hash);
     }
     
     /// <summary>
@@ -240,7 +157,7 @@ public static class ModelConverter
     /// </summary>
     public static ConversionResult LoadSharpMind(string modelDir)
     {
-        var config = SharpMindConfig.Load(Path.Combine(modelDir, "config.json"));
+        var config = SharpMindModelConfig.Load(Path.Combine(modelDir, "config.json"));
         string weightsPath = Path.Combine(modelDir, "weights.bin");
         
         var parameters = LoadWeightsBinary(weightsPath);
@@ -277,56 +194,5 @@ public static class ModelConverter
         }
         
         return result;
-    }
-
-    public static class Convert
-    {
-        public static void ToNative(string ggufPath, string outputDir)
-        {
-            var meta = GgufLoader.LoadMeta(ggufPath);
-            var weights = GgufLoader.LoadWeights(ggufPath);
-            
-            int vocabSize = 32000;
-            if (meta.KvPairs.Any(k => k.Key == "tokenizer.ggml.tokens"))
-            {
-                var kv = meta.KvPairs.First(k => k.Key == "tokenizer.ggml.tokens");
-                if (kv.Value is List<string> list)
-                    vocabSize = list.Count;
-            }
-            
-            var config = new SharpMindConfig
-            {
-                VocabSize = vocabSize,
-                HiddenDim = (int)meta.GetLong("embedding", meta.GetLong("llama.embedding_length", 2048)),
-                NumLayers = (int)meta.GetLong("llama.block_count", 22),
-                NumHeads = (int)meta.GetLong("llama.attention.head_count", 32),
-                NumKvHeads = (int)meta.GetLong("llama.attention.head_count_kv", 4),
-                FfnDim = (int)meta.GetLong("llama.feed_forward_length", 5632),
-                MaxSeqLen = (int)meta.GetLong("llama.context_length", 2048),
-                Source = meta.GetString("general.architecture", "llama") + "/" + meta.GetString("general.name", "model"),
-            };
-            
-            var parameters = new List<SharpMind.Core.Training.Parameter>();
-            foreach (var kvp in weights)
-            {
-                var name = MapWeightName(kvp.Key);
-                if (name != null)
-                    parameters.Add(new Parameter(name, kvp.Value));
-            }
-                  
-            SaveSharpMind(parameters, config, outputDir);
-          
-            foreach (var w in weights)
-                w.Value.Dispose();
-        }
-
-        private static string? MapWeightName(string ggufName)
-        {
-            if (ggufName.Contains("token_embd") || ggufName.Contains("output"))
-                return null;
-            return ggufName.Replace(".", "_").Replace("-", "_");
-        }
-
-        public static ConversionResult FromNative(string modelDir) => LoadSharpMind(modelDir);
     }
 }

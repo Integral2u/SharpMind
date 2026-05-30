@@ -6,13 +6,13 @@ namespace SharpMind.Model.Config;
 public static class SharpMindConfigFactory
 {
     /// <summary>
-    /// Creates the correct <see cref="global::SharpMind.SharpMindConfig"/> from a <see cref="ModelConfig"/>,
+    /// Creates the correct <see cref="SharpMindConfig"/> from a <see cref="ModelConfig"/>,
     /// using <see cref="ModelConfig.Architecture"/> to select the preset
     /// and dimensions to infer the attention variant.
     /// </summary>
-    public static global::SharpMind.SharpMindConfig ForModel(this ModelConfig modelConfig, global::SharpMind.HardwareTier hw = global::SharpMind.HardwareTier.Auto)
+    public static SharpMindConfig ForModel(this ModelConfig modelConfig, HardwareTier hw = HardwareTier.Auto)
     {
-        return global::SharpMind.SharpMindConfig.ForModel(
+        return SharpMindConfig.ForModel(
             modelConfig.NumHeads,
             modelConfig.NumKvHeads,
             modelConfig.Architecture,

@@ -21,7 +21,7 @@ public sealed class Transformer : IDisposable
     // Null means the model is weight-tied — the embedding weight is used instead.
     private Tensor<float>? _lmHead;
 
-    private TransformerBlock[]? _blocks; // For training backward
+    private readonly TransformerBlock[]? _blocks; // For training backward
 
     private Tensor<float>? _cachedEmbedding;
     private Tensor<float>? _cachedHidden;
@@ -78,11 +78,11 @@ public sealed class Transformer : IDisposable
                 // Partial fill: GGUF has fewer vocab rows than the current VocabSize
                 // (from injected special tokens). Copy existing rows, init new with mean.
                 int copyLen = data.Length;
-                data.CopyTo(_embedding.Weight.Data.Slice(0, copyLen));
+                data.CopyTo(_embedding.Weight.Data[..copyLen]);
                 double sum = 0;
                 for (int i = 0; i < copyLen; i++) sum += data[i];
                 float mean = (float)(sum / copyLen);
-                _embedding.Weight.Data.Slice(copyLen).Fill(mean);
+                _embedding.Weight.Data[copyLen..].Fill(mean);
             }
             return true;
             /*  ------Old
@@ -122,8 +122,8 @@ public sealed class Transformer : IDisposable
                 // Partial fill: GGUF has fewer vocab rows. Init new rows to zero.
                 _lmHead ??= new Tensor<float>(_config.VocabSize, hidden);
                 int copyLen = data.Length;
-                data.CopyTo(_lmHead.Data.Slice(0, copyLen));
-                _lmHead.Data.Slice(copyLen).Clear();
+                data.CopyTo(_lmHead.Data[..copyLen]);
+                _lmHead.Data[copyLen..].Clear();
             }
             return true;
             /* --- old
@@ -185,10 +185,7 @@ public sealed class Transformer : IDisposable
     /// Input:  token IDs [Batch, SeqLen]
     /// Output: logits    [Batch, SeqLen, VocabSize]
     /// </summary>
-    public unsafe Tensor<float> Forward(Tensor<int> tokenIds, int positionOffset = 0)
-    {
-        return Forward(tokenIds, null, positionOffset);
-    }
+    public unsafe Tensor<float> Forward(Tensor<int> tokenIds, int positionOffset = 0) => Forward(tokenIds, null, positionOffset);
 
     public unsafe Tensor<float> Forward(Tensor<int> tokenIds, KVCache[]? caches, int positionOffset = 0)
     {
@@ -200,7 +197,7 @@ public sealed class Transformer : IDisposable
 
         // 2. Architecture (stack of transformer blocks).
         //    Returns embedded (in-place residuals), so no separate using — embedded owns the buffer.
-        _cachedHidden = _arch.Forward(embedded, caches, positionOffset);
+        _cachedHidden = _arch.Forward(embedded, caches ?? [], positionOffset);
 
         // 3. Final normalisation
         _cachedNormed = _finalNorm.Forward(embedded);

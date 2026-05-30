@@ -1,22 +1,12 @@
 namespace SharpMind.Data.Sources.PseudoLanguage;
 
-public sealed class VocabularyBuilder
+public sealed class VocabularyBuilder(VocabConfig config, Random? random = null)
 {
-    private readonly MorphemeDictionary _morphemes;
-    private readonly VocabConfig _config;
-    private readonly Random _random;
+    private readonly MorphemeDictionary _morphemes = new(config.VocabSize);
+    private readonly VocabConfig _config = config;
+    private readonly Random _random = random ?? Random.Shared;
     private readonly HashSet<string> _usedWords = [];
-    private readonly List<PseudoWord> _words;
-
-    public VocabularyBuilder(VocabConfig config, Random? random = null)
-    {
-        _config = config;
-        _random = random ?? Random.Shared;
-        _words = new List<PseudoWord>(config.VocabSize);
-        
-        // Initialize MorphemeDictionary with target vocabulary size
-        _morphemes = new MorphemeDictionary(config.VocabSize);
-    }
+    private readonly List<PseudoWord> _words = new(config.VocabSize);
 
     public IReadOnlyList<PseudoWord> Words => _words;
 

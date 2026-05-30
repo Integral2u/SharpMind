@@ -1,5 +1,3 @@
-using System.Runtime.CompilerServices;
-
 namespace SharpMind.Data.Sources.PseudoLanguage;
 
 public sealed class LearnableGenerator : IDisposable
@@ -8,13 +6,13 @@ public sealed class LearnableGenerator : IDisposable
     private readonly Random _random;
     private bool _disposed;
 
-    private static readonly string[] Nouns = { "king", "queen", "dog", "cat", "bird", "fish", "child", "robot" };
-    private static readonly string[] Verbs = { "eats", "sees", "loves", "hits", "runs", "jumps", "chases" };
-    private static readonly string[] Objects = { "apple", "ball", "house", "tree", "fish", "book", "cake", "hat" };
-    private static readonly string[] Adjectives = { "big", "small", "fast", "slow", "happy", "sad", "tall", "short" };
-    private static readonly string[] Adverbs = { "quickly", "slowly", "always", "never", "often", "rarely" };
-    private static readonly string[] Questions = { "what", "who", "where", "when", "why", "how" };
-    private static readonly string[] Pronouns = { "does", "is", "are", "did", "can", "will" };
+    private static readonly string[] Nouns = ["king", "queen", "dog", "cat", "bird", "fish", "child", "robot"];
+    private static readonly string[] Verbs = ["eats", "sees", "loves", "hits", "runs", "jumps", "chases"];
+    private static readonly string[] Objects = ["apple", "ball", "house", "tree", "fish", "book", "cake", "hat"];
+    private static readonly string[] Adjectives = ["big", "small", "fast", "slow", "happy", "sad", "tall", "short"];
+    private static readonly string[] Adverbs = ["quickly", "slowly", "always", "never", "often", "rarely"];
+    private static readonly string[] Questions = ["what", "who", "where", "when", "why", "how"];
+    private static readonly string[] Pronouns = ["does", "is", "are", "did", "can", "will"];
 
     private readonly Dictionary<string, int> _vocab;
     private readonly string[] _vocabWords;
@@ -42,7 +40,7 @@ public sealed class LearnableGenerator : IDisposable
             allWords.AddRange(Pronouns);
 
         _vocab = new Dictionary<string, int>(allWords.Count);
-        _vocabWords = allWords.ToArray();
+        _vocabWords = [.. allWords];
 
         for (int i = 0; i < _vocabWords.Length; i++)
         {

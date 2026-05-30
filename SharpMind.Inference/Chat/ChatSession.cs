@@ -1,4 +1,3 @@
-using SharpMind.Core.Tensors;
 using SharpMind.Inference.Chat.PromptFormatters;
 using SharpMind.Model;
 using SharpMind.Model.Format;

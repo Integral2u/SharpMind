@@ -40,8 +40,8 @@ public sealed class ContinuousBatchScheduler : IAsyncDisposable
     private readonly KVCache[][] _cachePool;
 
     public ContinuousBatchScheduler(
-        SharpMind.Model.Transformer       model,
-        SharpMind.Tokenization.Tokenizer     tokenizer,
+        Transformer model,
+        Tokenization.Tokenizer     tokenizer,
         InferenceOps                      ops,
         int                               maxConcurrent = 8)
     {

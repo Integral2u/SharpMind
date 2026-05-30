@@ -1,5 +1,4 @@
 using SharpMind.Core.Tensors;
-using SharpMind.Core.Training;
 using SharpMind.Model.Layers;
 
 namespace SharpMind.Training.Pruning;
@@ -56,7 +55,6 @@ public static class PruningKernels
 /// </summary>
     public static Tensor<float> MovementPrune(
         Tensor<float> currentWeights,
-        Tensor<float> initialWeights,
         Tensor<float> accumulatedDelta,
         float sparsity,
         float movementPenalty)  // how much to penalize movement
@@ -67,7 +65,6 @@ public static class PruningKernels
         {
             float movement = MathF.Abs(accumulatedDelta.Data[i]);
             float currentMag = MathF.Abs(currentWeights.Data[i]);
-            float initialMag = MathF.Abs(initialWeights.Data[i]);
 
             // Penalize: ignore weights close to initial + don't touch already-small weights
             if (movement > movementPenalty * currentMag || currentMag < 1e-6f)

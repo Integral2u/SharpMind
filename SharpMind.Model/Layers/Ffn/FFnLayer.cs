@@ -161,28 +161,3 @@ public abstract class FfnLayer : IDisposable
 
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, nameof(FfnLayer));
 }
-
-/// <summary>Training state saved during FFN forward pass.</summary>
-public class FfnLayerState
-{
-    public Tensor<float> Input { get; init; } = null!;
-    public Tensor<float> Output { get; init; } = null!;
-    public FfnKind Kind { get; init; }
-}
-
-/// <summary>Training state for Dense FFN.</summary>
-public sealed class DenseFfnState : FfnLayerState
-{
-    public LinearLayerState? W1State { get; init; }
-    public LinearLayerState? W2State { get; init; }
-}
-
-/// <summary>Training state for Gated FFN.</summary>
-public sealed class GatedFfnState : FfnLayerState
-{
-    public LinearLayerState? WGateState { get; init; }
-    public LinearLayerState? WUpState { get; init; }
-    public LinearLayerState? WDownState { get; init; }
-    public Tensor<float>? Activated { get; init; }
-}
-

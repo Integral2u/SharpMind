@@ -2,7 +2,6 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using SharpMind.Core.Tensors;
 using SharpMind.Model;
-using SharpMind.Model.Config;
 
 namespace SharpMind.Inference;
 

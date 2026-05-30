@@ -135,12 +135,11 @@ public class Tokenizer
     public static Tokenizer FromGguf(
         string[] tokens,
         string[]? merges,
-        float[]? scores,
         int[]? tokenTypes,
         int bosId,
         int eosId)
     {        
-        var model = GgufConverter.Convert(tokens, merges, scores, tokenTypes, bosId, eosId);        
+        var model = GgufConverter.Convert(tokens, merges, tokenTypes, bosId, eosId);        
         return new Tokenizer(model);
     }
 

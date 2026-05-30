@@ -7,7 +7,7 @@ public class WeightMapperTests
     [Fact]
     public void LlamaMapper_EmbedTokens_MapsCorrectly()
     {
-        var mapper = new WeightMapper.LlamaMapper(32);
+        var mapper = new LlamaMapper();
 
         var result = mapper.MapWeight("model.embed_tokens.weight", [32000, 4096]);
 
@@ -18,7 +18,7 @@ public class WeightMapperTests
     [Fact]
     public void LlamaMapper_FinalNorm_MapsCorrectly()
     {
-        var mapper = new WeightMapper.LlamaMapper(32);
+        var mapper = new LlamaMapper();
 
         var result = mapper.MapWeight("model.norm.weight", [4096]);
 
@@ -29,7 +29,7 @@ public class WeightMapperTests
     [Fact]
     public void LlamaMapper_LmHead_MapsCorrectly()
     {
-        var mapper = new WeightMapper.LlamaMapper(32);
+        var mapper = new LlamaMapper();
 
         var result = mapper.MapWeight("lm_head.weight", [32000, 4096]);
 
@@ -40,7 +40,7 @@ public class WeightMapperTests
     [Fact]
     public void LlamaMapper_AttentionQProj_MapsCorrectly()
     {
-        var mapper = new WeightMapper.LlamaMapper(32);
+        var mapper = new LlamaMapper();
 
         var result = mapper.MapWeight("model.layers.0.self_attn.q_proj.weight", [4096, 4096]);
 
@@ -51,7 +51,7 @@ public class WeightMapperTests
     [Fact]
     public void LlamaMapper_AttentionKProj_MapsCorrectly()
     {
-        var mapper = new WeightMapper.LlamaMapper(32);
+        var mapper = new LlamaMapper();
 
         var result = mapper.MapWeight("model.layers.5.self_attn.k_proj.weight", [1024, 4096]);
 
@@ -62,7 +62,7 @@ public class WeightMapperTests
     [Fact]
     public void LlamaMapper_AttentionVProj_MapsCorrectly()
     {
-        var mapper = new WeightMapper.LlamaMapper(32);
+        var mapper = new LlamaMapper();
 
         var result = mapper.MapWeight("model.layers.10.self_attn.v_proj.weight", [1024, 4096]);
 
@@ -73,7 +73,7 @@ public class WeightMapperTests
     [Fact]
     public void LlamaMapper_AttentionOProj_MapsCorrectly()
     {
-        var mapper = new WeightMapper.LlamaMapper(32);
+        var mapper = new LlamaMapper();
 
         var result = mapper.MapWeight("model.layers.0.self_attn.o_proj.weight", [4096, 4096]);
 
@@ -84,7 +84,7 @@ public class WeightMapperTests
     [Fact]
     public void LlamaMapper_MlpGate_MapsCorrectly()
     {
-        var mapper = new WeightMapper.LlamaMapper(32);
+        var mapper = new LlamaMapper();
 
         var result = mapper.MapWeight("model.layers.0.mlp.gate_proj.weight", [11008, 4096]);
 
@@ -95,7 +95,7 @@ public class WeightMapperTests
     [Fact]
     public void LlamaMapper_MlpUp_MapsCorrectly()
     {
-        var mapper = new WeightMapper.LlamaMapper(32);
+        var mapper = new LlamaMapper();
 
         var result = mapper.MapWeight("model.layers.0.mlp.up_proj.weight", [11008, 4096]);
 
@@ -106,7 +106,7 @@ public class WeightMapperTests
     [Fact]
     public void LlamaMapper_MlpDown_MapsCorrectly()
     {
-        var mapper = new WeightMapper.LlamaMapper(32);
+        var mapper = new LlamaMapper();
 
         var result = mapper.MapWeight("model.layers.0.mlp.down_proj.weight", [4096, 11008]);
 
@@ -117,7 +117,7 @@ public class WeightMapperTests
     [Fact]
     public void LlamaMapper_LayerNorm_MapsCorrectly()
     {
-        var mapper = new WeightMapper.LlamaMapper(32);
+        var mapper = new LlamaMapper();
 
         var result1 = mapper.MapWeight("model.layers.15.input_layernorm.weight", [4096]);
         var result2 = mapper.MapWeight("model.layers.15.post_attention_layernorm.weight", [4096]);
@@ -131,7 +131,7 @@ public class WeightMapperTests
     [Fact]
     public void LlamaMapper_Unknown_ReturnsNull()
     {
-        var mapper = new WeightMapper.LlamaMapper(32);
+        var mapper = new LlamaMapper();
 
         var result = mapper.MapWeight("unknown.layer.weight", [100, 100]);
 
@@ -141,7 +141,7 @@ public class WeightMapperTests
     [Fact]
     public void Gpt2Mapper_Embed_MapsCorrectly()
     {
-        var mapper = new WeightMapper.Gpt2Mapper();
+        var mapper = new Gpt2Mapper();
 
         var result = mapper.MapWeight("wte.weight", [50257, 768]);
 
@@ -152,7 +152,7 @@ public class WeightMapperTests
     [Fact]
     public void Gpt2Mapper_Attention_MapsCorrectly()
     {
-        var mapper = new WeightMapper.Gpt2Mapper();
+        var mapper = new Gpt2Mapper();
 
         var result = mapper.MapWeight("h.0.attn.c_attn.weight", [2304, 768]);
 
@@ -163,7 +163,7 @@ public class WeightMapperTests
     [Fact]
     public void Gpt2Mapper_OutputProj_MapsCorrectly()
     {
-        var mapper = new WeightMapper.Gpt2Mapper();
+        var mapper = new Gpt2Mapper();
 
         var result = mapper.MapWeight("h.0.attn.c_proj.weight", [768, 768]);
 
@@ -174,7 +174,7 @@ public class WeightMapperTests
     [Fact]
     public void Gpt2Mapper_Mlp_MapsCorrectly()
     {
-        var mapper = new WeightMapper.Gpt2Mapper();
+        var mapper = new Gpt2Mapper();
 
         var result1 = mapper.MapWeight("h.0.mlp.c_fc.weight", [3072, 768]);
         var result2 = mapper.MapWeight("h.0.mlp.c_proj.weight", [768, 3072]);
@@ -188,7 +188,7 @@ public class WeightMapperTests
     [Fact]
     public void Gpt2Mapper_LayerNorm_MapsCorrectly()
     {
-        var mapper = new WeightMapper.Gpt2Mapper();
+        var mapper = new Gpt2Mapper();
 
         var result1 = mapper.MapWeight("h.0.ln_1.weight", [768]);
         var result2 = mapper.MapWeight("h.0.ln_2.weight", [768]);
@@ -202,7 +202,7 @@ public class WeightMapperTests
     [Fact]
     public void Gpt2Mapper_FinalNorm_MapsCorrectly()
     {
-        var mapper = new WeightMapper.Gpt2Mapper();
+        var mapper = new Gpt2Mapper();
 
         var result = mapper.MapWeight("ln_f.weight", [768]);
 
@@ -213,7 +213,7 @@ public class WeightMapperTests
     [Fact]
     public void Gpt2Mapper_LmHead_MapsCorrectly()
     {
-        var mapper = new WeightMapper.Gpt2Mapper();
+        var mapper = new Gpt2Mapper();
 
         var result = mapper.MapWeight("lm_head.weight", [50257, 768]);
 

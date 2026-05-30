@@ -7,18 +7,11 @@ namespace SharpMind.Model;
 /// Wrapper that provides a single-layer KV Cache interface using paged memory internally.
 /// This is a drop-in replacement for KVCache that uses PagedAttention internally.
 /// </summary>
-public sealed class PagedKVCacheLayer : IDisposable
+public sealed class PagedKVCacheLayer(int batchSize, int numKvHeads, int maxSeqLen, int headDim, int pageSize = PagedKVCache.DefaultPageSize) : IDisposable
 {
-    private readonly PagedKVCache _cache;
-    private readonly int _maxSeqLen;
-    private int _currentPosition;
-
-    public PagedKVCacheLayer(int batchSize, int numKvHeads, int maxSeqLen, int headDim, int pageSize = PagedKVCache.DefaultPageSize)
-    {
-        _cache = new PagedKVCache(batchSize, numKvHeads, maxSeqLen, headDim, pageSize);
-        _maxSeqLen = maxSeqLen;
-        _currentPosition = 0;
-    }
+    private readonly PagedKVCache _cache = new(batchSize, numKvHeads, maxSeqLen, headDim, pageSize);
+    private readonly int _maxSeqLen = maxSeqLen;
+    private int _currentPosition = 0;
 
     public int Length => _currentPosition;
     public int MaxSeqLen => _maxSeqLen;

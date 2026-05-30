@@ -26,7 +26,7 @@ public sealed class DataLoader
         ArgumentNullException.ThrowIfNull(pipeline);
         ArgumentNullException.ThrowIfNull(tokenise);
         ArgumentNullException.ThrowIfNull(batcher);
-        if (prefetchBuffer <= 0) throw new ArgumentOutOfRangeException(nameof(prefetchBuffer));
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(prefetchBuffer);
 
         _pipeline = pipeline;
         _tokenise = tokenise;

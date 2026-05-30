@@ -1,5 +1,4 @@
-﻿using System.Text.RegularExpressions;
-using SharpMind.Core.Ops;
+﻿using SharpMind.Core.Ops;
 using SharpMind.Core.Tensors;
 using SharpMind.Core.Training;
 using SharpMind.Model.Layers.Attention;

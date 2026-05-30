@@ -39,8 +39,6 @@ public sealed class LayerNormLayer(int dim, float eps = 1e-5f) : NormLayer(dim, 
         float mean = storedMean;
         float variance = 0f;
         foreach (float v in input) { float d = v - mean; variance += d * d; }
-        variance /= N;
-        float invStd = 1f / MathF.Sqrt(variance + eps);
         for (int i = 0; i < N; i++) dInput[i] = dOutput[i];
         float sumDY = 0f;
         for (int i = 0; i < N; i++) sumDY += dOutput[i];
