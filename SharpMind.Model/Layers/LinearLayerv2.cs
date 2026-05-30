@@ -7,7 +7,7 @@ using System.Runtime.Intrinsics.X86;
 
 namespace SharpMind.Model.Layers;
 
-public sealed class LinearLayer : IDisposable
+public sealed class LinearLayerv2 : IDisposable
 {
     private readonly Tensor<float> _weight;
     private Tensor<float>? _weightBT;
@@ -19,7 +19,7 @@ public sealed class LinearLayer : IDisposable
     public GgufDtype? QuantDtype { get; set; }
     public bool UseQuantizedForward { get; set; }
 
-    public LinearLayer(string name, int inFeatures, int outFeatures, bool bias = false)
+    public LinearLayerv2(string name, int inFeatures, int outFeatures, bool bias = false)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(inFeatures);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(outFeatures);
@@ -30,7 +30,7 @@ public sealed class LinearLayer : IDisposable
         _bias = bias ? new Tensor<float>(outFeatures) : null;
     }
 
-    public LinearLayer(int inFeatures, int outFeatures, bool bias = false)
+    public LinearLayerv2(int inFeatures, int outFeatures, bool bias = false)
         : this($"Linear.{Guid.NewGuid():N}", inFeatures, outFeatures, bias)
     {
     }
@@ -98,7 +98,7 @@ public sealed class LinearLayer : IDisposable
                     IntPtr pInPtr = (IntPtr)pIn;
                     IntPtr pOutPtr = (IntPtr)pOut;
                     IntPtr pRawPtr = (IntPtr)pRaw;
-                    Parallel.For(0, outF, col =>
+                    System.Threading.Tasks.Parallel.For(0, outF, col =>
                     {
                         float* pInL = (float*)pInPtr;
                         float* pOutL = (float*)pOutPtr;
@@ -134,17 +134,8 @@ public sealed class LinearLayer : IDisposable
     private static bool IsSupportedQuantDtype(GgufDtype dtype) => dtype switch
     {
         GgufDtype.Q8_0 => true,
-        GgufDtype.Q4_0 => true,
-        GgufDtype.Q4_1 => true,
-        GgufDtype.Q5_0 => true,
-        GgufDtype.Q5_1 => true,
-        GgufDtype.Q8_1 => true,
-        GgufDtype.Q2_K => true,
-        GgufDtype.Q3_K => true,
         GgufDtype.Q4_K => true,
-        GgufDtype.Q5_K => true,
-        GgufDtype.Q6_K => true,
-        GgufDtype.Q8_K => true,
+        GgufDtype.Q3_K => true,
         _ => false
     };
 
@@ -358,6 +349,15 @@ public sealed class LinearLayer : IDisposable
         return (float)sum;
     }
 
+    private static unsafe float HSum256(Vector256<float> v)
+    {
+        var lo = v.GetLower();
+        var hi = v.GetUpper();
+        var s = Sse.Add(lo, hi);
+        var s2 = Sse3.HorizontalAdd(s, s);
+        return s2.GetElement(0) + s2.GetElement(1);
+    }
+
     internal static unsafe float VecDotQ8_0(float* input, byte* rawWeights, int col, int inFeatures)
     {
         const int BLOCK_BYTES = 34;
@@ -466,12 +466,6 @@ public sealed class LinearLayer : IDisposable
 
     internal static unsafe float VecDotQ5_1(float* input, byte* rawWeights, int col, int inFeatures)
     {
-        // block_q5_1 layout (24 bytes, QK=32):
-        //   d[2]   half-float scale
-        //   m[2]   half-float min
-        //   qh[4]  1 high bit per element packed into 32 bits: bit i = (qh >> i) & 1
-        //   qs[16] 4 low bits per element: nibble i = (qs[i/2] >> (4*(i%2))) & 0x0F
-        //   value[i] = (qs_nibble[i] | (high_bit[i] << 4)) * d + m
         const int BLOCK_BYTES = 24;
         const int QK = 32;
         int nBlocks = (inFeatures + QK - 1) / QK;
@@ -486,9 +480,11 @@ public sealed class LinearLayer : IDisposable
             int blockEnd = Math.Min(QK, inFeatures - b * QK);
             for (int i = 0; i < blockEnd; i++)
             {
-                // high bit: always bit i of qh (not j+12 for upper half)
-                int xh = (int)((qh >> i) & 1) << 4;
-                int q = ((qs[i / 2] >> (4 * (i % 2))) & 0x0F) | xh;
+                int j = i % 16;
+                int xh = i < 16
+                    ? ((int)((qh >> (j + 0)) & 1) << 4)
+                    : ((int)((qh >> (j + 12)) & 1) << 4);
+                int q = ((qs[j / 2] >> (4 * (j % 2))) & 0x0F) | xh;
                 sum += input[b * QK + i] * (q * d + m);
             }
         }
@@ -516,11 +512,6 @@ public sealed class LinearLayer : IDisposable
 
     internal static unsafe float VecDotQ2K(float* input, byte* rawWeights, int col, int inFeatures)
     {
-        // block_q2_K layout (84 bytes, QK_K=256):
-        //   scales[16]  @ 0    – each byte: low 4 bits = scale, high 4 bits = min
-        //   qs[64]      @ 16   – 2 bits per element, 4 elements per byte
-        //   d[2]        @ 80   – half-float superblock scale
-        //   dmin[2]     @ 82   – half-float superblock min
         const int BLOCK_BYTES = 84;
         const int QK_K = 256;
         int nBlocks = (inFeatures + QK_K - 1) / QK_K;
@@ -528,11 +519,10 @@ public sealed class LinearLayer : IDisposable
         for (int b = 0; b < nBlocks; b++)
         {
             byte* block = rawWeights + (long)col * nBlocks * BLOCK_BYTES + b * BLOCK_BYTES;
-            byte* scales = block;                                          // @ 0
-            byte* qs = block + 16;                                     // @ 16
-            float dSuper = HalfToFloat(*(ushort*)(block + 80));            // @ 80
-            float minSuper = HalfToFloat(*(ushort*)(block + 82));           // @ 82
-
+            float dSuper = HalfToFloat(*(ushort*)block);
+            float minSuper = HalfToFloat(*(ushort*)(block + 2));
+            byte* scales = block + 4;
+            byte* qs = block + 20;
             int blockEnd = Math.Min(QK_K, inFeatures - b * QK_K);
             int qOff = 0;
             for (int n16 = 0; n16 < QK_K; n16 += 128)
@@ -607,15 +597,7 @@ public sealed class LinearLayer : IDisposable
             return mant == 0 ? (sign == 0 ? float.PositiveInfinity : float.NegativeInfinity) : float.NaN;
         return (sign == 0 ? 1f : -1f) * MathF.Pow(2f, exp - 15) * (1f + mant / 1024f);
     }
-    private static unsafe float HSum256(Vector256<float> v)
-    {
-        var lo = v.GetLower();
-        var hi = v.GetUpper();
-        var s = Sse.Add(lo, hi);
-        var s2 = Sse3.HorizontalAdd(s, s);
-        return s2.GetElement(0) + s2.GetElement(1);
-    }
-    
+
     public (Tensor<float> Output, LinearLayerState State) ForwardWithState(Tensor<float> input, TensorOps ops)
     {
         ThrowIfDisposed();

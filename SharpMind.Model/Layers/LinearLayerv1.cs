@@ -7,7 +7,7 @@ using System.Runtime.Intrinsics.X86;
 
 namespace SharpMind.Model.Layers;
 
-public sealed class LinearLayer : IDisposable
+public sealed class LinearLayerv1 : IDisposable
 {
     private readonly Tensor<float> _weight;
     private Tensor<float>? _weightBT;
@@ -19,7 +19,7 @@ public sealed class LinearLayer : IDisposable
     public GgufDtype? QuantDtype { get; set; }
     public bool UseQuantizedForward { get; set; }
 
-    public LinearLayer(string name, int inFeatures, int outFeatures, bool bias = false)
+    public LinearLayerv1(string name, int inFeatures, int outFeatures, bool bias = false)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(inFeatures);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(outFeatures);
@@ -30,7 +30,7 @@ public sealed class LinearLayer : IDisposable
         _bias = bias ? new Tensor<float>(outFeatures) : null;
     }
 
-    public LinearLayer(int inFeatures, int outFeatures, bool bias = false)
+    public LinearLayerv1(int inFeatures, int outFeatures, bool bias = false)
         : this($"Linear.{Guid.NewGuid():N}", inFeatures, outFeatures, bias)
     {
     }
@@ -98,7 +98,7 @@ public sealed class LinearLayer : IDisposable
                     IntPtr pInPtr = (IntPtr)pIn;
                     IntPtr pOutPtr = (IntPtr)pOut;
                     IntPtr pRawPtr = (IntPtr)pRaw;
-                    Parallel.For(0, outF, col =>
+                    System.Threading.Tasks.Parallel.For(0, outF, col =>
                     {
                         float* pInL = (float*)pInPtr;
                         float* pOutL = (float*)pOutPtr;
@@ -133,19 +133,19 @@ public sealed class LinearLayer : IDisposable
 
     private static bool IsSupportedQuantDtype(GgufDtype dtype) => dtype switch
     {
-        GgufDtype.Q8_0 => true,
-        GgufDtype.Q4_0 => true,
-        GgufDtype.Q4_1 => true,
-        GgufDtype.Q5_0 => true,
-        GgufDtype.Q5_1 => true,
-        GgufDtype.Q8_1 => true,
-        GgufDtype.Q2_K => true,
         GgufDtype.Q3_K => true,
         GgufDtype.Q4_K => true,
         GgufDtype.Q5_K => true,
         GgufDtype.Q6_K => true,
+        GgufDtype.Q4_0 => true,
+        GgufDtype.Q4_1 => true,
+        GgufDtype.Q5_0 => true,
+        GgufDtype.Q5_1 => true,
+        GgufDtype.Q8_0 => true,
+        GgufDtype.Q8_1 => true,
+        GgufDtype.Q2_K => true,
         GgufDtype.Q8_K => true,
-        _ => false
+        _ => false    // TEMP: disabled K-quants to isolate VecDot vs dequant bug
     };
 
     public bool SetRawWeight(byte[] rawData, GgufDtype dtype)
@@ -162,50 +162,38 @@ public sealed class LinearLayer : IDisposable
 
     internal static unsafe float VecDotQ3K(float* input, byte* rawWeights, int col, int inFeatures)
     {
-        // block_q3_K layout (110 bytes):
-        //   hmask[32]  @ 0    – high bit per element
-        //   qs[64]     @ 32   – 2 low bits per element
-        //   scales[12] @ 96   – packed 6-bit sub-group scales
-        //   d[2]       @ 108  – half-float block scale  ← LAST field
-        const int BLOCK_BYTES = 110;
+        const int BLOCK_BYTES = 110;  // d[2]+hmask[32]+qs[64]+scales[12]
         int nBlocks = (inFeatures + QK_K - 1) / QK_K;
         double sum = 0;
         byte* scaleBuf = stackalloc byte[16];
-
-        const uint kmask1 = 0x03030303u;
-        const uint kmask2 = 0x0f0f0f0fu;
-
         for (int b = 0; b < nBlocks; b++)
         {
             byte* block = rawWeights + (long)col * nBlocks * BLOCK_BYTES + b * BLOCK_BYTES;
-            byte* hmask = block;          // hmask @ 0
-            byte* qs = block + 32;     // qs    @ 32
-            // scales @ 96 (12 bytes), d @ 108
-            float dAll = HalfToFloat(*(ushort*)(block + 108));
+            float dAll = HalfToFloat(*(ushort*)block);  // d @ offset 0
+            byte* hmask = block + 2;                     // hmask @ offset 2 (32 bytes)
+            byte* qs = block + 34;                       // qs @ offset 34 (64 bytes)
 
-            // Unpack 12-byte scale encoding into 16 x 6-bit values
+            for (int j = 0; j < 12; j++) scaleBuf[j] = block[98 + j]; // scales @ offset 98
+
             uint* aux = (uint*)scaleBuf;
-            aux[0] = *(uint*)(block + 96);
-            aux[1] = *(uint*)(block + 100);
-            aux[2] = *(uint*)(block + 104);
             uint tmp = aux[2];
-            aux[2] = ((aux[0] >> 4) & kmask2) | (((tmp >> 4) & kmask1) << 4);
-            aux[3] = ((aux[1] >> 4) & kmask2) | (((tmp >> 6) & kmask1) << 4);
-            aux[0] = (aux[0] & kmask2) | (((tmp >> 0) & kmask1) << 4);
-            aux[1] = (aux[1] & kmask2) | (((tmp >> 2) & kmask1) << 4);
+            aux[2] = ((aux[0] >> 4) & 0x0f0f0f0fu) | (((tmp >> 4) & 0x03030303u) << 4);
+            aux[3] = ((aux[1] >> 4) & 0x0f0f0f0fu) | (((tmp >> 6) & 0x03030303u) << 4);
+            aux[0] = (aux[0] & 0x0f0f0f0fu) | (((tmp >> 0) & 0x03030303u) << 4);
+            aux[1] = (aux[1] & 0x0f0f0f0fu) | (((tmp >> 2) & 0x03030303u) << 4);
             sbyte* sc8 = (sbyte*)scaleBuf;
 
             int blockEnd = Math.Min(QK_K, inFeatures - b * QK_K);
             for (int i = 0; i < blockEnd; i++)
             {
-                // qs byte: (i/128)*32 + (i%32), 2-bit shift: ((i%128)/32)*2
+                // qs transposed: byte = (i/128)*32 + i%32, shift = ((i%128)/32)*2
                 int qsByte = (i / 128) * 32 + (i % 32);
                 int qsShift = ((i % 128) / 32) * 2;
                 int s2 = (qs[qsByte] >> qsShift) & 3;
-                // hmask: byte = i%32, bit = i/32
                 int hBit = (hmask[i % 32] >> (i / 32)) & 1;
                 int actual = s2 - (hBit == 0 ? 4 : 0);
-                float val = dAll * (sc8[i / 16] - 32) * actual;
+                int sub = i / 16;
+                float val = dAll * (sc8[sub] - 32) * actual;
                 sum += input[b * QK_K + i] * val;
             }
         }
@@ -358,6 +346,15 @@ public sealed class LinearLayer : IDisposable
         return (float)sum;
     }
 
+    private static unsafe float HSum256(Vector256<float> v)
+    {
+        var lo = v.GetLower();
+        var hi = v.GetUpper();
+        var s = Sse.Add(lo, hi);
+        var s2 = Sse3.HorizontalAdd(s, s);
+        return s2.GetElement(0) + s2.GetElement(1);
+    }
+
     internal static unsafe float VecDotQ8_0(float* input, byte* rawWeights, int col, int inFeatures)
     {
         const int BLOCK_BYTES = 34;
@@ -466,12 +463,6 @@ public sealed class LinearLayer : IDisposable
 
     internal static unsafe float VecDotQ5_1(float* input, byte* rawWeights, int col, int inFeatures)
     {
-        // block_q5_1 layout (24 bytes, QK=32):
-        //   d[2]   half-float scale
-        //   m[2]   half-float min
-        //   qh[4]  1 high bit per element packed into 32 bits: bit i = (qh >> i) & 1
-        //   qs[16] 4 low bits per element: nibble i = (qs[i/2] >> (4*(i%2))) & 0x0F
-        //   value[i] = (qs_nibble[i] | (high_bit[i] << 4)) * d + m
         const int BLOCK_BYTES = 24;
         const int QK = 32;
         int nBlocks = (inFeatures + QK - 1) / QK;
@@ -486,9 +477,11 @@ public sealed class LinearLayer : IDisposable
             int blockEnd = Math.Min(QK, inFeatures - b * QK);
             for (int i = 0; i < blockEnd; i++)
             {
-                // high bit: always bit i of qh (not j+12 for upper half)
-                int xh = (int)((qh >> i) & 1) << 4;
-                int q = ((qs[i / 2] >> (4 * (i % 2))) & 0x0F) | xh;
+                int j = i % 16;
+                int xh = i < 16
+                    ? ((int)((qh >> (j + 0)) & 1) << 4)
+                    : ((int)((qh >> (j + 12)) & 1) << 4);
+                int q = ((qs[j / 2] >> (4 * (j % 2))) & 0x0F) | xh;
                 sum += input[b * QK + i] * (q * d + m);
             }
         }
@@ -516,11 +509,6 @@ public sealed class LinearLayer : IDisposable
 
     internal static unsafe float VecDotQ2K(float* input, byte* rawWeights, int col, int inFeatures)
     {
-        // block_q2_K layout (84 bytes, QK_K=256):
-        //   scales[16]  @ 0    – each byte: low 4 bits = scale, high 4 bits = min
-        //   qs[64]      @ 16   – 2 bits per element, 4 elements per byte
-        //   d[2]        @ 80   – half-float superblock scale
-        //   dmin[2]     @ 82   – half-float superblock min
         const int BLOCK_BYTES = 84;
         const int QK_K = 256;
         int nBlocks = (inFeatures + QK_K - 1) / QK_K;
@@ -528,11 +516,10 @@ public sealed class LinearLayer : IDisposable
         for (int b = 0; b < nBlocks; b++)
         {
             byte* block = rawWeights + (long)col * nBlocks * BLOCK_BYTES + b * BLOCK_BYTES;
-            byte* scales = block;                                          // @ 0
-            byte* qs = block + 16;                                     // @ 16
-            float dSuper = HalfToFloat(*(ushort*)(block + 80));            // @ 80
-            float minSuper = HalfToFloat(*(ushort*)(block + 82));           // @ 82
-
+            float dSuper = HalfToFloat(*(ushort*)block);
+            float minSuper = HalfToFloat(*(ushort*)(block + 2));
+            byte* scales = block + 4;
+            byte* qs = block + 20;
             int blockEnd = Math.Min(QK_K, inFeatures - b * QK_K);
             int qOff = 0;
             for (int n16 = 0; n16 < QK_K; n16 += 128)
@@ -607,15 +594,7 @@ public sealed class LinearLayer : IDisposable
             return mant == 0 ? (sign == 0 ? float.PositiveInfinity : float.NegativeInfinity) : float.NaN;
         return (sign == 0 ? 1f : -1f) * MathF.Pow(2f, exp - 15) * (1f + mant / 1024f);
     }
-    private static unsafe float HSum256(Vector256<float> v)
-    {
-        var lo = v.GetLower();
-        var hi = v.GetUpper();
-        var s = Sse.Add(lo, hi);
-        var s2 = Sse3.HorizontalAdd(s, s);
-        return s2.GetElement(0) + s2.GetElement(1);
-    }
-    
+
     public (Tensor<float> Output, LinearLayerState State) ForwardWithState(Tensor<float> input, TensorOps ops)
     {
         ThrowIfDisposed();
@@ -644,10 +623,10 @@ public sealed class LinearLayer : IDisposable
         var flatGradOut = state.NeedReshape
             ? gradOutput.Reshape(batchSize, OutFeatures)
             : gradOutput;
-
+        
         // gradInput = gradOutput @ weight
         var gradInputFlat = ops.MatMul(flatGradOut, TensorOps.Transpose(_weight));
-
+        
         // gradWeight += input^T @ gradOutput
         using var inputT = TensorOps.Transpose(state.Input);
         using var dw = ops.MatMul(inputT, flatGradOut);
@@ -668,9 +647,9 @@ public sealed class LinearLayer : IDisposable
                     state.BiasGrad.Data[j] += row[j];
             }
         }
-
+        
         flatGradOut.Dispose();
-
+        
         if (state.NeedReshape)
         {
             int[] inDims = [.. state.InputDims[..^1], InFeatures];

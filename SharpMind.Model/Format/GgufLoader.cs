@@ -1181,8 +1181,7 @@ public static partial class GgufLoader
                 u1 <<= 2; u2 <<= 2;
             }
         }
-    }
-
+    }  
     public static unsafe void ReadQ3_K(BinaryReader reader, Span<float> data, int n)
     {
         // block_q3_K layout (110 bytes, QK_K=256 elements, 16 sub-groups of 16):

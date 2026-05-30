@@ -14,12 +14,15 @@ namespace SharpMind.Samples.Examples
     {
         private static readonly string[] Models =
             [
-
+            //"Qwen2-0.5B.Q2_K",              //Response:\n\n\n\n\n      ,,,..
+            //"Qwen2-0.5B.Q3_K_L",            //Response:????????/classes?????????????
+            //"Qwen2-0.5B.Q3_K_M",            //Response:!!!!!!!
+            //"Qwen2-0.5B.Q3_K_S",            //Response:!!!!!!!
             //"SmolLM-135M.Q4_K_M",           //Response:enos or port portern I either norussels but '', entryern - +/-
             //"SmolLM2-135M-Instruct.Q4_K_M", //Response:ELTS on Globeinstead/nbeccaeltary,,,,instead instead""", Gelcreat1
             //"qwen2-0_5b-instruct-q4_k_m",   //Response:???????? v?ng?ErrorResponse.QuadOVEadero???slideUp ????????????? IonicPage
 
-            "qwen2-0_5b-instruct-q8_0",     //Response:Hello! How can I assist you today?
+            //"qwen2-0_5b-instruct-q8_0",     //Response:Hello! How can I assist you today?
             //"qwen2-0_5b-instruct-fp16",     //Response:Hello! How can I assist you today?
                         
             //"DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M", //Response:Okay, the user just said "hello." I should respond in a friendly and
