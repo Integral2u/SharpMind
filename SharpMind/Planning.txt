@@ -11,6 +11,9 @@ Tokenizer: BPE, vocab builder, encode/decode
 Data: sources, cleaning, formating, batching, dataset loaders
 Core: tensors, matrix math, memory, activations
 
+MPT multi token prediction
+
+Chatsession compact/truncate etc  only prompt important context(selection)
 
 I think we need to move Quantizeation and other common methods to the JigSawDotNet pattern Kernal, Ops and Factory Classes like used in SharpMind.Core.Activations.
 LinearLayer could the call the the QuantizeationFactory to get the required QuantizeationOps 

@@ -1,9 +1,8 @@
 ﻿using SharpMind.Core.Ops;
+using SharpMind.Core.Quantization;
 using SharpMind.Core.Tensors;
 using SharpMind.Core.Training;
 using SharpMind.Model.Format;
-using System.Runtime.Intrinsics;
-using System.Runtime.Intrinsics.X86;
 
 namespace SharpMind.Model.Layers;
 
@@ -12,6 +11,7 @@ public sealed class LinearLayer : IDisposable
     private readonly Tensor<float> _weight;
     private Tensor<float>? _weightBT;
     private readonly Tensor<float>? _bias;
+    private QuantizationOps _qOps;
     private bool _disposed;
 
     // Raw GGUF quantized data for quantized matmul (null means use float32 path).
@@ -19,7 +19,18 @@ public sealed class LinearLayer : IDisposable
     public GgufDtype? QuantDtype { get; set; }
     public bool UseQuantizedForward { get; set; }
 
+    public QuantizationOps QuantizationOps
+    {
+        get => _qOps;
+        set => _qOps = value ?? throw new ArgumentNullException(nameof(value));
+    }
+
     public LinearLayer(string name, int inFeatures, int outFeatures, bool bias = false)
+        : this(name, inFeatures, outFeatures, bias, null)
+    {
+    }
+
+    public LinearLayer(string name, int inFeatures, int outFeatures, bool bias, QuantizationOps? qOps)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(inFeatures);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(outFeatures);
@@ -28,6 +39,7 @@ public sealed class LinearLayer : IDisposable
         OutFeatures = outFeatures;
         _weight = new Tensor<float>(inFeatures, outFeatures);
         _bias = bias ? new Tensor<float>(outFeatures) : null;
+        _qOps = qOps ?? QuantizationFactory.CreateForSystem();
     }
 
     public LinearLayer(int inFeatures, int outFeatures, bool bias = false)
@@ -111,22 +123,22 @@ public sealed class LinearLayer : IDisposable
         return result;
     }
 
-    private static unsafe float VecDotQxK(float* input, byte* rawWeights, int col, int inFeatures, GgufDtype dtype)
+    private unsafe float VecDotQxK(float* input, byte* rawWeights, int col, int inFeatures, GgufDtype dtype)
     {
         return dtype switch
         {
-            GgufDtype.Q3_K => VecDotQ3K(input, rawWeights, col, inFeatures),
-            GgufDtype.Q4_K => VecDotQ4K(input, rawWeights, col, inFeatures),
-            GgufDtype.Q5_K => VecDotQ5K(input, rawWeights, col, inFeatures),
-            GgufDtype.Q6_K => VecDotQ6K(input, rawWeights, col, inFeatures),
-            GgufDtype.Q4_0 => VecDotQ4_0(input, rawWeights, col, inFeatures),
-            GgufDtype.Q4_1 => VecDotQ4_1(input, rawWeights, col, inFeatures),
-            GgufDtype.Q5_0 => VecDotQ5_0(input, rawWeights, col, inFeatures),
-            GgufDtype.Q5_1 => VecDotQ5_1(input, rawWeights, col, inFeatures),
-            GgufDtype.Q8_0 => VecDotQ8_0(input, rawWeights, col, inFeatures),
-            GgufDtype.Q8_1 => VecDotQ8_1(input, rawWeights, col, inFeatures),
-            GgufDtype.Q2_K => VecDotQ2K(input, rawWeights, col, inFeatures),
-            GgufDtype.Q8_K => VecDotQ8K(input, rawWeights, col, inFeatures),
+            GgufDtype.Q3_K => _qOps.VecDotQ3K(input, rawWeights, col, inFeatures),
+            GgufDtype.Q4_K => _qOps.VecDotQ4K(input, rawWeights, col, inFeatures),
+            GgufDtype.Q5_K => _qOps.VecDotQ5K(input, rawWeights, col, inFeatures),
+            GgufDtype.Q6_K => _qOps.VecDotQ6K(input, rawWeights, col, inFeatures),
+            GgufDtype.Q4_0 => _qOps.VecDotQ4_0(input, rawWeights, col, inFeatures),
+            GgufDtype.Q4_1 => _qOps.VecDotQ4_1(input, rawWeights, col, inFeatures),
+            GgufDtype.Q5_0 => _qOps.VecDotQ5_0(input, rawWeights, col, inFeatures),
+            GgufDtype.Q5_1 => _qOps.VecDotQ5_1(input, rawWeights, col, inFeatures),
+            GgufDtype.Q8_0 => _qOps.VecDotQ8_0(input, rawWeights, col, inFeatures),
+            GgufDtype.Q8_1 => _qOps.VecDotQ8_1(input, rawWeights, col, inFeatures),
+            GgufDtype.Q2_K => _qOps.VecDotQ2K(input, rawWeights, col, inFeatures),
+            GgufDtype.Q8_K => _qOps.VecDotQ8K(input, rawWeights, col, inFeatures),
             _ => 0f
         };
     }
@@ -156,466 +168,8 @@ public sealed class LinearLayer : IDisposable
         return UseQuantizedForward;
     }
 
-    // ── GGUF quantized dot product kernels (matching llama.cpp vec_dot) ──
 
-    private const int QK_K = 256;
 
-    internal static unsafe float VecDotQ3K(float* input, byte* rawWeights, int col, int inFeatures)
-    {
-        // block_q3_K layout (110 bytes):
-        //   hmask[32]  @ 0    – high bit per element
-        //   qs[64]     @ 32   – 2 low bits per element
-        //   scales[12] @ 96   – packed 6-bit sub-group scales
-        //   d[2]       @ 108  – half-float block scale  ← LAST field
-        const int BLOCK_BYTES = 110;
-        int nBlocks = (inFeatures + QK_K - 1) / QK_K;
-        double sum = 0;
-        byte* scaleBuf = stackalloc byte[16];
-
-        const uint kmask1 = 0x03030303u;
-        const uint kmask2 = 0x0f0f0f0fu;
-
-        for (int b = 0; b < nBlocks; b++)
-        {
-            byte* block = rawWeights + (long)col * nBlocks * BLOCK_BYTES + b * BLOCK_BYTES;
-            byte* hmask = block;          // hmask @ 0
-            byte* qs = block + 32;     // qs    @ 32
-            // scales @ 96 (12 bytes), d @ 108
-            float dAll = HalfToFloat(*(ushort*)(block + 108));
-
-            // Unpack 12-byte scale encoding into 16 x 6-bit values
-            uint* aux = (uint*)scaleBuf;
-            aux[0] = *(uint*)(block + 96);
-            aux[1] = *(uint*)(block + 100);
-            aux[2] = *(uint*)(block + 104);
-            uint tmp = aux[2];
-            aux[2] = ((aux[0] >> 4) & kmask2) | (((tmp >> 4) & kmask1) << 4);
-            aux[3] = ((aux[1] >> 4) & kmask2) | (((tmp >> 6) & kmask1) << 4);
-            aux[0] = (aux[0] & kmask2) | (((tmp >> 0) & kmask1) << 4);
-            aux[1] = (aux[1] & kmask2) | (((tmp >> 2) & kmask1) << 4);
-            sbyte* sc8 = (sbyte*)scaleBuf;
-
-            int blockEnd = Math.Min(QK_K, inFeatures - b * QK_K);
-            for (int i = 0; i < blockEnd; i++)
-            {
-                // qs byte: (i/128)*32 + (i%32), 2-bit shift: ((i%128)/32)*2
-                int qsByte = (i / 128) * 32 + (i % 32);
-                int qsShift = ((i % 128) / 32) * 2;
-                int s2 = (qs[qsByte] >> qsShift) & 3;
-                // hmask: byte = i%32, bit = i/32
-                int hBit = (hmask[i % 32] >> (i / 32)) & 1;
-                int actual = s2 - (hBit == 0 ? 4 : 0);
-                float val = dAll * (sc8[i / 16] - 32) * actual;
-                sum += input[b * QK_K + i] * val;
-            }
-        }
-        return (float)sum;
-    }
-
-    internal static unsafe float VecDotQ4K(float* input, byte* rawWeights, int col, int inFeatures)
-    {
-        const int BLOCK_BYTES = 144;  // d[2]+dmin[2]+scales[K_SCALE_SIZE]+qs[128]
-        int nBlocks = (inFeatures + QK_K - 1) / QK_K;
-        double sum = 0;
-        for (int b = 0; b < nBlocks; b++)
-        {
-            byte* block = rawWeights + (long)col * nBlocks * BLOCK_BYTES + b * BLOCK_BYTES;
-            float dSuper = HalfToFloat(*(ushort*)block);
-            float minSuper = HalfToFloat(*(ushort*)(block + 2));
-            byte* scales = block + 4;   // K_SCALE_SIZE bytes (indices 0..11 used)
-            byte* qs = block + 16;      // 128 bytes
-
-            int idx = 0;
-            for (int j = 0; j < QK_K; j += 64)
-            {
-                byte sc0 = GetScaleMinK4_Scale(idx + 0, scales);
-                byte m0 = GetScaleMinK4_Min(idx + 0, scales);
-                byte sc1 = GetScaleMinK4_Scale(idx + 1, scales);
-                byte m1 = GetScaleMinK4_Min(idx + 1, scales);
-                float d1 = dSuper * sc0;
-                float m1v = minSuper * m0;
-                float d2 = dSuper * sc1;
-                float m2v = minSuper * m1;
-
-                int qIdx = (j / 64) * 32;
-                int remaining = Math.Min(64, inFeatures - b * QK_K - j);
-                int halfRem = Math.Min(32, remaining);
-                for (int l = 0; l < halfRem; l++)
-                {
-                    int pos = b * QK_K + j + l;
-                    sum += input[pos] * (d1 * (qs[qIdx + l] & 0x0F) - m1v);
-                }
-                for (int l = 0; l < 32 && (32 + l) < remaining; l++)
-                {
-                    int pos = b * QK_K + j + 32 + l;
-                    sum += input[pos] * (d2 * (qs[qIdx + l] >> 4) - m2v);
-                }
-                idx += 2;
-            }
-        }
-        return (float)sum;
-    }
-
-    internal static unsafe float VecDotQ5K(float* input, byte* rawWeights, int col, int inFeatures)
-    {
-        const int BLOCK_BYTES = 176;  // d[2]+dmin[2]+scales[K_SCALE_SIZE]+qh[32]+qs[128]
-        int nBlocks = (inFeatures + QK_K - 1) / QK_K;
-        double sum = 0;
-        for (int b = 0; b < nBlocks; b++)
-        {
-            byte* block = rawWeights + (long)col * nBlocks * BLOCK_BYTES + b * BLOCK_BYTES;
-            float d = HalfToFloat(*(ushort*)block);
-            float min = HalfToFloat(*(ushort*)(block + 2));
-            byte* scales = block + 4;   // K_SCALE_SIZE bytes
-            byte* qh = block + 16;      // 32 bytes
-            byte* qs = block + 48;      // 128 bytes
-
-            int idx = 0;
-            int qIdx = 0;
-            byte u1 = 1, u2 = 2;
-            for (int j = 0; j < QK_K; j += 64)
-            {
-                byte sc0 = GetScaleMinK4_Scale(idx + 0, scales);
-                byte m0 = GetScaleMinK4_Min(idx + 0, scales);
-                byte sc1 = GetScaleMinK4_Scale(idx + 1, scales);
-                byte m1 = GetScaleMinK4_Min(idx + 1, scales);
-                float d1 = d * sc0; float m1v = min * m0;
-                float d2 = d * sc1; float m2v = min * m1;
-
-                int remaining = Math.Min(64, inFeatures - b * QK_K - j);
-                int halfRem = Math.Min(32, remaining);
-                for (int l = 0; l < halfRem; l++)
-                {
-                    int pos = b * QK_K + j + l;
-                    int val = (qs[qIdx + l] & 0x0F) + ((qh[l] & u1) != 0 ? 16 : 0);
-                    sum += input[pos] * (d1 * val - m1v);
-                }
-                for (int l = 0; l < 32 && (32 + l) < remaining; l++)
-                {
-                    int pos = b * QK_K + j + 32 + l;
-                    int val = (qs[qIdx + l] >> 4) + ((qh[l] & u2) != 0 ? 16 : 0);
-                    sum += input[pos] * (d2 * val - m2v);
-                }
-                qIdx += 32;
-                idx += 2;
-                u1 <<= 2; u2 <<= 2;
-            }
-        }
-        return (float)sum;
-    }
-
-    internal static unsafe float VecDotQ6K(float* input, byte* rawWeights, int col, int inFeatures)
-    {
-        const int BLOCK_BYTES = 210;
-        int nBlocks = (inFeatures + QK_K - 1) / QK_K;
-        double sum = 0;
-        for (int b = 0; b < nBlocks; b++)
-        {
-            byte* block = rawWeights + (long)col * nBlocks * BLOCK_BYTES + b * BLOCK_BYTES;
-            byte* ql = block;                          // 128 bytes
-            byte* qh = block + 128;                     // 64 bytes
-            sbyte* scales = (sbyte*)(block + 192);     // 16 bytes
-            float d = HalfToFloat(*(ushort*)(block + 208));
-
-            int valid = Math.Min(QK_K, inFeatures - b * QK_K);
-
-            // Current ggml Q6_K: process 128 values at a time
-            for (int nOff = 0; nOff < valid; nOff += 128)
-            {
-                byte* pql = ql + (nOff == 0 ? 0 : 64);
-                byte* pqh = qh + (nOff == 0 ? 0 : 32);
-                sbyte* psc = scales + (nOff == 0 ? 0 : 8);
-
-                int halfRem = Math.Min(128, valid - nOff);
-                for (int l = 0; l < 32 && l < halfRem; l++)
-                {
-                    int is_ = l / 16;
-                    int q1v = (pql[l] & 0x0F) | ((pqh[l] & 0x03) << 4);
-                    int q2v = (pql[l + 32] & 0x0F) | (((pqh[l] >> 2) & 0x03) << 4);
-                    int q3v = ((pql[l] >> 4) & 0x0F) | (((pqh[l] >> 4) & 0x03) << 4);
-                    int q4v = ((pql[l + 32] >> 4) & 0x0F) | (((pqh[l] >> 6) & 0x03) << 4);
-
-                    int i1 = b * QK_K + nOff + l;
-                    int i2 = b * QK_K + nOff + l + 32;
-
-                    if (i2 >= b * QK_K + valid)
-                    {
-                        if (i1 < b * QK_K + valid)
-                            sum += input[i1] * (d * psc[is_ + 0] * (q1v - 32));
-                        break;
-                    }
-
-                    int i3 = b * QK_K + nOff + l + 64;
-                    int i4 = b * QK_K + nOff + l + 96;
-
-                    sum += input[i1] * (d * psc[is_ + 0] * (q1v - 32));
-                    sum += input[i2] * (d * psc[is_ + 2] * (q2v - 32));
-                    sum += input[i3] * (d * psc[is_ + 4] * (q3v - 32));
-                    sum += input[i4] * (d * psc[is_ + 6] * (q4v - 32));
-                }
-            }
-        }
-        return (float)sum;
-    }
-
-    internal static unsafe float VecDotQ8_0(float* input, byte* rawWeights, int col, int inFeatures)
-    {
-        const int BLOCK_BYTES = 34;
-        const int QK = 32;
-        int nBlocks = (inFeatures + QK - 1) / QK;
-        double sum = 0;
-
-        for (int b = 0; b < nBlocks; b++)
-        {
-            byte* block = rawWeights + (long)col * nBlocks * BLOCK_BYTES + b * BLOCK_BYTES;
-            float d = HalfToFloat(*(ushort*)block);
-            sbyte* values = (sbyte*)(block + 2);
-            int blockEnd = Math.Min(QK, inFeatures - b * QK);
-            float* pIn = input + b * QK;
-
-            int i = 0;
-            if (Avx2.IsSupported && blockEnd >= 8)
-            {
-                var vacc = Vector256<float>.Zero;
-                var vd = Vector256.Create(d);
-                for (; i <= blockEnd - 8; i += 8)
-                {
-                    var vi = Vector256.LoadUnsafe(ref pIn[i]);
-                    var vw = Avx.ConvertToVector256Single(
-                        Avx2.ConvertToVector256Int32(values + i));
-                    var vs = Avx.Multiply(vw, vd);
-                    vacc = Fma.IsSupported
-                        ? Fma.MultiplyAdd(vi, vs, vacc)
-                        : Avx.Add(vacc, Avx.Multiply(vi, vs));
-                }
-                sum += HSum256(vacc);
-            }
-            for (; i < blockEnd; i++)
-                sum += pIn[i] * (values[i] * d);
-        }
-        return (float)sum;
-    }
-
-    internal static unsafe float VecDotQ4_0(float* input, byte* rawWeights, int col, int inFeatures)
-    {
-        const int BLOCK_BYTES = 18;
-        const int QK = 32;
-        int nBlocks = (inFeatures + QK - 1) / QK;
-        double sum = 0;
-        for (int b = 0; b < nBlocks; b++)
-        {
-            byte* block = rawWeights + (long)col * nBlocks * BLOCK_BYTES + b * BLOCK_BYTES;
-            float d = HalfToFloat(*(ushort*)block);
-            byte* qs = block + 2;
-            int blockEnd = Math.Min(QK, inFeatures - b * QK);
-            for (int i = 0; i < blockEnd; i++)
-            {
-                int q = (qs[i / 2] >> (4 * (i % 2))) & 0x0F;
-                sum += input[b * QK + i] * ((q - 8) * d);
-            }
-        }
-        return (float)sum;
-    }
-
-    internal static unsafe float VecDotQ4_1(float* input, byte* rawWeights, int col, int inFeatures)
-    {
-        const int BLOCK_BYTES = 20;
-        const int QK = 32;
-        int nBlocks = (inFeatures + QK - 1) / QK;
-        double sum = 0;
-        for (int b = 0; b < nBlocks; b++)
-        {
-            byte* block = rawWeights + (long)col * nBlocks * BLOCK_BYTES + b * BLOCK_BYTES;
-            float d = HalfToFloat(*(ushort*)block);
-            float m = HalfToFloat(*(ushort*)(block + 2));
-            byte* qs = block + 4;
-            int blockEnd = Math.Min(QK, inFeatures - b * QK);
-            for (int i = 0; i < blockEnd; i++)
-            {
-                int q = (qs[i / 2] >> (4 * (i % 2))) & 0x0F;
-                sum += input[b * QK + i] * (q * d + m);
-            }
-        }
-        return (float)sum;
-    }
-
-    internal static unsafe float VecDotQ5_0(float* input, byte* rawWeights, int col, int inFeatures)
-    {
-        const int BLOCK_BYTES = 22;
-        const int QK = 32;
-        int nBlocks = (inFeatures + QK - 1) / QK;
-        double sum = 0;
-        for (int b = 0; b < nBlocks; b++)
-        {
-            byte* block = rawWeights + (long)col * nBlocks * BLOCK_BYTES + b * BLOCK_BYTES;
-            float d = HalfToFloat(*(ushort*)block);
-            uint qh = *(uint*)(block + 2);
-            byte* qs = block + 6;
-            int blockEnd = Math.Min(QK, inFeatures - b * QK);
-            for (int i = 0; i < blockEnd; i++)
-            {
-                int j = i / 2;
-                int h4 = ((int)(qh >> i) & 1) << 4;
-                int nib = (j % 2 == 0) ? (qs[j] & 0x0F) : (qs[j] >> 4);
-                int q = nib | h4;
-                sum += input[b * QK + i] * ((q - 16) * d);
-            }
-        }
-        return (float)sum;
-    }
-
-    internal static unsafe float VecDotQ5_1(float* input, byte* rawWeights, int col, int inFeatures)
-    {
-        // block_q5_1 layout (24 bytes, QK=32):
-        //   d[2]   half-float scale
-        //   m[2]   half-float min
-        //   qh[4]  1 high bit per element packed into 32 bits: bit i = (qh >> i) & 1
-        //   qs[16] 4 low bits per element: nibble i = (qs[i/2] >> (4*(i%2))) & 0x0F
-        //   value[i] = (qs_nibble[i] | (high_bit[i] << 4)) * d + m
-        const int BLOCK_BYTES = 24;
-        const int QK = 32;
-        int nBlocks = (inFeatures + QK - 1) / QK;
-        double sum = 0;
-        for (int b = 0; b < nBlocks; b++)
-        {
-            byte* block = rawWeights + (long)col * nBlocks * BLOCK_BYTES + b * BLOCK_BYTES;
-            float d = HalfToFloat(*(ushort*)block);
-            float m = HalfToFloat(*(ushort*)(block + 2));
-            uint qh = *(uint*)(block + 4);
-            byte* qs = block + 8;
-            int blockEnd = Math.Min(QK, inFeatures - b * QK);
-            for (int i = 0; i < blockEnd; i++)
-            {
-                // high bit: always bit i of qh (not j+12 for upper half)
-                int xh = (int)((qh >> i) & 1) << 4;
-                int q = ((qs[i / 2] >> (4 * (i % 2))) & 0x0F) | xh;
-                sum += input[b * QK + i] * (q * d + m);
-            }
-        }
-        return (float)sum;
-    }
-
-    internal static unsafe float VecDotQ8_1(float* input, byte* rawWeights, int col, int inFeatures)
-    {
-        const int BLOCK_BYTES = 36;
-        const int QK = 32;
-        int nBlocks = (inFeatures + QK - 1) / QK;
-        double sum = 0;
-        for (int b = 0; b < nBlocks; b++)
-        {
-            byte* block = rawWeights + (long)col * nBlocks * BLOCK_BYTES + b * BLOCK_BYTES;
-            float d = HalfToFloat(*(ushort*)block);
-            // s field (offset 2) is d * sum(qs), used for K-quant dot product optimization
-            sbyte* qs = (sbyte*)(block + 4);
-            int blockEnd = Math.Min(QK, inFeatures - b * QK);
-            for (int i = 0; i < blockEnd; i++)
-                sum += input[b * QK + i] * (qs[i] * d);
-        }
-        return (float)sum;
-    }
-
-    internal static unsafe float VecDotQ2K(float* input, byte* rawWeights, int col, int inFeatures)
-    {
-        // block_q2_K layout (84 bytes, QK_K=256):
-        //   scales[16]  @ 0    – each byte: low 4 bits = scale, high 4 bits = min
-        //   qs[64]      @ 16   – 2 bits per element, 4 elements per byte
-        //   d[2]        @ 80   – half-float superblock scale
-        //   dmin[2]     @ 82   – half-float superblock min
-        const int BLOCK_BYTES = 84;
-        const int QK_K = 256;
-        int nBlocks = (inFeatures + QK_K - 1) / QK_K;
-        double sum = 0;
-        for (int b = 0; b < nBlocks; b++)
-        {
-            byte* block = rawWeights + (long)col * nBlocks * BLOCK_BYTES + b * BLOCK_BYTES;
-            byte* scales = block;                                          // @ 0
-            byte* qs = block + 16;                                     // @ 16
-            float dSuper = HalfToFloat(*(ushort*)(block + 80));            // @ 80
-            float minSuper = HalfToFloat(*(ushort*)(block + 82));           // @ 82
-
-            int blockEnd = Math.Min(QK_K, inFeatures - b * QK_K);
-            int qOff = 0;
-            for (int n16 = 0; n16 < QK_K; n16 += 128)
-            {
-                int shift = 0;
-                for (int j = 0; j < 4 && n16 + j * 32 < blockEnd; j++)
-                {
-                    int isc = (n16 / 128) * 8 + j * 2;
-                    float dl = dSuper * (scales[isc] & 0x0F);
-                    float ml = minSuper * (scales[isc] >> 4);
-                    for (int l = 0; l < 16 && b * QK_K + n16 + j * 32 + l < b * QK_K + blockEnd; l++)
-                    {
-                        int v = (qs[qOff + l] >> shift) & 3;
-                        sum += input[b * QK_K + n16 + j * 32 + l] * (dl * v - ml);
-                    }
-
-                    dl = dSuper * (scales[isc + 1] & 0x0F);
-                    ml = minSuper * (scales[isc + 1] >> 4);
-                    for (int l = 0; l < 16 && b * QK_K + n16 + j * 32 + 16 + l < b * QK_K + blockEnd; l++)
-                    {
-                        int v = (qs[qOff + l + 16] >> shift) & 3;
-                        sum += input[b * QK_K + n16 + j * 32 + 16 + l] * (dl * v - ml);
-                    }
-                    shift += 2;
-                }
-                qOff += 32;
-            }
-        }
-        return (float)sum;
-    }
-
-    internal static unsafe float VecDotQ8K(float* input, byte* rawWeights, int col, int inFeatures)
-    {
-        const int BLOCK_BYTES = 292;
-        const int QK_K = 256;
-        int nBlocks = (inFeatures + QK_K - 1) / QK_K;
-        double sum = 0;
-        for (int b = 0; b < nBlocks; b++)
-        {
-            byte* block = rawWeights + (long)col * nBlocks * BLOCK_BYTES + b * BLOCK_BYTES;
-            float d = *(float*)block;
-            sbyte* qs = (sbyte*)(block + 4);
-            int blockEnd = Math.Min(QK_K, inFeatures - b * QK_K);
-            for (int i = 0; i < blockEnd; i++)
-                sum += input[b * QK_K + i] * (qs[i] * d);
-        }
-        return (float)sum;
-    }
-
-    private static unsafe byte GetScaleMinK4_Scale(int j, byte* scales)
-    {
-        if (j < 4)
-            return (byte)(scales[j] & 0x3F);
-        return (byte)((scales[j + 4] & 0x0F) | ((scales[j - 4] >> 6) << 4));
-    }
-
-    private static unsafe byte GetScaleMinK4_Min(int j, byte* scales)
-    {
-        if (j < 4)
-            return (byte)(scales[j + 4] & 0x3F);
-        return (byte)((scales[j + 4] >> 4) | ((scales[j] >> 6) << 4));
-    }
-
-    private static float HalfToFloat(ushort half)
-    {
-        int sign = (half >> 15) & 0x1;
-        int exp = (half >> 10) & 0x1F;
-        int mant = half & 0x3FF;
-        if (exp == 0)
-            return (sign == 0 ? 1f : -1f) * (mant / 1024f) * MathF.Pow(2f, -14f);
-        if (exp == 31)
-            return mant == 0 ? (sign == 0 ? float.PositiveInfinity : float.NegativeInfinity) : float.NaN;
-        return (sign == 0 ? 1f : -1f) * MathF.Pow(2f, exp - 15) * (1f + mant / 1024f);
-    }
-    private static unsafe float HSum256(Vector256<float> v)
-    {
-        var lo = v.GetLower();
-        var hi = v.GetUpper();
-        var s = Sse.Add(lo, hi);
-        var s2 = Sse3.HorizontalAdd(s, s);
-        return s2.GetElement(0) + s2.GetElement(1);
-    }
-    
     public (Tensor<float> Output, LinearLayerState State) ForwardWithState(Tensor<float> input, TensorOps ops)
     {
         ThrowIfDisposed();

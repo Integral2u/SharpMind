@@ -1,6 +1,7 @@
 ﻿using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
 using System.Buffers;
+using SharpMind.Core;
 
 namespace SharpMind.Model.Layers.Attention;
 
@@ -46,7 +47,7 @@ internal static class AttentionKernels
                         acc = Fma.IsSupported
                             ? Fma.MultiplyAdd(Vector256.LoadUnsafe(ref qi[d]), Vector256.LoadUnsafe(ref kj[d]), acc)
                             : Avx.Add(acc, Avx.Multiply(Vector256.LoadUnsafe(ref qi[d]), Vector256.LoadUnsafe(ref kj[d])));
-                    float dot = HSum256(acc);
+                    float dot = MathHelpers.HSum256_Avx(acc);
                     for (; d < headDim; d++) dot += qi[d] * kj[d];
                     scoreRow[j] = dot * scale;
                 }
@@ -109,17 +110,6 @@ internal static class AttentionKernels
         {
             ArrayPool<float>.Shared.Return(rented);
         }
-    }
-
-    [System.Runtime.CompilerServices.MethodImpl(
-        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
-    private static float HSum256(Vector256<float> v)
-    {
-        var lo = Avx.ExtractVector128(v, 0);
-        var hi = Avx.ExtractVector128(v, 1);
-        var s = Sse.Add(lo, hi);
-        s = Sse.Add(s, Sse.MoveHighToLow(s, s));
-        return Sse.AddScalar(s, Sse.Shuffle(s, s, 1)).ToScalar();
     }
 
     private static unsafe void SoftmaxInPlace(Span<float> row)

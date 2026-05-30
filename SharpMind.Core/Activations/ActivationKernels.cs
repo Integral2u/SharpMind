@@ -190,7 +190,7 @@ internal static class ActivationKernels
                         Vector256.LoadUnsafe(ref a[k]),
                         Vector256.LoadUnsafe(ref pBT[k]),
                         acc);
-                float sum = HSum256(acc);
+                float sum = MathHelpers.HSum256_Avx(acc);
                 for (; k < K; k++) sum += a[k] * pBT[k];
                 c[j] = sum;
             });
@@ -210,7 +210,7 @@ internal static class ActivationKernels
                         Vector256.LoadUnsafe(ref rowA[k]),
                         Vector256.LoadUnsafe(ref rowBT[k]),
                         acc);
-                float sum = HSum256(acc);
+                float sum = MathHelpers.HSum256_Avx(acc);
                 for (; k < K; k++) sum += rowA[k] * rowBT[k];
                 rowC[j] = sum;
             }
@@ -231,7 +231,7 @@ internal static class ActivationKernels
                     acc = Avx.Add(acc, Avx.Multiply(
                         Vector256.LoadUnsafe(ref a[k]),
                         Vector256.LoadUnsafe(ref pBT[k])));
-                float sum = HSum256(acc);
+                float sum = MathHelpers.HSum256_Avx(acc);
                 for (; k < K; k++) sum += a[k] * pBT[k];
                 c[j] = sum;
             });
@@ -250,7 +250,7 @@ internal static class ActivationKernels
                     acc = Avx.Add(acc, Avx.Multiply(
                         Vector256.LoadUnsafe(ref rowA[k]),
                         Vector256.LoadUnsafe(ref rowBT[k])));
-                float sum = HSum256(acc);
+                float sum = MathHelpers.HSum256_Avx(acc);
                 for (; k < K; k++) sum += rowA[k] * rowBT[k];
                 rowC[j] = sum;
             }
@@ -284,14 +284,4 @@ internal static class ActivationKernels
             }
         });
     }
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static float HSum256(Vector256<float> v)
-    {
-        var lo = Avx.ExtractVector128(v, 0);
-        var hi = Avx.ExtractVector128(v, 1);
-        var s = Sse.Add(lo, hi);
-        s = Sse.Add(s, Sse.MoveHighToLow(s, s));
-        return Sse.AddScalar(s, Sse.Shuffle(s, s, 1)).ToScalar();
-    }
-
 }

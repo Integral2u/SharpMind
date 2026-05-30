@@ -2,6 +2,7 @@ using System.Buffers;
 using System.Runtime.CompilerServices;
 using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
+using SharpMind.Core;
 
 namespace SharpMind.Inference;
 
@@ -42,7 +43,7 @@ internal static class InferenceKernels
                                           Vector256.LoadUnsafe(ref kj[d]), acc)
                         : Avx.Add(acc, Avx.Multiply(Vector256.LoadUnsafe(ref q[d]),
                                                      Vector256.LoadUnsafe(ref kj[d])));
-                float dot = HSum256(acc);
+                float dot = MathHelpers.HSum256_Avx(acc);
                 for (; d < headDim; d++) dot += q[d] * kj[d];
                 pS[j] = dot * scale;
             }
@@ -146,7 +147,7 @@ internal static class InferenceKernels
                         acc = Avx.Add(acc, Avx.Multiply(
                             Vector256.LoadUnsafe(ref q[d]),
                             Vector256.LoadUnsafe(ref kj[d])));
-                    dot = HSum256(acc);
+                    dot = MathHelpers.HSum256_Avx(acc);
                     for (; d < headDim; d++) dot += q[d] * kj[d];
                 }
                 else
@@ -217,18 +218,6 @@ internal static class InferenceKernels
             for (int i = 0; i < inFeatures; i++) sum += input[i] * row[i];
             output[o] = sum;
         }
-    }
-
-    // ── Shared helpers ────────────────────────────────────────────────────
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static float HSum256(Vector256<float> v)
-    {
-        var lo  = Avx.ExtractVector128(v, 0);
-        var hi  = Avx.ExtractVector128(v, 1);
-        var s   = Sse.Add(lo, hi);
-        s = Sse.Add(s, Sse.MoveHighToLow(s, s));
-        return Sse.AddScalar(s, Sse.Shuffle(s, s, 1)).ToScalar();
     }
 
     private static void SoftmaxInPlace(Span<float> x)

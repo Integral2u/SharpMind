@@ -14,8 +14,8 @@ namespace SharpMind.Samples.Examples
     {
         private static readonly string[] Models =
             [
-            //"Qwen2-0.5B.Q2_K",              //Response:\n\n\n\n\n      ,,,..
-            //"Qwen2-0.5B.Q3_K_L",            //Response:????????/classes?????????????
+            //"Qwen2-0.5B.Q2_K",              //Response:zn?-redux??zn???erator ++)
+            //"Qwen2-0.5B.Q3_K_L",            //Response:/classes/classes?????????ist??????????_*
             //"Qwen2-0.5B.Q3_K_M",            //Response:!!!!!!!
             //"Qwen2-0.5B.Q3_K_S",            //Response:!!!!!!!
             //"SmolLM-135M.Q4_K_M",           //Response:enos or port portern I either norussels but '', entryern - +/-
@@ -27,8 +27,8 @@ namespace SharpMind.Samples.Examples
                         
             //"DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M", //Response:Okay, the user just said "hello." I should respond in a friendly and
             "TinyLlama-1.1B-Chat-v1.0.Q4_K_M",      //Response:It seems like you'd like to provide information on the topic of which is not
-            //"llama-3.2-1b-instruct-q8_0",           //Response:It seems like you'd like to provide information on the topic of which is not
-            //"qwen2.5-1.5b-instruct-q8_0",           //Response:\n\n\n\n# 1. Write a Python program to check if the given
+            "llama-3.2-1b-instruct-q8_0",           //Response:It seems like you'd like to provide information on the topic of which is not
+            "qwen2.5-1.5b-instruct-q8_0",           //Response:\n\n\n\n# 1. Write a Python program to check if the given
             
             ];
 
@@ -135,6 +135,7 @@ namespace SharpMind.Samples.Examples
             }
             await Console.Out.WriteLineAsync();
             await Console.Out.WriteLineAsync("Done!");
+            Console.In.ReadLine();
         }
         private static HardwareTier DetectBestHardware()
         {

@@ -1,6 +1,7 @@
 using System.Runtime.CompilerServices;
 using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
+using SharpMind.Core;
 
 namespace SharpMind.Training;
 
@@ -104,7 +105,7 @@ internal static class TrainingKernels
                     ? Fma.MultiplyAdd(v, v, acc)
                     : Avx.Add(acc, Avx.Multiply(v, v));
             }
-            float sum = HSum256(acc);
+            float sum = MathHelpers.HSum256_Avx(acc);
             for (; i < n; i++) sum += p[i] * p[i];
             return sum;
         }
@@ -115,16 +116,6 @@ internal static class TrainingKernels
         float sum = 0f;
         foreach (float v in data) sum += v * v;
         return sum;
-    }
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static float HSum256(Vector256<float> v)
-    {
-        var lo  = Avx.ExtractVector128(v, 0);
-        var hi  = Avx.ExtractVector128(v, 1);
-        var s   = Sse.Add(lo, hi);
-        s = Sse.Add(s, Sse.MoveHighToLow(s, s));
-        return Sse.AddScalar(s, Sse.Shuffle(s, s, 1)).ToScalar();
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

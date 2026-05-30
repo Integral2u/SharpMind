@@ -377,15 +377,4 @@ internal static partial class QuantKernels
             output[o] = sum / scale;
         }
     }
-
-    // AVX2 helper
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static float HSum256(Vector256<float> v)
-    {
-        var lo = Avx.ExtractVector128(v, 0);
-        var hi = Avx.ExtractVector128(v, 1);
-        var s = Sse.Add(lo, hi);
-        s = Sse.Add(s, Sse.MoveHighToLow(s, s));
-        return Sse.AddScalar(s, Sse.Shuffle(s, s, 1)).ToScalar();
-    }
 }
