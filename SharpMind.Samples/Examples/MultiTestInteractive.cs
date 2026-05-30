@@ -18,8 +18,8 @@ namespace SharpMind.Samples.Examples
             //"Qwen2-0.5B.Q3_K_L",            //Response:????????/classes?????????????
             //"Qwen2-0.5B.Q3_K_M",            //Response:!!!!!!!
             //"Qwen2-0.5B.Q3_K_S",            //Response:!!!!!!!
-            //"SmolLM-135M.Q4_K_M",           //Response:enos or port portern I either norussels but '', entryern - +/-
-            //"SmolLM2-135M-Instruct.Q4_K_M", //Response:ELTS on Globeinstead/nbeccaeltary,,,,instead instead""", Gelcreat1
+            "SmolLM-135M.Q4_K_M",           //Response:enos or port portern I either norussels but '', entryern - +/-
+            "SmolLM2-135M-Instruct.Q4_K_M", //Response:ELTS on Globeinstead/nbeccaeltary,,,,instead instead""", Gelcreat1
             //"qwen2-0_5b-instruct-q4_k_m",   //Response:???????? v?ng?ErrorResponse.QuadOVEadero???slideUp ????????????? IonicPage
 
             //"qwen2-0_5b-instruct-q8_0",     //Response:Hello! How can I assist you today?
