@@ -427,3 +427,7 @@ FodyWeavers.xsd
 /ExternalAssets/qwen2.5-1.5b-instruct-q8_0.gguf
 /ExternalAssets/SmolLM2-135M-Instruct.Q4_K_M.gguf
 /ExternalAssets/llama-3.2-1b-instruct-q8_0.gguf
+/ExternalAssets/Qwen2-0.5B.Q2_K.gguf
+/ExternalAssets/Qwen2-0.5B.Q3_K_L.gguf
+/ExternalAssets/Qwen2-0.5B.Q3_K_M.gguf
+/ExternalAssets/Qwen2-0.5B.Q3_K_S.gguf
