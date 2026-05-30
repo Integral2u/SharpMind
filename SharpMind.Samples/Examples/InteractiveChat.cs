@@ -10,8 +10,6 @@ namespace SharpMind.Samples.Examples
 {
     public static class InteractiveChat
     {
-        // Set to true for one-shot test, false for interactive
-        private const bool TestMode = true;
         private const string TestPrompt = "hello";
 
         private static readonly string ModelName = "TinyLlama-1.1B-Chat-v1.0.Q4_K_M";
@@ -49,37 +47,17 @@ namespace SharpMind.Samples.Examples
 
             await using var session = new ChatSession(model, tokenizer, inferOps, meta)
             {
-                MaxTokens = TestMode ? 50 : 256,
-                Temperature = TestMode ? 0.0f : 0.7f,
-                TopK = TestMode ? 1 : 35,
-                TopP = TestMode ? 0.0f : 0.9f,
-                RepetitionPenalty = TestMode ? 1.0f : 1.1f,
+                MaxTokens = 256,
+                Temperature = 0.7f,
+                TopK = 35,
+                TopP = 0.9f,
+                RepetitionPenalty = 1.1f,
                 RepetitionWindow = 64,
             };
             if (!string.IsNullOrEmpty(systemPrompt)) session.AddMessage(ChatRole.System, systemPrompt);
 
-            if (TestMode)
-            {
-                Console.Out.WriteLine($"\nTest prompt: \"{TestPrompt}\"");
-                Console.Out.Write("Response: ");
-                var sw = System.Diagnostics.Stopwatch.StartNew();
-                await foreach (var entry in session.GetResponseStreamAsync(TestPrompt, cancellationTokenSource.Token))
-                {
-                    if (entry.TextDelta is { Length: > 0 } delta)
-                    {
-                        Console.ForegroundColor = ConsoleColor.Yellow;
-                        Console.Write(delta);
-                        Console.ResetColor();
-                    }
-                }
-                sw.Stop();
-                Console.Out.WriteLine($"\n--- Completed in {sw.Elapsed.TotalSeconds:F1}s ---");
-            }
-            else
-            {
-                Console.Out.WriteLine("\nChat ready! Say hello.\n");
-                var history = await session.StartChatAsync(cancellationTokenSource.Token, Prompt, Response);
-            }
+            Console.Out.WriteLine("\nChat ready! Say hello.\n");
+            var history = await session.StartChatAsync(cancellationTokenSource.Token, Prompt, Response);
 
             void Response(string text)
             {

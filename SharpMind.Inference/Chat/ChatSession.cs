@@ -177,11 +177,8 @@ public sealed class ChatSession
         _generator.ResetCache();
     }
 
-    public void ResetCaches()
-    {
-        _generator.ResetCache();
-    }
-
+    public void ResetCaches() => _generator.ResetCache();
+    //review: should use prompt formatter?
     private string BuildPrompt()
     {
         if (_formatter is not null)
@@ -220,6 +217,7 @@ public sealed class ChatSession
     private void ThrowIfDisposed()
         => ObjectDisposedException.ThrowIf(_disposed, nameof(ChatSession));
 
+    //Review: do hide system/agent prompts? may change over time not revelent to actual chat history
     public async Task<ChatMessage[]> StartChatAsync(CancellationToken token, Func<ChatMessage> prompt, Action<ChatStreamEntry> response)
     {
         while (!token.IsCancellationRequested)
@@ -239,11 +237,9 @@ public sealed class ChatSession
             {
                 response(new ChatStreamEntry { Status = ChatStatus.Interrupted });
             }
-            catch (Exception ex)
+            catch
             {
                 response(new ChatStreamEntry { Status = ChatStatus.Interrupted });
-                await Console.Out.WriteLineAsync(ex.Message);
-                await Console.Out.WriteLineAsync(ex.StackTrace);
             }
         }
         return [.. _history];

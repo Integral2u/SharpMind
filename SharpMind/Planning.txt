@@ -45,14 +45,6 @@ End to End Test, Super Dumb Model Training Load and Test Logits valid output.
 Add progress out Func<float> to loading mothods.
 Add tokens per second to ChatSession 
 
-Testing SmolLM-135M.Q4_K_M
-Hello
-1   FAIL
-
-Testing SmolLM2-135M-Instruct.Q4_K_M
-Hello
-Hello PASS
-
 
 ChatSession should possibly have a contrcutor that takes user name and default agent name (string userName = "User", string agentName = "Delta")
 this can be used is responses and chat history may require modifying prompting
