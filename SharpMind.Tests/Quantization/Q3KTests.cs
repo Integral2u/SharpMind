@@ -18,12 +18,12 @@ public class Q3KTests
     [Fact]
     public void TestReadQ3K_ValidBlock()
     {
-        // 110-byte block: d[2] + hmask[32] + qs[64] + scales[12]
+        // 110-byte block: hmask[32] + qs[64] + scales[12] + d[2]
         var block = new byte[110];
         
-        // d = 1.0 (0x3C00) at bytes 0-1
-        block[0] = 0x00;
-        block[1] = 0x3C;
+        // d = 1.0 (0x3C00) at bytes 108-109
+        block[108] = 0x00;
+        block[109] = 0x3C;
         
         // All scales = 0, all qs = 0, all hmask = 0
         // val = d * (0 - 32) * (0 - 4) = 1.0 * (-32) * (-4) = 128.0

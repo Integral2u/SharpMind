@@ -7,16 +7,9 @@ using Xunit.Abstractions;
 namespace SharpMind.Tests.Quantization;
 
 /// <summary>
-/// Reference tests for Q3_K dequant, matching llama.cpp block_q3_K layout:
-///   d[2] + hmask[32] + qs[64] + scales[12] = 110 bytes
-///   hmask @ 2, qs @ 34, scales @ 98
-///
-/// Scale packing: 12 bytes at offset 98 → 16 int8 scales.
-/// Reassembly (C dequantize_row_q3_K):
-///   aux[0] = bytes 98-101 (low nibbles of scales[0..3], scales[8..11])
-///   aux[1] = bytes 102-105 (low nibbles of scales[4..7], scales[12..15])
-///   tmp    = bytes 106-109 (each byte: bits 0-1=high{0,1,2,3}, 2-3=high{4,5,6,7},
-///                          4-5=high{8,9,10,11}, 6-7=high{12,13,14,15})
+/// Reference tests for Q3_K dequant, matching GGUF block_q3_K layout:
+///   hmask[32] + qs[64] + scales[12] + d[2] = 110 bytes
+///   hmask @ 0, qs @ 32, scales @ 96, d @ 108
 ///
 /// Dequant formula: result = d * (scales[sub-block] - 32) * (qs_val - (hmask_bit ? 0 : 4))
 /// </summary>
@@ -29,7 +22,7 @@ public class Q3KRefTests
     private static byte[] MakeBlock()
     {
         var block = new byte[110];
-        block[0] = 0x00; block[1] = 0x3C; // d = 1.0
+        block[108] = 0x00; block[109] = 0x3C; // d = 1.0
         return block;
     }
 
@@ -47,8 +40,8 @@ public class Q3KRefTests
     {
         var block = MakeBlock();
 
-        block[98] = 0x00; // scale[0] low nibble = 0
-        block[106] = 0x02; // scale[0] high nibble = 2
+        block[96] = 0x00; // scale[0] low nibble = 0
+        block[104] = 0x02; // scale[0] high nibble = 2
 
         var data = Dequant(block);
 
@@ -62,11 +55,11 @@ public class Q3KRefTests
     public void TestQ3K_HighBitSet()
     {
         var block = MakeBlock();
-        block[98] = 0x00;
-        block[106] = 0x02;
+        block[96] = 0x00;
+        block[104] = 0x02;
 
-        block[34 + 16] = 0x01; // qs[16] = 0x01 → qs_val = low 2 bits = 1
-        block[2 + 16] = 0x01;  // hmask[16] bit 0 = 1 → subtract 0
+        block[32 + 16] = 0x01; // qs[16] = 0x01 → qs_val = low 2 bits = 1
+        block[0 + 16] = 0x01;  // hmask[16] bit 0 = 1 → subtract 0
 
         var data = Dequant(block);
 
@@ -78,11 +71,11 @@ public class Q3KRefTests
     public void TestQ3K_HighBitClear()
     {
         var block = MakeBlock();
-        block[98] = 0x00;
-        block[106] = 0x02;
+        block[96] = 0x00;
+        block[104] = 0x02;
 
-        block[34 + 16] = 0x01;
-        block[2 + 16] = 0x00; // hmask[16] bit 0 = 0 → subtract 4
+        block[32 + 16] = 0x01;
+        block[0 + 16] = 0x00; // hmask[16] bit 0 = 0 → subtract 4
 
         var data = Dequant(block);
 
@@ -93,11 +86,11 @@ public class Q3KRefTests
     public void TestQ3K_Shift2()
     {
         var block = MakeBlock();
-        block[98] = 0x00;
-        block[106] = 0x02;
+        block[96] = 0x00;
+        block[104] = 0x02;
 
-        block[34] = 0x0C; // qs[0] bits 2-3 = 3
-        block[2] = 0x02;  // hmask[0] bit 1 = 1
+        block[32] = 0x0C; // qs[0] bits 2-3 = 3
+        block[0] = 0x02;  // hmask[0] bit 1 = 1
 
         var data = Dequant(block);
 
@@ -108,15 +101,16 @@ public class Q3KRefTests
     public void TestQ3K_Scale5_16()
     {
         var block = MakeBlock();
-        block[98] = 0x00;
-        block[106] = 0x02;
+        block[96] = 0x00;
+        block[104] = 0x02;
 
-        block[99] = 0x00; // scale[5] low nibble = 0 at buf[99] low 4 bits
-        block[107] = 0x04; // scale[5] high nibble = 1 at buf[107] bits 2-3
+        block[97] = 0x00; // scale[5] low nibble = 0 at buf[97]
+        block[105] = 0x04; // scale[5] high nibble = 1 at buf[105]
 
         var data = Dequant(block);
 
         Assert.Equal(0.0f, data[0]);
         Assert.Equal(64.0f, data[80]);
     }
+
 }

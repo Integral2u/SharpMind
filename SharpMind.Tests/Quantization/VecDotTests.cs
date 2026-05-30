@@ -15,20 +15,20 @@ public class VecDotTests
         var block = new byte[110];
         
         // d = 2.0 (F16: 0x4000) - little endian
-        block[0] = 0x00;
-        block[1] = 0x40;
+        block[108] = 0x00;
+        block[109] = 0x40;
         
         // scales[0..11] in bit-packed format that decodes to sc[0..15] = 0
-        // buf[98..101] low nibble, buf[102..105] low nibble, buf[106..109] = 0xAA gives all p[j] = 0x20, sc = 0x20-32 = 0
-        for (int j = 0; j < 4; j++) block[98 + j] = 0x00;  // buf[98..101]
-        for (int j = 0; j < 4; j++) block[102 + j] = 0x00;  // buf[102..105]
-        for (int j = 0; j < 4; j++) block[106 + j] = 0xAA;  // buf[106..109]
+        // buf[96..99] low nibble, buf[100..103] low nibble, buf[104..107] = 0xAA gives all p[j] = 0x20, sc = 0x20-32 = 0
+        for (int j = 0; j < 4; j++) block[96 + j] = 0x00;  // buf[96..99]
+        for (int j = 0; j < 4; j++) block[100 + j] = 0x00;  // buf[100..103]
+        for (int j = 0; j < 4; j++) block[104 + j] = 0xAA;  // buf[104..107]
 
         // qs[0] = 0x00 (all 0s, s2=0)
-        block[34] = 0x00;
+        block[32] = 0x00;
         
         // hmask[0] = 0x00 (all 0s, hmask byte 0 bit 0 = 0 → actual = s2 - 4 = -4)
-        block[2] = 0x00;
+        block[0] = 0x00;
         
         var input = new float[] { 1.0f };
         var weights = new byte[110];
