@@ -41,27 +41,6 @@ public static class ModelFactory
         return new Transformer(modelConfig, embedding, arch, finalNorm, ops);
     }
 
-    public static Transformer CreateSafe(
-        ModelConfig config, 
-        SharpMindConfig sharpConfig, 
-        SharpMind.Tokenization.Tokenizer tokenizer, 
-        int trainingSeqLen = 128)
-    {
-        bool vocabMismatch = config.VocabSize < tokenizer.VocabSize;
-        bool seqMismatch = config.MaxSeqLen < trainingSeqLen;
-
-        if (vocabMismatch || seqMismatch)
-        {
-            config = config with 
-            {
-                VocabSize = Math.Max(config.VocabSize, tokenizer.VocabSize),
-                MaxSeqLen = Math.Max(config.MaxSeqLen, trainingSeqLen)
-            };
-        }
-
-        return Create(config, sharpConfig);
-    }
-
     private static TransformerBlock BuildBlock(
         int layerIdx,
         ModelConfig modelConfig,

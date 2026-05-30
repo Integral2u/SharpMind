@@ -18,14 +18,14 @@ namespace SharpMind.Samples.Examples
             //"Qwen2-0.5B.Q3_K_L",            //Response:????????/classes?????????????
             //"Qwen2-0.5B.Q3_K_M",            //Response:!!!!!!!
             //"Qwen2-0.5B.Q3_K_S",            //Response:!!!!!!!
-            "SmolLM-135M.Q4_K_M",           //Response:enos or port portern I either norussels but '', entryern - +/-
-            "SmolLM2-135M-Instruct.Q4_K_M", //Response:ELTS on Globeinstead/nbeccaeltary,,,,instead instead""", Gelcreat1
+            //"SmolLM-135M.Q4_K_M",           //Response:enos or port portern I either norussels but '', entryern - +/-
+            //"SmolLM2-135M-Instruct.Q4_K_M", //Response:ELTS on Globeinstead/nbeccaeltary,,,,instead instead""", Gelcreat1
             //"qwen2-0_5b-instruct-q4_k_m",   //Response:???????? v?ng?ErrorResponse.QuadOVEadero???slideUp ????????????? IonicPage
 
             //"qwen2-0_5b-instruct-q8_0",     //Response:Hello! How can I assist you today?
             //"qwen2-0_5b-instruct-fp16",     //Response:Hello! How can I assist you today?
                         
-            //"DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M", //Response:Okay, the user just said "hello." I should respond in a friendly and
+            "DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M", //Response:Okay, the user just said "hello." I should respond in a friendly and
             //"TinyLlama-1.1B-Chat-v1.0.Q4_K_M",      //Response:It seems like you'd like to provide information on the topic of which is not
             //"llama-3.2-1b-instruct-q8_0",           //Response:It seems like you'd like to provide information on the topic of which is not
             //"qwen2.5-1.5b-instruct-q8_0",           //Response:\n\n\n\n# 1. Write a Python program to check if the given
