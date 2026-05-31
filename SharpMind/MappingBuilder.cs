@@ -48,17 +48,19 @@ public class MappingBuilder(HardwareTier hardware)
 
     public Dictionary<string, string> Build() => new(_mapping);
 
-private string GetHwSuffix() => _hardware switch
+    private string GetHwSuffix() => _hardware switch
     {
         HardwareTier.FMA => "fma",
         HardwareTier.AVX2 => "avx2",
+        HardwareTier.GPU => "",
         _ => ""
     };
-
+    
     private string GetMatMulHwKey() => _hardware switch
     {
         HardwareTier.FMA => "fma",
         HardwareTier.AVX2 => "avx2",
+        HardwareTier.GPU => "scalar",
         _ => "scalar" // MatMul typically needs an explicit scalar key
     };
 

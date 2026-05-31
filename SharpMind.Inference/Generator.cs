@@ -198,14 +198,7 @@ public sealed class Generator : IDisposable
                 rateTracker.RecordToken();
                 TokensPerSecond = rateTracker.RollingTokensPerSecond;
                 CumulativeTokensPerSecond = rateTracker.CumulativeTokensPerSecond;
-/*
-#if DEBUG
-                string debugRaw = _tokenizer.Decode([nextId], skipSpecials: false);
-                string debugSkip = _tokenizer.Decode([nextId], skipSpecials: true);
-                bool isSpecial = debugRaw != debugSkip || genCfg.StopTokenIds.Contains(nextId);
-                System.Console.Error.WriteLine($"  DEBUG Token {step}: id={nextId}, raw='{EscapeForDebug(debugRaw)}', skip='{EscapeForDebug(debugSkip)}', stop={genCfg.StopTokenIds.Contains(nextId)}, special={isSpecial}");
-#endif
-*/
+
                 if (genCfg.StopTokenIds.Contains(nextId)) break;
 
                 _decodeTokenScratch[0] = nextId;

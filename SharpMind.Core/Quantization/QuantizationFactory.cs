@@ -22,6 +22,7 @@ public static class QuantizationFactory
 
         if (Sse.IsSupported)
         {
+            list.Add(Create(HardwareTier.SSE));
             try { list.Add(Create(HardwareTier.AVX2)); } catch { }
             try { list.Add(Create(HardwareTier.FMA)); } catch { }
         }
@@ -40,8 +41,13 @@ public static class QuantizationFactory
     {
         var scalar = Create(HardwareTier.Scalar);
 
-        if (!Avx2.IsSupported)
+        if (!Sse.IsSupported)
             return scalar;
+
+        var sse = Create(HardwareTier.SSE);
+
+        if (!Avx2.IsSupported)
+            return sse;
 
         var avx2 = Create(HardwareTier.AVX2);
         var fma  = Fma.IsSupported ? Create(HardwareTier.FMA) : avx2;

@@ -23,45 +23,32 @@ public sealed record QuantizationConfig
 
     public Dictionary<string, string> ToJigSawMapping()
     {
-        // VecDot methods that have FMA / AVX2 variants — use the requested tier.
-        // Methods that only have Scalar always map to _scalar regardless of tier.
-        string vecSuffix = Hardware switch
+        string suffix = Hardware switch
         {
             HardwareTier.FMA  => "_fma",
             HardwareTier.AVX2 => "_avx2",
+            HardwareTier.SSE  => "_sse",
             _                 => "_scalar"
         };
 
         return new Dictionary<string, string>
         {
-            // Has FMA, AVX2, Scalar
-            [KeyVecDotQ3K]   = $"q3k{vecSuffix}",
-            [KeyVecDotQ4K]   = $"q4k{vecSuffix}",
-            [KeyVecDotQ5K]   = $"q5k{vecSuffix}",
-            [KeyVecDotQ6K]   = $"q6k{vecSuffix}",
-            [KeyVecDotQ2K]   = $"q2k{vecSuffix}",
-            // Has AVX2, SSE, Scalar (FMA falls back)
-            [KeyVecDotQ4_0]  = Hardware == HardwareTier.FMA ? "q4_0_scalar"
-                             : $"q4_0{vecSuffix}",
-            [KeyVecDotQ4_1]  = Hardware == HardwareTier.FMA ? "q4_1_scalar"
-                             : $"q4_1{vecSuffix}",
-            [KeyVecDotQ8_0]  = Hardware == HardwareTier.FMA ? "q8_0_fma"
-                             : Hardware == HardwareTier.AVX2 ? "q8_0_avx2"
-                             : $"q8_0{vecSuffix}",
-            [KeyVecDotQ8_1]  = Hardware == HardwareTier.FMA ? "q8_1_fma"
-                             : Hardware == HardwareTier.AVX2 ? "q8_1_avx2"
-                             : $"q8_1{vecSuffix}",
-            [KeyVecDotQ8K]   = Hardware == HardwareTier.FMA ? "q8k_fma"
-                             : Hardware == HardwareTier.AVX2 ? "q8k_avx2"
-                             : $"q8k{vecSuffix}",
-            // Scalar only — always scalar regardless of tier
-            [KeyVecDotQ5_0]  = "q5_0_scalar",
-            [KeyVecDotQ5_1]  = "q5_1_scalar",
-            // Helpers
-            [KeyHSum256]     = Hardware is HardwareTier.FMA or HardwareTier.AVX2 ? "avx" : "scalar",
-            [KeyHalfToFloat] = Hardware is HardwareTier.FMA or HardwareTier.AVX2 ? "f16c" : "scalar",
-            [KeyGetScaleMinK4_Scale] = "scalar",
-            [KeyGetScaleMinK4_Min]   = "scalar",
+            [KeyVecDotQ3K]   = $"q3k{suffix}",
+            [KeyVecDotQ4K]   = $"q4k{suffix}",
+            [KeyVecDotQ5K]   = $"q5k{suffix}",
+            [KeyVecDotQ6K]   = $"q6k{suffix}",
+            [KeyVecDotQ8_0]  = $"q8_0{suffix}",
+            [KeyVecDotQ4_0]  = $"q4_0{suffix}",
+            [KeyVecDotQ4_1]  = $"q4_1{suffix}",
+            [KeyVecDotQ5_0]  = $"q5_0{suffix}",
+            [KeyVecDotQ5_1]  = $"q5_1{suffix}",
+            [KeyVecDotQ8_1]  = $"q8_1{suffix}",
+            [KeyVecDotQ2K]   = $"q2k{suffix}",
+            [KeyVecDotQ8K]   = $"q8k{suffix}",
+            [KeyHSum256]     = $"hsum{suffix}",
+            [KeyHalfToFloat] = $"halftofloat{suffix}",
+            [KeyGetScaleMinK4_Scale] = $"getscalemink4_scale{suffix}",
+            [KeyGetScaleMinK4_Min]   = $"getscalemink4_min{suffix}",
         };
     }
 }

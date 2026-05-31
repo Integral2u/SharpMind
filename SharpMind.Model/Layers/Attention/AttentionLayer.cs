@@ -1,6 +1,7 @@
 ﻿using JigSawDotNet;
 using SharpMind.Core.Embeddings;
 using SharpMind.Core.Ops;
+using SharpMind.Core.Quantization;
 using SharpMind.Core.Tensors;
 using SharpMind.Core.Training;
 using SharpMind.Model.Config;
@@ -19,14 +20,14 @@ public abstract class AttentionLayer : IDisposable
     public readonly RoPE Rope;
     private bool _disposed;
 
-    protected AttentionLayer(ModelConfig config)
+    protected AttentionLayer(ModelConfig config, QuantizationOps qOps)
     {
         Config = config;
         int kvDim = config.NumKvHeads * config.HeadDim;
-        Wq = new LinearLayer("q_proj", config.HiddenDim, config.HiddenDim, bias: true);
-        Wk = new LinearLayer("k_proj", config.HiddenDim, kvDim, bias: true);
-        Wv = new LinearLayer("v_proj", config.HiddenDim, kvDim, bias: true);
-        Wo = new LinearLayer("o_proj", config.HiddenDim, config.HiddenDim, bias: true);
+        Wq = new LinearLayer("q_proj", config.HiddenDim, config.HiddenDim, bias: true, qOps: qOps);
+        Wk = new LinearLayer("k_proj", config.HiddenDim, kvDim, bias: true, qOps: qOps);
+        Wv = new LinearLayer("v_proj", config.HiddenDim, kvDim, bias: true, qOps: qOps);
+        Wo = new LinearLayer("o_proj", config.HiddenDim, config.HiddenDim, bias: true, qOps: qOps);
         Rope = new RoPE(config.HeadDim, config.MaxSeqLen, config.RopeTheta);
     }
 

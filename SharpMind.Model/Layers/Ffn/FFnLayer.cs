@@ -1,6 +1,7 @@
 ﻿using JigSawDotNet;
 using SharpMind.Core.Activations;
 using SharpMind.Core.Ops;
+using SharpMind.Core.Quantization;
 using SharpMind.Core.Tensors;
 using SharpMind.Core.Training;
 using SharpMind.Model.Config;
@@ -71,7 +72,7 @@ public abstract class FfnLayer : IDisposable
     protected readonly LinearLayer[]? ExpertUp;
     protected readonly LinearLayer[]? ExpertDown;
 
-    protected FfnLayer(ModelConfig config, ActivationOps acts, TensorOps ops, FfnKind kind)
+    protected FfnLayer(ModelConfig config, ActivationOps acts, TensorOps ops, FfnKind kind, QuantizationOps qOps)
     {
         Config = config;
         Acts = acts;
@@ -80,21 +81,21 @@ public abstract class FfnLayer : IDisposable
         switch (kind)
         {
             case FfnKind.Dense:
-                W1 = new LinearLayer("gate_proj", config.HiddenDim, config.FfnDim, bias: true);
-                W2 = new LinearLayer("down_proj", config.FfnDim, config.HiddenDim, bias: true);
+                W1 = new LinearLayer("gate_proj", config.HiddenDim, config.FfnDim, bias: true, qOps: qOps);
+                W2 = new LinearLayer("down_proj", config.FfnDim, config.HiddenDim, bias: true, qOps: qOps);
                 break;
 
             case FfnKind.Gated:
-                WGate = new LinearLayer("gate_proj", config.HiddenDim, config.FfnDim, bias: true);
-                WUp = new LinearLayer("up_proj", config.HiddenDim, config.FfnDim, bias: true);
-                WDown = new LinearLayer("down_proj", config.FfnDim, config.HiddenDim, bias: true);
+                WGate = new LinearLayer("gate_proj", config.HiddenDim, config.FfnDim, bias: true, qOps: qOps);
+                WUp = new LinearLayer("up_proj", config.HiddenDim, config.FfnDim, bias: true, qOps: qOps);
+                WDown = new LinearLayer("down_proj", config.FfnDim, config.HiddenDim, bias: true, qOps: qOps);
                 break;
 
             case FfnKind.MoE:
-                Router = new LinearLayer("router", config.HiddenDim, config.NumExperts, bias: true);
-                ExpertGate = [.. Enumerable.Range(0, config.NumExperts).Select(i => new LinearLayer($"expert_{i}_gate_proj", config.HiddenDim, config.FfnDim, bias: true))];
-                ExpertUp = [.. Enumerable.Range(0, config.NumExperts).Select(i => new LinearLayer($"expert_{i}_up_proj", config.HiddenDim, config.FfnDim, bias: true))];
-                ExpertDown = [.. Enumerable.Range(0, config.NumExperts).Select(i => new LinearLayer($"expert_{i}_down_proj", config.FfnDim, config.HiddenDim, bias: true))];
+                Router = new LinearLayer("router", config.HiddenDim, config.NumExperts, bias: true, qOps: qOps);
+                ExpertGate = [.. Enumerable.Range(0, config.NumExperts).Select(i => new LinearLayer($"expert_{i}_gate_proj", config.HiddenDim, config.FfnDim, bias: true, qOps: qOps))];
+                ExpertUp = [.. Enumerable.Range(0, config.NumExperts).Select(i => new LinearLayer($"expert_{i}_up_proj", config.HiddenDim, config.FfnDim, bias: true, qOps: qOps))];
+                ExpertDown = [.. Enumerable.Range(0, config.NumExperts).Select(i => new LinearLayer($"expert_{i}_down_proj", config.FfnDim, config.HiddenDim, bias: true, qOps: qOps))];
                 break;
         }
     }

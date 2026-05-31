@@ -112,7 +112,7 @@ public sealed record InferenceConfig
     /// </summary>
     public Dictionary<string, string> ToJigSawMapping(HardwareTier hw)
     {
-        string hwSuffix = hw == HardwareTier.Scalar ? "scalar" : "avx2";
+        string hwSuffix = hw is HardwareTier.Scalar or HardwareTier.SSE ? "scalar" : "avx2";
 
         string attnVal = Attention switch
         {

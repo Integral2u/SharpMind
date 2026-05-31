@@ -21,6 +21,23 @@ public static class MappingBuilderExtensions
         builder.Override(SharpMindConfig.KeyAdamW, "gpu_adamw");
         builder.Override(SharpMindConfig.KeyGradNorm, "gpu_gradnorm");
 
+        builder.Override("vecdot_q3k", "q3k_gpu");
+        builder.Override("vecdot_q4k", "q4k_gpu");
+        builder.Override("vecdot_q5k", "q5k_gpu");
+        builder.Override("vecdot_q6k", "q6k_gpu");
+        builder.Override("vecdot_q8_0", "q8_0_gpu");
+        builder.Override("vecdot_q4_0", "q4_0_gpu");
+        builder.Override("vecdot_q4_1", "q4_1_gpu");
+        builder.Override("vecdot_q5_0", "q5_0_gpu");
+        builder.Override("vecdot_q5_1", "q5_1_gpu");
+        builder.Override("vecdot_q8_1", "q8_1_gpu");
+        builder.Override("vecdot_q2k", "q2k_gpu");
+        builder.Override("vecdot_q8k", "q8k_gpu");
+        builder.Override("hsum256", "hsum_gpu");
+        builder.Override("halftofloat", "halftofloat_gpu");
+        builder.Override("getscalemink4_scale", "getscalemink4_scale_gpu");
+        builder.Override("getscalemink4_min", "getscalemink4_min_gpu");
+
         return builder;
     }
 }

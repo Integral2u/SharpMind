@@ -2,6 +2,7 @@
 using SharpMind.Core.Activations;
 using SharpMind.Core.Embeddings;
 using SharpMind.Core.Ops;
+using SharpMind.Core.Quantization;
 using SharpMind.Model.Arch;
 using SharpMind.Model.Config;
 using SharpMind.Model.Layers;
@@ -22,12 +23,13 @@ public static class ModelFactory
 
         var acts = Assembler.CreateInstance<ActivationOps>(mapping);
         var ops = TensorOpsFactory.Create(sharpConfig);
+        var qOps = QuantizationFactory.CreateForSystem();
 
         var embedding = new EmbeddingTable(modelConfig.VocabSize, modelConfig.HiddenDim);
         embedding.InitNormal(std: 0.02f);
 
         var blocks = Enumerable.Range(0, modelConfig.NumLayers)
-            .Select(i => BuildBlock(i, modelConfig, sharpConfig, mapping, acts, ops));
+            .Select(i => BuildBlock(i, modelConfig, sharpConfig, mapping, acts, ops, qOps));
 
         IArchitecture arch = sharpConfig.Arch switch
         {
@@ -47,10 +49,11 @@ public static class ModelFactory
         SharpMindConfig sharpConfig,
         Dictionary<string, string> mapping,
         ActivationOps acts,
-        TensorOps ops)
+        TensorOps ops,
+        QuantizationOps qOps)
     {
-        var attention = Assembler.CreateInstance<AttentionLayer>(mapping, modelConfig);
-        var ffn = BuildFfn(modelConfig, sharpConfig, acts, ops);
+        var attention = Assembler.CreateInstance<AttentionLayer>(mapping, modelConfig, qOps);
+        var ffn = BuildFfn(modelConfig, sharpConfig, acts, ops, qOps);
         float eps = modelConfig.NormEps;
         var norm1 = BuildNorm(modelConfig.HiddenDim, sharpConfig, eps);
         var norm2 = BuildNorm(modelConfig.HiddenDim, sharpConfig, eps);
@@ -62,12 +65,13 @@ public static class ModelFactory
         ModelConfig modelConfig,
         SharpMindConfig sharpConfig,
         ActivationOps acts,
-        TensorOps ops)
+        TensorOps ops,
+        QuantizationOps qOps)
         => sharpConfig.Ffn switch
         {
-            FfnKind.Dense => new DenseFfnLayer(modelConfig, acts, ops),
-            FfnKind.Gated => new GatedFfnLayer(modelConfig, acts, ops),
-            FfnKind.MoE => new MoEFfnLayer(modelConfig, acts, ops),
+            FfnKind.Dense => new DenseFfnLayer(modelConfig, acts, ops, qOps),
+            FfnKind.Gated => new GatedFfnLayer(modelConfig, acts, ops, qOps),
+            FfnKind.MoE => new MoEFfnLayer(modelConfig, acts, ops, qOps),
             _ => throw new NotSupportedException($"Unknown FfnKind: {sharpConfig.Ffn}")
         };
 

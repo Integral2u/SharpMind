@@ -13,7 +13,7 @@ public static class GPUActivationKernels
     private static Accelerator? _accelerator;
     private static Context? _context;
 
-    private static Accelerator SharedAccelerator
+    public static Accelerator SharedAccelerator
     {
         get
         {

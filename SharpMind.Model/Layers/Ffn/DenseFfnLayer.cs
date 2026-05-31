@@ -1,11 +1,12 @@
 ﻿using SharpMind.Core.Activations;
 using SharpMind.Core.Ops;
+using SharpMind.Core.Quantization;
 using SharpMind.Core.Tensors;
 using SharpMind.Model.Config;
 
 namespace SharpMind.Model.Layers.Ffn;
 
-public sealed class DenseFfnLayer(ModelConfig config, ActivationOps acts, TensorOps ops) : FfnLayer(config, acts, ops, FfnKind.Dense)
+public sealed class DenseFfnLayer(ModelConfig config, ActivationOps acts, TensorOps ops, QuantizationOps qOps) : FfnLayer(config, acts, ops, FfnKind.Dense, qOps)
 {
     public override Tensor<float> ApplyFfn(Tensor<float> x)
         => FfnKernels.Dense(x, W1!, W2!, Acts, Ops);
