@@ -5,10 +5,21 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <ApplicationIcon>SharpMind.ico</ApplicationIcon>
+    <OutputType>Exe</OutputType>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>
     <Content Include="SharpMind.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="BenchmarkDotNet" Version="0.15.8" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SharpMind.Core\SharpMind.Core.csproj" />
+    <ProjectReference Include="..\SharpMind.GPU\SharpMind.GPU.csproj" />
   </ItemGroup>
 
 </Project>
