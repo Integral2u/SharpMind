@@ -11,10 +11,23 @@ Tokenizer: BPE, vocab builder, encode/decode
 Data: sources, cleaning, formating, batching, dataset loaders
 Core: tensors, matrix math, memory, activations
 
+Options going forward:
+
+Reuse GPU buffers — pre-allocate once, reuse across calls (avoids per-call allocation but still pays PCIe transfer)
+Batch API — VecDotBatch(float* inputs, byte* weights, int count, ...) — process N VecDots in one kernel call, amortizing kernel launch + PCIe overhead
+Matrix-level offload — skip per-VecDot GPU and move to full matmul(activations, weights) on GPU, where copy-in/copy-out is worth it (e.g., attention Q*K^T with 4096x4096)
+Keep CPU — accept that VecDot is inherently CPU-friendly; focus GPU effort on large matrix/flash-attention ops
+
 SpeculativeGenerator noy used, Generator and SpeculativeGenerator should implement an interface so ChatSession can be created using various generators.
 This is the same for KVCaceh vs PagedKVCache
 
+GPU
+Options going forward:
 
+Reuse GPU buffers — pre-allocate once, reuse across calls (avoids per-call allocation but still pays PCIe transfer)
+Batch API — VecDotBatch(float* inputs, byte* weights, int count, ...) — process N VecDots in one kernel call, amortizing kernel launch + PCIe overhead
+Matrix-level offload — skip per-VecDot GPU and move to full matmul(activations, weights) on GPU, where copy-in/copy-out is worth it (e.g., attention Q*K^T with 4096x4096)
+Keep CPU — accept that VecDot is inherently CPU-friendly; focus GPU effort on large matrix/flash-attention ops
 Todo
 MPT multi token prediction
 Chatsession compact/truncate etc  only prompt important context(selection)
@@ -68,9 +81,7 @@ system and agent.md refinement.  caw we say somthing like adaptive if the user i
 //Model loading need an early fail if the model file is not found
 
 Ooops
-SharpMind.Evaluation prject was never created but EvaluationKernels.cs was, rather than add where should it go. 
 Follow-ups
-async returns of IAsyncEnumerable and IAsyncEnumerator are they optimized for intention where they can be
 KVCache used to take ModelConfig shoudl we check config usage/builder
 Use of JsonObject, preffer stronly typed class where possible.
 Config files hould be human readable

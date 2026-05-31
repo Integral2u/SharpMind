@@ -38,7 +38,7 @@ namespace SharpMind.Samples.Examples
 
             foreach (var m in Models)
             {
-
+                Console.ForegroundColor = ConsoleColor.White;
                 var returnedPrompt = false;
                 var tok = 0;
                 CancellationTokenSource cancellationTokenSource = new();
@@ -51,34 +51,10 @@ namespace SharpMind.Samples.Examples
                 GgufLoader.Load(ggufPath, null, out GgufMeta meta, out ModelConfig modelConfig, out Tokenizer? tokenizer);
                 if (tokenizer == null)
                 {
-                    await Console.Out.WriteLineAsync($"No Tekenizer Data");
+                    await Console.Out.WriteLineAsync($"No Tokenizer Data");
                     continue;
                 }
-                /*var template = string.Empty;
-                foreach (var d in meta.KvPairs)
-                {
-                    if (d.Key.Contains("tokenizer.chat_template"))
-                    {
-                        var strs = d.Value as string;
-                        if (strs != null)
-                        {
-                            foreach (var s in strs)
-                            {
-                                template+=s;
-                            }
-                        }
-                    }
-                }
-                if (string.IsNullOrEmpty(template))
-                {
-                    Console.Out.WriteLine($"{m}: No tokenizer.chat_template found!");
-                }
-                else
-                {
-                    Console.Out.WriteLine($"{m}: tokenizer.chat_template");
-                    Console.Out.WriteLine(template);
-                }
-                    continue;*/
+                
                 var sharpConfig = modelConfig.ForModel(DetectBestHardware());
                 GC.Collect(); GC.WaitForPendingFinalizers();
                 var sw = Stopwatch.StartNew();
@@ -90,7 +66,7 @@ namespace SharpMind.Samples.Examples
                 GgufLoader.LoadWeightsToModel(ggufPath, meta, model);
                 await Console.Out.WriteLineAsync($"GgufLoader.LoadWeightsToModel executed in: {sw.Elapsed.TotalSeconds:F2}s");
                 sw.Restart();
-                var inferOps = InferenceOpsFactory.Create(sharpConfig, InferenceConfig.Default);
+                var inferOps = InferenceOpsFactory.Create(sharpConfig, InferenceConfig.Fast);
                 await Console.Out.WriteLineAsync($"InferenceOpsFactory.Create executed in: {sw.Elapsed.TotalSeconds:F2}s");
 
                 string systemPrompt = "";
@@ -105,30 +81,30 @@ namespace SharpMind.Samples.Examples
                 //session.AddMessage(new ChatMessage() { Content = "You are a polite, creative but methodical AI assistant.", Role = ChatRole.System });
                 //session.AddMessage(new ChatMessage() { Content = "Your name is Delta", Role = ChatRole.Agent });
                 if (!string.IsNullOrEmpty(systemPrompt)) session.AddMessage(ChatRole.System, systemPrompt);
-                var history = await session.StartChatAsync(cancellationTokenSource.Token, Prompt, Response);
+                var history = await session.StartChatAsync(Prompt, Response, cancellationTokenSource.Token);
 
-                void Response(string text)
+                async void Response(ChatStreamEntry text)
                 {
                     Console.ForegroundColor = ConsoleColor.Blue;
-                    Console.Out.Write(text);
+                    await Console.Out.WriteAsync(text.Token);
                     tok++;
                     if (tok > 15) cancellationTokenSource.Cancel();
                 }
-                string Prompt()
+                async Task<ChatMessage> Prompt()
                 {
                     if (!returnedPrompt && !cancellationTokenSource.IsCancellationRequested)
                     {
                         returnedPrompt = true;
                         Console.ForegroundColor = ConsoleColor.Yellow;
-                        Console.Out.WriteLine($"Prompt:{prompt}");
-                        Console.Out.Flush();
-                        Console.Out.Write("Response:");
-                        return prompt;
+                        await Console.Out.WriteLineAsync($"Prompt:{prompt}");
+                        await Console.Out.FlushAsync();
+                        await Console.Out.WriteAsync("Response:");
+                        return new ChatMessage { Content = prompt, Role = ChatRole.User };
                     }
-                    Console.Out.WriteLine();
-                    Console.Out.Flush();
+                    await Console.Out.WriteLineAsync();
+                    await Console.Out.FlushAsync();
                     cancellationTokenSource.Cancel();
-                    return "exit";
+                    return new ChatMessage { Content = "exit", Role = ChatRole.User };
                 }
                 await Console.Out.WriteLineAsync();
                 await Console.Out.WriteLineAsync($"Tokens per second: {session.TokensPerSecond ?? 0}");
@@ -137,6 +113,7 @@ namespace SharpMind.Samples.Examples
             await Console.Out.WriteLineAsync("Done!");
             Console.In.ReadLine();
         }
+
         private static HardwareTier DetectBestHardware()
         {
             if (Avx2.IsSupported) return HardwareTier.AVX2;

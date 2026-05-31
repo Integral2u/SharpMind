@@ -57,7 +57,7 @@ namespace SharpMind.Samples.Examples
             if (!string.IsNullOrEmpty(systemPrompt)) session.AddMessage(ChatRole.System, systemPrompt);
 
             Console.Out.WriteLine("\nChat ready! Say hello.\n");
-            var history = await session.StartChatAsync(cancellationTokenSource.Token, Prompt, Response);
+            var history = await session.StartChatAsync(Prompt, Response, cancellationTokenSource.Token);
 
             void Response(string text)
             {

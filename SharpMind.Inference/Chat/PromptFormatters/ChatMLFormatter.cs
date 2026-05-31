@@ -11,7 +11,7 @@ public sealed class ChatMLFormatter : IChatPromptFormatter
 
     public ChatMLFormatter(string template)
     {
-        var tokenMatches = System.Text.RegularExpressions.Regex.Matches(template, @"<\|[^|]+\|>");
+        var tokenMatches = RegexGenerated.ChatMLTokens.Matches(template);// System.Text.RegularExpressions.Regex.Matches(template, @"<\|[^|]+\|>");
         var allTokens = tokenMatches.Select(m => m.Value).Distinct().ToList();
 
         bool isChatML = allTokens.Any(t => t.Contains("im_start"));

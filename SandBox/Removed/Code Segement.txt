@@ -103,3 +103,29 @@ ModelConverter
         };
     }
     
+
+    /*var template = string.Empty;
+                foreach (var d in meta.KvPairs)
+                {
+                    if (d.Key.Contains("tokenizer.chat_template"))
+                    {
+                        var strs = d.Value as string;
+                        if (strs != null)
+                        {
+                            foreach (var s in strs)
+                            {
+                                template+=s;
+                            }
+                        }
+                    }
+                }
+                if (string.IsNullOrEmpty(template))
+                {
+                    Console.Out.WriteLine($"{m}: No tokenizer.chat_template found!");
+                }
+                else
+                {
+                    Console.Out.WriteLine($"{m}: tokenizer.chat_template");
+                    Console.Out.WriteLine(template);
+                }
+                    continue;*/

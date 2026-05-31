@@ -175,7 +175,7 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
         JinjaEnv env, StringBuilder sb)
     {
         // Parse "for VAR in EXPR"
-        var m = Regex.Match(tokens[forIdx].Body, @"^for\s+(\w+)\s+in\s+(.+)$");
+        var m = RegexGenerated.JinjaForVarInExpr.Match(tokens[forIdx].Body);// Regex.Match(tokens[forIdx].Body, @"^for\s+(\w+)\s+in\s+(.+)$");
         if (!m.Success) return forIdx + 1;
 
         string varName = m.Groups[1].Value;
@@ -287,15 +287,13 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
     private static void ExecuteSet(string tag, JinjaEnv env)
     {
         // set ns = namespace(field=val, …)
-        var nsMatch = Regex.Match(tag,
-            @"^set\s+(\w+)\s*=\s*namespace\s*\((.*)?\)\s*$",
-            RegexOptions.Singleline);
+        var nsMatch = RegexGenerated.JinjaSetNsFieldValue.Match(tag);// Regex.Match(tag,@"^set\s+(\w+)\s*=\s*namespace\s*\((.*)?\)\s*$",RegexOptions.Singleline);
         if (nsMatch.Success)
         {
             string name = nsMatch.Groups[1].Value;
             string args = nsMatch.Groups[2].Value;
             var ns = new JinjaNamespace();
-            foreach (Match kv in Regex.Matches(args, @"(\w+)\s*=\s*([^,]+)"))
+            foreach (Match kv in RegexGenerated.JinjaNamespace.Matches(args)) // Regex.Matches(args, @"(\w+)\s*=\s*([^,]+)"))
             {
                 string k = kv.Groups[1].Value.Trim();
                 string v = kv.Groups[2].Value.Trim();
@@ -306,7 +304,7 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
         }
 
         // set ns.field = expr
-        var dotMatch = Regex.Match(tag, @"^set\s+(\w+)\.(\w+)\s*=\s*(.+)$");
+        var dotMatch = RegexGenerated.JinjaNamespaceDotFieldEqExpr.Match(tag);// Regex.Match(tag, @"^set\s+(\w+)\.(\w+)\s*=\s*(.+)$");
         if (dotMatch.Success)
         {
             string obj = dotMatch.Groups[1].Value;
@@ -321,7 +319,7 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
         }
 
         // set var = expr
-        var simple = Regex.Match(tag, @"^set\s+(\w+)\s*=\s*(.+)$");
+        var simple = RegexGenerated.JinjaSetVarEqExpr.Match(tag);// Regex.Match(tag, @"^set\s+(\w+)\s*=\s*(.+)$");
         if (simple.Success)
         {
             string name = simple.Groups[1].Value;
@@ -341,21 +339,21 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
             return Eval(expr[1..^1], env);
 
         // 'not X is defined'
-        if (Regex.IsMatch(expr, @"^not\s+\w+\s+is\s+defined$"))
+        if (RegexGenerated.JinjaNotXIsDefined.IsMatch(expr))// Regex.IsMatch(expr, @"^not\s+\w+\s+is\s+defined$"))
         {
-            string vname = Regex.Match(expr, @"not\s+(\w+)").Groups[1].Value;
+            string vname = RegexGenerated.JinjaNotX.Match(expr).Groups[1].Value;// Regex.Match(expr, @"not\s+(\w+)").Groups[1].Value;
             return (object)(env.Get(vname) == null);
         }
 
         // X is defined
-        if (Regex.IsMatch(expr, @"^(\w+)\s+is\s+defined$"))
+        if (RegexGenerated.JinjaXIsDefined.IsMatch(expr)) // Regex.IsMatch(expr, @"^(\w+)\s+is\s+defined$"))
         {
-            string vname = Regex.Match(expr, @"^(\w+)").Groups[1].Value;
+            string vname = RegexGenerated.JinjaIsX.Match(expr).Groups[1].Value;// Regex.Match(expr, @"^(\w+)").Groups[1].Value;
             return (object)(env.Get(vname) != null);
         }
 
         // X is none / X is not none
-        var noneM = Regex.Match(expr, @"^(.+?)\s+is\s+(not\s+)?none$");
+        var noneM = RegexGenerated.JinjaXIsNoneNotNone.Match(expr);// Regex.Match(expr, @"^(.+?)\s+is\s+(not\s+)?none$");
         if (noneM.Success)
         {
             var v = Eval(noneM.Groups[1].Value, env);
@@ -368,7 +366,7 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
             return (object)!IsTruthy(Eval(expr[4..], env));
 
         // 'literal' in X  (substring test)
-        var inMatch = Regex.Match(expr, @"^'([^']*)'\s+in\s+(.+)$");
+        var inMatch = RegexGenerated.JinjaLiteralInXSubstr.Match(expr); // Regex.Match(expr, @"^'([^']*)'\s+in\s+(.+)$");
         if (inMatch.Success)
         {
             string needle = inMatch.Groups[1].Value;
@@ -378,7 +376,7 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
         }
 
         // "literal" in X
-        var inMatch2 = Regex.Match(expr, "^\"([^\"]*)\"\\s+in\\s+(.+)$");
+        var inMatch2 = RegexGenerated.JinjaLiteralInX.Match(expr); //Regex.Match(expr, "^\"([^\"]*)\"\\s+in\\s+(.+)$");
         if (inMatch2.Success)
         {
             string needle = inMatch2.Groups[1].Value;
@@ -435,7 +433,7 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
         }
 
         // Filter: expr | trim  (only trim supported)
-        var filterM = Regex.Match(expr, @"^(.+?)\s*\|\s*trim\s*$");
+        var filterM = RegexGenerated.JinjaExprTrim.Match(expr);// Regex.Match(expr, @"^(.+?)\s*\|\s*trim\s*$");
         if (filterM.Success)
         {
             var v = Eval(filterM.Groups[1].Value, env);
@@ -443,8 +441,7 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
         }
 
         // content.split('delim')[-1]  — last segment
-        var splitM = Regex.Match(expr,
-            @"^(\w+)\.split\('([^']*)'\)\[(-?\d+)\]$");
+        var splitM = RegexGenerated.JinjaSplitDelim.Match(expr);// Regex.Match(expr,@"^(\w+)\.split\('([^']*)'\)\[(-?\d+)\]$");
         if (splitM.Success)
         {
             var src = Stringify(Eval(splitM.Groups[1].Value, env));
@@ -485,7 +482,7 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
         }
 
         // obj.field  (dot access, handles loop.first, ns.field etc.)
-        var dotM = Regex.Match(expr, @"^(\w+)\.(\w+)$");
+        var dotM = RegexGenerated.JinjaObjDotField.Match(expr);//  Regex.Match(expr, @"^(\w+)\.(\w+)$");
         if (dotM.Success)
         {
             var obj = env.Get(dotM.Groups[1].Value);
@@ -494,7 +491,7 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
         }
 
         // arithmetic: index0 +/- N inside bracket is handled by EvalIndex
-        var arithM = Regex.Match(expr, @"^(.+?)\s*([+\-])\s*(\d+)$");
+        var arithM = RegexGenerated.JinjaPlusMinusN.Match(expr);// Regex.Match(expr, @"^(.+?)\s*([+\-])\s*(\d+)$");
         if (arithM.Success)
         {
             var lv = Eval(arithM.Groups[1].Value, env);

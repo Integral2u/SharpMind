@@ -301,7 +301,7 @@ public static partial class GgufLoader
 
         // Extract <...> patterns from the template
         var candidates = new HashSet<string>();
-        foreach (Match m in Regex.Matches(template, @"<[^>]+>"))
+        foreach (Match m in RegexGenerated.ChatTemplateRegex.Matches(template))// Regex.Matches(template, @"<[^>]+>"))
             candidates.Add(m.Value);
 
         if (candidates.Count == 0) return;

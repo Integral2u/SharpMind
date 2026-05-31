@@ -27,7 +27,7 @@ public static class QuantizationFactory
             try { list.Add(Create(HardwareTier.FMA)); } catch { }
         }
 
-        return list.ToArray();
+        return [.. list];
     }
 
     /// <summary>

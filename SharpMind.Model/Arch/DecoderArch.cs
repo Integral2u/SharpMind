@@ -44,11 +44,11 @@ public sealed class DecoderArch : IArchitecture
         
         // Extract layer index from name - GGUF uses patterns like blk.7, layer.7, blk.7.attn_
         int layerIdx = -1;
-        var match7 = Regex.Match(name, @"\.(\d+)\.");  // .7. pattern
+        var match7 = RegexGenerated.LayerIndexDot7Regex.Match(name);// Regex.Match(name, @"\.(\d+)\.");  // .7. pattern
         if (!match7.Success)
-            match7 = Regex.Match(name, @"blk\.(\d+)");   // blk.7 pattern
+            match7 = RegexGenerated.LayerIndexBlkDot7Regex.Match(name);// Regex.Match(name, @"blk\.(\d+)");   // blk.7 pattern
         if (!match7.Success)
-            match7 = Regex.Match(name, @"layer_(\d+)"); // layer_7 pattern
+            match7 = RegexGenerated.LayerIndexLayerDot7Regex.Match(name);// Regex.Match(name, @"layer_(\d+)"); // layer_7 pattern
         if (match7.Success && int.TryParse(match7.Groups[1].Value, out var idx))
             layerIdx = idx;
         
@@ -78,11 +78,11 @@ public sealed class DecoderArch : IArchitecture
     {
         var lower = name.ToLower();
         int layerIdx = -1;
-        var match7 = Regex.Match(name, @"\.(\d+)\.");
+        var match7 = RegexGenerated.LayerIndexDot7Regex.Match(name);// Regex.Match(name, @"\.(\d+)\.");
         if (!match7.Success)
-            match7 = Regex.Match(name, @"blk\.(\d+)");
+            match7 = RegexGenerated.LayerIndexBlkDot7Regex.Match(name);// Regex.Match(name, @"blk\.(\d+)");
         if (!match7.Success)
-            match7 = Regex.Match(name, @"layer_(\d+)");
+            match7 = RegexGenerated.LayerIndexLayerDot7Regex.Match(name);// Regex.Match(name, @"layer_(\d+)");
         if (match7.Success && int.TryParse(match7.Groups[1].Value, out var idx))
             layerIdx = idx;
 

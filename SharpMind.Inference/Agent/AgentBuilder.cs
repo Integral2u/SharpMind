@@ -13,7 +13,7 @@ namespace SharpMind.Inference.Agent
     //Need to add permissions to IO network or file
     //define generation schema per model? 
     //  arch_field = reader.fields.get('general.architecture') from ggufmeta
-    public class AgentBuilder(string agentName = "Delta", SamplingConfig samplingConfig = null)
+    public class AgentBuilder(string agentName = "Delta", SamplingConfig? samplingConfig = null)
     {
         public enum AgentSections
         {

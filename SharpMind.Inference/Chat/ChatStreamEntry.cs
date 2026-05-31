@@ -6,7 +6,7 @@ namespace SharpMind.Inference.Chat;
 public sealed class ChatStreamEntry
 {
     public required ChatStatus Status { get; init; }
-    public string? TextDelta { get; init; }
+    public string? Token { get; init; }
     public ChatArtifact? Artifact { get; init; }
     public bool IsComplete { get; init; }
 

@@ -2,6 +2,7 @@ using SharpMind.Inference.Chat.PromptFormatters;
 using SharpMind.Model;
 using SharpMind.Model.Format;
 using SharpMind.Tokenization;
+using System.ComponentModel.DataAnnotations;
 using System.Runtime.CompilerServices;
 
 namespace SharpMind.Inference.Chat;
@@ -112,7 +113,7 @@ public sealed class ChatSession
             yield return new ChatStreamEntry
             {
                 Status = ChatStatus.Responding,
-                TextDelta = fragment,
+                Token = fragment,
                 IsComplete = false,
                 TokensPerSecond = _generator.TokensPerSecond
             };
@@ -139,8 +140,8 @@ public sealed class ChatSession
         await foreach (var entry in GetResponseStreamAsync(userInput, ct))
         {
             entries.Add(entry);
-            if (entry.TextDelta is not null)
-                content.Append(entry.TextDelta);
+            if (entry.Token is not null)
+                content.Append(entry.Token);
         }
 
         var lastEntry = entries.LastOrDefault();
@@ -217,19 +218,19 @@ public sealed class ChatSession
     private void ThrowIfDisposed()
         => ObjectDisposedException.ThrowIf(_disposed, nameof(ChatSession));
 
-    //Review: do hide system/agent prompts? may change over time not revelent to actual chat history
-    public async Task<ChatMessage[]> StartChatAsync(CancellationToken token, Func<ChatMessage> prompt, Action<ChatStreamEntry> response)
+
+    public async Task<ChatMessage[]> StartChatAsync(Func<Task<ChatMessage>> prompt, Action<ChatStreamEntry> response, CancellationToken token = default)
     {
         while (!token.IsCancellationRequested)
         {
-            var input = prompt();
+            var input = await prompt();
             if (string.IsNullOrWhiteSpace(input.Content))
                 continue;
             try
             {
                 await foreach (var entry in GetResponseStreamAsync(input.Content, token))
                 {
-                    if (entry.TextDelta is { Length: > 0 } delta) response(entry);
+                    if (entry.Token is { Length: > 0 } delta) response(entry);
                     TokensPerSecond = entry.TokensPerSecond;
                 }
             }
@@ -244,11 +245,19 @@ public sealed class ChatSession
         }
         return [.. _history];
     }
-    public async Task<ChatMessage[]> StartChatAsync(CancellationToken token, Func<string> prompt, Action<string> response)
-    {
-        return await StartChatAsync(token, () => new ChatMessage { Content = prompt(), Role = ChatRole.User }, (e) =>
+
+    public async Task<ChatMessage[]> StartChatAsync(Func<ChatMessage> prompt, Action<ChatStreamEntry> response, CancellationToken token = default)
+        => await StartChatAsync(() => Task.FromResult(prompt()), response, token);
+
+    public async Task<ChatMessage[]> StartChatAsync(Func<Task<string>> prompt, Action<string> response, CancellationToken token = default)
+        => await StartChatAsync(async () => new ChatMessage { Content = await prompt(), Role = ChatRole.User }, (e) =>
         {
-            if (e.TextDelta is { Length: > 0 } delta) response(delta);
-        });
-    }
+            if (e.Token is { Length: > 0 } delta) response(delta);
+        }, token);
+
+    public async Task<ChatMessage[]> StartChatAsync(Func<string> prompt, Action<string> response, CancellationToken token = default)
+        => await StartChatAsync(() => new ChatMessage { Content = prompt(), Role = ChatRole.User }, (e) =>
+        {
+            if (e.Token is { Length: > 0 } delta) response(delta);
+        }, token);
 }

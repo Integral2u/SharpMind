@@ -13,8 +13,6 @@ public static class RealDataTraining
         await Task.CompletedTask;
         Console.WriteLine("=== Training with Pixel Char Data ===");
         
-        var source = new PixelCharSource();
-        
         var modelConfig = new ModelConfig
         {
             VocabSize = 16,  // Simpler
@@ -30,7 +28,6 @@ public static class RealDataTraining
         var sharpConfig = SharpMindConfig.Gpt with { Hardware = HardwareTier.Scalar };
         var model = ModelFactory.Create(modelConfig, sharpConfig);
         
-        var rng = new Random(42);
         foreach (var p in model.Parameters())
         {
             var data = p.Data.Data;
@@ -41,7 +38,7 @@ public static class RealDataTraining
         
         // Test very simple forward - just embedding
         Console.WriteLine("Testing simple forward...");
-        var testInput = Tensor<int>.From(new int[] { 1, 1, 1, 1, 1, 1, 1, 1 }, 1, 8);
+        var testInput = Tensor<int>.From([1, 1, 1, 1, 1, 1, 1, 1], 1, 8);
         using var result = model.Forward(testInput);
         
         float[] sample = new float[16];
@@ -66,7 +63,7 @@ public static class RealDataTraining
 
         for (int step = 0; step < steps; step++)
         {
-            var batch = source.GetBatch(batchSize);
+            var batch = PixelCharSource.GetBatch(batchSize);
             
             var tokensTensor = Tensor<int>.From(batch.Inputs, batchSize, 8);
             var targetsTensor = Tensor<int>.From(batch.Targets, batchSize, 8);
@@ -113,7 +110,7 @@ public static class RealDataTraining
 
     private class PixelCharSource
     {
-        public PixelBatch GetBatch(int batchSize)
+        public static PixelBatch GetBatch(int batchSize)
         {
             var inputs = new int[batchSize * 8];
             var targets = new int[batchSize * 8];
