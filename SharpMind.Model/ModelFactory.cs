@@ -13,13 +13,20 @@ namespace SharpMind.Model;
 
 public static class ModelFactory
 {
-    public static Transformer Create(ModelConfig modelConfig, SharpMindConfig sharpConfig)
+public static Transformer Create(ModelConfig modelConfig, SharpMindConfig sharpConfig)
+    => Create(modelConfig, sharpConfig, sharpConfig.ToJigSawMapping());
+
+    /// <summary>
+    /// Creates a <see cref="Transformer"/> using a caller-supplied JigSaw
+    /// mapping. Used when GPU overrides are desired via
+    /// <c>MappingBuilder.WithGpu()</c>.
+    /// </summary>
+    public static Transformer Create(ModelConfig modelConfig, SharpMindConfig sharpConfig, Dictionary<string, string> mapping)
     {
         ArgumentNullException.ThrowIfNull(modelConfig);
         ArgumentNullException.ThrowIfNull(sharpConfig);
+        ArgumentNullException.ThrowIfNull(mapping);
         modelConfig.Validate();
-
-        var mapping = sharpConfig.ToJigSawMapping();
 
         var acts = Assembler.CreateInstance<ActivationOps>(mapping);
         var ops = TensorOpsFactory.Create(sharpConfig);

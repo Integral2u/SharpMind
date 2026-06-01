@@ -45,13 +45,17 @@ public class MappingBuilder(HardwareTier hardware)
         return this;
     }
 
+    /// <summary>
+    /// Reads the current value for a mapping key, if set.
+    /// </summary>
+    public bool TryGetValue(string key, out string? value) => _mapping.TryGetValue(key, out value);
+
     public Dictionary<string, string> Build() => new(_mapping);
 
     private string GetHwSuffix() => _hardware switch
     {
         HardwareTier.FMA => "fma",
         HardwareTier.AVX2 => "avx2",
-        HardwareTier.GPU => "",
         _ => ""
     };
     
@@ -59,7 +63,6 @@ public class MappingBuilder(HardwareTier hardware)
     {
         HardwareTier.FMA => "fma",
         HardwareTier.AVX2 => "avx2",
-        HardwareTier.GPU => "scalar",
         _ => "scalar" // MatMul typically needs an explicit scalar key
     };
 

@@ -1,4 +1,5 @@
-﻿using SharpMind.Inference;
+using SharpMind.GPU;
+using SharpMind.Inference;
 using SharpMind.Inference.Chat;
 using SharpMind.Model;
 using SharpMind.Model.Config;
@@ -9,27 +10,13 @@ using System.Runtime.Intrinsics.X86;
 
 namespace SharpMind.Samples.Examples
 {
-    public class MultiTestInteractive
+    public class MultiGpuTestInteractive
 
     {
         private static readonly string[] Models =
             [
-            //"Qwen2-0.5B.Q2_K",              //Response:zn?-redux??zn???erator ++)
-            //"Qwen2-0.5B.Q3_K_L",            //Response:/classes/classes?????????ist??????????_*
-            //"Qwen2-0.5B.Q3_K_M",            //Response:!!!!!!!
-            //"Qwen2-0.5B.Q3_K_S",            //Response:!!!!!!!
-            "SmolLM-135M.Q4_K_M",           //Response:enos or port portern I either norussels but '', entryern - +/-
-            //"SmolLM2-135M-Instruct.Q4_K_M", //Response:ELTS on Globeinstead/nbeccaeltary,,,,instead instead""", Gelcreat1
-            //"qwen2-0_5b-instruct-q4_k_m",   //Response:???????? v?ng?ErrorResponse.QuadOVEadero???slideUp ????????????? IonicPage
-
-            "qwen2-0_5b-instruct-q8_0",     //Response:Hello! How can I assist you today?
-            //"qwen2-0_5b-instruct-fp16",     //Response:Hello! How can I assist you today?
-                        
-            //"DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M", //Response:
-            //"TinyLlama-1.1B-Chat-v1.0.Q4_K_M",      //Response:It seems like you'd like to provide information on the topic of which is not
-            //"llama-3.2-1b-instruct-q8_0",           //Response:It seems like you'd like to provide information on the topic of which is not
-            //"qwen2.5-1.5b-instruct-q8_0",           //Response:\n\n\n\n# 1. Write a Python program to check if the given
-            
+            "SmolLM-135M.Q4_K_M",
+            "qwen2-0_5b-instruct-q8_0",
             ];
 
         private static readonly string ModelPath = @"C:\Integral2u\source\repos\SharpMind\ExternalAssets";
@@ -45,7 +32,7 @@ namespace SharpMind.Samples.Examples
                 var ggufPath = Path.Combine(ModelPath, $"{m}.gguf");
                 var tokenizerPath = Path.Combine(ModelPath, $"{m}.json");
                 if (!File.Exists(ggufPath)) continue;
-                await Console.Out.WriteLineAsync($"Testing {m}");
+                await Console.Out.WriteLineAsync($"Testing {m} (GPU kernels)");
                 await Console.Out.FlushAsync();
 
                 GgufLoader.Load(ggufPath, null, out GgufMeta meta, out ModelConfig modelConfig, out Tokenizer? tokenizer);
@@ -58,8 +45,18 @@ namespace SharpMind.Samples.Examples
                 var sharpConfig = modelConfig.ForModel(DetectBestHardware());
                 GC.Collect(); GC.WaitForPendingFinalizers();
                 var sw = Stopwatch.StartNew();
-                var model = ModelFactory.Create(modelConfig, sharpConfig);
-                await Console.Out.WriteLineAsync($"ModelFactory.Create executed in: {sw.Elapsed.TotalSeconds:F2}s");
+
+                // Build the JigSaw mapping with CPU baseline, then override
+                // activations and gates to use GPU-accelerated kernels (via WithGpu()).
+                // JigSaw's external [PuzzlePeice] scan finds the GPU kernels because
+                // SharpMind.GPU is loaded in the AppDomain (WithGpu() lives there).
+                var mapping = new MappingBuilder(DetectBestHardware())
+                    .ApplyPreset(sharpConfig)
+                    .WithGpu()
+                    .Build();
+
+                var model = ModelFactory.Create(modelConfig, sharpConfig, mapping);
+                await Console.Out.WriteLineAsync($"ModelFactory.Create (GPU) executed in: {sw.Elapsed.TotalSeconds:F2}s");
 
                 GC.Collect(); GC.WaitForPendingFinalizers();
                 sw.Restart();
@@ -72,10 +69,7 @@ namespace SharpMind.Samples.Examples
                     MaxTokens = 256,
                     Temperature = 0.0f,
                     TopK = 1,
-                    //TopP = 0.8f
                 };
-                //session.AddMessage(new ChatMessage() { Content = "You are a polite, creative but methodical AI assistant.", Role = ChatRole.System });
-                //session.AddMessage(new ChatMessage() { Content = "Your name is Delta", Role = ChatRole.Agent });
                 if (!string.IsNullOrEmpty(systemPrompt)) session.AddMessage(ChatRole.System, systemPrompt);
                 var history = await session.StartChatAsync(Prompt, Response, cancellationTokenSource.Token);
 

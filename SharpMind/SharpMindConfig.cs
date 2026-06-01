@@ -9,7 +9,7 @@ public enum AttentionKind { MHA, GQA, MQA }
 public enum NormKind { RMSNorm, LayerNorm }
 public enum ArchKind { Decoder, Encoder }
 
-public enum HardwareTier   { Auto, FMA, AVX2, SSE, Scalar, GPU }
+public enum HardwareTier   { Auto, FMA, AVX2, SSE, Scalar }
 
 public sealed record SharpMindConfig
 {
