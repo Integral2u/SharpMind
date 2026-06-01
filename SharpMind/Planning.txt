@@ -11,23 +11,7 @@ Tokenizer: BPE, vocab builder, encode/decode
 Data: sources, cleaning, formating, batching, dataset loaders
 Core: tensors, matrix math, memory, activations
 
-Options going forward:
 
-Reuse GPU buffers — pre-allocate once, reuse across calls (avoids per-call allocation but still pays PCIe transfer)
-Batch API — VecDotBatch(float* inputs, byte* weights, int count, ...) — process N VecDots in one kernel call, amortizing kernel launch + PCIe overhead
-Matrix-level offload — skip per-VecDot GPU and move to full matmul(activations, weights) on GPU, where copy-in/copy-out is worth it (e.g., attention Q*K^T with 4096x4096)
-Keep CPU — accept that VecDot is inherently CPU-friendly; focus GPU effort on large matrix/flash-attention ops
-
-SpeculativeGenerator noy used, Generator and SpeculativeGenerator should implement an interface so ChatSession can be created using various generators.
-This is the same for KVCaceh vs PagedKVCache
-
-GPU
-Options going forward:
-
-Reuse GPU buffers — pre-allocate once, reuse across calls (avoids per-call allocation but still pays PCIe transfer)
-Batch API — VecDotBatch(float* inputs, byte* weights, int count, ...) — process N VecDots in one kernel call, amortizing kernel launch + PCIe overhead
-Matrix-level offload — skip per-VecDot GPU and move to full matmul(activations, weights) on GPU, where copy-in/copy-out is worth it (e.g., attention Q*K^T with 4096x4096)
-Keep CPU — accept that VecDot is inherently CPU-friendly; focus GPU effort on large matrix/flash-attention ops
 Todo
 MPT multi token prediction
 Chatsession compact/truncate etc  only prompt important context(selection)
@@ -47,19 +31,7 @@ this can be used is responses and chat history may require modifying prompting
 ChatSession history  Agent Name(could be multiple with different inference options), User Name 
 ChatStatus should be updated during GetResponseStreamAsync Thinking
 
-InferenceKernels.DecodeAttention_Standard_AVX2 uses 
-acc = Fma.IsSupported
-                        ? Fma.MultiplyAdd(Vector256.LoadUnsafe(ref q[d]),
-                                          Vector256.LoadUnsafe(ref kj[d]), acc)
-                        : Avx.Add(acc, Avx.Multiply(Vector256.LoadUnsafe(ref q[d]),
-                                                     Vector256.LoadUnsafe(ref kj[d])));
-This condition should this be split into Specific AVX2 or FMA Variant to reduce conditional calls
-
-[PuzzleCornerPiece(InferenceConfig.PtrPrefillAttention,
-        InferenceConfig.ValStandardFMA,
-            NS + "." + nameof(InferenceKernels.DecodeAttention_Standard_FMA),
-        InferenceConfig.ValStandardAvx2,
-            NS + "." + nameof(InferenceKernels.DecodeAttention_Standard_AVX2),
+review .Encode(prompt, addBos: false, addEos: false)
 
 Model Tools,  should add permissions handler, Never,Ask,Always System.IO.Abstractions IFileService, INetworkService
 using System.IO.Abstractions; 

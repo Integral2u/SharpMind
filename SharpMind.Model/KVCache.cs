@@ -11,7 +11,7 @@ namespace SharpMind.Model;
 /// O(MaxSeqLen) up-front cost for short conversations while still supporting the
 /// full context length when needed.
 /// </summary>
-public sealed class KVCache : IDisposable
+public sealed class KVCache : IKVCache
 {
     private Tensor<float> _keys;
     private Tensor<float> _values;
@@ -24,14 +24,14 @@ public sealed class KVCache : IDisposable
     public Tensor<float> Values => _values;
     public int CurrentPosition { get; private set; }
 
-    /// <summary>Hard upper bound — the model's true context limit.</summary>
+    /// <summary>Hard upper bound ï¿½ the model's true context limit.</summary>
     public int MaxSeqLen { get; }
 
     /// <summary>Currently allocated token capacity (may be less than MaxSeqLen).</summary>
     public int AllocatedCapacity => _allocatedCapacity;
 
     /// <param name="initialCapacity">
-    /// Tokens to pre-allocate now. Defaults to 64 — enough for a first reply
+    /// Tokens to pre-allocate now. Defaults to 64 ï¿½ enough for a first reply
     /// without wasting memory for the full context window.
     /// </param>
     public KVCache(int batchSize, int numKvHeads, int maxSeqLen, int headDim, int initialCapacity = 64)

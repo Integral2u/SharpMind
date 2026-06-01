@@ -187,7 +187,7 @@ public sealed class Transformer : IDisposable
     /// </summary>
     public unsafe Tensor<float> Forward(Tensor<int> tokenIds, int positionOffset = 0) => Forward(tokenIds, null, positionOffset);
 
-    public unsafe Tensor<float> Forward(Tensor<int> tokenIds, KVCache[]? caches, int positionOffset = 0)
+    public unsafe Tensor<float> Forward(Tensor<int> tokenIds, IKVCache[]? caches, int positionOffset = 0)
     {
         ThrowIfDisposed();
 
@@ -223,7 +223,7 @@ public sealed class Transformer : IDisposable
     /// Input:  token IDs [Batch, SeqLen]
     /// Output: logits    [Batch, VocabSize]
     /// </summary>
-    public unsafe Tensor<float> ForwardLastLogits(Tensor<int> tokenIds, KVCache[] caches, int positionOffset = 0)
+    public unsafe Tensor<float> ForwardLastLogits(Tensor<int> tokenIds, IKVCache[] caches, int positionOffset = 0)
     {
         ThrowIfDisposed();
 
@@ -247,20 +247,16 @@ public sealed class Transformer : IDisposable
             return _ops.MatMulWithBT(flatEmbedded, projectionWeight);
         }
 
-        // Prefill path: allocate full normed output, extract last token
-        _cachedNormed = _finalNorm.Forward(_cachedHidden);
-        using var normed = _cachedNormed;
-
-        var lastTokenNormed = new Tensor<float>(batch, hiddenDim);
+        // Prefill path: extract last token's hidden state, norm in-place
+        var lastHidden = new Tensor<float>(batch, hiddenDim);
         for (int b = 0; b < batch; b++)
         {
             int srcOffset = (b * seqLen + (seqLen - 1)) * hiddenDim;
-            int dstOffset = b * hiddenDim;
-            normed.Data.Slice(srcOffset, hiddenDim).CopyTo(lastTokenNormed.Data.Slice(dstOffset, hiddenDim));
+            _cachedHidden.Data.Slice(srcOffset, hiddenDim).CopyTo(lastHidden.Data.Slice(b * hiddenDim, hiddenDim));
         }
-
-        var logits = _ops.MatMulWithBT(lastTokenNormed, projectionWeight);
-        lastTokenNormed.Dispose();
+        _finalNorm.ForwardInPlace(lastHidden);
+        var logits = _ops.MatMulWithBT(lastHidden, projectionWeight);
+        lastHidden.Dispose();
         return logits;
     }
 

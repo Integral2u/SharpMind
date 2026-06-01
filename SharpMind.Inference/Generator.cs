@@ -59,27 +59,13 @@ internal sealed class TokenRateTracker(int windowSize = 10)
 }
 
 /// <summary>
-/// Token generation loop using JigSaw-assembled <see cref="InferenceOps"/>.
-///
-/// The attention path (standard vs flash, AVX2 vs scalar) is selected once
-/// at construction via <see cref="InferenceOpsFactory.Create"/> — no runtime
-/// branching occurs inside the generation loop.
-///
-/// Usage:
-/// <code>
-/// var ops       = InferenceOpsFactory.Create(SharpMindConfig.Llama, InferenceConfig.Fast);
-/// var generator = new Generator(model, tokenizer, ops);
-///
-/// await foreach (var fragment in generator.GenerateAsync("Once upon a time"))
-///     Console.Write(fragment);
-/// </code>
+/// Token generation loop for autoregressive decoding.
 /// </summary>
-public sealed class Generator : IDisposable
+public sealed class Generator : IGenerator
 {
     private readonly Transformer  _model;
-    private readonly SharpMind.Tokenization.Tokenizer _tokenizer;
-    private readonly InferenceOps _ops;
-    private readonly KVCache[]     _caches;
+    private readonly Tokenization.Tokenizer _tokenizer;
+    private readonly IKVCache[]     _caches;
     private readonly Random       _defaultRng;
     /// <summary>Reused decode step (<c>[1]</c>) to avoid allocating a new <see cref="int"/>[] each token.</summary>
     private readonly int[]       _decodeTokenScratch = new int[1];
@@ -87,26 +73,24 @@ public sealed class Generator : IDisposable
 
     public Generator(
         Transformer   model,
-        SharpMind.Tokenization.Tokenizer tokenizer,
-        InferenceOps  ops,
+        Tokenization.Tokenizer tokenizer,
         int?          seed = null)
     {
         ArgumentNullException.ThrowIfNull(model);
         ArgumentNullException.ThrowIfNull(tokenizer);
-        ArgumentNullException.ThrowIfNull(ops);
 
         _model      = model;
         _tokenizer  = tokenizer;
-        _ops        = ops;
 
         int numLayers = model.Config.NumLayers;
         int maxSeqLen = model.Config.MaxSeqLen;
         int numKvHeads = model.Config.NumKvHeads;
         int headDim   = model.Config.HeadDim;
 
-        _caches = new KVCache[numLayers];
+        int initCapacity = Math.Min(512, maxSeqLen);
+        _caches = new IKVCache[numLayers];
         for (int i = 0; i < numLayers; i++)
-            _caches[i] = new KVCache(1, numKvHeads, maxSeqLen, headDim);
+            _caches[i] = new KVCache(1, numKvHeads, maxSeqLen, headDim, initCapacity);
 
         _defaultRng = seed.HasValue ? new Random(seed.Value) : Random.Shared;
     }
@@ -278,9 +262,9 @@ public sealed class Generator : IDisposable
 
     // ── Tokens-per-second ─────────────────────────────────────────────────
     /// <summary>Rolling tokens-per-second over the last few decode steps.</summary>
-    public float TokensPerSecond { get; private set; }
+    public float? TokensPerSecond { get; private set; }
     /// <summary>Cumulative tokens-per-second from the start of the current generation.</summary>
-    public float CumulativeTokensPerSecond { get; private set; }
+    public float? CumulativeTokensPerSecond { get; private set; }
 
     // ── Repetition penalty ────────────────────────────────────────────────
 

@@ -82,11 +82,23 @@ public abstract class AttentionLayer : IDisposable
 
     [PuzzleCornerPiece(SharpMindConfig.KeyAttention,
         SharpMindConfig.ValMhaAvx2, NS + "." + nameof(AttentionKernels.ScaledDotProductAVX2),
+        SharpMindConfig.ValMhaFma, NS + "." + nameof(AttentionKernels.ScaledDotProductFMA),
         SharpMindConfig.ValMhaScalar, NS + "." + nameof(AttentionKernels.ScaledDotProductScalar),
+        SharpMindConfig.ValMhaFlashAvx2, NS + "." + nameof(AttentionKernels.ScaledDotProductFlashAVX2),
+        SharpMindConfig.ValMhaFlashFma, NS + "." + nameof(AttentionKernels.ScaledDotProductFlashFMA),
+        SharpMindConfig.ValMhaFlashScalar, NS + "." + nameof(AttentionKernels.ScaledDotProductFlashScalar),
         SharpMindConfig.ValGqaAvx2, NS + "." + nameof(AttentionKernels.ScaledDotProductAVX2),
+        SharpMindConfig.ValGqaFma, NS + "." + nameof(AttentionKernels.ScaledDotProductFMA),
         SharpMindConfig.ValGqaScalar, NS + "." + nameof(AttentionKernels.ScaledDotProductScalar),
+        SharpMindConfig.ValGqaFlashAvx2, NS + "." + nameof(AttentionKernels.ScaledDotProductFlashAVX2),
+        SharpMindConfig.ValGqaFlashFma, NS + "." + nameof(AttentionKernels.ScaledDotProductFlashFMA),
+        SharpMindConfig.ValGqaFlashScalar, NS + "." + nameof(AttentionKernels.ScaledDotProductFlashScalar),
         SharpMindConfig.ValMqaAvx2, NS + "." + nameof(AttentionKernels.ScaledDotProductAVX2),
-        SharpMindConfig.ValMqaScalar, NS + "." + nameof(AttentionKernels.ScaledDotProductScalar))]
+        SharpMindConfig.ValMqaFma, NS + "." + nameof(AttentionKernels.ScaledDotProductFMA),
+        SharpMindConfig.ValMqaScalar, NS + "." + nameof(AttentionKernels.ScaledDotProductScalar),
+        SharpMindConfig.ValMqaFlashAvx2, NS + "." + nameof(AttentionKernels.ScaledDotProductFlashAVX2),
+        SharpMindConfig.ValMqaFlashFma, NS + "." + nameof(AttentionKernels.ScaledDotProductFlashFMA),
+        SharpMindConfig.ValMqaFlashScalar, NS + "." + nameof(AttentionKernels.ScaledDotProductFlashScalar))]
     public abstract unsafe void ScaledDotProduct(float* q, float* k, float* v, float* o, int seqLen, int kvLen, int headDim, float scale, bool causal);
 
     public Tensor<float> Forward(
@@ -94,7 +106,7 @@ public abstract class AttentionLayer : IDisposable
         TensorOps ops,
         int positionOffset = 0,
         bool causal = true,
-        KVCache? cache = null)
+        IKVCache? cache = null)
     {
         ThrowIfDisposed();
         int batch = x.Shape[0];
@@ -118,7 +130,7 @@ public abstract class AttentionLayer : IDisposable
         cache?.Update(k, v, numKv, headDim);
 
         var output = new Tensor<float>(batch, seqLen, hidden);
-        int effectiveKvLen = cache != null ? cache.CurrentPosition : seqLen;
+        int effectiveKvLen = cache != null ? cache.Length : seqLen;
 
         {
             int totalHeads = batch * numH;
@@ -145,13 +157,19 @@ public abstract class AttentionLayer : IDisposable
 
                         float* pK;
                         float* pV;
-                        if (cache != null)
+                        if (cache is KVCache kc)
                         {
-                            int cacheStride = cache.AllocatedCapacity;
-                            pK = cache.Keys.DataPtr + (long)b * (numKv * cacheStride * headDim)
+                            int cacheStride = kc.AllocatedCapacity;
+                            pK = kc.Keys.DataPtr + (long)b * (numKv * cacheStride * headDim)
                                                + (long)kvHead * (cacheStride * headDim);
-                            pV = cache.Values.DataPtr + (long)b * (numKv * cacheStride * headDim)
-                                                 + (long)kvHead * (cacheStride * headDim);
+                            pV = kc.Values.DataPtr + (long)b * (numKv * cacheStride * headDim)
+                                                  + (long)kvHead * (cacheStride * headDim);
+                        }
+                        else if (cache != null)
+                        {
+                            throw new NotSupportedException(
+                                $"Non-contiguous cache type {cache.GetType().Name} is not supported. " +
+                                "Use KVCache for contiguous pointer access.");
                         }
                         else
                         {

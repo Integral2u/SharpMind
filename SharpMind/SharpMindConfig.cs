@@ -60,11 +60,23 @@ public sealed record SharpMindConfig
 
     // ── Attention Values ──────────────────────────────────────────────────────
     public const string ValMhaAvx2 = "mhaavx2";
+    public const string ValMhaFma = "mhafma";
     public const string ValMhaScalar = "mhascalar";
+    public const string ValMhaFlashAvx2 = "mhaflashavx2";
+    public const string ValMhaFlashFma = "mhaflashfma";
+    public const string ValMhaFlashScalar = "mhaflashscalar";
     public const string ValGqaAvx2 = "gqaavx2";
+    public const string ValGqaFma = "gqafma";
     public const string ValGqaScalar = "gqascalar";
+    public const string ValGqaFlashAvx2 = "gqaflashavx2";
+    public const string ValGqaFlashFma = "gqaflashfma";
+    public const string ValGqaFlashScalar = "gqaflashscalar";
     public const string ValMqaAvx2 = "mqaavx2";
+    public const string ValMqaFma = "mqafma";
     public const string ValMqaScalar = "mqascalar";
+    public const string ValMqaFlashAvx2 = "mqaflashavx2";
+    public const string ValMqaFlashFma = "mqaflashfma";
+    public const string ValMqaFlashScalar = "mqaflashscalar";
 
     // ── Ffn Values ──────────────────────────────────────────────────────
     public const string ValFfnDense = "dense";
@@ -95,6 +107,7 @@ public sealed record SharpMindConfig
     public NormKind Norm { get; init; } = NormKind.RMSNorm;
     public ArchKind Arch { get; init; } = ArchKind.Decoder;
     public HardwareTier   Hardware   { get; init; } = HardwareTier.Auto;
+    public bool FlashAttention { get; init; } = false;
 
     public static SharpMindConfig Gpt => new()
     {

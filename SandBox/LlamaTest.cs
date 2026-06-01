@@ -4,7 +4,6 @@ using LLama.Native;
 using LLama.Sampling;
 using SharpMind;
 using SharpMind.Core.Tensors;
-using SharpMind.Inference;
 using SharpMind.Inference.Chat;
 using SharpMind.Inference.Chat.PromptFormatters;
 using SharpMind.Model;
@@ -777,7 +776,6 @@ namespace SandBox
                 var sharpConfig = DeriveSharpMindConfig(modelConfig, HardwareTier.Scalar);
                 var model = ModelFactory.Create(modelConfig, sharpConfig);
                 GgufLoader.LoadWeightsToModel(modelPath, meta, model);
-                var inferOps = InferenceOpsFactory.Create(sharpConfig, InferenceConfig.Default);
 
                 // Diagnostic: check LM head
                 var lmHead = model.LmHead;

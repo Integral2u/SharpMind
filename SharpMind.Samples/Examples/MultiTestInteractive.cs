@@ -18,14 +18,14 @@ namespace SharpMind.Samples.Examples
             //"Qwen2-0.5B.Q3_K_L",            //Response:/classes/classes?????????ist??????????_*
             //"Qwen2-0.5B.Q3_K_M",            //Response:!!!!!!!
             //"Qwen2-0.5B.Q3_K_S",            //Response:!!!!!!!
-            //"SmolLM-135M.Q4_K_M",           //Response:enos or port portern I either norussels but '', entryern - +/-
+            "SmolLM-135M.Q4_K_M",           //Response:enos or port portern I either norussels but '', entryern - +/-
             //"SmolLM2-135M-Instruct.Q4_K_M", //Response:ELTS on Globeinstead/nbeccaeltary,,,,instead instead""", Gelcreat1
             //"qwen2-0_5b-instruct-q4_k_m",   //Response:???????? v?ng?ErrorResponse.QuadOVEadero???slideUp ????????????? IonicPage
 
             "qwen2-0_5b-instruct-q8_0",     //Response:Hello! How can I assist you today?
             //"qwen2-0_5b-instruct-fp16",     //Response:Hello! How can I assist you today?
                         
-            "DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M", //Response:
+            //"DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M", //Response:
             //"TinyLlama-1.1B-Chat-v1.0.Q4_K_M",      //Response:It seems like you'd like to provide information on the topic of which is not
             //"llama-3.2-1b-instruct-q8_0",           //Response:It seems like you'd like to provide information on the topic of which is not
             //"qwen2.5-1.5b-instruct-q8_0",           //Response:\n\n\n\n# 1. Write a Python program to check if the given
@@ -64,16 +64,12 @@ namespace SharpMind.Samples.Examples
                 GC.Collect(); GC.WaitForPendingFinalizers();
                 sw.Restart();
                 GgufLoader.LoadWeightsToModel(ggufPath, meta, model);
-                await Console.Out.WriteLineAsync($"GgufLoader.LoadWeightsToModel executed in: {sw.Elapsed.TotalSeconds:F2}s");
-                sw.Restart();
-                var inferOps = InferenceOpsFactory.Create(sharpConfig, InferenceConfig.Fast);
-                await Console.Out.WriteLineAsync($"InferenceOpsFactory.Create executed in: {sw.Elapsed.TotalSeconds:F2}s");
-
                 string systemPrompt = "";
 
-                await using var session = new ChatSession(model, tokenizer, inferOps, meta)
+                var generator = new Generator(model, tokenizer);
+                await using var session = new ChatSession(generator, tokenizer, meta)
                 {
-                    MaxTokens = 32,
+                    MaxTokens = 256,
                     Temperature = 0.0f,
                     TopK = 1,
                     //TopP = 0.8f

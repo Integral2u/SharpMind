@@ -14,9 +14,8 @@ public class MappingBuilder(HardwareTier hardware)
     /// </summary>
     public MappingBuilder ApplyPreset(SharpMindConfig config)
     {
-        // We use the config's base properties to generate the standard mapping
-        // but we use the builder's hardware context for the suffixes.
         string hw = GetHwSuffix();
+        string flash = config.FlashAttention ? "flash" : "";
         string act = config.Activation.ToString().ToLowerInvariant();
         string gate = config.Gate.ToString().ToLowerInvariant();
 
@@ -26,8 +25,8 @@ public class MappingBuilder(HardwareTier hardware)
         _mapping[SharpMindConfig.KeyRMSNorm] = hw;
         _mapping[SharpMindConfig.KeyMatMul] = GetMatMulHwKey();
         _mapping[SharpMindConfig.KeyAttention] = string.IsNullOrEmpty(hw)
-            ? $"{config.Attention.ToString().ToLowerInvariant()}scalar"
-            : $"{config.Attention.ToString().ToLowerInvariant()}{hw}";
+            ? $"{config.Attention.ToString().ToLowerInvariant()}{flash}scalar"
+            : $"{config.Attention.ToString().ToLowerInvariant()}{flash}{hw}";
         _mapping[SharpMindConfig.KeyFfn] = config.Ffn.ToString().ToLowerInvariant();
         _mapping[SharpMindConfig.KeyNorm] = config.Norm == NormKind.RMSNorm ? SharpMindConfig.ValNormRMS : SharpMindConfig.ValNormLayer;
         _mapping[SharpMindConfig.KeyArch] = config.Arch == ArchKind.Decoder ? SharpMindConfig.ValDecoder : SharpMindConfig.ValEncoder;

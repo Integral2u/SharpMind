@@ -7,7 +7,7 @@ namespace SharpMind.Model;
 /// Wrapper that provides a single-layer KV Cache interface using paged memory internally.
 /// This is a drop-in replacement for KVCache that uses PagedAttention internally.
 /// </summary>
-public sealed class PagedKVCacheLayer(int batchSize, int numKvHeads, int maxSeqLen, int headDim, int pageSize = PagedKVCache.DefaultPageSize) : IDisposable
+public sealed class PagedKVCacheLayer(int batchSize, int numKvHeads, int maxSeqLen, int headDim, int pageSize = PagedKVCache.DefaultPageSize) : IKVCache
 {
     private readonly PagedKVCache _cache = new(batchSize, numKvHeads, maxSeqLen, headDim, pageSize);
     private readonly int _maxSeqLen = maxSeqLen;
@@ -42,28 +42,4 @@ public sealed class PagedKVCacheLayer(int batchSize, int numKvHeads, int maxSeqL
     }
 
     public void Dispose() => _cache.Dispose();
-}
-
-/// <summary>
-/// Factory for creating paged KV cache arrays for all transformer layers.
-/// </summary>
-public static class PagedKVCacheFactory
-{
-    public static PagedKVCacheLayer[] CreateArray(int numLayers, int batchSize, int numKvHeads, int maxSeqLen, int headDim, int pageSize = PagedKVCache.DefaultPageSize)
-    {
-        var caches = new PagedKVCacheLayer[numLayers];
-        for (int i = 0; i < numLayers; i++)
-            caches[i] = new PagedKVCacheLayer(batchSize, numKvHeads, maxSeqLen, headDim, pageSize);
-        return caches;
-    }
-
-    public static PagedKVCacheLayer[] CreateArray(ModelConfig config, int batchSize = 1)
-    {
-        return CreateArray(
-            config.NumLayers,
-            batchSize,
-            config.NumKvHeads,
-            config.MaxSeqLen,
-            config.HeadDim);
-    }
 }

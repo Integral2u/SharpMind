@@ -74,7 +74,7 @@ public sealed class TransformerBlock : IDisposable
         return Forward(x, null, positionOffset, causal);
     }
 
-    public Tensor<float> Forward(Tensor<float> x, KVCache? cache, int positionOffset = 0, bool causal = true)
+    public Tensor<float> Forward(Tensor<float> x, IKVCache? cache, int positionOffset = 0, bool causal = true)
     {
         ThrowIfDisposed();
         

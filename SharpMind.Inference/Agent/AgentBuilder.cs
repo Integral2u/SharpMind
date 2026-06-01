@@ -32,8 +32,10 @@ namespace SharpMind.Inference.Agent
 
         public readonly JsonArray ToolDefinitions = [];
 
+        public readonly List<string> Behaviors = [];
         public AgentBuilder WithCustomBehavior(string behavior)
         {
+            if (Behaviors.Contains(behavior)) Behaviors.Add(behavior);
             return this;
         }
         public AgentBuilder WithSkills(string folder, bool recusive = true)
@@ -55,6 +57,7 @@ namespace SharpMind.Inference.Agent
                 if (toolClass is null) continue;
                 var t = toolClass.GetType();
                 if (!t.IsClass) continue;
+
                 var tools = t.GetMethods().Where(m => m.GetCustomAttributes(typeof(ToolDescAttribute), true).Length != 0);
                 if (tools == null) continue;
                 foreach(var tool in tools)
@@ -222,12 +225,23 @@ namespace SharpMind.Inference.Agent
         }
         private static JsonObject Success(string data) => new() { ["status"] = "success", ["data"] = data };
         private static JsonObject Error(string message) => new() { ["status"] = "error", ["message"] = message };
-        public string BuildSystemPrompt()
+        private static string TemperaturePersonality(float temperature) => temperature switch
         {
-            return string.Empty;
-        }
+            <= 0.1f => "exacting and strictly literal",
+            <= 0.3f => "methodical and analytical",
+            <= 0.5f => "pragmatic and measured",
+            <= 0.7f => "thoughtful and adaptive",
+            <= 0.9f => "imaginative and expressive",
+            <= 1.1f => "creative and exploratory",
+            _ => "unconventional and abstract"
+        };
         public string BuildAgentPrompt()
         {
+            var stringBuilder = new StringBuilder();
+            stringBuilder.AppendLine("## Role");
+            stringBuilder.AppendLine($"You are {AgentName}, a {TemperaturePersonality(SamplingConfig.Temperature)} AI agent.");
+            if (ToolDefinitions.Count != 0) stringBuilder.Append("You only act using the tools provided.");
+            foreach (var behavior in Behaviors) stringBuilder.AppendLine(behavior);
             /*
              * <tool_calling>
 You have tools at your disposal to solve the coding task. Follow these rules regarding tool calls:
@@ -248,5 +262,41 @@ You have tools at your disposal to solve the coding task. Follow these rules reg
             sb.AppendLine(ToolDefinitions.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
             return sb.ToString();
         }
+
+        public enum ModelFamily { Anthropic, OpenAI, Generic }
+        /*
+        public string BuildSystemPrompt(ModelFamily family = ModelFamily.Generic)
+        {           
+            var callFormat = family switch
+            {
+                ModelFamily.Anthropic => "Use the tool_use content block format.",
+                ModelFamily.OpenAI => "Use the function_call format.",
+                _ => """
+                                 Respond ONLY with this JSON:
+                                 { "tool": "<name>", "arguments": { ... } }
+                                 """
+            };
+
+            return $"""
+        ## Role
+        You are {AgentName}, a precise AI agent. You only act using the tools provided.
+
+        ## Rules
+        - Respond ONLY in valid JSON. No prose. No markdown fences.
+        - Never invent tool names or argument values.
+        - If a required argument is missing, respond with:
+          {{"status":"error","message":"Missing required argument: <name>"}}
+        - Call one tool at a time. Wait for the result before proceeding.
+
+        ## Tool Call Format
+        {callFormat}
+
+        ## Available Tools
+        {toolsJson}
+
+        ## Final Response Format
+        {{"status":"success"|"error","data":"<result>"}}
+        """;
+        }*/
     }
 }

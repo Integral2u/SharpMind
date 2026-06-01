@@ -40,12 +40,10 @@ namespace SharpMind.Samples.Examples
             GC.Collect(); GC.WaitForPendingFinalizers();
             Console.Out.WriteLine("Loading weights...");
             GgufLoader.LoadWeightsToModel(ggufPath, meta, model);
-
-            Console.Out.WriteLine("Creating inference ops...");
-            var inferOps = InferenceOpsFactory.Create(sharpConfig, InferenceConfig.Default);
             string systemPrompt = "";
 
-            await using var session = new ChatSession(model, tokenizer, inferOps, meta)
+            var generator = new Generator(model, tokenizer);
+            await using var session = new ChatSession(generator, tokenizer, meta)
             {
                 MaxTokens = 256,
                 Temperature = 0.7f,

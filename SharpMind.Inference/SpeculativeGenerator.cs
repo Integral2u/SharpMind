@@ -16,12 +16,11 @@ namespace SharpMind.Inference;
 ///
 /// Speedup comes from verifying multiple tokens at once vs autoregressive single-token decoding.
 /// </summary>
-public sealed class SpeculativeGenerator : IDisposable
+public sealed class SpeculativeGenerator : IGenerator
 {
     private readonly Transformer _model;
-    private readonly SharpMind.Tokenization.Tokenizer _tokenizer;
-    private readonly InferenceOps _ops;
-    private readonly KVCache[] _caches;
+    private readonly Tokenization.Tokenizer _tokenizer;
+    private readonly IKVCache[] _caches;
     private readonly Random _defaultRng;
     private readonly int[] _decodeTokenScratch = new int[1];
     private bool _disposed;
@@ -30,24 +29,21 @@ public sealed class SpeculativeGenerator : IDisposable
 
     public SpeculativeGenerator(
         Transformer model,
-        SharpMind.Tokenization.Tokenizer tokenizer,
-        InferenceOps ops,
+        Tokenization.Tokenizer tokenizer,
         int? seed = null)
     {
         ArgumentNullException.ThrowIfNull(model);
         ArgumentNullException.ThrowIfNull(tokenizer);
-        ArgumentNullException.ThrowIfNull(ops);
 
         _model = model;
         _tokenizer = tokenizer;
-        _ops = ops;
 
         int numLayers = model.Config.NumLayers;
         int maxSeqLen = model.Config.MaxSeqLen;
         int numKvHeads = model.Config.NumKvHeads;
         int headDim = model.Config.HeadDim;
 
-        _caches = new KVCache[numLayers];
+        _caches = new IKVCache[numLayers];
         for (int i = 0; i < numLayers; i++)
             _caches[i] = new KVCache(1, numKvHeads, maxSeqLen, headDim);
 
@@ -168,6 +164,13 @@ public sealed class SpeculativeGenerator : IDisposable
         }
     }
 
+    IAsyncEnumerable<string> IGenerator.GenerateAsync(
+        string prompt,
+        SamplingConfig? sampling,
+        GenerationConfig? generation,
+        CancellationToken cancellationToken)
+        => GenerateAsync(prompt, sampling, generation, DefaultMaxDraftTokens, cancellationToken);
+
     private static bool StringBuilderContains(System.Text.StringBuilder sb, ReadOnlySpan<char> value)
     {
         if (value.IsEmpty) return true;
@@ -228,6 +231,21 @@ public sealed class SpeculativeGenerator : IDisposable
     }
 
     public float CacheFillRatio => (float)_caches[0].Length / _caches[0].MaxSeqLen;
+
+    public float? TokensPerSecond => null;
+    public float? CumulativeTokensPerSecond => null;
+
+    public async IAsyncEnumerable<string> GenerateFromTokensAsync(
+        int[] promptIds,
+        SamplingConfig? sampling = null,
+        GenerationConfig? generation = null,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        await foreach (var fragment in GenerateAsync(
+            _tokenizer.Decode(promptIds, skipSpecials: true),
+            sampling, generation, DefaultMaxDraftTokens, cancellationToken))
+            yield return fragment;
+    }
 
     public void Dispose()
     {

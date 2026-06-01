@@ -42,7 +42,7 @@ public sealed class EncoderArch : IArchitecture
     /// </summary>
     public Tensor<float> Forward(Tensor<float> hiddenStates, int positionOffset = 0) => Forward(hiddenStates, [], positionOffset);
 
-    public Tensor<float> Forward(Tensor<float> hiddenStates, KVCache[] caches, int positionOffset = 0)
+    public Tensor<float> Forward(Tensor<float> hiddenStates, IKVCache[] caches, int positionOffset = 0)
     {
         ThrowIfDisposed();
         var current = hiddenStates;
