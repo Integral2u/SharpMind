@@ -28,10 +28,14 @@ public abstract class InferenceOps
     [PuzzleCornerPiece(InferenceConfig.PtrDecodeAttention,
         InferenceConfig.ValStandardAvx2,
             NS + "." + nameof(InferenceKernels.DecodeAttention_Standard_AVX2),
+        InferenceConfig.ValStandardFma,
+            NS + "." + nameof(InferenceKernels.DecodeAttention_Standard_FMA),
         InferenceConfig.ValStandardScalar,
             NS + "." + nameof(InferenceKernels.DecodeAttention_Standard_Scalar),
         InferenceConfig.ValFlashAvx2,
             NS + "." + nameof(InferenceKernels.DecodeAttention_Flash_AVX2),
+        InferenceConfig.ValFlashFma,
+            NS + "." + nameof(InferenceKernels.DecodeAttention_Flash_FMA),
         InferenceConfig.ValFlashScalar,
             NS + "." + nameof(InferenceKernels.DecodeAttention_Flash_Scalar))]
     public abstract unsafe void DecodeAttention(
@@ -44,10 +48,14 @@ public abstract class InferenceOps
     [PuzzleCornerPiece(InferenceConfig.PtrPrefillAttention,
         InferenceConfig.ValStandardAvx2,
             NS + "." + nameof(InferenceKernels.DecodeAttention_Standard_AVX2),
+        InferenceConfig.ValStandardFma,
+            NS + "." + nameof(InferenceKernels.DecodeAttention_Standard_FMA),
         InferenceConfig.ValStandardScalar,
             NS + "." + nameof(InferenceKernels.DecodeAttention_Standard_Scalar),
         InferenceConfig.ValFlashAvx2,
             NS + "." + nameof(InferenceKernels.DecodeAttention_Flash_AVX2),
+        InferenceConfig.ValFlashFma,
+            NS + "." + nameof(InferenceKernels.DecodeAttention_Flash_FMA),
         InferenceConfig.ValFlashScalar,
             NS + "." + nameof(InferenceKernels.DecodeAttention_Flash_Scalar))]
     public abstract unsafe void PrefillAttention(

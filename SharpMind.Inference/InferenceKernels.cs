@@ -24,33 +24,58 @@ internal static class InferenceKernels
         float* q, float* k, float* v, float* output,
         int cacheLen, int headDim, float scale)
     {
-        // Use stackalloc for small caches, ArrayPool for large — avoids GC allocations.
         float[]? rentedScores = cacheLen > 256 ? ArrayPool<float>.Shared.Rent(cacheLen) : null;
         Span<float> scores = rentedScores is not null
             ? rentedScores.AsSpan(0, cacheLen)
             : stackalloc float[cacheLen];
         fixed (float* pS = scores)
         {
-            // scores[j] = dot(q, k[j]) * scale
             for (int j = 0; j < cacheLen; j++)
             {
                 float* kj  = k + (long)j * headDim;
                 var    acc = Vector256<float>.Zero;
                 int    d   = 0;
                 for (; d <= headDim - 8; d += 8)
-                    acc = Fma.IsSupported
-                        ? Fma.MultiplyAdd(Vector256.LoadUnsafe(ref q[d]),
-                                          Vector256.LoadUnsafe(ref kj[d]), acc)
-                        : Avx.Add(acc, Avx.Multiply(Vector256.LoadUnsafe(ref q[d]),
+                    acc = Avx.Add(acc, Avx.Multiply(Vector256.LoadUnsafe(ref q[d]),
                                                      Vector256.LoadUnsafe(ref kj[d])));
                 float dot = MathHelpers.HSum256_Avx(acc);
                 for (; d < headDim; d++) dot += q[d] * kj[d];
                 pS[j] = dot * scale;
             }
-
             SoftmaxInPlace(scores);
+            for (int d = 0; d < headDim; d++)
+            {
+                float sum = 0f;
+                for (int j = 0; j < cacheLen; j++) sum += pS[j] * v[(long)j * headDim + d];
+                output[d] = sum;
+            }
+        }
+        if (rentedScores is not null) ArrayPool<float>.Shared.Return(rentedScores);
+    }
 
-            // output = sum_j scores[j] * v[j]
+    internal static unsafe void DecodeAttention_Standard_FMA(
+        float* q, float* k, float* v, float* output,
+        int cacheLen, int headDim, float scale)
+    {
+        float[]? rentedScores = cacheLen > 256 ? ArrayPool<float>.Shared.Rent(cacheLen) : null;
+        Span<float> scores = rentedScores is not null
+            ? rentedScores.AsSpan(0, cacheLen)
+            : stackalloc float[cacheLen];
+        fixed (float* pS = scores)
+        {
+            for (int j = 0; j < cacheLen; j++)
+            {
+                float* kj  = k + (long)j * headDim;
+                var    acc = Vector256<float>.Zero;
+                int    d   = 0;
+                for (; d <= headDim - 8; d += 8)
+                    acc = Fma.MultiplyAdd(Vector256.LoadUnsafe(ref q[d]),
+                                          Vector256.LoadUnsafe(ref kj[d]), acc);
+                float dot = MathHelpers.HSum256_Avx(acc);
+                for (; d < headDim; d++) dot += q[d] * kj[d];
+                pS[j] = dot * scale;
+            }
+            SoftmaxInPlace(scores);
             for (int d = 0; d < headDim; d++)
             {
                 float sum = 0f;
@@ -94,20 +119,22 @@ internal static class InferenceKernels
     internal static unsafe void DecodeAttention_Flash_AVX2(
         float* q, float* k, float* v, float* output,
         int cacheLen, int headDim, float scale)
-        => DecodeAttention_Flash_Core(q, k, v, output, cacheLen, headDim, scale, avx2: true);
+        => DecodeAttention_Flash_Core(q, k, v, output, cacheLen, headDim, scale, avx2: true, fma: false);
+
+    internal static unsafe void DecodeAttention_Flash_FMA(
+        float* q, float* k, float* v, float* output,
+        int cacheLen, int headDim, float scale)
+        => DecodeAttention_Flash_Core(q, k, v, output, cacheLen, headDim, scale, avx2: true, fma: true);
 
     internal static unsafe void DecodeAttention_Flash_Scalar(
         float* q, float* k, float* v, float* output,
         int cacheLen, int headDim, float scale)
-        => DecodeAttention_Flash_Core(q, k, v, output, cacheLen, headDim, scale, avx2: false);
+        => DecodeAttention_Flash_Core(q, k, v, output, cacheLen, headDim, scale, avx2: false, fma: false);
 
     private static unsafe void DecodeAttention_Flash_Core(
     float* q, float* k, float* v, float* output,
-    int cacheLen, int headDim, float scale, bool avx2)
+    int cacheLen, int headDim, float scale, bool avx2, bool fma)
     {
-        // headDim is a runtime value — guard before touching the stack.
-        // All known configs produce headDim <= 128; 256 gives headroom for
-        // future models without risking overflow.
         const int MaxHeadDim = 256;
         if ((uint)headDim > MaxHeadDim)
             throw new ArgumentOutOfRangeException(nameof(headDim),
@@ -118,15 +145,9 @@ internal static class InferenceKernels
         float mMax = float.NegativeInfinity;
         float lSum = 0f;
 
-        // Fixed-size allocation: headDim <= MaxHeadDim, allocated once.
         float* pO = stackalloc float[MaxHeadDim];
         for (int d = 0; d < headDim; d++) pO[d] = 0f;
 
-        // Hoisted outside the loop: TileSize is a compile-time constant, so this
-        // single allocation of 64*4 = 256 bytes is made once and reused each tile.
-        // Previously inside the loop, where unsafe stackalloc does NOT restore the
-        // stack pointer between iterations — causing unbounded stack growth with
-        // large cacheLen (e.g. 32K context × 256 B/iter = 8 MB of stack consumed).
         float* tileScores = stackalloc float[TileSize];
 
         for (int start = 0; start < cacheLen; start += TileSize)
@@ -139,7 +160,17 @@ internal static class InferenceKernels
             {
                 float* kj = k + (long)j * headDim;
                 float dot = 0f;
-                if (avx2)
+                if (fma)
+                {
+                    var acc = Vector256<float>.Zero;
+                    int d = 0;
+                    for (; d <= headDim - 8; d += 8)
+                        acc = Fma.MultiplyAdd(Vector256.LoadUnsafe(ref q[d]),
+                                              Vector256.LoadUnsafe(ref kj[d]), acc);
+                    dot = MathHelpers.HSum256_Avx(acc);
+                    for (; d < headDim; d++) dot += q[d] * kj[d];
+                }
+                else if (avx2)
                 {
                     var acc = Vector256<float>.Zero;
                     int d = 0;

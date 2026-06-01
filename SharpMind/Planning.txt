@@ -53,7 +53,7 @@ acc = Fma.IsSupported
                                           Vector256.LoadUnsafe(ref kj[d]), acc)
                         : Avx.Add(acc, Avx.Multiply(Vector256.LoadUnsafe(ref q[d]),
                                                      Vector256.LoadUnsafe(ref kj[d])));
-This condition could be removed as we could create Specific AVX2 or FMA Variant
+This condition should this be split into Specific AVX2 or FMA Variant to reduce conditional calls
 
 [PuzzleCornerPiece(InferenceConfig.PtrPrefillAttention,
         InferenceConfig.ValStandardFMA,

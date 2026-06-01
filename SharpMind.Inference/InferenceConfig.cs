@@ -25,8 +25,10 @@ public sealed record InferenceConfig
 
     // ── Values: attention algo ────────────────────────────────────────────
     public const string ValStandardAvx2  = "standardavx2";
+    public const string ValStandardFma   = "standardfma";
     public const string ValStandardScalar = "standardscalar";
     public const string ValFlashAvx2     = "flashavx2";
+    public const string ValFlashFma      = "flashfma";
     public const string ValFlashScalar   = "flashscalar";
 
     // ── Values: quantization ──────────────────────────────────────────────
@@ -112,7 +114,12 @@ public sealed record InferenceConfig
     /// </summary>
     public Dictionary<string, string> ToJigSawMapping(HardwareTier hw)
     {
-        string hwSuffix = hw is HardwareTier.Scalar or HardwareTier.SSE ? "scalar" : "avx2";
+        string hwSuffix = hw switch
+        {
+            HardwareTier.FMA => "fma",
+            HardwareTier.Scalar or HardwareTier.SSE => "scalar",
+            _ => "avx2",
+        };
 
         string attnVal = Attention switch
         {
