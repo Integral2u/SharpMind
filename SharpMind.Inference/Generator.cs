@@ -1,4 +1,3 @@
-using System.Buffers;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -69,6 +68,8 @@ public sealed class Generator : IGenerator
     private readonly Random       _defaultRng;
     /// <summary>Reused decode step (<c>[1]</c>) to avoid allocating a new <see cref="int"/>[] each token.</summary>
     private readonly int[]       _decodeTokenScratch = new int[1];
+    /// <summary>Cached scratch buffer for repetition-penalty copy to avoid <see cref="ArrayPool{T}.Rent"/> per token.</summary>
+    private float[]?              _penaltyScratch;
     private bool                  _disposed;
 
     public Generator(
@@ -160,19 +161,13 @@ public sealed class Generator : IGenerator
                 int nextId;
                 if (genCfg.RepetitionPenalty != 1.0f)
                 {
-                    float[] rented = ArrayPool<float>.Shared.Rent(vocabSize);
-                    try
-                    {
-                        Span<float> logits = rented.AsSpan(0, vocabSize);
-                        logitsSlice.CopyTo(logits);
-                        ApplyRepetitionPenalty(logits, promptIds, generatedIds,
-                            genCfg.RepetitionPenalty, genCfg.RepetitionWindow);
-                        nextId = Sampler.Sample(logits, sampleCfg, rng);
-                    }
-                    finally
-                    {
-                        ArrayPool<float>.Shared.Return(rented);
-                    }
+                    if (_penaltyScratch is null || _penaltyScratch.Length < vocabSize)
+                        _penaltyScratch = new float[vocabSize];
+                    Span<float> logits = _penaltyScratch.AsSpan(0, vocabSize);
+                    logitsSlice.CopyTo(logits);
+                    ApplyRepetitionPenalty(logits, promptIds, generatedIds,
+                        genCfg.RepetitionPenalty, genCfg.RepetitionWindow);
+                    nextId = Sampler.Sample(logits, sampleCfg, rng);
                 }
                 else
                     nextId = Sampler.Sample(logitsSlice, sampleCfg, rng);

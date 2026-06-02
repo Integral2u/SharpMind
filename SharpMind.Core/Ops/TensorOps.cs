@@ -120,7 +120,7 @@ public abstract class TensorOps
         // Batch = product of all dims before the last two
         int batch = a.Shape.ElementCount / (M * K);
 
-        int[] outDims = (int[])a.Shape.Dims.ToArray().Clone();
+        int[] outDims = (int[])a.Shape.Dims.ToArray();//.Clone();
         outDims[rank - 1] = N;
         var result = new Tensor<float>(new TensorShape(outDims));
 
@@ -507,10 +507,4 @@ public abstract class TensorOps
             dst[i] = op(new Vector<T>(src[i]))[0];
     }
 
-    // Descending float comparer for the TopK min-heap
-    private sealed class FloatDescComparer : IComparer<float>
-    {
-        public static readonly FloatDescComparer Instance = new();
-        public int Compare(float x, float y) => y.CompareTo(x); // descending
-    }
 }

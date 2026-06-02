@@ -84,13 +84,13 @@ xcellent — three agents completed a thorough analysis. Here's the consolidated
 
 Tier 1: 5–30 min fixes, immediate measurable gain
 #	Fix	File	Impact
-1	HalfToFloat_F16C uses MathF.Pow(2f, exponent) per-call — replace with IEEE 754 bit manipulation	QuantizationKernels.cs:22,27	HIGH — called for every FP16 weight conversion; MathF.Pow is extremely expensive
-2	Cache repetition-penalty scratch buffer as a field instead of ArrayPool.Rent on every decode step	Generator.cs:163	Medium — one pool rent per token, small but consistent
+Done 1	HalfToFloat_F16C uses MathF.Pow(2f, exponent) per-call — replace with IEEE 754 bit manipulation	QuantizationKernels.cs:22,27	HIGH — called for every FP16 weight conversion; MathF.Pow is extremely expensive
+done 2	Cache repetition-penalty scratch buffer as a field instead of ArrayPool.Rent on every decode step	Generator.cs:163	Medium — one pool rent per token, small but consistent
 3	Replace StringBuilderContains O(n·m) scan with MemoryExtensions.IndexOf(value) (vectorized)	Generator.cs:192-201	Low — only hits on stop-string matching
 4	Pre-allocate generatedIds capacity to MaxNewTokens	Generator.cs:90-93	Low — avoids incremental resize
 5	Remove dead code: Q4K FMA computes w (unused), Q2K FMA computes biased (unused), Q2K FMA computes Avx.Multiply(vi, ...) twice redundantly	QuantizationKernels.cs:431,697-700	Low — eliminates unnecessary SIMD ops
-6	Replace .ToArray().Clone() with .ToArray() in BatchedMatMul	TensorOps.cs:123	Low — eliminates double allocation
-7	Remove unused FloatDescComparer class	TensorOps.cs:511-514	Cosmetic
+I have done 6	Replace .ToArray().Clone() with .ToArray() in BatchedMatMul	TensorOps.cs:123	Low — eliminates double allocation
+I have done 7	Remove unused FloatDescComparer class	TensorOps.cs:511-514	Cosmetic
 Tier 2: 1–4 hour changes, significant speedup
 #	Fix	Impact
 1	Eliminate per-head Q packing / O scattering in AttentionLayer.Forward — currently copies [seqLen × headDim] per head into contiguous buffers, then scatters output back. Use strided pointer arithmetic into the batched Q/K/V tensors directly	HIGH — O(numH·seqLen·headDim) redundant moves per layer per token, ~30-50% of attention time
