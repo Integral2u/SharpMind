@@ -85,8 +85,8 @@ xcellent — three agents completed a thorough analysis. Here's the consolidated
 
 Tier 2: 1–4 hour changes, significant speedup
 #	Fix	Impact
-1	Eliminate per-head Q packing / O scattering in AttentionLayer.Forward — currently copies [seqLen × headDim] per head into contiguous buffers, then scatters output back. Use strided pointer arithmetic into the batched Q/K/V tensors directly	HIGH — O(numH·seqLen·headDim) redundant moves per layer per token, ~30-50% of attention time
-2	Fuse WGate + WUp into a single LinearLayer (2× output dim) in GatedFfnLayer — halves matmul launches for the gate/up projections	HIGH — ~33% fewer matmul calls per FFN layer
+done 1	Eliminate per-head Q packing / O scattering in AttentionLayer.Forward — currently copies [seqLen × headDim] per head into contiguous buffers, then scatters output back. Use strided pointer arithmetic into the batched Q/K/V tensors directly	HIGH — O(numH·seqLen·headDim) redundant moves per layer per token, ~30-50% of attention time
+breaks everything: 2	Fuse WGate + WUp into a single LinearLayer (2× output dim) in GatedFfnLayer — halves matmul launches for the gate/up projections	HIGH — ~33% fewer matmul calls per FFN layer
 3	Replace top-k O(n log n) sort with O(n) quickselect in Sampler	MEDIUM — at vocab=128K, sorting dominates sampling time
 4	Bulk KV cache copy with Unsafe.CopyBlock instead of element-by-element loop	MEDIUM — O(heads·seqLen·headDim) per update; CopyBlock is ~10x faster than per-element
 5	Use online softmax in standard attention kernels (like flash variant) to reduce 3-pass to 2-pass and avoid the per-call ArrayPool.Rent	MEDIUM — standard kernels are still the default path for many users
