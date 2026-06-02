@@ -184,10 +184,11 @@ public sealed class Generator : IGenerator
                 string fragment = _tokenizer.Decode(_decodeTokenScratch.AsSpan(0, 1), skipSpecials: true);
                 decodedSoFar.Append(fragment);
 
+                ReadOnlySpan<char> decoded = decodedSoFar.ToString().AsSpan();
                 bool hitStop = false;
                 foreach (string stop in genCfg.StopStrings)
                 {
-                    if (StringBuilderContains(decodedSoFar, stop))
+                    if (decoded.IndexOf(stop.AsSpan()) >= 0)
                     {
                         hitStop = true;
                         fragment = string.Empty;
@@ -290,21 +291,6 @@ public sealed class Generator : IGenerator
             ScaleId(logits, generatedIds[i], penalty);
     }
 
-    private static bool StringBuilderContains(System.Text.StringBuilder sb, ReadOnlySpan<char> value)
-    {
-        if (value.IsEmpty) return true;
-        if (sb.Length < value.Length) return false;
-        for (int i = 0; i <= sb.Length - value.Length; i++)
-        {
-            bool match = true;
-            for (int j = 0; j < value.Length; j++)
-            {
-                if (sb[i + j] != value[j]) { match = false; break; }
-            }
-            if (match) return true;
-        }
-        return false;
-    }
 /*
 #if DEBUG
     private static string EscapeForDebug(string s)
