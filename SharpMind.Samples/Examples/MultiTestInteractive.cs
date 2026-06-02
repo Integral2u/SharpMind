@@ -21,7 +21,7 @@ namespace SharpMind.Samples.Examples
             "SmolLM-135M.Q4_K_M",           //Response:enos or port portern I either norussels but '', entryern - +/-
             //"SmolLM2-135M-Instruct.Q4_K_M", //Response:ELTS on Globeinstead/nbeccaeltary,,,,instead instead""", Gelcreat1
             //"qwen2-0_5b-instruct-q4_k_m",   //Response:???????? v?ng?ErrorResponse.QuadOVEadero???slideUp ????????????? IonicPage
-            //up to 1.4ts
+            //up to 1.4041163 ts
             "qwen2-0_5b-instruct-q8_0",     //Response:Hello! How can I assist you today?
             //"qwen2-0_5b-instruct-fp16",     //Response:Hello! How can I assist you today?
                         

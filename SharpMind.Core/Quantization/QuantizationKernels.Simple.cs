@@ -694,8 +694,6 @@ public static partial class QuantizationKernels
                             float v7 = (qs[qOff + l + 7] >> shift) & 3;
                             var vv = Vector256.Create(v0, v1, v2, v3, v4, v5, v6, v7);
                             var vi = Vector256.LoadUnsafe(ref pIn[n16 + j * 32 + l]);
-                            var biased = Fma.MultiplyAdd(vi, Avx.Multiply(vv, vdl),
-                                Avx.Multiply(vi, Avx.Multiply(vv, vdl)));
                             vacc = Avx.Add(vacc, Avx.Subtract(Avx.Multiply(vi, Avx.Multiply(vv, vdl)),
                                 Avx.Multiply(vi, vml)));
                         }
