@@ -20,7 +20,8 @@ internal static class AttentionKernels
     /// </summary>
     internal static unsafe void ScaledDotProductAVX2(
         float* q, float* k, float* v, float* output,
-        int seqLen, int kvLen, int headDim, float scale, bool causal)
+        int seqLen, int kvLen, int headDim, float scale, bool causal,
+        int qStride, int oStride)
     {
         float[] rented = ArrayPool<float>.Shared.Rent(kvLen);
         try
@@ -29,7 +30,7 @@ internal static class AttentionKernels
             int queryBase = causal ? kvLen - seqLen : 0;
             for (int i = 0; i < seqLen; i++)
             {
-                float* qi = q + (long)i * headDim;
+                float* qi = q + (long)i * qStride;
                 int absQPos = queryBase + i;
                 for (int j = 0; j < kvLen; j++)
                 {
@@ -49,7 +50,7 @@ internal static class AttentionKernels
                 }
 
                 SoftmaxInPlace(scoreRow);
-                float* outI = output + (long)i * headDim;
+                float* outI = output + (long)i * oStride;
                 for (int d = 0; d < headDim; d++)
                 {
                     float sum = 0f;
@@ -67,7 +68,8 @@ internal static class AttentionKernels
 
     internal static unsafe void ScaledDotProductFMA(
         float* q, float* k, float* v, float* output,
-        int seqLen, int kvLen, int headDim, float scale, bool causal)
+        int seqLen, int kvLen, int headDim, float scale, bool causal,
+        int qStride, int oStride)
     {
         float[] rented = ArrayPool<float>.Shared.Rent(kvLen);
         try
@@ -76,7 +78,7 @@ internal static class AttentionKernels
             int queryBase = causal ? kvLen - seqLen : 0;
             for (int i = 0; i < seqLen; i++)
             {
-                float* qi = q + (long)i * headDim;
+                float* qi = q + (long)i * qStride;
                 int absQPos = queryBase + i;
                 for (int j = 0; j < kvLen; j++)
                 {
@@ -96,7 +98,7 @@ internal static class AttentionKernels
                 }
 
                 SoftmaxInPlace(scoreRow);
-                float* outI = output + (long)i * headDim;
+                float* outI = output + (long)i * oStride;
                 for (int d = 0; d < headDim; d++)
                 {
                     float sum = 0f;
@@ -114,7 +116,8 @@ internal static class AttentionKernels
 
     internal static unsafe void ScaledDotProductScalar(
         float* q, float* k, float* v, float* output,
-        int seqLen, int kvLen, int headDim, float scale, bool causal)
+        int seqLen, int kvLen, int headDim, float scale, bool causal,
+        int qStride, int oStride)
     {
         float[] rented = ArrayPool<float>.Shared.Rent(kvLen);
         try
@@ -123,7 +126,7 @@ internal static class AttentionKernels
             int queryBase = causal ? kvLen - seqLen : 0;
             for (int i = 0; i < seqLen; i++)
             {
-                float* qi = q + (long)i * headDim;
+                float* qi = q + (long)i * qStride;
                 int absQPos = queryBase + i;
                 for (int j = 0; j < kvLen; j++)
                 {
@@ -139,7 +142,7 @@ internal static class AttentionKernels
                 }
 
                 SoftmaxInPlace(scoreRow);
-                float* outI = output + (long)i * headDim;
+                float* outI = output + (long)i * oStride;
                 for (int d = 0; d < headDim; d++)
                 {
                     float sum = 0f;
@@ -174,7 +177,8 @@ internal static class AttentionKernels
 
     internal static unsafe void ScaledDotProductFlashAVX2(
         float* q, float* k, float* v, float* output,
-        int seqLen, int kvLen, int headDim, float scale, bool causal)
+        int seqLen, int kvLen, int headDim, float scale, bool causal,
+        int qStride, int oStride)
     {
         if ((uint)headDim > FlashMaxHeadDim)
             throw new ArgumentOutOfRangeException(nameof(headDim),
@@ -185,13 +189,13 @@ internal static class AttentionKernels
 
         for (int i = 0; i < seqLen; i++)
         {
-            float* qi = q + (long)i * headDim;
+            float* qi = q + (long)i * qStride;
             int absQPos = queryBase + i;
             int effKvLen = causal ? Math.Min(absQPos + 1, kvLen) : kvLen;
 
             float mMax = float.NegativeInfinity;
             float lSum = 0f;
-            float* pO = output + (long)i * headDim;
+            float* pO = output + (long)i * oStride;
             for (int d = 0; d < headDim; d++) pO[d] = 0f;
 
             for (int start = 0; start < effKvLen; start += FlashTileSize)
@@ -247,7 +251,8 @@ internal static class AttentionKernels
 
     internal static unsafe void ScaledDotProductFlashFMA(
         float* q, float* k, float* v, float* output,
-        int seqLen, int kvLen, int headDim, float scale, bool causal)
+        int seqLen, int kvLen, int headDim, float scale, bool causal,
+        int qStride, int oStride)
     {
         if ((uint)headDim > FlashMaxHeadDim)
             throw new ArgumentOutOfRangeException(nameof(headDim),
@@ -258,13 +263,13 @@ internal static class AttentionKernels
 
         for (int i = 0; i < seqLen; i++)
         {
-            float* qi = q + (long)i * headDim;
+            float* qi = q + (long)i * qStride;
             int absQPos = queryBase + i;
             int effKvLen = causal ? Math.Min(absQPos + 1, kvLen) : kvLen;
 
             float mMax = float.NegativeInfinity;
             float lSum = 0f;
-            float* pO = output + (long)i * headDim;
+            float* pO = output + (long)i * oStride;
             for (int d = 0; d < headDim; d++) pO[d] = 0f;
 
             for (int start = 0; start < effKvLen; start += FlashTileSize)
@@ -319,7 +324,8 @@ internal static class AttentionKernels
 
     internal static unsafe void ScaledDotProductFlashScalar(
         float* q, float* k, float* v, float* output,
-        int seqLen, int kvLen, int headDim, float scale, bool causal)
+        int seqLen, int kvLen, int headDim, float scale, bool causal,
+        int qStride, int oStride)
     {
         if ((uint)headDim > FlashMaxHeadDim)
             throw new ArgumentOutOfRangeException(nameof(headDim),
@@ -330,13 +336,13 @@ internal static class AttentionKernels
 
         for (int i = 0; i < seqLen; i++)
         {
-            float* qi = q + (long)i * headDim;
+            float* qi = q + (long)i * qStride;
             int absQPos = queryBase + i;
             int effKvLen = causal ? Math.Min(absQPos + 1, kvLen) : kvLen;
 
             float mMax = float.NegativeInfinity;
             float lSum = 0f;
-            float* pO = output + (long)i * headDim;
+            float* pO = output + (long)i * oStride;
             for (int d = 0; d < headDim; d++) pO[d] = 0f;
 
             for (int start = 0; start < effKvLen; start += FlashTileSize)

@@ -99,7 +99,7 @@ public abstract class AttentionLayer : IDisposable
         SharpMindConfig.ValMqaFlashAvx2, NS + "." + nameof(AttentionKernels.ScaledDotProductFlashAVX2),
         SharpMindConfig.ValMqaFlashFma, NS + "." + nameof(AttentionKernels.ScaledDotProductFlashFMA),
         SharpMindConfig.ValMqaFlashScalar, NS + "." + nameof(AttentionKernels.ScaledDotProductFlashScalar))]
-    public abstract unsafe void ScaledDotProduct(float* q, float* k, float* v, float* o, int seqLen, int kvLen, int headDim, float scale, bool causal);
+    public abstract unsafe void ScaledDotProduct(float* q, float* k, float* v, float* o, int seqLen, int kvLen, int headDim, float scale, bool causal, int qStride, int oStride);
 
     public Tensor<float> Forward(
         Tensor<float> x,
@@ -134,6 +134,8 @@ public abstract class AttentionLayer : IDisposable
 
         {
             int totalHeads = batch * numH;
+            int qStride = numH * headDim;
+            int oStride = hidden;
             Parallel.For(0, totalHeads, bh =>
             {
                 int b = bh / numH;
@@ -141,70 +143,46 @@ public abstract class AttentionLayer : IDisposable
                 int kvHead = h / Config.KvGroupSize;
                 unsafe
                 {
-                    using var qHead = new Tensor<float>(seqLen, headDim);
-                    using var oHead = new Tensor<float>(seqLen, headDim);
-                    Tensor<float>? kHead = null;
-                    Tensor<float>? vHead = null;
-                    try
-                    {
-                        // Pack Q head into contiguous [SeqLen, HeadDim] buffer.
-                        for (int s = 0; s < seqLen; s++)
-                        {
-                            float* srcQ = qr.DataPtr + (long)((b * seqLen + s) * numH + h) * headDim;
-                            float* dstQ = qHead.DataPtr + (long)s * headDim;
-                            for (int d = 0; d < headDim; d++) dstQ[d] = srcQ[d];
-                        }
+                    float* pQ = qr.DataPtr + (long)(b * seqLen * numH + h) * headDim;
+                    float* pO = output.DataPtr + (long)(b * seqLen * hidden + h * headDim);
 
-                        float* pK;
-                        float* pV;
-                        if (cache is KVCache kc)
+                    float* pK;
+                    float* pV;
+                    if (cache is KVCache kc)
+                    {
+                        int cacheStride = kc.AllocatedCapacity;
+                        pK = kc.Keys.DataPtr + (long)b * (numKv * cacheStride * headDim)
+                                           + (long)kvHead * (cacheStride * headDim);
+                        pV = kc.Values.DataPtr + (long)b * (numKv * cacheStride * headDim)
+                                              + (long)kvHead * (cacheStride * headDim);
+                    }
+                    else if (cache != null)
+                    {
+                        throw new NotSupportedException(
+                            $"Non-contiguous cache type {cache.GetType().Name} is not supported. " +
+                            "Use KVCache for contiguous pointer access.");
+                    }
+                    else
+                    {
+                        using var kHead = new Tensor<float>(effectiveKvLen, headDim);
+                        using var vHead = new Tensor<float>(effectiveKvLen, headDim);
+                        for (int s = 0; s < effectiveKvLen; s++)
                         {
-                            int cacheStride = kc.AllocatedCapacity;
-                            pK = kc.Keys.DataPtr + (long)b * (numKv * cacheStride * headDim)
-                                               + (long)kvHead * (cacheStride * headDim);
-                            pV = kc.Values.DataPtr + (long)b * (numKv * cacheStride * headDim)
-                                                  + (long)kvHead * (cacheStride * headDim);
-                        }
-                        else if (cache != null)
-                        {
-                            throw new NotSupportedException(
-                                $"Non-contiguous cache type {cache.GetType().Name} is not supported. " +
-                                "Use KVCache for contiguous pointer access.");
-                        }
-                        else
-                        {
-                            kHead = new Tensor<float>(effectiveKvLen, headDim);
-                            vHead = new Tensor<float>(effectiveKvLen, headDim);
-                            for (int s = 0; s < effectiveKvLen; s++)
+                            float* srcK = kr.DataPtr + (long)((b * seqLen + s) * numKv + kvHead) * headDim;
+                            float* srcV = v.DataPtr + (long)(b * seqLen * kvDim + s * kvDim + kvHead * headDim);
+                            float* dstK = kHead.DataPtr + (long)s * headDim;
+                            float* dstV = vHead.DataPtr + (long)s * headDim;
+                            for (int d = 0; d < headDim; d++)
                             {
-                                float* srcK = kr.DataPtr + (long)((b * seqLen + s) * numKv + kvHead) * headDim;
-                                float* srcV = v.DataPtr + (long)(b * seqLen * kvDim + s * kvDim + kvHead * headDim);
-                                float* dstK = kHead.DataPtr + (long)s * headDim;
-                                float* dstV = vHead.DataPtr + (long)s * headDim;
-                                for (int d = 0; d < headDim; d++)
-                                {
-                                    dstK[d] = srcK[d];
-                                    dstV[d] = srcV[d];
-                                }
+                                dstK[d] = srcK[d];
+                                dstV[d] = srcV[d];
                             }
-                            pK = kHead.DataPtr;
-                            pV = vHead.DataPtr;
                         }
-
-                        ScaledDotProduct(qHead.DataPtr, pK, pV, oHead.DataPtr, seqLen, effectiveKvLen, headDim, scale, causal);
-
-                        for (int s = 0; s < seqLen; s++)
-                        {
-                            float* srcO = oHead.DataPtr + (long)s * headDim;
-                            float* dstO = output.DataPtr + (long)(b * seqLen * hidden + s * hidden + h * headDim);
-                            for (int d = 0; d < headDim; d++) dstO[d] = srcO[d];
-                        }
+                        pK = kHead.DataPtr;
+                        pV = vHead.DataPtr;
                     }
-                    finally
-                    {
-                        kHead?.Dispose();
-                        vHead?.Dispose();
-                    }
+
+                    ScaledDotProduct(pQ, pK, pV, pO, seqLen, effectiveKvLen, headDim, scale, causal, qStride, oStride);
                 }
             });
         }
