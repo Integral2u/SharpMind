@@ -4,7 +4,7 @@ using System.Runtime.Intrinsics.X86;
 
 namespace SharpMind.Core.Quantization;
 
-internal static partial class QuantizationKernels
+public static partial class QuantizationKernels
 {
     // ═══════════════════════════════════════════════════════════════════════
     // VecDotQ8_0 — 8-bit block (QK=32)

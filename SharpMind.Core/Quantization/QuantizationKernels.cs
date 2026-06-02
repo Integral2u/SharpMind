@@ -1,10 +1,11 @@
+using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
 
 namespace SharpMind.Core.Quantization;
 
-internal static partial class QuantizationKernels
+public static partial class QuantizationKernels
 {
     internal const int QK_K = 256;
     internal const int QK   = 32;
@@ -13,18 +14,35 @@ internal static partial class QuantizationKernels
     // HalfToFloat — FP16 → FP32
     // ═══════════════════════════════════════════════════════════════════════
 
-    internal static unsafe float HalfToFloat_F16C(ushort half)
+    public static unsafe float HalfToFloat_F16C(ushort half)
     {
-        int sign = (half >> 15) & 0x1;
-        int exp  = (half >> 10) & 0x1F;
-        int mant = half & 0x3FF;
-        if (exp == 0)
-            return (sign == 0 ? 1f : -1f) * (mant / 1024f) * MathF.Pow(2f, -14f);
-        if (exp == 31)
-            return mant == 0
-                ? (sign == 0 ? float.PositiveInfinity : float.NegativeInfinity)
-                : float.NaN;
-        return (sign == 0 ? 1f : -1f) * MathF.Pow(2f, exp - 15) * (1f + mant / 1024f);
+        int exp5 = (half >> 10) & 0x1F;
+
+        if (exp5 == 0)
+        {
+            uint mant10 = (uint)(half & 0x3FF);
+            if (mant10 == 0)
+                return (half & 0x8000) == 0 ? 0f : -0f;
+
+            int lz = BitOperations.LeadingZeroCount(mant10);
+            int k = 31 - lz;
+            uint e = (uint)(k + 103);
+            uint m = (mant10 - (1u << k)) << (23 - k);
+            uint bitsSub = ((uint)(half & 0x8000) << 16) | (e << 23) | m;
+            return *(float*)&bitsSub;
+        }
+
+        if (exp5 == 31)
+        {
+            if ((half & 0x3FF) == 0)
+                return (half & 0x8000) == 0 ? float.PositiveInfinity : float.NegativeInfinity;
+            return float.NaN;
+        }
+
+        uint eBits = (uint)(exp5 + 112);
+        uint mMant = (uint)(half & 0x3FF) << 13;
+        uint bitsNrm = ((uint)(half & 0x8000) << 16) | (eBits << 23) | mMant;
+        return *(float*)&bitsNrm;
     }
 
     internal static float HalfToFloat_Scalar(ushort half) => HalfToFloat_F16C(half);
