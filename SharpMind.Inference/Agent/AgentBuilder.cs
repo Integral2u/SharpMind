@@ -18,6 +18,7 @@ namespace SharpMind.Inference.Agent
         public enum AgentSections
         {
             Role,
+            Rules,
             Behavior,
             Tools,
             ToolCallFormat,
@@ -34,9 +35,15 @@ namespace SharpMind.Inference.Agent
 
         public readonly List<string> Behaviors = [];
         public readonly List<string> Skills = [];
+        public readonly List<string> Rules = [];
         public AgentBuilder WithCustomBehavior(string behavior)
         {
             if (Behaviors.Contains(behavior)) Behaviors.Add(behavior);
+            return this;
+        }
+        public AgentBuilder WithCustomRule(string rule)
+        {
+            if (Rules.Contains(rule)) Rules.Add(rule);
             return this;
         }
 
@@ -244,17 +251,29 @@ namespace SharpMind.Inference.Agent
         };
         public string BuildAgentPrompt()
         {
+            if (ToolDefinitions.Count != 0)
+            {
+                _ = WithCustomRule("- Respond ONLY in valid JSON. No prose. No markdown fences.");
+                _ = WithCustomRule("- Never invent tool names or argument values.");
+                _ = WithCustomRule("""- If a required argument is missing, respond with: {{"status":"error","message":"Missing required argument: <name>"}}""");
+                _ = WithCustomRule("- Call one tool at a time. Wait for the result before proceeding.");
+                _ = WithCustomRule("- You only act using the tools provided.");
+            }
             var stringBuilder = new StringBuilder();
             stringBuilder.AppendLine("## Role");
             stringBuilder.AppendLine($"You are {AgentName}, a {TemperaturePersonality(SamplingConfig.Temperature)} AI agent.");
-            if (ToolDefinitions.Count != 0) stringBuilder.Append("You only act using the tools provided.");
+            foreach (var rule in Rules) stringBuilder.AppendLine(rule);           
             foreach (var behavior in Behaviors) stringBuilder.AppendLine(behavior);
 
             // Tool call format
             if (ToolDefinitions.Count != 0)
             {
+                stringBuilder.AppendLine("## Tool Call Format");
                 stringBuilder.AppendLine("""Respond ONLY with this JSON:{ "tool": "<name>", "arguments": { ... } }""");
+                stringBuilder.AppendLine("## Available Tools");
                 stringBuilder.AppendLine(ToolDefinitions.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+                stringBuilder.AppendLine("## Final Response Format");
+                stringBuilder.AppendLine("""{{"status":"success"|"error","data":"<result>"}}""");
             }
 
 
@@ -280,43 +299,7 @@ You have tools at your disposal to solve the coding task. Follow these rules reg
 
 </tool_calling>
             */
-            
-        }
 
-        public enum ModelFamily { Anthropic, OpenAI, Generic }
-        /*
-        public string BuildSystemPrompt(ModelFamily family = ModelFamily.Generic)
-        {           
-            var callFormat = family switch
-            {
-                ModelFamily.Anthropic => "Use the tool_use content block format.",
-                ModelFamily.OpenAI => "Use the function_call format.",
-                _ => """
-                                 Respond ONLY with this JSON:
-                                 { "tool": "<name>", "arguments": { ... } }
-                                 """
-            };
-
-            return $"""
-        ## Role
-        You are {AgentName}, a precise AI agent. You only act using the tools provided.
-
-        ## Rules
-        - Respond ONLY in valid JSON. No prose. No markdown fences.
-        - Never invent tool names or argument values.
-        - If a required argument is missing, respond with:
-          {{"status":"error","message":"Missing required argument: <name>"}}
-        - Call one tool at a time. Wait for the result before proceeding.
-
-        ## Tool Call Format
-        {callFormat}
-
-        ## Available Tools
-        {toolsJson}
-
-        ## Final Response Format
-        {{"status":"success"|"error","data":"<result>"}}
-        """;
-        }*/
+            }     
     }
 }

@@ -94,7 +94,7 @@ done 6	Fix BinaryOp/UnaryOp delegate indirection — Func<Vector<T>, Vector<T>> 
 done 7	Avoid Tensor.this[params int[]] on hot paths — params always allocates an array	LOW — only if users call multi-index accessors in tight loops
 Tier 3: Architectural changes (days), biggest overall wins
 #	Fix	Impact
-1	Incremental prompt encoding in ChatSession — cache _lastEncodedTokens and append new user message + assistant prefix only, instead of re-encoding the full history each turn	HIGH — eliminates O(N²) encoding cost over long conversations
+done 1	Incremental prompt encoding in ChatSession — cache _lastEncodedTokens and append new user message + assistant prefix only, instead of re-encoding the full history each turn	HIGH — eliminates O(N²) encoding cost over long conversations
 2	Proper speculative decoding — currently draftCount=1, zero speedup. Needs a draft model (or self-speculation) + rejection sampling + KV-cache rollback	HIGH — can give 1.5-2.5× latency improvement
 3	Fused end-to-end attention kernel — eliminate per-head packing, RoPE → cache → attention in a single pass from the strided Q/K/V layout	HIGH — the single biggest inference bottleneck
 4	Pre-allocate KV cache to maxSeqLen to avoid O(log N) growth cost and GC spikes	MEDIUM — simplifies code, eliminates resize stalls

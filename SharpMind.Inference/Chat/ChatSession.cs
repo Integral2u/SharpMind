@@ -14,6 +14,7 @@ public sealed class ChatSession
     private readonly IChatPromptFormatter? _formatter;
     private readonly bool _addBos;
     private bool _disposed;
+    private int[]? _cachedPromptTokens;
 
     public ChatSession(
         IGenerator generator,
@@ -61,6 +62,7 @@ public sealed class ChatSession
     public void ClearHistory()
     {
         _history.Clear();
+        _cachedPromptTokens = null;
         _generator.ResetCache();
     }
 
@@ -113,19 +115,40 @@ public sealed class ChatSession
         var userMessage = ChatMessage.User(userInput);
         _history.Add(userMessage);
 
-        var prompt = BuildPrompt();
-        int[] promptToks = _tokenizer.Encode(prompt, addBos: false, addEos: false);
+        int[] promptToks;
+        if (_cachedPromptTokens is not null && _formatter is null)
+        {
+            // Incremental: previous prompt ended with "assistant: ".
+            // Append <response>\nuser: <input>\nassistant:  to form the new prompt.
+            var incremental = new System.Text.StringBuilder();
+            if (_history.Count >= 2 && _history[^2].Role == ChatRole.Agent)
+                incremental.Append(_history[^2].Content).Append('\n');
+            incremental.Append("user: ").Append(userInput).Append("\nassistant: ");
+
+            int[] newTokens = _tokenizer.Encode(incremental.ToString(), addBos: false, addEos: false);
+            promptToks = GC.AllocateUninitializedArray<int>(_cachedPromptTokens.Length + newTokens.Length);
+            _cachedPromptTokens.CopyTo(promptToks.AsSpan());
+            newTokens.CopyTo(promptToks.AsSpan(_cachedPromptTokens.Length));
+        }
+        else
+        {
+            // Full re-encode (first turn or formatter in use)
+            var prompt = BuildPrompt();
+            promptToks = _tokenizer.Encode(prompt, addBos: false, addEos: false);
+        }
+
         if (promptToks.Length > MaxTokens)
         {
             int start = promptToks.Length - MaxTokens;
-            var subset = new int[MaxTokens];
-            Array.Copy(promptToks, start, subset, 0, MaxTokens);
+            var subset = GC.AllocateUninitializedArray<int>(MaxTokens);
+            promptToks.AsSpan(start, MaxTokens).CopyTo(subset);
             promptToks = subset;
         }
 
         if (promptToks.Length == 0)
             throw new InvalidOperationException("Prompt produced no token IDs; cannot generate.");
 
+        _cachedPromptTokens = promptToks;
         _generator.ResetCache();
 
         var sampleCfg = new SamplingConfig
