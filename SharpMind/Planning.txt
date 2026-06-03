@@ -90,8 +90,8 @@ breaks everything: 2	Fuse WGate + WUp into a single LinearLayer (2× output dim)
 done 3	Replace top-k O(n log n) sort with O(n) quickselect in Sampler	MEDIUM — at vocab=128K, sorting dominates sampling time
 done 4	Bulk KV cache copy with Unsafe.CopyBlock instead of element-by-element loop	MEDIUM — O(heads·seqLen·headDim) per update; CopyBlock is ~10x faster than per-element
 done 5	Use online softmax in standard attention kernels (like flash variant) to reduce 3-pass to 2-pass and avoid the per-call ArrayPool.Rent	MEDIUM — standard kernels are still the default path for many users
-6	Fix BinaryOp/UnaryOp delegate indirection — Func<Vector<T>, Vector<T>> is a virtual call that JIT can't inline. Use INumber<T> generic math with static abstract interface methods (SAIM, .NET 9) or explicit per-type overloads	MEDIUM — affects every elementwise op (Add, Scale, etc.)
-7	Avoid Tensor.this[params int[]] on hot paths — params always allocates an array	LOW — only if users call multi-index accessors in tight loops
+done 6	Fix BinaryOp/UnaryOp delegate indirection — Func<Vector<T>, Vector<T>> is a virtual call that JIT can't inline. Use INumber<T> generic math with static abstract interface methods (SAIM, .NET 9) or explicit per-type overloads	MEDIUM — affects every elementwise op (Add, Scale, etc.)
+done 7	Avoid Tensor.this[params int[]] on hot paths — params always allocates an array	LOW — only if users call multi-index accessors in tight loops
 Tier 3: Architectural changes (days), biggest overall wins
 #	Fix	Impact
 1	Incremental prompt encoding in ChatSession — cache _lastEncodedTokens and append new user message + assistant prefix only, instead of re-encoding the full history each turn	HIGH — eliminates O(N²) encoding cost over long conversations

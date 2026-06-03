@@ -43,6 +43,10 @@ public sealed unsafe class Tensor<T> : IDisposable
 
     /// <inheritdoc cref="Tensor(TensorShape)"/>
     public Tensor(params int[] dims) : this(new TensorShape(dims)) { }
+    public Tensor(int d0) : this(new TensorShape(d0)) { }
+    public Tensor(int d0, int d1) : this(new TensorShape(d0, d1)) { }
+    public Tensor(int d0, int d1, int d2) : this(new TensorShape(d0, d1, d2)) { }
+    public Tensor(int d0, int d1, int d2, int d3) : this(new TensorShape(d0, d1, d2, d3)) { }
 
     /// <summary>
     /// Creates a view into an existing buffer (increments ref-count).
@@ -104,6 +108,10 @@ public sealed unsafe class Tensor<T> : IDisposable
 
     /// <summary>Allocates a zero-filled tensor.</summary>
     public static Tensor<T> Zeros(params int[] dims) => new(dims);
+    public static Tensor<T> Zeros(int d0) => new(d0);
+    public static Tensor<T> Zeros(int d0, int d1) => new(d0, d1);
+    public static Tensor<T> Zeros(int d0, int d1, int d2) => new(d0, d1, d2);
+    public static Tensor<T> Zeros(int d0, int d1, int d2, int d3) => new(d0, d1, d2, d3);
 
     /// <summary>Allocates a tensor filled with ones.</summary>
     public static Tensor<T> Ones(params int[] dims)
@@ -152,11 +160,11 @@ public sealed unsafe class Tensor<T> : IDisposable
     /// Returns a new tensor with the same data but a different shape.
     /// Zero-copy: both tensors share the same buffer.
     /// </summary>
-    public Tensor<T> Reshape(params int[] newDims)
-    {
-        var newShape = Shape.Reshape(newDims);
-        return new Tensor<T>(newShape, _buffer, _offset);
-    }
+    public Tensor<T> Reshape(params int[] newDims) => new(Shape.Reshape(newDims), _buffer, _offset);
+    public Tensor<T> Reshape(int d0) => new(Shape.Reshape(d0), _buffer, _offset);
+    public Tensor<T> Reshape(int d0, int d1) => new(Shape.Reshape(d0, d1), _buffer, _offset);
+    public Tensor<T> Reshape(int d0, int d1, int d2) => new(Shape.Reshape(d0, d1, d2), _buffer, _offset);
+    public Tensor<T> Reshape(int d0, int d1, int d2, int d3) => new(Shape.Reshape(d0, d1, d2, d3), _buffer, _offset);
 
     /// <summary>
     /// Returns a 1-D view of row <paramref name="i"/> for a 2-D tensor (zero-copy).

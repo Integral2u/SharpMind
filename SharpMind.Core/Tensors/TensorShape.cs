@@ -18,18 +18,25 @@ public readonly struct TensorShape : IEquatable<TensorShape>
 
     // ── construction ───────────────────────────────────────────────────────
 
-    public TensorShape(params int[] dims)
+    /// <summary>Core init with span — no <c>params</c> heap allocation at call site.</summary>
+    public TensorShape(ReadOnlySpan<int> dims)
     {
-        ArgumentNullException.ThrowIfNull(dims);
         if (dims.Length == 0)
             throw new ArgumentException($"A {nameof(TensorShape)} must have at least one dimension.", nameof(dims));
         foreach (int d in dims)
             if (d <= 0) throw new ArgumentOutOfRangeException(nameof(dims), $"Dimension must be > 0, got {d}.");
-
-        _dims    = (int[])dims.Clone();
+        _dims    = dims.ToArray();
         _strides = ComputeStrides(_dims);
         ElementCount = ComputeElementCount(_dims);
     }
+
+    public TensorShape(params int[] dims)
+        : this((ReadOnlySpan<int>)(dims ?? throw new ArgumentNullException(nameof(dims)))) { }
+
+    public TensorShape(int d0) : this(new[] { d0 }) { }
+    public TensorShape(int d0, int d1) : this(new[] { d0, d1 }) { }
+    public TensorShape(int d0, int d1, int d2) : this(new[] { d0, d1, d2 }) { }
+    public TensorShape(int d0, int d1, int d2, int d3) : this(new[] { d0, d1, d2, d3 }) { }
 
     // ── properties ─────────────────────────────────────────────────────────
 
@@ -80,30 +87,40 @@ public readonly struct TensorShape : IEquatable<TensorShape>
     /// Returns a new shape with the same element count but different dims.
     /// Pass -1 for exactly one dim to infer it automatically.
     /// </summary>
-    public TensorShape Reshape(params int[] newDims)
+    public TensorShape Reshape(params int[] newDims) => Reshape((ReadOnlySpan<int>)newDims);
+
+    public TensorShape Reshape(ReadOnlySpan<int> newDims)
     {
+        Span<int> dims = newDims.Length <= 4 ? stackalloc int[newDims.Length] : new int[newDims.Length];
+        newDims.CopyTo(dims);
+
         int inferred = -1;
         long known = 1;
-        for (int i = 0; i < newDims.Length; i++)
+        for (int i = 0; i < dims.Length; i++)
         {
-            if (newDims[i] == -1)
+            if (dims[i] == -1)
             {
                 if (inferred >= 0)
                     throw new ArgumentException("Only one dimension can be inferred (-1).");
                 inferred = i;
             }
-            else known *= newDims[i];
+            else known *= dims[i];
         }
 
         if (inferred >= 0)
-            newDims[inferred] = (int)(ElementCount / known);
+            dims[inferred] = (int)(ElementCount / known);
 
-        int count = ComputeElementCount(newDims);
+        int count = ComputeElementCount(dims);
         if (count != ElementCount)
             throw new ArgumentException(
-                $"Cannot reshape {this} ({ElementCount} elements) into ({string.Join(", ", newDims)}) ({count} elements).");
-        return new TensorShape(newDims);
+                $"Cannot reshape {this} ({ElementCount} elements) into ({string.Join(", ", dims.ToArray())}) ({count} elements).");
+        return new TensorShape(dims.ToArray());
     }
+
+    public TensorShape Reshape(int d0) => Reshape(stackalloc[] { d0 });
+    public TensorShape Reshape(int d0, int d1) => Reshape(stackalloc[] { d0, d1 });
+    public TensorShape Reshape(int d0, int d1, int d2) => Reshape(stackalloc[] { d0, d1, d2 });
+    public TensorShape Reshape(int d0, int d1, int d2, int d3) => Reshape(stackalloc[] { d0, d1, d2, d3 });
 
     /// <summary>Adds a size-1 dimension at <paramref name="axis"/>.</summary>
     public TensorShape Unsqueeze(int axis)
@@ -182,10 +199,13 @@ public readonly struct TensorShape : IEquatable<TensorShape>
         return s;
     }
 
-    private static int ComputeElementCount(int[] dims)
+    private static int ComputeElementCount(ReadOnlySpan<int> dims)
     {
         int n = 1;
         foreach (int d in dims) n *= d;
         return n;
     }
+
+    private static int ComputeElementCount(int[] dims)
+        => ComputeElementCount((ReadOnlySpan<int>)dims);
 }

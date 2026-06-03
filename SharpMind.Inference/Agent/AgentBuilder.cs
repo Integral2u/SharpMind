@@ -39,6 +39,12 @@ namespace SharpMind.Inference.Agent
             if (Behaviors.Contains(behavior)) Behaviors.Add(behavior);
             return this;
         }
+
+        public AgentBuilder WithSkill(string file)
+        {
+            //Need to add skill by specific file
+            return this;
+        }
         public AgentBuilder WithSkills(string folder, bool recusive = true)
         {
             //Need to check/add skills.md in path(s)
@@ -245,8 +251,11 @@ namespace SharpMind.Inference.Agent
             foreach (var behavior in Behaviors) stringBuilder.AppendLine(behavior);
 
             // Tool call format
-
-            stringBuilder.AppendLine(ToolDefinitions.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+            if (ToolDefinitions.Count != 0)
+            {
+                stringBuilder.AppendLine("""Respond ONLY with this JSON:{ "tool": "<name>", "arguments": { ... } }""");
+                stringBuilder.AppendLine(ToolDefinitions.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+            }
 
 
             foreach (var skill in Skills) stringBuilder.AppendLine(skill);
