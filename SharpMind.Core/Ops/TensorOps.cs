@@ -154,6 +154,38 @@ public abstract class TensorOps
     public static Tensor<float> BatchedMatMul(Tensor<float> a, Tensor<float> b, TensorOps? ops = null)
         => (ops ?? Default).BatchedMatMul(a, b);
 
+    // ── SAIM operator types (JIT-inlinable, no delegate indirection) ────
+
+    private interface IBinaryOp<T> where T : unmanaged, INumber<T>
+    {
+        static abstract Vector<T> Invoke(Vector<T> a, Vector<T> b);
+        static abstract T InvokeScalar(T a, T b);
+    }
+
+    private readonly struct AddOp<T> : IBinaryOp<T> where T : unmanaged, INumber<T>
+    {
+        public static Vector<T> Invoke(Vector<T> a, Vector<T> b) => a + b;
+        public static T InvokeScalar(T a, T b) => a + b;
+    }
+
+    private readonly struct SubtractOp<T> : IBinaryOp<T> where T : unmanaged, INumber<T>
+    {
+        public static Vector<T> Invoke(Vector<T> a, Vector<T> b) => a - b;
+        public static T InvokeScalar(T a, T b) => a - b;
+    }
+
+    private readonly struct MultiplyOp<T> : IBinaryOp<T> where T : unmanaged, INumber<T>
+    {
+        public static Vector<T> Invoke(Vector<T> a, Vector<T> b) => a * b;
+        public static T InvokeScalar(T a, T b) => a * b;
+    }
+
+    private readonly struct DivideOp<T> : IBinaryOp<T> where T : unmanaged, INumber<T>
+    {
+        public static Vector<T> Invoke(Vector<T> a, Vector<T> b) => a / b;
+        public static T InvokeScalar(T a, T b) => a / b;
+    }
+
     // ── Generic elementwise ops (no JigSaw — Vector<T> handles dispatch) ──
 
     /// <summary>Returns a + b elementwise.</summary>
@@ -162,15 +194,16 @@ public abstract class TensorOps
     {
         TensorShape.AssertSameShape(a.Shape, b.Shape);
         var r = new Tensor<T>(a.Shape);
-        BinaryOp(a.Data, b.Data, r.Data, static (va, vb) => va + vb);
+        BinaryOp<T, AddOp<T>>(a.Data, b.Data, r.Data);
         return r;
     }
+
     public static Tensor<T> Subtract<T>(Tensor<T> a, Tensor<T> b)
         where T : unmanaged, INumber<T>
     {
         TensorShape.AssertSameShape(a.Shape, b.Shape);
         var r = new Tensor<T>(a.Shape);
-        BinaryOp(a.Data, b.Data, r.Data, static (va, vb) => va - vb);
+        BinaryOp<T, SubtractOp<T>>(a.Data, b.Data, r.Data);
         return r;
     }
 
@@ -179,7 +212,7 @@ public abstract class TensorOps
     {
         TensorShape.AssertSameShape(a.Shape, b.Shape);
         var r = new Tensor<T>(a.Shape);
-        BinaryOp(a.Data, b.Data, r.Data, static (va, vb) => va * vb);
+        BinaryOp<T, MultiplyOp<T>>(a.Data, b.Data, r.Data);
         return r;
     }
 
@@ -188,7 +221,7 @@ public abstract class TensorOps
     {
         TensorShape.AssertSameShape(a.Shape, b.Shape);
         var r = new Tensor<T>(a.Shape);
-        BinaryOp(a.Data, b.Data, r.Data, static (va, vb) => va / vb);
+        BinaryOp<T, DivideOp<T>>(a.Data, b.Data, r.Data);
         return r;
     }
 
@@ -197,8 +230,7 @@ public abstract class TensorOps
         where T : unmanaged, INumber<T>
     {
         var r = new Tensor<T>(a.Shape);
-        var vs = new Vector<T>(scalar);
-        UnaryOp(a.Data, r.Data, v => v * vs);
+        ScaleVectorized(a.Data, r.Data, scalar);
         return r;
     }
 
@@ -207,13 +239,13 @@ public abstract class TensorOps
         where T : unmanaged, INumber<T>
     {
         TensorShape.AssertSameShape(a.Shape, b.Shape);
-        BinaryOp(a.Data, b.Data, a.Data, static (va, vb) => va + vb);
+        BinaryOp<T, AddOp<T>>(a.Data, b.Data, a.Data);
     }
+
     public static void ScaleInPlace<T>(Tensor<T> a, T scalar)
         where T : unmanaged, INumber<T>
     {
-        var vs = new Vector<T>(scalar);
-        UnaryOp(a.Data, a.Data, v => v * vs);
+        ScaleVectorized(a.Data, a.Data, scalar);
     }
     /// <summary>Clamps all elements to [min, max].</summary>
     public static Tensor<T> Clamp<T>(Tensor<T> a, T min, T max)
@@ -484,27 +516,27 @@ public abstract class TensorOps
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static void BinaryOp<T>(
-        ReadOnlySpan<T> a, ReadOnlySpan<T> b, Span<T> dst,
-        Func<Vector<T>, Vector<T>, Vector<T>> op)
+    private static void BinaryOp<T, TOp>(ReadOnlySpan<T> a, ReadOnlySpan<T> b, Span<T> dst)
         where T : unmanaged, INumber<T>
+        where TOp : struct, IBinaryOp<T>
     {
         int v = Vector<T>.Count, i = 0;
         for (; i <= dst.Length - v; i += v)
-            op(new Vector<T>(a[i..]), new Vector<T>(b[i..])).CopyTo(dst[i..]);
+            TOp.Invoke(new Vector<T>(a[i..]), new Vector<T>(b[i..])).CopyTo(dst[i..]);
         for (; i < dst.Length; i++)
-            dst[i] = op(new Vector<T>(a[i]), new Vector<T>(b[i]))[0];
+            dst[i] = TOp.InvokeScalar(a[i], b[i]);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static void UnaryOp<T>(ReadOnlySpan<T> src, Span<T> dst, Func<Vector<T>, Vector<T>> op)
+    private static void ScaleVectorized<T>(ReadOnlySpan<T> src, Span<T> dst, T scalar)
         where T : unmanaged, INumber<T>
     {
+        var vs = new Vector<T>(scalar);
         int v = Vector<T>.Count, i = 0;
         for (; i <= dst.Length - v; i += v)
-            op(new Vector<T>(src[i..])).CopyTo(dst[i..]);
+            (new Vector<T>(src[i..]) * vs).CopyTo(dst[i..]);
         for (; i < dst.Length; i++)
-            dst[i] = op(new Vector<T>(src[i]))[0];
+            dst[i] = src[i] * scalar;
     }
 
 }
