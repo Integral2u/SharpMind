@@ -88,10 +88,9 @@ public sealed class Generator : IGenerator
         int numKvHeads = model.Config.NumKvHeads;
         int headDim   = model.Config.HeadDim;
 
-        int initCapacity = Math.Min(512, maxSeqLen);
         _caches = new IKVCache[numLayers];
         for (int i = 0; i < numLayers; i++)
-            _caches[i] = new KVCache(1, numKvHeads, maxSeqLen, headDim, initCapacity);
+            _caches[i] = new KVCache(1, numKvHeads, maxSeqLen, headDim);
 
         _defaultRng = seed.HasValue ? new Random(seed.Value) : Random.Shared;
     }

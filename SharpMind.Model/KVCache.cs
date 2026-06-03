@@ -5,12 +5,8 @@ namespace SharpMind.Model;
 
 /// <summary>
 /// Stores cached Key and Value tensors for a single transformer layer.
-/// This allows auto-regressive generation to avoid re-computing the entire sequence.
-///
-/// Memory strategy: starts at <paramref name="initialCapacity"/> tokens and doubles
-/// up to <paramref name="maxSeqLen"/> as the conversation grows. This avoids the
-/// O(MaxSeqLen) up-front cost for short conversations while still supporting the
-/// full context length when needed.
+/// Pre-allocated to <paramref name="maxSeqLen"/> to avoid O(log N) growth cost
+/// and GC spikes during generation.
 /// </summary>
 public sealed class KVCache : IKVCache
 {
@@ -19,34 +15,24 @@ public sealed class KVCache : IKVCache
     private readonly int _batchSize;
     private readonly int _numKvHeads;
     private readonly int _headDim;
-    private int _allocatedCapacity;
 
     public Tensor<float> Keys => _keys;
     public Tensor<float> Values => _values;
     public int CurrentPosition { get; private set; }
 
-    /// <summary>Hard upper bound � the model's true context limit.</summary>
     public int MaxSeqLen { get; }
 
-    /// <summary>Currently allocated token capacity (may be less than MaxSeqLen).</summary>
-    public int AllocatedCapacity => _allocatedCapacity;
+    public int AllocatedCapacity => MaxSeqLen;
 
-    /// <param name="initialCapacity">
-    /// Tokens to pre-allocate now. Defaults to 64 � enough for a first reply
-    /// without wasting memory for the full context window.
-    /// </param>
-    public KVCache(int batchSize, int numKvHeads, int maxSeqLen, int headDim, int initialCapacity = 64)
+    public KVCache(int batchSize, int numKvHeads, int maxSeqLen, int headDim)
     {
         _batchSize    = batchSize;
         _numKvHeads   = numKvHeads;
         _headDim      = headDim;
         MaxSeqLen     = maxSeqLen;
 
-        // Clamp so we never over-allocate on tiny models.
-        _allocatedCapacity = Math.Clamp(initialCapacity, 1, maxSeqLen);
-
-        _keys   = new Tensor<float>(batchSize, numKvHeads, _allocatedCapacity, headDim);
-        _values = new Tensor<float>(batchSize, numKvHeads, _allocatedCapacity, headDim);
+        _keys   = new Tensor<float>(batchSize, numKvHeads, maxSeqLen, headDim);
+        _values = new Tensor<float>(batchSize, numKvHeads, maxSeqLen, headDim);
         CurrentPosition = 0;
     }
 
@@ -54,60 +40,6 @@ public sealed class KVCache : IKVCache
     public bool IsFull => CurrentPosition >= MaxSeqLen;
 
     public void Reset() => CurrentPosition = 0;
-
-    /// <summary>
-    /// Grows the internal tensors to <paramref name="newCapacity"/> tokens,
-    /// preserving all cached K/V data in [0, CurrentPosition).
-    /// No-op if already large enough.
-    /// </summary>
-    private void Grow(int newCapacity)
-    {
-        if (newCapacity <= _allocatedCapacity) return;
-        newCapacity = Math.Min(newCapacity, MaxSeqLen);
-
-        var newKeys   = new Tensor<float>(_batchSize, _numKvHeads, newCapacity, _headDim);
-        var newValues = new Tensor<float>(_batchSize, _numKvHeads, newCapacity, _headDim);
-
-        // Copy all cached positions into the new, larger tensors.
-        unsafe
-        {
-            long rowBytes = (long)_headDim * sizeof(float);
-            for (int b = 0; b < _batchSize; b++)
-            {
-                for (int h = 0; h < _numKvHeads; h++)
-                {
-                    for (int pos = 0; pos < CurrentPosition; pos++)
-                    {
-                        float* srcK = _keys.DataPtr
-                            + (long)b * (_numKvHeads * _allocatedCapacity * _headDim)
-                            + (long)h * (_allocatedCapacity * _headDim)
-                            + (long)pos * _headDim;
-                        float* dstK = newKeys.DataPtr
-                            + (long)b * (_numKvHeads * newCapacity * _headDim)
-                            + (long)h * (newCapacity * _headDim)
-                            + (long)pos * _headDim;
-                        Buffer.MemoryCopy(srcK, dstK, rowBytes, rowBytes);
-
-                        float* srcV = _values.DataPtr
-                            + (long)b * (_numKvHeads * _allocatedCapacity * _headDim)
-                            + (long)h * (_allocatedCapacity * _headDim)
-                            + (long)pos * _headDim;
-                        float* dstV = newValues.DataPtr
-                            + (long)b * (_numKvHeads * newCapacity * _headDim)
-                            + (long)h * (newCapacity * _headDim)
-                            + (long)pos * _headDim;
-                        Buffer.MemoryCopy(srcV, dstV, rowBytes, rowBytes);
-                    }
-                }
-            }
-        }
-
-        _keys.Dispose();
-        _values.Dispose();
-        _keys   = newKeys;
-        _values = newValues;
-        _allocatedCapacity = newCapacity;
-    }
 
     public void TrimToLast(int keep)
     {
@@ -124,11 +56,11 @@ public sealed class KVCache : IKVCache
                 for (int h = 0; h < _numKvHeads; h++)
                 {
                     float* kPtr = _keys.DataPtr
-                        + (long)b * (_numKvHeads * _allocatedCapacity * _headDim)
-                        + (long)h * (_allocatedCapacity * _headDim);
+                        + (long)b * (_numKvHeads * MaxSeqLen * _headDim)
+                        + (long)h * (MaxSeqLen * _headDim);
                     float* vPtr = _values.DataPtr
-                        + (long)b * (_numKvHeads * _allocatedCapacity * _headDim)
-                        + (long)h * (_allocatedCapacity * _headDim);
+                        + (long)b * (_numKvHeads * MaxSeqLen * _headDim)
+                        + (long)h * (MaxSeqLen * _headDim);
 
                     // Move the retained window [offset, offset+keep) to [0, keep).
                     for (int i = 0; i < keep; i++)
@@ -152,18 +84,9 @@ public sealed class KVCache : IKVCache
         int batch  = k.Shape[0];
         int seqLen = k.Shape[1];
 
-        // Hard cap: refuse data beyond the model's true context limit.
         if (CurrentPosition + seqLen > MaxSeqLen)
             throw new InvalidOperationException(
                 $"KVCache overflow: position {CurrentPosition} + seqLen {seqLen} exceeds capacity {MaxSeqLen}.");
-
-        // Grow the backing tensors if this batch doesn't fit in the current allocation.
-        if (CurrentPosition + seqLen > _allocatedCapacity)
-        {
-            int needed = CurrentPosition + seqLen;
-            int doubled = _allocatedCapacity * 2;
-            Grow(Math.Max(needed, doubled));
-        }
 
         unsafe
         {
@@ -180,8 +103,8 @@ public sealed class KVCache : IKVCache
                             + (long)h * headDim;
 
                         float* dstK = _keys.DataPtr
-                            + (long)b * (_numKvHeads * _allocatedCapacity * headDim)
-                            + (long)h * (_allocatedCapacity * headDim)
+                            + (long)b * (_numKvHeads * MaxSeqLen * headDim)
+                            + (long)h * (MaxSeqLen * headDim)
                             + (long)(CurrentPosition + s) * headDim;
 
                         Unsafe.CopyBlock(dstK, srcK, rowBytes);
@@ -192,8 +115,8 @@ public sealed class KVCache : IKVCache
                             + (long)h * headDim;
 
                         float* dstV = _values.DataPtr
-                            + (long)b * (_numKvHeads * _allocatedCapacity * headDim)
-                            + (long)h * (_allocatedCapacity * headDim)
+                            + (long)b * (_numKvHeads * MaxSeqLen * headDim)
+                            + (long)h * (MaxSeqLen * headDim)
                             + (long)(CurrentPosition + s) * headDim;
 
                         Unsafe.CopyBlock(dstV, srcV, rowBytes);
