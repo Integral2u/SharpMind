@@ -1,6 +1,5 @@
 ﻿using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
-using System.Buffers;
 using SharpMind.Core;
 
 namespace SharpMind.Model.Layers.Attention;
@@ -11,58 +10,81 @@ namespace SharpMind.Model.Layers.Attention;
 
 internal static class AttentionKernels
 {
+    /// <summary>Reusable score buffer per thread — avoids per-call ArrayPool.Rent.</summary>
+    [ThreadStatic]
+    private static float[]? t_ScoreScratch;
+
     /// <summary>
     /// Scaled dot-product attention inner kernel.
     /// Q: [SeqLen, HeadDim]  K: [KvLen, HeadDim]  V: [KvLen, HeadDim]
     /// Out: [SeqLen, HeadDim]
-    /// Out: [SeqLen, HeadDim]
-    /// Causal mask applied when <paramref name="causal"/> is true.
+    /// Uses online softmax (Milakov & Gimelshein, 2018) integrated with the
+    /// score-computation and V-weighted accumulation loops — 2 passes over KV
+    /// instead of 3 softmax passes + 1 V-accumulation pass.
     /// </summary>
     internal static unsafe void ScaledDotProductAVX2(
         float* q, float* k, float* v, float* output,
         int seqLen, int kvLen, int headDim, float scale, bool causal,
         int qStride, int oStride)
     {
-        float[] rented = ArrayPool<float>.Shared.Rent(kvLen);
-        try
+        EnsureScoreBuffer(kvLen);
+        fixed (float* pRow = &t_ScoreScratch![0])
         {
-            Span<float> scoreRow = rented.AsSpan(0, kvLen);
+            float* scoreRow = pRow;
             int queryBase = causal ? kvLen - seqLen : 0;
             for (int i = 0; i < seqLen; i++)
             {
                 float* qi = q + (long)i * qStride;
                 int absQPos = queryBase + i;
+
+                // Pass 1: compute scores + online softmax statistics
+                float max = float.NegativeInfinity;
+                float lSum = 0f;
                 for (int j = 0; j < kvLen; j++)
                 {
+                    float score;
                     if (causal && j > absQPos)
                     {
-                        scoreRow[j] = float.NegativeInfinity;
-                        continue;
+                        score = float.NegativeInfinity;
                     }
-                    float* kj = k + (long)j * headDim;
-                    var acc = Vector256<float>.Zero;
-                    int d = 0;
-                    for (; d <= headDim - 8; d += 8)
-                        acc = Avx.Add(acc, Avx.Multiply(Vector256.LoadUnsafe(ref qi[d]), Vector256.LoadUnsafe(ref kj[d])));
-                    float dot = MathHelpers.HSum256_Avx(acc);
-                    for (; d < headDim; d++) dot += qi[d] * kj[d];
-                    scoreRow[j] = dot * scale;
+                    else
+                    {
+                        float* kj = k + (long)j * headDim;
+                        var acc = Vector256<float>.Zero;
+                        int d = 0;
+                        for (; d <= headDim - 8; d += 8)
+                            acc = Avx.Add(acc, Avx.Multiply(
+                                Vector256.LoadUnsafe(ref qi[d]),
+                                Vector256.LoadUnsafe(ref kj[d])));
+                        float dot = MathHelpers.HSum256_Avx(acc);
+                        for (; d < headDim; d++) dot += qi[d] * kj[d];
+                        score = dot * scale;
+                    }
+                    scoreRow[j] = score;
+                    float oldMax = max;
+                    max = Math.Max(max, score);
+                    lSum = lSum * MathF.Exp(oldMax - max) + MathF.Exp(score - max);
                 }
 
-                SoftmaxInPlace(scoreRow);
+                // Pass 2: normalize + accumulate V-weighted output
                 float* outI = output + (long)i * oStride;
-                for (int d = 0; d < headDim; d++)
+                if (lSum > 0f)
                 {
-                    float sum = 0f;
+                    float invSum = 1f / lSum;
+                    for (int d = 0; d < headDim; d++) outI[d] = 0f;
                     for (int j = 0; j < kvLen; j++)
-                        sum += scoreRow[j] * v[(long)j * headDim + d];
-                    outI[d] = sum;
+                    {
+                        float sm = MathF.Exp(scoreRow[j] - max) * invSum;
+                        float* vj = v + (long)j * headDim;
+                        for (int d = 0; d < headDim; d++)
+                            outI[d] += sm * vj[d];
+                    }
+                }
+                else
+                {
+                    for (int d = 0; d < headDim; d++) outI[d] = 0f;
                 }
             }
-        }
-        finally
-        {
-            ArrayPool<float>.Shared.Return(rented);
         }
     }
 
@@ -71,46 +93,61 @@ internal static class AttentionKernels
         int seqLen, int kvLen, int headDim, float scale, bool causal,
         int qStride, int oStride)
     {
-        float[] rented = ArrayPool<float>.Shared.Rent(kvLen);
-        try
+        EnsureScoreBuffer(kvLen);
+        fixed (float* pRow = &t_ScoreScratch![0])
         {
-            Span<float> scoreRow = rented.AsSpan(0, kvLen);
+            float* scoreRow = pRow;
             int queryBase = causal ? kvLen - seqLen : 0;
             for (int i = 0; i < seqLen; i++)
             {
                 float* qi = q + (long)i * qStride;
                 int absQPos = queryBase + i;
+
+                float max = float.NegativeInfinity;
+                float lSum = 0f;
                 for (int j = 0; j < kvLen; j++)
                 {
+                    float score;
                     if (causal && j > absQPos)
                     {
-                        scoreRow[j] = float.NegativeInfinity;
-                        continue;
+                        score = float.NegativeInfinity;
                     }
-                    float* kj = k + (long)j * headDim;
-                    var acc = Vector256<float>.Zero;
-                    int d = 0;
-                    for (; d <= headDim - 8; d += 8)
-                        acc = Fma.MultiplyAdd(Vector256.LoadUnsafe(ref qi[d]), Vector256.LoadUnsafe(ref kj[d]), acc);
-                    float dot = MathHelpers.HSum256_Avx(acc);
-                    for (; d < headDim; d++) dot += qi[d] * kj[d];
-                    scoreRow[j] = dot * scale;
+                    else
+                    {
+                        float* kj = k + (long)j * headDim;
+                        var acc = Vector256<float>.Zero;
+                        int d = 0;
+                        for (; d <= headDim - 8; d += 8)
+                            acc = Fma.MultiplyAdd(Vector256.LoadUnsafe(ref qi[d]),
+                                                  Vector256.LoadUnsafe(ref kj[d]), acc);
+                        float dot = MathHelpers.HSum256_Avx(acc);
+                        for (; d < headDim; d++) dot += qi[d] * kj[d];
+                        score = dot * scale;
+                    }
+                    scoreRow[j] = score;
+                    float oldMax = max;
+                    max = Math.Max(max, score);
+                    lSum = lSum * MathF.Exp(oldMax - max) + MathF.Exp(score - max);
                 }
 
-                SoftmaxInPlace(scoreRow);
                 float* outI = output + (long)i * oStride;
-                for (int d = 0; d < headDim; d++)
+                if (lSum > 0f)
                 {
-                    float sum = 0f;
+                    float invSum = 1f / lSum;
+                    for (int d = 0; d < headDim; d++) outI[d] = 0f;
                     for (int j = 0; j < kvLen; j++)
-                        sum += scoreRow[j] * v[(long)j * headDim + d];
-                    outI[d] = sum;
+                    {
+                        float sm = MathF.Exp(scoreRow[j] - max) * invSum;
+                        float* vj = v + (long)j * headDim;
+                        for (int d = 0; d < headDim; d++)
+                            outI[d] += sm * vj[d];
+                    }
+                }
+                else
+                {
+                    for (int d = 0; d < headDim; d++) outI[d] = 0f;
                 }
             }
-        }
-        finally
-        {
-            ArrayPool<float>.Shared.Return(rented);
         }
     }
 
@@ -119,53 +156,64 @@ internal static class AttentionKernels
         int seqLen, int kvLen, int headDim, float scale, bool causal,
         int qStride, int oStride)
     {
-        float[] rented = ArrayPool<float>.Shared.Rent(kvLen);
-        try
+        EnsureScoreBuffer(kvLen);
+        fixed (float* pRow = &t_ScoreScratch![0])
         {
-            Span<float> scoreRow = rented.AsSpan(0, kvLen);
+            float* scoreRow = pRow;
             int queryBase = causal ? kvLen - seqLen : 0;
             for (int i = 0; i < seqLen; i++)
             {
                 float* qi = q + (long)i * qStride;
                 int absQPos = queryBase + i;
+
+                float max = float.NegativeInfinity;
+                float lSum = 0f;
                 for (int j = 0; j < kvLen; j++)
                 {
+                    float score;
                     if (causal && j > absQPos)
                     {
-                        scoreRow[j] = float.NegativeInfinity;
-                        continue;
+                        score = float.NegativeInfinity;
                     }
-                    float* kj = k + (long)j * headDim;
-                    float dot = 0f;
-                    for (int d = 0; d < headDim; d++) dot += qi[d] * kj[d];
-                    scoreRow[j] = dot * scale;
+                    else
+                    {
+                        float* kj = k + (long)j * headDim;
+                        float dot = 0f;
+                        for (int d = 0; d < headDim; d++) dot += qi[d] * kj[d];
+                        score = dot * scale;
+                    }
+                    scoreRow[j] = score;
+                    float oldMax = max;
+                    max = Math.Max(max, score);
+                    lSum = lSum * MathF.Exp(oldMax - max) + MathF.Exp(score - max);
                 }
 
-                SoftmaxInPlace(scoreRow);
                 float* outI = output + (long)i * oStride;
-                for (int d = 0; d < headDim; d++)
+                if (lSum > 0f)
                 {
-                    float sum = 0f;
+                    float invSum = 1f / lSum;
+                    for (int d = 0; d < headDim; d++) outI[d] = 0f;
                     for (int j = 0; j < kvLen; j++)
-                        sum += scoreRow[j] * v[(long)j * headDim + d];
-                    outI[d] = sum;
+                    {
+                        float sm = MathF.Exp(scoreRow[j] - max) * invSum;
+                        float* vj = v + (long)j * headDim;
+                        for (int d = 0; d < headDim; d++)
+                            outI[d] += sm * vj[d];
+                    }
+                }
+                else
+                {
+                    for (int d = 0; d < headDim; d++) outI[d] = 0f;
                 }
             }
         }
-        finally
-        {
-            ArrayPool<float>.Shared.Return(rented);
-        }
     }
 
-    private static unsafe void SoftmaxInPlace(Span<float> row)
+    private static void EnsureScoreBuffer(int kvLen)
     {
-        float max = row[0];
-        foreach (float v in row) if (v > max) max = v;
-        float sum = 0f;
-        for (int i = 0; i < row.Length; i++) { row[i] = MathF.Exp(row[i] - max); sum += row[i]; }
-        float inv = 1f / sum;
-        for (int i = 0; i < row.Length; i++) row[i] *= inv;
+        if (t_ScoreScratch is null || t_ScoreScratch.Length < kvLen)
+            t_ScoreScratch = GC.AllocateUninitializedArray<float>(
+                Math.Max(kvLen, 64));
     }
 
     // ── Flash attention ────────────────────────────────────────────────

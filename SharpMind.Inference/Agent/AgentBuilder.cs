@@ -33,6 +33,7 @@ namespace SharpMind.Inference.Agent
         public readonly JsonArray ToolDefinitions = [];
 
         public readonly List<string> Behaviors = [];
+        public readonly List<string> Skills = [];
         public AgentBuilder WithCustomBehavior(string behavior)
         {
             if (Behaviors.Contains(behavior)) Behaviors.Add(behavior);
@@ -242,6 +243,19 @@ namespace SharpMind.Inference.Agent
             stringBuilder.AppendLine($"You are {AgentName}, a {TemperaturePersonality(SamplingConfig.Temperature)} AI agent.");
             if (ToolDefinitions.Count != 0) stringBuilder.Append("You only act using the tools provided.");
             foreach (var behavior in Behaviors) stringBuilder.AppendLine(behavior);
+
+            // Tool call format
+
+            stringBuilder.AppendLine(ToolDefinitions.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+
+
+            foreach (var skill in Skills) stringBuilder.AppendLine(skill);
+
+            //cleanup
+            return stringBuilder.ToString();
+
+            
+
             /*
              * <tool_calling>
 You have tools at your disposal to solve the coding task. Follow these rules regarding tool calls:
@@ -257,10 +271,7 @@ You have tools at your disposal to solve the coding task. Follow these rules reg
 
 </tool_calling>
             */
-            var sb = new StringBuilder();
-            //Add tools in agent for granular control
-            sb.AppendLine(ToolDefinitions.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
-            return sb.ToString();
+            
         }
 
         public enum ModelFamily { Anthropic, OpenAI, Generic }
