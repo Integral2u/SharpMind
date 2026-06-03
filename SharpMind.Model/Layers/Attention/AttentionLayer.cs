@@ -136,7 +136,8 @@ public abstract class AttentionLayer : IDisposable
             int totalHeads = batch * numH;
             int qStride = numH * headDim;
             int oStride = hidden;
-            Parallel.For(0, totalHeads, bh =>
+
+            void DoHead(int bh)
             {
                 int b = bh / numH;
                 int h = bh % numH;
@@ -184,7 +185,16 @@ public abstract class AttentionLayer : IDisposable
 
                     ScaledDotProduct(pQ, pK, pV, pO, seqLen, effectiveKvLen, headDim, scale, causal, qStride, oStride);
                 }
-            });
+            }
+
+            if (totalHeads <= 16)
+            {
+                for (int bh = 0; bh < totalHeads; bh++) DoHead(bh);
+            }
+            else
+            {
+                Parallel.For(0, totalHeads, DoHead);
+            }
         }
 
         var projected = Wo.Forward(output, ops);
