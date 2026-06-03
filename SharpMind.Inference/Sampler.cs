@@ -102,8 +102,7 @@ public static class Sampler
 
     /// <summary>
     /// Zeroes all but the top-k highest-probability tokens.
-    /// Collects non-zero entries, sorts by value (ascending),
-    /// then zeros the bottom (count - k) entries.
+    /// Uses an O(n log k) min-heap select instead of O(n log n) full sort.
     /// No per-call GC allocations — uses ArrayPool.
     /// </summary>
     private static void ApplyTopK(Span<float> probs, int k)
@@ -127,18 +126,46 @@ public static class Sampler
 
             if (count <= k) return;
 
-            // Sort ascending by value — O(n log n)
-            vals[..count].Sort(idxs[..count]);
+            // Build initial min-heap from first k entries
+            for (int i = k / 2 - 1; i >= 0; i--)
+                SiftDown(vals, idxs, i, k);
 
-            // Zero the bottom (count - k) entries
-            int zeroEnd = count - k;
-            for (int i = 0; i < zeroEnd; i++)
+            // Heap-select: swap larger candidates with heap root, then sift down.
+            // Ejected indices naturally land in idxs[k..count-1].
+            for (int i = k; i < count; i++)
+            {
+                if (vals[i] > vals[0])
+                {
+                    (vals[0], vals[i]) = (vals[i], vals[0]);
+                    (idxs[0], idxs[i]) = (idxs[i], idxs[0]);
+                    SiftDown(vals, idxs, 0, k);
+                }
+            }
+
+            // Zero all ejected (non-top-k) probabilities in one linear pass
+            for (int i = k; i < count; i++)
                 probs[idxs[i]] = 0f;
         }
         finally
         {
             ArrayPool<float>.Shared.Return(rentedVals);
             ArrayPool<int>.Shared.Return(rentedIdxs);
+        }
+    }
+
+    private static void SiftDown(Span<float> vals, Span<int> idxs, int pos, int heapSize)
+    {
+        while (true)
+        {
+            int smallest = pos;
+            int left = 2 * pos + 1;
+            int right = 2 * pos + 2;
+            if (left < heapSize && vals[left] < vals[smallest]) smallest = left;
+            if (right < heapSize && vals[right] < vals[smallest]) smallest = right;
+            if (smallest == pos) break;
+            (vals[pos], vals[smallest]) = (vals[smallest], vals[pos]);
+            (idxs[pos], idxs[smallest]) = (idxs[smallest], idxs[pos]);
+            pos = smallest;
         }
     }
 

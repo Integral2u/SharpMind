@@ -87,7 +87,7 @@ Tier 2: 1–4 hour changes, significant speedup
 #	Fix	Impact
 done 1	Eliminate per-head Q packing / O scattering in AttentionLayer.Forward — currently copies [seqLen × headDim] per head into contiguous buffers, then scatters output back. Use strided pointer arithmetic into the batched Q/K/V tensors directly	HIGH — O(numH·seqLen·headDim) redundant moves per layer per token, ~30-50% of attention time
 breaks everything: 2	Fuse WGate + WUp into a single LinearLayer (2× output dim) in GatedFfnLayer — halves matmul launches for the gate/up projections	HIGH — ~33% fewer matmul calls per FFN layer
-3	Replace top-k O(n log n) sort with O(n) quickselect in Sampler	MEDIUM — at vocab=128K, sorting dominates sampling time
+done 3	Replace top-k O(n log n) sort with O(n) quickselect in Sampler	MEDIUM — at vocab=128K, sorting dominates sampling time
 4	Bulk KV cache copy with Unsafe.CopyBlock instead of element-by-element loop	MEDIUM — O(heads·seqLen·headDim) per update; CopyBlock is ~10x faster than per-element
 5	Use online softmax in standard attention kernels (like flash variant) to reduce 3-pass to 2-pass and avoid the per-call ArrayPool.Rent	MEDIUM — standard kernels are still the default path for many users
 6	Fix BinaryOp/UnaryOp delegate indirection — Func<Vector<T>, Vector<T>> is a virtual call that JIT can't inline. Use INumber<T> generic math with static abstract interface methods (SAIM, .NET 9) or explicit per-type overloads	MEDIUM — affects every elementwise op (Add, Scale, etc.)
@@ -109,3 +109,29 @@ Tier 4: Correctness / thread safety
 5	QuantizationFactory.CreateAllAvailable() uses try/catch for control flow	Replace with availability query
 6	RMSNorm overflow guard does two passes (find maxAbs, then sum squares) — could be one pass at the cost of slightly less precision	Marginal
 What direction do you want to focus on? I'd suggest starting with Tier 1 items 1 (HalfToFloat bit hack) and Tier 2 items 1 & 2 (attention Q-packing elimination + WGate/WUp fusion) — those are the biggest bang-for-buck and have clear 1-4 hour implementation paths.
+
+
+
+Root-Cause Hypothesis for FFN Fusion Failure
+After extensive analysis, the attention strides were proven correct. The FFN fusion garbled output despite:
+
+Correct blob ordering (gate_blob | up_blob) verified by GGUF metadata inspection
+Correct shape preservation fix (shape[^1] = ffnDim)
+Correct column-offset math in VecDotQxK
+The likely remaining issue is LoadWeightTransposedPartial column mapping: for the fused [2*ffnDim, hidden] weight, gate data must occupy columns [0, ffnDim) and up data columns [ffnDim, 2*ffnDim). The float path's _weight[i * outF + offset + o] transposition needs to match the quantized path's col * nBlocks * BLOCK_BYTES offset — a mismatch here produces swapped or misaligned values that pass per-column VecDot tests but corrupt the SiLU(gate)*up gating.
+
+Proposed Plan
+Phase 1 — Cleanup (no behavior change)
+Remove dead var w = Fma.MultiplyAdd(...) at QuantizationKernels.cs:449 (1 line)
+Phase 2 — FFN Fusion (re-apply with column-mapping assertion)
+Re-apply WGateUp fused LinearLayer([hidden], [2*ffnDim]) in FFnLayer.cs
+Re-apply FfnKernels.Gated with fused forward + shape[^1] = ffnDim split
+New: Add a VecDotQxK column-offset assertion test that exercises col = ffnDim - 1 and col = ffnDim on the combined blob to catch misalignment
+New: Add a Forward comparison test between separate WGate/WUp and fused WGateUp on small random float weights to confirm numerical identity before touching quantized path
+Run MultiTestInteractive with just the FFN fusion (no attention changes — they're already live) to isolate
+Phase 3 — Validation
+Confirm 1.4+ t/s maintained for Qwen2 Q8_0
+Re-run full test suite
+The core discipline: verify the fused FFN numerically matches the separate approach at the tensor level before trusting it in the model.
+
+Want me to proceed with Phase 1, or start on the Phase 2 test harness first?
