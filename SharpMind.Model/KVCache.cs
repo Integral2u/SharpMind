@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using SharpMind.Core.Tensors;
 
 namespace SharpMind.Model;
@@ -164,39 +165,38 @@ public sealed class KVCache : IKVCache
             Grow(Math.Max(needed, doubled));
         }
 
-        for (int b = 0; b < batch; b++)
+        unsafe
         {
-            for (int s = 0; s < seqLen; s++)
+            uint rowBytes = (uint)headDim * sizeof(float);
+            for (int b = 0; b < batch; b++)
             {
-                for (int h = 0; h < numKvHeads; h++)
+                for (int s = 0; s < seqLen; s++)
                 {
-                    unsafe
+                    for (int h = 0; h < numKvHeads; h++)
                     {
-                        float* srcPtr = k.DataPtr
+                        float* srcK = k.DataPtr
                             + (long)b * (seqLen * numKvHeads * headDim)
                             + (long)s * (numKvHeads * headDim)
                             + (long)h * headDim;
 
-                        float* dstPtr = _keys.DataPtr
+                        float* dstK = _keys.DataPtr
                             + (long)b * (_numKvHeads * _allocatedCapacity * headDim)
                             + (long)h * (_allocatedCapacity * headDim)
                             + (long)(CurrentPosition + s) * headDim;
 
-                        for (int d = 0; d < headDim; d++)
-                            dstPtr[d] = srcPtr[d];
+                        Unsafe.CopyBlock(dstK, srcK, rowBytes);
 
-                        srcPtr = v.DataPtr
+                        float* srcV = v.DataPtr
                             + (long)b * (seqLen * numKvHeads * headDim)
                             + (long)s * (numKvHeads * headDim)
                             + (long)h * headDim;
 
-                        dstPtr = _values.DataPtr
+                        float* dstV = _values.DataPtr
                             + (long)b * (_numKvHeads * _allocatedCapacity * headDim)
                             + (long)h * (_allocatedCapacity * headDim)
                             + (long)(CurrentPosition + s) * headDim;
 
-                        for (int d = 0; d < headDim; d++)
-                            dstPtr[d] = srcPtr[d];
+                        Unsafe.CopyBlock(dstV, srcV, rowBytes);
                     }
                 }
             }
