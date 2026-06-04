@@ -98,7 +98,7 @@ done 1	Incremental prompt encoding in ChatSession — cache _lastEncodedTokens a
 2	Proper speculative decoding — currently draftCount=1, zero speedup. Needs a draft model (or self-speculation) + rejection sampling + KV-cache rollback	HIGH — can give 1.5-2.5× latency improvement
 3	Fused end-to-end attention kernel — eliminate per-head packing, RoPE → cache → attention in a single pass from the strided Q/K/V layout	HIGH — the single biggest inference bottleneck
 done 4	Pre-allocate KV cache to maxSeqLen to avoid O(log N) growth cost and GC spikes	MEDIUM — simplifies code, eliminates resize stalls
-5	NativeBufferPool lock contention — use ConcurrentStack directly with Interlocked for counters instead of lock	MEDIUM — matters under high-throughput training
+To test 5	NativeBufferPool lock contention — use ConcurrentStack directly with Interlocked for counters instead of lock	MEDIUM — matters under high-throughput training
 done 6	Switch Parallel.For to sequential for small head counts (e.g., <16) — Parallel.For overhead can dominate when iterations are few	MEDIUM — improves single-batch decode latency
 Tier 4: Correctness / thread safety
 #	Issue	Status
