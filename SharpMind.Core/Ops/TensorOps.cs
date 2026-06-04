@@ -21,7 +21,7 @@ public abstract class TensorOps
     private const string NS = $"{nameof(SharpMind)}.{nameof(Core)}.{nameof(Activations)}.{nameof(ActivationKernels)}";
 
     // ── Singleton set by TensorOpsFactory ─────────────────────────────────
-    private static TensorOps? _default;
+    private static volatile TensorOps? _default;
 
     /// <summary>
     /// The default assembled instance used by static convenience methods.
