@@ -17,4 +17,7 @@ public sealed class ChatStreamEntry
     /// Null before generation begins.
     /// </summary>
     public float? TokensPerSecond { get; init; }
+
+    /// <summary>Seconds from start to first output token (includes prefill).</summary>
+    public float? TimeToFirstToken { get; init; }
 }

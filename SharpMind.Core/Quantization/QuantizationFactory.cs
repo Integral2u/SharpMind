@@ -12,10 +12,6 @@ public static class QuantizationFactory
         return Assembler.CreateInstance<QuantizationOps>(config.ToJigSawMapping());
     }
 
-    /// <summary>
-    /// Returns all hardware variants available on this machine.
-    /// Used by tests to verify correctness across every implementation path.
-    /// </summary>
     public static QuantizationOps[] CreateAllAvailable()
     {
         var list = new List<QuantizationOps> { Create(HardwareTier.Scalar) };
@@ -23,8 +19,12 @@ public static class QuantizationFactory
         if (Sse.IsSupported)
         {
             list.Add(Create(HardwareTier.SSE));
-            try { list.Add(Create(HardwareTier.AVX2)); } catch { }
-            try { list.Add(Create(HardwareTier.FMA)); } catch { }
+            if (Avx2.IsSupported)
+            {
+                list.Add(Create(HardwareTier.AVX2));
+                if (Fma.IsSupported)
+                    list.Add(Create(HardwareTier.FMA));
+            }
         }
 
         return [.. list];

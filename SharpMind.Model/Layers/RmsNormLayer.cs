@@ -7,29 +7,33 @@ public sealed class RmsNormLayer(int dim, float eps = 1e-5f) : NormLayer(dim, ha
 
     protected override float ComputeScalarParam(ReadOnlySpan<float> row)
     {
-        // Guard against overflow: when |v| > sqrt(float.MaxValue) ≈ 1.84e19,
-        // v² overflows to +Inf, making the norm output all zeros.
-        // Normalize by maxAbs to keep all intermediate squares in range.
+        // Single-pass online RMS with overflow guard.
+        // When |v| > sqrt(float.MaxValue) ≈ 1.84e19, v² overflows to +Inf.
+        // Normalize by running maxAbs to keep all intermediate squares in range.
         float maxAbs = 0f;
+        float ss = 0f;
+        int n = row.Length;
+
         foreach (float v in row)
         {
             float a = Math.Abs(v);
-            if (a > maxAbs) maxAbs = a;
+            if (a > maxAbs)
+            {
+                float ratio = maxAbs / a;
+                ss = ss * ratio * ratio + 1f;
+                maxAbs = a;
+            }
+            else if (a > 1e-20f)
+            {
+                float vn = v / maxAbs;
+                ss += vn * vn;
+            }
         }
 
         if (maxAbs < 1e-20f)
             return 1f / MathF.Sqrt(Eps);
 
-        float invMax = 1f / maxAbs;
-        float ss = 0f;
-        foreach (float v in row)
-        {
-            float vn = v * invMax;
-            ss += vn * vn;
-        }
-        // mean(x²) = ss / N * maxAbs²
-        // rms = maxAbs * sqrt(ss / N + eps / maxAbs²)
-        float rms = maxAbs * MathF.Sqrt(ss / row.Length + Eps / (maxAbs * maxAbs));
+        float rms = maxAbs * MathF.Sqrt(ss / n + Eps / (maxAbs * maxAbs));
         return 1f / rms;
     }
 

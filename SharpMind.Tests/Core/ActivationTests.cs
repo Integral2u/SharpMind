@@ -3,6 +3,7 @@ using SharpMind.Core.Tensors;
 
 namespace SharpMind.Tests.Core
 {
+    [Collection("Non-Parallel")]
     public sealed class ActivationTests
     {
         private readonly ActivationOps _gpt;

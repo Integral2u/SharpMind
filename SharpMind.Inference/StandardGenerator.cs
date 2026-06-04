@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using SharpMind.Core.Tensors;
@@ -7,60 +6,9 @@ using SharpMind.Model;
 namespace SharpMind.Inference;
 
 /// <summary>
-/// Computes a live rolling average of tokens-per-second.
-/// Maintains a ring-buffer of recent token timestamps.
-/// </summary>
-internal sealed class TokenRateTracker(int windowSize = 10)
-{
-    private readonly double[] _timestamps = new double[windowSize];
-    private int _head;
-    private int _count;
-    private int _totalTokens;
-    private double _startTime = double.NaN;
-
-    public void Start() { _startTime = Stopwatch.GetTimestamp(); }
-
-    public void RecordToken()
-    {
-        _totalTokens++;
-        double now = Stopwatch.GetTimestamp();
-        _timestamps[_head] = now;
-        _head = (_head + 1) % _timestamps.Length;
-        if (_count < _timestamps.Length) _count++;
-    }
-
-    /// <summary>Rolling average over the last N tokens, or cumulative if fewer than N tokens seen.</summary>
-    public float RollingTokensPerSecond
-    {
-        get
-        {
-            if (_count < 2) return 0f;
-            int oldestIdx = _head >= _count ? 0 : _head;
-            double oldest = _timestamps[oldestIdx];
-            double latest = _timestamps[(_head - 1 + _timestamps.Length) % _timestamps.Length];
-            double elapsedSec = (latest - oldest) / Stopwatch.Frequency;
-            if (elapsedSec <= 0) return 0f;
-            return (float)((_count - 1) / elapsedSec);
-        }
-    }
-
-    /// <summary>Cumulative tokens-per-second from the start.</summary>
-    public float CumulativeTokensPerSecond
-    {
-        get
-        {
-            if (_totalTokens == 0 || double.IsNaN(_startTime)) return 0f;
-            double elapsedSec = (Stopwatch.GetTimestamp() - _startTime) / Stopwatch.Frequency;
-            if (elapsedSec <= 0) return 0f;
-            return (float)(_totalTokens / elapsedSec);
-        }
-    }
-}
-
-/// <summary>
 /// Token generation loop for autoregressive decoding.
 /// </summary>
-public sealed class Generator : IGenerator
+public sealed class StandardGenerator : IGenerator
 {
     private readonly Transformer  _model;
     private readonly Tokenization.Tokenizer _tokenizer;
@@ -72,7 +20,7 @@ public sealed class Generator : IGenerator
     private float[]?              _penaltyScratch;
     private bool                  _disposed;
 
-    public Generator(
+    public StandardGenerator(
         Transformer   model,
         Tokenization.Tokenizer tokenizer,
         int?          seed = null)
@@ -131,6 +79,10 @@ public sealed class Generator : IGenerator
         if (promptIds.Length == 0)
             throw new InvalidOperationException("Prompt produced no token IDs; cannot generate.");
 
+        // ── Tokens-per-second tracking (started before prefill to capture TTFT) ─
+        var rateTracker = new TokenRateTracker(windowSize: 10);
+        rateTracker.Start();
+
         // ── Prefill ───────────────────────────────────────────────────────
         int posOffset = _caches[0].Length;
         using var prefillInput = Tensor<int>.From(promptIds, 1, promptIds.Length);
@@ -146,10 +98,6 @@ public sealed class Generator : IGenerator
             var rng = sampleCfg.Seed.HasValue
                 ? new Random(sampleCfg.Seed.Value)
                 : _defaultRng;
-
-            // ── Tokens-per-second tracking ─────────────────────────────────
-            var rateTracker = new TokenRateTracker(windowSize: 10);
-            rateTracker.Start();
 
             for (int step = 0; step < genCfg.MaxNewTokens; step++)
             {
@@ -174,6 +122,7 @@ public sealed class Generator : IGenerator
                 generatedIds.Add(nextId);
 
                 rateTracker.RecordToken();
+                TimeToFirstToken = rateTracker.TimeToFirstToken;
                 TokensPerSecond = rateTracker.RollingTokensPerSecond;
                 CumulativeTokensPerSecond = rateTracker.CumulativeTokensPerSecond;
 
@@ -260,6 +209,8 @@ public sealed class Generator : IGenerator
     public float? TokensPerSecond { get; private set; }
     /// <summary>Cumulative tokens-per-second from the start of the current generation.</summary>
     public float? CumulativeTokensPerSecond { get; private set; }
+    /// <summary>Seconds from start to first output token (includes prefill + first decode step).</summary>
+    public float? TimeToFirstToken { get; private set; }
 
     // ── Repetition penalty ────────────────────────────────────────────────
 
@@ -326,5 +277,5 @@ public sealed class Generator : IGenerator
             _caches[i].Dispose();
     }
 
-    private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, nameof(Generator));
+    private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, nameof(StandardGenerator));
 }

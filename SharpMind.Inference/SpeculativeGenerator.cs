@@ -65,6 +65,9 @@ public sealed class SpeculativeGenerator : IGenerator
 
         int[] promptIds = _tokenizer.Encode(prompt, addBos: true, addEos: false);
 
+        var rateTracker = new TokenRateTracker(windowSize: 10);
+        rateTracker.Start();
+
         int posOffset = _caches[0].Length;
         using var prefillInput = Tensor<int>.From(promptIds, 1, promptIds.Length);
         Tensor<float>? logitsTensor = _model.Forward(prefillInput, _caches, posOffset);
@@ -102,6 +105,11 @@ public sealed class SpeculativeGenerator : IGenerator
                 int tokenId = Tokens[i];
                 generatedIds.Add(tokenId);
 
+                rateTracker.RecordToken();
+                TimeToFirstToken = rateTracker.TimeToFirstToken;
+                TokensPerSecond = rateTracker.RollingTokensPerSecond;
+                CumulativeTokensPerSecond = rateTracker.CumulativeTokensPerSecond;
+
                 _decodeTokenScratch[0] = tokenId;
                 string fragment = _tokenizer.Decode(_decodeTokenScratch.AsSpan(0, 1), skipSpecials: true);
                 decodedSoFar.Append(fragment);
@@ -129,6 +137,11 @@ public sealed class SpeculativeGenerator : IGenerator
             {
                 var correctionToken = CorrectionToken;
                 generatedIds.Add(correctionToken);
+
+                rateTracker.RecordToken();
+                TimeToFirstToken = rateTracker.TimeToFirstToken;
+                TokensPerSecond = rateTracker.RollingTokensPerSecond;
+                CumulativeTokensPerSecond = rateTracker.CumulativeTokensPerSecond;
 
                 _decodeTokenScratch[0] = correctionToken;
                 string fragment = _tokenizer.Decode(_decodeTokenScratch.AsSpan(0, 1), skipSpecials: true);
@@ -232,8 +245,9 @@ public sealed class SpeculativeGenerator : IGenerator
 
     public float CacheFillRatio => (float)_caches[0].Length / _caches[0].MaxSeqLen;
 
-    public float? TokensPerSecond => null;
-    public float? CumulativeTokensPerSecond => null;
+    public float? TokensPerSecond { get; private set; }
+    public float? CumulativeTokensPerSecond { get; private set; }
+    public float? TimeToFirstToken { get; private set; }
 
     public async IAsyncEnumerable<string> GenerateFromTokensAsync(
         int[] promptIds,

@@ -36,6 +36,7 @@ public static class NativeBufferPool<T> where T : unmanaged
         {
             Interlocked.Decrement(ref bucket.Count);
             Interlocked.Add(ref bucket.Memory, -(long)bucketSize * sizeof(T));
+            rented._refCount = 1;
             return rented;
         }
 
@@ -47,7 +48,7 @@ public static class NativeBufferPool<T> where T : unmanaged
     public static unsafe void Return(NativeBuffer<T> buffer)
     {
         if (buffer is null) return;
-        buffer._refCount = 1;
+        buffer._refCount = 0;
         int bucketSize = buffer.Length;
         int byteSize = bucketSize * sizeof(T);
 

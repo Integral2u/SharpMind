@@ -39,7 +39,7 @@ namespace SharpMind.Samples.Examples
             GgufLoader.LoadWeightsToModel(ggufPath, meta, model);
             string systemPrompt = $"{PromptHelpers.DefaultSystemPrompt}\n\n{PromptHelpers.DefaultAgentPrompt}".Trim();
 
-            var generator = new Generator(model, tokenizer);
+            var generator = new StandardGenerator(model, tokenizer);
             await using var session = new ChatSession(generator, tokenizer, meta)
             {
                 MaxTokens = 512,

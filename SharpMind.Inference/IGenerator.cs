@@ -20,4 +20,5 @@ public interface IGenerator : IDisposable
     float CacheFillRatio { get; }
     float? TokensPerSecond { get; }
     float? CumulativeTokensPerSecond { get; }
+    float? TimeToFirstToken { get; }
 }

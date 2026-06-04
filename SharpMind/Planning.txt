@@ -79,59 +79,20 @@ TIES-Merging (TrIm, Elect, Sign, and Merge): Designed to handle interference bet
 DARE (Drop And REscale): Drops redundant weights and re-scales the remaining weights to create a "soups" of models, reducing task interference.
 Task Arithmetic: Creates "task vectors" by subtracting the base model weights from the fine-tuned model weights, allowing these vectors to be added or subtracted to modify model behavior.
 
-
-xcellent — three agents completed a thorough analysis. Here's the consolidated findings, ranked by impact:
-
-
-Tier 2: 1–4 hour changes, significant speedup
-#	Fix	Impact
-done 1	Eliminate per-head Q packing / O scattering in AttentionLayer.Forward — currently copies [seqLen × headDim] per head into contiguous buffers, then scatters output back. Use strided pointer arithmetic into the batched Q/K/V tensors directly	HIGH — O(numH·seqLen·headDim) redundant moves per layer per token, ~30-50% of attention time
-breaks everything: 2	Fuse WGate + WUp into a single LinearLayer (2× output dim) in GatedFfnLayer — halves matmul launches for the gate/up projections	HIGH — ~33% fewer matmul calls per FFN layer
-done 3	Replace top-k O(n log n) sort with O(n) quickselect in Sampler	MEDIUM — at vocab=128K, sorting dominates sampling time
-done 4	Bulk KV cache copy with Unsafe.CopyBlock instead of element-by-element loop	MEDIUM — O(heads·seqLen·headDim) per update; CopyBlock is ~10x faster than per-element
-done 5	Use online softmax in standard attention kernels (like flash variant) to reduce 3-pass to 2-pass and avoid the per-call ArrayPool.Rent	MEDIUM — standard kernels are still the default path for many users
-done 6	Fix BinaryOp/UnaryOp delegate indirection — Func<Vector<T>, Vector<T>> is a virtual call that JIT can't inline. Use INumber<T> generic math with static abstract interface methods (SAIM, .NET 9) or explicit per-type overloads	MEDIUM — affects every elementwise op (Add, Scale, etc.)
-done 7	Avoid Tensor.this[params int[]] on hot paths — params always allocates an array	LOW — only if users call multi-index accessors in tight loops
-Tier 3: Architectural changes (days), biggest overall wins
-#	Fix	Impact
-done 1	Incremental prompt encoding in ChatSession — cache _lastEncodedTokens and append new user message + assistant prefix only, instead of re-encoding the full history each turn	HIGH — eliminates O(N²) encoding cost over long conversations
-2	Proper speculative decoding — currently draftCount=1, zero speedup. Needs a draft model (or self-speculation) + rejection sampling + KV-cache rollback	HIGH — can give 1.5-2.5× latency improvement
-3	Fused end-to-end attention kernel — eliminate per-head packing, RoPE → cache → attention in a single pass from the strided Q/K/V layout	HIGH — the single biggest inference bottleneck
-done 4	Pre-allocate KV cache to maxSeqLen to avoid O(log N) growth cost and GC spikes	MEDIUM — simplifies code, eliminates resize stalls
-done 5	NativeBufferPool lock contention — use ConcurrentStack directly with Interlocked for counters instead of lock	MEDIUM — matters under high-throughput training
-done 6	Switch Parallel.For to sequential for small head counts (e.g., <16) — Parallel.For overhead can dominate when iterations are few	MEDIUM — improves single-batch decode latency
-Tier 4: Correctness / thread safety
-#	Issue	Status
-done 1	TensorOps._default not volatile — stale-read possible if SetDefault runs after threads start	Add volatile or use Lazy<T>
-2	KV cache Grow swaps _keys/_values without synchronization — concurrent read sees partial state	Document as single-threaded or add lock
-3	Backward() is a stub in every layer — gradients are geometrically wrong	Training is not functional
-4	SpeculativeGenerator doesn't roll back KV cache on rejected tokens	Gate-kept by draftCount=1 (no rejection happens)
-5	QuantizationFactory.CreateAllAvailable() uses try/catch for control flow	Replace with availability query
-6	RMSNorm overflow guard does two passes (find maxAbs, then sum squares) — could be one pass at the cost of slightly less precision	Marginal
-What direction do you want to focus on? I'd suggest starting with Tier 1 items 1 (HalfToFloat bit hack) and Tier 2 items 1 & 2 (attention Q-packing elimination + WGate/WUp fusion) — those are the biggest bang-for-buck and have clear 1-4 hour implementation paths.
+I want to come back to more optimizations however they a few fixes teaks required first.
+First and seemingly cosmetic tokens per second tracking in TokenRateTracker should have a TTFT time to first token metric and exposed in ChatSession, it;s implementended in StandardGenerator(recently refractored from Generator) but not speculative generator.
+Second Chat session should have a Generic<T> of the generator to allow easy swap put of generator type, standard or speulative so possibly a Factory of ChatSession could be applied as an end user easy code helper.
+Third which is in addtio to second generators would also need the same mothodolody applied to alloy use of diffeent implemntation of IKVCache. KVCache PagedKVCache or future implentations.
+Fourth the intermittently failing tests need to be reviewed and corrected.  if they fail execution could contaminating results.
+Lastly Tier 2 Fix 2 Fuse WGate + WUp into a single LinearLayer Tier 3 fix 3 Fused end-to-end attention kernel — eliminate per-head packing, RoPE → cache → attention in a single pass from the strided Q/K/V layout were ommited or rolled back during last phase due to breaking things and whilst potentially best gains available here they seem realted an may conflict or need revision on concept due to the above.
+Teir 3 Fix 2 Proper speculative decoding Teir 4 fix 4 SpeculativeGenerator doesn't roll back KV cache on rejected tokens would have needed reconsideration after the above
 
 
-
-Root-Cause Hypothesis for FFN Fusion Failure
-After extensive analysis, the attention strides were proven correct. The FFN fusion garbled output despite:
-
-Correct blob ordering (gate_blob | up_blob) verified by GGUF metadata inspection
-Correct shape preservation fix (shape[^1] = ffnDim)
-Correct column-offset math in VecDotQxK
-The likely remaining issue is LoadWeightTransposedPartial column mapping: for the fused [2*ffnDim, hidden] weight, gate data must occupy columns [0, ffnDim) and up data columns [ffnDim, 2*ffnDim). The float path's _weight[i * outF + offset + o] transposition needs to match the quantized path's col * nBlocks * BLOCK_BYTES offset — a mismatch here produces swapped or misaligned values that pass per-column VecDot tests but corrupt the SiLU(gate)*up gating.
-
-Proposed Plan
-Phase 1 — Cleanup (no behavior change)
-Remove dead var w = Fma.MultiplyAdd(...) at QuantizationKernels.cs:449 (1 line)
-Phase 2 — FFN Fusion (re-apply with column-mapping assertion)
-Re-apply WGateUp fused LinearLayer([hidden], [2*ffnDim]) in FFnLayer.cs
-Re-apply FfnKernels.Gated with fused forward + shape[^1] = ffnDim split
-New: Add a VecDotQxK column-offset assertion test that exercises col = ffnDim - 1 and col = ffnDim on the combined blob to catch misalignment
-New: Add a Forward comparison test between separate WGate/WUp and fused WGateUp on small random float weights to confirm numerical identity before touching quantized path
-Run MultiTestInteractive with just the FFN fusion (no attention changes — they're already live) to isolate
-Phase 3 — Validation
-Confirm 1.4+ t/s maintained for Qwen2 Q8_0
-Re-run full test suite
-The core discipline: verify the fused FFN numerically matches the separate approach at the tensor level before trusting it in the model.
-
-Want me to proceed with Phase 1, or start on the Phase 2 test harness first?
+Step	What	Pre-reqs
+done A	TTFT tracking — TokenRateTracker → IGenerator → ChatSession	None
+done B	Fix intermittent tests — [Collection] attributes for static-state tests	None
+C	IKVCache interface: add AllocatedCapacity, GetKeyPtr/GetValuePtr; refactor AttentionLayer to remove is KVCache cast	None
+D	Generator + cache injection — constructors accept IKVCache[]?, ChatSession<T>, ChatSessionFactory	C
+E	WGate+WUp fusion — single [hidden, 2*ffnDim] LinearLayer	C (cleaner but not strictly blocked)
+F	Speculative decoding — enable multi-token draft, KV cache snapshot/restore for rollback, wire up TPS/TTFT	C, D
+G	Fused attention kernel — RoPE → cache → attention in one pass	C, E (both affect attention path)

@@ -8,6 +8,7 @@ namespace SharpMind.Tests.Core
     /// are deterministic regardless of host CPU capabilities. A separate
     /// parity test verifies that the AVX2/FMA paths produce identical output.
     /// </summary>
+    [Collection("Non-Parallel")]
     public sealed class TensorOpsTests : IDisposable
     {
         private readonly TensorOps _ops;

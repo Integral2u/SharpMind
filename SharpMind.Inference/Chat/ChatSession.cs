@@ -40,6 +40,7 @@ public sealed class ChatSession
     public float RepetitionPenalty { get; set; } = 1.1f;
     public int RepetitionWindow { get; set; } = 32;
     public float? TokensPerSecond { get; private set; }
+    public float? TimeToFirstToken { get; private set; }
 
 
     public void AddMessage(ChatRole role, string content)
@@ -189,7 +190,8 @@ public sealed class ChatSession
                 Status = ChatStatus.Responding,
                 Token = fragment,
                 IsComplete = false,
-                TokensPerSecond = _generator.TokensPerSecond
+                TokensPerSecond = _generator.TokensPerSecond,
+                TimeToFirstToken = _generator.TimeToFirstToken
             };
         }
 
@@ -200,7 +202,8 @@ public sealed class ChatSession
         {
             Status = ChatStatus.Complete,
             IsComplete = true,
-            TokensPerSecond = _generator.CumulativeTokensPerSecond
+            TokensPerSecond = _generator.TokensPerSecond,
+            TimeToFirstToken = _generator.TimeToFirstToken
         };
     }
 
@@ -217,16 +220,17 @@ public sealed class ChatSession
                 {   
                     response(entry);
                     TokensPerSecond = entry.TokensPerSecond;
+                    TimeToFirstToken = entry.TimeToFirstToken;
                 }
             }
             catch (OperationCanceledException)
             {
-                response(new ChatStreamEntry { Status = ChatStatus.Interrupted, IsComplete = true , TokensPerSecond = _generator.CumulativeTokensPerSecond });
+                response(new ChatStreamEntry { Status = ChatStatus.Interrupted, IsComplete = true , TokensPerSecond = _generator.TokensPerSecond, TimeToFirstToken = _generator.TimeToFirstToken });
                 break;
             }
             catch
             {
-                response(new ChatStreamEntry { Status = ChatStatus.Interrupted, IsComplete = true, TokensPerSecond = _generator.CumulativeTokensPerSecond });
+                response(new ChatStreamEntry { Status = ChatStatus.Interrupted, IsComplete = true, TokensPerSecond = _generator.TokensPerSecond, TimeToFirstToken = _generator.TimeToFirstToken });
                 break;
             }
         }

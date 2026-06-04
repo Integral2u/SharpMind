@@ -25,7 +25,7 @@ namespace SharpMind.Samples.Examples
             "qwen2-0_5b-instruct-q8_0",     //Response:Hello! How can I assist you today?
             //"qwen2-0_5b-instruct-fp16",     //Response:Hello! How can I assist you today?
                         
-            "DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M", //Response:
+            //"DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M", //Response:
             //"TinyLlama-1.1B-Chat-v1.0.Q4_K_M",      //Response:It seems like you'd like to provide information on the topic of which is not
             //"llama-3.2-1b-instruct-q8_0",           //Response:It seems like you'd like to provide information on the topic of which is not
             //"qwen2.5-1.5b-instruct-q8_0",           //Response:\n\n\n\n# 1. Write a Python program to check if the given
@@ -66,7 +66,7 @@ namespace SharpMind.Samples.Examples
                 GgufLoader.LoadWeightsToModel(ggufPath, meta, model);
                 string systemPrompt = "";
 
-                var generator = new Generator(model, tokenizer);
+                var generator = new StandardGenerator(model, tokenizer);
                 await using var session = new ChatSession(generator, tokenizer, meta)
                 {
                     MaxTokens = 256,
@@ -103,7 +103,7 @@ namespace SharpMind.Samples.Examples
                     return new ChatMessage { Content = "exit", Role = ChatRole.User };
                 }
                 await Console.Out.WriteLineAsync();
-                await Console.Out.WriteLineAsync($"Tokens per second: {session.TokensPerSecond ?? 0}");
+                await Console.Out.WriteLineAsync($"Tokens per second: {session.TokensPerSecond ?? 0:F2}  TTFT: {session.TimeToFirstToken?.ToString("F3") ?? "N/A"}s");
             }
             await Console.Out.WriteLineAsync();
             await Console.Out.WriteLineAsync("Done!");

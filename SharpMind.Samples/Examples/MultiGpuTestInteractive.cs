@@ -63,7 +63,7 @@ namespace SharpMind.Samples.Examples
                 GgufLoader.LoadWeightsToModel(ggufPath, meta, model);
                 string systemPrompt = "";
 
-                var generator = new Generator(model, tokenizer);
+                var generator = new StandardGenerator(model, tokenizer);
                 await using var session = new ChatSession(generator, tokenizer, meta)
                 {
                     MaxTokens = 256,
@@ -97,7 +97,7 @@ namespace SharpMind.Samples.Examples
                     return new ChatMessage { Content = "exit", Role = ChatRole.User };
                 }
                 await Console.Out.WriteLineAsync();
-                await Console.Out.WriteLineAsync($"Tokens per second: {session.TokensPerSecond ?? 0}");
+                await Console.Out.WriteLineAsync($"Tokens per second: {session.TokensPerSecond ?? 0:F2}  TTFT: {session.TimeToFirstToken?.ToString("F3") ?? "N/A"}s");
             }
             await Console.Out.WriteLineAsync();
             await Console.Out.WriteLineAsync("Done!");
