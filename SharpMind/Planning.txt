@@ -91,7 +91,7 @@ Teir 3 Fix 2 Proper speculative decoding Teir 4 fix 4 SpeculativeGenerator doesn
 Step	What	Pre-reqs
 done A	TTFT tracking — TokenRateTracker → IGenerator → ChatSession	None
 done B	Fix intermittent tests — [Collection] attributes for static-state tests	None
-C	IKVCache interface: add AllocatedCapacity, GetKeyPtr/GetValuePtr; refactor AttentionLayer to remove is KVCache cast	None
+done C	IKVCache interface: add AllocatedCapacity, GetKeyPtr/GetValuePtr; refactor AttentionLayer to remove is KVCache cast	None
 D	Generator + cache injection — constructors accept IKVCache[]?, ChatSession<T>, ChatSessionFactory	C
 E	WGate+WUp fusion — single [hidden, 2*ffnDim] LinearLayer	C (cleaner but not strictly blocked)
 F	Speculative decoding — enable multi-token draft, KV cache snapshot/restore for rollback, wire up TPS/TTFT	C, D

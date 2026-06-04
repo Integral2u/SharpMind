@@ -1,4 +1,5 @@
-﻿using JigSawDotNet;
+﻿using System.Runtime.CompilerServices;
+using JigSawDotNet;
 using SharpMind.Core.Embeddings;
 using SharpMind.Core.Ops;
 using SharpMind.Core.Quantization;
@@ -149,41 +150,51 @@ public abstract class AttentionLayer : IDisposable
 
                     float* pK;
                     float* pV;
-                    if (cache is KVCache kc)
+                    Tensor<float>? tempK = null;
+                    Tensor<float>? tempV = null;
+
+                    if (cache is { IsContiguous: true })
                     {
-                        int cacheStride = kc.AllocatedCapacity;
-                        pK = kc.Keys.DataPtr + (long)b * (numKv * cacheStride * headDim)
-                                           + (long)kvHead * (cacheStride * headDim);
-                        pV = kc.Values.DataPtr + (long)b * (numKv * cacheStride * headDim)
-                                              + (long)kvHead * (cacheStride * headDim);
+                        pK = cache.GetKeyPtr(b, 0, kvHead);
+                        pV = cache.GetValuePtr(b, 0, kvHead);
                     }
                     else if (cache != null)
                     {
-                        throw new NotSupportedException(
-                            $"Non-contiguous cache type {cache.GetType().Name} is not supported. " +
-                            "Use KVCache for contiguous pointer access.");
+                        tempK = new Tensor<float>(effectiveKvLen, headDim);
+                        tempV = new Tensor<float>(effectiveKvLen, headDim);
+                        for (int s = 0; s < effectiveKvLen; s++)
+                        {
+                            float* srcK = cache.GetKeyPtr(b, s, kvHead);
+                            float* srcV = cache.GetValuePtr(b, s, kvHead);
+                            float* dstK = tempK.DataPtr + (long)s * headDim;
+                            float* dstV = tempV.DataPtr + (long)s * headDim;
+                            Unsafe.CopyBlock(dstK, srcK, (uint)(headDim * sizeof(float)));
+                            Unsafe.CopyBlock(dstV, srcV, (uint)(headDim * sizeof(float)));
+                        }
+                        pK = tempK.DataPtr;
+                        pV = tempV.DataPtr;
                     }
                     else
                     {
-                        using var kHead = new Tensor<float>(effectiveKvLen, headDim);
-                        using var vHead = new Tensor<float>(effectiveKvLen, headDim);
+                        tempK = new Tensor<float>(effectiveKvLen, headDim);
+                        tempV = new Tensor<float>(effectiveKvLen, headDim);
                         for (int s = 0; s < effectiveKvLen; s++)
                         {
                             float* srcK = kr.DataPtr + (long)((b * seqLen + s) * numKv + kvHead) * headDim;
                             float* srcV = v.DataPtr + (long)(b * seqLen * kvDim + s * kvDim + kvHead * headDim);
-                            float* dstK = kHead.DataPtr + (long)s * headDim;
-                            float* dstV = vHead.DataPtr + (long)s * headDim;
-                            for (int d = 0; d < headDim; d++)
-                            {
-                                dstK[d] = srcK[d];
-                                dstV[d] = srcV[d];
-                            }
+                            float* dstK = tempK.DataPtr + (long)s * headDim;
+                            float* dstV = tempV.DataPtr + (long)s * headDim;
+                            Unsafe.CopyBlock(dstK, srcK, (uint)(headDim * sizeof(float)));
+                            Unsafe.CopyBlock(dstV, srcV, (uint)(headDim * sizeof(float)));
                         }
-                        pK = kHead.DataPtr;
-                        pV = vHead.DataPtr;
+                        pK = tempK.DataPtr;
+                        pV = tempV.DataPtr;
                     }
 
                     ScaledDotProduct(pQ, pK, pV, pO, seqLen, effectiveKvLen, headDim, scale, causal, qStride, oStride);
+
+                    tempK?.Dispose();
+                    tempV?.Dispose();
                 }
             }
 

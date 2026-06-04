@@ -10,4 +10,8 @@ public interface IKVCache : IDisposable
     int Length { get; }
     int MaxSeqLen { get; }
     bool IsFull { get; }
+    int AllocatedCapacity { get; }
+    bool IsContiguous { get; }
+    unsafe float* GetKeyPtr(int batchIdx, int position, int kvHead);
+    unsafe float* GetValuePtr(int batchIdx, int position, int kvHead);
 }

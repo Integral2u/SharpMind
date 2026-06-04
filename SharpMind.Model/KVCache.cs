@@ -23,6 +23,19 @@ public sealed class KVCache : IKVCache
     public int MaxSeqLen { get; }
 
     public int AllocatedCapacity => MaxSeqLen;
+    public bool IsContiguous => true;
+
+    public unsafe float* GetKeyPtr(int batchIdx, int position, int kvHead)
+        => _keys.DataPtr
+            + (long)batchIdx * (_numKvHeads * MaxSeqLen * _headDim)
+            + (long)kvHead * (MaxSeqLen * _headDim)
+            + (long)position * _headDim;
+
+    public unsafe float* GetValuePtr(int batchIdx, int position, int kvHead)
+        => _values.DataPtr
+            + (long)batchIdx * (_numKvHeads * MaxSeqLen * _headDim)
+            + (long)kvHead * (MaxSeqLen * _headDim)
+            + (long)position * _headDim;
 
     public KVCache(int batchSize, int numKvHeads, int maxSeqLen, int headDim)
     {
