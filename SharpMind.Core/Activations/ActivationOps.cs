@@ -38,11 +38,14 @@ public abstract class ActivationOps
 
     [PuzzleCornerPiece(SharpMindConfig.KeyPointWise, true, null,
         SharpMindConfig.ValReLUAvx2, $"{NS}.{nameof(ActivationKernels.ReLUAVX2)}",
+        SharpMindConfig.ValReLUFma, $"{NS}.{nameof(ActivationKernels.ReLUAVX2)}",
         SharpMindConfig.ValReLU, $"{NS}.{nameof(ActivationKernels.ReLUScalar)}",
         SharpMindConfig.ValGELU, $"{NS}.{nameof(ActivationKernels.GELUScalar)}",
         SharpMindConfig.ValGELUAvx2, $"{NS}.{nameof(ActivationKernels.GELUScalar)}",
+        SharpMindConfig.ValGELUFma, $"{NS}.{nameof(ActivationKernels.GELUScalar)}",
         SharpMindConfig.ValSiLU, $"{NS}.{nameof(ActivationKernels.SiLUScalar)}",
-        SharpMindConfig.ValSiLUAvx2, $"{NS}.{nameof(ActivationKernels.SiLUScalar)}")]
+        SharpMindConfig.ValSiLUAvx2, $"{NS}.{nameof(ActivationKernels.SiLUScalar)}",
+        SharpMindConfig.ValSiLUFma, $"{NS}.{nameof(ActivationKernels.SiLUScalar)}")]
     public abstract void ApplyPointwise(ReadOnlySpan<float> src, Span<float> dst);
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -52,10 +55,13 @@ public abstract class ActivationOps
     [PuzzleCornerPiece(SharpMindConfig.KeyGate, true, null,
         SharpMindConfig.ValSwiGLU, $"{NS}.{nameof(ActivationKernels.SwiGLUScalar)}",
         SharpMindConfig.ValSwiGLUAvx2, $"{NS}.{nameof(ActivationKernels.SwiGLUScalar)}",
+        SharpMindConfig.ValSwiGLUFma, $"{NS}.{nameof(ActivationKernels.SwiGLUScalar)}",
         SharpMindConfig.ValGeGLU, $"{NS}.{nameof(ActivationKernels.GeGLUScalar)}",
         SharpMindConfig.ValGeGLUAvx2, $"{NS}.{nameof(ActivationKernels.GeGLUScalar)}",
+        SharpMindConfig.ValGeGLUFma, $"{NS}.{nameof(ActivationKernels.GeGLUScalar)}",
         SharpMindConfig.ValNone, $"{NS}.{nameof(ActivationKernels.CopyGate)}",
-        SharpMindConfig.ValNoneAvx2, $"{NS}.{nameof(ActivationKernels.CopyGate)}")]
+        SharpMindConfig.ValNoneAvx2, $"{NS}.{nameof(ActivationKernels.CopyGate)}",
+        SharpMindConfig.ValNoneFma, $"{NS}.{nameof(ActivationKernels.CopyGate)}")]
     public abstract void ApplyGate(ReadOnlySpan<float> gate, ReadOnlySpan<float> up, Span<float> dst);
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -64,7 +70,8 @@ public abstract class ActivationOps
 
     [PuzzleCornerPiece(SharpMindConfig.KeySoftmax, true, null,
         SharpMindConfig.ValScalar, $"{NS}.{nameof(ActivationKernels.SoftmaxRowScalar)}",
-        SharpMindConfig.ValAvx2, $"{NS}.{nameof(ActivationKernels.SoftmaxRowScalar)}")]
+        SharpMindConfig.ValAvx2, $"{NS}.{nameof(ActivationKernels.SoftmaxRowScalar)}",
+        SharpMindConfig.ValFma, $"{NS}.{nameof(ActivationKernels.SoftmaxRowScalar)}")]
     public abstract void ApplySoftmaxRow(ReadOnlySpan<float> src, Span<float> dst);
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -73,6 +80,7 @@ public abstract class ActivationOps
 
     [PuzzleCornerPiece(SharpMindConfig.KeyRMSNorm, true, null,
         SharpMindConfig.ValAvx2, $"{NS}.{nameof(ActivationKernels.RMSNormRowAVX2)}",
+        SharpMindConfig.ValFma, $"{NS}.{nameof(ActivationKernels.RMSNormRowAVX2)}",
         SharpMindConfig.ValScalar, $"{NS}.{nameof(ActivationKernels.RMSNormRowScalar)}")]
     public abstract void ApplyRMSNormRow(
         ReadOnlySpan<float> src,

@@ -1,8 +1,8 @@
-using System.Runtime.CompilerServices;
+using SharpMind.Model;
 
 namespace SharpMind.Inference;
 //public interface IGenerator<T> : IDisposable where T: IKVCache
-public interface IGenerator : IDisposable
+public interface IGenerator<T>  : IDisposable where T : IKVCacheBuilder, new()
 {
     IAsyncEnumerable<string> GenerateAsync(
         string prompt,

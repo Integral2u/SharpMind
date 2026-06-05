@@ -1,22 +1,28 @@
-using SharpMind.GPU;
-using SharpMind.Inference;
+﻿using SharpMind.Inference;
 using SharpMind.Inference.Chat;
 using SharpMind.Model;
 using SharpMind.Model.Config;
 using SharpMind.Model.Format;
 using SharpMind.Tokenization;
 using System.Diagnostics;
-using System.Runtime.Intrinsics.X86;
+
 
 namespace SharpMind.Samples.Examples
 {
-    public class MultiGpuTestInteractive
-
+    public class QwenSmallModels
     {
         private static readonly string[] Models =
-            [
-            "SmolLM-135M.Q4_K_M",
-            "qwen2-0_5b-instruct-q8_0",
+    [
+            "qwen2-0.5b-instruct-q2_k",
+            "Qwen2-0.5B.Q2_K",              //Response:zn?-redux??zn???erator ++)
+            "Qwen2-0.5B.Q3_K_L",            //Response:/classes/classes?????????ist??????????_*
+            "Qwen2-0.5B.Q3_K_M",            //Response:!!!!!!!
+            "Qwen2-0.5B.Q3_K_S",            //Response:!!!!!!!
+            "qwen2-0_5b-instruct-q4_k_m",
+            "Qwen2-0.5B.Q5_1",
+            "Qwen2-0.5B.Q6_K",
+            "qwen2-0_5b-instruct-q8_0",     //Response:Hello! How can I assist you today?
+            //"qwen2-0_5b-instruct-fp16",     //Response:Hello! How can I assist you today?
             ];
 
         private static readonly string ModelPath = @"C:\Integral2u\source\repos\SharpMind\ExternalAssets";
@@ -30,9 +36,8 @@ namespace SharpMind.Samples.Examples
                 var tok = 0;
                 CancellationTokenSource cancellationTokenSource = new();
                 var ggufPath = Path.Combine(ModelPath, $"{m}.gguf");
-                var tokenizerPath = Path.Combine(ModelPath, $"{m}.json");
                 if (!File.Exists(ggufPath)) continue;
-                await Console.Out.WriteLineAsync($"Testing {m} (GPU kernels)");
+                await Console.Out.WriteLineAsync($"Testing {m}");
                 await Console.Out.FlushAsync();
 
                 GgufLoader.Load(ggufPath, null, out GgufMeta meta, out ModelConfig modelConfig, out Tokenizer? tokenizer);
@@ -42,34 +47,27 @@ namespace SharpMind.Samples.Examples
                     continue;
                 }
 
-                var sharpConfig = modelConfig.ForModel(DetectBestHardware());
+                var sharpConfig = modelConfig.ForModel();
                 GC.Collect(); GC.WaitForPendingFinalizers();
                 var sw = Stopwatch.StartNew();
-
-                // Build the JigSaw mapping with CPU baseline, then override
-                // activations and gates to use GPU-accelerated kernels (via WithGpu()).
-                // JigSaw's external [PuzzlePeice] scan finds the GPU kernels because
-                // SharpMind.GPU is loaded in the AppDomain (WithGpu() lives there).
-                var mapping = new MappingBuilder(DetectBestHardware())
-                    .ApplyPreset(sharpConfig)
-                    .WithGpu()
-                    .Build();
-
-                var model = ModelFactory.Create(modelConfig, sharpConfig, mapping);
-                await Console.Out.WriteLineAsync($"ModelFactory.Create (GPU) executed in: {sw.Elapsed.TotalSeconds:F2}s");
+                var model = ModelFactory.Create(modelConfig, sharpConfig);
+                await Console.Out.WriteLineAsync($"ModelFactory.Create executed in: {sw.Elapsed.TotalSeconds:F2}s");
 
                 GC.Collect(); GC.WaitForPendingFinalizers();
                 sw.Restart();
                 GgufLoader.LoadWeightsToModel(ggufPath, meta, model);
+                await Console.Out.WriteLineAsync($"GgufLoader.LoadWeightsToModel executed in: {sw.Elapsed.TotalSeconds:F2}s");
+
+                sw.Stop();
                 string systemPrompt = "";
 
-                var generator = new StandardGenerator(model, tokenizer);
-                await using var session = new ChatSession<StandardGenerator>(generator, tokenizer, meta)
+                await using var session = new ChatSession<StandardGeneratorBuilder<KVCacherBuilder>, KVCacherBuilder>(model, tokenizer, meta)
                 {
                     MaxTokens = 256,
                     Temperature = 0.0f,
                     TopK = 1,
                 };
+
                 if (!string.IsNullOrEmpty(systemPrompt)) session.AddMessage(ChatRole.System, systemPrompt);
                 var history = await session.StartChatAsync(Prompt, Response, cancellationTokenSource.Token);
 
@@ -103,13 +101,5 @@ namespace SharpMind.Samples.Examples
             await Console.Out.WriteLineAsync("Done!");
             Console.In.ReadLine();
         }
-
-        private static HardwareTier DetectBestHardware()
-        {
-            if (Avx2.IsSupported) return HardwareTier.AVX2;
-            if (Fma.IsSupported) return HardwareTier.FMA;
-            return HardwareTier.Scalar;
-        }
-
     }
 }

@@ -23,7 +23,6 @@ Removed safetensor loader for now
 
 End to End Test, Super Dumb Model Training Load and Test Logits valid output.
 Add progress out Func<float> to loading mothods.
-Add tokens per second to ChatSession 
 
 
 ChatSession should possibly have a contrcutor that takes user name and default agent name (string userName = "User", string agentName = "Delta")
@@ -95,5 +94,7 @@ done B	Fix intermittent tests — [Collection] attributes for static-state tests
 done C	IKVCache interface: add AllocatedCapacity, GetKeyPtr/GetValuePtr; refactor AttentionLayer to remove is KVCache cast	None
 done D	Generator + cache injection — constructors accept IKVCache[]?, ChatSession<T>, ChatSessionFactory	C
 done E	WGate+WUp fusion — single [hidden, 2*ffnDim] LinearLayer	C (cleaner but not strictly blocked)
-F	Speculative decoding — enable multi-token draft, KV cache snapshot/restore for rollback, wire up TPS/TTFT	C, D
+done F	Speculative decoding — enable multi-token draft, KV cache snapshot/restore for rollback, wire up TPS/TTFT	C, D
 G	Fused attention kernel — RoPE → cache → attention in one pass	C, E (both affect attention path)
+
+

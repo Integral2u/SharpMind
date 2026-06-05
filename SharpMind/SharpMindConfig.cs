@@ -42,16 +42,22 @@ public sealed record SharpMindConfig
     // ── Activation Values ──────────────────────────────────────────────────────
     public const string ValReLU = "relu";
     public const string ValReLUAvx2 = "reluavx2";
+    public const string ValReLUFma = "relufma";
     public const string ValGELU = "gelu";
     public const string ValGELUAvx2 = "geluavx2";
+    public const string ValGELUFma = "gelufma";
     public const string ValSiLU = "silu";
     public const string ValSiLUAvx2 = "siluavx2";
+    public const string ValSiLUFma = "silufma";
     public const string ValSwiGLU = "swiglu";
     public const string ValSwiGLUAvx2 = "swigluavx2";
+    public const string ValSwiGLUFma = "swiglufma";
     public const string ValGeGLU = "geglu";
     public const string ValGeGLUAvx2 = "gegluavx2";
+    public const string ValGeGLUFma = "geglufma";
     public const string ValNone = "none";
     public const string ValNoneAvx2 = "noneavx2";
+    public const string ValNoneFma = "nonefma";
 
     // ── Hardware Values ──────────────────────────────────────────────────────
     public const string ValScalar = "scalar";

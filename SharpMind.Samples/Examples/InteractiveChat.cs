@@ -4,7 +4,6 @@ using SharpMind.Model;
 using SharpMind.Model.Config;
 using SharpMind.Model.Format;
 using SharpMind.Tokenization;
-using System.Runtime.Intrinsics.X86;
 
 namespace SharpMind.Samples.Examples
 {
@@ -32,7 +31,7 @@ namespace SharpMind.Samples.Examples
                 Console.Out.WriteLine($"Tokenizer not found");
                 return;
             }
-            var sharpConfig = modelConfig.ForModel(DetectBestHardware());
+            var sharpConfig = modelConfig.ForModel();
 
             GC.Collect(); GC.WaitForPendingFinalizers();
             Console.Out.WriteLine("Building model...");
@@ -42,8 +41,7 @@ namespace SharpMind.Samples.Examples
             GgufLoader.LoadWeightsToModel(ggufPath, meta, model);
             string systemPrompt = "";
 
-            var generator = new StandardGenerator(model, tokenizer);
-            await using var session = new ChatSession<StandardGenerator>(generator, tokenizer, meta)
+            await using var session = new ChatSession<StandardGeneratorBuilder<KVCacherBuilder>, KVCacherBuilder>(model, tokenizer, meta)
             {
                 MaxTokens = 256,
                 Temperature = 0.7f,
@@ -71,12 +69,5 @@ namespace SharpMind.Samples.Examples
                 return userInput;
             }
         }
-        private static HardwareTier DetectBestHardware()
-        {
-            if (Avx2.IsSupported) return HardwareTier.AVX2;
-            if (Fma.IsSupported) return HardwareTier.FMA;
-            return HardwareTier.Scalar;
-        }
-
     }
 }

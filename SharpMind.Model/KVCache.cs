@@ -141,6 +141,23 @@ public sealed class KVCache : IKVCache
         CurrentPosition += seqLen;
     }
 
+    public object? Snapshot()
+    {
+        if (CurrentPosition == 0) return null;
+        var k = _keys.Data.ToArray();
+        var v = _values.Data.ToArray();
+        return (CurrentPosition, k, v);
+    }
+
+    public void Restore(object? snapshot)
+    {
+        if (snapshot is null) return;
+        var (pos, k, v) = ((int, float[], float[]))snapshot;
+        _keys.CopyFrom(k);
+        _values.CopyFrom(v);
+        CurrentPosition = pos;
+    }
+
     public void Dispose()
     {
         _keys.Dispose();

@@ -8,7 +8,7 @@ namespace SharpMind.Inference;
 /// <summary>
 /// Token generation loop for autoregressive decoding.
 /// </summary>
-public sealed class StandardGenerator : IGenerator
+public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuilder, new ()
 {
     private readonly Transformer  _model;
     private readonly Tokenization.Tokenizer _tokenizer;
@@ -19,16 +19,20 @@ public sealed class StandardGenerator : IGenerator
     /// <summary>Cached scratch buffer for repetition-penalty copy to avoid <see cref="ArrayPool{T}.Rent"/> per token.</summary>
     private float[]?              _penaltyScratch;
     private bool                  _disposed;
+    private readonly bool _addBos;
+    private readonly bool _addEos;
 
     public StandardGenerator(
         Transformer   model,
         Tokenization.Tokenizer tokenizer,
+        bool addBos, bool addEos,
         IKVCache[]?   caches = null,
         int?          seed = null)
     {
         ArgumentNullException.ThrowIfNull(model);
         ArgumentNullException.ThrowIfNull(tokenizer);
-
+        _addBos = addBos;
+        _addEos = addEos;
         _model      = model;
         _tokenizer  = tokenizer;
 
@@ -45,7 +49,7 @@ public sealed class StandardGenerator : IGenerator
 
             _caches = new IKVCache[numLayers];
             for (int i = 0; i < numLayers; i++)
-                _caches[i] = new KVCache(1, numKvHeads, maxSeqLen, headDim);
+                _caches[i] = new T().CreateKVCache(1, numKvHeads, maxSeqLen, headDim);
         }
 
         _defaultRng = seed.HasValue ? new Random(seed.Value) : Random.Shared;
@@ -63,7 +67,7 @@ public sealed class StandardGenerator : IGenerator
         GenerationConfig?                         generation = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        int[] promptIds = _tokenizer.Encode(prompt, addBos: true, addEos: false);
+        int[] promptIds = _tokenizer.Encode(prompt, _addBos, _addEos);
         await foreach (var fragment in GenerateFromTokensAsync(promptIds, sampling, generation, cancellationToken))
             yield return fragment;
     }
@@ -249,25 +253,6 @@ public sealed class StandardGenerator : IGenerator
             ScaleId(logits, generatedIds[i], penalty);
     }
 
-/*
-#if DEBUG
-    private static string EscapeForDebug(string s)
-    {
-        if (string.IsNullOrEmpty(s)) return s;
-        var sb = new System.Text.StringBuilder(s.Length);
-        foreach (char c in s)
-        {
-            if (c < 0x20 || c == 0x7f)
-                sb.Append($"\\x{(int)c:X2}");
-            else if (c == '\u2581')
-                sb.Append('\u2581');
-            else
-                sb.Append(c);
-        }
-        return sb.ToString();
-    }
-#endif
-*/
     // ── Disposal ──────────────────────────────────────────────────────────
 
     public void Dispose()
@@ -285,5 +270,5 @@ public sealed class StandardGenerator : IGenerator
             _caches[i].Dispose();
     }
 
-    private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, nameof(StandardGenerator));
+    private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, nameof(StandardGenerator<T>));
 }

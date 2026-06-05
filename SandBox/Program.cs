@@ -1,1 +1,1 @@
-﻿await SharpMind.Samples.Examples.MultiTestInteractive.RunAsync("hello");
+﻿await SharpMind.Samples.Examples.QwenSmallModels.RunAsync("hello");

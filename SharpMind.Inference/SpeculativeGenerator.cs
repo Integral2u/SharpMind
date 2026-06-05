@@ -5,37 +5,31 @@ using SharpMind.Model;
 
 namespace SharpMind.Inference;
 
-/// <summary>
-/// Speculative Decoding generator - generates speculative tokens then verifies them.
-///
-/// Algorithm (Levenshtein et al., 2023):
-/// 1. Draft: Generate N speculative tokens (either from draft model or greedy from main)
-/// 2. Verify: Run full forward pass on all N tokens
-/// 3. Accept: Keep tokens where draft matches verification
-/// 4. Correct: On mismatch, use verification distribution to sample next token
-///
-/// Speedup comes from verifying multiple tokens at once vs autoregressive single-token decoding.
-/// </summary>
-public sealed class SpeculativeGenerator : IGenerator
+public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBuilder, new()
 {
     private readonly Transformer _model;
     private readonly Tokenization.Tokenizer _tokenizer;
     private readonly IKVCache[] _caches;
     private readonly Random _defaultRng;
     private readonly int[] _decodeTokenScratch = new int[1];
+    private float[]? _penaltyScratch;
     private bool _disposed;
 
     private const int DefaultMaxDraftTokens = 4;
+    private readonly bool _addBos;
+    private readonly bool _addEos;
 
     public SpeculativeGenerator(
         Transformer model,
         Tokenization.Tokenizer tokenizer,
+        bool addBos, bool addEos,
         IKVCache[]? caches = null,
         int? seed = null)
     {
         ArgumentNullException.ThrowIfNull(model);
         ArgumentNullException.ThrowIfNull(tokenizer);
-
+        _addBos = addBos;
+        _addEos = addEos;
         _model = model;
         _tokenizer = tokenizer;
 
@@ -52,7 +46,7 @@ public sealed class SpeculativeGenerator : IGenerator
 
             _caches = new IKVCache[numLayers];
             for (int i = 0; i < numLayers; i++)
-                _caches[i] = new KVCache(1, numKvHeads, maxSeqLen, headDim);
+                _caches[i] = new T().CreateKVCache(1, numKvHeads, maxSeqLen, headDim);
         }
 
         _defaultRng = seed.HasValue ? new Random(seed.Value) : Random.Shared;
@@ -62,8 +56,34 @@ public sealed class SpeculativeGenerator : IGenerator
         string prompt,
         SamplingConfig? sampling = null,
         GenerationConfig? generation = null,
-        int maxDraftTokens = DefaultMaxDraftTokens,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        int[] promptIds = _tokenizer.Encode(prompt, _addBos, _addEos);
+        if (promptIds.Length == 0)
+            throw new InvalidOperationException("Prompt produced no token IDs; cannot generate.");
+        await foreach (var fragment in GenerateCoreAsync(promptIds, sampling, generation, DefaultMaxDraftTokens, cancellationToken))
+            yield return fragment;
+    }
+
+
+    public async IAsyncEnumerable<string> GenerateFromTokensAsync(
+        int[] promptIds,
+        SamplingConfig? sampling = null,
+        GenerationConfig? generation = null,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        if (promptIds.Length == 0)
+            throw new InvalidOperationException("Prompt produced no token IDs; cannot generate.");
+        await foreach (var fragment in GenerateCoreAsync(promptIds, sampling, generation, DefaultMaxDraftTokens, cancellationToken))
+            yield return fragment;
+    }
+
+    private async IAsyncEnumerable<string> GenerateCoreAsync(
+        int[] promptIds,
+        SamplingConfig? sampling,
+        GenerationConfig? generation,
+        int maxDraftTokens,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         await Task.CompletedTask;
         ThrowIfDisposed();
@@ -71,126 +91,181 @@ public sealed class SpeculativeGenerator : IGenerator
         var sampleCfg = sampling ?? SamplingConfig.Greedy;
         var genCfg = generation ?? GenerationConfig.Default;
 
-        int[] promptIds = _tokenizer.Encode(prompt, addBos: true, addEos: false);
-
         var rateTracker = new TokenRateTracker(windowSize: 10);
         rateTracker.Start();
 
         int posOffset = _caches[0].Length;
         using var prefillInput = Tensor<int>.From(promptIds, 1, promptIds.Length);
-        Tensor<float>? logitsTensor = _model.Forward(prefillInput, _caches, posOffset);
+        Tensor<float>? logitsTensor = _model.ForwardLastLogits(prefillInput, _caches, posOffset);
 
         try
         {
-        int vocabSize = logitsTensor.Shape[2];
-        int lastPromptPos = promptIds.Length - 1;
-        ReadOnlySpan<float> logitsRow = logitsTensor.Data.Slice(lastPromptPos * vocabSize, vocabSize);
+            int vocabSize = logitsTensor.Shape[1];
+            int promptLen = promptIds.Length;
 
-        var generatedIds = new List<int>(genCfg.MaxNewTokens);
-        var decodedSoFar = new System.Text.StringBuilder();
-        var rng = sampleCfg.Seed.HasValue
-            ? new Random(sampleCfg.Seed.Value)
-            : _defaultRng;
+            var generatedIds = new List<int>(genCfg.MaxNewTokens);
+            var decodedSoFar = new System.Text.StringBuilder();
+            var rng = sampleCfg.Seed.HasValue
+                ? new Random(sampleCfg.Seed.Value)
+                : _defaultRng;
 
-        int currentPos = posOffset + promptIds.Length;
+            int currentPos = posOffset + promptLen;
 
-        while (generatedIds.Count < genCfg.MaxNewTokens)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            if (maxDraftTokens < 1)
-                break;
-
-            var draftTokens = new int[maxDraftTokens];
-            // One row of logits = one position — true multi-token drafting needs extra model calls or a draft model.
-            draftTokens[0] = Sampler.Sample(logitsRow, sampleCfg, rng);
-            const int draftCount = 1;
-
-            var (Tokens, AcceptedCount, NeedsCorrection, CorrectionToken) = VerifyDraftTokens(draftTokens, draftCount, currentPos, vocabSize, sampleCfg, rng);
-
-            for (int i = 0; i < AcceptedCount; i++)
+            while (generatedIds.Count < genCfg.MaxNewTokens)
             {
-                int tokenId = Tokens[i];
-                generatedIds.Add(tokenId);
+                cancellationToken.ThrowIfCancellationRequested();
 
-                rateTracker.RecordToken();
-                TimeToFirstToken = rateTracker.TimeToFirstToken;
-                TokensPerSecond = rateTracker.RollingTokensPerSecond;
-                CumulativeTokensPerSecond = rateTracker.CumulativeTokensPerSecond;
+                if (maxDraftTokens < 1) break;
 
-                _decodeTokenScratch[0] = tokenId;
-                string fragment = _tokenizer.Decode(_decodeTokenScratch.AsSpan(0, 1), skipSpecials: true);
-                decodedSoFar.Append(fragment);
-
-                bool hitStop = false;
-                foreach (string stop in genCfg.StopStrings)
+                object?[]? snapshots = null;
+                if (maxDraftTokens > 1)
                 {
-                    if (StringBuilderContains(decodedSoFar, stop))
+                    snapshots = new object?[_caches.Length];
+                    for (int i = 0; i < _caches.Length; i++)
+                        snapshots[i] = _caches[i].Snapshot();
+                }
+
+                if (_penaltyScratch is null || _penaltyScratch.Length < vocabSize)
+                    _penaltyScratch = new float[vocabSize];
+                logitsTensor.Data[..vocabSize].CopyTo(_penaltyScratch.AsSpan(0, vocabSize));
+
+                int tokensAccepted = 0;
+                bool roundDone = false;
+
+                for (int di = 0; di < maxDraftTokens && !roundDone && generatedIds.Count < genCfg.MaxNewTokens; di++)
+                {
+                    Span<float> curLogits = _penaltyScratch.AsSpan(0, vocabSize);
+
+                    if (genCfg.RepetitionPenalty != 1.0f)
+                        ApplyRepetitionPenalty(curLogits, promptIds, generatedIds,
+                            genCfg.RepetitionPenalty, genCfg.RepetitionWindow);
+
+                    // greedyChoice and draftToken come from the SAME logits
+                    int greedyChoice = Sampler.Sample(curLogits, SamplingConfig.Greedy, rng);
+                    int draftToken = Sampler.Sample(curLogits, sampleCfg, rng);
+
+                    if (draftToken == greedyChoice)
                     {
-                        hitStop = true;
-                        break;
+                        // Accept draft: forward it to update cache and get next logits
+                        _decodeTokenScratch[0] = draftToken;
+                        Tensor<float>? prevTensor = logitsTensor;
+                        logitsTensor = null;
+                        using var stepInput = Tensor<int>.From(_decodeTokenScratch.AsSpan(0, 1), 1, 1);
+                        logitsTensor = _model.ForwardLastLogits(stepInput, _caches, currentPos);
+                        currentPos++;
+                        prevTensor.Dispose();
+
+                        generatedIds.Add(draftToken);
+                        rateTracker.RecordToken();
+                        TimeToFirstToken = rateTracker.TimeToFirstToken;
+                        TokensPerSecond = rateTracker.RollingTokensPerSecond;
+                        CumulativeTokensPerSecond = rateTracker.CumulativeTokensPerSecond;
+                        tokensAccepted++;
+
+                        string fragment = _tokenizer.Decode(_decodeTokenScratch.AsSpan(0, 1), skipSpecials: true);
+                        decodedSoFar.Append(fragment);
+
+                        bool hitStop = false;
+                        foreach (string stop in genCfg.StopStrings)
+                        {
+                            if (StringBuilderContains(decodedSoFar, stop))
+                            { hitStop = true; fragment = string.Empty; break; }
+                        }
+
+                        if (genCfg.Stream && fragment.Length > 0)
+                            yield return fragment;
+
+                        if (hitStop || genCfg.StopTokenIds.Contains(draftToken))
+                        { roundDone = true; break; }
+
+                        logitsTensor.Data[..vocabSize].CopyTo(_penaltyScratch.AsSpan(0, vocabSize));
+
+                        if (_caches[0].IsFull)
+                        {
+                            int keep = genCfg is { SlidingWindowSize: > 0 }
+                                ? genCfg.SlidingWindowSize
+                                : _caches[0].MaxSeqLen / 2;
+                            for (int i = 0; i < _caches.Length; i++)
+                                _caches[i].TrimToLast(keep);
+                        }
+                    }
+                    else
+                    {
+                        // Reject: restore cache and emit the model's greedy choice
+                        if (snapshots != null)
+                        {
+                            for (int i = 0; i < _caches.Length; i++)
+                                _caches[i].Restore(snapshots[i]);
+                        }
+                        currentPos = posOffset + promptLen + generatedIds.Count;
+
+                        int correctionToken = greedyChoice;
+                        generatedIds.Add(correctionToken);
+                        rateTracker.RecordToken();
+                        TimeToFirstToken = rateTracker.TimeToFirstToken;
+                        TokensPerSecond = rateTracker.RollingTokensPerSecond;
+                        CumulativeTokensPerSecond = rateTracker.CumulativeTokensPerSecond;
+
+                        _decodeTokenScratch[0] = correctionToken;
+                        string corrFragment = _tokenizer.Decode(_decodeTokenScratch.AsSpan(0, 1), skipSpecials: true);
+                        decodedSoFar.Append(corrFragment);
+
+                        if (genCfg.Stream && corrFragment.Length > 0)
+                            yield return corrFragment;
+
+                        // Forward correction token to get next logits
+                        Tensor<float>? prevTensor = logitsTensor;
+                        logitsTensor = null;
+                        using var corrInput = Tensor<int>.From(_decodeTokenScratch.AsSpan(0, 1), 1, 1);
+                        logitsTensor = _model.ForwardLastLogits(corrInput, _caches, currentPos);
+                        currentPos++;
+                        prevTensor.Dispose();
+                        logitsTensor.Data[..vocabSize].CopyTo(_penaltyScratch.AsSpan(0, vocabSize));
+
+                        roundDone = true;
+
+                        if (genCfg.StopTokenIds.Contains(correctionToken))
+                            break;
                     }
                 }
 
-                if (genCfg.Stream && fragment.Length > 0)
-                    yield return fragment;
+                if (!roundDone && tokensAccepted == maxDraftTokens)
+                {
+                    // All drafts accepted: emit the bonus token (greedy sample from last logits)
+                    int bonusToken = Sampler.Sample(_penaltyScratch.AsSpan(0, vocabSize), SamplingConfig.Greedy, rng);
+                    generatedIds.Add(bonusToken);
+                    rateTracker.RecordToken();
+                    TimeToFirstToken = rateTracker.TimeToFirstToken;
+                    TokensPerSecond = rateTracker.RollingTokensPerSecond;
+                    CumulativeTokensPerSecond = rateTracker.CumulativeTokensPerSecond;
 
-                if (hitStop || genCfg.StopTokenIds.Contains(tokenId))
-                    break;
+                    _decodeTokenScratch[0] = bonusToken;
+                    string bonusFragment = _tokenizer.Decode(_decodeTokenScratch.AsSpan(0, 1), skipSpecials: true);
+                    decodedSoFar.Append(bonusFragment);
+
+                    if (genCfg.Stream && bonusFragment.Length > 0)
+                        yield return bonusFragment;
+
+                    if (genCfg.StopTokenIds.Contains(bonusToken))
+                        break;
+
+                    Tensor<float>? bonusPrev = logitsTensor;
+                    logitsTensor = null;
+                    using var bonusInput = Tensor<int>.From(_decodeTokenScratch.AsSpan(0, 1), 1, 1);
+                    logitsTensor = _model.ForwardLastLogits(bonusInput, _caches, currentPos);
+                    currentPos++;
+                    bonusPrev.Dispose();
+                }
             }
 
-            currentPos += AcceptedCount;
-
-            if (NeedsCorrection)
-            {
-                var correctionToken = CorrectionToken;
-                generatedIds.Add(correctionToken);
-
-                rateTracker.RecordToken();
-                TimeToFirstToken = rateTracker.TimeToFirstToken;
-                TokensPerSecond = rateTracker.RollingTokensPerSecond;
-                CumulativeTokensPerSecond = rateTracker.CumulativeTokensPerSecond;
-
-                _decodeTokenScratch[0] = correctionToken;
-                string fragment = _tokenizer.Decode(_decodeTokenScratch.AsSpan(0, 1), skipSpecials: true);
-                decodedSoFar.Append(fragment);
-
-                if (genCfg.Stream && fragment.Length > 0)
-                    yield return fragment;
-
-                if (genCfg.StopTokenIds.Contains(correctionToken))
-                    break;
-
-                currentPos++;
-            }
-
-            if (generatedIds.Count >= genCfg.MaxNewTokens)
-                break;
-
-            Tensor<float>? prevLogits = logitsTensor;
-            logitsTensor = null;
-            _decodeTokenScratch[0] = generatedIds[^1];
-            prevLogits.Dispose();
-            using var nextInput = Tensor<int>.From(_decodeTokenScratch.AsSpan(0, 1), 1, 1);
-            logitsTensor = _model.Forward(nextInput, _caches, currentPos);
-            logitsRow = logitsTensor.Data[..vocabSize];
-        }
-
-        if (!genCfg.Stream && decodedSoFar.Length > 0)
-            yield return _tokenizer.Decode(CollectionsMarshal.AsSpan(generatedIds), skipSpecials: true);
+            if (!genCfg.Stream && decodedSoFar.Length > 0)
+                yield return _tokenizer.Decode(CollectionsMarshal.AsSpan(generatedIds), skipSpecials: true);
         }
         finally
         {
             logitsTensor?.Dispose();
         }
     }
-
-    IAsyncEnumerable<string> IGenerator.GenerateAsync(
-        string prompt,
-        SamplingConfig? sampling,
-        GenerationConfig? generation,
-        CancellationToken cancellationToken)
-        => GenerateAsync(prompt, sampling, generation, DefaultMaxDraftTokens, cancellationToken);
 
     private static bool StringBuilderContains(System.Text.StringBuilder sb, ReadOnlySpan<char> value)
     {
@@ -208,41 +283,27 @@ public sealed class SpeculativeGenerator : IGenerator
         return false;
     }
 
-    private (int[] Tokens, int AcceptedCount, bool NeedsCorrection, int CorrectionToken) VerifyDraftTokens(
-        int[] draftTokens,
-        int draftCount,
-        int position,
-        int vocabSize,
-        SamplingConfig cfg,
-        Random rng)
+    private static void ApplyRepetitionPenalty(
+        Span<float> logits,
+        int[] promptIds,
+        List<int> generatedIds,
+        float penalty,
+        int window)
     {
-        var accepted = new int[draftCount];
-        int acceptedCount = 0;
-        bool needsCorrection = false;
-        int correctionToken = 0;
-
-        for (int i = 0; i < draftCount; i++)
+        if (penalty == 1.0f) return;
+        int start = Math.Max(0, generatedIds.Count - (window > 0 ? window : generatedIds.Count));
+        for (int i = 0; i < promptIds.Length; i++)
         {
-            int pos = position + i;
-            _decodeTokenScratch[0] = draftTokens[i];
-            using var input = Tensor<int>.From(_decodeTokenScratch.AsSpan(0, 1), 1, 1);
-            using var logits = _model.Forward(input, _caches, pos);
-
-            int verifiedToken = Sampler.Sample(logits.Data[..vocabSize], cfg, rng);
-
-            if (verifiedToken == draftTokens[i])
-            {
-                accepted[acceptedCount++] = draftTokens[i];
-            }
-            else
-            {
-                needsCorrection = true;
-                correctionToken = verifiedToken;
-                break;
-            }
+            int id = promptIds[i];
+            if (id >= 0 && id < logits.Length && logits[id] < 0)
+                logits[id] *= penalty;
         }
-
-        return (accepted, acceptedCount, needsCorrection, correctionToken);
+        for (int i = start; i < generatedIds.Count; i++)
+        {
+            int id = generatedIds[i];
+            if (id >= 0 && id < logits.Length && logits[id] < 0)
+                logits[id] *= penalty;
+        }
     }
 
     public void ResetCache()
@@ -257,18 +318,6 @@ public sealed class SpeculativeGenerator : IGenerator
     public float? CumulativeTokensPerSecond { get; private set; }
     public float? TimeToFirstToken { get; private set; }
 
-    public async IAsyncEnumerable<string> GenerateFromTokensAsync(
-        int[] promptIds,
-        SamplingConfig? sampling = null,
-        GenerationConfig? generation = null,
-        [EnumeratorCancellation] CancellationToken cancellationToken = default)
-    {
-        await foreach (var fragment in GenerateAsync(
-            _tokenizer.Decode(promptIds, skipSpecials: true),
-            sampling, generation, DefaultMaxDraftTokens, cancellationToken))
-            yield return fragment;
-    }
-
     public void Dispose()
     {
         if (_disposed) return;
@@ -277,5 +326,5 @@ public sealed class SpeculativeGenerator : IGenerator
             _caches[i].Dispose();
     }
 
-    private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, nameof(SpeculativeGenerator));
+    private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, nameof(SpeculativeGenerator<T>));
 }

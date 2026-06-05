@@ -176,5 +176,55 @@ public sealed class PagedKVCache : IDisposable
         }
     }
 
+    public object? Snapshot()
+    {
+        ThrowIfDisposed();
+        if (_currentPosition == 0) return null;
+        int total = 0;
+        for (int h = 0; h < _numKvHeads; h++)
+            for (int p = 0; p < _numPages; p++)
+                total += _keysPages[h, p].ElementCount * 2;
+        var data = new float[total];
+        int idx = 0;
+        for (int h = 0; h < _numKvHeads; h++)
+            for (int p = 0; p < _numPages; p++)
+            {
+                var src = _keysPages[h, p].Data;
+                src.CopyTo(data.AsSpan(idx, src.Length));
+                idx += src.Length;
+            }
+        for (int h = 0; h < _numKvHeads; h++)
+            for (int p = 0; p < _numPages; p++)
+            {
+                var src = _valuePages[h, p].Data;
+                src.CopyTo(data.AsSpan(idx, src.Length));
+                idx += src.Length;
+            }
+        return (_currentPosition, data);
+    }
+
+    public void Restore(object? snapshot)
+    {
+        ThrowIfDisposed();
+        if (snapshot is null) return;
+        var (pos, data) = ((int, float[]))snapshot;
+        _currentPosition = pos;
+        int idx = 0;
+        for (int h = 0; h < _numKvHeads; h++)
+            for (int p = 0; p < _numPages; p++)
+            {
+                var span = _keysPages[h, p].Data;
+                data.AsSpan(idx, span.Length).CopyTo(span);
+                idx += span.Length;
+            }
+        for (int h = 0; h < _numKvHeads; h++)
+            for (int p = 0; p < _numPages; p++)
+            {
+                var span = _valuePages[h, p].Data;
+                data.AsSpan(idx, span.Length).CopyTo(span);
+                idx += span.Length;
+            }
+    }
+
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, nameof(PagedKVCache));
 }

@@ -1,4 +1,5 @@
 using SharpMind.Inference.Chat.PromptFormatters;
+using SharpMind.Model;
 using SharpMind.Model.Format;
 using SharpMind.Tokenization;
 using System.ComponentModel.DataAnnotations;
@@ -6,32 +7,39 @@ using System.Runtime.CompilerServices;
 
 namespace SharpMind.Inference.Chat;
 
-public sealed class ChatSession<T> : IAsyncDisposable where T : IGenerator
+public sealed class ChatSession<T,K> : IChatSession where K : IKVCacheBuilder, new() where T : IGeneratorBuilder<K>, new()
 {
     private readonly Tokenizer _tokenizer;
-    private readonly T _generator;
+    private readonly IGenerator<K> _generator;
+    private readonly Transformer _model;
     private readonly List<ChatMessage> _history = [];
     private readonly IChatPromptFormatter? _formatter;
     private readonly bool _addBos;
+    private readonly bool _addEos;
     private bool _disposed;
     private int[]? _cachedPromptTokens;
 
     public ChatSession(
-        T generator,
+        Transformer model,
         Tokenizer tokenizer,
-        GgufMeta? meta = null)
+        GgufMeta? meta = null,
+        IKVCache[]? caches = null,
+        int? seed = null)
     {
-        ArgumentNullException.ThrowIfNull(generator);
         ArgumentNullException.ThrowIfNull(tokenizer);
-
-        _generator = generator;
+        ArgumentNullException.ThrowIfNull(model);
+        _model = model;
         _tokenizer = tokenizer;
         _formatter = ChatPromptFormatterFactory.Create(meta);
         _addBos = meta?.GetLong("tokenizer.ggml.add_bos_token", 1) != 0;
+        _addEos = meta?.GetLong("tokenizer.ggml.add_eos_token", 1) != 0;
+        _generator = new T().CreateGenerator(model, tokenizer, _addBos, _addEos, caches, seed);
+        ArgumentNullException.ThrowIfNull(_generator);
     }
 
-    public T Generator => _generator;
+    public IGenerator<K> Generator => _generator;
     public Tokenizer Tokenizer => _tokenizer;
+    public Transformer Model => _model;
     public IReadOnlyList<ChatMessage> History => _history;
 
     public int MaxTokens { get; set; } = 2048;
@@ -103,10 +111,11 @@ public sealed class ChatSession<T> : IAsyncDisposable where T : IGenerator
         _disposed = true;
         await Task.CompletedTask;
         _generator.Dispose();
+        _model.Dispose();
     }
 
     private void ThrowIfDisposed()
-        => ObjectDisposedException.ThrowIf(_disposed, typeof(ChatSession<T>).Name);
+        => ObjectDisposedException.ThrowIf(_disposed, typeof(ChatSession<T,K>).Name);
 
     private async IAsyncEnumerable<ChatStreamEntry> GetResponseStreamAsync(
     string userInput,
@@ -218,7 +227,7 @@ public sealed class ChatSession<T> : IAsyncDisposable where T : IGenerator
             try
             {
                 await foreach (var entry in GetResponseStreamAsync(input.Content, token))
-                {   
+                {
                     response(entry);
                     TokensPerSecond = entry.TokensPerSecond;
                     TimeToFirstToken = entry.TimeToFirstToken;
@@ -226,7 +235,7 @@ public sealed class ChatSession<T> : IAsyncDisposable where T : IGenerator
             }
             catch (OperationCanceledException)
             {
-                response(new ChatStreamEntry { Status = ChatStatus.Interrupted, IsComplete = true , TokensPerSecond = _generator.TokensPerSecond, TimeToFirstToken = _generator.TimeToFirstToken });
+                response(new ChatStreamEntry { Status = ChatStatus.Interrupted, IsComplete = true, TokensPerSecond = _generator.TokensPerSecond, TimeToFirstToken = _generator.TimeToFirstToken });
                 break;
             }
             catch

@@ -1,30 +1,26 @@
-using SharpMind.Model;
+﻿using SharpMind.Model;
 using SharpMind.Model.Format;
 using SharpMind.Tokenization;
 
-namespace SharpMind.Inference.Chat;
-
-public static class ChatSessionFactory
+namespace SharpMind.Inference.Chat
 {
-    public static ChatSession<StandardGenerator> CreateStandard(
-        Transformer model,
-        Tokenizer tokenizer,
-        GgufMeta? meta = null,
-        IKVCache[]? caches = null,
-        int? seed = null)
+    public static class ChatSessionFactory
     {
-        var generator = new StandardGenerator(model, tokenizer, caches, seed);
-        return new ChatSession<StandardGenerator>(generator, tokenizer, meta);
-    }
-
-    public static ChatSession<SpeculativeGenerator> CreateSpeculative(
-        Transformer model,
-        Tokenizer tokenizer,
-        GgufMeta? meta = null,
-        IKVCache[]? caches = null,
-        int? seed = null)
-    {
-        var generator = new SpeculativeGenerator(model, tokenizer, caches, seed);
-        return new ChatSession<SpeculativeGenerator>(generator, tokenizer, meta);
+        // Reflection-based — for your iterator loop (runtime type selection)
+        public static IChatSession CreateChatSession(
+            Type generatorBuilderDef,  // typeof(StandardGeneratorBuilder<>)
+            Type cacheBuilder,         // typeof(KVCacherBuilder)
+            Transformer model, Tokenizer tokenizer, GgufMeta? meta = null)
+        {
+            var closedGen = generatorBuilderDef.MakeGenericType(cacheBuilder);
+            var sessionType = typeof(ChatSession<,>).MakeGenericType(closedGen, cacheBuilder);
+            return (IChatSession)Activator.CreateInstance(sessionType, [model, tokenizer, meta, null, null])!;
+        }
+        // Compile-time — for known type combos
+        public static ChatSession<T, K> CreateChatSession<T, K>(
+            Transformer model, Tokenizer tokenizer, GgufMeta? meta = null)
+            where K : IKVCacheBuilder, new()
+            where T : IGeneratorBuilder<K>, new()
+            => new(model, tokenizer, meta);            
     }
 }

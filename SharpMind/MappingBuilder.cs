@@ -4,7 +4,7 @@ namespace SharpMind;
 /// Orchestrates the assembly of JigSawDotNet mappings.
 /// Allows for base presets with hardware-specific overrides and manual adjustments.
 /// </summary>
-public class MappingBuilder(HardwareTier hardware)
+public class MappingBuilder(HardwareTier hardware = HardwareTier.Auto)
 {
     private readonly Dictionary<string, string> _mapping = [];
     private readonly HardwareTier _hardware = hardware;

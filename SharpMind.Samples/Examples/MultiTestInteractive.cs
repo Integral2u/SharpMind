@@ -66,8 +66,7 @@ namespace SharpMind.Samples.Examples
                 GgufLoader.LoadWeightsToModel(ggufPath, meta, model);
                 string systemPrompt = "";
 
-                var generator = new StandardGenerator(model, tokenizer);
-                await using var session = new ChatSession<StandardGenerator>(generator, tokenizer, meta)
+                await using var session = new ChatSession<StandardGeneratorBuilder<KVCacherBuilder>,KVCacherBuilder>(model, tokenizer, meta)
                 {
                     MaxTokens = 256,
                     Temperature = 0.0f,

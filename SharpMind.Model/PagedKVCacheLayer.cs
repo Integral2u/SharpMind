@@ -1,5 +1,4 @@
 using SharpMind.Core.Tensors;
-using SharpMind.Model.Config;
 
 namespace SharpMind.Model;
 
@@ -44,4 +43,6 @@ public sealed class PagedKVCacheLayer(int batchSize, int numKvHeads, int maxSeqL
     }
 
     public void Dispose() => _cache.Dispose();
+    public object? Snapshot() => _cache.Snapshot();
+    public void Restore(object? snapshot) { _cache.Restore(snapshot); _currentPosition = _cache.Length; }
 }

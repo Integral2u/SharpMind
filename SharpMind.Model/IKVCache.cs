@@ -14,4 +14,6 @@ public interface IKVCache : IDisposable
     bool IsContiguous { get; }
     unsafe float* GetKeyPtr(int batchIdx, int position, int kvHead);
     unsafe float* GetValuePtr(int batchIdx, int position, int kvHead);
+    object? Snapshot();
+    void Restore(object? snapshot);
 }
