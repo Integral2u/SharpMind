@@ -130,53 +130,59 @@ public sealed class TransformerBlock : IDisposable
     public bool LoadWeight(string name, ReadOnlySpan<float> data)
     {
         var lower = name.ToLower();
-        
-        if (lower.Contains("attn_q"))
+
+        // Attention — supports both old (attn_q) and modern (q_proj/self_attn.q) naming
+        if (lower.Contains("attn_q") || lower.Contains("q_proj") || lower.Contains("self_attn.q"))
         {
             _attention.LoadWeights(name, data);
             return true;
         }
-        if (lower.Contains("attn_k"))
+        if (lower.Contains("attn_k") || lower.Contains("k_proj") || lower.Contains("self_attn.k"))
         {
             _attention.LoadWeights(name, data);
             return true;
         }
-        if (lower.Contains("attn_v"))
+        if (lower.Contains("attn_v") || lower.Contains("v_proj") || lower.Contains("self_attn.v"))
         {
             _attention.LoadWeights(name, data);
             return true;
         }
-        if (lower.Contains("attn_output") || lower.Contains("attn_o"))
+        if (lower.Contains("attn_output") || lower.Contains("attn_o") ||
+            lower.Contains("o_proj") || lower.Contains("out_proj") || lower.Contains("self_attn.o"))
         {
             _attention.LoadWeights(name, data);
             return true;
         }
-        if (lower.Contains("ffn_gate"))
+
+        // FFN — supports both old (ffn_gate) and modern (gate_proj/mlp.gate) naming
+        if (lower.Contains("ffn_gate") || lower.Contains("gate_proj") || lower.Contains("mlp.gate"))
         {
             _ffn.LoadWeights(name, data);
             return true;
         }
-        if (lower.Contains("ffn_up"))
+        if (lower.Contains("ffn_up") || lower.Contains("up_proj") || lower.Contains("mlp.up"))
         {
             _ffn.LoadWeights(name, data);
             return true;
         }
-        if (lower.Contains("ffn_down"))
+        if (lower.Contains("ffn_down") || lower.Contains("down_proj") || lower.Contains("mlp.down"))
         {
             _ffn.LoadWeights(name, data);
             return true;
         }
-        if (lower.Contains("attn_norm"))
+
+        // Norms — supports both old and modern naming
+        if (lower.Contains("attn_norm") || lower.Contains("input_layernorm"))
         {
             _norm1.LoadWeight(data);
             return true;
         }
-        if (lower.Contains("ffn_norm"))
+        if (lower.Contains("ffn_norm") || lower.Contains("post_attention_layernorm"))
         {
             _norm2.LoadWeight(data);
             return true;
         }
-        
+
         return false;
     }
 
@@ -184,9 +190,12 @@ public sealed class TransformerBlock : IDisposable
     {
         var lower = name.ToLower();
         if (lower.Contains("attn_q") || lower.Contains("attn_k") || lower.Contains("attn_v") ||
-            lower.Contains("attn_output") || lower.Contains("attn_o"))
+            lower.Contains("attn_output") || lower.Contains("attn_o") ||
+            lower.Contains("q_proj") || lower.Contains("k_proj") || lower.Contains("v_proj") ||
+            lower.Contains("o_proj") || lower.Contains("out_proj"))
             return _attention.SetRawWeight(name, rawData, dtype);
-        if (lower.Contains("ffn_gate") || lower.Contains("ffn_up") || lower.Contains("ffn_down"))
+        if (lower.Contains("ffn_gate") || lower.Contains("ffn_up") || lower.Contains("ffn_down") ||
+            lower.Contains("gate_proj") || lower.Contains("up_proj") || lower.Contains("down_proj"))
             return _ffn.SetRawWeight(name, rawData, dtype);
         return false;
     }

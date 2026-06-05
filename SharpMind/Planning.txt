@@ -94,6 +94,6 @@ done A	TTFT tracking — TokenRateTracker → IGenerator → ChatSession	None
 done B	Fix intermittent tests — [Collection] attributes for static-state tests	None
 done C	IKVCache interface: add AllocatedCapacity, GetKeyPtr/GetValuePtr; refactor AttentionLayer to remove is KVCache cast	None
 done D	Generator + cache injection — constructors accept IKVCache[]?, ChatSession<T>, ChatSessionFactory	C
-E	WGate+WUp fusion — single [hidden, 2*ffnDim] LinearLayer	C (cleaner but not strictly blocked)
+done E	WGate+WUp fusion — single [hidden, 2*ffnDim] LinearLayer	C (cleaner but not strictly blocked)
 F	Speculative decoding — enable multi-token draft, KV cache snapshot/restore for rollback, wire up TPS/TTFT	C, D
 G	Fused attention kernel — RoPE → cache → attention in one pass	C, E (both affect attention path)

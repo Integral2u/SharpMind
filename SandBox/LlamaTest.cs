@@ -450,7 +450,10 @@ namespace SandBox
 
                 if (layer <= 2)
                 {
-                    var wg = block.Ffn.WGate; var wu = block.Ffn.WUp;
+                    using var fused = block.Ffn.WGated!.Forward(normed2, ops);
+                    int ffnDim = modelConfig.FfnDim;
+                    int seqLen = fused.ElementCount / (2 * ffnDim);
+                    var flat = fused.Reshape(seqLen, 2 * ffnDim);
                     Console.Write($"nin={MaxAbs(normed2.Data):G3} h1max={MaxAbs(h1.Data):G3} ");
                     int hd = modelConfig.HiddenDim;
                     // Find position of max normed value
@@ -469,9 +472,7 @@ namespace SandBox
                     float h1atN = Math.Abs(h1.Data[nTok * hd + nDim]);
                     float wImplied = maxN * hrms / Math.Max(h1atN, 1e-10f);
                     Console.Write($"maxNin@tok{nTok}d{nDim}: h1={h1atN:G3} h1rms={hrms:G3} w~={wImplied:G3} ");
-                    using var gate = wg.Forward(normed2, ops);
-                    using var up = wu.Forward(normed2, ops);
-                    Console.Write($"gateO={MaxAbs(gate.Data):G3} upO={MaxAbs(up.Data):G3} ");
+                    Console.Write($"gateO={MaxAbs(flat.RowSpan(0)[..ffnDim]):G3} upO={MaxAbs(flat.RowSpan(0)[ffnDim..]):G3} ");
                 }
 
                 normed2.Dispose();
@@ -900,14 +901,14 @@ namespace SandBox
                         for (int k = 0; k < 20; k++) Console.Write($"{n2.Data[k]:G6} ");
                         Console.WriteLine();
                         
-                        // Manual FFN gate/up
-                        using var gate = block.Ffn.WGate.Forward(n2, model.Ops);
-                        using var up = block.Ffn.WUp.Forward(n2, model.Ops);
+                        // Manual FFN gate/up using fused WGated
+                        using var fused = block.Ffn.WGated!.Forward(n2, model.Ops);
+                        int ffnDim = modelConfig.FfnDim;
                         Console.Write($"  L00 Gate[0][0..10]: ");
-                        for (int k = 0; k < 10; k++) Console.Write($"{gate.Data[k]:G6} ");
+                        for (int k = 0; k < 10; k++) Console.Write($"{fused.Data[k]:G6} ");
                         Console.WriteLine();
                         Console.Write($"  L00 Up[0][0..10]: ");
-                        for (int k = 0; k < 10; k++) Console.Write($"{up.Data[k]:G6} ");
+                        for (int k = 0; k < 10; k++) Console.Write($"{fused.Data[ffnDim + k]:G6} ");
                         Console.WriteLine();
                         
                         // Full FFN

@@ -318,14 +318,12 @@ public class Q4KTests
             {
                 double Norm(Tensor<float> t) { double s = 0; for (int i = 0; i < t.ElementCount; i++) s += t.Data[i] * (double)t.Data[i]; return Math.Sqrt(s); }
                 // Check Q4_K_M FFN weights for layer 0
-                var g4 = block4.Ffn.WGate.Weight;
-                var u4 = block4.Ffn.WUp.Weight;
+                var gated = block4.Ffn.WGated!.Weight;
                 var d4 = block4.Ffn.WDown.Weight;
-                _output.WriteLine($"  Wgate norm={Norm(g4):G6} shape=[{g4.Shape.Rows},{g4.Shape.Cols}]");
-                _output.WriteLine($"  Wup   norm={Norm(u4):G6} shape=[{u4.Shape.Rows},{u4.Shape.Cols}]");
+                int ffnDim = gated.Shape[1] / 2;
+                _output.WriteLine($"  WGated norm={Norm(gated):G6} shape=[{gated.Shape.Rows},{gated.Shape.Cols}]");
                 _output.WriteLine($"  Wdown norm={Norm(d4):G6} shape=[{d4.Shape.Rows},{d4.Shape.Cols}]");
-                _output.WriteLine($"  Wgate max={g4.Data.ToArray().Max():G6} min={g4.Data.ToArray().Min():G6}");
-                _output.WriteLine($"  Wup   max={u4.Data.ToArray().Max():G6} min={u4.Data.ToArray().Min():G6}");
+                _output.WriteLine($"  WGated max={gated.Data.ToArray().Max():G6} min={gated.Data.ToArray().Min():G6}");
                 _output.WriteLine($"  Wdown first 8: {string.Join(", ", Enumerable.Range(0,8).Select(i=>d4.Data[i].ToString("G6")))}");
                 _output.WriteLine($"  Wdown last 8:  {string.Join(", ", Enumerable.Range(d4.ElementCount-8,8).Select(i=>d4.Data[i].ToString("G6")))}");
                 _output.WriteLine($"  Wdown mid 8 [2179072..2179079]: {string.Join(", ", Enumerable.Range(2179072,8).Select(i=>d4.Data[i].ToString("G6")))}");

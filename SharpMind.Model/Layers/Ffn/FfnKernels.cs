@@ -27,8 +27,43 @@ internal static class FfnKernels
     }
 
     /// <summary>
-    /// Gated FFN forward: out = (activation(x @ Wgate^T) ⊙ (x @ Wup^T)) @ Wdown^T
-    /// SwiGLU / GeGLU pattern used in LLaMA, Mistral, PaLM.
+    /// Gated FFN forward: out = (activation(x @ Wgated[0:fD]^T) ⊙ (x @ Wgated[fD:]^T)) @ Wdown^T
+    /// WGated is a fused [HiddenDim, 2*FfnDim] layer; gate is first fD columns, up is last fD.
+    /// Preserves the batch dimension so WDown.Forward returns [B,S,HiddenDim].
+    /// </summary>
+    internal static Tensor<float> Gated(
+        Tensor<float> x,
+        LinearLayer wGated,
+        LinearLayer wDown,
+        ActivationOps acts,
+        TensorOps ops)
+    {
+        using var fused = wGated.Forward(x, ops);
+        int ffnDim = wDown.Weight.Shape[0];
+        int[] fusedDims = fused.Shape.Dims.ToArray();
+        int total = fused.ElementCount / (2 * ffnDim);
+        bool hasBatch = fused.Rank > 2;
+        using var gate = hasBatch
+            ? Tensor<float>.Zeros(fusedDims[0], fusedDims[1], ffnDim)
+            : Tensor<float>.Zeros(total, ffnDim);
+        using var up = hasBatch
+            ? Tensor<float>.Zeros(fusedDims[0], fusedDims[1], ffnDim)
+            : Tensor<float>.Zeros(total, ffnDim);
+        var flat = fused.Reshape(total, 2 * ffnDim);
+        for (int i = 0; i < total; i++)
+        {
+            var row = flat.RowSpan(i);
+            row[..ffnDim].CopyTo(gate.RowSpan(i));
+            row[ffnDim..].CopyTo(up.RowSpan(i));
+        }
+        using var gated = acts.GatedActivate(gate, up);
+        return wDown.Forward(gated, ops);
+    }
+
+
+
+    /// <summary>
+    /// Gated FFN forward with separate gate/up layers (for MoE experts).
     /// </summary>
     internal static Tensor<float> Gated(
         Tensor<float> x,

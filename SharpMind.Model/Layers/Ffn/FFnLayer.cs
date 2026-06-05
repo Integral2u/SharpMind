@@ -29,8 +29,7 @@ public abstract class FfnLayer : IDisposable
     protected readonly LinearLayer? W2;   // [HiddenDim, FfnDim]
 
     // ── Gated weights ─────────────────────────────────────────────────────
-    public readonly LinearLayer? WGate;  // [FfnDim,    HiddenDim]
-    public readonly LinearLayer? WUp;    // [FfnDim,    HiddenDim]
+    public readonly LinearLayer? WGated; // [HiddenDim, 2*FfnDim] — fused gate+up
     public readonly LinearLayer? WDown;  // [HiddenDim, FfnDim]
 
     public void LoadWeights(string name, ReadOnlySpan<float> data)
@@ -40,11 +39,17 @@ public abstract class FfnLayer : IDisposable
 
         if (lower.Contains("gate"))
         {
-            if (isBias) WGate!.LoadBias(data); else WGate!.LoadWeightTransposed(data);
+            if (isBias)
+                LoadFusedBias(data, 0);
+            else
+                LoadFusedWeightTransposed(data, 0);
         }
         else if (lower.Contains("up"))
         {
-            if (isBias) WUp!.LoadBias(data); else WUp!.LoadWeightTransposed(data);
+            if (isBias)
+                LoadFusedBias(data, Config.FfnDim);
+            else
+                LoadFusedWeightTransposed(data, Config.FfnDim);
         }
         else if (lower.Contains("down"))
         {
@@ -52,15 +57,31 @@ public abstract class FfnLayer : IDisposable
         }
     }
 
+    private unsafe void LoadFusedWeightTransposed(ReadOnlySpan<float> data, int colOffset)
+    {
+        // WGated weight: [HiddenDim, 2*FfnDim]
+        // GGUF: [FfnDim, HiddenDim] → SharpMind: [HiddenDim, FfnDim] starting at colOffset
+        var w = WGated!.Weight;
+        int hidden = Config.HiddenDim;
+        int ffnDim = Config.FfnDim;
+        int outStride = 2 * ffnDim;
+        for (int o = 0; o < ffnDim; o++)
+            for (int i = 0; i < hidden; i++)
+                w.Data[i * outStride + colOffset + o] = data[o * hidden + i];
+    }
+
+    private void LoadFusedBias(ReadOnlySpan<float> data, int offset)
+        => data.CopyTo(WGated!.Bias!.Data.Slice(offset, data.Length));
+
     public bool SetRawWeight(string name, byte[] rawData, Format.GgufDtype dtype)
     {
         var lower = name.ToLower();
         if (lower.Contains("bias")) return false;
 
-        if (lower.Contains("gate"))
-            return WGate!.SetRawWeight(rawData, dtype);
-        if (lower.Contains("up"))
-            return WUp!.SetRawWeight(rawData, dtype);
+        // Gate and up are fused into WGated with separate quantized tensors in GGUF.
+        // Force dequantization so LoadWeights can load into the fused float weight.
+        if (lower.Contains("gate") || lower.Contains("up"))
+            return false;
         if (lower.Contains("down"))
             return WDown!.SetRawWeight(rawData, dtype);
         return false;
@@ -86,8 +107,7 @@ public abstract class FfnLayer : IDisposable
                 break;
 
             case FfnKind.Gated:
-                WGate = new LinearLayer("gate_proj", config.HiddenDim, config.FfnDim, bias: true, qOps: qOps);
-                WUp = new LinearLayer("up_proj", config.HiddenDim, config.FfnDim, bias: true, qOps: qOps);
+                WGated = new LinearLayer("wgated_proj", config.HiddenDim, 2 * config.FfnDim, bias: true, qOps: qOps);
                 WDown = new LinearLayer("down_proj", config.FfnDim, config.HiddenDim, bias: true, qOps: qOps);
                 break;
 
@@ -136,7 +156,7 @@ public abstract class FfnLayer : IDisposable
         if (disposing)
         {
             W1?.Dispose(); W2?.Dispose();
-            WGate?.Dispose(); WUp?.Dispose(); WDown?.Dispose();
+            WGated?.Dispose(); WDown?.Dispose();
             Router?.Dispose();
             if (ExpertGate is not null) foreach (var l in ExpertGate) l.Dispose();
             if (ExpertUp is not null) foreach (var l in ExpertUp) l.Dispose();
@@ -151,8 +171,7 @@ public abstract class FfnLayer : IDisposable
     {
         if (W1 is not null) foreach (var p in W1.Parameters()) yield return p;
         if (W2 is not null) foreach (var p in W2.Parameters()) yield return p;
-        if (WGate is not null) foreach (var p in WGate.Parameters()) yield return p;
-        if (WUp is not null) foreach (var p in WUp.Parameters()) yield return p;
+        if (WGated is not null) foreach (var p in WGated.Parameters()) yield return p;
         if (WDown is not null) foreach (var p in WDown.Parameters()) yield return p;
         if (Router is not null) foreach (var p in Router.Parameters()) yield return p;
         if (ExpertGate is not null) foreach (var l in ExpertGate) foreach (var p in l.Parameters()) yield return p;
