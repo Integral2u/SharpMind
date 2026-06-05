@@ -64,7 +64,7 @@ namespace SharpMind.Samples.Examples
                 string systemPrompt = "";
 
                 var generator = new StandardGenerator(model, tokenizer);
-                await using var session = new ChatSession(generator, tokenizer, meta)
+                await using var session = new ChatSession<StandardGenerator>(generator, tokenizer, meta)
                 {
                     MaxTokens = 256,
                     Temperature = 0.0f,

@@ -6,10 +6,10 @@ using System.Runtime.CompilerServices;
 
 namespace SharpMind.Inference.Chat;
 
-public sealed class ChatSession
+public sealed class ChatSession<T> : IAsyncDisposable where T : IGenerator
 {
     private readonly Tokenizer _tokenizer;
-    private readonly IGenerator _generator;
+    private readonly T _generator;
     private readonly List<ChatMessage> _history = [];
     private readonly IChatPromptFormatter? _formatter;
     private readonly bool _addBos;
@@ -17,7 +17,7 @@ public sealed class ChatSession
     private int[]? _cachedPromptTokens;
 
     public ChatSession(
-        IGenerator generator,
+        T generator,
         Tokenizer tokenizer,
         GgufMeta? meta = null)
     {
@@ -30,6 +30,7 @@ public sealed class ChatSession
         _addBos = meta?.GetLong("tokenizer.ggml.add_bos_token", 1) != 0;
     }
 
+    public T Generator => _generator;
     public Tokenizer Tokenizer => _tokenizer;
     public IReadOnlyList<ChatMessage> History => _history;
 
@@ -105,7 +106,7 @@ public sealed class ChatSession
     }
 
     private void ThrowIfDisposed()
-        => ObjectDisposedException.ThrowIf(_disposed, nameof(ChatSession));
+        => ObjectDisposedException.ThrowIf(_disposed, typeof(ChatSession<T>).Name);
 
     private async IAsyncEnumerable<ChatStreamEntry> GetResponseStreamAsync(
     string userInput,

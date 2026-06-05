@@ -30,6 +30,7 @@ public sealed class SpeculativeGenerator : IGenerator
     public SpeculativeGenerator(
         Transformer model,
         Tokenization.Tokenizer tokenizer,
+        IKVCache[]? caches = null,
         int? seed = null)
     {
         ArgumentNullException.ThrowIfNull(model);
@@ -38,14 +39,21 @@ public sealed class SpeculativeGenerator : IGenerator
         _model = model;
         _tokenizer = tokenizer;
 
-        int numLayers = model.Config.NumLayers;
-        int maxSeqLen = model.Config.MaxSeqLen;
-        int numKvHeads = model.Config.NumKvHeads;
-        int headDim = model.Config.HeadDim;
+        if (caches != null)
+        {
+            _caches = caches;
+        }
+        else
+        {
+            int numLayers = model.Config.NumLayers;
+            int maxSeqLen = model.Config.MaxSeqLen;
+            int numKvHeads = model.Config.NumKvHeads;
+            int headDim = model.Config.HeadDim;
 
-        _caches = new IKVCache[numLayers];
-        for (int i = 0; i < numLayers; i++)
-            _caches[i] = new KVCache(1, numKvHeads, maxSeqLen, headDim);
+            _caches = new IKVCache[numLayers];
+            for (int i = 0; i < numLayers; i++)
+                _caches[i] = new KVCache(1, numKvHeads, maxSeqLen, headDim);
+        }
 
         _defaultRng = seed.HasValue ? new Random(seed.Value) : Random.Shared;
     }

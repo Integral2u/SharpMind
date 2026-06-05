@@ -87,12 +87,13 @@ Fourth the intermittently failing tests need to be reviewed and corrected.  if t
 Lastly Tier 2 Fix 2 Fuse WGate + WUp into a single LinearLayer Tier 3 fix 3 Fused end-to-end attention kernel — eliminate per-head packing, RoPE → cache → attention in a single pass from the strided Q/K/V layout were ommited or rolled back during last phase due to breaking things and whilst potentially best gains available here they seem realted an may conflict or need revision on concept due to the above.
 Teir 3 Fix 2 Proper speculative decoding Teir 4 fix 4 SpeculativeGenerator doesn't roll back KV cache on rejected tokens would have needed reconsideration after the above
 
+should standard and speculative genrater use addbos and addeos _tokenizer.Encode(prompt, addBos: true, addEos: false); from GgufMeta
 
 Step	What	Pre-reqs
 done A	TTFT tracking — TokenRateTracker → IGenerator → ChatSession	None
 done B	Fix intermittent tests — [Collection] attributes for static-state tests	None
 done C	IKVCache interface: add AllocatedCapacity, GetKeyPtr/GetValuePtr; refactor AttentionLayer to remove is KVCache cast	None
-D	Generator + cache injection — constructors accept IKVCache[]?, ChatSession<T>, ChatSessionFactory	C
+done D	Generator + cache injection — constructors accept IKVCache[]?, ChatSession<T>, ChatSessionFactory	C
 E	WGate+WUp fusion — single [hidden, 2*ffnDim] LinearLayer	C (cleaner but not strictly blocked)
 F	Speculative decoding — enable multi-token draft, KV cache snapshot/restore for rollback, wire up TPS/TTFT	C, D
 G	Fused attention kernel — RoPE → cache → attention in one pass	C, E (both affect attention path)
