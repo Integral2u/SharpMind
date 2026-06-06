@@ -15,6 +15,18 @@ Core: tensors, matrix math, memory, activations
 Todo
 MPT multi token prediction
 
+ChatSession improvements phase one.
+With the AgentBuilder we have IAgentBuilder.CallToolAsync so we need a way for chat to capture request to call a tool and execute,
+while doing this though we need to add a premissions callback handler that returns Never,Ask,Always.
+triggering permission requiments will requires using System.IO.Abstractions IFileService, INetworkService and checking if the call orginated from IAgentBuilder.CallToolAsync otherwise it's fine.
+This could also require returning a ChatStreamEntry indicating Executing as in exectuing a tool, see ChatStatus.
+
+Additionally given the model and relevent details are available we could add to IAgentBuilder CreateAgent to spawn sub agents essentially acting as tools,
+Consideration to Agent Spawn depth will be needed to prevent ifinate spawning, agent naming possibly greek name to match behaviour or task asigned.
+
+
+
+
 ChatSession design (async), tool, input types, status(Thinking/Updating/Executing/Responding/Waiting)
 Chatsession pre-prompt post prompt processors
 Chatsession compact/truncate etc  only prompt important context(selection)
@@ -57,8 +69,6 @@ Third which is in addtio to second generators would also need the same mothodolo
 Fourth the intermittently failing tests need to be reviewed and corrected.  if they fail execution could contaminating results.
 Lastly Tier 2 Fix 2 Fuse WGate + WUp into a single LinearLayer Tier 3 fix 3 Fused end-to-end attention kernel — eliminate per-head packing, RoPE → cache → attention in a single pass from the strided Q/K/V layout were ommited or rolled back during last phase due to breaking things and whilst potentially best gains available here they seem realted an may conflict or need revision on concept due to the above.
 Teir 3 Fix 2 Proper speculative decoding Teir 4 fix 4 SpeculativeGenerator doesn't roll back KV cache on rejected tokens would have needed reconsideration after the above
-
-should standard and speculative genrater use addbos and addeos _tokenizer.Encode(prompt, addBos: true, addEos: false); from GgufMeta
 
 Step	What	Pre-reqs
 done A	TTFT tracking — TokenRateTracker → IGenerator → ChatSession	None

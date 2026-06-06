@@ -15,6 +15,7 @@ public sealed class Transformer : IDisposable
     private readonly IArchitecture _arch;
     private readonly NormLayer _finalNorm;
     private readonly TensorOps _ops;
+    private readonly SharpMind.Core.Memory.Workspace? _workspace;
     private bool _disposed;
 
     // Separate LM head for non-weight-tied models (e.g. LLaMA 2/3).
@@ -200,7 +201,7 @@ public sealed class Transformer : IDisposable
         _cachedHidden = _arch.Forward(embedded, caches ?? [], positionOffset);
 
         // 3. Final normalisation
-        _cachedNormed = _finalNorm.Forward(embedded);
+        _cachedNormed = _finalNorm.Forward(_cachedHidden);
         using var normed = _cachedNormed;
 
         // 4. LM head: [Batch, SeqLen, HiddenDim] @ LmHead^T → [Batch, SeqLen, VocabSize]
@@ -242,9 +243,9 @@ public sealed class Transformer : IDisposable
         // so we use embedded directly to avoid double-dispose of the shared buffer.
         if (batch == 1 && seqLen == 1)
         {
-            _finalNorm.ForwardInPlace(embedded);
-            using var flatEmbedded = embedded.Reshape(batch, hiddenDim);
-            return _ops.MatMulWithBT(flatEmbedded, projectionWeight);
+            _finalNorm.ForwardInPlace(_cachedHidden);
+            using var flatHidden = _cachedHidden.Reshape(batch, hiddenDim);
+            return _ops.MatMulWithBT(flatHidden, projectionWeight);
         }
 
         // Prefill path: extract last token's hidden state, norm in-place

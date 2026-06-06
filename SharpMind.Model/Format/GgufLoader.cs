@@ -774,29 +774,14 @@ public static partial class GgufLoader
             float dSuper = HalfToFloat(Unsafe.ReadUnaligned<ushort>(ref buf[80]));
             float minSuper = HalfToFloat(Unsafe.ReadUnaligned<ushort>(ref buf[82]));
 
-            int qOff = 0;
-            for (int n16 = 0; n16 < QK_K; n16 += 128)
+            for (int i = 0; i < QK_K && blockStart + i < n; i++)
             {
-                int shift = 0;
-                for (int j = 0; j < 4; j++)
-                {
-                    int isc = (n16 / 128) * 8 + j * 2;
-                    byte sc0 = buf[isc];
-                    float s0 = sc0 & 0x0F;
-                    float m0 = sc0 >> 4;
-                    int base_ = blockStart + n16 + j * 32;
-                    for (int l = 0; l < 16 && base_ + l < n; l++)
-                        data[base_ + l] = (s0 * ((buf[16 + qOff + l] >> shift) & 3) * dSuper) - (m0 * minSuper);
-                    
-                    byte sc1 = buf[isc + 1];
-                    float s1 = sc1 & 0x0F;
-                    float m1 = sc1 >> 4;
-                    for (int l = 0; l < 16 && base_ + 16 + l < n; l++)
-                        data[base_ + 16 + l] = (s1 * ((buf[16 + qOff + l + 16] >> shift) & 3) * dSuper) - (m1 * minSuper);
-
-                    shift += 2;
-                }
-                qOff += 32;
+                int pairIdx = i / 16;
+                byte pair = buf[pairIdx];
+                float s = pair & 0x0F;
+                float m = pair >> 4;
+                int quant = (buf[16 + (i / 4)] >> ((i % 4) * 2)) & 3;
+                data[blockStart + i] = (s * quant * dSuper) - (m * minSuper);
             }
         }
     }
@@ -1141,42 +1126,30 @@ public static partial class GgufLoader
 
             float d = HalfToFloat(Unsafe.ReadUnaligned<ushort>(ref buf[0]));
             float dmin = HalfToFloat(Unsafe.ReadUnaligned<ushort>(ref buf[2]));
-
             var scaleSpan = buf.Slice(4, 12);
 
-            int valid = Math.Min(QK_K, n - blockStart);
-            int iScale = 0;
-            byte u1 = 1, u2 = 2;
-
-            for (int j = 0; j < QK_K; j += 64)
+            for (int i = 0; i < QK_K && blockStart + i < n; i++)
             {
-                GetScaleMinK4(iScale + 0, scaleSpan, out byte sc0, out byte m0);
-                float d1 = d * sc0; float m1v = dmin * m0;
-                GetScaleMinK4(iScale + 1, scaleSpan, out byte sc1, out byte m1);
-                float d2 = d * sc1; float m2v = dmin * m1;
-
-                int qOff = 48 + (j / 64) * 32;
-                for (int l = 0; l < 32; l++)
-                {
-                    int idx1 = blockStart + j + l;
-                    if (idx1 < n)
-                    {
-                    int qv = (buf[qOff + l] & 0x0F) + ((buf[16 + l] & u1) != 0 ? 16 : 0);
-                    data[idx1] = (sc0 * qv * d) - (m0 * dmin);
-                    }
-                    int idx2 = blockStart + j + 32 + l;
-                    if (idx2 < n)
-                    {
-                        int qv = (buf[qOff + l] >> 4) + ((buf[16 + l] & u2) != 0 ? 16 : 0);
-                        data[idx2] = (sc1 * qv * d) - (m1 * dmin);
-                    }
-                }
-
-                iScale += 2;
-                u1 <<= 2; u2 <<= 2;
+                // Sub-block scale/min (every 32 elements)
+                int subIdx = i / 32;
+                GetScaleMinK4(subIdx, scaleSpan, out byte sc, out byte m);
+                
+                // Quant: 4 bits from qs + 1 bit from qh
+                int qLow = (buf[48 + (i / 4) * 2 + (i % 4 == 0 ? 0 : 0)] >> 0) & 0x0F; // This is still a bit messy
+                // Let's just use the linear index for qs
+                // Q5_K qs are 128 bytes for 256 elements? No, 128 bytes for 256 elements is 4 bits per element.
+                // 128 * 8 = 1024 bits. 1024 / 256 = 4 bits. Correct.
+                int qsByteIdx = 48 + (i / 2);
+                int qsShift = (i % 2) * 4;
+                int q4 = (buf[qsByteIdx] >> qsShift) & 0x0F;
+                
+                int qhBit = (buf[16 + (i / 8)] >> (i % 8)) & 1;
+                int q5 = q4 | (qhBit << 4);
+                
+                data[blockStart + i] = (sc * q5 * d) - (m * dmin);
             }
         }
-    }  
+    }
     public static unsafe void ReadQ3_K(BinaryReader reader, Span<float> data, int n)
     {
         // block_q3_K layout (110 bytes, QK_K=256 elements, 16 sub-groups of 16):

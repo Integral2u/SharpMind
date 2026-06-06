@@ -4,12 +4,14 @@ using LLama.Native;
 using LLama.Sampling;
 using SharpMind;
 using SharpMind.Core.Tensors;
+using SharpMind.Inference;
 using SharpMind.Inference.Chat;
 using SharpMind.Inference.Chat.PromptFormatters;
 using SharpMind.Model;
 using SharpMind.Model.Config;
 using SharpMind.Model.Format;
 using SharpMind.Tokenization;
+using System.Diagnostics;
 using System.Runtime.Intrinsics.X86;
 
 namespace SandBox
@@ -24,61 +26,102 @@ namespace SandBox
             NativeLibraryConfig.All.WithAvx(Avx512F.IsSupported ? AvxLevel.Avx512 : Avx2.IsSupported ? AvxLevel.Avx2 : Avx.IsSupported ? AvxLevel.Avx : AvxLevel.None);
         }
 
-        public static async Task TestChat()
+    public static async Task TestChatSession()
+    {
+        SetupNative();
+        CancellationTokenSource cts = new();
+            string modelPath = Path.Combine(Assets, "SmolLM-135M.Q4_K_M.gguf");
+        string prompt = "hello";
+
+        Console.WriteLine($"\n=== Performance Comparison: {Path.GetFileName(modelPath)} ===");
+
+        // 1. LLamaSharp Baseline
+        Console.WriteLine("\n--- LLamaSharp ---");
+        var parameters = new ModelParams(modelPath) { ContextSize = 1024, GpuLayerCount = 0 };
+        using var weights = LLamaWeights.LoadFromFile(parameters);
+        using var context = weights.CreateContext(parameters);
+        var executor = new InteractiveExecutor(context);
+        var session = new LLama.ChatSession(executor, new ChatHistory([
+            new(AuthorRole.System, "You are a helpful assistant.")
+        ]));
+        var inferenceParams = new InferenceParams()
         {
-            NativeLibraryConfig.All.WithLogCallback(delegate (LLamaLogLevel level, string message) { });
-            NativeLibraryConfig.All.WithAvx(Avx512F.IsSupported ? AvxLevel.Avx512 : Avx2.IsSupported ? AvxLevel.Avx2 : Avx.IsSupported ? AvxLevel.Avx : AvxLevel.None);
+            MaxTokens = 512,
+            SamplingPipeline = new DefaultSamplingPipeline { Temperature = 0.7f, TopP = 0.9f, TopK = 40 }
+        };
 
-            CancellationTokenSource cts = new();
-            string modelPath = @"C:\Integral2u\source\repos\SharpMind\ExternalAssets\DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M.gguf";
+        var sw = Stopwatch.StartNew();
+        int tokenCount = 0;
+        bool firstToken = true;
+        double ttft = 0;
 
-            var parameters = new ModelParams(modelPath)
+        Console.Write("Assistant: ");
+        await foreach (var text in session.ChatAsync(new ChatHistory.Message(AuthorRole.User, prompt), inferenceParams, cts.Token))
+        {
+            if (firstToken)
             {
-                ContextSize = 1024,
-                GpuLayerCount = 0
-            };
-
-            using var weights = LLamaWeights.LoadFromFile(parameters);
-            using var context = weights.CreateContext(parameters);
-
-            var inferenceParams = new InferenceParams()
-            {
-                MaxTokens = 256,
-                AntiPrompts = ["User:", "<｜User｜>"],
-                SamplingPipeline = new DefaultSamplingPipeline()
-                {
-                    Temperature = 0.7f,
-                    TopP = 0.9f,
-                    TopK = 35,
-                }
-            };
-
-            string prompt = "<｜begin▁of▁sentence｜><｜User｜>hello<｜Assistant｜>\n";
-
-            // Test 1: InteractiveExecutor + manual prompt (WORKS)
-            Console.WriteLine("=== InteractiveExecutor + manual prompt ===");
-            var executor1 = new InteractiveExecutor(context);
-            Console.Out.Write("User: hello\nAssistant: ");
-            await foreach (var text in executor1.InferAsync(prompt, inferenceParams, cts.Token))
-                Console.Write(text);
-            Console.WriteLine("\n");
-
-            // Test 2: ChatSession + ChatHistory (BROKEN for DeepSeek)
-            Console.WriteLine("=== ChatSession + ChatHistory ===");
-            using var context2 = weights.CreateContext(parameters);
-            var executor2 = new InteractiveExecutor(context2);
-            var session = new LLama.ChatSession(executor2, new ChatHistory([
-                new(AuthorRole.System, "You are a helpful assistant.")
-            ]));
-            Console.Out.Write("User: hello\nAssistant: ");
-            await foreach (var text in session.ChatAsync(
-                new ChatHistory.Message(AuthorRole.User, "hello"),
-                inferenceParams, cts.Token))
-                Console.Write(text);
-            Console.WriteLine();
-
-            Console.ReadLine();
+                ttft = sw.Elapsed.TotalSeconds;
+                firstToken = false;
+            }
+            Console.Write(text);
+            tokenCount++;
         }
+        sw.Stop();
+        double totalTime = sw.Elapsed.TotalSeconds;
+        double tps = tokenCount / (totalTime - ttft);
+        Console.WriteLine($"\nTTFT: {ttft:F3}s, TPS: {tps:F2}, Total: {totalTime:F3}s");
+
+        // 2. SharpMind
+        Console.WriteLine("\n--- SharpMind ---");
+        GgufLoader.Load(modelPath, null, out ModelMetaData meta, out ModelConfig modelConfig, out Tokenizer? tokenizer);
+        var sharpConfig = modelConfig.ForModel(HardwareTier.AVX2);
+        var model = ModelFactory.Create(modelConfig, sharpConfig);
+        GgufLoader.LoadWeightsToModel(modelPath, meta, model);
+
+        await using var smSession = new ChatSession<StandardGeneratorBuilder<KVCacherBuilder>, KVCacherBuilder>(model, tokenizer, meta)
+        {
+            MaxTokens = 64,
+            Temperature = 0.0f,
+            TopK = 40,
+            TopP = 0.9f,
+        };
+
+        sw.Restart();
+        tokenCount = 0;
+        firstToken = true;
+        
+        // We only want to run the chat once for the benchmark
+        var promptTask = Task.FromResult(new ChatMessage { Content = prompt, Role = ChatRole.User });
+        int callCount = 0;
+        var history = await smSession.StartChatAsync(
+            async () => 
+            {
+                callCount++;
+                if (callCount > 1) throw new OperationCanceledException();
+                return await promptTask;
+            },
+            async (entry) => 
+            {
+                if (firstToken)
+                {
+                    ttft = sw.Elapsed.TotalSeconds;
+                    firstToken = false;
+                }
+                Console.Write(entry.Token);
+                tokenCount++;
+                await Task.CompletedTask;
+            },
+            cts.Token
+        );
+        
+        // Since StartChatAsync is a loop, we need a way to break it for a benchmark
+        // But for a single prompt "hello", it will eventually hit EOS.
+        sw.Stop();
+        totalTime = sw.Elapsed.TotalSeconds;
+        tps = tokenCount / (totalTime - ttft);
+        Console.WriteLine($"\nTTFT: {ttft:F3}s, TPS: {tps:F2}, Total: {totalTime:F3}s");
+    }
+
         /// <summary>Verifies SharpMind's prompt formatting for each model.</summary>
         public static void VerifyPromptFormatting()
         {

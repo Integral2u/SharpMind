@@ -15,14 +15,26 @@ public static class QuantizationDiagnostic
     {
         Console.WriteLine($"--- Running Quantization Consistency Diagnostic ---");
         
-        TestType(GgufDtype.Q2_K, "Q2_K", 84);
-        TestType(GgufDtype.Q3_K, "Q3_K", 110);
-        TestType(GgufDtype.Q4_K, "Q4_K", 144);
-        TestType(GgufDtype.Q5_K, "Q5_K", 176);
-        TestType(GgufDtype.Q5_1, "Q5_1", 24);
+        Console.WriteLine("\n=== HardwareTier.Scalar ===");
+        RunForTier(HardwareTier.Scalar);
+
+        Console.WriteLine("\n=== HardwareTier.AVX2 ===");
+        RunForTier(HardwareTier.AVX2);
+
+        Console.WriteLine("\n=== HardwareTier.FMA ===");
+        RunForTier(HardwareTier.FMA);
     }
 
-    private static unsafe void TestType(GgufDtype dtype, string name, int blockBytes)
+    private static unsafe void RunForTier(HardwareTier tier)
+    {
+        TestType(tier, GgufDtype.Q2_K, "Q2_K", 84);
+        TestType(tier, GgufDtype.Q3_K, "Q3_K", 110);
+        TestType(tier, GgufDtype.Q4_K, "Q4_K", 144);
+        TestType(tier, GgufDtype.Q5_K, "Q5_K", 176);
+        TestType(tier, GgufDtype.Q5_1, "Q5_1", 24);
+    }
+
+    private static unsafe void TestType(HardwareTier tier, GgufDtype dtype, string name, int blockBytes)
     {
         Console.WriteLine($"Testing {name}...");
         int qk = (dtype == GgufDtype.Q5_1) ? 32 : 256;
@@ -31,30 +43,30 @@ public static class QuantizationDiagnostic
         byte[] block = new byte[blockBytes];
         Random rng = new Random(42);
         for (int i = 0; i < blockBytes; i++) block[i] = (byte)rng.Next(256);
-
+        
         // 2. Compute dot product via Read (dequantize-then-dot)
         float[] dequantized = new float[qk];
         fixed (byte* pBlock = block)
         {
             DequantizeHelper(dtype, block, dequantized, qk);
         }
-
+        
         // Dummy input vector
         float[] input = new float[qk];
         for(int i=0; i<qk; i++) input[i] = 1.0f;
-
+        
         float dotRead = 0;
         for(int i=0; i<qk; i++) dotRead += input[i] * dequantized[i];
-
+        
         // 3. Compute dot product via VecDot
-        var qOps = QuantizationFactory.Create(HardwareTier.Scalar);
+        var qOps = QuantizationFactory.Create(tier);
         float dotVec = 0;
         fixed (float* pIn = input)
         fixed (byte* pBlock = block)
         {
             dotVec = VecDotDispatch(qOps, dtype, pIn, pBlock, 0, qk);
         }
-
+        
         Console.WriteLine($"  Read: {dotRead:F4}, VecDot: {dotVec:F4}, Diff: {Math.Abs(dotRead - dotVec):F4}");
     }
 

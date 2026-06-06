@@ -98,6 +98,7 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
         // ── Prefill ───────────────────────────────────────────────────────
         int posOffset = _caches[0].Length;
         using var prefillInput = Tensor<int>.From(promptIds, 1, promptIds.Length);
+        //Console.WriteLine($"Prefill tokens: {string.Join(", ", promptIds)}");
         Tensor<float>? logitsTensor = _model.ForwardLastLogits(prefillInput, _caches, posOffset);
 
         try

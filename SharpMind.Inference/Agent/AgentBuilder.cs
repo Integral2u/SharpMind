@@ -5,6 +5,10 @@ using System.Text.Json.Nodes;
 
 namespace SharpMind.Inference.Agent
 {
+    /// <summary>
+    /// Contract that <see cref="SharpMind.Inference.Chat.ChatSession{T,K}"/> depends on.
+    /// Implemented by <c>AgentBuilder</c>.
+    /// </summary>
     public interface IAgentBuilder
     {
         public string AgentName { get; }
@@ -13,8 +17,26 @@ namespace SharpMind.Inference.Agent
         public IAgentBuilder WithSkill(string file);
         public IAgentBuilder WithSkills(string folder, bool recursive = true);
         public IAgentBuilder WithTools(params object[] toolClasses);
-        public Task<JsonObject> CallToolAsync(object input);
+        /// <summary>Builds the system prompt text for the current agent configuration.</summary>
         public string BuildAgentPrompt();
+        /// <summary>
+        /// Dispatches a tool call described by <paramref name="toolCall"/> and returns
+        /// a <c>{ "status": "success"|"error", "data"|"message": "..." }</c> result object.
+        /// </summary>
+        /// <param name="toolCall">
+        /// A JSON object with at minimum a <c>tool</c> string field and an
+        /// <c>arguments</c> object field, as produced by the model.
+        /// </param>
+        public Task<JsonObject> CallToolAsync(JsonObject toolCall);
+        
+        /// <summary>
+        /// Returns the host object instance for the named tool, or <see langword="null"/>
+        /// when the tool is not registered. Used by <c>ChatSession</c> to resolve the
+        /// tool's <see cref="ToolCategory"/> via its marker interface
+        /// (<see cref="IFileToolService"/> / <see cref="INetworkToolService"/>)
+        /// before the permission gate fires.
+        /// </summary>
+        object? GetToolHost(string toolName);
     }
     // TODO: add permissions model for IO / network / file tool categories
     public class AgentBuilder(string agentName = "Delta", SamplingConfig? samplingConfig = null) : IAgentBuilder
@@ -224,27 +246,31 @@ namespace SharpMind.Inference.Agent
         // ── Tool invocation ──────────────────────────────────────────────────────
 
         /// <summary>
-        /// Dispatches a tool call from the model's JSON response.
-        /// Accepts either a raw JSON string or a pre-parsed <see cref="JsonObject"/>.
+        /// Returns the host object for <paramref name="toolName"/>, or
+        /// <see langword="null"/> if the tool is not registered.
+        /// Used by <c>ChatSession</c> to resolve <see cref="ToolCategory"/> via
+        /// <see cref="IFileToolService"/> / <see cref="INetworkToolService"/> before
+        /// the permission gate fires.
         /// </summary>
-        public async Task<JsonObject> CallToolAsync(object input)
+        public object? GetToolHost(string toolName)
+            => ToolMethods.TryGetValue(toolName, out var entry) ? entry.Instance : null;
+        /// <summary>
+        /// Dispatches a tool call from the model's JSON response.
+        /// <paramref name="toolCall"/> must be a JSON object with a <c>tool</c>
+        /// string field and an <c>arguments</c> object field — exactly the shape
+        /// produced by the agent prompt's Tool Call Format section.
+        /// </summary>
+        public async Task<JsonObject> CallToolAsync(JsonObject toolCall)
         {
             try
             {
-                var request = input switch
-                {
-                    string s => JsonNode.Parse(s)!.AsObject(),
-                    JsonObject jo => jo,
-                    _ => throw new ArgumentException("Input must be a string or JsonObject.")
-                };
-
-                var toolName = request["tool"]?.GetValue<string>()
+                var toolName = toolCall["tool"]?.GetValue<string>()
                     ?? throw new ArgumentException("Missing required field: 'tool'.");
 
                 if (!ToolMethods.TryGetValue(toolName, out var entry))
                     throw new ArgumentException($"Unknown tool: '{toolName}'.");
 
-                var args = request["arguments"]?.AsObject() ?? new JsonObject();
+                var args = toolCall["arguments"]?.AsObject() ?? new JsonObject();
                 var invokeArgs = BindArguments(entry.Method, args);
 
                 var raw = entry.Method.Invoke(entry.Instance, invokeArgs)

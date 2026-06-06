@@ -28,18 +28,16 @@ public sealed unsafe class Tensor<T> : IDisposable
 {
     // ── fields ─────────────────────────────────────────────────────────────
 
-    private readonly NativeBuffer<T> _buffer;
+    private readonly NativeBuffer<T>? _buffer;
     private readonly int _offset; // element offset into buffer (for views)
+    private readonly bool _ownsMemory;
+    private readonly T* _rawPtr;
+
 
     // ── constructors ───────────────────────────────────────────────────────
-
+    
     /// <summary>Allocates a new zero-initialised tensor of the given shape.</summary>
-    public Tensor(TensorShape shape)
-    {
-        Shape   = shape;
-        _buffer = NativeBufferPool<T>.Rent(shape.ElementCount);
-        _offset = 0;
-    }
+    public Tensor(TensorShape shape) : this(shape, NativeBufferPool<T>.Rent(shape.ElementCount), 0, true) { }
 
     /// <inheritdoc cref="Tensor(TensorShape)"/>
     public Tensor(params int[] dims) : this(new TensorShape(dims)) { }
@@ -49,15 +47,30 @@ public sealed unsafe class Tensor<T> : IDisposable
     public Tensor(int d0, int d1, int d2, int d3) : this(new TensorShape(d0, d1, d2, d3)) { }
 
     /// <summary>
+    /// Creates a tensor from a raw pointer.
+    /// </summary>
+    internal Tensor(T* ptr, TensorShape shape, bool ownsMemory = false)
+    {
+        Shape = shape;
+        _ownsMemory = ownsMemory;
+        _offset = 0;
+        _rawPtr = ptr;
+        _buffer = null;
+    }
+
+    /// <summary>
     /// Creates a view into an existing buffer (increments ref-count).
     /// The view is independently disposable.
     /// </summary>
-    internal Tensor(TensorShape shape, NativeBuffer<T> buffer, int offset = 0)
+    internal Tensor(TensorShape shape, NativeBuffer<T> buffer, int offset = 0, bool ownsMemory = false)
     {
         Shape   = shape;
         _buffer = buffer;
-        _buffer.AddRef();
+        if (ownsMemory || _buffer != null)
+            _buffer?.AddRef();
         _offset = offset;
+        _ownsMemory = ownsMemory;
+        _rawPtr = _buffer != null ? _buffer.Ptr + offset : null;
     }
 
     // ── properties ─────────────────────────────────────────────────────────
@@ -69,18 +82,25 @@ public sealed unsafe class Tensor<T> : IDisposable
     /// Raw pointer to element 0 of this tensor (may be an offset view).
     /// Valid only while the tensor is alive.
     /// </summary>
-    public T* DataPtr
+    public unsafe T* DataPtr
     {
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        get => _buffer.Ptr + _offset;
+        get => _rawPtr + _offset;
     }
 
     /// <summary>Span over all elements in flat (row-major) order.</summary>
     public Span<T> Data
     {
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        get => _buffer.AsSpan(_offset, ElementCount);
+        get 
+        {
+            if (_buffer != null) return _buffer.AsSpan(_offset, ElementCount);
+            return new Span<T>(_rawPtr + _offset, ElementCount);
+        }
     }
+
+    // ... [rest of the file]
+
 
     // ── indexers ───────────────────────────────────────────────────────────
 
@@ -154,17 +174,24 @@ public sealed unsafe class Tensor<T> : IDisposable
 
     public void CopyTo(Span<T> dst) => Data.CopyTo(dst);
 
-    // ── view operations (zero-copy) ────────────────────────────────────────
+    private Tensor<T> CreateView(TensorShape shape, int offset, bool ownsMemory)
+    {
+        if (_buffer != null)
+            return new Tensor<T>(shape, _buffer, offset, ownsMemory);
+        
+        return new Tensor<T>(_rawPtr + offset, shape, ownsMemory);
+    }
 
     /// <summary>
     /// Returns a new tensor with the same data but a different shape.
     /// Zero-copy: both tensors share the same buffer.
     /// </summary>
-    public Tensor<T> Reshape(params int[] newDims) => new(Shape.Reshape(newDims), _buffer, _offset);
-    public Tensor<T> Reshape(int d0) => new(Shape.Reshape(d0), _buffer, _offset);
-    public Tensor<T> Reshape(int d0, int d1) => new(Shape.Reshape(d0, d1), _buffer, _offset);
-    public Tensor<T> Reshape(int d0, int d1, int d2) => new(Shape.Reshape(d0, d1, d2), _buffer, _offset);
-    public Tensor<T> Reshape(int d0, int d1, int d2, int d3) => new(Shape.Reshape(d0, d1, d2, d3), _buffer, _offset);
+    public Tensor<T> Reshape(params int[] newDims) => CreateView(Shape.Reshape(newDims), _offset, _ownsMemory);
+    public Tensor<T> Reshape(int d0) => CreateView(Shape.Reshape(d0), _offset, _ownsMemory);
+    public Tensor<T> Reshape(int d0, int d1) => CreateView(Shape.Reshape(d0, d1), _offset, _ownsMemory);
+    public Tensor<T> Reshape(int d0, int d1, int d2) => CreateView(Shape.Reshape(d0, d1, d2), _offset, _ownsMemory);
+    public Tensor<T> Reshape(int d0, int d1, int d2, int d3) => CreateView(Shape.Reshape(d0, d1, d2, d3), _offset, _ownsMemory);
+
 
     /// <summary>
     /// Returns a 1-D view of row <paramref name="i"/> for a 2-D tensor (zero-copy).
@@ -173,8 +200,9 @@ public sealed unsafe class Tensor<T> : IDisposable
     {
         if (Rank != 2) throw new InvalidOperationException("RowView requires a 2-D tensor.");
         int cols = Shape.Cols;
-        return new Tensor<T>(new TensorShape(cols), _buffer, _offset + i * cols);
+        return CreateView(new TensorShape(cols), _offset + i * cols, _ownsMemory);
     }
+
 
     /// <summary>Row as a <see cref="Span{T}"/> — slightly cheaper than <see cref="RowView"/>.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -201,7 +229,7 @@ public sealed unsafe class Tensor<T> : IDisposable
             newDimsArray[i] = Shape.Dims[startIndices.Length + i];
         }
         
-        return new Tensor<T>(new TensorShape(newDimsArray), _buffer, _offset + offset);
+        return CreateView(new TensorShape(newDimsArray), _offset + offset, _ownsMemory);
     }
 
     // ── diagnostics ────────────────────────────────────────────────────────
@@ -235,6 +263,7 @@ public sealed unsafe class Tensor<T> : IDisposable
     /// </summary>
     public void Dispose()
     {
-        _buffer.Dispose();
+        if (_ownsMemory && _buffer != null)
+            _buffer.Dispose();
     }
 }
