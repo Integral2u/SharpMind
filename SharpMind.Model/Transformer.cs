@@ -166,8 +166,6 @@ public sealed class Transformer : IDisposable
         return _arch is DecoderArch dec && dec.SetRawWeight(name, rawData, dtype);
     }
 
-    public void Reset() => DisposeCache();
-
     public IEnumerable<Parameter> Parameters()
     {
         foreach (var p in _embedding.Parameters())
