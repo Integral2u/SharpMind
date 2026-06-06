@@ -30,11 +30,13 @@ public abstract class NormLayer : IDisposable
         SharpMindConfig.ValNormLayerScalar, NS + "." + nameof(NormKernels.LayerNormRowScalar))]
     public abstract void ApplyRow(ReadOnlySpan<float> src, ReadOnlySpan<float> weight, Span<float> dst, float scalarParam);
 
-    public Tensor<float> Forward(Tensor<float> x)
+    public Tensor<float> Forward(Tensor<float> x, SharpMind.Core.Memory.Workspace? workspace = null)
     {
         ThrowIfDisposed();
         if (x.Shape[^1] != Dim) throw new ArgumentException($"NormLayer expects last dim {Dim}, got {x.Shape[^1]}.");
-        var result = new Tensor<float>(x.Shape);
+        Tensor<float> result = workspace != null 
+            ? workspace.Rent<float>(x.Shape.Dims) 
+            : new Tensor<float>(x.Shape);
         int rows = x.ElementCount / Dim;
         for (int i = 0; i < rows; i++)
         {

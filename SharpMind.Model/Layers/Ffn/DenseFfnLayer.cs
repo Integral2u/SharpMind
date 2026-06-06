@@ -8,8 +8,8 @@ namespace SharpMind.Model.Layers.Ffn;
 
 public sealed class DenseFfnLayer(ModelConfig config, ActivationOps acts, TensorOps ops, QuantizationOps qOps) : FfnLayer(config, acts, ops, FfnKind.Dense, qOps)
 {
-    public override Tensor<float> ApplyFfn(Tensor<float> x)
-        => FfnKernels.Dense(x, W1!, W2!, Acts, Ops);
+    public override Tensor<float> ApplyFfn(Tensor<float> x, SharpMind.Core.Memory.Workspace? workspace = null)
+        => FfnKernels.Dense(x, W1!, W2!, Acts, Ops, workspace);
 
     public override (Tensor<float> Output, FfnLayerState State) ForwardWithState(Tensor<float> x)
     {

@@ -19,11 +19,12 @@ internal static class FfnKernels
         LinearLayer w1,
         LinearLayer w2,
         ActivationOps acts,
-        TensorOps ops)
+        TensorOps ops,
+        SharpMind.Core.Memory.Workspace? workspace = null)
     {
-        using var hidden = w1.Forward(x, ops);
-        using var acted = acts.Activate(hidden);
-        return w2.Forward(acted, ops);
+        using var hidden = w1.Forward(x, ops, workspace);
+        using var acted = acts.Activate(hidden, workspace);
+        return w2.Forward(acted, ops, workspace);
     }
 
     /// <summary>
@@ -36,19 +37,20 @@ internal static class FfnKernels
         LinearLayer wGated,
         LinearLayer wDown,
         ActivationOps acts,
-        TensorOps ops)
+        TensorOps ops,
+        SharpMind.Core.Memory.Workspace? workspace = null)
     {
-        using var fused = wGated.Forward(x, ops);
+        using var fused = wGated.Forward(x, ops, workspace);
         int ffnDim = wDown.Weight.Shape[0];
         int[] fusedDims = fused.Shape.Dims.ToArray();
         int total = fused.ElementCount / (2 * ffnDim);
         bool hasBatch = fused.Rank > 2;
-        using var gate = hasBatch
-            ? Tensor<float>.Zeros(fusedDims[0], fusedDims[1], ffnDim)
-            : Tensor<float>.Zeros(total, ffnDim);
-        using var up = hasBatch
-            ? Tensor<float>.Zeros(fusedDims[0], fusedDims[1], ffnDim)
-            : Tensor<float>.Zeros(total, ffnDim);
+        using var gate = workspace != null 
+            ? workspace.Rent<float>(hasBatch ? new[] { fusedDims[0], fusedDims[1], ffnDim } : new[] { total, ffnDim })
+            : (hasBatch ? new Tensor<float>(fusedDims[0], fusedDims[1], ffnDim) : new Tensor<float>(total, ffnDim));
+        using var up = workspace != null 
+            ? workspace.Rent<float>(hasBatch ? new[] { fusedDims[0], fusedDims[1], ffnDim } : new[] { total, ffnDim })
+            : (hasBatch ? new Tensor<float>(fusedDims[0], fusedDims[1], ffnDim) : new Tensor<float>(total, ffnDim));
         var flat = fused.Reshape(total, 2 * ffnDim);
         for (int i = 0; i < total; i++)
         {
@@ -56,8 +58,8 @@ internal static class FfnKernels
             row[..ffnDim].CopyTo(gate.RowSpan(i));
             row[ffnDim..].CopyTo(up.RowSpan(i));
         }
-        using var gated = acts.GatedActivate(gate, up);
-        return wDown.Forward(gated, ops);
+        using var gated = acts.GatedActivate(gate, up, workspace);
+        return wDown.Forward(gated, ops, workspace);
     }
 
 
@@ -71,12 +73,13 @@ internal static class FfnKernels
         LinearLayer wUp,
         LinearLayer wDown,
         ActivationOps acts,
-        TensorOps ops)
+        TensorOps ops,
+        SharpMind.Core.Memory.Workspace? workspace = null)
     {
-        using var gate = wGate.Forward(x, ops);
-        using var up = wUp.Forward(x, ops);
-        using var gated = acts.GatedActivate(gate, up);
-        return wDown.Forward(gated, ops);
+        using var gate = wGate.Forward(x, ops, workspace);
+        using var up = wUp.Forward(x, ops, workspace);
+        using var gated = acts.GatedActivate(gate, up, workspace);
+        return wDown.Forward(gated, ops, workspace);
     }
 
     /// <summary>
@@ -91,25 +94,36 @@ internal static class FfnKernels
         LinearLayer[] wDown,
         int topK,
         ActivationOps acts,
-        TensorOps ops)
+        TensorOps ops,
+        SharpMind.Core.Memory.Workspace? workspace = null)
     {
         int batch = x.ElementCount / x.Shape[^1];
         int hidden = x.Shape[^1];
-        var result = new Tensor<float>(x.Shape);
+        Tensor<float> result = workspace != null 
+            ? workspace.Rent<float>(x.Shape.Dims) 
+            : new Tensor<float>(x.Shape);
 
         // Router logits: [batch, numExperts]
-        using var logits = router.Forward(x.Rank > 2 ? x.Reshape(batch, hidden) : x, ops);
-        using var probs = SoftmaxOverExperts(logits);
+        using var logits = router.Forward(x.Rank > 2 ? x.Reshape(batch, hidden) : x, ops, workspace);
+        using var probs = SoftmaxOverExperts(logits, workspace);
 
         for (int t = 0; t < batch; t++)
         {
             // Get top-k expert indices for this token
-            using var tokenLogits = Tensor<float>.From(logits.RowSpan(t), logits.Shape.Cols);
+            using var tokenLogits = workspace != null 
+                ? workspace.Rent<float>(new[] { logits.Shape.Cols }) 
+                : Tensor<float>.From(logits.RowSpan(t), logits.Shape.Cols);
+            logits.RowSpan(t).CopyTo(tokenLogits.Data);
             int[] topKIdx = TensorOps.ArgTopK(tokenLogits, topK);
 
             // Accumulate weighted expert outputs
-            using var tokenInput = Tensor<float>.From(x.RowSpan(t), hidden);
-            var tokenOut = Tensor<float>.Zeros(hidden);
+            using var tokenInput = workspace != null 
+                ? workspace.Rent<float>(new[] { hidden }) 
+                : Tensor<float>.From(x.RowSpan(t), hidden);
+            x.RowSpan(t).CopyTo(tokenInput.Data);
+            var tokenOut = workspace != null 
+                ? workspace.Rent<float>(new[] { hidden }) 
+                : Tensor<float>.Zeros(hidden);
 
             float weightSum = 0f;
             foreach (int expertIdx in topKIdx)
@@ -119,7 +133,7 @@ internal static class FfnKernels
             {
                 float weight = probs.RowSpan(t)[expertIdx] / weightSum;
                 using var expertOut = Gated(tokenInput, wGate[expertIdx],
-                                            wUp[expertIdx], wDown[expertIdx], acts, ops);
+                                             wUp[expertIdx], wDown[expertIdx], acts, ops, workspace);
                 TensorOps.AddInPlace(tokenOut, TensorOps.Scale(expertOut, weight));
             }
 
@@ -130,9 +144,11 @@ internal static class FfnKernels
         return result;
     }
 
-    private static Tensor<float> SoftmaxOverExperts(Tensor<float> logits)
+    private static Tensor<float> SoftmaxOverExperts(Tensor<float> logits, SharpMind.Core.Memory.Workspace? workspace = null)
     {
-        var result = new Tensor<float>(logits.Shape);
+        Tensor<float> result = workspace != null 
+            ? workspace.Rent<float>(logits.Shape.Dims) 
+            : new Tensor<float>(logits.Shape);
         for (int i = 0; i < logits.Shape.Rows; i++)
         {
             var src = logits.RowSpan(i);

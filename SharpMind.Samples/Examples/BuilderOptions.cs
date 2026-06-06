@@ -15,8 +15,8 @@ namespace SharpMind.Samples.Examples
         private static readonly string Model = "qwen2-0_5b-instruct-q8_0";
         public static async Task RunAsync(string prompt)
         {
-            Type[] cacheBuilders = [typeof(KVCacherBuilder), typeof(PagedKVCacherBuilder)];
-            Type[] generatorBuilders = [typeof(StandardGeneratorBuilder<>), typeof(SpeculativeGeneratorBuilder<>)];
+            Type[] cacheBuilders = [typeof(PagedKVCacherBuilder),typeof(KVCacherBuilder)];
+            Type[] generatorBuilders = [typeof(SpeculativeGeneratorBuilder<>), typeof(StandardGeneratorBuilder<>)];
 
             var ggufPath = Path.Combine(ModelPath, $"{Model}.gguf");
             if (!File.Exists(ggufPath))
@@ -36,13 +36,6 @@ namespace SharpMind.Samples.Examples
             }
             var sharpConfig = modelConfig.ForModel();
             GC.Collect(); GC.WaitForPendingFinalizers();
-            var sw = Stopwatch.StartNew();
-            var model = ModelFactory.Create(modelConfig, sharpConfig);
-            await Console.Out.WriteLineAsync($"ModelFactory.Create executed in: {sw.Elapsed.TotalSeconds:F2}s");
-            GC.Collect(); GC.WaitForPendingFinalizers();
-            sw.Restart();
-            GgufLoader.LoadWeightsToModel(ggufPath, meta, model);
-            await Console.Out.WriteLineAsync($"GgufLoader.LoadWeightsToModel executed in: {sw.Elapsed.TotalSeconds:F2}s");
 
             foreach (var generatorDef in generatorBuilders)
             {
@@ -56,6 +49,14 @@ namespace SharpMind.Samples.Examples
                     
                     await Console.Out.WriteLineAsync($"Testing {Model} using {generatorDef.Name},{cacheBuilder}");
                     await Console.Out.FlushAsync();
+                    var sw = Stopwatch.StartNew();
+                    var model = ModelFactory.Create(modelConfig, sharpConfig);
+                    await Console.Out.WriteLineAsync($"ModelFactory.Create executed in: {sw.Elapsed.TotalSeconds:F2}s");
+                    GC.Collect(); GC.WaitForPendingFinalizers();
+                    sw.Restart();
+                    GgufLoader.LoadWeightsToModel(ggufPath, meta, model);
+                    await Console.Out.WriteLineAsync($"GgufLoader.LoadWeightsToModel executed in: {sw.Elapsed.TotalSeconds:F2}s");
+
                     sw.Stop();
                     
                     await using var session = ChatSessionFactory.CreateChatSession(generatorDef, cacheBuilder, model, tokenizer, meta);                   

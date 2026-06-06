@@ -107,7 +107,8 @@ public abstract class AttentionLayer : IDisposable
         TensorOps ops,
         int positionOffset = 0,
         bool causal = true,
-        IKVCache? cache = null)
+        IKVCache? cache = null,
+        SharpMind.Core.Memory.Workspace? workspace = null)
     {
         ThrowIfDisposed();
         int batch = x.Shape[0];
@@ -119,9 +120,9 @@ public abstract class AttentionLayer : IDisposable
         int kvDim = numKv * headDim;
         float scale = 1f / MathF.Sqrt(headDim);
 
-        using var q = Wq.Forward(x, ops);
-        using var k = Wk.Forward(x, ops);
-        using var v = Wv.Forward(x, ops);
+        using var q = Wq.Forward(x, ops, workspace);
+        using var k = Wk.Forward(x, ops, workspace);
+        using var v = Wv.Forward(x, ops, workspace);
 
         using var qr = q.Reshape(batch, seqLen, numH, headDim);
         using var kr = k.Reshape(batch, seqLen, numKv, headDim);
@@ -130,13 +131,28 @@ public abstract class AttentionLayer : IDisposable
 
         cache?.Update(k, v, numKv, headDim);
 
-        var output = new Tensor<float>(batch, seqLen, hidden);
+        Tensor<float> output = workspace != null 
+            ? workspace.Rent<float>(new[] { batch, seqLen, hidden }) 
+            : new Tensor<float>(batch, seqLen, hidden);
         int effectiveKvLen = cache != null ? cache.Length : seqLen;
 
         {
             int totalHeads = batch * numH;
             int qStride = numH * headDim;
             int oStride = hidden;
+
+            // Pre-allocate temporary buffers for non-contiguous caches to avoid race conditions in Parallel.For
+            Tensor<float>? allTempK = null;
+            Tensor<float>? allTempV = null;
+            if (cache is not { IsContiguous: true })
+            {
+                allTempK = workspace != null 
+                    ? workspace.Rent<float>(new[] { totalHeads, effectiveKvLen, headDim }) 
+                    : new Tensor<float>(totalHeads, effectiveKvLen, headDim);
+                allTempV = workspace != null 
+                    ? workspace.Rent<float>(new[] { totalHeads, effectiveKvLen, headDim }) 
+                    : new Tensor<float>(totalHeads, effectiveKvLen, headDim);
+            }
 
             void DoHead(int bh)
             {
@@ -150,51 +166,40 @@ public abstract class AttentionLayer : IDisposable
 
                     float* pK;
                     float* pV;
-                    Tensor<float>? tempK = null;
-                    Tensor<float>? tempV = null;
 
                     if (cache is { IsContiguous: true })
                     {
                         pK = cache.GetKeyPtr(b, 0, kvHead);
                         pV = cache.GetValuePtr(b, 0, kvHead);
                     }
-                    else if (cache != null)
-                    {
-                        tempK = new Tensor<float>(effectiveKvLen, headDim);
-                        tempV = new Tensor<float>(effectiveKvLen, headDim);
-                        for (int s = 0; s < effectiveKvLen; s++)
-                        {
-                            float* srcK = cache.GetKeyPtr(b, s, kvHead);
-                            float* srcV = cache.GetValuePtr(b, s, kvHead);
-                            float* dstK = tempK.DataPtr + (long)s * headDim;
-                            float* dstV = tempV.DataPtr + (long)s * headDim;
-                            Unsafe.CopyBlock(dstK, srcK, (uint)(headDim * sizeof(float)));
-                            Unsafe.CopyBlock(dstV, srcV, (uint)(headDim * sizeof(float)));
-                        }
-                        pK = tempK.DataPtr;
-                        pV = tempV.DataPtr;
-                    }
                     else
                     {
-                        tempK = new Tensor<float>(effectiveKvLen, headDim);
-                        tempV = new Tensor<float>(effectiveKvLen, headDim);
-                        for (int s = 0; s < effectiveKvLen; s++)
+                        pK = allTempK!.DataPtr + (long)bh * effectiveKvLen * headDim;
+                        pV = allTempV!.DataPtr + (long)bh * effectiveKvLen * headDim;
+
+                        if (cache != null)
                         {
-                            float* srcK = kr.DataPtr + (long)((b * seqLen + s) * numKv + kvHead) * headDim;
-                            float* srcV = v.DataPtr + (long)(b * seqLen * kvDim + s * kvDim + kvHead * headDim);
-                            float* dstK = tempK.DataPtr + (long)s * headDim;
-                            float* dstV = tempV.DataPtr + (long)s * headDim;
-                            Unsafe.CopyBlock(dstK, srcK, (uint)(headDim * sizeof(float)));
-                            Unsafe.CopyBlock(dstV, srcV, (uint)(headDim * sizeof(float)));
+                            for (int s = 0; s < effectiveKvLen; s++)
+                            {
+                                float* srcK = cache.GetKeyPtr(b, s, kvHead);
+                                float* srcV = cache.GetValuePtr(b, s, kvHead);
+                                Unsafe.CopyBlock(pK + (long)s * headDim, srcK, (uint)(headDim * sizeof(float)));
+                                Unsafe.CopyBlock(pV + (long)s * headDim, srcV, (uint)(headDim * sizeof(float)));
+                            }
                         }
-                        pK = tempK.DataPtr;
-                        pV = tempV.DataPtr;
+                        else
+                        {
+                            for (int s = 0; s < effectiveKvLen; s++)
+                            {
+                                float* srcK = kr.DataPtr + (long)((b * seqLen + s) * numKv + kvHead) * headDim;
+                                float* srcV = v.DataPtr + (long)(b * seqLen * kvDim + s * kvDim + kvHead * headDim);
+                                Unsafe.CopyBlock(pK + (long)s * headDim, srcK, (uint)(headDim * sizeof(float)));
+                                Unsafe.CopyBlock(pV + (long)s * headDim, srcV, (uint)(headDim * sizeof(float)));
+                            }
+                        }
                     }
 
                     ScaledDotProduct(pQ, pK, pV, pO, seqLen, effectiveKvLen, headDim, scale, causal, qStride, oStride);
-
-                    tempK?.Dispose();
-                    tempV?.Dispose();
                 }
             }
 
@@ -206,9 +211,12 @@ public abstract class AttentionLayer : IDisposable
             {
                 Parallel.For(0, totalHeads, DoHead);
             }
+
+            allTempK?.Dispose();
+            allTempV?.Dispose();
         }
 
-        var projected = Wo.Forward(output, ops);
+        var projected = Wo.Forward(output, ops, workspace);
         output.Dispose();
         return projected;
     }

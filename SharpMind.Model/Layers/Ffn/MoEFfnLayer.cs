@@ -8,8 +8,8 @@ namespace SharpMind.Model.Layers.Ffn;
 
 public sealed class MoEFfnLayer(ModelConfig config, ActivationOps acts, TensorOps ops, QuantizationOps qOps) : FfnLayer(config, acts, ops, FfnKind.MoE, qOps)
 {
-    public override Tensor<float> ApplyFfn(Tensor<float> x)
-        => FfnKernels.MoE(x, Router!, ExpertGate!, ExpertUp!, ExpertDown!, Config.TopKExperts, Acts, Ops);
+    public override Tensor<float> ApplyFfn(Tensor<float> x, SharpMind.Core.Memory.Workspace? workspace = null)
+        => FfnKernels.MoE(x, Router!, ExpertGate!, ExpertUp!, ExpertDown!, Config.TopKExperts, Acts, Ops, workspace);
 
     public override (Tensor<float> Output, FfnLayerState State) ForwardWithState(Tensor<float> x)
     {

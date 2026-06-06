@@ -61,7 +61,7 @@ public sealed class LinearLayer : IDisposable
             yield return new Parameter($"{Name}.bias", _bias);
     }
 
-    public Tensor<float> Forward(Tensor<float> input, TensorOps ops)
+    public Tensor<float> Forward(Tensor<float> input, TensorOps ops, SharpMind.Core.Memory.Workspace? workspace = null)
     {
         ThrowIfDisposed();
         bool needReshape = input.Rank > 2;
@@ -71,16 +71,38 @@ public sealed class LinearLayer : IDisposable
         Tensor<float> output;
         if (UseQuantizedForward && RawQuantizedData != null && QuantDtype.HasValue)
         {
-            output = QuantizedForward(flat, ops);
+            output = QuantizedForward(flat, ops, workspace);
         }
         else
         {
             _weightBT ??= TensorOps.Transpose(_weight);
-            output = ops.MatMulWithBT(flat, _weightBT);
+            if (workspace != null)
+            {
+                output = workspace.Rent<float>(new[] { batchSize, OutFeatures });
+                ops.MatMulWithBTInto(flat, _weightBT, output);
+            }
+            else
+            {
+                output = ops.MatMulWithBT(flat, _weightBT);
+            }
         }
 
         if (_bias is not null)
-            TensorOps.AddInPlace(output, BroadcastBias(batchSize));
+        {
+            if (workspace != null)
+            {
+                var biasB = workspace.Rent<float>(new[] { batchSize, OutFeatures });
+                for (int i = 0; i < batchSize; i++)
+                    _bias!.Data.CopyTo(biasB.RowSpan(i));
+                TensorOps.AddInPlace<float>(output, biasB);
+                // Rent returns a tensor that doesn't own memory, so we don't dispose it.
+                // But the workspace will be reset anyway.
+            }
+            else
+            {
+                TensorOps.AddInPlace(output, BroadcastBias(batchSize));
+            }
+        }
         if (needReshape)
         {
             int[] outDims = [.. input.Shape.Dims.ToArray()[..^1], OutFeatures];
@@ -91,12 +113,14 @@ public sealed class LinearLayer : IDisposable
         return output;
     }
 
-    private Tensor<float> QuantizedForward(Tensor<float> input, TensorOps ops)
+    private Tensor<float> QuantizedForward(Tensor<float> input, TensorOps ops, SharpMind.Core.Memory.Workspace? workspace = null)
     {
         var dtype = QuantDtype!.Value;
         var rawData = RawQuantizedData!;
         int m = input.ElementCount / InFeatures;
-        var result = new Tensor<float>(m, OutFeatures);
+        Tensor<float> result = workspace != null 
+            ? workspace.Rent<float>(new[] { m, OutFeatures }) 
+            : new Tensor<float>(m, OutFeatures);
         int inF = InFeatures, outF = OutFeatures;
 
         for (int row = 0; row < m; row++)

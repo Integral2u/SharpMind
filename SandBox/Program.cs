@@ -1,3 +1,5 @@
-﻿//await SharpMind.Samples.Examples.QwenQ8.RunAsync("hello");
-await SandBox.LlamaTest.TestChatSession();
+﻿//using System.IO.Abstractions;
+//IFileSystem _fileSystem;
+await SharpMind.Samples.Examples.BuilderOptions.RunAsync("hello");
+//await SandBox.LlamaTest.TestChatSession();
 //Console.In.ReadLine();

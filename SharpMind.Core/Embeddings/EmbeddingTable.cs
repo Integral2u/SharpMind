@@ -50,11 +50,14 @@ public sealed class EmbeddingTable : IDisposable
     /// Returns a new tensor of shape [SeqLen, EmbeddingDim].
     /// </summary>
     /// <param name="tokenIds">Token ID per position. Values must be in [0, VocabSize).</param>
-    public Tensor<float> Forward(ReadOnlySpan<int> tokenIds)
+    /// <param name="workspace">Optional workspace to rent the result tensor from.</param>
+    public Tensor<float> Forward(ReadOnlySpan<int> tokenIds, SharpMind.Core.Memory.Workspace? workspace = null)
     {
         ThrowIfDisposed();
         int seqLen = tokenIds.Length;
-        var result = new Tensor<float>(seqLen, EmbeddingDim);
+        Tensor<float> result = workspace != null 
+            ? workspace.Rent<float>(new[] { seqLen, EmbeddingDim }) 
+            : new Tensor<float>(seqLen, EmbeddingDim);
 
         for (int i = 0; i < seqLen; i++)
         {
@@ -73,7 +76,9 @@ public sealed class EmbeddingTable : IDisposable
     /// Batched forward: token IDs shaped [Batch, SeqLen].
     /// Returns [Batch, SeqLen, EmbeddingDim].
     /// </summary>
-    public Tensor<float> Forward(Tensor<int> tokenIds)
+    /// <param name="tokenIds">Token ID per position. Values must be in [0, VocabSize).</param>
+    /// <param name="workspace">Optional workspace to rent the result tensor from.</param>
+    public Tensor<float> Forward(Tensor<int> tokenIds, SharpMind.Core.Memory.Workspace? workspace = null)
     {
         ThrowIfDisposed();
         if (tokenIds.Rank != 2)
@@ -82,7 +87,9 @@ public sealed class EmbeddingTable : IDisposable
 
         int batch = tokenIds.Shape.Rows;
         int seqLen = tokenIds.Shape.Cols;
-        var result = new Tensor<float>(batch, seqLen, EmbeddingDim);
+        Tensor<float> result = workspace != null 
+            ? workspace.Rent<float>(new[] { batch, seqLen, EmbeddingDim }) 
+            : new Tensor<float>(batch, seqLen, EmbeddingDim);
 
         for (int b = 0; b < batch; b++)
         {

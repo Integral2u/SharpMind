@@ -15,7 +15,6 @@ public sealed class Transformer : IDisposable
     private readonly IArchitecture _arch;
     private readonly NormLayer _finalNorm;
     private readonly TensorOps _ops;
-    private readonly SharpMind.Core.Memory.Workspace? _workspace;
     private bool _disposed;
 
     // Separate LM head for non-weight-tied models (e.g. LLaMA 2/3).
@@ -167,6 +166,8 @@ public sealed class Transformer : IDisposable
         return _arch is DecoderArch dec && dec.SetRawWeight(name, rawData, dtype);
     }
 
+    public void Reset() => DisposeCache();
+
     public IEnumerable<Parameter> Parameters()
     {
         foreach (var p in _embedding.Parameters())
@@ -186,22 +187,22 @@ public sealed class Transformer : IDisposable
     /// Input:  token IDs [Batch, SeqLen]
     /// Output: logits    [Batch, SeqLen, VocabSize]
     /// </summary>
-    public unsafe Tensor<float> Forward(Tensor<int> tokenIds, int positionOffset = 0) => Forward(tokenIds, null, positionOffset);
+    public unsafe Tensor<float> Forward(Tensor<int> tokenIds, int positionOffset = 0, SharpMind.Core.Memory.Workspace? workspace = null) => Forward(tokenIds, null, positionOffset, workspace);
 
-    public unsafe Tensor<float> Forward(Tensor<int> tokenIds, IKVCache[]? caches, int positionOffset = 0)
+    public unsafe Tensor<float> Forward(Tensor<int> tokenIds, IKVCache[]? caches, int positionOffset = 0, SharpMind.Core.Memory.Workspace? workspace = null)
     {
         ThrowIfDisposed();
 
         // 1. Token embeddings → [Batch, SeqLen, HiddenDim]
-        _cachedEmbedding = _embedding.Forward(tokenIds);
+        _cachedEmbedding = _embedding.Forward(tokenIds, workspace);
         using var embedded = _cachedEmbedding;
 
         // 2. Architecture (stack of transformer blocks).
         //    Returns embedded (in-place residuals), so no separate using — embedded owns the buffer.
-        _cachedHidden = _arch.Forward(embedded, caches ?? [], positionOffset);
+        _cachedHidden = _arch.Forward(embedded, caches ?? [], positionOffset, workspace);
 
         // 3. Final normalisation
-        _cachedNormed = _finalNorm.Forward(_cachedHidden);
+        _cachedNormed = _finalNorm.Forward(_cachedHidden, workspace);
         using var normed = _cachedNormed;
 
         // 4. LM head: [Batch, SeqLen, HiddenDim] @ LmHead^T → [Batch, SeqLen, VocabSize]
@@ -211,7 +212,17 @@ public sealed class Transformer : IDisposable
 
         using var normedFlat = normed.Reshape(batch * seqLen, hidden2);
         var projectionWeight = _lmHead ?? _embedding.Weight;
-        var logits = _ops.MatMulWithBT(normedFlat, projectionWeight);
+        
+        Tensor<float> logits;
+        if (workspace != null)
+        {
+            logits = workspace.Rent<float>(new[] { batch * seqLen, _config.VocabSize });
+            _ops.MatMulWithBTInto(normedFlat, projectionWeight, logits);
+        }
+        else
+        {
+            logits = _ops.MatMulWithBT(normedFlat, projectionWeight);
+        }
 
         // Restore [Batch, SeqLen, VocabSize]
         var result = logits.Reshape(batch, seqLen, _config.VocabSize);
@@ -224,14 +235,15 @@ public sealed class Transformer : IDisposable
     /// Input:  token IDs [Batch, SeqLen]
     /// Output: logits    [Batch, VocabSize]
     /// </summary>
-    public unsafe Tensor<float> ForwardLastLogits(Tensor<int> tokenIds, IKVCache[] caches, int positionOffset = 0)
+    public unsafe Tensor<float> ForwardLastLogits(Tensor<int> tokenIds, IKVCache[] caches, int positionOffset = 0, SharpMind.Core.Memory.Workspace? workspace = null)
     {
         ThrowIfDisposed();
 
-        _cachedEmbedding = _embedding.Forward(tokenIds);
+        _cachedEmbedding = _embedding.Forward(tokenIds, workspace);
         using var embedded = _cachedEmbedding;
 
-        _cachedHidden = _arch.Forward(embedded, caches, positionOffset);
+        _cachedHidden = _arch.Forward(embedded, caches, positionOffset, workspace);
+
 
         int batch = tokenIds.Shape.Rows;
         int seqLen = tokenIds.Shape.Cols;
@@ -239,26 +251,43 @@ public sealed class Transformer : IDisposable
         var projectionWeight = _lmHead ?? _embedding.Weight;
 
         // Single-token decode: normalise in-place, no allocation, no copy
-        // _cachedHidden may be the same tensor as embedded (in-place residuals),
-        // so we use embedded directly to avoid double-dispose of the shared buffer.
         if (batch == 1 && seqLen == 1)
         {
             _finalNorm.ForwardInPlace(_cachedHidden);
             using var flatHidden = _cachedHidden.Reshape(batch, hiddenDim);
+            
+            if (workspace != null)
+            {
+                var resultLogits = workspace.Rent<float>(new[] { batch, _config.VocabSize });
+                _ops.MatMulWithBTInto(flatHidden, projectionWeight, resultLogits);
+                return resultLogits;
+            }
             return _ops.MatMulWithBT(flatHidden, projectionWeight);
         }
 
         // Prefill path: extract last token's hidden state, norm in-place
-        var lastHidden = new Tensor<float>(batch, hiddenDim);
+        Tensor<float> lastHidden = workspace != null 
+            ? workspace.Rent<float>(new[] { batch, hiddenDim }) 
+            : new Tensor<float>(batch, hiddenDim);
         for (int b = 0; b < batch; b++)
         {
             int srcOffset = (b * seqLen + (seqLen - 1)) * hiddenDim;
             _cachedHidden.Data.Slice(srcOffset, hiddenDim).CopyTo(lastHidden.Data.Slice(b * hiddenDim, hiddenDim));
         }
         _finalNorm.ForwardInPlace(lastHidden);
-        var logits = _ops.MatMulWithBT(lastHidden, projectionWeight);
+        
+        Tensor<float> finalLogits;
+        if (workspace != null)
+        {
+            finalLogits = workspace.Rent<float>(new[] { batch, _config.VocabSize });
+            _ops.MatMulWithBTInto(lastHidden, projectionWeight, finalLogits);
+        }
+        else
+        {
+            finalLogits = _ops.MatMulWithBT(lastHidden, projectionWeight);
+        }
         lastHidden.Dispose();
-        return logits;
+        return finalLogits;
     }
 
     private void DisposeCache()
@@ -322,26 +351,26 @@ public sealed class Transformer : IDisposable
     {
         ThrowIfDisposed();
         DisposeCache();
-
+        
         _cachedEmbedding = _embedding.Forward(tokenIds);
         using var embedded = _cachedEmbedding;
-
+        
         _cachedHidden = _arch.Forward(embedded, positionOffset);
         using var hidden = _cachedHidden;
-
+        
         _cachedNormed = _finalNorm.Forward(hidden);
         using var normed = _cachedNormed;
-
+        
         int batch = tokenIds.Shape.Rows;
         int seqLen = tokenIds.Shape.Cols;
-
+        
         using var normedFlat = normed.Reshape(batch * seqLen, _config.HiddenDim);
         var projectionWeight = _lmHead ?? _embedding.Weight;
         var logits = _ops.MatMulWithBT(normedFlat, projectionWeight);
-
+        
         var result = logits.Reshape(batch, seqLen, _config.VocabSize);
         logits.Dispose();
-
+        
         var state = new TransformerState
         {
             TokenIds = tokenIds,
@@ -351,7 +380,7 @@ public sealed class Transformer : IDisposable
             Logits = result,
             PositionOffset = positionOffset
         };
-
+        
         return (result, state);
     }
 

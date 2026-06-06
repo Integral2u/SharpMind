@@ -10,18 +10,16 @@ public sealed class PagedKVCacheLayer(int batchSize, int numKvHeads, int maxSeqL
 {
     private readonly PagedKVCache _cache = new(batchSize, numKvHeads, maxSeqLen, headDim, pageSize);
     private readonly int _maxSeqLen = maxSeqLen;
-    private int _currentPosition = 0;
 
-    public int Length => _currentPosition;
+    public int Length => _cache.Length;
     public int MaxSeqLen => _maxSeqLen;
-    public bool IsFull => _currentPosition >= _maxSeqLen;
+    public bool IsFull => _cache.IsFull;
     public int AllocatedCapacity => _cache.PageSize;
     public bool IsContiguous => false;
 
     public void Update(Tensor<float> k, Tensor<float> v, int numKvHeads, int headDim)
     {
         _cache.Update(k, v, numKvHeads, headDim);
-        _currentPosition += k.Shape[1];
     }
 
     public unsafe float* GetKeyPtr(int batchIdx, int position, int kvHead)
@@ -33,16 +31,14 @@ public sealed class PagedKVCacheLayer(int batchSize, int numKvHeads, int maxSeqL
     public void Reset()
     {
         _cache.Reset();
-        _currentPosition = 0;
     }
 
     public void TrimToLast(int keepTokens)
     {
         _cache.TrimToLast(keepTokens);
-        _currentPosition = Math.Min(_currentPosition, keepTokens);
     }
 
     public void Dispose() => _cache.Dispose();
     public object? Snapshot() => _cache.Snapshot();
-    public void Restore(object? snapshot) { _cache.Restore(snapshot); _currentPosition = _cache.Length; }
+    public void Restore(object? snapshot) { _cache.Restore(snapshot); }
 }

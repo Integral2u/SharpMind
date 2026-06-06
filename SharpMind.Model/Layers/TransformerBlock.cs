@@ -69,18 +69,18 @@ public sealed class TransformerBlock : IDisposable
     /// 0 for full-sequence prefill; kv-cache length for incremental decode.
     /// </param>
     /// <param name="causal">Apply causal (lower-triangular) attention mask.</param>
-    public Tensor<float> Forward(Tensor<float> x, int positionOffset = 0, bool causal = true)
+    public Tensor<float> Forward(Tensor<float> x, int positionOffset = 0, bool causal = true, SharpMind.Core.Memory.Workspace? workspace = null)
     {
-        return Forward(x, null, positionOffset, causal);
+        return Forward(x, null, positionOffset, causal, workspace);
     }
 
-    public Tensor<float> Forward(Tensor<float> x, IKVCache? cache, int positionOffset = 0, bool causal = true)
+    public Tensor<float> Forward(Tensor<float> x, IKVCache? cache, int positionOffset = 0, bool causal = true, SharpMind.Core.Memory.Workspace? workspace = null)
     {
         ThrowIfDisposed();
         
         // ── Attention sub-layer ──────────────────────────────────────────
-        var normed1 = _norm1.Forward(x);
-        var attnOut = _attention.Forward(normed1, _ops, positionOffset, causal, cache);
+        var normed1 = _norm1.Forward(x, workspace);
+        var attnOut = _attention.Forward(normed1, _ops, positionOffset, causal, cache, workspace);
         normed1.Dispose();
         
         // Residual: h = x + attn(norm(x)) — reuse x in-place
@@ -88,8 +88,8 @@ public sealed class TransformerBlock : IDisposable
         attnOut.Dispose();
         
         // ── FFN sub-layer ────────────────────────────────────────────────
-        var normed2 = _norm2.Forward(x);
-        var ffnOut = _ffn.Forward(normed2);
+        var normed2 = _norm2.Forward(x, workspace);
+        var ffnOut = _ffn.Forward(normed2, workspace);
         normed2.Dispose();
         
         // Residual: out = h + ffn(norm(h)) — reuse x in-place

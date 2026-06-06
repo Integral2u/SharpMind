@@ -11,6 +11,7 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
     private readonly Tokenization.Tokenizer _tokenizer;
     private readonly IKVCache[] _caches;
     private readonly Random _defaultRng;
+    private readonly SharpMind.Core.Memory.Workspace? _workspace;
     private readonly int[] _decodeTokenScratch = new int[1];
     private float[]? _penaltyScratch;
     private bool _disposed;
@@ -44,13 +45,14 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
             int numKvHeads = model.Config.NumKvHeads;
             int headDim = model.Config.HeadDim;
 
-            _caches = new IKVCache[numLayers];
-            for (int i = 0; i < numLayers; i++)
-                _caches[i] = new T().CreateKVCache(1, numKvHeads, maxSeqLen, headDim);
-        }
-
-        _defaultRng = seed.HasValue ? new Random(seed.Value) : Random.Shared;
+        _caches = new IKVCache[numLayers];
+        for (int i = 0; i < numLayers; i++)
+            _caches[i] = new T().CreateKVCache(1, numKvHeads, maxSeqLen, headDim);
     }
+
+    _workspace = new SharpMind.Core.Memory.Workspace(SharpMind.Core.Memory.Workspace.CalculateRequiredSize(model.Config.HeadDim, model.Config.FfnDim, model.Config.VocabSize, model.Config.NumLayers, model.Config.MaxSeqLen));
+    _defaultRng = seed.HasValue ? new Random(seed.Value) : Random.Shared;
+}
 
     public async IAsyncEnumerable<string> GenerateAsync(
         string prompt,
@@ -96,7 +98,8 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
 
         int posOffset = _caches[0].Length;
         using var prefillInput = Tensor<int>.From(promptIds, 1, promptIds.Length);
-        Tensor<float>? logitsTensor = _model.ForwardLastLogits(prefillInput, _caches, posOffset);
+        _workspace?.Reset();
+        Tensor<float>? logitsTensor = _model.ForwardLastLogits(prefillInput, _caches, posOffset, _workspace);
 
         try
         {
@@ -150,10 +153,14 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
                         _decodeTokenScratch[0] = draftToken;
                         Tensor<float>? prevTensor = logitsTensor;
                         logitsTensor = null;
-                        using var stepInput = Tensor<int>.From(_decodeTokenScratch.AsSpan(0, 1), 1, 1);
-                        logitsTensor = _model.ForwardLastLogits(stepInput, _caches, currentPos);
+                        _workspace?.Reset();
+                        using var stepInput = _workspace != null 
+                            ? _workspace.Rent<int>(new[] { 1, 1 }) 
+                            : Tensor<int>.From(_decodeTokenScratch.AsSpan(0, 1), 1, 1);
+                        if (_workspace != null) stepInput.Data[0] = draftToken;
+                        logitsTensor = _model.ForwardLastLogits(stepInput, _caches, currentPos, _workspace);
                         currentPos++;
-                        prevTensor.Dispose();
+                        prevTensor?.Dispose();
 
                         generatedIds.Add(draftToken);
                         rateTracker.RecordToken();
@@ -216,10 +223,14 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
                         // Forward correction token to get next logits
                         Tensor<float>? prevTensor = logitsTensor;
                         logitsTensor = null;
-                        using var corrInput = Tensor<int>.From(_decodeTokenScratch.AsSpan(0, 1), 1, 1);
-                        logitsTensor = _model.ForwardLastLogits(corrInput, _caches, currentPos);
+                        _workspace?.Reset();
+                        using var corrInput = _workspace != null 
+                            ? _workspace.Rent<int>(new[] { 1, 1 }) 
+                            : Tensor<int>.From(_decodeTokenScratch.AsSpan(0, 1), 1, 1);
+                        if (_workspace != null) corrInput.Data[0] = correctionToken;
+                        logitsTensor = _model.ForwardLastLogits(corrInput, _caches, currentPos, _workspace);
                         currentPos++;
-                        prevTensor.Dispose();
+                        prevTensor?.Dispose();
                         logitsTensor.Data[..vocabSize].CopyTo(_penaltyScratch.AsSpan(0, vocabSize));
 
                         roundDone = true;
@@ -251,10 +262,14 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
 
                     Tensor<float>? bonusPrev = logitsTensor;
                     logitsTensor = null;
-                    using var bonusInput = Tensor<int>.From(_decodeTokenScratch.AsSpan(0, 1), 1, 1);
-                    logitsTensor = _model.ForwardLastLogits(bonusInput, _caches, currentPos);
+                    _workspace?.Reset();
+                    using var bonusInput = _workspace != null 
+                        ? _workspace.Rent<int>(new[] { 1, 1 }) 
+                        : Tensor<int>.From(_decodeTokenScratch.AsSpan(0, 1), 1, 1);
+                    if (_workspace != null) bonusInput.Data[0] = bonusToken;
+                    logitsTensor = _model.ForwardLastLogits(bonusInput, _caches, currentPos, _workspace);
                     currentPos++;
-                    bonusPrev.Dispose();
+                    bonusPrev?.Dispose();
                 }
             }
 
@@ -322,6 +337,7 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
     {
         if (_disposed) return;
         _disposed = true;
+        _workspace?.Dispose();
         for (int i = 0; i < _caches.Length; i++)
             _caches[i].Dispose();
     }

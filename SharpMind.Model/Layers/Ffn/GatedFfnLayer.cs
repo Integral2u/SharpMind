@@ -8,8 +8,8 @@ namespace SharpMind.Model.Layers.Ffn;
 
 public sealed class GatedFfnLayer(ModelConfig config, ActivationOps acts, TensorOps ops, QuantizationOps qOps) : FfnLayer(config, acts, ops, FfnKind.Gated, qOps)
 {
-    public override Tensor<float> ApplyFfn(Tensor<float> x)
-        => FfnKernels.Gated(x, WGated!, WDown!, Acts, Ops);
+    public override Tensor<float> ApplyFfn(Tensor<float> x, SharpMind.Core.Memory.Workspace? workspace = null)
+        => FfnKernels.Gated(x, WGated!, WDown!, Acts, Ops, workspace);
 
     public override (Tensor<float> Output, FfnLayerState State) ForwardWithState(Tensor<float> x)
     {

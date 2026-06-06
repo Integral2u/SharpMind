@@ -14,6 +14,7 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
     private readonly Tokenization.Tokenizer _tokenizer;
     private readonly IKVCache[]     _caches;
     private readonly Random       _defaultRng;
+    private readonly SharpMind.Core.Memory.Workspace _workspace;
     /// <summary>Reused decode step (<c>[1]</c>) to avoid allocating a new <see cref="int"/>[] each token.</summary>
     private readonly int[]       _decodeTokenScratch = new int[1];
     /// <summary>Cached scratch buffer for repetition-penalty copy to avoid <see cref="ArrayPool{T}.Rent"/> per token.</summary>
@@ -53,6 +54,7 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
         }
 
         _defaultRng = seed.HasValue ? new Random(seed.Value) : Random.Shared;
+        _workspace = new SharpMind.Core.Memory.Workspace(SharpMind.Core.Memory.Workspace.CalculateRequiredSize(model.Config.HeadDim,model.Config.FfnDim,model.Config.VocabSize,model.Config.NumLayers, model.Config.MaxSeqLen));
     }
 
     // ── Public API ────────────────────────────────────────────────────────
@@ -95,14 +97,16 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
         var rateTracker = new TokenRateTracker(windowSize: 10);
         rateTracker.Start();
 
-        // ── Prefill ───────────────────────────────────────────────────────
-        int posOffset = _caches[0].Length;
-        using var prefillInput = Tensor<int>.From(promptIds, 1, promptIds.Length);
-        //Console.WriteLine($"Prefill tokens: {string.Join(", ", promptIds)}");
-        Tensor<float>? logitsTensor = _model.ForwardLastLogits(prefillInput, _caches, posOffset);
-
+        Tensor<float>? logitsTensor = null;
         try
         {
+            // ── Prefill ───────────────────────────────────────────────────────
+            _workspace.Reset();
+            int posOffset = _caches[0].Length;
+            using var prefillInput = _workspace.Rent<int>(new[] { 1, promptIds.Length });
+            promptIds.CopyTo(prefillInput.Data);
+            logitsTensor = _model.ForwardLastLogits(prefillInput, _caches, posOffset, _workspace);
+
             int vocabSize = logitsTensor.Shape[1];
             int promptLen = promptIds.Length;
 
@@ -158,7 +162,12 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
                 }
 
                 if (genCfg.Stream && fragment.Length > 0)
+                {
+                    // Buffer the fragment to yield outside the try-finally if needed, 
+                    // but for simple Tensors, a try-finally without a catch is OK.
+                    // Wait, actually yield return is allowed in try-finally, just not try-catch.
                     yield return fragment;
+                }
 
                 if (hitStop) break;
 
@@ -175,9 +184,12 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
                 logitsTensor = null;
                 int newPos = posOffset + promptLen + step;
 
+                _workspace.Reset();
                 prevTensor.Dispose();
-                using var stepInput = Tensor<int>.From(_decodeTokenScratch.AsSpan(0, 1), 1, 1);
-                logitsTensor = _model.ForwardLastLogits(stepInput, _caches, newPos);
+                using var stepInput = _workspace.Rent<int>(new[] { 1, 1 });
+                _decodeTokenScratch[0] = nextId;
+                stepInput.Data[0] = nextId;
+                logitsTensor = _model.ForwardLastLogits(stepInput, _caches, newPos, _workspace);
             }
 
             if (!genCfg.Stream)
@@ -188,6 +200,7 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
             logitsTensor?.Dispose();
         }
     }
+    
 
     /// <summary>
     /// Generates a full completion string without streaming.
@@ -269,6 +282,7 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
         if (!disposing) return;
         for (int i = 0; i < _caches.Length; i++)
             _caches[i].Dispose();
+        _workspace.Dispose();
     }
 
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, nameof(StandardGenerator<T>));

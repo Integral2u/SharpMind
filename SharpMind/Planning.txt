@@ -26,17 +26,26 @@ Consideration to Agent Spawn depth will be needed to prevent ifinate spawning, a
 
 
 
+Fused QKV Projection — Combine Wq, Wk, and Wv into a single fused MatMul for better cache locality.
+Fused RoPE 
+→
+→ Attention Kernel — Apply RoPE rotations on-the-fly inside the ScaledDotProduct kernel to reduce memory bandwidth.
+KV Cache & SIMD Tightening — Optimize PagedKVCache access and refine VecDot kernels for deeper loop unrolling and FMA efficiency.
+
 
 ChatSession design (async), tool, input types, status(Thinking/Updating/Executing/Responding/Waiting)
 Chatsession pre-prompt post prompt processors
 Chatsession compact/truncate etc  only prompt important context(selection)
 ChatSession interrupt, Recover rather than start again?
-ChatSession trap tool calls and use IAgentBuilder.CallToolAsync to envoke
-AgentBuilder child builder , inherit allow
+
 
 Removed safetensor loader for now
 End to End Test, Super Dumb Model Training Load and Test Logits valid output.
 Add progress out Func<float> to loading mothods.
+
+The Implementation of IAgentBuilder.GetToolHost is incorrect and not wanted, we cannot trust tools to always be honest or implementations of GetToolHost to be correct.
+I simply want chat session to implement System.IO.Abstractions IFileService, INetworkService to capture any access to filesystem orginating from a CallToolAsync call and the check previous permissions or request permission for access.
+If the PermissionCallback is null the dont worry about the check.  the IFileService, INetworkService could be enabled/disable before and the after call to CallToolAsync to prevent excessive IO blocking
 
 Model Tools,  should add permissions handler, Never,Ask,Always System.IO.Abstractions IFileService, INetworkService
 using System.IO.Abstractions; 
@@ -78,5 +87,51 @@ done D	Generator + cache injection — constructors accept IKVCache[]?, ChatSess
 done E	WGate+WUp fusion — single [hidden, 2*ffnDim] LinearLayer	C (cleaner but not strictly blocked)
 done F	Speculative decoding — enable multi-token draft, KV cache snapshot/restore for rollback, wire up TPS/TTFT	C, D
 G	Fused attention kernel — RoPE → cache → attention in one pass	C, E (both affect attention path)
+
+
+
+
+Why the gap exists
+Memory Allocation Overhead: Our Forward passes use using var ... for intermediate tensors. While this manages memory, the constant allocation and disposal of tensors during the decode loop (which happens every single token) creates significant GC pressure and allocator overhead.
+Lack of Kernel Fusion: We apply RoPE in a separate pass before the attention dot product. llama.cpp often fuses these operations or uses highly optimized combined kernels to reduce memory bandwidth usage.
+Fine-Grained Parallelism: We use Parallel.For over attention heads. For small models (like the 0.5B or 135M versions), the overhead of managing these threads can be larger than the computation itself.
+Non-Contiguous Cache Access: Our PagedKVCache requires copying data into a temporary buffer for every head, every token.
+The Strategy to Close the Gap
+I propose a performance-focused roadmap:
+
+1. Zero-Allocation Forward Path (The "Workspace" Pattern)
+Instead of allocating new tensors for every Forward call, we will implement a Workspace/Scratchpad system.
+
+Plan: Pre-allocate all necessary intermediate buffers (for Norm, Attention, and FFN outputs) during model load.
+Impact: Eliminates GC spikes and allocator overhead during the hot loop.
+2. Fused QKV Projection
+Currently, we perform three separate MatMuls for Q, K, and V.
+
+Plan: Combine Wq, Wk, and Wv into a single Wqkv weight matrix and perform one large MatMul.
+Impact: Better cache utilization and fewer kernel launch overheads.
+3. Fused RoPE 
+→
+→ Attention Kernel
+Avoid the separate Rope.ApplyBatched pass.
+
+Plan: Modify the ScaledDotProduct kernel to apply the RoPE rotation "on-the-fly" as it reads the Key and Query vectors.
+Impact: Dramatically reduces memory bandwidth usage (one of the primary bottlenecks in LLM inference).
+4. SIMD Kernel Tightening
+Review the VecDot kernels to ensure they match ggml's efficiency.
+
+Plan: Implement deeper loop unrolling and ensure we are using the most efficient AVX2/FMA instructions available, avoiding any unnecessary casting or shuffling in the inner loop.
+5. KV Cache Optimization
+Plan: Optimize the PagedKVCache path to use direct pointer access where possible or implement a more efficient block-copy mechanism that avoids per-head allocations.
+
+
+Proposed Plan
+Phase 1: Cleanup and Fixes
+Remove unused field: Delete _workspace from Transformer.cs.
+Fix Thread-Safety: Modify AttentionLayer.Forward to ensure that temporary buffers used in Parallel.For are not rented from the shared Workspace (or use a thread-local approach).
+Phase 2: SpeculativeGenerator Optimization
+Add Workspace: Implement Workspace in SpeculativeGenerator to eliminate runtime allocations during the draft and verification loops.
+Phase 3: Workspace Robustness
+Dynamic Sizing: Replace the hardcoded 100MB with a calculation based on ModelConfig and a configurable MaxPrefillLength to ensure it scales with model size and input length.
+Would you like me to proceed with this plan, or would you prefer to focus on a specific part first?
 
 

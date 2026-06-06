@@ -126,14 +126,15 @@ public abstract class FfnLayer : IDisposable
         SharpMindConfig.ValFfnDense, NS + "." + nameof(FfnKernels.Dense),
         SharpMindConfig.ValFfnGated, NS + "." + nameof(FfnKernels.Gated),
         SharpMindConfig.ValFfnMoE, NS + "." + nameof(FfnKernels.MoE))]
-    public abstract Tensor<float> ApplyFfn(Tensor<float> x);
+    public abstract Tensor<float> ApplyFfn(Tensor<float> x, SharpMind.Core.Memory.Workspace? workspace = null);
+
 
     // ── Forward ───────────────────────────────────────────────────────
 
-    public Tensor<float> Forward(Tensor<float> x)
+    public Tensor<float> Forward(Tensor<float> x, SharpMind.Core.Memory.Workspace? workspace = null)
     {
         ThrowIfDisposed();
-        return ApplyFfn(x);
+        return ApplyFfn(x, workspace);
     }
 
     // ── Forward + State (for training) ─────────────────────────────────

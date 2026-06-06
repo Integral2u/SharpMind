@@ -107,50 +107,27 @@ public sealed class DecoderArch : IArchitecture
     /// <paramref name="positionOffset"/> supports KV-cache decode:
     /// set to the current cache length to correctly encode positions.
     /// </summary>
-    public Tensor<float> Forward(Tensor<float> hiddenStates, int positionOffset = 0)
+    public Tensor<float> Forward(Tensor<float> hiddenStates, int positionOffset = 0, SharpMind.Core.Memory.Workspace? workspace = null)
     {
-        return Forward(hiddenStates, [], positionOffset);
+        return Forward(hiddenStates, [], positionOffset, workspace);
     }
 
-    public Tensor<float> Forward(Tensor<float> hiddenStates, IKVCache[] caches, int positionOffset = 0)
+    public Tensor<float> Forward(Tensor<float> hiddenStates, IKVCache[] caches, int positionOffset = 0, SharpMind.Core.Memory.Workspace? workspace = null)
     {
         ThrowIfDisposed();
         
         var current = hiddenStates;
-/*
-#if DEBUG
-        {
-            double norm = 0;
-            var d = current.Data;
-            for (int j = 0; j < current.ElementCount; j++)
-                norm += d[j] * (double)d[j];
-            norm = System.Math.Sqrt(norm);
-            System.Console.Error.WriteLine($"  DEBUG Embedding norm: {norm:F4}");
-        }
-#endif
-*/
-
+        
         for (int i = 0; i < _blocks.Length; i++)
         {
-            var next = _blocks[i].Forward(current, caches?[i], positionOffset, causal: true);
+            var next = _blocks[i].Forward(current, caches?[i], positionOffset, causal: true, workspace: workspace);
             
             if (i > 0 && !ReferenceEquals(current, hiddenStates))
                 current.Dispose();
             
             current = next;
-/*
-#if DEBUG
-            double norm = 0;
-            int nElem = current.ElementCount;
-            var d = current.Data;
-            for (int j = 0; j < nElem; j++)
-                norm += d[j] * (double)d[j];
-            norm = System.Math.Sqrt(norm);
-            System.Console.Error.WriteLine($"  DEBUG Layer {i} hidden norm: {norm:F4}");
-#endif
-            */
         }
-
+        
         return current;
     }
 

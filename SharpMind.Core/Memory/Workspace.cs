@@ -1,5 +1,4 @@
-using System;
-using System.Runtime.InteropServices;
+using System.Numerics;
 using SharpMind.Core.Tensors;
 
 namespace SharpMind.Core.Memory;
@@ -25,20 +24,23 @@ public sealed class Workspace : IDisposable
     /// Returns a Tensor that views a slice of the workspace.
     /// Note: This Tensor does NOT own the memory and should NOT be disposed independently.
     /// </summary>
-    public unsafe Tensor<float> Rent(int[] shape)
+    public unsafe Tensor<T> Rent<T>(ReadOnlySpan<int> shape) where T : unmanaged, INumber<T>
     {
         long size = 1;
         foreach (var d in shape) size *= d;
-        long bytes = size * sizeof(float);
+        long bytes = size * sizeof(T);
+
+        // Align offset to 32 bytes (AVX2 requirement)
+        _offset = (_offset + 31) & ~31;
 
         if (_offset + bytes > _capacity)
             throw new OutOfMemoryException($"Workspace capacity exceeded. Requested {bytes} bytes, but only {_capacity - _offset} remain.");
 
-        float* ptr = (float*)_buffer.Ptr + (_offset / sizeof(float));
+        T* ptr = (T*)((byte*)_buffer.Ptr + _offset);
         _offset += bytes;
 
         // We use a special constructor for Tensor that takes an existing pointer and does not own the memory.
-        return new Tensor<float>(ptr, new TensorShape(shape), ownsMemory: false);
+        return new Tensor<T>(ptr, new TensorShape(shape), ownsMemory: false);
     }
 
     /// <summary>
@@ -56,5 +58,26 @@ public sealed class Workspace : IDisposable
     public void Dispose()
     {
         _buffer.Dispose();
+    }
+
+    /// <summary>
+    /// Estimates the required workspace size based on model configuration and maximum prefill length.
+    /// </summary>
+    public static long CalculateRequiredSize(long hiddenDim,long ffnDim, long vocabSize,int numLayers, int maxSeqLen)
+    {
+        long bytesPerFloat = 4;
+        long hidden = hiddenDim;
+        long ffn = ffnDim;
+        long vocab = vocabSize;
+
+        // Per-token allocations across the whole model:
+        // Embedding + (NumLayers * (Attention(6*hidden) + FFN(2*ffn))) + Norm
+        long perToken = (hidden + numLayers * (6 * hidden + 2 * ffn) + hidden) * bytesPerFloat;
+
+        long prefillMemory = perToken * maxSeqLen;
+        long logitsMemory = vocab * bytesPerFloat;
+
+        // Minimum 100MB to cover various overheads and small batch sizes.
+        return Math.Max(100 * 1024 * 1024, prefillMemory + logitsMemory);
     }
 }
