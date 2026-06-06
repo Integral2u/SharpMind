@@ -23,7 +23,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     public ChatSession(
         Transformer model,
         Tokenizer tokenizer,
-        GgufMeta? meta = null,
+        ModelMetaData? meta = null,
         IAgentBuilder? agentBuilder = null,
         IKVCache[]? caches = null,
         int? seed = null)

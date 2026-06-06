@@ -3,7 +3,7 @@ using SharpMind.Model.Format;
 namespace SharpMind.Inference.Chat.PromptFormatters;
 
 /// <summary>
-/// Creates an <see cref="IChatPromptFormatter"/> from a <see cref="GgufMeta"/>.
+/// Creates an <see cref="IChatPromptFormatter"/> from a <see cref="ModelMetaData"/>.
 ///
 /// When a <c>tokenizer.chat_template</c> key is present the template is executed
 /// by <see cref="JinjaTemplateFormatter"/>, which implements the Jinja2 subset
@@ -19,7 +19,7 @@ public static class ChatPromptFormatterFactory
     /// Reads <c>tokenizer.chat_template</c> directly from the KV pairs; no
     /// heuristic string matching is required.
     /// </summary>
-    public static IChatPromptFormatter Create(GgufMeta? meta)
+    public static IChatPromptFormatter Create(ModelMetaData? meta)
     {
         string? tmpl = meta?.GetChatTemplate();
 

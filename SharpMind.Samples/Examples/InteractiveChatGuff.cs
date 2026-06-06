@@ -23,7 +23,7 @@ namespace SharpMind.Samples.Examples
                 return;
             }
             Console.Out.WriteLine("Loading model detail...");
-            GgufLoader.Load(ggufPath, null, out GgufMeta meta, out ModelConfig modelConfig, out Tokenizer? tokenizer);            
+            GgufLoader.Load(ggufPath, null, out ModelMetaData meta, out ModelConfig modelConfig, out Tokenizer? tokenizer);            
             if (tokenizer == null)
             {
                 Console.Out.WriteLine($"Tokenizer dat not found");

@@ -121,21 +121,21 @@ public static partial class GgufLoader
 
     // ?? KvPair array helpers ??????????????????????????????????????????????
 
-    public static string[]? GetStringArray(GgufMeta meta, string key)
+    public static string[]? GetStringArray(ModelMetaData meta, string key)
         => meta.KvPairs.FirstOrDefault(p => p.Key == key).Value as string[];
 
-    public static float[]? GetFloatArray(GgufMeta meta, string key)
+    public static float[]? GetFloatArray(ModelMetaData meta, string key)
         => meta.KvPairs.FirstOrDefault(p => p.Key == key).Value as float[];
 
-    public static int[]? GetIntArray(GgufMeta meta, string key)
+    public static int[]? GetIntArray(ModelMetaData meta, string key)
         => meta.KvPairs.FirstOrDefault(p => p.Key == key).Value as int[];
 
-    public static GgufMeta LoadMeta(string path)
+    public static ModelMetaData LoadMeta(string path)
     {
         using var stream = File.OpenRead(path);
         using var reader = new BinaryReader(stream);
 
-        var meta = new GgufMeta();
+        var meta = new ModelMetaData();
 
         uint magic = reader.ReadUInt32();
         if (magic != Magic) throw new InvalidDataException("Not GGUF: " + magic.ToString("X8"));
@@ -191,7 +191,7 @@ public static partial class GgufLoader
         return meta;
     }
 
-    public static ModelConfig? LoadConfig(GgufMeta meta)
+    public static ModelConfig? LoadConfig(ModelMetaData meta)
     {
         string arch = meta.GetString("general.architecture");
         if (string.IsNullOrWhiteSpace(arch)) return null;
@@ -258,7 +258,7 @@ public static partial class GgufLoader
     /// model weights, so it can never produce the OOB token-ID crashes that
     /// occur when an external tokenizer.json has the wrong vocab size.
     /// </summary>
-    public static Tokenizer? LoadTokenizerFromMeta(GgufMeta meta)
+    public static Tokenizer? LoadTokenizerFromMeta(ModelMetaData meta)
     {
         var tokens = GetStringArray(meta, "tokenizer.ggml.tokens");
         if (tokens == null || tokens.Length == 0) return null;
@@ -294,7 +294,7 @@ public static partial class GgufLoader
     /// This is fully dynamic — no hardcoded model names or token strings.
     /// </summary>
     private static void InjectMissingTemplateTokens(
-        GgufMeta meta, ref ModelConfig config, Tokenizer tokenizer)
+        ModelMetaData meta, ref ModelConfig config, Tokenizer tokenizer)
     {
         string? template = meta.GetChatTemplate();
         if (string.IsNullOrEmpty(template)) return;
@@ -332,7 +332,7 @@ public static partial class GgufLoader
     public static void Load(
         string ggufPath,
         string? tokenizerPath,
-        out GgufMeta meta,
+        out ModelMetaData meta,
         out ModelConfig config,
         out Tokenizer? tokenizer)
     {
@@ -403,7 +403,7 @@ public static partial class GgufLoader
         return result;
     }
 
-    public static void LoadWeightsToModel(string path, GgufMeta meta, Transformer model, IProgress<float>? progress = null)
+    public static void LoadWeightsToModel(string path, ModelMetaData meta, Transformer model, IProgress<float>? progress = null)
     {
         using var mmf = MemoryMappedFile.CreateFromFile(path, FileMode.Open, null, 0, MemoryMappedFileAccess.Read);
         using var stream = mmf.CreateViewStream(0, 0, MemoryMappedFileAccess.Read);

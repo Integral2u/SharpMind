@@ -2,7 +2,7 @@ using static SharpMind.Model.Format.GgufLoader;
 
 namespace SharpMind.Model.Format;
 
-public sealed class GgufMeta
+public sealed class ModelMetaData
 {
     public uint Version { get; set; }
     public long TensorCount { get; set; }

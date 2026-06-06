@@ -104,7 +104,7 @@ namespace SandBox
             Console.WriteLine();
         }
 
-        private static void VerifyFormatter(GgufMeta meta, Tokenizer tok)
+        private static void VerifyFormatter(ModelMetaData meta, Tokenizer tok)
         {
             var formatter = ChatPromptFormatterFactory.Create(meta.GetChatTemplate());
             bool addBos = meta.GetLong("tokenizer.ggml.add_bos_token", 1) != 0;
@@ -367,7 +367,7 @@ namespace SandBox
             string modelPath = Path.Combine(Assets, "DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M.gguf");
             Console.WriteLine("═══ Trace Forward Pass NaN Cascade ═══");
 
-            GgufLoader.Load(modelPath, null, out GgufMeta meta, out ModelConfig modelConfig, out Tokenizer? tokenizer);
+            GgufLoader.Load(modelPath, null, out ModelMetaData meta, out ModelConfig modelConfig, out Tokenizer? tokenizer);
             if (tokenizer == null) { Console.WriteLine("No tokenizer"); return; }
 
             Console.WriteLine($"Architecture: {meta.GetString("general.architecture")}");
@@ -586,7 +586,7 @@ namespace SandBox
         {
             Console.WriteLine($"═══ Diagnostics: {Path.GetFileName(modelPath)} ═══");
 
-            GgufLoader.Load(modelPath, null, out GgufMeta meta, out ModelConfig modelConfig, out Tokenizer? tokenizer);
+            GgufLoader.Load(modelPath, null, out ModelMetaData meta, out ModelConfig modelConfig, out Tokenizer? tokenizer);
             if (tokenizer == null) { Console.WriteLine("No tokenizer"); return; }
 
             string arch = meta.GetString("general.architecture") ?? "?";
@@ -750,7 +750,7 @@ namespace SandBox
             return (maxAbs, meanAbs, nanCnt, allZero);
         }
 
-        private static (GgufMeta, Tokenizer) LoadMetaAndTokenizer(string ggufPath)
+        private static (ModelMetaData, Tokenizer) LoadMetaAndTokenizer(string ggufPath)
         {
             var meta = GgufLoader.LoadMeta(ggufPath);
             var tok = GgufLoader.LoadTokenizerFromMeta(meta)
@@ -771,7 +771,7 @@ namespace SandBox
         {
             try
             {
-                GgufLoader.Load(modelPath, null, out GgufMeta meta, out ModelConfig modelConfig, out Tokenizer? tokenizer);
+                GgufLoader.Load(modelPath, null, out ModelMetaData meta, out ModelConfig modelConfig, out Tokenizer? tokenizer);
                 if (tokenizer == null) { Console.WriteLine("No tokenizer from GGUF"); return null; }
 
                 var sharpConfig = DeriveSharpMindConfig(modelConfig, HardwareTier.Scalar);

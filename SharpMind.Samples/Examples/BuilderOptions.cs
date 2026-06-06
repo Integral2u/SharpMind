@@ -26,7 +26,7 @@ namespace SharpMind.Samples.Examples
                 return;
             }
 
-            GgufLoader.Load(ggufPath, null, out GgufMeta meta, out ModelConfig modelConfig, out Tokenizer? tokenizer);
+            GgufLoader.Load(ggufPath, null, out ModelMetaData meta, out ModelConfig modelConfig, out Tokenizer? tokenizer);
 
             if (tokenizer == null)
             {

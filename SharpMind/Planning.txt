@@ -14,8 +14,9 @@ Core: tensors, matrix math, memory, activations
 
 Todo
 MPT multi token prediction
-Chatsession pre-prompt post prompt processors
 
+ChatSession design (async), tool, input types, status(Thinking/Updating/Executing/Responding/Waiting)
+Chatsession pre-prompt post prompt processors
 Chatsession compact/truncate etc  only prompt important context(selection)
 ChatSession interrupt, Recover rather than start again?
 ChatSession trap tool calls and use IAgentBuilder.CallToolAsync to envoke
@@ -35,34 +36,12 @@ Before release check mutilple models with interactive chat
 AirLLM stream in model layers sound interesting
 Model/Tokenizer load could be async with progress
 build small native model for testing
-system and agent.md refinement.  caw we say somthing like adaptive if the user is asking question be more helpful if asking for action be concise
-//Needs to be fast, text llm only, any multi modal type interations to be impemnted thought tools.
-//Tools actaul class methods with atrribute, desc. the schema is resolvable by method info
-//while using GGUF for no this is only testing eventual end production should use .SM(uncompressed) or .SMP(sharp mind package(compressed variant)) qantization should be part of this to define how model data is stored.
-//End result is we should be able to have a builder class for model building and inference to make it simple easy create an instance and launch using a ChatSession
-//Part of this must include using option for methods and means to process(JigSawDotNet) be it default config, custom or detection for optimal operation performance or precision including exteral JigSawPeices(See SharpMind.GPU)
-//Let me reiterate this has to be as fast as possible
-//Model loading need an early fail if the model file is not found
-
-Ooops
-Follow-ups
-KVCache used to take ModelConfig shoudl we check config usage/builder
-Use of JsonObject, preffer stronly typed class where possible.
-Config files hould be human readable
-
-Should we work on 
-
-ChatSession design (async), tool, input types, status(Thinking/Updating/Executing/Responding/Waiting)
-Skills.MD
-
-
 
 
 Would like to introduce 
 
 LLM lobotomy
 Take a model and strip it of all but necessity for becoming an expert wich could be re-merge for MOE type LLM  
-
 
 LLM weight merging
 Weighted Averaging/Linear Merge: Takes a weighted average of the parameters from multiple models

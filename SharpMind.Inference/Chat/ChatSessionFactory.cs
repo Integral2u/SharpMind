@@ -11,7 +11,7 @@ namespace SharpMind.Inference.Chat
         public static IChatSession CreateChatSession(
             Type generatorBuilderDef,  // typeof(StandardGeneratorBuilder<>)
             Type cacheBuilder,         // typeof(KVCacherBuilder)
-            Transformer model, Tokenizer tokenizer, GgufMeta? meta = null, IAgentBuilder? agentBuilder = null, int? seed = null)
+            Transformer model, Tokenizer tokenizer, ModelMetaData? meta = null, IAgentBuilder? agentBuilder = null, int? seed = null)
         {
             var closedGen = generatorBuilderDef.MakeGenericType(cacheBuilder);
             var sessionType = typeof(ChatSession<,>).MakeGenericType(closedGen, cacheBuilder);
@@ -19,7 +19,7 @@ namespace SharpMind.Inference.Chat
         }
         // Compile-time — for known type combos
         public static ChatSession<T, K> CreateChatSession<T, K>(
-            Transformer model, Tokenizer tokenizer, GgufMeta? meta = null, IAgentBuilder? agentBuilder = null, int? seed = null)
+            Transformer model, Tokenizer tokenizer, ModelMetaData? meta = null, IAgentBuilder? agentBuilder = null, int? seed = null)
             where K : IKVCacheBuilder, new()
             where T : IGeneratorBuilder<K>, new()
             => new(model, tokenizer, meta, agentBuilder,null,seed);            

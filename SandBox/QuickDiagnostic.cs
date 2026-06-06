@@ -42,7 +42,7 @@ public static class QuickDiagnostic
 
             Console.WriteLine($"\n═══ {modelName} ═══");
 
-            GgufLoader.Load(path, null, out GgufMeta meta, out ModelConfig mc, out Tokenizer? tokenizer);
+            GgufLoader.Load(path, null, out ModelMetaData meta, out ModelConfig mc, out Tokenizer? tokenizer);
             if (tokenizer == null) { Console.WriteLine("No tokenizer"); continue; }
 
             var hw = DetectBestHardware();
