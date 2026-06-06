@@ -1,19 +1,20 @@
+using SharpMind.Inference.Agent;
 using SharpMind.Inference.Chat.PromptFormatters;
 using SharpMind.Model;
 using SharpMind.Model.Format;
 using SharpMind.Tokenization;
-using System.ComponentModel.DataAnnotations;
 using System.Runtime.CompilerServices;
 
 namespace SharpMind.Inference.Chat;
 
-public sealed class ChatSession<T,K> : IChatSession where K : IKVCacheBuilder, new() where T : IGeneratorBuilder<K>, new()
+public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, new() where T : IGeneratorBuilder<K>, new()
 {
     private readonly Tokenizer _tokenizer;
     private readonly IGenerator<K> _generator;
     private readonly Transformer _model;
     private readonly List<ChatMessage> _history = [];
     private readonly IChatPromptFormatter? _formatter;
+    private readonly IAgentBuilder? _agentBuilder;
     private readonly bool _addBos;
     private readonly bool _addEos;
     private bool _disposed;
@@ -23,6 +24,7 @@ public sealed class ChatSession<T,K> : IChatSession where K : IKVCacheBuilder, n
         Transformer model,
         Tokenizer tokenizer,
         GgufMeta? meta = null,
+        IAgentBuilder? agentBuilder = null,
         IKVCache[]? caches = null,
         int? seed = null)
     {
@@ -31,16 +33,19 @@ public sealed class ChatSession<T,K> : IChatSession where K : IKVCacheBuilder, n
         _model = model;
         _tokenizer = tokenizer;
         _formatter = ChatPromptFormatterFactory.Create(meta);
+        _agentBuilder = agentBuilder;
         _addBos = meta?.GetLong("tokenizer.ggml.add_bos_token", 1) != 0;
         _addEos = meta?.GetLong("tokenizer.ggml.add_eos_token", 1) != 0;
         _generator = new T().CreateGenerator(model, tokenizer, _addBos, _addEos, caches, seed);
         ArgumentNullException.ThrowIfNull(_generator);
+
+        if (_agentBuilder != null) AddMessage(ChatRole.System, _agentBuilder.BuildAgentPrompt());
     }
 
     public IGenerator<K> Generator => _generator;
     public Tokenizer Tokenizer => _tokenizer;
     public Transformer Model => _model;
-    public IReadOnlyList<ChatMessage> History => _history;
+    public IReadOnlyList<ChatMessage> History => _history.Where(p => p.Role != ChatRole.System).ToList();
 
     public int MaxTokens { get; set; } = 2048;
     public float Temperature { get; set; } = 0.0f;
@@ -72,6 +77,7 @@ public sealed class ChatSession<T,K> : IChatSession where K : IKVCacheBuilder, n
     public void ClearHistory()
     {
         _history.Clear();
+        if (_agentBuilder != null) AddMessage(ChatRole.System, _agentBuilder.BuildAgentPrompt());
         _cachedPromptTokens = null;
         _generator.ResetCache();
     }
@@ -115,7 +121,7 @@ public sealed class ChatSession<T,K> : IChatSession where K : IKVCacheBuilder, n
     }
 
     private void ThrowIfDisposed()
-        => ObjectDisposedException.ThrowIf(_disposed, typeof(ChatSession<T,K>).Name);
+        => ObjectDisposedException.ThrowIf(_disposed, typeof(ChatSession<T, K>).Name);
 
     private async IAsyncEnumerable<ChatStreamEntry> GetResponseStreamAsync(
     string userInput,

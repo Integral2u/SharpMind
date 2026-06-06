@@ -58,8 +58,6 @@ namespace SharpMind.Samples.Examples
                     await Console.Out.FlushAsync();
                     sw.Stop();
                     
-                    string systemPrompt = "";
-
                     await using var session = ChatSessionFactory.CreateChatSession(generatorDef, cacheBuilder, model, tokenizer, meta);                   
                     session.MaxTokens = 256;
                     session.Temperature = 0.0f;
@@ -89,7 +87,6 @@ namespace SharpMind.Samples.Examples
                         return new ChatMessage { Content = "exit", Role = ChatRole.User };
                     }
 
-                    if (!string.IsNullOrEmpty(systemPrompt)) session.AddMessage(ChatRole.System, systemPrompt);
                     var history = await session.StartChatAsync( Prompt,Response,cancellationTokenSource.Token);
 
                     await Console.Out.WriteLineAsync();

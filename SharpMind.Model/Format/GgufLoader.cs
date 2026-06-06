@@ -491,7 +491,7 @@ public static partial class GgufLoader
             case GgufDtype.Q4_K: blockSize = 256; bytesPerBlock = 144; break;  // d[2]+dmin[2]+scales[12]+qs[128]
             case GgufDtype.Q5_K: blockSize = 256; bytesPerBlock = 176; break;  // d[2]+dmin[2]+scales[12]+qh[32]+qs[128]
             case GgufDtype.Q6_K: blockSize = 256; bytesPerBlock = 210; break;  // ql[128]+qh[64]+scales[16]+d[2]
-            case GgufDtype.Q2_K: blockSize = 256; bytesPerBlock = 84; break;  // d[2]+dmin[2]+scales[16]+qs[64]
+            case GgufDtype.Q2_K: blockSize = 256; bytesPerBlock = 84; break;  // scales[16]+qs[64]+d[2]+dmin[2]
             case GgufDtype.Q8_K: blockSize = 256; bytesPerBlock = 292; break;  // d[4]+qs[256]+bsums[32]
             case GgufDtype.Q8_0: blockSize = 32; bytesPerBlock = 34; break;
             case GgufDtype.Q8_1: blockSize = 32; bytesPerBlock = 36; break;  // d[2]+s[2]+qs[32]
@@ -714,11 +714,8 @@ public static partial class GgufLoader
 
             for (int i = 0; i < valid; i++)
             {
-                int j = i % 16;
-                int xh = i < 16
-                    ? (int)((qh >> (j + 0)) & 1) << 4
-                    : (int)((qh >> (j + 12)) & 1) << 4;
-                int q = ((buf[8 + j / 2] >> (4 * (j % 2))) & 0x0F) | xh;
+                int xh = (int)((qh >> i) & 1) << 4;
+                int q = ((buf[8 + i / 2] >> (4 * (i % 2))) & 0x0F) | xh;
                 data[blockStart + i] = q * d + m;
             }
         }
@@ -774,8 +771,8 @@ public static partial class GgufLoader
         {
             int blockStart = b * QK_K;
             reader.Read(buf);
-            float dSuper = HalfToFloat(Unsafe.ReadUnaligned<ushort>(ref buf[0]));
-            float minSuper = HalfToFloat(Unsafe.ReadUnaligned<ushort>(ref buf[2]));
+            float dSuper = HalfToFloat(Unsafe.ReadUnaligned<ushort>(ref buf[80]));
+            float minSuper = HalfToFloat(Unsafe.ReadUnaligned<ushort>(ref buf[82]));
 
             int qOff = 0;
             for (int n16 = 0; n16 < QK_K; n16 += 128)
@@ -784,18 +781,18 @@ public static partial class GgufLoader
                 for (int j = 0; j < 4; j++)
                 {
                     int isc = (n16 / 128) * 8 + j * 2;
-                    byte sc0 = buf[4 + isc];
-                    float dl = dSuper * (sc0 & 0x0F);
-                    float ml = minSuper * (sc0 >> 4);
+                    byte sc0 = buf[isc];
+                    float s0 = sc0 & 0x0F;
+                    float m0 = sc0 >> 4;
                     int base_ = blockStart + n16 + j * 32;
                     for (int l = 0; l < 16 && base_ + l < n; l++)
-                        data[base_ + l] = dl * ((buf[20 + qOff + l] >> shift) & 3) - ml;
-
-                    byte sc1 = buf[4 + isc + 1];
-                    dl = dSuper * (sc1 & 0x0F);
-                    ml = minSuper * (sc1 >> 4);
+                        data[base_ + l] = (s0 * ((buf[16 + qOff + l] >> shift) & 3) * dSuper) - (m0 * minSuper);
+                    
+                    byte sc1 = buf[isc + 1];
+                    float s1 = sc1 & 0x0F;
+                    float m1 = sc1 >> 4;
                     for (int l = 0; l < 16 && base_ + 16 + l < n; l++)
-                        data[base_ + 16 + l] = dl * ((buf[20 + qOff + l + 16] >> shift) & 3) - ml;
+                        data[base_ + 16 + l] = (s1 * ((buf[16 + qOff + l + 16] >> shift) & 3) * dSuper) - (m1 * minSuper);
 
                     shift += 2;
                 }
@@ -1046,11 +1043,11 @@ public static partial class GgufLoader
 
                 int lim1 = Math.Min(32, n - blockStart - j);
                 for (int l = 0; l < lim1; l++)
-                    data[blockStart + j + l] = d1 * (buf[qIdx + l] & 0x0F) - m1v;
-
+                    data[blockStart + j + l] = (sc0 * (buf[qIdx + l] & 0x0F) * dSuper) - (m0 * minSuper);
+                
                 int lim2 = Math.Min(32, n - blockStart - j - 32);
                 for (int l = 0; l < lim2; l++)
-                    data[blockStart + j + 32 + l] = d2 * (buf[qIdx + l] >> 4) - m2v;
+                    data[blockStart + j + 32 + l] = (sc1 * (buf[qIdx + l] >> 4) * dSuper) - (m1 * minSuper);
 
                 idx += 2;
             }
@@ -1164,14 +1161,14 @@ public static partial class GgufLoader
                     int idx1 = blockStart + j + l;
                     if (idx1 < n)
                     {
-                        int qv = (buf[qOff + l] & 0x0F) + ((buf[16 + l] & u1) != 0 ? 16 : 0);
-                        data[idx1] = d1 * qv - m1v;
+                    int qv = (buf[qOff + l] & 0x0F) + ((buf[16 + l] & u1) != 0 ? 16 : 0);
+                    data[idx1] = (sc0 * qv * d) - (m0 * dmin);
                     }
                     int idx2 = blockStart + j + 32 + l;
                     if (idx2 < n)
                     {
                         int qv = (buf[qOff + l] >> 4) + ((buf[16 + l] & u2) != 0 ? 16 : 0);
-                        data[idx2] = d2 * qv - m2v;
+                        data[idx2] = (sc1 * qv * d) - (m1 * dmin);
                     }
                 }
 
@@ -1235,8 +1232,8 @@ public static partial class GgufLoader
                     //                 gIdx2 covers [(idx+1)*16 .. (idx+1)*16+15]
                     // gIdx1 elements use qs bytes at qOff+[0..15]
                     // gIdx2 elements use qs bytes at qOff+[16..31]
-                    float dl1 = dAll * (scales[idx] - 32);
-                    float dl2 = dAll * (scales[idx + 1] - 32);
+                    float s1 = scales[idx] - 32;
+                    float s2 = scales[idx + 1] - 32;
 
                     int gIdx1 = idx;
                     int gIdx2 = idx + 1;
@@ -1247,7 +1244,7 @@ public static partial class GgufLoader
                         int relPos = gIdx1 * 16 + l;
                         int hmBit = (buf[relPos % 32] >> (relPos / 32)) & 1; // hmask at buf[0]
                         int q2 = (buf[qOff + l] >> shift) & 3;
-                        data[blockStart + gIdx1 * 16 + l] = dl1 * (q2 - (hmBit != 0 ? 0 : 4));
+                        data[blockStart + gIdx1 * 16 + l] = (s1 * (q2 - (hmBit != 0 ? 0 : 4))) * dAll;
                     }
 
                     int lim2 = Math.Min(16, valid - gIdx2 * 16);
@@ -1256,7 +1253,7 @@ public static partial class GgufLoader
                         int relPos = gIdx2 * 16 + l;
                         int hmBit = (buf[relPos % 32] >> (relPos / 32)) & 1;
                         int q2 = (buf[qOff + 16 + l] >> shift) & 3;
-                        data[blockStart + gIdx2 * 16 + l] = dl2 * (q2 - (hmBit != 0 ? 0 : 4));
+                        data[blockStart + gIdx2 * 16 + l] = (s2 * (q2 - (hmBit != 0 ? 0 : 4))) * dAll;
                     }
 
                     idx += 2;

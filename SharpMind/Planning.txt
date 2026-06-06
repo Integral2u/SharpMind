@@ -14,23 +14,16 @@ Core: tensors, matrix math, memory, activations
 
 Todo
 MPT multi token prediction
+Chatsession pre-prompt post prompt processors
+
 Chatsession compact/truncate etc  only prompt important context(selection)
-Chat session interrupt, Recover rather than start again?
-FusedRMSNormLinear and FusedKernels were no longer used.  Revisit.
+ChatSession interrupt, Recover rather than start again?
+ChatSession trap tool calls and use IAgentBuilder.CallToolAsync to envoke
+AgentBuilder child builder , inherit allow
+
 Removed safetensor loader for now
-
-
-
 End to End Test, Super Dumb Model Training Load and Test Logits valid output.
 Add progress out Func<float> to loading mothods.
-
-
-ChatSession should possibly have a contrcutor that takes user name and default agent name (string userName = "User", string agentName = "Delta")
-this can be used is responses and chat history may require modifying prompting
-ChatSession history  Agent Name(could be multiple with different inference options), User Name 
-ChatStatus should be updated during GetResponseStreamAsync Thinking
-
-review .Encode(prompt, addBos: false, addEos: false)
 
 Model Tools,  should add permissions handler, Never,Ask,Always System.IO.Abstractions IFileService, INetworkService
 using System.IO.Abstractions; 

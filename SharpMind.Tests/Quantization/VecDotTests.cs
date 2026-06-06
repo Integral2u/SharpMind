@@ -12,6 +12,12 @@ public class VecDotTests
         => QuantizationFactory.CreateAllAvailable().Select(q => new object[] { q });
 
     [Fact]
+    public void RunConsistencyDiagnostic()
+    {
+        QuantizationDiagnostic.RunDiagnostics();
+    }
+
+    [Fact]
     public unsafe void VecDotQ3K_MultiBlockAgrees()
     {
         const int blockBytes = 110, qk = 256, nBlocks = 4;

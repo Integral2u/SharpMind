@@ -508,20 +508,20 @@ public static partial class QuantizationKernels
                 for (int j = 0; j < 4 && n16 + j * 32 < blockEnd; j++)
                 {
                     int isc = (n16 / 128) * 8 + j * 2;
-                    float dl = dSuper * (scales[isc] & 0x0F);
-                    float ml = minSuper * (scales[isc] >> 4);
+                    float s0 = scales[isc] & 0x0F;
+                    float m0 = scales[isc] >> 4;
                     for (int l = 0; l < 16 && b * QK_K + n16 + j * 32 + l < b * QK_K + blockEnd; l++)
                     {
                         int v = (qs[qOff + l] >> shift) & 3;
-                        sum += input[b * QK_K + n16 + j * 32 + l] * (dl * v - ml);
+                        sum += input[b * QK_K + n16 + j * 32 + l] * (s0 * v * dSuper - m0 * minSuper);
                     }
 
-                    dl = dSuper * (scales[isc + 1] & 0x0F);
-                    ml = minSuper * (scales[isc + 1] >> 4);
+                    float s1 = scales[isc + 1] & 0x0F;
+                    float m1 = scales[isc + 1] >> 4;
                     for (int l = 0; l < 16 && b * QK_K + n16 + j * 32 + 16 + l < b * QK_K + blockEnd; l++)
                     {
                         int v = (qs[qOff + l + 16] >> shift) & 3;
-                        sum += input[b * QK_K + n16 + j * 32 + 16 + l] * (dl * v - ml);
+                        sum += input[b * QK_K + n16 + j * 32 + 16 + l] * (s1 * v * dSuper - m1 * minSuper);
                     }
                     shift += 2;
                 }
@@ -554,10 +554,10 @@ public static partial class QuantizationKernels
                 for (int j = 0; j < 4 && n16 + j * 32 < blockEnd; j++)
                 {
                     int isc = (n16 / 128) * 8 + j * 2;
-                    float dl = dSuper * (scales[isc] & 0x0F);
-                    float ml = minSuper * (scales[isc] >> 4);
-                    var vdl = Vector256.Create(dl);
-                    var vml = Vector256.Create(ml);
+                    float s0 = scales[isc] & 0x0F;
+                    float m0 = scales[isc] >> 4;
+                    var vs0 = Vector256.Create(s0);
+                    var vm0 = Vector256.Create(m0);
 
                     int subRem = Math.Min(16, remaining128 - j * 32);
                     if (subRem >= 8)
@@ -576,16 +576,15 @@ public static partial class QuantizationKernels
                             float v7 = (qs[qOff + l + 7] >> shift) & 3;
                             var vv = Vector256.Create(v0, v1, v2, v3, v4, v5, v6, v7);
                             var vi = Vector256.LoadUnsafe(ref pIn[n16 + j * 32 + l]);
-                            var scaled = Avx.Multiply(vv, vdl);
-                            var biased = Avx.Subtract(scaled, vml);
-                            vacc = Avx.Add(vacc, Avx.Multiply(vi, biased));
+                            var res = Avx.Multiply(vi, Avx.Subtract(Avx.Multiply(vv, vs0), vm0));
+                            vacc = Avx.Add(vacc, res);
                         }
-                        sum += MathHelpers.HSum256_Avx(vacc);
+                        sum += MathHelpers.HSum256_Avx(vacc) * dSuper;
                         for (; l < subRem; l++)
                         {
                             int pos = b * QK_K + n16 + j * 32 + l;
                             int v = (qs[qOff + l] >> shift) & 3;
-                            sum += input[pos] * (dl * v - ml);
+                            sum += input[pos] * (s0 * v - m0) * dSuper;
                         }
                     }
                     else
@@ -594,14 +593,14 @@ public static partial class QuantizationKernels
                         {
                             int pos = b * QK_K + n16 + j * 32 + l;
                             int v = (qs[qOff + l] >> shift) & 3;
-                            sum += input[pos] * (dl * v - ml);
+                            sum += input[pos] * (s0 * v - m0) * dSuper;
                         }
                     }
 
-                    dl = dSuper * (scales[isc + 1] & 0x0F);
-                    ml = minSuper * (scales[isc + 1] >> 4);
-                    vdl = Vector256.Create(dl);
-                    vml = Vector256.Create(ml);
+                    float s1 = scales[isc + 1] & 0x0F;
+                    float m1 = scales[isc + 1] >> 4;
+                    var vs1 = Vector256.Create(s1);
+                    var vm1 = Vector256.Create(m1);
 
                     int subRem2 = Math.Min(16, remaining128 - j * 32 - 16);
                     if (subRem2 > 0 && subRem2 >= 8)
@@ -620,16 +619,15 @@ public static partial class QuantizationKernels
                             float v7 = (qs[qOff + l + 23] >> shift) & 3;
                             var vv = Vector256.Create(v0, v1, v2, v3, v4, v5, v6, v7);
                             var vi = Vector256.LoadUnsafe(ref pIn[n16 + j * 32 + 16 + l]);
-                            var scaled = Avx.Multiply(vv, vdl);
-                            var biased = Avx.Subtract(scaled, vml);
-                            vacc = Avx.Add(vacc, Avx.Multiply(vi, biased));
+                            var res = Avx.Multiply(vi, Avx.Subtract(Avx.Multiply(vv, vs1), vm1));
+                            vacc = Avx.Add(vacc, res);
                         }
-                        sum += MathHelpers.HSum256_Avx(vacc);
+                        sum += MathHelpers.HSum256_Avx(vacc) * dSuper;
                         for (; l < subRem2; l++)
                         {
                             int pos = b * QK_K + n16 + j * 32 + 16 + l;
                             int v = (qs[qOff + l + 16] >> shift) & 3;
-                            sum += input[pos] * (dl * v - ml);
+                            sum += input[pos] * (s1 * v - m1) * dSuper;
                         }
                     }
                     else
@@ -638,7 +636,7 @@ public static partial class QuantizationKernels
                         {
                             int pos = b * QK_K + n16 + j * 32 + 16 + l;
                             int v = (qs[qOff + l + 16] >> shift) & 3;
-                            sum += input[pos] * (dl * v - ml);
+                            sum += input[pos] * (s1 * v - m1) * dSuper;
                         }
                     }
                     shift += 2;
@@ -672,10 +670,10 @@ public static partial class QuantizationKernels
                 for (int j = 0; j < 4 && n16 + j * 32 < blockEnd; j++)
                 {
                     int isc = (n16 / 128) * 8 + j * 2;
-                    float dl = dSuper * (scales[isc] & 0x0F);
-                    float ml = minSuper * (scales[isc] >> 4);
-                    var vdl = Vector256.Create(dl);
-                    var vml = Vector256.Create(ml);
+                    float s0 = scales[isc] & 0x0F;
+                    float m0 = scales[isc] >> 4;
+                    var vs0 = Vector256.Create(s0);
+                    var vm0 = Vector256.Create(m0);
 
                     int subRem = Math.Min(16, remaining128 - j * 32);
                     if (subRem >= 8)
@@ -694,15 +692,15 @@ public static partial class QuantizationKernels
                             float v7 = (qs[qOff + l + 7] >> shift) & 3;
                             var vv = Vector256.Create(v0, v1, v2, v3, v4, v5, v6, v7);
                             var vi = Vector256.LoadUnsafe(ref pIn[n16 + j * 32 + l]);
-                            vacc = Avx.Add(vacc, Avx.Subtract(Avx.Multiply(vi, Avx.Multiply(vv, vdl)),
-                                Avx.Multiply(vi, vml)));
+                            var res = Avx.Multiply(vi, Avx.Subtract(Avx.Multiply(vv, vs0), vm0));
+                            vacc = Avx.Add(vacc, res);
                         }
-                        sum += MathHelpers.HSum256_Avx(vacc);
+                        sum += MathHelpers.HSum256_Avx(vacc) * dSuper;
                         for (; l < subRem; l++)
                         {
                             int pos = b * QK_K + n16 + j * 32 + l;
                             int v = (qs[qOff + l] >> shift) & 3;
-                            sum += input[pos] * (dl * v - ml);
+                            sum += input[pos] * (s0 * v - m0) * dSuper;
                         }
                     }
                     else
@@ -711,14 +709,14 @@ public static partial class QuantizationKernels
                         {
                             int pos = b * QK_K + n16 + j * 32 + l;
                             int v = (qs[qOff + l] >> shift) & 3;
-                            sum += input[pos] * (dl * v - ml);
+                            sum += input[pos] * (s0 * v - m0) * dSuper;
                         }
                     }
 
-                    dl = dSuper * (scales[isc + 1] & 0x0F);
-                    ml = minSuper * (scales[isc + 1] >> 4);
-                    vdl = Vector256.Create(dl);
-                    vml = Vector256.Create(ml);
+                    float s1 = scales[isc + 1] & 0x0F;
+                    float m1 = scales[isc + 1] >> 4;
+                    var vs1 = Vector256.Create(s1);
+                    var vm1 = Vector256.Create(m1);
 
                     int subRem2 = Math.Min(16, remaining128 - j * 32 - 16);
                     if (subRem2 > 0 && subRem2 >= 8)
@@ -737,16 +735,15 @@ public static partial class QuantizationKernels
                             float v7 = (qs[qOff + l + 23] >> shift) & 3;
                             var vv = Vector256.Create(v0, v1, v2, v3, v4, v5, v6, v7);
                             var vi = Vector256.LoadUnsafe(ref pIn[n16 + j * 32 + 16 + l]);
-                            var biased = Avx.Subtract(Avx.Multiply(vi, Avx.Multiply(vv, vdl)),
-                                Avx.Multiply(vi, vml));
-                            vacc = Avx.Add(vacc, biased);
+                            var res = Avx.Multiply(vi, Avx.Subtract(Avx.Multiply(vv, vs1), vm1));
+                            vacc = Avx.Add(vacc, res);
                         }
-                        sum += MathHelpers.HSum256_Avx(vacc);
+                        sum += MathHelpers.HSum256_Avx(vacc) * dSuper;
                         for (; l < subRem2; l++)
                         {
                             int pos = b * QK_K + n16 + j * 32 + 16 + l;
                             int v = (qs[qOff + l + 16] >> shift) & 3;
-                            sum += input[pos] * (dl * v - ml);
+                            sum += input[pos] * (s1 * v - m1) * dSuper;
                         }
                     }
                     else
@@ -755,7 +752,7 @@ public static partial class QuantizationKernels
                         {
                             int pos = b * QK_K + n16 + j * 32 + 16 + l;
                             int v = (qs[qOff + l + 16] >> shift) & 3;
-                            sum += input[pos] * (dl * v - ml);
+                            sum += input[pos] * (s1 * v - m1) * dSuper;
                         }
                     }
                     shift += 2;

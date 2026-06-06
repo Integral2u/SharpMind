@@ -1,1 +1,3 @@
-﻿await SharpMind.Samples.Examples.QwenSmallModels.RunAsync("hello");
+﻿SharpMind.Tests.QuantizationDiagnostic.RunDiagnostics();
+
+await SharpMind.Samples.Examples.QwenSmallModels.RunAsync("hello");

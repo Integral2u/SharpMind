@@ -37,7 +37,7 @@ namespace SharpMind.Samples.Examples
             GC.Collect(); GC.WaitForPendingFinalizers();
             Console.Out.WriteLine("Loading weights...");
             GgufLoader.LoadWeightsToModel(ggufPath, meta, model);
-            string systemPrompt = $"{PromptHelpers.DefaultSystemPrompt}\n\n{PromptHelpers.DefaultAgentPrompt}".Trim();
+
             await using var session = new ChatSession<StandardGeneratorBuilder<KVCacherBuilder>, KVCacherBuilder>(model, tokenizer, meta)
             {
                 MaxTokens = 512,
@@ -45,7 +45,7 @@ namespace SharpMind.Samples.Examples
                 TopK = 40,
                 TopP = 0.9f,
             };
-            if (!string.IsNullOrEmpty(systemPrompt)) session.AddMessage(ChatRole.System, systemPrompt);
+            
             Console.Out.WriteLine("\nChat ready! Say hello.\n");
             var history = await session.StartChatAsync(Prompt, Response, cancellationTokenSource.Token);
 

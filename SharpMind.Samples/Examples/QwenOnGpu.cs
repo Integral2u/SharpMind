@@ -63,14 +63,12 @@ namespace SharpMind.Samples.Examples
 
             sw.Stop();
 
-            string systemPrompt = "";
             await using var session = new ChatSession<StandardGeneratorBuilder<KVCacherBuilder>, KVCacherBuilder>(model, tokenizer, meta)
             {
                 MaxTokens = 256,
                 Temperature = 0.0f,
                 TopK = 1,
             };
-            if (!string.IsNullOrEmpty(systemPrompt)) session.AddMessage(ChatRole.System, systemPrompt);
             var history = await session.StartChatAsync(Prompt, Response, cancellationTokenSource.Token);
 
             async void Response(ChatStreamEntry text)

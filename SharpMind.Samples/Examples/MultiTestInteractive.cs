@@ -64,7 +64,6 @@ namespace SharpMind.Samples.Examples
                 GC.Collect(); GC.WaitForPendingFinalizers();
                 sw.Restart();
                 GgufLoader.LoadWeightsToModel(ggufPath, meta, model);
-                string systemPrompt = "";
 
                 await using var session = new ChatSession<StandardGeneratorBuilder<KVCacherBuilder>,KVCacherBuilder>(model, tokenizer, meta)
                 {
@@ -73,9 +72,6 @@ namespace SharpMind.Samples.Examples
                     TopK = 1,
                     //TopP = 0.8f
                 };
-                //session.AddMessage(new ChatMessage() { Content = "You are a polite, creative but methodical AI assistant.", Role = ChatRole.System });
-                //session.AddMessage(new ChatMessage() { Content = "Your name is Delta", Role = ChatRole.Agent });
-                if (!string.IsNullOrEmpty(systemPrompt)) session.AddMessage(ChatRole.System, systemPrompt);
                 var history = await session.StartChatAsync(Prompt, Response, cancellationTokenSource.Token);
 
                 async void Response(ChatStreamEntry text)

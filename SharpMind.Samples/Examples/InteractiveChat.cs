@@ -39,7 +39,6 @@ namespace SharpMind.Samples.Examples
             GC.Collect(); GC.WaitForPendingFinalizers();
             Console.Out.WriteLine("Loading weights...");
             GgufLoader.LoadWeightsToModel(ggufPath, meta, model);
-            string systemPrompt = "";
 
             await using var session = new ChatSession<StandardGeneratorBuilder<KVCacherBuilder>, KVCacherBuilder>(model, tokenizer, meta)
             {
@@ -50,8 +49,7 @@ namespace SharpMind.Samples.Examples
                 RepetitionPenalty = 1.1f,
                 RepetitionWindow = 64,
             };
-            if (!string.IsNullOrEmpty(systemPrompt)) session.AddMessage(ChatRole.System, systemPrompt);
-
+            
             Console.Out.WriteLine("\nChat ready! Say hello.\n");
             var history = await session.StartChatAsync(Prompt, Response, cancellationTokenSource.Token);
 

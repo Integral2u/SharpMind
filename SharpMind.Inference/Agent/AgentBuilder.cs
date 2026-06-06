@@ -1,19 +1,23 @@
-﻿using JigSawDotNet;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Reflection;
+﻿using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using System.Threading.Tasks;
 
 namespace SharpMind.Inference.Agent
 {
-    //Need to add permissions to IO network or file
-    //define generation schema per model? 
-    //  arch_field = reader.fields.get('general.architecture') from ggufmeta
-    public class AgentBuilder(string agentName = "Delta", SamplingConfig? samplingConfig = null)
+    public interface IAgentBuilder
+    {
+        public string AgentName { get; }
+        public IAgentBuilder WithCustomBehavior(string behavior);
+        public IAgentBuilder WithCustomRule(string rule);
+        public IAgentBuilder WithSkill(string file);
+        public IAgentBuilder WithSkills(string folder, bool recursive = true);
+        public IAgentBuilder WithTools(params object[] toolClasses);
+        public Task<JsonObject> CallToolAsync(object input);
+        public string BuildAgentPrompt();
+    }
+    // TODO: add permissions model for IO / network / file tool categories
+    public class AgentBuilder(string agentName = "Delta", SamplingConfig? samplingConfig = null) : IAgentBuilder
     {
         public enum AgentSections
         {
@@ -25,46 +29,99 @@ namespace SharpMind.Inference.Agent
             Skills
         }
         public string AgentName { get; init; } = agentName;
-        //Can be used to define various traits, creative, concise etc
         public SamplingConfig SamplingConfig { get; init; } = samplingConfig ?? new();
+
+        // Not currently used in prompt building but available for callers that want
+        // to inspect or manipulate sections as keyed lists.
         public Dictionary<AgentSections, List<string>> Sections = [];
 
         private readonly Dictionary<string, (MethodInfo Method, object Instance)> ToolMethods = [];
-
         public readonly JsonArray ToolDefinitions = [];
 
         public readonly List<string> Behaviors = [];
         public readonly List<string> Skills = [];
         public readonly List<string> Rules = [];
-        public AgentBuilder WithCustomBehavior(string behavior)
+
+        // ── Builder helpers ──────────────────────────────────────────────────────
+
+        /// <summary>Adds a free-form behavioral instruction (idempotent).</summary>
+        public IAgentBuilder WithCustomBehavior(string behavior)
         {
-            if (Behaviors.Contains(behavior)) Behaviors.Add(behavior);
-            return this;
-        }
-        public AgentBuilder WithCustomRule(string rule)
-        {
-            if (Rules.Contains(rule)) Rules.Add(rule);
+            // FIX: was "if (Contains)" — only added duplicates, never new entries
+            if (!Behaviors.Contains(behavior))
+                Behaviors.Add(behavior);
             return this;
         }
 
-        public AgentBuilder WithSkill(string file)
+        /// <summary>Adds a rule (idempotent).</summary>
+        public IAgentBuilder WithCustomRule(string rule)
         {
-            //Need to add skill by specific file
+            // FIX: same inverted guard as above
+            if (!Rules.Contains(rule))
+                Rules.Add(rule);
             return this;
         }
-        public AgentBuilder WithSkills(string folder, bool recusive = true)
-        {
-            //Need to check/add skills.md in path(s)
-            return this;
-        }
+
         /// <summary>
-        /// Add tools from objects with defined <see cref="AgentTool(string)"/>
-        /// In theroy this could even be use to spin up a new agent to process a prompt and provide a response to a ChatSession
-        /// Will silently fail if required detail is missing.
+        /// Loads a single skill file (.md / .txt) and appends its content to the Skills section.
+        /// Silently skips if the file does not exist or is empty.
         /// </summary>
-        /// <param name="toolClasses">Classes to get tools from</param>
-        /// <returns></returns>
-        public AgentBuilder WithTools(params object[] toolClasses)
+        public IAgentBuilder WithSkill(string file)
+        {
+            if (string.IsNullOrWhiteSpace(file) || !File.Exists(file))
+                return this;
+
+            var content = File.ReadAllText(file).Trim();
+            if (content.Length == 0)
+                return this;
+
+            // Avoid loading the same physical file twice
+            if (!Skills.Contains(content))
+                Skills.Add(content);
+
+            return this;
+        }
+
+        /// <summary>
+        /// Walks <paramref name="folder"/> for files named <c>skill.md</c> or <c>skills.md</c>
+        /// (case-insensitive) and loads each one. Recurses into sub-directories when
+        /// <paramref name="recursive"/> is <see langword="true"/> (default).
+        /// Silently skips missing or empty folders.
+        /// </summary>
+        public IAgentBuilder WithSkills(string folder, bool recursive = true)
+        {
+            if (string.IsNullOrWhiteSpace(folder) || !Directory.Exists(folder))
+                return this;
+
+            var option = recursive
+                ? SearchOption.AllDirectories
+                : SearchOption.TopDirectoryOnly;
+
+            // Accept both "skill.md" and "skills.md" conventions
+            var skillFiles = Directory
+                .EnumerateFiles(folder, "*.md", option)
+                .Where(f =>
+                {
+                    var name = Path.GetFileNameWithoutExtension(f);
+                    return string.Equals(name, "skill", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(name, "skills", StringComparison.OrdinalIgnoreCase);
+                })
+                .OrderBy(f => f); // deterministic ordering
+
+            foreach (var file in skillFiles)
+                WithSkill(file);
+
+            return this;
+        }
+
+        /// <summary>
+        /// Reflects over <paramref name="toolClasses"/> and registers every public method
+        /// decorated with <see cref="ToolDescAttribute"/> whose parameters are also all
+        /// decorated with <see cref="ToolDescAttribute"/>.
+        /// Will silently skip methods that are void, non-returning Tasks, have un-annotated
+        /// parameters, or whose name collides with an already-registered tool.
+        /// </summary>
+        public IAgentBuilder WithTools(params object[] toolClasses)
         {
             foreach (object toolClass in toolClasses)
             {
@@ -72,22 +129,23 @@ namespace SharpMind.Inference.Agent
                 var t = toolClass.GetType();
                 if (!t.IsClass) continue;
 
-                var tools = t.GetMethods().Where(m => m.GetCustomAttributes(typeof(ToolDescAttribute), true).Length != 0);
-                if (tools == null) continue;
-                foreach(var tool in tools)
+                var tools = t.GetMethods()
+                             .Where(m => m.GetCustomAttributes(typeof(ToolDescAttribute), true).Length != 0);
+
+                foreach (var tool in tools)
                 {
-                    if (tool == null) continue;
+                    if (tool is null) continue;
                     if (tool.ReturnType == typeof(void)) continue;
                     if (tool.ReturnType == typeof(Task)) continue;
-
                     if (ToolMethods.ContainsKey(tool.Name)) continue;
-                    // ── Validate all parameters have [ToolDesc] ──────────────────────────
-                    var missing = tool.GetParameters()
+
+                    // All parameters must carry [ToolDesc]
+                    var missingAnnotations = tool.GetParameters()
                         .Where(p => p.GetCustomAttribute<ToolDescAttribute>() is null)
                         .Select(p => p.Name)
                         .ToList();
 
-                    if (missing.Count > 0) continue;
+                    if (missingAnnotations.Count > 0) continue;
 
                     ToolMethods.Add(tool.Name, (tool, toolClass));
                     ToolDefinitions.Add(BuildToolDef(tool));
@@ -95,6 +153,9 @@ namespace SharpMind.Inference.Agent
             }
             return this;
         }
+
+        // ── Tool definition builders ─────────────────────────────────────────────
+
         private static JsonObject BuildToolDef(MethodInfo method)
         {
             var desc = method.GetCustomAttribute<ToolDescAttribute>()?.Text ?? "";
@@ -105,10 +166,8 @@ namespace SharpMind.Inference.Agent
 
             foreach (var p in method.GetParameters())
             {
-                var schema = BuildParamSchema(p);
-                props[p.Name!] = schema;
+                props[p.Name!] = BuildParamSchema(p);
 
-                // Required = non-nullable AND no default value
                 bool isOptional = p.HasDefaultValue
                                || ctx.Create(p).WriteState == NullabilityState.Nullable;
 
@@ -123,11 +182,11 @@ namespace SharpMind.Inference.Agent
                 {
                     ["type"] = "object",
                     ["properties"] = props,
-                    ["required"] = new JsonArray(
-                        [.. required.Select(r => JsonValue.Create(r))])
+                    ["required"] = new JsonArray([.. required.Select(r => JsonValue.Create(r))])
                 }
             };
         }
+
         private static JsonObject BuildParamSchema(ParameterInfo param)
         {
             var desc = param.GetCustomAttribute<ToolDescAttribute>()?.Text ?? "";
@@ -140,28 +199,35 @@ namespace SharpMind.Inference.Agent
 
             return schema;
         }
+
         private static JsonObject JsonTypeToSchema(Type type)
         {
-            // Unwrap Nullable<T> → T
             type = Nullable.GetUnderlyingType(type) ?? type;
 
-            // Unwrap Task<T> → T
             if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(Task<>))
                 type = type.GetGenericArguments()[0];
 
             if (type == typeof(string)) return Typed("string");
             if (type == typeof(bool)) return Typed("boolean");
-            if (type == typeof(int) || type == typeof(long)
-                                    || type == typeof(short)) return Typed("integer");
-            if (type == typeof(float) || type == typeof(double)
-                                      || type == typeof(decimal)) return Typed("number");
+            if (type == typeof(int) || type == typeof(long) || type == typeof(short)) return Typed("integer");
+            if (type == typeof(float) || type == typeof(double) || type == typeof(decimal)) return Typed("number");
             if (type.IsArray || IsGenericList(type)) return Typed("array");
 
             return Typed("object");
         }
-        private static bool IsGenericList(Type t) => t.IsGenericType && t.GetGenericTypeDefinition() == typeof(List<>);
+
+        private static bool IsGenericList(Type t) =>
+            t.IsGenericType && t.GetGenericTypeDefinition() == typeof(List<>);
+
         private static JsonObject Typed(string type) => new() { ["type"] = type };
-        public async Task<JsonObject> CallAsync(object input)
+
+        // ── Tool invocation ──────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Dispatches a tool call from the model's JSON response.
+        /// Accepts either a raw JSON string or a pre-parsed <see cref="JsonObject"/>.
+        /// </summary>
+        public async Task<JsonObject> CallToolAsync(object input)
         {
             try
             {
@@ -181,7 +247,7 @@ namespace SharpMind.Inference.Agent
                 var args = request["arguments"]?.AsObject() ?? new JsonObject();
                 var invokeArgs = BindArguments(entry.Method, args);
 
-                var raw = entry.Method.Invoke(entry.Instance, invokeArgs) // ← use instance
+                var raw = entry.Method.Invoke(entry.Instance, invokeArgs)
                     ?? throw new InvalidOperationException("Tool returned null.");
 
                 var data = raw switch
@@ -198,6 +264,7 @@ namespace SharpMind.Inference.Agent
             catch (TargetInvocationException ex) { return Error(ex.InnerException?.Message ?? ex.Message); }
             catch (Exception ex) { return Error(ex.Message); }
         }
+
         private static object?[] BindArguments(MethodInfo method, JsonObject args)
         {
             var ctx = new NullabilityInfoContext();
@@ -211,8 +278,10 @@ namespace SharpMind.Inference.Agent
 
                 if (node is null)
                 {
-                    if (p.HasDefaultValue) { result[i] = p.DefaultValue; continue; }
-                    if (ctx.Create(p).WriteState == NullabilityState.Nullable) { result[i] = null; continue; }
+                    if (p.HasDefaultValue)
+                    { result[i] = p.DefaultValue; continue; }
+                    if (ctx.Create(p).WriteState == NullabilityState.Nullable)
+                    { result[i] = null; continue; }
                     throw new ArgumentException($"Required argument '{p.Name}' is missing.");
                 }
 
@@ -221,6 +290,7 @@ namespace SharpMind.Inference.Agent
 
             return result;
         }
+
         private static object? CoerceValue(JsonNode node, Type targetType)
         {
             targetType = Nullable.GetUnderlyingType(targetType) ?? targetType;
@@ -237,6 +307,7 @@ namespace SharpMind.Inference.Agent
                 _ => node.Deserialize(targetType)
             };
         }
+
         private static JsonObject Success(string data) => new() { ["status"] = "success", ["data"] = data };
         private static JsonObject Error(string message) => new() { ["status"] = "error", ["message"] = message };
         private static string TemperaturePersonality(float temperature) => temperature switch
@@ -249,57 +320,101 @@ namespace SharpMind.Inference.Agent
             <= 1.1f => "creative and exploratory",
             _ => "unconventional and abstract"
         };
+
+
+        // ── Prompt building ──────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Builds a plain-text system prompt from the current builder state.
+        /// The result is architecture-agnostic markdown; the caller (e.g. ChatSession
+        /// via <c>IChatPromptFormatter</c>) is responsible for wrapping it in whatever
+        /// special tokens the model requires (ChatML, Llama-3, Mistral, Phi-3, etc.).
+        ///
+        /// Usage from ChatSession:
+        /// <code>
+        ///   session.AddMessage(ChatRole.System, agent.BuildAgentPrompt());
+        /// </code>
+        /// </summary>
         public string BuildAgentPrompt()
         {
-            if (ToolDefinitions.Count != 0)
+            // Collect tool-specific rules separately so we don't mutate Rules on
+            // every call to BuildAgentPrompt() (the original code appended to Rules
+            // directly, causing duplicates on repeated calls).
+            var toolRules = ToolDefinitions.Count == 0
+                ? []
+                : new List<string>
+                {
+                    "- Respond ONLY in valid JSON. No prose. No markdown fences.",
+                    "- Never invent tool names or argument values.",
+                    """- If a required argument is missing, respond with: {"status":"error","message":"Missing required argument: <name>"}""",
+                    "- Call one tool at a time. Wait for the result before proceeding.",
+                    "- You only act using the tools provided."
+                };
+
+            var sb = new StringBuilder();
+
+            // ── Role ─────────────────────────────────────────────────────────────
+            sb.AppendLine("## Role");
+            sb.AppendLine($"You are {AgentName}, a {TemperaturePersonality(SamplingConfig.Temperature)} AI agent. " +
+                          $"When asked for your name, you must respond with \"{AgentName}\".");
+
+            // ── Rules ─────────────────────────────────────────────────────────────
+            var allRules = Rules.Concat(toolRules).ToList();
+            if (allRules.Count > 0)
             {
-                _ = WithCustomRule("- Respond ONLY in valid JSON. No prose. No markdown fences.");
-                _ = WithCustomRule("- Never invent tool names or argument values.");
-                _ = WithCustomRule("""- If a required argument is missing, respond with: {{"status":"error","message":"Missing required argument: <name>"}}""");
-                _ = WithCustomRule("- Call one tool at a time. Wait for the result before proceeding.");
-                _ = WithCustomRule("- You only act using the tools provided.");
+                sb.AppendLine();
+                sb.AppendLine("## Rules");
+                foreach (var rule in allRules)
+                    sb.AppendLine(rule);
             }
-            var stringBuilder = new StringBuilder();
-            stringBuilder.AppendLine("## Role");
-            stringBuilder.AppendLine($"You are {AgentName}, a {TemperaturePersonality(SamplingConfig.Temperature)} AI agent.");
-            foreach (var rule in Rules) stringBuilder.AppendLine(rule);           
-            foreach (var behavior in Behaviors) stringBuilder.AppendLine(behavior);
 
-            // Tool call format
-            if (ToolDefinitions.Count != 0)
+            // ── Behaviors ─────────────────────────────────────────────────────────
+            if (Behaviors.Count > 0)
             {
-                stringBuilder.AppendLine("## Tool Call Format");
-                stringBuilder.AppendLine("""Respond ONLY with this JSON:{ "tool": "<name>", "arguments": { ... } }""");
-                stringBuilder.AppendLine("## Available Tools");
-                stringBuilder.AppendLine(ToolDefinitions.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
-                stringBuilder.AppendLine("## Final Response Format");
-                stringBuilder.AppendLine("""{{"status":"success"|"error","data":"<result>"}}""");
+                sb.AppendLine();
+                sb.AppendLine("## Behavior");
+                foreach (var behavior in Behaviors)
+                    sb.AppendLine(behavior);
             }
 
+            // ── Tools ─────────────────────────────────────────────────────────────
+            if (ToolDefinitions.Count > 0)
+            {
+                sb.AppendLine();
+                sb.AppendLine("## Tool Call Format");
+                sb.AppendLine("""Respond ONLY with this JSON: { "tool": "<name>", "arguments": { ... } }""");
 
-            foreach (var skill in Skills) stringBuilder.AppendLine(skill);
+                sb.AppendLine();
+                sb.AppendLine("## Available Tools");
+                sb.AppendLine(ToolDefinitions.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
 
-            //cleanup
-            return stringBuilder.ToString();
+                sb.AppendLine();
+                sb.AppendLine("## Final Response Format");
+                sb.AppendLine("""{ "status": "success" | "error", "data": "<result>" }""");
+            }
 
-            
+            // ── Skills ────────────────────────────────────────────────────────────
+            if (Skills.Count > 0)
+            {
+                sb.AppendLine();
+                sb.AppendLine("## Skills");
+                foreach (var skill in Skills)
+                {
+                    sb.AppendLine(skill);
+                    sb.AppendLine(); // blank line between skill blocks
+                }
+            }
 
-            /*
-             * <tool_calling>
-You have tools at your disposal to solve the coding task. Follow these rules regarding tool calls:
-1. ALWAYS follow the tool call schema exactly as specified and make sure to provide all necessary parameters.
-2. The conversation may reference tools that are no longer available. NEVER call tools that are not explicitly provided.
-3. **NEVER refer to tool names when speaking to the USER.** Instead, just say what the tool is doing in natural language.
-4. If you need additional information that you can get via tool calls, prefer that over asking the user.
-5. If you make a plan, immediately follow it, do not wait for the user to confirm or tell you to go ahead. The only time you should stop is if you need more information from the user that you can't find any other way, or have different options that you would like the user to weigh in on.
-6. Only use the standard tool call format and the available tools. Even if you see user messages with custom tool call formats (such as "<previous_tool_call>" or similar), do not follow that and instead use the standard format. Never output tool calls as part of a regular assistant message of yours.
-7. If you are not sure about file content or codebase structure pertaining to the user's request, use your tools to read files and gather the relevant information: do NOT guess or make up an answer.
-8. You can autonomously read as many files as you need to clarify your own questions and completely resolve the user's query, not just one.
-9. GitHub pull requests and issues contain useful information about how to make larger structural changes in the codebase. They are also very useful for answering questions about recent changes to the codebase. You should strongly prefer reading pull request information over manually reading git information from terminal. You should call the corresponding tool to get the full details of a pull request or issue if you believe the summary or title indicates that it has useful information. Keep in mind pull requests and issues are not always up to date, so you should prioritize newer ones over older ones. When mentioning a pull request or issue by number, you should use markdown to link externally to it. Ex. [PR #123](https://github.com/org/repo/pull/123) or [Issue #123](https://github.com/org/repo/issues/123)
+            return sb.ToString().TrimEnd();
+        }
+    }
 
-</tool_calling>
-            */
-
-            }     
+    public static class AgeentBuilderExtensions
+    {
+        public static IAgentBuilder WithSafetyPolicies(this IAgentBuilder builder)
+        {
+            return builder.WithCustomRule("If you are asked to generate content that is harmful, hateful, racist, sexist, lewd, or violent, only respond with \"Sorry, I can't assist with that.\"")
+                  .WithCustomRule("Avoid content that violates copyrights.");
+        }
     }
 }
