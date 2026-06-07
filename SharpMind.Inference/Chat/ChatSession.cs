@@ -21,29 +21,46 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     private readonly bool _addEos;
     private bool _disposed;
     private int[]? _cachedPromptTokens;
+    // ── IO interceptors (optional) ───────────────────────────────────────────
+    // Supplied by the host application. When present and PermissionCallback is
+    // set, they are activated only for the duration of each CallToolAsync call
+    // so that ordinary session IO is never gated.
+    private readonly InterceptingFileSystem? _fileSystem;
+    private readonly InterceptingNetworkHandler? _networkHandler;
+
     // ── Permission gate ──────────────────────────────────────────────────────
     /// <summary>
-    /// Optional callback invoked before every tool call that originates from
-    /// <see cref="IAgentBuilder.CallToolAsync"/>. The host application inspects
-    /// <see cref="ToolPermissionContext"/> and returns:
+    /// Optional callback invoked when a tool call attempts file system or network IO.
+    /// Receives a <see cref="ToolPermissionContext"/> describing the actual access
+    /// attempt (path or URL, category, tool name, model arguments) and returns:
     /// <list type="bullet">
-    ///   <item><see cref="ToolPermission.Always"/> — execute immediately.</item>
-    ///   <item><see cref="ToolPermission.Ask"/>   — block until the user confirms
-    ///         (the callback itself is responsible for surfacing UI and resolving
-    ///         to Always or Never before returning).</item>
-    ///   <item><see cref="ToolPermission.Never"/> — deny the call; the model
-    ///         receives an error result and may try another approach.</item>
+    ///   <item><see cref="ToolPermission.Always"/> — permit the access immediately.</item>
+    ///   <item><see cref="ToolPermission.Ask"/>   — block until the user confirms.
+    ///         The callback is responsible for surfacing UI and resolving to
+    ///         <see cref="ToolPermission.Always"/> or <see cref="ToolPermission.Never"/>
+    ///         before returning.</item>
+    ///   <item><see cref="ToolPermission.Never"/> — deny the access; the tool receives
+    ///         an <see cref="UnauthorizedAccessException"/> or
+    ///         <see cref="System.Net.Http.HttpRequestException"/> and the model is given
+    ///         an error result.</item>
     /// </list>
-    /// When <see langword="null"/> all tools are executed without prompting
-    /// (equivalent to returning <see cref="ToolPermission.Always"/> for every call).
+    /// When <see langword="null"/> interceptors are never activated — all tool IO
+    /// proceeds without any gating.
     /// </summary>
     public Func<ToolPermissionContext, Task<ToolPermission>>? PermissionCallback { get; set; }
 
-    /// <summary>
-    /// Maximum number of consecutive tool calls allowed in a single agent turn
-    /// before the loop is broken and the last tool result is returned as-is.
-    /// Prevents runaway agentic loops. Default: 10.
-    /// </summary>
+    /// <param name="fileSystem">
+    /// Optional <see cref="InterceptingFileSystem"/> wrapping your real
+    /// <c>System.IO.Abstractions.FileSystem</c>. When provided and
+    /// <see cref="PermissionCallback"/> is set, every file-system access made by a
+    /// tool call is gated through the callback.
+    /// </param>
+    /// <param name="networkHandler">
+    /// Optional <see cref="InterceptingNetworkHandler"/> wrapping your real
+    /// <see cref="HttpMessageHandler"/>. When provided and
+    /// <see cref="PermissionCallback"/> is set, every outbound HTTP request made by a
+    /// tool call is gated through the callback.
+    /// </param>
     public int MaxToolCallsPerTurn { get; set; } = 10;
     public ChatSession(
         Transformer model,
@@ -51,7 +68,9 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         ModelMetaData? meta = null,
         IAgentBuilder? agentBuilder = null,
         IKVCache[]? caches = null,
-        int? seed = null)
+        int? seed = null,
+        InterceptingFileSystem? fileSystem = null,
+        InterceptingNetworkHandler? networkHandler = null)
     {
         ArgumentNullException.ThrowIfNull(tokenizer);
         ArgumentNullException.ThrowIfNull(model);
@@ -63,7 +82,8 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         _addEos = meta?.GetLong("tokenizer.ggml.add_eos_token", 1) != 0;
         _generator = new T().CreateGenerator(model, tokenizer, _addBos, _addEos, caches, seed);
         ArgumentNullException.ThrowIfNull(_generator);
-
+        _fileSystem = fileSystem;
+        _networkHandler = networkHandler;
         if (_agentBuilder != null) AddMessage(ChatRole.System, _agentBuilder.BuildAgentPrompt());
     }
 
@@ -169,48 +189,53 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
             parsed = obj;
             return true;
         }
-        catch (JsonException)
-        {
-            return false;
-        }
+        catch (JsonException) { return false; }
     }
 
-    /// <summary>
-    /// Determines the <see cref="ToolCategory"/> for a tool call by looking up
-    /// the host object's marker interface via <see cref="IAgentBuilder.GetToolHost"/>.
-    /// Falls back to <see cref="ToolCategory.General"/> when no IO marker is present
-    /// or when the builder does not implement <c>GetToolHost</c>.
-    /// </summary>
-    private ToolCategory ResolveCategory(string toolName)
-    {
-        var host = _agentBuilder?.GetToolHost(toolName);
-        if (host is INetworkToolService) return ToolCategory.Network;
-        if (host is IFileToolService) return ToolCategory.File;
-        return ToolCategory.General;
-    }
+    // ── Tool dispatch with IO interception ───────────────────────────────────
 
     /// <summary>
-    /// Checks the permission callback for <paramref name="toolName"/> with the
-    /// supplied <paramref name="arguments"/>. Returns <see langword="true"/> when
-    /// the call is allowed to proceed.
+    /// Activates the IO interceptors (if any) around <see cref="IAgentBuilder.CallToolAsync"/>,
+    /// gating every file-system or network access through <see cref="PermissionCallback"/>.
+    /// Interceptors are always deactivated in the finally block regardless of outcome.
+    /// When <see cref="PermissionCallback"/> is null the interceptors are never activated.
     /// </summary>
-    private async Task<bool> IsPermittedAsync(
-        string toolName, JsonObject arguments, CancellationToken ct)
+    private async Task<JsonObject> DispatchToolAsync(
+        string toolName, JsonObject toolCall, JsonObject args, CancellationToken ct)
     {
-        if (PermissionCallback is null) return true;
-
-        var ctx = new ToolPermissionContext
+        // Build the permission check delegate once — it closes over toolName and args
+        // so the interceptors have everything they need without any further coupling.
+        IoPermissionCheck? check = PermissionCallback is null ? null : async (tn, category, resource, callArgs) =>
         {
-            ToolName = toolName,
-            Category = ResolveCategory(toolName),
-            Arguments = arguments
+            var ctx = new ToolPermissionContext
+            {
+                ToolName = tn,
+                Category = category,
+                Resource = resource,
+                Arguments = callArgs
+            };
+            var permission = await PermissionCallback(ctx).WaitAsync(ct);
+            return permission == ToolPermission.Always;
         };
 
-        // The callback handles its own "Ask" UI; by the time it returns it has
-        // resolved to Always or Never.
-        var permission = await PermissionCallback(ctx).WaitAsync(ct);
-        return permission == ToolPermission.Always;
-    }
+        // Activate interceptors only when we have a callback to wire them to
+        if (check is not null)
+        {
+            _fileSystem?.Activate(toolName, args, check);
+            _networkHandler?.Activate(toolName, args, check);
+        }
+
+        try
+        {
+            return await _agentBuilder!.CallToolAsync(toolCall);
+        }
+        finally
+        {
+            // Always deactivate — tool must not retain IO access after the call
+            _fileSystem?.Deactivate();
+            _networkHandler?.Deactivate();
+        }
+    }   
     private async IAsyncEnumerable<ChatStreamEntry> GetResponseStreamAsync(
         string userInput,
         [EnumeratorCancellation] CancellationToken ct = default)
@@ -221,15 +246,14 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         _history.Add(ChatMessage.User(userInput));
 
         // Agentic loop: keep generating until the model produces a plain response
-        // rather than another tool call, or until MaxToolCallsPerTurn is reached.
+        // rather than a tool call, or until MaxToolCallsPerTurn is reached.
         for (int toolCallCount = 0; ; toolCallCount++)
         {
             // ── Tokenise ─────────────────────────────────────────────────────
             int[] promptToks;
             if (_cachedPromptTokens is not null && _formatter is null)
             {
-                // Incremental: previous prompt ended with "assistant: ".
-                // Append <last-agent-response>\nuser: <input>\nassistant:
+                // Incremental encode: previous prompt ended with "assistant: "
                 var incremental = new System.Text.StringBuilder();
                 if (_history.Count >= 2 && _history[^2].Role == ChatRole.Agent)
                     incremental.Append(_history[^2].Content).Append('\n');
@@ -307,8 +331,6 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
             var responseText = response.ToString();
 
             // ── Tool call detection ──────────────────────────────────────────
-            // Only attempt tool dispatch when an AgentBuilder is present and the
-            // model actually produced a tool-call JSON.
             if (_agentBuilder is not null
                 && toolCallCount < MaxToolCallsPerTurn
                 && TryParseToolCall(responseText, out var toolCall)
@@ -317,50 +339,33 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
                 var toolName = toolCall["tool"]!.GetValue<string>();
                 var args = toolCall["arguments"]!.AsObject();
 
-                // Record the model's tool-call response in history as an agent turn
-                // so the formatter can include it in the next prompt correctly.
+                // Record the model's tool-call turn in history for the formatter
                 _history.Add(ChatMessage.Agent(responseText));
 
-                // ── Permission gate ──────────────────────────────────────────
-                bool permitted = await IsPermittedAsync(toolName, args, ct);
-
-                JsonObject toolResult;
-                if (!permitted)
+                // Signal to the UI that a tool is about to execute
+                yield return new ChatStreamEntry
                 {
-                    toolResult = new JsonObject
-                    {
-                        ["status"] = "error",
-                        ["message"] = $"Permission denied for tool '{toolName}'."
-                    };
-                }
-                else
-                {
-                    // Signal to the UI that a tool is executing
-                    yield return new ChatStreamEntry
-                    {
-                        Status = ChatStatus.Executing,
-                        Token = toolName,   // lets the UI display which tool is running
-                        IsComplete = false,
-                        TokensPerSecond = _generator.TokensPerSecond,
-                        TimeToFirstToken = _generator.TimeToFirstToken
-                    };
+                    Status = ChatStatus.Executing,
+                    Token = toolName,
+                    IsComplete = false,
+                    TokensPerSecond = _generator.TokensPerSecond,
+                    TimeToFirstToken = _generator.TimeToFirstToken
+                };
 
-                    toolResult = await _agentBuilder.CallToolAsync(toolCall);
-                }
+                // Dispatch with IO interception — interceptors gate any actual
+                // file/network access the tool makes through PermissionCallback.
+                // If PermissionCallback is null, interceptors are never activated.
+                var toolResult = await DispatchToolAsync(toolName, toolCall, args, ct);
 
-                // Feed the tool result back as a system message so the model can
-                // use it in its next generation pass.
+                // Feed the result back as a system message for the next generation pass
                 _history.Add(new ChatMessage
                 {
                     Role = ChatRole.System,
                     Content = $"Tool result: {toolResult.ToJsonString()}"
                 });
 
-                // Invalidate the incremental cache — history has grown significantly
-                _cachedPromptTokens = null;
-
-                // Loop: generate again with the enriched history
-                continue;
+                _cachedPromptTokens = null; // history grew; invalidate incremental cache
+                continue;                   // generate again with enriched history
             }
 
             // ── Normal (non-tool) response ───────────────────────────────────
@@ -375,7 +380,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
                 TimeToFirstToken = _generator.TimeToFirstToken
             };
 
-            break; // Exit the agentic loop
+            break;
         }
     }
 

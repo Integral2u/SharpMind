@@ -29,14 +29,6 @@ namespace SharpMind.Inference.Agent
         /// </param>
         public Task<JsonObject> CallToolAsync(JsonObject toolCall);
         
-        /// <summary>
-        /// Returns the host object instance for the named tool, or <see langword="null"/>
-        /// when the tool is not registered. Used by <c>ChatSession</c> to resolve the
-        /// tool's <see cref="ToolCategory"/> via its marker interface
-        /// (<see cref="IFileToolService"/> / <see cref="INetworkToolService"/>)
-        /// before the permission gate fires.
-        /// </summary>
-        object? GetToolHost(string toolName);
     }
     // TODO: add permissions model for IO / network / file tool categories
     public class AgentBuilder(string agentName = "Delta", SamplingConfig? samplingConfig = null) : IAgentBuilder
@@ -244,16 +236,6 @@ namespace SharpMind.Inference.Agent
         private static JsonObject Typed(string type) => new() { ["type"] = type };
 
         // ── Tool invocation ──────────────────────────────────────────────────────
-
-        /// <summary>
-        /// Returns the host object for <paramref name="toolName"/>, or
-        /// <see langword="null"/> if the tool is not registered.
-        /// Used by <c>ChatSession</c> to resolve <see cref="ToolCategory"/> via
-        /// <see cref="IFileToolService"/> / <see cref="INetworkToolService"/> before
-        /// the permission gate fires.
-        /// </summary>
-        public object? GetToolHost(string toolName)
-            => ToolMethods.TryGetValue(toolName, out var entry) ? entry.Instance : null;
         /// <summary>
         /// Dispatches a tool call from the model's JSON response.
         /// <paramref name="toolCall"/> must be a JSON object with a <c>tool</c>
@@ -290,6 +272,7 @@ namespace SharpMind.Inference.Agent
             catch (TargetInvocationException ex) { return Error(ex.InnerException?.Message ?? ex.Message); }
             catch (Exception ex) { return Error(ex.Message); }
         }
+
 
         private static object?[] BindArguments(MethodInfo method, JsonObject args)
         {

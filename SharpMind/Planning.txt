@@ -136,3 +136,13 @@ Dynamic Sizing: Replace the hardcoded 100MB with a calculation based on ModelCon
 Would you like me to proceed with this plan, or would you prefer to focus on a specific part first?
 
 
+------------------------------------------------------------------------------
+
+All 5 items are still relevant — our fixes were pure correctness/bug-fix changes and didn't touch any of these optimizations. Here's a quick per-item sanity check:
+
+Zero-Allocation Workspace — Still open. The Workspace class and LinearLayer.Forward(..., Workspace?) signature already exist, but QuantizedForward still allocates a fresh tensor per call when no workspace is provided, and the pipeline doesn't pass a workspace through yet. High-value item.
+Fused QKV — Still open. The three separate MatMuls are still there. No architectural changes made.
+Fused RoPE into Attention Kernel — Still open. Rope.ApplyBatched is still a separate pass.
+SIMD Kernel Tightening — Still open. The VecDot kernels are correct (no layout bug per our analysis), but we didn't benchmark them against ggml's efficiency. Worth profiling.
+KV Cache Optimization — Still open. No changes made to KV cache code.
+One note: item 3 (fused RoPE) depends on whether you have a custom attention kernel or use the existing ScaledDotProduct class — we'd need to check if that kernel is CPU scalar (not SIMD), which would change the approach. Want me to look at that before we prioritize?
