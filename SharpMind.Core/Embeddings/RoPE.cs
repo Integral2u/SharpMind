@@ -1,3 +1,5 @@
+using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.X86;
 using SharpMind.Core.Tensors;
 
 namespace SharpMind.Core.Embeddings;
@@ -91,14 +93,31 @@ public sealed class RoPE
             {
                 int offset = (s * numHead + h) * _headDim;
 
-                for (int i = 0; i < halfDim; i++)
+                int i = 0;
+                if (Avx.IsSupported)
+                {
+                    for (; i <= halfDim - 4; i += 4)
+                    {
+                        var cos = Vector256.LoadUnsafe(ref _cosCache[cacheBase + i]);
+                        var sin = Vector256.LoadUnsafe(ref _sinCache[cacheBase + i]);
+                        var vx0 = Vector256.LoadUnsafe(ref data[offset + i]);
+                        var vx1 = Vector256.LoadUnsafe(ref data[offset + halfDim + i]);
+
+                        Vector256.StoreUnsafe(
+                            Avx.Subtract(Avx.Multiply(vx0, cos), Avx.Multiply(vx1, sin)),
+                            ref data[offset + i]);
+                        Vector256.StoreUnsafe(
+                            Avx.Add(Avx.Multiply(vx1, cos), Avx.Multiply(vx0, sin)),
+                            ref data[offset + halfDim + i]);
+                    }
+                }
+                for (; i < halfDim; i++)  //finishes off or does all if avx missing
                 {
                     float cos = _cosCache[cacheBase + i];
                     float sin = _sinCache[cacheBase + i];
                     float x0  = data[offset + i];
                     float x1  = data[offset + halfDim + i];
 
-                    // Rotation: [x0, x1] → [x0·cos − x1·sin, x1·cos + x0·sin]
                     data[offset + i]           = x0 * cos - x1 * sin;
                     data[offset + halfDim + i] = x1 * cos + x0 * sin;
                 }

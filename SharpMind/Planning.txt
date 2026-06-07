@@ -146,3 +146,37 @@ Fused RoPE into Attention Kernel — Still open. Rope.ApplyBatched is still a se
 SIMD Kernel Tightening — Still open. The VecDot kernels are correct (no layout bug per our analysis), but we didn't benchmark them against ggml's efficiency. Worth profiling.
 KV Cache Optimization — Still open. No changes made to KV cache code.
 One note: item 3 (fused RoPE) depends on whether you have a custom attention kernel or use the existing ScaledDotProduct class — we'd need to check if that kernel is CPU scalar (not SIMD), which would change the approach. Want me to look at that before we prioritize?
+
+-----------------------------------------------------------------------------------------------------------
+
+The opportunity:
+
+Approach A — SIMD RoPE (easy, big win):
+
+Vectorize RoPE.Apply() inner loop — 8 floats per iteration with AVX2
+Each pair (i, i+halfDim) uses the same (cos, sin) → can process 4 pairs = 8 floats per iteration
+Non-invasive: just rewrite the inner loop, no architecture change
+Estimated speedup: 4-8x on the RoPE pass
+Approach B — Fused RoPE into attention kernel (harder, moderate extra win):
+
+Modify ScaledDotProduct kernels to apply RoPE on-the-fly when reading Q/K
+Eliminates the separate RoPE pass entirely — saves 2 full writes + reads of Q and K tensors
+Requires modifying 6 kernels (standard+flash × AVX2/FMA/Scalar)
+Each Q/K vector read applies the paired rotation before accumulation
+The qStride parameter already exists, and positionOffset is available in Forward but not threaded through to the kernel yet
+Recommendation: Start with Approach A (SIMD RoPE) — it's low risk, isolated to one file, and addresses the biggest bottleneck since RoPE is the only scalar holdout in the attention path. Approach B can be done afterward if profiling shows the extra memory traffic is significant.
+
+Related: items 1 (workspace) and 2 (fused QKV) don't affect the attention kernel design, so these are independently prioritizable. Want to refine ordering for any of the 5 items?
+
+
+-------------------------------------------------------------------
+Zero-Allocation Workspace — Pre-allocate intermediate buffers for Norm, Attention, FFN during model load to eliminate GC spikes. The Workspace class and LinearLayer.Forward(..., Workspace?) signature exist but QuantizedForward still allocates fresh tensors and the pipeline never passes a workspace through.
+
+Fused QKV Projection — Combine Wq, Wk, Wv into one Wqkv weight for a single large MatMul, improving cache utilization and reducing kernel launch overhead.
+
+SIMD Kernel Tightening — Review VecDot kernels against ggml's efficiency: deeper loop unrolling, verify optimal AVX2/FMA instruction selection, eliminate unnecessary casting/shuffling in the inner loop.
+
+KV Cache Optimization — Optimize PagedKVCache path with direct pointer access and more efficient block-copy that avoids per-head allocations.
+
+
+if (Avx.IsSupported) slow check

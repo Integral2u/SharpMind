@@ -1,5 +1,5 @@
 ﻿await SharpMind.Samples.Examples.BuilderOptions.RunAsync("hello");
-Console.In.ReadLine();
+Console.ReadLine();
 var m = SharpMind.Model.Format.GgufLoader.LoadMeta(@"C:\Integral2u\source\repos\SharpMind\ExternalAssets\qwen2-0_5b-instruct-q8_0.gguf");
 Console.WriteLine("=== Searching for output.* / head / lm_* ===");
 foreach (var t in m.Tensors)
