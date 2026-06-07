@@ -196,15 +196,15 @@ public sealed unsafe class Tensor<T> : IDisposable
     /// <summary>
     /// Returns a 1-D view of row <paramref name="i"/> for a 2-D tensor (zero-copy).
     /// </summary>
-    public Tensor<T> RowView(int i)
+   /* public Tensor<T> RowView(int i)
     {
         if (Rank != 2) throw new InvalidOperationException("RowView requires a 2-D tensor.");
         int cols = Shape.Cols;
         return CreateView(new TensorShape(cols), _offset + i * cols, _ownsMemory);
-    }
+    }*/
 
 
-    /// <summary>Row as a <see cref="Span{T}"/> — slightly cheaper than <see cref="RowView"/>.</summary>
+    /// <summary>Row as a <see cref="Span{T}"/></summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public Span<T> RowSpan(int i) => Data.Slice(i * Shape.Cols, Shape.Cols);
     

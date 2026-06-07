@@ -35,25 +35,25 @@ namespace SharpMind.Tests.Core
             Assert.Equal(99f, t[0, 0]);  // mutation visible through original
         }
 
-        [Fact]
-        public void RowView_ZeroCopy()
-        {
-            using var t = Tensor<float>.From([1f, 2f, 3f, 4f], 2, 2);
-            using var row = t.RowView(1);
-            row[0] = 77f;
-            Assert.Equal(77f, t[1, 0]);
-        }
+        /* [Fact]
+         public void RowView_ZeroCopy()
+         {
+             using var t = Tensor<float>.From([1f, 2f, 3f, 4f], 2, 2);
+             using var row = t.RowView(1);
+             row[0] = 77f;
+             Assert.Equal(77f, t[1, 0]);
+         }
 
-        [Fact]
-        public void Dispose_ViewIndependentOfOriginal()
-        {
-            var t = Tensor<float>.Ones(4, 4);
-            var row = t.RowView(0);
-            row.Dispose();              // view disposed — original still alive
-            var ex = Record.Exception(() => { float _ = t[0, 0]; });
-            Assert.Null(ex);
-            t.Dispose();
-        }
+         [Fact]
+         public void Dispose_ViewIndependentOfOriginal()
+         {
+             var t = Tensor<float>.Ones(4, 4);
+             var row = t.RowView(0);
+             row.Dispose();              // view disposed — original still alive
+             var ex = Record.Exception(() => { float _ = t[0, 0]; });
+             Assert.Null(ex);
+             t.Dispose();
+         }*/
 
         [Fact]
         public void NegativeIndex_WorksForLastDim()
