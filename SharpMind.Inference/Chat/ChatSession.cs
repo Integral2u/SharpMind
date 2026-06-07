@@ -214,8 +214,9 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     private async IAsyncEnumerable<ChatStreamEntry> GetResponseStreamAsync(
         string userInput,
         [EnumeratorCancellation] CancellationToken ct = default)
-    {
+    {        
         ThrowIfDisposed();
+
 
         _history.Add(ChatMessage.User(userInput));
 
@@ -384,6 +385,11 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         {
             response(new ChatStreamEntry { Status = ChatStatus.Thinking, IsComplete = false });
             var input = await prompt();
+            if(token.IsCancellationRequested)
+            {
+                response(new ChatStreamEntry { Status = ChatStatus.Interrupted, IsComplete = true, TokensPerSecond = _generator.TokensPerSecond, TimeToFirstToken = _generator.TimeToFirstToken });
+                break;
+            }
             if (string.IsNullOrWhiteSpace(input.Content)) continue;
             try
             {
@@ -398,12 +404,13 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
             {
                 response(new ChatStreamEntry { Status = ChatStatus.Interrupted, IsComplete = true, TokensPerSecond = _generator.TokensPerSecond, TimeToFirstToken = _generator.TimeToFirstToken });
                 break;
-            }
-            catch
-            {
-                response(new ChatStreamEntry { Status = ChatStatus.Interrupted, IsComplete = true, TokensPerSecond = _generator.TokensPerSecond, TimeToFirstToken = _generator.TimeToFirstToken });
-                break;
-            }
+                }
+                catch
+                {
+                    response(new ChatStreamEntry { Status = ChatStatus.Interrupted, IsComplete = true, TokensPerSecond = _generator.TokensPerSecond, TimeToFirstToken = _generator.TimeToFirstToken });
+                    break;
+                }
+
         }
         return [.. _history];
     }

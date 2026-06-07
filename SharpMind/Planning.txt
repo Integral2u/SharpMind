@@ -11,6 +11,7 @@ Tokenizer: BPE, vocab builder, encode/decode
 Data: sources, cleaning, formating, batching, dataset loaders
 Core: tensors, matrix math, memory, activations
 
+tolower or equals StringComparison.OrdinalIgnoreCase speed
 
 Todo
 MPT multi token prediction

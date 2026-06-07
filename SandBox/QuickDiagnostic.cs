@@ -47,8 +47,25 @@ public static class QuickDiagnostic
 
             var hw = DetectBestHardware();
             var cfg = DeriveSharpMindConfig(mc, hw);
-            var model = ModelFactory.Create(mc, cfg);
-            GgufLoader.LoadWeightsToModel(path, meta, model);
+            // Print GGUF tensor names
+            var metaDiag = GgufLoader.LoadMeta(path);
+            foreach (var t in metaDiag.Tensors)
+                Console.WriteLine($"  Tensor: {t.Name} shape=[{string.Join(",", t.Shape)}] dtype={t.Dtype}");
+            Console.WriteLine($"  Config: HiddenDim={mc.HiddenDim} FfnDim={mc.FfnDim} NumLayers={mc.NumLayers} VocabSize={mc.VocabSize}");
+
+            var weights = GgufLoader.LoadWeightsToTransformerWeights(path, mc);
+            var model = ModelFactory.CreateSession(weights, cfg);
+
+            // LM head diagnostic
+            var lmHead = model.LmHead;
+            int hd = mc.HiddenDim;
+            Console.WriteLine($"LM head: {(lmHead != null ? $"non-null [{lmHead.Shape[0]},{lmHead.Shape[1]}] mean={string.Format("{0:G6}", lmHead.Data.ToArray().Average())}" : "null")}");
+            Console.WriteLine($"Embedding shape=[{model.EmbeddingWeight.Shape[0]},{model.EmbeddingWeight.Shape[1]}] mean={string.Format("{0:G6}", model.EmbeddingWeight.Data.ToArray().Average())}");
+            // Check embedding data layout: token 0's first 5 values
+            var embData = model.EmbeddingWeight.Data;
+            Console.WriteLine($"  Token 0 emb[0..4]: {embData[0]:F6}, {embData[1]:F6}, {embData[2]:F6}, {embData[3]:F6}, {embData[4]:F6}");
+            Console.WriteLine($"  Token 0 emb[{hd - 5}..{hd - 1}]: {embData[hd - 5]:F6}, {embData[hd - 4]:F6}, {embData[hd - 3]:F6}, {embData[hd - 2]:F6}, {embData[hd - 1]:F6}");
+            Console.WriteLine($"  Embedding at [1,0..4] (token 1): {embData[1*hd]:F6}, {embData[1*hd + 1]:F6}, {embData[1*hd + 2]:F6}, {embData[1*hd + 3]:F6}, {embData[1*hd + 4]:F6}");
 
             // Build prompt via formatter
             var formatter = ChatPromptFormatterFactory.Create(meta.GetChatTemplate());
@@ -111,6 +128,59 @@ public static class QuickDiagnostic
             foreach (var c in caches) c.Dispose();
             model.Dispose();
         }
+    }
+
+    public static void CheckEmbeddingLayout(string modelName)
+    {
+        string path = Path.Combine(@"C:\Integral2u\source\repos\SharpMind\ExternalAssets", $"{modelName}.gguf");
+        if (!File.Exists(path)) { Console.WriteLine($"[SKIP] {modelName} not found"); return; }
+
+        Console.WriteLine($"\n═══ {modelName} Embedding Layout Diagnostic ═══");
+
+        var meta = GgufLoader.LoadMeta(path);
+        var info = meta.Tensors.First(t => t.Name == "token_embd.weight");
+        Console.WriteLine($"GGUF token_embd.weight shape=[{string.Join(",", info.Shape)}] dtype={info.Dtype}");
+
+        // Read raw Q8_0 data and dequantize first 32 elements
+        using var mmf = System.IO.MemoryMappedFiles.MemoryMappedFile.CreateFromFile(path, System.IO.FileMode.Open);
+        using var stream = mmf.CreateViewStream(0, 0, System.IO.MemoryMappedFiles.MemoryMappedFileAccess.Read);
+        using var reader = new BinaryReader(stream);
+        stream.Position = meta.DataOffset + info.Offset;
+        float[] first32 = new float[32];
+        GgufLoader.ReadQ8_0(reader, first32, 32);
+        Console.WriteLine($"  First 32 dequantized values: {string.Format("{0:F6} {1:F6} {2:F6} {3:F6}...", first32[0], first32[1], first32[2], first32[3])}");
+
+        // Read next block (elements 32..63)
+        float[] next32 = new float[32];
+        GgufLoader.ReadQ8_0(reader, next32, 32);
+        Console.WriteLine($"  Next 32 (32..63): {string.Format("{0:F6} {1:F6} {2:F6} {3:F6}...", next32[0], next32[1], next32[2], next32[3])}");
+
+        // Seek to position 896 (dim0=0, dim1=896) — should be vocab 896's first hidden value if [hidden,vocab]
+        stream.Position = meta.DataOffset + info.Offset + (896 / 32) * 34; // Q8_0 block size = 34, skip first 28 blocks
+        float[] at896 = new float[32];
+        GgufLoader.ReadQ8_0(reader, at896, 32);
+        Console.WriteLine($"  At offset 896 (vocab 896?): {string.Format("{0:F6} {1:F6} {2:F6} {3:F6}...", at896[0], at896[1], at896[2], at896[3])}");
+
+        // Seek to element 151936 (dim0=1, dim1=0) — if [hidden,vocab], this is hidden=1, vocab=0
+        long elemIdx = 151936;
+        long blockIdx = elemIdx / 32;
+        long byteOffset = blockIdx * 34;
+        stream.Position = meta.DataOffset + info.Offset + byteOffset;
+        float[] at151936 = new float[32];
+        GgufLoader.ReadQ8_0(reader, at151936, 32);
+        int subIdx = (int)(elemIdx % 32);
+        Console.WriteLine($"  At offset 151936 ({subIdx}): {at151936[subIdx]:F6}");
+
+        Console.WriteLine("  ---");
+        Console.WriteLine("  If [vocab,hidden] row-major:");
+        Console.WriteLine($"    emb[0] = token 0, hidden 0 = {first32[0]:F6}");
+        Console.WriteLine($"    emb[1] = token 0, hidden 1 = {first32[1]:F6}");
+        Console.WriteLine($"    emb[896] = token 1, hidden 0 = {at896[0]:F6}");
+
+        Console.WriteLine("  If [hidden,vocab] row-major:");
+        Console.WriteLine($"    emb[0] = hidden 0, vocab 0 = {first32[0]:F6}");
+        Console.WriteLine($"    emb[1] = hidden 0, vocab 1 = {first32[1]:F6}");
+        Console.WriteLine($"    emb[151936] = hidden 1, vocab 0 = {at151936[subIdx]:F6}");
     }
 
     public static void Run()

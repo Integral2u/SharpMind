@@ -1,6 +1,8 @@
-﻿namespace SharpMind.Model.Layers;
+﻿using SharpMind.Core.Tensors;
 
-public sealed class LayerNormLayer(int dim, float eps = 1e-5f) : NormLayer(dim, hasBias: true, eps)
+namespace SharpMind.Model.Layers;
+
+public sealed class LayerNormLayer(int dim, float eps = 1e-5f, Tensor<float>? weight = null, Tensor<float>? bias = null) : NormLayer(dim, true, eps, weight, bias)
 {
     public override void ApplyRow(ReadOnlySpan<float> src, ReadOnlySpan<float> weight, Span<float> dst, float eps)
     {

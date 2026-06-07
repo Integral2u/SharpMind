@@ -26,7 +26,8 @@ public static class RealDataTraining
         modelConfig.Validate();
         
         var sharpConfig = SharpMindConfig.Gpt with { Hardware = HardwareTier.Scalar };
-        var model = ModelFactory.Create(modelConfig, sharpConfig);
+        var weights = ModelFactory.CreateWeights(modelConfig, sharpConfig);
+        var model = ModelFactory.CreateSession(weights, sharpConfig);
         
         foreach (var p in model.Parameters())
         {

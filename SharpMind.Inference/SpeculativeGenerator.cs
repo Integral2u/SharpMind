@@ -50,7 +50,7 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
             _caches[i] = new T().CreateKVCache(1, numKvHeads, maxSeqLen, headDim);
     }
 
-    _workspace = new SharpMind.Core.Memory.Workspace(SharpMind.Core.Memory.Workspace.CalculateRequiredSize(model.Config.HeadDim, model.Config.FfnDim, model.Config.VocabSize, model.Config.NumLayers, model.Config.MaxSeqLen));
+    _workspace = new SharpMind.Core.Memory.Workspace(SharpMind.Core.Memory.Workspace.CalculateRequiredSize(model.Config.HiddenDim, model.Config.FfnDim, model.Config.VocabSize, model.Config.NumLayers, model.Config.MaxSeqLen));
     _defaultRng = seed.HasValue ? new Random(seed.Value) : Random.Shared;
 }
 

@@ -7,6 +7,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
 using System.Text.RegularExpressions;
+using static SharpMind.Model.TransformerWeights;
 
 namespace SharpMind.Model.Format;
 public static partial class GgufLoader
@@ -381,7 +382,92 @@ public static partial class GgufLoader
             InjectMissingTemplateTokens(meta, ref config, tokenizer);
     }
 
+    public static TransformerWeights LoadWeightsToTransformerWeights(string path, ModelConfig config, IProgress<float>? progress = null)
+    {
+        var meta = LoadMeta(path);
+        var weights = ModelFactory.CreateWeights(config, config.ForModel(HardwareTier.Auto)); // Use model-specific config for allocation shapes
+        
+        using var mmf = MemoryMappedFile.CreateFromFile(path, FileMode.Open, null, 0, MemoryMappedFileAccess.Read);
+        using var stream = mmf.CreateViewStream(0, 0, MemoryMappedFileAccess.Read);
+        using var reader = new BinaryReader(stream);
+
+        int loaded = 0, total = meta.Tensors.Count;
+
+        foreach (var info in meta.Tensors)
+        {
+            progress?.Report((float)loaded / total);
+            long targetOffset = meta.DataOffset + info.Offset;
+            if (targetOffset >= stream.Length) continue;
+            stream.Position = targetOffset;
+
+            // Create LM head tensor on demand when output.weight is found
+            // Must NOT match attn_output.weight in block tensors
+            if (!info.Name.Contains("blk.") && info.Name.Contains("output.weight") && weights.LmHeadWeight == null)
+            {
+                weights.SetLmHead(new Tensor<float>(info.Shape));
+            }
+
+            // Identify the target tensor and whether it's a raw weight
+            var (target, block, rawField) = weights.ResolveTarget(info.Name);
+
+            if (target == null && block == null)
+            {
+                loaded++;
+                continue;
+            }
+
+            int count = 1;
+            foreach (int d in info.Shape) count *= d;
+
+            if (IsQuantizedType(info.Dtype) && info.Shape.Length >= 2 && block != null && rawField != null)
+            {
+                long rawSize = GetRawTensorByteCount(info.Shape, info.Dtype);
+                if (rawSize > 0 && stream.Position + rawSize <= stream.Length)
+                {
+                    byte[] rawData = new byte[rawSize];
+                    stream.ReadExactly(rawData);
+                    stream.Position -= rawSize; // seek back for dequant read if needed
+                    
+                    // Store raw data in BlockWeights
+                    weights.SetRawField(block, rawField, rawData, info.Dtype);
+                    loaded++;
+                    continue;
+                }
+            }
+
+            float[] buffer = ArrayPool<float>.Shared.Rent(count);
+            try
+            {
+                ReadTensorInto(reader, info.Dtype, info.Shape, buffer.AsSpan(0, count));
+                if (target != null)
+                {
+                    target.Data.Clear();
+                    buffer.AsSpan(0, count).CopyTo(target.Data);
+                }
+                else if (block != null)
+                {
+                    var floatTarget = weights.ResolveFloatTarget(info.Name);
+                    if (floatTarget != null)
+                    {
+                        floatTarget.Data.Clear();
+                        buffer.AsSpan(0, count).CopyTo(floatTarget.Data);
+                    }
+                }
+                loaded++;
+            }
+            finally
+            {
+                ArrayPool<float>.Shared.Return(buffer);
+            }
+        }
+        progress?.Report(1f);
+        return weights;
+    }
+
+    // Obsolete resolve methods removed as they are now in TransformerWeights
+
     public static Dictionary<string, Tensor<float>> LoadWeights(string path, IProgress<float>? progress = null)
+
     {
         var meta = LoadMeta(path);
         using var mmf = MemoryMappedFile.CreateFromFile(path, FileMode.Open, null, 0, MemoryMappedFileAccess.Read);

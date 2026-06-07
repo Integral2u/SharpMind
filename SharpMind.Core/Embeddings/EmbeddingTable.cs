@@ -21,14 +21,20 @@ public sealed class EmbeddingTable : IDisposable
     /// <param name="vocabSize">Number of distinct tokens.</param>
     /// <param name="embeddingDim">Vector dimension per token.</param>
     public EmbeddingTable(int vocabSize, int embeddingDim)
+        : this(vocabSize, embeddingDim, new Tensor<float>(vocabSize, embeddingDim), true)
     {
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(vocabSize);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(embeddingDim);
+    }
 
+    public EmbeddingTable(int vocabSize, int embeddingDim, Tensor<float> weight, bool ownsMemory)
+    {
+        ThrowIfDisposed();
         VocabSize = vocabSize;
         EmbeddingDim = embeddingDim;
-        _weight = new Tensor<float>(vocabSize, embeddingDim);
+        _weight = weight;
+        _ownsMemory = ownsMemory;
     }
+
+    private readonly bool _ownsMemory;
 
     // ── Properties ────────────────────────────────────────────────────────
 
@@ -144,7 +150,7 @@ public sealed class EmbeddingTable : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
-        _weight.Dispose();
+        if (_ownsMemory) _weight.Dispose();
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────

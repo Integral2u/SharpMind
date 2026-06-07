@@ -5,6 +5,7 @@ using SharpMind.Core.Quantization;
 using SharpMind.Core.Tensors;
 using SharpMind.Core.Training;
 using SharpMind.Model.Config;
+using SharpMind.Model.Format;
 
 namespace SharpMind.Model.Layers.Ffn;
 
@@ -94,6 +95,11 @@ public abstract class FfnLayer : IDisposable
     protected readonly LinearLayer[]? ExpertDown;
 
     protected FfnLayer(ModelConfig config, ActivationOps acts, TensorOps ops, FfnKind kind, QuantizationOps qOps)
+        : this(config, acts, ops, kind, qOps, null)
+    {
+    }
+
+    protected FfnLayer(ModelConfig config, ActivationOps acts, TensorOps ops, FfnKind kind, QuantizationOps qOps, TransformerWeights.BlockWeights? weights)
     {
         Config = config;
         Acts = acts;
@@ -102,13 +108,17 @@ public abstract class FfnLayer : IDisposable
         switch (kind)
         {
             case FfnKind.Dense:
-                W1 = new LinearLayer("gate_proj", config.HiddenDim, config.FfnDim, bias: true, qOps: qOps);
-                W2 = new LinearLayer("down_proj", config.FfnDim, config.HiddenDim, bias: true, qOps: qOps);
+                W1 = new LinearLayer("gate_proj", config.HiddenDim, config.FfnDim, bias: true, qOps: qOps, 
+                    weights?.Wf1, weights?.Wf1Bias);
+                W2 = new LinearLayer("down_proj", config.FfnDim, config.HiddenDim, bias: true, qOps: qOps, 
+                    weights?.Wf2, weights?.Wf2Bias);
                 break;
 
             case FfnKind.Gated:
-                WGated = new LinearLayer("wgated_proj", config.HiddenDim, 2 * config.FfnDim, bias: true, qOps: qOps);
-                WDown = new LinearLayer("down_proj", config.FfnDim, config.HiddenDim, bias: true, qOps: qOps);
+                WGated = new LinearLayer("wgated_proj", config.HiddenDim, 2 * config.FfnDim, bias: true, qOps: qOps, 
+                    weights?.Wf1, weights?.Wf1Bias);
+                WDown = new LinearLayer("down_proj", config.FfnDim, config.HiddenDim, bias: true, qOps: qOps, 
+                    weights?.Wf2, weights?.Wf2Bias);
                 break;
 
             case FfnKind.MoE:
@@ -118,6 +128,29 @@ public abstract class FfnLayer : IDisposable
                 ExpertDown = [.. Enumerable.Range(0, config.NumExperts).Select(i => new LinearLayer($"expert_{i}_down_proj", config.FfnDim, config.HiddenDim, bias: true, qOps: qOps))];
                 break;
         }
+    }
+
+    public void SetWeights(TransformerWeights.BlockWeights weights)
+    {
+        if (W1 is not null && W2 is not null)
+        {
+            W1.ReplaceWeights(weights.Wf1, weights.Wf1Bias);
+            W2.ReplaceWeights(weights.Wf2, weights.Wf2Bias);
+        }
+        else if (WGated is not null && WDown is not null)
+        {
+            WGated.ReplaceWeights(weights.Wf1, weights.Wf1Bias);
+            if (weights.RawWgate != null && weights.RawWup != null)
+            {
+                byte[] fused = new byte[weights.RawWgate.Length + weights.RawWup.Length];
+                Buffer.BlockCopy(weights.RawWgate, 0, fused, 0, weights.RawWgate.Length);
+                Buffer.BlockCopy(weights.RawWup, 0, fused, weights.RawWgate.Length, weights.RawWup.Length);
+                WGated.SetRawWeight(fused, weights.QuantDtype ?? GgufDtype.F32);
+            }
+            WDown.ReplaceWeights(weights.Wf2, weights.Wf2Bias);
+            WDown.SetRawWeight(weights.RawWf2, weights.QuantDtype ?? GgufDtype.F32);
+        }
+        // MoE weights not supported in current BlockWeights
     }
 
     // ── PuzzleCornerPieces ────────────────────────────────────────────────

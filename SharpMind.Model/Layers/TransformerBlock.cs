@@ -42,6 +42,18 @@ public sealed class TransformerBlock : IDisposable
         NormLayer norm1,
         NormLayer norm2,
         TensorOps ops)
+        : this(layerIdx, attention, ffn, norm1, norm2, ops, null)
+    {
+    }
+
+    public TransformerBlock(
+        int layerIdx,
+        AttentionLayer attention,
+        FfnLayer ffn,
+        NormLayer norm1,
+        NormLayer norm2,
+        TensorOps ops,
+        TransformerWeights.BlockWeights? weights)
     {
         ArgumentNullException.ThrowIfNull(attention);
         ArgumentNullException.ThrowIfNull(ffn);

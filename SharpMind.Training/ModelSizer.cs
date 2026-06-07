@@ -94,7 +94,8 @@ public static class ModelSizer
     private static float EvaluateConfig(ModelConfig config, Tokenizer tokenizer, List<string> samples, int steps)
     {
         var sharpConfig = SharpMindConfig.Gpt with { Hardware = HardwareTier.Scalar };
-        using var model = ModelFactory.Create(config, sharpConfig);
+        var weights = ModelFactory.CreateWeights(config, sharpConfig);
+        using var model = ModelFactory.CreateSession(weights, sharpConfig);
         
         var parameters = model.Parameters().ToList();
         var lossFn = new CrossEntropyLoss();

@@ -13,13 +13,23 @@ public abstract class NormLayer : IDisposable
     private bool _disposed;
 
     protected NormLayer(int dim, bool hasBias = false, float eps = 1e-5f)
+        : this(dim, hasBias, eps, null, null)
+    {
+    }
+
+    protected NormLayer(int dim, bool hasBias, float eps, Tensor<float> weight, Tensor<float>? bias)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(dim);
         Dim = dim;
         Eps = eps;
-        Weight = Tensor<float>.Ones(dim);
-        Bias = hasBias ? Tensor<float>.Zeros(dim) : null;
+        Weight = weight ?? Tensor<float>.Ones(dim);
+        Bias = bias ?? (hasBias ? Tensor<float>.Zeros(dim) : null);
+        _ownsWeight = weight == null;
+        _ownsBias = bias == null && Bias != null;
     }
+
+    private readonly bool _ownsWeight;
+    private readonly bool _ownsBias;
 
     public int Dim { get; }
 
@@ -122,7 +132,11 @@ public abstract class NormLayer : IDisposable
     protected virtual void Dispose(bool disposing)
     {
         if (_disposed) return;
-        if (disposing) { Weight.Dispose(); Bias?.Dispose(); }
+        if (disposing) 
+        { 
+            if (_ownsWeight) Weight.Dispose(); 
+            if (_ownsBias) Bias?.Dispose(); 
+        }
         _disposed = true;
     }
     ~NormLayer() => Dispose(false);

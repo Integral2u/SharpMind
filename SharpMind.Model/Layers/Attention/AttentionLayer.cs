@@ -6,6 +6,7 @@ using SharpMind.Core.Quantization;
 using SharpMind.Core.Tensors;
 using SharpMind.Core.Training;
 using SharpMind.Model.Config;
+using SharpMind.Model.Format;
 
 namespace SharpMind.Model.Layers.Attention;
 
@@ -22,14 +23,31 @@ public abstract class AttentionLayer : IDisposable
     private bool _disposed;
 
     protected AttentionLayer(ModelConfig config, QuantizationOps qOps)
+        : this(config, qOps, null)
+    {
+    }
+
+    protected AttentionLayer(ModelConfig config, QuantizationOps qOps, TransformerWeights.BlockWeights? weights)
     {
         Config = config;
         int kvDim = config.NumKvHeads * config.HeadDim;
-        Wq = new LinearLayer("q_proj", config.HiddenDim, config.HiddenDim, bias: true, qOps: qOps);
-        Wk = new LinearLayer("k_proj", config.HiddenDim, kvDim, bias: true, qOps: qOps);
-        Wv = new LinearLayer("v_proj", config.HiddenDim, kvDim, bias: true, qOps: qOps);
-        Wo = new LinearLayer("o_proj", config.HiddenDim, config.HiddenDim, bias: true, qOps: qOps);
+        Wq = new LinearLayer("q_proj", config.HiddenDim, config.HiddenDim, bias: true, qOps: qOps, weights?.Wq, weights?.WqBias);
+        Wk = new LinearLayer("k_proj", config.HiddenDim, kvDim, bias: true, qOps: qOps, weights?.Wk, weights?.WkBias);
+        Wv = new LinearLayer("v_proj", config.HiddenDim, kvDim, bias: true, qOps: qOps, weights?.Wv, weights?.WvBias);
+        Wo = new LinearLayer("o_proj", config.HiddenDim, config.HiddenDim, bias: true, qOps: qOps, weights?.Wo, weights?.WoBias);
         Rope = new RoPE(config.HeadDim, config.MaxSeqLen, config.RopeTheta);
+    }
+
+    public void SetWeights(TransformerWeights.BlockWeights weights)
+    {
+        Wq.ReplaceWeights(weights.Wq, weights.WqBias);
+        Wq.SetRawWeight(weights.RawWq, weights.QuantDtype ?? GgufDtype.F32);
+        Wk.ReplaceWeights(weights.Wk, weights.WkBias);
+        Wk.SetRawWeight(weights.RawWk, weights.QuantDtype ?? GgufDtype.F32);
+        Wv.ReplaceWeights(weights.Wv, weights.WvBias);
+        Wv.SetRawWeight(weights.RawWv, weights.QuantDtype ?? GgufDtype.F32);
+        Wo.ReplaceWeights(weights.Wo, weights.WoBias);
+        Wo.SetRawWeight(weights.RawWo, weights.QuantDtype ?? GgufDtype.F32);
     }
 
     public void LoadWeights(string name, ReadOnlySpan<float> data)
@@ -254,7 +272,11 @@ public abstract class AttentionLayer : IDisposable
     protected virtual void Dispose(bool disposing)
     {
         if (_disposed) return;
-        if (disposing) { Wq.Dispose(); Wk.Dispose(); Wv.Dispose(); Wo.Dispose(); }
+        if (disposing) 
+        { 
+            // These are LinearLayers, they will only dispose if they own the weights.
+            Wq.Dispose(); Wk.Dispose(); Wv.Dispose(); Wo.Dispose(); 
+        }
         _disposed = true;
     }
     ~AttentionLayer() => Dispose(false);

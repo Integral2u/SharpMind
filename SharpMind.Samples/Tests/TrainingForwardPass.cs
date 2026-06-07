@@ -14,8 +14,9 @@ public static class TrainingForwardPass
 
         var modelConfig = ModelConfig.Tiny;
         var sharpConfig = SharpMindConfig.Gpt with { Hardware = HardwareTier.Scalar };
-
-        var model = ModelFactory.Create(modelConfig, sharpConfig);
+        
+        var weights = ModelFactory.CreateWeights(modelConfig, sharpConfig);
+        var model = ModelFactory.CreateSession(weights, sharpConfig);
         Console.WriteLine($"Model params: {model.ParameterCount:N0}");
 
         var vocabConfig = VocabConfig.Tiny;

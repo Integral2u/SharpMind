@@ -8,11 +8,12 @@ namespace SharpMind.Model.Layers;
 
 public sealed class LinearLayer : IDisposable
 {
-    private readonly Tensor<float> _weight;
+    private Tensor<float> _weight;
     private Tensor<float>? _weightBT;
-    private readonly Tensor<float>? _bias;
+    private Tensor<float>? _bias;
     private QuantizationOps _qOps;
     private bool _disposed;
+
 
     // Raw GGUF quantized data for quantized matmul (null means use float32 path).
     public byte[]? RawQuantizedData { get; set; }
@@ -26,21 +27,31 @@ public sealed class LinearLayer : IDisposable
     }
 
     public LinearLayer(string name, int inFeatures, int outFeatures, bool bias = false)
-        : this(name, inFeatures, outFeatures, bias, null)
+        : this(name, inFeatures, outFeatures, bias, null, null, null)
     {
     }
 
     public LinearLayer(string name, int inFeatures, int outFeatures, bool bias, QuantizationOps? qOps)
+        : this(name, inFeatures, outFeatures, bias, qOps, null, null)
+    {
+    }
+
+    public LinearLayer(string name, int inFeatures, int outFeatures, bool bias, QuantizationOps? qOps, Tensor<float> weight, Tensor<float>? biasTensor)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(inFeatures);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(outFeatures);
         Name = name;
         InFeatures = inFeatures;
         OutFeatures = outFeatures;
-        _weight = new Tensor<float>(inFeatures, outFeatures);
-        _bias = bias ? new Tensor<float>(outFeatures) : null;
+        _weight = weight ?? new Tensor<float>(inFeatures, outFeatures);
+        _bias = biasTensor ?? (bias ? new Tensor<float>(outFeatures) : null);
         _qOps = qOps ?? QuantizationFactory.CreateForSystem();
+        _ownsWeight = weight == null;
+        _ownsBias = biasTensor == null && _bias != null;
     }
+
+    private bool _ownsWeight;
+    private bool _ownsBias;
 
     public LinearLayer(int inFeatures, int outFeatures, bool bias = false)
         : this($"Linear.{Guid.NewGuid():N}", inFeatures, outFeatures, bias)
@@ -122,7 +133,7 @@ public sealed class LinearLayer : IDisposable
             ? workspace.Rent<float>(new[] { m, OutFeatures }) 
             : new Tensor<float>(m, OutFeatures);
         int inF = InFeatures, outF = OutFeatures;
-
+        
         for (int row = 0; row < m; row++)
         {
             unsafe
@@ -134,6 +145,7 @@ public sealed class LinearLayer : IDisposable
                     IntPtr pInPtr = (IntPtr)pIn;
                     IntPtr pOutPtr = (IntPtr)pOut;
                     IntPtr pRawPtr = (IntPtr)pRaw;
+                    
                     Parallel.For(0, outF, col =>
                     {
                         float* pInL = (float*)pInPtr;
@@ -146,6 +158,7 @@ public sealed class LinearLayer : IDisposable
         }
         return result;
     }
+
 
     private unsafe float VecDotQxK(float* input, byte* rawWeights, int col, int inFeatures, GgufDtype dtype)
     {
@@ -259,6 +272,21 @@ public sealed class LinearLayer : IDisposable
         return gradInputFlat;
     }
 
+    public void ReplaceWeights(Tensor<float> weight, Tensor<float>? biasTensor)
+    {
+        ThrowIfDisposed();
+        
+        // Dispose old weights only if we owned them
+        if (_ownsWeight) _weight.Dispose();
+        if (_ownsBias) _bias?.Dispose();
+
+        _weight = weight;
+        _bias = biasTensor;
+        _ownsWeight = false;
+        _ownsBias = false;
+        InvalidateCache();
+    }
+
     public void LoadWeight(ReadOnlySpan<float> data)
     {
         ThrowIfDisposed();
@@ -301,9 +329,9 @@ public sealed class LinearLayer : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
-        _weight.Dispose();
+        if (_ownsWeight) _weight.Dispose();
         _weightBT?.Dispose();
-        _bias?.Dispose();
+        if (_ownsBias) _bias?.Dispose();
     }
 
     private Tensor<float> BroadcastBias(int batchSize)

@@ -50,13 +50,12 @@ namespace SharpMind.Samples.Examples
                 var sharpConfig = modelConfig.ForModel();
                 GC.Collect(); GC.WaitForPendingFinalizers();
                 var sw = Stopwatch.StartNew();
-                var model = ModelFactory.Create(modelConfig, sharpConfig);
-                await Console.Out.WriteLineAsync($"ModelFactory.Create executed in: {sw.Elapsed.TotalSeconds:F2}s");
-
+                var weights = GgufLoader.LoadWeightsToTransformerWeights(ggufPath, modelConfig);
+                await Console.Out.WriteLineAsync($"GgufLoader.LoadWeightsToTransformerWeights executed in: {sw.Elapsed.TotalSeconds:F2}s");
                 GC.Collect(); GC.WaitForPendingFinalizers();
                 sw.Restart();
-                GgufLoader.LoadWeightsToModel(ggufPath, meta, model);
-                await Console.Out.WriteLineAsync($"GgufLoader.LoadWeightsToModel executed in: {sw.Elapsed.TotalSeconds:F2}s");
+                var model = ModelFactory.CreateSession(weights, sharpConfig);
+                await Console.Out.WriteLineAsync($"ModelFactory.CreateSession executed in: {sw.Elapsed.TotalSeconds:F2}s");
 
                 sw.Stop();
 

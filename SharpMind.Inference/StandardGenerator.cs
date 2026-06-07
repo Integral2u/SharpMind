@@ -54,7 +54,7 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
         }
 
         _defaultRng = seed.HasValue ? new Random(seed.Value) : Random.Shared;
-        _workspace = new SharpMind.Core.Memory.Workspace(SharpMind.Core.Memory.Workspace.CalculateRequiredSize(model.Config.HeadDim,model.Config.FfnDim,model.Config.VocabSize,model.Config.NumLayers, model.Config.MaxSeqLen));
+        _workspace = new SharpMind.Core.Memory.Workspace(SharpMind.Core.Memory.Workspace.CalculateRequiredSize(model.Config.HiddenDim,model.Config.FfnDim,model.Config.VocabSize,model.Config.NumLayers, model.Config.MaxSeqLen));
     }
 
     // ── Public API ────────────────────────────────────────────────────────
@@ -105,7 +105,8 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
             int posOffset = _caches[0].Length;
             using var prefillInput = _workspace.Rent<int>(new[] { 1, promptIds.Length });
             promptIds.CopyTo(prefillInput.Data);
-            logitsTensor = _model.ForwardLastLogits(prefillInput, _caches, posOffset, _workspace);
+                logitsTensor = _model.ForwardLastLogits(prefillInput, _caches, posOffset, _workspace);
+
 
             int vocabSize = logitsTensor.Shape[1];
             int promptLen = promptIds.Length;
