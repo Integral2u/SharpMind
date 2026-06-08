@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Runtime.InteropServices;
 using SharpMind.Core.Tensors;
 
 namespace SharpMind.Core.Memory;
@@ -6,17 +7,26 @@ namespace SharpMind.Core.Memory;
 /// <summary>
 /// A pre-allocated memory workspace used to eliminate GC pressure during the inference loop.
 /// Provides a way to "rent" slices of a large contiguous buffer as Tensors without allocating new memory.
+///
+/// Uses a linear bump allocator: rents advance an offset, and <see cref="Reset"/> rewinds it.
+/// Tensors obtained via <see cref="Rent{T}"/> do not own memory and must not be disposed independently.
 /// </summary>
-public sealed class Workspace : IDisposable
+public sealed unsafe class Workspace : IDisposable
 {
-    private readonly NativeBuffer<byte> _buffer;
+    private byte* _buffer;
     private long _offset;
     private readonly long _capacity;
 
     public Workspace(long capacityBytes)
     {
         _capacity = capacityBytes;
-        _buffer = new NativeBuffer<byte>((int)capacityBytes);
+        unsafe
+        {
+            _buffer = (byte*)NativeMemory.AlignedAlloc((nuint)capacityBytes, 32);
+            if (_buffer is null)
+                throw new OutOfMemoryException("Workspace: aligned allocation failed.");
+            NativeMemory.Clear(_buffer, (nuint)capacityBytes);
+        }
         _offset = 0;
     }
 
@@ -36,7 +46,7 @@ public sealed class Workspace : IDisposable
         if (_offset + bytes > _capacity)
             throw new OutOfMemoryException($"Workspace capacity exceeded. Requested {bytes} bytes, but only {_capacity - _offset} remain.");
 
-        T* ptr = (T*)((byte*)_buffer.Ptr + _offset);
+        T* ptr = (T*)(_buffer + _offset);
         _offset += bytes;
 
         // We use a special constructor for Tensor that takes an existing pointer and does not own the memory.
@@ -57,27 +67,54 @@ public sealed class Workspace : IDisposable
 
     public void Dispose()
     {
-        _buffer.Dispose();
+        unsafe
+        {
+            if (_buffer != null)
+            {
+                NativeMemory.AlignedFree(_buffer);
+                _buffer = null;
+            }
+        }
     }
 
     /// <summary>
     /// Estimates the required workspace size based on model configuration and maximum prefill length.
+    ///
+    /// The formula accounts for all intermediate tensors allocated by a single forward pass
+    /// through all layers (the bump allocator does not free between layers):
+    ///   Embedding + NumLayers * (Norm + Attention + FFN) + FinalNorm + LM head
+    ///
+    /// Attention counts (non-contiguous cache, worst case):
+    ///   Q + K + V + output + tempK + tempV + Wo + norm1 = 9 * hidden
+    ///
+    /// Gated FFN counts:
+    ///   gate-up + gate-split + up-split + gate-act + down + norm2 = 2*hidden + 5*ffnDim
+    ///
+    /// The prefill length used for sizing is capped to keep the workspace under 2 GiB
+    /// and to avoid OS commit-pressure issues. Full prefill of very long sequences
+    /// should fall back to direct allocations (handled by the generator).
     /// </summary>
-    public static long CalculateRequiredSize(long hiddenDim,long ffnDim, long vocabSize,int numLayers, int maxSeqLen)
+    public static long CalculateRequiredSize(long hiddenDim, long ffnDim, long vocabSize, int numLayers, int maxSeqLen)
     {
         long bytesPerFloat = 4;
         long hidden = hiddenDim;
         long ffn = ffnDim;
         long vocab = vocabSize;
 
-        // Per-token allocations across the whole model:
-        // Embedding + (NumLayers * (Attention(6*hidden) + FFN(2*ffn))) + Norm
-        long perToken = (hidden + numLayers * (6 * hidden + 2 * ffn) + hidden) * bytesPerFloat;
+        // Per-token floats for the entire forward pass — all layers accumulate
+        // because the bump allocator is never reset mid-pass.
+        // Estimate: norm(1H) + attn(8H+2kvDim) + gated-ffn(2H+5ffn) per layer
+        // plus embedding(1H) + finalNorm(1H) + LMhead(1V).
+        long perLayer = 11 * hidden + 7 * ffn;  // generous upper bound
+        long perTokenFloats = hidden + numLayers * perLayer + hidden + vocab;
 
-        long prefillMemory = perToken * maxSeqLen;
-        long logitsMemory = vocab * bytesPerFloat;
+        // Cap prefill length to keep the workspace under ~2 GiB. The workspace
+        // is primarily sized for the decode hot loop; very long prefills will
+        // fall back to direct allocation (handled by the generator).
+        int effectivePrefillLen = Math.Min(maxSeqLen, 256);
+        long total = perTokenFloats * bytesPerFloat * effectivePrefillLen;
 
-        // Minimum 100MB to cover various overheads and small batch sizes.
-        return Math.Max(100 * 1024 * 1024, prefillMemory + logitsMemory);
+        // Minimum 100MB to cover small-batch / short-prompt overheads.
+        return Math.Max(100 * 1024 * 1024, total);
     }
 }

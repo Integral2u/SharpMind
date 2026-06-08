@@ -240,6 +240,10 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
                     }
                 }
 
+                // If the inner loop stopped on a stop token, end generation entirely.
+                if (generatedIds.Count > 0 && genCfg.StopTokenIds.Contains(generatedIds[^1]))
+                    break;
+
                 if (!roundDone && tokensAccepted == maxDraftTokens)
                 {
                     // All drafts accepted: emit the bonus token (greedy sample from last logits)

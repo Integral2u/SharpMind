@@ -1,6 +1,7 @@
+using SharpMind.Core.Tensors;
+using System.Collections.Concurrent;
 using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
-using SharpMind.Core.Tensors;
 
 namespace SharpMind.Core.Embeddings;
 
@@ -22,6 +23,7 @@ namespace SharpMind.Core.Embeddings;
 /// </summary>
 public sealed class RoPE
 {
+    private static ConcurrentDictionary<int, (float[] cos, float[] sin)> TableCache = [];
     private readonly float[] _cosCache; // [MaxSeqLen, HeadDim/2]
     private readonly float[] _sinCache;
     private readonly int     _headDim;
@@ -42,10 +44,26 @@ public sealed class RoPE
         _maxSeqLen = maxSeqLen;
 
         int halfDim = headDim / 2;
-        _cosCache = new float[maxSeqLen * halfDim];
-        _sinCache = new float[maxSeqLen * halfDim];
-
-        PrecomputeFreqs(theta, halfDim);
+        (_cosCache, _sinCache) = TableCache.GetOrAdd(HashCode.Combine(theta, halfDim, _maxSeqLen), (b) =>
+        {
+            var cos = new float[_maxSeqLen * halfDim];
+            var sin = new float[_maxSeqLen * halfDim];
+            // Frequency for each pair: θ_i = 1 / (theta ^ (2i / headDim))
+            var freqs = new float[halfDim];
+            for (int i = 0; i < halfDim; i++)
+                freqs[i] = 1f / MathF.Pow(theta, 2f * i / _headDim);
+            for (int pos = 0; pos < _maxSeqLen; pos++)
+            {
+                int cacheBase = pos * halfDim;
+                for (int i = 0; i < halfDim; i++)
+                {
+                    float angle = pos * freqs[i];
+                    cos[cacheBase + i] = MathF.Cos(angle);
+                    sin[cacheBase + i] = MathF.Sin(angle);
+                }
+            }
+            return (cos, sin);
+        });
     }
 
     // ── Properties ────────────────────────────────────────────────────────
@@ -140,27 +158,6 @@ public sealed class RoPE
         {
             using var slice = x.Slice(b);
             Apply(slice, positionOffset);
-        }
-    }
-
-    // ── Cache building ────────────────────────────────────────────────────
-
-    private void PrecomputeFreqs(float theta, int halfDim)
-    {
-        // Frequency for each pair: θ_i = 1 / (theta ^ (2i / headDim))
-        var freqs = new float[halfDim];
-        for (int i = 0; i < halfDim; i++)
-            freqs[i] = 1f / MathF.Pow(theta, 2f * i / _headDim);
-
-        for (int pos = 0; pos < _maxSeqLen; pos++)
-        {
-            int cacheBase = pos * halfDim;
-            for (int i = 0; i < halfDim; i++)
-            {
-                float angle = pos * freqs[i];
-                _cosCache[cacheBase + i] = MathF.Cos(angle);
-                _sinCache[cacheBase + i] = MathF.Sin(angle);
-            }
         }
     }
 }
