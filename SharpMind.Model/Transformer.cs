@@ -68,7 +68,7 @@ public sealed class Transformer : IDisposable
         var (target, block, rawField) = _weights.ResolveTarget(name);
         if (block != null && rawField != null)
         {
-            _weights.SetRawField(block, rawField, rawData, dtype);
+            TransformerWeights.SetRawField(block, rawField, rawData, dtype);
             return true;
         }
         return false;

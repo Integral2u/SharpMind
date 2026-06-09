@@ -9,6 +9,8 @@ namespace SharpMind.Model
 {
     public partial class RegexGenerated
     {
+        [GeneratedRegex(@"blk\.(\d+)\.")]
+        public static partial Regex LayerIndexDotNDot { get; }
         [GeneratedRegex(@"<[^>]+>")]
         public static partial Regex ChatTemplateRegex { get; }
         [GeneratedRegex(@"\.(\d+)\.")]

@@ -83,7 +83,7 @@ done 2	SiLU/GELU polynomial approximation (currently scalar MathF.Exp/Tanh with 
 3	LayerNorm mean/variance vectorization (entirely scalar currently)	Medium — called 2× per layer	Small	Low
 Done 4	StringComparison.OrdinalIgnoreCase refactor (11 ToLower() → allocation-free)	Low (init-time only)	Trivial	None
 5	QKV fusion (re-attempt with delegate dispatch pattern)	High — 3 MatMuls → 1	High	High — previously caused echo regression
-6	Remove unused dtype param from VecDotQxK (no longer needed after pre-resolution)
+Done 6	Remove unused dtype param from VecDotQxK (no longer needed after pre-resolution)
 
 
 if (Avx.IsSupported) slow check

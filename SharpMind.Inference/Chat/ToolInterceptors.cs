@@ -29,7 +29,7 @@ internal delegate Task<bool> IoPermissionCheck(string toolName, ToolCategory cat
 /// </summary>
 public sealed class InterceptingFileSystem : IFileSystem
 {
-    private readonly FileSystem _inner = new FileSystem();
+    private readonly FileSystem _inner = new();
     private IoPermissionCheck? _check;
     private string _currentTool = string.Empty;
     private JsonObject _currentArgs = [];

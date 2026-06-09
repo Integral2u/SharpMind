@@ -80,8 +80,8 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         _addEos = meta?.GetLong("tokenizer.ggml.add_eos_token", 1) != 0;
         _generator = new T().CreateGenerator(model, tokenizer, _addBos, _addEos, caches, seed);
         ArgumentNullException.ThrowIfNull(_generator);
-       
-        PermissionCallback = permissions ?? new Func<ToolPermissionContext, Task<ToolPermission>>(async (ctx) => { return ToolPermission.Never; });
+
+        PermissionCallback = permissions ?? new Func<ToolPermissionContext, Task<ToolPermission>>(async (ctx) => { await Task.CompletedTask; return ToolPermission.Never; });
         _fileSystem = new InterceptingFileSystem();
         _networkHandler = new InterceptingNetworkHandler();
 
@@ -91,7 +91,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     public IGenerator<K> Generator => _generator;
     public Tokenizer Tokenizer => _tokenizer;
     public Transformer Model => _model;
-    public IReadOnlyList<ChatMessage> History => _history.Where(p => p.Role != ChatRole.System).ToList();
+    public IReadOnlyList<ChatMessage> History => [.. _history.Where(p => p.Role != ChatRole.System)];
 
     public int MaxTokens { get; set; } = 2048;
     public float Temperature { get; set; } = 0.0f;
@@ -234,11 +234,11 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
             _fileSystem?.Deactivate();
             _networkHandler?.Deactivate();
         }
-    }   
+    }
     private async IAsyncEnumerable<ChatStreamEntry> GetResponseStreamAsync(
         string userInput,
         [EnumeratorCancellation] CancellationToken ct = default)
-    {        
+    {
         ThrowIfDisposed();
 
 
@@ -389,7 +389,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         {
             response(new ChatStreamEntry { Status = ChatStatus.Thinking, IsComplete = false });
             var input = await prompt();
-            if(token.IsCancellationRequested)
+            if (token.IsCancellationRequested)
             {
                 response(new ChatStreamEntry { Status = ChatStatus.Interrupted, IsComplete = true, TokensPerSecond = _generator.TokensPerSecond, TimeToFirstToken = _generator.TimeToFirstToken });
                 break;
@@ -408,12 +408,12 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
             {
                 response(new ChatStreamEntry { Status = ChatStatus.Interrupted, IsComplete = true, TokensPerSecond = _generator.TokensPerSecond, TimeToFirstToken = _generator.TimeToFirstToken });
                 break;
-                }
-                catch
-                {
-                    response(new ChatStreamEntry { Status = ChatStatus.Interrupted, IsComplete = true, TokensPerSecond = _generator.TokensPerSecond, TimeToFirstToken = _generator.TimeToFirstToken });
-                    break;
-                }
+            }
+            catch
+            {
+                response(new ChatStreamEntry { Status = ChatStatus.Interrupted, IsComplete = true, TokensPerSecond = _generator.TokensPerSecond, TimeToFirstToken = _generator.TimeToFirstToken });
+                break;
+            }
 
         }
         return [.. _history];

@@ -17,7 +17,7 @@ public abstract class NormLayer : IDisposable
     {
     }
 
-    protected NormLayer(int dim, bool hasBias, float eps, Tensor<float> weight, Tensor<float>? bias)
+    protected NormLayer(int dim, bool hasBias, float eps, Tensor<float>? weight, Tensor<float>? bias)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(dim);
         Dim = dim;

@@ -8,27 +8,17 @@ namespace SharpMind.Model;
 /// Immutable container for a Transformer's weights. 
 /// Designed to be shared across multiple Transformer sessions to avoid reloading from disk.
 /// </summary>
-public sealed class TransformerWeights : IDisposable
+public sealed class TransformerWeights(ModelConfig config, Tensor<float> embedding, Tensor<float>? lmHead, Tensor<float> finalNormW, Tensor<float>? finalNormB, TransformerWeights.BlockWeights[] blocks) : IDisposable
 {
-    public ModelConfig Config { get; }
-    public Tensor<float> EmbeddingWeight { get; }
-    public Tensor<float>? LmHeadWeight { get; private set; }
+    public ModelConfig Config { get; } = config;
+    public Tensor<float> EmbeddingWeight { get; } = embedding;
+    public Tensor<float>? LmHeadWeight { get; private set; } = lmHead;
     public void SetLmHead(Tensor<float> head) => LmHeadWeight = head;
-    public Tensor<float> FinalNormWeight { get; }
-    public Tensor<float>? FinalNormBias { get; }
-    
-    // Weights for each block
-    public BlockWeights[] Blocks { get; }
+    public Tensor<float> FinalNormWeight { get; } = finalNormW;
+    public Tensor<float>? FinalNormBias { get; } = finalNormB;
 
-    public TransformerWeights(ModelConfig config, Tensor<float> embedding, Tensor<float>? lmHead, Tensor<float> finalNormW, Tensor<float>? finalNormB, BlockWeights[] blocks)
-    {
-        Config = config;
-        EmbeddingWeight = embedding;
-        LmHeadWeight = lmHead;
-        FinalNormWeight = finalNormW;
-        FinalNormBias = finalNormB;
-        Blocks = blocks;
-    }
+    // Weights for each block
+    public BlockWeights[] Blocks { get; } = blocks;
 
     public void Dispose()
     {
@@ -45,8 +35,8 @@ public sealed class TransformerWeights : IDisposable
         if (name.Contains("output_norm", StringComparison.OrdinalIgnoreCase)) return (FinalNormWeight, null, null);
         // Exact match only — "attn_output.weight" contains "output.weight" but is a block tensor
         if (name.Equals("output.weight", StringComparison.OrdinalIgnoreCase) || name.Equals("lm_head.weight", StringComparison.OrdinalIgnoreCase)) return (LmHeadWeight, null, null);
-        
-        var match = System.Text.RegularExpressions.Regex.Match(name, @"blk\.(\d+)\.");
+
+        var match = RegexGenerated.LayerIndexDotNDot.Match(name);// System.Text.RegularExpressions.Regex.Match(name, @"blk\.(\d+)\.");
         if (match.Success && int.TryParse(match.Groups[1].Value, out int bIdx) && bIdx < Blocks.Length)
         {
             var block = Blocks[bIdx];
@@ -83,7 +73,7 @@ public sealed class TransformerWeights : IDisposable
         if (name.Contains("output_norm", StringComparison.OrdinalIgnoreCase)) return FinalNormWeight;
         if (name.Equals("output.weight", StringComparison.OrdinalIgnoreCase) || name.Equals("lm_head.weight", StringComparison.OrdinalIgnoreCase)) return LmHeadWeight;
         
-        var match = System.Text.RegularExpressions.Regex.Match(name, @"blk\.(\d+)\.");
+        var match = RegexGenerated.LayerIndexDotNDot.Match(name); //System.Text.RegularExpressions.Regex.Match(name, @"blk\.(\d+)\.");
         if (match.Success && int.TryParse(match.Groups[1].Value, out int bIdx) && bIdx < Blocks.Length)
         {
             var b = Blocks[bIdx];
@@ -113,7 +103,7 @@ public sealed class TransformerWeights : IDisposable
         return null;
     }
 
-    public void SetRawField(BlockWeights block, string field, byte[] data, Format.GgufDtype dtype)
+    public static void SetRawField(BlockWeights block, string field, byte[] data, Format.GgufDtype dtype)
     {
         switch (field)
         {
@@ -129,30 +119,21 @@ public sealed class TransformerWeights : IDisposable
         block.QuantDtype = dtype;
     }
 
-    public sealed class BlockWeights : IDisposable
+    public sealed class BlockWeights(Tensor<float> wq, Tensor<float> wk, Tensor<float> wv, Tensor<float> wo,
+                        Tensor<float> wqB, Tensor<float> wkB, Tensor<float> wvB, Tensor<float> woB,
+                        Tensor<float> wf1, Tensor<float> wf2, Tensor<float> wf1B, Tensor<float> wf2B,
+                        Tensor<float> n1w, Tensor<float>? n1b, Tensor<float> n2w, Tensor<float>? n2b) : IDisposable
     {
         // Attention
-        public Tensor<float> Wq { get; }
-        public Tensor<float> Wk { get; }
-        public Tensor<float> Wv { get; }
-        public Tensor<float> Wo { get; }
-        public Tensor<float> WqBias { get; }
-        public Tensor<float> WkBias { get; }
-        public Tensor<float> WvBias { get; }
-        public Tensor<float> WoBias { get; }
+        public Tensor<float> Wq { get; } = wq; public Tensor<float> Wk { get; } = wk; public Tensor<float> Wv { get; } = wv; public Tensor<float> Wo { get; } = wo;
+        public Tensor<float> WqBias { get; } = wqB; public Tensor<float> WkBias { get; } = wkB; public Tensor<float> WvBias { get; } = wvB; public Tensor<float> WoBias { get; } = woB;
 
         // FFN
-        public Tensor<float> Wf1 { get; } // Gate/Up
-        public Tensor<float> Wf2 { get; } // Down
-        public Tensor<float> Wf1Bias { get; }
-        public Tensor<float> Wf2Bias { get; }
+        public Tensor<float> Wf1 { get; } = wf1; public Tensor<float> Wf2 { get; } = wf2; public Tensor<float> Wf1Bias { get; } = wf1B; public Tensor<float> Wf2Bias { get; } = wf2B;
 
         // Norms
-        public Tensor<float> Norm1W { get; }
-        public Tensor<float>? Norm1B { get; }
-        public Tensor<float> Norm2W { get; }
-        public Tensor<float>? Norm2B { get; }
-        
+        public Tensor<float> Norm1W { get; } = n1w; public Tensor<float>? Norm1B { get; } = n1b; public Tensor<float> Norm2W { get; } = n2w; public Tensor<float>? Norm2B { get; } = n2b;
+
         // Quantized data
         public byte[]? RawWq { get; set; }
         public byte[]? RawWk { get; set; }
@@ -163,17 +144,6 @@ public sealed class TransformerWeights : IDisposable
         public byte[]? RawWf1 { get; set; }
         public byte[]? RawWf2 { get; set; }
         public Format.GgufDtype? QuantDtype { get; set; }
-
-        public BlockWeights(Tensor<float> wq, Tensor<float> wk, Tensor<float> wv, Tensor<float> wo, 
-                            Tensor<float> wqB, Tensor<float> wkB, Tensor<float> wvB, Tensor<float> woB,
-                            Tensor<float> wf1, Tensor<float> wf2, Tensor<float> wf1B, Tensor<float> wf2B,
-                            Tensor<float> n1w, Tensor<float>? n1b, Tensor<float> n2w, Tensor<float>? n2b)
-        {
-            Wq = wq; Wk = wk; Wv = wv; Wo = wo;
-            WqBias = wqB; WkBias = wkB; WvBias = wvB; WoBias = woB;
-            Wf1 = wf1; Wf2 = wf2; Wf1Bias = wf1B; Wf2Bias = wf2B;
-            Norm1W = n1w; Norm1B = n1b; Norm2W = n2w; Norm2B = n2b;
-        }
 
         public void Dispose()
         {

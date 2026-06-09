@@ -37,7 +37,7 @@ public sealed class LinearLayer : IDisposable
     {
     }
 
-    public LinearLayer(string name, int inFeatures, int outFeatures, bool bias, QuantizationOps? qOps, Tensor<float> weight, Tensor<float>? biasTensor)
+    public LinearLayer(string name, int inFeatures, int outFeatures, bool bias, QuantizationOps? qOps, Tensor<float>? weight, Tensor<float>? biasTensor)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(inFeatures);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(outFeatures);
@@ -90,7 +90,7 @@ public sealed class LinearLayer : IDisposable
             _weightBT ??= TensorOps.Transpose(_weight);
             if (workspace != null)
             {
-                output = workspace.Rent<float>(new[] { batchSize, OutFeatures });
+                output = workspace.Rent<float>([batchSize, OutFeatures]);
                 ops.MatMulWithBTInto(flat, _weightBT, output);
             }
             else
@@ -103,7 +103,7 @@ public sealed class LinearLayer : IDisposable
         {
             if (workspace != null)
             {
-                var biasB = workspace.Rent<float>(new[] { batchSize, OutFeatures });
+                var biasB = workspace.Rent<float>([batchSize, OutFeatures]);
                 for (int i = 0; i < batchSize; i++)
                     _bias!.Data.CopyTo(biasB.RowSpan(i));
                 TensorOps.AddInPlace<float>(output, biasB);
@@ -131,7 +131,7 @@ public sealed class LinearLayer : IDisposable
         var rawData = RawQuantizedData!;
         int m = input.ElementCount / InFeatures;
         Tensor<float> result = workspace != null 
-            ? workspace.Rent<float>(new[] { m, OutFeatures }) 
+            ? workspace.Rent<float>([m, OutFeatures]) 
             : new Tensor<float>(m, OutFeatures);
         int inF = InFeatures, outF = OutFeatures;
         
@@ -144,7 +144,7 @@ public sealed class LinearLayer : IDisposable
                     float* pInRow = input.DataPtr;
                     float* pOutRow = result.DataPtr;
                     for (int col = 0; col < outF; col++)
-                        pOutRow[col] = VecDotQxK(pInRow, pRaw, col, inF, dtype);
+                        pOutRow[col] = VecDotQxK(pInRow, pRaw, col, inF);
                 }
                 else
                 {
@@ -160,7 +160,7 @@ public sealed class LinearLayer : IDisposable
                             float* pInL = (float*)pInRow;
                             float* pOutL = (float*)pOutRow;
                             byte* pRawL = (byte*)pRawPtr;
-                            pOutL[col] = VecDotQxK(pInL, pRawL, col, inF, dtype);
+                            pOutL[col] = VecDotQxK(pInL, pRawL, col, inF);
                         });
                     }
                 }
@@ -170,7 +170,7 @@ public sealed class LinearLayer : IDisposable
     }
 
 
-    private unsafe float VecDotQxK(float* input, byte* rawWeights, int col, int inFeatures, GgufDtype dtype) => _vecDotFn!(input, rawWeights, col, inFeatures);
+    private unsafe float VecDotQxK(float* input, byte* rawWeights, int col, int inFeatures) => _vecDotFn!(input, rawWeights, col, inFeatures);
 
     private static bool IsSupportedQuantDtype(GgufDtype dtype) => dtype switch
     {

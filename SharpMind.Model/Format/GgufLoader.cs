@@ -427,9 +427,9 @@ public static partial class GgufLoader
                     byte[] rawData = new byte[rawSize];
                     stream.ReadExactly(rawData);
                     stream.Position -= rawSize; // seek back for dequant read if needed
-                    
+
                     // Store raw data in BlockWeights
-                    weights.SetRawField(block, rawField, rawData, info.Dtype);
+                    SetRawField(block, rawField, rawData, info.Dtype);
                     loaded++;
                     continue;
                 }
