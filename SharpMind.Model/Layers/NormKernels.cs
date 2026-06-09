@@ -93,10 +93,59 @@ internal static class NormKernels
     // ── LayerNorm row — standard mean/variance normalisation ─────────────
     // out[i] = (src[i] - mean) / sqrt(var + eps) * weight[i] + bias[i]
 
-    internal static void LayerNormRowAVX2(
+    internal static unsafe void LayerNormRowAVX2(
         ReadOnlySpan<float> src, ReadOnlySpan<float> weight,
         ReadOnlySpan<float> bias, Span<float> dst, float eps)
-        => LayerNormRowScalar(src, weight, bias, dst, eps); // exp-dominated; AVX2 gives no gain
+    {
+        fixed (float* pS = src, pW = weight, pB = bias, pD = dst)
+        {
+            int i = 0, n = dst.Length;
+
+            // Pass 1: sum → mean
+            var vSum = Vector256<float>.Zero;
+            for (; i <= n - 8; i += 8)
+                vSum = Avx.Add(vSum, Vector256.LoadUnsafe(ref pS[i]));
+            float total = MathHelpers.HSum256_Avx(vSum);
+            for (; i < n; i++)
+                total += pS[i];
+            float mean = total / n;
+            var vMean = Vector256.Create(mean);
+
+            // Pass 2: sum of (x - mean)² → variance
+            i = 0;
+            var vVar = Vector256<float>.Zero;
+            for (; i <= n - 8; i += 8)
+            {
+                var d = Avx.Subtract(Vector256.LoadUnsafe(ref pS[i]), vMean);
+                vVar = Avx.Add(vVar, Avx.Multiply(d, d));
+            }
+            float varTotal = MathHelpers.HSum256_Avx(vVar);
+            for (; i < n; i++)
+            {
+                float d = pS[i] - mean;
+                varTotal += d * d;
+            }
+            float variance = varTotal / n;
+            float invStd = 1f / MathF.Sqrt(variance + eps);
+            var vInvStd = Vector256.Create(invStd);
+
+            // Pass 3: output = (x - mean) * invStd * weight + bias
+            i = 0;
+            for (; i <= n - 8; i += 8)
+            {
+                var vS = Vector256.LoadUnsafe(ref pS[i]);
+                var vW = Vector256.LoadUnsafe(ref pW[i]);
+                var vB = Vector256.LoadUnsafe(ref pB[i]);
+                var norm = Avx.Multiply(Avx.Subtract(vS, vMean), vInvStd);
+                Vector256.StoreUnsafe(Avx.Add(Avx.Multiply(norm, vW), vB), ref pD[i]);
+            }
+            for (; i < n; i++)
+            {
+                float norm = (pS[i] - mean) * invStd;
+                pD[i] = norm * pW[i] + pB[i];
+            }
+        }
+    }
 
     internal static void LayerNormRowScalar(
         ReadOnlySpan<float> src, ReadOnlySpan<float> weight,

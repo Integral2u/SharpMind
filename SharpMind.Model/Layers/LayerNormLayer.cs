@@ -1,4 +1,5 @@
-﻿using SharpMind.Core.Tensors;
+﻿using System.Runtime.Intrinsics.X86;
+using SharpMind.Core.Tensors;
 
 namespace SharpMind.Model.Layers;
 
@@ -6,6 +7,12 @@ public sealed class LayerNormLayer(int dim, float eps = 1e-5f, Tensor<float>? we
 {
     public override void ApplyRow(ReadOnlySpan<float> src, ReadOnlySpan<float> weight, Span<float> dst, float eps)
     {
+        if (Avx.IsSupported)
+        {
+            NormKernels.LayerNormRowAVX2(src, weight, Bias!.Data, dst, eps);
+            return;
+        }
+
         float mean = 0f;
         foreach (float v in src) mean += v;
         mean /= src.Length;

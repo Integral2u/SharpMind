@@ -1,5 +1,6 @@
 ﻿using SharpMind.Core.Activations;
 using SharpMind.Core.Tensors;
+using SharpMind.Model.Layers;
 
 namespace SharpMind.Tests.Core
 {
@@ -207,6 +208,19 @@ namespace SharpMind.Tests.Core
 
             for (int i = 0; i < rS.ElementCount; i++)
                 Assert.Equal(rS[i], rA[i], precision: 5);
+        }
+
+        // ── LayerNorm ─────────────────────────────────────────────────────────
+
+        [Fact]
+        public void LayerNorm_BasicOutput_FiniteAndSane()
+        {
+            using var x = Tensor<float>.From([1f, 2f, 3f, 4f, 5f, 6f, 7f, 8f], 8);
+            using var layer = new LayerNormLayer(8);
+            using var r = layer.Forward(x);
+
+            Assert.All(r.Data.ToArray(), v => Assert.False(float.IsNaN(v)));
+            Assert.All(r.Data.ToArray(), v => Assert.False(float.IsInfinity(v)));
         }
 
         [Fact]
