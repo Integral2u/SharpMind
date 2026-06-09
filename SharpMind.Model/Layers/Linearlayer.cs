@@ -13,7 +13,8 @@ public sealed class LinearLayer : IDisposable
     private Tensor<float>? _bias;
     private QuantizationOps _qOps;
     private bool _disposed;
-
+    private unsafe delegate float VecDotFn(float* input, byte* rawWeights, int col, int inFeatures);
+    private VecDotFn? _vecDotFn;
 
     // Raw GGUF quantized data for quantized matmul (null means use float32 path).
     public byte[]? RawQuantizedData { get; set; }
@@ -134,25 +135,34 @@ public sealed class LinearLayer : IDisposable
             : new Tensor<float>(m, OutFeatures);
         int inF = InFeatures, outF = OutFeatures;
         
-        for (int row = 0; row < m; row++)
+        unsafe
         {
-            unsafe
+            fixed (byte* pRaw = rawData)
             {
-                float* pIn = input.DataPtr + (long)row * inF;
-                float* pOut = result.DataPtr + (long)row * outF;
-                fixed (byte* pRaw = rawData)
+                if (m <= 1)
                 {
-                    IntPtr pInPtr = (IntPtr)pIn;
-                    IntPtr pOutPtr = (IntPtr)pOut;
+                    float* pInRow = input.DataPtr;
+                    float* pOutRow = result.DataPtr;
+                    for (int col = 0; col < outF; col++)
+                        pOutRow[col] = VecDotQxK(pInRow, pRaw, col, inF, dtype);
+                }
+                else
+                {
                     IntPtr pRawPtr = (IntPtr)pRaw;
-                    
-                    Parallel.For(0, outF, col =>
+
+                    for (int row = 0; row < m; row++)
                     {
-                        float* pInL = (float*)pInPtr;
-                        float* pOutL = (float*)pOutPtr;
-                        byte* pRawL = (byte*)pRawPtr;
-                        pOutL[col] = VecDotQxK(pInL, pRawL, col, inF, dtype);
-                    });
+                        IntPtr pInRow = (IntPtr)(input.DataPtr + (long)row * inF);
+                        IntPtr pOutRow = (IntPtr)(result.DataPtr + (long)row * outF);
+
+                        Parallel.For(0, outF, col =>
+                        {
+                            float* pInL = (float*)pInRow;
+                            float* pOutL = (float*)pOutRow;
+                            byte* pRawL = (byte*)pRawPtr;
+                            pOutL[col] = VecDotQxK(pInL, pRawL, col, inF, dtype);
+                        });
+                    }
                 }
             }
         }
@@ -160,25 +170,7 @@ public sealed class LinearLayer : IDisposable
     }
 
 
-    private unsafe float VecDotQxK(float* input, byte* rawWeights, int col, int inFeatures, GgufDtype dtype)
-    {
-        return dtype switch
-        {
-            GgufDtype.Q3_K => _qOps.VecDotQ3K(input, rawWeights, col, inFeatures),
-            GgufDtype.Q4_K => _qOps.VecDotQ4K(input, rawWeights, col, inFeatures),
-            GgufDtype.Q5_K => _qOps.VecDotQ5K(input, rawWeights, col, inFeatures),
-            GgufDtype.Q6_K => _qOps.VecDotQ6K(input, rawWeights, col, inFeatures),
-            GgufDtype.Q4_0 => _qOps.VecDotQ4_0(input, rawWeights, col, inFeatures),
-            GgufDtype.Q4_1 => _qOps.VecDotQ4_1(input, rawWeights, col, inFeatures),
-            GgufDtype.Q5_0 => _qOps.VecDotQ5_0(input, rawWeights, col, inFeatures),
-            GgufDtype.Q5_1 => _qOps.VecDotQ5_1(input, rawWeights, col, inFeatures),
-            GgufDtype.Q8_0 => _qOps.VecDotQ8_0(input, rawWeights, col, inFeatures),
-            GgufDtype.Q8_1 => _qOps.VecDotQ8_1(input, rawWeights, col, inFeatures),
-            GgufDtype.Q2_K => _qOps.VecDotQ2K(input, rawWeights, col, inFeatures),
-            GgufDtype.Q8_K => _qOps.VecDotQ8K(input, rawWeights, col, inFeatures),
-            _ => 0f
-        };
-    }
+    private unsafe float VecDotQxK(float* input, byte* rawWeights, int col, int inFeatures, GgufDtype dtype) => _vecDotFn!(input, rawWeights, col, inFeatures);
 
     private static bool IsSupportedQuantDtype(GgufDtype dtype) => dtype switch
     {
@@ -197,11 +189,27 @@ public sealed class LinearLayer : IDisposable
         _ => false
     };
 
-    public bool SetRawWeight(byte[] rawData, GgufDtype dtype)
+    public unsafe bool SetRawWeight(byte[] rawData, GgufDtype dtype)
     {
         RawQuantizedData = rawData;
         QuantDtype = dtype;
         UseQuantizedForward = IsSupportedQuantDtype(dtype);
+        _vecDotFn = dtype switch
+        {
+            GgufDtype.Q3_K => _qOps.VecDotQ3K,
+            GgufDtype.Q4_K => _qOps.VecDotQ4K,
+            GgufDtype.Q5_K => _qOps.VecDotQ5K,
+            GgufDtype.Q6_K => _qOps.VecDotQ6K,
+            GgufDtype.Q4_0 => _qOps.VecDotQ4_0,
+            GgufDtype.Q4_1 => _qOps.VecDotQ4_1,
+            GgufDtype.Q5_0 => _qOps.VecDotQ5_0,
+            GgufDtype.Q5_1 => _qOps.VecDotQ5_1,
+            GgufDtype.Q8_0 => _qOps.VecDotQ8_0,
+            GgufDtype.Q8_1 => _qOps.VecDotQ8_1,
+            GgufDtype.Q2_K => _qOps.VecDotQ2K,
+            GgufDtype.Q8_K => _qOps.VecDotQ8K,
+            _ => null
+        };
         return UseQuantizedForward;
     }
 

@@ -15,13 +15,13 @@ namespace SharpMind.Inference.Chat
         {
             var closedGen = generatorBuilderDef.MakeGenericType(cacheBuilder);
             var sessionType = typeof(ChatSession<,>).MakeGenericType(closedGen, cacheBuilder);
-            return (IChatSession)Activator.CreateInstance(sessionType, [model, tokenizer, meta, agentBuilder, null, seed, fileSystem, networkHandler])!;
+            return (IChatSession)Activator.CreateInstance(sessionType, [model, tokenizer, meta, agentBuilder, null, null, seed])!;
         }
         // Compile-time — for known type combos
         public static ChatSession<T, K> CreateChatSession<T, K>(
             Transformer model, Tokenizer tokenizer, ModelMetaData? meta = null, IAgentBuilder? agentBuilder = null, int? seed = null, InterceptingFileSystem? fileSystem = null, InterceptingNetworkHandler? networkHandler = null)
             where K : IKVCacheBuilder, new()
             where T : IGeneratorBuilder<K>, new()
-            => new(model, tokenizer, meta, agentBuilder,null,seed, fileSystem, networkHandler);            
+            => new(model, tokenizer, meta, agentBuilder, null, null, seed);
     }
 }

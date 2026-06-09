@@ -28,12 +28,10 @@ internal delegate Task<bool> IoPermissionCheck(string toolName, ToolCategory cat
 /// </summary>
 public sealed class InterceptingFileSystem : IFileSystem
 {
-    private readonly IFileSystem _inner;
+    private readonly FileSystem _inner = new FileSystem();
     private IoPermissionCheck? _check;
     private string _currentTool = string.Empty;
     private JsonObject _currentArgs = [];
-
-    public InterceptingFileSystem(IFileSystem inner) => _inner = inner;
 
     // ── Internal activation (ChatSession only) ────────────────────────────────
 
@@ -393,7 +391,7 @@ public sealed class InterceptingNetworkHandler : DelegatingHandler
     private string _currentTool = string.Empty;
     private JsonObject _currentArgs = [];
 
-    public InterceptingNetworkHandler(HttpMessageHandler inner) : base(inner) { }
+    public InterceptingNetworkHandler() : base(new HttpClientHandler()) { }
 
     // ── Internal activation (ChatSession only) ────────────────────────────────
 

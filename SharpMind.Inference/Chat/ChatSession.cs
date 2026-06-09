@@ -30,7 +30,8 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
 
     // ── Permission gate ──────────────────────────────────────────────────────
     /// <summary>
-    /// Optional callback invoked when a tool call attempts file system or network IO.
+    /// Callback invoked when a tool call attempts file system or network IO.
+    /// When <see langword="null"/> <see cref="ToolPermission.Never"/> is returned.
     /// Receives a <see cref="ToolPermissionContext"/> describing the actual access
     /// attempt (path or URL, category, tool name, model arguments) and returns:
     /// <list type="bullet">
@@ -44,10 +45,8 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     ///         <see cref="System.Net.Http.HttpRequestException"/> and the model is given
     ///         an error result.</item>
     /// </list>
-    /// When <see langword="null"/> interceptors are never activated — all tool IO
-    /// proceeds without any gating.
     /// </summary>
-    public Func<ToolPermissionContext, Task<ToolPermission>>? PermissionCallback { get; set; }
+    public readonly Func<ToolPermissionContext, Task<ToolPermission>> PermissionCallback;
 
     /// <param name="fileSystem">
     /// Optional <see cref="InterceptingFileSystem"/> wrapping your real
@@ -67,10 +66,9 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         Tokenizer tokenizer,
         ModelMetaData? meta = null,
         IAgentBuilder? agentBuilder = null,
+        Func<ToolPermissionContext, Task<ToolPermission>>? permissions = null,
         IKVCache[]? caches = null,
-        int? seed = null,
-        InterceptingFileSystem? fileSystem = null,
-        InterceptingNetworkHandler? networkHandler = null)
+        int? seed = null)
     {
         ArgumentNullException.ThrowIfNull(tokenizer);
         ArgumentNullException.ThrowIfNull(model);
@@ -82,8 +80,11 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         _addEos = meta?.GetLong("tokenizer.ggml.add_eos_token", 1) != 0;
         _generator = new T().CreateGenerator(model, tokenizer, _addBos, _addEos, caches, seed);
         ArgumentNullException.ThrowIfNull(_generator);
-        _fileSystem = fileSystem;
-        _networkHandler = networkHandler;
+       
+        PermissionCallback = permissions ?? new Func<ToolPermissionContext, Task<ToolPermission>>(async (ctx) => { return ToolPermission.Never; });
+        _fileSystem = new InterceptingFileSystem();
+        _networkHandler = new InterceptingNetworkHandler();
+
         if (_agentBuilder != null) AddMessage(ChatRole.System, _agentBuilder.BuildAgentPrompt());
     }
 
@@ -203,9 +204,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     private async Task<JsonObject> DispatchToolAsync(
         string toolName, JsonObject toolCall, JsonObject args, CancellationToken ct)
     {
-        // Build the permission check delegate once — it closes over toolName and args
-        // so the interceptors have everything they need without any further coupling.
-        IoPermissionCheck? check = PermissionCallback is null ? null : async (tn, category, resource, callArgs) =>
+        async Task<bool> check(string tn, ToolCategory category, string resource, JsonObject callArgs)
         {
             var ctx = new ToolPermissionContext
             {
@@ -216,10 +215,10 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
             };
             var permission = await PermissionCallback(ctx).WaitAsync(ct);
             return permission == ToolPermission.Always;
-        };
+        }
 
         // Activate interceptors only when we have a callback to wire them to
-        if (check is not null)
+        if ((IoPermissionCheck?)check is not null)
         {
             _fileSystem?.Activate(toolName, args, check);
             _networkHandler?.Activate(toolName, args, check);
