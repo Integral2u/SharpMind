@@ -1,4 +1,5 @@
-﻿using SharpMind.Core.Tensors;
+﻿using System.Runtime.Intrinsics.X86;
+using SharpMind.Core.Tensors;
 
 namespace SharpMind.Model.Layers;
 
@@ -8,36 +9,9 @@ public sealed class RmsNormLayer(int dim, float eps = 1e-5f, Tensor<float>? weig
         => NormKernels.RMSNormRowScalar(src, weight, dst, rmsInv);
 
     protected override float ComputeScalarParam(ReadOnlySpan<float> row)
-    {
-        // Single-pass online RMS with overflow guard.
-        // When |v| > sqrt(float.MaxValue) ≈ 1.84e19, v² overflows to +Inf.
-        // Normalize by running maxAbs to keep all intermediate squares in range.
-        float maxAbs = 0f;
-        float ss = 0f;
-        int n = row.Length;
-
-        foreach (float v in row)
-        {
-            float a = Math.Abs(v);
-            if (a > maxAbs)
-            {
-                float ratio = maxAbs / a;
-                ss = ss * ratio * ratio + 1f;
-                maxAbs = a;
-            }
-            else if (a > 1e-20f)
-            {
-                float vn = v / maxAbs;
-                ss += vn * vn;
-            }
-        }
-
-        if (maxAbs < 1e-20f)
-            return 1f / MathF.Sqrt(Eps);
-
-        float rms = maxAbs * MathF.Sqrt(ss / n + Eps / (maxAbs * maxAbs));
-        return 1f / rms;
-    }
+        => Avx.IsSupported
+            ? NormKernels.RMSNormParamAVX2(row, Eps)
+            : NormKernels.RMSNormParamScalar(row, Eps);
 
     protected override void ComputeBackward(float[] input, float[] output, ReadOnlySpan<float> dOutput, Span<float> dInput, int N, float eps, float rmsInv)
     {

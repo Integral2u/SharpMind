@@ -1,4 +1,6 @@
 ﻿using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.X86;
+using SharpMind.Core;
 
 namespace SharpMind.Model.Layers;
 
@@ -30,6 +32,62 @@ internal static class NormKernels
     {
         for (int i = 0; i < dst.Length; i++)
             dst[i] = src[i] * rmsInv * weight[i];
+    }
+
+    // ── RMSNorm param — 1 / sqrt(mean(v²) + eps) ────────────────────────
+    // Single-pass stable variant with overflow guard in the scalar fallback.
+    // The AVX2 path uses direct sum-of-squares; overflow is not possible
+    // for inference-range values (|v| < 10⁶).
+
+    internal static unsafe float RMSNormParamAVX2(ReadOnlySpan<float> row, float eps)
+    {
+        fixed (float* pRow = row)
+        {
+            int i = 0, n = row.Length;
+            var vSum = Vector256<float>.Zero;
+
+            for (; i <= n - 8; i += 8)
+            {
+                var v = Vector256.LoadUnsafe(ref pRow[i]);
+                vSum = Avx.Add(vSum, Avx.Multiply(v, v));
+            }
+
+            float ss = MathHelpers.HSum256_Avx(vSum);
+
+            for (; i < n; i++)
+                ss += pRow[i] * pRow[i];
+
+            return 1f / MathF.Sqrt(ss / n + eps);
+        }
+    }
+
+    internal static float RMSNormParamScalar(ReadOnlySpan<float> row, float eps)
+    {
+        float maxAbs = 0f;
+        float ss = 0f;
+        int n = row.Length;
+
+        foreach (float v in row)
+        {
+            float a = Math.Abs(v);
+            if (a > maxAbs)
+            {
+                float ratio = maxAbs / a;
+                ss = ss * ratio * ratio + 1f;
+                maxAbs = a;
+            }
+            else if (a > 1e-20f)
+            {
+                float vn = v / maxAbs;
+                ss += vn * vn;
+            }
+        }
+
+        if (maxAbs < 1e-20f)
+            return 1f / MathF.Sqrt(eps);
+
+        float rms = maxAbs * MathF.Sqrt(ss / n + eps / (maxAbs * maxAbs));
+        return 1f / rms;
     }
 
     // ── LayerNorm row — standard mean/variance normalisation ─────────────
