@@ -35,24 +35,23 @@ public abstract class FfnLayer : IDisposable
 
     public void LoadWeights(string name, ReadOnlySpan<float> data)
     {
-        var lower = name.ToLower();
-        bool isBias = lower.Contains("bias");
+        bool isBias = name.Contains("bias", StringComparison.OrdinalIgnoreCase);
 
-        if (lower.Contains("gate"))
+        if (name.Contains("gate", StringComparison.OrdinalIgnoreCase))
         {
             if (isBias)
                 LoadFusedBias(data, 0);
             else
                 LoadFusedWeightTransposed(data, 0);
         }
-        else if (lower.Contains("up"))
+        else if (name.Contains("up", StringComparison.OrdinalIgnoreCase))
         {
             if (isBias)
                 LoadFusedBias(data, Config.FfnDim);
             else
                 LoadFusedWeightTransposed(data, Config.FfnDim);
         }
-        else if (lower.Contains("down"))
+        else if (name.Contains("down", StringComparison.OrdinalIgnoreCase))
         {
             if (isBias) WDown!.LoadBias(data); else WDown!.LoadWeightTransposed(data);
         }
@@ -76,14 +75,13 @@ public abstract class FfnLayer : IDisposable
 
     public bool SetRawWeight(string name, byte[] rawData, Format.GgufDtype dtype)
     {
-        var lower = name.ToLower();
-        if (lower.Contains("bias")) return false;
+        if (name.Contains("bias", StringComparison.OrdinalIgnoreCase)) return false;
 
         // Gate and up are fused into WGated with separate quantized tensors in GGUF.
         // Force dequantization so LoadWeights can load into the fused float weight.
-        if (lower.Contains("gate") || lower.Contains("up"))
+        if (name.Contains("gate", StringComparison.OrdinalIgnoreCase) || name.Contains("up", StringComparison.OrdinalIgnoreCase))
             return false;
-        if (lower.Contains("down"))
+        if (name.Contains("down", StringComparison.OrdinalIgnoreCase))
             return WDown!.SetRawWeight(rawData, dtype);
         return false;
     }

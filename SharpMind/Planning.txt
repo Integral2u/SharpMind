@@ -81,7 +81,7 @@ Priority	Change	Impact	Effort	Risk
 done 1	RMSNorm variance vectorization (currently scalar for loop sum-of-squares → Vector256 8-wide)	High — runs 2× per layer, 48× per forward pass	Small	Low — isolated math change
 done 2	SiLU/GELU polynomial approximation (currently scalar MathF.Exp/Tanh with no SIMD path)	High — no .NET SIMD exp/tanh intrinsic, polynomial approx enables 8-wide AVX2	Medium	Medium — quality vs perf tradeoff
 3	LayerNorm mean/variance vectorization (entirely scalar currently)	Medium — called 2× per layer	Small	Low
-4	StringComparison.OrdinalIgnoreCase refactor (11 ToLower() → allocation-free)	Low (init-time only)	Trivial	None
+Done 4	StringComparison.OrdinalIgnoreCase refactor (11 ToLower() → allocation-free)	Low (init-time only)	Trivial	None
 5	QKV fusion (re-attempt with delegate dispatch pattern)	High — 3 MatMuls → 1	High	High — previously caused echo regression
 6	Remove unused dtype param from VecDotQxK (no longer needed after pre-resolution)
 

@@ -141,55 +141,53 @@ public sealed class TransformerBlock : IDisposable
 
     public bool LoadWeight(string name, ReadOnlySpan<float> data)
     {
-        var lower = name.ToLower();
-
         // Attention — supports both old (attn_q) and modern (q_proj/self_attn.q) naming
-        if (lower.Contains("attn_q") || lower.Contains("q_proj") || lower.Contains("self_attn.q"))
+        if (name.Contains("attn_q", StringComparison.OrdinalIgnoreCase) || name.Contains("q_proj", StringComparison.OrdinalIgnoreCase) || name.Contains("self_attn.q", StringComparison.OrdinalIgnoreCase))
         {
             _attention.LoadWeights(name, data);
             return true;
         }
-        if (lower.Contains("attn_k") || lower.Contains("k_proj") || lower.Contains("self_attn.k"))
+        if (name.Contains("attn_k", StringComparison.OrdinalIgnoreCase) || name.Contains("k_proj", StringComparison.OrdinalIgnoreCase) || name.Contains("self_attn.k", StringComparison.OrdinalIgnoreCase))
         {
             _attention.LoadWeights(name, data);
             return true;
         }
-        if (lower.Contains("attn_v") || lower.Contains("v_proj") || lower.Contains("self_attn.v"))
+        if (name.Contains("attn_v", StringComparison.OrdinalIgnoreCase) || name.Contains("v_proj", StringComparison.OrdinalIgnoreCase) || name.Contains("self_attn.v", StringComparison.OrdinalIgnoreCase))
         {
             _attention.LoadWeights(name, data);
             return true;
         }
-        if (lower.Contains("attn_output") || lower.Contains("attn_o") ||
-            lower.Contains("o_proj") || lower.Contains("out_proj") || lower.Contains("self_attn.o"))
+        if (name.Contains("attn_output", StringComparison.OrdinalIgnoreCase) || name.Contains("attn_o", StringComparison.OrdinalIgnoreCase) ||
+            name.Contains("o_proj", StringComparison.OrdinalIgnoreCase) || name.Contains("out_proj", StringComparison.OrdinalIgnoreCase) || name.Contains("self_attn.o", StringComparison.OrdinalIgnoreCase))
         {
             _attention.LoadWeights(name, data);
             return true;
         }
 
         // FFN — supports both old (ffn_gate) and modern (gate_proj/mlp.gate) naming
-        if (lower.Contains("ffn_gate") || lower.Contains("gate_proj") || lower.Contains("mlp.gate"))
+        if (name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase) || name.Contains("gate_proj", StringComparison.OrdinalIgnoreCase) || name.Contains("mlp.gate", StringComparison.OrdinalIgnoreCase))
         {
             _ffn.LoadWeights(name, data);
             return true;
         }
-        if (lower.Contains("ffn_up") || lower.Contains("up_proj") || lower.Contains("mlp.up"))
+        if (name.Contains("ffn_up", StringComparison.OrdinalIgnoreCase) || name.Contains("up_proj", StringComparison.OrdinalIgnoreCase) || name.Contains("mlp.up", StringComparison.OrdinalIgnoreCase))
         {
             _ffn.LoadWeights(name, data);
             return true;
         }
-        if (lower.Contains("ffn_down") || lower.Contains("down_proj") || lower.Contains("mlp.down"))
+        if (name.Contains("ffn_down", StringComparison.OrdinalIgnoreCase) || name.Contains("down_proj", StringComparison.OrdinalIgnoreCase) || name.Contains("mlp.down", StringComparison.OrdinalIgnoreCase))
         {
             _ffn.LoadWeights(name, data);
             return true;
         }
 
         // Norms — supports both old and modern naming
-        if (lower.Contains("attn_norm") || lower.Contains("input_layernorm"))
+        if (name.Contains("attn_norm", StringComparison.OrdinalIgnoreCase) || name.Contains("input_layernorm", StringComparison.OrdinalIgnoreCase))
         {
             _norm1.LoadWeight(data);
             return true;
         }
-        if (lower.Contains("ffn_norm") || lower.Contains("post_attention_layernorm"))
+        if (name.Contains("ffn_norm", StringComparison.OrdinalIgnoreCase) || name.Contains("post_attention_layernorm", StringComparison.OrdinalIgnoreCase))
         {
             _norm2.LoadWeight(data);
             return true;
@@ -200,14 +198,13 @@ public sealed class TransformerBlock : IDisposable
 
     public bool SetRawWeight(string name, byte[] rawData, Format.GgufDtype dtype)
     {
-        var lower = name.ToLower();
-        if (lower.Contains("attn_q") || lower.Contains("attn_k") || lower.Contains("attn_v") ||
-            lower.Contains("attn_output") || lower.Contains("attn_o") ||
-            lower.Contains("q_proj") || lower.Contains("k_proj") || lower.Contains("v_proj") ||
-            lower.Contains("o_proj") || lower.Contains("out_proj"))
+        if (name.Contains("attn_q", StringComparison.OrdinalIgnoreCase) || name.Contains("attn_k", StringComparison.OrdinalIgnoreCase) || name.Contains("attn_v", StringComparison.OrdinalIgnoreCase) ||
+            name.Contains("attn_output", StringComparison.OrdinalIgnoreCase) || name.Contains("attn_o", StringComparison.OrdinalIgnoreCase) ||
+            name.Contains("q_proj", StringComparison.OrdinalIgnoreCase) || name.Contains("k_proj", StringComparison.OrdinalIgnoreCase) || name.Contains("v_proj", StringComparison.OrdinalIgnoreCase) ||
+            name.Contains("o_proj", StringComparison.OrdinalIgnoreCase) || name.Contains("out_proj", StringComparison.OrdinalIgnoreCase))
             return _attention.SetRawWeight(name, rawData, dtype);
-        if (lower.Contains("ffn_gate") || lower.Contains("ffn_up") || lower.Contains("ffn_down") ||
-            lower.Contains("gate_proj") || lower.Contains("up_proj") || lower.Contains("down_proj"))
+        if (name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase) || name.Contains("ffn_up", StringComparison.OrdinalIgnoreCase) || name.Contains("ffn_down", StringComparison.OrdinalIgnoreCase) ||
+            name.Contains("gate_proj", StringComparison.OrdinalIgnoreCase) || name.Contains("up_proj", StringComparison.OrdinalIgnoreCase) || name.Contains("down_proj", StringComparison.OrdinalIgnoreCase))
             return _ffn.SetRawWeight(name, rawData, dtype);
         return false;
     }

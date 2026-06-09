@@ -41,38 +41,37 @@ public sealed class TransformerWeights : IDisposable
 
     public (Tensor<float>? target, BlockWeights? block, string? rawField) ResolveTarget(string name)
     {
-        var lower = name.ToLower();
-        if (lower.Contains("token_embd")) return (EmbeddingWeight, null, null);
-        if (lower.Contains("output_norm")) return (FinalNormWeight, null, null);
+        if (name.Contains("token_embd", StringComparison.OrdinalIgnoreCase)) return (EmbeddingWeight, null, null);
+        if (name.Contains("output_norm", StringComparison.OrdinalIgnoreCase)) return (FinalNormWeight, null, null);
         // Exact match only — "attn_output.weight" contains "output.weight" but is a block tensor
-        if (lower == "output.weight" || lower == "lm_head.weight") return (LmHeadWeight, null, null);
+        if (name.Equals("output.weight", StringComparison.OrdinalIgnoreCase) || name.Equals("lm_head.weight", StringComparison.OrdinalIgnoreCase)) return (LmHeadWeight, null, null);
         
         var match = System.Text.RegularExpressions.Regex.Match(name, @"blk\.(\d+)\.");
         if (match.Success && int.TryParse(match.Groups[1].Value, out int bIdx) && bIdx < Blocks.Length)
         {
             var block = Blocks[bIdx];
-            if (lower.Contains("bias"))
+            if (name.Contains("bias", StringComparison.OrdinalIgnoreCase))
             {
-                if (lower.Contains("attn_q") || lower.Contains("q_proj")) return (null, block, null);
-                if (lower.Contains("attn_k") || lower.Contains("k_proj")) return (null, block, null);
-                if (lower.Contains("attn_v") || lower.Contains("v_proj")) return (null, block, null);
-                if (lower.Contains("attn_output") || lower.Contains("o_proj")) return (null, block, null);
-                if (lower.Contains("attn_norm") || lower.Contains("input_layernorm")) return (null, block, null);
-                if (lower.Contains("ffn_norm") || lower.Contains("post_attention_layernorm")) return (null, block, null);
-                if (lower.Contains("ffn_gate") || lower.Contains("ffn_up")) return (null, block, null);
-                if (lower.Contains("ffn_down")) return (null, block, null);
+                if (name.Contains("attn_q", StringComparison.OrdinalIgnoreCase) || name.Contains("q_proj", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
+                if (name.Contains("attn_k", StringComparison.OrdinalIgnoreCase) || name.Contains("k_proj", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
+                if (name.Contains("attn_v", StringComparison.OrdinalIgnoreCase) || name.Contains("v_proj", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
+                if (name.Contains("attn_output", StringComparison.OrdinalIgnoreCase) || name.Contains("o_proj", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
+                if (name.Contains("attn_norm", StringComparison.OrdinalIgnoreCase) || name.Contains("input_layernorm", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
+                if (name.Contains("ffn_norm", StringComparison.OrdinalIgnoreCase) || name.Contains("post_attention_layernorm", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
+                if (name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase) || name.Contains("ffn_up", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
+                if (name.Contains("ffn_down", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
             }
             else
             {
-                if (lower.Contains("attn_q") || lower.Contains("q_proj")) return (null, block, "RawWq");
-                if (lower.Contains("attn_k") || lower.Contains("k_proj")) return (null, block, "RawWk");
-                if (lower.Contains("attn_v") || lower.Contains("v_proj")) return (null, block, "RawWv");
-                if (lower.Contains("attn_output") || lower.Contains("o_proj")) return (null, block, "RawWo");
-                if (lower.Contains("attn_norm") || lower.Contains("input_layernorm")) return (null, block, null);
-                if (lower.Contains("ffn_norm") || lower.Contains("post_attention_layernorm")) return (null, block, null);
-                if (lower.Contains("ffn_gate")) return (null, block, "RawWgate");
-                if (lower.Contains("ffn_up")) return (null, block, "RawWup");
-                if (lower.Contains("ffn_down")) return (null, block, "RawWf2");
+                if (name.Contains("attn_q", StringComparison.OrdinalIgnoreCase) || name.Contains("q_proj", StringComparison.OrdinalIgnoreCase)) return (null, block, "RawWq");
+                if (name.Contains("attn_k", StringComparison.OrdinalIgnoreCase) || name.Contains("k_proj", StringComparison.OrdinalIgnoreCase)) return (null, block, "RawWk");
+                if (name.Contains("attn_v", StringComparison.OrdinalIgnoreCase) || name.Contains("v_proj", StringComparison.OrdinalIgnoreCase)) return (null, block, "RawWv");
+                if (name.Contains("attn_output", StringComparison.OrdinalIgnoreCase) || name.Contains("o_proj", StringComparison.OrdinalIgnoreCase)) return (null, block, "RawWo");
+                if (name.Contains("attn_norm", StringComparison.OrdinalIgnoreCase) || name.Contains("input_layernorm", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
+                if (name.Contains("ffn_norm", StringComparison.OrdinalIgnoreCase) || name.Contains("post_attention_layernorm", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
+                if (name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase)) return (null, block, "RawWgate");
+                if (name.Contains("ffn_up", StringComparison.OrdinalIgnoreCase)) return (null, block, "RawWup");
+                if (name.Contains("ffn_down", StringComparison.OrdinalIgnoreCase)) return (null, block, "RawWf2");
             }
         }
         return (null, null, null);
@@ -80,36 +79,35 @@ public sealed class TransformerWeights : IDisposable
 
     public Tensor<float>? ResolveFloatTarget(string name)
     {
-        var lower = name.ToLower();
-        if (lower.Contains("token_embd")) return EmbeddingWeight;
-        if (lower.Contains("output_norm")) return FinalNormWeight;
-        if (lower == "output.weight" || lower == "lm_head.weight") return LmHeadWeight;
+        if (name.Contains("token_embd", StringComparison.OrdinalIgnoreCase)) return EmbeddingWeight;
+        if (name.Contains("output_norm", StringComparison.OrdinalIgnoreCase)) return FinalNormWeight;
+        if (name.Equals("output.weight", StringComparison.OrdinalIgnoreCase) || name.Equals("lm_head.weight", StringComparison.OrdinalIgnoreCase)) return LmHeadWeight;
         
         var match = System.Text.RegularExpressions.Regex.Match(name, @"blk\.(\d+)\.");
         if (match.Success && int.TryParse(match.Groups[1].Value, out int bIdx) && bIdx < Blocks.Length)
         {
             var b = Blocks[bIdx];
-            if (lower.Contains("bias"))
+            if (name.Contains("bias", StringComparison.OrdinalIgnoreCase))
             {
-                if (lower.Contains("attn_q") || lower.Contains("q_proj")) return b.WqBias;
-                if (lower.Contains("attn_k") || lower.Contains("k_proj")) return b.WkBias;
-                if (lower.Contains("attn_v") || lower.Contains("v_proj")) return b.WvBias;
-                if (lower.Contains("attn_output") || lower.Contains("o_proj")) return b.WoBias;
-                if (lower.Contains("attn_norm") || lower.Contains("input_layernorm")) return b.Norm1B;
-                if (lower.Contains("ffn_norm") || lower.Contains("post_attention_layernorm")) return b.Norm2B;
-                if (lower.Contains("ffn_gate") || lower.Contains("ffn_up")) return b.Wf1Bias;
-                if (lower.Contains("ffn_down")) return b.Wf2Bias;
+                if (name.Contains("attn_q", StringComparison.OrdinalIgnoreCase) || name.Contains("q_proj", StringComparison.OrdinalIgnoreCase)) return b.WqBias;
+                if (name.Contains("attn_k", StringComparison.OrdinalIgnoreCase) || name.Contains("k_proj", StringComparison.OrdinalIgnoreCase)) return b.WkBias;
+                if (name.Contains("attn_v", StringComparison.OrdinalIgnoreCase) || name.Contains("v_proj", StringComparison.OrdinalIgnoreCase)) return b.WvBias;
+                if (name.Contains("attn_output", StringComparison.OrdinalIgnoreCase) || name.Contains("o_proj", StringComparison.OrdinalIgnoreCase)) return b.WoBias;
+                if (name.Contains("attn_norm", StringComparison.OrdinalIgnoreCase) || name.Contains("input_layernorm", StringComparison.OrdinalIgnoreCase)) return b.Norm1B;
+                if (name.Contains("ffn_norm", StringComparison.OrdinalIgnoreCase) || name.Contains("post_attention_layernorm", StringComparison.OrdinalIgnoreCase)) return b.Norm2B;
+                if (name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase) || name.Contains("ffn_up", StringComparison.OrdinalIgnoreCase)) return b.Wf1Bias;
+                if (name.Contains("ffn_down", StringComparison.OrdinalIgnoreCase)) return b.Wf2Bias;
             }
             else
             {
-                if (lower.Contains("attn_q") || lower.Contains("q_proj")) return b.Wq;
-                if (lower.Contains("attn_k") || lower.Contains("k_proj")) return b.Wk;
-                if (lower.Contains("attn_v") || lower.Contains("v_proj")) return b.Wv;
-                if (lower.Contains("attn_output") || lower.Contains("o_proj")) return b.Wo;
-                if (lower.Contains("attn_norm") || lower.Contains("input_layernorm")) return b.Norm1W;
-                if (lower.Contains("ffn_norm") || lower.Contains("post_attention_layernorm")) return b.Norm2W;
-                if (lower.Contains("ffn_gate") || lower.Contains("ffn_up")) return b.Wf1;
-                if (lower.Contains("ffn_down")) return b.Wf2;
+                if (name.Contains("attn_q", StringComparison.OrdinalIgnoreCase) || name.Contains("q_proj", StringComparison.OrdinalIgnoreCase)) return b.Wq;
+                if (name.Contains("attn_k", StringComparison.OrdinalIgnoreCase) || name.Contains("k_proj", StringComparison.OrdinalIgnoreCase)) return b.Wk;
+                if (name.Contains("attn_v", StringComparison.OrdinalIgnoreCase) || name.Contains("v_proj", StringComparison.OrdinalIgnoreCase)) return b.Wv;
+                if (name.Contains("attn_output", StringComparison.OrdinalIgnoreCase) || name.Contains("o_proj", StringComparison.OrdinalIgnoreCase)) return b.Wo;
+                if (name.Contains("attn_norm", StringComparison.OrdinalIgnoreCase) || name.Contains("input_layernorm", StringComparison.OrdinalIgnoreCase)) return b.Norm1W;
+                if (name.Contains("ffn_norm", StringComparison.OrdinalIgnoreCase) || name.Contains("post_attention_layernorm", StringComparison.OrdinalIgnoreCase)) return b.Norm2W;
+                if (name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase) || name.Contains("ffn_up", StringComparison.OrdinalIgnoreCase)) return b.Wf1;
+                if (name.Contains("ffn_down", StringComparison.OrdinalIgnoreCase)) return b.Wf2;
             }
         }
         return null;

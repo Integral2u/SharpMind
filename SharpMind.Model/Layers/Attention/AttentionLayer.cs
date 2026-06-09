@@ -52,29 +52,28 @@ public abstract class AttentionLayer : IDisposable
 
     public void LoadWeights(string name, ReadOnlySpan<float> data)
     {
-        var lower = name.ToLower();
-        bool isBias = lower.EndsWith(".bias");
+        bool isBias = name.EndsWith(".bias", StringComparison.OrdinalIgnoreCase);
 
         // Use full tensor-name suffixes — single-char matching ("q", "k", "v") is
         // fooled by the "blk" block prefix which contains "k", causing V weights to
         // silently load into Wk and leaving Wv permanently zeroed.
-        if (lower.Contains("attn_q") || lower.Contains("q_proj"))
+        if (name.Contains("attn_q", StringComparison.OrdinalIgnoreCase) || name.Contains("q_proj", StringComparison.OrdinalIgnoreCase))
         {
             if (isBias) Wq.LoadBias(data);
             else Wq.LoadWeightTransposed(data);
         }
-        else if (lower.Contains("attn_k") || lower.Contains("k_proj"))
+        else if (name.Contains("attn_k", StringComparison.OrdinalIgnoreCase) || name.Contains("k_proj", StringComparison.OrdinalIgnoreCase))
         {
             if (isBias) Wk.LoadBias(data);
             else Wk.LoadWeightTransposed(data);
         }
-        else if (lower.Contains("attn_v") || lower.Contains("v_proj"))
+        else if (name.Contains("attn_v", StringComparison.OrdinalIgnoreCase) || name.Contains("v_proj", StringComparison.OrdinalIgnoreCase))
         {
             if (isBias) Wv.LoadBias(data);
             else Wv.LoadWeightTransposed(data);
         }
-        else if (lower.Contains("attn_output") || lower.Contains("attn_o.") ||
-                 lower.Contains("o_proj") || lower.Contains("out_proj"))
+        else if (name.Contains("attn_output", StringComparison.OrdinalIgnoreCase) || name.Contains("attn_o.", StringComparison.OrdinalIgnoreCase) ||
+                 name.Contains("o_proj", StringComparison.OrdinalIgnoreCase) || name.Contains("out_proj", StringComparison.OrdinalIgnoreCase))
         {
             if (isBias) Wo.LoadBias(data);
             else Wo.LoadWeightTransposed(data);
@@ -83,18 +82,17 @@ public abstract class AttentionLayer : IDisposable
 
     public bool SetRawWeight(string weightName, byte[] rawData, Format.GgufDtype dtype)
     {
-        var lower = weightName.ToLower();
-        bool isBias = lower.EndsWith(".bias");
+        bool isBias = weightName.EndsWith(".bias", StringComparison.OrdinalIgnoreCase);
         if (isBias) return false;
 
-        if (lower.Contains("attn_q") || lower.Contains("q_proj"))
+        if (weightName.Contains("attn_q", StringComparison.OrdinalIgnoreCase) || weightName.Contains("q_proj", StringComparison.OrdinalIgnoreCase))
             return Wq.SetRawWeight(rawData, dtype);
-        if (lower.Contains("attn_k") || lower.Contains("k_proj"))
+        if (weightName.Contains("attn_k", StringComparison.OrdinalIgnoreCase) || weightName.Contains("k_proj", StringComparison.OrdinalIgnoreCase))
             return Wk.SetRawWeight(rawData, dtype);
-        if (lower.Contains("attn_v") || lower.Contains("v_proj"))
+        if (weightName.Contains("attn_v", StringComparison.OrdinalIgnoreCase) || weightName.Contains("v_proj", StringComparison.OrdinalIgnoreCase))
             return Wv.SetRawWeight(rawData, dtype);
-        if (lower.Contains("attn_output") || lower.Contains("attn_o.") ||
-            lower.Contains("o_proj") || lower.Contains("out_proj"))
+        if (weightName.Contains("attn_output", StringComparison.OrdinalIgnoreCase) || weightName.Contains("attn_o.", StringComparison.OrdinalIgnoreCase) ||
+            weightName.Contains("o_proj", StringComparison.OrdinalIgnoreCase) || weightName.Contains("out_proj", StringComparison.OrdinalIgnoreCase))
             return Wo.SetRawWeight(rawData, dtype);
         return false;
     }

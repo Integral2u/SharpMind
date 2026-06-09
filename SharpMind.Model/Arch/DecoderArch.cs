@@ -40,8 +40,6 @@ public sealed class DecoderArch : IArchitecture
 
     public bool LoadWeight(string name, ReadOnlySpan<float> data)
     {
-        var lower = name.ToLower();
-        
         // Extract layer index from name - GGUF uses patterns like blk.7, layer.7, blk.7.attn_
         int layerIdx = -1;
         var match7 = RegexGenerated.LayerIndexDot7Regex.Match(name);// Regex.Match(name, @"\.(\d+)\.");  // .7. pattern
@@ -61,7 +59,7 @@ public sealed class DecoderArch : IArchitecture
         // Try to find by component name prefix - e.g., "blk.7.attn_q" -> layer 7
         for (int i = 0; i < _blocks.Length; i++)
         {
-            if (lower.Contains($".{i}.") || lower.Contains($"blk.{i}") || lower.Contains($"layer_{i}"))
+            if (name.Contains($".{i}.", StringComparison.OrdinalIgnoreCase) || name.Contains($"blk.{i}", StringComparison.OrdinalIgnoreCase) || name.Contains($"layer_{i}", StringComparison.OrdinalIgnoreCase))
             {
                 if (_blocks[i].LoadWeight(name, data)) return true;
             }
@@ -76,7 +74,6 @@ public sealed class DecoderArch : IArchitecture
 
     public bool SetRawWeight(string name, byte[] rawData, Format.GgufDtype dtype)
     {
-        var lower = name.ToLower();
         int layerIdx = -1;
         var match7 = RegexGenerated.LayerIndexDot7Regex.Match(name);// Regex.Match(name, @"\.(\d+)\.");
         if (!match7.Success)
@@ -91,7 +88,7 @@ public sealed class DecoderArch : IArchitecture
 
         for (int i = 0; i < _blocks.Length; i++)
         {
-            if (lower.Contains($".{i}.") || lower.Contains($"blk.{i}") || lower.Contains($"layer_{i}"))
+            if (name.Contains($".{i}.", StringComparison.OrdinalIgnoreCase) || name.Contains($"blk.{i}", StringComparison.OrdinalIgnoreCase) || name.Contains($"layer_{i}", StringComparison.OrdinalIgnoreCase))
             {
                 if (_blocks[i].SetRawWeight(name, rawData, dtype)) return true;
             }

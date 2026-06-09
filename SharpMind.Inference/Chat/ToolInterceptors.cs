@@ -1,6 +1,7 @@
 using Microsoft.Win32.SafeHandles;
 using SharpMind.Inference.Agent;
 using System.IO.Abstractions;
+using System.Runtime.Versioning;
 using System.Text;
 using System.Text.Json.Nodes;
 
@@ -162,9 +163,9 @@ public sealed class InterceptingFileSystem : IFileSystem
         public FileSystemStream Create(string path, int bufferSize, FileOptions options) => inner.Create(path, bufferSize, options);
 
         public IFileSystemInfo CreateSymbolicLink(string path, string pathToTarget) => inner.CreateSymbolicLink(path, pathToTarget);
-
+        [SupportedOSPlatform("windows")]
         public void Decrypt(string path) => inner.Decrypt(path);
-
+        [SupportedOSPlatform("windows")]
         public void Encrypt(string path) => inner.Encrypt(path);
 
         public FileAttributes GetAttributes(SafeFileHandle fileHandle) => inner.GetAttributes(fileHandle);
@@ -186,9 +187,9 @@ public sealed class InterceptingFileSystem : IFileSystem
         public DateTime GetLastWriteTimeUtc(string path) => inner.GetLastWriteTimeUtc(path);
 
         public DateTime GetLastWriteTimeUtc(SafeFileHandle fileHandle) => inner.GetLastWriteTimeUtc(fileHandle);
-
+        [UnsupportedOSPlatform("windows")]
         public UnixFileMode GetUnixFileMode(string path) => inner.GetUnixFileMode(path);
-
+        [UnsupportedOSPlatform("windows")]
         public UnixFileMode GetUnixFileMode(SafeFileHandle fileHandle) => inner.GetUnixFileMode(fileHandle);
 
         public void Move(string sourceFileName, string destFileName, bool overwrite) => inner.Move(sourceFileName, destFileName, overwrite);
@@ -250,9 +251,9 @@ public sealed class InterceptingFileSystem : IFileSystem
         public void SetLastWriteTimeUtc(string path, DateTime lastWriteTimeUtc) => inner.SetLastWriteTimeUtc(path, lastWriteTimeUtc);
 
         public void SetLastWriteTimeUtc(SafeFileHandle fileHandle, DateTime lastWriteTimeUtc) => inner.SetLastWriteTimeUtc(fileHandle, lastWriteTimeUtc);
-
+        [UnsupportedOSPlatform("windows")]
         public void SetUnixFileMode(string path, UnixFileMode mode) => inner.SetUnixFileMode(path, mode);
-
+        [UnsupportedOSPlatform("windows")]
         public void SetUnixFileMode(SafeFileHandle fileHandle, UnixFileMode mode) => inner.SetUnixFileMode(fileHandle, mode);
 
         public void WriteAllBytes(string path, ReadOnlySpan<byte> bytes) => inner.WriteAllBytes(path, bytes);
