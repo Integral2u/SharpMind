@@ -159,5 +159,71 @@ namespace SharpMind.Tests.Core
             for (int i = 0; i < rS.ElementCount; i++)
                 Assert.Equal(rS[i], rA[i], precision: 5);
         }
+
+        [Fact]
+        public void ActivationParity_ScalarMatchesAvx2_SiLU()
+        {
+            if (!System.Runtime.Intrinsics.X86.Avx2.IsSupported) return;
+
+            var siluAvx2 = ActivationFactory.Create(SharpMindConfig.Llama with { Hardware = HardwareTier.AVX2 });
+            var siluScalar = ActivationFactory.Create(SharpMindConfig.Llama with { Hardware = HardwareTier.Scalar });
+
+            using var x = Tensor<float>.From([-5f, -2f, -1f, 0f, 1f, 2f, 5f, 8f], 8);
+            using var rS = siluScalar.Activate(x);
+            using var rA = siluAvx2.Activate(x);
+
+            for (int i = 0; i < rS.ElementCount; i++)
+                Assert.Equal(rS[i], rA[i], precision: 5);
+        }
+
+        [Fact]
+        public void ActivationParity_ScalarMatchesAvx2_GELU()
+        {
+            if (!System.Runtime.Intrinsics.X86.Avx2.IsSupported) return;
+
+            var geluAvx2 = ActivationFactory.Create(SharpMindConfig.Gpt with { Activation = ActivationKind.GELU, Hardware = HardwareTier.AVX2 });
+            var geluScalar = ActivationFactory.Create(SharpMindConfig.Gpt with { Activation = ActivationKind.GELU, Hardware = HardwareTier.Scalar });
+
+            using var x = Tensor<float>.From([-5f, -2f, -1f, 0f, 1f, 2f, 5f, 8f], 8);
+            using var rS = geluScalar.Activate(x);
+            using var rA = geluAvx2.Activate(x);
+
+            for (int i = 0; i < rS.ElementCount; i++)
+                Assert.Equal(rS[i], rA[i], precision: 5);
+        }
+
+        [Fact]
+        public void ActivationParity_ScalarMatchesAvx2_SwiGLU()
+        {
+            if (!System.Runtime.Intrinsics.X86.Avx2.IsSupported) return;
+
+            var swigluAvx2 = ActivationFactory.Create(SharpMindConfig.Llama with { Hardware = HardwareTier.AVX2 });
+            var swigluScalar = ActivationFactory.Create(SharpMindConfig.Llama with { Hardware = HardwareTier.Scalar });
+
+            using var gate = Tensor<float>.From([-5f, -2f, -1f, 0f, 1f, 2f, 5f, 8f], 8);
+            using var up = Tensor<float>.From([1f, 2f, 3f, 4f, 5f, 6f, 7f, 8f], 8);
+            using var rS = swigluScalar.GatedActivate(gate, up);
+            using var rA = swigluAvx2.GatedActivate(gate, up);
+
+            for (int i = 0; i < rS.ElementCount; i++)
+                Assert.Equal(rS[i], rA[i], precision: 5);
+        }
+
+        [Fact]
+        public void ActivationParity_ScalarMatchesAvx2_GeGLU()
+        {
+            if (!System.Runtime.Intrinsics.X86.Avx2.IsSupported) return;
+
+            var gegluAvx2 = ActivationFactory.Create(SharpMindConfig.Gpt with { Gate = GateKind.GeGLU, Hardware = HardwareTier.AVX2 });
+            var gegluScalar = ActivationFactory.Create(SharpMindConfig.Gpt with { Gate = GateKind.GeGLU, Hardware = HardwareTier.Scalar });
+
+            using var gate = Tensor<float>.From([-5f, -2f, -1f, 0f, 1f, 2f, 5f, 8f], 8);
+            using var up = Tensor<float>.From([1f, 2f, 3f, 4f, 5f, 6f, 7f, 8f], 8);
+            using var rS = gegluScalar.GatedActivate(gate, up);
+            using var rA = gegluAvx2.GatedActivate(gate, up);
+
+            for (int i = 0; i < rS.ElementCount; i++)
+                Assert.Equal(rS[i], rA[i], precision: 5);
+        }
     }
 }

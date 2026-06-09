@@ -41,11 +41,11 @@ public abstract class ActivationOps
         SharpMindConfig.ValReLUFma, $"{NS}.{nameof(ActivationKernels.ReLUAVX2)}",
         SharpMindConfig.ValReLU, $"{NS}.{nameof(ActivationKernels.ReLUScalar)}",
         SharpMindConfig.ValGELU, $"{NS}.{nameof(ActivationKernels.GELUScalar)}",
-        SharpMindConfig.ValGELUAvx2, $"{NS}.{nameof(ActivationKernels.GELUScalar)}",
-        SharpMindConfig.ValGELUFma, $"{NS}.{nameof(ActivationKernels.GELUScalar)}",
+        SharpMindConfig.ValGELUAvx2, $"{NS}.{nameof(ActivationKernels.GELUAVX2)}",
+        SharpMindConfig.ValGELUFma, $"{NS}.{nameof(ActivationKernels.GELUAVX2)}",
         SharpMindConfig.ValSiLU, $"{NS}.{nameof(ActivationKernels.SiLUScalar)}",
-        SharpMindConfig.ValSiLUAvx2, $"{NS}.{nameof(ActivationKernels.SiLUScalar)}",
-        SharpMindConfig.ValSiLUFma, $"{NS}.{nameof(ActivationKernels.SiLUScalar)}")]
+        SharpMindConfig.ValSiLUAvx2, $"{NS}.{nameof(ActivationKernels.SiLUAVX2)}",
+        SharpMindConfig.ValSiLUFma, $"{NS}.{nameof(ActivationKernels.SiLUAVX2)}")]
     public abstract void ApplyPointwise(ReadOnlySpan<float> src, Span<float> dst);
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -54,11 +54,11 @@ public abstract class ActivationOps
 
     [PuzzleCornerPiece(SharpMindConfig.KeyGate, true, null,
         SharpMindConfig.ValSwiGLU, $"{NS}.{nameof(ActivationKernels.SwiGLUScalar)}",
-        SharpMindConfig.ValSwiGLUAvx2, $"{NS}.{nameof(ActivationKernels.SwiGLUScalar)}",
-        SharpMindConfig.ValSwiGLUFma, $"{NS}.{nameof(ActivationKernels.SwiGLUScalar)}",
+        SharpMindConfig.ValSwiGLUAvx2, $"{NS}.{nameof(ActivationKernels.SwiGLUAVX2)}",
+        SharpMindConfig.ValSwiGLUFma, $"{NS}.{nameof(ActivationKernels.SwiGLUAVX2)}",
         SharpMindConfig.ValGeGLU, $"{NS}.{nameof(ActivationKernels.GeGLUScalar)}",
-        SharpMindConfig.ValGeGLUAvx2, $"{NS}.{nameof(ActivationKernels.GeGLUScalar)}",
-        SharpMindConfig.ValGeGLUFma, $"{NS}.{nameof(ActivationKernels.GeGLUScalar)}",
+        SharpMindConfig.ValGeGLUAvx2, $"{NS}.{nameof(ActivationKernels.GeGLUAVX2)}",
+        SharpMindConfig.ValGeGLUFma, $"{NS}.{nameof(ActivationKernels.GeGLUAVX2)}",
         SharpMindConfig.ValNone, $"{NS}.{nameof(ActivationKernels.CopyGate)}",
         SharpMindConfig.ValNoneAvx2, $"{NS}.{nameof(ActivationKernels.CopyGate)}",
         SharpMindConfig.ValNoneFma, $"{NS}.{nameof(ActivationKernels.CopyGate)}")]
