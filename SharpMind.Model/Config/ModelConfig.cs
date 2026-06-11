@@ -1,5 +1,4 @@
 ﻿namespace SharpMind.Model.Config;
-
 /// <summary>
 /// Immutable hyperparameter set for a transformer model.
 /// Contains only dimensional and structural parameters — kernel selection
@@ -23,6 +22,7 @@ public sealed record ModelConfig
 
     // ── Dimensions ────────────────────────────────────────────────────────
 
+    public PositionalEncoding PositionalEncoding { get; init; } = PositionalEncoding.RoPE;
     /// <summary>Vocabulary size — must match the tokenizer.</summary>
     public int VocabSize { get; init; }
 
@@ -82,6 +82,7 @@ public sealed record ModelConfig
 
     /// <summary>Number of query heads each KV head serves (GQA group size).</summary>
     public int KvGroupSize => NumHeads / NumKvHeads;
+
 
     // ── Validation ────────────────────────────────────────────────────────
 

@@ -21,7 +21,7 @@ namespace SharpMind.Core.Embeddings;
 ///   rope.Apply(query, positionOffset: 0);  // mutates query in-place
 ///   rope.Apply(key,   positionOffset: 0);  // mutates key in-place
 /// </summary>
-public sealed class RoPE
+public sealed class RoPE : PositionalEncoder
 {
     private static readonly ConcurrentDictionary<int, (float[] cos, float[] sin)> TableCache = [];
     private readonly float[] _cosCache; // [MaxSeqLen, HeadDim/2]
@@ -82,7 +82,7 @@ public sealed class RoPE
     /// Starting position index. Set to 0 for prefill; set to current KV-cache
     /// length for incremental decode.
     /// </param>
-    public void Apply(Tensor<float> x, int positionOffset = 0)
+    public override void Apply(Tensor<float> x, int positionOffset = 0)
     {
         if (x.Rank != 3)
             throw new ArgumentException(
@@ -146,7 +146,7 @@ public sealed class RoPE
     /// <summary>
     /// Applies RoPE to a batched tensor [Batch, SeqLen, NumHeads, HeadDim].
     /// </summary>
-    public void ApplyBatched(Tensor<float> x, int positionOffset = 0)
+    public override void ApplyBatched(Tensor<float> x, int positionOffset = 0)
     {
         if (x.Rank != 4)
             throw new ArgumentException(

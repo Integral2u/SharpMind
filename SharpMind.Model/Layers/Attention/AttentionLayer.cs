@@ -19,7 +19,7 @@ public abstract class AttentionLayer : IDisposable
     public readonly LinearLayer Wk;
     public readonly LinearLayer Wv;
     public readonly LinearLayer Wo;
-    public readonly RoPE Rope;
+    public readonly PositionalEncoder PositionalEncoder;
     private bool _disposed;
 
     protected AttentionLayer(ModelConfig config, QuantizationOps qOps)
@@ -35,7 +35,7 @@ public abstract class AttentionLayer : IDisposable
         Wk = new LinearLayer("k_proj", config.HiddenDim, kvDim, bias: true, qOps: qOps, weights?.Wk, weights?.WkBias);
         Wv = new LinearLayer("v_proj", config.HiddenDim, kvDim, bias: true, qOps: qOps, weights?.Wv, weights?.WvBias);
         Wo = new LinearLayer("o_proj", config.HiddenDim, config.HiddenDim, bias: true, qOps: qOps, weights?.Wo, weights?.WoBias);
-        Rope = new RoPE(config.HeadDim, config.MaxSeqLen, config.RopeTheta);
+        PositionalEncoder = config.PositionalEncoding == PositionalEncoding.NoPE ? new NoPE() : new RoPE(config.HeadDim, config.MaxSeqLen, config.RopeTheta);
     }
 
     public void SetWeights(TransformerWeights.BlockWeights weights)
@@ -142,13 +142,13 @@ public abstract class AttentionLayer : IDisposable
 
         using var qr = q.Reshape(batch, seqLen, numH, headDim);
         using var kr = k.Reshape(batch, seqLen, numKv, headDim);
-        Rope.ApplyBatched(qr, positionOffset);
-        Rope.ApplyBatched(kr, positionOffset);
+        PositionalEncoder.ApplyBatched(qr, positionOffset);
+        PositionalEncoder.ApplyBatched(kr, positionOffset);
 
         cache?.Update(k, v, numKv, headDim);
 
-        Tensor<float> output = workspace != null 
-            ? workspace.Rent<float>([batch, seqLen, hidden]) 
+        Tensor<float> output = workspace != null
+            ? workspace.Rent<float>([batch, seqLen, hidden])
             : new Tensor<float>(batch, seqLen, hidden);
         int effectiveKvLen = cache != null ? cache.Length : seqLen;
 
@@ -162,11 +162,11 @@ public abstract class AttentionLayer : IDisposable
             Tensor<float>? allTempV = null;
             if (cache is not { IsContiguous: true })
             {
-                allTempK = workspace != null 
-                    ? workspace.Rent<float>([totalHeads, effectiveKvLen, headDim]) 
+                allTempK = workspace != null
+                    ? workspace.Rent<float>([totalHeads, effectiveKvLen, headDim])
                     : new Tensor<float>(totalHeads, effectiveKvLen, headDim);
-                allTempV = workspace != null 
-                    ? workspace.Rent<float>([totalHeads, effectiveKvLen, headDim]) 
+                allTempV = workspace != null
+                    ? workspace.Rent<float>([totalHeads, effectiveKvLen, headDim])
                     : new Tensor<float>(totalHeads, effectiveKvLen, headDim);
             }
 
@@ -270,10 +270,10 @@ public abstract class AttentionLayer : IDisposable
     protected virtual void Dispose(bool disposing)
     {
         if (_disposed) return;
-        if (disposing) 
-        { 
+        if (disposing)
+        {
             // These are LinearLayers, they will only dispose if they own the weights.
-            Wq.Dispose(); Wk.Dispose(); Wv.Dispose(); Wo.Dispose(); 
+            Wq.Dispose(); Wk.Dispose(); Wv.Dispose(); Wo.Dispose();
         }
         _disposed = true;
     }

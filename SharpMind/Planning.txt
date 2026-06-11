@@ -29,7 +29,7 @@ Consideration to Agent Spawn depth will be needed to prevent ifinate spawning, a
 
 if (Avx.IsSupported) slow check
 RmsNormLayer and NormKernels to JigSawDotNet pattern
-
+RoPE NoPE to Jigsaw Pattern
 review CreateForSystem benchmark patterns
 
 Todo
