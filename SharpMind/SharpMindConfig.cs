@@ -2,15 +2,6 @@ using System.Runtime.Intrinsics.X86;
 
 namespace SharpMind;
 
-public enum ActivationKind { GELU, SiLU, ReLU }
-public enum GateKind       { None, SwiGLU, GeGLU }
-public enum FfnKind { Dense, Gated, MoE }
-public enum AttentionKind { MHA, GQA, MQA }
-public enum NormKind { RMSNorm, LayerNorm }
-public enum ArchKind { Decoder, Encoder }
-
-public enum HardwareTier   { Auto, FMA, AVX2, SSE, Scalar }
-
 public sealed record SharpMindConfig
 {
     // ── JigSaw Pointers (Abstract method names) ────────────────────────────
@@ -206,45 +197,20 @@ public sealed record SharpMindConfig
         };
     }
 
-    public Dictionary<string, string> ToJigSawMapping()
+    public Dictionary<string, string> ToJigSawMapping(Dictionary<string, string>? overrides = null)
     {
-        return new MappingBuilder(ResolvedHardware)
+        var cfg = new MappingBuilder(ResolvedHardware)
             .ApplyPreset(this)
             .Build();
+        if (overrides == null) return cfg;
+        if (overrides != null)
+        {
+            foreach (var m in overrides)
+            {
+                if (cfg.TryGetValue(m.Key, out string? value)) cfg[m.Key] = value;
+                else cfg.Add(m.Key, m.Value);
+            }
+        }
+        return cfg;
     }
-}
-
-/// <summary>
-/// Fixed configuration - must match trained model weights.
-/// Dimensions and activation functions trained into the model.
-/// </summary>
-public record FixedConfig
-{
-    public int VocabSize { get; init; } = 32000;
-    public int HiddenDim { get; init; } = 2048;
-    public int NumLayers { get; init; } = 1;
-    public int NumHeads { get; init; } = 32;
-    public int NumKvHeads { get; init; } = 4;
-    public int FfnDim { get; init; } = 5632;
-    public int MaxSeqLen { get; init; } = 2048;
-    public float RopeTheta { get; init; } = 10000f;
-    
-    public ActivationKind Activation { get; init; } = ActivationKind.SiLU;
-    public GateKind Gate { get; init; } = GateKind.SwiGLU;
-    public FfnKind Ffn { get; init; } = FfnKind.Gated;
-    
-    public static FixedConfig Default => new();
-}
-
-/// <summary>
-/// Runtime configuration - can be changed without affecting model.
-/// Performance and execution settings.
-/// </summary>
-public record RuntimeConfig
-{
-    public AttentionKind Attention { get; init; } = AttentionKind.GQA;
-    public NormKind Norm { get; init; } = NormKind.RMSNorm;
-    public HardwareTier Hardware { get; init; } = HardwareTier.Auto;
-    
-    public static RuntimeConfig Default => new();
 }

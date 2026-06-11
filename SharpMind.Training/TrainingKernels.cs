@@ -18,7 +18,7 @@ internal static class TrainingKernels
     // v = β₂v + (1-β₂)g²
     // θ -= lr * (m̂/(√v̂+ε) + λθ)   (λ=0 for no-decay params)
 
-    internal static unsafe void AdamWUpdate_AVX2(
+    public static unsafe void AdamWUpdate_AVX2(
         Span<float> data, Span<float> grad,
         Span<float> m,    Span<float> v,
         float beta1,   float beta2,
@@ -71,7 +71,7 @@ internal static class TrainingKernels
         }
     }
 
-    internal static void AdamWUpdate_Scalar(
+    public static void AdamWUpdate_Scalar(
         Span<float> data, Span<float> grad,
         Span<float> m,    Span<float> v,
         float beta1,   float beta2,
@@ -92,7 +92,7 @@ internal static class TrainingKernels
 
     // ── L2 norm accumulation — AVX2 ───────────────────────────────────────
 
-    internal static unsafe float L2NormSq_AVX2(ReadOnlySpan<float> data)
+    public static unsafe float L2NormSq_AVX2(ReadOnlySpan<float> data)
     {
         fixed (float* p = data)
         {
@@ -111,7 +111,7 @@ internal static class TrainingKernels
         }
     }
 
-    internal static float L2NormSq_Scalar(ReadOnlySpan<float> data)
+    public static float L2NormSq_Scalar(ReadOnlySpan<float> data)
     {
         float sum = 0f;
         foreach (float v in data) sum += v * v;
@@ -119,6 +119,6 @@ internal static class TrainingKernels
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static Vector256<float> Avx256Sqrt(Vector256<float> v)
+    public static Vector256<float> Avx256Sqrt(Vector256<float> v)
         => Avx.Sqrt(v);
 }

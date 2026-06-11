@@ -11,21 +11,29 @@ Tokenizer: BPE, vocab builder, encode/decode
 Data: sources, cleaning, formating, batching, dataset loaders
 Core: tensors, matrix math, memory, activations
 
-tolower or equals StringComparison.OrdinalIgnoreCase speed
-
-Todo
-MPT multi token prediction
-
-ChatSession improvements phase one.
-With the AgentBuilder we have IAgentBuilder.CallToolAsync so we need a way for chat to capture request to call a tool and execute,
-while doing this though we need to add a premissions callback handler that returns Never,Ask,Always.
-triggering permission requiments will requires using System.IO.Abstractions IFileService, INetworkService and checking if the call orginated from IAgentBuilder.CallToolAsync otherwise it's fine.
-This could also require returning a ChatStreamEntry indicating Executing as in exectuing a tool, see ChatStatus.
-
+Code Checking
+!!! SharpMind.Model.ModelFactory.CreateSession BuildBlock call passing mappings 
+!!! must check all calls to Assembler.CreateInstance, cache and or check mappings
+SharpMind.Training.Trainer._scheduler never used.
+Delete any of this ──────────── or ═════════════════
+Review CreateForSystem
+Ensure Chat Session is reporting correct ChatStatus
+interface(s) declair public, not required but I prefer it
+Review SharpMind Model Format
+SharpMind.Model.Training.ITrainableModel and SharpMind.Model.Training.ITrainableLayer no longer used?
+review public static TensorOps Default can this pattern carry over to other factories
+NoPO version of RoPE for SmolLM or other model variants.
+AgentBuilder Tool
 Additionally given the model and relevent details are available we could add to IAgentBuilder CreateAgent to spawn sub agents essentially acting as tools,
 Consideration to Agent Spawn depth will be needed to prevent ifinate spawning, agent naming possibly greek name to match behaviour or task asigned.
 
+if (Avx.IsSupported) slow check
+RmsNormLayer and NormKernels to JigSawDotNet pattern
 
+review CreateForSystem benchmark patterns
+
+Todo
+MPT multi token prediction
 
 Fused QKV Projection — Combine Wq, Wk, and Wv into a single fused MatMul for better cache locality.
 Fused RoPE 
@@ -43,11 +51,6 @@ ChatSession interrupt, Recover rather than start again?
 Removed safetensor loader for now
 End to End Test, Super Dumb Model Training Load and Test Logits valid output.
 Add progress out Func<float> to loading mothods.
-
-The Implementation of IAgentBuilder.GetToolHost is incorrect and not wanted, we cannot trust tools to always be honest or implementations of GetToolHost to be correct.
-I simply want chat session to implement System.IO.Abstractions IFileService, INetworkService to capture any access to filesystem orginating from a CallToolAsync call and the check previous permissions or request permission for access.
-If the PermissionCallback is null the dont worry about the check.  the IFileService, INetworkService could be enabled/disable before and the after call to CallToolAsync to prevent excessive IO blocking
-
 
 Before release check mutilple models with interactive chat
 
@@ -67,24 +70,3 @@ SLERP (Spherical Linear Interpolation): Better than linear interpolation for hig
 TIES-Merging (TrIm, Elect, Sign, and Merge): Designed to handle interference between models by only merging the most significant weight updates and resolving sign disagreements
 DARE (Drop And REscale): Drops redundant weights and re-scales the remaining weights to create a "soups" of models, reducing task interference.
 Task Arithmetic: Creates "task vectors" by subtracting the base model weights from the fine-tuned model weights, allowing these vectors to be added or subtracted to modify model behavior.
-
-I want to come back to more optimizations however they a few fixes teaks required first.
-First and seemingly cosmetic tokens per second tracking in TokenRateTracker should have a TTFT time to first token metric and exposed in ChatSession, it;s implementended in StandardGenerator(recently refractored from Generator) but not speculative generator.
-Second Chat session should have a Generic<T> of the generator to allow easy swap put of generator type, standard or speulative so possibly a Factory of ChatSession could be applied as an end user easy code helper.
-Third which is in addtio to second generators would also need the same mothodolody applied to alloy use of diffeent implemntation of IKVCache. KVCache PagedKVCache or future implentations.
-Fourth the intermittently failing tests need to be reviewed and corrected.  if they fail execution could contaminating results.
-Lastly Tier 2 Fix 2 Fuse WGate + WUp into a single LinearLayer Tier 3 fix 3 Fused end-to-end attention kernel — eliminate per-head packing, RoPE → cache → attention in a single pass from the strided Q/K/V layout were ommited or rolled back during last phase due to breaking things and whilst potentially best gains available here they seem realted an may conflict or need revision on concept due to the above.
-Teir 3 Fix 2 Proper speculative decoding Teir 4 fix 4 SpeculativeGenerator doesn't roll back KV cache on rejected tokens would have needed reconsideration after the above
-
-
-Priority	Change	Impact	Effort	Risk
-done 1	RMSNorm variance vectorization (currently scalar for loop sum-of-squares → Vector256 8-wide)	High — runs 2× per layer, 48× per forward pass	Small	Low — isolated math change
-done 2	SiLU/GELU polynomial approximation (currently scalar MathF.Exp/Tanh with no SIMD path)	High — no .NET SIMD exp/tanh intrinsic, polynomial approx enables 8-wide AVX2	Medium	Medium — quality vs perf tradeoff
-3	LayerNorm mean/variance vectorization (entirely scalar currently)	Medium — called 2× per layer	Small	Low
-Done 4	StringComparison.OrdinalIgnoreCase refactor (11 ToLower() → allocation-free)	Low (init-time only)	Trivial	None
-5	QKV fusion (re-attempt with delegate dispatch pattern)	High — 3 MatMuls → 1	High	High — previously caused echo regression
-Done 6	Remove unused dtype param from VecDotQxK (no longer needed after pre-resolution)
-
-
-if (Avx.IsSupported) slow check
-RmsNormLayer and NormKernels to JigSawDotNet pattern

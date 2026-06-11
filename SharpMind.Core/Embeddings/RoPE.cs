@@ -23,7 +23,7 @@ namespace SharpMind.Core.Embeddings;
 /// </summary>
 public sealed class RoPE
 {
-    private static ConcurrentDictionary<int, (float[] cos, float[] sin)> TableCache = [];
+    private static readonly ConcurrentDictionary<int, (float[] cos, float[] sin)> TableCache = [];
     private readonly float[] _cosCache; // [MaxSeqLen, HeadDim/2]
     private readonly float[] _sinCache;
     private readonly int     _headDim;

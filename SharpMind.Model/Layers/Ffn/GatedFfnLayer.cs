@@ -13,8 +13,8 @@ public sealed class GatedFfnLayer(ModelConfig config, ActivationOps acts, Tensor
 
     public override (Tensor<float> Output, FfnLayerState State) ForwardWithState(Tensor<float> x)
     {
-        var fusedStateOut = WGated!.ForwardWithState(x, Ops);
-        using var gateUp = fusedStateOut.Output;
+        var (Output, _) = WGated!.ForwardWithState(x, Ops);
+        using var gateUp = Output;
         int ffnDim = Config.FfnDim;
         int total = gateUp.ElementCount / (2 * ffnDim);
         var flat = gateUp.Reshape(total, 2 * ffnDim);

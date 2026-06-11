@@ -19,7 +19,7 @@ public sealed class Transformer : IDisposable
 
     // Separate LM head for non-weight-tied models (e.g. LLaMA 2/3).
     // Null means the model is weight-tied — the embedding weight is used instead.
-    private Tensor<float>? _lmHead;
+    private readonly Tensor<float>? _lmHead;
 
     private readonly TransformerBlock[]? _blocks; // For training backward
 
@@ -65,7 +65,7 @@ public sealed class Transformer : IDisposable
 
     public bool SetRawWeight(string name, byte[] rawData, Format.GgufDtype dtype)
     {
-        var (target, block, rawField) = _weights.ResolveTarget(name);
+        var (_ , block, rawField) = _weights.ResolveTarget(name);
         if (block != null && rawField != null)
         {
             TransformerWeights.SetRawField(block, rawField, rawData, dtype);
@@ -134,7 +134,7 @@ public sealed class Transformer : IDisposable
         Tensor<float> logits;
         if (workspace != null)
         {
-            logits = workspace.Rent<float>(new[] { batch * seqLen, _weights.Config.VocabSize });
+            logits = workspace.Rent<float>([batch * seqLen, _weights.Config.VocabSize]);
             _ops.MatMulWithBTInto(normedFlat, projectionWeight, logits);
         }
         else
@@ -177,7 +177,7 @@ public sealed class Transformer : IDisposable
             
         if (workspace != null)
         {
-            var resultLogits = workspace.Rent<float>(new[] { batch, _weights.Config.VocabSize });
+            var resultLogits = workspace.Rent<float>([batch, _weights.Config.VocabSize]);
             _ops.MatMulWithBTInto(flatHidden, projectionWeight, resultLogits);
             return resultLogits;
         }
@@ -186,7 +186,7 @@ public sealed class Transformer : IDisposable
 
         // Prefill path: extract last token's hidden state, norm in-place
         Tensor<float> lastHidden = workspace != null 
-            ? workspace.Rent<float>(new[] { batch, hiddenDim }) 
+            ? workspace.Rent<float>([batch, hiddenDim]) 
             : new Tensor<float>(batch, hiddenDim);
         for (int b = 0; b < batch; b++)
         {
@@ -198,7 +198,7 @@ public sealed class Transformer : IDisposable
         Tensor<float> finalLogits;
         if (workspace != null)
         {
-            finalLogits = workspace.Rent<float>(new[] { batch, _weights.Config.VocabSize });
+            finalLogits = workspace.Rent<float>([batch, _weights.Config.VocabSize]);
             _ops.MatMulWithBTInto(lastHidden, projectionWeight, finalLogits);
         }
         else

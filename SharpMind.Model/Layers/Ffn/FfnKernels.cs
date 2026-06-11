@@ -46,10 +46,10 @@ internal static class FfnKernels
         int total = fused.ElementCount / (2 * ffnDim);
         bool hasBatch = fused.Rank > 2;
         using var gate = workspace != null 
-            ? workspace.Rent<float>(hasBatch ? new[] { fusedDims[0], fusedDims[1], ffnDim } : new[] { total, ffnDim })
+            ? workspace.Rent<float>(hasBatch ? new[] { fusedDims[0], fusedDims[1], ffnDim } : [total, ffnDim])
             : (hasBatch ? new Tensor<float>(fusedDims[0], fusedDims[1], ffnDim) : new Tensor<float>(total, ffnDim));
         using var up = workspace != null 
-            ? workspace.Rent<float>(hasBatch ? new[] { fusedDims[0], fusedDims[1], ffnDim } : new[] { total, ffnDim })
+            ? workspace.Rent<float>(hasBatch ? new[] { fusedDims[0], fusedDims[1], ffnDim } : [total, ffnDim])
             : (hasBatch ? new Tensor<float>(fusedDims[0], fusedDims[1], ffnDim) : new Tensor<float>(total, ffnDim));
         var flat = fused.Reshape(total, 2 * ffnDim);
         for (int i = 0; i < total; i++)
@@ -111,18 +111,18 @@ internal static class FfnKernels
         {
             // Get top-k expert indices for this token
             using var tokenLogits = workspace != null 
-                ? workspace.Rent<float>(new[] { logits.Shape.Cols }) 
+                ? workspace.Rent<float>([logits.Shape.Cols]) 
                 : Tensor<float>.From(logits.RowSpan(t), logits.Shape.Cols);
             logits.RowSpan(t).CopyTo(tokenLogits.Data);
             int[] topKIdx = TensorOps.ArgTopK(tokenLogits, topK);
 
             // Accumulate weighted expert outputs
             using var tokenInput = workspace != null 
-                ? workspace.Rent<float>(new[] { hidden }) 
+                ? workspace.Rent<float>([hidden]) 
                 : Tensor<float>.From(x.RowSpan(t), hidden);
             x.RowSpan(t).CopyTo(tokenInput.Data);
             var tokenOut = workspace != null 
-                ? workspace.Rent<float>(new[] { hidden }) 
+                ? workspace.Rent<float>([hidden]) 
                 : Tensor<float>.Zeros(hidden);
 
             float weightSum = 0f;

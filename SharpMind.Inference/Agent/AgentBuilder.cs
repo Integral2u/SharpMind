@@ -5,32 +5,6 @@ using System.Text.Json.Nodes;
 
 namespace SharpMind.Inference.Agent
 {
-    /// <summary>
-    /// Contract that <see cref="SharpMind.Inference.Chat.ChatSession{T,K}"/> depends on.
-    /// Implemented by <c>AgentBuilder</c>.
-    /// </summary>
-    public interface IAgentBuilder
-    {
-        public string AgentName { get; }
-        public IAgentBuilder WithCustomBehavior(string behavior);
-        public IAgentBuilder WithCustomRule(string rule);
-        public IAgentBuilder WithSkill(string file);
-        public IAgentBuilder WithSkills(string folder, bool recursive = true);
-        public IAgentBuilder WithTools(params object[] toolClasses);
-        /// <summary>Builds the system prompt text for the current agent configuration.</summary>
-        public string BuildAgentPrompt();
-        /// <summary>
-        /// Dispatches a tool call described by <paramref name="toolCall"/> and returns
-        /// a <c>{ "status": "success"|"error", "data"|"message": "..." }</c> result object.
-        /// </summary>
-        /// <param name="toolCall">
-        /// A JSON object with at minimum a <c>tool</c> string field and an
-        /// <c>arguments</c> object field, as produced by the model.
-        /// </param>
-        public Task<JsonObject> CallToolAsync(JsonObject toolCall);
-        
-    }
-    // TODO: add permissions model for IO / network / file tool categories
     public class AgentBuilder(string agentName = "Delta", SamplingConfig? samplingConfig = null) : IAgentBuilder
     {
         public enum AgentSections
@@ -252,7 +226,7 @@ namespace SharpMind.Inference.Agent
                 if (!ToolMethods.TryGetValue(toolName, out var entry))
                     throw new ArgumentException($"Unknown tool: '{toolName}'.");
 
-                var args = toolCall["arguments"]?.AsObject() ?? new JsonObject();
+                var args = toolCall["arguments"]?.AsObject() ?? [];
                 var invokeArgs = BindArguments(entry.Method, args);
 
                 var raw = entry.Method.Invoke(entry.Instance, invokeArgs)
@@ -415,15 +389,6 @@ namespace SharpMind.Inference.Agent
             }
 
             return sb.ToString().TrimEnd();
-        }
-    }
-
-    public static class AgeentBuilderExtensions
-    {
-        public static IAgentBuilder WithSafetyPolicies(this IAgentBuilder builder)
-        {
-            return builder.WithCustomRule("If you are asked to generate content that is harmful, hateful, racist, sexist, lewd, or violent, only respond with \"Sorry, I can't assist with that.\"")
-                  .WithCustomRule("Avoid content that violates copyrights.");
         }
     }
 }

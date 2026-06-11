@@ -148,7 +148,7 @@ public abstract class AttentionLayer : IDisposable
         cache?.Update(k, v, numKv, headDim);
 
         Tensor<float> output = workspace != null 
-            ? workspace.Rent<float>(new[] { batch, seqLen, hidden }) 
+            ? workspace.Rent<float>([batch, seqLen, hidden]) 
             : new Tensor<float>(batch, seqLen, hidden);
         int effectiveKvLen = cache != null ? cache.Length : seqLen;
 
@@ -163,10 +163,10 @@ public abstract class AttentionLayer : IDisposable
             if (cache is not { IsContiguous: true })
             {
                 allTempK = workspace != null 
-                    ? workspace.Rent<float>(new[] { totalHeads, effectiveKvLen, headDim }) 
+                    ? workspace.Rent<float>([totalHeads, effectiveKvLen, headDim]) 
                     : new Tensor<float>(totalHeads, effectiveKvLen, headDim);
                 allTempV = workspace != null 
-                    ? workspace.Rent<float>(new[] { totalHeads, effectiveKvLen, headDim }) 
+                    ? workspace.Rent<float>([totalHeads, effectiveKvLen, headDim]) 
                     : new Tensor<float>(totalHeads, effectiveKvLen, headDim);
             }
 

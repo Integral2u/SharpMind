@@ -11,10 +11,10 @@ namespace SharpMind.Model.Arch;
 /// </summary>
 public interface IArchitecture : IDisposable
 {
-    Tensor<float> Forward(Tensor<float> hiddenStates, int positionOffset = 0, SharpMind.Core.Memory.Workspace? workspace = null);
-    Tensor<float> Forward(Tensor<float> hiddenStates, IKVCache[] caches, int positionOffset = 0, SharpMind.Core.Memory.Workspace? workspace = null);
-    int NumLayers { get; }
-    IEnumerable<Parameter> Parameters();
-    
-    void Backward(Tensor<float> dOutput);
+    public Tensor<float> Forward(Tensor<float> hiddenStates, int positionOffset = 0, SharpMind.Core.Memory.Workspace? workspace = null);
+    public Tensor<float> Forward(Tensor<float> hiddenStates, IKVCache[] caches, int positionOffset = 0, SharpMind.Core.Memory.Workspace? workspace = null);
+    public int NumLayers { get; }
+    public IEnumerable<Parameter> Parameters();
+
+    public void Backward(Tensor<float> dOutput);
 }

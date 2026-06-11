@@ -7,14 +7,6 @@ using System.Text.Json.Nodes;
 
 namespace SharpMind.Inference.Chat;
 
-// ── Delegate types ────────────────────────────────────────────────────────────
-
-/// <summary>
-/// Invoked by an interceptor when a tool attempts IO.
-/// Returns true when the access is permitted, false to block it.
-/// </summary>
-internal delegate Task<bool> IoPermissionCheck(string toolName, ToolCategory category, string resource, JsonObject arguments);
-
 // ── File system interceptor ───────────────────────────────────────────────────
 
 /// <summary>
@@ -87,42 +79,42 @@ public sealed class InterceptingFileSystem : IFileSystem
     {
         public IFileSystem FileSystem => inner.FileSystem;
 
-        public string ReadAllText(string path)                    { gate(path); return inner.ReadAllText(path); }
+        public string ReadAllText(string path) { gate(path); return inner.ReadAllText(path); }
         public string ReadAllText(string path, System.Text.Encoding encoding) { gate(path); return inner.ReadAllText(path, encoding); }
-        public void WriteAllText(string path, string? contents)   { gate(path); inner.WriteAllText(path, contents); }
+        public void WriteAllText(string path, string? contents) { gate(path); inner.WriteAllText(path, contents); }
         public void WriteAllText(string path, string? contents, System.Text.Encoding encoding) { gate(path); inner.WriteAllText(path, contents, encoding); }
-        public byte[] ReadAllBytes(string path)                   { gate(path); return inner.ReadAllBytes(path); }
-        public void WriteAllBytes(string path, byte[] bytes)      { gate(path); inner.WriteAllBytes(path, bytes); }
-        public void AppendAllText(string path, string? contents)  { gate(path); inner.AppendAllText(path, contents); }
-        public void Delete(string path)                           { gate(path); inner.Delete(path); }
-        public bool Exists(string? path)                          => inner.Exists(path);
+        public byte[] ReadAllBytes(string path) { gate(path); return inner.ReadAllBytes(path); }
+        public void WriteAllBytes(string path, byte[] bytes) { gate(path); inner.WriteAllBytes(path, bytes); }
+        public void AppendAllText(string path, string? contents) { gate(path); inner.AppendAllText(path, contents); }
+        public void Delete(string path) { gate(path); inner.Delete(path); }
+        public bool Exists(string? path) => inner.Exists(path);
         public void Copy(string sourceFileName, string destFileName) { gate(sourceFileName); gate(destFileName); inner.Copy(sourceFileName, destFileName); }
         public void Move(string sourceFileName, string destFileName) { gate(sourceFileName); gate(destFileName); inner.Move(sourceFileName, destFileName); }
-        public Stream OpenRead(string path)                       { gate(path); return inner.OpenRead(path); }
-        public Stream OpenWrite(string path)                      { gate(path); return inner.OpenWrite(path); }
-        public Stream Open(string path, FileMode mode)            { gate(path); return inner.Open(path, mode); }
-        public Stream Create(string path)                         { gate(path); return inner.Create(path); }
-        public StreamReader OpenText(string path)                 { gate(path); return inner.OpenText(path); }
-        public StreamWriter CreateText(string path)               { gate(path); return inner.CreateText(path); }
-        public StreamWriter AppendText(string path)               { gate(path); return inner.AppendText(path); }
-        public string[] ReadAllLines(string path)                 { gate(path); return inner.ReadAllLines(path); }
+        public FileSystemStream OpenRead(string path) { gate(path); return inner.OpenRead(path); }
+        public FileSystemStream OpenWrite(string path) { gate(path); return inner.OpenWrite(path); }
+        public FileSystemStream Open(string path, FileMode mode) { gate(path); return inner.Open(path, mode); }
+        public FileSystemStream Create(string path) { gate(path); return inner.Create(path); }
+        public StreamReader OpenText(string path) { gate(path); return inner.OpenText(path); }
+        public StreamWriter CreateText(string path) { gate(path); return inner.CreateText(path); }
+        public StreamWriter AppendText(string path) { gate(path); return inner.AppendText(path); }
+        public string[] ReadAllLines(string path) { gate(path); return inner.ReadAllLines(path); }
         public void WriteAllLines(string path, IEnumerable<string> contents) { gate(path); inner.WriteAllLines(path, contents); }
-        public IEnumerable<string> ReadLines(string path)         { gate(path); return inner.ReadLines(path); }
-        public FileAttributes GetAttributes(string path)          => inner.GetAttributes(path);
+        public IEnumerable<string> ReadLines(string path) { gate(path); return inner.ReadLines(path); }
+        public FileAttributes GetAttributes(string path) => inner.GetAttributes(path);
         public void SetAttributes(string path, FileAttributes fileAttributes) => inner.SetAttributes(path, fileAttributes);
-        public DateTime GetCreationTime(string path)              => inner.GetCreationTime(path);
-        public DateTime GetLastWriteTime(string path)             => inner.GetLastWriteTime(path);
-        public DateTime GetLastAccessTime(string path)            => inner.GetLastAccessTime(path);
+        public DateTime GetCreationTime(string path) => inner.GetCreationTime(path);
+        public DateTime GetLastWriteTime(string path) => inner.GetLastWriteTime(path);
+        public DateTime GetLastAccessTime(string path) => inner.GetLastAccessTime(path);
 
         // Async variants — gate then delegate
         public Task<string> ReadAllTextAsync(string path, CancellationToken ct = default)
-            { gate(path); return inner.ReadAllTextAsync(path, ct); }
+        { gate(path); return inner.ReadAllTextAsync(path, ct); }
         public Task WriteAllTextAsync(string path, string? contents, CancellationToken ct = default)
-            { gate(path); return inner.WriteAllTextAsync(path, contents, ct); }
+        { gate(path); return inner.WriteAllTextAsync(path, contents, ct); }
         public Task<byte[]> ReadAllBytesAsync(string path, CancellationToken ct = default)
-            { gate(path); return inner.ReadAllBytesAsync(path, ct); }
+        { gate(path); return inner.ReadAllBytesAsync(path, ct); }
         public Task WriteAllBytesAsync(string path, byte[] bytes, CancellationToken ct = default)
-            { gate(path); return inner.WriteAllBytesAsync(path, bytes, ct); }
+        { gate(path); return inner.WriteAllBytesAsync(path, bytes, ct); }
 
         public void AppendAllBytes(string path, byte[] bytes) => inner.AppendAllBytes(path, bytes);
 
@@ -287,21 +279,21 @@ public sealed class InterceptingFileSystem : IFileSystem
     {
         public IFileSystem FileSystem => inner.FileSystem;
 
-        public IDirectoryInfo CreateDirectory(string path)        { gate(path); return inner.CreateDirectory(path); }
-        public void Delete(string path)                           { gate(path); inner.Delete(path); }
-        public void Delete(string path, bool recursive)           { gate(path); inner.Delete(path, recursive); }
-        public bool Exists(string? path)                          => inner.Exists(path);
-        public IEnumerable<string> EnumerateFiles(string path)    { gate(path); return inner.EnumerateFiles(path); }
+        public IDirectoryInfo CreateDirectory(string path) { gate(path); return inner.CreateDirectory(path); }
+        public void Delete(string path) { gate(path); inner.Delete(path); }
+        public void Delete(string path, bool recursive) { gate(path); inner.Delete(path, recursive); }
+        public bool Exists(string? path) => inner.Exists(path);
+        public IEnumerable<string> EnumerateFiles(string path) { gate(path); return inner.EnumerateFiles(path); }
         public IEnumerable<string> EnumerateDirectories(string path) { gate(path); return inner.EnumerateDirectories(path); }
-        public string[] GetFiles(string path)                     { gate(path); return inner.GetFiles(path); }
-        public string[] GetDirectories(string path)               { gate(path); return inner.GetDirectories(path); }
-        public void Move(string sourceDirName, string destDirName){ gate(sourceDirName); gate(destDirName); inner.Move(sourceDirName, destDirName); }
-        public string GetCurrentDirectory()                       => inner.GetCurrentDirectory();
-        public void SetCurrentDirectory(string path)              => inner.SetCurrentDirectory(path);
-        public string[] GetLogicalDrives()                        => inner.GetLogicalDrives();
-        public IDirectoryInfo? GetParent(string path)             => inner.GetParent(path);
+        public string[] GetFiles(string path) { gate(path); return inner.GetFiles(path); }
+        public string[] GetDirectories(string path) { gate(path); return inner.GetDirectories(path); }
+        public void Move(string sourceDirName, string destDirName) { gate(sourceDirName); gate(destDirName); inner.Move(sourceDirName, destDirName); }
+        public string GetCurrentDirectory() => inner.GetCurrentDirectory();
+        public void SetCurrentDirectory(string path) => inner.SetCurrentDirectory(path);
+        public string[] GetLogicalDrives() => inner.GetLogicalDrives();
+        public IDirectoryInfo? GetParent(string path) => inner.GetParent(path);
         public IEnumerable<string> EnumerateFileSystemEntries(string path) { gate(path); return inner.EnumerateFileSystemEntries(path); }
-        public string[] GetFileSystemEntries(string path)         { gate(path); return inner.GetFileSystemEntries(path); }
+        public string[] GetFileSystemEntries(string path) { gate(path); return inner.GetFileSystemEntries(path); }
 
         public IDirectoryInfo CreateDirectory(string path, UnixFileMode unixCreateMode) => inner.CreateDirectory(path, unixCreateMode);
 
@@ -372,57 +364,5 @@ public sealed class InterceptingFileSystem : IFileSystem
         public void SetLastWriteTime(string path, DateTime lastWriteTime) => inner.SetLastWriteTime(path, lastWriteTime);
 
         public void SetLastWriteTimeUtc(string path, DateTime lastWriteTimeUtc) => inner.SetLastWriteTimeUtc(path, lastWriteTimeUtc);
-    }
-}
-
-// ── Network interceptor ───────────────────────────────────────────────────────
-
-/// <summary>
-/// <see cref="HttpMessageHandler"/> decorator that gates every outbound HTTP request
-/// through <see cref="IoPermissionCheck"/> while a tool call is in flight.
-/// <para>
-/// Pass the <see cref="HttpClient"/> built from this handler wherever HTTP calls
-/// are needed. ChatSession enables and disables it around each
-/// <see cref="IAgentBuilder.CallToolAsync"/> call.
-/// </para>
-/// </summary>
-public sealed class InterceptingNetworkHandler : DelegatingHandler
-{
-    private IoPermissionCheck? _check;
-    private string _currentTool = string.Empty;
-    private JsonObject _currentArgs = [];
-
-    public InterceptingNetworkHandler() : base(new HttpClientHandler()) { }
-
-    // ── Internal activation (ChatSession only) ────────────────────────────────
-
-    internal void Activate(string toolName, JsonObject args, IoPermissionCheck check)
-    {
-        _currentTool = toolName;
-        _currentArgs = args;
-        _check = check;
-    }
-
-    internal void Deactivate()
-    {
-        _check = null;
-        _currentTool = string.Empty;
-        _currentArgs = [];
-    }
-
-    // ── HttpMessageHandler override ───────────────────────────────────────────
-
-    protected override async Task<HttpResponseMessage> SendAsync(
-        HttpRequestMessage request, CancellationToken ct)
-    {
-        if (_check is not null)
-        {
-            var resource = request.RequestUri?.ToString() ?? "(unknown)";
-            bool ok = await _check(_currentTool, ToolCategory.Network, resource, _currentArgs);
-            if (!ok)
-                throw new HttpRequestException(
-                    $"Tool '{_currentTool}' was denied network access to '{resource}'.");
-        }
-        return await base.SendAsync(request, ct);
     }
 }

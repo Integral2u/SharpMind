@@ -155,7 +155,7 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
                         logitsTensor = null;
                         _workspace?.Reset();
                         using var stepInput = _workspace != null 
-                            ? _workspace.Rent<int>(new[] { 1, 1 }) 
+                            ? _workspace.Rent<int>([1, 1]) 
                             : Tensor<int>.From(_decodeTokenScratch.AsSpan(0, 1), 1, 1);
                         if (_workspace != null) stepInput.Data[0] = draftToken;
                         logitsTensor = _model.ForwardLastLogits(stepInput, _caches, currentPos, _workspace);
@@ -225,7 +225,7 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
                         logitsTensor = null;
                         _workspace?.Reset();
                         using var corrInput = _workspace != null 
-                            ? _workspace.Rent<int>(new[] { 1, 1 }) 
+                            ? _workspace.Rent<int>([1, 1]) 
                             : Tensor<int>.From(_decodeTokenScratch.AsSpan(0, 1), 1, 1);
                         if (_workspace != null) corrInput.Data[0] = correctionToken;
                         logitsTensor = _model.ForwardLastLogits(corrInput, _caches, currentPos, _workspace);
@@ -268,7 +268,7 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
                     logitsTensor = null;
                     _workspace?.Reset();
                     using var bonusInput = _workspace != null 
-                        ? _workspace.Rent<int>(new[] { 1, 1 }) 
+                        ? _workspace.Rent<int>([1, 1]) 
                         : Tensor<int>.From(_decodeTokenScratch.AsSpan(0, 1), 1, 1);
                     if (_workspace != null) bonusInput.Data[0] = bonusToken;
                     logitsTensor = _model.ForwardLastLogits(bonusInput, _caches, currentPos, _workspace);

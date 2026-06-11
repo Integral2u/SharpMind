@@ -33,10 +33,10 @@ public readonly struct TensorShape : IEquatable<TensorShape>
     public TensorShape(params int[] dims)
         : this((ReadOnlySpan<int>)(dims ?? throw new ArgumentNullException(nameof(dims)))) { }
 
-    public TensorShape(int d0) : this(new[] { d0 }) { }
-    public TensorShape(int d0, int d1) : this(new[] { d0, d1 }) { }
-    public TensorShape(int d0, int d1, int d2) : this(new[] { d0, d1, d2 }) { }
-    public TensorShape(int d0, int d1, int d2, int d3) : this(new[] { d0, d1, d2, d3 }) { }
+    public TensorShape(int d0) : this([d0]) { }
+    public TensorShape(int d0, int d1) : this([d0, d1]) { }
+    public TensorShape(int d0, int d1, int d2) : this([d0, d1, d2]) { }
+    public TensorShape(int d0, int d1, int d2, int d3) : this([d0, d1, d2, d3]) { }
 
     // ── properties ─────────────────────────────────────────────────────────
 
@@ -117,10 +117,10 @@ public readonly struct TensorShape : IEquatable<TensorShape>
         return new TensorShape(dims.ToArray());
     }
 
-    public TensorShape Reshape(int d0) => Reshape(stackalloc[] { d0 });
-    public TensorShape Reshape(int d0, int d1) => Reshape(stackalloc[] { d0, d1 });
-    public TensorShape Reshape(int d0, int d1, int d2) => Reshape(stackalloc[] { d0, d1, d2 });
-    public TensorShape Reshape(int d0, int d1, int d2, int d3) => Reshape(stackalloc[] { d0, d1, d2, d3 });
+    public TensorShape Reshape(int d0) => Reshape([d0]);
+    public TensorShape Reshape(int d0, int d1) => Reshape([d0, d1]);
+    public TensorShape Reshape(int d0, int d1, int d2) => Reshape([d0, d1, d2]);
+    public TensorShape Reshape(int d0, int d1, int d2, int d3) => Reshape([d0, d1, d2, d3]);
 
     /// <summary>Adds a size-1 dimension at <paramref name="axis"/>.</summary>
     public TensorShape Unsqueeze(int axis)

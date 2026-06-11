@@ -9,12 +9,14 @@ using SharpMind.Model.Config;
 using SharpMind.Model.Layers;
 using SharpMind.Model.Layers.Attention;
 using SharpMind.Model.Layers.Ffn;
+using System.Collections.Concurrent;
 
 
 namespace SharpMind.Model;
 
 public static class ModelFactory
 {
+    private static readonly ConcurrentDictionary<int, Type> _attnCache = [];
     public static TransformerWeights CreateWeights(ModelConfig modelConfig, SharpMindConfig sharpConfig)
     {
         ArgumentNullException.ThrowIfNull(modelConfig);
@@ -59,16 +61,14 @@ public static class ModelFactory
     {
         ArgumentNullException.ThrowIfNull(weights);
         ArgumentNullException.ThrowIfNull(sharpConfig);
-        var actualMapping = mapping ?? sharpConfig.ToJigSawMapping();
-        
-        var acts = Assembler.CreateInstance<ActivationOps>(actualMapping);
-        var ops = TensorOpsFactory.Create(sharpConfig);
-        var qOps = QuantizationFactory.CreateForSystem();
+
+        var acts = ActivationFactory.Create(sharpConfig,mapping);//  Assembler.CreateInstance<ActivationOps>(actualMapping);
+        var ops = TensorOpsFactory.Create(sharpConfig,mapping);// sharpConfig);
+        var qOps = QuantizationFactory.Create();// .CreateForSystem();
 
         var embedding = new EmbeddingTable(weights.Config.VocabSize, weights.Config.HiddenDim, weights.EmbeddingWeight, false);
-        
         var blocks = Enumerable.Range(0, weights.Config.NumLayers)
-            .Select(i => BuildBlock(i, weights, sharpConfig, actualMapping, acts, ops, qOps)).ToArray();
+            .Select(i => BuildBlock(i, weights, sharpConfig, mapping, acts, ops, qOps)).ToArray();
 
         IArchitecture arch = sharpConfig.Arch switch
         {
@@ -86,14 +86,28 @@ public static class ModelFactory
         int layerIdx,
         TransformerWeights weights,
         SharpMindConfig sharpConfig,
-        Dictionary<string, string> mapping,
+        Dictionary<string, string>? overrides,
         ActivationOps acts,
         TensorOps ops,
         QuantizationOps qOps)
     {
+        var cfg = sharpConfig.ToJigSawMapping();
+        if (overrides != null)
+        {
+            foreach (var m in overrides)
+            {
+                if (cfg.TryGetValue(m.Key, out string? value)) cfg[m.Key] = value;
+                else cfg.Add(m.Key, m.Value);
+            }
+        }
         var blockWeights = weights.Blocks[layerIdx];
-        
-        var attn = Assembler.CreateInstance<AttentionLayer>(mapping, weights.Config, qOps);
+        var t = _attnCache.GetOrAdd(cfg.GetHashCode(), (h) =>
+        {
+            return Assembler.Assemble<AttentionLayer>(cfg);
+        });
+        var attn = Activator.CreateInstance(t, weights.Config, qOps) as AttentionLayer;
+        //Assembler.CreateInstance<AttentionLayer>(cfg, weights.Config, qOps);
+        ArgumentNullException.ThrowIfNull(attn);
         attn.SetWeights(blockWeights);
         
         var ffn = BuildFfn(weights, sharpConfig, acts, ops, qOps);

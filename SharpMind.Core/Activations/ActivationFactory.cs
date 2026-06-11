@@ -1,4 +1,6 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
 using System.Runtime.Intrinsics.X86;
 using JigSawDotNet;
 using SharpMind.Core.Tensors;
@@ -20,13 +22,31 @@ namespace SharpMind.Core.Activations;
 /// </summary>
 public static class ActivationFactory
 {
+    private static readonly ConcurrentDictionary<int, ActivationOps> _opsCache = [];
     /// <summary>
     /// Assembles and returns an <see cref="ActivationOps"/> for the given config.
     /// Hardware tier is taken directly from <see cref="SharpMindConfig.ResolvedHardware"/>.
     /// </summary>
     public static ActivationOps Create(SharpMindConfig config)
-        => Assembler.CreateInstance<ActivationOps>(config.ToJigSawMapping());
-
+        => Create(config.ToJigSawMapping());
+    public static ActivationOps Create(SharpMindConfig config, Dictionary<string, string>? overrides)
+    {
+        var cfg = config.ToJigSawMapping();
+        if (overrides != null)
+        {
+            foreach (var m in overrides)
+            {
+                if (cfg.TryGetValue(m.Key, out string? value)) cfg[m.Key] = value;
+                else cfg.Add(m.Key, m.Value);
+            }
+        }
+        return Create(cfg);
+    }
+    public static ActivationOps Create(Dictionary<string, string> mappings) => 
+        _opsCache.GetOrAdd(mappings.GetHashCode(), (h) =>
+            {
+                return Assembler.CreateInstance<ActivationOps>(mappings);
+            });
     /// <summary>
     /// Assembles both hardware variants available on this machine, benchmarks them
     /// directly (bypassing reflection — <see cref="System.Span{T}"/> cannot be boxed),

@@ -8,19 +8,19 @@ namespace SharpMind.Model;
 /// Pre-allocated to <paramref name="maxSeqLen"/> to avoid O(log N) growth cost
 /// and GC spikes during generation.
 /// </summary>
-public sealed class KVCache : IKVCache
+public sealed class KVCache(int batchSize, int numKvHeads, int maxSeqLen, int headDim) : IKVCache
 {
-    private Tensor<float> _keys;
-    private Tensor<float> _values;
-    private readonly int _batchSize;
-    private readonly int _numKvHeads;
-    private readonly int _headDim;
+    private readonly Tensor<float> _keys = new(batchSize, numKvHeads, maxSeqLen, headDim);
+    private readonly Tensor<float> _values = new(batchSize, numKvHeads, maxSeqLen, headDim);
+    private readonly int _batchSize = batchSize;
+    private readonly int _numKvHeads = numKvHeads;
+    private readonly int _headDim = headDim;
 
     public Tensor<float> Keys => _keys;
     public Tensor<float> Values => _values;
-    public int CurrentPosition { get; private set; }
+    public int CurrentPosition { get; private set; } = 0;
 
-    public int MaxSeqLen { get; }
+    public int MaxSeqLen { get; } = maxSeqLen;
 
     public int AllocatedCapacity => MaxSeqLen;
     public bool IsContiguous => true;
@@ -36,18 +36,6 @@ public sealed class KVCache : IKVCache
             + (long)batchIdx * (_numKvHeads * MaxSeqLen * _headDim)
             + (long)kvHead * (MaxSeqLen * _headDim)
             + (long)position * _headDim;
-
-    public KVCache(int batchSize, int numKvHeads, int maxSeqLen, int headDim)
-    {
-        _batchSize    = batchSize;
-        _numKvHeads   = numKvHeads;
-        _headDim      = headDim;
-        MaxSeqLen     = maxSeqLen;
-
-        _keys   = new Tensor<float>(batchSize, numKvHeads, maxSeqLen, headDim);
-        _values = new Tensor<float>(batchSize, numKvHeads, maxSeqLen, headDim);
-        CurrentPosition = 0;
-    }
 
     public int Length => CurrentPosition;
     public bool IsFull => CurrentPosition >= MaxSeqLen;

@@ -9,17 +9,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <None Remove="Agent.md" />
-    <None Remove="System.md" />
-  </ItemGroup>
-
-  <ItemGroup>
     <Content Include="SharpMind.ico" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <EmbeddedResource Include="Agent.md" />
-    <EmbeddedResource Include="System.md" />
   </ItemGroup>
 
 </Project>

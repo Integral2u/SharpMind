@@ -4,26 +4,26 @@ using SharpMind.Tokenization;
 namespace SharpMind.Inference.Chat;
 public interface IChatSession : IAsyncDisposable
 {
-    int MaxTokens { get; set; }
-    float Temperature { get; set; }
-    int TopK { get; set; }
-    float TopP { get; set; }
-    float RepetitionPenalty { get; set; }
-    int RepetitionWindow { get; set; }
-    float? TokensPerSecond { get; }
-    float? TimeToFirstToken { get; }
-    Tokenizer Tokenizer { get; }
-    Transformer Model { get; }
-    IReadOnlyList<ChatMessage> History { get; }
+    public int MaxTokens { get; set; }
+    public float Temperature { get; set; }
+    public int TopK { get; set; }
+    public float TopP { get; set; }
+    public float RepetitionPenalty { get; set; }
+    public int RepetitionWindow { get; set; }
+    public float? TokensPerSecond { get; }
+    public float? TimeToFirstToken { get; }
+    public Tokenizer Tokenizer { get; }
+    public Transformer Model { get; }
+    public IReadOnlyList<ChatMessage> History { get; }
 
-    void AddMessage(ChatRole role, string content);
-    void AddMessage(ChatMessage message);
-    string GetFormattedPrompt();
-    void ClearHistory();
-    void ResetCaches();
+    public void AddMessage(ChatRole role, string content);
+    public void AddMessage(ChatMessage message);
+    public string GetFormattedPrompt();
+    public void ClearHistory();
+    public void ResetCaches();
 
-    Task<ChatMessage[]> StartChatAsync(Func<Task<ChatMessage>> prompt, Action<ChatStreamEntry> response, CancellationToken token = default);
-    Task<ChatMessage[]> StartChatAsync(Func<ChatMessage> prompt, Action<ChatStreamEntry> response, CancellationToken token = default);
-    Task<ChatMessage[]> StartChatAsync(Func<Task<string>> prompt, Action<string> response, CancellationToken token = default);
-    Task<ChatMessage[]> StartChatAsync(Func<string> prompt, Action<string> response, CancellationToken token = default);
+    public Task<ChatMessage[]> StartChatAsync(Func<Task<ChatMessage>> prompt, Action<ChatStreamEntry> response, CancellationToken token = default);
+    public Task<ChatMessage[]> StartChatAsync(Func<ChatMessage> prompt, Action<ChatStreamEntry> response, CancellationToken token = default);
+    public Task<ChatMessage[]> StartChatAsync(Func<Task<string>> prompt, Action<string> response, CancellationToken token = default);
+    public Task<ChatMessage[]> StartChatAsync(Func<string> prompt, Action<string> response, CancellationToken token = default);
 }

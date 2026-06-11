@@ -6,7 +6,7 @@ namespace SharpMind.Core.Quantization;
 
 public static class QuantizationFactory
 {
-    public static QuantizationOps Create(HardwareTier hw)
+    public static QuantizationOps Create(HardwareTier hw = HardwareTier.Auto)
     {
         var config = new QuantizationConfig { Hardware = hw };
         return Assembler.CreateInstance<QuantizationOps>(config.ToJigSawMapping());

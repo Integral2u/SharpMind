@@ -1,9 +1,0 @@
-﻿Training: optimizer, scheduler, checkpointing
-
-Issues
-TrainLoop._ops is assigned but never used.
-So now AdamWUpdate is not used at all and L2NormSq is only used in SharpMind.Training.Autograd.ClipGlobalNorm
-
-TrainingOpsFactory is no longer called so none of the optimized TrainingKernels are called.  The kernals will need revision and tested as corrected functions have been intoduced since.
-
-DistillationKernels.ComputeLoss assigns vocabSize but it is never used

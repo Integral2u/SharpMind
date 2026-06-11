@@ -189,7 +189,7 @@ public sealed class LinearLayer : IDisposable
         _ => false
     };
 
-    public unsafe bool SetRawWeight(byte[] rawData, GgufDtype dtype)
+    public unsafe bool SetRawWeight(byte[]? rawData, GgufDtype dtype)
     {
         RawQuantizedData = rawData;
         QuantDtype = dtype;
