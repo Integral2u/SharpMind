@@ -331,15 +331,8 @@ public static partial class QuantizationKernels
                     int l = 0;
                     for (; l <= halfRem - 8; l += 8)
                     {
-                        float v0 = qs[qIdx + l] & 0x0F;
-                        float v1 = qs[qIdx + l + 1] & 0x0F;
-                        float v2 = qs[qIdx + l + 2] & 0x0F;
-                        float v3 = qs[qIdx + l + 3] & 0x0F;
-                        float v4 = qs[qIdx + l + 4] & 0x0F;
-                        float v5 = qs[qIdx + l + 5] & 0x0F;
-                        float v6 = qs[qIdx + l + 6] & 0x0F;
-                        float v7 = qs[qIdx + l + 7] & 0x0F;
-                                var vv = Vector256.Create(v0, v1, v2, v3, v4, v5, v6, v7);
+                        var packed = Sse2.LoadVector128((byte*)(qs + qIdx + l));
+                        var vv = Avx.ConvertToVector256Single(Avx2.And(Avx2.ConvertToVector256Int32(packed), Vector256.Create(0x0F)));
                                 var vi = Vector256.LoadUnsafe(ref pIn[j + l]);
                                 var res = Avx.Multiply(vi, Avx.Subtract(Avx.Multiply(vv, vs0_d), vm0_min));
                                 vacc1 = Avx.Add(vacc1, res);
@@ -363,19 +356,12 @@ public static partial class QuantizationKernels
                         int half2End = Math.Min(32, remaining - 32);
                         if (half2End > 0 && half2End >= 8)
                         {
-                            var vacc2 = Vector256<float>.Zero;
-                            int l = 0;
-                            for (; l <= half2End - 8; l += 8)
-                            {
-                                float v0 = qs[qIdx + l] >> 4;
-                                float v1 = qs[qIdx + l + 1] >> 4;
-                                float v2 = qs[qIdx + l + 2] >> 4;
-                                float v3 = qs[qIdx + l + 3] >> 4;
-                                float v4 = qs[qIdx + l + 4] >> 4;
-                                float v5 = qs[qIdx + l + 5] >> 4;
-                                float v6 = qs[qIdx + l + 6] >> 4;
-                                float v7 = qs[qIdx + l + 7] >> 4;
-                                var vv = Vector256.Create(v0, v1, v2, v3, v4, v5, v6, v7);
+                    var vacc2 = Vector256<float>.Zero;
+                    int l = 0;
+                    for (; l <= half2End - 8; l += 8)
+                    {
+                        var packed = Sse2.LoadVector128((byte*)(qs + qIdx + l));
+                        var vv = Avx.ConvertToVector256Single(Avx2.ShiftRightLogical(Avx2.ConvertToVector256Int32(packed), 4));
                                 var vi = Vector256.LoadUnsafe(ref pIn[j + 32 + l]);
                                 var res = Avx.Multiply(vi, Avx.Subtract(Avx.Multiply(vv, vs1_d), vm1_min));
                                 vacc2 = Avx.Add(vacc2, res);
@@ -444,15 +430,8 @@ public static partial class QuantizationKernels
                     int l = 0;
                     for (; l <= halfRem - 8; l += 8)
                     {
-                        float v0 = qs[qIdx + l] & 0x0F;
-                        float v1 = qs[qIdx + l + 1] & 0x0F;
-                        float v2 = qs[qIdx + l + 2] & 0x0F;
-                        float v3 = qs[qIdx + l + 3] & 0x0F;
-                        float v4 = qs[qIdx + l + 4] & 0x0F;
-                        float v5 = qs[qIdx + l + 5] & 0x0F;
-                        float v6 = qs[qIdx + l + 6] & 0x0F;
-                        float v7 = qs[qIdx + l + 7] & 0x0F;
-                                var vv = Vector256.Create(v0, v1, v2, v3, v4, v5, v6, v7);
+                        var packed = Sse2.LoadVector128((byte*)(qs + qIdx + l));
+                        var vv = Avx.ConvertToVector256Single(Avx2.And(Avx2.ConvertToVector256Int32(packed), Vector256.Create(0x0F)));
                                 var vi = Vector256.LoadUnsafe(ref pIn[j + l]);
                                 var res = Avx.Multiply(vi, Avx.Subtract(Avx.Multiply(vv, vs0_d), vm0_min));
                                 vacc1 = Avx.Add(vacc1, res);
@@ -476,19 +455,12 @@ public static partial class QuantizationKernels
                         int half2End = Math.Min(32, remaining - 32);
                         if (half2End > 0 && half2End >= 8)
                         {
-                            var vacc2 = Vector256<float>.Zero;
-                            int l = 0;
-                            for (; l <= half2End - 8; l += 8)
-                            {
-                                float v0 = qs[qIdx + l] >> 4;
-                                float v1 = qs[qIdx + l + 1] >> 4;
-                                float v2 = qs[qIdx + l + 2] >> 4;
-                                float v3 = qs[qIdx + l + 3] >> 4;
-                                float v4 = qs[qIdx + l + 4] >> 4;
-                                float v5 = qs[qIdx + l + 5] >> 4;
-                                float v6 = qs[qIdx + l + 6] >> 4;
-                                float v7 = qs[qIdx + l + 7] >> 4;
-                                var vv = Vector256.Create(v0, v1, v2, v3, v4, v5, v6, v7);
+                    var vacc2 = Vector256<float>.Zero;
+                    int l = 0;
+                    for (; l <= half2End - 8; l += 8)
+                    {
+                        var packed = Sse2.LoadVector128((byte*)(qs + qIdx + l));
+                        var vv = Avx.ConvertToVector256Single(Avx2.ShiftRightLogical(Avx2.ConvertToVector256Int32(packed), 4));
                                 var vi = Vector256.LoadUnsafe(ref pIn[j + 32 + l]);
                                 var res = Avx.Multiply(vi, Avx.Subtract(Avx.Multiply(vv, vs1_d), vm1_min));
                                 vacc2 = Avx.Add(vacc2, res);
@@ -607,15 +579,14 @@ public static partial class QuantizationKernels
                     int l = 0;
                     for (; l <= halfRem - 8; l += 8)
                     {
-                        float v0 = (qs[qIdx + l] & 0x0F) + ((qh[l] & u1) != 0 ? 16 : 0);
-                        float v1 = (qs[qIdx + l + 1] & 0x0F) + ((qh[l + 1] & u1) != 0 ? 16 : 0);
-                        float v2 = (qs[qIdx + l + 2] & 0x0F) + ((qh[l + 2] & u1) != 0 ? 16 : 0);
-                        float v3 = (qs[qIdx + l + 3] & 0x0F) + ((qh[l + 3] & u1) != 0 ? 16 : 0);
-                        float v4 = (qs[qIdx + l + 4] & 0x0F) + ((qh[l + 4] & u1) != 0 ? 16 : 0);
-                        float v5 = (qs[qIdx + l + 5] & 0x0F) + ((qh[l + 5] & u1) != 0 ? 16 : 0);
-                        float v6 = (qs[qIdx + l + 6] & 0x0F) + ((qh[l + 6] & u1) != 0 ? 16 : 0);
-                        float v7 = (qs[qIdx + l + 7] & 0x0F) + ((qh[l + 7] & u1) != 0 ? 16 : 0);
-                                var vv = Vector256.Create(v0, v1, v2, v3, v4, v5, v6, v7);
+                        var packed = Sse2.LoadVector128((byte*)(qs + qIdx + l));
+                        var hiPacked = Sse2.LoadVector128((byte*)(qh + l));
+                        var lo = Sse2.And(packed, Vector128.Create((byte)0x0F));
+                        var qhMask = Sse2.And(hiPacked, Vector128.Create(u1));
+                        var isZero = Sse2.CompareEqual(qhMask, Vector128<byte>.Zero);
+                        var addVal = Sse2.And(Sse2.AndNot(isZero, Vector128.Create((byte)0xFF)), Vector128.Create((byte)16));
+                        var vals = Sse2.Add(lo, addVal);
+                        var vv = Avx.ConvertToVector256Single(Avx2.ConvertToVector256Int32(vals));
                                 var vi = Vector256.LoadUnsafe(ref pIn[j + l]);
                                 var res = Avx.Multiply(vi, Avx.Subtract(Avx.Multiply(vv, vs0_d), vm0_min));
                                 vacc1 = Avx.Add(vacc1, res);
@@ -643,17 +614,15 @@ public static partial class QuantizationKernels
                         {
                             var vacc2 = Vector256<float>.Zero;
                             int l = 0;
-                            for (; l <= half2End - 8; l += 8)
-                            {
-                                float v0 = (qs[qIdx + l] >> 4) + ((qh[l] & u2) != 0 ? 16 : 0);
-                                float v1 = (qs[qIdx + l + 1] >> 4) + ((qh[l + 1] & u2) != 0 ? 16 : 0);
-                                float v2 = (qs[qIdx + l + 2] >> 4) + ((qh[l + 2] & u2) != 0 ? 16 : 0);
-                                float v3 = (qs[qIdx + l + 3] >> 4) + ((qh[l + 3] & u2) != 0 ? 16 : 0);
-                                float v4 = (qs[qIdx + l + 4] >> 4) + ((qh[l + 4] & u2) != 0 ? 16 : 0);
-                                float v5 = (qs[qIdx + l + 5] >> 4) + ((qh[l + 5] & u2) != 0 ? 16 : 0);
-                                float v6 = (qs[qIdx + l + 6] >> 4) + ((qh[l + 6] & u2) != 0 ? 16 : 0);
-                                float v7 = (qs[qIdx + l + 7] >> 4) + ((qh[l + 7] & u2) != 0 ? 16 : 0);
-                                var vv = Vector256.Create(v0, v1, v2, v3, v4, v5, v6, v7);
+                    for (; l <= half2End - 8; l += 8)
+                    {
+                        var packed = Sse2.LoadVector128((byte*)(qs + qIdx + l));
+                        var hiPacked = Sse2.LoadVector128((byte*)(qh + l));
+                        var hiInt = Avx2.ShiftRightLogical(Avx2.ConvertToVector256Int32(packed), 4);
+                        var qhMask = Sse2.And(hiPacked, Vector128.Create(u2));
+                        var isZero = Sse2.CompareEqual(qhMask, Vector128<byte>.Zero);
+                        var addValByte = Sse2.And(Sse2.AndNot(isZero, Vector128.Create((byte)0xFF)), Vector128.Create((byte)16));
+                        var vv = Avx.ConvertToVector256Single(Avx2.Add(hiInt, Avx2.ConvertToVector256Int32(addValByte)));
                                 var vi = Vector256.LoadUnsafe(ref pIn[j + 32 + l]);
                                 var res = Avx.Multiply(vi, Avx.Subtract(Avx.Multiply(vv, vs1_d), vm1_min));
                                 vacc2 = Avx.Add(vacc2, res);
