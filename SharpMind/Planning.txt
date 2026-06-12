@@ -70,3 +70,11 @@ SLERP (Spherical Linear Interpolation): Better than linear interpolation for hig
 TIES-Merging (TrIm, Elect, Sign, and Merge): Designed to handle interference between models by only merging the most significant weight updates and resolving sign disagreements
 DARE (Drop And REscale): Drops redundant weights and re-scales the remaining weights to create a "soups" of models, reducing task interference.
 Task Arithmetic: Creates "task vectors" by subtracting the base model weights from the fine-tuned model weights, allowing these vectors to be added or subtracted to modify model behavior.
+
+
+Fused RoPE + attention kernel — High impact, Medium effort
+Fused QKV projection — Medium impact, Low-Medium effort
+Activation hook system — Medium (experimentation), Low effort
+Gradient checkpointing — High (large model training), Medium effort
+Weight merging API — High (experimentation), Medium effort
+Benchmark / profiling project — Medium, Low-Medium effort

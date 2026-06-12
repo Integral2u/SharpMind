@@ -1,8 +1,6 @@
-using SharpMind.Core.Tensors;
-using SharpMind.Core.Training;
+﻿using SharpMind.Core.Tensors;
 
-namespace SharpMind.Evaluation;
-
+namespace SharpMind.Benchmarks.Evaluation;
 /// <summary>
 /// Model evaluation metrics.
 /// </summary>
@@ -260,16 +258,4 @@ public static class EvaluationKernels
 
         return indices.Take(k).ToArray();
     }
-}
-
-/// <summary>
-/// Evaluation metrics for full generation tasks.
-/// </summary>
-public class EvaluationResult
-{
-    public float Perplexity { get; set; }
-    public float TokenAccuracy { get; set; }
-    public float ExactMatch { get; set; }
-    public (float Precision, float Recall, float F1) Classification { get; set; }
-    public float bleuScore { get; set; }
 }
