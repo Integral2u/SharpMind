@@ -3,6 +3,8 @@ using SharpMind.Core.Activations;
 using SharpMind.Core.Tensors;
 using System.Numerics;
 using System.Runtime.CompilerServices;
+using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.X86;
 
 namespace SharpMind.Core.Ops;
 
@@ -254,17 +256,34 @@ public abstract class TensorOps
         var r = new Tensor<T>(a.Shape);
         var src = a.Data;
         var dst = r.Data;
-        for (int i = 0; i < src.Length; i++)
+        int vecLen = Vector<T>.Count;
+        var vMin = new Vector<T>(min);
+        var vMax = new Vector<T>(max);
+        int i = 0;
+        for (; i <= src.Length - vecLen; i += vecLen)
+            Vector.Min(vMax, Vector.Max(vMin, new Vector<T>(src[i..]))).CopyTo(dst[i..]);
+        for (; i < src.Length; i++)
             dst[i] = T.Clamp(src[i], min, max);
         return r;
     }
 
     /// <summary>Elementwise square root.</summary>
-    public static Tensor<float> Sqrt(Tensor<float> a)
+    public static unsafe Tensor<float> Sqrt(Tensor<float> a)
     {
         var r = new Tensor<float>(a.Shape);
-        var src = a.Data; var dst = r.Data;
-        for (int i = 0; i < src.Length; i++) dst[i] = MathF.Sqrt(src[i]);
+        var src = a.Data;
+        var dst = r.Data;
+        int i = 0;
+        if (Avx.IsSupported)
+        {
+            fixed (float* pSrc = src, pDst = dst)
+            {
+                for (; i <= src.Length - 8; i += 8)
+                    Avx.Sqrt(Vector256.LoadUnsafe(ref pSrc[i])).StoreUnsafe(ref pDst[i]);
+            }
+        }
+        for (; i < src.Length; i++)
+            dst[i] = MathF.Sqrt(src[i]);
         return r;
     }
 
@@ -273,8 +292,14 @@ public abstract class TensorOps
         where T : unmanaged, INumber<T>
     {
         var r = new Tensor<T>(a.Shape);
-        var src = a.Data; var dst = r.Data;
-        for (int i = 0; i < src.Length; i++) dst[i] = T.Abs(src[i]);
+        var src = a.Data;
+        var dst = r.Data;
+        int vecLen = Vector<T>.Count;
+        int i = 0;
+        for (; i <= src.Length - vecLen; i += vecLen)
+            Vector.Abs(new Vector<T>(src[i..])).CopyTo(dst[i..]);
+        for (; i < src.Length; i++)
+            dst[i] = T.Abs(src[i]);
         return r;
     }
     /// <summary>
@@ -346,13 +371,14 @@ public abstract class TensorOps
             throw new ArgumentOutOfRangeException(nameof(k), $"k={k} must be in [1, {a.ElementCount}].");
 
         int n = a.ElementCount;
-        float[] data = a.Data.ToArray();
+        ReadOnlySpan<float> data = a.Data;
 
         if (k >= n)
         {
             var indices = new int[n];
             for (int i = 0; i < n; i++) indices[i] = i;
-            Array.Sort(indices, (x, y) => data[y].CompareTo(data[x]));
+            float[] dataArr = a.Data.ToArray();
+            Array.Sort(indices, (x, y) => dataArr[y].CompareTo(dataArr[x]));
             var result = new int[k];
             Array.Copy(indices, result, k);
             return result;
@@ -379,11 +405,10 @@ public abstract class TensorOps
             return result;
         }
 
-        // For introselect, we need the array anyway
         return ArgTopKIntroselectArray(data, k);
     }
 
-    private static int[] ArgTopKIntroselectArray(float[] data, int k)
+    private static int[] ArgTopKIntroselectArray(ReadOnlySpan<float> data, int k)
     {
         int n = data.Length;
         var indices = new int[n];
@@ -402,11 +427,12 @@ public abstract class TensorOps
 
         var result = new int[k];
         for (int i = 0; i < k; i++) result[i] = indices[i];
-        Array.Sort(result, (x, y) => data[y].CompareTo(data[x]));
+        float[] dataArr = data.ToArray();
+        Array.Sort(result, (x, y) => dataArr[y].CompareTo(dataArr[x]));
         return result;
     }
 
-    private static int PartitionArray(float[] data, int[] indices, int left, int right)
+    private static int PartitionArray(ReadOnlySpan<float> data, int[] indices, int left, int right)
     {
         float pivot = data[indices[left]];
         int i = left;
@@ -457,12 +483,20 @@ public abstract class TensorOps
         var dst = new Tensor<float>(C, R);
         float* pS = src.DataPtr, pD = dst.DataPtr;
 
-        System.Threading.Tasks.Parallel.For(0, R, r =>
+        if (R * C < 4096)
         {
-            for (int c = 0; c < C; c++)
-                pD[(long)c * R + r] = pS[(long)r * C + c];
-        });
-
+            for (int r = 0; r < R; r++)
+                for (int c = 0; c < C; c++)
+                    pD[(long)c * R + r] = pS[(long)r * C + c];
+        }
+        else
+        {
+            System.Threading.Tasks.Parallel.For(0, R, r =>
+            {
+                for (int c = 0; c < C; c++)
+                    pD[(long)c * R + r] = pS[(long)r * C + c];
+            });
+        }
         return dst;
     }
     /// <summary>
