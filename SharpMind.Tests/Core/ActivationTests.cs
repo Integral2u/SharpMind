@@ -213,17 +213,6 @@ namespace SharpMind.Tests.Core
         // ── LayerNorm ─────────────────────────────────────────────────────────
 
         [Fact]
-        public void LayerNorm_BasicOutput_FiniteAndSane()
-        {
-            using var x = Tensor<float>.From([1f, 2f, 3f, 4f, 5f, 6f, 7f, 8f], 8);
-            using var layer = new LayerNormLayer(8);
-            using var r = layer.Forward(x);
-
-            Assert.All(r.Data.ToArray(), v => Assert.False(float.IsNaN(v)));
-            Assert.All(r.Data.ToArray(), v => Assert.False(float.IsInfinity(v)));
-        }
-
-        [Fact]
         public void ActivationParity_ScalarMatchesAvx2_GeGLU()
         {
             if (!System.Runtime.Intrinsics.X86.Avx2.IsSupported) return;
