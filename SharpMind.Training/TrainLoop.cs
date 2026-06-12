@@ -93,6 +93,9 @@ public sealed class TrainLoop
         {
             cancellationToken.ThrowIfCancellationRequested();
 
+            // Zero gradients at the start of each accumulation window
+            if (accumCount == 0) _optimizer.ZeroGrad();
+
             var sw = System.Diagnostics.Stopwatch.StartNew();
 
             // ── Forward pass ──────────────────────────────────────────────
@@ -112,7 +115,6 @@ public sealed class TrainLoop
                 : 0f;
 
             _optimizer.Update();
-            _optimizer.ZeroGrad();
 
             step++;
             float stepLoss = accumLoss / accumCount;
