@@ -66,7 +66,7 @@ internal static class AttentionKernels
                     lSum = lSum * MathF.Exp(oldMax - max) + MathF.Exp(score - max);
                 }
 
-                // Pass 2: normalize + accumulate V-weighted output
+                // Pass 2: normalize + accumulate V-weighted output (vectorized SAXPY)
                 float* outI = output + (long)i * oStride;
                 if (lSum > 0f)
                 {
@@ -76,7 +76,15 @@ internal static class AttentionKernels
                     {
                         float sm = MathF.Exp(scoreRow[j] - max) * invSum;
                         float* vj = v + (long)j * headDim;
-                        for (int d = 0; d < headDim; d++)
+                        var vSm = Vector256.Create(sm);
+                        int d = 0;
+                        for (; d <= headDim - 8; d += 8)
+                            Vector256.StoreUnsafe(
+                                Avx.Add(
+                                    Avx.Multiply(Vector256.LoadUnsafe(ref vj[d]), vSm),
+                                    Vector256.LoadUnsafe(ref outI[d])),
+                                ref outI[d]);
+                        for (; d < headDim; d++)
                             outI[d] += sm * vj[d];
                     }
                 }
@@ -139,7 +147,15 @@ internal static class AttentionKernels
                     {
                         float sm = MathF.Exp(scoreRow[j] - max) * invSum;
                         float* vj = v + (long)j * headDim;
-                        for (int d = 0; d < headDim; d++)
+                        var vSm = Vector256.Create(sm);
+                        int d = 0;
+                        for (; d <= headDim - 8; d += 8)
+                            Vector256.StoreUnsafe(
+                                Fma.MultiplyAdd(
+                                    Vector256.LoadUnsafe(ref vj[d]), vSm,
+                                    Vector256.LoadUnsafe(ref outI[d])),
+                                ref outI[d]);
+                        for (; d < headDim; d++)
                             outI[d] += sm * vj[d];
                     }
                 }
