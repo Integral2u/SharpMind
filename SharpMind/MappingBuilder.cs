@@ -32,6 +32,7 @@ public class MappingBuilder(HardwareTier hardware = HardwareTier.Auto)
         _mapping[SharpMindConfig.KeyArch] = config.Arch == ArchKind.Decoder ? SharpMindConfig.ValDecoder : SharpMindConfig.ValEncoder;
         _mapping[SharpMindConfig.KeyAdamW] = _hardware == HardwareTier.Scalar ? SharpMindConfig.ValScalar : SharpMindConfig.ValAvx2;
         _mapping[SharpMindConfig.KeyGradNorm] = _hardware == HardwareTier.Scalar ? SharpMindConfig.ValScalar : SharpMindConfig.ValAvx2;
+        _mapping[SharpMindConfig.KeyLayerNormRow] = _hardware == HardwareTier.Scalar ? SharpMindConfig.ValScalar : SharpMindConfig.ValAvx2;
 
         return this;
     }

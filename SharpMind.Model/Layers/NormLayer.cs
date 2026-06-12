@@ -1,12 +1,10 @@
-﻿using JigSawDotNet;
-using SharpMind.Core.Tensors;
+﻿using SharpMind.Core.Tensors;
 using SharpMind.Core.Training;
 
 namespace SharpMind.Model.Layers;
 
 public abstract class NormLayer : IDisposable
 {
-    private const string NS = $"{nameof(SharpMind)}.{nameof(Model)}.{nameof(Layers)}.{nameof(NormKernels)}";
     protected readonly Tensor<float> Weight;
     protected readonly Tensor<float>? Bias;
     protected readonly float Eps;
@@ -33,11 +31,6 @@ public abstract class NormLayer : IDisposable
 
     public int Dim { get; }
 
-    [PuzzleCornerPiece(SharpMindConfig.KeyNorm,
-        SharpMindConfig.ValNormRMSAvx2, NS + "." + nameof(NormKernels.RMSNormRowAVX2),
-        SharpMindConfig.ValNormRMSScalar, NS + "." + nameof(NormKernels.RMSNormRowScalar),
-        SharpMindConfig.ValNormLayerAvx2, NS + "." + nameof(NormKernels.LayerNormRowAVX2),
-        SharpMindConfig.ValNormLayerScalar, NS + "." + nameof(NormKernels.LayerNormRowScalar))]
     public abstract void ApplyRow(ReadOnlySpan<float> src, ReadOnlySpan<float> weight, Span<float> dst, float scalarParam);
 
     public Tensor<float> Forward(Tensor<float> x, SharpMind.Core.Memory.Workspace? workspace = null)

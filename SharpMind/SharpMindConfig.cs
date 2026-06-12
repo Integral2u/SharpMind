@@ -29,6 +29,8 @@ public sealed record SharpMindConfig
     // ── Training Keys ────────────────────────────────────────────────────────
     public const string KeyAdamW = "adamw";
     public const string KeyGradNorm = "gradnorm";
+    // ── Norm Row Keys ────────────────────────────────────────────────────────
+    public const string KeyLayerNormRow = "layernormrow";
 
     // ── Activation Values ──────────────────────────────────────────────────────
     public const string ValReLU = "relu";
