@@ -330,10 +330,67 @@ internal static class ActivationKernels
 
     internal static unsafe void MatMulInnerFMA(float* a, float* bt, float* c, int M, int K, int N)
     {
+        const int NR = 8;
         if (M <= 1)
         {
             if (M <= 0) return;
-            System.Threading.Tasks.Parallel.For(0, N, j =>
+            int nBlocks = N / NR;
+            if (nBlocks > 0)
+            {
+                System.Threading.Tasks.Parallel.For(0, nBlocks, block =>
+                {
+                    int j0 = block * NR;
+                    var acc0 = Vector256<float>.Zero;
+                    var acc1 = Vector256<float>.Zero;
+                    var acc2 = Vector256<float>.Zero;
+                    var acc3 = Vector256<float>.Zero;
+                    var acc4 = Vector256<float>.Zero;
+                    var acc5 = Vector256<float>.Zero;
+                    var acc6 = Vector256<float>.Zero;
+                    var acc7 = Vector256<float>.Zero;
+                    float* pBT0 = bt + (long)j0 * K;
+                    float* pBT1 = pBT0 + K;
+                    float* pBT2 = pBT1 + K;
+                    float* pBT3 = pBT2 + K;
+                    float* pBT4 = pBT3 + K;
+                    float* pBT5 = pBT4 + K;
+                    float* pBT6 = pBT5 + K;
+                    float* pBT7 = pBT6 + K;
+                    int k = 0;
+                    for (; k <= K - 8; k += 8)
+                    {
+                        var a_vec = Vector256.LoadUnsafe(ref a[k]);
+                        acc0 = Fma.MultiplyAdd(a_vec, Vector256.LoadUnsafe(ref pBT0[k]), acc0);
+                        acc1 = Fma.MultiplyAdd(a_vec, Vector256.LoadUnsafe(ref pBT1[k]), acc1);
+                        acc2 = Fma.MultiplyAdd(a_vec, Vector256.LoadUnsafe(ref pBT2[k]), acc2);
+                        acc3 = Fma.MultiplyAdd(a_vec, Vector256.LoadUnsafe(ref pBT3[k]), acc3);
+                        acc4 = Fma.MultiplyAdd(a_vec, Vector256.LoadUnsafe(ref pBT4[k]), acc4);
+                        acc5 = Fma.MultiplyAdd(a_vec, Vector256.LoadUnsafe(ref pBT5[k]), acc5);
+                        acc6 = Fma.MultiplyAdd(a_vec, Vector256.LoadUnsafe(ref pBT6[k]), acc6);
+                        acc7 = Fma.MultiplyAdd(a_vec, Vector256.LoadUnsafe(ref pBT7[k]), acc7);
+                    }
+                    float s0 = MathHelpers.HSum256_Avx(acc0);
+                    float s1 = MathHelpers.HSum256_Avx(acc1);
+                    float s2 = MathHelpers.HSum256_Avx(acc2);
+                    float s3 = MathHelpers.HSum256_Avx(acc3);
+                    float s4 = MathHelpers.HSum256_Avx(acc4);
+                    float s5 = MathHelpers.HSum256_Avx(acc5);
+                    float s6 = MathHelpers.HSum256_Avx(acc6);
+                    float s7 = MathHelpers.HSum256_Avx(acc7);
+                    for (; k < K; k++)
+                    {
+                        float a_val = a[k];
+                        s0 += a_val * pBT0[k]; s1 += a_val * pBT1[k];
+                        s2 += a_val * pBT2[k]; s3 += a_val * pBT3[k];
+                        s4 += a_val * pBT4[k]; s5 += a_val * pBT5[k];
+                        s6 += a_val * pBT6[k]; s7 += a_val * pBT7[k];
+                    }
+                    c[j0] = s0; c[j0 + 1] = s1; c[j0 + 2] = s2; c[j0 + 3] = s3;
+                    c[j0 + 4] = s4; c[j0 + 5] = s5; c[j0 + 6] = s6; c[j0 + 7] = s7;
+                });
+            }
+            int tailStart = nBlocks * NR;
+            for (int j = tailStart; j < N; j++)
             {
                 float* pBT = bt + (long)j * K;
                 var acc = Vector256<float>.Zero;
@@ -346,25 +403,78 @@ internal static class ActivationKernels
                 float sum = MathHelpers.HSum256_Avx(acc);
                 for (; k < K; k++) sum += a[k] * pBT[k];
                 c[j] = sum;
-            });
+            }
             return;
         }
         System.Threading.Tasks.Parallel.For(0, M, i =>
         {
             float* rowA = a + (long)i * K;
             float* rowC = c + (long)i * N;
-            for (int j = 0; j < N; j++)
+            int nBlocks = N / NR;
+            for (int block = 0; block < nBlocks; block++)
             {
-                float* rowBT = bt + (long)j * K;
+                int j0 = block * NR;
+                var acc0 = Vector256<float>.Zero;
+                var acc1 = Vector256<float>.Zero;
+                var acc2 = Vector256<float>.Zero;
+                var acc3 = Vector256<float>.Zero;
+                var acc4 = Vector256<float>.Zero;
+                var acc5 = Vector256<float>.Zero;
+                var acc6 = Vector256<float>.Zero;
+                var acc7 = Vector256<float>.Zero;
+                float* pBT0 = bt + (long)j0 * K;
+                float* pBT1 = pBT0 + K;
+                float* pBT2 = pBT1 + K;
+                float* pBT3 = pBT2 + K;
+                float* pBT4 = pBT3 + K;
+                float* pBT5 = pBT4 + K;
+                float* pBT6 = pBT5 + K;
+                float* pBT7 = pBT6 + K;
+                int k = 0;
+                for (; k <= K - 8; k += 8)
+                {
+                    var a_vec = Vector256.LoadUnsafe(ref rowA[k]);
+                    acc0 = Fma.MultiplyAdd(a_vec, Vector256.LoadUnsafe(ref pBT0[k]), acc0);
+                    acc1 = Fma.MultiplyAdd(a_vec, Vector256.LoadUnsafe(ref pBT1[k]), acc1);
+                    acc2 = Fma.MultiplyAdd(a_vec, Vector256.LoadUnsafe(ref pBT2[k]), acc2);
+                    acc3 = Fma.MultiplyAdd(a_vec, Vector256.LoadUnsafe(ref pBT3[k]), acc3);
+                    acc4 = Fma.MultiplyAdd(a_vec, Vector256.LoadUnsafe(ref pBT4[k]), acc4);
+                    acc5 = Fma.MultiplyAdd(a_vec, Vector256.LoadUnsafe(ref pBT5[k]), acc5);
+                    acc6 = Fma.MultiplyAdd(a_vec, Vector256.LoadUnsafe(ref pBT6[k]), acc6);
+                    acc7 = Fma.MultiplyAdd(a_vec, Vector256.LoadUnsafe(ref pBT7[k]), acc7);
+                }
+                float s0 = MathHelpers.HSum256_Avx(acc0);
+                float s1 = MathHelpers.HSum256_Avx(acc1);
+                float s2 = MathHelpers.HSum256_Avx(acc2);
+                float s3 = MathHelpers.HSum256_Avx(acc3);
+                float s4 = MathHelpers.HSum256_Avx(acc4);
+                float s5 = MathHelpers.HSum256_Avx(acc5);
+                float s6 = MathHelpers.HSum256_Avx(acc6);
+                float s7 = MathHelpers.HSum256_Avx(acc7);
+                for (; k < K; k++)
+                {
+                    float a_val = rowA[k];
+                    s0 += a_val * pBT0[k]; s1 += a_val * pBT1[k];
+                    s2 += a_val * pBT2[k]; s3 += a_val * pBT3[k];
+                    s4 += a_val * pBT4[k]; s5 += a_val * pBT5[k];
+                    s6 += a_val * pBT6[k]; s7 += a_val * pBT7[k];
+                }
+                rowC[j0] = s0; rowC[j0 + 1] = s1; rowC[j0 + 2] = s2; rowC[j0 + 3] = s3;
+                rowC[j0 + 4] = s4; rowC[j0 + 5] = s5; rowC[j0 + 6] = s6; rowC[j0 + 7] = s7;
+            }
+            int colTail = nBlocks * NR;
+            for (int j = colTail; j < N; j++)
+            {
+                float* pBT = bt + (long)j * K;
                 var acc = Vector256<float>.Zero;
                 int k = 0;
                 for (; k <= K - 8; k += 8)
                     acc = Fma.MultiplyAdd(
                         Vector256.LoadUnsafe(ref rowA[k]),
-                        Vector256.LoadUnsafe(ref rowBT[k]),
+                        Vector256.LoadUnsafe(ref pBT[k]),
                         acc);
                 float sum = MathHelpers.HSum256_Avx(acc);
-                for (; k < K; k++) sum += rowA[k] * rowBT[k];
+                for (; k < K; k++) sum += rowA[k] * pBT[k];
                 rowC[j] = sum;
             }
         });
@@ -372,10 +482,67 @@ internal static class ActivationKernels
 
     internal static unsafe void MatMulInnerAVX2(float* a, float* bt, float* c, int M, int K, int N)
     {
+        const int NR = 8;
         if (M <= 1)
         {
             if (M <= 0) return;
-            System.Threading.Tasks.Parallel.For(0, N, j =>
+            int nBlocks = N / NR;
+            if (nBlocks > 0)
+            {
+                System.Threading.Tasks.Parallel.For(0, nBlocks, block =>
+                {
+                    int j0 = block * NR;
+                    var acc0 = Vector256<float>.Zero;
+                    var acc1 = Vector256<float>.Zero;
+                    var acc2 = Vector256<float>.Zero;
+                    var acc3 = Vector256<float>.Zero;
+                    var acc4 = Vector256<float>.Zero;
+                    var acc5 = Vector256<float>.Zero;
+                    var acc6 = Vector256<float>.Zero;
+                    var acc7 = Vector256<float>.Zero;
+                    float* pBT0 = bt + (long)j0 * K;
+                    float* pBT1 = pBT0 + K;
+                    float* pBT2 = pBT1 + K;
+                    float* pBT3 = pBT2 + K;
+                    float* pBT4 = pBT3 + K;
+                    float* pBT5 = pBT4 + K;
+                    float* pBT6 = pBT5 + K;
+                    float* pBT7 = pBT6 + K;
+                    int k = 0;
+                    for (; k <= K - 8; k += 8)
+                    {
+                        var a_vec = Vector256.LoadUnsafe(ref a[k]);
+                        acc0 = Avx.Add(acc0, Avx.Multiply(a_vec, Vector256.LoadUnsafe(ref pBT0[k])));
+                        acc1 = Avx.Add(acc1, Avx.Multiply(a_vec, Vector256.LoadUnsafe(ref pBT1[k])));
+                        acc2 = Avx.Add(acc2, Avx.Multiply(a_vec, Vector256.LoadUnsafe(ref pBT2[k])));
+                        acc3 = Avx.Add(acc3, Avx.Multiply(a_vec, Vector256.LoadUnsafe(ref pBT3[k])));
+                        acc4 = Avx.Add(acc4, Avx.Multiply(a_vec, Vector256.LoadUnsafe(ref pBT4[k])));
+                        acc5 = Avx.Add(acc5, Avx.Multiply(a_vec, Vector256.LoadUnsafe(ref pBT5[k])));
+                        acc6 = Avx.Add(acc6, Avx.Multiply(a_vec, Vector256.LoadUnsafe(ref pBT6[k])));
+                        acc7 = Avx.Add(acc7, Avx.Multiply(a_vec, Vector256.LoadUnsafe(ref pBT7[k])));
+                    }
+                    float s0 = MathHelpers.HSum256_Avx(acc0);
+                    float s1 = MathHelpers.HSum256_Avx(acc1);
+                    float s2 = MathHelpers.HSum256_Avx(acc2);
+                    float s3 = MathHelpers.HSum256_Avx(acc3);
+                    float s4 = MathHelpers.HSum256_Avx(acc4);
+                    float s5 = MathHelpers.HSum256_Avx(acc5);
+                    float s6 = MathHelpers.HSum256_Avx(acc6);
+                    float s7 = MathHelpers.HSum256_Avx(acc7);
+                    for (; k < K; k++)
+                    {
+                        float a_val = a[k];
+                        s0 += a_val * pBT0[k]; s1 += a_val * pBT1[k];
+                        s2 += a_val * pBT2[k]; s3 += a_val * pBT3[k];
+                        s4 += a_val * pBT4[k]; s5 += a_val * pBT5[k];
+                        s6 += a_val * pBT6[k]; s7 += a_val * pBT7[k];
+                    }
+                    c[j0] = s0; c[j0 + 1] = s1; c[j0 + 2] = s2; c[j0 + 3] = s3;
+                    c[j0 + 4] = s4; c[j0 + 5] = s5; c[j0 + 6] = s6; c[j0 + 7] = s7;
+                });
+            }
+            int tailStart = nBlocks * NR;
+            for (int j = tailStart; j < N; j++)
             {
                 float* pBT = bt + (long)j * K;
                 var acc = Vector256<float>.Zero;
@@ -387,24 +554,77 @@ internal static class ActivationKernels
                 float sum = MathHelpers.HSum256_Avx(acc);
                 for (; k < K; k++) sum += a[k] * pBT[k];
                 c[j] = sum;
-            });
+            }
             return;
         }
         System.Threading.Tasks.Parallel.For(0, M, i =>
         {
             float* rowA = a + (long)i * K;
             float* rowC = c + (long)i * N;
-            for (int j = 0; j < N; j++)
+            int nBlocks = N / NR;
+            for (int block = 0; block < nBlocks; block++)
             {
-                float* rowBT = bt + (long)j * K;
+                int j0 = block * NR;
+                var acc0 = Vector256<float>.Zero;
+                var acc1 = Vector256<float>.Zero;
+                var acc2 = Vector256<float>.Zero;
+                var acc3 = Vector256<float>.Zero;
+                var acc4 = Vector256<float>.Zero;
+                var acc5 = Vector256<float>.Zero;
+                var acc6 = Vector256<float>.Zero;
+                var acc7 = Vector256<float>.Zero;
+                float* pBT0 = bt + (long)j0 * K;
+                float* pBT1 = pBT0 + K;
+                float* pBT2 = pBT1 + K;
+                float* pBT3 = pBT2 + K;
+                float* pBT4 = pBT3 + K;
+                float* pBT5 = pBT4 + K;
+                float* pBT6 = pBT5 + K;
+                float* pBT7 = pBT6 + K;
+                int k = 0;
+                for (; k <= K - 8; k += 8)
+                {
+                    var a_vec = Vector256.LoadUnsafe(ref rowA[k]);
+                    acc0 = Avx.Add(acc0, Avx.Multiply(a_vec, Vector256.LoadUnsafe(ref pBT0[k])));
+                    acc1 = Avx.Add(acc1, Avx.Multiply(a_vec, Vector256.LoadUnsafe(ref pBT1[k])));
+                    acc2 = Avx.Add(acc2, Avx.Multiply(a_vec, Vector256.LoadUnsafe(ref pBT2[k])));
+                    acc3 = Avx.Add(acc3, Avx.Multiply(a_vec, Vector256.LoadUnsafe(ref pBT3[k])));
+                    acc4 = Avx.Add(acc4, Avx.Multiply(a_vec, Vector256.LoadUnsafe(ref pBT4[k])));
+                    acc5 = Avx.Add(acc5, Avx.Multiply(a_vec, Vector256.LoadUnsafe(ref pBT5[k])));
+                    acc6 = Avx.Add(acc6, Avx.Multiply(a_vec, Vector256.LoadUnsafe(ref pBT6[k])));
+                    acc7 = Avx.Add(acc7, Avx.Multiply(a_vec, Vector256.LoadUnsafe(ref pBT7[k])));
+                }
+                float s0 = MathHelpers.HSum256_Avx(acc0);
+                float s1 = MathHelpers.HSum256_Avx(acc1);
+                float s2 = MathHelpers.HSum256_Avx(acc2);
+                float s3 = MathHelpers.HSum256_Avx(acc3);
+                float s4 = MathHelpers.HSum256_Avx(acc4);
+                float s5 = MathHelpers.HSum256_Avx(acc5);
+                float s6 = MathHelpers.HSum256_Avx(acc6);
+                float s7 = MathHelpers.HSum256_Avx(acc7);
+                for (; k < K; k++)
+                {
+                    float a_val = rowA[k];
+                    s0 += a_val * pBT0[k]; s1 += a_val * pBT1[k];
+                    s2 += a_val * pBT2[k]; s3 += a_val * pBT3[k];
+                    s4 += a_val * pBT4[k]; s5 += a_val * pBT5[k];
+                    s6 += a_val * pBT6[k]; s7 += a_val * pBT7[k];
+                }
+                rowC[j0] = s0; rowC[j0 + 1] = s1; rowC[j0 + 2] = s2; rowC[j0 + 3] = s3;
+                rowC[j0 + 4] = s4; rowC[j0 + 5] = s5; rowC[j0 + 6] = s6; rowC[j0 + 7] = s7;
+            }
+            int colTail = nBlocks * NR;
+            for (int j = colTail; j < N; j++)
+            {
+                float* pBT = bt + (long)j * K;
                 var acc = Vector256<float>.Zero;
                 int k = 0;
                 for (; k <= K - 8; k += 8)
                     acc = Avx.Add(acc, Avx.Multiply(
                         Vector256.LoadUnsafe(ref rowA[k]),
-                        Vector256.LoadUnsafe(ref rowBT[k])));
+                        Vector256.LoadUnsafe(ref pBT[k])));
                 float sum = MathHelpers.HSum256_Avx(acc);
-                for (; k < K; k++) sum += rowA[k] * rowBT[k];
+                for (; k < K; k++) sum += rowA[k] * pBT[k];
                 rowC[j] = sum;
             }
         });
