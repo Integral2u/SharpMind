@@ -52,6 +52,7 @@ public sealed class Trainer(
             using var dLogits = _lossFn.Backward(flatLogits, flatLabels);
 
             // 4. Update Weights
+            _optimizer.LearningRate = _scheduler.GetLr(currentStep + 1);
             _optimizer.Update();
 
             // 5. Cleanup
