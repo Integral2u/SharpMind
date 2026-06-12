@@ -149,20 +149,14 @@ public sealed class LinearLayer : IDisposable
                 else
                 {
                     IntPtr pRawPtr = (IntPtr)pRaw;
-
-                    for (int row = 0; row < m; row++)
+                    Parallel.For(0, m, row =>
                     {
-                        IntPtr pInRow = (IntPtr)(input.DataPtr + (long)row * inF);
-                        IntPtr pOutRow = (IntPtr)(result.DataPtr + (long)row * outF);
-
-                        Parallel.For(0, outF, col =>
-                        {
-                            float* pInL = (float*)pInRow;
-                            float* pOutL = (float*)pOutRow;
-                            byte* pRawL = (byte*)pRawPtr;
-                            pOutL[col] = VecDotQxK(pInL, pRawL, col, inF);
-                        });
-                    }
+                        byte* pRawL = (byte*)pRawPtr;
+                        float* pInRow = input.DataPtr + (long)row * inF;
+                        float* pOutRow = result.DataPtr + (long)row * outF;
+                        for (int col = 0; col < outF; col++)
+                            pOutRow[col] = VecDotQxK(pInRow, pRawL, col, inF);
+                    });
                 }
             }
         }
