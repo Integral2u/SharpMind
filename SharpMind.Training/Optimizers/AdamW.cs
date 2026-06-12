@@ -12,12 +12,14 @@ public sealed class AdamW : IOptimizer
     private readonly float _epsilon;
     private readonly float _weightDecay;
     private readonly HashSet<string> _noDecayNames;
+    private readonly TrainingOps? _ops;
     private float _lr;
     private int _step;
     private bool _disposed;
 
     public AdamW(
         IEnumerable<Parameter> parameters,
+        TrainingOps? ops = null,
         float lr = 3e-4f,
         float beta1 = 0.9f,
         float beta2 = 0.95f,
@@ -26,6 +28,7 @@ public sealed class AdamW : IOptimizer
         IEnumerable<string>? noDecayNames = null)
     {
         _parameters = [.. parameters];
+        _ops = ops;
         _lr = lr;
         _beta1 = beta1;
         _beta2 = beta2;
@@ -54,20 +57,29 @@ public sealed class AdamW : IOptimizer
             var grad = _parameters[i].Grad.Data;
             var m = _m[i];
             var v = _v[i];
-            bool decay = ShouldDecay(_parameters[i].Name);
+            float decay = ShouldDecay(_parameters[i].Name) ? _weightDecay : 0f;
 
-            for (int j = 0; j < data.Length; j++)
+            if (_ops is not null)
             {
-                float g = grad[j];
-                m[j] = _beta1 * m[j] + (1f - _beta1) * g;
-                v[j] = _beta2 * v[j] + (1f - _beta2) * g * g;
+                _ops.AdamWUpdate(data, grad, m, v,
+                    _beta1, _beta2, bc1, bc2,
+                    _lr, _epsilon, decay);
+            }
+            else
+            {
+                for (int j = 0; j < data.Length; j++)
+                {
+                    float g = grad[j];
+                    m[j] = _beta1 * m[j] + (1f - _beta1) * g;
+                    v[j] = _beta2 * v[j] + (1f - _beta2) * g * g;
 
-                float mHat = m[j] / bc1;
-                float vHat = v[j] / bc2;
+                    float mHat = m[j] / bc1;
+                    float vHat = v[j] / bc2;
 
-                float update = _lr * mHat / (MathF.Sqrt(vHat) + _epsilon);
-                if (decay) update += _lr * _weightDecay * data[j];
-                data[j] -= update;
+                    float update = _lr * mHat / (MathF.Sqrt(vHat) + _epsilon);
+                    if (decay > 0f) update += _lr * decay * data[j];
+                    data[j] -= update;
+                }
             }
         }
     }
