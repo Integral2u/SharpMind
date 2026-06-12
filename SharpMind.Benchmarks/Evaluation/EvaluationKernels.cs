@@ -252,10 +252,11 @@ public static class EvaluationKernels
     private static int[] ArgMaxK(ReadOnlySpan<float> values, int k)
     {
         var indices = new int[values.Length];
+        var valuesArray = values.ToArray();
         for (int i = 0; i < indices.Length; i++) indices[i] = i;
 
-        Array.Sort(indices, (a, b) => values[b].CompareTo(values[a]));
+        Array.Sort(indices, (a, b) => valuesArray[b].CompareTo(valuesArray[a]));
 
-        return indices.Take(k).ToArray();
+        return [.. indices.Take(k)];
     }
 }

@@ -1,20 +1,6 @@
-﻿Apps:
-	Cli: entry point, commands, config
-	Benchmarks: performance, accuracy, throughput
-	Samples: usage examples, notebooks
-Runtime:
-	Inference: sampling, kv-cache, generation loop
-	Training: optimizer, scheduler, checkpointing
-
-Model: transformer, attention, FFN, norms
-Tokenizer: BPE, vocab builder, encode/decode
-Data: sources, cleaning, formating, batching, dataset loaders
-Core: tensors, matrix math, memory, activations
-
-Code Checking
+﻿Code Checking
 !!! SharpMind.Model.ModelFactory.CreateSession BuildBlock call passing mappings 
 !!! must check all calls to Assembler.CreateInstance, cache and or check mappings
-SharpMind.Training.Trainer._scheduler never used.
 Delete any of this ──────────── or ═════════════════
 Review CreateForSystem
 Ensure Chat Session is reporting correct ChatStatus
@@ -59,7 +45,7 @@ Model/Tokenizer load could be async with progress
 build small native model for testing
 
 
-Would like to introduce 
+#Future after stable realse experiments 
 
 LLM lobotomy
 Take a model and strip it of all but necessity for becoming an expert wich could be re-merge for MOE type LLM  

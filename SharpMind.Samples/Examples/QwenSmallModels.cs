@@ -22,6 +22,7 @@ namespace SharpMind.Samples.Examples
             "Qwen2-0.5B.Q5_1",
             "Qwen2-0.5B.Q6_K",
             "qwen2-0_5b-instruct-q8_0",     //Response:Hello! How can I assist you today?
+            // New response I'm a helpful assistant. How can I assist you today?
             //"qwen2-0_5b-instruct-fp16",     //Response:Hello! How can I assist you today?
             ];
 

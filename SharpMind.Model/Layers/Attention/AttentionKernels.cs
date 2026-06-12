@@ -25,9 +25,12 @@ internal static class AttentionKernels
     internal static unsafe void ScaledDotProductAVX2(
         float* q, float* k, float* v, float* output,
         int seqLen, int kvLen, int headDim, float scale, bool causal,
-        int qStride, int oStride)
+        int qStride, int oStride,
+        float* cosCache, float* sinCache, int positionOffset)
     {
         EnsureScoreBuffer(kvLen);
+        int halfDim = headDim / 2;
+        float* qRot = stackalloc float[headDim];
         fixed (float* pRow = &t_ScoreScratch![0])
         {
             float* scoreRow = pRow;
@@ -36,6 +39,43 @@ internal static class AttentionKernels
             {
                 float* qi = q + (long)i * qStride;
                 int absQPos = queryBase + i;
+
+                // Pre-rotate Q on-the-fly when RoPE tables are provided
+                float* qr;
+                if (cosCache != null)
+                {
+                    qr = qRot;
+                    int pos = positionOffset + absQPos;
+                    float* cosQ = cosCache + (long)pos * halfDim;
+                    float* sinQ = sinCache + (long)pos * halfDim;
+                    int d = 0;
+                    for (; d <= halfDim - 8; d += 8)
+                    {
+                        var vcos = Vector256.LoadUnsafe(ref cosQ[d]);
+                        var vsin = Vector256.LoadUnsafe(ref sinQ[d]);
+                        var vlo = Vector256.LoadUnsafe(ref qi[d]);
+                        var vhi = Vector256.LoadUnsafe(ref qi[halfDim + d]);
+                        Vector256.StoreUnsafe(
+                            Avx.Subtract(Avx.Multiply(vlo, vcos), Avx.Multiply(vhi, vsin)),
+                            ref qRot[d]);
+                        Vector256.StoreUnsafe(
+                            Avx.Add(Avx.Multiply(vhi, vcos), Avx.Multiply(vlo, vsin)),
+                            ref qRot[halfDim + d]);
+                    }
+                    for (; d < halfDim; d++)
+                    {
+                        float cos = cosQ[d];
+                        float sin = sinQ[d];
+                        float lo = qi[d];
+                        float hi = qi[halfDim + d];
+                        qRot[d] = lo * cos - hi * sin;
+                        qRot[halfDim + d] = hi * cos + lo * sin;
+                    }
+                }
+                else
+                {
+                    qr = qi;
+                }
 
                 // Pass 1: compute scores + online softmax statistics
                 float max = float.NegativeInfinity;
@@ -54,10 +94,10 @@ internal static class AttentionKernels
                         int d = 0;
                         for (; d <= headDim - 8; d += 8)
                             acc = Avx.Add(acc, Avx.Multiply(
-                                Vector256.LoadUnsafe(ref qi[d]),
+                                Vector256.LoadUnsafe(ref qr[d]),
                                 Vector256.LoadUnsafe(ref kj[d])));
                         float dot = MathHelpers.HSum256_Avx(acc);
-                        for (; d < headDim; d++) dot += qi[d] * kj[d];
+                        for (; d < headDim; d++) dot += qr[d] * kj[d];
                         score = dot * scale;
                     }
                     scoreRow[j] = score;
@@ -99,9 +139,12 @@ internal static class AttentionKernels
     internal static unsafe void ScaledDotProductFMA(
         float* q, float* k, float* v, float* output,
         int seqLen, int kvLen, int headDim, float scale, bool causal,
-        int qStride, int oStride)
+        int qStride, int oStride,
+        float* cosCache, float* sinCache, int positionOffset)
     {
         EnsureScoreBuffer(kvLen);
+        int halfDim = headDim / 2;
+        float* qRot = stackalloc float[headDim];
         fixed (float* pRow = &t_ScoreScratch![0])
         {
             float* scoreRow = pRow;
@@ -110,6 +153,42 @@ internal static class AttentionKernels
             {
                 float* qi = q + (long)i * qStride;
                 int absQPos = queryBase + i;
+
+                float* qr;
+                if (cosCache != null)
+                {
+                    qr = qRot;
+                    int pos = positionOffset + absQPos;
+                    float* cosQ = cosCache + (long)pos * halfDim;
+                    float* sinQ = sinCache + (long)pos * halfDim;
+                    int d = 0;
+                    for (; d <= halfDim - 8; d += 8)
+                    {
+                        var vcos = Vector256.LoadUnsafe(ref cosQ[d]);
+                        var vsin = Vector256.LoadUnsafe(ref sinQ[d]);
+                        var vlo = Vector256.LoadUnsafe(ref qi[d]);
+                        var vhi = Vector256.LoadUnsafe(ref qi[halfDim + d]);
+                        Vector256.StoreUnsafe(
+                            Avx.Subtract(Avx.Multiply(vlo, vcos), Avx.Multiply(vhi, vsin)),
+                            ref qRot[d]);
+                        Vector256.StoreUnsafe(
+                            Avx.Add(Avx.Multiply(vhi, vcos), Avx.Multiply(vlo, vsin)),
+                            ref qRot[halfDim + d]);
+                    }
+                    for (; d < halfDim; d++)
+                    {
+                        float cos = cosQ[d];
+                        float sin = sinQ[d];
+                        float lo = qi[d];
+                        float hi = qi[halfDim + d];
+                        qRot[d] = lo * cos - hi * sin;
+                        qRot[halfDim + d] = hi * cos + lo * sin;
+                    }
+                }
+                else
+                {
+                    qr = qi;
+                }
 
                 float max = float.NegativeInfinity;
                 float lSum = 0f;
@@ -126,10 +205,10 @@ internal static class AttentionKernels
                         var acc = Vector256<float>.Zero;
                         int d = 0;
                         for (; d <= headDim - 8; d += 8)
-                            acc = Fma.MultiplyAdd(Vector256.LoadUnsafe(ref qi[d]),
+                            acc = Fma.MultiplyAdd(Vector256.LoadUnsafe(ref qr[d]),
                                                   Vector256.LoadUnsafe(ref kj[d]), acc);
                         float dot = MathHelpers.HSum256_Avx(acc);
-                        for (; d < headDim; d++) dot += qi[d] * kj[d];
+                        for (; d < headDim; d++) dot += qr[d] * kj[d];
                         score = dot * scale;
                     }
                     scoreRow[j] = score;
@@ -170,9 +249,12 @@ internal static class AttentionKernels
     internal static unsafe void ScaledDotProductScalar(
         float* q, float* k, float* v, float* output,
         int seqLen, int kvLen, int headDim, float scale, bool causal,
-        int qStride, int oStride)
+        int qStride, int oStride,
+        float* cosCache, float* sinCache, int positionOffset)
     {
         EnsureScoreBuffer(kvLen);
+        int halfDim = headDim / 2;
+        float* qRot = stackalloc float[headDim];
         fixed (float* pRow = &t_ScoreScratch![0])
         {
             float* scoreRow = pRow;
@@ -181,6 +263,28 @@ internal static class AttentionKernels
             {
                 float* qi = q + (long)i * qStride;
                 int absQPos = queryBase + i;
+
+                float* qr;
+                if (cosCache != null)
+                {
+                    qr = qRot;
+                    int pos = positionOffset + absQPos;
+                    float* cosQ = cosCache + (long)pos * halfDim;
+                    float* sinQ = sinCache + (long)pos * halfDim;
+                    for (int d = 0; d < halfDim; d++)
+                    {
+                        float cos = cosQ[d];
+                        float sin = sinQ[d];
+                        float lo = qi[d];
+                        float hi = qi[halfDim + d];
+                        qRot[d] = lo * cos - hi * sin;
+                        qRot[halfDim + d] = hi * cos + lo * sin;
+                    }
+                }
+                else
+                {
+                    qr = qi;
+                }
 
                 float max = float.NegativeInfinity;
                 float lSum = 0f;
@@ -195,7 +299,7 @@ internal static class AttentionKernels
                     {
                         float* kj = k + (long)j * headDim;
                         float dot = 0f;
-                        for (int d = 0; d < headDim; d++) dot += qi[d] * kj[d];
+                        for (int d = 0; d < headDim; d++) dot += qr[d] * kj[d];
                         score = dot * scale;
                     }
                     scoreRow[j] = score;
@@ -242,13 +346,16 @@ internal static class AttentionKernels
     internal static unsafe void ScaledDotProductFlashAVX2(
         float* q, float* k, float* v, float* output,
         int seqLen, int kvLen, int headDim, float scale, bool causal,
-        int qStride, int oStride)
+        int qStride, int oStride,
+        float* cosCache, float* sinCache, int positionOffset)
     {
         if ((uint)headDim > FlashMaxHeadDim)
             throw new ArgumentOutOfRangeException(nameof(headDim),
                 $"headDim {headDim} exceeds FlashMaxHeadDim {FlashMaxHeadDim}.");
 
         float* tileScores = stackalloc float[FlashTileSize];
+        int halfDim = headDim / 2;
+        float* qRot = stackalloc float[headDim];
         int queryBase = causal ? kvLen - seqLen : 0;
 
         for (int i = 0; i < seqLen; i++)
@@ -256,6 +363,43 @@ internal static class AttentionKernels
             float* qi = q + (long)i * qStride;
             int absQPos = queryBase + i;
             int effKvLen = causal ? Math.Min(absQPos + 1, kvLen) : kvLen;
+
+            // Pre-rotate Q on-the-fly when RoPE tables are provided
+            float* qr;
+            if (cosCache != null)
+            {
+                qr = qRot;
+                int pos = positionOffset + absQPos;
+                float* cosQ = cosCache + (long)pos * halfDim;
+                float* sinQ = sinCache + (long)pos * halfDim;
+                int d = 0;
+                for (; d <= halfDim - 8; d += 8)
+                {
+                    var vcos = Vector256.LoadUnsafe(ref cosQ[d]);
+                    var vsin = Vector256.LoadUnsafe(ref sinQ[d]);
+                    var vlo = Vector256.LoadUnsafe(ref qi[d]);
+                    var vhi = Vector256.LoadUnsafe(ref qi[halfDim + d]);
+                    Vector256.StoreUnsafe(
+                        Avx.Subtract(Avx.Multiply(vlo, vcos), Avx.Multiply(vhi, vsin)),
+                        ref qRot[d]);
+                    Vector256.StoreUnsafe(
+                        Avx.Add(Avx.Multiply(vhi, vcos), Avx.Multiply(vlo, vsin)),
+                        ref qRot[halfDim + d]);
+                }
+                for (; d < halfDim; d++)
+                {
+                    float cos = cosQ[d];
+                    float sin = sinQ[d];
+                    float lo = qi[d];
+                    float hi = qi[halfDim + d];
+                    qRot[d] = lo * cos - hi * sin;
+                    qRot[halfDim + d] = hi * cos + lo * sin;
+                }
+            }
+            else
+            {
+                qr = qi;
+            }
 
             float mMax = float.NegativeInfinity;
             float lSum = 0f;
@@ -275,10 +419,10 @@ internal static class AttentionKernels
                     int d = 0;
                     for (; d <= headDim - 8; d += 8)
                         acc = Avx.Add(acc, Avx.Multiply(
-                            Vector256.LoadUnsafe(ref qi[d]),
+                            Vector256.LoadUnsafe(ref qr[d]),
                             Vector256.LoadUnsafe(ref kj[d])));
                     float dot = MathHelpers.HSum256_Avx(acc);
-                    for (; d < headDim; d++) dot += qi[d] * kj[d];
+                    for (; d < headDim; d++) dot += qr[d] * kj[d];
                     dot *= scale;
                     tileScores[j - start] = dot;
                     if (dot > tileMax) tileMax = dot;
@@ -316,13 +460,16 @@ internal static class AttentionKernels
     internal static unsafe void ScaledDotProductFlashFMA(
         float* q, float* k, float* v, float* output,
         int seqLen, int kvLen, int headDim, float scale, bool causal,
-        int qStride, int oStride)
+        int qStride, int oStride,
+        float* cosCache, float* sinCache, int positionOffset)
     {
         if ((uint)headDim > FlashMaxHeadDim)
             throw new ArgumentOutOfRangeException(nameof(headDim),
                 $"headDim {headDim} exceeds FlashMaxHeadDim {FlashMaxHeadDim}.");
 
         float* tileScores = stackalloc float[FlashTileSize];
+        int halfDim = headDim / 2;
+        float* qRot = stackalloc float[headDim];
         int queryBase = causal ? kvLen - seqLen : 0;
 
         for (int i = 0; i < seqLen; i++)
@@ -330,6 +477,42 @@ internal static class AttentionKernels
             float* qi = q + (long)i * qStride;
             int absQPos = queryBase + i;
             int effKvLen = causal ? Math.Min(absQPos + 1, kvLen) : kvLen;
+
+            float* qr;
+            if (cosCache != null)
+            {
+                qr = qRot;
+                int pos = positionOffset + absQPos;
+                float* cosQ = cosCache + (long)pos * halfDim;
+                float* sinQ = sinCache + (long)pos * halfDim;
+                int d = 0;
+                for (; d <= halfDim - 8; d += 8)
+                {
+                    var vcos = Vector256.LoadUnsafe(ref cosQ[d]);
+                    var vsin = Vector256.LoadUnsafe(ref sinQ[d]);
+                    var vlo = Vector256.LoadUnsafe(ref qi[d]);
+                    var vhi = Vector256.LoadUnsafe(ref qi[halfDim + d]);
+                    Vector256.StoreUnsafe(
+                        Avx.Subtract(Avx.Multiply(vlo, vcos), Avx.Multiply(vhi, vsin)),
+                        ref qRot[d]);
+                    Vector256.StoreUnsafe(
+                        Avx.Add(Avx.Multiply(vhi, vcos), Avx.Multiply(vlo, vsin)),
+                        ref qRot[halfDim + d]);
+                }
+                for (; d < halfDim; d++)
+                {
+                    float cos = cosQ[d];
+                    float sin = sinQ[d];
+                    float lo = qi[d];
+                    float hi = qi[halfDim + d];
+                    qRot[d] = lo * cos - hi * sin;
+                    qRot[halfDim + d] = hi * cos + lo * sin;
+                }
+            }
+            else
+            {
+                qr = qi;
+            }
 
             float mMax = float.NegativeInfinity;
             float lSum = 0f;
@@ -348,10 +531,10 @@ internal static class AttentionKernels
                     var acc = Vector256<float>.Zero;
                     int d = 0;
                     for (; d <= headDim - 8; d += 8)
-                        acc = Fma.MultiplyAdd(Vector256.LoadUnsafe(ref qi[d]),
+                        acc = Fma.MultiplyAdd(Vector256.LoadUnsafe(ref qr[d]),
                                               Vector256.LoadUnsafe(ref kj[d]), acc);
                     float dot = MathHelpers.HSum256_Avx(acc);
-                    for (; d < headDim; d++) dot += qi[d] * kj[d];
+                    for (; d < headDim; d++) dot += qr[d] * kj[d];
                     dot *= scale;
                     tileScores[j - start] = dot;
                     if (dot > tileMax) tileMax = dot;
@@ -389,13 +572,16 @@ internal static class AttentionKernels
     internal static unsafe void ScaledDotProductFlashScalar(
         float* q, float* k, float* v, float* output,
         int seqLen, int kvLen, int headDim, float scale, bool causal,
-        int qStride, int oStride)
+        int qStride, int oStride,
+        float* cosCache, float* sinCache, int positionOffset)
     {
         if ((uint)headDim > FlashMaxHeadDim)
             throw new ArgumentOutOfRangeException(nameof(headDim),
                 $"headDim {headDim} exceeds FlashMaxHeadDim {FlashMaxHeadDim}.");
 
         float* tileScores = stackalloc float[FlashTileSize];
+        int halfDim = headDim / 2;
+        float* qRot = stackalloc float[headDim];
         int queryBase = causal ? kvLen - seqLen : 0;
 
         for (int i = 0; i < seqLen; i++)
@@ -403,6 +589,28 @@ internal static class AttentionKernels
             float* qi = q + (long)i * qStride;
             int absQPos = queryBase + i;
             int effKvLen = causal ? Math.Min(absQPos + 1, kvLen) : kvLen;
+
+            float* qr;
+            if (cosCache != null)
+            {
+                qr = qRot;
+                int pos = positionOffset + absQPos;
+                float* cosQ = cosCache + (long)pos * halfDim;
+                float* sinQ = sinCache + (long)pos * halfDim;
+                for (int d = 0; d < halfDim; d++)
+                {
+                    float cos = cosQ[d];
+                    float sin = sinQ[d];
+                    float lo = qi[d];
+                    float hi = qi[halfDim + d];
+                    qRot[d] = lo * cos - hi * sin;
+                    qRot[halfDim + d] = hi * cos + lo * sin;
+                }
+            }
+            else
+            {
+                qr = qi;
+            }
 
             float mMax = float.NegativeInfinity;
             float lSum = 0f;
@@ -419,7 +627,7 @@ internal static class AttentionKernels
                 {
                     float* kj = k + (long)j * headDim;
                     float dot = 0f;
-                    for (int d = 0; d < headDim; d++) dot += qi[d] * kj[d];
+                    for (int d = 0; d < headDim; d++) dot += qr[d] * kj[d];
                     dot *= scale;
                     tileScores[j - start] = dot;
                     if (dot > tileMax) tileMax = dot;
