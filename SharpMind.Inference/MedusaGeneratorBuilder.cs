@@ -7,6 +7,15 @@ public class MedusaGeneratorBuilder<T> : IGeneratorBuilder<T> where T : IKVCache
 {
     private const int DefaultNumHeads = 3;
 
+    /// <summary>Number of greedy samples to collect for head calibration. 0 = skip calibration (start with random heads).</summary>
+    public int CalibrationSamples { get; set; } = 0;
+
+    /// <summary>SGD training steps over the calibration data.</summary>
+    public int CalibrationSteps { get; set; } = 20;
+
+    /// <summary>SGD learning rate for head training.</summary>
+    public float CalibrationLearningRate { get; set; } = 0.01f;
+
     public IGenerator<T> CreateGenerator(
         Transformer model,
         Tokenization.Tokenizer tokenizer,
@@ -23,6 +32,15 @@ public class MedusaGeneratorBuilder<T> : IGeneratorBuilder<T> where T : IKVCache
             rawEmbedding: null,
             rawDtype: null,
             qOps: null);
+
+        // Self-calibrate: train heads on the model's own greedy outputs.
+        if (CalibrationSamples > 0)
+        {
+            medusaHeads.SelfCalibrate(model,
+                numSamples: CalibrationSamples,
+                trainingSteps: CalibrationSteps,
+                learningRate: CalibrationLearningRate);
+        }
 
         return new MedusaGenerator<T>(
             model, tokenizer, addBos, addEos,
