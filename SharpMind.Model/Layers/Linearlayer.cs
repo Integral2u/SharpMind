@@ -15,6 +15,8 @@ public sealed class LinearLayer : IDisposable
     private bool _disposed;
     private unsafe delegate float VecDotFn(float* input, byte* rawWeights, int col, int inFeatures);
     private VecDotFn? _vecDotFn;
+    private unsafe delegate void QuantizedMatMulFn(float* input, byte* rawWeights, float* output, int M, int K, int N);
+    private QuantizedMatMulFn? _matMulFn;
 
     // Raw GGUF quantized data for quantized matmul (null means use float32 path).
     public byte[]? RawQuantizedData { get; set; }
@@ -139,7 +141,11 @@ public sealed class LinearLayer : IDisposable
         {
             fixed (byte* pRaw = rawData)
             {
-                if (m <= 1)
+                if (_matMulFn != null)
+                {
+                    _matMulFn(input.DataPtr, pRaw, result.DataPtr, m, inF, outF);
+                }
+                else if (m <= 1)
                 {
                     float* pInRow = input.DataPtr;
                     float* pOutRow = result.DataPtr;
@@ -202,6 +208,11 @@ public sealed class LinearLayer : IDisposable
             GgufDtype.Q8_1 => _qOps.VecDotQ8_1,
             GgufDtype.Q2_K => _qOps.VecDotQ2K,
             GgufDtype.Q8_K => _qOps.VecDotQ8K,
+            _ => null
+        };
+        _matMulFn = dtype switch
+        {
+            GgufDtype.Q8_0 => _qOps.QuantizedMatMulQ8_0,
             _ => null
         };
         return UseQuantizedForward;

@@ -19,6 +19,7 @@ public abstract class AttentionLayer : IDisposable
     public readonly LinearLayer Wk;
     public readonly LinearLayer Wv;
     public readonly LinearLayer Wo;
+    public readonly LinearLayer Wqkv; // Added fused layer
     public readonly PositionalEncoder PositionalEncoder;
     private bool _disposed;
 
@@ -35,42 +36,130 @@ public abstract class AttentionLayer : IDisposable
         Wk = new LinearLayer("k_proj", config.HiddenDim, kvDim, bias: true, qOps: qOps, weights?.Wk, weights?.WkBias);
         Wv = new LinearLayer("v_proj", config.HiddenDim, kvDim, bias: true, qOps: qOps, weights?.Wv, weights?.WvBias);
         Wo = new LinearLayer("o_proj", config.HiddenDim, config.HiddenDim, bias: true, qOps: qOps, weights?.Wo, weights?.WoBias);
+        
+        // Initialize Wqkv layer
+        int totalQkvDim = config.HiddenDim + 2 * kvDim;
+        Wqkv = new LinearLayer("qkv_proj", config.HiddenDim, totalQkvDim, bias: true, qOps: qOps, null, null);
         PositionalEncoder = config.PositionalEncoding == PositionalEncoding.NoPE ? new NoPE() : new RoPE(config.HeadDim, config.MaxSeqLen, config.RopeTheta);
+
+        if (weights != null)
+            CopyFusedWeights(weights.Wq, weights.Wk, weights.Wv, weights.WqBias, weights.WkBias, weights.WvBias);
+    }
+
+    private void CopyFusedWeights(Tensor<float> wq, Tensor<float> wk, Tensor<float> wv,
+        Tensor<float>? wqB, Tensor<float>? wkB, Tensor<float>? wvB)
+    {
+        int hiddenDim = Config.HiddenDim;
+        int kvDim = Config.NumKvHeads * Config.HeadDim;
+        int totalOut = hiddenDim + 2 * kvDim;
+        var wData = Wqkv.Weight.Data;
+
+        // Weights are stored transposed [Out, In] in LinearLayer
+        for (int i = 0; i < hiddenDim; i++) // OutFeatures
+        {
+            for (int j = 0; j < hiddenDim; j++) // InFeatures
+                wData[i * totalOut + j] = wq.Data[j * hiddenDim + i];
+        }
+        for (int i = 0; i < kvDim; i++) // OutFeatures
+        {
+            for (int j = 0; j < hiddenDim; j++) // InFeatures
+            {
+                wData[(hiddenDim + i) * totalOut + j] = wk.Data[j * kvDim + i];
+                wData[(hiddenDim + kvDim + i) * totalOut + j] = wv.Data[j * kvDim + i];
+            }
+        }
+
+        if (Wqkv.Bias != null && wqB != null)
+        {
+            wqB.Data.CopyTo(Wqkv.Bias.Data[..hiddenDim]);
+            wkB.Data.CopyTo(Wqkv.Bias.Data.Slice(hiddenDim, kvDim));
+            wvB.Data.CopyTo(Wqkv.Bias.Data.Slice(hiddenDim + kvDim, kvDim));
+        }
     }
 
     public void SetWeights(TransformerWeights.BlockWeights weights)
     {
+        int kvDim = Config.NumKvHeads * Config.HeadDim;
+        int hiddenDim = Config.HiddenDim;
+        int totalOut = hiddenDim + 2 * kvDim;
+        var wData = Wqkv.Weight.Data;
+
+        // Weights are stored transposed [Out, In]
+        // Fused Wqkv is [In, Out]
+        for (int i = 0; i < hiddenDim; i++) // InFeatures
+        {
+            for (int j = 0; j < hiddenDim; j++) // OutFeatures
+                wData[j * totalOut + i] = weights.Wq.Data[i * hiddenDim + j];
+        }
+        for (int i = 0; i < kvDim; i++) // OutFeatures
+        {
+            for (int j = 0; j < hiddenDim; j++) // InFeatures
+            {
+                wData[j * totalOut + (hiddenDim + i)] = weights.Wk.Data[i * kvDim + j];
+                wData[j * totalOut + (hiddenDim + kvDim + i)] = weights.Wv.Data[i * kvDim + j];
+            }
+        }
+
+        if (Wqkv.Bias != null && weights.WqBias != null)
+        {
+            weights.WqBias.Data.CopyTo(Wqkv.Bias.Data[..hiddenDim]);
+            weights.WkBias.Data.CopyTo(Wqkv.Bias.Data.Slice(hiddenDim, kvDim));
+            weights.WvBias.Data.CopyTo(Wqkv.Bias.Data.Slice(hiddenDim + kvDim, kvDim));
+        }
+
+        // Restore individual Q/K/V layers for fast quantized forward path
         Wq.ReplaceWeights(weights.Wq, weights.WqBias);
         Wq.SetRawWeight(weights.RawWq, weights.QuantDtype ?? GgufDtype.F32);
         Wk.ReplaceWeights(weights.Wk, weights.WkBias);
         Wk.SetRawWeight(weights.RawWk, weights.QuantDtype ?? GgufDtype.F32);
         Wv.ReplaceWeights(weights.Wv, weights.WvBias);
         Wv.SetRawWeight(weights.RawWv, weights.QuantDtype ?? GgufDtype.F32);
+
         Wo.ReplaceWeights(weights.Wo, weights.WoBias);
         Wo.SetRawWeight(weights.RawWo, weights.QuantDtype ?? GgufDtype.F32);
+    }
+
+    private unsafe void LoadFusedWeightTransposed(ReadOnlySpan<float> data, int colOffset, int subOutF)
+    {
+        // data is GGUF layout [subOutF, HiddenDim] (transposed)
+        // Wqkv.Weight is [HiddenDim, totalOut] (Row-major: [In, Out])
+        var w = Wqkv.Weight;
+        int inF = w.Shape[0]; // HiddenDim
+        int totalOut = w.Shape[1]; // TotalOut
+        var wData = w.Data;
+
+        for (int o = 0; o < subOutF; o++) // OutFeatures index in sub-tensor
+        {
+            for (int i = 0; i < inF; i++) // InFeatures
+            {
+                // wData[row * totalOut + col]
+                // row = i, col = colOffset + o
+                wData[i * totalOut + (colOffset + o)] = data[o * inF + i];
+            }
+        }
+        // Stale _weightBT will be recomputed on next Forward
     }
 
     public void LoadWeights(string name, ReadOnlySpan<float> data)
     {
         bool isBias = name.EndsWith(".bias", StringComparison.OrdinalIgnoreCase);
+        int hiddenDim = Config.HiddenDim;
+        int kvDim = Config.NumKvHeads * Config.HeadDim;
 
-        // Use full tensor-name suffixes — single-char matching ("q", "k", "v") is
-        // fooled by the "blk" block prefix which contains "k", causing V weights to
-        // silently load into Wk and leaving Wv permanently zeroed.
         if (name.Contains("attn_q", StringComparison.OrdinalIgnoreCase) || name.Contains("q_proj", StringComparison.OrdinalIgnoreCase))
         {
-            if (isBias) Wq.LoadBias(data);
-            else Wq.LoadWeightTransposed(data);
+            if (isBias) data.CopyTo(Wqkv.Bias!.Data[..hiddenDim]);
+            else LoadFusedWeightTransposed(data, 0, hiddenDim);
         }
         else if (name.Contains("attn_k", StringComparison.OrdinalIgnoreCase) || name.Contains("k_proj", StringComparison.OrdinalIgnoreCase))
         {
-            if (isBias) Wk.LoadBias(data);
-            else Wk.LoadWeightTransposed(data);
+            if (isBias) data.CopyTo(Wqkv.Bias!.Data.Slice(hiddenDim, kvDim));
+            else LoadFusedWeightTransposed(data, hiddenDim, kvDim);
         }
         else if (name.Contains("attn_v", StringComparison.OrdinalIgnoreCase) || name.Contains("v_proj", StringComparison.OrdinalIgnoreCase))
         {
-            if (isBias) Wv.LoadBias(data);
-            else Wv.LoadWeightTransposed(data);
+            if (isBias) data.CopyTo(Wqkv.Bias!.Data.Slice(hiddenDim + kvDim, kvDim));
+            else LoadFusedWeightTransposed(data, hiddenDim + kvDim, kvDim);
         }
         else if (name.Contains("attn_output", StringComparison.OrdinalIgnoreCase) || name.Contains("attn_o.", StringComparison.OrdinalIgnoreCase) ||
                  name.Contains("o_proj", StringComparison.OrdinalIgnoreCase) || name.Contains("out_proj", StringComparison.OrdinalIgnoreCase))
@@ -85,12 +174,12 @@ public abstract class AttentionLayer : IDisposable
         bool isBias = weightName.EndsWith(".bias", StringComparison.OrdinalIgnoreCase);
         if (isBias) return false;
 
-        if (weightName.Contains("attn_q", StringComparison.OrdinalIgnoreCase) || weightName.Contains("q_proj", StringComparison.OrdinalIgnoreCase))
-            return Wq.SetRawWeight(rawData, dtype);
-        if (weightName.Contains("attn_k", StringComparison.OrdinalIgnoreCase) || weightName.Contains("k_proj", StringComparison.OrdinalIgnoreCase))
-            return Wk.SetRawWeight(rawData, dtype);
-        if (weightName.Contains("attn_v", StringComparison.OrdinalIgnoreCase) || weightName.Contains("v_proj", StringComparison.OrdinalIgnoreCase))
-            return Wv.SetRawWeight(rawData, dtype);
+        // Force dequantization for Q, K, V
+        if (weightName.Contains("attn_q", StringComparison.OrdinalIgnoreCase) || weightName.Contains("q_proj", StringComparison.OrdinalIgnoreCase) ||
+            weightName.Contains("attn_k", StringComparison.OrdinalIgnoreCase) || weightName.Contains("k_proj", StringComparison.OrdinalIgnoreCase) ||
+            weightName.Contains("attn_v", StringComparison.OrdinalIgnoreCase) || weightName.Contains("v_proj", StringComparison.OrdinalIgnoreCase))
+            return false;
+            
         if (weightName.Contains("attn_output", StringComparison.OrdinalIgnoreCase) || weightName.Contains("attn_o.", StringComparison.OrdinalIgnoreCase) ||
             weightName.Contains("o_proj", StringComparison.OrdinalIgnoreCase) || weightName.Contains("out_proj", StringComparison.OrdinalIgnoreCase))
             return Wo.SetRawWeight(rawData, dtype);
@@ -273,7 +362,7 @@ public abstract class AttentionLayer : IDisposable
         if (disposing)
         {
             // These are LinearLayers, they will only dispose if they own the weights.
-            Wq.Dispose(); Wk.Dispose(); Wv.Dispose(); Wo.Dispose();
+            Wq.Dispose(); Wk.Dispose(); Wv.Dispose(); Wo.Dispose(); Wqkv.Dispose();
         }
         _disposed = true;
     }

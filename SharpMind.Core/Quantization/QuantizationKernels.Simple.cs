@@ -7,6 +7,341 @@ namespace SharpMind.Core.Quantization;
 public static partial class QuantizationKernels
 {
     // ═══════════════════════════════════════════════════════════════════════
+    // QuantizedMatMulQ8_0 — fused matmul for q8_0 weights
+    // Processes all output columns in one call, parallelized over column
+    // groups (NR=8). Eliminates per-column VecDot function call overhead
+    // and enables multi-core scaling.
+    // ═══════════════════════════════════════════════════════════════════════
+
+    internal static unsafe void QuantizedMatMulQ8_0_FMA(
+        float* input, byte* rawWeights, float* output,
+        int M, int K, int N)
+    {
+        const int QK = 32;
+        const int BLOCK_BYTES = 34;
+        const int NR = 8;
+        int nBlocks = (K + QK - 1) / QK;
+        int colStride = nBlocks * BLOCK_BYTES;
+
+        if (M <= 1)
+        {
+            int nGroups = N / NR;
+            if (nGroups > 0)
+            {
+                System.Threading.Tasks.Parallel.For(0, nGroups, group =>
+                {
+                    int colBase = group * NR;
+                    double* sums = stackalloc double[NR];
+                    for (int ci = 0; ci < NR; ci++) sums[ci] = 0.0;
+
+                    for (int b = 0; b < nBlocks; b++)
+                    {
+                        float* pInBlock = input + b * QK;
+                        int blockEnd = Math.Min(QK, K - b * QK);
+
+                        for (int ci = 0; ci < NR; ci++)
+                        {
+                            int col = colBase + ci;
+                            byte* block = rawWeights + (long)col * colStride + b * BLOCK_BYTES;
+                            float d = HalfToFloat_Scalar(*(ushort*)block);
+                            sbyte* values = (sbyte*)(block + 2);
+
+                            var vacc = Vector256<float>.Zero;
+                            var vd = Vector256.Create(d);
+                            int i = 0;
+                            for (; i <= blockEnd - 8; i += 8)
+                            {
+                                var vi = Vector256.LoadUnsafe(ref pInBlock[i]);
+                                var vw = Avx.ConvertToVector256Single(Avx2.ConvertToVector256Int32(values + i));
+                                vacc = Fma.MultiplyAdd(vi, Avx.Multiply(vw, vd), vacc);
+                            }
+                            float s = MathHelpers.HSum256_Avx(vacc);
+                            for (; i < blockEnd; i++) s += pInBlock[i] * (values[i] * d);
+                            sums[ci] += s;
+                        }
+                    }
+
+                    for (int ci = 0; ci < NR; ci++)
+                        output[colBase + ci] = (float)sums[ci];
+                });
+            }
+            int tailStart = nGroups * NR;
+            for (int col = tailStart; col < N; col++)
+                output[col] = VecDotQ8_0_FMA(input, rawWeights, col, K);
+        }
+        else
+        {
+            System.Threading.Tasks.Parallel.For(0, M, row =>
+            {
+                float* pInRow = input + (long)row * K;
+                float* pOutRow = output + (long)row * N;
+                double* sums = stackalloc double[NR];
+
+                int nGroups = N / NR;
+                for (int group = 0; group < nGroups; group++)
+                {
+                    int colBase = group * NR;
+                    for (int ci = 0; ci < NR; ci++) sums[ci] = 0.0;
+
+                    for (int b = 0; b < nBlocks; b++)
+                    {
+                        float* pInBlock = pInRow + b * QK;
+                        int blockEnd = Math.Min(QK, K - b * QK);
+
+                        for (int ci = 0; ci < NR; ci++)
+                        {
+                            int col = colBase + ci;
+                            byte* block = rawWeights + (long)col * colStride + b * BLOCK_BYTES;
+                            float d = HalfToFloat_Scalar(*(ushort*)block);
+                            sbyte* values = (sbyte*)(block + 2);
+
+                            var vacc = Vector256<float>.Zero;
+                            var vd = Vector256.Create(d);
+                            int i = 0;
+                            for (; i <= blockEnd - 8; i += 8)
+                            {
+                                var vi = Vector256.LoadUnsafe(ref pInBlock[i]);
+                                var vw = Avx.ConvertToVector256Single(Avx2.ConvertToVector256Int32(values + i));
+                                vacc = Fma.MultiplyAdd(vi, Avx.Multiply(vw, vd), vacc);
+                            }
+                            float s = MathHelpers.HSum256_Avx(vacc);
+                            for (; i < blockEnd; i++) s += pInBlock[i] * (values[i] * d);
+                            sums[ci] += s;
+                        }
+                    }
+
+                    for (int ci = 0; ci < NR; ci++)
+                        pOutRow[colBase + ci] = (float)sums[ci];
+                }
+
+                int tail = nGroups * NR;
+                for (int col = tail; col < N; col++)
+                    pOutRow[col] = VecDotQ8_0_FMA(pInRow, rawWeights, col, K);
+            });
+        }
+    }
+
+    internal static unsafe void QuantizedMatMulQ8_0_AVX2(
+        float* input, byte* rawWeights, float* output,
+        int M, int K, int N)
+    {
+        const int QK = 32;
+        const int BLOCK_BYTES = 34;
+        const int NR = 8;
+        int nBlocks = (K + QK - 1) / QK;
+        int colStride = nBlocks * BLOCK_BYTES;
+
+        if (M <= 1)
+        {
+            int nGroups = N / NR;
+            if (nGroups > 0)
+            {
+                System.Threading.Tasks.Parallel.For(0, nGroups, group =>
+                {
+                    int colBase = group * NR;
+                    double* sums = stackalloc double[NR];
+                    for (int ci = 0; ci < NR; ci++) sums[ci] = 0.0;
+
+                    for (int b = 0; b < nBlocks; b++)
+                    {
+                        float* pInBlock = input + b * QK;
+                        int blockEnd = Math.Min(QK, K - b * QK);
+
+                        for (int ci = 0; ci < NR; ci++)
+                        {
+                            int col = colBase + ci;
+                            byte* block = rawWeights + (long)col * colStride + b * BLOCK_BYTES;
+                            float d = HalfToFloat_Scalar(*(ushort*)block);
+                            sbyte* values = (sbyte*)(block + 2);
+
+                            var vacc0 = Vector256<float>.Zero;
+                            var vacc1 = Vector256<float>.Zero;
+                            var vd = Vector256.Create(d);
+                            int i = 0;
+                            for (; i <= blockEnd - 16; i += 16)
+                            {
+                                var vi0 = Vector256.LoadUnsafe(ref pInBlock[i]);
+                                var vi1 = Vector256.LoadUnsafe(ref pInBlock[i + 8]);
+                                var vw0 = Avx.ConvertToVector256Single(Avx2.ConvertToVector256Int32(values + i));
+                                var vw1 = Avx.ConvertToVector256Single(Avx2.ConvertToVector256Int32(values + i + 8));
+                                vacc0 = Avx.Add(vacc0, Avx.Multiply(vi0, Avx.Multiply(vw0, vd)));
+                                vacc1 = Avx.Add(vacc1, Avx.Multiply(vi1, Avx.Multiply(vw1, vd)));
+                            }
+                            for (; i <= blockEnd - 8; i += 8)
+                            {
+                                var vi = Vector256.LoadUnsafe(ref pInBlock[i]);
+                                var vw = Avx.ConvertToVector256Single(Avx2.ConvertToVector256Int32(values + i));
+                                vacc0 = Avx.Add(vacc0, Avx.Multiply(vi, Avx.Multiply(vw, vd)));
+                            }
+                            float s = MathHelpers.HSum256_Avx(Avx.Add(vacc0, vacc1));
+                            for (; i < blockEnd; i++) s += pInBlock[i] * (values[i] * d);
+                            sums[ci] += s;
+                        }
+                    }
+
+                    for (int ci = 0; ci < NR; ci++)
+                        output[colBase + ci] = (float)sums[ci];
+                });
+            }
+            int tailStart = nGroups * NR;
+            for (int col = tailStart; col < N; col++)
+                output[col] = VecDotQ8_0_AVX2(input, rawWeights, col, K);
+        }
+        else
+        {
+            System.Threading.Tasks.Parallel.For(0, M, row =>
+            {
+                float* pInRow = input + (long)row * K;
+                float* pOutRow = output + (long)row * N;
+                double* sums = stackalloc double[NR];
+
+                int nGroups = N / NR;
+                for (int group = 0; group < nGroups; group++)
+                {
+                    int colBase = group * NR;
+                    for (int ci = 0; ci < NR; ci++) sums[ci] = 0.0;
+
+                    for (int b = 0; b < nBlocks; b++)
+                    {
+                        float* pInBlock = pInRow + b * QK;
+                        int blockEnd = Math.Min(QK, K - b * QK);
+
+                        for (int ci = 0; ci < NR; ci++)
+                        {
+                            int col = colBase + ci;
+                            byte* block = rawWeights + (long)col * colStride + b * BLOCK_BYTES;
+                            float d = HalfToFloat_Scalar(*(ushort*)block);
+                            sbyte* values = (sbyte*)(block + 2);
+
+                            var vacc0 = Vector256<float>.Zero;
+                            var vacc1 = Vector256<float>.Zero;
+                            var vd = Vector256.Create(d);
+                            int i = 0;
+                            for (; i <= blockEnd - 16; i += 16)
+                            {
+                                var vi0 = Vector256.LoadUnsafe(ref pInBlock[i]);
+                                var vi1 = Vector256.LoadUnsafe(ref pInBlock[i + 8]);
+                                var vw0 = Avx.ConvertToVector256Single(Avx2.ConvertToVector256Int32(values + i));
+                                var vw1 = Avx.ConvertToVector256Single(Avx2.ConvertToVector256Int32(values + i + 8));
+                                vacc0 = Avx.Add(vacc0, Avx.Multiply(vi0, Avx.Multiply(vw0, vd)));
+                                vacc1 = Avx.Add(vacc1, Avx.Multiply(vi1, Avx.Multiply(vw1, vd)));
+                            }
+                            for (; i <= blockEnd - 8; i += 8)
+                            {
+                                var vi = Vector256.LoadUnsafe(ref pInBlock[i]);
+                                var vw = Avx.ConvertToVector256Single(Avx2.ConvertToVector256Int32(values + i));
+                                vacc0 = Avx.Add(vacc0, Avx.Multiply(vi, Avx.Multiply(vw, vd)));
+                            }
+                            float s = MathHelpers.HSum256_Avx(Avx.Add(vacc0, vacc1));
+                            for (; i < blockEnd; i++) s += pInBlock[i] * (values[i] * d);
+                            sums[ci] += s;
+                        }
+                    }
+
+                    for (int ci = 0; ci < NR; ci++)
+                        pOutRow[colBase + ci] = (float)sums[ci];
+                }
+
+                int tail = nGroups * NR;
+                for (int col = tail; col < N; col++)
+                    pOutRow[col] = VecDotQ8_0_AVX2(pInRow, rawWeights, col, K);
+            });
+        }
+    }
+
+    internal static unsafe void QuantizedMatMulQ8_0_Scalar(
+        float* input, byte* rawWeights, float* output,
+        int M, int K, int N)
+    {
+        const int QK = 32;
+        const int BLOCK_BYTES = 34;
+        const int NR = 8;
+        int nBlocks = (K + QK - 1) / QK;
+        int colStride = nBlocks * BLOCK_BYTES;
+
+        if (M <= 1)
+        {
+            int nGroups = N / NR;
+            if (nGroups > 0)
+            {
+                System.Threading.Tasks.Parallel.For(0, nGroups, group =>
+                {
+                    int colBase = group * NR;
+                    double* sums = stackalloc double[NR];
+                    for (int ci = 0; ci < NR; ci++) sums[ci] = 0.0;
+
+                    for (int b = 0; b < nBlocks; b++)
+                    {
+                        float* pInBlock = input + b * QK;
+                        int blockEnd = Math.Min(QK, K - b * QK);
+
+                        for (int ci = 0; ci < NR; ci++)
+                        {
+                            int col = colBase + ci;
+                            byte* block = rawWeights + (long)col * colStride + b * BLOCK_BYTES;
+                            float d = HalfToFloat_Scalar(*(ushort*)block);
+                            sbyte* values = (sbyte*)(block + 2);
+
+                            double s = 0.0;
+                            for (int i = 0; i < blockEnd; i++)
+                                s += pInBlock[i] * (values[i] * d);
+                            sums[ci] += s;
+                        }
+                    }
+
+                    for (int ci = 0; ci < NR; ci++)
+                        output[colBase + ci] = (float)sums[ci];
+                });
+            }
+            int tailStart = nGroups * NR;
+            for (int col = tailStart; col < N; col++)
+                output[col] = VecDotQ8_0_Scalar(input, rawWeights, col, K);
+        }
+        else
+        {
+            System.Threading.Tasks.Parallel.For(0, M, row =>
+            {
+                float* pInRow = input + (long)row * K;
+                float* pOutRow = output + (long)row * N;
+                double* sums = stackalloc double[NR];
+
+                int nGroups = N / NR;
+                for (int group = 0; group < nGroups; group++)
+                {
+                    int colBase = group * NR;
+                    for (int ci = 0; ci < NR; ci++) sums[ci] = 0.0;
+
+                    for (int b = 0; b < nBlocks; b++)
+                    {
+                        float* pInBlock = pInRow + b * QK;
+                        int blockEnd = Math.Min(QK, K - b * QK);
+
+                        for (int ci = 0; ci < NR; ci++)
+                        {
+                            int col = colBase + ci;
+                            byte* block = rawWeights + (long)col * colStride + b * BLOCK_BYTES;
+                            float d = HalfToFloat_Scalar(*(ushort*)block);
+                            sbyte* values = (sbyte*)(block + 2);
+
+                            double s = 0.0;
+                            for (int i = 0; i < blockEnd; i++)
+                                s += pInBlock[i] * (values[i] * d);
+                            sums[ci] += s;
+                        }
+                    }
+
+                    for (int ci = 0; ci < NR; ci++)
+                        pOutRow[colBase + ci] = (float)sums[ci];
+                }
+
+                int tail = nGroups * NR;
+                for (int col = tail; col < N; col++)
+                    pOutRow[col] = VecDotQ8_0_Scalar(pInRow, rawWeights, col, K);
+            });
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
     // VecDotQ8_0 — 8-bit block (QK=32)
     // ═══════════════════════════════════════════════════════════════════════
 

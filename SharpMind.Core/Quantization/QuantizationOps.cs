@@ -51,6 +51,13 @@ public abstract class QuantizationOps
         "q8_0_scalar", $"{NS}.{nameof(QuantizationKernels.VecDotQ8_0_Scalar)}")]
     public abstract unsafe float VecDotQ8_0(float* input, byte* rawWeights, int col, int inFeatures);
 
+    [PuzzleCornerPiece(QuantizationConfig.KeyQuantizedMatMulQ8_0, true, null,
+        "qmatmul_q8_0_fma",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ8_0_FMA)}",
+        "qmatmul_q8_0_avx2",   $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ8_0_AVX2)}",
+        "qmatmul_q8_0_sse",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ8_0_Scalar)}",
+        "qmatmul_q8_0_scalar", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ8_0_Scalar)}")]
+    public abstract unsafe void QuantizedMatMulQ8_0(float* input, byte* rawWeights, float* output, int M, int K, int N);
+
     [PuzzleCornerPiece(QuantizationConfig.KeyVecDotQ4_0, true, null,
         "q4_0_fma",    $"{NS}.{nameof(QuantizationKernels.VecDotQ4_0_Scalar)}",
         "q4_0_avx2",   $"{NS}.{nameof(QuantizationKernels.VecDotQ4_0_AVX2)}",
