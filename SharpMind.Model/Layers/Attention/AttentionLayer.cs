@@ -1,4 +1,5 @@
 ﻿using System.Runtime.CompilerServices;
+using System.Runtime.Intrinsics.X86;
 using JigSawDotNet;
 using SharpMind.Core.Embeddings;
 using SharpMind.Core.Ops;
@@ -22,6 +23,20 @@ public abstract class AttentionLayer : IDisposable
     public readonly LinearLayer Wqkv; // Added fused layer
     public readonly PositionalEncoder PositionalEncoder;
     private bool _disposed;
+
+    private unsafe delegate void ScaledDotProductQ8_0Delegate(
+        float* q, byte* kQuant, byte* vQuant, float* output,
+        int seqLen, int kvLen, int headDim, float scale, bool causal,
+        int qStride, int oStride);
+
+    private static readonly ScaledDotProductQ8_0Delegate Q8Kernel = InitQ8Kernel();
+
+    private static unsafe ScaledDotProductQ8_0Delegate InitQ8Kernel()
+    {
+        if (Fma.IsSupported) return AttentionKernels.ScaledDotProductQ8_0FMA;
+        if (Avx2.IsSupported) return AttentionKernels.ScaledDotProductQ8_0AVX2;
+        return AttentionKernels.ScaledDotProductQ8_0Scalar;
+    }
 
     protected AttentionLayer(ModelConfig config, QuantizationOps qOps)
         : this(config, qOps, null)
@@ -269,18 +284,22 @@ public abstract class AttentionLayer : IDisposable
                     float* pQ = qr.DataPtr + (long)(b * seqLen * numH + h) * headDim;
                     float* pO = output.DataPtr + (long)(b * seqLen * hidden + h * headDim);
 
-                    float* pK;
-                    float* pV;
-
-                    if (cache is { IsContiguous: true })
+                    if (cache is { IsQuantized: true })
                     {
-                        pK = cache.GetKeyPtr(b, 0, kvHead);
-                        pV = cache.GetValuePtr(b, 0, kvHead);
+                        byte* pKQ = cache.GetQuantizedKeyPtr(b, 0, kvHead);
+                        byte* pVQ = cache.GetQuantizedValuePtr(b, 0, kvHead);
+                        Q8Kernel(pQ, pKQ, pVQ, pO, seqLen, effectiveKvLen, headDim, scale, causal, qStride, oStride);
+                    }
+                    else if (cache is { IsContiguous: true })
+                    {
+                        float* pK = cache.GetKeyPtr(b, 0, kvHead);
+                        float* pV = cache.GetValuePtr(b, 0, kvHead);
+                        ScaledDotProduct(pQ, pK, pV, pO, seqLen, effectiveKvLen, headDim, scale, causal, qStride, oStride);
                     }
                     else
                     {
-                        pK = allTempK!.DataPtr + (long)bh * effectiveKvLen * headDim;
-                        pV = allTempV!.DataPtr + (long)bh * effectiveKvLen * headDim;
+                        float* pK = allTempK!.DataPtr + (long)bh * effectiveKvLen * headDim;
+                        float* pV = allTempV!.DataPtr + (long)bh * effectiveKvLen * headDim;
 
                         if (cache != null)
                         {
@@ -302,9 +321,9 @@ public abstract class AttentionLayer : IDisposable
                                 Unsafe.CopyBlock(pV + (long)s * headDim, srcV, (uint)(headDim * sizeof(float)));
                             }
                         }
-                    }
 
-                    ScaledDotProduct(pQ, pK, pV, pO, seqLen, effectiveKvLen, headDim, scale, causal, qStride, oStride);
+                        ScaledDotProduct(pQ, pK, pV, pO, seqLen, effectiveKvLen, headDim, scale, causal, qStride, oStride);
+                    }
                 }
             }
 

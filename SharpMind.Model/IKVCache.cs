@@ -16,4 +16,11 @@ public interface IKVCache : IDisposable
     public unsafe float* GetValuePtr(int batchIdx, int position, int kvHead);
     public object? Snapshot();
     public void Restore(object? snapshot);
+
+    /// <summary>True if the cache stores quantized data (Q8_0).</summary>
+    public bool IsQuantized => false;
+    /// <summary>Returns a pointer to quantized key data at (batchIdx, position, kvHead). Only valid when IsQuantized is true.</summary>
+    public unsafe byte* GetQuantizedKeyPtr(int batchIdx, int position, int kvHead) => null;
+    /// <summary>Returns a pointer to quantized value data at (batchIdx, position, kvHead). Only valid when IsQuantized is true.</summary>
+    public unsafe byte* GetQuantizedValuePtr(int batchIdx, int position, int kvHead) => null;
 }

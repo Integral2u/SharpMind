@@ -15,7 +15,7 @@ namespace SharpMind.Samples.Examples
         private static readonly string Model = "qwen2-0_5b-instruct-q8_0";
         public static async Task RunAsync(string prompt)
         {
-            Type[] cacheBuilders = [typeof(PagedKVCacherBuilder),typeof(KVCacherBuilder)];
+            Type[] cacheBuilders = [typeof(QuantizedKVCacherBuilder), typeof(PagedKVCacherBuilder),typeof(KVCacherBuilder)];
             Type[] generatorBuilders = [typeof(StandardGeneratorBuilder<>), typeof(MedusaGeneratorBuilder<>),typeof(SpeculativeGeneratorBuilder<>)];
 
             var ggufPath = Path.Combine(ModelPath, $"{Model}.gguf");
