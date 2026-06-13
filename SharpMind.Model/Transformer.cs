@@ -68,6 +68,37 @@ public sealed class Transformer : IDisposable
     public TransformerBlock? GetBlock(int layer) => _blocks is not null && layer < _blocks.Length ? _blocks[layer] : null;
     public TensorOps Ops => _ops;
 
+    /// <summary>
+    /// Exposes the cached hidden state from the last Forward/ForwardLastLogits call.
+    /// Contains the arch output (pre-final-norm) for all processed positions.
+    /// Shape: [Batch, SeqLen, HiddenDim]. May be modified by ForwardInPlace when
+    /// the single-token path of ForwardLastLogits is used.
+    /// </summary>
+    public Tensor<float>? LastCachedHidden => _cachedHidden;
+
+    /// <summary>
+    /// Copies row <paramref name="positionIndex"/> from the last cached hidden state,
+    /// applies final norm, and returns a new [1, HiddenDim] tensor.
+    /// Returns null if no cached hidden state is available.
+    /// </summary>
+    public Tensor<float>? GetNormedHiddenRow(int positionIndex, SharpMind.Core.Memory.Workspace? workspace = null)
+    {
+        if (_cachedHidden == null) return null;
+        int hiddenDim = _weights.Config.HiddenDim;
+        Tensor<float> row;
+        if (workspace != null)
+        {
+            row = workspace.Rent<float>([1, hiddenDim]);
+        }
+        else
+        {
+            row = new Tensor<float>(1, hiddenDim);
+        }
+        _cachedHidden.Data.Slice(positionIndex * hiddenDim, hiddenDim).CopyTo(row.Data);
+        _finalNorm.ForwardInPlace(row);
+        return row;
+    }
+
     public bool SetRawWeight(string name, byte[] rawData, Format.GgufDtype dtype)
     {
         var (target, block, rawField) = _weights.ResolveTarget(name);

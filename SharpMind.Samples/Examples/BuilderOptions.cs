@@ -16,7 +16,7 @@ namespace SharpMind.Samples.Examples
         public static async Task RunAsync(string prompt)
         {
             Type[] cacheBuilders = [typeof(PagedKVCacherBuilder),typeof(KVCacherBuilder)];
-            Type[] generatorBuilders = [typeof(SpeculativeGeneratorBuilder<>), typeof(StandardGeneratorBuilder<>)];
+            Type[] generatorBuilders = [typeof(MedusaGeneratorBuilder<>),typeof(SpeculativeGeneratorBuilder<>), typeof(StandardGeneratorBuilder<>)];
 
             var ggufPath = Path.Combine(ModelPath, $"{Model}.gguf");
             if (!File.Exists(ggufPath))
