@@ -435,6 +435,21 @@ public static partial class GgufLoader
                 }
             }
 
+            // Capture raw quantized data for non-block tensors (embedding/lm_head)
+            // These are stored alongside the float dequantized copy
+            if (IsQuantizedType(info.Dtype) && info.Shape.Length >= 2 && target != null && block == null)
+            {
+                long rawSize = GetRawTensorByteCount(info.Shape, info.Dtype);
+                if (rawSize > 0 && stream.Position + rawSize <= stream.Length)
+                {
+                    byte[] rawData = new byte[rawSize];
+                    stream.ReadExactly(rawData);
+                    stream.Position -= rawSize;
+                    weights.RawEmbedding = rawData;
+                    weights.RawEmbeddingDtype = info.Dtype;
+                }
+            }
+
             float[] buffer = ArrayPool<float>.Shared.Rent(count);
             try
             {

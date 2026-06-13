@@ -17,6 +17,10 @@ public sealed class TransformerWeights(ModelConfig config, Tensor<float> embeddi
     public Tensor<float> FinalNormWeight { get; } = finalNormW;
     public Tensor<float>? FinalNormBias { get; } = finalNormB;
 
+    // Raw quantized data for non-block tensors (embedding, lm_head)
+    public byte[]? RawEmbedding { get; set; }
+    public Format.GgufDtype? RawEmbeddingDtype { get; set; }
+
     // Weights for each block
     public BlockWeights[] Blocks { get; } = blocks;
 

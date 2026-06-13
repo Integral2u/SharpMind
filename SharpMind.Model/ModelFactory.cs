@@ -80,7 +80,7 @@ public static class ModelFactory
 
         var finalNorm = BuildNorm(weights.Config.HiddenDim, sharpConfig, weights.Config.NormEps, weights.FinalNormWeight, weights.FinalNormBias);
 
-        return new Transformer(weights, embedding, arch, finalNorm, ops, weights.LmHeadWeight);
+        return new Transformer(weights, embedding, arch, finalNorm, ops, weights.LmHeadWeight, qOps);
     }
 
     private static TransformerBlock BuildBlock(

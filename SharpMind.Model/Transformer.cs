@@ -1,9 +1,11 @@
 ﻿using SharpMind.Core.Embeddings;
 using SharpMind.Core.Ops;
+using SharpMind.Core.Quantization;
 using SharpMind.Core.Tensors;
 using SharpMind.Core.Training;
 using SharpMind.Model.Arch;
 using SharpMind.Model.Config;
+using SharpMind.Model.Format;
 using SharpMind.Model.Layers;
 
 namespace SharpMind.Model;
@@ -20,6 +22,7 @@ public sealed class Transformer : IDisposable
     // Separate LM head for non-weight-tied models (e.g. LLaMA 2/3).
     // Null means the model is weight-tied — the embedding weight is used instead.
     private readonly Tensor<float>? _lmHead;
+    private readonly QuantizationOps? _qOps;
 
     private readonly TransformerBlock[]? _blocks; // For training backward
 
@@ -33,7 +36,8 @@ public sealed class Transformer : IDisposable
         IArchitecture arch,
         NormLayer finalNorm,
         TensorOps ops,
-        Tensor<float>? lmHead = null)
+        Tensor<float>? lmHead = null,
+        QuantizationOps? qOps = null)
     {
         ArgumentNullException.ThrowIfNull(weights);
         ArgumentNullException.ThrowIfNull(embedding);
@@ -47,6 +51,7 @@ public sealed class Transformer : IDisposable
         _finalNorm = finalNorm;
         _ops = ops;
         _lmHead = lmHead;
+        _qOps = qOps;
 
 
         if (arch is DecoderArch decodeArch)
@@ -65,10 +70,16 @@ public sealed class Transformer : IDisposable
 
     public bool SetRawWeight(string name, byte[] rawData, Format.GgufDtype dtype)
     {
-        var (_ , block, rawField) = _weights.ResolveTarget(name);
+        var (target, block, rawField) = _weights.ResolveTarget(name);
         if (block != null && rawField != null)
         {
             TransformerWeights.SetRawField(block, rawField, rawData, dtype);
+            return true;
+        }
+        if (target != null && block == null && rawData.Length > 0)
+        {
+            _weights.RawEmbedding = rawData;
+            _weights.RawEmbeddingDtype = dtype;
             return true;
         }
         return false;
@@ -126,20 +137,47 @@ public sealed class Transformer : IDisposable
         // 4. LM head: [Batch, SeqLen, HiddenDim] @ LmHead^T → [Batch, SeqLen, VocabSize]
         int batch = tokenIds.Shape.Rows;
         int seqLen = tokenIds.Shape.Cols;
-        int hidden2 = _weights.Config.HiddenDim;
+        int hiddenDim = _weights.Config.HiddenDim;
 
-        using var normedFlat = normed.Reshape(batch * seqLen, hidden2);
+        using var normedFlat = normed.Reshape(batch * seqLen, hiddenDim);
         var projectionWeight = _lmHead ?? _embedding.Weight;
         
+        bool useQuantizedProj = _weights.RawEmbedding != null && _weights.RawEmbeddingDtype == GgufDtype.Q8_0 && _qOps != null;
+        int M = batch * seqLen;
+        int K = hiddenDim;
+        int N = _weights.Config.VocabSize;
+
         Tensor<float> logits;
         if (workspace != null)
         {
-            logits = workspace.Rent<float>([batch * seqLen, _weights.Config.VocabSize]);
-            _ops.MatMulWithBTInto(normedFlat, projectionWeight, logits);
+            logits = workspace.Rent<float>([M, N]);
         }
         else
         {
-            logits = _ops.MatMulWithBT(normedFlat, projectionWeight);
+            logits = new Tensor<float>(M, N);
+        }
+
+        if (useQuantizedProj)
+        {
+            byte[] rawEmbed = _weights.RawEmbedding!;
+            fixed (float* pInput = normedFlat.Data)
+            fixed (float* pOutput = logits.Data)
+            fixed (byte* pRaw = rawEmbed)
+            {
+                _qOps!.QuantizedMatMulQ8_0(pInput, pRaw, pOutput, M, K, N);
+            }
+        }
+        else
+        {
+            if (workspace != null)
+            {
+                _ops.MatMulWithBTInto(normedFlat, projectionWeight, logits);
+            }
+            else
+            {
+                logits.Dispose();
+                logits = _ops.MatMulWithBT(normedFlat, projectionWeight);
+            }
         }
 
         // Restore [Batch, SeqLen, VocabSize]
@@ -168,19 +206,46 @@ public sealed class Transformer : IDisposable
         int seqLen = tokenIds.Shape.Cols;
         int hiddenDim = _weights.Config.HiddenDim;
         var projectionWeight = _lmHead ?? _embedding.Weight;
+        bool useQuantizedProj = _weights.RawEmbedding != null && _weights.RawEmbeddingDtype == GgufDtype.Q8_0 && _qOps != null;
+        int K = hiddenDim;
+        int N = _weights.Config.VocabSize;
 
         // Single-token decode: normalise in-place, no allocation, no copy
         if (batch == 1 && seqLen == 1)
         {
             _finalNorm.ForwardInPlace(_cachedHidden);
             using var flatHidden = _cachedHidden.Reshape(batch, hiddenDim);
-            
-        if (workspace != null)
-        {
-            var resultLogits = workspace.Rent<float>([batch, _weights.Config.VocabSize]);
-            _ops.MatMulWithBTInto(flatHidden, projectionWeight, resultLogits);
-            return resultLogits;
-        }
+
+            if (useQuantizedProj)
+            {
+                byte[] rawEmbed = _weights.RawEmbedding!;
+                if (workspace != null)
+                {
+                    var result = workspace.Rent<float>([batch, N]);
+                    fixed (float* pInput = flatHidden.Data)
+                    fixed (float* pOutput = result.Data)
+                    fixed (byte* pRaw = rawEmbed)
+                    {
+                        _qOps!.QuantizedMatMulQ8_0(pInput, pRaw, pOutput, batch, K, N);
+                    }
+                    return result;
+                }
+                var resultLogits = new Tensor<float>(batch, N);
+                fixed (float* pInput = flatHidden.Data)
+                fixed (float* pOutput = resultLogits.Data)
+                fixed (byte* pRaw = rawEmbed)
+                {
+                    _qOps!.QuantizedMatMulQ8_0(pInput, pRaw, pOutput, batch, K, N);
+                }
+                return resultLogits;
+            }
+
+            if (workspace != null)
+            {
+                var resultLogits = workspace.Rent<float>([batch, N]);
+                _ops.MatMulWithBTInto(flatHidden, projectionWeight, resultLogits);
+                return resultLogits;
+            }
             return _ops.MatMulWithBT(flatHidden, projectionWeight);
         }
 
@@ -194,19 +259,35 @@ public sealed class Transformer : IDisposable
             _cachedHidden.Data.Slice(srcOffset, hiddenDim).CopyTo(lastHidden.Data.Slice(b * hiddenDim, hiddenDim));
         }
         _finalNorm.ForwardInPlace(lastHidden);
-        
-        Tensor<float> finalLogits;
+
+        if (useQuantizedProj)
+        {
+            byte[] rawEmbed = _weights.RawEmbedding!;
+            Tensor<float> finalLogits = workspace != null
+                ? workspace.Rent<float>([batch, N])
+                : new Tensor<float>(batch, N);
+            fixed (float* pInput = lastHidden.Data)
+            fixed (float* pOutput = finalLogits.Data)
+            fixed (byte* pRaw = rawEmbed)
+            {
+                _qOps!.QuantizedMatMulQ8_0(pInput, pRaw, pOutput, batch, K, N);
+            }
+            lastHidden.Dispose();
+            return finalLogits;
+        }
+
+        Tensor<float> finalLogits2;
         if (workspace != null)
         {
-            finalLogits = workspace.Rent<float>([batch, _weights.Config.VocabSize]);
-            _ops.MatMulWithBTInto(lastHidden, projectionWeight, finalLogits);
+            finalLogits2 = workspace.Rent<float>([batch, N]);
+            _ops.MatMulWithBTInto(lastHidden, projectionWeight, finalLogits2);
         }
         else
         {
-            finalLogits = _ops.MatMulWithBT(lastHidden, projectionWeight);
+            finalLogits2 = _ops.MatMulWithBT(lastHidden, projectionWeight);
         }
         lastHidden.Dispose();
-        return finalLogits;
+        return finalLogits2;
     }
 
     private void DisposeCache()
