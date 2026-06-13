@@ -254,7 +254,17 @@ public static class EvaluationKernels
         var indices = new int[values.Length];
         for (int i = 0; i < indices.Length; i++) indices[i] = i;
 
-        Array.Sort(indices, (a, b) => values[b].CompareTo(values[a]));
+        // Simple bubble sort-like to get top K indices
+        for (int i = 0; i < k; i++)
+        {
+            int maxIdx = i;
+            for (int j = i + 1; j < values.Length; j++)
+            {
+                if (values[j] > values[maxIdx])
+                    maxIdx = j;
+            }
+            (indices[i], indices[maxIdx]) = (indices[maxIdx], indices[i]);
+        }
 
         return indices.Take(k).ToArray();
     }
