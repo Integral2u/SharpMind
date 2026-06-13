@@ -70,8 +70,6 @@ public sealed class RoPE : PositionalEncoder
 
     public int HeadDim   => _headDim;
     public int MaxSeqLen => _maxSeqLen;
-    public float[] CosCache => _cosCache;
-    public float[] SinCache => _sinCache;
 
     // ── Forward (in-place) ────────────────────────────────────────────────
 

@@ -116,7 +116,7 @@ public abstract class AttentionLayer : IDisposable
         SharpMindConfig.ValMqaFlashAvx2, NS + "." + nameof(AttentionKernels.ScaledDotProductFlashAVX2),
         SharpMindConfig.ValMqaFlashFma, NS + "." + nameof(AttentionKernels.ScaledDotProductFlashFMA),
         SharpMindConfig.ValMqaFlashScalar, NS + "." + nameof(AttentionKernels.ScaledDotProductFlashScalar))]
-    public abstract unsafe void ScaledDotProduct(float* q, float* k, float* v, float* o, int seqLen, int kvLen, int headDim, float scale, bool causal, int qStride, int oStride, float* cosCache, float* sinCache, int positionOffset);
+    public abstract unsafe void ScaledDotProduct(float* q, float* k, float* v, float* o, int seqLen, int kvLen, int headDim, float scale, bool causal, int qStride, int oStride);
 
     public Tensor<float> Forward(
         Tensor<float> x,
@@ -142,19 +142,8 @@ public abstract class AttentionLayer : IDisposable
 
         using var qr = q.Reshape(batch, seqLen, numH, headDim);
         using var kr = k.Reshape(batch, seqLen, numKv, headDim);
-
-        // Fuse Q rotation into kernel when RoPE is active; K is always pre-rotated
-        // so the KV cache stores rotated K values (backward-compatible).
-        var rope = PositionalEncoder as RoPE;
-        if (rope != null)
-        {
-            PositionalEncoder.ApplyBatched(kr, positionOffset);
-        }
-        else
-        {
-            PositionalEncoder.ApplyBatched(qr, positionOffset);
-            PositionalEncoder.ApplyBatched(kr, positionOffset);
-        }
+        PositionalEncoder.ApplyBatched(qr, positionOffset);
+        PositionalEncoder.ApplyBatched(kr, positionOffset);
 
         cache?.Update(k, v, numKv, headDim);
 
@@ -226,17 +215,7 @@ public abstract class AttentionLayer : IDisposable
                         }
                     }
 
-                    if (rope != null)
-                    {
-                        fixed (float* pCos = rope.CosCache, pSin = rope.SinCache)
-                        {
-                            ScaledDotProduct(pQ, pK, pV, pO, seqLen, effectiveKvLen, headDim, scale, causal, qStride, oStride, pCos, pSin, positionOffset);
-                        }
-                    }
-                    else
-                    {
-                        ScaledDotProduct(pQ, pK, pV, pO, seqLen, effectiveKvLen, headDim, scale, causal, qStride, oStride, null, null, 0);
-                    }
+                    ScaledDotProduct(pQ, pK, pV, pO, seqLen, effectiveKvLen, headDim, scale, causal, qStride, oStride);
                 }
             }
 
