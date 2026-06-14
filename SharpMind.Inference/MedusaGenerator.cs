@@ -388,7 +388,7 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
                     // positions; keeping only cacheLenBefore + accepted entries
                     // discards the unverified suffix.
                     for (int i = 0; i < _caches.Length; i++)
-                        _caches[i].TrimToLast(cacheLenBefore + accepted);
+                        _caches[i].Truncate(cacheLenBefore + accepted);
 
                     // Sliding window check (same as above).
                     if (_caches[0].IsFull)

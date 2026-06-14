@@ -38,6 +38,11 @@ public sealed class PagedKVCacheLayer(int batchSize, int numKvHeads, int maxSeqL
         _cache.TrimToLast(keepTokens);
     }
 
+    public void Truncate(int length)
+    {
+        _cache.Truncate(length);
+    }
+
     public void Dispose() => _cache.Dispose();
     public object? Snapshot() => _cache.Snapshot();
     public void Restore(object? snapshot) { _cache.Restore(snapshot); }

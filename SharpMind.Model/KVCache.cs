@@ -42,6 +42,8 @@ public sealed class KVCache(int batchSize, int numKvHeads, int maxSeqLen, int he
 
     public void Reset() => CurrentPosition = 0;
 
+    public void Truncate(int length) => CurrentPosition = Math.Min(length, CurrentPosition);
+
     public void TrimToLast(int keep)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(keep);

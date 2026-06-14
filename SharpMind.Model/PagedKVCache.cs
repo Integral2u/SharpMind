@@ -142,6 +142,12 @@ public sealed class PagedKVCache : IDisposable
         _currentPosition = 0;
     }
 
+    public void Truncate(int length)
+    {
+        ThrowIfDisposed();
+        _currentPosition = Math.Min(length, _currentPosition);
+    }
+
     public void TrimToLast(int keepTokens)
     {
         ThrowIfDisposed();

@@ -7,6 +7,7 @@ public interface IKVCache : IDisposable
     public void Update(Tensor<float> k, Tensor<float> v, int numKvHeads, int headDim);
     public void Reset();
     public void TrimToLast(int keep);
+    public void Truncate(int length);
     public int Length { get; }
     public int MaxSeqLen { get; }
     public bool IsFull { get; }

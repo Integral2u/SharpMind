@@ -65,6 +65,8 @@ public sealed class QuantizedKVCache : IKVCache
 
     public void Reset() => CurrentPosition = 0;
 
+    public void Truncate(int length) => CurrentPosition = Math.Min(length, CurrentPosition);
+
     public unsafe void Update(Tensor<float> k, Tensor<float> v, int numKvHeads, int headDim)
     {
         int batch = k.Shape[0];
