@@ -24,9 +24,11 @@ public sealed class TransformerBlock : IDisposable
     public NormLayer Norm2 => _norm2;
     public AttentionLayer Attention => _attention;
     public FfnLayer Ffn => _ffn;
+    public IActivationHook? Hook { get => _hook; set => _hook = value; }
     private readonly TensorOps _ops;
     private readonly int _layerIdx;
     private bool _disposed;
+    private IActivationHook? _hook;
 
     private Tensor<float>? _cachedInput;
     private Tensor<float>? _cachedNormed1;
@@ -80,8 +82,10 @@ public sealed class TransformerBlock : IDisposable
         
         // ── Attention sub-layer ──────────────────────────────────────────
         var normed1 = _norm1.Forward(x, workspace);
+        _hook?.OnPreAttention(_layerIdx, normed1);
         var attnOut = _attention.Forward(normed1, _ops, positionOffset, causal, cache, workspace);
         normed1.Dispose();
+        _hook?.OnPostAttention(_layerIdx, attnOut);
         
         // Residual: h = x + attn(norm(x)) — reuse x in-place
         TensorOps.AddInPlace(x, attnOut);
@@ -91,6 +95,7 @@ public sealed class TransformerBlock : IDisposable
         var normed2 = _norm2.Forward(x, workspace);
         var ffnOut = _ffn.Forward(normed2, workspace);
         normed2.Dispose();
+        _hook?.OnPostFFN(_layerIdx, ffnOut);
         
         // Residual: out = h + ffn(norm(h)) — reuse x in-place
         TensorOps.AddInPlace(x, ffnOut);

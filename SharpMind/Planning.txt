@@ -33,7 +33,23 @@ RoPE NoPE to Jigsaw Pattern
 review CreateForSystem benchmark patterns
 
 Todo
-MPT multi token prediction
+MPT multi token prediction	but jigsawdotnet pattern
+
+### 17. No `ILayer` / Module Registry for Composing Novel Architectures
+
+All architecture variants (`DecoderArch`, `TransformerBlock`, attention types, FFN types) are concrete classes. There's no lightweight `ILayer` abstraction that would let a researcher compose a custom architecture from a config string or YAML without writing C# class definitions.
+
+A minimal module registry pattern:
+
+```csharp
+// Register a custom FFN variant
+LayerRegistry.Register("MoE-FFN", cfg => new MoEFeedForward(cfg));
+
+// Compose from config
+var block = LayerRegistry.Build(config.FfnKind, config);
+```
+
+The existing `FfnKind`, `AttentionKind`, `NormKind` enums are already doing this conceptually — the gap is that adding a new variant currently requires adding an enum case, a class, and a switch branch, rather than just registering a factory.
 
 Fused QKV Projection — Combine Wq, Wk, and Wv into a single fused MatMul for better cache locality.
 Fused RoPE 

@@ -66,6 +66,15 @@ public sealed class Transformer : IDisposable
     public Tensor<float> EmbeddingWeight => _embedding.Weight;
     public Tensor<float> ForwardEmbedding(Tensor<int> tokenIds) => _embedding.Forward(tokenIds);
     public TransformerBlock? GetBlock(int layer) => _blocks is not null && layer < _blocks.Length ? _blocks[layer] : null;
+
+    /// <summary>Sets an activation hook on all blocks in the model.</summary>
+    public void SetActivationHook(IActivationHook? hook)
+    {
+        if (_blocks is null) return;
+        foreach (var block in _blocks)
+            block.Hook = hook;
+    }
+
     public TensorOps Ops => _ops;
     public byte[]? RawEmbedding => _weights.RawEmbedding;
     public GgufDtype? RawEmbeddingDtype => _weights.RawEmbeddingDtype;
