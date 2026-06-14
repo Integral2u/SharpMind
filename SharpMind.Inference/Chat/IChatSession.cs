@@ -10,6 +10,7 @@ public interface IChatSession : IAsyncDisposable
     public float TopP { get; set; }
     public float RepetitionPenalty { get; set; }
     public int RepetitionWindow { get; set; }
+    public IReadOnlyList<int>? StopTokenIds { get; set; }
     public float? TokensPerSecond { get; }
     public float? TimeToFirstToken { get; }
     public Tokenizer Tokenizer { get; }

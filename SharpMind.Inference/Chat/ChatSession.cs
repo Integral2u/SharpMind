@@ -99,6 +99,8 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     public float TopP { get; set; } = 0.85f;
     public float RepetitionPenalty { get; set; } = 1.1f;
     public int RepetitionWindow { get; set; } = 32;
+    /// <summary>Token IDs that stop generation. Defaults to EOS if not set.</summary>
+    public IReadOnlyList<int>? StopTokenIds { get; set; }
     public float? TokensPerSecond { get; private set; }
     public float? TimeToFirstToken { get; private set; }
 
@@ -295,7 +297,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
                 MaxNewTokens = MaxTokens,
                 RepetitionPenalty = RepetitionPenalty,
                 RepetitionWindow = RepetitionWindow,
-                StopTokenIds = [_tokenizer.EosId],
+                StopTokenIds = StopTokenIds ?? [_tokenizer.EosId],
                 SlidingWindowSize = 0,
                 Stream = true,
             };
