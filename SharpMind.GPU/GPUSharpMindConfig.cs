@@ -44,9 +44,9 @@ public static class GPUSharpMindConfig
     public const string ValGetScaleMinK4_Scale = "getscalemink4_scale_gpu";
     public const string ValGetScaleMinK4_Min = "getscalemink4_min_gpu";
 
-    private static GPUMode? _backend;
+    private static readonly Lazy<GPUMode> _backend = new(DetectBestBackend, LazyThreadSafetyMode.ExecutionAndPublication);
 
-    public static GPUMode BestBackend => _backend ??= DetectBestBackend();
+    public static GPUMode BestBackend => _backend.Value;
 
     public static bool HasGPU => BestBackend != GPUMode.Cpu;
 

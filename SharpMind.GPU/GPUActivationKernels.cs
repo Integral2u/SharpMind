@@ -10,19 +10,15 @@ public static class GPUActivationKernels
     private const float SqrtTwoPiInv = 0.7978845608f;
     private const float GeluCoeff = 0.044715f;
 
-    private static Accelerator? _accelerator;
     private static Context? _context;
 
-    public static Accelerator SharedAccelerator
+    private static readonly Lazy<Accelerator> _sharedAccelerator = new(() =>
     {
-        get
-        {
-            if (_accelerator != null) return _accelerator;
-            _context = Context.CreateDefault();
-            _accelerator = _context.GetPreferredDevice(!GPUMode.Cuda.Equals(GPUSharpMindConfig.BestBackend)).CreateAccelerator(_context);
-            return _accelerator;
-        }
-    }
+        _context = Context.CreateDefault();
+        return _context.GetPreferredDevice(!GPUMode.Cuda.Equals(GPUSharpMindConfig.BestBackend)).CreateAccelerator(_context);
+    }, LazyThreadSafetyMode.ExecutionAndPublication);
+
+    public static Accelerator SharedAccelerator => _sharedAccelerator.Value;
 
     [PuzzlePeice(SharpMindConfig.KeyPointWise, SharpMindConfig.KeyPointWise, GPUSharpMindConfig.ValReLU)]
     public static void ReLUGPU(ReadOnlySpan<float> src, Span<float> dst)

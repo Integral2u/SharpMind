@@ -329,7 +329,7 @@ public static partial class QuantizationKernels
                 {
                     var vacc1 = Vector256<float>.Zero;
                     int l = 0;
-                    for (; l <= halfRem - 8; l += 8)
+                    for (; l <= Math.Min(halfRem - 8, 112 - qIdx); l += 8)
                     {
                         var packed = Sse2.LoadVector128((byte*)(qs + qIdx + l));
                         var vv = Avx.ConvertToVector256Single(Avx2.And(Avx2.ConvertToVector256Int32(packed), Vector256.Create(0x0F)));
@@ -358,7 +358,7 @@ public static partial class QuantizationKernels
                         {
                     var vacc2 = Vector256<float>.Zero;
                     int l = 0;
-                    for (; l <= half2End - 8; l += 8)
+                    for (; l <= Math.Min(half2End - 8, 112 - qIdx); l += 8)
                     {
                         var packed = Sse2.LoadVector128((byte*)(qs + qIdx + l));
                         var vv = Avx.ConvertToVector256Single(Avx2.ShiftRightLogical(Avx2.ConvertToVector256Int32(packed), 4));
@@ -428,7 +428,7 @@ public static partial class QuantizationKernels
                 {
                     var vacc1 = Vector256<float>.Zero;
                     int l = 0;
-                    for (; l <= halfRem - 8; l += 8)
+                    for (; l <= Math.Min(halfRem - 8, 112 - qIdx); l += 8)
                     {
                         var packed = Sse2.LoadVector128((byte*)(qs + qIdx + l));
                         var vv = Avx.ConvertToVector256Single(Avx2.And(Avx2.ConvertToVector256Int32(packed), Vector256.Create(0x0F)));
@@ -457,7 +457,7 @@ public static partial class QuantizationKernels
                         {
                     var vacc2 = Vector256<float>.Zero;
                     int l = 0;
-                    for (; l <= half2End - 8; l += 8)
+                    for (; l <= Math.Min(half2End - 8, 112 - qIdx); l += 8)
                     {
                         var packed = Sse2.LoadVector128((byte*)(qs + qIdx + l));
                         var vv = Avx.ConvertToVector256Single(Avx2.ShiftRightLogical(Avx2.ConvertToVector256Int32(packed), 4));
@@ -577,7 +577,7 @@ public static partial class QuantizationKernels
                 {
                     var vacc1 = Vector256<float>.Zero;
                     int l = 0;
-                    for (; l <= halfRem - 8; l += 8)
+                    for (; l <= Math.Min(halfRem - 8, 112 - qIdx); l += 8)
                     {
                         var packed = Sse2.LoadVector128((byte*)(qs + qIdx + l));
                         var hiPacked = Sse2.LoadVector128((byte*)(qh + l));
@@ -614,7 +614,7 @@ public static partial class QuantizationKernels
                         {
                             var vacc2 = Vector256<float>.Zero;
                             int l = 0;
-                    for (; l <= half2End - 8; l += 8)
+                    for (; l <= Math.Min(half2End - 8, 112 - qIdx); l += 8)
                     {
                         var packed = Sse2.LoadVector128((byte*)(qs + qIdx + l));
                         var hiPacked = Sse2.LoadVector128((byte*)(qh + l));
