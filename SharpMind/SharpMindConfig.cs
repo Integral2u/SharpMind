@@ -106,7 +106,7 @@ public sealed record SharpMindConfig
     public NormKind Norm { get; init; } = NormKind.RMSNorm;
     public ArchKind Arch { get; init; } = ArchKind.Decoder;
     public HardwareTier   Hardware   { get; init; } = HardwareTier.Auto;
-    public bool FlashAttention { get; init; } = false;
+    public bool FlashAttention { get; init; } = true;
 
     public static SharpMindConfig Gpt => new()
     {

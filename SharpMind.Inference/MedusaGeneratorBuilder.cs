@@ -29,9 +29,9 @@ public class MedusaGeneratorBuilder<T> : IGeneratorBuilder<T> where T : IKVCache
             hiddenDim: model.Config.HiddenDim,
             vocabSize: model.Config.VocabSize,
             lmHeadWeight: lmHeadWeight,
-            rawEmbedding: null,
-            rawDtype: null,
-            qOps: null);
+            rawEmbedding: model.RawEmbedding,
+            rawDtype: model.RawEmbeddingDtype,
+            qOps: model.QOps);
 
         // Self-calibrate: train heads on the model's own greedy outputs.
         if (CalibrationSamples > 0)

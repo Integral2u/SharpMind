@@ -67,6 +67,9 @@ public sealed class Transformer : IDisposable
     public Tensor<float> ForwardEmbedding(Tensor<int> tokenIds) => _embedding.Forward(tokenIds);
     public TransformerBlock? GetBlock(int layer) => _blocks is not null && layer < _blocks.Length ? _blocks[layer] : null;
     public TensorOps Ops => _ops;
+    public byte[]? RawEmbedding => _weights.RawEmbedding;
+    public GgufDtype? RawEmbeddingDtype => _weights.RawEmbeddingDtype;
+    public QuantizationOps? QOps => _qOps;
 
     /// <summary>
     /// Exposes the cached hidden state from the last Forward/ForwardLastLogits call.

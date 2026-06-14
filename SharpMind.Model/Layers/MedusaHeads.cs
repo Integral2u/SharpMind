@@ -17,6 +17,8 @@ public sealed class MedusaHeads : IDisposable
     private readonly byte[]? _rawEmbedding;
     private readonly GgufDtype? _rawDtype;
     private readonly QuantizationOps? _qOps;
+    private float[]? _logitBuffer;
+    private float[]? _predictLogitBuffer;
     private bool _disposed;
 
     public MedusaHeads(int numHeads, int hiddenDim, int vocabSize, Tensor<float> lmHeadWeight,
@@ -79,36 +81,37 @@ public sealed class MedusaHeads : IDisposable
     private unsafe void PredictQuantized(Span<float> hiddenState, Span<int> outputTokens, int k)
     {
         float* headsInput = stackalloc float[k * _hiddenDim];
-        byte* rawEmbed = null;
 
-        fixed (byte* pRaw = _rawEmbedding!)
+        for (int h = 0; h < k; h++)
         {
-            rawEmbed = pRaw;
+            var w = _headWeights[h];
+            var b = _headBiases[h];
+            float* pOut = headsInput + (long)h * _hiddenDim;
 
-            for (int h = 0; h < k; h++)
+            for (int i = 0; i < _hiddenDim; i++)
             {
-                var w = _headWeights[h];
-                var b = _headBiases[h];
-                float* pOut = headsInput + (long)h * _hiddenDim;
-
-                for (int i = 0; i < _hiddenDim; i++)
-                {
-                    float sum = b.Data[i];
-                    for (int j = 0; j < _hiddenDim; j++)
-                        sum += hiddenState[j] * w.Data[j * _hiddenDim + i];
-                    pOut[i] = sum;
-                }
-
-                for (int i = 0; i < _hiddenDim; i++)
-                    pOut[i] = pOut[i] / (1.0f + MathF.Exp(-pOut[i]));
+                float sum = b.Data[i];
+                for (int j = 0; j < _hiddenDim; j++)
+                    sum += hiddenState[j] * w.Data[j * _hiddenDim + i];
+                pOut[i] = sum;
             }
 
-            float* allLogits = stackalloc float[k * _vocabSize];
-            _qOps!.QuantizedMatMulQ8_0(headsInput, rawEmbed, allLogits, k, _hiddenDim, _vocabSize);
+            for (int i = 0; i < _hiddenDim; i++)
+                pOut[i] = pOut[i] / (1.0f + MathF.Exp(-pOut[i]));
+        }
+
+        int logitLen = k * _vocabSize;
+        if (_predictLogitBuffer == null || _predictLogitBuffer.Length < logitLen)
+            _predictLogitBuffer = GC.AllocateUninitializedArray<float>(logitLen);
+
+        fixed (byte* pRaw = _rawEmbedding!)
+        fixed (float* pLogits = _predictLogitBuffer)
+        {
+            _qOps!.QuantizedMatMulQ8_0(headsInput, pRaw, pLogits, k, _hiddenDim, _vocabSize);
 
             for (int h = 0; h < k; h++)
             {
-                float* row = allLogits + (long)h * _vocabSize;
+                float* row = pLogits + (long)h * _vocabSize;
                 int bestIdx = 0;
                 float bestVal = row[0];
                 for (int v = 1; v < _vocabSize; v++)
@@ -156,6 +159,16 @@ public sealed class MedusaHeads : IDisposable
         }
     }
 
+    private unsafe void ComputeLogitsQ8(float[] hPrime)
+    {
+        fixed (float* pIn = hPrime)
+        fixed (byte* pRaw = _rawEmbedding)
+        fixed (float* pOut = _logitBuffer)
+        {
+            _qOps!.QuantizedMatMulQ8_0(pIn, pRaw, pOut, 1, _hiddenDim, _vocabSize);
+        }
+    }
+
     /// <summary>
     /// Self-calibration: trains the heads to predict the model's own greedy output.
     /// Uses the model directly: feeds draft tokens and checks predictions.
@@ -173,6 +186,14 @@ public sealed class MedusaHeads : IDisposable
         int k = Math.Min(_numHeads, targetLen);
 
         var lossAccum = new float[k];
+        var preAct = new float[_hiddenDim];
+        var hPrime = new float[_hiddenDim];
+        var dHPrime = new float[_hiddenDim];
+        if (_logitBuffer == null || _logitBuffer.Length != _vocabSize)
+            _logitBuffer = new float[_vocabSize];
+
+        bool useQ8 = _rawEmbedding != null && _rawDtype == GgufDtype.Q8_0 && _qOps != null;
+        var lmData = _lmHeadWeight.Data;
 
         for (int step = 0; step < steps; step++)
         {
@@ -188,42 +209,49 @@ public sealed class MedusaHeads : IDisposable
                     var w = _headWeights[head];
                     var b = _headBiases[head];
 
-                    // Forward: h' = SiLU(h @ W + b)
-                    var hPrime = new float[_hiddenDim];
+                    // Forward: h' = SiLU(h @ W + b), save pre-activation for backward
                     for (int i = 0; i < _hiddenDim; i++)
                     {
                         float sum = b.Data[i];
                         for (int j = 0; j < _hiddenDim; j++)
                             sum += hRow[j] * w.Data[j * _hiddenDim + i];
-                        hPrime[i] = sum;
+                        preAct[i] = sum;
+                        hPrime[i] = sum / (1.0f + MathF.Exp(-sum));
                     }
-                    for (int i = 0; i < _hiddenDim; i++)
-                        hPrime[i] = hPrime[i] / (1.0f + MathF.Exp(-hPrime[i]));
 
-                    // Compute logits via LM head: logits = h' @ lm_head^T
-                    // Use full softmax cross-entropy on targetId
-                    double maxLogit = double.NegativeInfinity;
+                    // Compute all logits in ONE pass
+                    if (useQ8)
+                    {
+                        ComputeLogitsQ8(hPrime);
+                    }
+                    else
+                    {
+                        int v = 0;
+                        for (; v < _vocabSize; v++)
+                        {
+                            double sum = 0;
+                            var row = lmData.Slice(v * _hiddenDim, _hiddenDim);
+                            for (int i = 0; i < _hiddenDim; i++)
+                                sum += hPrime[i] * row[i];
+                            _logitBuffer[v] = (float)sum;
+                        }
+                    }
+
+                    // Find maxLogit and targetLogit from buffer
+                    double maxLogit = _logitBuffer[0];
                     double targetLogit = 0;
                     for (int v = 0; v < _vocabSize; v++)
                     {
-                        double logit = 0;
-                        var row = _lmHeadWeight.Data.Slice(v * _hiddenDim, _hiddenDim);
-                        for (int i = 0; i < _hiddenDim; i++)
-                            logit += hPrime[i] * row[i];
-                        if (logit > maxLogit) maxLogit = logit;
-                        if (v == targetId) targetLogit = logit;
+                        double l = _logitBuffer[v];
+                        if (l > maxLogit) maxLogit = l;
+                        if (v == targetId) targetLogit = l;
                     }
 
-                    // Softmax + cross-entropy loss
-                    double sumExp = 0;
-                    double targetExp = 0;
+                    // Softmax denominator
+                    double sumExp = 0, targetExp = 0;
                     for (int v = 0; v < _vocabSize; v++)
                     {
-                        double logit = 0;
-                        var row = _lmHeadWeight.Data.Slice(v * _hiddenDim, _hiddenDim);
-                        for (int i = 0; i < _hiddenDim; i++)
-                            logit += hPrime[i] * row[i];
-                        double e = Math.Exp(logit - maxLogit);
+                        double e = Math.Exp(_logitBuffer[v] - maxLogit);
                         sumExp += e;
                         if (v == targetId) targetExp = e;
                     }
@@ -231,52 +259,28 @@ public sealed class MedusaHeads : IDisposable
                     double loss = -Math.Log(targetExp / sumExp);
                     lossAccum[head] += (float)loss;
 
-                    // Gradient of loss w.r.t. hPrime[i]
-                    // dL/dhPrime[i] = sum_v (softmax[v] - delta(v,targetId)) * lm_head[v,i]
-                    var dHPrime = new float[_hiddenDim];
+                    // Gradient w.r.t. hPrime (from stored logits — no LM head recomputation)
+                    Array.Clear(dHPrime);
                     double invSum = 1.0 / sumExp;
-
                     for (int v = 0; v < _vocabSize; v++)
                     {
-                        double logit = 0;
-                        var row = _lmHeadWeight.Data.Slice(v * _hiddenDim, _hiddenDim);
+                        double softmax = Math.Exp(_logitBuffer[v] - maxLogit) * invSum;
+                        double d = softmax - (v == targetId ? 1.0 : 0.0);
+                        var row = lmData.Slice(v * _hiddenDim, _hiddenDim);
                         for (int i = 0; i < _hiddenDim; i++)
-                            logit += hPrime[i] * row[i];
-
-                        double softmax = Math.Exp(logit - maxLogit) * invSum;
-                        double dSoftmax = softmax - (v == targetId ? 1.0 : 0.0);
-
-                        for (int i = 0; i < _hiddenDim; i++)
-                            dHPrime[i] += (float)(dSoftmax * row[i]);
+                            dHPrime[i] += (float)(d * row[i]);
                     }
 
-                    // Gradient through SiLU: silu'(x) = sigmoid(x) * (1 + x * (1 - sigmoid(x)))
-                    // Actually: silu'(x) = sigmoid(x) + x * sigmoid(x) * (1 - sigmoid(x))
-                    // silu(x) = x * sigmoid(x), silu'(x) = sigmoid(x) + x * sigmoid(x) * (1 - sigmoid(x))
-                    float[] hPreAct = new float[_hiddenDim];
-                    float[] siluGrad = new float[_hiddenDim];
-
+                    // SiLU backward + weight update (using saved preAct, no recomputation)
                     for (int i = 0; i < _hiddenDim; i++)
                     {
-                        float sum = b.Data[i];
-                        for (int j = 0; j < _hiddenDim; j++)
-                            sum += hRow[j] * w.Data[j * _hiddenDim + i];
-                        hPreAct[i] = sum;
-                        float sig = 1.0f / (1.0f + MathF.Exp(-sum));
-                        siluGrad[i] = sig + sum * sig * (1.0f - sig);
-                    }
-
-                    // Gradient w.r.t. W and b
-                    // dL/dW[j,i] = dL/dhPrime[i] * siluGrad[i] * hRow[j]
-                    // dL/db[i] = dL/dhPrime[i] * siluGrad[i]
-                    for (int i = 0; i < _hiddenDim; i++)
-                    {
-                        float dOut = dHPrime[i] * siluGrad[i];
+                        float sig = 1.0f / (1.0f + MathF.Exp(-preAct[i]));
+                        float siluGrad = sig + preAct[i] * sig * (1.0f - sig);
+                        float lrDo = learningRate * dHPrime[i] * siluGrad;
 
                         for (int j = 0; j < _hiddenDim; j++)
-                            w.Data[j * _hiddenDim + i] -= learningRate * dOut * hRow[j];
-
-                        b.Data[i] -= learningRate * dOut;
+                            w.Data[j * _hiddenDim + i] -= lrDo * hRow[j];
+                        b.Data[i] -= lrDo;
                     }
                 }
             }

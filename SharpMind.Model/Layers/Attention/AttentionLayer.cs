@@ -33,9 +33,9 @@ public abstract class AttentionLayer : IDisposable
 
     private static unsafe ScaledDotProductQ8_0Delegate InitQ8Kernel()
     {
-        if (Fma.IsSupported) return AttentionKernels.ScaledDotProductQ8_0FMA;
-        if (Avx2.IsSupported) return AttentionKernels.ScaledDotProductQ8_0AVX2;
-        return AttentionKernels.ScaledDotProductQ8_0Scalar;
+        if (Fma.IsSupported) return AttentionKernels.ScaledDotProductFlashQ8_0FMA;
+        if (Avx2.IsSupported) return AttentionKernels.ScaledDotProductFlashQ8_0AVX2;
+        return AttentionKernels.ScaledDotProductFlashQ8_0Scalar;
     }
 
     protected AttentionLayer(ModelConfig config, QuantizationOps qOps)
