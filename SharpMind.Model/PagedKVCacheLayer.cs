@@ -17,31 +17,20 @@ public sealed class PagedKVCacheLayer(int batchSize, int numKvHeads, int maxSeqL
     public int AllocatedCapacity => _cache.PageSize;
     public bool IsContiguous => false;
 
-    public void Update(Tensor<float> k, Tensor<float> v, int numKvHeads, int headDim)
-    {
-        _cache.Update(k, v, numKvHeads, headDim);
-    }
+    public void Update(Tensor<float> k, Tensor<float> v, int numKvHeads, int headDim) => _cache.Update(k, v, numKvHeads, headDim);
 
     public unsafe float* GetKeyPtr(int batchIdx, int position, int kvHead)
-        => _cache.GetKeyPtr(batchIdx, position, kvHead);
-
-    public unsafe float* GetValuePtr(int batchIdx, int position, int kvHead)
-        => _cache.GetValuePtr(batchIdx, position, kvHead);
-
-    public void Reset()
     {
-        _cache.Reset();
+        return _cache.GetKeyPtr(batchIdx, position, kvHead);
     }
 
-    public void TrimToLast(int keepTokens)
-    {
-        _cache.TrimToLast(keepTokens);
-    }
+    public unsafe float* GetValuePtr(int batchIdx, int position, int kvHead) => _cache.GetValuePtr(batchIdx, position, kvHead);
 
-    public void Truncate(int length)
-    {
-        _cache.Truncate(length);
-    }
+    public void Reset() => _cache.Reset();
+
+    public void TrimToLast(int keepTokens) => _cache.TrimToLast(keepTokens);
+
+    public void Truncate(int length) => _cache.Truncate(length);
 
     public void Dispose() => _cache.Dispose();
     public object? Snapshot() => _cache.Snapshot();

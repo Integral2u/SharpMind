@@ -131,13 +131,10 @@ public sealed class Transformer : IDisposable
     public bool LoadWeight(string name, ReadOnlySpan<float> data)
     {
         var target = _weights.ResolveFloatTarget(name);
-        if (target != null)
-        {
-            if (data.Length != target.ElementCount) return false;
-            data.CopyTo(target.Data);
-            return true;
-        }
-        return false;
+        if (target == null) return false;        
+        if (data.Length != target.ElementCount) return false;
+        data.CopyTo(target.Data);
+        return true;
     }
 
     public IEnumerable<Parameter> Parameters()
@@ -152,16 +149,14 @@ public sealed class Transformer : IDisposable
             yield return p;
     }
 
-    // Forward
-
     /// <summary>
     /// Full forward pass.
     /// Input:  token IDs [Batch, SeqLen]
     /// Output: logits    [Batch, SeqLen, VocabSize]
     /// </summary>
-    public unsafe Tensor<float> Forward(Tensor<int> tokenIds, int positionOffset = 0, SharpMind.Core.Memory.Workspace? workspace = null) => Forward(tokenIds, null, positionOffset, workspace);
+    public unsafe Tensor<float> Forward(Tensor<int> tokenIds, int positionOffset = 0, Core.Memory.Workspace? workspace = null) => Forward(tokenIds, null, positionOffset, workspace);
 
-    public unsafe Tensor<float> Forward(Tensor<int> tokenIds, IKVCache[]? caches, int positionOffset = 0, SharpMind.Core.Memory.Workspace? workspace = null)
+    public unsafe Tensor<float> Forward(Tensor<int> tokenIds, IKVCache[]? caches, int positionOffset = 0, Core.Memory.Workspace? workspace = null)
     {
         ThrowIfDisposed();
 
@@ -235,7 +230,7 @@ public sealed class Transformer : IDisposable
     /// Input:  token IDs [Batch, SeqLen]
     /// Output: logits    [Batch, VocabSize]
     /// </summary>
-    public unsafe Tensor<float> ForwardLastLogits(Tensor<int> tokenIds, IKVCache[] caches, int positionOffset = 0, SharpMind.Core.Memory.Workspace? workspace = null)
+    public unsafe Tensor<float> ForwardLastLogits(Tensor<int> tokenIds, IKVCache[] caches, int positionOffset = 0, Core.Memory.Workspace? workspace = null)
     {
         ThrowIfDisposed();
 
@@ -343,8 +338,6 @@ public sealed class Transformer : IDisposable
         _cachedNormed = null;
     }
 
-    // Diagnostics
-
     /// <summary>Approximate total parameter count.</summary>
     public long ParameterCount
     {
@@ -374,9 +367,6 @@ public sealed class Transformer : IDisposable
         $"Transformer ({_weights.Config.NumLayers}L × {_weights.Config.HiddenDim}D, " +
         $"~{ParameterCount / 1_000_000}M params)";
 
-
-    // Disposal
-
     public void Dispose()
     {
         if (_disposed) return;
@@ -388,8 +378,6 @@ public sealed class Transformer : IDisposable
     }
 
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, nameof(Transformer));
-
-    // Training Support
 
     public (Tensor<float> Logits, TransformerState State) ForwardWithState(Tensor<int> tokenIds, int positionOffset = 0)
     {
@@ -415,14 +403,13 @@ public sealed class Transformer : IDisposable
         var result = logits.Reshape(batch, seqLen, _weights.Config.VocabSize);
         logits.Dispose();
         
-        var state = new TransformerState
+        var state = new TransformerState(positionOffset)
         {
             TokenIds = tokenIds,
             Embedded = embedded,
             Hidden = hidden,
             Normed = normed,
-            Logits = result,
-            PositionOffset = positionOffset
+            Logits = result
         };
         
         return (result, state);
@@ -445,14 +432,4 @@ public sealed class Transformer : IDisposable
 
         return gradInput;
     }
-}
-
-public class TransformerState
-{
-    public Tensor<int> TokenIds { get; init; } = null!;
-    public Tensor<float> Embedded { get; init; } = null!;
-    public Tensor<float> Hidden { get; init; } = null!;
-    public Tensor<float> Normed { get; init; } = null!;
-    public Tensor<float> Logits { get; init; } = null!;
-    public int PositionOffset { get; init; }
 }

@@ -55,8 +55,6 @@ public sealed class BpeEncoder
             .OrderByDescending(s => s.Length)];
     }
 
-    // Encode
-
     /// <summary>
     /// Encodes a string to a sequence of token IDs.
     /// Special tokens are matched verbatim and never passed through BPE.
@@ -96,8 +94,6 @@ public sealed class BpeEncoder
     /// </summary>
     public int[][] EncodeBatch(IEnumerable<string> texts, bool addBos = false, bool addEos = false)
         => [.. texts.Select(t => Encode(t, addBos, addEos))];
-
-    // Decode
 
     /// <summary>
     /// Decodes a sequence of token IDs back to a string.
@@ -147,8 +143,6 @@ public sealed class BpeEncoder
         result = result.Replace('\u2581', ' ');
         return result;
     }
-
-    // Special-token splitter
 
     private readonly record struct Segment(string Text, bool IsSpecial);
 
@@ -208,8 +202,6 @@ public sealed class BpeEncoder
         }
     }
 
-    // BPE merge application
-
     private void ApplyMerges(List<string> tokens)
     {
         while (tokens.Count > 1)
@@ -257,8 +249,5 @@ public sealed class BpeEncoder
         return result;
     }
 
-    private static bool TryDecodeByte(string token, out byte b)
-    {
-        return Vocabulary.TryDecodeByteToken(token, out b);
-    }
+    private static bool TryDecodeByte(string token, out byte b) => Vocabulary.TryDecodeByteToken(token, out b);
 }

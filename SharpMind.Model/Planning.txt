@@ -1,3 +1,0 @@
-﻿Model:
-	Model: transformer, attention, FFN, norms
-	Tokenizer: BPE, vocab builder, encode/decode

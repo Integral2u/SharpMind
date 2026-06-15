@@ -68,8 +68,6 @@ public sealed class Vocabulary
 
     public bool Contains(string token) => _tokenToId.ContainsKey(token);
 
-    // Mutation (training only)
-
     /// <summary>
     /// Adds a new token and returns its assigned ID.
     /// No-ops and returns the existing ID if the token is already present.

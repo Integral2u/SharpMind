@@ -1,15 +1,42 @@
-﻿Apps:
-	Cli: entry point, commands, config
-	Benchmarks: performance, accuracy, throughput
-	Samples: usage examples, notebooks
-Runtime:
-	Inference: sampling, kv-cache, generation loop
-	Training: optimizer, scheduler, checkpointing
+﻿Code Review Notes
+#HIGH Priority
+you must make sure you understand the JigSawDotNet pattern and use. Intention is to reduce and branching code by genertaing code whihc may require implmenting or re-using Ops, Kernel and Factory patterns,
+Review Sharmind.Core.Activations.* for example
 
-Model: transformer, attention, FFN, norms
-Tokenizer: BPE, vocab builder, encode/decode
-Data: sources, cleaning, formating, batching, dataset loaders
-Core: tensors, matrix math, memory, activations
+# SharpMind.Model
+## Transformer.cs
+### Branching
+ForwardLastLogits tests for workspace != null and useQuantizedProj this indicated JIgSawDotNet pattern can be be implmented even allowing for more _qOps for not just Q8_0 see code segment _weights.RawEmbeddingDtype == GgufDtype.Q8_0 && _qOps != null
+SetActivationHook(IActivationHook? hook) could be moved to a nullable option constructor argument and any TransformerBlock could be redifined as an abstract class with hooked or unhooked version to reduce null checks to _hook? as the hooked version would never be null and un-hoodked would not even need be called.  JigSawDotNet Pattern implementation.  
+### Not used 
+ForwardWithState
+Backward
+## TransformerBlock.cs,see prior may need hooked and unhooked version
+## QuantizedKVCaccherBuilder.cs
+### call to FloatToHalf_Scalar however i beleive once again there may be oppertuninty to implement JigSawDotNet Pattern see QuantizationKernels.HalfToFloat_F16C also foud a reference in GgufLoader.HalfToFloat
+## PagedKVCacheLayer.cs
+### Redundant? pretty much all methods or properited call _cache
+## PagedKVCache
+### Not used
+_batchSize and _numKvHeads,  this feels like we may have broken something or lost initial intention
+#IKVCacheBuilder and KVCacheBuilde
+## Concern KVCacherBuilder only instanciates a KVCache
+# AttentionKernels.cs
+## EnsureScoreBuffer is this required or operational expense
+### Note use
+ScaledDotProductQ8_0Scalar, ScaledDotProductQ8_0FMA, ScaledDotProductQ8_0AVX2. Only Q8 have we subverted JigSawDotNet pattern forcing calls to alternates skipping any potentially more benificial versions.
+# WeightMapper.cs
+## Not used
+ShouldInclude, unclear of initial intention or purpose
+# TokenizerInfo.cs possible relic to remove
+# PositionalEncoding.cs possibly needs ALiBi  and correct implentation 
+# ModelConfig.cs
+## Not used Dropout
+
+#Post Review
+##Consitancy 
+### ToString, output string should be simple, clean and consistant
+### Check JigSawDotNet calls where duplicate methods exist and code can either be simplified by removing dulicates or expanded by completing missing variants 
 
 Code Checking
 !!! SharpMind.Model.ModelFactory.CreateSession BuildBlock call passing mappings 

@@ -28,9 +28,5 @@ public static class TokenizationPipeline
     /// <summary>
     /// Loads a tokenizer from a saved file.
     /// </summary>
-    public static Tokenizer Load(string path)
-    {
-        var model = TokenizerFile.Load(path);
-        return new Tokenizer(model);
-    }
+    public static Tokenizer Load(string path) => new(TokenizerFile.Load(path));
 }

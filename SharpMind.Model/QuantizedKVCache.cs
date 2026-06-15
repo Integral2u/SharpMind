@@ -1,4 +1,3 @@
-using System.Runtime.CompilerServices;
 using SharpMind.Core.Tensors;
 
 namespace SharpMind.Model;

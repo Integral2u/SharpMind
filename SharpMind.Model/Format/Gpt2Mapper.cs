@@ -3,10 +3,6 @@ namespace SharpMind.Model.Format;
 /// <summary>GPT-2 weight mapper.</summary>
 public sealed class Gpt2Mapper : WeightMapper
 {
-    public Gpt2Mapper()
-    {
-    }
-
     public override string? MapWeight(string name, int[] shape)
     {
         if (name == "wte.weight")

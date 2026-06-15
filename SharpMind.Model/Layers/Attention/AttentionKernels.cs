@@ -1,7 +1,6 @@
 ﻿using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
 using SharpMind.Core;
-using SharpMind.Core.Quantization;
 using static SharpMind.Core.Quantization.QuantizationKernels;
 
 namespace SharpMind.Model.Layers.Attention;

@@ -11,5 +11,5 @@ public interface IPreTokeniser
     /// Splits <paramref name="text"/> into a sequence of pre-tokens.
     /// Each pre-token is later independently encoded by BPE.
     /// </summary>
-    IEnumerable<string> PreTokenise(string text);
+    public IEnumerable<string> PreTokenise(string text);
 }

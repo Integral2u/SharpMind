@@ -60,30 +60,20 @@ public class Tokenizer
     public Vocabulary Vocab => _model.Vocab;
     public SpecialTokens Specials => _model.Vocab.Specials;
 
-    // Encode
-
     /// <summary>
     /// Encodes text to token IDs.
     /// Set <paramref name="addBos"/> / <paramref name="addEos"/> to include
     /// boundary tokens required by most autoregressive LLMs.
     /// </summary>
-    public int[] Encode(string text, bool addBos = false, bool addEos = false)
-        => _model.Encoder.Encode(text, addBos, addEos);
+    public int[] Encode(string text, bool addBos = false, bool addEos = false) => _model.Encoder.Encode(text, addBos, addEos);
 
     /// <summary>Encodes a batch of strings independently.</summary>
-    public int[][] EncodeBatch(IEnumerable<string> texts, bool addBos = false, bool addEos = false)
-        => _model.Encoder.EncodeBatch(texts, addBos, addEos);
-
-    // Decode
+    public int[][] EncodeBatch(IEnumerable<string> texts, bool addBos = false, bool addEos = false) => _model.Encoder.EncodeBatch(texts, addBos, addEos);
 
     /// <summary>Decodes token IDs back to a string. Skips special tokens by default.</summary>
-    public string Decode(ReadOnlySpan<int> ids, bool skipSpecials = true)
-        => _model.Encoder.Decode(ids, skipSpecials);
+    public string Decode(ReadOnlySpan<int> ids, bool skipSpecials = true) => _model.Encoder.Decode(ids, skipSpecials);
 
-    public string Decode(int[] ids, bool skipSpecials = true)
-        => _model.Encoder.Decode(ids, skipSpecials);
-
-    // Token helpers
+    public string Decode(int[] ids, bool skipSpecials = true) => _model.Encoder.Decode(ids, skipSpecials);
 
     public string IdToToken(int id) => _model.Vocab.GetToken(id);
     public int TokenToId(string tok) => _model.Vocab.GetId(tok);
@@ -106,13 +96,8 @@ public class Tokenizer
         return id;
     }
 
-    // Factory: SharpMind native
-
     /// <summary>Loads a SharpMind native tokenizer JSON file.</summary>
-    public static Tokenizer FromFile(string path)
-        => new(TokenizerFile.Load(path));
-
-    // Factory: GGUF (model-family agnostic)
+    public static Tokenizer FromFile(string path) => new(TokenizerFile.Load(path));
 
     /// <summary>
     /// Builds a tokenizer directly from GGUF-embedded vocab data.
@@ -132,48 +117,30 @@ public class Tokenizer
     /// <param name="tokenTypes">Per-token type flags (tokenizer.ggml.token_type). May be null.</param>
     /// <param name="bosId">BOS token ID (tokenizer.ggml.bos_token_id).</param>
     /// <param name="eosId">EOS token ID (tokenizer.ggml.eos_token_id).</param>
-    public static Tokenizer FromGguf(
-        string[] tokens,
-        string[]? merges,
-        int[]? tokenTypes,
-        int bosId,
-        int eosId)
-    {        
-        var model = GgufConverter.Convert(tokens, merges, tokenTypes, bosId, eosId);        
-        return new Tokenizer(model);
-    }
-
-    // Factory: model-family converters
+    public static Tokenizer FromGguf(string[] tokens, string[]? merges, int[]? tokenTypes, int bosId, int eosId) => new(GgufConverter.Convert(tokens, merges, tokenTypes, bosId, eosId));
 
     /// <summary>
     /// Loads a GPT-2 tokenizer from its two native files.
     /// <paramref name="encoderJsonPath"/> = <c>encoder.json</c>
     /// <paramref name="vocabBpePath"/>    = <c>vocab.bpe</c>
     /// </summary>
-    public static Tokenizer FromGpt2(string encoderJsonPath, string vocabBpePath)
-        => new(Gpt2Converter.Convert(encoderJsonPath, vocabBpePath));
+    public static Tokenizer FromGpt2(string encoderJsonPath, string vocabBpePath) => new(Gpt2Converter.Convert(encoderJsonPath, vocabBpePath));
 
     /// <summary>
     /// Loads a LLaMA 2 or LLaMA 3 tokenizer from a HuggingFace
     /// <c>tokenizer.json</c> file.
     /// </summary>
-    public static Tokenizer FromLlama(string tokenizerJsonPath)
-        => new(LlamaConverter.Convert(tokenizerJsonPath));
+    public static Tokenizer FromLlama(string tokenizerJsonPath) => new(LlamaConverter.Convert(tokenizerJsonPath));
 
     /// <summary>
     /// Loads a Mistral tokenizer from a HuggingFace <c>tokenizer.json</c> file.
     /// Handles both v0.1 (LLaMA-compatible) and v0.3+ (extended vocab) formats.
     /// </summary>
-    public static Tokenizer FromMistral(string tokenizerJsonPath)
-        => new(MistralConverter.Convert(tokenizerJsonPath));
+    public static Tokenizer FromMistral(string tokenizerJsonPath) => new(MistralConverter.Convert(tokenizerJsonPath));
 
     /// <summary>
     /// Loads a Qwen tokenizer from a HuggingFace <c>tokenizer.json</c> file.
     /// Handles Qwen-specific special tokens like <|im_start|>, <|im_end|>.
     /// </summary>
-    public static Tokenizer FromQwen(string tokenizerJsonPath)
-    {        
-        var result = QwenConverter.Convert(tokenizerJsonPath);        
-        return new Tokenizer(result);
-    }
+    public static Tokenizer FromQwen(string tokenizerJsonPath) => new(QwenConverter.Convert(tokenizerJsonPath));
 }

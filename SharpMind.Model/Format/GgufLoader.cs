@@ -120,8 +120,6 @@ public static partial class GgufLoader
         }
     }
 
-    // ?? KvPair array helpers ??????????????????????????????????????????????
-
     public static string[]? GetStringArray(ModelMetaData meta, string key)
         => meta.KvPairs.FirstOrDefault(p => p.Key == key).Value as string[];
 
@@ -251,8 +249,6 @@ public static partial class GgufLoader
         };
     }
 
-    // ?? Tokenizer from GGUF ???????????????????????????????????????????????
-
     /// <summary>
     /// Builds a <see cref="Tokenizer"/> directly from the GGUF metadata.
     /// This is the preferred path: the vocab stored in GGUF always matches the
@@ -279,8 +275,6 @@ public static partial class GgufLoader
             return null;
         }
     }
-
-    // ?? Template token injection ????????????????????????????????????????
 
     /// <summary>
     /// Some GGUF files drop HuggingFace "added_tokens" during conversion
@@ -386,7 +380,7 @@ public static partial class GgufLoader
     {
         var meta = LoadMeta(path);
         var weights = ModelFactory.CreateWeights(config, config.ForModel(HardwareTier.Auto)); // Use model-specific config for allocation shapes
-        
+
         using var mmf = MemoryMappedFile.CreateFromFile(path, FileMode.Open, null, 0, MemoryMappedFileAccess.Read);
         using var stream = mmf.CreateViewStream(0, 0, MemoryMappedFileAccess.Read);
         using var reader = new BinaryReader(stream);
@@ -479,8 +473,6 @@ public static partial class GgufLoader
         return weights;
     }
 
-    // Obsolete resolve methods removed as they are now in TransformerWeights
-
     public static Dictionary<string, Tensor<float>> LoadWeights(string path, IProgress<float>? progress = null)
 
     {
@@ -550,14 +542,7 @@ public static partial class GgufLoader
                 float[] buffer = ArrayPool<float>.Shared.Rent(count);
                 try
                 {
-                    //try
-                    //{
-                        ReadTensorInto(reader, info.Dtype, info.Shape, buffer.AsSpan(0, count));
-                    //}
-                    //catch
-                    //{                        
-                    //    buffer.AsSpan(0, count).Clear();
-                    //}
+                    ReadTensorInto(reader, info.Dtype, info.Shape, buffer.AsSpan(0, count));
 
                     if (model.LoadWeight(info.Name, buffer.AsSpan(0, count)))
                         loaded++;
@@ -1130,7 +1115,7 @@ public static partial class GgufLoader
                 int lim1 = Math.Min(32, n - blockStart - j);
                 for (int l = 0; l < lim1; l++)
                     data[blockStart + j + l] = (sc0 * (buf[qIdx + l] & 0x0F) * dSuper) - (m0 * minSuper);
-                
+
                 int lim2 = Math.Min(32, n - blockStart - j - 32);
                 for (int l = 0; l < lim2; l++)
                     data[blockStart + j + 32 + l] = (sc1 * (buf[qIdx + l] >> 4) * dSuper) - (m1 * minSuper);
@@ -1234,7 +1219,7 @@ public static partial class GgufLoader
                 // Sub-block scale/min (every 32 elements)
                 int subIdx = i / 32;
                 GetScaleMinK4(subIdx, scaleSpan, out byte sc, out byte m);
-                
+
                 // Quant: 4 bits from qs + 1 bit from qh
                 int qLow = (buf[48 + (i / 4) * 2 + (i % 4 == 0 ? 0 : 0)] >> 0) & 0x0F; // This is still a bit messy
                 // Let's just use the linear index for qs
@@ -1243,10 +1228,10 @@ public static partial class GgufLoader
                 int qsByteIdx = 48 + (i / 2);
                 int qsShift = (i % 2) * 4;
                 int q4 = (buf[qsByteIdx] >> qsShift) & 0x0F;
-                
+
                 int qhBit = (buf[16 + (i / 8)] >> (i % 8)) & 1;
                 int q5 = q4 | (qhBit << 4);
-                
+
                 data[blockStart + i] = (sc * q5 * d) - (m * dmin);
             }
         }
