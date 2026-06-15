@@ -4,13 +4,11 @@ using System.Runtime.Intrinsics.X86;
 
 namespace SharpMind.Model.Layers;
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Fused kernels — combine multiple ops to reduce memory bandwidth
-// ─────────────────────────────────────────────────────────────────────────────
 
 internal static class FusedKernels
 {
-    // ── Fused RMSNorm + Linear ─────────────────────────────────────────────
+    // Fused RMSNorm + Linear
     // Computes: output = (RMSNorm(src, normWeight) @ weight + bias
     //
     // Input:  src [HiddenDim], normWeight [HiddenDim], weight [HiddenDim, HiddenDim], bias [HiddenDim] or null
@@ -75,7 +73,7 @@ internal static class FusedKernels
         }
     }
 
-    // ── Fused RMSNorm + Linear (residual form) ───────────────────────────
+    // Fused RMSNorm + Linear (residual form)
     // Computes: output = residual + (RMSNorm(src) @ weight + bias)
     // Used in transformer block: h = x + Layer(Norm(x))
 
@@ -140,7 +138,7 @@ internal static class FusedKernels
         }
     }
 
-    // ── Helpers ────────────────────────────────────────────────────────
+    // Helpers
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static float HSum256(Vector256<float> v)

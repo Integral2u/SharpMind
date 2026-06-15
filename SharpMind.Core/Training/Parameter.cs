@@ -29,12 +29,12 @@ public sealed class Parameter : IDisposable
         Grad = new Tensor<float>(data.Shape);  // zero-initialised
     }
 
-    // ── Identity ──────────────────────────────────────────────────────────
+    // Identity
 
     /// <summary>Dot-path name, e.g. <c>"blocks.0.attention.Wq.weight"</c>.</summary>
     public string Name { get; }
 
-    // ── Tensors ───────────────────────────────────────────────────────────
+    // Tensors
 
     /// <summary>The parameter values — read by the forward pass.</summary>
     public Tensor<float> Data { get; }
@@ -45,7 +45,7 @@ public sealed class Parameter : IDisposable
     /// </summary>
     public Tensor<float> Grad { get; }
 
-    // ── Gradient ops ──────────────────────────────────────────────────────
+    // Gradient ops
 
     /// <summary>Adds <paramref name="delta"/> into the gradient buffer in-place.</summary>
     public void AccumulateGrad(ReadOnlySpan<float> delta)
@@ -62,7 +62,7 @@ public sealed class Parameter : IDisposable
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void ZeroGrad() => Grad.Fill(0f);
 
-    // ── Disposal ──────────────────────────────────────────────────────────
+    // Disposal
 
     public void Dispose()
     {

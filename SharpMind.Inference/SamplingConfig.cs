@@ -6,7 +6,7 @@ namespace SharpMind.Inference;
 /// </summary>
 public sealed record SamplingConfig
 {
-    // ── Strategy selection ─────────────────────────────────────────────────
+    // Strategy selection
 
     /// <summary>
     /// Temperature to apply before sampling. Values:
@@ -39,7 +39,7 @@ public sealed record SamplingConfig
     /// <summary>Seed for reproducible sampling. Null = non-deterministic.</summary>
     public int? Seed { get; init; }
 
-    // ── Presets ───────────────────────────────────────────────────────────
+    // Presets
 
     /// <summary>Deterministic greedy decoding — always picks the highest-probability token.</summary>
     public static SamplingConfig Greedy => new() { Temperature = 0f };

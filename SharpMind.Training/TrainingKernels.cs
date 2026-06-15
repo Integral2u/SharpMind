@@ -5,15 +5,13 @@ using SharpMind.Core;
 
 namespace SharpMind.Training;
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Static kernels — one pure unconditional path each
-// ─────────────────────────────────────────────────────────────────────────────
 
 internal static class TrainingKernels
 {
     private const string NS = $"{nameof(SharpMind)}.{nameof(Training)}.{nameof(TrainingKernels)}";
 
-    // ── AdamW per-element update — AVX2 ──────────────────────────────────
+    // AdamW per-element update — AVX2
     // m = β₁m + (1-β₁)g
     // v = β₂v + (1-β₂)g²
     // θ -= lr * (m̂/(√v̂+ε) + λθ)   (λ=0 for no-decay params)
@@ -90,7 +88,7 @@ internal static class TrainingKernels
         }
     }
 
-    // ── L2 norm accumulation — AVX2 ───────────────────────────────────────
+    // L2 norm accumulation — AVX2
 
     public static unsafe float L2NormSq_AVX2(ReadOnlySpan<float> data)
     {

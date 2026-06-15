@@ -4,13 +4,11 @@ using SharpMind.Core;
 
 namespace SharpMind.Model.Layers;
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Static kernels — one pure unconditional path each
-// ─────────────────────────────────────────────────────────────────────────────
 
 internal static class NormKernels
 {
-    // ── RMSNorm row — out[i] = src[i] * rmsInv * weight[i] ───────────────
+    // RMSNorm row — out[i] = src[i] * rmsInv * weight[i]
 
     internal static unsafe void RMSNormRowAVX2(
         ReadOnlySpan<float> src, ReadOnlySpan<float> weight, Span<float> dst, float rmsInv)
@@ -34,7 +32,7 @@ internal static class NormKernels
             dst[i] = src[i] * rmsInv * weight[i];
     }
 
-    // ── RMSNorm param — 1 / sqrt(mean(v²) + eps) ────────────────────────
+    // RMSNorm param — 1 / sqrt(mean(v²) + eps)
     // Single-pass stable variant with overflow guard in the scalar fallback.
     // The AVX2 path uses direct sum-of-squares; overflow is not possible
     // for inference-range values (|v| < 10⁶).
@@ -90,7 +88,7 @@ internal static class NormKernels
         return 1f / rms;
     }
 
-    // ── LayerNorm row — standard mean/variance normalisation ─────────────
+    // LayerNorm row — standard mean/variance normalisation
     // out[i] = (src[i] - mean) / sqrt(var + eps) * weight[i] + bias[i]
 
     internal static unsafe void LayerNormRowAVX2(

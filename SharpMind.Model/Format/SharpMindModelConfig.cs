@@ -16,7 +16,7 @@ public sealed class SharpMindModelConfig
     /// <summary>Architecture type: decoder, encoder, encoder-decoder.</summary>
     public string Architecture { get; set; } = "decoder";
     
-    // ── Model dimensions (mirrors ModelConfig) ─────────────────────────────
+    // Model dimensions (mirrors ModelConfig)
     public int VocabSize { get; set; }
     public int HiddenDim { get; set; }
     public int NumLayers { get; set; }
@@ -26,17 +26,17 @@ public sealed class SharpMindModelConfig
     public int MaxSeqLen { get; set; }
     public float RopeTheta { get; set; } = 10000f;
     
-    // ── Activation settings ─────────────────────────────────────────────
+    // Activation settings
     public string Activation { get; set; } = "silu";
     public string Gate { get; set; } = "swiglu";
     public string Ffn { get; set; } = "gated";
     public string Norm { get; set; } = "rmsnorm";
     public string Attention { get; set; } = "gqa";
     
-    // ── Quantization settings ────────────────────────────────────────────
+    // Quantization settings
     public QuantConfig? Quantization { get; set; }
     
-    // ── Metadata ─────────────────────────────────────────────────────
+    // Metadata
     public string? Source { get; set; }
     public string? Checksum { get; set; }
     public TokenizerInfo? Tokenizer { get; set; }

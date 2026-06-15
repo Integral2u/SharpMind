@@ -17,7 +17,7 @@ namespace SharpMind.Tests.Core
             _llama = ActivationFactory.Create(SharpMindConfig.Llama with { Hardware = scalar });
         }
 
-        // ── Softmax ───────────────────────────────────────────────────────────
+        // Softmax
 
         [Fact]
         public void Softmax_SumsToOne()
@@ -59,7 +59,7 @@ namespace SharpMind.Tests.Core
             Assert.Equal(1f, row1Sum, precision: 5);
         }
 
-        // ── RMSNorm ───────────────────────────────────────────────────────────
+        // RMSNorm
 
         [Fact]
         public void RMSNorm_UnitWeights_NormalisesInput()
@@ -80,7 +80,7 @@ namespace SharpMind.Tests.Core
             Assert.All(r.Data.ToArray(), v => Assert.Equal(2f, v, precision: 4));
         }
 
-        // ── GELU ──────────────────────────────────────────────────────────────
+        // GELU
 
         [Fact]
         public void GELU_Zero_ReturnsZero()
@@ -106,7 +106,7 @@ namespace SharpMind.Tests.Core
             Assert.Equal(0f, r[0], precision: 2);
         }
 
-        // ── SiLU ──────────────────────────────────────────────────────────────
+        // SiLU
 
         [Fact]
         public void SiLU_Zero_ReturnsZero()
@@ -124,7 +124,7 @@ namespace SharpMind.Tests.Core
             Assert.All(r.Data.ToArray(), v => Assert.True(v >= -0.4f));
         }
 
-        // ── SwiGLU ────────────────────────────────────────────────────────────
+        // SwiGLU
 
         [Fact]
         public void SwiGLU_ZeroGate_ZeroOutput()
@@ -144,7 +144,7 @@ namespace SharpMind.Tests.Core
             Assert.Equal(300f, r[0], precision: 2);  // silu(100) ≈ 100 → 100 * 3 = 300
         }
 
-        // ── AVX2 parity ───────────────────────────────────────────────────────
+        // AVX2 parity
 
         [Fact]
         public void ActivationParity_ScalarMatchesAvx2_RMSNorm()
@@ -210,7 +210,7 @@ namespace SharpMind.Tests.Core
                 Assert.Equal(rS[i], rA[i], precision: 5);
         }
 
-        // ── LayerNorm ─────────────────────────────────────────────────────────
+        // LayerNorm
 
         [Fact]
         public void ActivationParity_ScalarMatchesAvx2_GeGLU()

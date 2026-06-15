@@ -59,7 +59,7 @@ public sealed class TransformerBlock : IDisposable
         _ops = ops;
     }
 
-    // ── Forward ───────────────────────────────────────────────────────────
+    // Forward
 
     /// <summary>
     /// Single block forward pass with residual connections.
@@ -80,7 +80,7 @@ public sealed class TransformerBlock : IDisposable
     {
         ThrowIfDisposed();
         
-        // ── Attention sub-layer ──────────────────────────────────────────
+        // Attention sub-layer
         var normed1 = _norm1.Forward(x, workspace);
         _hook?.OnPreAttention(_layerIdx, normed1);
         var attnOut = _attention.Forward(normed1, _ops, positionOffset, causal, cache, workspace);
@@ -91,7 +91,7 @@ public sealed class TransformerBlock : IDisposable
         TensorOps.AddInPlace(x, attnOut);
         attnOut.Dispose();
         
-        // ── FFN sub-layer ────────────────────────────────────────────────
+        // FFN sub-layer
         var normed2 = _norm2.Forward(x, workspace);
         var ffnOut = _ffn.Forward(normed2, workspace);
         normed2.Dispose();

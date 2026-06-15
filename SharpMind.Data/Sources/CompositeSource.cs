@@ -63,7 +63,7 @@ public sealed class CompositeSource : IDataSource
             await source.DisposeAsync().ConfigureAwait(false);
     }
 
-    // ── Round-robin interleaving ──────────────────────────────────────────
+    // Round-robin interleaving
 
     private async IAsyncEnumerable<string> RoundRobinAsync(
         [EnumeratorCancellation] CancellationToken cancellationToken)

@@ -15,7 +15,6 @@ Code Checking
 !!! SharpMind.Model.ModelFactory.CreateSession BuildBlock call passing mappings 
 !!! must check all calls to Assembler.CreateInstance, cache and or check mappings
 SharpMind.Training.Trainer._scheduler never used.
-Delete any of this ──────────── or ═════════════════
 Review CreateForSystem
 Ensure Chat Session is reporting correct ChatStatus
 interface(s) declair public, not required but I prefer it
@@ -51,11 +50,18 @@ var block = LayerRegistry.Build(config.FfnKind, config);
 
 The existing `FfnKind`, `AttentionKind`, `NormKind` enums are already doing this conceptually — the gap is that adding a new variant currently requires adding an enum case, a class, and a switch branch, rather than just registering a factory.
 
-Fused QKV Projection — Combine Wq, Wk, and Wv into a single fused MatMul for better cache locality.
-Fused RoPE 
-→
-→ Attention Kernel — Apply RoPE rotations on-the-fly inside the ScaledDotProduct kernel to reduce memory bandwidth.
-KV Cache & SIMD Tightening — Optimize PagedKVCache access and refine VecDot kernels for deeper loop unrolling and FMA efficiency.
+
+## Part 5: Architectural Suggestions for Experimentation
+
+These don't affect performance directly but make the codebase genuinely better as an experimental platform:
+
+**Separate `IForwardPass` from `ITrainable`** — currently `Transformer` owns both inference-time logic and training-time parameter management. Splitting them makes it trivial to wrap a model in a distillation harness or a LoRA adapter without touching `Transformer` itself.
+
+**Make `Workspace` scope-aware** — a simple stack of offsets would allow nested allocations (useful when an experimental module wants its own scratch space without interfering with the outer workspace). The bump allocator is already there; add `Push()` / `Pop()` scope markers.
+
+**Typed experiment config** — a base `ExperimentConfig : SharpMindConfig` class that carries metadata (name, description, hypothesis) alongside model hyperparameters. Trivial to add, makes checkpoint logs and experiment tracking far easier.
+
+**`IScheduler` chaining** — the existing schedulers (cosine, warmup, linear) are good but not composable. A `ComposedScheduler` that chains stages (warmup → cosine → constant tail) would cover most real training runs without writing a custom scheduler.
 
 
 ChatSession design (async), tool, input types, status(Thinking/Updating/Executing/Responding/Waiting)
@@ -86,43 +92,3 @@ SLERP (Spherical Linear Interpolation): Better than linear interpolation for hig
 TIES-Merging (TrIm, Elect, Sign, and Merge): Designed to handle interference between models by only merging the most significant weight updates and resolving sign disagreements
 DARE (Drop And REscale): Drops redundant weights and re-scales the remaining weights to create a "soups" of models, reducing task interference.
 Task Arithmetic: Creates "task vectors" by subtracting the base model weights from the fine-tuned model weights, allowing these vectors to be added or subtracted to modify model behavior.
-
-
-Fused RoPE + attention kernel — High impact, Medium effort
-Fused QKV projection — Medium impact, Low-Medium effort
-Activation hook system — Medium (experimentation), Low effort
-Gradient checkpointing — High (large model training), Medium effort
-Weight merging API — High (experimentation), Medium effort
-Benchmark / profiling project — Medium, Low-Medium effort
-
-Summary Analysis
-What is consuming the most time per decode step?
-For Qwen2-0.5B Q8_0 at moderate context (kvLen=512):
-
-Component	Time Share	Reason
-FFN (gate+up+down)	~45%	3 large Q8_0 matmuls; activations in float32 cause dequant + FMA loop
-Attention KV reads + score	~30%	Reads 128KB float32 from KV cache per layer; 2-pass online softmax
-QKV projections	~15%	3 smaller Q8_0 matmuls
-Output projection (Wo)	~5%	Q8_0 matmul
-Norms + overhead	~5%	RMS norms + tensor management
-Key bottleneck: The KV cache is stored as float32 and read by the attention kernel, which is severely memory-bound (0.25 FLOP/byte at headDim=64). As kvLen grows, this dominates.
-
-The Q8_0 quantized matmuls are relatively efficient -- they achieve ~0.4-0.5 FLOP/byte because the Q8_0 weights are 4× smaller than float32, but the activations are still full float32.
-
-Single Highest-Impact Optimization
-KV Cache Quantization (Q8_0) -- compress the KV cache from float32 to Q8_0 (or even Q4_0/Q4_K).
-
-Impact: Reduces KV cache memory bandwidth by 4×. For kvLen=2048, this cuts ~12.6MB reads per step to ~3.2MB. At DDR5 bandwidth of ~50 GB/s, this is a savings of ~0.2ms per layer × 24 layers ≈ 4.8ms per decode step, or roughly 25-30% end-to-end speedup at long context.
-The Q8_0 dequantization is already implemented in VecDotQ8_0 and QuantizedMatMulQ8_0 -- the same kernels could be reused. The KV cache would store byte[] in Q8_0 blocks and dequant on-the-fly in the attention kernel.
-Implementation effort: Moderate (modify KVCache, add Q8_0 storage + dequant in attention kernel).
-Ranked Top 3 Optimizations
-Rank	Optimization	Expected Speedup	Implementation Effort	Rationale
-1	KV Cache Q8_0 quantization	25-35% at long context	Moderate (3-5 days)	Cuts the #1 bandwidth consumer by 4×; reuses existing Q8_0 kernels; no accuracy loss at Q8_0
-2	Flash attention tiles (always-on)	10-15% at medium+ context	Low (1-2 days)	Eliminates O(kvLen) score buffer writes/reads; already implemented (just needs to be the default path); reduces attention memory traffic by ~30%
-3	FFN activation quantization (Q8_0 or FP16)	15-20%	Moderate (4-6 days)	The FFN's intermediate activations (gate+up @ 22KB, hidden before down @ 11KB) are float32. Converting to Q8_0 or even just FP16 halves the bandwidth of the 3 biggest matmuls. However, this requires changing the fused FFN to keep activations in a compressed format and dequant on-the-fly.
-Honorable mentions:
-
-Attention kernel rewrite for seqLen=1 decode: The current per-head loop wastes memory bandwidth on score materialization. A specialized decode kernel that computes softmax(Q @ K^T)_i = exp(Q·Ki) / sum_j exp(Q·Kj) as a single vectorized fused operation would be more efficient.
-GQA broadcast fusion: For GQA models (not Qwen2-0.5B, which is MHA), having multiple query heads share a single KV head read would be a big win.
-Prefill fusion: During prefill, fuse the QKV projections into a single batched matrix multiply (the fused Wqkv weight already exists, but the Forward method still calls separate Wq/Wk/Wv forwards).
-MedusaHead integration: The MedusaHeads code already exists and could provide 2-3× wall-clock speedup by predicting multiple tokens from a single forward pass. This is higher effort but has the highest potential impact.

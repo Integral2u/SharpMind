@@ -30,7 +30,7 @@ namespace SharpMind.Inference.Agent
         public readonly List<string> Skills = [];
         public readonly List<string> Rules = [];
 
-        // ── Builder helpers ──────────────────────────────────────────────────────
+        // Builder helpers
 
         /// <summary>Adds a free-form behavioral instruction (idempotent).</summary>
         public IAgentBuilder WithCustomBehavior(string behavior)
@@ -142,7 +142,7 @@ namespace SharpMind.Inference.Agent
             return this;
         }
 
-        // ── Tool definition builders ─────────────────────────────────────────────
+        // Tool definition builders
 
         private static JsonObject BuildToolDef(MethodInfo method)
         {
@@ -209,7 +209,7 @@ namespace SharpMind.Inference.Agent
 
         private static JsonObject Typed(string type) => new() { ["type"] = type };
 
-        // ── Tool invocation ──────────────────────────────────────────────────────
+        // Tool invocation
         /// <summary>
         /// Dispatches a tool call from the model's JSON response.
         /// <paramref name="toolCall"/> must be a JSON object with a <c>tool</c>
@@ -305,7 +305,7 @@ namespace SharpMind.Inference.Agent
         };
 
 
-        // ── Prompt building ──────────────────────────────────────────────────────
+        // Prompt building
 
         /// <summary>
         /// Builds a plain-text system prompt from the current builder state.
@@ -336,12 +336,12 @@ namespace SharpMind.Inference.Agent
 
             var sb = new StringBuilder();
 
-            // ── Role ─────────────────────────────────────────────────────────────
+            // Role
             sb.AppendLine("## Role");
             sb.AppendLine($"You are {AgentName}, a {TemperaturePersonality(SamplingConfig.Temperature)} AI agent. " +
                           $"When asked for your name, you must respond with \"{AgentName}\".");
 
-            // ── Rules ─────────────────────────────────────────────────────────────
+            // Rules
             var allRules = Rules.Concat(toolRules).ToList();
             if (allRules.Count > 0)
             {
@@ -351,7 +351,7 @@ namespace SharpMind.Inference.Agent
                     sb.AppendLine(rule);
             }
 
-            // ── Behaviors ─────────────────────────────────────────────────────────
+            // Behaviors
             if (Behaviors.Count > 0)
             {
                 sb.AppendLine();
@@ -360,7 +360,7 @@ namespace SharpMind.Inference.Agent
                     sb.AppendLine(behavior);
             }
 
-            // ── Tools ─────────────────────────────────────────────────────────────
+            // Tools
             if (ToolDefinitions.Count > 0)
             {
                 sb.AppendLine();
@@ -376,7 +376,7 @@ namespace SharpMind.Inference.Agent
                 sb.AppendLine("""{ "status": "success" | "error", "data": "<result>" }""");
             }
 
-            // ── Skills ────────────────────────────────────────────────────────────
+            // Skills
             if (Skills.Count > 0)
             {
                 sb.AppendLine();

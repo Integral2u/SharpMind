@@ -55,7 +55,7 @@ public sealed class BpeEncoder
             .OrderByDescending(s => s.Length)];
     }
 
-    // ── Encode ────────────────────────────────────────────────────────────
+    // Encode
 
     /// <summary>
     /// Encodes a string to a sequence of token IDs.
@@ -97,7 +97,7 @@ public sealed class BpeEncoder
     public int[][] EncodeBatch(IEnumerable<string> texts, bool addBos = false, bool addEos = false)
         => [.. texts.Select(t => Encode(t, addBos, addEos))];
 
-    // ── Decode ────────────────────────────────────────────────────────────
+    // Decode
 
     /// <summary>
     /// Decodes a sequence of token IDs back to a string.
@@ -148,7 +148,7 @@ public sealed class BpeEncoder
         return result;
     }
 
-    // ── Special-token splitter ────────────────────────────────────────────
+    // Special-token splitter
 
     private readonly record struct Segment(string Text, bool IsSpecial);
 
@@ -208,7 +208,7 @@ public sealed class BpeEncoder
         }
     }
 
-    // ── BPE merge application ─────────────────────────────────────────────
+    // BPE merge application
 
     private void ApplyMerges(List<string> tokens)
     {

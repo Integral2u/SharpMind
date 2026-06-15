@@ -30,7 +30,7 @@ public static class Gpt2Converter
         ArgumentException.ThrowIfNullOrWhiteSpace(encoderJsonPath);
         ArgumentException.ThrowIfNullOrWhiteSpace(vocabBpePath);
 
-        // ── Vocab ─────────────────────────────────────────────────────────
+        // Vocab
         using var doc = JsonDocument.Parse(File.ReadAllText(encoderJsonPath));
         var ordered   = doc.RootElement
                            .EnumerateObject()
@@ -53,7 +53,7 @@ public static class Gpt2Converter
         // contains its special token at id 50256 so we use it as-is
         var vocab = new Vocabulary(ordered, specials);
 
-        // ── Merges ────────────────────────────────────────────────────────
+        // Merges
         // vocab.bpe format:
         //   Line 0: "#version: 0.2"  (header — skip)
         //   Lines 1+: "Ġhello Ġworld"  (one merge per line, rank = line index - 1)

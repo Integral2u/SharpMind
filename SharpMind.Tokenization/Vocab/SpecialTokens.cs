@@ -11,14 +11,14 @@
 /// </summary>
 public sealed class SpecialTokens
 {
-    // ── Default token strings ─────────────────────────────────────────────
+    // Default token strings
 
     public const string DefaultUnk = "[UNK]";
     public const string DefaultBos = "[BOS]";
     public const string DefaultEos = "[EOS]";
     public const string DefaultPad = "[PAD]";
 
-    // ── Resolved token strings ────────────────────────────────────────────
+    // Resolved token strings
 
     public string Unk { get; }
     public string Bos { get; }

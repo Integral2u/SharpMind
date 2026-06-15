@@ -34,8 +34,6 @@ public static class TokenizerFile
         PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
     };
 
-    // ── Save ──────────────────────────────────────────────────────────────
-
     /// <summary>Saves a trained <see cref="BpeModel"/> to a SharpMind JSON file.</summary>
     public static void Save(BpeModel model, string path)
     {
@@ -65,8 +63,6 @@ public static class TokenizerFile
         Directory.CreateDirectory(Path.GetDirectoryName(path) ?? ".");
         File.WriteAllText(path, obj.ToJsonString(JsonOpts));
     }
-
-    // ── Load ──────────────────────────────────────────────────────────────
 
     /// <summary>Loads a SharpMind native tokenizer JSON file.</summary>
     public static BpeModel Load(string path)
@@ -116,7 +112,7 @@ public static class TokenizerFile
         return new BpeModel(vocab, merges, preTokeniser);
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────────
+    // Helpers
 
     private static JsonObject BuildVocabObject(Vocabulary vocab)
     {

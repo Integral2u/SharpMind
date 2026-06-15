@@ -60,7 +60,7 @@ public sealed class Transformer : IDisposable
 
     public ModelConfig Config => _weights.Config;
 
-    // ── Diagnostics accessors ──────────────────────────────────────────────
+    // Diagnostics accessors
     public NormLayer FinalNorm => _finalNorm;
     public Tensor<float>? LmHead => _lmHead;
     public Tensor<float> EmbeddingWeight => _embedding.Weight;
@@ -152,7 +152,7 @@ public sealed class Transformer : IDisposable
             yield return p;
     }
 
-    // ── Forward ───────────────────────────────────────────────────────────
+    // Forward
 
     /// <summary>
     /// Full forward pass.
@@ -343,7 +343,7 @@ public sealed class Transformer : IDisposable
         _cachedNormed = null;
     }
 
-    // ── Diagnostics ───────────────────────────────────────────────────────
+    // Diagnostics
 
     /// <summary>Approximate total parameter count.</summary>
     public long ParameterCount
@@ -375,7 +375,7 @@ public sealed class Transformer : IDisposable
         $"~{ParameterCount / 1_000_000}M params)";
 
 
-    // ── Disposal ──────────────────────────────────────────────────────────
+    // Disposal
 
     public void Dispose()
     {
@@ -389,7 +389,7 @@ public sealed class Transformer : IDisposable
 
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, nameof(Transformer));
 
-    // ── Training Support ───────────────────────────────────────────────────
+    // Training Support
 
     public (Tensor<float> Logits, TransformerState State) ForwardWithState(Tensor<int> tokenIds, int positionOffset = 0)
     {

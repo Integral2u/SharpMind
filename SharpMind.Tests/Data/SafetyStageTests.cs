@@ -4,7 +4,7 @@ namespace SharpMind.Tests.Data;
 
 public sealed class SafetyStageTests
 {
-    // ── BlocklistFilter ───────────────────────────────────────────────────
+    // BlocklistFilter
 
     [Fact]
     public void Blocklist_DiscardsDocumentContainingTerm()
@@ -66,7 +66,7 @@ public sealed class SafetyStageTests
         finally { File.Delete(path); }
     }
 
-    // ── HapFilter ─────────────────────────────────────────────────────────
+    // HapFilter
 
     [Fact]
     public void Hap_Discard_RemovesDocumentWithHapContent()
@@ -111,7 +111,7 @@ public sealed class SafetyStageTests
         Assert.Null(stage.Process("this has newbadterm in it"));
     }
 
-    // ── PiiMaskingStage ───────────────────────────────────────────────────
+    // PiiMaskingStage
 
     [Fact]
     public void Pii_MasksEmail()

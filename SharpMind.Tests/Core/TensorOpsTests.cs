@@ -21,7 +21,7 @@ namespace SharpMind.Tests.Core
 
         public void Dispose() { }
 
-        // ── MatMul ────────────────────────────────────────────────────────────
+        // MatMul
 
         [Fact]
         public void MatMul_Identity_ReturnsInputUnchanged()
@@ -93,7 +93,7 @@ namespace SharpMind.Tests.Core
             Assert.Throws<ArgumentException>(() => _ops.BatchedMatMul(a, b));
         }
 
-        // ── Elementwise ───────────────────────────────────────────────────────
+        // Elementwise
 
         [Fact]
         public void Add_KnownValues()
@@ -216,7 +216,7 @@ namespace SharpMind.Tests.Core
             Assert.Equal(2f, t[1, 0]);
         }
 
-        // ── Kernel parity ─────────────────────────────────────────────────────
+        // Kernel parity
 
         [Fact]
         public void ScalarAndAvx2MatMul_ProduceIdenticalResults()
@@ -238,7 +238,7 @@ namespace SharpMind.Tests.Core
             AssertClose(cScalar.Data, cAvx2.Data, tolerance: 1e-4f);
         }
 
-        // ── Helpers ───────────────────────────────────────────────────────────
+        // Helpers
 
         private static void AssertClose(ReadOnlySpan<float> a, ReadOnlySpan<float> b, float tolerance = 1e-5f)
         {

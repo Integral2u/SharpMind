@@ -33,7 +33,7 @@ public sealed class HuggingFaceSource : IDataSource
     private readonly int _pageSize;
     private readonly long? _maxRows;
 
-    // ── Construction ──────────────────────────────────────────────────────
+    // Construction
 
     /// <param name="dataset">Dataset repository id, e.g. <c>"allenai/c4"</c>.</param>
     /// <param name="split">Dataset split: <c>"train"</c>, <c>"validation"</c>, <c>"test"</c>.</param>
@@ -110,7 +110,7 @@ public sealed class HuggingFaceSource : IDataSource
         }
     }
 
-    // ── IDataSource ───────────────────────────────────────────────────────
+    // IDataSource
 
     public long? EstimatedCount => _maxRows;
 
@@ -162,7 +162,7 @@ public sealed class HuggingFaceSource : IDataSource
         return ValueTask.CompletedTask;
     }
 
-    // ── API helpers ───────────────────────────────────────────────────────
+    // API helpers
 
     private async Task<HuggingFacePage?> FetchPageAsync(
         long offset, int length, CancellationToken cancellationToken)
@@ -194,7 +194,7 @@ public sealed class HuggingFaceSource : IDataSource
         return current.ValueKind == JsonValueKind.String ? current.GetString() : null;
     }
 
-    // ── Response DTOs (internal — not part of the public API) ────────────
+    // Response DTOs (internal — not part of the public API)
 
     private sealed class HuggingFacePage
     {

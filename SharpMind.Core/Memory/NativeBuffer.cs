@@ -15,14 +15,14 @@ namespace SharpMind.Core.Memory;
 /// </remarks>
 public sealed unsafe class NativeBuffer<T> : IDisposable where T : unmanaged
 {
-    // ── constants ──────────────────────────────────────────────────────────
+    // constants
     public const nuint Alignment = 32; // AVX2
 
-    // ── fields ─────────────────────────────────────────────────────────────
+    // fields 
     internal T* _ptr;
     internal int _refCount = 1;
 
-    // ── construction ───────────────────────────────────────────────────────
+    // construction
 
     public NativeBuffer(int elementCount)
     {
@@ -34,7 +34,7 @@ public sealed unsafe class NativeBuffer<T> : IDisposable where T : unmanaged
         NativeMemory.Clear(_ptr, byteLen);
     }
 
-    // ── properties ─────────────────────────────────────────────────────────
+    // properties
 
     public int Length { get; }
 
@@ -49,7 +49,7 @@ public sealed unsafe class NativeBuffer<T> : IDisposable where T : unmanaged
         }
     }
 
-    // ── ref-counting ───────────────────────────────────────────────────────
+    // ref-counting
 
     /// <summary>
     /// Increment the reference count. Called when a view tensor borrows this buffer.
@@ -77,7 +77,7 @@ public sealed unsafe class NativeBuffer<T> : IDisposable where T : unmanaged
         }
     }
 
-    // ── span access ────────────────────────────────────────────────────────
+    // span access
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public Span<T> AsSpan()
@@ -93,7 +93,7 @@ public sealed unsafe class NativeBuffer<T> : IDisposable where T : unmanaged
         return new Span<T>(_ptr + start, length);
     }
 
-    // ── element access ─────────────────────────────────────────────────────
+    // element access
 
     public ref T this[int index]
     {
@@ -101,7 +101,7 @@ public sealed unsafe class NativeBuffer<T> : IDisposable where T : unmanaged
         get => ref _ptr[index];
     }
 
-    // ── helpers ────────────────────────────────────────────────────────────
+    // Helpers
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void AssertAlive()

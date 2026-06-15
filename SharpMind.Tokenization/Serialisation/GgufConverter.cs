@@ -62,7 +62,7 @@ public static class GgufConverter
         if (tokens.Length == 0)
             throw new ArgumentException("Token list is empty — GGUF vocab data is missing.", nameof(tokens));
         
-        // ── Resolve byte mapping ──────────────────────────────────────────────
+        // Resolve byte mapping
         // GGUF explicitly marks byte tokens with type=6.
         // We build a map: byte [0..255] -> token string.
         var byteMap = new string[256];
@@ -85,7 +85,7 @@ public static class GgufConverter
         // Actually, the most robust way to handle GGUF is to use the tokens as-is
         // and let the BPE encoder's ByteTokenise produce strings that match these.
         
-        // ── Resolve special token strings ─────────────────────────────────
+        // Resolve special token strings
         // ... (rest of the method)
 
 
@@ -121,12 +121,12 @@ public static class GgufConverter
 
         var specials = new SpecialTokens(unkToken, bosToken, eosToken, padToken, additional);
 
-        // ── Vocabulary ────────────────────────────────────────────────────
+        // Vocabulary
         // GGUF tokens are already in ID order — pass the list directly to the
         // internal Vocabulary constructor that preserves the existing ordering.
         var vocab = new Vocabulary(tokens, specials);
 
-        // ── Merge rules ───────────────────────────────────────────────────
+        // Merge rules
         // Each entry is "left right" — same format as HuggingFace tokenizer.json.
         var mergeList = new List<MergeRule>();
         if (merges != null)
@@ -139,13 +139,13 @@ public static class GgufConverter
             }
         }        
 
-        // ── PreTokeniser ──────────────────────────────────────────────────
+        // PreTokeniser
         // All BPE models in GGUF (LLaMA, Mistral, Qwen, Phi, etc.) use
         // the GPT-2 byte-level pre-tokenisation pattern.
         return new BpeModel(vocab, mergeList, new Gpt2PreTokeniser());
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────────
+    // Helpers
 
     private static string? IdToToken(string[] tokens, int id)
         => id >= 0 && id < tokens.Length ? tokens[id] : null;

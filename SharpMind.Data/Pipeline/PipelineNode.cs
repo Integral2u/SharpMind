@@ -12,7 +12,7 @@ public abstract class PipelineNode
     public static PipelineNode From(IDataSource source)
         => new SourceNode(source);
 
-    // ── Fluent builders ───────────────────────────────────────────────────
+    // Fluent builders
 
 
     /// <summary>Appends a stage that transforms every document.</summary>
@@ -35,7 +35,7 @@ public abstract class PipelineNode
         return (node.MatchOutput, node.OtherOutput);
     }
 
-    // ── Document streaming ────────────────────────────────────────────────
+    // Document streaming
 
     /// <summary>
     /// Materialises the pipeline and streams processed documents.

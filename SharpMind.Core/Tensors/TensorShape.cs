@@ -16,7 +16,7 @@ public readonly struct TensorShape : IEquatable<TensorShape>
     private readonly int[] _dims;
     private readonly int[] _strides;
 
-    // ── construction ───────────────────────────────────────────────────────
+    // construction
 
     /// <summary>Core init with span — no <c>params</c> heap allocation at call site.</summary>
     public TensorShape(ReadOnlySpan<int> dims)
@@ -38,7 +38,7 @@ public readonly struct TensorShape : IEquatable<TensorShape>
     public TensorShape(int d0, int d1, int d2) : this([d0, d1, d2]) { }
     public TensorShape(int d0, int d1, int d2, int d3) : this([d0, d1, d2, d3]) { }
 
-    // ── properties ─────────────────────────────────────────────────────────
+    // properties
 
     public int Rank         => _dims.Length;
     public int ElementCount { get; }
@@ -64,7 +64,7 @@ public readonly struct TensorShape : IEquatable<TensorShape>
     public bool IsVector  => Rank == 1;
     public bool IsMatrix  => Rank == 2;
 
-    // ── flat offset ────────────────────────────────────────────────────────
+    // flat offset
 
     /// <summary>Converts a multi-index to a flat buffer offset.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -81,7 +81,7 @@ public readonly struct TensorShape : IEquatable<TensorShape>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public int GetOffset(int row, int col) => row * _strides[^2] + col;
 
-    // ── shape algebra ──────────────────────────────────────────────────────
+    // shape algebra
 
     /// <summary>
     /// Returns a new shape with the same element count but different dims.
@@ -145,7 +145,7 @@ public readonly struct TensorShape : IEquatable<TensorShape>
         return new TensorShape(newDims);
     }
 
-    // ── validation helpers ─────────────────────────────────────────────────
+    // validation helpers
 
     public static void AssertSameShape(TensorShape a, TensorShape b)
     {
@@ -162,7 +162,7 @@ public readonly struct TensorShape : IEquatable<TensorShape>
                 $"{nameof(TensorOps.MatMul)} shape mismatch: {a} · {b} (inner dims {a.Cols} ≠ {b.Rows}).");
     }
 
-    // ── equality ───────────────────────────────────────────────────────────
+    // equality
 
     public bool Equals(TensorShape other) =>
         _dims is not null && other._dims is not null &&
@@ -174,7 +174,7 @@ public readonly struct TensorShape : IEquatable<TensorShape>
     public static bool operator ==(TensorShape a, TensorShape b) => a.Equals(b);
     public static bool operator !=(TensorShape a, TensorShape b) => !a.Equals(b);
 
-    // ── display ────────────────────────────────────────────────────────────
+    // display
 
     public override string ToString()
     {
@@ -188,7 +188,7 @@ public readonly struct TensorShape : IEquatable<TensorShape>
         return sb.ToString();
     }
 
-    // ── private helpers ────────────────────────────────────────────────────
+    // private helpers
 
     private static int[] ComputeStrides(int[] dims)
     {

@@ -4,9 +4,7 @@ using SharpMind.Core.Tensors;
 
 namespace SharpMind.Model.Layers.Ffn;
 
-// ─────────────────────────────────────────────────────────────────────────────
 // FFN kernels — pure static, one unconditional path each
-// ─────────────────────────────────────────────────────────────────────────────
 
 internal static class FfnKernels
 {

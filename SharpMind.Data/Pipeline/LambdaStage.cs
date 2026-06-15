@@ -1,7 +1,5 @@
 ﻿namespace SharpMind.Data.Pipeline;
-// ─────────────────────────────────────────────────────────────────────────────
 // Lambda stage — lets callers write inline transforms without a class
-// ─────────────────────────────────────────────────────────────────────────────
 internal sealed class LambdaStage : ICleaningStage
 {
     private readonly Func<string, string?> _fn;

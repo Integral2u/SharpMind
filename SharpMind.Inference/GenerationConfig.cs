@@ -6,7 +6,7 @@ namespace SharpMind.Inference;
 /// </summary>
 public sealed record GenerationConfig
 {
-    // ── Stopping ──────────────────────────────────────────────────────────
+    // Stopping
 
     /// <summary>Maximum number of new tokens to generate.</summary>
     public int MaxNewTokens { get; init; } = 256;
@@ -24,7 +24,7 @@ public sealed record GenerationConfig
     /// </summary>
     public IReadOnlyList<string> StopStrings { get; init; } = [];
 
-    // ── Repetition penalty ────────────────────────────────────────────────
+    // Repetition penalty
 
     /// <summary>
     /// Penalises tokens that have already appeared in the context.
@@ -45,7 +45,7 @@ public sealed record GenerationConfig
     /// 0 = keep half the cache (default sliding window behaviour).
     /// </summary>
     public int SlidingWindowSize { get; init; } = 0;
-    // ── Streaming ─────────────────────────────────────────────────────────
+    // Streaming
 
     /// <summary>
     /// When true, each token is decoded and yielded as a partial string.
@@ -53,7 +53,7 @@ public sealed record GenerationConfig
     /// </summary>
     public bool Stream { get; init; } = true;
 
-    // ── Presets ───────────────────────────────────────────────────────────
+    // Presets
 
     public static GenerationConfig Default => new();
 

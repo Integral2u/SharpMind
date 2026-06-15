@@ -29,7 +29,7 @@ public sealed class RoPE : PositionalEncoder
     private readonly int     _headDim;
     private readonly int     _maxSeqLen;
 
-    // ── Construction ──────────────────────────────────────────────────────
+    // Construction
 
     /// <param name="headDim">Dimension of a single attention head. Must be even.</param>
     /// <param name="maxSeqLen">Maximum sequence length to pre-compute freqs for.</param>
@@ -66,12 +66,12 @@ public sealed class RoPE : PositionalEncoder
         });
     }
 
-    // ── Properties ────────────────────────────────────────────────────────
+    // Properties
 
     public int HeadDim   => _headDim;
     public int MaxSeqLen => _maxSeqLen;
 
-    // ── Forward (in-place) ────────────────────────────────────────────────
+    // Forward (in-place)
 
     /// <summary>
     /// Applies RoPE rotation in-place to a query or key tensor.

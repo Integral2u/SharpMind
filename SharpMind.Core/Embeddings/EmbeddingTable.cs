@@ -16,7 +16,7 @@ public sealed class EmbeddingTable : IDisposable
     private readonly Tensor<float> _weight;
     private bool _disposed;
 
-    // ── Construction ──────────────────────────────────────────────────────
+    // Construction
 
     /// <param name="vocabSize">Number of distinct tokens.</param>
     /// <param name="embeddingDim">Vector dimension per token.</param>
@@ -36,7 +36,7 @@ public sealed class EmbeddingTable : IDisposable
 
     private readonly bool _ownsMemory;
 
-    // ── Properties ────────────────────────────────────────────────────────
+    // Properties
 
     public int VocabSize { get; }
     public int EmbeddingDim { get; }
@@ -49,7 +49,7 @@ public sealed class EmbeddingTable : IDisposable
         yield return new Parameter($"{nameof(EmbeddingTable)}.weight", _weight);
     }
 
-    // ── Forward pass ──────────────────────────────────────────────────────
+    // Forward pass
 
     /// <summary>
     /// Gathers embedding vectors for a sequence of token IDs.
@@ -115,7 +115,7 @@ public sealed class EmbeddingTable : IDisposable
         return result;
     }
 
-    // ── Weight initialisation helpers ─────────────────────────────────────
+    // Weight initialisation helpers
 
     /// <summary>
     /// Initialises weights with N(0, std) — the GPT-2 convention
@@ -144,7 +144,7 @@ public sealed class EmbeddingTable : IDisposable
         weights.CopyTo(_weight.Data);
     }
 
-    // ── Disposal ──────────────────────────────────────────────────────────
+    // Disposal
 
     public void Dispose()
     {
@@ -153,7 +153,7 @@ public sealed class EmbeddingTable : IDisposable
         if (_ownsMemory) _weight.Dispose();
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────────
+    // Helpers
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, nameof(EmbeddingTable));

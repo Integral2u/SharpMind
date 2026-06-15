@@ -24,7 +24,7 @@ public sealed class InterceptingNetworkHandler : DelegatingHandler
     {
     }
 
-    // ── Internal activation (ChatSession only) ────────────────────────────────
+    // Internal activation (ChatSession only)
 
     internal void Activate(string toolName, JsonObject args, IoPermissionCheck check)
     {
@@ -40,7 +40,7 @@ public sealed class InterceptingNetworkHandler : DelegatingHandler
         _currentArgs = [];
     }
 
-    // ── HttpMessageHandler override ───────────────────────────────────────────
+    // HttpMessageHandler override
 
     protected override async Task<HttpResponseMessage> SendAsync(
         HttpRequestMessage request, CancellationToken ct)

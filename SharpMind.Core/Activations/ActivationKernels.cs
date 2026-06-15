@@ -14,10 +14,8 @@ internal static class ActivationKernels
 {
     private const float SqrtTwoPiInv = 0.7978845608f;
     private const float GeluCoeff    = 0.044715f;
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // ReLU
-    // ═══════════════════════════════════════════════════════════════════════
+    
+    // ReLU  
 
     internal static unsafe void ReLUAVX2(ReadOnlySpan<float> src, Span<float> dst)
     {
@@ -38,9 +36,9 @@ internal static class ActivationKernels
             dst[i] = src[i] < 0f ? 0f : src[i];
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
+    
     // Fast transcendental helpers — polynomial approximations
-    // ═══════════════════════════════════════════════════════════════════════
+    
 
     /// <summary>exp(x) via range-reduced degree-6 polynomial, ≈5 ULP over [-88, 88].</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -95,9 +93,9 @@ internal static class ActivationKernels
         return Avx.Divide(Avx.Subtract(e2z, one), Avx.Add(e2z, one));
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
+    
     // GELU  0.5 * x * (1 + tanh(√(2/π) * (x + 0.044715 * x³)))
-    // ═══════════════════════════════════════════════════════════════════════
+    
 
     internal static unsafe void GELUAVX2(ReadOnlySpan<float> src, Span<float> dst)
     {
@@ -138,9 +136,9 @@ internal static class ActivationKernels
         }
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
+    
     // SiLU  x * sigmoid(x) = x / (1 + exp(-x))
-    // ═══════════════════════════════════════════════════════════════════════
+    
 
     internal static unsafe void SiLUAVX2(ReadOnlySpan<float> src, Span<float> dst)
     {
@@ -169,9 +167,9 @@ internal static class ActivationKernels
         }
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
+    
     // SwiGLU  silu(gate) * up
-    // ═══════════════════════════════════════════════════════════════════════
+    
 
     internal static unsafe void SwiGLUAVX2(ReadOnlySpan<float> gate, ReadOnlySpan<float> up, Span<float> dst)
     {
@@ -202,9 +200,9 @@ internal static class ActivationKernels
         }
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
+    
     // GeGLU  gelu(gate) * up
-    // ═══════════════════════════════════════════════════════════════════════
+    
 
     internal static unsafe void GeGLUAVX2(ReadOnlySpan<float> gate, ReadOnlySpan<float> up, Span<float> dst)
     {
@@ -252,10 +250,10 @@ internal static class ActivationKernels
     internal static void CopyGate(ReadOnlySpan<float> gate, ReadOnlySpan<float> _, Span<float> dst)
         => gate.CopyTo(dst);
 
-    // ═══════════════════════════════════════════════════════════════════════
+    
     // Softmax  (numerically stable)
     // exp is the bottleneck — no benefit from AVX2 here
-    // ═══════════════════════════════════════════════════════════════════════
+    
 
     internal static void SoftmaxRowScalar(ReadOnlySpan<float> src, Span<float> dst)
     {
@@ -291,10 +289,10 @@ internal static class ActivationKernels
         for (int i = 0; i < dst.Length; i++) dst[i] *= inv;
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
+    
     // RMSNorm row  out[i] = src[i] * rmsInv * weight[i]
     // rmsInv is pre-computed by the Tensor-level wrapper — not computed here
-    // ═══════════════════════════════════════════════════════════════════════
+    
 
     internal static unsafe void RMSNormRowAVX2(
         ReadOnlySpan<float> src, ReadOnlySpan<float> weight, Span<float> dst, float rmsInv)
@@ -319,14 +317,14 @@ internal static class ActivationKernels
             dst[i] = src[i] * rmsInv * weight[i];
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
+    
     // MatMul inner  A[M,K] × BT[N,K] → C[M,N]  (B already transposed)
     //
     // Three unconditional paths — no capability checks inside any of them:
     //   FMA    → Fma.MultiplyAdd   best throughput on Haswell+ (fused multiply-add)
     //   AVX2   → Avx.Multiply + Avx.Add  for CPUs with AVX2 but no FMA instruction set
     //   Scalar → portable fallback, JIT auto-vectorises this loop on most platforms
-    // ═══════════════════════════════════════════════════════════════════════
+    
 
     internal static unsafe void MatMulInnerFMA(float* a, float* bt, float* c, int M, int K, int N)
     {

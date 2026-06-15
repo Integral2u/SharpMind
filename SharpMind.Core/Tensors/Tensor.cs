@@ -26,7 +26,7 @@ namespace SharpMind.Core.Tensors;
 public sealed unsafe class Tensor<T> : IDisposable
     where T : unmanaged, INumber<T>
 {
-    // ── fields ─────────────────────────────────────────────────────────────
+    // fields
 
     private readonly NativeBuffer<T>? _buffer;
     private readonly int _offset; // element offset into buffer (for views)
@@ -34,7 +34,7 @@ public sealed unsafe class Tensor<T> : IDisposable
     private readonly T* _rawPtr;
 
 
-    // ── constructors ───────────────────────────────────────────────────────
+    // constructors
     
     /// <summary>Allocates a new zero-initialised tensor of the given shape.</summary>
     public Tensor(TensorShape shape) : this(shape, NativeBufferPool<T>.Rent(shape.ElementCount), 0, true) { }
@@ -73,7 +73,7 @@ public sealed unsafe class Tensor<T> : IDisposable
         _rawPtr = _buffer != null ? _buffer.Ptr + offset : null;
     }
 
-    // ── properties ─────────────────────────────────────────────────────────
+    // properties
 
     public TensorShape Shape        { get; }
     public int         Rank         => Shape.Rank;
@@ -99,10 +99,8 @@ public sealed unsafe class Tensor<T> : IDisposable
         }
     }
 
-    // ... [rest of the file]
 
-
-    // ── indexers ───────────────────────────────────────────────────────────
+    // indexers
 
     /// <summary>Flat element access.</summary>
     public ref T this[int flatIndex]
@@ -124,7 +122,7 @@ public sealed unsafe class Tensor<T> : IDisposable
         get => ref DataPtr[Shape.GetOffset(indices)];
     }
 
-    // ── factory methods ────────────────────────────────────────────────────
+    // factory methods
 
     /// <summary>Allocates a zero-filled tensor.</summary>
     public static Tensor<T> Zeros(params int[] dims) => new(dims);
@@ -161,7 +159,7 @@ public sealed unsafe class Tensor<T> : IDisposable
         return t;
     }
 
-    // ── mutation ───────────────────────────────────────────────────────────
+    // mutation
 
     public void Fill(T value) => Data.Fill(value);
 
@@ -232,7 +230,7 @@ public sealed unsafe class Tensor<T> : IDisposable
         return CreateView(new TensorShape(newDimsArray), _offset + offset, _ownsMemory);
     }
 
-    // ── diagnostics ────────────────────────────────────────────────────────
+    // diagnostics
 
     public override string ToString() =>
         $"Tensor<{typeof(T).Name}> {Shape} [{ElementCount} elements]";
@@ -255,7 +253,7 @@ public sealed unsafe class Tensor<T> : IDisposable
         return sb.ToString();
     }
 
-    // ── disposal ───────────────────────────────────────────────────────────
+    // disposal
 
     /// <summary>
     /// Releases this tensor's reference to the backing buffer.

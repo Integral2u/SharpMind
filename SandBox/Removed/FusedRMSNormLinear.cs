@@ -4,9 +4,7 @@ using SharpMind.Core.Training;
 
 namespace SharpMind.Model.Layers;
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Fused RmsNorm + Linear layer — reduces memory bandwidth by fusing operations
-// ─────────────────────────────────────────────────────────────────────────────
 
 public sealed class FusedRMSNormLinear : IDisposable
 {

@@ -369,8 +369,7 @@ public sealed class MedusaHeads : IDisposable
                 if (step < numSamples)
                 {
                     var ch = model.LastCachedHidden;
-                    if (ch != null)
-                        ch.Data[.._hiddenDim].CopyTo(hiddenStates.RowSpan(step));
+                    ch?.Data[.._hiddenDim].CopyTo(hiddenStates.RowSpan(step));
                 }
             }
 

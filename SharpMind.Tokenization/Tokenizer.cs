@@ -50,7 +50,7 @@ public class Tokenizer
         _model = model;
     }
 
-    // ── Vocabulary ────────────────────────────────────────────────────────
+    // Vocabulary
 
     public int VocabSize => _model.Vocab.Size;
     public int UnkId => _model.Vocab.UnkId;
@@ -60,7 +60,7 @@ public class Tokenizer
     public Vocabulary Vocab => _model.Vocab;
     public SpecialTokens Specials => _model.Vocab.Specials;
 
-    // ── Encode ────────────────────────────────────────────────────────────
+    // Encode
 
     /// <summary>
     /// Encodes text to token IDs.
@@ -74,7 +74,7 @@ public class Tokenizer
     public int[][] EncodeBatch(IEnumerable<string> texts, bool addBos = false, bool addEos = false)
         => _model.Encoder.EncodeBatch(texts, addBos, addEos);
 
-    // ── Decode ────────────────────────────────────────────────────────────
+    // Decode
 
     /// <summary>Decodes token IDs back to a string. Skips special tokens by default.</summary>
     public string Decode(ReadOnlySpan<int> ids, bool skipSpecials = true)
@@ -83,7 +83,7 @@ public class Tokenizer
     public string Decode(int[] ids, bool skipSpecials = true)
         => _model.Encoder.Decode(ids, skipSpecials);
 
-    // ── Token helpers ─────────────────────────────────────────────────────
+    // Token helpers
 
     public string IdToToken(int id) => _model.Vocab.GetToken(id);
     public int TokenToId(string tok) => _model.Vocab.GetId(tok);
@@ -106,13 +106,13 @@ public class Tokenizer
         return id;
     }
 
-    // ── Factory: SharpMind native ─────────────────────────────────────────
+    // Factory: SharpMind native
 
     /// <summary>Loads a SharpMind native tokenizer JSON file.</summary>
     public static Tokenizer FromFile(string path)
         => new(TokenizerFile.Load(path));
 
-    // ── Factory: GGUF (model-family agnostic) ─────────────────────────────
+    // Factory: GGUF (model-family agnostic)
 
     /// <summary>
     /// Builds a tokenizer directly from GGUF-embedded vocab data.
@@ -143,7 +143,7 @@ public class Tokenizer
         return new Tokenizer(model);
     }
 
-    // ── Factory: model-family converters ──────────────────────────────────
+    // Factory: model-family converters
 
     /// <summary>
     /// Loads a GPT-2 tokenizer from its two native files.

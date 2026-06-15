@@ -16,8 +16,6 @@ public sealed class Vocabulary
     private readonly Dictionary<string, int> _tokenToId;
     private readonly List<string> _idToToken;
 
-    // ── Construction ──────────────────────────────────────────────────────
-
     /// <param name="specials">Special tokens added first with the lowest IDs.</param>
     /// <param name="addByteTokens">
     /// When true, adds 256 single-byte tokens (Ġ0x00 … Ġ0xFF) after specials.
@@ -49,16 +47,12 @@ public sealed class Vocabulary
             _tokenToId[tokens[i]] = i;
     }
 
-    // ── Properties ────────────────────────────────────────────────────────
-
     public SpecialTokens Specials { get; }
     public int Size => _idToToken.Count;
     public int UnkId => _tokenToId.TryGetValue(Specials.Unk, out int unk) ? unk : 0;
     public int BosId => _tokenToId.TryGetValue(Specials.Bos, out int bos) ? bos : 1;
     public int EosId => _tokenToId.TryGetValue(Specials.Eos, out int eos) ? eos : 2;
     public int PadId => _tokenToId.TryGetValue(Specials.Pad, out int pad) ? pad : 0;
-
-    // ── Lookup ────────────────────────────────────────────────────────────
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool TryGetId(string token, out int id)
@@ -74,7 +68,7 @@ public sealed class Vocabulary
 
     public bool Contains(string token) => _tokenToId.ContainsKey(token);
 
-    // ── Mutation (training only) ──────────────────────────────────────────
+    // Mutation (training only)
 
     /// <summary>
     /// Adds a new token and returns its assigned ID.
@@ -91,11 +85,7 @@ public sealed class Vocabulary
         return id;
     }
 
-    // ── Enumeration ───────────────────────────────────────────────────────
-
     public IReadOnlyList<string> AllTokens => _idToToken;
-
-    // ── Byte token helpers ────────────────────────────────────────────────
 
     /// <summary>
     /// Returns the canonical byte token string for byte value <paramref name="b"/>.

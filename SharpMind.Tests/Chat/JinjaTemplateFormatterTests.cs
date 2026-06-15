@@ -55,7 +55,7 @@ public sealed class JinjaTemplateFormatterTests
         "{% endfor %}" +
         "{{ '<|start_header_id|>assistant<|end_header_id|>\\n\\n' }}";
 
-    // ── Stub tokenizer ──────────────────────────────────────────────────
+    // Stub tokenizer
 
     /// <summary>
     /// Minimal tokenizer built via the public <see cref="Tokenizer.FromGguf"/> factory.
@@ -69,7 +69,7 @@ public sealed class JinjaTemplateFormatterTests
         bosId: 1,
         eosId: 2);
 
-    // ── Helpers ─────────────────────────────────────────────────────────
+    // Helpers
 
     private static string Render(string template, IReadOnlyList<ChatMessage> messages,
                                   bool addBos = false)
@@ -78,7 +78,7 @@ public sealed class JinjaTemplateFormatterTests
         return fmt.Format(messages, Tok, addBos);
     }
 
-    // ── SmolLM2 ──────────────────────────────────────────────────────────
+    // SmolLM2
 
     [Fact]
     public void SmolLM2_SingleUserMessage_InjectsDefaultSystemAndAssistantPrompt()
@@ -111,7 +111,7 @@ public sealed class JinjaTemplateFormatterTests
         Assert.EndsWith("<|im_start|>assistant\n", result);
     }
 
-    // ── Qwen2 ────────────────────────────────────────────────────────────
+    // Qwen2
 
     [Fact]
     public void Qwen2_SingleUserMessage_MatchesGolden()
@@ -143,7 +143,7 @@ public sealed class JinjaTemplateFormatterTests
         Assert.EndsWith("<|im_start|>assistant\n", result);
     }
 
-    // ── TinyLlama / Zephyr ───────────────────────────────────────────────
+    // TinyLlama / Zephyr
 
     [Fact]
     public void TinyLlama_UserMessage_UsesZephyrTokens()
@@ -169,7 +169,7 @@ public sealed class JinjaTemplateFormatterTests
         Assert.Contains("<|user|>\nhi</s>", result);
     }
 
-    // ── Llama 3.x ────────────────────────────────────────────────────────
+    // Llama 3.x
 
     [Fact]
     public void Llama3_SingleUserMessage_MatchesGolden()
@@ -201,7 +201,7 @@ public sealed class JinjaTemplateFormatterTests
         Assert.EndsWith("<|start_header_id|>assistant<|end_header_id|>\n\n", result);
     }
 
-    // ── Factory ──────────────────────────────────────────────────────────
+    // Factory
 
     [Fact]
     public void Factory_WithTemplate_ReturnsJinjaFormatter()
@@ -224,7 +224,7 @@ public sealed class JinjaTemplateFormatterTests
         Assert.IsType<SimpleFormatter>(fmt);
     }
 
-    // ── Jinja expression evaluator edge cases ────────────────────────────
+    // Jinja expression evaluator edge cases
 
     [Fact]
     public void Eval_StringConcat_Works()

@@ -4,7 +4,7 @@ namespace SharpMind.Tests.Data;
 
 public sealed class BuiltInStageTests
 {
-    // ── NormaliseWhitespace ───────────────────────────────────────────────
+    // NormaliseWhitespace
 
     [Fact]
     public void NormaliseWhitespace_CollapsesRuns()
@@ -28,7 +28,7 @@ public sealed class BuiltInStageTests
         Assert.Null(stage.Process("   "));
     }
 
-    // ── LowerCase ─────────────────────────────────────────────────────────
+    // LowerCase
 
     [Fact]
     public void LowerCase_LowercasesAll()
@@ -36,7 +36,7 @@ public sealed class BuiltInStageTests
         Assert.Equal("hello world", new LowerCase().Process("HELLO WORLD"));
     }
 
-    // ── StripHtml ─────────────────────────────────────────────────────────
+    // StripHtml
 
     [Fact]
     public void StripHtml_RemovesTags()
@@ -59,7 +59,7 @@ public sealed class BuiltInStageTests
         Assert.Equal(expected, result.Trim());
     }
 
-    // ── MinLengthFilter ───────────────────────────────────────────────────
+    // MinLengthFilter
 
     [Fact]
     public void MinLengthFilter_PassesLongEnough()
@@ -75,7 +75,7 @@ public sealed class BuiltInStageTests
         Assert.Null(stage.Process("hi"));
     }
 
-    // ── MaxLengthFilter ───────────────────────────────────────────────────
+    // MaxLengthFilter
 
     [Fact]
     public void MaxLengthFilter_PassesShortEnough()
@@ -89,7 +89,7 @@ public sealed class BuiltInStageTests
         Assert.Null(new MaxLengthFilter(3).Process("toolong"));
     }
 
-    // ── RegexFilter ───────────────────────────────────────────────────────
+    // RegexFilter
 
     [Fact]
     public void RegexFilter_DiscardsMatching()
@@ -107,7 +107,7 @@ public sealed class BuiltInStageTests
         Assert.Null(stage.Process("abc123"));
     }
 
-    // ── DeduplicateFilter ─────────────────────────────────────────────────
+    // DeduplicateFilter
 
     [Fact]
     public void DeduplicateFilter_DropsDuplicates()

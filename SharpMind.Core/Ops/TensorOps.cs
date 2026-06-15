@@ -8,7 +8,6 @@ using System.Runtime.Intrinsics.X86;
 
 namespace SharpMind.Core.Ops;
 
-// ─────────────────────────────────────────────────────────────────────────────
 // TensorOps
 //
 // Abstract class assembled by JigSawDotNet. The inner matmul kernel is selected
@@ -17,12 +16,11 @@ namespace SharpMind.Core.Ops;
 // Public static convenience methods (MatMul, Add, Scale…) remain accessible
 // without instantiation — they delegate to the DefaultInstance which is set
 // by TensorOpsFactory at startup.
-// ─────────────────────────────────────────────────────────────────────────────
 public abstract class TensorOps
 {
     private const string NS = $"{nameof(SharpMind)}.{nameof(Core)}.{nameof(Activations)}.{nameof(ActivationKernels)}";
 
-    // ── Singleton set by TensorOpsFactory ─────────────────────────────────
+    // Singleton set by TensorOpsFactory
     private static volatile TensorOps? _default;
 
     /// <summary>
@@ -36,11 +34,11 @@ public abstract class TensorOps
 
     internal static void SetDefault(TensorOps instance) => _default = instance;
 
-    // ═══════════════════════════════════════════════════════════════════════
+    
     // Abstract kernel — PuzzleCornerPiece selects AVX2 or scalar path
     // Signature takes raw pointers so the kernel owns the inner loop entirely;
     // the public wrapper handles allocation and B-transpose.
-    // ═══════════════════════════════════════════════════════════════════════
+    
 
     [PuzzleCornerPiece(SharpMindConfig.KeyMatMul, true, null,
         SharpMindConfig.ValFma, $"{NS}.{nameof(ActivationKernels.MatMulInnerFMA)}",
@@ -48,9 +46,9 @@ public abstract class TensorOps
         SharpMindConfig.ValScalar, $"{NS}.{nameof(ActivationKernels.MatMulInnerScalar)}")]
     public abstract unsafe void MatMulInner(float* a, float* bt, float* c, int M, int K, int N);
 
-    // ═══════════════════════════════════════════════════════════════════════
+    
     // Instance matmul — transposes B, allocates result, calls kernel
-    // ═══════════════════════════════════════════════════════════════════════
+    
 
     /// <summary>Computes C = A @ B and returns a new tensor.</summary>
     public Tensor<float> MatMul(Tensor<float> a, Tensor<float> b)
@@ -99,11 +97,11 @@ public abstract class TensorOps
         using var bt = TransposeInternal(b);
         unsafe { MatMulInner(a.DataPtr, bt.DataPtr, c.DataPtr, M, K, N); }
     }
-    // ═══════════════════════════════════════════════════════════════════════
+    
     // Batched MatMul — [*, M, K] × [*, K, N] → [*, M, N]
     // Handles 3D and 4D (batch × heads × seq × dim).
     // All batch dims are flattened — the inner 2D kernel is reused.
-    // ═══════════════════════════════════════════════════════════════════════
+    
 
     /// <summary>
     /// Batched matrix multiply. Supports rank 3 [B,M,K]×[B,K,N] and
@@ -145,9 +143,9 @@ public abstract class TensorOps
         return result;
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
+    
     // Static convenience methods — delegate to Default instance
-    // ═══════════════════════════════════════════════════════════════════════
+    
 
     /// <summary>C = A @ B using the default assembled instance.</summary>
     public static Tensor<float> MatMul(Tensor<float> a, Tensor<float> b, TensorOps? ops = null)
@@ -357,9 +355,9 @@ public abstract class TensorOps
         return idx;
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
+    
     // Helpers
-    // ═══════════════════════════════════════════════════════════════════════
+    
 
     /// <summary>
     /// Returns the flat indices of the top <paramref name="k"/> elements (sorted descending).
@@ -473,9 +471,9 @@ public abstract class TensorOps
             }
         }
     }
-    // ═══════════════════════════════════════════════════════════════════════
+    
     // Private helpers
-    // ═══════════════════════════════════════════════════════════════════════
+    
 
     private static unsafe Tensor<float> TransposeInternal(Tensor<float> src)
     {

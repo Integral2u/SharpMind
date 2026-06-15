@@ -84,11 +84,11 @@ public abstract class AttentionLayer : IDisposable
             }
         }
 
-        if (Wqkv.Bias != null && wqB != null)
+        if (Wqkv.Bias != null)
         {
-            wqB.Data.CopyTo(Wqkv.Bias.Data[..hiddenDim]);
-            wkB.Data.CopyTo(Wqkv.Bias.Data.Slice(hiddenDim, kvDim));
-            wvB.Data.CopyTo(Wqkv.Bias.Data.Slice(hiddenDim + kvDim, kvDim));
+            wqB?.Data.CopyTo(Wqkv.Bias.Data[..hiddenDim]);
+            wkB?.Data.CopyTo(Wqkv.Bias.Data.Slice(hiddenDim, kvDim));
+            wvB?.Data.CopyTo(Wqkv.Bias.Data.Slice(hiddenDim + kvDim, kvDim));
         }
     }
 

@@ -45,8 +45,7 @@ public static class LlamaConverter
         return new BpeModel(vocab, merges, new Gpt2PreTokeniser());
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────────
-
+    // Helpers
     private static void AssertBpeModel(JsonElement root, string path)
     {
         if (root.TryGetProperty("model", out var model) &&

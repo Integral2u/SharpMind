@@ -7,7 +7,7 @@ namespace SharpMind.Inference;
 /// </summary>
 public static class Sampler
 {
-    // ── Entry point ───────────────────────────────────────────────────────
+    // Entry point
 
     /// <summary>
     /// Selects the next token from <paramref name="logits"/> using the given config.
@@ -46,7 +46,7 @@ public static class Sampler
         }
     }
 
-    // ── Greedy ────────────────────────────────────────────────────────────
+    // Greedy
 
     private static int Argmax(ReadOnlySpan<float> logits)
     {
@@ -57,7 +57,7 @@ public static class Sampler
         return best;
     }
 
-    // ── Temperature ───────────────────────────────────────────────────────
+    // Temperature
 
     private static void ApplyTemperature(Span<float> logits, float temperature)
     {
@@ -65,7 +65,7 @@ public static class Sampler
         for (int i = 0; i < logits.Length; i++) logits[i] *= inv;
     }
 
-    // ── Softmax ───────────────────────────────────────────────────────────
+    // Softmax
 
     private static void Softmax(Span<float> x)
     {
@@ -98,7 +98,7 @@ public static class Sampler
         for (int i = 0; i < x.Length; i++) x[i] *= inv;
     }
 
-    // ── Top-k ─────────────────────────────────────────────────────────────
+    // Top-k
 
     /// <summary>
     /// Zeroes all but the top-k highest-probability tokens.
@@ -169,7 +169,7 @@ public static class Sampler
         }
     }
 
-    // ── Top-p (nucleus) ───────────────────────────────────────────────────
+    // Top-p (nucleus)
 
     /// <summary>
     /// Zeroes tokens outside the nucleus whose cumulative probability exceeds p.
@@ -222,7 +222,7 @@ public static class Sampler
         }
     }
 
-    // ── Min-p ─────────────────────────────────────────────────────────────
+    // Min-p
 
     /// <summary>
     /// Zeroes tokens whose probability is below min_p × max_probability.
@@ -237,7 +237,7 @@ public static class Sampler
             if (probs[i] < threshold) probs[i] = 0f;
     }
 
-    // ── Normalise ─────────────────────────────────────────────────────────
+    // Normalise
 
     private static void Normalise(Span<float> probs)
     {
@@ -248,7 +248,7 @@ public static class Sampler
         for (int i = 0; i < probs.Length; i++) probs[i] *= inv;
     }
 
-    // ── Categorical sample ────────────────────────────────────────────────
+    // Categorical sample
 
     private static int SampleFromProbs(Span<float> probs, Random rng)
     {

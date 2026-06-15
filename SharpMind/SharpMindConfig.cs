@@ -4,7 +4,7 @@ namespace SharpMind;
 
 public sealed record SharpMindConfig
 {
-    // ── JigSaw Pointers (Abstract method names) ────────────────────────────
+    // JigSaw Pointers (Abstract method names)
     public const string PtrPointWise = "ApplyPointwise";
     public const string PtrGate = "ApplyGate";
     public const string PtrRMSNorm = "ApplyRMSNormRow";
@@ -15,24 +15,24 @@ public sealed record SharpMindConfig
     public const string PtrNorm = "ApplyRow";
     public const string PtrArch = "Forward";
 
-    // ── Activation Keys ────────────────────────────────────────────────────────
+    //  Activation Keys
     public const string KeyPointWise = "pointwise";
     public const string KeyGate = "gate";
     public const string KeyRMSNorm = "rmsnorm";
     public const string KeySoftmax = "softmax";
     public const string KeyMatMul = "matmul";
-    // ── Model Layer Keys ────────────────────────────────────────────────────────
+    // Model Layer Keys
     public const string KeyAttention = "attention";
     public const string KeyFfn = "ffn";
     public const string KeyNorm = "norm";
     public const string KeyArch = "arch";
-    // ── Training Keys ────────────────────────────────────────────────────────
+    // Training Keys
     public const string KeyAdamW = "adamw";
     public const string KeyGradNorm = "gradnorm";
-    // ── Norm Row Keys ────────────────────────────────────────────────────────
+    // Norm Row Keys
     public const string KeyLayerNormRow = "layernormrow";
 
-    // ── Activation Values ──────────────────────────────────────────────────────
+    // Activation Values
     public const string ValReLU = "relu";
     public const string ValReLUAvx2 = "reluavx2";
     public const string ValReLUFma = "relufma";
@@ -52,12 +52,12 @@ public sealed record SharpMindConfig
     public const string ValNoneAvx2 = "noneavx2";
     public const string ValNoneFma = "nonefma";
 
-    // ── Hardware Values ──────────────────────────────────────────────────────
+    // Hardware Values
     public const string ValScalar = "scalar";
     public const string ValAvx2 = "avx2";
     public const string ValFma = "fma";
 
-    // ── Attention Values ──────────────────────────────────────────────────────
+    // Attention Values
     public const string ValMhaAvx2 = "mhaavx2";
     public const string ValMhaFma = "mhafma";
     public const string ValMhaScalar = "mhascalar";
@@ -77,12 +77,12 @@ public sealed record SharpMindConfig
     public const string ValMqaFlashFma = "mqaflashfma";
     public const string ValMqaFlashScalar = "mqaflashscalar";
 
-    // ── Ffn Values ──────────────────────────────────────────────────────
+    // Ffn Values
     public const string ValFfnDense = "dense";
     public const string ValFfnGated = "gated";
     public const string ValFfnMoE = "moe";
 
-    // ── Norm Values ──────────────────────────────────────────────────────
+    // Norm Values
     public const string ValNormRMS = "rmsnorm";
     public const string ValNormRMSAvx2 = "rmsnormavx2";
     public const string ValNormRMSScalar = "rmsnormscalar";
@@ -90,12 +90,12 @@ public sealed record SharpMindConfig
     public const string ValNormLayerAvx2 = "layernormavx2";
     public const string ValNormLayerScalar = "layernormscalar";
 
-    // ── Fused Kernel Values ─────────────────────────────────────────────
+    // Fused Kernel Values
     public const string KeyFusedNormLinear = "fusednormlinear";
     public const string ValFusedNormLinearAVX2 = "fusednormlinearavx2";
     public const string ValFusedNormLinearScalar = "fusednormlinearscalar";
 
-    // ── Arch Values ──────────────────────────────────────────────────────
+    // Arch Values
     public const string ValDecoder = "decoder";
     public const string ValEncoder = "encoder";
 

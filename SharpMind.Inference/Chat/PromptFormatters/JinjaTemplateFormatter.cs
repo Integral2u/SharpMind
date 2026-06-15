@@ -29,7 +29,7 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
 {
     private readonly string _template = template;
 
-    // ── Public entry point ────────────────────────────────────────────────
+    // Public entry point
 
     public string Format(IReadOnlyList<ChatMessage> history, Tokenizer tokenizer, bool addBos)
     {
@@ -59,7 +59,7 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
         return sb.ToString();
     }
 
-    // ── Tokeniser ─────────────────────────────────────────────────────────
+    // Tokeniser
     // Splits the template into a flat list of Token objects.
 
     private enum TKind { Text, Output, Tag }
@@ -115,7 +115,7 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
         return result;
     }
 
-    // ── Executor ──────────────────────────────────────────────────────────
+    // Executor
 
     private static void Execute(
         List<Token> tokens, int start, int end,
@@ -168,7 +168,7 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
         }
     }
 
-    // ── For loop ──────────────────────────────────────────────────────────
+    // For loop
 
     private static int ExecuteFor(
         List<Token> tokens, int forIdx, int end,
@@ -211,7 +211,7 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
         return bodyEnd + 1; // +1 to skip the endfor token
     }
 
-    // ── If / elif / else ──────────────────────────────────────────────────
+    // If / elif / else
 
     private static int ExecuteIf(
         List<Token> tokens, int ifIdx, int end,
@@ -282,7 +282,7 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
         return end;
     }
 
-    // ── Set ───────────────────────────────────────────────────────────────
+    // Set
 
     private static void ExecuteSet(string tag, JinjaEnv env)
     {
@@ -328,7 +328,7 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
         }
     }
 
-    // ── Expression evaluator ──────────────────────────────────────────────
+    // Expression evaluator
 
     public static object? Eval(string expr, JinjaEnv env)
     {
@@ -504,7 +504,7 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
         return env.Get(expr);
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────────
+    // Helpers
 
     private static int FindMatchingEnd(
         List<Token> tokens, int start, int end,

@@ -21,14 +21,14 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     private readonly bool _addEos;
     private bool _disposed;
     private int[]? _cachedPromptTokens;
-    // ── IO interceptors (optional) ───────────────────────────────────────────
+    // IO interceptors (optional)
     // Supplied by the host application. When present and PermissionCallback is
     // set, they are activated only for the duration of each CallToolAsync call
     // so that ordinary session IO is never gated.
     private readonly InterceptingFileSystem? _fileSystem;
     private readonly InterceptingNetworkHandler? _networkHandler;
 
-    // ── Permission gate ──────────────────────────────────────────────────────
+    // Permission gate
     /// <summary>
     /// Callback invoked when a tool call attempts file system or network IO.
     /// When <see langword="null"/> <see cref="ToolPermission.Never"/> is returned.
@@ -170,7 +170,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
 
     private void ThrowIfDisposed()
         => ObjectDisposedException.ThrowIf(_disposed, typeof(ChatSession<T, K>).Name);
-    // ── Tool call detection & dispatch ───────────────────────────────────────
+    // Tool call detection & dispatch
 
     /// <summary>
     /// Returns true when <paramref name="text"/> looks like a well-formed agent
@@ -195,7 +195,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         catch (JsonException) { return false; }
     }
 
-    // ── Tool dispatch with IO interception ───────────────────────────────────
+    // Tool dispatch with IO interception
 
     /// <summary>
     /// Activates the IO interceptors (if any) around <see cref="IAgentBuilder.CallToolAsync"/>,
@@ -250,7 +250,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         // rather than a tool call, or until MaxToolCallsPerTurn is reached.
         for (int toolCallCount = 0; ; toolCallCount++)
         {
-            // ── Tokenise ─────────────────────────────────────────────────────
+            // Tokenise
             int[] promptToks;
             if (_cachedPromptTokens is not null && _formatter is null)
             {
@@ -302,7 +302,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
                 Stream = true,
             };
 
-            // ── Stream tokens ────────────────────────────────────────────────
+            // Stream tokens
             var response = new System.Text.StringBuilder();
 
             await foreach (var fragment in _generator.GenerateFromTokensAsync(promptToks, sampleCfg, genCfg, ct))
@@ -331,7 +331,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
 
             var responseText = response.ToString();
 
-            // ── Tool call detection ──────────────────────────────────────────
+            // Tool call detection
             if (_agentBuilder is not null
                 && toolCallCount < MaxToolCallsPerTurn
                 && TryParseToolCall(responseText, out var toolCall)
@@ -369,7 +369,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
                 continue;                   // generate again with enriched history
             }
 
-            // ── Normal (non-tool) response ───────────────────────────────────
+            // Normal (non-tool) response
             if (responseText.Length > 0)
                 _history.Add(ChatMessage.Agent(responseText));
 

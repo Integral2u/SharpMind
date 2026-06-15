@@ -9,7 +9,7 @@ namespace SharpMind.Core.Numerics;
 /// </summary>
 public static class TensorInit
 {
-    // ── uniform ────────────────────────────────────────────────────────────
+    // uniform
 
     /// <summary>Fills with U[low, high) samples.</summary>
     public static Tensor<T> Uniform<T>(TensorShape shape, T low, T high, int? seed = null)
@@ -23,7 +23,7 @@ public static class TensorInit
         return tensor;
     }
 
-    // ── normal ─────────────────────────────────────────────────────────────
+    // normal
 
     /// <summary>Fills with N(mean, std²) samples via Box-Muller.</summary>
     public static Tensor<T> Normal<T>(
@@ -39,7 +39,7 @@ public static class TensorInit
         return tensor;
     }
 
-    // ── Xavier / Glorot uniform ────────────────────────────────────────────
+    // Xavier / Glorot uniform
 
     /// <summary>
     /// Xavier uniform initialisation (Glorot &amp; Bengio, 2010).
@@ -56,7 +56,7 @@ public static class TensorInit
         return Uniform(shape, T.Zero - lim, lim, seed);
     }
 
-    // ── He / Kaiming normal ────────────────────────────────────────────────
+    // He / Kaiming normal
 
     /// <summary>
     /// He / Kaiming normal initialisation (He et al., 2015).
@@ -72,7 +72,7 @@ public static class TensorInit
         return Normal(shape, T.Zero, std, seed);
     }
 
-    // ── helpers ────────────────────────────────────────────────────────────
+    // helpers
 
     /// <summary>
     /// Estimates fan-in and fan-out from a weight tensor's shape.

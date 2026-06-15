@@ -11,7 +11,7 @@
 /// </summary>
 public sealed record ModelConfig
 {
-    // ── Architecture ───────────────────────────────────────────────────
+    // Architecture
 
     /// <summary>
     /// GGUF architecture name (e.g. "qwen2", "llama", "bert", "gpt2").
@@ -20,7 +20,7 @@ public sealed record ModelConfig
     /// </summary>
     public string? Architecture { get; init; }
 
-    // ── Dimensions ────────────────────────────────────────────────────────
+    // Dimensions
 
     public PositionalEncoding PositionalEncoding { get; init; } = PositionalEncoding.RoPE;
     /// <summary>Vocabulary size — must match the tokenizer.</summary>
@@ -49,7 +49,7 @@ public sealed record ModelConfig
     /// <summary>Maximum sequence length the model supports.</summary>
     public int MaxSeqLen { get; init; }
 
-    // ── MoE ───────────────────────────────────────────────────────────────
+    // MoE
 
     /// <summary>Total number of experts. Ignored when FfnKind is not MoE.</summary>
     public int NumExperts { get; init; } = 8;
@@ -57,12 +57,12 @@ public sealed record ModelConfig
     /// <summary>Number of experts activated per token (top-k routing).</summary>
     public int TopKExperts { get; init; } = 2;
 
-    // ── Regularisation ────────────────────────────────────────────────────
+    // Regularisation
 
     /// <summary>Dropout probability. 0 = disabled (inference default).</summary>
     public float Dropout { get; init; } = 0f;
 
-    // ── RoPE ──────────────────────────────────────────────────────────────
+    // RoPE
 
     /// <summary>
     /// RoPE base frequency theta.
@@ -70,12 +70,12 @@ public sealed record ModelConfig
     /// </summary>
     public float RopeTheta { get; init; } = 10_000f;
 
-    // ── Normalisation ─────────────────────────────────────────────────────
+    // Normalisation
 
     /// <summary>Epsilon for RMS / LayerNorm. Qwen2 uses 1e-6; LLaMA 2 uses 1e-5.</summary>
     public float NormEps { get; init; } = 1e-5f;
 
-    // ── Derived ───────────────────────────────────────────────────────────
+    // Derived
 
     /// <summary>Dimension per query head. Must equal HiddenDim / NumHeads.</summary>
     public int HeadDim => HiddenDim / NumHeads;
@@ -84,7 +84,7 @@ public sealed record ModelConfig
     public int KvGroupSize => NumHeads / NumKvHeads;
 
 
-    // ── Validation ────────────────────────────────────────────────────────
+    // Validation
 
     public void Validate()
     {
@@ -106,7 +106,7 @@ public sealed record ModelConfig
                 $"NumExperts ({NumExperts}) must be >= TopKExperts ({TopKExperts}).");
     }
 
-    // ── Presets ───────────────────────────────────────────────────────────
+    // Presets
 
     /// <summary>GPT-2 small (117M parameters).</summary>
     public static ModelConfig Gpt2Small => new()

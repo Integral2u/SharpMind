@@ -1,13 +1,10 @@
-﻿using System.Text.RegularExpressions;
-using SharpMind.Core.Tensors;
+﻿using SharpMind.Core.Tensors;
 using SharpMind.Core.Training;
 using SharpMind.Model.Layers;
 
 namespace SharpMind.Model.Arch;
 
-// ─────────────────────────────────────────────────────────────────────────────
 // DecoderArch — causal, autoregressive (GPT, LLaMA, Mistral)
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// <summary>
 /// Decoder-only architecture. Each token attends only to itself and

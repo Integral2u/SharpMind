@@ -66,8 +66,6 @@ public sealed class TrainLoop
         _ops        = ops;
     }
 
-    // ── Main loop ─────────────────────────────────────────────────────────
-
     /// <summary>
     /// Runs the training loop for <see cref="TrainConfig.TotalSteps"/> steps.
     /// <paramref name="onStep"/> is called after each optimizer step with loss
@@ -98,13 +96,13 @@ public sealed class TrainLoop
 
             var sw = System.Diagnostics.Stopwatch.StartNew();
 
-            // ── Forward pass ──────────────────────────────────────────────
+            // Forward pass
             float batchLoss = ForwardBackward(batch);
             accumLoss += batchLoss;
             accumCount++;
             batch.Dispose();
 
-            // ── Optimizer step (after accumulation) ───────────────────────
+            // Optimizer step (after accumulation)
             if (accumCount < _config.GradAccumSteps) continue;
 
             float lr = _scheduler.GetLr(step + 1);
@@ -122,7 +120,7 @@ public sealed class TrainLoop
             accumCount = 0;
             sw.Stop();
 
-            // ── Callbacks ─────────────────────────────────────────────────
+            // Callbacks
             if (onStep is not null && step % _config.LogInterval == 0)
                 onStep(new TrainStepResult
                 {
@@ -150,7 +148,7 @@ public sealed class TrainLoop
         }
     }
 
-    // ── Forward + backward ────────────────────────────────────────────────
+    // Forward + backward
 
     private float ForwardBackward(TrainingBatch batch)
     {

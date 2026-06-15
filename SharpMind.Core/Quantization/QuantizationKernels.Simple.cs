@@ -6,12 +6,12 @@ namespace SharpMind.Core.Quantization;
 
 public static partial class QuantizationKernels
 {
-    // ═══════════════════════════════════════════════════════════════════════
+    
     // QuantizedMatMulQ8_0 — fused matmul for q8_0 weights
     // Processes all output columns in one call, parallelized over column
     // groups (NR=8). Eliminates per-column VecDot function call overhead
     // and enables multi-core scaling.
-    // ═══════════════════════════════════════════════════════════════════════
+    
 
     internal static unsafe void QuantizedMatMulQ8_0_FMA(
         float* input, byte* rawWeights, float* output,
@@ -343,9 +343,9 @@ public static partial class QuantizationKernels
         }
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
+    
     // VecDotQ8_0 — 8-bit block (QK=32)
-    // ═══════════════════════════════════════════════════════════════════════
+    
 
     internal static unsafe float VecDotQ8_0_Scalar(float* input, byte* rawWeights, int col, int inFeatures)
     {
@@ -473,9 +473,9 @@ public static partial class QuantizationKernels
         return (float)sum;
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
+    
     // VecDotQ4_0 — 4-bit block (QK=32)
-    // ═══════════════════════════════════════════════════════════════════════
+    
 
     internal static unsafe float VecDotQ4_0_Scalar(float* input, byte* rawWeights, int col, int inFeatures)
     {
@@ -596,9 +596,9 @@ public static partial class QuantizationKernels
         return (float)sum;
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
+    
     // VecDotQ4_1 — 4-bit block with min (QK=32)
-    // ═══════════════════════════════════════════════════════════════════════
+    
 
     internal static unsafe float VecDotQ4_1_Scalar(float* input, byte* rawWeights, int col, int inFeatures)
     {
@@ -698,9 +698,9 @@ public static partial class QuantizationKernels
         return (float)sum;
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
+    
     // VecDotQ5_0 — 5-bit block (QK=32)
-    // ═══════════════════════════════════════════════════════════════════════
+    
 
     internal static unsafe float VecDotQ5_0_Scalar(float* input, byte* rawWeights, int col, int inFeatures)
     {
@@ -727,9 +727,9 @@ public static partial class QuantizationKernels
         return (float)sum;
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
+    
     // VecDotQ5_1 — 5-bit block with min (QK=32)
-    // ═══════════════════════════════════════════════════════════════════════
+    
 
     internal static unsafe float VecDotQ5_1_Scalar(float* input, byte* rawWeights, int col, int inFeatures)
     {
@@ -755,9 +755,9 @@ public static partial class QuantizationKernels
         return (float)sum;
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
+    
     // VecDotQ8_1 — 8-bit block with sum (QK=32)
-    // ═══════════════════════════════════════════════════════════════════════
+    
 
     internal static unsafe float VecDotQ8_1_Scalar(float* input, byte* rawWeights, int col, int inFeatures)
     {
@@ -885,9 +885,9 @@ public static partial class QuantizationKernels
         return (float)sum;
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
+    
     // VecDotQ2K — 2-bit K-quant
-    // ═══════════════════════════════════════════════════════════════════════
+    
 
     internal static unsafe float VecDotQ2K_Scalar(float* input, byte* rawWeights, int col, int inFeatures)
     {
@@ -1165,9 +1165,9 @@ public static partial class QuantizationKernels
         return (float)sum;
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
+    
     // VecDotQ8K — 8-bit K-quant (QK_K=256)
-    // ═══════════════════════════════════════════════════════════════════════
+    
 
     internal static unsafe float VecDotQ8K_Scalar(float* input, byte* rawWeights, int col, int inFeatures)
     {

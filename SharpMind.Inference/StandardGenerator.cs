@@ -57,7 +57,7 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
         _workspace = new Core.Memory.Workspace(SharpMind.Core.Memory.Workspace.CalculateRequiredSize(model.Config.HiddenDim,model.Config.FfnDim,model.Config.VocabSize,model.Config.NumLayers, model.Config.MaxSeqLen));
     }
 
-    // ── Public API ────────────────────────────────────────────────────────
+    // Public API
 
     /// <summary>
     /// Generates tokens from <paramref name="prompt"/> as an async stream of
@@ -100,7 +100,7 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
         Tensor<float>? logitsTensor = null;
         try
         {
-            // ── Prefill ───────────────────────────────────────────────────────
+            // Prefill
             _workspace.Reset();
             int posOffset = _caches[0].Length;
             using var prefillInput = _workspace.Rent<int>([1, promptIds.Length]);
@@ -231,7 +231,7 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
     /// <summary>KV-cache fill as a fraction of maximum capacity.</summary>
     public float CacheFillRatio => (float)_caches[0].Length / _caches[0].MaxSeqLen;
 
-    // ── Tokens-per-second ─────────────────────────────────────────────────
+    // Tokens-per-second
     /// <summary>Rolling tokens-per-second over the last few decode steps.</summary>
     public float? TokensPerSecond { get; private set; }
     /// <summary>Cumulative tokens-per-second from the start of the current generation.</summary>
@@ -239,7 +239,7 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
     /// <summary>Seconds from start to first output token (includes prefill + first decode step).</summary>
     public float? TimeToFirstToken { get; private set; }
 
-    // ── Repetition penalty ────────────────────────────────────────────────
+    // Repetition penalty
 
     private static void ApplyRepetitionPenalty(
         Span<float> logits,
@@ -268,7 +268,7 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
             ScaleId(logits, generatedIds[i], penalty);
     }
 
-    // ── Disposal ──────────────────────────────────────────────────────────
+    // Disposal
 
     public void Dispose()
     {

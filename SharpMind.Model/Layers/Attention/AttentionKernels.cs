@@ -6,9 +6,7 @@ using static SharpMind.Core.Quantization.QuantizationKernels;
 
 namespace SharpMind.Model.Layers.Attention;
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Attention kernels — pure static, one unconditional path each
-// ─────────────────────────────────────────────────────────────────────────────
 
 internal static class AttentionKernels
 {
@@ -234,7 +232,7 @@ internal static class AttentionKernels
                 Math.Max(kvLen, 64));
     }
 
-    // ── Flash attention ────────────────────────────────────────────────
+    // Flash attention
     // Online softmax (Milakov & Gimelshein, 2018) — tiles KV positions to
     // avoid O(kvLen) score buffer. Essential for long-context inference.
 
@@ -456,12 +454,12 @@ internal static class AttentionKernels
         }
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
+    
     // Q8_0 quantized KV cache attention kernels.
     // Same online-softmax 2-pass structure as the float variants, but K and
     // V are read from Q8_0 block-format byte arrays and dequantized on the
     // fly during the Q·K dot and V-accumulation loops.
-    // ═══════════════════════════════════════════════════════════════════════
+    
 
     private const int Q8QK = 32;
     private const int Q8BLOCK = 34; // 2 bytes fp16 scale + 32 × int8
@@ -753,10 +751,10 @@ internal static class AttentionKernels
         }
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
+    
     // Flash Q8_0 quantized KV cache attention kernels.
     // Tiled online softmax — O(1) score buffer (stackalloc), no heap alloc.
-    // ═══════════════════════════════════════════════════════════════════════
+    
 
     internal static unsafe void ScaledDotProductFlashQ8_0AVX2(
         float* q, byte* kQuant, byte* vQuant, float* output,

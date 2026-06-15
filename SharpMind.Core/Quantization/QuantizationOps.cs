@@ -8,9 +8,9 @@ public abstract class QuantizationOps
     private const string NS  = $"{nameof(SharpMind)}.{nameof(Core)}.{nameof(Quantization)}.{nameof(QuantizationKernels)}";
     private const string MH  = $"{nameof(SharpMind)}.{nameof(Core)}.{nameof(MathHelpers)}";
 
-    // ═══════════════════════════════════════════════════════════════════════
+    
     // K-Quant VecDot methods (QK_K=256)
-    // ═══════════════════════════════════════════════════════════════════════
+    
 
     [PuzzleCornerPiece(QuantizationConfig.KeyVecDotQ3K, true, null,
         "q3k_fma",    $"{NS}.{nameof(QuantizationKernels.VecDotQ3K_FMA)}",
@@ -40,9 +40,9 @@ public abstract class QuantizationOps
         "q6k_scalar", $"{NS}.{nameof(QuantizationKernels.VecDotQ6K_Scalar)}")]
     public abstract unsafe float VecDotQ6K(float* input, byte* rawWeights, int col, int inFeatures);
 
-    // ═══════════════════════════════════════════════════════════════════════
+    
     // Simple-block VecDot methods (QK=32)
-    // ═══════════════════════════════════════════════════════════════════════
+    
 
     [PuzzleCornerPiece(QuantizationConfig.KeyVecDotQ8_0, true, null,
         "q8_0_fma",    $"{NS}.{nameof(QuantizationKernels.VecDotQ8_0_FMA)}",
@@ -107,9 +107,9 @@ public abstract class QuantizationOps
         "q8k_scalar", $"{NS}.{nameof(QuantizationKernels.VecDotQ8K_Scalar)}")]
     public abstract unsafe float VecDotQ8K(float* input, byte* rawWeights, int col, int inFeatures);
 
-    // ═══════════════════════════════════════════════════════════════════════
+    
     // Shared helpers
-    // ═══════════════════════════════════════════════════════════════════════
+    
 
     [PuzzleCornerPiece(QuantizationConfig.KeyHSum256, true, null,
         "hsum_fma",   $"{MH}.{nameof(MathHelpers.HSum256_Avx)}",

@@ -10,7 +10,7 @@ public sealed class BlockContext : IDisposable
 {
     private bool _disposed;
 
-    // ── Norm 1 (pre-attention) ────────────────────────────────────────────
+    // Norm 1 (pre-attention)
 
     /// <summary>Input to norm1 — the residual stream before this block.</summary>
     public Tensor<float>? Norm1Input { get; set; }
@@ -21,7 +21,7 @@ public sealed class BlockContext : IDisposable
     /// <summary>Per-row rmsInv values used in RMSNorm backward.</summary>
     public float[]? Norm1RmsInv { get; set; }
 
-    // ── Attention ─────────────────────────────────────────────────────────
+    // Attention
 
     public Tensor<float>? Q          { get; set; }
     public Tensor<float>? K          { get; set; }
@@ -30,13 +30,13 @@ public sealed class BlockContext : IDisposable
     public Tensor<float>? AttnOut    { get; set; }   // before output projection
     public Tensor<float>? AttnProjOut { get; set; }  // after output projection
 
-    // ── Norm 2 (pre-FFN) ──────────────────────────────────────────────────
+    // Norm 2 (pre-FFN)
 
     public Tensor<float>? Norm2Input { get; set; }
     public Tensor<float>? Norm2Out   { get; set; }
     public float[]? Norm2RmsInv { get; set; }
 
-    // ── FFN ───────────────────────────────────────────────────────────────
+    // FFN
 
     public Tensor<float>? FfnHidden  { get; set; }   // after W1 (or gate/up for gated)
     public Tensor<float>? FfnGate    { get; set; }   // gated FFN: gate projection
@@ -44,7 +44,7 @@ public sealed class BlockContext : IDisposable
     public Tensor<float>? FfnActOut  { get; set; }   // after activation
     public Tensor<float>? FfnOut     { get; set; }   // after W2/Wdown
 
-    // ── Disposal ──────────────────────────────────────────────────────────
+    // Disposal
 
     public void Dispose()
     {

@@ -28,9 +28,9 @@ public static class GPUQuantizationKernels
         return sign == 0 ? result : -result;
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
+    
     // Simple-block VecDot GPU (QK=32)
-    // ═══════════════════════════════════════════════════════════════════════
+    
 
     [PuzzlePeice(nameof(QuantizationOps.VecDotQ8_0), QuantizationConfig.KeyVecDotQ8_0, GPUSharpMindConfig.ValVecDotQ8_0)]
     public static unsafe float VecDotQ8_0_GPU(float* input, byte* rawWeights, int col, int inFeatures)
@@ -340,9 +340,9 @@ public static class GPUQuantizationKernels
         partials[tid] = (float)sum;
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
+    
     // K-Quant VecDot GPU (QK_K=256)
-    // ═══════════════════════════════════════════════════════════════════════
+    
 
     [PuzzlePeice(nameof(QuantizationOps.VecDotQ2K), QuantizationConfig.KeyVecDotQ2K, GPUSharpMindConfig.ValVecDotQ2K)]
     public static unsafe float VecDotQ2K_GPU(float* input, byte* rawWeights, int col, int inFeatures)
@@ -719,9 +719,9 @@ public static class GPUQuantizationKernels
         partials[tid] = (float)sum;
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
+    
     // Helpers — GPU versions call CPU scalar fallbacks
-    // ═══════════════════════════════════════════════════════════════════════
+    
 
     [PuzzlePeice(nameof(QuantizationOps.HSum256), QuantizationConfig.KeyHSum256, GPUSharpMindConfig.ValHSum256)]
     public static float HSum256_GPU(System.Runtime.Intrinsics.Vector256<float> v)

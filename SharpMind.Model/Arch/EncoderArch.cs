@@ -4,9 +4,7 @@ using SharpMind.Model.Layers;
 
 namespace SharpMind.Model.Arch;
 
-// ─────────────────────────────────────────────────────────────────────────────
 // EncoderArch — bidirectional (BERT, RoBERTa)
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// <summary>
 /// Encoder-only architecture. Every token attends to every other token

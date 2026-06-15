@@ -132,7 +132,7 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
         _draftScratch = new int[DefaultNumHeads + 1];
     }
 
-    // ── IGenerator<T> implementation ─────────────────────────────────────────
+    // IGenerator<T> implementation
 
     public async IAsyncEnumerable<string> GenerateAsync(
         string prompt,
@@ -159,7 +159,7 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
             yield return fragment;
     }
 
-    // ── Core generation loop ─────────────────────────────────────────────────
+    // Core generation loop
 
     private async IAsyncEnumerable<string> GenerateCoreAsync(
         int[] promptIds,
@@ -181,7 +181,7 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
         int numHeads = _medusaHeads.NumHeads;
         int draftLen = numHeads + 1; // LM-head greedy + K head predictions
 
-        // ── Prefill ────────────────────────────────────────────────────────
+        // Prefill
         // Process the full prompt in one go.  After this, the KV cache has
         // promptLen entries and logitsTensor predicts the very next token.
         _workspace.Reset();
@@ -209,7 +209,7 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
             // stores into _normedHiddenScratch for the first Medusa prediction.
             RefillNormedHidden(promptLen - 1);
 
-            // ── Decode loop ────────────────────────────────────────────────
+            // Decode loop
             while (generatedIds.Count < genCfg.MaxNewTokens)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -317,7 +317,7 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
                 //    Two cases depending on whether all K+1 draft tokens were accepted.
                 if (accepted == draftLen)
                 {
-                    // ── All accepted: emit the bonus token ─────────────────
+                    // All accepted: emit the bonus token
                     // verif_logits[K] predicts what comes after the last draft
                     // token (draft[K]).  We sample this greedily as the "bonus"
                     // — an un-verified token that we accept optimistically.
@@ -375,12 +375,11 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
                     // [1, 1, H] and already final-normed (ForwardInPlace).
                     // We copy directly into _normedHiddenScratch.
                     var ch = _model.LastCachedHidden;
-                    if (ch != null)
-                        ch.Data[..hiddenDim].CopyTo(_normedHiddenScratch);
+                    ch?.Data[..hiddenDim].CopyTo(_normedHiddenScratch);
                 }
                 else
                 {
-                    // ── Partial acceptance: trim and re-extract state ──────
+                    // Partial acceptance: trim and re-extract state
                     int lastAcceptedIdx = accepted - 1;
 
                     // Remove the rejected suffix from every layer's KV cache.
@@ -445,7 +444,7 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
         }
     }
 
-    // ── Helpers ─────────────────────────────────────────────────────────────
+    // Helpers
 
     /// <summary>
     /// Copies row <paramref name="rowIndex"/> from the model's cached hidden
@@ -479,7 +478,7 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
         normTemp.Data.CopyTo(_normedHiddenScratch);
     }
 
-    // ── Cache management & disposal ─────────────────────────────────────────
+    // Cache management & disposal
 
     public void ResetCache()
     {

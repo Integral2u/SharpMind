@@ -7,7 +7,7 @@ using System.Text.Json.Nodes;
 
 namespace SharpMind.Inference.Chat;
 
-// ── File system interceptor ───────────────────────────────────────────────────
+// File system interceptor
 
 /// <summary>
 /// <see cref="IFileSystem"/> decorator that gates every file-system operation
@@ -26,7 +26,7 @@ public sealed class InterceptingFileSystem : IFileSystem
     private string _currentTool = string.Empty;
     private JsonObject _currentArgs = [];
 
-    // ── Internal activation (ChatSession only) ────────────────────────────────
+    // Internal activation (ChatSession only)
 
     internal void Activate(string toolName, JsonObject args, IoPermissionCheck check)
     {
@@ -42,7 +42,7 @@ public sealed class InterceptingFileSystem : IFileSystem
         _currentArgs = [];
     }
 
-    // ── Gate helper ───────────────────────────────────────────────────────────
+    // Gate helper
 
     /// <summary>
     /// Synchronously blocks until the async permission check resolves.
@@ -59,7 +59,7 @@ public sealed class InterceptingFileSystem : IFileSystem
                 $"Tool '{_currentTool}' was denied file access to '{path}'.");
     }
 
-    // ── IFileSystem passthrough with gate ─────────────────────────────────────
+    // IFileSystem passthrough with gate
     // Only the most commonly used surface members need gating; everything else
     // delegates to the inner implementation transparently.
 
@@ -73,7 +73,7 @@ public sealed class InterceptingFileSystem : IFileSystem
     public IFileSystemWatcherFactory FileSystemWatcher => _inner.FileSystemWatcher;
     public IFileVersionInfoFactory FileVersionInfo => _inner.FileVersionInfo;
 
-    // ── Gated IFile ───────────────────────────────────────────────────────────
+    // Gated IFile
 
     private sealed class GatedFile(IFile inner, Action<string> gate) : IFile
     {
@@ -273,7 +273,7 @@ public sealed class InterceptingFileSystem : IFileSystem
         public Task WriteAllTextAsync(string path, ReadOnlyMemory<char> contents, Encoding encoding, CancellationToken cancellationToken = default) => inner.WriteAllTextAsync(path, contents, encoding, cancellationToken);
     }
 
-    // ── Gated IDirectory ──────────────────────────────────────────────────────
+    // Gated IDirectory
 
     private sealed class GatedDirectory(IDirectory inner, Action<string> gate) : IDirectory
     {

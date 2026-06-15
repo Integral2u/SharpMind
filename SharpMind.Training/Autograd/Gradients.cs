@@ -21,9 +21,9 @@ namespace SharpMind.Training.Autograd;
 /// </summary>
 public static class Gradients
 {
-    // ═══════════════════════════════════════════════════════════════════════
+    
     // Cross-entropy + softmax combined backward
-    // ═══════════════════════════════════════════════════════════════════════
+    
 
     /// <summary>
     /// Computes dL/dLogits for the combined softmax + cross-entropy loss.
@@ -68,13 +68,13 @@ public static class Gradients
         return dLogits;
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
+    
     // Linear backward  y = x @ W^T
     // W: [OutFeatures, InFeatures]   x: [B, InFeatures]   y: [B, OutFeatures]
     // dL/dx = dL/dy @ W              [B, InFeatures]
     // dL/dW = dL/dy^T @ x            [OutFeatures, InFeatures]
     // dL/db = sum(dL/dy, axis=0)     [OutFeatures]
-    // ═══════════════════════════════════════════════════════════════════════
+    
 
     /// <summary>
     /// Returns dInput [B, InFeatures] and accumulates gradients into weight/bias parameters.
@@ -139,12 +139,12 @@ public static class Gradients
         return dInput;
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
+    
     // RMSNorm backward
     // y = x * rmsInv * w
     // dL/dw = sum_batch(dL/dy * xNorm)
     // dL/dx[i] = rmsInv * (dL/dy[i]*w[i] - xNorm[i] * dot(dL/dy*w, xNorm)/n)
-    // ═══════════════════════════════════════════════════════════════════════
+    
 
     /// <summary>
     /// Returns dInput [T, D] and accumulates into weight gradient.
@@ -187,10 +187,10 @@ public static class Gradients
         return dInput;
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
+    
     // LayerNorm backward
     // y = (x - mean) / std * w + b
-    // ═══════════════════════════════════════════════════════════════════════
+    
 
     public static Tensor<float> LayerNorm(
         Tensor<float> dOutput,
@@ -247,11 +247,11 @@ public static class Gradients
         return dInput;
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
+    
     // Scaled dot-product attention backward
     // scores = Q @ K^T / sqrt(d)    probs = softmax(scores, causal)
     // out = probs @ V
-    // ═══════════════════════════════════════════════════════════════════════
+    
 
     /// <summary>
     /// Returns (dQ, dK, dV) for one head.
@@ -332,9 +332,9 @@ public static class Gradients
         return (dQ, dK, dV);
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
+    
     // Embedding backward — scatter-add gradient into the embedding table
-    // ═══════════════════════════════════════════════════════════════════════
+    
 
     /// <summary>
     /// Accumulates dOutput into the rows of the embedding weight gradient
@@ -359,9 +359,9 @@ public static class Gradients
         }
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
+    
     // Fast transcendental helpers — polynomial approximations
-    // ═══════════════════════════════════════════════════════════════════════
+    
 
     /// <summary>exp(x) via range-reduced degree-6 polynomial, ≈5 ULP over [-88, 88].</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -407,9 +407,9 @@ public static class Gradients
         return Avx.Divide(Avx.Subtract(e2z, one), Avx.Add(e2z, one));
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
+    
     // Activation function backward — SiLU and GELU derivatives
-    // ═══════════════════════════════════════════════════════════════════════
+    
 
     /// <summary>SiLU backward: d/dx [x * sigmoid(x)] = sigmoid(x) + x * sigmoid(x) * (1 - sigmoid(x)).</summary>
     public static unsafe Tensor<float> SiLUBackward(Tensor<float> dOutput, Tensor<float> preAct)
@@ -518,9 +518,9 @@ public static class Gradients
         return dInput;
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
+    
     // Gradient clipping — L2 norm clipping across all parameters
-    // ═══════════════════════════════════════════════════════════════════════
+    
 
     /// <summary>
     /// Clips the global gradient norm to <paramref name="maxNorm"/> in-place.

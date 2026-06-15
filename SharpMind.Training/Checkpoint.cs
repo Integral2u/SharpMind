@@ -17,7 +17,7 @@ namespace SharpMind.Training;
 /// </summary>
 public static class Checkpoint
 {
-    // ── Save ──────────────────────────────────────────────────────────────
+    // Save
 
     /// <summary>
     /// Saves all parameters and optimizer state to <paramref name="directory"/>.
@@ -36,7 +36,7 @@ public static class Checkpoint
 
         var paramList = parameters.ToList();
 
-        // ── Model weights ─────────────────────────────────────────────────
+        // Model weights
         string modelPath = Path.Combine(directory, "model.bin");
         using (var modelStream = new FileStream(
             modelPath, FileMode.Create, FileAccess.Write,
@@ -58,7 +58,7 @@ public static class Checkpoint
             }
         }
 
-        // ── Optimizer state ───────────────────────────────────────────────
+        // Optimizer state
         if (optimizer is not null)
         {
             string optPath = Path.Combine(directory, "optimizer.bin");
@@ -67,7 +67,7 @@ public static class Checkpoint
             optimizer.SaveState(optWriter);
         }
 
-        // ── Metadata ──────────────────────────────────────────────────────
+        // Metadata
         var meta = new JsonObject
         {
             ["step"]      = step,
@@ -81,7 +81,7 @@ public static class Checkpoint
             meta.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
     }
 
-    // ── Load ──────────────────────────────────────────────────────────────
+    // Load
 
     /// <summary>
     /// Loads parameter values from a checkpoint directory into the supplied

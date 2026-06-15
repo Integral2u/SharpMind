@@ -25,11 +25,11 @@ public abstract class FfnLayer : IDisposable
     protected readonly TensorOps Ops;
     private bool _disposed;
 
-    // ── Dense weights ─────────────────────────────────────────────────────
+    // Dense weights
     protected readonly LinearLayer? W1;   // [FfnDim,    HiddenDim]
     protected readonly LinearLayer? W2;   // [HiddenDim, FfnDim]
 
-    // ── Gated weights ─────────────────────────────────────────────────────
+    // Gated weights
     public readonly LinearLayer? WGated; // [HiddenDim, 2*FfnDim] — fused gate+up
     public readonly LinearLayer? WDown;  // [HiddenDim, FfnDim]
 
@@ -86,7 +86,7 @@ public abstract class FfnLayer : IDisposable
         return false;
     }
 
-    // ── MoE weights ───────────────────────────────────────────────────────
+    // MoE weights
     protected readonly LinearLayer? Router;     // [NumExperts, HiddenDim]
     protected readonly LinearLayer[]? ExpertGate;
     protected readonly LinearLayer[]? ExpertUp;
@@ -151,7 +151,7 @@ public abstract class FfnLayer : IDisposable
         // MoE weights not supported in current BlockWeights
     }
 
-    // ── PuzzleCornerPieces ────────────────────────────────────────────────
+    // PuzzleCornerPieces
 
     [PuzzleCornerPiece(SharpMindConfig.KeyFfn,
         SharpMindConfig.ValFfnDense, NS + "." + nameof(FfnKernels.Dense),
@@ -160,7 +160,7 @@ public abstract class FfnLayer : IDisposable
     public abstract Tensor<float> ApplyFfn(Tensor<float> x, SharpMind.Core.Memory.Workspace? workspace = null);
 
 
-    // ── Forward ───────────────────────────────────────────────────────
+    // Forward
 
     public Tensor<float> Forward(Tensor<float> x, SharpMind.Core.Memory.Workspace? workspace = null)
     {
@@ -168,13 +168,13 @@ public abstract class FfnLayer : IDisposable
         return ApplyFfn(x, workspace);
     }
 
-    // ── Forward + State (for training) ─────────────────────────────────
+    // Forward + State (for training)
 
     public abstract (Tensor<float> Output, FfnLayerState State) ForwardWithState(Tensor<float> x);
 
     public abstract Tensor<float> Backward(Tensor<float> gradOutput, FfnLayerState state);
 
-    // ── Parameters & Disposal ───────────────────────────────────────────
+    // Parameters & Disposal
 
     public void Dispose()
     {

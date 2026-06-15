@@ -10,9 +10,9 @@ public static partial class QuantizationKernels
     internal const int QK_K = 256;
     internal const int QK   = 32;
 
-    // ═══════════════════════════════════════════════════════════════════════
+    
     // HalfToFloat — FP16 → FP32
-    // ═══════════════════════════════════════════════════════════════════════
+    
 
     public static unsafe float HalfToFloat_F16C(ushort half)
     {
@@ -47,9 +47,9 @@ public static partial class QuantizationKernels
 
     internal static float HalfToFloat_Scalar(ushort half) => HalfToFloat_F16C(half);
 
-    // ═══════════════════════════════════════════════════════════════════════
+    
     // GetScaleMinK4 — 6-bit K-quant scale/min unpacking
-    // ═══════════════════════════════════════════════════════════════════════
+    
 
     internal static unsafe byte GetScaleMinK4_Scale_Scalar(int j, byte* scales)
     {
@@ -65,9 +65,9 @@ public static partial class QuantizationKernels
         return (byte)((scales[j + 4] >> 4) | ((scales[j] >> 6) << 4));
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
+    
     // VecDotQ3K — 3-bit K-quant
-    // ═══════════════════════════════════════════════════════════════════════
+    
 
     internal static unsafe float VecDotQ3K_Scalar(float* input, byte* rawWeights, int col, int inFeatures)
     {
@@ -240,9 +240,9 @@ public static partial class QuantizationKernels
         return (float)sum;
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
+    
     // VecDotQ4K — 4-bit K-quant
-    // ═══════════════════════════════════════════════════════════════════════
+    
 
     internal static unsafe float VecDotQ4K_Scalar(float* input, byte* rawWeights, int col, int inFeatures)
     {
@@ -486,9 +486,9 @@ public static partial class QuantizationKernels
         return (float)sum;
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
+    
     // VecDotQ5K — 5-bit K-quant
-    // ═══════════════════════════════════════════════════════════════════════
+    
 
     internal static unsafe float VecDotQ5K_Scalar(float* input, byte* rawWeights, int col, int inFeatures)
     {
@@ -767,9 +767,9 @@ public static partial class QuantizationKernels
         return (float)sum;
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
+    
     // VecDotQ6K — 6-bit K-quant
-    // ═══════════════════════════════════════════════════════════════════════
+    
 
     internal static unsafe float VecDotQ6K_Scalar(float* input, byte* rawWeights, int col, int inFeatures)
     {
