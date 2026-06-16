@@ -379,6 +379,7 @@ public sealed class Transformer : IDisposable
 
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, nameof(Transformer));
 
+    [Obsolete("Use Forward() with workspace instead.")]
     public (Tensor<float> Logits, TransformerState State) ForwardWithState(Tensor<int> tokenIds, int positionOffset = 0)
     {
         ThrowIfDisposed();
@@ -415,6 +416,7 @@ public sealed class Transformer : IDisposable
         return (result, state);
     }
 
+    [Obsolete("Training path placeholder — will be removed in v2.")]
     public Tensor<float> Backward(Tensor<float> gradLogits, TransformerState state)
     {
         int batch = state.TokenIds.Shape.Rows;

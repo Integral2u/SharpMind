@@ -17,6 +17,7 @@ public sealed record QuantizationConfig
     public const string KeyVecDotQ8K   = "vecdot_q8k";
     public const string KeyHSum256     = "hsum256";
     public const string KeyHalfToFloat = "halftofloat";
+    public const string KeyFloatToHalf = "floattohalf";
     public const string KeyGetScaleMinK4_Scale = "getscalemink4_scale";
     public const string KeyGetScaleMinK4_Min   = "getscalemink4_min";
 
@@ -49,6 +50,7 @@ public sealed record QuantizationConfig
             [KeyVecDotQ8K]   = $"q8k{suffix}",
             [KeyHSum256]     = $"hsum{suffix}",
             [KeyHalfToFloat] = $"halftofloat{suffix}",
+            [KeyFloatToHalf] = $"floattohalf{suffix}",
             [KeyGetScaleMinK4_Scale] = $"getscalemink4_scale{suffix}",
             [KeyGetScaleMinK4_Min]   = $"getscalemink4_min{suffix}",
         };

@@ -126,6 +126,13 @@ public abstract class QuantizationOps
         "halftofloat_scalar", $"{NS}.{nameof(QuantizationKernels.HalfToFloat_Scalar)}")]
     public abstract float HalfToFloat(ushort half);
 
+    [PuzzleCornerPiece(QuantizationConfig.KeyFloatToHalf, true, null,
+        "floattohalf_fma",   $"{NS}.{nameof(QuantizationKernels.FloatToHalf_F16C)}",
+        "floattohalf_avx2",  $"{NS}.{nameof(QuantizationKernels.FloatToHalf_F16C)}",
+        "floattohalf_sse",   $"{NS}.{nameof(QuantizationKernels.FloatToHalf_Scalar)}",
+        "floattohalf_scalar", $"{NS}.{nameof(QuantizationKernels.FloatToHalf_Scalar)}")]
+    public abstract ushort FloatToHalf(float f);
+
     [PuzzleCornerPiece(QuantizationConfig.KeyGetScaleMinK4_Scale, true, null,
         "getscalemink4_scale_fma",    $"{NS}.{nameof(QuantizationKernels.GetScaleMinK4_Scale_Scalar)}",
         "getscalemink4_scale_avx2",   $"{NS}.{nameof(QuantizationKernels.GetScaleMinK4_Scale_Scalar)}",

@@ -1,3 +1,4 @@
+using SharpMind.Core.Quantization;
 using SharpMind.Core.Tensors;
 
 namespace SharpMind.Model;
@@ -181,7 +182,7 @@ public sealed class QuantizedKVCache : IKVCache
             float d = amax / 127f;
             if (amax == 0f) d = 1f;
 
-            *(ushort*)pDst = FloatToHalf_Scalar(d);
+            *(ushort*)pDst = QuantizationKernels.FloatToHalf_F16C(d);
             sbyte* qVals = (sbyte*)(pDst + 2);
 
             for (int i = 0; i < blockEnd; i++)
@@ -197,26 +198,4 @@ public sealed class QuantizedKVCache : IKVCache
         }
     }
 
-    private static unsafe ushort FloatToHalf_Scalar(float f)
-    {
-        uint bits = *(uint*)&f;
-        uint sign = (bits >> 16) & 0x8000;
-        int exp = (int)((bits >> 23) & 0xFF) - 127 + 15;
-        uint mant = bits & 0x007FFFFF;
-
-        if (exp <= 0)
-        {
-            if (exp < -10) return (ushort)sign;
-            mant = (mant | 0x00800000) >> (1 - exp);
-            return (ushort)(sign | (mant >> 13));
-        }
-
-        if (exp >= 31)
-        {
-            if (exp > 31) return (ushort)(sign | 0x7C00 | (mant >> 13));
-            return (ushort)(sign | 0x7C00 | (mant != 0 ? 0x200u : 0));
-        }
-
-        return (ushort)(sign | ((uint)exp << 10) | (mant >> 13));
-    }
 }

@@ -47,7 +47,38 @@ public static partial class QuantizationKernels
 
     internal static float HalfToFloat_Scalar(ushort half) => HalfToFloat_F16C(half);
 
-    
+
+    // FloatToHalf — FP32 → FP16
+
+
+    public static unsafe ushort FloatToHalf_F16C(float f)
+    {
+        uint bits = *(uint*)&f;
+        uint sign = (bits >> 16) & 0x8000;
+        int exp = (int)((bits >> 23) & 0xFF) - 127 + 15;
+        uint mant = bits & 0x007FFFFF;
+
+        if (exp <= 0)
+        {
+            if (exp < -10) return (ushort)sign;
+            mant = (mant | 0x00800000) >> (1 - exp);
+            return (ushort)(sign | (mant >> 13));
+        }
+
+        if (exp >= 31)
+        {
+            if (exp > 31) return (ushort)(sign | 0x7C00 | (mant >> 13));
+            return (ushort)(sign | 0x7C00 | (mant != 0 ? 0x200u : 0));
+        }
+
+        uint eBits = (uint)(exp << 10);
+        uint mMant = mant >> 13;
+        return (ushort)(sign | eBits | mMant);
+    }
+
+    internal static ushort FloatToHalf_Scalar(float f) => FloatToHalf_F16C(f);
+
+
     // GetScaleMinK4 — 6-bit K-quant scale/min unpacking
     
 

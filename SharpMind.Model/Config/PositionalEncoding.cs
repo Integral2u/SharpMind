@@ -3,5 +3,6 @@
 public enum PositionalEncoding
 {
     NoPE,
-    RoPE
+    RoPE,
+    ALiBi
 }

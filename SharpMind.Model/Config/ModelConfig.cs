@@ -1,4 +1,5 @@
 ﻿namespace SharpMind.Model.Config;
+
 /// <summary>
 /// Immutable hyperparameter set for a transformer model.
 /// Contains only dimensional and structural parameters — kernel selection
@@ -60,6 +61,7 @@ public sealed record ModelConfig
     // Regularisation
 
     /// <summary>Dropout probability. 0 = disabled (inference default).</summary>
+    [Obsolete("Unused in forward pass — kept for serialization compatibility.")]
     public float Dropout { get; init; } = 0f;
 
     // RoPE
