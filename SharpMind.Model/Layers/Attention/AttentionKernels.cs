@@ -24,7 +24,7 @@ internal static class AttentionKernels
     internal static unsafe void ScaledDotProductAVX2(
         float* q, float* k, float* v, float* output,
         int seqLen, int kvLen, int headDim, float scale, bool causal,
-        int qStride, int oStride)
+        int qStride, int oStride, float alibiSlope)
     {
         EnsureScoreBuffer(kvLen);
         fixed (float* pRow = &t_ScoreScratch![0])
@@ -57,7 +57,7 @@ internal static class AttentionKernels
                                 Vector256.LoadUnsafe(ref kj[d])));
                         float dot = MathHelpers.HSum256_Avx(acc);
                         for (; d < headDim; d++) dot += qi[d] * kj[d];
-                        score = dot * scale;
+                        score = dot * scale - alibiSlope * (absQPos - j);
                     }
                     scoreRow[j] = score;
                     float oldMax = max;
@@ -98,7 +98,7 @@ internal static class AttentionKernels
     internal static unsafe void ScaledDotProductFMA(
         float* q, float* k, float* v, float* output,
         int seqLen, int kvLen, int headDim, float scale, bool causal,
-        int qStride, int oStride)
+        int qStride, int oStride, float alibiSlope)
     {
         EnsureScoreBuffer(kvLen);
         fixed (float* pRow = &t_ScoreScratch![0])
@@ -129,7 +129,7 @@ internal static class AttentionKernels
                                                   Vector256.LoadUnsafe(ref kj[d]), acc);
                         float dot = MathHelpers.HSum256_Avx(acc);
                         for (; d < headDim; d++) dot += qi[d] * kj[d];
-                        score = dot * scale;
+                        score = dot * scale - alibiSlope * (absQPos - j);
                     }
                     scoreRow[j] = score;
                     float oldMax = max;
@@ -169,7 +169,7 @@ internal static class AttentionKernels
     internal static unsafe void ScaledDotProductScalar(
         float* q, float* k, float* v, float* output,
         int seqLen, int kvLen, int headDim, float scale, bool causal,
-        int qStride, int oStride)
+        int qStride, int oStride, float alibiSlope)
     {
         EnsureScoreBuffer(kvLen);
         fixed (float* pRow = &t_ScoreScratch![0])
@@ -195,7 +195,7 @@ internal static class AttentionKernels
                         float* kj = k + (long)j * headDim;
                         float dot = 0f;
                         for (int d = 0; d < headDim; d++) dot += qi[d] * kj[d];
-                        score = dot * scale;
+                        score = dot * scale - alibiSlope * (absQPos - j);
                     }
                     scoreRow[j] = score;
                     float oldMax = max;
@@ -241,7 +241,7 @@ internal static class AttentionKernels
     internal static unsafe void ScaledDotProductFlashAVX2(
         float* q, float* k, float* v, float* output,
         int seqLen, int kvLen, int headDim, float scale, bool causal,
-        int qStride, int oStride)
+        int qStride, int oStride, float alibiSlope)
     {
         if ((uint)headDim > FlashMaxHeadDim)
             throw new ArgumentOutOfRangeException(nameof(headDim),
@@ -278,7 +278,7 @@ internal static class AttentionKernels
                             Vector256.LoadUnsafe(ref kj[d])));
                     float dot = MathHelpers.HSum256_Avx(acc);
                     for (; d < headDim; d++) dot += qi[d] * kj[d];
-                    dot *= scale;
+                    dot = dot * scale - alibiSlope * (absQPos - j);
                     tileScores[j - start] = dot;
                     if (dot > tileMax) tileMax = dot;
                 }
@@ -315,7 +315,7 @@ internal static class AttentionKernels
     internal static unsafe void ScaledDotProductFlashFMA(
         float* q, float* k, float* v, float* output,
         int seqLen, int kvLen, int headDim, float scale, bool causal,
-        int qStride, int oStride)
+        int qStride, int oStride, float alibiSlope)
     {
         if ((uint)headDim > FlashMaxHeadDim)
             throw new ArgumentOutOfRangeException(nameof(headDim),
@@ -351,7 +351,7 @@ internal static class AttentionKernels
                                               Vector256.LoadUnsafe(ref kj[d]), acc);
                     float dot = MathHelpers.HSum256_Avx(acc);
                     for (; d < headDim; d++) dot += qi[d] * kj[d];
-                    dot *= scale;
+                    dot = dot * scale - alibiSlope * (absQPos - j);
                     tileScores[j - start] = dot;
                     if (dot > tileMax) tileMax = dot;
                 }
@@ -388,7 +388,7 @@ internal static class AttentionKernels
     internal static unsafe void ScaledDotProductFlashScalar(
         float* q, float* k, float* v, float* output,
         int seqLen, int kvLen, int headDim, float scale, bool causal,
-        int qStride, int oStride)
+        int qStride, int oStride, float alibiSlope)
     {
         if ((uint)headDim > FlashMaxHeadDim)
             throw new ArgumentOutOfRangeException(nameof(headDim),
@@ -419,7 +419,7 @@ internal static class AttentionKernels
                     float* kj = k + (long)j * headDim;
                     float dot = 0f;
                     for (int d = 0; d < headDim; d++) dot += qi[d] * kj[d];
-                    dot *= scale;
+                    dot = dot * scale - alibiSlope * (absQPos - j);
                     tileScores[j - start] = dot;
                     if (dot > tileMax) tileMax = dot;
                 }
@@ -466,7 +466,7 @@ internal static class AttentionKernels
     internal static unsafe void ScaledDotProductQ8_0AVX2(
         float* q, byte* kQuant, byte* vQuant, float* output,
         int seqLen, int kvLen, int headDim, float scale, bool causal,
-        int qStride, int oStride)
+        int qStride, int oStride, float alibiSlope)
     {
         int nBlocks = (headDim + Q8QK - 1) / Q8QK;
         int colStride = nBlocks * Q8BLOCK;
@@ -517,7 +517,7 @@ internal static class AttentionKernels
                                 s += qi_b[k] * (vals[k] * d);
                             dot += s;
                         }
-                        score = (float)dot * scale;
+                        score = (float)dot * scale - alibiSlope * (absQPos - j);
                     }
                     scoreRow[j] = score;
                     float oldMax = max;
@@ -571,7 +571,7 @@ internal static class AttentionKernels
     internal static unsafe void ScaledDotProductQ8_0FMA(
         float* q, byte* kQuant, byte* vQuant, float* output,
         int seqLen, int kvLen, int headDim, float scale, bool causal,
-        int qStride, int oStride)
+        int qStride, int oStride, float alibiSlope)
     {
         int nBlocks = (headDim + Q8QK - 1) / Q8QK;
         int colStride = nBlocks * Q8BLOCK;
@@ -622,7 +622,7 @@ internal static class AttentionKernels
                                 s += qi_b[k] * (vals[k] * d);
                             dot += s;
                         }
-                        score = (float)dot * scale;
+                        score = (float)dot * scale - alibiSlope * (absQPos - j);
                     }
                     scoreRow[j] = score;
                     float oldMax = max;
@@ -676,7 +676,7 @@ internal static class AttentionKernels
     internal static unsafe void ScaledDotProductQ8_0Scalar(
         float* q, byte* kQuant, byte* vQuant, float* output,
         int seqLen, int kvLen, int headDim, float scale, bool causal,
-        int qStride, int oStride)
+        int qStride, int oStride, float alibiSlope)
     {
         int nBlocks = (headDim + Q8QK - 1) / Q8QK;
         int colStride = nBlocks * Q8BLOCK;
@@ -713,7 +713,7 @@ internal static class AttentionKernels
                             for (int k = 0; k < blockEnd; k++)
                                 dot += qi_b[k] * (vals[k] * d);
                         }
-                        score = (float)dot * scale;
+                        score = (float)dot * scale - alibiSlope * (absQPos - j);
                     }
                     scoreRow[j] = score;
                     float oldMax = max;
@@ -758,7 +758,7 @@ internal static class AttentionKernels
     internal static unsafe void ScaledDotProductFlashQ8_0AVX2(
         float* q, byte* kQuant, byte* vQuant, float* output,
         int seqLen, int kvLen, int headDim, float scale, bool causal,
-        int qStride, int oStride)
+        int qStride, int oStride, float alibiSlope)
     {
         if ((uint)headDim > FlashMaxHeadDim)
             throw new ArgumentOutOfRangeException(nameof(headDim),
@@ -814,7 +814,7 @@ internal static class AttentionKernels
                             s += qi_b[k] * (vals[k] * d);
                         dot += s;
                     }
-                    float score = (float)dot * scale;
+                    float score = (float)dot * scale - alibiSlope * (absQPos - j);
                     tileScores[j - start] = score;
                     if (score > tileMax) tileMax = score;
                 }
@@ -876,7 +876,7 @@ internal static class AttentionKernels
     internal static unsafe void ScaledDotProductFlashQ8_0FMA(
         float* q, byte* kQuant, byte* vQuant, float* output,
         int seqLen, int kvLen, int headDim, float scale, bool causal,
-        int qStride, int oStride)
+        int qStride, int oStride, float alibiSlope)
     {
         if ((uint)headDim > FlashMaxHeadDim)
             throw new ArgumentOutOfRangeException(nameof(headDim),
@@ -932,7 +932,7 @@ internal static class AttentionKernels
                             s += qi_b[k] * (vals[k] * d);
                         dot += s;
                     }
-                    float score = (float)dot * scale;
+                    float score = (float)dot * scale - alibiSlope * (absQPos - j);
                     tileScores[j - start] = score;
                     if (score > tileMax) tileMax = score;
                 }
@@ -971,8 +971,8 @@ internal static class AttentionKernels
                                 Avx2.ConvertToVector256Int32(vals + k));
                             var vOld = Vector256.LoadUnsafe(ref pOut[k]);
                             Vector256.StoreUnsafe(
-                                Fma.MultiplyAdd(
-                                    Avx.Multiply(vw, vd), vSm, vOld),
+                                Avx.Add(vOld, Avx.Multiply(vSm,
+                                    Avx.Multiply(vw, vd))),
                                 ref pOut[k]);
                         }
                         for (; k < blockEnd; k++)
@@ -994,7 +994,7 @@ internal static class AttentionKernels
     internal static unsafe void ScaledDotProductFlashQ8_0Scalar(
         float* q, byte* kQuant, byte* vQuant, float* output,
         int seqLen, int kvLen, int headDim, float scale, bool causal,
-        int qStride, int oStride)
+        int qStride, int oStride, float alibiSlope)
     {
         if ((uint)headDim > FlashMaxHeadDim)
             throw new ArgumentOutOfRangeException(nameof(headDim),
@@ -1036,7 +1036,7 @@ internal static class AttentionKernels
                         for (int k = 0; k < blockEnd; k++)
                             dot += qi_b[k] * (vals[k] * d);
                     }
-                    float score = (float)dot * scale;
+                    float score = (float)dot * scale - alibiSlope * (absQPos - j);
                     tileScores[j - start] = score;
                     if (score > tileMax) tileMax = score;
                 }

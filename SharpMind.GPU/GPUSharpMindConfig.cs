@@ -41,6 +41,7 @@ public static class GPUSharpMindConfig
     public const string ValVecDotQ8K = "q8k_gpu";
     public const string ValHSum256 = "hsum_gpu";
     public const string ValHalfToFloat = "halftofloat_gpu";
+    public const string ValFloatToHalf = "floattohalf_gpu";
     public const string ValGetScaleMinK4_Scale = "getscalemink4_scale_gpu";
     public const string ValGetScaleMinK4_Min = "getscalemink4_min_gpu";
 
@@ -79,6 +80,7 @@ public static class GPUSharpMindConfig
         mapping[QuantizationConfig.KeyVecDotQ8K]   = ValVecDotQ8K;
         mapping[QuantizationConfig.KeyHSum256]     = ValHSum256;
         mapping[QuantizationConfig.KeyHalfToFloat] = ValHalfToFloat;
+        mapping[QuantizationConfig.KeyFloatToHalf] = ValFloatToHalf;
         mapping[QuantizationConfig.KeyGetScaleMinK4_Scale] = ValGetScaleMinK4_Scale;
         mapping[QuantizationConfig.KeyGetScaleMinK4_Min]   = ValGetScaleMinK4_Min;
     }

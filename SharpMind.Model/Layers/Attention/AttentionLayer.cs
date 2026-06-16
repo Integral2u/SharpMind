@@ -27,7 +27,7 @@ public abstract class AttentionLayer : IDisposable
     private unsafe delegate void ScaledDotProductQ8_0Delegate(
         float* q, byte* kQuant, byte* vQuant, float* output,
         int seqLen, int kvLen, int headDim, float scale, bool causal,
-        int qStride, int oStride);
+        int qStride, int oStride, float alibiSlope);
 
     private static readonly ScaledDotProductQ8_0Delegate Q8Kernel = InitQ8Kernel();
 
@@ -55,7 +55,12 @@ public abstract class AttentionLayer : IDisposable
         // Initialize Wqkv layer
         int totalQkvDim = config.HiddenDim + 2 * kvDim;
         Wqkv = new LinearLayer("qkv_proj", config.HiddenDim, totalQkvDim, bias: true, qOps: qOps, null, null);
-        PositionalEncoder = config.PositionalEncoding == PositionalEncoding.NoPE ? new NoPE() : new RoPE(config.HeadDim, config.MaxSeqLen, config.RopeTheta);
+        PositionalEncoder = config.PositionalEncoding switch
+        {
+            PositionalEncoding.NoPE => new NoPE(),
+            PositionalEncoding.ALiBi => new AlibiEncoder(config.NumHeads),
+            _ => new RoPE(config.HeadDim, config.MaxSeqLen, config.RopeTheta),
+        };
 
         if (weights != null)
             CopyFusedWeights(weights.Wq, weights.Wk, weights.Wv, weights.WqBias, weights.WkBias, weights.WvBias);
@@ -220,7 +225,7 @@ public abstract class AttentionLayer : IDisposable
         SharpMindConfig.ValMqaFlashAvx2, NS + "." + nameof(AttentionKernels.ScaledDotProductFlashAVX2),
         SharpMindConfig.ValMqaFlashFma, NS + "." + nameof(AttentionKernels.ScaledDotProductFlashFMA),
         SharpMindConfig.ValMqaFlashScalar, NS + "." + nameof(AttentionKernels.ScaledDotProductFlashScalar))]
-    public abstract unsafe void ScaledDotProduct(float* q, float* k, float* v, float* o, int seqLen, int kvLen, int headDim, float scale, bool causal, int qStride, int oStride);
+    public abstract unsafe void ScaledDotProduct(float* q, float* k, float* v, float* o, int seqLen, int kvLen, int headDim, float scale, bool causal, int qStride, int oStride, float alibiSlope);
 
     public Tensor<float> Forward( Tensor<float> x, TensorOps ops, int positionOffset = 0, bool causal = true, IKVCache? cache = null, Core.Memory.Workspace? workspace = null)
     {
@@ -273,6 +278,7 @@ public abstract class AttentionLayer : IDisposable
                 int b = bh / numH;
                 int h = bh % numH;
                 int kvHead = h / Config.KvGroupSize;
+                float alibiSlope = PositionalEncoder is AlibiEncoder alibi ? alibi.Slopes[h] : 0f;
                 unsafe
                 {
                     float* pQ = qr.DataPtr + (long)(b * seqLen * numH + h) * headDim;
@@ -282,13 +288,13 @@ public abstract class AttentionLayer : IDisposable
                     {
                         byte* pKQ = cache.GetQuantizedKeyPtr(b, 0, kvHead);
                         byte* pVQ = cache.GetQuantizedValuePtr(b, 0, kvHead);
-                        Q8Kernel(pQ, pKQ, pVQ, pO, seqLen, effectiveKvLen, headDim, scale, causal, qStride, oStride);
+                        Q8Kernel(pQ, pKQ, pVQ, pO, seqLen, effectiveKvLen, headDim, scale, causal, qStride, oStride, alibiSlope);
                     }
                     else if (cache is { IsContiguous: true })
                     {
                         float* pK = cache.GetKeyPtr(b, 0, kvHead);
                         float* pV = cache.GetValuePtr(b, 0, kvHead);
-                        ScaledDotProduct(pQ, pK, pV, pO, seqLen, effectiveKvLen, headDim, scale, causal, qStride, oStride);
+                        ScaledDotProduct(pQ, pK, pV, pO, seqLen, effectiveKvLen, headDim, scale, causal, qStride, oStride, alibiSlope);
                     }
                     else
                     {
@@ -316,7 +322,7 @@ public abstract class AttentionLayer : IDisposable
                             }
                         }
 
-                        ScaledDotProduct(pQ, pK, pV, pO, seqLen, effectiveKvLen, headDim, scale, causal, qStride, oStride);
+                        ScaledDotProduct(pQ, pK, pV, pO, seqLen, effectiveKvLen, headDim, scale, causal, qStride, oStride, alibiSlope);
                     }
                 }
             }

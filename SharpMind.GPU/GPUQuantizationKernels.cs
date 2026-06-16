@@ -736,6 +736,32 @@ public static class GPUQuantizationKernels
         return HalfToFloatGPU(half);
     }
 
+    private static ushort FloatToHalf_GPUImpl(float f)
+    {
+        uint bits = (uint)BitConverter.SingleToInt32Bits(f);
+        uint sign = (bits >> 16) & 0x8000;
+        int exp = (int)((bits >> 23) & 0xFF) - 127 + 15;
+        uint mant = bits & 0x007FFFFF;
+        if (exp <= 0)
+        {
+            if (exp < -10) return (ushort)sign;
+            mant = (mant | 0x00800000) >> (1 - exp);
+            return (ushort)(sign | (mant >> 13));
+        }
+        if (exp >= 31)
+        {
+            if (exp > 31) return (ushort)(sign | 0x7C00 | (mant >> 13));
+            return (ushort)(sign | 0x7C00 | (mant != 0 ? 0x200u : 0));
+        }
+        return (ushort)(sign | ((uint)exp << 10) | (mant >> 13));
+    }
+
+    [PuzzlePeice(nameof(QuantizationOps.FloatToHalf), QuantizationConfig.KeyFloatToHalf, GPUSharpMindConfig.ValFloatToHalf)]
+    public static ushort FloatToHalf_GPU(float f)
+    {
+        return FloatToHalf_GPUImpl(f);
+    }
+
     private static unsafe byte GetScaleMinK4_ScaleImpl(int j, byte* scales)
     {
         if (j < 4) return (byte)(scales[j] & 0x3F);

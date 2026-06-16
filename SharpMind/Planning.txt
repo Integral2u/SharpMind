@@ -119,3 +119,88 @@ SLERP (Spherical Linear Interpolation): Better than linear interpolation for hig
 TIES-Merging (TrIm, Elect, Sign, and Merge): Designed to handle interference between models by only merging the most significant weight updates and resolving sign disagreements
 DARE (Drop And REscale): Drops redundant weights and re-scales the remaining weights to create a "soups" of models, reducing task interference.
 Task Arithmetic: Creates "task vectors" by subtracting the base model weights from the fine-tuned model weights, allowing these vectors to be added or subtracted to modify model behavior.
+
+
+
+Detailed Plan
+Phase 1 — Quick Wins
+1a. FloatToHalf JigSaw
+The gap: QuantizationKernels.cs has HalfToFloat_F16C (hardware float16, 1 cycle) and it's wired in QuantizationOps.cs via JigSaw. But QuantizedKVCache.cs has a private FloatToHalf_Scalar (15-20 cycles) with no F16C variant and no JigSaw wiring.
+
+Work:
+
+Add FloatToHalf_F16C(float f) → ushort to QuantizationKernels.cs using the F16C Vcvtps2ph intrinsic (or software fallback via Vector256.Create + StoreMask).
+Rename existing FloatToHalf_Scalar → FloatToHalf_Scalar, move into QuantizationKernels.cs alongside HalfToFloat_Scalar.
+Add KeyFloatToHalf to QuantizationConfig.cs.
+Add [PuzzleCornerPiece] to QuantizationOps.cs mapping floattohalf_fma/floattohalf_avx2 → FloatToHalf_F16C, floattohalf_scalar → FloatToHalf_Scalar.
+Wire QuantizedKVCache.cs to accept QuantizationOps and call ops.FloatToHalf(d) instead of the private scalar.
+Remove the private FloatToHalf_Scalar from QuantizedKVCache.cs.
+Files touched: QuantizationKernels.cs, QuantizationOps.cs, QuantizationConfig.cs, QuantizedKVCache.cs
+
+1b. Remove Dropout from ModelConfig
+Add [Obsolete("Not used in inference")] or remove the property from ModelConfig.cs:63. Also remove its mention in Validate() if present.
+
+Files touched: ModelConfig.cs
+
+1c. Add ALiBi to PositionalEncoding enum
+Add ALiBi member to PositionalEncoding.cs.
+
+Files touched: PositionalEncoding.cs
+
+1d. Mark ForwardWithState / Backward as obsolete
+In Transformer.cs, add [Obsolete("Training path — not wired for inference")] on ForwardWithState() and Backward(). These are vestiges from an older training integration.
+
+Files touched: Transformer.cs
+
+Phase 2 — Core JigSaw Expansion
+2a. Q8 Attention Kernels in JigSaw
+The gap: AttentionLayer.ScaledDotProduct has [PuzzleCornerPiece] with entries for ValMhaAvx2, ValMhaFma, ValMhaScalar, ValMhaFlashAvx2, etc. — but no Q8_0 variants. The Q8 attention kernels (ScaledDotProductQ8_0AVX2 etc.) exist in AttentionKernels.cs but are called via manual dispatch.
+
+Work:
+
+Add JigSaw mapping keys to SharpMindConfig.cs: KeyAttention, ValMhaQ8_0Avx2, ValMhaQ8_0Fma, ValMhaQ8_0Scalar, ValMhaFlashQ8_0Avx2, ValMhaFlashQ8_0Fma, ValMhaFlashQ8_0Scalar, and same for GQA/MQA variants.
+Add corresponding [PuzzleCornerPiece] entries to AttentionLayer.ScaledDotProduct mapping these keys to the Q8 kernels.
+Remove manual dispatch in the attention layer — let JigSaw select both float and Q8 kernels. The _useFlash config flag should fold into the JigSaw mapping value (flash vs non-flash becomes a string suffix like "mha_q8_0" vs "mha_flash_q8_0").
+Add EnsureScoreBuffer optimization: since JigSaw assembles per-type concrete methods, the scratch buffer can be sized at assembly time (type-level kvLen constant) rather than rechecked each call. Or keep as-is — the if is cheap.
+Files touched: SharpMindConfig.cs, AttentionLayer.cs, MappingBuilder.cs
+
+2b. ForwardLastLogits → JigSaw LogitOps
+The gap: 6 if branches + 2 ternaries in ForwardLastLogits for workspace != null × useQuantizedProj × batch==1 && seqLen==1. This is a 3-dimension Cartesian product: projection type × workspace × sequence length.
+
+Design:
+
+Create LogitOps.cs (abstract), LogitKernels.cs (kernels), LogitOpsFactory.cs
+Two JigSaw dimensions:
+KeyProjection → "float" | "q8_0" — selects the matmul type (float vs Q8_0)
+KeyAllocation → "workspace" | "heap" — selects buffer source
+LogitOps abstract methods:
+ProjectLast(Tensor<float> hidden, Tensor<float> weight, ...) → Tensor<float> — handles the full projection
+Allocate(int batch, int N) → Tensor<float> — workspace or direct alloc
+The sequence-length check (batch==1 && seqLen==1) stays as a simple early-return guard on the caller side (it's not a dispatch dimension).
+Concrete assembled variants:
+
+FloatWorkspace + FloatHeap + Q8_0Workspace + Q8_0Heap — 4 concrete types
+Each has zero branches
+Files created: LogitOps.cs, LogitKernels.cs, LogitOpsFactory.cs
+Files modified: Transformer.cs (replace branching with _logitOps.ProjectLast(...))
+
+Phase 3 — Cleanup
+3a. PagedKVCacheLayer
+Evaluate if PagedKVCacheLayer is referenced anywhere outside its own instantiation (in PagedKVCacherBuilder). If it's only used as a Builder target, consider inlining its logic into PagedKVCacherBuilder or removing the wrapper and having the builder instantiate PagedKVCache directly. If the wrapper provides future extension points, add XML docs explaining the delegation intent.
+
+3b. WeightMapper.ShouldInclude
+Add XML doc on ShouldInclude explaining its intended use (filtering layers during weight loading) and that it defaults to true (include all layers).
+
+3c. TokenizerInfo.cs
+Search for references. If only read/written in GgufLoader.Load() as a data-transfer holder, it's not a relic — it has a purpose. Otherwise mark [Obsolete].
+
+Phase 4 — Hook Refinement
+4a. Abstract TransformerBlock with hooked/unhooked variants
+Create abstract class TransformerBlockBase with the common Forward() signature and _layerIdx, _attention, _ffn, _norm1, _norm2 fields.
+Create sealed class TransformerBlock : TransformerBlockBase (no hook — Forward() has zero hook overhead).
+Create sealed class HookedTransformerBlock : TransformerBlockBase (has IActivationHook Hook — Forward() includes the 3 hook calls without ?. since _hook is guaranteed non-null).
+Keep the factory/API backward-compat: TransformerBlock constructor creates the unhooked version; a separate HookedTransformerBlock constructor for the hooked version.
+4b. Move SetActivationHook to constructor
+Transformer constructor accepts optional IActivationHook?.
+If set, creates HookedTransformerBlock instances; otherwise TransformerBlock.
+Remove post-hoc SetActivationHook method entirely.
