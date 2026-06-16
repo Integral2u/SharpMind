@@ -34,7 +34,6 @@ public sealed class QuantizedKVCache : IKVCache
 
     public int CurrentPosition { get; private set; } = 0;
     public int MaxSeqLen { get; }
-    public int AllocatedCapacity => MaxSeqLen;
     public bool IsContiguous => true;
     public bool IsQuantized => true;
     public int Length => CurrentPosition;

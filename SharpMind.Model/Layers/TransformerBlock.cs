@@ -1,50 +1,29 @@
-﻿using SharpMind.Core.Ops;
+﻿using SharpMind.Core.Memory;
+using SharpMind.Core.Ops;
 using SharpMind.Core.Tensors;
 using SharpMind.Core.Training;
 using SharpMind.Model.Layers.Attention;
 using SharpMind.Model.Layers.Ffn;
 
 namespace SharpMind.Model.Layers;
-/// <summary>
-/// A single transformer block: pre-norm → attention → residual →
-///                             pre-norm → FFN → residual.
-///
-/// Pre-norm (norm before the sub-layer) is used by all modern LLMs.
-/// Post-norm (BERT-style) is not currently supported but can be added
-/// by reordering the forward pass here.
-/// </summary>
-public sealed class TransformerBlock : IDisposable
+
+public abstract class TransformerBlock : IDisposable
 {
-    private readonly AttentionLayer _attention;
-    private readonly FfnLayer _ffn;
-    private readonly NormLayer _norm1;   // pre-attention norm
-    private readonly NormLayer _norm2;   // pre-FFN norm
+    protected readonly AttentionLayer _attention;
+    protected readonly FfnLayer _ffn;
+    protected readonly NormLayer _norm1;
+    protected readonly NormLayer _norm2;
+    protected readonly TensorOps _ops;
+    protected readonly int _layerIdx;
+    private bool _disposed;
 
     public NormLayer Norm1 => _norm1;
     public NormLayer Norm2 => _norm2;
     public AttentionLayer Attention => _attention;
     public FfnLayer Ffn => _ffn;
-    public IActivationHook? Hook { get => _hook; set => _hook = value; }
-    private readonly TensorOps _ops;
-    private readonly int _layerIdx;
-    private bool _disposed;
-    private IActivationHook? _hook;
 
-    private Tensor<float>? _cachedInput;
-    private Tensor<float>? _cachedNormed1;
-    private Tensor<float>? _cachedAttnOut;
-    private Tensor<float>? _cachedHidden;
-    private Tensor<float>? _cachedNormed2;
-    private Tensor<float>? _cachedFfnOut;
-
-    public TransformerBlock(
-        int layerIdx,
-        AttentionLayer attention,
-        FfnLayer ffn,
-        NormLayer norm1,
-        NormLayer norm2,
-        TensorOps ops)
-    { 
+    protected TransformerBlock(int layerIdx, AttentionLayer attention, FfnLayer ffn, NormLayer norm1, NormLayer norm2, TensorOps ops)
+    {
         ArgumentNullException.ThrowIfNull(attention);
         ArgumentNullException.ThrowIfNull(ffn);
         ArgumentNullException.ThrowIfNull(norm1);
@@ -59,66 +38,9 @@ public sealed class TransformerBlock : IDisposable
         _ops = ops;
     }
 
-    // Forward
+    public abstract Tensor<float> Forward(Tensor<float> x, IKVCache? cache, int positionOffset = 0, bool causal = true, Workspace? workspace = null);
 
-    /// <summary>
-    /// Single block forward pass with residual connections.
-    /// Input/output: [Batch, SeqLen, HiddenDim]
-    /// </summary>
-    /// <param name="x">Input hidden states.</param>
-    /// <param name="positionOffset">
-    /// Position of the first token in <paramref name="x"/>.
-    /// 0 for full-sequence prefill; kv-cache length for incremental decode.
-    /// </param>
-    /// <param name="causal">Apply causal (lower-triangular) attention mask.</param>
-    public Tensor<float> Forward(Tensor<float> x, int positionOffset = 0, bool causal = true, SharpMind.Core.Memory.Workspace? workspace = null)
-    {
-        return Forward(x, null, positionOffset, causal, workspace);
-    }
-
-    public Tensor<float> Forward(Tensor<float> x, IKVCache? cache, int positionOffset = 0, bool causal = true, SharpMind.Core.Memory.Workspace? workspace = null)
-    {
-        ThrowIfDisposed();
-        
-        // Attention sub-layer
-        var normed1 = _norm1.Forward(x, workspace);
-        _hook?.OnPreAttention(_layerIdx, normed1);
-        var attnOut = _attention.Forward(normed1, _ops, positionOffset, causal, cache, workspace);
-        normed1.Dispose();
-        _hook?.OnPostAttention(_layerIdx, attnOut);
-        
-        // Residual: h = x + attn(norm(x)) — reuse x in-place
-        TensorOps.AddInPlace(x, attnOut);
-        attnOut.Dispose();
-        
-        // FFN sub-layer
-        var normed2 = _norm2.Forward(x, workspace);
-        var ffnOut = _ffn.Forward(normed2, workspace);
-        normed2.Dispose();
-        _hook?.OnPostFFN(_layerIdx, ffnOut);
-        
-        // Residual: out = h + ffn(norm(h)) — reuse x in-place
-        TensorOps.AddInPlace(x, ffnOut);
-        ffnOut.Dispose();
-        
-        return x;
-    }
-    
-    private void DisposeCache()
-    {
-        _cachedInput?.Dispose();
-        _cachedNormed1?.Dispose();
-        _cachedAttnOut?.Dispose();
-        _cachedHidden?.Dispose();
-        _cachedNormed2?.Dispose();
-        _cachedFfnOut?.Dispose();
-        _cachedInput = null;
-        _cachedNormed1 = null;
-        _cachedAttnOut = null;
-        _cachedHidden = null;
-        _cachedNormed2 = null;
-        _cachedFfnOut = null;
-    }
+    public virtual void SetActivationHook(IActivationHook? hook) { }
 
     public IEnumerable<Parameter> Parameters()
     {
@@ -134,7 +56,6 @@ public sealed class TransformerBlock : IDisposable
 
     public bool LoadWeight(string name, ReadOnlySpan<float> data)
     {
-        // Attention — supports both old (attn_q) and modern (q_proj/self_attn.q) naming
         if (name.Contains("attn_q", StringComparison.OrdinalIgnoreCase) || name.Contains("q_proj", StringComparison.OrdinalIgnoreCase) || name.Contains("self_attn.q", StringComparison.OrdinalIgnoreCase))
         {
             _attention.LoadWeights(name, data);
@@ -156,8 +77,6 @@ public sealed class TransformerBlock : IDisposable
             _attention.LoadWeights(name, data);
             return true;
         }
-
-        // FFN — supports both old (ffn_gate) and modern (gate_proj/mlp.gate) naming
         if (name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase) || name.Contains("gate_proj", StringComparison.OrdinalIgnoreCase) || name.Contains("mlp.gate", StringComparison.OrdinalIgnoreCase))
         {
             _ffn.LoadWeights(name, data);
@@ -173,8 +92,6 @@ public sealed class TransformerBlock : IDisposable
             _ffn.LoadWeights(name, data);
             return true;
         }
-
-        // Norms — supports both old and modern naming
         if (name.Contains("attn_norm", StringComparison.OrdinalIgnoreCase) || name.Contains("input_layernorm", StringComparison.OrdinalIgnoreCase))
         {
             _norm1.LoadWeight(data);
@@ -212,5 +129,5 @@ public sealed class TransformerBlock : IDisposable
         _norm2.Dispose();
     }
 
-    private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, nameof(TransformerBlock));
+    protected void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, nameof(TransformerBlock));
 }

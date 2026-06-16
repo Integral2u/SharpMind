@@ -90,7 +90,8 @@ public static class ModelFactory
         Dictionary<string, string>? overrides,
         ActivationOps acts,
         TensorOps ops,
-        QuantizationOps qOps)
+        QuantizationOps qOps,
+        bool useHooks = false)
     {
         var cfg = sharpConfig.ToJigSawMapping();
         if (overrides != null)
@@ -118,7 +119,9 @@ public static class ModelFactory
         var norm1 = BuildNorm(weights.Config.HiddenDim, sharpConfig, eps, blockWeights.Norm1W, blockWeights.Norm1B);
         var norm2 = BuildNorm(weights.Config.HiddenDim, sharpConfig, eps, blockWeights.Norm2W, blockWeights.Norm2B);
 
-        return new TransformerBlock(layerIdx, attn, ffn, norm1, norm2, ops);
+        return useHooks
+            ? new HookedTransformerBlock(layerIdx, attn, ffn, norm1, norm2, ops)
+            : new UnhookedTransformerBlock(layerIdx, attn, ffn, norm1, norm2, ops);
     }
 
     private static FfnLayer BuildFfn(

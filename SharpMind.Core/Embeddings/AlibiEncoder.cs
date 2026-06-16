@@ -2,8 +2,19 @@ using SharpMind.Core.Tensors;
 
 namespace SharpMind.Core.Embeddings;
 
+/// <summary>
+/// ALiBi (Attention with Linear Biases) position encoder.
+///
+/// Unlike RoPE, ALiBi does NOT modify Q or K tensors — Apply/ApplyBatched are
+/// no-ops. Instead, per-head slopes are precomputed here and used later inside
+/// the attention kernel (<see cref="Model.Layers.Attention.AttentionKernels"/>)
+/// where the bias -slope[h] × (absQPos - j) is added to each Q·K score before
+/// softmax. The slope is selected per head from <see cref="Slopes"/> by
+/// <c>AttentionLayer.Forward</c> and passed as the <c>alibiSlope</c> parameter.
+/// </summary>
 public sealed class AlibiEncoder : PositionalEncoder
 {
+    /// <summary>Geometric slopes per head: 2^(-8h/nHeads).</summary>
     public float[] Slopes { get; }
 
     public AlibiEncoder(int numHeads)

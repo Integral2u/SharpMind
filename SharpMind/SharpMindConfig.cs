@@ -23,6 +23,7 @@ public sealed record SharpMindConfig
     public const string KeyMatMul = "matmul";
     // Model Layer Keys
     public const string KeyAttention = "attention";
+    public const string KeyAttentionQ8 = "attention_q8";
     public const string KeyFfn = "ffn";
     public const string KeyNorm = "norm";
     public const string KeyArch = "arch";
@@ -76,6 +77,17 @@ public sealed record SharpMindConfig
     public const string ValMqaFlashAvx2 = "mqaflashavx2";
     public const string ValMqaFlashFma = "mqaflashfma";
     public const string ValMqaFlashScalar = "mqaflashscalar";
+
+    // Q8_0 Attention Values
+    public const string ValMhaFlashQ8_0Avx2 = "mhaflashq8_0avx2";
+    public const string ValMhaFlashQ8_0Fma = "mhaflashq8_0fma";
+    public const string ValMhaFlashQ8_0Scalar = "mhaflashq8_0scalar";
+    public const string ValGqaFlashQ8_0Avx2 = "gqaflashq8_0avx2";
+    public const string ValGqaFlashQ8_0Fma = "gqaflashq8_0fma";
+    public const string ValGqaFlashQ8_0Scalar = "gqaflashq8_0scalar";
+    public const string ValMqaFlashQ8_0Avx2 = "mqaflashq8_0avx2";
+    public const string ValMqaFlashQ8_0Fma = "mqaflashq8_0fma";
+    public const string ValMqaFlashQ8_0Scalar = "mqaflashq8_0scalar";
 
     // Ffn Values
     public const string ValFfnDense = "dense";

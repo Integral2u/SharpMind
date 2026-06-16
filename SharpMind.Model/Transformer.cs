@@ -23,6 +23,7 @@ public sealed class Transformer : IDisposable
     // Null means the model is weight-tied — the embedding weight is used instead.
     private readonly Tensor<float>? _lmHead;
     private readonly QuantizationOps? _qOps;
+    private readonly LogitOps _logitOps;
 
     private readonly TransformerBlock[]? _blocks; // For training backward
 
@@ -52,7 +53,8 @@ public sealed class Transformer : IDisposable
         _ops = ops;
         _lmHead = lmHead;
         _qOps = qOps;
-
+        var projWeight = _lmHead ?? _embedding.Weight;
+        _logitOps = new LogitOps(projWeight, _weights.RawEmbedding, _weights.RawEmbeddingDtype, _ops, _qOps);
 
         if (arch is DecoderArch decodeArch)
             _blocks = decodeArch.Blocks;
@@ -72,7 +74,7 @@ public sealed class Transformer : IDisposable
     {
         if (_blocks is null) return;
         foreach (var block in _blocks)
-            block.Hook = hook;
+            block.SetActivationHook(hook);
     }
 
     public TensorOps Ops => _ops;
@@ -178,48 +180,12 @@ public sealed class Transformer : IDisposable
         int hiddenDim = _weights.Config.HiddenDim;
 
         using var normedFlat = normed.Reshape(batch * seqLen, hiddenDim);
-        var projectionWeight = _lmHead ?? _embedding.Weight;
-        
-        bool useQuantizedProj = _weights.RawEmbedding != null && _weights.RawEmbeddingDtype == GgufDtype.Q8_0 && _qOps != null;
         int M = batch * seqLen;
         int K = hiddenDim;
         int N = _weights.Config.VocabSize;
 
-        Tensor<float> logits;
-        if (workspace != null)
-        {
-            logits = workspace.Rent<float>([M, N]);
-        }
-        else
-        {
-            logits = new Tensor<float>(M, N);
-        }
-
-        if (useQuantizedProj)
-        {
-            byte[] rawEmbed = _weights.RawEmbedding!;
-            fixed (float* pInput = normedFlat.Data)
-            fixed (float* pOutput = logits.Data)
-            fixed (byte* pRaw = rawEmbed)
-            {
-                _qOps!.QuantizedMatMulQ8_0(pInput, pRaw, pOutput, M, K, N);
-            }
-        }
-        else
-        {
-            if (workspace != null)
-            {
-                _ops.MatMulWithBTInto(normedFlat, projectionWeight, logits);
-            }
-            else
-            {
-                logits.Dispose();
-                logits = _ops.MatMulWithBT(normedFlat, projectionWeight);
-            }
-        }
-
-        // Restore [Batch, SeqLen, VocabSize]
-        var result = logits.Reshape(batch, seqLen, _weights.Config.VocabSize);
+        var logits = _logitOps.Project(normedFlat, M, K, N, workspace);
+        var result = logits.Reshape(batch, seqLen, N);
         logits.Dispose();
         return result;
     }
@@ -243,8 +209,6 @@ public sealed class Transformer : IDisposable
         int batch = tokenIds.Shape.Rows;
         int seqLen = tokenIds.Shape.Cols;
         int hiddenDim = _weights.Config.HiddenDim;
-        var projectionWeight = _lmHead ?? _embedding.Weight;
-        bool useQuantizedProj = _weights.RawEmbedding != null && _weights.RawEmbeddingDtype == GgufDtype.Q8_0 && _qOps != null;
         int K = hiddenDim;
         int N = _weights.Config.VocabSize;
 
@@ -253,38 +217,7 @@ public sealed class Transformer : IDisposable
         {
             _finalNorm.ForwardInPlace(_cachedHidden);
             using var flatHidden = _cachedHidden.Reshape(batch, hiddenDim);
-
-            if (useQuantizedProj)
-            {
-                byte[] rawEmbed = _weights.RawEmbedding!;
-                if (workspace != null)
-                {
-                    var result = workspace.Rent<float>([batch, N]);
-                    fixed (float* pInput = flatHidden.Data)
-                    fixed (float* pOutput = result.Data)
-                    fixed (byte* pRaw = rawEmbed)
-                    {
-                        _qOps!.QuantizedMatMulQ8_0(pInput, pRaw, pOutput, batch, K, N);
-                    }
-                    return result;
-                }
-                var resultLogits = new Tensor<float>(batch, N);
-                fixed (float* pInput = flatHidden.Data)
-                fixed (float* pOutput = resultLogits.Data)
-                fixed (byte* pRaw = rawEmbed)
-                {
-                    _qOps!.QuantizedMatMulQ8_0(pInput, pRaw, pOutput, batch, K, N);
-                }
-                return resultLogits;
-            }
-
-            if (workspace != null)
-            {
-                var resultLogits = workspace.Rent<float>([batch, N]);
-                _ops.MatMulWithBTInto(flatHidden, projectionWeight, resultLogits);
-                return resultLogits;
-            }
-            return _ops.MatMulWithBT(flatHidden, projectionWeight);
+            return _logitOps.Project(flatHidden, batch, K, N, workspace);
         }
 
         // Prefill path: extract last token's hidden state, norm in-place
@@ -298,34 +231,9 @@ public sealed class Transformer : IDisposable
         }
         _finalNorm.ForwardInPlace(lastHidden);
 
-        if (useQuantizedProj)
-        {
-            byte[] rawEmbed = _weights.RawEmbedding!;
-            Tensor<float> finalLogits = workspace != null
-                ? workspace.Rent<float>([batch, N])
-                : new Tensor<float>(batch, N);
-            fixed (float* pInput = lastHidden.Data)
-            fixed (float* pOutput = finalLogits.Data)
-            fixed (byte* pRaw = rawEmbed)
-            {
-                _qOps!.QuantizedMatMulQ8_0(pInput, pRaw, pOutput, batch, K, N);
-            }
-            lastHidden.Dispose();
-            return finalLogits;
-        }
-
-        Tensor<float> finalLogits2;
-        if (workspace != null)
-        {
-            finalLogits2 = workspace.Rent<float>([batch, N]);
-            _ops.MatMulWithBTInto(lastHidden, projectionWeight, finalLogits2);
-        }
-        else
-        {
-            finalLogits2 = _ops.MatMulWithBT(lastHidden, projectionWeight);
-        }
+        Tensor<float> result = _logitOps.Project(lastHidden, batch, K, N, workspace);
         lastHidden.Dispose();
-        return finalLogits2;
+        return result;
     }
 
     private void DisposeCache()

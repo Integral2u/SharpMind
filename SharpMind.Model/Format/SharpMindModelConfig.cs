@@ -39,8 +39,6 @@ public sealed class SharpMindModelConfig
     // Metadata
     public string? Source { get; set; }
     public string? Checksum { get; set; }
-    public TokenizerInfo? Tokenizer { get; set; }
-
     private static readonly JsonSerializerOptions JsonSerializerOptionsSavePolicy = new()
     {
         WriteIndented = true,

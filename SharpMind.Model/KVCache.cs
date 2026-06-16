@@ -22,7 +22,6 @@ public sealed class KVCache(int batchSize, int numKvHeads, int maxSeqLen, int he
 
     public int MaxSeqLen { get; } = maxSeqLen;
 
-    public int AllocatedCapacity => MaxSeqLen;
     public bool IsContiguous => true;
 
     public unsafe float* GetKeyPtr(int batchIdx, int position, int kvHead)

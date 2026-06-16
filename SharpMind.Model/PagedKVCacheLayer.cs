@@ -14,7 +14,6 @@ public sealed class PagedKVCacheLayer(int batchSize, int numKvHeads, int maxSeqL
     public int Length => _cache.Length;
     public int MaxSeqLen => _maxSeqLen;
     public bool IsFull => _cache.IsFull;
-    public int AllocatedCapacity => _cache.PageSize;
     public bool IsContiguous => false;
 
     public void Update(Tensor<float> k, Tensor<float> v, int numKvHeads, int headDim) => _cache.Update(k, v, numKvHeads, headDim);

@@ -1,5 +1,4 @@
 ﻿using System.Runtime.CompilerServices;
-using System.Runtime.Intrinsics.X86;
 using JigSawDotNet;
 using SharpMind.Core.Embeddings;
 using SharpMind.Core.Ops;
@@ -24,19 +23,19 @@ public abstract class AttentionLayer : IDisposable
     public readonly PositionalEncoder PositionalEncoder;
     private bool _disposed;
 
-    private unsafe delegate void ScaledDotProductQ8_0Delegate(
-        float* q, byte* kQuant, byte* vQuant, float* output,
+    [PuzzleCornerPiece(SharpMindConfig.KeyAttentionQ8,
+        SharpMindConfig.ValMhaFlashQ8_0Avx2, NS + "." + nameof(AttentionKernels.ScaledDotProductFlashQ8_0AVX2),
+        SharpMindConfig.ValMhaFlashQ8_0Fma, NS + "." + nameof(AttentionKernels.ScaledDotProductFlashQ8_0FMA),
+        SharpMindConfig.ValMhaFlashQ8_0Scalar, NS + "." + nameof(AttentionKernels.ScaledDotProductFlashQ8_0Scalar),
+        SharpMindConfig.ValGqaFlashQ8_0Avx2, NS + "." + nameof(AttentionKernels.ScaledDotProductFlashQ8_0AVX2),
+        SharpMindConfig.ValGqaFlashQ8_0Fma, NS + "." + nameof(AttentionKernels.ScaledDotProductFlashQ8_0FMA),
+        SharpMindConfig.ValGqaFlashQ8_0Scalar, NS + "." + nameof(AttentionKernels.ScaledDotProductFlashQ8_0Scalar),
+        SharpMindConfig.ValMqaFlashQ8_0Avx2, NS + "." + nameof(AttentionKernels.ScaledDotProductFlashQ8_0AVX2),
+        SharpMindConfig.ValMqaFlashQ8_0Fma, NS + "." + nameof(AttentionKernels.ScaledDotProductFlashQ8_0FMA),
+        SharpMindConfig.ValMqaFlashQ8_0Scalar, NS + "." + nameof(AttentionKernels.ScaledDotProductFlashQ8_0Scalar))]
+    public abstract unsafe void ScaledDotProductQ8_0(float* q, byte* kQuant, byte* vQuant, float* output,
         int seqLen, int kvLen, int headDim, float scale, bool causal,
         int qStride, int oStride, float alibiSlope);
-
-    private static readonly ScaledDotProductQ8_0Delegate Q8Kernel = InitQ8Kernel();
-
-    private static unsafe ScaledDotProductQ8_0Delegate InitQ8Kernel()
-    {
-        if (Fma.IsSupported) return AttentionKernels.ScaledDotProductFlashQ8_0FMA;
-        if (Avx2.IsSupported) return AttentionKernels.ScaledDotProductFlashQ8_0AVX2;
-        return AttentionKernels.ScaledDotProductFlashQ8_0Scalar;
-    }
 
     protected AttentionLayer(ModelConfig config, QuantizationOps qOps)
         : this(config, qOps, null)
@@ -288,7 +287,7 @@ public abstract class AttentionLayer : IDisposable
                     {
                         byte* pKQ = cache.GetQuantizedKeyPtr(b, 0, kvHead);
                         byte* pVQ = cache.GetQuantizedValuePtr(b, 0, kvHead);
-                        Q8Kernel(pQ, pKQ, pVQ, pO, seqLen, effectiveKvLen, headDim, scale, causal, qStride, oStride, alibiSlope);
+                        ScaledDotProductQ8_0(pQ, pKQ, pVQ, pO, seqLen, effectiveKvLen, headDim, scale, causal, qStride, oStride, alibiSlope);
                     }
                     else if (cache is { IsContiguous: true })
                     {
