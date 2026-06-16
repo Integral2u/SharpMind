@@ -119,6 +119,7 @@ public sealed record SharpMindConfig
     public ArchKind Arch { get; init; } = ArchKind.Decoder;
     public HardwareTier   Hardware   { get; init; } = HardwareTier.Auto;
     public bool FlashAttention { get; init; } = true;
+    public bool UseHooks { get; init; } = false;
 
     public static SharpMindConfig Gpt => new()
     {

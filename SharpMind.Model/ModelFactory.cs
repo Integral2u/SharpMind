@@ -69,7 +69,7 @@ public static class ModelFactory
 
         var embedding = new EmbeddingTable(weights.Config.VocabSize, weights.Config.HiddenDim, weights.EmbeddingWeight, false);
         var blocks = Enumerable.Range(0, weights.Config.NumLayers)
-            .Select(i => BuildBlock(i, weights, sharpConfig, mapping, acts, ops, qOps)).ToArray();
+            .Select(i => BuildBlock(i, weights, sharpConfig, mapping, acts, ops, qOps, sharpConfig.UseHooks)).ToArray();
 
         IArchitecture arch = sharpConfig.Arch switch
         {
