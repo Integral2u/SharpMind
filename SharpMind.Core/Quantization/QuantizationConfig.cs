@@ -40,7 +40,7 @@ public sealed record QuantizationConfig
             [KeyVecDotQ5K]   = $"q5k{suffix}",
             [KeyVecDotQ6K]   = $"q6k{suffix}",
             [KeyVecDotQ8_0]  = $"q8_0{suffix}",
-            [KeyQuantizedMatMulQ8_0] = $"qmatmul_q8_0{suffix}",
+            [KeyQuantizedMatMulQ8_0] = suffix == "_sse" ? "qmatmul_q8_0_scalar" : $"qmatmul_q8_0{suffix}",
             [KeyVecDotQ4_0]  = $"q4_0{suffix}",
             [KeyVecDotQ4_1]  = $"q4_1{suffix}",
             [KeyVecDotQ5_0]  = $"q5_0{suffix}",
