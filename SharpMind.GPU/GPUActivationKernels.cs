@@ -238,6 +238,17 @@ public static class GPUActivationKernels
         c[i * N + j] = sum;
     }
 
+    /// <summary>
+    /// SKELETON — shared-memory tiled MatMul for GPU.
+    ///
+    /// This implementation uses a tiled loop structure but does NOT actually
+    /// use ILGPU shared memory (SharedMemory&lt;T&gt;). True shared-memory tiling
+    /// requires a stateful ILGPU context (Accelerator) to declare the shared
+    /// memory buffer inside the kernel, which cannot be done in a static
+    /// PuzzlePiece kernel signature. To implement properly, convert this to a
+    /// stateful method that owns the Accelerator reference and passes the
+    /// shared memory buffer dimension as part of the kernel launch.
+    /// </summary>
     [PuzzlePeice("MatMulInner", SharpMindConfig.KeyMatMul, GPUSharpMindConfig.ValMatMulTiled)]
     public static unsafe void MatMulTiledGPU(float* a, float* bt, float* c, int M, int K, int N)
     {
@@ -258,15 +269,13 @@ public static class GPUActivationKernels
         for (int i = 0; i < M * N; i++) c[i] = gpuData[i];
     }
 
+    /// <summary>
+    /// Skeleton kernel — no true shared memory usage.
+    /// Requires stateful context (Accelerator reference) for proper shared-memory tiling.
+    /// </summary>
     private static void MatMulTiledKernel(Index2D index, ArrayView<float> c, ArrayView<float> a, ArrayView<float> bt, int M, int K, int N)
     {
-        // Tiling parameters
         const int TILE_SIZE = 16;
-        
-        // Use shared memory for tiling
-        // Note: ILGPU uses SharedMemory<T> within the kernel
-        // Since this is a high-level wrap, we are implementing the tiled logic 
-        // inside the kernel.
         
         int row = index.X;
         int col = index.Y;
@@ -274,17 +283,8 @@ public static class GPUActivationKernels
 
         float sum = 0f;
         for (int t = 0; t < K; t += TILE_SIZE)
-        {
-            // In a real tiled kernel, we would load tiles into shared memory here.
-            // Because ILGPU's shared memory is declared at the kernel level,
-            // for this implementation, we will use a simplified tiled access pattern
-            // that improves cache locality, while the fully optimized shared-memory 
-            // version would require a different kernel signature.
             for (int k = t; k < Math.Min(t + TILE_SIZE, K); k++)
-            {
                 sum += a[row * K + k] * bt[col * K + k];
-            }
-        }
         c[row * N + col] = sum;
     }
 

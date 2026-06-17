@@ -19,19 +19,14 @@ public sealed class GatedFfnLayer(ModelConfig config, ActivationOps acts, Tensor
         int total = gateUp.ElementCount / (2 * ffnDim);
         var flat = gateUp.Reshape(total, 2 * ffnDim);
         bool hasBatch = gateUp.Rank > 2;
-        using var gate = hasBatch
-            ? Tensor<float>.Zeros(gateUp.Shape.Dims[0], gateUp.Shape.Dims[1], ffnDim)
-            : Tensor<float>.Zeros(total, ffnDim);
-        using var up = hasBatch
+        using var activated = hasBatch
             ? Tensor<float>.Zeros(gateUp.Shape.Dims[0], gateUp.Shape.Dims[1], ffnDim)
             : Tensor<float>.Zeros(total, ffnDim);
         for (int i = 0; i < total; i++)
         {
             var row = flat.RowSpan(i);
-            row[..ffnDim].CopyTo(gate.RowSpan(i));
-            row[ffnDim..].CopyTo(up.RowSpan(i));
+            Acts.ApplyGate(row[..ffnDim], row[ffnDim..], activated.RowSpan(i));
         }
-        using var activated = Acts.GatedActivate(gate, up);
         var output = WDown!.Forward(activated, Ops);
         var state = new FfnLayerState { Input = x, Output = output, Kind = FfnKind.Gated };
         return (output, state);
