@@ -293,12 +293,25 @@ internal static class AttentionKernels
                 }
 
                 float newL = scaleOld * lSum + scaleNew;
-                for (int d = 0; d < headDim; d++)
-                    pO[d] *= scaleOld;
+                var vScaleOld = Vector256.Create(scaleOld);
+                int d0 = 0;
+                for (; d0 <= headDim - 8; d0 += 8)
+                    Vector256.StoreUnsafe(
+                        Avx.Multiply(Vector256.LoadUnsafe(ref pO[d0]), vScaleOld),
+                        ref pO[d0]);
+                for (; d0 < headDim; d0++)
+                    pO[d0] *= scaleOld;
                 for (int t = 0; t < tileLen; t++)
                 {
                     float* vj = v + (long)(start + t) * headDim;
-                    for (int d = 0; d < headDim; d++)
+                    var vSm = Vector256.Create(tileScores[t]);
+                    int d = 0;
+                    for (; d <= headDim - 8; d += 8)
+                        Vector256.StoreUnsafe(
+                            Avx.Add(Vector256.LoadUnsafe(ref pO[d]),
+                                    Avx.Multiply(Vector256.LoadUnsafe(ref vj[d]), vSm)),
+                            ref pO[d]);
+                    for (; d < headDim; d++)
                         pO[d] += tileScores[t] * vj[d];
                 }
                 mMax = newMax;
@@ -306,7 +319,15 @@ internal static class AttentionKernels
             }
 
             if (lSum > 0f)
-                for (int d = 0; d < headDim; d++) pO[d] /= lSum;
+            {
+                var vLSum = Vector256.Create(lSum);
+                int d = 0;
+                for (; d <= headDim - 8; d += 8)
+                    Vector256.StoreUnsafe(
+                        Avx.Divide(Vector256.LoadUnsafe(ref pO[d]), vLSum),
+                        ref pO[d]);
+                for (; d < headDim; d++) pO[d] /= lSum;
+            }
             else
                 for (int d = 0; d < headDim; d++) pO[d] = 0f;
         }
@@ -366,12 +387,25 @@ internal static class AttentionKernels
                 }
 
                 float newL = scaleOld * lSum + scaleNew;
-                for (int d = 0; d < headDim; d++)
-                    pO[d] *= scaleOld;
+                var vScaleOld = Vector256.Create(scaleOld);
+                int d0 = 0;
+                for (; d0 <= headDim - 8; d0 += 8)
+                    Vector256.StoreUnsafe(
+                        Avx.Multiply(Vector256.LoadUnsafe(ref pO[d0]), vScaleOld),
+                        ref pO[d0]);
+                for (; d0 < headDim; d0++)
+                    pO[d0] *= scaleOld;
                 for (int t = 0; t < tileLen; t++)
                 {
                     float* vj = v + (long)(start + t) * headDim;
-                    for (int d = 0; d < headDim; d++)
+                    var vSm = Vector256.Create(tileScores[t]);
+                    int d = 0;
+                    for (; d <= headDim - 8; d += 8)
+                        Vector256.StoreUnsafe(
+                            Fma.MultiplyAdd(Vector256.LoadUnsafe(ref vj[d]), vSm,
+                                            Vector256.LoadUnsafe(ref pO[d])),
+                            ref pO[d]);
+                    for (; d < headDim; d++)
                         pO[d] += tileScores[t] * vj[d];
                 }
                 mMax = newMax;
@@ -379,7 +413,15 @@ internal static class AttentionKernels
             }
 
             if (lSum > 0f)
-                for (int d = 0; d < headDim; d++) pO[d] /= lSum;
+            {
+                var vLSum = Vector256.Create(lSum);
+                int d = 0;
+                for (; d <= headDim - 8; d += 8)
+                    Vector256.StoreUnsafe(
+                        Avx.Divide(Vector256.LoadUnsafe(ref pO[d]), vLSum),
+                        ref pO[d]);
+                for (; d < headDim; d++) pO[d] /= lSum;
+            }
             else
                 for (int d = 0; d < headDim; d++) pO[d] = 0f;
         }

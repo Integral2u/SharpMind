@@ -238,6 +238,7 @@ public abstract class AttentionLayer : IDisposable
         int kvDim = numKv * headDim;
         float scale = 1f / MathF.Sqrt(headDim);
 
+        // Individual Q, K, V projections (each uses quantized forward path when available)
         using var q = Wq.Forward(x, ops, workspace);
         using var k = Wk.Forward(x, ops, workspace);
         using var v = Wv.Forward(x, ops, workspace);

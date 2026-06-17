@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
@@ -335,56 +336,62 @@ internal static class ActivationKernels
             int nBlocks = N / NR;
             if (nBlocks > 0)
             {
-                System.Threading.Tasks.Parallel.For(0, nBlocks, block =>
+                const int MinGrainN = 128;
+                int grainBlocks = Math.Max(1, MinGrainN / NR);
+                var partitioner = Partitioner.Create(0, nBlocks, Math.Min(grainBlocks, nBlocks));
+                Parallel.ForEach(partitioner, range =>
                 {
-                    int j0 = block * NR;
-                    var acc0 = Vector256<float>.Zero;
-                    var acc1 = Vector256<float>.Zero;
-                    var acc2 = Vector256<float>.Zero;
-                    var acc3 = Vector256<float>.Zero;
-                    var acc4 = Vector256<float>.Zero;
-                    var acc5 = Vector256<float>.Zero;
-                    var acc6 = Vector256<float>.Zero;
-                    var acc7 = Vector256<float>.Zero;
-                    float* pBT0 = bt + (long)j0 * K;
-                    float* pBT1 = pBT0 + K;
-                    float* pBT2 = pBT1 + K;
-                    float* pBT3 = pBT2 + K;
-                    float* pBT4 = pBT3 + K;
-                    float* pBT5 = pBT4 + K;
-                    float* pBT6 = pBT5 + K;
-                    float* pBT7 = pBT6 + K;
-                    int k = 0;
-                    for (; k <= K - 8; k += 8)
+                    for (int block = range.Item1; block < range.Item2; block++)
                     {
-                        var a_vec = Vector256.LoadUnsafe(ref a[k]);
-                        acc0 = Fma.MultiplyAdd(a_vec, Vector256.LoadUnsafe(ref pBT0[k]), acc0);
-                        acc1 = Fma.MultiplyAdd(a_vec, Vector256.LoadUnsafe(ref pBT1[k]), acc1);
-                        acc2 = Fma.MultiplyAdd(a_vec, Vector256.LoadUnsafe(ref pBT2[k]), acc2);
-                        acc3 = Fma.MultiplyAdd(a_vec, Vector256.LoadUnsafe(ref pBT3[k]), acc3);
-                        acc4 = Fma.MultiplyAdd(a_vec, Vector256.LoadUnsafe(ref pBT4[k]), acc4);
-                        acc5 = Fma.MultiplyAdd(a_vec, Vector256.LoadUnsafe(ref pBT5[k]), acc5);
-                        acc6 = Fma.MultiplyAdd(a_vec, Vector256.LoadUnsafe(ref pBT6[k]), acc6);
-                        acc7 = Fma.MultiplyAdd(a_vec, Vector256.LoadUnsafe(ref pBT7[k]), acc7);
+                        int j0 = block * NR;
+                        var acc0 = Vector256<float>.Zero;
+                        var acc1 = Vector256<float>.Zero;
+                        var acc2 = Vector256<float>.Zero;
+                        var acc3 = Vector256<float>.Zero;
+                        var acc4 = Vector256<float>.Zero;
+                        var acc5 = Vector256<float>.Zero;
+                        var acc6 = Vector256<float>.Zero;
+                        var acc7 = Vector256<float>.Zero;
+                        float* pBT0 = bt + (long)j0 * K;
+                        float* pBT1 = pBT0 + K;
+                        float* pBT2 = pBT1 + K;
+                        float* pBT3 = pBT2 + K;
+                        float* pBT4 = pBT3 + K;
+                        float* pBT5 = pBT4 + K;
+                        float* pBT6 = pBT5 + K;
+                        float* pBT7 = pBT6 + K;
+                        int k = 0;
+                        for (; k <= K - 8; k += 8)
+                        {
+                            var a_vec = Vector256.LoadUnsafe(ref a[k]);
+                            acc0 = Fma.MultiplyAdd(a_vec, Vector256.LoadUnsafe(ref pBT0[k]), acc0);
+                            acc1 = Fma.MultiplyAdd(a_vec, Vector256.LoadUnsafe(ref pBT1[k]), acc1);
+                            acc2 = Fma.MultiplyAdd(a_vec, Vector256.LoadUnsafe(ref pBT2[k]), acc2);
+                            acc3 = Fma.MultiplyAdd(a_vec, Vector256.LoadUnsafe(ref pBT3[k]), acc3);
+                            acc4 = Fma.MultiplyAdd(a_vec, Vector256.LoadUnsafe(ref pBT4[k]), acc4);
+                            acc5 = Fma.MultiplyAdd(a_vec, Vector256.LoadUnsafe(ref pBT5[k]), acc5);
+                            acc6 = Fma.MultiplyAdd(a_vec, Vector256.LoadUnsafe(ref pBT6[k]), acc6);
+                            acc7 = Fma.MultiplyAdd(a_vec, Vector256.LoadUnsafe(ref pBT7[k]), acc7);
+                        }
+                        float s0 = MathHelpers.HSum256_Avx(acc0);
+                        float s1 = MathHelpers.HSum256_Avx(acc1);
+                        float s2 = MathHelpers.HSum256_Avx(acc2);
+                        float s3 = MathHelpers.HSum256_Avx(acc3);
+                        float s4 = MathHelpers.HSum256_Avx(acc4);
+                        float s5 = MathHelpers.HSum256_Avx(acc5);
+                        float s6 = MathHelpers.HSum256_Avx(acc6);
+                        float s7 = MathHelpers.HSum256_Avx(acc7);
+                        for (; k < K; k++)
+                        {
+                            float a_val = a[k];
+                            s0 += a_val * pBT0[k]; s1 += a_val * pBT1[k];
+                            s2 += a_val * pBT2[k]; s3 += a_val * pBT3[k];
+                            s4 += a_val * pBT4[k]; s5 += a_val * pBT5[k];
+                            s6 += a_val * pBT6[k]; s7 += a_val * pBT7[k];
+                        }
+                        c[j0] = s0; c[j0 + 1] = s1; c[j0 + 2] = s2; c[j0 + 3] = s3;
+                        c[j0 + 4] = s4; c[j0 + 5] = s5; c[j0 + 6] = s6; c[j0 + 7] = s7;
                     }
-                    float s0 = MathHelpers.HSum256_Avx(acc0);
-                    float s1 = MathHelpers.HSum256_Avx(acc1);
-                    float s2 = MathHelpers.HSum256_Avx(acc2);
-                    float s3 = MathHelpers.HSum256_Avx(acc3);
-                    float s4 = MathHelpers.HSum256_Avx(acc4);
-                    float s5 = MathHelpers.HSum256_Avx(acc5);
-                    float s6 = MathHelpers.HSum256_Avx(acc6);
-                    float s7 = MathHelpers.HSum256_Avx(acc7);
-                    for (; k < K; k++)
-                    {
-                        float a_val = a[k];
-                        s0 += a_val * pBT0[k]; s1 += a_val * pBT1[k];
-                        s2 += a_val * pBT2[k]; s3 += a_val * pBT3[k];
-                        s4 += a_val * pBT4[k]; s5 += a_val * pBT5[k];
-                        s6 += a_val * pBT6[k]; s7 += a_val * pBT7[k];
-                    }
-                    c[j0] = s0; c[j0 + 1] = s1; c[j0 + 2] = s2; c[j0 + 3] = s3;
-                    c[j0 + 4] = s4; c[j0 + 5] = s5; c[j0 + 6] = s6; c[j0 + 7] = s7;
                 });
             }
             int tailStart = nBlocks * NR;
@@ -487,56 +494,62 @@ internal static class ActivationKernels
             int nBlocks = N / NR;
             if (nBlocks > 0)
             {
-                System.Threading.Tasks.Parallel.For(0, nBlocks, block =>
+                const int MinGrainN = 128;
+                int grainBlocks = Math.Max(1, MinGrainN / NR);
+                var partitioner = Partitioner.Create(0, nBlocks, Math.Min(grainBlocks, nBlocks));
+                Parallel.ForEach(partitioner, range =>
                 {
-                    int j0 = block * NR;
-                    var acc0 = Vector256<float>.Zero;
-                    var acc1 = Vector256<float>.Zero;
-                    var acc2 = Vector256<float>.Zero;
-                    var acc3 = Vector256<float>.Zero;
-                    var acc4 = Vector256<float>.Zero;
-                    var acc5 = Vector256<float>.Zero;
-                    var acc6 = Vector256<float>.Zero;
-                    var acc7 = Vector256<float>.Zero;
-                    float* pBT0 = bt + (long)j0 * K;
-                    float* pBT1 = pBT0 + K;
-                    float* pBT2 = pBT1 + K;
-                    float* pBT3 = pBT2 + K;
-                    float* pBT4 = pBT3 + K;
-                    float* pBT5 = pBT4 + K;
-                    float* pBT6 = pBT5 + K;
-                    float* pBT7 = pBT6 + K;
-                    int k = 0;
-                    for (; k <= K - 8; k += 8)
+                    for (int block = range.Item1; block < range.Item2; block++)
                     {
-                        var a_vec = Vector256.LoadUnsafe(ref a[k]);
-                        acc0 = Avx.Add(acc0, Avx.Multiply(a_vec, Vector256.LoadUnsafe(ref pBT0[k])));
-                        acc1 = Avx.Add(acc1, Avx.Multiply(a_vec, Vector256.LoadUnsafe(ref pBT1[k])));
-                        acc2 = Avx.Add(acc2, Avx.Multiply(a_vec, Vector256.LoadUnsafe(ref pBT2[k])));
-                        acc3 = Avx.Add(acc3, Avx.Multiply(a_vec, Vector256.LoadUnsafe(ref pBT3[k])));
-                        acc4 = Avx.Add(acc4, Avx.Multiply(a_vec, Vector256.LoadUnsafe(ref pBT4[k])));
-                        acc5 = Avx.Add(acc5, Avx.Multiply(a_vec, Vector256.LoadUnsafe(ref pBT5[k])));
-                        acc6 = Avx.Add(acc6, Avx.Multiply(a_vec, Vector256.LoadUnsafe(ref pBT6[k])));
-                        acc7 = Avx.Add(acc7, Avx.Multiply(a_vec, Vector256.LoadUnsafe(ref pBT7[k])));
+                        int j0 = block * NR;
+                        var acc0 = Vector256<float>.Zero;
+                        var acc1 = Vector256<float>.Zero;
+                        var acc2 = Vector256<float>.Zero;
+                        var acc3 = Vector256<float>.Zero;
+                        var acc4 = Vector256<float>.Zero;
+                        var acc5 = Vector256<float>.Zero;
+                        var acc6 = Vector256<float>.Zero;
+                        var acc7 = Vector256<float>.Zero;
+                        float* pBT0 = bt + (long)j0 * K;
+                        float* pBT1 = pBT0 + K;
+                        float* pBT2 = pBT1 + K;
+                        float* pBT3 = pBT2 + K;
+                        float* pBT4 = pBT3 + K;
+                        float* pBT5 = pBT4 + K;
+                        float* pBT6 = pBT5 + K;
+                        float* pBT7 = pBT6 + K;
+                        int k = 0;
+                        for (; k <= K - 8; k += 8)
+                        {
+                            var a_vec = Vector256.LoadUnsafe(ref a[k]);
+                            acc0 = Avx.Add(acc0, Avx.Multiply(a_vec, Vector256.LoadUnsafe(ref pBT0[k])));
+                            acc1 = Avx.Add(acc1, Avx.Multiply(a_vec, Vector256.LoadUnsafe(ref pBT1[k])));
+                            acc2 = Avx.Add(acc2, Avx.Multiply(a_vec, Vector256.LoadUnsafe(ref pBT2[k])));
+                            acc3 = Avx.Add(acc3, Avx.Multiply(a_vec, Vector256.LoadUnsafe(ref pBT3[k])));
+                            acc4 = Avx.Add(acc4, Avx.Multiply(a_vec, Vector256.LoadUnsafe(ref pBT4[k])));
+                            acc5 = Avx.Add(acc5, Avx.Multiply(a_vec, Vector256.LoadUnsafe(ref pBT5[k])));
+                            acc6 = Avx.Add(acc6, Avx.Multiply(a_vec, Vector256.LoadUnsafe(ref pBT6[k])));
+                            acc7 = Avx.Add(acc7, Avx.Multiply(a_vec, Vector256.LoadUnsafe(ref pBT7[k])));
+                        }
+                        float s0 = MathHelpers.HSum256_Avx(acc0);
+                        float s1 = MathHelpers.HSum256_Avx(acc1);
+                        float s2 = MathHelpers.HSum256_Avx(acc2);
+                        float s3 = MathHelpers.HSum256_Avx(acc3);
+                        float s4 = MathHelpers.HSum256_Avx(acc4);
+                        float s5 = MathHelpers.HSum256_Avx(acc5);
+                        float s6 = MathHelpers.HSum256_Avx(acc6);
+                        float s7 = MathHelpers.HSum256_Avx(acc7);
+                        for (; k < K; k++)
+                        {
+                            float a_val = a[k];
+                            s0 += a_val * pBT0[k]; s1 += a_val * pBT1[k];
+                            s2 += a_val * pBT2[k]; s3 += a_val * pBT3[k];
+                            s4 += a_val * pBT4[k]; s5 += a_val * pBT5[k];
+                            s6 += a_val * pBT6[k]; s7 += a_val * pBT7[k];
+                        }
+                        c[j0] = s0; c[j0 + 1] = s1; c[j0 + 2] = s2; c[j0 + 3] = s3;
+                        c[j0 + 4] = s4; c[j0 + 5] = s5; c[j0 + 6] = s6; c[j0 + 7] = s7;
                     }
-                    float s0 = MathHelpers.HSum256_Avx(acc0);
-                    float s1 = MathHelpers.HSum256_Avx(acc1);
-                    float s2 = MathHelpers.HSum256_Avx(acc2);
-                    float s3 = MathHelpers.HSum256_Avx(acc3);
-                    float s4 = MathHelpers.HSum256_Avx(acc4);
-                    float s5 = MathHelpers.HSum256_Avx(acc5);
-                    float s6 = MathHelpers.HSum256_Avx(acc6);
-                    float s7 = MathHelpers.HSum256_Avx(acc7);
-                    for (; k < K; k++)
-                    {
-                        float a_val = a[k];
-                        s0 += a_val * pBT0[k]; s1 += a_val * pBT1[k];
-                        s2 += a_val * pBT2[k]; s3 += a_val * pBT3[k];
-                        s4 += a_val * pBT4[k]; s5 += a_val * pBT5[k];
-                        s6 += a_val * pBT6[k]; s7 += a_val * pBT7[k];
-                    }
-                    c[j0] = s0; c[j0 + 1] = s1; c[j0 + 2] = s2; c[j0 + 3] = s3;
-                    c[j0 + 4] = s4; c[j0 + 5] = s5; c[j0 + 6] = s6; c[j0 + 7] = s7;
                 });
             }
             int tailStart = nBlocks * NR;
@@ -633,12 +646,18 @@ internal static class ActivationKernels
         if (M <= 1)
         {
             if (M <= 0) return;
-            System.Threading.Tasks.Parallel.For(0, N, j =>
+            const int MinGrainN = 128;
+            int grain = Math.Max(1, Math.Min(MinGrainN, N));
+            var partitioner = Partitioner.Create(0, N, grain);
+            Parallel.ForEach(partitioner, range =>
             {
-                float* pBT = bt + (long)j * K;
-                float sum = 0f;
-                for (int k = 0; k < K; k++) sum += a[k] * pBT[k];
-                c[j] = sum;
+                for (int j = range.Item1; j < range.Item2; j++)
+                {
+                    float* pBT = bt + (long)j * K;
+                    float sum = 0f;
+                    for (int k = 0; k < K; k++) sum += a[k] * pBT[k];
+                    c[j] = sum;
+                }
             });
             return;
         }
