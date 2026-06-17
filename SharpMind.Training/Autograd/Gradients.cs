@@ -92,34 +92,73 @@ public static class Gradients
 
         var dInput = new Tensor<float>(B, In);
 
+        bool useFma = Avx2.IsSupported && Fma.IsSupported;
+        bool useAvx = Avx2.IsSupported;
+
         // dInput = dOutput @ W   (W is [Out, In])
+        // Reordered: for (b) { for (o) { dInRow += dOutVal * WRow } } — sequential W access
         fixed (float* pDOut = dOutput.Data, pW = weight.Data.Data, pDIn = dInput.Data)
         {
             for (int b = 0; b < B; b++)
             {
                 float* dOutRow = pDOut + (long)b * Out;
                 float* dInRow  = pDIn  + (long)b * In;
-                for (int i = 0; i < In; i++)
+                for (int o = 0; o < Out; o++)
                 {
-                    float sum = 0f;
-                    for (int o = 0; o < Out; o++)
-                        sum += dOutRow[o] * pW[(long)o * In + i];
-                    dInRow[i] += sum;
+                    float dOutVal = dOutRow[o];
+                    float* wRow = pW + (long)o * In;
+                    int i = 0;
+                    if (useFma)
+                    {
+                        var vScale = Vector256.Create(dOutVal);
+                        for (; i <= In - 8; i += 8)
+                            Vector256.StoreUnsafe(
+                                Fma.MultiplyAdd(vScale, Vector256.LoadUnsafe(ref wRow[i]), Vector256.LoadUnsafe(ref dInRow[i])),
+                                ref dInRow[i]);
+                    }
+                    else if (useAvx)
+                    {
+                        var vScale = Vector256.Create(dOutVal);
+                        for (; i <= In - 8; i += 8)
+                            Vector256.StoreUnsafe(
+                                Avx.Add(Avx.Multiply(vScale, Vector256.LoadUnsafe(ref wRow[i])), Vector256.LoadUnsafe(ref dInRow[i])),
+                                ref dInRow[i]);
+                    }
+                    for (; i < In; i++)
+                        dInRow[i] += dOutVal * wRow[i];
                 }
             }
         }
 
         // dW += dOutput^T @ input   accumulated into weight.Grad
+        // Reordered: for (b) { dOutput[b, :] sequential, inRow reused across all o }
         fixed (float* pDOut = dOutput.Data, pIn = input.Data, pDW = weight.Grad.Data)
         {
-            for (int o = 0; o < Out; o++)
+            for (int b = 0; b < B; b++)
             {
-                float* dWRow = pDW + (long)o * In;
-                for (int b = 0; b < B; b++)
+                float* inRow = pIn + (long)b * In;
+                for (int o = 0; o < Out; o++)
                 {
                     float dOutOB = pDOut[(long)b * Out + o];
-                    float* inRow = pIn + (long)b * In;
-                    for (int i = 0; i < In; i++)
+                    float* dWRow = pDW + (long)o * In;
+                    int i = 0;
+                    if (useFma)
+                    {
+                        var vScale = Vector256.Create(dOutOB);
+                        for (; i <= In - 8; i += 8)
+                            Vector256.StoreUnsafe(
+                                Fma.MultiplyAdd(vScale, Vector256.LoadUnsafe(ref inRow[i]), Vector256.LoadUnsafe(ref dWRow[i])),
+                                ref dWRow[i]);
+                    }
+                    else if (useAvx)
+                    {
+                        var vScale = Vector256.Create(dOutOB);
+                        for (; i <= In - 8; i += 8)
+                            Vector256.StoreUnsafe(
+                                Avx.Add(Avx.Multiply(vScale, Vector256.LoadUnsafe(ref inRow[i])), Vector256.LoadUnsafe(ref dWRow[i])),
+                                ref dWRow[i]);
+                    }
+                    for (; i < In; i++)
                         dWRow[i] += dOutOB * inRow[i];
                 }
             }
