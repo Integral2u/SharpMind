@@ -1,16 +1,25 @@
+using JigSawDotNet;
+using SharpMind.Core.Ops;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Runtime.Intrinsics.X86;
-using JigSawDotNet;
 
 namespace SharpMind.Core.Quantization;
 
 public static class QuantizationFactory
 {
+    private static readonly ConcurrentDictionary<int, QuantizationOps> _opsCache = [];
     public static QuantizationOps Create(HardwareTier hw = HardwareTier.Auto)
     {
         var config = new QuantizationConfig { Hardware = hw };
-        return Assembler.CreateInstance<QuantizationOps>(config.ToJigSawMapping());
+        return Create(config.ToJigSawMapping());        
     }
+
+    public static QuantizationOps Create(Dictionary<string, string> mappings) =>
+        _opsCache.GetOrAdd(mappings.GetHashCode(), (h) =>
+        {
+            return Assembler.CreateInstance<QuantizationOps>(mappings);
+        });
 
     public static QuantizationOps[] CreateAllAvailable()
     {
@@ -50,7 +59,7 @@ public static class QuantizationFactory
             return sse;
 
         var avx2 = Create(HardwareTier.AVX2);
-        var fma  = Fma.IsSupported ? Create(HardwareTier.FMA) : avx2;
+        var fma = Fma.IsSupported ? Create(HardwareTier.FMA) : avx2;
 
         // Benchmark Q8_0 and Q8K — representative of the two main code paths
         var best = BenchmarkVecDot(avx2, scalar, fma, benchVectorSize, warmup, iterations);

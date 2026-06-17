@@ -735,7 +735,7 @@ internal static class AttentionKernels
                     for (int b = 0; b < nBlocks; b++)
                     {
                         byte* bp = kj_base + b * Q8BLOCK;
-                        float d = HalfToFloat_F16C(*(ushort*)bp);
+                        float d = HalfToFloat_Scalar(*(ushort*)bp);
                         sbyte* vals = (sbyte*)(bp + 2);
                         float* qi_b = qi + b * Q8QK;
                         int blockEnd = Math.Min(Q8QK, headDim - b * Q8QK);
@@ -767,7 +767,7 @@ internal static class AttentionKernels
                     for (int b = 0; b < nBlocks; b++)
                     {
                         byte* bp = vj_base + b * Q8BLOCK;
-                        float d = HalfToFloat_F16C(*(ushort*)bp);
+                        float d = HalfToFloat_Scalar(*(ushort*)bp);
                         sbyte* vals = (sbyte*)(bp + 2);
                         int blockEnd = Math.Min(Q8QK, headDim - b * Q8QK);
                         float* pOut = pO + b * Q8QK;

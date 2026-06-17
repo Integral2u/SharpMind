@@ -11,10 +11,16 @@ public static partial class QuantizationKernels
     internal const int QK   = 32;
 
     
-    // HalfToFloat — FP16 → FP32
-    
+    // HalfToFloat — FP16 → FP32    
 
-    public static unsafe float HalfToFloat_F16C(ushort half)
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static float HalfToFloat_F16C(ushort half)
+    {
+        return (float)BitConverter.UInt16BitsToHalf(half);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static unsafe float HalfToFloat_Scalar(ushort half)
     {
         int exp5 = (half >> 10) & 0x1F;
 
@@ -45,13 +51,14 @@ public static partial class QuantizationKernels
         return *(float*)&bitsNrm;
     }
 
-    internal static float HalfToFloat_Scalar(ushort half) => HalfToFloat_F16C(half);
-
 
     // FloatToHalf — FP32 → FP16
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static ushort FloatToHalf_F16C(float f) => BitConverter.HalfToUInt16Bits((Half)f);
 
-    public static unsafe ushort FloatToHalf_F16C(float f)
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static unsafe ushort FloatToHalf_Scalar(float f)
     {
         uint bits = *(uint*)&f;
         uint sign = (bits >> 16) & 0x8000;
@@ -76,31 +83,25 @@ public static partial class QuantizationKernels
         return (ushort)(sign | eBits | mMant);
     }
 
-    internal static ushort FloatToHalf_Scalar(float f) => FloatToHalf_F16C(f);
-
-
     // GetScaleMinK4 — 6-bit K-quant scale/min unpacking
-    
 
-    internal static unsafe byte GetScaleMinK4_Scale_Scalar(int j, byte* scales)
+    public static unsafe byte GetScaleMinK4_Scale_Scalar(int j, byte* scales)
     {
         if (j < 4)
             return (byte)(scales[j] & 0x3F);
         return (byte)((scales[j + 4] & 0x0F) | ((scales[j - 4] >> 6) << 4));
     }
 
-    internal static unsafe byte GetScaleMinK4_Min_Scalar(int j, byte* scales)
+    public static unsafe byte GetScaleMinK4_Min_Scalar(int j, byte* scales)
     {
         if (j < 4)
             return (byte)(scales[j + 4] & 0x3F);
         return (byte)((scales[j + 4] >> 4) | ((scales[j] >> 6) << 4));
     }
 
-    
     // VecDotQ3K — 3-bit K-quant
-    
 
-    internal static unsafe float VecDotQ3K_Scalar(float* input, byte* rawWeights, int col, int inFeatures)
+    public static unsafe float VecDotQ3K_Scalar(float* input, byte* rawWeights, int col, int inFeatures)
     {
         const int BLOCK_BYTES = 110;
         int nBlocks = (inFeatures + QK_K - 1) / QK_K;
@@ -143,7 +144,7 @@ public static partial class QuantizationKernels
         return (float)sum;
     }
 
-    internal static unsafe float VecDotQ3K_AVX2(float* input, byte* rawWeights, int col, int inFeatures)
+    public static unsafe float VecDotQ3K_AVX2(float* input, byte* rawWeights, int col, int inFeatures)
     {
         const int BLOCK_BYTES = 110;
         int nBlocks = (inFeatures + QK_K - 1) / QK_K;
@@ -159,7 +160,7 @@ public static partial class QuantizationKernels
             byte* block  = rawWeights + (long)col * nBlocks * BLOCK_BYTES + b * BLOCK_BYTES;
             byte* hmask  = block;
             byte* qs     = block + 32;
-            float dAll   = HalfToFloat_Scalar(*(ushort*)(block + 108));
+            float dAll   = HalfToFloat_F16C(*(ushort*)(block + 108));
 
             uint* aux = (uint*)scaleBuf;
             aux[0] = *(uint*)(block + 96);
@@ -207,7 +208,7 @@ public static partial class QuantizationKernels
         return (float)sum;
     }
 
-    internal static unsafe float VecDotQ3K_FMA(float* input, byte* rawWeights, int col, int inFeatures)
+    public static unsafe float VecDotQ3K_FMA(float* input, byte* rawWeights, int col, int inFeatures)
     {
         const int BLOCK_BYTES = 110;
         int nBlocks = (inFeatures + QK_K - 1) / QK_K;
@@ -223,7 +224,7 @@ public static partial class QuantizationKernels
             byte* block  = rawWeights + (long)col * nBlocks * BLOCK_BYTES + b * BLOCK_BYTES;
             byte* hmask  = block;
             byte* qs     = block + 32;
-            float dAll   = HalfToFloat_Scalar(*(ushort*)(block + 108));
+            float dAll   = HalfToFloat_F16C(*(ushort*)(block + 108));
 
             uint* aux = (uint*)scaleBuf;
             aux[0] = *(uint*)(block + 96);
@@ -271,11 +272,9 @@ public static partial class QuantizationKernels
         return (float)sum;
     }
 
-    
     // VecDotQ4K — 4-bit K-quant
-    
 
-    internal static unsafe float VecDotQ4K_Scalar(float* input, byte* rawWeights, int col, int inFeatures)
+    public static unsafe float VecDotQ4K_Scalar(float* input, byte* rawWeights, int col, int inFeatures)
     {
         const int BLOCK_BYTES = 144;
         int nBlocks = (inFeatures + QK_K - 1) / QK_K;
@@ -319,7 +318,7 @@ public static partial class QuantizationKernels
         return (float)sum;
     }
 
-    internal static unsafe float VecDotQ4K_AVX2(float* input, byte* rawWeights, int col, int inFeatures)
+    public static unsafe float VecDotQ4K_AVX2(float* input, byte* rawWeights, int col, int inFeatures)
     {
         const int BLOCK_BYTES = 144;
         int nBlocks = (inFeatures + QK_K - 1) / QK_K;
@@ -327,8 +326,8 @@ public static partial class QuantizationKernels
         for (int b = 0; b < nBlocks; b++)
         {
             byte* block    = rawWeights + (long)col * nBlocks * BLOCK_BYTES + b * BLOCK_BYTES;
-            float dSuper   = HalfToFloat_Scalar(*(ushort*)block);
-            float minSuper = HalfToFloat_Scalar(*(ushort*)(block + 2));
+            float dSuper   = HalfToFloat_F16C(*(ushort*)block);
+            float minSuper = HalfToFloat_F16C(*(ushort*)(block + 2));
             byte* scales   = block + 4;
             byte* qs       = block + 16;
 
@@ -418,7 +417,7 @@ public static partial class QuantizationKernels
         return (float)sum;
     }
 
-    internal static unsafe float VecDotQ4K_FMA(float* input, byte* rawWeights, int col, int inFeatures)
+    public static unsafe float VecDotQ4K_FMA(float* input, byte* rawWeights, int col, int inFeatures)
     {
         const int BLOCK_BYTES = 144;
         int nBlocks = (inFeatures + QK_K - 1) / QK_K;
@@ -426,8 +425,8 @@ public static partial class QuantizationKernels
         for (int b = 0; b < nBlocks; b++)
         {
             byte* block    = rawWeights + (long)col * nBlocks * BLOCK_BYTES + b * BLOCK_BYTES;
-            float dSuper   = HalfToFloat_Scalar(*(ushort*)block);
-            float minSuper = HalfToFloat_Scalar(*(ushort*)(block + 2));
+            float dSuper   = HalfToFloat_F16C(*(ushort*)block);
+            float minSuper = HalfToFloat_F16C(*(ushort*)(block + 2));
             byte* scales   = block + 4;
             byte* qs       = block + 16;
 
@@ -517,11 +516,8 @@ public static partial class QuantizationKernels
         return (float)sum;
     }
 
-    
     // VecDotQ5K — 5-bit K-quant
-    
-
-    internal static unsafe float VecDotQ5K_Scalar(float* input, byte* rawWeights, int col, int inFeatures)
+    public static unsafe float VecDotQ5K_Scalar(float* input, byte* rawWeights, int col, int inFeatures)
     {
         const int BLOCK_BYTES = 176;
         int nBlocks = (inFeatures + QK_K - 1) / QK_K;
@@ -566,7 +562,7 @@ public static partial class QuantizationKernels
         return (float)sum;
     }
 
-    internal static unsafe float VecDotQ5K_AVX2(float* input, byte* rawWeights, int col, int inFeatures)
+    public static unsafe float VecDotQ5K_AVX2(float* input, byte* rawWeights, int col, int inFeatures)
     {
         const int BLOCK_BYTES = 176;
         int nBlocks = (inFeatures + QK_K - 1) / QK_K;
@@ -574,8 +570,8 @@ public static partial class QuantizationKernels
         for (int b = 0; b < nBlocks; b++)
         {
             byte* block  = rawWeights + (long)col * nBlocks * BLOCK_BYTES + b * BLOCK_BYTES;
-            float d      = HalfToFloat_Scalar(*(ushort*)block);
-            float min    = HalfToFloat_Scalar(*(ushort*)(block + 2));
+            float d      = HalfToFloat_F16C(*(ushort*)block);
+            float min    = HalfToFloat_F16C(*(ushort*)(block + 2));
             byte* scales = block + 4;
             byte* qh     = block + 16;
             byte* qs     = block + 48;
@@ -683,7 +679,7 @@ public static partial class QuantizationKernels
         return (float)sum;
     }
 
-    internal static unsafe float VecDotQ5K_FMA(float* input, byte* rawWeights, int col, int inFeatures)
+    public static unsafe float VecDotQ5K_FMA(float* input, byte* rawWeights, int col, int inFeatures)
     {
         const int BLOCK_BYTES = 176;
         int nBlocks = (inFeatures + QK_K - 1) / QK_K;
@@ -691,8 +687,8 @@ public static partial class QuantizationKernels
         for (int b = 0; b < nBlocks; b++)
         {
             byte* block  = rawWeights + (long)col * nBlocks * BLOCK_BYTES + b * BLOCK_BYTES;
-            float d      = HalfToFloat_Scalar(*(ushort*)block);
-            float min    = HalfToFloat_Scalar(*(ushort*)(block + 2));
+            float d      = HalfToFloat_F16C(*(ushort*)block);
+            float min    = HalfToFloat_F16C(*(ushort*)(block + 2));
             byte* scales = block + 4;
             byte* qh     = block + 16;
             byte* qs     = block + 48;
@@ -798,11 +794,9 @@ public static partial class QuantizationKernels
         return (float)sum;
     }
 
-    
     // VecDotQ6K — 6-bit K-quant
-    
 
-    internal static unsafe float VecDotQ6K_Scalar(float* input, byte* rawWeights, int col, int inFeatures)
+    public static unsafe float VecDotQ6K_Scalar(float* input, byte* rawWeights, int col, int inFeatures)
     {
         const int BLOCK_BYTES = 210;
         int nBlocks = (inFeatures + QK_K - 1) / QK_K;
@@ -854,7 +848,7 @@ public static partial class QuantizationKernels
         return (float)sum;
     }
 
-    internal static unsafe float VecDotQ6K_AVX2(float* input, byte* rawWeights, int col, int inFeatures)
+    public static unsafe float VecDotQ6K_AVX2(float* input, byte* rawWeights, int col, int inFeatures)
     {
         const int BLOCK_BYTES = 210;
         int nBlocks = (inFeatures + QK_K - 1) / QK_K;
@@ -865,7 +859,7 @@ public static partial class QuantizationKernels
             byte* ql     = block;
             byte* qh     = block + 128;
             sbyte* scales = (sbyte*)(block + 192);
-            float d      = HalfToFloat_Scalar(*(ushort*)(block + 208));
+            float d      = HalfToFloat_F16C(*(ushort*)(block + 208));
 
             int valid = Math.Min(QK_K, inFeatures - b * QK_K);
             float* pIn = input + b * QK_K;
@@ -912,7 +906,7 @@ public static partial class QuantizationKernels
         return (float)sum;
     }
 
-    internal static unsafe float VecDotQ6K_FMA(float* input, byte* rawWeights, int col, int inFeatures)
+    public static unsafe float VecDotQ6K_FMA(float* input, byte* rawWeights, int col, int inFeatures)
     {
         const int BLOCK_BYTES = 210;
         int nBlocks = (inFeatures + QK_K - 1) / QK_K;
@@ -923,7 +917,7 @@ public static partial class QuantizationKernels
             byte* ql     = block;
             byte* qh     = block + 128;
             sbyte* scales = (sbyte*)(block + 192);
-            float d      = HalfToFloat_Scalar(*(ushort*)(block + 208));
+            float d      = HalfToFloat_F16C(*(ushort*)(block + 208));
 
             int valid = Math.Min(QK_K, inFeatures - b * QK_K);
             float* pIn = input + b * QK_K;
