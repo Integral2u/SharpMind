@@ -64,7 +64,7 @@ public static class ModelFactory
 
         var acts = ActivationFactory.Create(sharpConfig,mapping);//  Assembler.CreateInstance<ActivationOps>(actualMapping);
         var ops = TensorOpsFactory.Create(sharpConfig,mapping);// sharpConfig);
-        var qOps = QuantizationFactory.CreateForSystem();
+        var qOps = QuantizationFactory.Create();
         NormOpsFactory.SetDefault(sharpConfig);
 
         var embedding = new EmbeddingTable(weights.Config.VocabSize, weights.Config.HiddenDim, weights.EmbeddingWeight, false);

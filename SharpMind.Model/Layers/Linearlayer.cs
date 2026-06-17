@@ -48,7 +48,7 @@ public sealed class LinearLayer : IDisposable
         OutFeatures = outFeatures;
         _weight = weight ?? new Tensor<float>(inFeatures, outFeatures);
         _bias = biasTensor ?? (bias ? new Tensor<float>(outFeatures) : null);
-        _qOps = qOps ?? QuantizationFactory.CreateForSystem();
+        _qOps = qOps ?? QuantizationFactory.Create();
         _ownsWeight = weight == null;
         _ownsBias = biasTensor == null && _bias != null;
     }
