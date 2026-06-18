@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.Intrinsics.X86;
 using SharpMind.Core.Quantization;
 using Xunit;
 
@@ -9,7 +10,19 @@ namespace SharpMind.Tests.Quantization;
 public class VecDotTests
 {
     public static IEnumerable<object[]> AllQuantizationOps()
-        => QuantizationFactory.CreateAllAvailable().Select(q => new object[] { q });
+    {
+        yield return new object[] { QuantizationFactory.Create(HardwareTier.Scalar) };
+        if (Sse.IsSupported)
+        {
+            yield return new object[] { QuantizationFactory.Create(HardwareTier.SSE) };
+            if (Avx2.IsSupported)
+            {
+                yield return new object[] { QuantizationFactory.Create(HardwareTier.AVX2) };
+                if (Fma.IsSupported)
+                    yield return new object[] { QuantizationFactory.Create(HardwareTier.FMA) };
+            }
+        }
+    }
 
     [Fact]
     public void RunConsistencyDiagnostic()
@@ -27,7 +40,17 @@ public class VecDotTests
         var input = new float[nBlocks * qk];
         for (int i = 0; i < input.Length; i++) input[i] = (float)(rng.NextDouble() - 0.5);
         int inF = nBlocks * qk;
-        var all = QuantizationFactory.CreateAllAvailable();
+        var all = new List<QuantizationOps> { QuantizationFactory.Create(HardwareTier.Scalar) };
+        if (Sse.IsSupported)
+        {
+            all.Add(QuantizationFactory.Create(HardwareTier.SSE));
+            if (Avx2.IsSupported)
+            {
+                all.Add(QuantizationFactory.Create(HardwareTier.AVX2));
+                if (Fma.IsSupported)
+                    all.Add(QuantizationFactory.Create(HardwareTier.FMA));
+            }
+        }
         var results = new List<float>();
         fixed (float* pIn = input) fixed (byte* pW = weights)
             foreach (var q in all) results.Add(q.VecDotQ3K(pIn, pW, 0, inF));

@@ -23,25 +23,6 @@ public static class QuantizationFactory
     public static QuantizationOps Create(Dictionary<string, string> mappings) =>
         Assembler.CreateInstance<QuantizationOps>(mappings);
 
-    [Obsolete("Only used in tests; will be removed after test review.")]
-    public static QuantizationOps[] CreateAllAvailable()
-    {
-        var list = new List<QuantizationOps> { Create(HardwareTier.Scalar) };
-
-        if (Sse.IsSupported)
-        {
-            list.Add(Create(HardwareTier.SSE));
-            if (Avx2.IsSupported)
-            {
-                list.Add(Create(HardwareTier.AVX2));
-                if (Fma.IsSupported)
-                    list.Add(Create(HardwareTier.FMA));
-            }
-        }
-
-        return [.. list];
-    }
-
     private static HardwareTier DetectBestTier()
     {
         if (Fma.IsSupported)  return HardwareTier.FMA;
