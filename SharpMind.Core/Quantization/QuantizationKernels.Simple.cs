@@ -36,7 +36,18 @@ public static partial class QuantizationKernels
                     for (int b = 0; b < nBlocks; b++)
                     {
                         float* pInBlock = input + b * QK;
-                        int blockEnd = Math.Min(QK, K - b * QK);
+                        bool isLast = b == nBlocks - 1;
+                        int blockEnd = isLast ? K - b * QK : QK;
+                        bool fullBlock = blockEnd == QK;
+
+                        Vector256<float> vi0 = default, vi1 = default, vi2 = default, vi3 = default;
+                        if (fullBlock)
+                        {
+                            vi0 = Vector256.LoadUnsafe(ref pInBlock[0]);
+                            vi1 = Vector256.LoadUnsafe(ref pInBlock[8]);
+                            vi2 = Vector256.LoadUnsafe(ref pInBlock[16]);
+                            vi3 = Vector256.LoadUnsafe(ref pInBlock[24]);
+                        }
 
                         for (int ci = 0; ci < NR; ci++)
                         {
@@ -44,18 +55,37 @@ public static partial class QuantizationKernels
                             byte* block = rawWeights + (long)col * colStride + b * BLOCK_BYTES;
                             float d = HalfToFloat_F16C(*(ushort*)block);
                             sbyte* values = (sbyte*)(block + 2);
-
-                            var vacc = Vector256<float>.Zero;
                             var vd = Vector256.Create(d);
-                            int i = 0;
-                            for (; i <= blockEnd - 16; i += 8)
+
+                            float s;
+                            if (fullBlock)
                             {
-                                var vi = Vector256.LoadUnsafe(ref pInBlock[i]);
-                                var vw = Avx.ConvertToVector256Single(Avx2.ConvertToVector256Int32(values + i));
-                                vacc = Fma.MultiplyAdd(vi, Avx.Multiply(vw, vd), vacc);
+                                var vw0 = Avx.ConvertToVector256Single(Avx2.ConvertToVector256Int32(values));
+                                var vw1 = Avx.ConvertToVector256Single(Avx2.ConvertToVector256Int32(values + 8));
+                                var vw2 = Avx.ConvertToVector256Single(Avx2.ConvertToVector256Int32(values + 16));
+                                var vw3 = Avx.ConvertToVector256Single(Avx2.ConvertToVector256Int32(values + 24));
+
+                                var a0 = Fma.MultiplyAdd(vi0, Avx.Multiply(vw0, vd), Vector256<float>.Zero);
+                                var a1 = Fma.MultiplyAdd(vi1, Avx.Multiply(vw1, vd), Vector256<float>.Zero);
+                                var a2 = Fma.MultiplyAdd(vi2, Avx.Multiply(vw2, vd), Vector256<float>.Zero);
+                                var a3 = Fma.MultiplyAdd(vi3, Avx.Multiply(vw3, vd), Vector256<float>.Zero);
+
+                                s = MathHelpers.HSum256_Avx((a0 + a1) + (a2 + a3));
                             }
-                            float s = MathHelpers.HSum256_Avx(vacc);
-                            for (; i < blockEnd; i++) s += pInBlock[i] * (values[i] * d);
+                            else
+                            {
+                                var vacc = Vector256<float>.Zero;
+                                int i = 0;
+                                for (; i <= blockEnd - 16; i += 8)
+                                {
+                                    var vi = Vector256.LoadUnsafe(ref pInBlock[i]);
+                                    var vw = Avx.ConvertToVector256Single(Avx2.ConvertToVector256Int32(values + i));
+                                    vacc = Fma.MultiplyAdd(vi, Avx.Multiply(vw, vd), vacc);
+                                }
+                                s = MathHelpers.HSum256_Avx(vacc);
+                                for (; i < blockEnd; i++) s += pInBlock[i] * (values[i] * d);
+                            }
+
                             sums[ci] += s;
                         }
                     }
@@ -63,7 +93,6 @@ public static partial class QuantizationKernels
                     for (int ci = 0; ci < NR; ci++)
                         output[colBase + ci] = (float)sums[ci];
                 });
-
             }
 
             int tailStart = nGroups * NR;
@@ -87,7 +116,18 @@ public static partial class QuantizationKernels
                     for (int b = 0; b < nBlocks; b++)
                     {
                         float* pInBlock = pInRow + b * QK;
-                        int blockEnd = Math.Min(QK, K - b * QK);
+                        bool isLast = b == nBlocks - 1;
+                        int blockEnd = isLast ? K - b * QK : QK;
+                        bool fullBlock = blockEnd == QK;
+
+                        Vector256<float> vi0 = default, vi1 = default, vi2 = default, vi3 = default;
+                        if (fullBlock)
+                        {
+                            vi0 = Vector256.LoadUnsafe(ref pInBlock[0]);
+                            vi1 = Vector256.LoadUnsafe(ref pInBlock[8]);
+                            vi2 = Vector256.LoadUnsafe(ref pInBlock[16]);
+                            vi3 = Vector256.LoadUnsafe(ref pInBlock[24]);
+                        }
 
                         for (int ci = 0; ci < NR; ci++)
                         {
@@ -95,18 +135,37 @@ public static partial class QuantizationKernels
                             byte* block = rawWeights + (long)col * colStride + b * BLOCK_BYTES;
                             float d = HalfToFloat_F16C(*(ushort*)block);
                             sbyte* values = (sbyte*)(block + 2);
-
-                            var vacc = Vector256<float>.Zero;
                             var vd = Vector256.Create(d);
-                            int i = 0;
-                            for (; i <= blockEnd - 16; i += 8)
+
+                            float s;
+                            if (fullBlock)
                             {
-                                var vi = Vector256.LoadUnsafe(ref pInBlock[i]);
-                                var vw = Avx.ConvertToVector256Single(Avx2.ConvertToVector256Int32(values + i));
-                                vacc = Fma.MultiplyAdd(vi, Avx.Multiply(vw, vd), vacc);
+                                var vw0 = Avx.ConvertToVector256Single(Avx2.ConvertToVector256Int32(values));
+                                var vw1 = Avx.ConvertToVector256Single(Avx2.ConvertToVector256Int32(values + 8));
+                                var vw2 = Avx.ConvertToVector256Single(Avx2.ConvertToVector256Int32(values + 16));
+                                var vw3 = Avx.ConvertToVector256Single(Avx2.ConvertToVector256Int32(values + 24));
+
+                                var a0 = Fma.MultiplyAdd(vi0, Avx.Multiply(vw0, vd), Vector256<float>.Zero);
+                                var a1 = Fma.MultiplyAdd(vi1, Avx.Multiply(vw1, vd), Vector256<float>.Zero);
+                                var a2 = Fma.MultiplyAdd(vi2, Avx.Multiply(vw2, vd), Vector256<float>.Zero);
+                                var a3 = Fma.MultiplyAdd(vi3, Avx.Multiply(vw3, vd), Vector256<float>.Zero);
+
+                                s = MathHelpers.HSum256_Avx((a0 + a1) + (a2 + a3));
                             }
-                            float s = MathHelpers.HSum256_Avx(vacc);
-                            for (; i < blockEnd; i++) s += pInBlock[i] * (values[i] * d);
+                            else
+                            {
+                                var vacc = Vector256<float>.Zero;
+                                int i = 0;
+                                for (; i <= blockEnd - 16; i += 8)
+                                {
+                                    var vi = Vector256.LoadUnsafe(ref pInBlock[i]);
+                                    var vw = Avx.ConvertToVector256Single(Avx2.ConvertToVector256Int32(values + i));
+                                    vacc = Fma.MultiplyAdd(vi, Avx.Multiply(vw, vd), vacc);
+                                }
+                                s = MathHelpers.HSum256_Avx(vacc);
+                                for (; i < blockEnd; i++) s += pInBlock[i] * (values[i] * d);
+                            }
+
                             sums[ci] += s;
                         }
                     }
