@@ -6,6 +6,7 @@ using SharpMind.Tokenization;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Threading.Channels;
 
 namespace SharpMind.Inference.Chat;
 
@@ -313,7 +314,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         string query,
         float? temperatureOverride,
         int? seedOverride,
-        Func<string, ChatStreamEntry>? onSubStream = null,
+        Action<string>? onSubFragment = null,
         CancellationToken ct = default)
     {
         // Build the sub-agent's prompt: system prompt + user query
@@ -348,7 +349,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         await foreach (var fragment in _generator.GenerateFromTokensAsync(promptToks, sampleCfg, genCfg, ct))
         {
             sb.Append(fragment);
-            onSubStream?.Invoke(fragment);
+            onSubFragment?.Invoke(fragment);
         }
 
         return sb.ToString();
@@ -545,22 +546,41 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
                     TimeToFirstToken = _generator.TimeToFirstToken
                 };
 
-                // Execute sub-agent with depth tracking
+                // Execute sub-agent with depth tracking, streaming Researching tokens
                 _currentDepth++;
+                var subChannel = Channel.CreateUnbounded<ChatStreamEntry>();
+
+                async Task<string> RunSubAgentAsync()
+                {
+                    try
+                    {
+                        return await ExecuteSubAgentAsync(
+                            subAgent, agentQuery, agentTemp, agentSeed,
+                            fragment => subChannel.Writer.TryWrite(new ChatStreamEntry
+                            {
+                                Status = ChatStatus.Researching,
+                                Token = fragment,
+                                IsComplete = false,
+                                TokensPerSecond = _generator.TokensPerSecond,
+                                TimeToFirstToken = _generator.TimeToFirstToken
+                            }),
+                            ct);
+                    }
+                    finally
+                    {
+                        subChannel.Writer.TryComplete();
+                    }
+                }
+
+                var subTask = RunSubAgentAsync();
+
+                await foreach (var entry in subChannel.Reader.ReadAllAsync(ct))
+                    yield return entry;
+
                 string agentResult;
                 try
                 {
-                    agentResult = await ExecuteSubAgentAsync(
-                        subAgent, agentQuery, agentTemp, agentSeed,
-                        fragment => new ChatStreamEntry
-                        {
-                            Status = ChatStatus.Researching,
-                            Token = fragment,
-                            IsComplete = false,
-                            TokensPerSecond = _generator.TokensPerSecond,
-                            TimeToFirstToken = _generator.TimeToFirstToken
-                        },
-                        ct);
+                    agentResult = await subTask;
                 }
                 finally
                 {
