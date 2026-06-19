@@ -30,6 +30,16 @@ namespace SharpMind.Inference.Agent
         public readonly List<string> Skills = [];
         public readonly List<string> Rules = [];
 
+        // Sub-agent registry
+        private readonly Dictionary<string, IAgent> _agents = [];
+        private int _unnamedCounter;
+        public IReadOnlyDictionary<string, IAgent> RegisteredAgents => _agents;
+
+        private bool _agentsEnabled;
+        private int _maxAgentDepth = 2;
+        public bool AgentsEnabled => _agentsEnabled;
+        public int MaxAgentDepth => _maxAgentDepth;
+
         // Builder helpers
 
         /// <summary>Adds a free-form behavioral instruction (idempotent).</summary>
@@ -209,6 +219,47 @@ namespace SharpMind.Inference.Agent
 
         private static JsonObject Typed(string type) => new() { ["type"] = type };
 
+        // Sub-agent registration
+
+        /// <summary>
+        /// Creates and registers a sub-agent. When <paramref name="config.Name"/> is null,
+        /// an auto-name is generated using the Greek tier system
+        /// (<c>{Deity}-{Tier}</c> e.g. <c>Athena-Alpha</c>).
+        /// The agent is callable by the model via <c>{{agent:Name:query}}</c>.
+        /// </summary>
+        /// <summary>Enables sub-agent delegation with the given nesting depth.</summary>
+        public IAgentBuilder WithAgents(int depth = 2)
+        {
+            _agentsEnabled = true;
+            _maxAgentDepth = depth;
+            return this;
+        }
+
+        /// <summary>
+        /// Creates and registers a sub-agent. When <paramref name="config.Name"/> is null,
+        /// an auto-name is generated using the Greek tier system
+        /// (<c>{Deity}-{Tier}</c> e.g. <c>Athena-Alpha</c>).
+        /// The agent is callable by the model via <c>{{agent:Name:query}}</c>.
+        /// </summary>
+        public IAgent CreateAgent(AgentConfig config)
+        {
+            ArgumentNullException.ThrowIfNull(config);
+            ArgumentException.ThrowIfNullOrWhiteSpace(config.SystemPrompt);
+
+            string? name = config.Name;
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                name = GreekTier.AutoName(config.Temperature, ref _unnamedCounter, [.. _agents.Keys]);
+            }
+
+            if (_agents.ContainsKey(name))
+                throw new InvalidOperationException($"An agent named '{name}' is already registered.");
+
+            var agent = new Agent(name, config);
+            _agents[name] = agent;
+            return agent;
+        }
+
         // Tool invocation
         /// <summary>
         /// Dispatches a tool call from the model's JSON response.
@@ -386,6 +437,26 @@ namespace SharpMind.Inference.Agent
                     sb.AppendLine(skill);
                     sb.AppendLine(); // blank line between skill blocks
                 }
+            }
+
+            // Delegated agents
+            if (_agentsEnabled && _agents.Count > 0)
+            {
+                sb.AppendLine();
+                sb.AppendLine("## Delegated Agents");
+                sb.AppendLine("You may delegate sub-tasks to other agents using this format:");
+                sb.AppendLine("""{{agent:<name>[:temp=<temperature>][:seed=<seed>]:<query>}}""");
+                sb.AppendLine();
+                sb.AppendLine("Available agents:");
+                foreach (var agent in _agents.Values)
+                {
+                    var temp = agent.Config.Temperature.HasValue
+                        ? $" (temp={agent.Config.Temperature.Value:F2})"
+                        : "";
+                    sb.AppendLine($"- {agent.Name}{temp}: {agent.Config.SystemPrompt[..Math.Min(agent.Config.SystemPrompt.Length, 120)]}");
+                }
+                sb.AppendLine();
+                sb.AppendLine("After delegating, you will receive the result as a tool result. Continue from there.");
             }
 
             return sb.ToString().TrimEnd();

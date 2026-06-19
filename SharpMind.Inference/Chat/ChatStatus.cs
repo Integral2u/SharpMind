@@ -15,6 +15,8 @@ public enum ChatStatus
     Responding,
     /// <summary>Waiting for input or tool results.</summary>
     Waiting,
+    /// <summary>Sub-agent is generating a response (streamed outside main history/KV cache).</summary>
+    Researching,
     /// <summary>That chat was interrupted, cancelled or failed.</summary>
     Interrupted,
     /// <summary>Completed.</summary>

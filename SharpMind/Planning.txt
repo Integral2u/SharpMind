@@ -1,4 +1,28 @@
 ﻿Code Review Notes
+
+I want to look at Chatsession improvements but belive some my rely on agent capabilites. see SharpMind.AgenTools.EchoTool for example however this need to be more closly tied in with ChatSession so existing model can be passed but with fresh context,
+this could be used as essentially a tool to report back a result to the main chatsession or for other purposes, such as summarising.
+Given the model and relevent details are available we could add to IAgentBuilder CreateAgent to spawn sub agents essentially acting as tools,
+Consideration to Agent Spawn depth will be needed to prevent ifinate spawning, agent naming possibly greek name to match behaviour or task asigned.
+
+Addtional benifits would be psotentail additions of pre-prompt post prompt processors.  Pre prompt could be correcting or adding likes of skills.md, post could be summary for use in the next item.
+
+
+AgentBuilder Tool
+Additionally given the model and relevent details are available we could add to IAgentBuilder CreateAgent to spawn sub agents essentially acting as tools,
+Consideration to Agent Spawn depth will be needed to prevent ifinate spawning, agent naming possibly greek name to match behaviour or task asigned.
+the next item would be post processors compact/truncate or other methods of reducing active contect window/size.
+As for chatsession itself we need to review states in responses (Thinking/Updating/Executing/Responding/Waiting) and in chat history or somthing idenitfy context or idea so while discussing or working on topics only relvent context windows are bein workred on no evenerthing from th beginnig that may now be irrelevent. possibly add meta data to chat history captuirng reigons of context of importance.
+Finnaly possibly last if not ever ChatSession interrupt, how do we implment Recover rather than start again?
+
+Can we review AgentBuilder and ChatSession i think we need a way of implemnting a pre-prompt post prompt processors.
+this 
+
+ChatSession design (async), tool, input types, status(Thinking/Updating/Executing/Responding/Waiting)
+Chatsession pre-prompt post prompt processors
+Chatsession compact/truncate etc  only prompt important context(selection)
+ChatSession interrupt, Recover rather than start again?
+
 #HIGH Priority
 you must make sure you understand the JigSawDotNet pattern and use. Intention is to reduce and branching code by genertaing code whihc may require implmenting or re-using Ops, Kernel and Factory patterns,
 Review Sharmind.Core.Activations.* for example
@@ -12,10 +36,8 @@ interface(s) declair public, not required but I prefer it
 Review SharpMind Model Format
 SharpMind.Model.Training.ITrainableModel and SharpMind.Model.Training.ITrainableLayer no longer used?
 review public static TensorOps Default can this pattern carry over to other factories
-NoPO version of RoPE for SmolLM or other model variants.
-AgentBuilder Tool
-Additionally given the model and relevent details are available we could add to IAgentBuilder CreateAgent to spawn sub agents essentially acting as tools,
-Consideration to Agent Spawn depth will be needed to prevent ifinate spawning, agent naming possibly greek name to match behaviour or task asigned.
+
+
 
 if (Avx.IsSupported) slow check
 RmsNormLayer and NormKernels to JigSawDotNet pattern
@@ -55,10 +77,7 @@ These don't affect performance directly but make the codebase genuinely better a
 **`IScheduler` chaining** — the existing schedulers (cosine, warmup, linear) are good but not composable. A `ComposedScheduler` that chains stages (warmup → cosine → constant tail) would cover most real training runs without writing a custom scheduler.
 
 
-ChatSession design (async), tool, input types, status(Thinking/Updating/Executing/Responding/Waiting)
-Chatsession pre-prompt post prompt processors
-Chatsession compact/truncate etc  only prompt important context(selection)
-ChatSession interrupt, Recover rather than start again?
+
 
 
 Removed safetensor loader for now
@@ -86,85 +105,71 @@ Task Arithmetic: Creates "task vectors" by subtracting the base model weights fr
 
 
 
-Detailed Plan
-Phase 1 — Quick Wins
-1a. FloatToHalf JigSaw
-The gap: QuantizationKernels.cs has HalfToFloat_F16C (hardware float16, 1 cycle) and it's wired in QuantizationOps.cs via JigSaw. But QuantizedKVCache.cs has a private FloatToHalf_Scalar (15-20 cycles) with no F16C variant and no JigSaw wiring.
 
-Work:
+Critical Review
+1. Agent-as-Tool Sub-agents (IAgentBuilder.CreateAgent)
+Good idea, but high complexity for the actual benefit:
 
-Add FloatToHalf_F16C(float f) → ushort to QuantizationKernels.cs using the F16C Vcvtps2ph intrinsic (or software fallback via Vector256.Create + StoreMask).
-Rename existing FloatToHalf_Scalar → FloatToHalf_Scalar, move into QuantizationKernels.cs alongside HalfToFloat_Scalar.
-Add KeyFloatToHalf to QuantizationConfig.cs.
-Add [PuzzleCornerPiece] to QuantizationOps.cs mapping floattohalf_fma/floattohalf_avx2 → FloatToHalf_F16C, floattohalf_scalar → FloatToHalf_Scalar.
-Wire QuantizedKVCache.cs to accept QuantizationOps and call ops.FloatToHalf(d) instead of the private scalar.
-Remove the private FloatToHalf_Scalar from QuantizedKVCache.cs.
-Files touched: QuantizationKernels.cs, QuantizationOps.cs, QuantizationConfig.cs, QuantizedKVCache.cs
+What it requires: Each sub-agent needs its own generator context (model instance + KV cache). Sharing a single generator across agents means serializing generation requests — no parallelism. Creating separate model instances means 2×–10× memory.
+The lightweight alternative: Sub-agents that reuse the parent's generator as a pure "prompt → response" call with a fresh mini-context (system prompt + single user message + stop condition). No persistent KV cache, no session history. This is basically generator.GenerateFromTokensAsync() with a custom system prompt. Much cheaper.
+Depth control: Absolute must. Configurable max depth (default 3–5). Pass currentDepth through the call chain, reject at limit.
+Naming: Greek names as a default convention is fine but shouldn't be enforced. Let the user optionally name their agents. Auto-name with Greek letters if not provided (Alpha, Beta, Gamma...).
+My recommendation: Implement as a lightweight delegate pattern first — CreateAgent(name, systemPrompt) returns a Func<string, Task<string>> that calls the shared generator. No full ChatSession per agent. This gets 90% of the value at 10% of the cost.
+2. Post-processors / Context Window Reduction
+The current truncation (tail-drop when promptToks.Length > MaxTokens) is dangerously naive — it can silently drop the system prompt + agent instructions.
 
-1b. Remove Dropout from ModelConfig
-Add [Obsolete("Not used in inference")] or remove the property from ModelConfig.cs:63. Also remove its mention in Validate() if present.
+Better strategies, ordered from simplest to most sophisticated:
 
-Files touched: ModelConfig.cs
+Strategy	Effort	Impact	Risk
+Priority truncation — keep system prompt + tool results + most recent user/agent turns, drop middle history	Low	High	Low
+Importance metadata — tag messages with IsPinned / importance score, evict lowest-scored first	Low	Medium	Low
+Sliding window — keep last N messages/tokens, full stop	Low	Medium	Low
+History summarization — use LLM to condense old turns into a summary message	High	Very High	High (cost, quality)
+My recommendation: Start with priority truncation (smarter than tail-drop, no LLM calls). Add IsPinned metadata. Defer summarization.
 
-1c. Add ALiBi to PositionalEncoding enum
-Add ALiBi member to PositionalEncoding.cs.
+3. ChatSession States + History Context Tagging
+States: ChatStatus already has Thinking, Updating, Executing, Responding, Waiting, Interrupted, Complete. But:
 
-Files touched: PositionalEncoding.cs
+Updating is never emitted — should fire during context management
+Waiting is never emitted — should fire when waiting for tool results or user input
+Wiring these up is nearly zero-effort and makes the API honest.
+History metadata: Adding a Dictionary<string, string>? Metadata or Tags field to ChatMessage is trivial. The hard part is populating it meaningfully:
 
-1d. Mark ForwardWithState / Backward as obsolete
-In Transformer.cs, add [Obsolete("Training path — not wired for inference")] on ForwardWithState() and Backward(). These are vestiges from an older training integration.
+Auto-tagging via the model is expensive and unreliable
+Manual tagging via API (ChatMessage.WithTag("code_review", "session-3")) is simple but requires user buy-in
+Recommendation: Add the field, populate it manually via API surface. Don't auto-tag until there's a concrete use case demanding it.
+4. Interrupt & Recovery
+True recovery (serialize KV cache, resume mid-token) is a moonshot — the KV cache is megabytes of opaque float buffers, architecture-specific, not serializable in the current design.
 
-Files touched: Transformer.cs
+Soft recovery (pragmatic and implementable):
 
-Phase 2 — Core JigSaw Expansion
-2a. Q8 Attention Kernels in JigSaw
-The gap: AttentionLayer.ScaledDotProduct has [PuzzleCornerPiece] with entries for ValMhaAvx2, ValMhaFma, ValMhaScalar, ValMhaFlashAvx2, etc. — but no Q8_0 variants. The Q8 attention kernels (ScaledDotProductQ8_0AVX2 etc.) exist in AttentionKernels.cs but are called via manual dispatch.
+On interrupt, save the partial response to _history as an Agent message with an Interrupted: true metadata flag
+On resume, inject a system message: "The previous response was interrupted. Continue from where you left off."
+No KV cache serialization needed
+The model re-generates from scratch but has the context of what was happening
+Cost: Re-generating the full response instead of resuming mid-stream
+My recommendation: Implement soft recovery. It's maybe 20 lines of code and dramatically improves UX over "start completely over."
 
-Work:
-
-Add JigSaw mapping keys to SharpMindConfig.cs: KeyAttention, ValMhaQ8_0Avx2, ValMhaQ8_0Fma, ValMhaQ8_0Scalar, ValMhaFlashQ8_0Avx2, ValMhaFlashQ8_0Fma, ValMhaFlashQ8_0Scalar, and same for GQA/MQA variants.
-Add corresponding [PuzzleCornerPiece] entries to AttentionLayer.ScaledDotProduct mapping these keys to the Q8 kernels.
-Remove manual dispatch in the attention layer — let JigSaw select both float and Q8 kernels. The _useFlash config flag should fold into the JigSaw mapping value (flash vs non-flash becomes a string suffix like "mha_q8_0" vs "mha_flash_q8_0").
-Add EnsureScoreBuffer optimization: since JigSaw assembles per-type concrete methods, the scratch buffer can be sized at assembly time (type-level kvLen constant) rather than rechecked each call. Or keep as-is — the if is cheap.
-Files touched: SharpMindConfig.cs, AttentionLayer.cs, MappingBuilder.cs
-
-2b. ForwardLastLogits → JigSaw LogitOps
-The gap: 6 if branches + 2 ternaries in ForwardLastLogits for workspace != null × useQuantizedProj × batch==1 && seqLen==1. This is a 3-dimension Cartesian product: projection type × workspace × sequence length.
-
-Design:
-
-Create LogitOps.cs (abstract), LogitKernels.cs (kernels), LogitOpsFactory.cs
-Two JigSaw dimensions:
-KeyProjection → "float" | "q8_0" — selects the matmul type (float vs Q8_0)
-KeyAllocation → "workspace" | "heap" — selects buffer source
-LogitOps abstract methods:
-ProjectLast(Tensor<float> hidden, Tensor<float> weight, ...) → Tensor<float> — handles the full projection
-Allocate(int batch, int N) → Tensor<float> — workspace or direct alloc
-The sequence-length check (batch==1 && seqLen==1) stays as a simple early-return guard on the caller side (it's not a dispatch dimension).
-Concrete assembled variants:
-
-FloatWorkspace + FloatHeap + Q8_0Workspace + Q8_0Heap — 4 concrete types
-Each has zero branches
-Files created: LogitOps.cs, LogitKernels.cs, LogitOpsFactory.cs
-Files modified: Transformer.cs (replace branching with _logitOps.ProjectLast(...))
-
-Phase 3 — Cleanup
-3a. PagedKVCacheLayer
-Evaluate if PagedKVCacheLayer is referenced anywhere outside its own instantiation (in PagedKVCacherBuilder). If it's only used as a Builder target, consider inlining its logic into PagedKVCacherBuilder or removing the wrapper and having the builder instantiate PagedKVCache directly. If the wrapper provides future extension points, add XML docs explaining the delegation intent.
-
-3b. WeightMapper.ShouldInclude
-Add XML doc on ShouldInclude explaining its intended use (filtering layers during weight loading) and that it defaults to true (include all layers).
-
-3c. TokenizerInfo.cs
-Search for references. If only read/written in GgufLoader.Load() as a data-transfer holder, it's not a relic — it has a purpose. Otherwise mark [Obsolete].
-
-Phase 4 — Hook Refinement
-4a. Abstract TransformerBlock with hooked/unhooked variants
-Create abstract class TransformerBlockBase with the common Forward() signature and _layerIdx, _attention, _ffn, _norm1, _norm2 fields.
-Create sealed class TransformerBlock : TransformerBlockBase (no hook — Forward() has zero hook overhead).
-Create sealed class HookedTransformerBlock : TransformerBlockBase (has IActivationHook Hook — Forward() includes the 3 hook calls without ?. since _hook is guaranteed non-null).
-Keep the factory/API backward-compat: TransformerBlock constructor creates the unhooked version; a separate HookedTransformerBlock constructor for the hooked version.
-4b. Move SetActivationHook to constructor
-Transformer constructor accepts optional IActivationHook?.
-If set, creates HookedTransformerBlock instances; otherwise TransformerBlock.
-Remove post-hoc SetActivationHook method entirely.
+Proposed Implementation Plan
+Phase 1 — Low Effort, High Impact (immediately shippable)
+#	Item	Files	Est.
+1.1	Wire Updating status into GetResponseStreamAsync before context management operations	ChatSession.cs	~5 min
+1.2	Wire Waiting status when calling _agentBuilder.CallToolAsync	ChatSession.cs	~5 min
+1.3	Replace tail truncation with priority truncation (keep: system prompt, tool results, last N user/agent turns)	ChatSession.cs	~30 min
+1.4	Add Metadata dictionary to ChatMessage (nullable, optional)	ChatMessage.cs	~5 min
+1.5	Add IsPinned bool to ChatMessage (skipped by truncation)	ChatMessage.cs	~5 min
+Phase 2 — Medium Effort, High Value
+#	Item	Files	Est.
+2.1	Soft recovery: save partial response on interrupt, inject resume context on next StartChatAsync call	ChatSession.cs	~1 hr
+2.2	Importance scoring in truncation: score messages by (isPinned, role, hasToolResults, recency), evict lowest	ChatSession.cs + ChatMessage.cs	~1 hr
+Phase 3 — High Effort, High Value (deferrable)
+#	Item	Files	Est.
+3.1	Lightweight sub-agent via IAgentBuilder.CreateAgent(name, systemPrompt) → returns Func<string, Task<string>> using shared generator	IAgentBuilder.cs, AgentBuilder.cs	~2 hr
+3.2	Depth control: pass currentDepth through tool call chain, MaxAgentDepth config, reject at limit	IAgentBuilder.cs, ChatSession.cs	~30 min
+3.3	Optional Greek auto-naming for unnamed sub-agents	AgentBuilder.cs	~15 min
+Phase 4 — Deferred / If Needed
+#	Item	Reason for deferral
+4.1	History summarization via LLM	Expensive, complex, Phase 1 truncation covers most cases
+4.2	Auto-tagging conversation regions	No concrete use case yet; metadata field is ready for when one emerges
+4.3	KV cache checkpoint/resume	Architecture-level change, needs generator redesign
+4.4	Full multi-agent ChatSession sub-agents	Until lightweight sub-agents (3.1) prove insufficient

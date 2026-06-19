@@ -27,6 +27,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     // so that ordinary session IO is never gated.
     private readonly InterceptingFileSystem? _fileSystem;
     private readonly InterceptingNetworkHandler? _networkHandler;
+    private int _currentDepth;
 
     // Permission gate
     /// <summary>
@@ -61,6 +62,8 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     /// tool call is gated through the callback.
     /// </param>
     public int MaxToolCallsPerTurn { get; set; } = 10;
+    /// <summary>Maximum sub-agent nesting depth. Default 2. Reached when both parent and one sub-agent are active.</summary>
+    public int MaxAgentDepth { get; set; }
     public ChatSession(
         Transformer model,
         Tokenizer tokenizer,
@@ -76,6 +79,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         _tokenizer = tokenizer;
         _formatter = ChatPromptFormatterFactory.Create(meta);
         _agentBuilder = agentBuilder;
+        MaxAgentDepth = _agentBuilder?.MaxAgentDepth ?? 2;
         _addBos = meta?.GetLong("tokenizer.ggml.add_bos_token", 1) != 0;
         _addEos = meta?.GetLong("tokenizer.ggml.add_eos_token", 1) != 0;
         _generator = new T().CreateGenerator(model, tokenizer, _addBos, _addEos, caches, seed);
@@ -193,6 +197,101 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
             return true;
         }
         catch (JsonException) { return false; }
+    }
+
+    // Agent call tag parsing
+    // Format: {{agent:<name>[:temp=<X>][:seed=<Y>]:<query>}}
+    // Examples:
+    //   {{agent:Athena-Alpha:research quantum computing}}
+    //   {{agent:Hermes-Gamma:temp=0.7:seed=42:summarize this text}}
+
+    private static bool TryParseAgentTag(string text, out string? name, out float? temperature, out int? seed, out string? query)
+    {
+        name = null; temperature = null; seed = null; query = null;
+        var trimmed = text.Trim();
+        if (!trimmed.StartsWith("{{agent:")) return false;
+        if (!trimmed.EndsWith("}}")) return false;
+
+        var inner = trimmed.AsSpan(8, trimmed.Length - 10); // strip "{{agent:" and "}}"
+
+        int firstColon = inner.IndexOf(':');
+        if (firstColon <= 0) return false;
+
+        name = inner[..firstColon].ToString();
+
+        // Parse optional params from middle segments; everything after params is the query
+        int queryStart = firstColon + 1;
+        while (queryStart < inner.Length)
+        {
+            int nextColon = inner[queryStart..].IndexOf(':');
+            int segEnd = nextColon < 0 ? inner.Length : queryStart + nextColon;
+            var segment = inner[queryStart..segEnd].ToString();
+
+            if (segment.StartsWith("temp=") && float.TryParse(segment.AsSpan(5), out var t))
+            {
+                temperature = t;
+                queryStart = segEnd + 1;
+            }
+            else if (segment.StartsWith("seed=") && int.TryParse(segment.AsSpan(5), out var s))
+            {
+                seed = s;
+                queryStart = segEnd + 1;
+            }
+            else
+            {
+                query = inner[queryStart..].ToString();
+                return true;
+            }
+        }
+
+        // No query found
+        return false;
+    }
+
+    private async Task<string> ExecuteSubAgentAsync(
+        IAgent agent,
+        string query,
+        float? temperatureOverride,
+        int? seedOverride,
+        Func<string, ChatStreamEntry>? onSubStream = null,
+        CancellationToken ct = default)
+    {
+        // Build the sub-agent's prompt: system prompt + user query
+        var prompt = $"{agent.Config.SystemPrompt}\n{query}";
+
+        // Resolve temperature: override → agent config → tier default
+        float temp = temperatureOverride ?? agent.Config.Temperature ?? 0.65f;
+        int? seed = seedOverride ?? agent.Config.Seed;
+
+        var sampleCfg = new SamplingConfig
+        {
+            Temperature = temp,
+            TopK = TopK,
+            TopP = TopP,
+            Seed = seed,
+        };
+
+        var genCfg = new GenerationConfig
+        {
+            MaxNewTokens = MaxTokens,
+            RepetitionPenalty = RepetitionPenalty,
+            RepetitionWindow = RepetitionWindow,
+            StopTokenIds = StopTokenIds ?? [_tokenizer.EosId],
+            Stream = true,
+        };
+
+        var promptToks = _tokenizer.Encode(prompt, addBos: _addBos, addEos: false);
+
+        _generator.ResetCache();
+
+        var sb = new System.Text.StringBuilder();
+        await foreach (var fragment in _generator.GenerateFromTokensAsync(promptToks, sampleCfg, genCfg, ct))
+        {
+            sb.Append(fragment);
+            onSubStream?.Invoke(fragment);
+        }
+
+        return sb.ToString();
     }
 
     // Tool dispatch with IO interception
@@ -367,6 +466,78 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
 
                 _cachedPromptTokens = null; // history grew; invalidate incremental cache
                 continue;                   // generate again with enriched history
+            }
+
+            // Agent call detection ({{agent:...}} format)
+            if (_agentBuilder is not null
+                && _agentBuilder.AgentsEnabled
+                && toolCallCount < MaxToolCallsPerTurn
+                && _currentDepth < MaxAgentDepth
+                && TryParseAgentTag(responseText, out var agentName, out var agentTemp, out var agentSeed, out var agentQuery)
+                && agentName is not null && agentQuery is not null
+                && _agentBuilder.RegisteredAgents.TryGetValue(agentName, out var subAgent))
+            {
+                // Record the model's agent-call turn in history
+                _history.Add(ChatMessage.Agent(responseText));
+
+                // Signal which agent is about to execute
+                yield return new ChatStreamEntry
+                {
+                    Status = ChatStatus.Executing,
+                    Token = agentName,
+                    IsComplete = false,
+                    TokensPerSecond = _generator.TokensPerSecond,
+                    TimeToFirstToken = _generator.TimeToFirstToken
+                };
+
+                // Execute sub-agent with depth tracking
+                _currentDepth++;
+                string agentResult;
+                try
+                {
+                    agentResult = await ExecuteSubAgentAsync(
+                        subAgent, agentQuery, agentTemp, agentSeed,
+                        fragment => new ChatStreamEntry
+                        {
+                            Status = ChatStatus.Researching,
+                            Token = fragment,
+                            IsComplete = false,
+                            TokensPerSecond = _generator.TokensPerSecond,
+                            TimeToFirstToken = _generator.TimeToFirstToken
+                        },
+                        ct);
+                }
+                finally
+                {
+                    _currentDepth--;
+                }
+
+                // Feed the result back as a system message
+                _history.Add(new ChatMessage
+                {
+                    Role = ChatRole.System,
+                    Content = $"Tool result: {agentResult}"
+                });
+
+                _cachedPromptTokens = null; // history grew; invalidate incremental cache
+                continue;                   // generate again with enriched history
+            }
+
+            // Depth limit reached — inform the model
+            if (_agentBuilder is not null
+                && _agentBuilder.AgentsEnabled
+                && toolCallCount < MaxToolCallsPerTurn
+                && _currentDepth >= MaxAgentDepth
+                && TryParseAgentTag(responseText, out _, out _, out _, out _))
+            {
+                _history.Add(ChatMessage.Agent(responseText));
+                _history.Add(new ChatMessage
+                {
+                    Role = ChatRole.System,
+                    Content = $"Tool result: {{\"status\":\"error\",\"message\":\"Maximum agent depth ({MaxAgentDepth}) reached. Cannot delegate further.\"}}"
+                });
+                _cachedPromptTokens = null;
+                continue;
             }
 
             // Normal (non-tool) response

@@ -9,6 +9,10 @@ public sealed class ChatMessage
     public required string Content { get; init; }
     public string? Name { get; init; }
     public DateTime Timestamp { get; init; } = DateTime.UtcNow;
+    /// <summary>Optional metadata for context management, tagging, and interrupt markers.</summary>
+    public Dictionary<string, string>? Metadata { get; init; }
+    /// <summary>When true, this message is exempted from truncation/eviction.</summary>
+    public bool IsPinned { get; init; }
 
     public static ChatMessage User(string content)
         => new() { Role = ChatRole.User, Content = content };

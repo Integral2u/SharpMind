@@ -25,6 +25,23 @@ namespace SharpMind.Inference.Agent
         /// <c>arguments</c> object field, as produced by the model.
         /// </param>
         public Task<JsonObject> CallToolAsync(JsonObject toolCall);
-        
+
+        /// <summary>
+        /// Creates and registers a sub-agent that can be called by the model
+        /// via the <c>{{agent:Name[:temp=X][:seed=Y]:query}}</c> format.
+        /// </summary>
+        public IAgent CreateAgent(AgentConfig config);
+
+        /// <summary>All registered sub-agents, keyed by their auto/assigned name.</summary>
+        public IReadOnlyDictionary<string, IAgent> RegisteredAgents { get; }
+
+        /// <summary>Whether sub-agent delegation is enabled (opt-in via <see cref="WithAgents"/>).</summary>
+        public bool AgentsEnabled { get; }
+
+        /// <summary>Maximum sub-agent nesting depth when agents are enabled.</summary>
+        public int MaxAgentDepth { get; }
+
+        /// <summary>Enables sub-agent delegation with the given nesting depth.</summary>
+        public IAgentBuilder WithAgents(int depth = 2);
     }
 }
