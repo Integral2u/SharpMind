@@ -31,6 +31,8 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     private int _currentDepth;
     private string? _pendingDraft;
     private readonly System.Text.StringBuilder _responseBuffer = new();
+    private readonly IPromptPreProcessor? _preProcessor;
+    private readonly IContextCompactor? _compactor;
 
     // Permission gate
     /// <summary>
@@ -72,6 +74,8 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         Tokenizer tokenizer,
         ModelMetaData? meta = null,
         IAgentBuilder? agentBuilder = null,
+        IPromptPreProcessor? preProcessor = null,
+        IContextCompactor? compactor = null,
         Func<ToolPermissionContext, Task<ToolPermission>>? permissions = null,
         IKVCache[]? caches = null,
         int? seed = null)
@@ -82,6 +86,8 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         _tokenizer = tokenizer;
         _formatter = ChatPromptFormatterFactory.Create(meta);
         _agentBuilder = agentBuilder;
+        _preProcessor = preProcessor;
+        _compactor = compactor;
         MaxAgentDepth = _agentBuilder?.MaxAgentDepth ?? 2;
         _addBos = meta?.GetLong("tokenizer.ggml.add_bos_token", 1) != 0;
         _addEos = meta?.GetLong("tokenizer.ggml.add_eos_token", 1) != 0;
@@ -431,6 +437,23 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
                 promptToks = _tokenizer.Encode(prompt, addBos: false, addEos: false);
             }
 
+            // Context compaction
+            if (_compactor is not null)
+            {
+                var cmpCtx = new CompactionContext
+                {
+                    History = _history,
+                    CurrentTokenCount = promptToks.Length,
+                    MaxTokens = MaxTokens
+                };
+                if (await _compactor.ShouldCompactAsync(cmpCtx, ct) && await _compactor.CompactAsync(cmpCtx, ct))
+                {
+                    _cachedPromptTokens = null;
+                    _generator.ResetCache();
+                    promptToks = _tokenizer.Encode(BuildPrompt(), addBos: false, addEos: false);
+                }
+            }
+
             if (promptToks.Length > MaxTokens)
                 promptToks = TrimToFitContext(promptToks);
 
@@ -657,6 +680,13 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
                 });
             }
 
+            // Pre-process user input
+            if (_preProcessor is not null)
+            {
+                var processed = await _preProcessor.ProcessAsync(input.Content, _history, token);
+                input = new ChatMessage { Role = input.Role, Content = processed };
+            }
+
             try
             {
                 await foreach (var entry in GetResponseStreamAsync(input.Content, token))
@@ -697,4 +727,58 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         {
             if (e.Token is { Length: > 0 } delta) response(delta);
         }, token);
+
+    public ChatSessionSnapshot GetSnapshot()
+    {
+        ThrowIfDisposed();
+        return new ChatSessionSnapshot
+        {
+            History = [.. _history],
+            PendingDraft = _pendingDraft
+        };
+    }
+
+    public void LoadSnapshot(ChatSessionSnapshot snapshot)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(snapshot);
+
+        _history.Clear();
+        _pendingDraft = snapshot.PendingDraft;
+
+        if (_agentBuilder != null)
+            _history.Add(new ChatMessage { Role = ChatRole.System, Content = _agentBuilder.BuildAgentPrompt() });
+
+        foreach (var msg in snapshot.History)
+            if (msg.Role != ChatRole.System)
+                _history.Add(msg);
+
+        _cachedPromptTokens = null;
+        _generator.ResetCache();
+    }
+
+    public async Task SaveAsync(string path, CancellationToken ct = default)
+    {
+        ThrowIfDisposed();
+        var snapshot = GetSnapshot();
+        var options = new System.Text.Json.JsonSerializerOptions
+        {
+            WriteIndented = true,
+            Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
+        };
+        var json = System.Text.Json.JsonSerializer.Serialize(snapshot, options);
+        await File.WriteAllTextAsync(path, json, ct);
+    }
+
+    public static async Task LoadSnapshotAsync(string path, ChatSession<T, K> session, CancellationToken ct = default)
+    {
+        var options = new System.Text.Json.JsonSerializerOptions
+        {
+            Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
+        };
+        var json = await File.ReadAllTextAsync(path, ct);
+        var snapshot = System.Text.Json.JsonSerializer.Deserialize<ChatSessionSnapshot>(json, options)
+            ?? throw new InvalidOperationException("Failed to deserialize session snapshot.");
+        session.LoadSnapshot(snapshot);
+    }
 }

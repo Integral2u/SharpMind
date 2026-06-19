@@ -12,7 +12,7 @@ public sealed class ChatMessage
     /// <summary>Optional metadata for context management, tagging, and interrupt markers.</summary>
     public Dictionary<string, string>? Metadata { get; init; }
     /// <summary>When true, this message is exempted from truncation/eviction.</summary>
-    public bool IsPinned { get; init; }
+    public bool IsPinned { get; set; }
 
     public static ChatMessage User(string content)
         => new() { Role = ChatRole.User, Content = content };
