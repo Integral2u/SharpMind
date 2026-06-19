@@ -1,13 +1,7 @@
 namespace SharpMind.Inference.Agent;
 
-internal sealed class Agent : IAgent
+internal sealed class Agent(string name, AgentConfig config) : IAgent
 {
-    public string Name { get; }
-    public AgentConfig Config { get; }
-
-    public Agent(string name, AgentConfig config)
-    {
-        Name = name;
-        Config = config;
-    }
+    public string Name { get; } = name;
+    public AgentConfig Config { get; } = config;
 }

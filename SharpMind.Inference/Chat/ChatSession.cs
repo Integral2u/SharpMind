@@ -28,6 +28,8 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     private readonly InterceptingFileSystem? _fileSystem;
     private readonly InterceptingNetworkHandler? _networkHandler;
     private int _currentDepth;
+    private string? _pendingDraft;
+    private readonly System.Text.StringBuilder _responseBuffer = new();
 
     // Permission gate
     /// <summary>
@@ -129,6 +131,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     public void ClearHistory()
     {
         _history.Clear();
+        _pendingDraft = null;
         if (_agentBuilder != null) AddMessage(ChatRole.System, _agentBuilder.BuildAgentPrompt());
         _cachedPromptTokens = null;
         _generator.ResetCache();
@@ -161,6 +164,63 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         }
         sb.Append("assistant: ");
         return sb.ToString();
+    }
+
+    private int[] TrimToFitContext(int[] promptToks)
+    {
+        if (promptToks.Length <= MaxTokens)
+            return promptToks;
+
+        // Phase 1: importance-scored message-level eviction
+        var candidates = new List<(int Index, double Importance, DateTime Timestamp)>();
+        for (int i = 0; i < _history.Count; i++)
+        {
+            var msg = _history[i];
+            if (msg.IsPinned) continue;
+            if (msg.Role == ChatRole.System && msg.Metadata?.TryGetValue("type", out var t) == true && t == "resume_draft")
+                continue;
+
+            double importance = 0.5;
+            if (msg.Metadata?.TryGetValue("importance_score", out var s) == true)
+                double.TryParse(s, out importance);
+
+            candidates.Add((i, importance, msg.Timestamp));
+        }
+
+        candidates.Sort(static (a, b) =>
+        {
+            int cmp = a.Importance.CompareTo(b.Importance);
+            return cmp != 0 ? cmp : a.Timestamp.CompareTo(b.Timestamp);
+        });
+
+        var removed = new HashSet<int>();
+        foreach (var (idx, _, _) in candidates)
+        {
+            if (promptToks.Length <= MaxTokens) break;
+            removed.Add(idx);
+
+            var surviving = new List<ChatMessage>(_history.Count - removed.Count);
+            for (int i = 0; i < _history.Count; i++)
+                if (!removed.Contains(i))
+                    surviving.Add(_history[i]);
+
+            _history.Clear();
+            _history.AddRange(surviving);
+            _cachedPromptTokens = null;
+
+            promptToks = _tokenizer.Encode(BuildPrompt(), addBos: false, addEos: false);
+        }
+
+        // Phase 2: token-level truncation from end as last resort
+        if (promptToks.Length > MaxTokens)
+        {
+            int start = promptToks.Length - MaxTokens;
+            var subset = GC.AllocateUninitializedArray<int>(MaxTokens);
+            promptToks.AsSpan(start, MaxTokens).CopyTo(subset);
+            promptToks = subset;
+        }
+
+        return promptToks;
     }
 
     public async ValueTask DisposeAsync()
@@ -371,12 +431,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
             }
 
             if (promptToks.Length > MaxTokens)
-            {
-                int start = promptToks.Length - MaxTokens;
-                var subset = GC.AllocateUninitializedArray<int>(MaxTokens);
-                promptToks.AsSpan(start, MaxTokens).CopyTo(subset);
-                promptToks = subset;
-            }
+                promptToks = TrimToFitContext(promptToks);
 
             if (promptToks.Length == 0)
                 throw new InvalidOperationException("Prompt produced no token IDs; cannot generate.");
@@ -402,19 +457,19 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
             };
 
             // Stream tokens
-            var response = new System.Text.StringBuilder();
+            _responseBuffer.Clear();
 
             await foreach (var fragment in _generator.GenerateFromTokensAsync(promptToks, sampleCfg, genCfg, ct))
             {
-                response.Append(fragment);
+                _responseBuffer.Append(fragment);
 
                 // Safety: detect single-character repetition loop and stop
-                if (response.Length >= 8)
+                if (_responseBuffer.Length >= 8)
                 {
-                    char last = response[^1];
+                    char last = _responseBuffer[^1];
                     bool loop = true;
                     for (int i = 2; i <= 8; i++)
-                        if (response[^i] != last) { loop = false; break; }
+                        if (_responseBuffer[^i] != last) { loop = false; break; }
                     if (loop) break;
                 }
 
@@ -428,7 +483,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
                 };
             }
 
-            var responseText = response.ToString();
+            var responseText = _responseBuffer.ToString();
 
             // Tool call detection
             if (_agentBuilder is not null
@@ -568,6 +623,20 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
                 break;
             }
             if (string.IsNullOrWhiteSpace(input.Content)) continue;
+
+            // Soft recovery: inject pending draft from previous interruption
+            if (_pendingDraft is not null)
+            {
+                var draft = _pendingDraft;
+                _pendingDraft = null;
+                AddMessage(new ChatMessage
+                {
+                    Role = ChatRole.System,
+                    Content = $"[Resume from interruption]\nThe assistant was interrupted while generating:\n\n{draft}\n\nContinue seamlessly from where it left off.",
+                    Metadata = new Dictionary<string, string> { ["type"] = "resume_draft" }
+                });
+            }
+
             try
             {
                 await foreach (var entry in GetResponseStreamAsync(input.Content, token))
@@ -579,6 +648,8 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
             }
             catch (OperationCanceledException)
             {
+                if (_responseBuffer.Length > 0)
+                    _pendingDraft = _responseBuffer.ToString();
                 response(new ChatStreamEntry { Status = ChatStatus.Interrupted, IsComplete = true, TokensPerSecond = _generator.TokensPerSecond, TimeToFirstToken = _generator.TimeToFirstToken });
                 break;
             }
