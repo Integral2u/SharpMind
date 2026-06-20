@@ -35,7 +35,7 @@ namespace SandBox
             
             GgufLoader.Load(modelPath, null, out ModelMetaData meta, out ModelConfig modelConfig, out Tokenizer? tokenizer);
             var sharpConfig = modelConfig.ForModel(HardwareTier.AVX2);
-            var weights = GgufLoader.LoadWeightsToTransformerWeights(modelPath, modelConfig);
+            using var weights = GgufLoader.LoadWeightsToTransformerWeights(modelPath, modelConfig);
             
             int sessionCount = 4;
             var tasks = new List<Task<string>>();

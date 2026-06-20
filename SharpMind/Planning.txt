@@ -30,7 +30,6 @@ Review Sharmind.Core.Activations.* for example
 Code Checking
 !!! SharpMind.Model.ModelFactory.CreateSession BuildBlock call passing mappings 
 !!! must check all calls to Assembler.CreateInstance, cache and or check mappings
-SharpMind.Training.Trainer._scheduler never used.
 Ensure Chat Session is reporting correct ChatStatus
 interface(s) declair public, not required but I prefer it
 Review SharpMind Model Format

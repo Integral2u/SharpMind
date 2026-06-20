@@ -20,7 +20,7 @@ public static class FullTraining
         var sharpConfig = SharpMindConfig.Gpt with { Hardware = HardwareTier.Scalar };
         
         var weights = ModelFactory.CreateWeights(modelConfig, sharpConfig);
-        var model = ModelFactory.CreateSession(weights, sharpConfig);
+        using var model = ModelFactory.CreateSession(weights, sharpConfig);
         Console.WriteLine($"Model params: {model.ParameterCount:N0}");
 
         var learnConfig = new LearnableConfig

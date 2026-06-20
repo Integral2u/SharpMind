@@ -1,6 +1,6 @@
 ﻿namespace SharpMind.Inference.Agent
 {
-    public static class AgeentBuilderExtensions
+    public static class AgentBuilderExtensions
     {
         public static IAgentBuilder WithSafetyPolicies(this IAgentBuilder builder)
         {

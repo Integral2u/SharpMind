@@ -32,7 +32,7 @@ public static class KVCacheBenchmark
         var sharpConfig = modelConfig.ForModel();
         GC.Collect(); GC.WaitForPendingFinalizers();
         var sw = Stopwatch.StartNew();
-        var weights = GgufLoader.LoadWeightsToTransformerWeights(ggufPath, modelConfig);
+        using var weights = GgufLoader.LoadWeightsToTransformerWeights(ggufPath, modelConfig);
         await Console.Out.WriteLineAsync($"Model load: {sw.Elapsed.TotalSeconds:F2}s\n");
 
         int[] contextSizes = [512, 1024, 2048];
@@ -76,7 +76,7 @@ public static class KVCacheBenchmark
                 var (name, cacheType) = cacheTypes[c];
 
                 GC.Collect(); GC.WaitForPendingFinalizers();
-                var model = ModelFactory.CreateSession(weights, sharpConfig);
+                using var model = ModelFactory.CreateSession(weights, sharpConfig);
 
                 await using var session = ChatSessionFactory.CreateChatSession(
                     typeof(StandardGeneratorBuilder<>), cacheType, model, tokenizer, meta);

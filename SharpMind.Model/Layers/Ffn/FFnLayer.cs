@@ -143,10 +143,12 @@ public abstract class FfnLayer : IDisposable
                 byte[] fused = new byte[weights.RawWgate.Length + weights.RawWup.Length];
                 Buffer.BlockCopy(weights.RawWgate, 0, fused, 0, weights.RawWgate.Length);
                 Buffer.BlockCopy(weights.RawWup, 0, fused, weights.RawWgate.Length, weights.RawWup.Length);
-                WGated.SetRawWeight(fused, weights.QuantDtype ?? GgufDtype.F32);
+                // Use gate dtype for fused — both gate and up should be same type in practice
+                var fusedDtype = weights.QuantDtypeWgate ?? weights.QuantDtype ?? GgufDtype.F32;
+                WGated.SetRawWeight(fused, fusedDtype);
             }
             WDown.ReplaceWeights(weights.Wf2, weights.Wf2Bias);
-            WDown.SetRawWeight(weights.RawWf2, weights.QuantDtype ?? GgufDtype.F32);
+            WDown.SetRawWeight(weights.RawWf2, weights.QuantDtypeWf2 ?? weights.QuantDtype ?? GgufDtype.F32);
         }
         // MoE weights not supported in current BlockWeights
     }

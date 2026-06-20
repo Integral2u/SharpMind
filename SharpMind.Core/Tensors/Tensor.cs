@@ -59,15 +59,17 @@ public sealed unsafe class Tensor<T> : IDisposable
     }
 
     /// <summary>
-    /// Creates a view into an existing buffer (increments ref-count).
-    /// The view is independently disposable.
+    /// Creates a tensor backed by an existing buffer.
+    /// When <paramref name="ownsMemory"/> is true (owner created via Rent),
+    /// AddRef is NOT called because Rent already set refcount=1.
+    /// When false (view), AddRef is called to pin the buffer independently.
     /// </summary>
     internal Tensor(TensorShape shape, NativeBuffer<T> buffer, int offset = 0, bool ownsMemory = false)
     {
         Shape   = shape;
         _buffer = buffer;
-        if (ownsMemory || _buffer != null)
-            _buffer?.AddRef();
+        if (!ownsMemory && _buffer != null)
+            _buffer.AddRef();
         _offset = offset;
         _ownsMemory = ownsMemory;
         _rawPtr = _buffer != null ? _buffer.Ptr + offset : null;
@@ -172,12 +174,14 @@ public sealed unsafe class Tensor<T> : IDisposable
 
     public void CopyTo(Span<T> dst) => Data.CopyTo(dst);
 
-    private Tensor<T> CreateView(TensorShape shape, int offset, bool ownsMemory)
+    private Tensor<T> CreateView(TensorShape shape, int offset, bool _)
     {
+        // Views never own memory — the parent manages the buffer lifecycle.
+        // This prevents premature Return-to-pool when a view is disposed.
         if (_buffer != null)
-            return new Tensor<T>(shape, _buffer, offset, ownsMemory);
+            return new Tensor<T>(shape, _buffer, offset, false);
         
-        return new Tensor<T>(_rawPtr + offset, shape, ownsMemory);
+        return new Tensor<T>(_rawPtr + offset, shape, false);
     }
 
     /// <summary>
@@ -261,7 +265,6 @@ public sealed unsafe class Tensor<T> : IDisposable
     /// </summary>
     public void Dispose()
     {
-        if (_ownsMemory && _buffer != null)
-            _buffer.Dispose();
+        _buffer?.Dispose();
     }
 }

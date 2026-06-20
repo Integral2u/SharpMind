@@ -128,14 +128,14 @@ public abstract class AttentionLayer : IDisposable
 
         // Restore individual Q/K/V layers for fast quantized forward path
         Wq.ReplaceWeights(weights.Wq, weights.WqBias);
-        Wq.SetRawWeight(weights.RawWq, weights.QuantDtype ?? GgufDtype.F32);
+        Wq.SetRawWeight(weights.RawWq, weights.QuantDtypeWq ?? weights.QuantDtype ?? GgufDtype.F32);
         Wk.ReplaceWeights(weights.Wk, weights.WkBias);
-        Wk.SetRawWeight(weights.RawWk, weights.QuantDtype ?? GgufDtype.F32);
+        Wk.SetRawWeight(weights.RawWk, weights.QuantDtypeWk ?? weights.QuantDtype ?? GgufDtype.F32);
         Wv.ReplaceWeights(weights.Wv, weights.WvBias);
-        Wv.SetRawWeight(weights.RawWv, weights.QuantDtype ?? GgufDtype.F32);
+        Wv.SetRawWeight(weights.RawWv, weights.QuantDtypeWv ?? weights.QuantDtype ?? GgufDtype.F32);
 
         Wo.ReplaceWeights(weights.Wo, weights.WoBias);
-        Wo.SetRawWeight(weights.RawWo, weights.QuantDtype ?? GgufDtype.F32);
+        Wo.SetRawWeight(weights.RawWo, weights.QuantDtypeWo ?? weights.QuantDtype ?? GgufDtype.F32);
     }
 
     private unsafe void LoadFusedWeightTransposed(ReadOnlySpan<float> data, int colOffset, int subOutF)

@@ -111,16 +111,16 @@ public sealed class TransformerWeights(ModelConfig config, Tensor<float> embeddi
     {
         switch (field)
         {
-            case "RawWq": block.RawWq = data; break;
-            case "RawWk": block.RawWk = data; break;
-            case "RawWv": block.RawWv = data; break;
-            case "RawWo": block.RawWo = data; break;
-            case "RawWgate": block.RawWgate = data; break;
-            case "RawWup": block.RawWup = data; break;
-            case "RawWf1": block.RawWf1 = data; break;
-            case "RawWf2": block.RawWf2 = data; break;
+            case "RawWq": block.RawWq = data; block.QuantDtypeWq = dtype; break;
+            case "RawWk": block.RawWk = data; block.QuantDtypeWk = dtype; break;
+            case "RawWv": block.RawWv = data; block.QuantDtypeWv = dtype; break;
+            case "RawWo": block.RawWo = data; block.QuantDtypeWo = dtype; break;
+            case "RawWgate": block.RawWgate = data; block.QuantDtypeWgate = dtype; break;
+            case "RawWup": block.RawWup = data; block.QuantDtypeWup = dtype; break;
+            case "RawWf1": block.RawWf1 = data; block.QuantDtypeWf1 = dtype; break;
+            case "RawWf2": block.RawWf2 = data; block.QuantDtypeWf2 = dtype; break;
         }
-        block.QuantDtype = dtype;
+        block.QuantDtype = dtype; // backwards compat
     }
 
     public sealed class BlockWeights(Tensor<float> wq, Tensor<float> wk, Tensor<float> wv, Tensor<float> wo,
@@ -147,6 +147,17 @@ public sealed class TransformerWeights(ModelConfig config, Tensor<float> embeddi
         public byte[]? RawWup { get; set; }
         public byte[]? RawWf1 { get; set; }
         public byte[]? RawWf2 { get; set; }
+
+        // Per-tensor quantization dtype (one per raw field)
+        public Format.GgufDtype? QuantDtypeWq { get; set; }
+        public Format.GgufDtype? QuantDtypeWk { get; set; }
+        public Format.GgufDtype? QuantDtypeWv { get; set; }
+        public Format.GgufDtype? QuantDtypeWo { get; set; }
+        public Format.GgufDtype? QuantDtypeWgate { get; set; }
+        public Format.GgufDtype? QuantDtypeWup { get; set; }
+        public Format.GgufDtype? QuantDtypeWf1 { get; set; }
+        public Format.GgufDtype? QuantDtypeWf2 { get; set; }
+        [Obsolete("Use per-tensor QuantDtype fields instead. This field is overwritten by the last tensor processed.")]
         public Format.GgufDtype? QuantDtype { get; set; }
 
         public void Dispose()

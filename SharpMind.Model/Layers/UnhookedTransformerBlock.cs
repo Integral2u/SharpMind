@@ -6,11 +6,8 @@ using SharpMind.Model.Layers.Ffn;
 
 namespace SharpMind.Model.Layers;
 
-public sealed class UnhookedTransformerBlock : TransformerBlock
+public sealed class UnhookedTransformerBlock(int layerIdx, AttentionLayer attention, FfnLayer ffn, NormLayer norm1, NormLayer norm2, TensorOps ops) : TransformerBlock(layerIdx, attention, ffn, norm1, norm2, ops)
 {
-    public UnhookedTransformerBlock(int layerIdx, AttentionLayer attention, FfnLayer ffn, NormLayer norm1, NormLayer norm2, TensorOps ops)
-        : base(layerIdx, attention, ffn, norm1, norm2, ops) { }
-
     public override Tensor<float> Forward(Tensor<float> x, IKVCache? cache, int positionOffset = 0, bool causal = true, Workspace? workspace = null)
     {
         ThrowIfDisposed();

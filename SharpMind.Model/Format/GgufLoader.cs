@@ -378,6 +378,10 @@ public static partial class GgufLoader
 
     public static TransformerWeights LoadWeightsToTransformerWeights(string path, ModelConfig config, IProgress<float>? progress = null)
     {
+        // Clear pool to prevent cross-model memory accumulation
+        // (different model sizes rarely reuse the same buckets)
+        SharpMind.Core.Memory.NativeBufferPool<float>.Clear();
+
         var meta = LoadMeta(path);
         var weights = ModelFactory.CreateWeights(config, config.ForModel(HardwareTier.Auto)); // Use model-specific config for allocation shapes
 
@@ -587,11 +591,13 @@ public static partial class GgufLoader
             case GgufDtype.Q4_1: blockSize = 32; bytesPerBlock = 20; break;  // d[2]+m[2]+qs[16]
             default: return 0;
         }
-        // K-quants are stored flat in GGUF (blocks across total elements, not per-row)
-        int totalElements = 1;
-        foreach (int d in shape) totalElements *= d;
-        int totalBlocks = (totalElements + blockSize - 1) / blockSize;
-        return (long)totalBlocks * bytesPerBlock;
+        // Quantized data is stored per-output-column (per row of the weight matrix).
+        // shape is [InF, OutF] — innermost dim is InF, which maps to the input features per column.
+        // Each output column has ceil(InF / blockSize) blocks.
+        long inF = shape.Length > 0 ? shape[0] : 1;
+        long outF = shape.Length > 1 ? shape[1] : 1;
+        long blocksPerCol = (inF + blockSize - 1) / blockSize;
+        return outF * blocksPerCol * bytesPerBlock;
     }
 
     private static Tensor<float> ReadTensor(BinaryReader stream, GgufDtype dtype, int[] shape)
@@ -643,19 +649,12 @@ public static partial class GgufLoader
             default:
                 // GGUF stores shape as [InF, OutF] — innermost (fastest-varying) dimension is InF.
                 // The dequant output must be [OutF, InF] row-major so LoadWeightTransposed can transpose correctly.
-                if (IsKQuant(dtype))
-                {
-                    // K-quants are stored flat in GGUF. Read once with total count.
-                    ReadQBlockRow(stream, dtype, destination, count);
-                }
-                else
-                {
-                    // Non K-quants: read row-by-row with stride = InF
-                    int stride = shape.Length > 0 ? shape[0] : count;
-                    int nRows = count / stride;
-                    for (int r = 0; r < nRows; r++)
-                        ReadQBlockRow(stream, dtype, destination.Slice(r * stride, stride), stride);
-                }
+                // All quantized types are stored per-output-column (per row of the weight matrix).
+                // Read row-by-row with stride = InF so each row's blocks are contiguous in the output.
+                int stride = shape.Length > 0 ? shape[0] : count;
+                int nRows = count / stride;
+                for (int r = 0; r < nRows; r++)
+                    ReadQBlockRow(stream, dtype, destination.Slice(r * stride, stride), stride);
                 break;
         }
     }

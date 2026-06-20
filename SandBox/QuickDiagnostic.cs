@@ -53,7 +53,7 @@ public static class QuickDiagnostic
                 Console.WriteLine($"  Tensor: {t.Name} shape=[{string.Join(",", t.Shape)}] dtype={t.Dtype}");
             Console.WriteLine($"  Config: HiddenDim={mc.HiddenDim} FfnDim={mc.FfnDim} NumLayers={mc.NumLayers} VocabSize={mc.VocabSize}");
 
-            var weights = GgufLoader.LoadWeightsToTransformerWeights(path, mc);
+            using var weights = GgufLoader.LoadWeightsToTransformerWeights(path, mc);
             var model = ModelFactory.CreateSession(weights, cfg);
 
             // LM head diagnostic
