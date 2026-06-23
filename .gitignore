@@ -434,3 +434,12 @@ FodyWeavers.xsd
 /ExternalAssets/Qwen2-0.5B.Q5_1.gguf
 /ExternalAssets/Qwen2-0.5B.Q6_K.gguf
 /ExternalAssets/qwen2-0.5b-instruct-q2_k.gguf
+/ExternalAssets/Llama-3.2-1B-Instruct-Q4_K_M.gguf
+/ExternalAssets/Qwen3-0.6B-Q2_K.gguf
+/ExternalAssets/Qwen3-0.6B-Q3_K_M.gguf
+/ExternalAssets/Qwen3-0.6B-Q4_K_M.gguf
+/ExternalAssets/Qwen3-0.6B-Q5_K_M.gguf
+/ExternalAssets/Qwen3-0.6B-Q6_K.gguf
+/ExternalAssets/Qwen3-0.6B-Q8_0.gguf
+/ExternalAssets/Qwen3-0.6B-Q4_0.gguf
+/ExternalAssets/Qwen3-0.6B-Q4_1.gguf
