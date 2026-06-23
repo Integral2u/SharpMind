@@ -4,27 +4,25 @@ using SharpMind.Model;
 using SharpMind.Model.Config;
 using SharpMind.Model.Format;
 using SharpMind.Tokenization;
+using System;
+using System.Collections.Generic;
 using System.Diagnostics;
-
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
 
 namespace SharpMind.Samples.Examples
 {
-    public class QwenSmallModels
+    public class KnownWorkingModels
     {
-        private static readonly string[] Models =
+    private static readonly string[] Models =
     [
-            //"qwen2-0.5b-instruct-q2_k",
-            //"Qwen2-0.5B.Q2_K",              //Response:zn?-redux??zn???erator ++)
-           // "Qwen2-0.5B.Q3_K_L",            //Response:/classes/classes?????????ist??????????_*
-            //"Qwen2-0.5B.Q3_K_M",            //Response:!!!!!!!
-            //"Qwen2-0.5B.Q3_K_S",            //Response:!!!!!!!           
-            //"qwen2-0_5b-instruct-q4_k_m",
-            //"llama-3.2-1b-instruct-q8_0",// good
-            //"Qwen2-0.5B.Q5_1",
-            //"DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M", //Okay, the user just said "hello." I should respond in a friendly and
-            "Qwen2-0.5B.Q6_K",
+        //"SmolLM2-135M-Instruct.Q4_K_M",
+        // not working anymore "DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M", //Okay, the user just said "hello." I should respond in a friendly and
+            //"llama-3.2-1b-instruct-q8_0",   //Response:It seems like you've got a question about the answer to my own.
+            
             "qwen2-0_5b-instruct-q8_0",     //Response:Hello! How can I assist you today?
-            //"qwen2-0_5b-instruct-fp16",     //Response:Hello! How can I assist you today?
+             "qwen2-0_5b-instruct-fp16",     //Response:Hello! How can I assist you today?
             ];
 
         private static readonly string ModelPath = @"C:\Integral2u\source\repos\SharpMind\ExternalAssets";
@@ -67,17 +65,7 @@ namespace SharpMind.Samples.Examples
                     Temperature = 0.0f,
                     TopK = 1,
                 };
-                try
-                {
-                    var history = await session.StartChatAsync(Prompt, Response, cancellationTokenSource.Token);
-                }
-                catch (Exception ex)
-                {
-                    Console.ForegroundColor = ConsoleColor.Red;
-                    await Console.Out.WriteLineAsync();
-                    await Console.Out.WriteLineAsync($"EXCEPTION: {ex.GetType().Name}: {ex.Message}");
-                    await Console.Out.WriteLineAsync(ex.StackTrace?.Substring(0, 500) ?? "(no stack)");
-                }
+                var history = await session.StartChatAsync(Prompt, Response, cancellationTokenSource.Token);
 
                 async void Response(ChatStreamEntry text)
                 {

@@ -231,7 +231,7 @@ public class VecDotTests
         Array.Copy(block, weights, 24);
         fixed (float* pInput = input)
         fixed (byte* pWeights = weights)
-            Assert.Equal(2.0f, qOps.VecDotQ5_1(pInput, pWeights, 0, 1), 5);
+            Assert.Equal(-30.0f, qOps.VecDotQ5_1(pInput, pWeights, 0, 1), 5);
     }
 
     [Theory]

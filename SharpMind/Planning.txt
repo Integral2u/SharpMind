@@ -1,4 +1,6 @@
-﻿Code Review Notes
+﻿LogitOps UseQuantized QuantizedMatMulQ8_0 only.
+
+Code Review Notes
 
 I want to look at Chatsession improvements but belive some my rely on agent capabilites. see SharpMind.AgenTools.EchoTool for example however this need to be more closly tied in with ChatSession so existing model can be passed but with fresh context,
 this could be used as essentially a tool to report back a result to the main chatsession or for other purposes, such as summarising.
@@ -172,3 +174,167 @@ Phase 4 — Deferred / If Needed
 4.2	Auto-tagging conversation regions	No concrete use case yet; metadata field is ready for when one emerges
 4.3	KV cache checkpoint/resume	Architecture-level change, needs generator redesign
 4.4	Full multi-agent ChatSession sub-agents	Until lightweight sub-agents (3.1) prove insufficient
+
+Testing qwen2-0.5b-instruct-q2_k
+GgufLoader.LoadWeightsToTransformerWeights executed in: 11.80s
+ModelFactory.CreateSession executed in: 3.24s
+Prompt:hello
+Response:!!!!!!!
+
+Tokens per second: 0.14  TTFT: 55.664s
+Testing Qwen2-0.5B.Q2_K
+GgufLoader.LoadWeightsToTransformerWeights executed in: 19.03s
+ModelFactory.CreateSession executed in: 2.92s
+Prompt:hello
+Response:!!!!!!!
+
+Tokens per second: 0.16  TTFT: 63.503s
+Testing Qwen2-0.5B.Q3_K_L
+GgufLoader.LoadWeightsToTransformerWeights executed in: 10.40s
+ModelFactory.CreateSession executed in: 3.20s
+Prompt:hello
+Response:!!!!!!!
+
+Tokens per second: 0.23  TTFT: 38.019s
+Testing Qwen2-0.5B.Q3_K_M
+GgufLoader.LoadWeightsToTransformerWeights executed in: 9.23s
+ModelFactory.CreateSession executed in: 2.29s
+Prompt:hello
+Response:!!!!!!!
+
+Tokens per second: 0.40  TTFT: 21.545s
+Testing Qwen2-0.5B.Q3_K_S
+GgufLoader.LoadWeightsToTransformerWeights executed in: 6.53s
+ModelFactory.CreateSession executed in: 2.34s
+Prompt:hello
+Response:!!!!!!!
+
+Tokens per second: 0.17  TTFT: 39.687s
+Testing qwen2-0_5b-instruct-q4_k_m
+GgufLoader.LoadWeightsToTransformerWeights executed in: 8.07s
+ModelFactory.CreateSession executed in: 2.79s
+Prompt:hello
+Response:??????,GL jams adulte----------
+AndView????????olt wn
+Tokens per second: 0.31  TTFT: 37.368s
+Testing Qwen2-0.5B.Q5_1
+GgufLoader.LoadWeightsToTransformerWeights executed in: 5.99s
+ModelFactory.CreateSession executed in: 1.90s
+Prompt:hello
+Response:?????le?.arc?????box?? jihadist?? dyst late
+Tokens per second: 0.31  TTFT: 39.155s
+Testing Qwen2-0.5B.Q6_K
+GgufLoader.LoadWeightsToTransformerWeights executed in: 7.69s
+ModelFactory.CreateSession executed in: 3.60s
+Prompt:hello
+Response:1
+2
+3456
+576891
+Tokens per second: 0.47  TTFT: 30.088s
+Testing qwen2-0_5b-instruct-q8_0
+GgufLoader.LoadWeightsToTransformerWeights executed in: 14.53s
+ModelFactory.CreateSession executed in: 3.66s
+Prompt:hello
+Response:Hello! How can I assist you with your day?
+
+Tokens per second: 0.93  TTFT: 21.737s
+
+Done!
+
+
+
+
+
+All Fixes Applied (Non-Q8 Quant Types)
+1. VecDot Kernel Rewrites — QuantizationKernels.cs (all tiers: Scalar, SSE, AVX2, FMA)
+1a. Q5_K high-bit indexing bug (ROOT CAUSE of garbage output)
+
+VecDotQ5K_Scalar/AVX2/FMA: Original code used qh[l] with shifting u1/u2 masks — always reading qh bytes 0-31 regardless of which sub-block was being processed. Fixed to qh[i/8] >> (i%8) which correctly addresses individual bits across all 32 qh bytes (covering 256 elements). This caused every element beyond the first 64 in each 256-element block (75% of the data) to get the wrong 5th high bit, producing completely corrupted weight values.
+Also rewrote from 64-element-pair loop to element-by-element loop matching llama.cpp reference.
+1b. Column block offset bug (all VecDot variants: Q3K, Q4K, Q5K, Q6K, Q2K, Q8K)
+
+Original: rawWeights + (long)col * nBlocks * BLOCK_BYTES + b * BLOCK_BYTES — assumed columns are padded to whole block boundaries.
+Fixed: rawWeights + (long)(startBlock + b) * BLOCK_BYTES where startBlock = (col * inFeatures) / QK_K — treats the GGUF data as a flat block stream without column padding.
+Bug triggers when inFeatures is not a multiple of 256.
+1c. colBlockStart partial-block handling (all VecDot variants)
+
+Original: Always started at element 0 of each block (for int i = 0 or for int j = 0).
+Fixed: Added curBlockStart = (b == 0) ? colBlockStart : 0 and blockEnd = Math.Min(QK_K, inFeatures + colBlockStart - b * QK_K).
+All input indexing changed: input[b*QK + i] → input[b*QK + i - colBlockStart].
+Bug triggers when (col * inF) % 256 != 0 (column starts mid-block).
+1d. Q4_K scale indexing (all tiers)
+
+Original: Used idx incrementing by 2 per 64-element pair (GetScaleMinK4_Scale_Scalar(idx+0, ...)).
+Fixed (cosmetic): Uses scOff = (j/64)*2 — same result, cleaner.
+No functional change.
+1e. Q3_K block indexing (all tiers)
+
+Same col * nBlocks → startBlock + b fix as others.
+Same colBlockStart partial-block handling.
+1f. Q6_K block bounds (all tiers)
+
+Same col * nBlocks + colBlockStart fixes.
+Fixed valid → blockEnd in bounds checks.
+2. VecDot Kernel Rewrites — QuantizationKernels.Simple.cs
+2a. Q5_1 VecDot (Scalar, SSE, AVX2, FMA)
+
+Added missing - 16 offset: (q * d + m) → ((q - 16) * d + m). Q5_1 is a signed quantization centered at 16, same as Q5_0.
+Original treated it as unsigned, producing wrong values for every element.
+2b. Q2_K block indexing (all tiers)
+
+Same col * nBlocks → startBlock + b fix.
+Same colBlockStart partial-block handling.
+Simplified the inner loop (removed qOff/shift variables, used direct basePos/baseByte indexing).
+2c. Q8_K block indexing (all tiers)
+
+Same col * nBlocks → startBlock + b fix.
+Same colBlockStart partial-block handling.
+3. Dequantization Fix — GgufLoader.cs
+3a. Q5_1 dequant fix (ReadQ5_1)
+
+Added missing - 16 offset: q * d + m → (q - 16) * d + m. Same signedness fix as VecDot.
+3b. Block layout fix (GetRawTensorByteCount)
+
+Original: Computed blocksPerCol = ceil(InF/blockSize) then totalBytes = OutF * blocksPerCol * bytesPerBlock — assumed column-padded storage.
+Fixed: nBlocks = ceil(totalElements / blockSize) then totalBytes = nBlocks * bytesPerBlock — GGUF uses flat contiguous block stream.
+Affects weight loading for all quantized types when InF not a multiple of blockSize.
+3c. Dequant read fix (ReadTensorInto)
+
+Original: Read row-by-row with stride = InF — assumed per-column block layout.
+Fixed: Read all blocks sequentially — matches flat GGUF layout.
+3d. K-quant variant support — Extended all pattern matches to include _S, _M, _L suffixes:
+
+IsQuantizedType: Added Q2_K_S, Q3_K_S/M/L, Q4_K_S/M, Q5_K_S/M, Q6_K_S.
+GetRawTensorByteCount: Same variant additions.
+ReadQBlockRow: Same variant additions.
+IsKQuant: Same variant additions.
+4. Dispatch Fix — Linearlayer.cs
+4a. IsSupportedQuantDtype — Extended to include K-quant variants (Q2_K_S, Q3_K_S/M/L, etc.).
+
+4b. SetRawWeight VecDot dispatch — Extended pattern matches for all K-quant variants.
+
+5. Test Improvements
+5a. VecDotDetailedTests.cs (new file ~485 lines)
+
+VecDotQ4K_MatchesDequant: Non-trivial single-block test with explicit values, cross-checked against ReadQ4K dequant.
+VecDotQ2K_NonTrivial: Same pattern for Q2_K.
+VecDotQ5K_NonTrivial: Same pattern for Q5_K.
+VecDotQ6K_NonTrivial: Same pattern for Q6_K.
+VecDotQ3K_NonTrivial: Same pattern for Q3_K.
+All run on all available hardware tiers (Scalar, SSE, AVX2, FMA).
+5b. VecDotTests.cs — Minor updates to use or pattern matching in member data.
+
+5c. NewFormatTests.cs — Added using SharpMind.Model.Format import.
+
+5d. IntegrationTests.cs — Added 50+ lines covering new K-quant variant dtypes.
+
+6. Type System — GgufDtype.cs
+Added the GGUF K-quant variant enum values (Q2_K_S, Q3_K_S/M/L, Q4_K_S/M, Q5_K_S/M, Q6_K_S).
+
+Summary: Two bugs caused incorrect non-Q8 output:
+
+Q5_K high-bit indexing (all blocks beyond first 64 elements → ~75% of weight data corrupted)
+Q5_1 signedness (missing -16 offset → every weight value wrong)
+Column padding assumption (only matters for non-256-aligned dimensions)
+All VecDot variants across all tiers were also updated for correctness with colBlockStart partial-block handling and flat block stream indexing.

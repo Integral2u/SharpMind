@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using SharpMind;
+using SharpMind.Core.Quantization;
 using SharpMind.Core.Tensors;
 using SharpMind.Inference;
 using SharpMind.Model;
@@ -51,7 +52,6 @@ public class Q4KTests
         Assert.Equal(17.0f, data[0]);
     }
     
-    /*
     [Fact]
     public void Diagnostic_Q4KffnDownVerify()
     {
@@ -266,21 +266,20 @@ public class Q4KTests
         string q4Path = @"C:\Integral2u\source\repos\SharpMind\ExternalAssets\qwen2-0_5b-instruct-q4_k_m.gguf";
         if (!File.Exists(q8Path) || !File.Exists(q4Path)) { _output.WriteLine("SKIP"); return; }
 
-        // Load both models
         _output.WriteLine("Loading Q8_0 model...");
         var sw = Stopwatch.StartNew();
         GgufLoader.Load(q8Path, null, out var m8Meta, out var m8Config, out _);
         var sc8 = m8Config.ForModel(HardwareTier.AVX2);
-        var model8 = ModelFactory.Create(m8Config, sc8);
-        GgufLoader.LoadWeightsToModel(q8Path, m8Meta, model8);
+        var w8 = GgufLoader.LoadWeightsToTransformerWeights(q8Path, m8Config);
+        var model8 = ModelFactory.CreateSession(w8, sc8);
         _output.WriteLine($"  done in {sw.Elapsed.TotalSeconds:F1}s");
 
         sw.Restart();
         _output.WriteLine("Loading Q4_K_M model...");
         GgufLoader.Load(q4Path, null, out var m4Meta, out var m4Config, out _);
         var sc4 = m4Config.ForModel(HardwareTier.AVX2);
-        var model4 = ModelFactory.Create(m4Config, sc4);
-        GgufLoader.LoadWeightsToModel(q4Path, m4Meta, model4);
+        var w4 = GgufLoader.LoadWeightsToTransformerWeights(q4Path, m4Config);
+        var model4 = ModelFactory.CreateSession(w4, sc4);
         _output.WriteLine($"  done in {sw.Elapsed.TotalSeconds:F1}s");
 
         // Create single-token input [0]
@@ -317,7 +316,6 @@ public class Q4KTests
             if (layer == 0)
             {
                 double Norm(Tensor<float> t) { double s = 0; for (int i = 0; i < t.ElementCount; i++) s += t.Data[i] * (double)t.Data[i]; return Math.Sqrt(s); }
-                // Check Q4_K_M FFN weights for layer 0
                 var gated = block4.Ffn.WGated!.Weight;
                 var d4 = block4.Ffn.WDown.Weight;
                 int ffnDim = gated.Shape[1] / 2;
@@ -326,22 +324,10 @@ public class Q4KTests
                 _output.WriteLine($"  WGated max={gated.Data.ToArray().Max():G6} min={gated.Data.ToArray().Min():G6}");
                 _output.WriteLine($"  Wdown first 8: {string.Join(", ", Enumerable.Range(0,8).Select(i=>d4.Data[i].ToString("G6")))}");
                 _output.WriteLine($"  Wdown last 8:  {string.Join(", ", Enumerable.Range(d4.ElementCount-8,8).Select(i=>d4.Data[i].ToString("G6")))}");
-                _output.WriteLine($"  Wdown mid 8 [2179072..2179079]: {string.Join(", ", Enumerable.Range(2179072,8).Select(i=>d4.Data[i].ToString("G6")))}");
-                // Check ALL GGUF shapes vs _weight shapes
-                foreach (var t in m4Meta.Tensors.Where(t => t.Name.StartsWith("blk.0.")))
-                {
-                    _output.WriteLine($"  {t.Name}: GGUF shape=[{string.Join(",", t.Shape)}] dtype={t.Dtype}");
-                }
+
                 // Also check Q8_0 Wdown
                 var d8 = block8.Ffn.WDown.Weight;
                 _output.WriteLine($"  Q8 Wdown norm={Norm(d8):G6} first={d8.Data[0]:G6} last={d8.Data[d8.ElementCount-1]:G6}");
-                // Check dtype from metadata
-                var wdMeta = m4Meta.Tensors.FirstOrDefault(t => t.Name == $"blk.{layer}.ffn_down.weight");
-                _output.WriteLine($"  Q4 blk.{layer}.ffn_down.weight dtype={wdMeta.Dtype} shape=[{string.Join(",", wdMeta.Shape)}]");
-                // Check attention
-                var w4q = block4.Attention.Wq.Weight;
-                var w4v = block4.Attention.Wv.Weight;
-                _output.WriteLine($"  Wq norm={Norm(w4q):G6} Wv norm={Norm(w4v):G6}");
             }
 
             // Forward through block (in-place)
@@ -364,7 +350,6 @@ public class Q4KTests
                 _output.WriteLine($"  *** DIVERGENCE at layer {layer}! avgDiff={avgDiff:G6} maxDiff={maxDiff:G6}");
                 for (int i = 0; i < Math.Min(8, next8.ElementCount); i++)
                     _output.WriteLine($"  [{i}] Q8={next8.Data[i]:G8}  Q4={next4.Data[i]:G8}  diff={Math.Abs(next8.Data[i] - next4.Data[i]):G4}");
-                if (avgDiff > 1.0) break;
             }
             if (layer % 6 == 5 || layer == numLayers - 1)
             {
@@ -384,6 +369,108 @@ public class Q4KTests
         else
         {
             _output.WriteLine($"\nNo divergence detected — both models produce identical forward pass.");
+        }
+
+        // === Diagnostics: VecDot vs dequant for actual weight dtypes ===
+        _output.WriteLine($"\n=== VecDot Diagnostics (dtype-aware) ===");
+        var saveW4 = model4.ForwardEmbedding(Tensor<int>.From(new int[] { 0 }, 1, 1));
+        _output.WriteLine($"  Config: layers={m8Config.NumLayers} hidden={m8Config.HiddenDim} ffn={m8Config.FfnDim} heads={m8Config.NumHeads} kv={m8Config.NumKvHeads} eps={m8Config.NormEps:G4}");
+        _output.WriteLine($"  Q4 Config: layers={m4Config.NumLayers} hidden={m4Config.HiddenDim} ffn={m4Config.FfnDim} heads={m4Config.NumHeads} kv={m4Config.NumKvHeads} eps={m4Config.NormEps:G4}");
+
+        var blk0 = w4.Blocks[0];
+        _output.WriteLine($"  Raw sizes: Wq={blk0.RawWq?.Length} Wgate={blk0.RawWgate?.Length} Wup={blk0.RawWup?.Length} Wf2={blk0.RawWf2?.Length} Wk={blk0.RawWk?.Length} Wv={blk0.RawWv?.Length} Wo={blk0.RawWo?.Length}");
+
+        unsafe
+        {
+            var inputEmb = saveW4;
+            int hidden = m4Config.HiddenDim;
+            int ffn = m4Config.FfnDim;
+
+            // Check if input has any NaN
+            bool inputHasNan = false;
+            for (int i = 0; i < inputEmb.ElementCount; i++) { if (float.IsNaN(inputEmb.Data[i]) || float.IsInfinity(inputEmb.Data[i])) { inputHasNan = true; break; } }
+            _output.WriteLine($"  Input has NaN/Inf: {inputHasNan}");
+
+            string DetectDtype(byte[] raw, int inF, int outF)
+            {
+                if (raw.Length == (outF * inF + 31) / 32 * 22) return "Q5_0";
+                if (raw.Length == (outF * inF + 255) / 256 * 210) return "Q6_K";
+                if (raw.Length == (outF * inF + 31) / 32 * 34) return "Q8_0";
+                if (raw.Length == (outF * inF + 255) / 256 * 144) return "Q4_K";
+                if (raw.Length == (outF * inF + 255) / 256 * 176) return "Q5_K";
+                return "unknown";
+            }
+
+            void TestVecDot(string name, byte[] rawData, int inFeatures, int outFeatures)
+            {
+                string dtype = DetectDtype(rawData, inFeatures, outFeatures);
+                _output.WriteLine($"  {name}: detected dtype={dtype} bytes={rawData.Length} inF={inFeatures} outF={outFeatures}");
+
+                int blockBytes, blkSize;
+                switch (dtype)
+                {
+                    case "Q5_0": blockBytes = 22; blkSize = 32; break;
+                    case "Q6_K": blockBytes = 210; blkSize = 256; break;
+                    case "Q8_0": blockBytes = 34; blkSize = 32; break;
+                    default: _output.WriteLine($"    unsupported dtype {dtype}, skipping"); return;
+                }
+
+                int expBlocks = (inFeatures * outFeatures + blkSize - 1) / blkSize;
+                int expBytes = expBlocks * blockBytes;
+                if (rawData.Length != expBytes)
+                {
+                    _output.WriteLine($"    WARNING: size mismatch expected={expBytes} actual={rawData.Length}");
+                    return;
+                }
+
+                int nColBlocks = (inFeatures + blkSize - 1) / blkSize;
+
+                fixed (byte* pRaw = rawData)
+                fixed (float* pIn = inputEmb.Data)
+                {
+                    var qOps = QuantizationFactory.Create(HardwareTier.Scalar);
+
+                    for (int col = 0; col < Math.Min(3, outFeatures); col++)
+                    {
+                        // Dequantize and compute dot product
+                        double expected = 0;
+                        int startBlock = (col * inFeatures) / blkSize;
+                        int colOff = (col * inFeatures) % blkSize;
+                        for (int b = 0; b < nColBlocks; b++)
+                        {
+                            byte* block = pRaw + (long)(startBlock + b) * blockBytes;
+                            float[] deq = GgufLoader.ReadBlock(block, dtype, blkSize);
+                            int curStart = (b == 0) ? colOff : 0;
+                            int curEnd = Math.Min(blkSize, inFeatures + colOff - b * blkSize);
+                            for (int j = curStart; j < curEnd; j++)
+                                expected += pIn[b * blkSize + j - colOff] * deq[j];
+                        }
+
+                        // VecDot
+                        float vecDotVal = dtype switch
+                        {
+                            "Q5_0" => qOps.VecDotQ5_0(pIn, pRaw, col, inFeatures),
+                            "Q6_K" => qOps.VecDotQ6K(pIn, pRaw, col, inFeatures),
+                            "Q8_0" => qOps.VecDotQ8_0(pIn, pRaw, col, inFeatures),
+                            _ => float.NaN
+                        };
+
+                        double relDiff = Math.Abs((double)vecDotVal - expected) / Math.Max(1.0, Math.Abs(expected));
+                        string status = relDiff > 1e-4 ? $"FAIL({relDiff:G3})" : "OK";
+                        _output.WriteLine($"  {name}[col={col}]: VecDot={vecDotVal:G6} expected={expected:G6} {status}");
+                    }
+                }
+            }
+
+            if (blk0.RawWq != null) TestVecDot("Wq", blk0.RawWq, hidden, hidden);
+            if (blk0.RawWk != null) TestVecDot("Wk", blk0.RawWk, hidden, hidden);
+            if (blk0.RawWv != null) TestVecDot("Wv", blk0.RawWv, hidden, hidden);
+            if (blk0.RawWo != null) TestVecDot("Wo", blk0.RawWo, hidden, hidden);
+            if (blk0.RawWgate != null) TestVecDot("Wgate", blk0.RawWgate, hidden, ffn);
+            if (blk0.RawWup != null) TestVecDot("Wup", blk0.RawWup, hidden, ffn);
+            if (blk0.RawWf2 != null) TestVecDot("Wf2", blk0.RawWf2, ffn, hidden);
+
+            saveW4.Dispose();
         }
 
         // Compare final logits
@@ -408,6 +495,70 @@ public class Q4KTests
 
         model8.Dispose();
         model4.Dispose();
+        w8.Dispose();
+        w4.Dispose();
     }
-    */
+
+    [Fact]
+    public void Diagnostic_MinimalMatMul()
+    {
+        string q4Path = @"C:\Integral2u\source\repos\SharpMind\ExternalAssets\qwen2-0_5b-instruct-q4_k_m.gguf";
+        if (!File.Exists(q4Path)) { _output.WriteLine("SKIP"); return; }
+
+        _output.WriteLine("Loading Q4_K_M model metadata...");
+        GgufLoader.Load(q4Path, null, out var m4Meta, out var m4Config, out _);
+        var sc4 = m4Config.ForModel(HardwareTier.AVX2);
+        _output.WriteLine("Loading weights...");
+        var w4 = GgufLoader.LoadWeightsToTransformerWeights(q4Path, m4Config);
+        _output.WriteLine("Creating session...");
+        var model4 = ModelFactory.CreateSession(w4, sc4);
+        _output.WriteLine("Session created.");
+        model4.Dispose();
+        w4.Dispose();
+    }
+
+    [Fact]
+    public void Diagnostic_Q6K_MatMul_Direct()
+    {
+        string q4Path = @"C:\Integral2u\source\repos\SharpMind\ExternalAssets\qwen2-0_5b-instruct-q4_k_m.gguf";
+        if (!File.Exists(q4Path)) { _output.WriteLine("SKIP"); return; }
+
+        // Load the first Q6_K tensor (blk.0.ffn_down.weight)
+        GgufLoader.Load(q4Path, null, out var meta, out var config, out _);
+        var t6 = meta.Tensors.FirstOrDefault(t => t.Name == "blk.0.ffn_down.weight");
+        if (t6.Name == null) { _output.WriteLine("Tensor not found"); return; }
+        _output.WriteLine($"Tensor: {t6.Name}, dtype={t6.Dtype}, shape=[{string.Join(",", t6.Shape)}]");
+
+        // Read raw data
+        int inF = (int)t6.Shape[0];  // 4864
+        int outF = (int)t6.Shape[1];  // 896
+        int totalBytes = 896 * 210 * (4864 / 256);
+        using var fs = File.OpenRead(q4Path);
+        long pos = meta.DataOffset + t6.Offset;
+        fs.Position = pos;
+        byte[] rawData = new byte[totalBytes];
+        int read = fs.Read(rawData, 0, totalBytes);
+        _output.WriteLine($"Read {read} bytes, expected {totalBytes}");
+
+        // Create input data (random-like)
+        float[] inputData = new float[inF];
+        for (int i = 0; i < inF; i++) inputData[i] = (float)(Math.Sin(i * 0.1) * 0.5);
+
+        // Allocate output
+        float[] outputData = new float[outF];
+
+        unsafe
+        {
+            fixed (byte* pRaw = rawData)
+            fixed (float* pIn = inputData)
+            fixed (float* pOut = outputData)
+            {
+                _output.WriteLine("Calling QuantizedMatMulQ6K_Scalar...");
+                QuantizationKernels.QuantizedMatMulQ6K_Scalar(pIn, pRaw, pOut, 1, inF, outF);
+                _output.WriteLine("Done.");
+            }
+        }
+
+        _output.WriteLine($"Output[0]={outputData[0]:G6} [1]={outputData[1]:G6} [2]={outputData[2]:G6}");
+    }
 }

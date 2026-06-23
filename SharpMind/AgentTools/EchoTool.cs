@@ -1,4 +1,4 @@
-﻿namespace SharpMind.AgenTools
+﻿namespace SharpMind.AgentTools
 {
    
     public class EchoTool

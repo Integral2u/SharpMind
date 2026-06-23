@@ -34,13 +34,14 @@ public static class ModelFactory
 
         for (int i = 0; i < modelConfig.NumLayers; i++)
         {
+            int qDim = modelConfig.NumHeads * modelConfig.HeadDim;
             int kvDim = modelConfig.NumKvHeads * modelConfig.HeadDim;
             blockWeights[i] = new TransformerWeights.BlockWeights(
-                new Tensor<float>(modelConfig.HiddenDim, modelConfig.HiddenDim), // Wq
+                new Tensor<float>(modelConfig.HiddenDim, qDim),               // Wq
                 new Tensor<float>(modelConfig.HiddenDim, kvDim),               // Wk
                 new Tensor<float>(modelConfig.HiddenDim, kvDim),               // Wv
-                new Tensor<float>(modelConfig.HiddenDim, modelConfig.HiddenDim), // Wo
-                new Tensor<float>(modelConfig.HiddenDim),                       // WqB
+                new Tensor<float>(qDim, modelConfig.HiddenDim),                 // Wo
+                new Tensor<float>(qDim),                                        // WqB
                 new Tensor<float>(kvDim),                                      // WkB
                 new Tensor<float>(kvDim),                                      // WvB
                 new Tensor<float>(modelConfig.HiddenDim),                       // WoB
@@ -51,7 +52,9 @@ public static class ModelFactory
                 new Tensor<float>(modelConfig.HiddenDim),                       // Norm1W
                 null,                                                           // Norm1B
                 new Tensor<float>(modelConfig.HiddenDim),                       // Norm2W
-                null                                                            // Norm2B
+                null,                                                           // Norm2B
+                null,                                                           // QNormW (created lazily if present in GGUF)
+                null                                                            // KNormW
             );
         }
         return new TransformerWeights(modelConfig, embedding, lmHead, finalNormW, finalNormB, blockWeights);

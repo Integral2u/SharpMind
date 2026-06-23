@@ -214,7 +214,16 @@ public static partial class GgufLoader
         ffnDim = (int)meta.GetLong($"{arch}.feed_forward_length", ffnDim);
         maxSeqLen = (int)meta.GetLong($"{arch}.context_length", maxSeqLen);
         numHeads = (int)meta.GetLong($"{arch}.attention.head_count", numHeads);
-        numKvHeads = (int)meta.GetLong($"{arch}.attention.head_count_kv", numKvHeads);
+        // head_count_kv may be absent for MHA models (Qwen3); default to numHeads.
+        numKvHeads = (int)meta.GetLong($"{arch}.attention.head_count_kv", -1);
+        if (numKvHeads <= 0) numKvHeads = numHeads;
+
+        // Some architectures (Qwen3) specify explicit key/value head dimensions
+        // that may differ from HiddenDim / NumHeads.
+        long rawKeyLen = meta.GetLong($"{arch}.attention.key_length", -1);
+        int? keyLength = rawKeyLen > 0 ? (int)rawKeyLen : null;
+        long rawValLen = meta.GetLong($"{arch}.attention.value_length", -1);
+        int? valueLength = rawValLen > 0 ? (int)rawValLen : null;
 
         // BUG FIX: numLayers was hardcoded to 24, never read from meta.
         // block_count is the GGUF key that holds the layer count for all architectures.
@@ -246,6 +255,8 @@ public static partial class GgufLoader
             RopeTheta = ropeTheta,
             NormEps = meta.GetFloat($"{arch}.attention.layer_norm_rms_epsilon",
                       meta.GetFloat("rms_norm_eps", 1e-5f)),
+            KeyLength = keyLength,
+            ValueLength = valueLength,
         };
     }
 
@@ -566,22 +577,24 @@ public static partial class GgufLoader
     private static bool IsQuantizedType(GgufDtype dtype) => dtype switch
     {
         GgufDtype.Q2_K or GgufDtype.Q3_K or GgufDtype.Q4_K or GgufDtype.Q5_K or GgufDtype.Q6_K
+        or GgufDtype.Q2_K_S or GgufDtype.Q3_K_S or GgufDtype.Q3_K_M or GgufDtype.Q3_K_L
+        or GgufDtype.Q4_K_S or GgufDtype.Q4_K_M or GgufDtype.Q5_K_S or GgufDtype.Q5_K_M or GgufDtype.Q6_K_S
         or GgufDtype.Q4_0 or GgufDtype.Q4_1 or GgufDtype.Q5_0 or GgufDtype.Q5_1
         or GgufDtype.Q8_0 or GgufDtype.Q8_1 or GgufDtype.Q8_K => true,
         _ => false
     };
 
-    private static long GetRawTensorByteCount(int[] shape, GgufDtype dtype)
+    internal static long GetRawTensorByteCount(int[] shape, GgufDtype dtype)
     {
         int blockSize, bytesPerBlock;
 
         switch (dtype)
         {
-            case GgufDtype.Q3_K: blockSize = 256; bytesPerBlock = 110; break;  // d[2]+hmask[32]+qs[64]+scales[12]
-            case GgufDtype.Q4_K: blockSize = 256; bytesPerBlock = 144; break;  // d[2]+dmin[2]+scales[12]+qs[128]
-            case GgufDtype.Q5_K: blockSize = 256; bytesPerBlock = 176; break;  // d[2]+dmin[2]+scales[12]+qh[32]+qs[128]
-            case GgufDtype.Q6_K: blockSize = 256; bytesPerBlock = 210; break;  // ql[128]+qh[64]+scales[16]+d[2]
-            case GgufDtype.Q2_K: blockSize = 256; bytesPerBlock = 84; break;  // scales[16]+qs[64]+d[2]+dmin[2]
+            case GgufDtype.Q3_K or GgufDtype.Q3_K_S or GgufDtype.Q3_K_M or GgufDtype.Q3_K_L: blockSize = 256; bytesPerBlock = 110; break;  // d[2]+hmask[32]+qs[64]+scales[12]
+            case GgufDtype.Q4_K or GgufDtype.Q4_K_S or GgufDtype.Q4_K_M: blockSize = 256; bytesPerBlock = 144; break;  // d[2]+dmin[2]+scales[12]+qs[128]
+            case GgufDtype.Q5_K or GgufDtype.Q5_K_S or GgufDtype.Q5_K_M: blockSize = 256; bytesPerBlock = 176; break;  // d[2]+dmin[2]+scales[12]+qh[32]+qs[128]
+            case GgufDtype.Q6_K or GgufDtype.Q6_K_S: blockSize = 256; bytesPerBlock = 210; break;  // ql[128]+qh[64]+scales[16]+d[2]
+            case GgufDtype.Q2_K or GgufDtype.Q2_K_S: blockSize = 256; bytesPerBlock = 84; break;  // scales[16]+qs[64]+d[2]+dmin[2]
             case GgufDtype.Q8_K: blockSize = 256; bytesPerBlock = 292; break;  // d[4]+qs[256]+bsums[32]
             case GgufDtype.Q8_0: blockSize = 32; bytesPerBlock = 34; break;
             case GgufDtype.Q8_1: blockSize = 32; bytesPerBlock = 36; break;  // d[2]+s[2]+qs[32]
@@ -591,13 +604,13 @@ public static partial class GgufLoader
             case GgufDtype.Q4_1: blockSize = 32; bytesPerBlock = 20; break;  // d[2]+m[2]+qs[16]
             default: return 0;
         }
-        // Quantized data is stored per-output-column (per row of the weight matrix).
-        // shape is [InF, OutF] — innermost dim is InF, which maps to the input features per column.
-        // Each output column has ceil(InF / blockSize) blocks.
-        long inF = shape.Length > 0 ? shape[0] : 1;
-        long outF = shape.Length > 1 ? shape[1] : 1;
-        long blocksPerCol = (inF + blockSize - 1) / blockSize;
-        return outF * blocksPerCol * bytesPerBlock;
+        // The GGUF file stores quantized blocks in a single contiguous stream:
+        // total blocks = ceil(total_elements / blockSize). Blocks are NOT
+        // padded to column boundaries (no ceil(InF/blockSize) * OutF).
+        long totalElements = 1;
+        foreach (int d in shape) totalElements *= d;
+        long nBlocks = (totalElements + blockSize - 1) / blockSize;
+        return nBlocks * bytesPerBlock;
     }
 
     private static Tensor<float> ReadTensor(BinaryReader stream, GgufDtype dtype, int[] shape)
@@ -609,7 +622,7 @@ public static partial class GgufLoader
         return result;
     }
 
-    private static void ReadQBlockRow(BinaryReader stream, GgufDtype dtype, Span<float> dest, int count)
+    internal static void ReadQBlockRow(BinaryReader stream, GgufDtype dtype, Span<float> dest, int count)
     {
         switch (dtype)
         {
@@ -619,17 +632,22 @@ public static partial class GgufLoader
             case GgufDtype.Q5_1: ReadQ5_1(stream, dest, count); break;
             case GgufDtype.Q8_0: ReadQ8_0(stream, dest, count); break;
             case GgufDtype.Q8_1: ReadQ8_1(stream, dest, count); break;
-            case GgufDtype.Q2_K: ReadQ2K(stream, dest, count); break;
-            case GgufDtype.Q3_K: ReadQ3_K(stream, dest, count); break;
-            case GgufDtype.Q4_K: ReadQ4K(stream, dest, count); break;
-            case GgufDtype.Q5_K: ReadQ5_K(stream, dest, count); break;
-            case GgufDtype.Q6_K: ReadQ6K(stream, dest, count); break;
+            case GgufDtype.Q2_K or GgufDtype.Q2_K_S: ReadQ2K(stream, dest, count); break;
+            case GgufDtype.Q3_K or GgufDtype.Q3_K_S or GgufDtype.Q3_K_M or GgufDtype.Q3_K_L: ReadQ3_K(stream, dest, count); break;
+            case GgufDtype.Q4_K or GgufDtype.Q4_K_S or GgufDtype.Q4_K_M: ReadQ4K(stream, dest, count); break;
+            case GgufDtype.Q5_K or GgufDtype.Q5_K_S or GgufDtype.Q5_K_M: ReadQ5_K(stream, dest, count); break;
+            case GgufDtype.Q6_K or GgufDtype.Q6_K_S: ReadQ6K(stream, dest, count); break;
             case GgufDtype.Q8_K: ReadQ8K(stream, dest, count); break;
         }
     }
 
     private static bool IsKQuant(GgufDtype dtype) => dtype is
-        GgufDtype.Q2_K or GgufDtype.Q3_K or GgufDtype.Q4_K or GgufDtype.Q5_K or GgufDtype.Q6_K or GgufDtype.Q8_K;
+        GgufDtype.Q2_K or GgufDtype.Q2_K_S
+        or GgufDtype.Q3_K or GgufDtype.Q3_K_S or GgufDtype.Q3_K_M or GgufDtype.Q3_K_L
+        or GgufDtype.Q4_K or GgufDtype.Q4_K_S or GgufDtype.Q4_K_M
+        or GgufDtype.Q5_K or GgufDtype.Q5_K_S or GgufDtype.Q5_K_M
+        or GgufDtype.Q6_K or GgufDtype.Q6_K_S
+        or GgufDtype.Q8_K;
 
     private static void ReadTensorInto(BinaryReader stream, GgufDtype dtype, int[] shape, Span<float> destination)
     {
@@ -647,14 +665,12 @@ public static partial class GgufLoader
                 for (int i = 0; i < count; i++) destination[i] = HalfToFloat(stream.ReadUInt16());
                 break;
             default:
-                // GGUF stores shape as [InF, OutF] — innermost (fastest-varying) dimension is InF.
-                // The dequant output must be [OutF, InF] row-major so LoadWeightTransposed can transpose correctly.
-                // All quantized types are stored per-output-column (per row of the weight matrix).
-                // Read row-by-row with stride = InF so each row's blocks are contiguous in the output.
-                int stride = shape.Length > 0 ? shape[0] : count;
-                int nRows = count / stride;
-                for (int r = 0; r < nRows; r++)
-                    ReadQBlockRow(stream, dtype, destination.Slice(r * stride, stride), stride);
+                // GGUF stores quantized blocks in flat (element-contiguous) layout:
+                // blocks cover the linear element array sequentially and may span
+                // column boundaries when shape[0] % blockSize != 0.
+                // Read all blocks sequentially — the destination is already in
+                // flat row-major order matching the GGUF element ordering.
+                ReadQBlockRow(stream, dtype, destination, count);
                 break;
         }
     }
@@ -672,7 +688,11 @@ public static partial class GgufLoader
             return (sign == 0 ? 1f : -1f) * val * MathF.Pow(2f, -14f);
         }
         if (exp == 31)
-            return 0f; // NaN and Inf from F16 → guarded to zero
+        {
+            if (mant == 0)
+                return (sign == 0 ? float.PositiveInfinity : float.NegativeInfinity);
+            return float.NaN;
+        }
 
         return (sign == 0 ? 1f : -1f) * MathF.Pow(2f, exp - 15) * (1f + mant / 1024f);
     }
@@ -714,6 +734,69 @@ public static partial class GgufLoader
                 }
             }
         }
+    }
+
+    public static unsafe float[] ReadBlock(byte* block, string dtype, int blkSize)
+    {
+        float[] result = new float[blkSize];
+        switch (dtype)
+        {
+            case "Q5_0":
+            {
+                float d = HalfToFloat(*(ushort*)block);
+                uint qh = *(uint*)(block + 2);
+                byte* qs = block + 6;
+                for (int j = 0; j < blkSize; j++)
+                {
+                    int nibble = (qs[j / 2] >> ((j & 1) * 4)) & 0x0F;
+                    int highBit = (int)(qh >> j) & 1;
+                    result[j] = d * ((nibble | (highBit << 4)) - 16);
+                }
+                break;
+            }
+            case "Q6_K":
+            {
+                byte* ql = block;
+                byte* qh = ql + 128;
+                sbyte* scales = (sbyte*)(qh + 64);
+                float d = HalfToFloat(*(ushort*)(block + 208));
+                for (int nOff = 0; nOff < blkSize; nOff += 128)
+                {
+                    int qlOff = nOff == 0 ? 0 : 64;
+                    int qhOff = nOff == 0 ? 0 : 32;
+                    int scOff = nOff == 0 ? 0 : 8;
+                    int halfRem = Math.Min(128, blkSize - nOff);
+                    for (int l = 0; l < 32 && l < halfRem; l++)
+                    {
+                        int is_ = l / 16;
+                        int q1 = (ql[qlOff + l] & 0x0F) | ((qh[qhOff + l] & 0x03) << 4);
+                        int q2 = (ql[qlOff + l + 32] & 0x0F) | (((qh[qhOff + l] >> 2) & 0x03) << 4);
+                        int q3 = ((ql[qlOff + l] >> 4) & 0x0F) | (((qh[qhOff + l] >> 4) & 0x03) << 4);
+                        int q4 = ((ql[qlOff + l + 32] >> 4) & 0x0F) | (((qh[qhOff + l] >> 6) & 0x03) << 4);
+                        int idx1 = nOff + l;
+                        int idx2 = nOff + l + 32;
+                        int idx3 = nOff + l + 64;
+                        int idx4 = nOff + l + 96;
+                        if (idx1 < blkSize) result[idx1] = d * scales[scOff + is_ + 0] * (q1 - 32);
+                        if (idx2 < blkSize) result[idx2] = d * scales[scOff + is_ + 2] * (q2 - 32);
+                        if (idx3 < blkSize) result[idx3] = d * scales[scOff + is_ + 4] * (q3 - 32);
+                        if (idx4 < blkSize) result[idx4] = d * scales[scOff + is_ + 6] * (q4 - 32);
+                    }
+                }
+                break;
+            }
+            case "Q8_0":
+            {
+                float d = HalfToFloat(*(ushort*)block);
+                sbyte* qs = (sbyte*)(block + 2);
+                for (int j = 0; j < blkSize; j++)
+                    result[j] = qs[j] * d;
+                break;
+            }
+            default:
+                throw new ArgumentException($"Unsupported dtype: {dtype}");
+        }
+        return result;
     }
 
     internal static unsafe void ReadQ4_1(BinaryReader reader, Span<float> data, int n)
@@ -801,7 +884,7 @@ public static partial class GgufLoader
             {
                 int xh = (int)((qh >> i) & 1) << 4;
                 int q = ((buf[8 + i / 2] >> (4 * (i % 2))) & 0x0F) | xh;
-                data[blockStart + i] = q * d + m;
+                data[blockStart + i] = (q - 16) * d + m;
             }
         }
     }

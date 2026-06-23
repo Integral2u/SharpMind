@@ -197,6 +197,7 @@ public sealed record SharpMindConfig
             "opt"                                                         => (ActivationKind.ReLU,    GateKind.None,   FfnKind.Dense, NormKind.LayerNorm, ArchKind.Decoder),
             "gemma"                                                       => (ActivationKind.GELU,    GateKind.GeGLU,  FfnKind.Gated, NormKind.RMSNorm,   ArchKind.Decoder),
             "mixtral" or "qwen2moe" or "deepseek2" or "dbrx"            => (ActivationKind.SiLU,    GateKind.SwiGLU, FfnKind.MoE,   NormKind.RMSNorm,   ArchKind.Decoder),
+            "qwen3"                                                       => (ActivationKind.SiLU,    GateKind.SwiGLU, FfnKind.Gated, NormKind.RMSNorm,   ArchKind.Decoder),
             _                                                              => (ActivationKind.SiLU,    GateKind.SwiGLU, FfnKind.Gated, NormKind.RMSNorm,   ArchKind.Decoder),
         };
 

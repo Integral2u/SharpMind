@@ -59,6 +59,17 @@ public abstract class TransformerBlock : IDisposable
 
     public bool LoadWeight(string name, ReadOnlySpan<float> data)
     {
+        // Q/K norm checks must precede the broader attn_q/attn_k checks
+        if (name.Contains("attn_q_norm", StringComparison.OrdinalIgnoreCase))
+        {
+            _attention.LoadWeights(name, data);
+            return true;
+        }
+        if (name.Contains("attn_k_norm", StringComparison.OrdinalIgnoreCase))
+        {
+            _attention.LoadWeights(name, data);
+            return true;
+        }
         if (name.Contains("attn_q", StringComparison.OrdinalIgnoreCase) || name.Contains("q_proj", StringComparison.OrdinalIgnoreCase) || name.Contains("self_attn.q", StringComparison.OrdinalIgnoreCase))
         {
             _attention.LoadWeights(name, data);
@@ -111,6 +122,10 @@ public abstract class TransformerBlock : IDisposable
 
     public bool SetRawWeight(string name, byte[] rawData, Format.GgufDtype dtype)
     {
+        // Q/K norm (always loaded as float) — skip quantized path
+        if (name.Contains("attn_q_norm", StringComparison.OrdinalIgnoreCase) ||
+            name.Contains("attn_k_norm", StringComparison.OrdinalIgnoreCase))
+            return false;
         if (name.Contains("attn_q", StringComparison.OrdinalIgnoreCase) || name.Contains("attn_k", StringComparison.OrdinalIgnoreCase) || name.Contains("attn_v", StringComparison.OrdinalIgnoreCase) ||
             name.Contains("attn_output", StringComparison.OrdinalIgnoreCase) || name.Contains("attn_o", StringComparison.OrdinalIgnoreCase) ||
             name.Contains("q_proj", StringComparison.OrdinalIgnoreCase) || name.Contains("k_proj", StringComparison.OrdinalIgnoreCase) || name.Contains("v_proj", StringComparison.OrdinalIgnoreCase) ||

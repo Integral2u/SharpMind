@@ -1,0 +1,77 @@
+using SharpMind.Inference;
+
+namespace SharpMind.CUI.App;
+
+/// <summary>Which IGenerator strategy to build the session with.</summary>
+public enum GeneratorStrategy
+{
+    /// <summary>One token at a time. Simplest, always correct, baseline speed.</summary>
+    Standard,
+    /// <summary>Draft-and-verify against a smaller model. Faster, needs a draft model path.</summary>
+    Speculative,
+    /// <summary>Multiple candidate heads predicted per step. Faster, needs a Medusa-trained model.</summary>
+    Medusa,
+    /// <summary>
+    /// No real model at all — SessionLauncher skips loading any GGUF entirely
+    /// and the session is driven by DebugChatBridge's scripted responses.
+    /// Exists purely for testing the CUI's own plumbing (rendering, dialogs,
+    /// sub-agent name display) without needing a model file or paying any
+    /// inference cost. Type <c>TestOptions</c> or <c>TestAgent</c> into chat
+    /// once running to exercise specific scripted scenarios.
+    /// </summary>
+    UIDebug
+}
+
+/// <summary>Which IKVCacheBuilder strategy backs the session's attention cache.</summary>
+public enum CacheStrategy
+{
+    /// <summary>Flat pre-allocated buffer. Simplest, most memory-hungry per sequence.</summary>
+    Standard,
+    /// <summary>Block/page-based allocation. Better for many concurrent or growing sequences.</summary>
+    Paged,
+    /// <summary>Cache entries stored quantized. Less memory, small accuracy cost.</summary>
+    Quantized
+}
+
+/// <summary>
+/// Everything needed to stand up a ChatSession, gathered in one place so the
+/// UI can present it as a single options screen and the launcher can resolve
+/// it to a concrete generic ChatSession&lt;T,K&gt; instantiation.
+/// </summary>
+public sealed class SessionOptions
+{
+    // Model + project
+    public string? ModelPath { get; set; }
+    public string? ProjectPath { get; set; }       // working directory: skills, tool assemblies, history
+    public List<string> SkillFolders { get; set; } = [];
+
+    /// <summary>Explicit, individually-chosen tool DLL paths (the ;-separated field on the Options screen).</summary>
+    public List<string> ToolAssemblyPaths { get; set; } = [];
+
+    /// <summary>
+    /// A folder scanned for *.dll at launch time, in addition to the explicit
+    /// paths above. Kept separate rather than pre-expanded into
+    /// ToolAssemblyPaths so that dropping a new tool DLL into this folder
+    /// takes effect on the next launch without needing the Options screen's
+    /// path list to be re-typed or re-synced — the folder is the source of
+    /// truth, re-read every time a session actually starts, not snapshotted
+    /// once when the options were first built.
+    /// </summary>
+    public string? ToolsFolder { get; set; }
+
+    // Strategy selection
+    public GeneratorStrategy Generator { get; set; } = GeneratorStrategy.Standard;
+    public CacheStrategy Cache { get; set; } = CacheStrategy.Standard;
+
+    // Sampling / generation
+    public SamplingConfig Sampling { get; set; } = SamplingConfig.Llama3Chat;
+    public GenerationConfig Generation { get; set; } = GenerationConfig.Default;
+
+    // Agent
+    public string AgentName { get; set; } = "Delta";
+    public bool AgentsEnabled { get; set; }
+    public int MaxAgentDepth { get; set; } = 2;
+    public int MaxToolCallsPerTurn { get; set; } = 10;
+
+    public static SessionOptions Default => new();
+}

@@ -180,11 +180,11 @@ public sealed class LinearLayer : IDisposable
         GgufDtype.Q5_0 => true,
         GgufDtype.Q5_1 => true,
         GgufDtype.Q8_1 => true,
-        GgufDtype.Q2_K => true,
-        GgufDtype.Q3_K => true,
-        GgufDtype.Q4_K => true,
-        GgufDtype.Q5_K => true,
-        GgufDtype.Q6_K => true,
+        GgufDtype.Q2_K or GgufDtype.Q2_K_S => true,
+        GgufDtype.Q3_K or GgufDtype.Q3_K_S or GgufDtype.Q3_K_M or GgufDtype.Q3_K_L => true,
+        GgufDtype.Q4_K or GgufDtype.Q4_K_S or GgufDtype.Q4_K_M => true,
+        GgufDtype.Q5_K or GgufDtype.Q5_K_S or GgufDtype.Q5_K_M => true,
+        GgufDtype.Q6_K or GgufDtype.Q6_K_S => true,
         GgufDtype.Q8_K => true,
         _ => false
     };
@@ -196,26 +196,43 @@ public sealed class LinearLayer : IDisposable
         UseQuantizedForward = IsSupportedQuantDtype(dtype);
         _vecDotFn = dtype switch
         {
-            GgufDtype.Q3_K => _qOps.VecDotQ3K,
-            GgufDtype.Q4_K => _qOps.VecDotQ4K,
-            GgufDtype.Q5_K => _qOps.VecDotQ5K,
-            GgufDtype.Q6_K => _qOps.VecDotQ6K,
+            GgufDtype.Q3_K or GgufDtype.Q3_K_S or GgufDtype.Q3_K_M or GgufDtype.Q3_K_L => _qOps.VecDotQ3K,
+            GgufDtype.Q4_K or GgufDtype.Q4_K_S or GgufDtype.Q4_K_M => _qOps.VecDotQ4K,
+            GgufDtype.Q5_K or GgufDtype.Q5_K_S or GgufDtype.Q5_K_M => _qOps.VecDotQ5K,
+            GgufDtype.Q6_K or GgufDtype.Q6_K_S => _qOps.VecDotQ6K,
             GgufDtype.Q4_0 => _qOps.VecDotQ4_0,
             GgufDtype.Q4_1 => _qOps.VecDotQ4_1,
             GgufDtype.Q5_0 => _qOps.VecDotQ5_0,
             GgufDtype.Q5_1 => _qOps.VecDotQ5_1,
             GgufDtype.Q8_0 => _qOps.VecDotQ8_0,
             GgufDtype.Q8_1 => _qOps.VecDotQ8_1,
-            GgufDtype.Q2_K => _qOps.VecDotQ2K,
+            GgufDtype.Q2_K or GgufDtype.Q2_K_S => _qOps.VecDotQ2K,
             GgufDtype.Q8_K => _qOps.VecDotQ8K,
             _ => null
         };
         _matMulFn = dtype switch
         {
             GgufDtype.Q8_0 => _qOps.QuantizedMatMulQ8_0,
+            GgufDtype.Q5_0 when _qOps.VecDotQ5_0 != null => WrapVecDotAsMatMul(_qOps.VecDotQ5_0),
+            GgufDtype.Q5_1 when _qOps.VecDotQ5_1 != null => WrapVecDotAsMatMul(_qOps.VecDotQ5_1),
+            GgufDtype.Q6_K or GgufDtype.Q6_K_S when _qOps.VecDotQ6K != null => WrapVecDotAsMatMul(_qOps.VecDotQ6K),
             _ => null
         };
         return UseQuantizedForward;
+    }
+
+    private static unsafe QuantizedMatMulFn WrapVecDotAsMatMul(VecDotFn vecDot)
+    {
+        return (float* input, byte* rawWeights, float* output, int M, int K, int N) =>
+        {
+            for (int row = 0; row < M; row++)
+            {
+                float* pInRow = input + (long)row * K;
+                float* pOutRow = output + (long)row * N;
+                for (int col = 0; col < N; col++)
+                    pOutRow[col] = vecDot(pInRow, rawWeights, col, K);
+            }
+        };
     }
 
 

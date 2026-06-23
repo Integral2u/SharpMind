@@ -57,6 +57,10 @@ public sealed class TransformerWeights(ModelConfig config, Tensor<float> embeddi
             }
             else
             {
+                // Q/K norm checks must be BEFORE the broader attn_q/attn_k checks
+                // to avoid "attn_q_norm" being misidentified as "attn_q".
+                if (name.Contains("attn_q_norm", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
+                if (name.Contains("attn_k_norm", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
                 if (name.Contains("attn_q", StringComparison.OrdinalIgnoreCase) || name.Contains("q_proj", StringComparison.OrdinalIgnoreCase)) return (null, block, "RawWq");
                 if (name.Contains("attn_k", StringComparison.OrdinalIgnoreCase) || name.Contains("k_proj", StringComparison.OrdinalIgnoreCase)) return (null, block, "RawWk");
                 if (name.Contains("attn_v", StringComparison.OrdinalIgnoreCase) || name.Contains("v_proj", StringComparison.OrdinalIgnoreCase)) return (null, block, "RawWv");
@@ -94,6 +98,16 @@ public sealed class TransformerWeights(ModelConfig config, Tensor<float> embeddi
             }
             else
             {
+                if (name.Contains("attn_q_norm", StringComparison.OrdinalIgnoreCase))
+                {
+                    b.QNormW ??= new Tensor<float>(Config.HeadDim);
+                    return b.QNormW;
+                }
+                if (name.Contains("attn_k_norm", StringComparison.OrdinalIgnoreCase))
+                {
+                    b.KNormW ??= new Tensor<float>(Config.HeadDim);
+                    return b.KNormW;
+                }
                 if (name.Contains("attn_q", StringComparison.OrdinalIgnoreCase) || name.Contains("q_proj", StringComparison.OrdinalIgnoreCase)) return b.Wq;
                 if (name.Contains("attn_k", StringComparison.OrdinalIgnoreCase) || name.Contains("k_proj", StringComparison.OrdinalIgnoreCase)) return b.Wk;
                 if (name.Contains("attn_v", StringComparison.OrdinalIgnoreCase) || name.Contains("v_proj", StringComparison.OrdinalIgnoreCase)) return b.Wv;
@@ -126,7 +140,8 @@ public sealed class TransformerWeights(ModelConfig config, Tensor<float> embeddi
     public sealed class BlockWeights(Tensor<float> wq, Tensor<float> wk, Tensor<float> wv, Tensor<float> wo,
                         Tensor<float> wqB, Tensor<float> wkB, Tensor<float> wvB, Tensor<float> woB,
                         Tensor<float> wf1, Tensor<float> wf2, Tensor<float> wf1B, Tensor<float> wf2B,
-                        Tensor<float> n1w, Tensor<float>? n1b, Tensor<float> n2w, Tensor<float>? n2b) : IDisposable
+                        Tensor<float> n1w, Tensor<float>? n1b, Tensor<float> n2w, Tensor<float>? n2b,
+                        Tensor<float>? qNorm, Tensor<float>? kNorm) : IDisposable
     {
         // Attention
         public Tensor<float> Wq { get; } = wq; public Tensor<float> Wk { get; } = wk; public Tensor<float> Wv { get; } = wv; public Tensor<float> Wo { get; } = wo;
@@ -137,6 +152,11 @@ public sealed class TransformerWeights(ModelConfig config, Tensor<float> embeddi
 
         // Norms
         public Tensor<float> Norm1W { get; } = n1w; public Tensor<float>? Norm1B { get; } = n1b; public Tensor<float> Norm2W { get; } = n2w; public Tensor<float>? Norm2B { get; } = n2b;
+
+        // Per-head Q/K normalization (Qwen3)
+        // Settable so ResolveFloatTarget can create lazily.
+        public Tensor<float>? QNormW { get; set; } = qNorm;
+        public Tensor<float>? KNormW { get; set; } = kNorm;
 
         // Quantized data
         public byte[]? RawWq { get; set; }
@@ -166,6 +186,7 @@ public sealed class TransformerWeights(ModelConfig config, Tensor<float> embeddi
             WqBias.Dispose(); WkBias.Dispose(); WvBias.Dispose(); WoBias.Dispose();
             Wf1.Dispose(); Wf2.Dispose(); Wf1Bias.Dispose(); Wf2Bias.Dispose();
             Norm1W.Dispose(); Norm1B?.Dispose(); Norm2W.Dispose(); Norm2B?.Dispose();
+            QNormW?.Dispose(); KNormW?.Dispose();
         }
     }
 }

@@ -225,8 +225,7 @@ public static class GPUQuantizationKernels
             int be = Math.Min(QK, size - b * QK);
             for (int i = 0; i < be; i++)
             {
-                int j = i / 2;
-                int nib = (j % 2 == 0) ? (weights[bo + 6 + j] & 0x0F) : (weights[bo + 6 + j] >> 4);
+                int nib = ((i & 1) == 0) ? (weights[bo + 6 + i / 2] & 0x0F) : (weights[bo + 6 + i / 2] >> 4);
                 int q = nib | (((int)(qh >> i) & 1) << 4);
                 sum += input[b * QK + i] * ((q - 16) * d);
             }
@@ -284,8 +283,7 @@ public static class GPUQuantizationKernels
             int be = Math.Min(QK, size - b * QK);
             for (int i = 0; i < be; i++)
             {
-                int j = i / 2;
-                int nib = (j % 2 == 0) ? (weights[bo + 8 + j] & 0x0F) : (weights[bo + 8 + j] >> 4);
+                int nib = ((i & 1) == 0) ? (weights[bo + 8 + i / 2] & 0x0F) : (weights[bo + 8 + i / 2] >> 4);
                 int q = nib | (((int)(qh >> i) & 1) << 4);
                 sum += input[b * QK + i] * (q * d + m);
             }

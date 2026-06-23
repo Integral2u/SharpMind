@@ -168,7 +168,7 @@ public sealed class Transformer : IDisposable
 
         // 2. Architecture (stack of transformer blocks).
         //    Returns embedded (in-place residuals), so no separate using — embedded owns the buffer.
-        _cachedHidden = _arch.Forward(embedded, caches ?? [], positionOffset, workspace);
+        _cachedHidden = _arch.Forward(embedded, caches ?? new IKVCache[_arch.NumLayers], positionOffset, workspace);
 
         // 3. Final normalisation
         _cachedNormed = _finalNorm.Forward(_cachedHidden, workspace);

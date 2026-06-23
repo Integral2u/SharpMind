@@ -50,6 +50,16 @@ public sealed record ModelConfig
     /// <summary>Maximum sequence length the model supports.</summary>
     public int MaxSeqLen { get; init; }
 
+    /// <summary>
+    /// Override for head dimension (per-head key/value size).
+    /// If null, derived as HiddenDim / NumHeads.
+    /// Qwen3 GGUF specifies explicit key_length (e.g. 128).
+    /// </summary>
+    public int? KeyLength { get; init; }
+
+    /// <summary>Override for value head dimension. Falls back to <see cref="KeyLength"/> then derived.</summary>
+    public int? ValueLength { get; init; }
+
     // MoE
 
     /// <summary>Total number of experts. Ignored when FfnKind is not MoE.</summary>
@@ -79,8 +89,11 @@ public sealed record ModelConfig
 
     // Derived
 
-    /// <summary>Dimension per query head. Must equal HiddenDim / NumHeads.</summary>
-    public int HeadDim => HiddenDim / NumHeads;
+    /// <summary>Dimension per query head. Uses KeyLength override when present (e.g. Qwen3).</summary>
+    public int HeadDim => KeyLength ?? HiddenDim / NumHeads;
+
+    /// <summary>Dimension per value head. Falls back to HeadDim.</summary>
+    public int ValueDim => ValueLength ?? HeadDim;
 
     /// <summary>Number of query heads each KV head serves (GQA group size).</summary>
     public int KvGroupSize => NumHeads / NumKvHeads;

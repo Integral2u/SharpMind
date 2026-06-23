@@ -1,3 +1,3 @@
 ﻿//await SharpMind.Samples.Examples.QwenOnGpu.RunAsync("hello");
-await SharpMind.Samples.Examples.QwenSmallModels.RunAsync("hello");// .BuilderOptions.RunAsync("Hello");
+await SharpMind.Samples.Examples.KnownWorkingModels.RunAsync("Hello");// .BuilderOptions.RunAsync("Hello");
 Console.In.ReadLine();

@@ -6,25 +6,22 @@ using SharpMind.Model.Format;
 using SharpMind.Tokenization;
 using System.Diagnostics;
 
-
 namespace SharpMind.Samples.Examples
 {
-    public class QwenSmallModels
+    public class Qwen3_6B
     {
+        //https://huggingface.co/unsloth/Qwen3-0.6B-GGUF/tree/main
         private static readonly string[] Models =
     [
-            //"qwen2-0.5b-instruct-q2_k",
-            //"Qwen2-0.5B.Q2_K",              //Response:zn?-redux??zn???erator ++)
-           // "Qwen2-0.5B.Q3_K_L",            //Response:/classes/classes?????????ist??????????_*
-            //"Qwen2-0.5B.Q3_K_M",            //Response:!!!!!!!
-            //"Qwen2-0.5B.Q3_K_S",            //Response:!!!!!!!           
-            //"qwen2-0_5b-instruct-q4_k_m",
-            //"llama-3.2-1b-instruct-q8_0",// good
-            //"Qwen2-0.5B.Q5_1",
-            //"DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M", //Okay, the user just said "hello." I should respond in a friendly and
-            "Qwen2-0.5B.Q6_K",
-            "qwen2-0_5b-instruct-q8_0",     //Response:Hello! How can I assist you today?
-            //"qwen2-0_5b-instruct-fp16",     //Response:Hello! How can I assist you today?
+            "qwen2-0_5b-instruct-q8_0",  //Reference good known model
+            "Qwen3-0.6B-Q8_0",
+            "Qwen3-0.6B-Q6_K",
+            "Qwen3-0.6B-Q5_K_M",
+            "Qwen3-0.6B-Q4_K_M",
+            "Qwen3-0.6B-Q4_1",
+            "Qwen3-0.6B-Q4_0",
+            "Qwen3-0.6B-Q3_K_M",
+            "Qwen3-0.6B-Q2_K"
             ];
 
         private static readonly string ModelPath = @"C:\Integral2u\source\repos\SharpMind\ExternalAssets";
@@ -67,17 +64,7 @@ namespace SharpMind.Samples.Examples
                     Temperature = 0.0f,
                     TopK = 1,
                 };
-                try
-                {
-                    var history = await session.StartChatAsync(Prompt, Response, cancellationTokenSource.Token);
-                }
-                catch (Exception ex)
-                {
-                    Console.ForegroundColor = ConsoleColor.Red;
-                    await Console.Out.WriteLineAsync();
-                    await Console.Out.WriteLineAsync($"EXCEPTION: {ex.GetType().Name}: {ex.Message}");
-                    await Console.Out.WriteLineAsync(ex.StackTrace?.Substring(0, 500) ?? "(no stack)");
-                }
+                var history = await session.StartChatAsync(Prompt, Response, cancellationTokenSource.Token);
 
                 async void Response(ChatStreamEntry text)
                 {
@@ -107,7 +94,6 @@ namespace SharpMind.Samples.Examples
             }
             await Console.Out.WriteLineAsync();
             await Console.Out.WriteLineAsync("Done!");
-            Console.In.ReadLine();
         }
     }
 }

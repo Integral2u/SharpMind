@@ -33,6 +33,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SharpMind.Tokenization", "S
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SharpMind.Data.Parquet", "SharpMind.Data.Parquet\SharpMind.Data.Parquet.csproj", "{D5194327-81F5-EEF8-D4C6-F120EFCE26E0}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SharpMind.CUI", "SharpMind.CUI\SharpMind.CUI.csproj", "{000D8F35-5B70-4E59-A7E4-8A124DFE5047}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -99,6 +101,10 @@ Global
 		{D5194327-81F5-EEF8-D4C6-F120EFCE26E0}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{D5194327-81F5-EEF8-D4C6-F120EFCE26E0}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{D5194327-81F5-EEF8-D4C6-F120EFCE26E0}.Release|Any CPU.Build.0 = Release|Any CPU
+		{000D8F35-5B70-4E59-A7E4-8A124DFE5047}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{000D8F35-5B70-4E59-A7E4-8A124DFE5047}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{000D8F35-5B70-4E59-A7E4-8A124DFE5047}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{000D8F35-5B70-4E59-A7E4-8A124DFE5047}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
