@@ -19,7 +19,7 @@ namespace SharpMind.Samples.Examples
     [
         //"SmolLM2-135M-Instruct.Q4_K_M",
         // not working anymore "DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M", //Okay, the user just said "hello." I should respond in a friendly and
-            //"llama-3.2-1b-instruct-q8_0",   //Response:It seems like you've got a question about the answer to my own.
+            "llama-3.2-1b-instruct-q8_0",   //Response:It seems like you've got a question about the answer to my own.
             
             "qwen2-0_5b-instruct-q8_0",     //Response:Hello! How can I assist you today?
              "qwen2-0_5b-instruct-fp16",     //Response:Hello! How can I assist you today?

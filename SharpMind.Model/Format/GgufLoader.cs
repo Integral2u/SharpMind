@@ -473,8 +473,26 @@ public static partial class GgufLoader
                     var floatTarget = weights.ResolveFloatTarget(info.Name);
                     if (floatTarget != null)
                     {
-                        floatTarget.Data.Clear();
-                        buffer.AsSpan(0, count).CopyTo(floatTarget.Data);
+                        if (info.Shape.Length == 2)
+                        {
+                            int ggufIn = info.Shape[0];
+                            int ggufOut = info.Shape[1];
+                            // ffn_gate and ffn_up both map to Wf1 [HiddenDim, 2*FfnDim].
+                            // Gate fills columns [0, FfnDim), up fills [FfnDim, 2*FfnDim).
+                            bool isFfnUp = info.Name.Contains("ffn_up", StringComparison.OrdinalIgnoreCase) &&
+                                           floatTarget.Shape[1] == 2 * ggufOut;
+                            int colOff = isFfnUp ? ggufOut : 0;
+                            if (colOff == 0) floatTarget.Data.Clear();
+                            int targetOut = floatTarget.Shape[1];
+                            for (int i = 0; i < ggufIn; i++)
+                                for (int o = 0; o < ggufOut; o++)
+                                    floatTarget.Data[i * targetOut + colOff + o] = buffer[o * ggufIn + i];
+                        }
+                        else
+                        {
+                            floatTarget.Data.Clear();
+                            buffer.AsSpan(0, count).CopyTo(floatTarget.Data);
+                        }
                     }
                 }
                 loaded++;
