@@ -374,18 +374,12 @@ public sealed class App : IAsyncDisposable
     /// Checked once per frame: has a tool call (real or scripted) posted a
     /// choice request since the last frame? If so, wrap it in a
     /// <see cref="ChoiceDialog"/> so the next frame's Draw/HandleKey pick it
-    /// up as the active modal. Also forwards DebugChatBridge's simulated
-    /// sub-agent name to the chat screen — see
-    /// <see cref="ChatScreen.SetDebugSpeakerOverride"/> for why that's
-    /// debug-only and not something a real model's output can do yet.
+    /// up as the active modal.
     /// </summary>
     private void PollPendingChoiceRequest()
     {
         if (_choiceDialog is null && _cuiContext?.TakePending() is { } request)
             _choiceDialog = new ChoiceDialog(request);
-
-        if (_bridge is DebugChatBridge debugBridge)
-            _chatScreen?.SetDebugSpeakerOverride(debugBridge.CurrentSpeakerOverride);
     }
 
     private async Task TeardownSessionAsync()

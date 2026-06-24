@@ -12,8 +12,7 @@ namespace SharpMind.Samples.Examples
     {
         //https://huggingface.co/unsloth/Qwen3-0.6B-GGUF/tree/main
         private static readonly string[] Models =
-    [
-            "qwen2-0_5b-instruct-q8_0",  //Reference good known model
+        [
             "Qwen3-0.6B-Q8_0",
             "Qwen3-0.6B-Q6_K",
             "Qwen3-0.6B-Q5_K_M",

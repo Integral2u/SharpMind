@@ -9,22 +9,36 @@ using System.Diagnostics;
 
 namespace SharpMind.Samples.Examples
 {
-    public class QwenSmallModels
+    public class KnownFailingModels
     {
         private static readonly string[] Models =
-    [
-            //"qwen2-0.5b-instruct-q2_k",
-            //"Qwen2-0.5B.Q2_K",              //Response:zn?-redux??zn???erator ++)
-           // "Qwen2-0.5B.Q3_K_L",            //Response:/classes/classes?????????ist??????????_*
-            //"Qwen2-0.5B.Q3_K_M",            //Response:!!!!!!!
-            //"Qwen2-0.5B.Q3_K_S",            //Response:!!!!!!!           
-            //"qwen2-0_5b-instruct-q4_k_m",
-            //"llama-3.2-1b-instruct-q8_0",// good
-            //"Qwen2-0.5B.Q5_1",
-            //"DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M", //Okay, the user just said "hello." I should respond in a friendly and
-            "Qwen2-0.5B.Q6_K",
-            "qwen2-0_5b-instruct-q8_0",     //Response:Hello! How can I assist you today?
-            //"qwen2-0_5b-instruct-fp16",     //Response:Hello! How can I assist you today?
+        [            
+            "Qwen3-0.6B-Q8_0",      //Response:.json
+            "Qwen3-0.6B-Q6_K",      //Lots of new lines \n Response: 
+            "Qwen3-0.6B-Q5_K_M",    //Response:zym???yms Trustees stands????iclesYT???.dup? searchData
+            "Qwen3-0.6B-Q4_K_M",    //Lots of new lines \n Response: 
+            "Qwen3-0.6B-Q4_1",      //Response: {\nohic?? Gst","#toophonieres?? verst???uably (oise
+            "Qwen3-0.6B-Q4_0",      //Response:);}\n\nYSzo(fin industri);}\n\n Cain?enetuserService vig.getLabel.LAitorezburg
+            "Qwen3-0.6B-Q3_K_M",    //Response:oon uiisión adjacent»?t harmful applicable  of isClass} robber present
+            "Qwen3-0.6B-Q2_K",      //Response:[floattimesdicti however theirt???syted[]( ** awaitapp us
+            "qwen2-0.5b-instruct-q2_k",     //Response:!!!!!!!
+            "Qwen2-0.5B.Q2_K",              //Response:!!!!!!!
+            "Qwen2-0.5B.Q3_K_L",            //Response:!!!!!!!
+            "Qwen2-0.5B.Q3_K_M",            //Response:!!!!!!!
+            "Qwen2-0.5B.Q3_K_S",            //Response:!!!!!!!
+            "qwen2-0_5b-instruct-q4_k_m",   //Response:?  (????. - ( (g.-.
+            "Qwen2-0.5B.Q5_1",              //Response:?????le?.arc?????box?? jihadist?? dyst late
+            
+            "Llama-3.2-1B-Instruct-Q4_K_M", //Response:  #\n\n\n## 3\n- and\n   - so, the
+            
+            "Qwen2.5-1.5B-Instruct-f16",    //Response:\n\n\n# # #\n#\n#\n\nimport sys\nsys.path
+            "tinyllama-1.1b-chat-v1.0.Q8_0",    //Response:mathopmathopmathop ???? Luci LucyZygoteInitZygoteInitZygoteInitZygoteInitDataFrameDataFrameDataFrame? geldig
+            "TinyLlama-1.1B-Chat-v1.0.Q4_K_M",      //No Response:
+            "DeepSeek-R1-Distill-Qwen-1.5B-Q8_0",   //Response:>\n\n---\n\n?>0ONENTdTdTdT>>ONENTONENT?ONENT
+            "DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M", //No Response: Prior Response:Okay, the user just said "hello." I should respond in a friendly and      
+            "qwen2.5-coder-3b-instruct-q8_0", //System.OutOfMemoryException
+            "qwen2.5-coder-3b-instruct-q4_k_m", //System.OutOfMemoryException
+            "qwen2.5-coder-3b-instruct-q2_k", //System.OutOfMemoryException
             ];
 
         private static readonly string ModelPath = @"C:\Integral2u\source\repos\SharpMind\ExternalAssets";

@@ -5,10 +5,19 @@ namespace SharpMind.CUI.App;
 
 /// <summary>
 /// The chat screen: scrolling transcript on the left, live status sidebar on
-/// the right (this is what finally gives the existing ChatStatus enum
-/// somewhere to be seen — Thinking/Executing/Responding/Waiting were already
-/// being emitted by ChatSession, nothing in the engine needed to change),
-/// input line and status bar pinned to the bottom.
+/// the right, input line and status bar pinned to the bottom.
+///
+/// Sub-agent attribution: ChatSession already streams everything needed to
+/// know which sub-agent produced a given piece of output — it yields
+/// <c>ChatStatus.Executing</c> with the agent's name in <c>Token</c> right
+/// before delegating, then <c>ChatStatus.Researching</c> with the sub-agent's
+/// own generated text as it streams. No engine change was needed for this;
+/// the gap was entirely here, in not reading those two statuses as agent
+/// identity. See the bookkeeping fields below for why a naive "attribute
+/// everything to whoever's name was last seen, flush on Complete" approach
+/// is wrong: ChatSession only emits one Complete per *turn*, and a turn that
+/// delegates to a sub-agent loops back into Responding for the top-level
+/// agent's own follow-up before that Complete ever fires.
 /// </summary>
 public sealed class ChatScreen(string agentName, SessionOptions options)
 {
@@ -20,6 +29,21 @@ public sealed class ChatScreen(string agentName, SessionOptions options)
     private float? _tokensPerSecond;
     private bool _generating;
     private int _scrollOffset; // 0 = pinned to bottom
+
+    // Sub-agent attribution bookkeeping. ChatSession only yields one
+    // ChatStatus.Complete entry per *turn*, at the very end — a turn that
+    // delegates to a sub-agent along the way streams Researching(fragments)
+    // for the sub-agent, then loops back into Thinking/Responding for the
+    // top-level model's own follow-up, all before that single Complete
+    // fires. So "wait for Complete to attribute the buffer" is wrong here:
+    // it would credit the sub-agent's words and the top-level model's words
+    // to whichever name happened to be active first. Instead, the
+    // sub-agent's accumulated text is flushed as its own transcript entry
+    // the moment the status stops being Researching, before any other
+    // entry's text gets appended to what's now a fresh buffer.
+    private string? _pendingSpeakerName;     // name seen on the most recent Executing entry
+    private string? _activeSubAgentName;     // confirmed (via a Researching entry) sub-agent currently streaming
+    private readonly System.Text.StringBuilder _subAgentBuffer = new();
 
     public bool ExitRequested { get; private set; }
 
@@ -78,28 +102,41 @@ public sealed class ChatScreen(string agentName, SessionOptions options)
         _scrollOffset = 0;
     }
 
-    private string? _debugSpeakerOverride;
-
-    /// <summary>
-    /// Debug-only: lets <see cref="DebugChatBridge"/> attribute a response to
-    /// a simulated sub-agent name instead of the session's top-level agent
-    /// name. This is a CUI-side convention, not something the real engine
-    /// supports — <see cref="SharpMind.Inference.Chat.ChatStreamEntry"/> has
-    /// no speaker-identity field at all, so a real model's sub-agent
-    /// delegation currently has no way to tag which agent actually produced
-    /// a given piece of streamed output. TestAgent exercises what the
-    /// transcript display *would* look like if that engine-side gap were
-    /// closed; it does not close it. Call with null to clear the override
-    /// once a turn finishes.
-    /// </summary>
-    public void SetDebugSpeakerOverride(string? speakerName) => _debugSpeakerOverride = speakerName;
-
     /// <summary>Feed each streamed entry in as it arrives.</summary>
     public void OnStreamEntry(ChatStreamEntry entry)
     {
+        // Flush the sub-agent buffer the instant the stream leaves Researching —
+        // whatever comes next (a new Executing, a Responding token from the
+        // top-level model picking back up, or Complete) must not have its text
+        // mixed into a buffer that belongs to the sub-agent's turn.
+        if (_activeSubAgentName is not null && entry.Status != ChatStatus.Researching)
+        {
+            if (_subAgentBuffer.Length > 0)
+                _transcript.Add((_activeSubAgentName!, _subAgentBuffer.ToString()));
+            _subAgentBuffer.Clear();
+            _activeSubAgentName = null;
+        }
+
         _status = entry.Status;
         _tokensPerSecond = entry.TokensPerSecond;
-        _activeToolName = entry.Status == ChatStatus.Executing ? entry.Token : _activeToolName;
+
+        if (entry.Status == ChatStatus.Executing)
+        {
+            // ChatSession overloads Token to carry a name at this moment —
+            // either a tool name (plain tool call) or a sub-agent name (about
+            // to delegate via {{agent:name:query}}). Captured here but not
+            // yet trusted as a sub-agent name: a following Researching entry
+            // is what actually confirms that, since plain tool calls never
+            // emit Researching.
+            _activeToolName = entry.Token;
+            _pendingSpeakerName = entry.Token;
+        }
+
+        if (entry.Status == ChatStatus.Researching)
+        {
+            _activeSubAgentName ??= _pendingSpeakerName;
+            if (entry.Token is not null) _subAgentBuffer.Append(entry.Token);
+        }
 
         if (entry.Status == ChatStatus.Responding && entry.Token is not null)
             _liveResponse.Append(entry.Token);
@@ -107,10 +144,11 @@ public sealed class ChatScreen(string agentName, SessionOptions options)
         if (entry.IsComplete || entry.Status is ChatStatus.Complete or ChatStatus.Interrupted)
         {
             if (_liveResponse.Length > 0)
-                _transcript.Add((_debugSpeakerOverride ?? agentName, _liveResponse.ToString()));
+                _transcript.Add((agentName, _liveResponse.ToString()));
             _liveResponse.Clear();
             _generating = false;
             _activeToolName = null;
+            _pendingSpeakerName = null;
             _status = ChatStatus.Waiting;
         }
     }
@@ -166,6 +204,13 @@ public sealed class ChatScreen(string agentName, SessionOptions options)
             foreach (var wrapped in WrapText(text, w))
                 lines.Add((wrapped, fg));
             lines.Add(("", fg)); // blank separator
+        }
+        if (_generating && _subAgentBuffer.Length > 0)
+        {
+            string speaker = _activeSubAgentName ?? "agent";
+            lines.Add(($"{speaker}:", theme.DimText));
+            foreach (var wrapped in WrapText(_subAgentBuffer.ToString(), w))
+                lines.Add((wrapped, fg));
         }
         if (_generating && _liveResponse.Length > 0)
         {

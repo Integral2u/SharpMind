@@ -25,17 +25,6 @@ public sealed class DebugChatBridge(CuiToolContext cuiContext) : IChatBridge
     public bool Faulted { get; private set; }
     public Exception? Fault { get; private set; }
 
-    /// <summary>
-    /// The simulated speaker name for whatever is currently in flight, or
-    /// null for the ordinary top-level-agent case. App polls this once per
-    /// frame, right alongside <see cref="DrainEntries"/>, and forwards it to
-    /// <see cref="ChatScreen.SetDebugSpeakerOverride"/> — this only exists on
-    /// the debug bridge because only TestAgent ever needs it; the real
-    /// bridge never sets this to anything but null because the real engine
-    /// has no per-entry speaker identity to report in the first place.
-    /// </summary>
-    public string? CurrentSpeakerOverride { get; private set; }
-
     public void SubmitUserInput(string text)
     {
         // Each submission runs as its own short-lived task rather than a single
@@ -75,10 +64,6 @@ public sealed class DebugChatBridge(CuiToolContext cuiContext) : IChatBridge
             Faulted = true;
             Fault = ex;
         }
-        finally
-        {
-            CurrentSpeakerOverride = null;
-        }
     }
 
     /// <summary>
@@ -106,23 +91,41 @@ public sealed class DebugChatBridge(CuiToolContext cuiContext) : IChatBridge
     }
 
     /// <summary>
-    /// Simulates a sub-agent responding under its own name, to verify the
-    /// transcript actually distinguishes "Delta" from a named sub-agent
-    /// rather than labelling every response with the top-level agent's name
-    /// regardless of which agent produced it. See
-    /// <see cref="CurrentSpeakerOverride"/> for the honest caveat on how far
-    /// this actually reaches — it's a CUI-side simulation, not a real
-    /// engine capability.
+    /// Reproduces the actual entry sequence ChatSession emits for a real
+    /// {{agent:name:query}} delegation: Executing(name) to announce the
+    /// sub-agent, Researching(fragment) for each piece of its streamed
+    /// output, then — because ChatSession's loop continues and generates
+    /// again after a sub-agent call rather than ending the turn there — a
+    /// further Responding stream from the "top-level" agent picking back up,
+    /// before the one Complete that ends the whole turn. This exercises
+    /// ChatScreen's real flush-on-phase-transition attribution logic
+    /// directly, rather than a parallel shortcut, since that logic is the
+    /// part actually worth testing here.
     /// </summary>
     private async Task RunTestAgentAsync(CancellationToken token)
     {
-        CurrentSpeakerOverride = "Athena-Alpha";
-
         Emit(ChatStatus.Thinking, null);
         await Task.Delay(150, token);
 
+        Emit(ChatStatus.Executing, "Athena-Alpha");
+        await Task.Delay(100, token);
+
+        string subAgentText = "This text is streamed as Researching fragments, exactly like a real sub-agent delegation — if it shows up under \"Athena-Alpha\" rather than the top-level agent's name, attribution is working correctly.";
+        var subAgentWords = subAgentText.Split(' ');
+        for (int i = 0; i < subAgentWords.Length; i++)
+        {
+            token.ThrowIfCancellationRequested();
+            string piece = i == 0 ? subAgentWords[i] : " " + subAgentWords[i];
+            Emit(ChatStatus.Researching, piece);
+            await Task.Delay(20, token);
+        }
+
+        // ChatSession loops back to the top-level agent after a sub-agent call
+        // completes, rather than ending the turn — this Responding burst is
+        // what should land under the ordinary agent name, separately from the
+        // sub-agent text above, in the same transcript.
         Emit(ChatStatus.Responding, null);
-        await StreamTextAsync("This response is tagged as coming from a sub-agent named Athena-Alpha, not from the top-level agent — if the transcript shows that name instead of the agent's, sub-agent visibility is wired correctly in the CUI layer. The real engine does not yet report sub-agent identity on its own, so a genuine model's sub-agent calls won't show this until that's added upstream.", token);
+        await StreamTextAsync("And this part streams afterward as ordinary Responding tokens from the top-level agent picking back up — it should land as a separate transcript entry under the regular agent name, not get merged into the sub-agent's text above.", token);
         Complete();
     }
 
