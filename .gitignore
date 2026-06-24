@@ -443,3 +443,10 @@ FodyWeavers.xsd
 /ExternalAssets/Qwen3-0.6B-Q8_0.gguf
 /ExternalAssets/Qwen3-0.6B-Q4_0.gguf
 /ExternalAssets/Qwen3-0.6B-Q4_1.gguf
+/ExternalAssets/DeepSeek-R1-Distill-Qwen-1.5B-Q8_0.gguf
+/ExternalAssets/gemma-3-270m-it-F16.gguf
+/ExternalAssets/gemma-3-270m-it-Q4_K_M.gguf
+/ExternalAssets/qwen2.5-coder-3b-instruct-q2_k.gguf
+/ExternalAssets/qwen2.5-coder-3b-instruct-q4_k_m.gguf
+/ExternalAssets/qwen2.5-coder-3b-instruct-q8_0.gguf
+/ExternalAssets/gemma-3-270m-it-Q8_0.gguf
