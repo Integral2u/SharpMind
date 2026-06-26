@@ -1,33 +1,32 @@
-﻿LogitOps UseQuantized QuantizedMatMulQ8_0 only.
-
-Code Review Notes
-
-I want to look at Chatsession improvements but belive some my rely on agent capabilites. see SharpMind.AgenTools.EchoTool for example however this need to be more closly tied in with ChatSession so existing model can be passed but with fresh context,
-this could be used as essentially a tool to report back a result to the main chatsession or for other purposes, such as summarising.
-Given the model and relevent details are available we could add to IAgentBuilder CreateAgent to spawn sub agents essentially acting as tools,
-Consideration to Agent Spawn depth will be needed to prevent ifinate spawning, agent naming possibly greek name to match behaviour or task asigned.
-
-Addtional benifits would be psotentail additions of pre-prompt post prompt processors.  Pre prompt could be correcting or adding likes of skills.md, post could be summary for use in the next item.
-
-
-AgentBuilder Tool
-Additionally given the model and relevent details are available we could add to IAgentBuilder CreateAgent to spawn sub agents essentially acting as tools,
-Consideration to Agent Spawn depth will be needed to prevent ifinate spawning, agent naming possibly greek name to match behaviour or task asigned.
-the next item would be post processors compact/truncate or other methods of reducing active contect window/size.
-As for chatsession itself we need to review states in responses (Thinking/Updating/Executing/Responding/Waiting) and in chat history or somthing idenitfy context or idea so while discussing or working on topics only relvent context windows are bein workred on no evenerthing from th beginnig that may now be irrelevent. possibly add meta data to chat history captuirng reigons of context of importance.
-Finnaly possibly last if not ever ChatSession interrupt, how do we implment Recover rather than start again?
-
-Can we review AgentBuilder and ChatSession i think we need a way of implemnting a pre-prompt post prompt processors.
-this 
-
-ChatSession design (async), tool, input types, status(Thinking/Updating/Executing/Responding/Waiting)
-Chatsession pre-prompt post prompt processors
-Chatsession compact/truncate etc  only prompt important context(selection)
-ChatSession interrupt, Recover rather than start again?
-
-#HIGH Priority
+﻿#HIGH Priority
 you must make sure you understand the JigSawDotNet pattern and use. Intention is to reduce and branching code by genertaing code whihc may require implmenting or re-using Ops, Kernel and Factory patterns,
 Review Sharmind.Core.Activations.* for example
+
+
+
+Code Review Notes
+Quantize / Dequantized question.  Is full model being dequantized on load if so first question is does it only need to be dequantized for math orperations or can we just processes in quantized state? as for loading this should possibly be an option FULL,REALTIME,CACHE
+FULL, dequant full model to memory
+REALTIME, Dequantize as required
+CACHE, LoadLayer and Dequant as needed and Unload After,  Can have a cache count to forward load layer or loop back to first. when working on one layer prepair loading of the next in parrallel.
+Model loading, is full model being dequantized?  Possibly a runtime option for loading FULL,REAL_TIME
+
+Is KV cache be quantized/dequantized should it be stored in desired Qunatization it can be changed though going from lower to higher would result in degridation 
+
+
+ChatSession History should have flag for indicating if required or not, ignore Agent thinking only require summary.
+PrePrompt and PostPrompt porcessor interfaces, truncate, compaction, summarization of current chat or Pre prompt could be used for other purposes, reading attached artifacts or correcting input prompts.
+ChatSession interrupt, need to be able to impement but how do we implment Recover rather than start again?
+
+
+LogitOps should this move to JIgSawDotNetPattern.
+currently in Project there are 2 tests if (UseQuantized), if (workspace != null) and a fallback
+and in the UseQuantized block only qOps!.QuantizedMatMulQ8_0 is called but this could expand out to many conditions
+qOps.QuantizedMatMulQ8_0, currently exists
+qOps.QuantizedMatMulQ5_0, presently does not exist but here is a method QuantizedMatMulQ5_0_Scalar wich is not used and would need AVX,FMA,SSE built out
+qOps.QuantizedMatMulQ6_0, presently does not exist but here is a method QuantizedMatMulQ6K_Scalar wich is only used in a test and would need AVX,FMA,SSE built out
+
+
 
 Code Checking
 !!! SharpMind.Model.ModelFactory.CreateSession BuildBlock call passing mappings 
@@ -103,238 +102,3 @@ SLERP (Spherical Linear Interpolation): Better than linear interpolation for hig
 TIES-Merging (TrIm, Elect, Sign, and Merge): Designed to handle interference between models by only merging the most significant weight updates and resolving sign disagreements
 DARE (Drop And REscale): Drops redundant weights and re-scales the remaining weights to create a "soups" of models, reducing task interference.
 Task Arithmetic: Creates "task vectors" by subtracting the base model weights from the fine-tuned model weights, allowing these vectors to be added or subtracted to modify model behavior.
-
-
-
-
-Critical Review
-1. Agent-as-Tool Sub-agents (IAgentBuilder.CreateAgent)
-Good idea, but high complexity for the actual benefit:
-
-What it requires: Each sub-agent needs its own generator context (model instance + KV cache). Sharing a single generator across agents means serializing generation requests — no parallelism. Creating separate model instances means 2×–10× memory.
-The lightweight alternative: Sub-agents that reuse the parent's generator as a pure "prompt → response" call with a fresh mini-context (system prompt + single user message + stop condition). No persistent KV cache, no session history. This is basically generator.GenerateFromTokensAsync() with a custom system prompt. Much cheaper.
-Depth control: Absolute must. Configurable max depth (default 3–5). Pass currentDepth through the call chain, reject at limit.
-Naming: Greek names as a default convention is fine but shouldn't be enforced. Let the user optionally name their agents. Auto-name with Greek letters if not provided (Alpha, Beta, Gamma...).
-My recommendation: Implement as a lightweight delegate pattern first — CreateAgent(name, systemPrompt) returns a Func<string, Task<string>> that calls the shared generator. No full ChatSession per agent. This gets 90% of the value at 10% of the cost.
-2. Post-processors / Context Window Reduction
-The current truncation (tail-drop when promptToks.Length > MaxTokens) is dangerously naive — it can silently drop the system prompt + agent instructions.
-
-Better strategies, ordered from simplest to most sophisticated:
-
-Strategy	Effort	Impact	Risk
-Priority truncation — keep system prompt + tool results + most recent user/agent turns, drop middle history	Low	High	Low
-Importance metadata — tag messages with IsPinned / importance score, evict lowest-scored first	Low	Medium	Low
-Sliding window — keep last N messages/tokens, full stop	Low	Medium	Low
-History summarization — use LLM to condense old turns into a summary message	High	Very High	High (cost, quality)
-My recommendation: Start with priority truncation (smarter than tail-drop, no LLM calls). Add IsPinned metadata. Defer summarization.
-
-3. ChatSession States + History Context Tagging
-States: ChatStatus already has Thinking, Updating, Executing, Responding, Waiting, Interrupted, Complete. But:
-
-Updating is never emitted — should fire during context management
-Waiting is never emitted — should fire when waiting for tool results or user input
-Wiring these up is nearly zero-effort and makes the API honest.
-History metadata: Adding a Dictionary<string, string>? Metadata or Tags field to ChatMessage is trivial. The hard part is populating it meaningfully:
-
-Auto-tagging via the model is expensive and unreliable
-Manual tagging via API (ChatMessage.WithTag("code_review", "session-3")) is simple but requires user buy-in
-Recommendation: Add the field, populate it manually via API surface. Don't auto-tag until there's a concrete use case demanding it.
-4. Interrupt & Recovery
-True recovery (serialize KV cache, resume mid-token) is a moonshot — the KV cache is megabytes of opaque float buffers, architecture-specific, not serializable in the current design.
-
-Soft recovery (pragmatic and implementable):
-
-On interrupt, save the partial response to _history as an Agent message with an Interrupted: true metadata flag
-On resume, inject a system message: "The previous response was interrupted. Continue from where you left off."
-No KV cache serialization needed
-The model re-generates from scratch but has the context of what was happening
-Cost: Re-generating the full response instead of resuming mid-stream
-My recommendation: Implement soft recovery. It's maybe 20 lines of code and dramatically improves UX over "start completely over."
-
-Proposed Implementation Plan
-Phase 1 — Low Effort, High Impact (immediately shippable)
-#	Item	Files	Est.
-1.1	Wire Updating status into GetResponseStreamAsync before context management operations	ChatSession.cs	~5 min
-1.2	Wire Waiting status when calling _agentBuilder.CallToolAsync	ChatSession.cs	~5 min
-1.3	Replace tail truncation with priority truncation (keep: system prompt, tool results, last N user/agent turns)	ChatSession.cs	~30 min
-1.4	Add Metadata dictionary to ChatMessage (nullable, optional)	ChatMessage.cs	~5 min
-1.5	Add IsPinned bool to ChatMessage (skipped by truncation)	ChatMessage.cs	~5 min
-Phase 2 — Medium Effort, High Value
-#	Item	Files	Est.
-2.1	Soft recovery: save partial response on interrupt, inject resume context on next StartChatAsync call	ChatSession.cs	~1 hr
-2.2	Importance scoring in truncation: score messages by (isPinned, role, hasToolResults, recency), evict lowest	ChatSession.cs + ChatMessage.cs	~1 hr
-Phase 3 — High Effort, High Value (deferrable)
-#	Item	Files	Est.
-3.1	Lightweight sub-agent via IAgentBuilder.CreateAgent(name, systemPrompt) → returns Func<string, Task<string>> using shared generator	IAgentBuilder.cs, AgentBuilder.cs	~2 hr
-3.2	Depth control: pass currentDepth through tool call chain, MaxAgentDepth config, reject at limit	IAgentBuilder.cs, ChatSession.cs	~30 min
-3.3	Optional Greek auto-naming for unnamed sub-agents	AgentBuilder.cs	~15 min
-Phase 4 — Deferred / If Needed
-#	Item	Reason for deferral
-4.1	History summarization via LLM	Expensive, complex, Phase 1 truncation covers most cases
-4.2	Auto-tagging conversation regions	No concrete use case yet; metadata field is ready for when one emerges
-4.3	KV cache checkpoint/resume	Architecture-level change, needs generator redesign
-4.4	Full multi-agent ChatSession sub-agents	Until lightweight sub-agents (3.1) prove insufficient
-
-Testing qwen2-0.5b-instruct-q2_k
-GgufLoader.LoadWeightsToTransformerWeights executed in: 11.80s
-ModelFactory.CreateSession executed in: 3.24s
-Prompt:hello
-Response:!!!!!!!
-
-Tokens per second: 0.14  TTFT: 55.664s
-Testing Qwen2-0.5B.Q2_K
-GgufLoader.LoadWeightsToTransformerWeights executed in: 19.03s
-ModelFactory.CreateSession executed in: 2.92s
-Prompt:hello
-Response:!!!!!!!
-
-Tokens per second: 0.16  TTFT: 63.503s
-Testing Qwen2-0.5B.Q3_K_L
-GgufLoader.LoadWeightsToTransformerWeights executed in: 10.40s
-ModelFactory.CreateSession executed in: 3.20s
-Prompt:hello
-Response:!!!!!!!
-
-Tokens per second: 0.23  TTFT: 38.019s
-Testing Qwen2-0.5B.Q3_K_M
-GgufLoader.LoadWeightsToTransformerWeights executed in: 9.23s
-ModelFactory.CreateSession executed in: 2.29s
-Prompt:hello
-Response:!!!!!!!
-
-Tokens per second: 0.40  TTFT: 21.545s
-Testing Qwen2-0.5B.Q3_K_S
-GgufLoader.LoadWeightsToTransformerWeights executed in: 6.53s
-ModelFactory.CreateSession executed in: 2.34s
-Prompt:hello
-Response:!!!!!!!
-
-Tokens per second: 0.17  TTFT: 39.687s
-Testing qwen2-0_5b-instruct-q4_k_m
-GgufLoader.LoadWeightsToTransformerWeights executed in: 8.07s
-ModelFactory.CreateSession executed in: 2.79s
-Prompt:hello
-Response:??????,GL jams adulte----------
-AndView????????olt wn
-Tokens per second: 0.31  TTFT: 37.368s
-Testing Qwen2-0.5B.Q5_1
-GgufLoader.LoadWeightsToTransformerWeights executed in: 5.99s
-ModelFactory.CreateSession executed in: 1.90s
-Prompt:hello
-Response:?????le?.arc?????box?? jihadist?? dyst late
-Tokens per second: 0.31  TTFT: 39.155s
-Testing Qwen2-0.5B.Q6_K
-GgufLoader.LoadWeightsToTransformerWeights executed in: 7.69s
-ModelFactory.CreateSession executed in: 3.60s
-Prompt:hello
-Response:1
-2
-3456
-576891
-Tokens per second: 0.47  TTFT: 30.088s
-Testing qwen2-0_5b-instruct-q8_0
-GgufLoader.LoadWeightsToTransformerWeights executed in: 14.53s
-ModelFactory.CreateSession executed in: 3.66s
-Prompt:hello
-Response:Hello! How can I assist you with your day?
-
-Tokens per second: 0.93  TTFT: 21.737s
-
-Done!
-
-
-
-
-
-All Fixes Applied (Non-Q8 Quant Types)
-1. VecDot Kernel Rewrites — QuantizationKernels.cs (all tiers: Scalar, SSE, AVX2, FMA)
-1a. Q5_K high-bit indexing bug (ROOT CAUSE of garbage output)
-
-VecDotQ5K_Scalar/AVX2/FMA: Original code used qh[l] with shifting u1/u2 masks — always reading qh bytes 0-31 regardless of which sub-block was being processed. Fixed to qh[i/8] >> (i%8) which correctly addresses individual bits across all 32 qh bytes (covering 256 elements). This caused every element beyond the first 64 in each 256-element block (75% of the data) to get the wrong 5th high bit, producing completely corrupted weight values.
-Also rewrote from 64-element-pair loop to element-by-element loop matching llama.cpp reference.
-1b. Column block offset bug (all VecDot variants: Q3K, Q4K, Q5K, Q6K, Q2K, Q8K)
-
-Original: rawWeights + (long)col * nBlocks * BLOCK_BYTES + b * BLOCK_BYTES — assumed columns are padded to whole block boundaries.
-Fixed: rawWeights + (long)(startBlock + b) * BLOCK_BYTES where startBlock = (col * inFeatures) / QK_K — treats the GGUF data as a flat block stream without column padding.
-Bug triggers when inFeatures is not a multiple of 256.
-1c. colBlockStart partial-block handling (all VecDot variants)
-
-Original: Always started at element 0 of each block (for int i = 0 or for int j = 0).
-Fixed: Added curBlockStart = (b == 0) ? colBlockStart : 0 and blockEnd = Math.Min(QK_K, inFeatures + colBlockStart - b * QK_K).
-All input indexing changed: input[b*QK + i] → input[b*QK + i - colBlockStart].
-Bug triggers when (col * inF) % 256 != 0 (column starts mid-block).
-1d. Q4_K scale indexing (all tiers)
-
-Original: Used idx incrementing by 2 per 64-element pair (GetScaleMinK4_Scale_Scalar(idx+0, ...)).
-Fixed (cosmetic): Uses scOff = (j/64)*2 — same result, cleaner.
-No functional change.
-1e. Q3_K block indexing (all tiers)
-
-Same col * nBlocks → startBlock + b fix as others.
-Same colBlockStart partial-block handling.
-1f. Q6_K block bounds (all tiers)
-
-Same col * nBlocks + colBlockStart fixes.
-Fixed valid → blockEnd in bounds checks.
-2. VecDot Kernel Rewrites — QuantizationKernels.Simple.cs
-2a. Q5_1 VecDot (Scalar, SSE, AVX2, FMA)
-
-Added missing - 16 offset: (q * d + m) → ((q - 16) * d + m). Q5_1 is a signed quantization centered at 16, same as Q5_0.
-Original treated it as unsigned, producing wrong values for every element.
-2b. Q2_K block indexing (all tiers)
-
-Same col * nBlocks → startBlock + b fix.
-Same colBlockStart partial-block handling.
-Simplified the inner loop (removed qOff/shift variables, used direct basePos/baseByte indexing).
-2c. Q8_K block indexing (all tiers)
-
-Same col * nBlocks → startBlock + b fix.
-Same colBlockStart partial-block handling.
-3. Dequantization Fix — GgufLoader.cs
-3a. Q5_1 dequant fix (ReadQ5_1)
-
-Added missing - 16 offset: q * d + m → (q - 16) * d + m. Same signedness fix as VecDot.
-3b. Block layout fix (GetRawTensorByteCount)
-
-Original: Computed blocksPerCol = ceil(InF/blockSize) then totalBytes = OutF * blocksPerCol * bytesPerBlock — assumed column-padded storage.
-Fixed: nBlocks = ceil(totalElements / blockSize) then totalBytes = nBlocks * bytesPerBlock — GGUF uses flat contiguous block stream.
-Affects weight loading for all quantized types when InF not a multiple of blockSize.
-3c. Dequant read fix (ReadTensorInto)
-
-Original: Read row-by-row with stride = InF — assumed per-column block layout.
-Fixed: Read all blocks sequentially — matches flat GGUF layout.
-3d. K-quant variant support — Extended all pattern matches to include _S, _M, _L suffixes:
-
-IsQuantizedType: Added Q2_K_S, Q3_K_S/M/L, Q4_K_S/M, Q5_K_S/M, Q6_K_S.
-GetRawTensorByteCount: Same variant additions.
-ReadQBlockRow: Same variant additions.
-IsKQuant: Same variant additions.
-4. Dispatch Fix — Linearlayer.cs
-4a. IsSupportedQuantDtype — Extended to include K-quant variants (Q2_K_S, Q3_K_S/M/L, etc.).
-
-4b. SetRawWeight VecDot dispatch — Extended pattern matches for all K-quant variants.
-
-5. Test Improvements
-5a. VecDotDetailedTests.cs (new file ~485 lines)
-
-VecDotQ4K_MatchesDequant: Non-trivial single-block test with explicit values, cross-checked against ReadQ4K dequant.
-VecDotQ2K_NonTrivial: Same pattern for Q2_K.
-VecDotQ5K_NonTrivial: Same pattern for Q5_K.
-VecDotQ6K_NonTrivial: Same pattern for Q6_K.
-VecDotQ3K_NonTrivial: Same pattern for Q3_K.
-All run on all available hardware tiers (Scalar, SSE, AVX2, FMA).
-5b. VecDotTests.cs — Minor updates to use or pattern matching in member data.
-
-5c. NewFormatTests.cs — Added using SharpMind.Model.Format import.
-
-5d. IntegrationTests.cs — Added 50+ lines covering new K-quant variant dtypes.
-
-6. Type System — GgufDtype.cs
-Added the GGUF K-quant variant enum values (Q2_K_S, Q3_K_S/M/L, Q4_K_S/M, Q5_K_S/M, Q6_K_S).
-
-Summary: Two bugs caused incorrect non-Q8 output:
-
-Q5_K high-bit indexing (all blocks beyond first 64 elements → ~75% of weight data corrupted)
-Q5_1 signedness (missing -16 offset → every weight value wrong)
-Column padding assumption (only matters for non-256-aligned dimensions)
-All VecDot variants across all tiers were also updated for correctness with colBlockStart partial-block handling and flat block stream indexing.

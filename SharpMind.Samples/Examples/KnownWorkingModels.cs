@@ -4,12 +4,7 @@ using SharpMind.Model;
 using SharpMind.Model.Config;
 using SharpMind.Model.Format;
 using SharpMind.Tokenization;
-using System;
-using System.Collections.Generic;
 using System.Diagnostics;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace SharpMind.Samples.Examples
 {
@@ -72,7 +67,17 @@ namespace SharpMind.Samples.Examples
                     Temperature = 0.0f,
                     TopK = 1,
                 };
-                var history = await session.StartChatAsync(Prompt, Response, cancellationTokenSource.Token);
+                try
+                {
+                    var history = await session.StartChatAsync(Prompt, Response, cancellationTokenSource.Token);
+                }
+                catch (Exception ex)
+                {
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    await Console.Out.WriteLineAsync();
+                    await Console.Out.WriteLineAsync($"EXCEPTION: {ex.GetType().Name}: {ex.Message}");
+                    await Console.Out.WriteLineAsync(ex.StackTrace?.Substring(0, 500) ?? "(no stack)");
+                }
 
                 async void Response(ChatStreamEntry text)
                 {

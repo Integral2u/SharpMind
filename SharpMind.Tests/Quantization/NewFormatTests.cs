@@ -71,7 +71,7 @@ public class NewFormatTests
         var reader = new BinaryReader(ms);
         var data = new float[32];
         GgufLoader.ReadQ5_1(reader, data.AsSpan(), 32);
-        Assert.Equal(-15f, data[0], 5); // (1-16)*1.0+0 = -15
+        Assert.Equal(1f, data[0], 5); // 1*1.0+0 = 1
     }
 
     // ── Q8_1 ──

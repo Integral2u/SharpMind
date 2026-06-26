@@ -1,3 +1,5 @@
+using SharpMind;
+using SharpMind.GPU;
 using SharpMind.Inference;
 using SharpMind.Inference.Agent;
 using SharpMind.Inference.Chat;
@@ -87,8 +89,26 @@ public static class SessionLauncher
         }
 
         status?.Report("Assembling model...");
-        var sharpConfig = modelConfig.ForModel();
-        var model = ModelFactory.CreateSession(weights, sharpConfig);
+        var sharpConfig = modelConfig.ForModel(hw: options.HardwareTier);
+
+        // GPU path needs the mapping built manually via MappingBuilder so
+        // WithGpu() can be chained in — SharpMindConfig.ToJigSawMapping()
+        // (the simpler CPU-only path) has no GPU-aware overload. Both paths
+        // ultimately produce the same Dictionary<string,string> shape
+        // ModelFactory.CreateSession accepts; this only decides how that
+        // dictionary gets built, mirroring the engine's own QwenOnGpu sample
+        // exactly for the GPU case.
+        //
+        // Requires a project reference to SharpMind.GPU for WithGpu() to
+        // resolve at all — if that reference isn't present, UseGpu in
+        // SessionOptions simply won't compile against this method, which is
+        // the correct failure mode (a missing capability should fail to
+        // build, not silently no-op at runtime).
+        Dictionary<string, string> mapping = options.UseGpu
+            ? new MappingBuilder(options.HardwareTier).ApplyPreset(sharpConfig).WithGpu().Build()
+            : sharpConfig.ToJigSawMapping();
+
+        var model = ModelFactory.CreateSession(weights, sharpConfig, mapping);
 
         // --- Tools / skills / agent -----------------------------------------
         var resolvedToolPaths = ResolveToolAssemblyPaths(options);

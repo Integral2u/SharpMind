@@ -598,7 +598,8 @@ public static partial class GgufLoader
         or GgufDtype.Q2_K_S or GgufDtype.Q3_K_S or GgufDtype.Q3_K_M or GgufDtype.Q3_K_L
         or GgufDtype.Q4_K_S or GgufDtype.Q4_K_M or GgufDtype.Q5_K_S or GgufDtype.Q5_K_M or GgufDtype.Q6_K_S
         or GgufDtype.Q4_0 or GgufDtype.Q4_1 or GgufDtype.Q5_0 or GgufDtype.Q5_1
-        or GgufDtype.Q8_0 or GgufDtype.Q8_1 or GgufDtype.Q8_K => true,
+        or GgufDtype.Q8_0 or GgufDtype.Q8_1 or GgufDtype.Q8_K
+        or GgufDtype.IQ4_NL => true,
         _ => false
     };
 
@@ -619,6 +620,7 @@ public static partial class GgufLoader
             case GgufDtype.Q5_0: blockSize = 32; bytesPerBlock = 22; break;
             case GgufDtype.Q5_1: blockSize = 32; bytesPerBlock = 24; break;  // d[2]+m[2]+qh[4]+qs[16]
             case GgufDtype.Q4_0: blockSize = 32; bytesPerBlock = 18; break;
+            case GgufDtype.IQ4_NL: blockSize = 32; bytesPerBlock = 18; break;  // d[2]+qs[16]
             case GgufDtype.Q4_1: blockSize = 32; bytesPerBlock = 20; break;  // d[2]+m[2]+qs[16]
             default: return 0;
         }
@@ -645,6 +647,7 @@ public static partial class GgufLoader
         switch (dtype)
         {
             case GgufDtype.Q4_0: ReadQ4_0(stream, dest, count); break;
+            case GgufDtype.IQ4_NL: ReadIQ4_NL(stream, dest, count); break;
             case GgufDtype.Q4_1: ReadQ4_1(stream, dest, count); break;
             case GgufDtype.Q5_0: ReadQ5_0(stream, dest, count); break;
             case GgufDtype.Q5_1: ReadQ5_1(stream, dest, count); break;
@@ -902,7 +905,7 @@ public static partial class GgufLoader
             {
                 int xh = (int)((qh >> i) & 1) << 4;
                 int q = ((buf[8 + i / 2] >> (4 * (i % 2))) & 0x0F) | xh;
-                data[blockStart + i] = (q - 16) * d + m;
+                data[blockStart + i] = q * d + m;
             }
         }
     }
@@ -966,7 +969,9 @@ public static partial class GgufLoader
                 byte pair = buf[pairIdx];
                 float s = pair & 0x0F;
                 float m = pair >> 4;
-                int quant = (buf[16 + (i / 4)] >> ((i % 4) * 2)) & 3;
+                int qsByte = (i / 128) * 32 + (i % 32);
+                int qsShift = ((i % 128) / 32) * 2;
+                int quant = (buf[16 + qsByte] >> qsShift) & 3;
                 data[blockStart + i] = (s * quant * dSuper) - (m * minSuper);
             }
         }
@@ -1172,6 +1177,32 @@ public static partial class GgufLoader
         }
     }
 
+    private static readonly float[] kvalues_iq4nl =
+        { -127f, -104f, -83f, -65f, -49f, -35f, -22f, -10f, 1f, 13f, 25f, 38f, 53f, 69f, 89f, 113f };
+
+    internal static unsafe void ReadIQ4_NL(BinaryReader reader, Span<float> data, int n)
+    {
+        // block_iq4_nl: d[2] + qs[16] = 18 bytes, QK=32 elements
+        const int qk = 32;
+        const int blockBytes = 18;
+        int nBlocks = (n + qk - 1) / qk;
+        Span<byte> buf = stackalloc byte[blockBytes];
+
+        for (int b = 0; b < nBlocks; b++)
+        {
+            int blockStart = b * qk;
+            reader.Read(buf);
+            float d = HalfToFloat(Unsafe.ReadUnaligned<ushort>(ref buf[0]));
+            int valid = Math.Min(qk, n - blockStart);
+
+            for (int j = 0; j < valid; j++)
+            {
+                int nib = (buf[2 + j % 16] >> (4 * (j / 16))) & 0x0F;
+                data[blockStart + j] = d * kvalues_iq4nl[nib];
+            }
+        }
+    }
+
     internal static void ReadQ4K(BinaryReader reader, Span<float> data, int n)
     {
         // block_q4_K layout (144 bytes, QK_K=256 elements, 8 sub-blocks of 32):
@@ -1321,15 +1352,11 @@ public static partial class GgufLoader
                 GetScaleMinK4(subIdx, scaleSpan, out byte sc, out byte m);
 
                 // Quant: 4 bits from qs + 1 bit from qh
-                int qLow = (buf[48 + (i / 4) * 2 + (i % 4 == 0 ? 0 : 0)] >> 0) & 0x0F; // This is still a bit messy
-                // Let's just use the linear index for qs
-                // Q5_K qs are 128 bytes for 256 elements? No, 128 bytes for 256 elements is 4 bits per element.
-                // 128 * 8 = 1024 bits. 1024 / 256 = 4 bits. Correct.
-                int qsByteIdx = 48 + (i / 2);
-                int qsShift = (i % 2) * 4;
+                int qsByteIdx = 48 + (i / 64) * 32 + (i % 32);
+                int qsShift = ((i % 64) / 32) * 4;
                 int q4 = (buf[qsByteIdx] >> qsShift) & 0x0F;
 
-                int qhBit = (buf[16 + (i / 8)] >> (i % 8)) & 1;
+                int qhBit = (buf[16 + (i % 32)] >> ((i / 64) * 2 + ((i % 64) / 32))) & 1;
                 int q5 = q4 | (qhBit << 4);
 
                 data[blockStart + i] = (sc * q5 * d) - (m * dmin);
@@ -1339,12 +1366,10 @@ public static partial class GgufLoader
     public static unsafe void ReadQ3_K(BinaryReader reader, Span<float> data, int n)
     {
         // block_q3_K layout (110 bytes, QK_K=256 elements, 16 sub-groups of 16):
-        //   hmask[32]   1 bit per element (high bit of the 3-bit quant)
-        //               hmask byte index = i % 32, bit index within byte = i / 32
-        //   qs[64]      2 low bits per element packed 4-per-byte
-        //               for element i: byte = (i/128)*32 + (i%32), shift = ((i%128)/32)*2
-        //   scales[12]  packed 6-bit sub-group scales (16 x 6-bit after unpack)
-        //   d[2]        half-float block scale  ← LAST field, not first
+        //   hmask[32]   1 bit per element (offset 0)
+        //   qs[64]      2 low bits per element packed 4-per-byte (offset 32)
+        //   scales[12]  packed 6-bit sub-group scales (offset 96)
+        //   d[2]        half-float block scale (offset 108)
         const int QK_K = 256;
         const int blockBytes = 110;
         int nBlocks = (n + QK_K - 1) / QK_K;
@@ -1401,7 +1426,7 @@ public static partial class GgufLoader
                     for (int l = 0; l < lim1; l++)
                     {
                         int relPos = gIdx1 * 16 + l;
-                        int hmBit = (buf[relPos % 32] >> (relPos / 32)) & 1; // hmask at buf[0]
+                        int hmBit = (buf[relPos % 32] >> (relPos / 32)) & 1;
                         int q2 = (buf[qOff + l] >> shift) & 3;
                         data[blockStart + gIdx1 * 16 + l] = (s1 * (q2 - (hmBit != 0 ? 0 : 4))) * dAll;
                     }

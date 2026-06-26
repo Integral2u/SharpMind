@@ -3,28 +3,33 @@ using System.Text;
 namespace SharpMind.CUI.Screen;
 
 /// <summary>
-/// Reads keys on a background thread and produces both key events and mouse
-/// events from them. This deliberately keeps using <see cref="Console.ReadKey"/>
-/// as the actual read primitive rather than reading raw bytes off
-/// <see cref="Console.In"/> directly — <c>ReadKey(intercept: true)</c> is
-/// what actually puts the terminal into raw/no-echo mode under the hood on
-/// every supported platform, and <c>System.Console</c> exposes no public way
-/// to do that ourselves. Bypassing it would mean keystrokes echo to the
-/// screen and don't arrive until Enter on Linux/macOS terminals, which is a
-/// far worse problem than the one mouse support is solving.
+/// Reads keys (and, where possible, mouse events) on a background thread.
 ///
-/// The actual problem this works around: when a terminal reports a mouse
-/// click via an SGR escape sequence (<c>ESC [ &lt; Cb ; Cx ; Cy M</c>), each
-/// byte of that sequence still arrives as its own individual
-/// <see cref="ConsoleKeyInfo"/> from <c>ReadKey</c> — there's no single call
-/// that returns "a mouse event". So whenever a read comes back as Escape,
-/// this pump keeps reading (with a short timeout) to see whether more keys
-/// immediately follow that match the mouse-sequence shape. If they do, the
-/// whole burst becomes one <see cref="MouseEvent"/>. If they look like an
-/// arrow/Home/End sequence instead, that becomes a normal navigation key. If
-/// nothing else arrives within the timeout, it really was just Escape on its
-/// own, and that's what gets queued — so plain Esc-to-go-back still works
-/// exactly as before.
+/// Two genuinely different code paths live here, picked once at
+/// <see cref="Start"/> based on the actual OS:
+///
+/// <b>Windows</b> uses <see cref="WindowsConsoleInput"/>, a direct
+/// <c>ReadConsoleInput</c> P/Invoke. This exists because classic conhost —
+/// the default console host on Windows, what a plain command prompt and
+/// Visual Studio's "Console Host" debug option both launch into — reports
+/// mouse activity exclusively as native <c>MOUSE_EVENT_RECORD</c>s through
+/// the Win32 console API, never as ANSI/VT escape sequences in the input
+/// stream. No amount of escape-sequence parsing on this end can see
+/// something conhost never sends; the two console hosts use fundamentally
+/// different transports for mouse data.
+///
+/// <b>Everywhere else</b> (Linux, macOS, and Windows Terminal specifically,
+/// which — unlike conhost — does speak VT mouse sequences) keeps using
+/// <see cref="Console.ReadKey"/> as the actual read primitive, since
+/// <c>ReadKey(intercept: true)</c> is what puts the terminal into raw/no-echo
+/// mode under the hood on those platforms, and <c>System.Console</c> exposes
+/// no public way to do that ourselves. The problem this branch works around:
+/// when a terminal reports a mouse click via an SGR escape sequence
+/// (<c>ESC [ &lt; Cb ; Cx ; Cy M</c>), each byte still arrives as its own
+/// individual <see cref="ConsoleKeyInfo"/> from <c>ReadKey</c> — there's no
+/// single call that returns "a mouse event". So whenever a read comes back
+/// as Escape, this pump keeps reading (with a short timeout) to see whether
+/// more keys immediately follow that match the mouse-sequence shape.
 /// </summary>
 public sealed class InputQueue
 {
@@ -33,6 +38,7 @@ public sealed class InputQueue
     private readonly Queue<MouseEvent> _mouseQueue = new();
     private volatile bool _running;
     private Thread? _thread;
+    private bool _useWindowsNativeInput;
 
     /// <summary>
     /// How long to wait, after seeing Escape, for the rest of a multi-key
@@ -40,7 +46,7 @@ public sealed class InputQueue
     /// burst (the terminal writes all the bytes at once), so this only needs
     /// to be long enough to not split that burst under load — not anywhere
     /// near long enough for a person to notice as input lag on a genuine
-    /// standalone Escape press.
+    /// standalone Escape press. Only relevant on the non-Windows path.
     /// </summary>
     private static readonly TimeSpan SequenceGapTimeout = TimeSpan.FromMilliseconds(15);
 
@@ -49,7 +55,13 @@ public sealed class InputQueue
 
     public void Start()
     {
-        EnableMouseReporting();
+        _useWindowsNativeInput = WindowsConsoleInput.IsSupported;
+
+        if (_useWindowsNativeInput)
+            WindowsConsoleInput.Enable();
+        else
+            EnableMouseReporting();
+
         _running = true;
         _thread = new Thread(Pump) { IsBackground = true, Name = "SharpMind.CUI.Input" };
         _thread.Start();
@@ -58,7 +70,11 @@ public sealed class InputQueue
     public void Stop()
     {
         _running = false;
-        DisableMouseReporting();
+
+        if (_useWindowsNativeInput)
+            WindowsConsoleInput.Restore();
+        else
+            DisableMouseReporting();
     }
 
     /// <summary>
@@ -68,7 +84,9 @@ public sealed class InputQueue
     /// the stream quiet when the mouse is just sitting still. Terminals that
     /// don't understand these sequences simply ignore them — there's no
     /// error, no visible effect, and the app falls back to keyboard-only
-    /// navigation automatically since no mouse events will ever arrive.
+    /// navigation automatically since no mouse events will ever arrive. Only
+    /// used on the non-Windows path; see <see cref="WindowsConsoleInput"/>
+    /// for how mouse reporting is enabled on Windows instead.
     /// </summary>
     private static void EnableMouseReporting()
     {
@@ -82,6 +100,12 @@ public sealed class InputQueue
 
     private void Pump()
     {
+        if (_useWindowsNativeInput)
+        {
+            PumpWindowsNative();
+            return;
+        }
+
         while (_running)
         {
             ConsoleKeyInfo key;
@@ -95,6 +119,36 @@ public sealed class InputQueue
             }
 
             lock (_gate) _keyQueue.Enqueue(key);
+        }
+    }
+
+    /// <summary>
+    /// Windows-only read loop. Replaces <see cref="Console.ReadKey"/>
+    /// entirely on this path — see the class doc comment for why both
+    /// readers can't safely run concurrently against the same console input
+    /// buffer. <see cref="WindowsConsoleInput.ReadBatch"/> decodes both keys
+    /// and mouse events from the same underlying <c>ReadConsoleInput</c>
+    /// call, so nothing is lost by not using <c>ReadKey</c> here.
+    /// </summary>
+    private void PumpWindowsNative()
+    {
+        // Mouse reporting is a real, always-on capability on this path —
+        // unlike the VT path, which only learns a terminal supports mouse
+        // sequences by actually observing one arrive.
+        MouseSupportDetected = true;
+
+        while (_running)
+        {
+            var (keys, mouseEvents) = WindowsConsoleInput.ReadBatch();
+
+            if (keys.Count > 0 || mouseEvents.Count > 0)
+            {
+                lock (_gate)
+                {
+                    foreach (var k in keys) _keyQueue.Enqueue(k);
+                    foreach (var m in mouseEvents) _mouseQueue.Enqueue(m);
+                }
+            }
         }
     }
 

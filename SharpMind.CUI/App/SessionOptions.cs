@@ -1,3 +1,4 @@
+using SharpMind;
 using SharpMind.Inference;
 
 namespace SharpMind.CUI.App;
@@ -62,6 +63,26 @@ public sealed class SessionOptions
     // Strategy selection
     public GeneratorStrategy Generator { get; set; } = GeneratorStrategy.Standard;
     public CacheStrategy Cache { get; set; } = CacheStrategy.Standard;
+
+    /// <summary>
+    /// CPU code-path selection for JigSaw's mapping. Auto (the engine's own
+    /// default) genuinely detects FMA/AVX2/SSE3 support at runtime via
+    /// System.Runtime.Intrinsics.X86 checks — it isn't a placeholder, it's a
+    /// real, working choice. The explicit tiers exist for forcing a specific
+    /// path regardless of what the CPU actually supports (testing, or
+    /// deliberately stepping down from a tier that's misbehaving on a given
+    /// machine).
+    /// </summary>
+    public HardwareTier HardwareTier { get; set; } = HardwareTier.Auto;
+
+    /// <summary>
+    /// Whether to chain MappingBuilder.WithGpu() into the launch mapping.
+    /// Requires SharpMind.GPU to be referenced by whatever project starts
+    /// the session — JigSaw discovers the GPU kernel entries by scanning the
+    /// loaded AppDomain, so the reference is what actually makes WithGpu()'s
+    /// overrides resolve to real kernels rather than no-ops.
+    /// </summary>
+    public bool UseGpu { get; set; }
 
     // Sampling / generation
     public SamplingConfig Sampling { get; set; } = SamplingConfig.Llama3Chat;

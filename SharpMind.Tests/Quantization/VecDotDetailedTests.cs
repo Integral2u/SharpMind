@@ -113,12 +113,9 @@ public class VecDotDetailedTests
         // scale0=2, min0=1 → scales[0] = 0x12
         block[0] = 0x12;
 
-        // qs[0..3] for first 16 elements: each 2-bit = 3
-        // qs[0] = 0b11111111 → elements 0-3 each = 3
-        block[16] = 0xFF;
-        block[17] = 0xFF;
-        block[18] = 0xFF;
-        block[19] = 0xFF;
+        // qs[0..15] for first 16 elements: each byte has 2-bit value 3 (0xFF & 3 = 3)
+        // GGML Q2_K layout: qs[0..15] at shift 0 hold elements 0..15
+        for (int i = 0; i < 16; i++) block[16 + i] = 0xFF;
 
         // Dequantize manually
         float[] dequant = new float[256];
@@ -171,12 +168,13 @@ public class VecDotDetailedTests
         block[4] = 0x04;
         block[8] = 0x02;
 
-        // qh = 0 for first 32 elements (no high bit)
-        // qs[0] = 0x51 → low nibble=1 (element 0), high nibble=5 (element 1)
-        block[48] = 0x51;
-
-        // Element 0: scale * q5 * d - m * dmin = 4 * 1 * 2 - 2 * 1 = 8 - 2 = 6
-        // Element 1: 4 * 5 * 2 - 2 * 1 = 40 - 2 = 38
+        // qh = 0 (no high bits)
+        // Q5_K GGML layout: qs[g*32 + l] for group g, index l (0..31)
+        //   Low nibble = elements g*64 + l, high nibble = elements g*64 + l + 32
+        // qs[0] = 0x01 → element 0 low nibble=1
+        // qs[1] = 0x05 → element 1 low nibble=5
+        block[48] = 0x01;
+        block[49] = 0x05;
 
         float[] dequant = new float[256];
         fixed (byte* pBlock = block)
@@ -257,24 +255,12 @@ public class VecDotDetailedTests
     {
         byte[] block = new byte[110];
 
-        // d = 2.0 (half: 0x4000 at offset 108)
-        block[108] = 0x00; block[109] = 0x40;
+        // d = 2.0 (half: 0x4000 at offset 0)
+        block[0] = 0x00; block[1] = 0x40;
 
-        // Set up scales (12 bytes at offset 96-107)
-        // All 16 scales = 1 (encoded as (1+32) = 33 = 0x21 in the 6-bit scale field)
-        // The scale encoding is complex. Let me use simpler approach: set all qs=0 and hmask=0
-        // to make all actual=0, then only the scale offset matters.
-        // For qs=0, hmask=0: actual = 0 - (0?4:0)... actually if hmask bit is 0, actual = 0 - 4 = -4
-
-        // Actually, let's set qs = 0x55 (binary 01010101) so each 2-bit field = 1
-        // And hmask=0 so actual = 1 - 4 = -3
-        for (int i = 0; i < 64; i++) block[32 + i] = 0x55;
-        // hmask all zero
-        // scales: all set to represent scale=1 (0 in 6-bit signed = -32... wait)
-
-        // scale encoding in Q3_K is: bytes at offset 96-107 represent 16 signed 6-bit values
-        // The encoding is complex. Let's just set all qs=0 so actual=0, and check that result=0
-        for (int i = 0; i < 64; i++) block[32 + i] = 0;
+        // qs all zero → actual = 0 - 4 = -4 (since hmask=0)
+        // hmask all zero (already zero-initialized)
+        // scales all zero (already zero-initialized)
 
         float[] dequant = new float[256];
         using var ms = new MemoryStream(block);
@@ -317,15 +303,15 @@ public class VecDotDetailedTests
         // qs[0] = 0x53 → low nibble=3 (element 0), high nibble=5 (element 1)
         block[8] = 0x53;
 
-        // Expected: element 0 = (3 - 16) * 2 + 1 = -25, element 1 = (5 - 16) * 2 + 1 = -21
+        // Expected: element 0 = 3 * 2 + 1 = 7, element 1 = 5 * 2 + 1 = 11
 
         float[] dequant = new float[32];
         using var ms = new MemoryStream(block);
         using var reader = new BinaryReader(ms);
         GgufLoader.ReadQ5_1(reader, dequant, 32);
 
-        Assert.Equal(-25.0f, dequant[0], 4);
-        Assert.Equal(-21.0f, dequant[1], 4);
+        Assert.Equal(7.0f, dequant[0], 4);
+        Assert.Equal(11.0f, dequant[1], 4);
 
         float[] input = new float[32];
         for (int i = 0; i < 32; i++) input[i] = 1.0f;
@@ -405,21 +391,26 @@ public class VecDotDetailedTests
                             for (int j = 0; j < 4 && n16 + j * 32 < blockEnd; j++)
                             {
                                 int basePos = n16 + j * 32;
-                                int baseByte = basePos / 4;
                                 int isc = (n16 / 128) * 8 + j * 2;
                                 float s0 = scales[isc] & 0x0F;
                                 float m0 = scales[isc] >> 4;
                                 for (int l = 0; l < 16 && basePos + l < blockEnd; l++)
                                 {
-                                    int v = (qs[baseByte + l / 4] >> ((l % 4) * 2)) & 3;
-                                    expected += input[(b * QK_K + basePos + l) - colBlockStart] * (s0 * v * dSuper - m0 * minSuper);
+                                    int idx = basePos + l;
+                                    int qsByte = (idx / 128) * 32 + (idx % 32);
+                                    int qsShift = ((idx % 128) / 32) * 2;
+                                    int v = (qs[qsByte] >> qsShift) & 3;
+                                    expected += input[(b * QK_K + idx) - colBlockStart] * (s0 * v * dSuper - m0 * minSuper);
                                 }
                                 float s1 = scales[isc + 1] & 0x0F;
                                 float m1 = scales[isc + 1] >> 4;
                                 for (int l = 0; l < 16 && basePos + 16 + l < blockEnd; l++)
                                 {
-                                    int v = (qs[baseByte + 4 + l / 4] >> ((l % 4) * 2)) & 3;
-                                    expected += input[(b * QK_K + basePos + 16 + l) - colBlockStart] * (s1 * v * dSuper - m1 * minSuper);
+                                    int idx = basePos + 16 + l;
+                                    int qsByte = (idx / 128) * 32 + (idx % 32);
+                                    int qsShift = ((idx % 128) / 32) * 2;
+                                    int v = (qs[qsByte] >> qsShift) & 3;
+                                    expected += input[(b * QK_K + idx) - colBlockStart] * (s1 * v * dSuper - m1 * minSuper);
                                 }
                             }
                         }

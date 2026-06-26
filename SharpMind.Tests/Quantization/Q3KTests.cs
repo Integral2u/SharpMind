@@ -25,7 +25,7 @@ public class Q3KTests
         block[108] = 0x00;
         block[109] = 0x3C;
         
-        // All scales = 0, all qs = 0, all hmask = 0
+        // All hmask = 0, all qs = 0, all scales = 0
         // val = d * (0 - 32) * (0 - 4) = 1.0 * (-32) * (-4) = 128.0
         
         var ms = new MemoryStream(block);

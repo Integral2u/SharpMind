@@ -95,6 +95,23 @@ public sealed class App : IAsyncDisposable
 
     private async Task HandleKeyAsync(ConsoleKeyInfo key)
     {
+        // Explicit Ctrl+C handling, ahead of every other input path. On
+        // Windows, WindowsConsoleInput deliberately clears
+        // ENABLE_PROCESSED_INPUT so Ctrl+C arrives here as an ordinary key
+        // event instead of the OS terminating the process mid-render — but
+        // that means this app now has to be the one to honour the
+        // conventional "Ctrl+C quits" reflex, or it would otherwise do
+        // nothing at all on Windows while still working (via .NET's own
+        // default SIGINT handling, unrelated to anything in this file) on
+        // Linux/macOS. Binding it explicitly here makes the behaviour the
+        // same deliberate choice on every platform instead of an accident of
+        // whichever OS default happened to apply.
+        if (key.Key == ConsoleKey.C && key.Modifiers.HasFlag(ConsoleModifiers.Control))
+        {
+            _quit = true;
+            return;
+        }
+
         if (_choiceDialog is not null)
         {
             _choiceDialog.HandleKey(key);

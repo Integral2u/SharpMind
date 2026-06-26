@@ -127,6 +127,7 @@ public sealed class LinearLayer : IDisposable
         return output;
     }
 
+    static int _qf_diag = 0;
     private Tensor<float> QuantizedForward(Tensor<float> input, TensorOps ops, SharpMind.Core.Memory.Workspace? workspace = null)
     {
         var dtype = QuantDtype!.Value;
@@ -136,7 +137,14 @@ public sealed class LinearLayer : IDisposable
             ? workspace.Rent<float>([m, OutFeatures]) 
             : new Tensor<float>(m, OutFeatures);
         int inF = InFeatures, outF = OutFeatures;
-        
+
+        if (_qf_diag < 50)
+        {
+            Interlocked.Increment(ref _qf_diag);
+            Console.Error.WriteLine($"[QF_DIAG] name={Name} dtype={dtype} m={m} inF={inF} outF={outF} matMulFn={_matMulFn?.Method?.Name ?? "null"} vecDotFn={_vecDotFn?.Method?.Name ?? "null"} quantized={UseQuantizedForward}");
+            Console.Error.Flush();
+        }
+
         unsafe
         {
             fixed (byte* pRaw = rawData)
@@ -175,6 +183,7 @@ public sealed class LinearLayer : IDisposable
     private static bool IsSupportedQuantDtype(GgufDtype dtype) => dtype switch
     {
         GgufDtype.Q8_0 => true,
+        GgufDtype.IQ4_NL => true,
         GgufDtype.Q4_0 => true,
         GgufDtype.Q4_1 => true,
         GgufDtype.Q5_0 => true,
@@ -200,6 +209,7 @@ public sealed class LinearLayer : IDisposable
             GgufDtype.Q4_K or GgufDtype.Q4_K_S or GgufDtype.Q4_K_M => _qOps.VecDotQ4K,
             GgufDtype.Q5_K or GgufDtype.Q5_K_S or GgufDtype.Q5_K_M => _qOps.VecDotQ5K,
             GgufDtype.Q6_K or GgufDtype.Q6_K_S => _qOps.VecDotQ6K,
+            GgufDtype.IQ4_NL => _qOps.VecDotQ4_NL,
             GgufDtype.Q4_0 => _qOps.VecDotQ4_0,
             GgufDtype.Q4_1 => _qOps.VecDotQ4_1,
             GgufDtype.Q5_0 => _qOps.VecDotQ5_0,
@@ -213,18 +223,33 @@ public sealed class LinearLayer : IDisposable
         _matMulFn = dtype switch
         {
             GgufDtype.Q8_0 => _qOps.QuantizedMatMulQ8_0,
+            GgufDtype.IQ4_NL when _qOps.VecDotQ4_NL != null => WrapVecDotAsMatMul(_qOps.VecDotQ4_NL),
+            GgufDtype.Q4_0 when _qOps.VecDotQ4_0 != null => WrapVecDotAsMatMul(_qOps.VecDotQ4_0),
+            GgufDtype.Q4_1 when _qOps.VecDotQ4_1 != null => WrapVecDotAsMatMul(_qOps.VecDotQ4_1),
             GgufDtype.Q5_0 when _qOps.VecDotQ5_0 != null => WrapVecDotAsMatMul(_qOps.VecDotQ5_0),
             GgufDtype.Q5_1 when _qOps.VecDotQ5_1 != null => WrapVecDotAsMatMul(_qOps.VecDotQ5_1),
+            GgufDtype.Q2_K or GgufDtype.Q2_K_S when _qOps.VecDotQ2K != null => WrapVecDotAsMatMul(_qOps.VecDotQ2K),
+            GgufDtype.Q3_K or GgufDtype.Q3_K_S or GgufDtype.Q3_K_M or GgufDtype.Q3_K_L when _qOps.VecDotQ3K != null => WrapVecDotAsMatMul(_qOps.VecDotQ3K),
+            GgufDtype.Q4_K or GgufDtype.Q4_K_S or GgufDtype.Q4_K_M when _qOps.VecDotQ4K != null => WrapVecDotAsMatMul(_qOps.VecDotQ4K),
+            GgufDtype.Q5_K or GgufDtype.Q5_K_S or GgufDtype.Q5_K_M when _qOps.VecDotQ5K != null => WrapVecDotAsMatMul(_qOps.VecDotQ5K),
             GgufDtype.Q6_K or GgufDtype.Q6_K_S when _qOps.VecDotQ6K != null => WrapVecDotAsMatMul(_qOps.VecDotQ6K),
+            GgufDtype.Q8_K when _qOps.VecDotQ8K != null => WrapVecDotAsMatMul(_qOps.VecDotQ8K),
             _ => null
         };
         return UseQuantizedForward;
     }
 
+    static int _wrap_diag = 0;
     private static unsafe QuantizedMatMulFn WrapVecDotAsMatMul(VecDotFn vecDot)
     {
         return (float* input, byte* rawWeights, float* output, int M, int K, int N) =>
         {
+            if (_wrap_diag < 50)
+            {
+                Interlocked.Increment(ref _wrap_diag);
+                Console.Error.WriteLine($"[WRAP_DIAG] M={M} K={K} N={N} vecDot={vecDot?.Method?.Name ?? "null"}");
+                Console.Error.Flush();
+            }
             for (int row = 0; row < M; row++)
             {
                 float* pInRow = input + (long)row * K;

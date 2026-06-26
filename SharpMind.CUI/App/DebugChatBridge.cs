@@ -35,6 +35,17 @@ public sealed class DebugChatBridge(CuiToolContext cuiContext) : IChatBridge
         _runningTurn = Task.Run(() => RunScriptedTurnAsync(text, _cts.Token));
     }
 
+    /// <summary>
+    /// Single source of truth for both dispatch and the help listing, so the
+    /// two can't drift out of sync — adding a new TestX command here makes it
+    /// both runnable and discoverable in one place.
+    /// </summary>
+    private static readonly (string Command, string Description)[] KnownCommands =
+    [
+        ("TestOptions", "Exercises a real UIShowOptionSelection round trip through the choice dialog."),
+        ("TestAgent", "Simulates a sub-agent delegation (Executing/Researching/Responding) to test transcript attribution."),
+    ];
+
     private async Task RunScriptedTurnAsync(string input, CancellationToken token)
     {
         try
@@ -53,7 +64,7 @@ public sealed class DebugChatBridge(CuiToolContext cuiContext) : IChatBridge
                 return;
             }
 
-            await RunEchoAsync(input, token);
+            await RunHelpAsync(command, token);
         }
         catch (OperationCanceledException)
         {
@@ -64,6 +75,28 @@ public sealed class DebugChatBridge(CuiToolContext cuiContext) : IChatBridge
             Faulted = true;
             Fault = ex;
         }
+    }
+
+    /// <summary>
+    /// UIDebug mode has no real model to interpret arbitrary input, so
+    /// anything that isn't one of <see cref="KnownCommands"/> gets this
+    /// instead of a generic echo — the point of the mode is exercising
+    /// specific scripted scenarios, and a person poking at it for the first
+    /// time should be told what's actually runnable rather than left
+    /// guessing from an echoed-back message that doesn't explain anything.
+    /// </summary>
+    private async Task RunHelpAsync(string unrecognizedInput, CancellationToken token)
+    {
+        Emit(ChatStatus.Thinking, null);
+        await Task.Delay(80, token);
+        Emit(ChatStatus.Responding, null);
+
+        var lines = new List<string> { $"\"{unrecognizedInput}\" isn't a recognized test command. Available commands:" };
+        lines.AddRange(KnownCommands.Select(c => $"  {c.Command} — {c.Description}"));
+        string message = string.Join('\n', lines);
+
+        await StreamTextAsync(message, token);
+        Complete();
     }
 
     /// <summary>
@@ -126,15 +159,6 @@ public sealed class DebugChatBridge(CuiToolContext cuiContext) : IChatBridge
         // sub-agent text above, in the same transcript.
         Emit(ChatStatus.Responding, null);
         await StreamTextAsync("And this part streams afterward as ordinary Responding tokens from the top-level agent picking back up — it should land as a separate transcript entry under the regular agent name, not get merged into the sub-agent's text above.", token);
-        Complete();
-    }
-
-    private async Task RunEchoAsync(string input, CancellationToken token)
-    {
-        Emit(ChatStatus.Thinking, null);
-        await Task.Delay(150, token);
-        Emit(ChatStatus.Responding, null);
-        await StreamTextAsync($"[debug echo] {input}", token);
         Complete();
     }
 

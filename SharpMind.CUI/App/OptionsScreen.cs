@@ -12,7 +12,7 @@ public sealed class OptionsScreen(SessionOptions options, string? modelPath)
 {
     private enum Field
     {
-        ModelPath, ProjectPath, Generator, Cache,
+        ModelPath, ProjectPath, Generator, Cache, HardwareTier, UseGpu,
         Temperature, TopK, TopP, MaxNewTokens, RepetitionPenalty,
         AgentName, AgentsEnabled, MaxAgentDepth,
         SkillFolders, ToolAssemblies, ToolsFolder,
@@ -65,6 +65,12 @@ public sealed class OptionsScreen(SessionOptions options, string? modelPath)
             case Field.Cache:
                 options.Cache = Cycle(options.Cache, dir);
                 break;
+            case Field.HardwareTier:
+                options.HardwareTier = Cycle(options.HardwareTier, dir);
+                break;
+            case Field.UseGpu:
+                options.UseGpu = !options.UseGpu;
+                break;
             case Field.Temperature:
                 options.Sampling = options.Sampling with { Temperature = Clamp(options.Sampling.Temperature + dir * 0.05f, 0f, 2f) };
                 break;
@@ -105,6 +111,7 @@ public sealed class OptionsScreen(SessionOptions options, string? modelPath)
             case Field.ProjectPath: _textEditBuffer = options.ProjectPath ?? ""; break;
             case Field.AgentName: _textEditBuffer = options.AgentName; break;
             case Field.AgentsEnabled: options.AgentsEnabled = !options.AgentsEnabled; break;
+            case Field.UseGpu: options.UseGpu = !options.UseGpu; break;
             case Field.SkillFolders: _textEditBuffer = string.Join(";", options.SkillFolders); break;
             case Field.ToolAssemblies: _textEditBuffer = string.Join(";", options.ToolAssemblyPaths); break;
             case Field.ToolsFolder: _textEditBuffer = options.ToolsFolder ?? ""; break;
@@ -193,6 +200,8 @@ public sealed class OptionsScreen(SessionOptions options, string? modelPath)
         row++;
         DrawField(Field.Generator, "Generator strategy", $"< {options.Generator} >");
         DrawField(Field.Cache, "KV cache strategy", $"< {options.Cache} >");
+        DrawField(Field.HardwareTier, "Hardware tier", $"< {options.HardwareTier} >");
+        DrawField(Field.UseGpu, "Use GPU", $"< {(options.UseGpu ? "Yes" : "No")} >");
         row++;
         DrawField(Field.Temperature, "Temperature", $"< {options.Sampling.Temperature:F2} >");
         DrawField(Field.TopK, "Top-K", $"< {options.Sampling.TopK} >");

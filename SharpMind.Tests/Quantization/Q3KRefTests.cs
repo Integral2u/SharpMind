@@ -40,7 +40,7 @@ public class Q3KRefTests
     {
         var block = MakeBlock();
 
-        block[96] = 0x00; // scale[0] low nibble = 0
+        block[96] = 0x00;  // scale[0] low nibble = 0
         block[104] = 0x02; // scale[0] high nibble = 2
 
         var data = Dequant(block);
@@ -59,7 +59,7 @@ public class Q3KRefTests
         block[104] = 0x02;
 
         block[32 + 16] = 0x01; // qs[16] = 0x01 → qs_val = low 2 bits = 1
-        block[0 + 16] = 0x01;  // hmask[16] bit 0 = 1 → subtract 0
+        block[16] = 0x01;      // hmask[16] bit 0 = 1 → subtract 0
 
         var data = Dequant(block);
 
@@ -75,7 +75,7 @@ public class Q3KRefTests
         block[104] = 0x02;
 
         block[32 + 16] = 0x01;
-        block[0 + 16] = 0x00; // hmask[16] bit 0 = 0 → subtract 4
+        block[16] = 0x00; // hmask[16] bit 0 = 0 → subtract 4
 
         var data = Dequant(block);
 

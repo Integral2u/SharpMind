@@ -6,9 +6,10 @@ public sealed record QuantizationConfig
     public const string KeyVecDotQ4K   = "vecdot_q4k";
     public const string KeyVecDotQ5K   = "vecdot_q5k";
     public const string KeyVecDotQ6K   = "vecdot_q6k";
-    public const string KeyVecDotQ8_0  = "vecdot_q8_0";
-    public const string KeyQuantizedMatMulQ8_0 = "qmatmul_q8_0";
-    public const string KeyVecDotQ4_0  = "vecdot_q4_0";
+	public const string KeyVecDotQ8_0  = "vecdot_q8_0";
+	public const string KeyQuantizedMatMulQ8_0 = "qmatmul_q8_0";
+	public const string KeyVecDotQ4_NL = "vecdot_q4_nl";
+	public const string KeyVecDotQ4_0  = "vecdot_q4_0";
     public const string KeyVecDotQ4_1  = "vecdot_q4_1";
     public const string KeyVecDotQ5_0  = "vecdot_q5_0";
     public const string KeyVecDotQ5_1  = "vecdot_q5_1";
@@ -41,7 +42,8 @@ public sealed record QuantizationConfig
             [KeyVecDotQ6K]   = $"q6k{suffix}",
             [KeyVecDotQ8_0]  = $"q8_0{suffix}",
             [KeyQuantizedMatMulQ8_0] = suffix == "_sse" ? "qmatmul_q8_0_scalar" : $"qmatmul_q8_0{suffix}",
-            [KeyVecDotQ4_0]  = $"q4_0{suffix}",
+			[KeyVecDotQ4_NL] = $"q4_nl{suffix}",
+			[KeyVecDotQ4_0]  = $"q4_0{suffix}",
             [KeyVecDotQ4_1]  = $"q4_1{suffix}",
             [KeyVecDotQ5_0]  = $"q5_0{suffix}",
             [KeyVecDotQ5_1]  = $"q5_1{suffix}",

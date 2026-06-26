@@ -266,6 +266,7 @@ public sealed class ChatScreen(string agentName, SessionOptions options)
         Line("STRATEGY", dim);
         Line(options.Generator.ToString(), fg);
         Line(options.Cache.ToString(), fg);
+        Line(options.UseGpu ? $"GPU ({options.HardwareTier})" : options.HardwareTier.ToString(), fg);
         row++;
         if (_activeToolName is not null)
         {

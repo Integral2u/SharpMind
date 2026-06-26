@@ -12,33 +12,31 @@ namespace SharpMind.Samples.Examples
     public class KnownFailingModels
     {
         private static readonly string[] Models =
-        [            
-            "Qwen3-0.6B-Q8_0",      //Response:.json
+        [
+            "qwen2-0.5b-instruct-q2_k",     //Response:???u u performance?? 's elbowso??ef-.
+            "Qwen2-0.5B.Q2_K",              //Response: performance sa?ero_ ?and i?.??f*+
+            "Qwen2-0.5B.Q3_K_L",            //Response:./(?????????????????????
+            "Qwen2-0.5B.Q3_K_M",            //Response:???\n\n??\_iple???\n\niez? manufactures gainedies
+            "Qwen2-0.5B.Q3_K_S",            //Response:estring???emales?? je??? Gro  (??hibition Main
+            "qwen2-0_5b-instruct-q4_k_m",   //Response:?  (????. - ( (g.-.
+            "Qwen2-0.5B.Q5_1",              //Response:-+$?ergy=> Tw %(. Tw?????
+            "Qwen3-0.6B-Q8_0",      //Lots of new lines \n Response: 
             "Qwen3-0.6B-Q6_K",      //Lots of new lines \n Response: 
-            "Qwen3-0.6B-Q5_K_M",    //Response:zym???yms Trustees stands????iclesYT???.dup? searchData
+            "Qwen3-0.6B-Q5_K_M",    //Lots of new lines \n Response: 
             "Qwen3-0.6B-Q4_K_M",    //Lots of new lines \n Response: 
             "Qwen3-0.6B-Q4_1",      //Response: {\nohic?? Gst","#toophonieres?? verst???uably (oise
             "Qwen3-0.6B-Q4_0",      //Response:);}\n\nYSzo(fin industri);}\n\n Cain?enetuserService vig.getLabel.LAitorezburg
-            "Qwen3-0.6B-Q3_K_M",    //Response:oon uiisión adjacent»?t harmful applicable  of isClass} robber present
-            "Qwen3-0.6B-Q2_K",      //Response:[floattimesdicti however theirt???syted[]( ** awaitapp us
-            "qwen2-0.5b-instruct-q2_k",     //Response:!!!!!!!
-            "Qwen2-0.5B.Q2_K",              //Response:!!!!!!!
-            "Qwen2-0.5B.Q3_K_L",            //Response:!!!!!!!
-            "Qwen2-0.5B.Q3_K_M",            //Response:!!!!!!!
-            "Qwen2-0.5B.Q3_K_S",            //Response:!!!!!!!
-            "qwen2-0_5b-instruct-q4_k_m",   //Response:?  (????. - ( (g.-.
-            "Qwen2-0.5B.Q5_1",              //Response:?????le?.arc?????box?? jihadist?? dyst late
-            
-            "Llama-3.2-1B-Instruct-Q4_K_M", //Response:  #\n\n\n## 3\n- and\n   - so, the
-            
+            "Qwen3-0.6B-Q3_K_M",    //Some new lines \n Response: 
+            "Qwen3-0.6B-Q2_K",      //Response:    # 2ndr  (followed by many new lines)
+            "Llama-3.2-1B-Instruct-Q4_K_M", //Response:  #\n\n\n## 3\n- and\n   - so, the            
             "Qwen2.5-1.5B-Instruct-f16",    //Response:\n\n\n# # #\n#\n#\n\nimport sys\nsys.path
             "tinyllama-1.1b-chat-v1.0.Q8_0",    //Response:mathopmathopmathop ???? Luci LucyZygoteInitZygoteInitZygoteInitZygoteInitDataFrameDataFrameDataFrame? geldig
             "TinyLlama-1.1B-Chat-v1.0.Q4_K_M",      //No Response:
-            "DeepSeek-R1-Distill-Qwen-1.5B-Q8_0",   //Response:>\n\n---\n\n?>0ONENTdTdTdT>>ONENTONENT?ONENT
+            "DeepSeek-R1-Distill-Qwen-1.5B-Q8_0",   //Response:>\n\niversity\n\niversityiversityigmaiversity\n\n**iversityigma**\n\niversityigmaigma
             "DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M", //No Response: Prior Response:Okay, the user just said "hello." I should respond in a friendly and      
-            "qwen2.5-coder-3b-instruct-q8_0", //System.OutOfMemoryException
-            "qwen2.5-coder-3b-instruct-q4_k_m", //System.OutOfMemoryException
-            "qwen2.5-coder-3b-instruct-q2_k", //System.OutOfMemoryException
+            //"qwen2.5-coder-3b-instruct-q8_0", //System.OutOfMemoryException
+            //"qwen2.5-coder-3b-instruct-q4_k_m", //System.OutOfMemoryException
+            //"qwen2.5-coder-3b-instruct-q2_k", //System.OutOfMemoryException
             ];
 
         private static readonly string ModelPath = @"C:\Integral2u\source\repos\SharpMind\ExternalAssets";
