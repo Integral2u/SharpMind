@@ -31,10 +31,16 @@ public sealed class RoPE : PositionalEncoder
 
     // Construction
 
+    private readonly int _ropeDim;    // dimensions that actually get rotated (null=full headDim)
+
     /// <param name="headDim">Dimension of a single attention head. Must be even.</param>
     /// <param name="maxSeqLen">Maximum sequence length to pre-compute freqs for.</param>
     /// <param name="theta">Base frequency. 10000 for LLaMA 2; 500000 for LLaMA 3.</param>
-    public RoPE(int headDim, int maxSeqLen, float theta = 10_000f)
+    /// <param name="ropeDim">Optional subset of headDim to apply RoPE to. Null means apply to all.</param>
+    /// <param name="ropeScalingType">RoPE scaling type ("linear", "yarn", etc.). Null = no scaling.</param>
+    /// <param name="ropeScalingFactor">RoPE scaling factor (e.g. 2.0 for 2x context).</param>
+    public RoPE(int headDim, int maxSeqLen, float theta = 10_000f,
+        int? ropeDim = null, string? ropeScalingType = null, float? ropeScalingFactor = null)
     {
         if (headDim % 2 != 0)
             throw new ArgumentException($"HeadDim must be even, got {headDim}.");
@@ -42,22 +48,29 @@ public sealed class RoPE : PositionalEncoder
 
         _headDim   = headDim;
         _maxSeqLen = maxSeqLen;
+        _ropeDim = ropeDim ?? headDim;
 
-        int halfDim = headDim / 2;
-        (_cosCache, _sinCache) = TableCache.GetOrAdd(HashCode.Combine(theta, halfDim, _maxSeqLen), (b) =>
+        int halfDim = _ropeDim / 2;
+        (_cosCache, _sinCache) = TableCache.GetOrAdd(HashCode.Combine(theta, halfDim, _maxSeqLen, ropeScalingFactor, ropeScalingType), (b) =>
         {
             var cos = new float[_maxSeqLen * halfDim];
             var sin = new float[_maxSeqLen * halfDim];
             // Frequency for each pair: θ_i = 1 / (theta ^ (2i / headDim))
             var freqs = new float[halfDim];
             for (int i = 0; i < halfDim; i++)
-                freqs[i] = 1f / MathF.Pow(theta, 2f * i / _headDim);
+                freqs[i] = 1f / MathF.Pow(theta, 2f * i / _ropeDim);
+
+            // Apply RoPE scaling if configured
+            float scaleFactor = ropeScalingFactor ?? 1f;
+            bool linearScaling = string.Equals(ropeScalingType, "linear", StringComparison.OrdinalIgnoreCase);
+
             for (int pos = 0; pos < _maxSeqLen; pos++)
             {
                 int cacheBase = pos * halfDim;
                 for (int i = 0; i < halfDim; i++)
                 {
-                    float angle = pos * freqs[i];
+                    float scaledPos = linearScaling ? (pos / scaleFactor) : pos;
+                    float angle = scaledPos * freqs[i];
                     cos[cacheBase + i] = MathF.Cos(angle);
                     sin[cacheBase + i] = MathF.Sin(angle);
                 }
@@ -99,13 +112,13 @@ public sealed class RoPE : PositionalEncoder
             throw new ArgumentOutOfRangeException(nameof(positionOffset),
                 $"Position {positionOffset + seqLen} exceeds MaxSeqLen {_maxSeqLen}.");
 
-        int halfDim = _headDim / 2;
+        int ropePairs = _ropeDim / 2;
         var data    = x.Data;
 
         for (int s = 0; s < seqLen; s++)
         {
             int pos       = positionOffset + s;
-            int cacheBase = pos * halfDim;
+            int cacheBase = pos * ropePairs;
 
             for (int h = 0; h < numHead; h++)
             {
@@ -114,30 +127,30 @@ public sealed class RoPE : PositionalEncoder
                 int i = 0;
                 if (Avx.IsSupported)
                 {
-                    for (; i <= halfDim - 4; i += 4)
+                    for (; i <= ropePairs - 4; i += 4)
                     {
                         var cos = Vector256.LoadUnsafe(ref _cosCache[cacheBase + i]);
                         var sin = Vector256.LoadUnsafe(ref _sinCache[cacheBase + i]);
                         var vx0 = Vector256.LoadUnsafe(ref data[offset + i]);
-                        var vx1 = Vector256.LoadUnsafe(ref data[offset + halfDim + i]);
+                        var vx1 = Vector256.LoadUnsafe(ref data[offset + ropePairs + i]);
 
                         Vector256.StoreUnsafe(
                             Avx.Subtract(Avx.Multiply(vx0, cos), Avx.Multiply(vx1, sin)),
                             ref data[offset + i]);
                         Vector256.StoreUnsafe(
                             Avx.Add(Avx.Multiply(vx1, cos), Avx.Multiply(vx0, sin)),
-                            ref data[offset + halfDim + i]);
+                            ref data[offset + ropePairs + i]);
                     }
                 }
-                for (; i < halfDim; i++)  //finishes off or does all if avx missing
+                for (; i < ropePairs; i++)
                 {
                     float cos = _cosCache[cacheBase + i];
                     float sin = _sinCache[cacheBase + i];
                     float x0  = data[offset + i];
-                    float x1  = data[offset + halfDim + i];
+                    float x1  = data[offset + ropePairs + i];
 
-                    data[offset + i]           = x0 * cos - x1 * sin;
-                    data[offset + halfDim + i] = x1 * cos + x0 * sin;
+                    data[offset + i]               = x0 * cos - x1 * sin;
+                    data[offset + ropePairs + i]   = x1 * cos + x0 * sin;
                 }
             }
         }

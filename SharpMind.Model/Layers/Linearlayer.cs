@@ -127,7 +127,6 @@ public sealed class LinearLayer : IDisposable
         return output;
     }
 
-    static int _qf_diag = 0;
     private Tensor<float> QuantizedForward(Tensor<float> input, TensorOps ops, SharpMind.Core.Memory.Workspace? workspace = null)
     {
         var dtype = QuantDtype!.Value;
@@ -137,13 +136,6 @@ public sealed class LinearLayer : IDisposable
             ? workspace.Rent<float>([m, OutFeatures]) 
             : new Tensor<float>(m, OutFeatures);
         int inF = InFeatures, outF = OutFeatures;
-
-        if (_qf_diag < 50)
-        {
-            Interlocked.Increment(ref _qf_diag);
-            Console.Error.WriteLine($"[QF_DIAG] name={Name} dtype={dtype} m={m} inF={inF} outF={outF} matMulFn={_matMulFn?.Method?.Name ?? "null"} vecDotFn={_vecDotFn?.Method?.Name ?? "null"} quantized={UseQuantizedForward}");
-            Console.Error.Flush();
-        }
 
         unsafe
         {
@@ -239,17 +231,10 @@ public sealed class LinearLayer : IDisposable
         return UseQuantizedForward;
     }
 
-    static int _wrap_diag = 0;
     private static unsafe QuantizedMatMulFn WrapVecDotAsMatMul(VecDotFn vecDot)
     {
         return (float* input, byte* rawWeights, float* output, int M, int K, int N) =>
         {
-            if (_wrap_diag < 50)
-            {
-                Interlocked.Increment(ref _wrap_diag);
-                Console.Error.WriteLine($"[WRAP_DIAG] M={M} K={K} N={N} vecDot={vecDot?.Method?.Name ?? "null"}");
-                Console.Error.Flush();
-            }
             for (int row = 0; row < M; row++)
             {
                 float* pInRow = input + (long)row * K;

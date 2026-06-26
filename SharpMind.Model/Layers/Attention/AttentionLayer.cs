@@ -61,7 +61,9 @@ namespace SharpMind.Model.Layers.Attention;
         {
             PositionalEncoding.NoPE => new NoPE(),
             PositionalEncoding.ALiBi => new AlibiEncoder(config.NumHeads),
-            _ => new RoPE(config.HeadDim, config.MaxSeqLen, config.RopeTheta),
+            _ => new RoPE(config.RopeDim ?? config.HeadDim, config.MaxSeqLen, config.RopeTheta,
+                 ropeDim: config.RopeDim, ropeScalingType: config.RopeScalingType,
+                 ropeScalingFactor: config.RopeScalingFactor),
         };
 
         if (weights != null)

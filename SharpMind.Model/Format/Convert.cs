@@ -9,25 +9,36 @@ public static partial class ModelConverter
         {
             var meta = GgufLoader.LoadMeta(ggufPath);
             var weights = GgufLoader.LoadWeights(ggufPath);
-            
+            string arch = meta.GetString("general.architecture", "llama");
+
+            // Derive vocab size from tokenizer tokens or embedding shape
             int vocabSize = 32000;
-            if (meta.KvPairs.Any(k => k.Key == "tokenizer.ggml.tokens"))
+            var tokKv = meta.KvPairs.FirstOrDefault(k => k.Key == "tokenizer.ggml.tokens");
+            if (tokKv.Value is List<string> list)
+                vocabSize = list.Count;
+            else
             {
-                var kv = meta.KvPairs.First(k => k.Key == "tokenizer.ggml.tokens");
-                if (kv.Value is List<string> list)
-                    vocabSize = list.Count;
+                var embdInfo = meta.Tensors.FirstOrDefault(
+                    t => t.Name.Contains("token_embd") && t.Name.Contains("weight"));
+                if (embdInfo.Shape is { Length: >= 2 })
+                {
+                    long d0 = embdInfo.Shape[0], d1 = embdInfo.Shape[1];
+                    vocabSize = (int)(d0 > d1 ? d0 : d1);
+                }
             }
-            
+            vocabSize = (int)meta.GetLong($"{arch}.vocab_size",
+                        meta.GetLong("tokenizer.ggml.token_count", vocabSize));
+
             var config = new SharpMindModelConfig
             {
                 VocabSize = vocabSize,
-                HiddenDim = (int)meta.GetLong("embedding", meta.GetLong("llama.embedding_length", 2048)),
-                NumLayers = (int)meta.GetLong("llama.block_count", 22),
-                NumHeads = (int)meta.GetLong("llama.attention.head_count", 32),
-                NumKvHeads = (int)meta.GetLong("llama.attention.head_count_kv", 4),
-                FfnDim = (int)meta.GetLong("llama.feed_forward_length", 5632),
-                MaxSeqLen = (int)meta.GetLong("llama.context_length", 2048),
-                Source = meta.GetString("general.architecture", "llama") + "/" + meta.GetString("general.name", "model"),
+                HiddenDim = (int)meta.GetLong($"{arch}.embedding_length", 2048),
+                NumLayers = (int)meta.GetLong($"{arch}.block_count", 22),
+                NumHeads = (int)meta.GetLong($"{arch}.attention.head_count", 32),
+                NumKvHeads = (int)meta.GetLong($"{arch}.attention.head_count_kv", 4),
+                FfnDim = (int)meta.GetLong($"{arch}.feed_forward_length", 5632),
+                MaxSeqLen = (int)meta.GetLong($"{arch}.context_length", 2048),
+                Source = $"{arch}/{meta.GetString("general.name", "model")}",
             };
             
             var parameters = new List<SharpMind.Core.Training.Parameter>();

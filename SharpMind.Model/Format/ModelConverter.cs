@@ -45,20 +45,36 @@ public static partial class ModelConverter
     {
         var meta = GgufLoader.LoadMeta(path);
         var weights = GgufLoader.LoadWeights(path);
-        
+        string arch = meta.GetString("general.architecture", "llama");
+
+        // Derive vocab size from embedding tensor shape (most reliable)
+        int vocabSize = 32000;
+        var embdInfo = meta.Tensors.FirstOrDefault(
+            t => t.Name.Contains("token_embd") && t.Name.Contains("weight"));
+        if (embdInfo.Shape is { Length: >= 2 })
+        {
+            long d0 = embdInfo.Shape[0], d1 = embdInfo.Shape[1];
+            vocabSize = (int)(d0 > d1 ? d0 : d1);
+        }
+        // Override with explicit metadata keys
+        vocabSize = (int)meta.GetLong($"{arch}.vocab_size",
+                    meta.GetLong("tokenizer.ggml.token_count",
+                    meta.GetLong("vocab_size", vocabSize)));
+
         var config = new SharpMindModelConfig
         {
-            VocabSize = (int)meta.GetLong("tokenizer.ggml.bos_token_id", 32000), // Approximate
-            HiddenDim = (int)meta.GetLong("llama.embedding_length", meta.GetLong("embedding", 4096)),
-            NumLayers = (int)meta.GetLong("llama.block_count", meta.GetLong("block_count", 32)),
-            NumHeads = (int)meta.GetLong("llama.attention.head_count", meta.GetLong("attention.head_count", 32)),
-            NumKvHeads = (int)meta.GetLong("llama.attention.head_count_kv", meta.GetLong("attention.head_count_kv", 32)),
-            FfnDim = (int)meta.GetLong("llama.feed_forward_length", meta.GetLong("ffn_dim", 11008)),
-            MaxSeqLen = (int)meta.GetLong("llama.context_length", meta.GetLong("context_length", 2048)),
-            RopeTheta = meta.GetFloat("llama.rope.freq_base", meta.GetFloat("rope_theta", 10000f)),
-            Source = meta.GetString("general.architecture", "llama") + "/" + meta.GetString("general.name", "model"),
+            VocabSize = vocabSize,
+            HiddenDim = (int)meta.GetLong($"{arch}.embedding_length", 4096),
+            NumLayers = (int)meta.GetLong($"{arch}.block_count", 32),
+            NumHeads = (int)meta.GetLong($"{arch}.attention.head_count", 32),
+            NumKvHeads = (int)meta.GetLong($"{arch}.attention.head_count_kv", 32),
+            FfnDim = (int)meta.GetLong($"{arch}.feed_forward_length", 11008),
+            MaxSeqLen = (int)meta.GetLong($"{arch}.context_length", 2048),
+            RopeTheta = meta.GetFloat($"{arch}.rope.freq_base",
+                        meta.GetFloat("rope_theta", 10000f)),
+            Source = $"{arch}/{meta.GetString("general.name", "model")}",
         };
-        
+
         return ConvertWeights(weights, mapper, config);
     }   
     private static ConversionResult ConvertWeights(

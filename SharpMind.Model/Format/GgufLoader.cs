@@ -242,6 +242,37 @@ public static partial class GgufLoader
                          meta.GetLong("vocab_size", vocabSize)));
         if (metaVocab > 0) vocabSize = metaVocab;
 
+        // Explicit head_dim override — some models (Gemma 2, DeepSeek V2)
+        // specify head_dim directly rather than deriving from HiddenDim / NumHeads.
+        long rawHeadDim = meta.GetLong($"{arch}.head_dim", -1);
+        int? headDimOverride = rawHeadDim > 0 ? (int)rawHeadDim : null;
+
+        // RoPE dimension count — if specified and less than HeadDim,
+        // only the first N dimensions get rotary encoding.
+        long rawRopeDim = meta.GetLong($"{arch}.rope.dimension_count", -1);
+        int? ropeDim = rawRopeDim > 0 ? (int)rawRopeDim : null;
+
+        // RoPE scaling for extended context
+        string? ropeScalingType = meta.GetString($"{arch}.rope.scaling.type");
+        float ropeFactor = meta.GetFloat($"{arch}.rope.scaling.factor", float.NaN);
+        float? ropeScalingFactor = float.IsNaN(ropeFactor) ? null : ropeFactor;
+        long rawRopeOrigCtx = meta.GetLong($"{arch}.rope.scaling.original_context_length", -1);
+        int? ropeOriginalContextLength = rawRopeOrigCtx > 0 ? (int)rawRopeOrigCtx : null;
+
+        // Tie word embeddings — whether LM head shares weights with token embeddings
+        long rawTie = meta.GetLong($"{arch}.tie_word_embeddings", -1);
+        bool? tieWordEmbeddings = rawTie >= 0 ? (rawTie != 0) : null;
+
+        // Norm type: 0 = LayerNorm, 1 = RMSNorm
+        long rawNormType = meta.GetLong($"{arch}.norm_type", -1);
+        int? normTypeOverride = rawNormType >= 0 ? (int)rawNormType : null;
+
+        // MoE expert counts
+        long rawExpertCount = meta.GetLong($"{arch}.expert_count", -1);
+        int expertCount = rawExpertCount > 0 ? (int)rawExpertCount : 8;
+        long rawTopK = meta.GetLong($"{arch}.expert_used_count", -1);
+        int topKExperts = rawTopK > 0 ? (int)rawTopK : 2;
+
         return new ModelConfig
         {
             Architecture = arch,
@@ -257,6 +288,15 @@ public static partial class GgufLoader
                       meta.GetFloat("rms_norm_eps", 1e-5f)),
             KeyLength = keyLength,
             ValueLength = valueLength,
+            HeadDimOverride = headDimOverride,
+            RopeDim = ropeDim,
+            RopeScalingType = ropeScalingType,
+            RopeScalingFactor = ropeScalingFactor,
+            RopeOriginalContextLength = ropeOriginalContextLength,
+            TieWordEmbeddings = tieWordEmbeddings,
+            NormTypeOverride = normTypeOverride,
+            NumExperts = expertCount,
+            TopKExperts = topKExperts,
         };
     }
 
@@ -411,9 +451,12 @@ public static partial class GgufLoader
 
             // Create LM head tensor on demand when output.weight is found
             // Must NOT match attn_output.weight in block tensors
+            // GGUF stores shape as [hidden_dim, vocab_size] but SharpMind expects
+            // [vocab_size, hidden_dim] for MatMulWithBT convention.
             if (!info.Name.Contains("blk.") && info.Name.Contains("output.weight") && weights.LmHeadWeight == null)
             {
-                weights.SetLmHead(new Tensor<float>(info.Shape));
+                long ggufIn = info.Shape[0], ggufOut = info.Shape[1];
+                weights.SetLmHead(new Tensor<float>((int)ggufOut, (int)ggufIn));
             }
 
             // Identify the target tensor and whether it's a raw weight
@@ -466,7 +509,19 @@ public static partial class GgufLoader
                 if (target != null)
                 {
                     target.Data.Clear();
-                    buffer.AsSpan(0, count).CopyTo(target.Data);
+                    // LM head requires transpose: GGUF stores [hidden_dim, vocab_size]
+                    // but SharpMind expects [vocab_size, hidden_dim].
+                    if (target == weights.LmHeadWeight && info.Shape.Length == 2)
+                    {
+                        int ggufIn = (int)info.Shape[0], ggufOut = (int)info.Shape[1];
+                        for (int i = 0; i < ggufIn; i++)
+                            for (int j = 0; j < ggufOut; j++)
+                                target.Data[j * ggufIn + i] = buffer[i * ggufOut + j];
+                    }
+                    else
+                    {
+                        buffer.AsSpan(0, count).CopyTo(target.Data);
+                    }
                 }
                 else if (block != null)
                 {

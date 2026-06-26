@@ -20,8 +20,7 @@ namespace SharpMind.Samples.Examples
             "gemma-3-270m-it-F16",      //Response: incessant Harare prized incessant Kisandegenerative SDG lousy motorway agronLife poorest intensive Highways kilowatt
 
             //Working
-            "Qwen2-0.5B.Q6_K",              //Response:The\nsystem\nsystem is a system that helps you to make better decisions        
-            "qwen2.5-1.5b-instruct-q8_0",   //Response:\n\n\n# 1. Write a Python program to print the following pattern        
+            "Qwen2-0.5B.Q6_K",              //Response:The\nsystem\nsystem is a system that helps you to make better decisions              
             "llama-3.2-1b-instruct-q8_0",   //Response:It seems like you've got a question about the answer to my own.            
             "qwen2-0_5b-instruct-q8_0",     //Response:Hello! How can I assist you today?
             "qwen2-0_5b-instruct-fp16",     //Response:Hello! How can I assist you today?

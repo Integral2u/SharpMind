@@ -60,6 +60,14 @@ public sealed record ModelConfig
     /// <summary>Override for value head dimension. Falls back to <see cref="KeyLength"/> then derived.</summary>
     public int? ValueLength { get; init; }
 
+    /// <summary>
+    /// Explicit head_dim from GGUF ({arch}.head_dim).
+    /// Some models (Gemma 2, DeepSeek V2) specify head_dim directly
+    /// rather than deriving it from HiddenDim / NumHeads.
+    /// When set and KeyLength is null, this takes priority for HeadDim.
+    /// </summary>
+    public int? HeadDimOverride { get; init; }
+
     // MoE
 
     /// <summary>Total number of experts. Ignored when FfnKind is not MoE.</summary>
@@ -82,15 +90,43 @@ public sealed record ModelConfig
     /// </summary>
     public float RopeTheta { get; init; } = 10_000f;
 
+    /// <summary>
+    /// RoPE dimension count. If non-null, only the first N dimensions
+    /// of each head receive rotary encoding (partial RoPE).
+    /// </summary>
+    public int? RopeDim { get; init; }
+
+    /// <summary>
+    /// RoPE scaling type from GGUF ({arch}.rope.scaling.type).
+    /// "linear", "dynamic", "yarn", etc. Null means no scaling.
+    /// </summary>
+    public string? RopeScalingType { get; init; }
+
+    /// <summary>RoPE scaling factor (e.g. 2.0 for 2x context extension).</summary>
+    public float? RopeScalingFactor { get; init; }
+
+    /// <summary>Original max sequence length before RoPE scaling was applied.</summary>
+    public int? RopeOriginalContextLength { get; init; }
+
+    /// <summary>Whether the LM head weight is tied to the embedding weight.</summary>
+    public bool? TieWordEmbeddings { get; init; }
+
     // Normalisation
 
     /// <summary>Epsilon for RMS / LayerNorm. Qwen2 uses 1e-6; LLaMA 2 uses 1e-5.</summary>
     public float NormEps { get; init; } = 1e-5f;
 
+    /// <summary>
+    /// Norm type override from GGUF ({arch}.norm_type).
+    /// 0 = LayerNorm, 1 = RMSNorm.
+    /// When non-null, overrides the architecture-based default in SharpMindConfig.
+    /// </summary>
+    public int? NormTypeOverride { get; init; }
+
     // Derived
 
-    /// <summary>Dimension per query head. Uses KeyLength override when present (e.g. Qwen3).</summary>
-    public int HeadDim => KeyLength ?? HiddenDim / NumHeads;
+    /// <summary>Dimension per query head. Priority: KeyLength > HeadDimOverride > HiddenDim / NumHeads.</summary>
+    public int HeadDim => KeyLength ?? HeadDimOverride ?? HiddenDim / NumHeads;
 
     /// <summary>Dimension per value head. Falls back to HeadDim.</summary>
     public int ValueDim => ValueLength ?? HeadDim;
