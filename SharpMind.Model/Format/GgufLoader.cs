@@ -752,7 +752,7 @@ public static partial class GgufLoader
         or GgufDtype.Q6_K or GgufDtype.Q6_K_S
         or GgufDtype.Q8_K;
 
-    private static void ReadTensorInto(BinaryReader stream, GgufDtype dtype, int[] shape, Span<float> destination)
+    internal static void ReadTensorInto(BinaryReader stream, GgufDtype dtype, int[] shape, Span<float> destination)
     {
         int count = 1;
         foreach (int d in shape) count *= d;
@@ -1279,7 +1279,7 @@ public static partial class GgufLoader
 
             for (int j = 0; j < valid; j++)
             {
-                int nib = (buf[2 + j % 16] >> (4 * (j / 16))) & 0x0F;
+                int nib = (buf[2 + (j >> 1)] >> (4 * (j & 1))) & 0x0F;
                 data[blockStart + j] = d * kvalues_iq4nl[nib];
             }
         }

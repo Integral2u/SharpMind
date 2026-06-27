@@ -34,9 +34,11 @@ namespace SharpMind.Samples.Examples
             "Qwen2.5-1.5B-Instruct-f16",    //Response:\n\n\n# # #\n#\n#\n\nimport sys\nsys.path
             
             "TinyLlama-1.1B-Chat-v1.0.Q4_K_M",      //No Response:
+                                                    //New Response: sacrificCAAFIG grat ?? Ord veg Richard step ..File Bayer ????????ifoliaars
             "DeepSeek-R1-Distill-Qwen-1.5B-Q8_0",   //Response:>\n\niversity\n\niversityiversityigmaiversity\n\n**iversityigma**\n\niversityigmaigma
+                                                    //New Response:</think>\n\nHello! How Are You? ?? ?
             "DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M", //No Response: Prior Response:Okay, the user just said "hello." I should respond in a friendly and      
-            
+                                                    //New Response" Response: surfaced_into PICK quad&# embarrassing delay finale ????.Topic??? flex?\Validation
                                             
             //"qwen2.5-coder-3b-instruct-q8_0", //System.OutOfMemoryException
             //"qwen2.5-coder-3b-instruct-q4_k_m", //System.OutOfMemoryException
