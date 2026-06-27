@@ -9,12 +9,10 @@
     <AssemblyName>SharpMind.CUI</AssemblyName>
     <InvariantGlobalization>true</InvariantGlobalization>
   </PropertyGroup>
-  <!--
-    Intentionally zero PackageReference entries. This project talks to
-    System.Console directly and does its own screen-buffer diffing rather
-    than pulling in a terminal UI library — see Screen/ScreenBuffer.cs.
-    The only ItemGroup below is project references to the engine itself.
-  -->
+
+  <ItemGroup>
+    <PackageReference Include="Terminal.Gui" Version="1.15.1" />
+  </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\SharpMind.GPU\SharpMind.GPU.csproj" />
     <ProjectReference Include="..\SharpMind\SharpMind.csproj" />

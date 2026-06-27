@@ -1,14 +1,17 @@
-﻿using SharpMind.CUI.App;
+using SharpMind.CUI;
+using Terminal.Gui;
+// Terminal.Gui owns the entire input/render loop once Application.Run is
+// called - there's no manual frame loop to write here, unlike the previous
+// hand-rolled console UI. Init/Run/Shutdown is the whole lifecycle.
 
-// Single entry point, no DI container, no startup ceremony: build the app,
-// run it, dispose it. This is meant to feel as close as possible to typing
-// CUI.EXE at a DOS prompt — instant, with nothing to configure first.
-var app = new App();
+Application.Init();
 try
 {
-    await app.RunAsync();
+    var top = Application.Top;
+    top.Add(new MainWindow());
+    Application.Run();
 }
 finally
 {
-    await app.DisposeAsync();
+    Application.Shutdown();
 }
