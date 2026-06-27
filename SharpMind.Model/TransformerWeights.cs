@@ -20,6 +20,8 @@ public sealed class TransformerWeights(ModelConfig config, Tensor<float> embeddi
     // Raw quantized data for non-block tensors (embedding, lm_head)
     public byte[]? RawEmbedding { get; set; }
     public Format.GgufDtype? RawEmbeddingDtype { get; set; }
+    public byte[]? RawLmHead { get; set; }
+    public Format.GgufDtype? RawLmHeadDtype { get; set; }
 
     // Weights for each block
     public BlockWeights[] Blocks { get; } = blocks;

@@ -13,7 +13,7 @@ namespace SharpMind.Samples.Examples
     {
         private static readonly string[] Models =
         [
-            "tinyllama-1.1b-chat-v1.0.Q8_0",    //Response:mathopmathopmathop ???? Luci LucyZygoteInitZygoteInitZygoteInitZygoteInitDataFrameDataFrameDataFrame? geldig
+            
             /*
             "qwen2-0.5b-instruct-q2_k",     //Response:???u u performance?? 's elbowso??ef-.
             "Qwen2-0.5B.Q2_K",              //Response: performance sa?ero_ ?and i?.??f*+
@@ -36,8 +36,8 @@ namespace SharpMind.Samples.Examples
             "TinyLlama-1.1B-Chat-v1.0.Q4_K_M",      //No Response:
             "DeepSeek-R1-Distill-Qwen-1.5B-Q8_0",   //Response:>\n\niversity\n\niversityiversityigmaiversity\n\n**iversityigma**\n\niversityigmaigma
             "DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M", //No Response: Prior Response:Okay, the user just said "hello." I should respond in a friendly and      
-            "qwen2.5-1.5b-instruct-q8_0",   //Now Responding with: Response:\n\n\n\n\n\n\n\n\n\n\n\n\n all\n\n\n\n\n\n\n 
-                                            //Was Response:\n\n\n# 1. Write a Python program to print the following pattern 
+            
+                                            
             //"qwen2.5-coder-3b-instruct-q8_0", //System.OutOfMemoryException
             //"qwen2.5-coder-3b-instruct-q4_k_m", //System.OutOfMemoryException
             //"qwen2.5-coder-3b-instruct-q2_k", //System.OutOfMemoryException

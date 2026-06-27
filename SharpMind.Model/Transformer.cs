@@ -54,7 +54,9 @@ public sealed class Transformer : IDisposable
         _lmHead = lmHead;
         _qOps = qOps;
         var projWeight = _lmHead ?? _embedding.Weight;
-        _logitOps = new LogitOps(projWeight, _weights.RawEmbedding, _weights.RawEmbeddingDtype, _ops, _qOps);
+        var rawW = _lmHead != null ? _weights.RawLmHead : _weights.RawEmbedding;
+        var rawDtype = _lmHead != null ? _weights.RawLmHeadDtype : _weights.RawEmbeddingDtype;
+        _logitOps = new LogitOps(projWeight, rawW, rawDtype, _ops, _qOps);
 
         if (arch is DecoderArch decodeArch)
             _blocks = decodeArch.Blocks;

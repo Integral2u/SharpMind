@@ -455,8 +455,8 @@ public static partial class GgufLoader
             // [vocab_size, hidden_dim] for MatMulWithBT convention.
             if (!info.Name.Contains("blk.") && info.Name.Contains("output.weight") && weights.LmHeadWeight == null)
             {
-                long ggufIn = info.Shape[0], ggufOut = info.Shape[1];
-                weights.SetLmHead(new Tensor<float>((int)ggufOut, (int)ggufIn));
+                long ggufIn = info.Shape[0];
+                weights.SetLmHead(new Tensor<float>((int)config.VocabSize, (int)ggufIn));
             }
 
             // Identify the target tensor and whether it's a raw weight
@@ -494,11 +494,27 @@ public static partial class GgufLoader
                 long rawSize = GetRawTensorByteCount(info.Shape, info.Dtype);
                 if (rawSize > 0 && stream.Position + rawSize <= stream.Length)
                 {
-                    byte[] rawData = new byte[rawSize];
-                    stream.ReadExactly(rawData);
-                    stream.Position -= rawSize;
-                    weights.RawEmbedding = rawData;
-                    weights.RawEmbeddingDtype = info.Dtype;
+                    byte[] rawData;
+                    if (target == weights.LmHeadWeight)
+                    {
+                        long ggufVocab = info.Shape[1];
+                        long paddedVocab = config.VocabSize;
+                        long colBytes = rawSize / ggufVocab;
+                        rawData = new byte[paddedVocab * colBytes];
+                        for (long r = 0; r < ggufVocab; r++)
+                            stream.ReadExactly(rawData, (int)(r * colBytes), (int)colBytes);
+                        stream.Position -= rawSize;
+                        weights.RawLmHead = rawData;
+                        weights.RawLmHeadDtype = info.Dtype;
+                    }
+                    else
+                    {
+                        rawData = new byte[rawSize];
+                        stream.ReadExactly(rawData);
+                        stream.Position -= rawSize;
+                        weights.RawEmbedding = rawData;
+                        weights.RawEmbeddingDtype = info.Dtype;
+                    }
                 }
             }
 
