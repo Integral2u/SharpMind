@@ -107,9 +107,11 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     public IReadOnlyList<ChatMessage> History => [.. _history.Where(p => p.Role != ChatRole.System)];
 
     public int MaxTokens { get; set; } = 2048;
+    /// <summary>Max generation tokens. Defaults to 256 so context trimming leaves room.</summary>
+    public int MaxNewTokens { get; set; } = 256;
     public float Temperature { get; set; } = 0.0f;
     public int TopK { get; set; } = 20;
-    public float TopP { get; set; } = 0.85f;
+    public float TopP { set; get; } = 0.85f;
     public float RepetitionPenalty { get; set; } = 1.1f;
     public int RepetitionWindow { get; set; } = 32;
     /// <summary>Token IDs that stop generation. Defaults to EOS if not set.</summary>
@@ -175,7 +177,9 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
 
     private int[] TrimToFitContext(int[] promptToks)
     {
-        if (promptToks.Length <= MaxTokens)
+        int contextBudget = MaxTokens - MaxNewTokens;
+        if (contextBudget <= 0) contextBudget = MaxTokens / 2;
+        if (promptToks.Length <= contextBudget)
             return promptToks;
 
         // Phase 1: importance-scored message-level eviction
@@ -203,7 +207,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         var removed = new HashSet<int>();
         foreach (var (idx, _, _) in candidates)
         {
-            if (promptToks.Length <= MaxTokens) break;
+            if (promptToks.Length <= contextBudget) break;
             removed.Add(idx);
 
             var surviving = new List<ChatMessage>(_history.Count - removed.Count);
@@ -219,11 +223,11 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         }
 
         // Phase 2: token-level truncation from end as last resort
-        if (promptToks.Length > MaxTokens)
+        if (promptToks.Length > contextBudget)
         {
-            int start = promptToks.Length - MaxTokens;
-            var subset = GC.AllocateUninitializedArray<int>(MaxTokens);
-            promptToks.AsSpan(start, MaxTokens).CopyTo(subset);
+            int start = promptToks.Length - contextBudget;
+            var subset = GC.AllocateUninitializedArray<int>(contextBudget);
+            promptToks.AsSpan(start, contextBudget).CopyTo(subset);
             promptToks = subset;
         }
 
@@ -340,7 +344,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
 
         var genCfg = new GenerationConfig
         {
-            MaxNewTokens = MaxTokens,
+            MaxNewTokens = MaxNewTokens,
             RepetitionPenalty = RepetitionPenalty,
             RepetitionWindow = RepetitionWindow,
             StopTokenIds = StopTokenIds ?? [_tokenizer.EosId],
@@ -472,7 +476,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
 
             var genCfg = new GenerationConfig
             {
-                MaxNewTokens = MaxTokens,
+                MaxNewTokens = MaxNewTokens,
                 RepetitionPenalty = RepetitionPenalty,
                 RepetitionWindow = RepetitionWindow,
                 StopTokenIds = StopTokenIds ?? [_tokenizer.EosId],

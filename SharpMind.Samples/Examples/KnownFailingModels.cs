@@ -14,7 +14,7 @@ namespace SharpMind.Samples.Examples
         private static readonly string[] Models =
         [
             
-            /*
+            
             "qwen2-0.5b-instruct-q2_k",     //Response:???u u performance?? 's elbowso??ef-.
             "Qwen2-0.5B.Q2_K",              //Response: performance sa?ero_ ?and i?.??f*+
             "Qwen2-0.5B.Q3_K_L",            //Response:./(?????????????????????
@@ -41,7 +41,7 @@ namespace SharpMind.Samples.Examples
             //"qwen2.5-coder-3b-instruct-q8_0", //System.OutOfMemoryException
             //"qwen2.5-coder-3b-instruct-q4_k_m", //System.OutOfMemoryException
             //"qwen2.5-coder-3b-instruct-q2_k", //System.OutOfMemoryException
-            */
+            
             ];
 
         private static readonly string ModelPath = @"C:\Integral2u\source\repos\SharpMind\ExternalAssets";

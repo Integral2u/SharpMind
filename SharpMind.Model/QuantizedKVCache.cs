@@ -10,6 +10,8 @@ public sealed class QuantizedKVCache : IKVCache
 
     private readonly byte[] _qKeys;
     private readonly byte[] _qValues;
+    private readonly System.Runtime.InteropServices.GCHandle _keyHandle;
+    private readonly System.Runtime.InteropServices.GCHandle _valHandle;
     private readonly int _batchSize;
     private readonly int _numKvHeads;
     private readonly int _headDim;
@@ -30,6 +32,8 @@ public sealed class QuantizedKVCache : IKVCache
         long totalSize = (long)batchSize * numKvHeads * maxSeqLen * _qStride;
         _qKeys = new byte[totalSize];
         _qValues = new byte[totalSize];
+        _keyHandle = System.Runtime.InteropServices.GCHandle.Alloc(_qKeys, System.Runtime.InteropServices.GCHandleType.Pinned);
+        _valHandle = System.Runtime.InteropServices.GCHandle.Alloc(_qValues, System.Runtime.InteropServices.GCHandleType.Pinned);
     }
 
     public int CurrentPosition { get; private set; } = 0;
@@ -41,22 +45,18 @@ public sealed class QuantizedKVCache : IKVCache
 
     public unsafe byte* GetQuantizedKeyPtr(int batchIdx, int position, int kvHead)
     {
-        fixed (byte* p = _qKeys)
-        {
-            return p + (long)batchIdx * (_numKvHeads * _headStride)
-                     + (long)kvHead * _headStride
-                     + (long)position * _qStride;
-        }
+        return (byte*)_keyHandle.AddrOfPinnedObject()
+             + (long)batchIdx * (_numKvHeads * _headStride)
+             + (long)kvHead * _headStride
+             + (long)position * _qStride;
     }
 
     public unsafe byte* GetQuantizedValuePtr(int batchIdx, int position, int kvHead)
     {
-        fixed (byte* p = _qValues)
-        {
-            return p + (long)batchIdx * (_numKvHeads * _headStride)
-                     + (long)kvHead * _headStride
-                     + (long)position * _qStride;
-        }
+        return (byte*)_valHandle.AddrOfPinnedObject()
+             + (long)batchIdx * (_numKvHeads * _headStride)
+             + (long)kvHead * _headStride
+             + (long)position * _qStride;
     }
 
     public unsafe float* GetKeyPtr(int batchIdx, int position, int kvHead) => null;
@@ -120,14 +120,15 @@ public sealed class QuantizedKVCache : IKVCache
             {
                 for (int h = 0; h < _numKvHeads; h++)
                 {
-                    byte* headBase = GetQuantizedKeyPtr(b, 0, h) - (long)b * (_numKvHeads * _headStride) - (long)h * _headStride;
+                    byte* headBaseK = GetQuantizedKeyPtr(b, 0, h) - (long)b * (_numKvHeads * _headStride) - (long)h * _headStride;
+                byte* headBaseV = GetQuantizedValuePtr(b, 0, h) - (long)b * (_numKvHeads * _headStride) - (long)h * _headStride;
 
-                    byte* srcK = headBase + (long)b * (_numKvHeads * _headStride) + (long)h * _headStride + (long)offset * _qStride;
-                    byte* dstK = headBase + (long)b * (_numKvHeads * _headStride) + (long)h * _headStride;
+                    byte* srcK = headBaseK + (long)b * (_numKvHeads * _headStride) + (long)h * _headStride + (long)offset * _qStride;
+                    byte* dstK = headBaseK + (long)b * (_numKvHeads * _headStride) + (long)h * _headStride;
                     Buffer.MemoryCopy(srcK, dstK, (long)keep * _qStride, (long)keep * _qStride);
 
-                    byte* srcV = headBase + (long)b * (_numKvHeads * _headStride) + (long)h * _headStride + (long)offset * _qStride;
-                    byte* dstV = headBase + (long)b * (_numKvHeads * _headStride) + (long)h * _headStride;
+                    byte* srcV = headBaseV + (long)b * (_numKvHeads * _headStride) + (long)h * _headStride + (long)offset * _qStride;
+                    byte* dstV = headBaseV + (long)b * (_numKvHeads * _headStride) + (long)h * _headStride;
                     Buffer.MemoryCopy(srcV, dstV, (long)keep * _qStride, (long)keep * _qStride);
                 }
             }
@@ -159,7 +160,8 @@ public sealed class QuantizedKVCache : IKVCache
 
     public void Dispose()
     {
-        // byte[] is managed — nothing to release
+        if (_keyHandle.IsAllocated) _keyHandle.Free();
+        if (_valHandle.IsAllocated) _valHandle.Free();
     }
 
     private static unsafe void QuantizeRowQ8_0(float* src, byte* dst, int n)

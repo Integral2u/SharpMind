@@ -300,10 +300,9 @@ public sealed class LinearLayer : IDisposable
             }
         }
 
-        flatGradOut.Dispose();
-
         if (state.NeedReshape)
         {
+            flatGradOut.Dispose();
             int[] inDims = [.. state.InputDims[..^1], InFeatures];
             var reshaped = gradInputFlat.Reshape(inDims);
             gradInputFlat.Dispose();

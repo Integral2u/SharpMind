@@ -166,22 +166,22 @@ public sealed class Transformer : IDisposable
 
         // 1. Token embeddings → [Batch, SeqLen, HiddenDim]
         _cachedEmbedding = _embedding.Forward(tokenIds, workspace);
-        using var embedded = _cachedEmbedding;
 
         // 2. Architecture (stack of transformer blocks).
-        //    Returns embedded (in-place residuals), so no separate using — embedded owns the buffer.
-        _cachedHidden = _arch.Forward(embedded, caches ?? new IKVCache[_arch.NumLayers], positionOffset, workspace);
+        //    Blocks mutate in-place and return the same tensor, so _cachedHidden
+        //    may alias _cachedEmbedding. Keep both alive until we exit this method.
+        _cachedHidden = _arch.Forward(_cachedEmbedding, caches ?? new IKVCache[_arch.NumLayers], positionOffset, workspace);
 
         // 3. Final normalisation
+        _cachedNormed?.Dispose();
         _cachedNormed = _finalNorm.Forward(_cachedHidden, workspace);
-        using var normed = _cachedNormed;
 
         // 4. LM head: [Batch, SeqLen, HiddenDim] @ LmHead^T → [Batch, SeqLen, VocabSize]
         int batch = tokenIds.Shape.Rows;
         int seqLen = tokenIds.Shape.Cols;
         int hiddenDim = _weights.Config.HiddenDim;
 
-        using var normedFlat = normed.Reshape(batch * seqLen, hiddenDim);
+        using var normedFlat = _cachedNormed.Reshape(batch * seqLen, hiddenDim);
         int M = batch * seqLen;
         int K = hiddenDim;
         int N = _weights.Config.VocabSize;
@@ -203,9 +203,8 @@ public sealed class Transformer : IDisposable
         ThrowIfDisposed();
 
         _cachedEmbedding = _embedding.Forward(tokenIds, workspace);
-        using var embedded = _cachedEmbedding;
 
-        _cachedHidden = _arch.Forward(embedded, caches, positionOffset, workspace);
+        _cachedHidden = _arch.Forward(_cachedEmbedding, caches, positionOffset, workspace);
 
 
         int batch = tokenIds.Shape.Rows;
@@ -240,8 +239,13 @@ public sealed class Transformer : IDisposable
 
     private void DisposeCache()
     {
+        // _cachedHidden may alias _cachedEmbedding (blocks return input tensor in-place).
+        // Dispose embedding first; if hidden is the same object, skip its disposal.
+        var emb = _cachedEmbedding;
+        var hid = _cachedHidden;
         _cachedEmbedding?.Dispose();
-        _cachedHidden?.Dispose();
+        if (hid != null && !ReferenceEquals(hid, emb))
+            hid.Dispose();
         _cachedNormed?.Dispose();
         _cachedEmbedding = null;
         _cachedHidden = null;
