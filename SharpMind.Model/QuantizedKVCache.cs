@@ -1,12 +1,14 @@
 using SharpMind.Core.Quantization;
 using SharpMind.Core.Tensors;
+using SharpMind.Model.Format;
 
 namespace SharpMind.Model;
 
 public sealed class QuantizedKVCache : IKVCache
 {
     private const int QK = 32;
-    private const int BLOCK_BYTES = 34;
+    private const int Q8_BLOCK = 34;
+    private const int Q4_BLOCK = 18;
 
     private readonly byte[] _qKeys;
     private readonly byte[] _qValues;
@@ -16,16 +18,25 @@ public sealed class QuantizedKVCache : IKVCache
     private readonly int _numKvHeads;
     private readonly int _headDim;
     private readonly int _nBlocks;
+    private readonly int _blockBytes;
     private readonly int _qStride;
     private readonly int _headStride;
 
-    public QuantizedKVCache(int batchSize, int numKvHeads, int maxSeqLen, int headDim)
+    public GgufDtype QuantKind { get; }
+
+    public QuantizedKVCache(int batchSize, int numKvHeads, int maxSeqLen, int headDim, GgufDtype quantKind = GgufDtype.Q8_0)
     {
         _batchSize = batchSize;
         _numKvHeads = numKvHeads;
         _headDim = headDim;
+        QuantKind = quantKind;
         _nBlocks = (headDim + QK - 1) / QK;
-        _qStride = _nBlocks * BLOCK_BYTES;
+        _blockBytes = quantKind switch
+        {
+            GgufDtype.Q4_0 => Q4_BLOCK,
+            _ => Q8_BLOCK
+        };
+        _qStride = _nBlocks * _blockBytes;
         _headStride = maxSeqLen * _qStride;
         MaxSeqLen = maxSeqLen;
 
@@ -87,7 +98,10 @@ public sealed class QuantizedKVCache : IKVCache
                         + (long)h * headDim;
 
                     byte* dstK = GetQuantizedKeyPtr(b, CurrentPosition + s, h);
-                    QuantizeRowQ8_0(srcK, dstK, headDim);
+                    if (QuantKind == GgufDtype.Q4_0)
+                        QuantizeRowQ4_0(srcK, dstK, headDim);
+                    else
+                        QuantizeRowQ8_0(srcK, dstK, headDim);
 
                     float* srcV = v.DataPtr
                         + (long)b * (seqLen * numKvHeads * headDim)
@@ -95,7 +109,10 @@ public sealed class QuantizedKVCache : IKVCache
                         + (long)h * headDim;
 
                     byte* dstV = GetQuantizedValuePtr(b, CurrentPosition + s, h);
-                    QuantizeRowQ8_0(srcV, dstV, headDim);
+                    if (QuantKind == GgufDtype.Q4_0)
+                        QuantizeRowQ4_0(srcV, dstV, headDim);
+                    else
+                        QuantizeRowQ8_0(srcV, dstV, headDim);
                 }
             }
         }
@@ -171,7 +188,7 @@ public sealed class QuantizedKVCache : IKVCache
         {
             int blockEnd = Math.Min(QK, n - b * QK);
             float* pSrc = src + b * QK;
-            byte* pDst = dst + b * BLOCK_BYTES;
+            byte* pDst = dst + b * Q8_BLOCK;
 
             float amax = 0f;
             for (int i = 0; i < blockEnd; i++)
@@ -193,10 +210,50 @@ public sealed class QuantizedKVCache : IKVCache
                 if (q > 127) q = 127;
                 qVals[i] = (sbyte)q;
             }
-            // Zero out tail (if n not multiple of QK)
             for (int i = blockEnd; i < QK; i++)
                 qVals[i] = 0;
         }
     }
 
+    private static unsafe void QuantizeRowQ4_0(float* src, byte* dst, int n)
+    {
+        int nBlocks = (n + QK - 1) / QK;
+        for (int b = 0; b < nBlocks; b++)
+        {
+            int blockEnd = Math.Min(QK, n - b * QK);
+            float* pSrc = src + b * QK;
+            byte* pDst = dst + b * Q4_BLOCK;
+
+            float amax = 0f;
+            for (int i = 0; i < blockEnd; i++)
+            {
+                float abs = Math.Abs(pSrc[i]);
+                if (abs > amax) amax = abs;
+            }
+
+            float d = amax / 8f;
+            if (amax == 0f) d = 1f;
+
+            *(ushort*)pDst = QuantizationKernels.FloatToHalf_F16C(d);
+            byte* qNibbles = pDst + 2;
+
+            for (int i = 0; i < blockEnd; i++)
+            {
+                int q = (int)MathF.Round(pSrc[i] / d) + 8;
+                if (q < 0) q = 0;
+                if (q > 15) q = 15;
+                if ((i & 1) == 0)
+                    qNibbles[i / 2] = (byte)(q & 0x0F);
+                else
+                    qNibbles[i / 2] = (byte)((qNibbles[i / 2] & 0x0F) | ((byte)q << 4));
+            }
+            for (int i = blockEnd; i < QK; i++)
+            {
+                if ((i & 1) == 0)
+                    qNibbles[i / 2] &= 0xF0;
+                else
+                    qNibbles[i / 2] &= 0x0F;
+            }
+        }
+    }
 }

@@ -39,6 +39,20 @@ namespace SharpMind.Model.Layers.Attention;
         int seqLen, int kvLen, int headDim, float scale, bool causal,
         int qStride, int oStride, float alibiSlope);
 
+    [PuzzleCornerPiece(SharpMindConfig.KeyAttentionQ4,
+        SharpMindConfig.ValMhaFlashQ4_0Avx2, NS + "." + nameof(AttentionKernels.ScaledDotProductFlashQ4_0AVX2),
+        SharpMindConfig.ValMhaFlashQ4_0Fma, NS + "." + nameof(AttentionKernels.ScaledDotProductFlashQ4_0FMA),
+        SharpMindConfig.ValMhaFlashQ4_0Scalar, NS + "." + nameof(AttentionKernels.ScaledDotProductFlashQ4_0Scalar),
+        SharpMindConfig.ValGqaFlashQ4_0Avx2, NS + "." + nameof(AttentionKernels.ScaledDotProductFlashQ4_0AVX2),
+        SharpMindConfig.ValGqaFlashQ4_0Fma, NS + "." + nameof(AttentionKernels.ScaledDotProductFlashQ4_0FMA),
+        SharpMindConfig.ValGqaFlashQ4_0Scalar, NS + "." + nameof(AttentionKernels.ScaledDotProductFlashQ4_0Scalar),
+        SharpMindConfig.ValMqaFlashQ4_0Avx2, NS + "." + nameof(AttentionKernels.ScaledDotProductFlashQ4_0AVX2),
+        SharpMindConfig.ValMqaFlashQ4_0Fma, NS + "." + nameof(AttentionKernels.ScaledDotProductFlashQ4_0FMA),
+        SharpMindConfig.ValMqaFlashQ4_0Scalar, NS + "." + nameof(AttentionKernels.ScaledDotProductFlashQ4_0Scalar))]
+    public abstract unsafe void ScaledDotProductQ4_0(float* q, byte* kQuant, byte* vQuant, float* output,
+        int seqLen, int kvLen, int headDim, float scale, bool causal,
+        int qStride, int oStride, float alibiSlope);
+
     protected AttentionLayer(ModelConfig config, QuantizationOps qOps)
         : this(config, qOps, null)
     {
@@ -341,7 +355,10 @@ namespace SharpMind.Model.Layers.Attention;
                     {
                         byte* pKQ = cache.GetQuantizedKeyPtr(b, 0, kvHead);
                         byte* pVQ = cache.GetQuantizedValuePtr(b, 0, kvHead);
-                        ScaledDotProductQ8_0(pQ, pKQ, pVQ, pO, seqLen, effectiveKvLen, headDim, scale, causal, qStride, oStride, alibiSlope);
+                        if (cache.QuantKind == Format.GgufDtype.Q4_0)
+                            ScaledDotProductQ4_0(pQ, pKQ, pVQ, pO, seqLen, effectiveKvLen, headDim, scale, causal, qStride, oStride, alibiSlope);
+                        else
+                            ScaledDotProductQ8_0(pQ, pKQ, pVQ, pO, seqLen, effectiveKvLen, headDim, scale, causal, qStride, oStride, alibiSlope);
                     }
                     else if (cache is { IsContiguous: true })
                     {
