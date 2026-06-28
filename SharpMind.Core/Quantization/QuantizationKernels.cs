@@ -888,4 +888,50 @@ public static partial class QuantizationKernels
         }
         return (float)sum;
     }
+
+    public static unsafe void QuantizedMatMulQ6K_AVX2(
+        float* input, byte* rawWeights, float* output,
+        int M, int K, int N)
+    {
+        if (M <= 1)
+        {
+            System.Threading.Tasks.Parallel.For(0, N, col =>
+            {
+                output[col] = VecDotQ6K_AVX2(input, rawWeights, col, K);
+            });
+        }
+        else
+        {
+            System.Threading.Tasks.Parallel.For(0, M, row =>
+            {
+                float* pInRow = input + (long)row * K;
+                float* pOutRow = output + (long)row * N;
+                for (int col = 0; col < N; col++)
+                    pOutRow[col] = VecDotQ6K_AVX2(pInRow, rawWeights, col, K);
+            });
+        }
+    }
+
+    public static unsafe void QuantizedMatMulQ6K_FMA(
+        float* input, byte* rawWeights, float* output,
+        int M, int K, int N)
+    {
+        if (M <= 1)
+        {
+            System.Threading.Tasks.Parallel.For(0, N, col =>
+            {
+                output[col] = VecDotQ6K_FMA(input, rawWeights, col, K);
+            });
+        }
+        else
+        {
+            System.Threading.Tasks.Parallel.For(0, M, row =>
+            {
+                float* pInRow = input + (long)row * K;
+                float* pOutRow = output + (long)row * N;
+                for (int col = 0; col < N; col++)
+                    pOutRow[col] = VecDotQ6K_FMA(pInRow, rawWeights, col, K);
+            });
+        }
+    }
 }

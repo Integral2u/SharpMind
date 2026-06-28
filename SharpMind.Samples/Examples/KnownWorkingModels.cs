@@ -26,6 +26,7 @@ namespace SharpMind.Samples.Examples
             "llama-3.2-1b-instruct-q8_0",       //Response:It seems like you've got a question about the answer to my own.            
             "qwen2-0_5b-instruct-q8_0",         //Response:Hello! How can I assist you today?
             "qwen2-0_5b-instruct-fp16",         //Response:Hello! How can I assist you today?
+            "DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M", //Response: Response:Hello! I'm here. How can assist you?Hi what you can
         ];
 
         private static readonly string ModelPath = @"C:\Integral2u\source\repos\SharpMind\ExternalAssets";

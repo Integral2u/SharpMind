@@ -215,16 +215,16 @@ public sealed class LinearLayer : IDisposable
         _matMulFn = dtype switch
         {
             GgufDtype.Q8_0 => _qOps.QuantizedMatMulQ8_0,
+            GgufDtype.Q5_0 => _qOps.QuantizedMatMulQ5_0,
+            GgufDtype.Q6_K or GgufDtype.Q6_K_S => _qOps.QuantizedMatMulQ6K,
             GgufDtype.IQ4_NL when _qOps.VecDotQ4_NL != null => WrapVecDotAsMatMul(_qOps.VecDotQ4_NL),
             GgufDtype.Q4_0 when _qOps.VecDotQ4_0 != null => WrapVecDotAsMatMul(_qOps.VecDotQ4_0),
             GgufDtype.Q4_1 when _qOps.VecDotQ4_1 != null => WrapVecDotAsMatMul(_qOps.VecDotQ4_1),
-            GgufDtype.Q5_0 when _qOps.VecDotQ5_0 != null => WrapVecDotAsMatMul(_qOps.VecDotQ5_0),
             GgufDtype.Q5_1 when _qOps.VecDotQ5_1 != null => WrapVecDotAsMatMul(_qOps.VecDotQ5_1),
             GgufDtype.Q2_K or GgufDtype.Q2_K_S when _qOps.VecDotQ2K != null => WrapVecDotAsMatMul(_qOps.VecDotQ2K),
             GgufDtype.Q3_K or GgufDtype.Q3_K_S or GgufDtype.Q3_K_M or GgufDtype.Q3_K_L when _qOps.VecDotQ3K != null => WrapVecDotAsMatMul(_qOps.VecDotQ3K),
             GgufDtype.Q4_K or GgufDtype.Q4_K_S or GgufDtype.Q4_K_M when _qOps.VecDotQ4K != null => WrapVecDotAsMatMul(_qOps.VecDotQ4K),
             GgufDtype.Q5_K or GgufDtype.Q5_K_S or GgufDtype.Q5_K_M when _qOps.VecDotQ5K != null => WrapVecDotAsMatMul(_qOps.VecDotQ5K),
-            GgufDtype.Q6_K or GgufDtype.Q6_K_S when _qOps.VecDotQ6K != null => WrapVecDotAsMatMul(_qOps.VecDotQ6K),
             GgufDtype.Q8_K when _qOps.VecDotQ8K != null => WrapVecDotAsMatMul(_qOps.VecDotQ8K),
             _ => null
         };

@@ -58,6 +58,20 @@ public abstract class QuantizationOps
         "qmatmul_q8_0_scalar", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ8_0_Scalar)}")]
     public abstract unsafe void QuantizedMatMulQ8_0(float* input, byte* rawWeights, float* output, int M, int K, int N);
 
+    [PuzzleCornerPiece(QuantizationConfig.KeyQuantizedMatMulQ5_0, true, null,
+        "qmatmul_q5_0_fma",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ5_0_FMA)}",
+        "qmatmul_q5_0_avx2",   $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ5_0_AVX2)}",
+        "qmatmul_q5_0_sse",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ5_0_Scalar)}",
+        "qmatmul_q5_0_scalar", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ5_0_Scalar)}")]
+    public abstract unsafe void QuantizedMatMulQ5_0(float* input, byte* rawWeights, float* output, int M, int K, int N);
+
+    [PuzzleCornerPiece(QuantizationConfig.KeyQuantizedMatMulQ6K, true, null,
+        "qmatmul_q6k_fma",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ6K_FMA)}",
+        "qmatmul_q6k_avx2",   $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ6K_AVX2)}",
+        "qmatmul_q6k_sse",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ6K_Scalar)}",
+        "qmatmul_q6k_scalar", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ6K_Scalar)}")]
+    public abstract unsafe void QuantizedMatMulQ6K(float* input, byte* rawWeights, float* output, int M, int K, int N);
+
     [PuzzleCornerPiece(QuantizationConfig.KeyVecDotQ4_0, true, null,
         "q4_0_fma",    $"{NS}.{nameof(QuantizationKernels.VecDotQ4_0_Scalar)}",
         "q4_0_avx2",   $"{NS}.{nameof(QuantizationKernels.VecDotQ4_0_AVX2)}",

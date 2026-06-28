@@ -12,7 +12,7 @@ public sealed class LogitOps(Tensor<float> projectionWeight, byte[]? rawWeight, 
     private readonly byte[]? rawWeight = rawWeight;
     private readonly TensorOps ops = ops;
     private readonly QuantizationOps? qOps = qOps;
-    public readonly bool UseQuantized = rawWeight != null && rawDtype == GgufDtype.Q8_0 && qOps != null;
+    public readonly bool UseQuantized = rawWeight != null && qOps != null && (rawDtype == GgufDtype.Q8_0 || rawDtype == GgufDtype.Q5_0 || rawDtype == GgufDtype.Q6_K || rawDtype == GgufDtype.Q6_K_S);
 
     public unsafe Tensor<float> Project(Tensor<float> input, int M, int K, int N, Workspace? workspace = null)
     {
@@ -25,7 +25,19 @@ public sealed class LogitOps(Tensor<float> projectionWeight, byte[]? rawWeight, 
             fixed (float* pOutput = result.Data)
             fixed (byte* pRaw = rawWeight!)
             {
-                qOps!.QuantizedMatMulQ8_0(pInput, pRaw, pOutput, M, K, N);
+                switch (rawDtype)
+                {
+                    case GgufDtype.Q8_0:
+                        qOps!.QuantizedMatMulQ8_0(pInput, pRaw, pOutput, M, K, N);
+                        break;
+                    case GgufDtype.Q5_0:
+                        qOps!.QuantizedMatMulQ5_0(pInput, pRaw, pOutput, M, K, N);
+                        break;
+                    case GgufDtype.Q6_K:
+                    case GgufDtype.Q6_K_S:
+                        qOps!.QuantizedMatMulQ6K(pInput, pRaw, pOutput, M, K, N);
+                        break;
+                }
             }
             return result;
         }

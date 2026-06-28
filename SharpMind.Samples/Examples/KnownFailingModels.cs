@@ -13,14 +13,19 @@ namespace SharpMind.Samples.Examples
     {
         private static readonly string[] Models =
         [
+            "DeepSeek-R1-Distill-Qwen-1.5B-Q8_0",   //Response:</think>\n\nHello! How Are You? ?? ?
             
             
             "qwen2-0.5b-instruct-q2_k",     //Response:???u u performance?? 's elbowso??ef-.
+            // New Response:>Welcome???" sting in.(?? (???? cruising???? of
             "Qwen2-0.5B.Q2_K",              //Response: performance sa?ero_ ?and i?.??f*+
+            //Response:amaject?actusPooling?[]?tigi??????? subscript?????
             "Qwen2-0.5B.Q3_K_L",            //Response:./(?????????????????????
             "Qwen2-0.5B.Q3_K_M",            //Response:???\n\n??\_iple???\n\niez? manufactures gainedies
+            //New Response:-???..inst????nd??????????_Helper???????????
             "Qwen2-0.5B.Q3_K_S",            //Response:estring???emales?? je??? Gro  (??hibition Main
             "qwen2-0_5b-instruct-q4_k_m",   //Response:?  (????. - ( (g.-.
+            //New Response:? Tmin??VEbindValueTeS????.???.getInstance???
             "Qwen2-0.5B.Q5_1",              //Response:-+$?ergy=> Tw %(. Tw?????
             "Qwen3-0.6B-Q8_0",      //Lots of new lines \n Response: 
             "Qwen3-0.6B-Q6_K",      //Lots of new lines \n Response: 
@@ -35,10 +40,7 @@ namespace SharpMind.Samples.Examples
             
             "TinyLlama-1.1B-Chat-v1.0.Q4_K_M",      //No Response:
                                                     //New Response: sacrificCAAFIG grat ?? Ord veg Richard step ..File Bayer ????????ifoliaars
-            "DeepSeek-R1-Distill-Qwen-1.5B-Q8_0",   //Response:>\n\niversity\n\niversityiversityigmaiversity\n\n**iversityigma**\n\niversityigmaigma
-                                                    //New Response:</think>\n\nHello! How Are You? ?? ?
-            "DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M", //No Response: Prior Response:Okay, the user just said "hello." I should respond in a friendly and      
-                                                    //New Response" Response: surfaced_into PICK quad&# embarrassing delay finale ????.Topic??? flex?\Validation
+
                                             
             //"qwen2.5-coder-3b-instruct-q8_0", //System.OutOfMemoryException
             //"qwen2.5-coder-3b-instruct-q4_k_m", //System.OutOfMemoryException
