@@ -56,7 +56,6 @@ namespace SharpMind.Samples.Examples
                     GC.Collect(); GC.WaitForPendingFinalizers();
                     sw.Restart();
                     using var model = ModelFactory.CreateSession(weights, sharpConfig);
-                    model.FreeFloatWeights();
                     await Console.Out.WriteLineAsync($"ModelFactory.CreateSession executed in: {sw.Elapsed.TotalSeconds:F2}s");
 
                     sw.Stop();
