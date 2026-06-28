@@ -19,6 +19,8 @@ namespace SharpMind.Model
         public static partial Regex LayerIndexBlkDot7Regex { get; }
         [GeneratedRegex(@"layer_(\d+)")]
         public static partial Regex LayerIndexLayerDot7Regex { get; }
+        [GeneratedRegex(@"\.exps\.(\d+)\.")]
+        public static partial Regex ExpertIndex { get; }
 
     }
 }

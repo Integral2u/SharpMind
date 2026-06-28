@@ -1,15 +1,4 @@
-﻿using var model = ModelFactory.CreateSession(weights, sharpConfig);
-model.FreeFloatWeights();
-
-Consider the below but handle diagnostic tests call CreateSession 
-public static Transformer CreateSession(..., bool optimizeMemory = true)
-{
-    // ... existing construction ...
-    var transformer = new Transformer(...);
-    if (optimizeMemory)
-        transformer.FreeFloatWeights();
-    return transformer;
-}
+﻿Future	MoE	CachedWeightLoader skips MoE expert tensors (same limitation as existing SetWeights). Not blocking since no MoE models are in KnownWorking/Failing.
 
 
 Changes to SharpMind.CUI
@@ -45,20 +34,7 @@ Review Sharmind.Core.Activations.* for example
 
 
 Code Review Notes
-Quantize / Dequantized question.  Is full model being dequantized on load if so first question is does it only need to be dequantized for math orperations or can we just processes in quantized state? as for loading this should possibly be an option FULL,REALTIME,CACHE
-FULL, dequant full model to memory
-REALTIME, Dequantize as required
-CACHE, LoadLayer and Dequant as needed and Unload After,  Can have a cache count to forward load layer or loop back to first. when working on one layer prepair loading of the next in parrallel.
-Model loading, is full model being dequantized?  Possibly a runtime option for loading FULL,REAL_TIME
-
 Is KV cache be quantized/dequantized should it be stored in desired Qunatization it can be changed though going from lower to higher would result in degridation 
-
-LogitOps should this move to JIgSawDotNetPattern.
-currently in Project there are 2 tests if (UseQuantized), if (workspace != null) and a fallback
-and in the UseQuantized block only qOps!.QuantizedMatMulQ8_0 is called but this could expand out to many conditions
-qOps.QuantizedMatMulQ8_0, currently exists
-qOps.QuantizedMatMulQ5_0, presently does not exist but here is a method QuantizedMatMulQ5_0_Scalar wich is not used and would need AVX,FMA,SSE built out
-qOps.QuantizedMatMulQ6_0, presently does not exist but here is a method QuantizedMatMulQ6K_Scalar wich is only used in a test and would need AVX,FMA,SSE built out
 
 
 ChatSession History should have flag for indicating if required or not, ignore Agent thinking only require summary.
