@@ -1,0 +1,57 @@
+GgufLoader.LoadWeightsToTransformerWeights executed in: 5.64s
+Testing qwen2-0_5b-instruct-q8_0 using StandardGeneratorBuilder`1,SharpMind.Model.QuantizedKVCacherBuilder
+ModelFactory.CreateSession executed in: 0.44s
+Prompt:Hello
+Response:Hello! How can I help you today?
+
+Tokens per second: 6.01  TTFT: 2.444s
+Testing qwen2-0_5b-instruct-q8_0 using StandardGeneratorBuilder`1,SharpMind.Model.PagedKVCacherBuilder
+ModelFactory.CreateSession executed in: 0.23s
+Prompt:Hello
+Response:Hello! How can I assist you today?
+
+Tokens per second: 4.54  TTFT: 2.903s
+Testing qwen2-0_5b-instruct-q8_0 using StandardGeneratorBuilder`1,SharpMind.Model.KVCacherBuilder
+ModelFactory.CreateSession executed in: 0.28s
+Prompt:Hello
+Response:Hello! How can I assist you today?
+
+Tokens per second: 6.90  TTFT: 1.605s
+Testing qwen2-0_5b-instruct-q8_0 using MedusaGeneratorBuilder`1,SharpMind.Model.QuantizedKVCacherBuilder
+ModelFactory.CreateSession executed in: 0.28s
+Prompt:Hello
+Response:Hello! How can I help you today?
+
+Tokens per second: 1.70  TTFT: 2.330s
+Testing qwen2-0_5b-instruct-q8_0 using MedusaGeneratorBuilder`1,SharpMind.Model.PagedKVCacherBuilder
+ModelFactory.CreateSession executed in: 0.21s
+Prompt:Hello
+Response:Hello! How can I assist you today?
+
+Tokens per second: 1.67  TTFT: 2.535s
+Testing qwen2-0_5b-instruct-q8_0 using MedusaGeneratorBuilder`1,SharpMind.Model.KVCacherBuilder
+ModelFactory.CreateSession executed in: 0.20s
+Prompt:Hello
+Response:Hello! How can I assist you today?
+
+Tokens per second: 1.42  TTFT: 2.305s
+Testing qwen2-0_5b-instruct-q8_0 using SpeculativeGeneratorBuilder`1,SharpMind.Model.QuantizedKVCacherBuilder
+ModelFactory.CreateSession executed in: 0.20s
+Prompt:Hello
+Response:Hello! How can I can help you with?
+
+Tokens per second: 6.63  TTFT: 1.798s
+Testing qwen2-0_5b-instruct-q8_0 using SpeculativeGeneratorBuilder`1,SharpMind.Model.PagedKVCacherBuilder
+ModelFactory.CreateSession executed in: 0.20s
+Prompt:Hello
+Response:Hello! How can I assist you today?
+
+Tokens per second: 4.09  TTFT: 2.630s
+Testing qwen2-0_5b-instruct-q8_0 using SpeculativeGeneratorBuilder`1,SharpMind.Model.KVCacherBuilder
+ModelFactory.CreateSession executed in: 0.21s
+Prompt:Hello
+Response:Hello! How can I assist you today?
+
+Tokens per second: 3.86  TTFT: 2.385s
+
+Done!

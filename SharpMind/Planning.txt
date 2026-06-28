@@ -1,4 +1,30 @@
-﻿#HIGH Priority
+﻿Changes to SharpMind.CUI
+Options View Skills folder, Tools Dll and Tools Folder need an open button for searching file system or selecting tools in tools folder 
+Should have a Project Path, this would be a woking path for File ops, example code.
+Should have a Save Options As for use in Code only, or an Open to load pre-sets
+There dosn't seem to be an implimentation for approving File or Network Access and should be an Option, Ask,Allways,Never
+
+Noticd onces chart started after going into session options and cancelling the return window was the Model chooser not the Chat
+Chat Sessions need to be easily renameable
+
+Chat
+Response in not being streamed only full output shown
+ChatView _transcriptView shouldn't be selectable for input and the input needs a button on right for Interrupt and key Binding Esc
+sidebarFrame should show Tokens Per Second, Time to First Token and not clear after Chat Streamed.
+sidebar frame ModelMem, KevMem, FreeMem would be nice.
+
+Need to have save Session/Load Session.  Re-Use exact same model and track if needs to be freed on closing
+Chat needs to be able to load opend sessions.
+Need to have close session and remove from Chat List
+
+
+
+
+
+
+Final Addition  Model Building/Training
+
+#HIGH Priority
 you must make sure you understand the JigSawDotNet pattern and use. Intention is to reduce and branching code by genertaing code whihc may require implmenting or re-using Ops, Kernel and Factory patterns,
 Review Sharmind.Core.Activations.* for example
 
@@ -15,9 +41,11 @@ Is KV cache be quantized/dequantized should it be stored in desired Qunatization
 
 
 ChatSession History should have flag for indicating if required or not, ignore Agent thinking only require summary.
-PrePrompt and PostPrompt porcessor interfaces, truncate, compaction, summarization of current chat or Pre prompt could be used for other purposes, reading attached artifacts or correcting input prompts.
+PrePrompt and PostPrompt porcessor interfaces, truncate, compaction, summarization of current chat or Pre prompt could be used for other purposes,Cache Importance for Current Context , reading attached artifacts or correcting input prompts.
 ChatSession interrupt, need to be able to impement but how do we implment Recover rather than start again?
-
+Tools, obligigotry Weather Tool,  Commmon CLI/Git Tools.
+Tools in setting should have sub option to enable/disable available tools.
+Agent Builder Option To use Deafaul System Prompt could cause issue with Agent Name
 
 LogitOps should this move to JIgSawDotNetPattern.
 currently in Project there are 2 tests if (UseQuantized), if (workspace != null) and a fallback

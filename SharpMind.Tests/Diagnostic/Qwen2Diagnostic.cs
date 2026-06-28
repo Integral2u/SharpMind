@@ -335,4 +335,98 @@ public class Qwen2Diagnostic
             }
         }
     }
+
+    /// <summary>Verify every K-quant VecDot against dequantized float for all failing models.</summary>
+    [Fact]
+    public void Verify_KQuant_VecDots_Against_Float()
+    {
+        var models = new[] {
+            ("TinyLlama-1.1B-Chat-v1.0.Q4_K_M", @"C:\Integral2u\source\repos\SharpMind\ExternalAssets\TinyLlama-1.1B-Chat-v1.0.Q4_K_M.gguf", "blk.0.attn_q.weight"),
+            ("DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M", @"C:\Integral2u\source\repos\SharpMind\ExternalAssets\DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M.gguf", "blk.0.attn_q.weight"),
+        };
+
+        foreach (var (label, path, tensorName) in models)
+        {
+            if (!File.Exists(path)) { _output.WriteLine($"SKIP {label}"); continue; }
+            _output.WriteLine($"\n=== {label} ===");
+            var meta = GgufLoader.LoadMeta(path);
+            ModelConfig c = GgufLoader.LoadConfig(meta)!;
+            var sc = c.ForModel(HardwareTier.AVX2);
+            var w = GgufLoader.LoadWeightsToTransformerWeights(path, c);
+            var m = ModelFactory.CreateSession(w, sc);
+            var block = m.GetBlock(0)!;
+
+            using var x = new Tensor<float>(1, c.HiddenDim);
+            var rng = new Random(42);
+            for (int i = 0; i < x.ElementCount; i++) x.Data[i] = (float)(rng.NextDouble() * 2 - 1);
+
+            // Test each attention projection
+            var layers = new (LinearLayer? layer, string name, string ggufName)[] {
+                (block.Attention.Wq, "Q", tensorName),
+                (block.Attention.Wk, "K", tensorName.Replace("attn_q", "attn_k")),
+                (block.Attention.Wv, "V", tensorName.Replace("attn_q", "attn_v")),
+                (block.Attention.Wo, "O", tensorName.Replace("attn_q", "attn_output")),
+            };
+
+            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read);
+            using var reader = new BinaryReader(fs);
+            var tensorsByName = meta.Tensors.ToDictionary(t => t.Name, t => t);
+
+            foreach (var (layer, lname, gname) in layers)
+            {
+                if (layer == null) { _output.WriteLine($"  {lname}: SKIP (null)"); continue; }
+
+                // Load dequantized float weight
+                if (tensorsByName.TryGetValue(gname, out var tInfo))
+                {
+                    fs.Position = meta.DataOffset + tInfo.Offset;
+                    int count = 1;
+                    foreach (int d in tInfo.Shape) count *= d;
+                    var floatBuf = new float[count];
+                    GgufLoader.ReadTensorInto(reader, tInfo.Dtype, tInfo.Shape, floatBuf.AsSpan());
+                    layer.LoadWeightTransposed(floatBuf.AsSpan());
+                }
+
+                layer.UseQuantizedForward = false;
+                using var yf = layer.Forward(x, m.Ops);
+                layer.UseQuantizedForward = true;
+                using var yq = layer.Forward(x, m.Ops);
+                double diff = 0;
+                for (int i = 0; i < yf.ElementCount; i++)
+                    diff += Math.Abs(yf.Data[i] - yq.Data[i]);
+                double avg = diff / yf.ElementCount;
+                string dt = layer.QuantDtype?.ToString() ?? "?";
+                string pass = avg < 0.01 ? "PASS" : "FAIL";
+                _output.WriteLine($"  {lname} ({layer.InFeatures}x{layer.OutFeatures} dtype={dt}): diff_avg={avg:G6} {(pass)}");
+                if (avg > 0.01)
+                    for (int i = 0; i < Math.Min(2, yf.ElementCount); i++)
+                        _output.WriteLine($"    [{i}] float={yf.Data[i]:G8} quant={yq.Data[i]:G8} diff={Math.Abs(yf.Data[i] - yq.Data[i]):G4}");
+            }
+            m.Dispose();
+        }
+    }
+
+    /// <summary>Verify F16 model: check F16 dequantization produces valid values.</summary>
+    [Fact]
+    public void Verify_F16_Dequant()
+    {
+        string path = @"C:\Integral2u\source\repos\SharpMind\ExternalAssets\Qwen2.5-1.5B-Instruct-f16.gguf";
+        if (!File.Exists(path)) { _output.WriteLine("SKIP"); return; }
+        var meta = GgufLoader.LoadMeta(path);
+        var qInfo = meta.Tensors.First(t => t.Name == "blk.0.attn_q.weight");
+        _output.WriteLine($"attn_q: shape=[{string.Join(",", qInfo.Shape)}] dtype={qInfo.Dtype}");
+
+        using var fs = new FileStream(path, FileMode.Open, FileAccess.Read);
+        using var reader = new BinaryReader(fs);
+        fs.Position = meta.DataOffset + qInfo.Offset;
+        int count = 1;
+        foreach (int d in qInfo.Shape) count *= d;
+        var buf = new float[count];
+        GgufLoader.ReadTensorInto(reader, qInfo.Dtype, qInfo.Shape, buf.AsSpan());
+
+        double sum = 0;
+        int nanCount = 0;
+        for (int i = 0; i < count; i++) { if (float.IsNaN(buf[i])) nanCount++; sum += Math.Abs(buf[i]); }
+        _output.WriteLine($"F16 dequant: avg_abs={(sum / count):G6} nanCount={nanCount} ({(nanCount == 0 ? "PASS" : "FAIL")})");
+    }
 }

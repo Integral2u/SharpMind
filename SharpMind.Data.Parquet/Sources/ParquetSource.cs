@@ -51,23 +51,61 @@ public sealed class ParquetSource : IDataSource
             cancellationToken.ThrowIfCancellationRequested();
 
             using var stream = File.OpenRead(path);
-            using var reader = await ParquetReader.CreateAsync(stream, null, true, cancellationToken);
+            var reader = await ParquetReader.CreateAsync(stream, null, true, cancellationToken);
             
             for (int i = 0; i < reader.RowGroupCount; i++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
                 using var rowGroupReader = reader.OpenRowGroupReader(i);
-                DataColumn[] columns = await reader.ReadEntireRowGroupAsync(i, cancellationToken);
+                var dataFields = reader.Schema.GetDataFields();
+
+                // Find the data field schemas by their names
+                var fromField = dataFields.FirstOrDefault(f => f.Name == "from");
+                var valueField = dataFields.FirstOrDefault(f => f.Name == "value");
+                var sourceField = dataFields.FirstOrDefault(f => f.Name == "source");
+
+                int rowCount = (int)rowGroupReader.RowCount;
+
+                // 1. Read "from" column
+                object[] fromCol = null;
+                if (fromField != null)
+                {
+                    // Swap string[] for whatever type 'from' is (e.g., int[], long[])
+                    string[] buffer = new string[rowCount];
+                    await rowGroupReader.ReadAsync(fromField, buffer,null, cancellationToken);
+                    fromCol = buffer.Cast<object>().ToArray();
+                }
+
+                // 2. Read "value" column
+                object[] valueCol = null;
+                if (valueField != null)
+                {
+                    // Swap double[] for whatever type 'value' is (e.g., decimal[], float[])
+                    double[] buffer = new double[rowCount];
+                    await rowGroupReader.ReadAsync<double>(valueField, buffer, null, cancellationToken);
+                    valueCol = buffer.Cast<object>().ToArray();
+                }
+
+                // 3. Read "source" column
+                object[] sourceCol = null;
+                if (sourceField != null)
+                {
+                    string[] buffer = new string[rowCount];
+                    await rowGroupReader.ReadAsync(sourceField, buffer, null, cancellationToken);
+                    sourceCol = buffer.Cast<object>().ToArray();
+                }
+
+                /*DataColumn[] columns = await reader.ReadEntireRowGroupAsync(i, cancellationToken);
                 
                 var fromCol = columns.FirstOrDefault(c => c.Field.Name == "from");
                 var valueCol = columns.FirstOrDefault(c => c.Field.Name == "value");
                 var sourceCol = columns.FirstOrDefault(c => c.Field.Name == "source");
-
+                */
                 if (fromCol != null && valueCol != null)
                 {
-                    var froms = (string[])fromCol.Data;
-                    var values = (string[])valueCol.Data;
+                    var froms = (string[])fromCol;
+                    var values = (string[])valueCol;
 
                     for (int j = 0; j < froms.Length; j++)
                     {
@@ -77,7 +115,7 @@ public sealed class ParquetSource : IDataSource
                 }
                 else if (_textField == "source" && sourceCol != null)
                 {
-                    var sources = (string[])sourceCol.Data;
+                    var sources = (string[])sourceCol;
                     foreach (var s in sources)
                     {
                         cancellationToken.ThrowIfCancellationRequested();
@@ -86,6 +124,7 @@ public sealed class ParquetSource : IDataSource
                     }
                 }
             }
+            await reader.DisposeAsync();
         }
     }
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;

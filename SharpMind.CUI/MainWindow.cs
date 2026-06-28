@@ -95,22 +95,26 @@ public sealed class MainWindow : Window
     private void ShowWelcome() => SwapContent(new WelcomeView(
         onBrowseModel: ShowModelBrowser));
 
-    private void ShowModelBrowser() => SwapContent(new ModelBrowserView(
-        startPath: _options.ProjectPath ?? Directory.GetCurrentDirectory(),
-        onChosen: path =>
-        {
-            _options.ModelPath = path;
-            _options.ProjectPath ??= Path.GetDirectoryName(path);
-
-            if (string.IsNullOrWhiteSpace(_settings.DefaultModelFolder))
+    private void ShowModelBrowser()
+    {
+        Action onCancel = _activeSession is not null ? ShowChat : ShowWelcome;
+        SwapContent(new ModelBrowserView(
+            startPath: _options.ProjectPath ?? Directory.GetCurrentDirectory(),
+            onChosen: path =>
             {
-                _settings.DefaultModelFolder = Path.GetDirectoryName(path);
-                _settings.Save(out _);
-            }
+                _options.ModelPath = path;
+                _options.ProjectPath ??= Path.GetDirectoryName(path);
 
-            ShowOptions();
-        },
-        onCancel: ShowWelcome));
+                if (string.IsNullOrWhiteSpace(_settings.DefaultModelFolder))
+                {
+                    _settings.DefaultModelFolder = Path.GetDirectoryName(path);
+                    _settings.Save(out _);
+                }
+
+                ShowOptions();
+            },
+            onCancel: onCancel));
+    }
 
     private void ShowOptions() => SwapContent(new OptionsView(_options,
         onLaunch: LaunchSession,
@@ -125,7 +129,8 @@ public sealed class MainWindow : Window
 
     private void ShowSettings()
     {
-        var view = new SettingsView(_settings, onBack: ShowWelcome);
+        Action onBack = _activeSession is not null ? ShowChat : ShowWelcome;
+        var view = new SettingsView(_settings, onBack: onBack);
         view.OnThemeChanged = kind => ThemeBuilder.ApplyRecursively(this, ThemeBuilder.Build(kind));
         SwapContent(view);
     }

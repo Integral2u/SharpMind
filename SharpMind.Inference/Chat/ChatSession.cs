@@ -193,7 +193,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
 
             double importance = 0.5;
             if (msg.Metadata?.TryGetValue("importance_score", out var s) == true)
-                double.TryParse(s, out importance);
+                if (double.TryParse(s, out var metaImportance)) importance = metaImportance;
 
             candidates.Add((i, importance, msg.Timestamp));
         }
@@ -761,27 +761,27 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         _generator.ResetCache();
     }
 
+    public static readonly JsonSerializerOptions IndentedEnumConverter = new()
+    {
+        WriteIndented = true,
+        Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
+    };
+    public static readonly JsonSerializerOptions EnumConverter = new()
+    {
+        Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
+    };
     public async Task SaveAsync(string path, CancellationToken ct = default)
     {
         ThrowIfDisposed();
         var snapshot = GetSnapshot();
-        var options = new System.Text.Json.JsonSerializerOptions
-        {
-            WriteIndented = true,
-            Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
-        };
-        var json = System.Text.Json.JsonSerializer.Serialize(snapshot, options);
+        var json = JsonSerializer.Serialize(snapshot, IndentedEnumConverter);
         await File.WriteAllTextAsync(path, json, ct);
     }
 
     public static async Task LoadSnapshotAsync(string path, ChatSession<T, K> session, CancellationToken ct = default)
     {
-        var options = new System.Text.Json.JsonSerializerOptions
-        {
-            Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
-        };
         var json = await File.ReadAllTextAsync(path, ct);
-        var snapshot = System.Text.Json.JsonSerializer.Deserialize<ChatSessionSnapshot>(json, options)
+        var snapshot = JsonSerializer.Deserialize<ChatSessionSnapshot>(json, EnumConverter)
             ?? throw new InvalidOperationException("Failed to deserialize session snapshot.");
         session.LoadSnapshot(snapshot);
     }
