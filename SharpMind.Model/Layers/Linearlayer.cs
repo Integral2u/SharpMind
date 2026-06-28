@@ -228,6 +228,7 @@ public sealed class LinearLayer : IDisposable
             GgufDtype.Q8_K when _qOps.VecDotQ8K != null => WrapVecDotAsMatMul(_qOps.VecDotQ8K),
             _ => null
         };
+
         return UseQuantizedForward;
     }
 
@@ -362,6 +363,23 @@ public sealed class LinearLayer : IDisposable
         if (data.Length != _bias.ElementCount)
             throw new ArgumentException($"Expected {_bias.ElementCount} bias values, got {data.Length}.");
         data.CopyTo(_bias.Data);
+    }
+
+    /// <summary>
+    /// When quantized forward is active and raw data exists, the float weight
+    /// tensor is never read. Replace with a minimal placeholder to free memory.
+    /// The original float tensor is owned by BlockWeights (when _ownsWeight is
+    /// false) and stays alive there.
+    /// </summary>
+    public void FreeFloatWeight()
+    {
+        if (!UseQuantizedForward || RawQuantizedData == null) return;
+        if (_ownsWeight)
+            _weight.Dispose();
+        _weight = new Tensor<float>(InFeatures, 1);
+        _ownsWeight = true;
+        _weightBT?.Dispose();
+        _weightBT = null;
     }
 
     public void Dispose()

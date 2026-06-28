@@ -40,7 +40,7 @@ internal static class FfnKernels
         SharpMind.Core.Memory.Workspace? workspace = null)
     {
         using var fused = wGated.Forward(x, ops, workspace);
-        int ffnDim = wDown.Weight.Shape[0];
+        int ffnDim = wDown.InFeatures;
         int[] fusedDims = fused.Shape.Dims.ToArray();
         int total = fused.ElementCount / (2 * ffnDim);
         bool hasBatch = fused.Rank > 2;

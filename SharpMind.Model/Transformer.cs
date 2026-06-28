@@ -71,6 +71,21 @@ public sealed class Transformer : IDisposable
     public Tensor<float> ForwardEmbedding(Tensor<int> tokenIds) => _embedding.Forward(tokenIds);
     public TransformerBlock? GetBlock(int layer) => _blocks is not null && layer < _blocks.Length ? _blocks[layer] : null;
 
+    /// <summary>
+    /// Frees float weight memory for all layers using quantized forward.
+    /// Safe to call after model loading is complete — float weights are not
+    /// needed for inference when UseQuantizedForward is active.
+    /// </summary>
+    public void FreeFloatWeights()
+    {
+        if (_blocks != null)
+        {
+            foreach (var block in _blocks)
+                block.FreeFloatWeights();
+        }
+        // LogitOps float weight is freed by its own logic
+    }
+
     /// <summary>Sets an activation hook on all blocks in the model.</summary>
     public void SetActivationHook(IActivationHook? hook)
     {

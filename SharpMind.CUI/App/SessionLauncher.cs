@@ -109,6 +109,7 @@ public static class SessionLauncher
             : sharpConfig.ToJigSawMapping();
 
         var model = ModelFactory.CreateSession(weights, sharpConfig, mapping);
+        model.FreeFloatWeights();
 
         // --- Tools / skills / agent -----------------------------------------
         var resolvedToolPaths = ResolveToolAssemblyPaths(options);

@@ -137,6 +137,12 @@ public abstract class TransformerBlock : IDisposable
         return false;
     }
 
+    public void FreeFloatWeights()
+    {
+        _attention.FreeFloatWeights();
+        _ffn.FreeFloatWeights();
+    }
+
     public void Dispose()
     {
         if (_disposed) return;

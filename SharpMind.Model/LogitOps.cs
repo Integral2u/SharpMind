@@ -8,7 +8,11 @@ namespace SharpMind.Model;
 
 public sealed class LogitOps(Tensor<float> projectionWeight, byte[]? rawWeight, GgufDtype? rawDtype, TensorOps ops, QuantizationOps? qOps)
 {
-    public bool UseQuantized => rawWeight != null && rawDtype == GgufDtype.Q8_0 && qOps != null;
+    private readonly Tensor<float> projectionWeight = projectionWeight;
+    private readonly byte[]? rawWeight = rawWeight;
+    private readonly TensorOps ops = ops;
+    private readonly QuantizationOps? qOps = qOps;
+    public readonly bool UseQuantized = rawWeight != null && rawDtype == GgufDtype.Q8_0 && qOps != null;
 
     public unsafe Tensor<float> Project(Tensor<float> input, int M, int K, int N, Workspace? workspace = null)
     {

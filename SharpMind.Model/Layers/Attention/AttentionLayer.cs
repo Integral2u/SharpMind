@@ -429,6 +429,16 @@ namespace SharpMind.Model.Layers.Attention;
         if (_kNorm != null) foreach (var p in _kNorm.Parameters()) yield return p;
     }
 
+    public void FreeFloatWeights()
+    {
+        Wq.FreeFloatWeight();
+        Wk.FreeFloatWeight();
+        Wv.FreeFloatWeight();
+        Wo.FreeFloatWeight();
+        if (Wqkv != null && Wqkv.UseQuantizedForward && Wqkv.RawQuantizedData != null)
+            Wqkv.FreeFloatWeight();
+    }
+
     public void Dispose() { Dispose(true); GC.SuppressFinalize(this); }
     protected virtual void Dispose(bool disposing)
     {

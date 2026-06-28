@@ -38,7 +38,7 @@ public sealed class GatedFfnLayer(ModelConfig config, ActivationOps acts, Tensor
         var dHidden = Ops.MatMul(gradOutput, wDownT);
         int ffnDim = Config.FfnDim;
         int batchSize = dHidden.ElementCount / ffnDim;
-        int hiddenDim = WGated!.Weight.Shape[0];
+                int hiddenDim = WGated.InFeatures;
 
         // Fused backward: reconstruct [B, 2*fD] gradient from [B, fD] gradient.
         // Gate and up have the same gradient (dHidden) in this simplified version.

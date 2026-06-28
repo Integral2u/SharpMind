@@ -178,6 +178,27 @@ public abstract class FfnLayer : IDisposable
 
     // Parameters & Disposal
 
+    public void FreeFloatWeights()
+    {
+        if (W1 is not null && W2 is not null)
+        {
+            W1.FreeFloatWeight();
+            W2.FreeFloatWeight();
+        }
+        else if (WGated is not null && WDown is not null)
+        {
+            WGated.FreeFloatWeight();
+            WDown.FreeFloatWeight();
+        }
+        Router?.FreeFloatWeight();
+        if (ExpertGate is not null)
+            foreach (var l in ExpertGate) l.FreeFloatWeight();
+        if (ExpertUp is not null)
+            foreach (var l in ExpertUp) l.FreeFloatWeight();
+        if (ExpertDown is not null)
+            foreach (var l in ExpertDown) l.FreeFloatWeight();
+    }
+
     public void Dispose()
     {
         Dispose(true);
