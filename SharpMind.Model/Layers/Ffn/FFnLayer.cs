@@ -153,6 +153,30 @@ public abstract class FfnLayer : IDisposable
         // MoE weights not supported in current BlockWeights
     }
 
+    /// <summary>Pushes newly loaded raw quantized data into layer instances.
+    /// Called by <see cref="CachedWeightLoader"/> after on-demand layer loading.
+    /// Does NOT touch float tensors — safe after FreeFloatWeights.</summary>
+    public void UpdateRawWeights(TransformerWeights.BlockWeights weights)
+    {
+        if (W1 is not null && W2 is not null)
+        {
+            W1.SetRawWeight(weights.RawWf1, weights.QuantDtypeWf1 ?? GgufDtype.F32);
+            W2.SetRawWeight(weights.RawWf2, weights.QuantDtypeWf2 ?? GgufDtype.F32);
+        }
+        else if (WGated is not null && WDown is not null)
+        {
+            if (weights.RawWgate != null && weights.RawWup != null)
+            {
+                byte[] fused = new byte[weights.RawWgate.Length + weights.RawWup.Length];
+                Buffer.BlockCopy(weights.RawWgate, 0, fused, 0, weights.RawWgate.Length);
+                Buffer.BlockCopy(weights.RawWup, 0, fused, weights.RawWgate.Length, weights.RawWup.Length);
+                var fusedDtype = weights.QuantDtypeWgate ?? GgufDtype.F32;
+                WGated.SetRawWeight(fused, fusedDtype);
+            }
+            WDown.SetRawWeight(weights.RawWf2, weights.QuantDtypeWf2 ?? GgufDtype.F32);
+        }
+    }
+
     // PuzzleCornerPieces
 
     [PuzzleCornerPiece(SharpMindConfig.KeyFfn,

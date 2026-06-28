@@ -14,6 +14,7 @@ public sealed class CachedWeightLoader : IDisposable
     private readonly HashSet<int> _loaded = [];
     private readonly ConcurrentDictionary<int, Task> _loading = new();
     private readonly object _sync = new();
+    private readonly List<Action<int>> _onLayerLoaded = [];
 
     public int CacheDepth => _cacheDepth;
 
@@ -28,6 +29,17 @@ public sealed class CachedWeightLoader : IDisposable
         int initialLayers = Math.Min(_cacheDepth, weights.Blocks.Length);
         for (int i = 0; i < initialLayers; i++)
             LoadLayerSync(i);
+    }
+
+    public void RegisterOnLayerLoaded(Action<int> callback)
+    {
+        lock (_sync)
+        {
+            _onLayerLoaded.Add(callback);
+            // Fire for any layers already loaded
+            foreach (int i in _loaded)
+                callback(i);
+        }
     }
 
     public void EnsureLayer(int layerIndex)
@@ -83,13 +95,18 @@ public sealed class CachedWeightLoader : IDisposable
             }
         }
 
-        lock (_sync) { _loaded.Add(layerIndex); }
+        lock (_sync)
+        {
+            _loaded.Add(layerIndex);
+            foreach (var cb in _onLayerLoaded)
+                cb(layerIndex);
+        }
     }
 
     public void Dispose()
     {
         _mmf.Dispose();
         _loading.Clear();
-        lock (_sync) { _loaded.Clear(); }
+        lock (_sync) { _loaded.Clear(); _onLayerLoaded.Clear(); }
     }
 }

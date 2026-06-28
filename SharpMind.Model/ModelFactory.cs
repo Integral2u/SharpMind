@@ -74,6 +74,18 @@ public static class ModelFactory
         var blocks = Enumerable.Range(0, weights.Config.NumLayers)
             .Select(i => BuildBlock(i, weights, sharpConfig, mapping, acts, ops, qOps, sharpConfig.UseHooks)).ToArray();
 
+        // In Cached mode, register callbacks so CachedWeightLoader pushes raw data
+        // into layer instances after on-demand loading. Fires immediately for layers
+        // already loaded (0..cacheDepth-1) and for each subsequent layer on prefetch.
+        if (weights.CachedLoader != null)
+        {
+            weights.CachedLoader.RegisterOnLayerLoaded(layerIdx =>
+            {
+                if (layerIdx < blocks.Length)
+                    blocks[layerIdx].UpdateRawWeights(weights.Blocks[layerIdx]);
+            });
+        }
+
         IArchitecture arch = sharpConfig.Arch switch
         {
             ArchKind.Decoder => new DecoderArch(blocks, weights.CachedLoader),

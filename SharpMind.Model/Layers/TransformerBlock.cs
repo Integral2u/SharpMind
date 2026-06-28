@@ -143,6 +143,14 @@ public abstract class TransformerBlock : IDisposable
         _ffn.FreeFloatWeights();
     }
 
+    /// <summary>Pushes newly loaded raw quantized data into attention + FFN layer instances.
+    /// Safe to call after FreeFloatWeights — only sets RawQuantizedData, not float tensors.</summary>
+    public void UpdateRawWeights(TransformerWeights.BlockWeights weights)
+    {
+        _attention.UpdateRawWeights(weights);
+        _ffn.UpdateRawWeights(weights);
+    }
+
     public void Dispose()
     {
         if (_disposed) return;

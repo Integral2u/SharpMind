@@ -485,15 +485,10 @@ public static partial class GgufLoader
         weights.GgufMeta = meta;
         weights.GgufPath = path;
 
-        // Cached mode: create CachedWeightLoader, skip tensor loop entirely.
-        // CachedWeightLoader constructor loads initial layers synchronously,
-        // then PrefetchAfter async-loads subsequent layers as Forward progresses.
-        if (mode == LoadMode.Cached)
-        {
-            weights.CachedLoader = new Layers.CachedWeightLoader(weights, path, meta);
-            progress?.Report(1f);
-            return weights;
-        }
+        // Cached mode: CachedWeightLoader handles block weight matrix raw data
+        // on demand. We still run the tensor loop for non-weight tensors
+        // (norms, biases, embedding, lm_head).
+        bool isCached = mode == LoadMode.Cached;
 
         using var mmf = MemoryMappedFile.CreateFromFile(path, FileMode.Open, null, 0, MemoryMappedFileAccess.Read);
         using var stream = mmf.CreateViewStream(0, 0, MemoryMappedFileAccess.Read);
@@ -532,6 +527,13 @@ public static partial class GgufLoader
 
             if (IsQuantizedType(info.Dtype) && info.Shape.Length >= 2 && block != null && rawField != null)
             {
+                // Cached mode: CachedWeightLoader handles block weight matrix raw data on demand
+                if (isCached)
+                {
+                    loaded++;
+                    continue;
+                }
+
                 long rawSize = GetRawTensorByteCount(info.Shape, info.Dtype);
                 if (rawSize > 0 && stream.Position + rawSize <= stream.Length)
                 {
@@ -645,6 +647,10 @@ public static partial class GgufLoader
             }
         }
         progress?.Report(1f);
+
+        if (isCached)
+            weights.CachedLoader = new Layers.CachedWeightLoader(weights, path, meta);
+
         return weights;
     }
 

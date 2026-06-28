@@ -167,6 +167,17 @@ namespace SharpMind.Model.Layers.Attention;
         }
     }
 
+    /// <summary>Pushes newly loaded raw quantized data into layer instances.
+    /// Called by <see cref="CachedWeightLoader"/> after on-demand layer loading.
+    /// Does NOT touch float tensors — safe after FreeFloatWeights.</summary>
+    public void UpdateRawWeights(TransformerWeights.BlockWeights weights)
+    {
+        Wq.SetRawWeight(weights.RawWq, weights.QuantDtypeWq ?? GgufDtype.F32);
+        Wk.SetRawWeight(weights.RawWk, weights.QuantDtypeWk ?? GgufDtype.F32);
+        Wv.SetRawWeight(weights.RawWv, weights.QuantDtypeWv ?? GgufDtype.F32);
+        Wo.SetRawWeight(weights.RawWo, weights.QuantDtypeWo ?? GgufDtype.F32);
+    }
+
     private unsafe void LoadFusedWeightTransposed(ReadOnlySpan<float> data, int colOffset, int subOutF)
     {
         // data is GGUF layout [subOutF, HiddenDim] (transposed)
