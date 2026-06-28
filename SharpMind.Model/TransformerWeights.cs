@@ -26,6 +26,13 @@ public sealed class TransformerWeights(ModelConfig config, Tensor<float> embeddi
     // Weights for each block
     public BlockWeights[] Blocks { get; } = blocks;
 
+    // GGUF metadata and path for seek-based lazy loading (Phase 5)
+    public Format.ModelMetaData? GgufMeta { get; set; }
+    public string? GgufPath { get; set; }
+
+    // Cached mode loader for on-demand layer weight loading
+    public CachedWeightLoader? CachedLoader { get; set; }
+
     public void Dispose()
     {
         EmbeddingWeight.Dispose();
@@ -33,6 +40,7 @@ public sealed class TransformerWeights(ModelConfig config, Tensor<float> embeddi
         FinalNormWeight.Dispose();
         FinalNormBias?.Dispose();
         foreach (var block in Blocks) block.Dispose();
+        CachedLoader?.Dispose();
     }
 
     public (Tensor<float>? target, BlockWeights? block, string? rawField) ResolveTarget(string name)

@@ -427,7 +427,54 @@ public static partial class GgufLoader
             InjectMissingTemplateTokens(meta, ref config, tokenizer);
     }
 
-    public static TransformerWeights LoadWeightsToTransformerWeights(string path, ModelConfig config, IProgress<float>? progress = null)
+    /// <summary>Seeks to and loads raw quantized data for a single layer's tensors.
+    /// Requires <see cref="TransformerWeights.GgufMeta"/> and <see cref="TransformerWeights.GgufPath"/>
+    /// populated by <see cref="LoadWeightsToTransformerWeights"/> (any mode).
+    /// When <paramref name="loadFloat"/> is true, non-quantized float tensors (norms, biases) are also read.</summary>
+    public static void LoadLayerRawWeights(TransformerWeights weights, int layerIndex, bool loadFloat = false)
+    {
+        var meta = weights.GgufMeta ?? throw new InvalidOperationException("GgufMeta not set. Load weights first.");
+        var path = weights.GgufPath ?? throw new InvalidOperationException("GgufPath not set. Load weights first.");
+        string prefix = $"blk.{layerIndex}.";
+
+        var layerTensors = meta.Tensors
+            .Where(t => t.Name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        if (layerTensors.Count == 0) return;
+
+        using var mmf = MemoryMappedFile.CreateFromFile(path, FileMode.Open, null, 0, MemoryMappedFileAccess.Read);
+        using var stream = mmf.CreateViewStream(0, 0, MemoryMappedFileAccess.Read);
+        using var reader = new BinaryReader(stream);
+        var block = weights.Blocks[layerIndex];
+
+        foreach (var info in layerTensors)
+        {
+            long targetOffset = meta.DataOffset + info.Offset;
+            if (targetOffset >= stream.Length) continue;
+            stream.Position = targetOffset;
+
+            var (target, _, rawField) = weights.ResolveTarget(info.Name);
+            long rawSize = GetRawTensorByteCount(info.Shape, info.Dtype);
+
+            if (rawSize > 0 && IsQuantizedType(info.Dtype) && rawField != null)
+            {
+                byte[] rawData = new byte[rawSize];
+                stream.ReadExactly(rawData);
+                SetRawField(block, rawField, rawData, info.Dtype);
+            }
+            else if (loadFloat && target != null)
+            {
+                var floatTarget = weights.ResolveFloatTarget(info.Name);
+                if (floatTarget != null)
+                {
+                    floatTarget.Data.Clear();
+                    ReadTensorInto(reader, info.Dtype, info.Shape, floatTarget.Data);
+                }
+            }
+        }
+    }
+
+    public static TransformerWeights LoadWeightsToTransformerWeights(string path, ModelConfig config, IProgress<float>? progress = null, LoadMode mode = LoadMode.Realtime)
     {
         // Clear pool to prevent cross-model memory accumulation
         // (different model sizes rarely reuse the same buckets)
@@ -435,6 +482,18 @@ public static partial class GgufLoader
 
         var meta = LoadMeta(path);
         var weights = ModelFactory.CreateWeights(config, config.ForModel(HardwareTier.Auto)); // Use model-specific config for allocation shapes
+        weights.GgufMeta = meta;
+        weights.GgufPath = path;
+
+        // Cached mode: create CachedWeightLoader, skip tensor loop entirely.
+        // CachedWeightLoader constructor loads initial layers synchronously,
+        // then PrefetchAfter async-loads subsequent layers as Forward progresses.
+        if (mode == LoadMode.Cached)
+        {
+            weights.CachedLoader = new Layers.CachedWeightLoader(weights, path, meta);
+            progress?.Report(1f);
+            return weights;
+        }
 
         using var mmf = MemoryMappedFile.CreateFromFile(path, FileMode.Open, null, 0, MemoryMappedFileAccess.Read);
         using var stream = mmf.CreateViewStream(0, 0, MemoryMappedFileAccess.Read);
@@ -483,7 +542,8 @@ public static partial class GgufLoader
                     // Store raw data in BlockWeights
                     SetRawField(block, rawField, rawData, info.Dtype);
                     loaded++;
-                    continue;
+                    if (mode != LoadMode.Full)
+                        continue;
                 }
             }
 
@@ -674,7 +734,7 @@ public static partial class GgufLoader
         progress?.Report(1f);
     }
 
-    private static bool IsQuantizedType(GgufDtype dtype) => dtype switch
+    internal static bool IsQuantizedType(GgufDtype dtype) => dtype switch
     {
         GgufDtype.Q2_K or GgufDtype.Q3_K or GgufDtype.Q4_K or GgufDtype.Q5_K or GgufDtype.Q6_K
         or GgufDtype.Q2_K_S or GgufDtype.Q3_K_S or GgufDtype.Q3_K_M or GgufDtype.Q3_K_L

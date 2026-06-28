@@ -13,14 +13,16 @@ namespace SharpMind.Model.Arch;
 public sealed class DecoderArch : IArchitecture
 {
     private readonly TransformerBlock[] _blocks;
+    private readonly CachedWeightLoader? _cachedLoader;
     private bool _disposed;
     
     private readonly List<Tensor<float>> _cachedInputs = [];
 
-    public DecoderArch(IEnumerable<TransformerBlock> blocks)
+    public DecoderArch(IEnumerable<TransformerBlock> blocks, CachedWeightLoader? cachedLoader = null)
     {
         ArgumentNullException.ThrowIfNull(blocks);
         _blocks = [.. blocks];
+        _cachedLoader = cachedLoader;
         if (_blocks.Length == 0)
             throw new ArgumentException("DecoderArch requires at least one block.", nameof(blocks));
     }
@@ -114,7 +116,9 @@ public sealed class DecoderArch : IArchitecture
         
         for (int i = 0; i < _blocks.Length; i++)
         {
+            _cachedLoader?.EnsureLayer(i);
             var next = _blocks[i].Forward(current, caches?[i], positionOffset, causal: true, workspace: workspace);
+            _cachedLoader?.PrefetchAfter(i);
             
             if (i > 0 && !ReferenceEquals(current, hiddenStates))
                 current.Dispose();

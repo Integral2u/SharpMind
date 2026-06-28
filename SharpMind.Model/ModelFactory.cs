@@ -76,7 +76,7 @@ public static class ModelFactory
 
         IArchitecture arch = sharpConfig.Arch switch
         {
-            ArchKind.Decoder => new DecoderArch(blocks),
+            ArchKind.Decoder => new DecoderArch(blocks, weights.CachedLoader),
             ArchKind.Encoder => new EncoderArch(blocks),
             _ => throw new NotSupportedException($"Unknown ArchKind: {sharpConfig.Arch}")
         };

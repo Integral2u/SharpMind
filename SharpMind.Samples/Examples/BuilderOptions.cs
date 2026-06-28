@@ -37,7 +37,7 @@ namespace SharpMind.Samples.Examples
             var sharpConfig = modelConfig.ForModel();
             GC.Collect(); GC.WaitForPendingFinalizers();
             var sw = Stopwatch.StartNew();
-            using var weights = GgufLoader.LoadWeightsToTransformerWeights(ggufPath, modelConfig);
+            using var weights = GgufLoader.LoadWeightsToTransformerWeights(ggufPath, modelConfig, null, LoadMode.Realtime);
             await Console.Out.WriteLineAsync($"GgufLoader.LoadWeightsToTransformerWeights executed in: {sw.Elapsed.TotalSeconds:F2}s");
             
 
