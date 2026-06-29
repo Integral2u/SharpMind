@@ -60,7 +60,7 @@ public static class ModelFactory
         return new TransformerWeights(modelConfig, embedding, lmHead, finalNormW, finalNormB, blockWeights);
     }
 
-    public static Transformer CreateSession(TransformerWeights weights, SharpMindConfig sharpConfig, Dictionary<string, string>? mapping = null, Dictionary<string, string>? quantMapping = null, bool optimizeMemory = true)
+    public static Transformer CreateSession(TransformerWeights weights, SharpMindConfig sharpConfig, Dictionary<string, string>? mapping = null, Dictionary<string, string>? quantMapping = null)
     {
         ArgumentNullException.ThrowIfNull(weights);
         ArgumentNullException.ThrowIfNull(sharpConfig);
@@ -77,11 +77,14 @@ public static class ModelFactory
         // In Cached mode, register callbacks so CachedWeightLoader pushes raw data
         // into layer instances after on-demand loading. Fires immediately for layers
         // already loaded (0..cacheDepth-1) and for each subsequent layer on prefetch.
-        weights.CachedLoader?.RegisterOnLayerLoaded(layerIdx =>
+        if (weights.CachedLoader != null)
+        {
+            weights.CachedLoader.RegisterOnLayerLoaded(layerIdx =>
             {
                 if (layerIdx < blocks.Length)
                     blocks[layerIdx].UpdateRawWeights(weights.Blocks[layerIdx]);
             });
+        }
 
         IArchitecture arch = sharpConfig.Arch switch
         {
@@ -92,10 +95,7 @@ public static class ModelFactory
 
         var finalNorm = BuildNorm(weights.Config.HiddenDim, sharpConfig, weights.Config.NormEps, weights.FinalNormWeight, weights.FinalNormBias);
 
-        var transformer = new Transformer(weights, embedding, arch, finalNorm, ops, weights.LmHeadWeight, qOps);
-        if (optimizeMemory)
-            transformer.FreeFloatWeights();
-        return transformer;         
+        return new Transformer(weights, embedding, arch, finalNorm, ops, weights.LmHeadWeight, qOps);
     }
 
     private static TransformerBlock BuildBlock(
@@ -156,10 +156,13 @@ public static class ModelFactory
         };
     }
 
-    private static NormLayer BuildNorm(int dim, SharpMindConfig sharpConfig, float eps, Tensor<float> w, Tensor<float>? b) => sharpConfig.Norm switch
+    private static NormLayer BuildNorm(int dim, SharpMindConfig sharpConfig, float eps, Tensor<float> w, Tensor<float>? b)
     {
-        NormKind.RMSNorm => new RmsNormLayer(dim, eps, w, b),
-        NormKind.LayerNorm => new LayerNormLayer(dim, eps, w, b),
-        _ => throw new NotSupportedException($"Unknown NormKind: {sharpConfig.Norm}")
-    };
+        return sharpConfig.Norm switch
+        {
+            NormKind.RMSNorm => new RmsNormLayer(dim, eps, w, b),
+            NormKind.LayerNorm => new LayerNormLayer(dim, eps, w, b),
+            _ => throw new NotSupportedException($"Unknown NormKind: {sharpConfig.Norm}")
+        };
+    }
 }

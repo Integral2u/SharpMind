@@ -78,7 +78,7 @@ namespace SharpMind.Samples.Examples
                     Console.ForegroundColor = ConsoleColor.Red;
                     await Console.Out.WriteLineAsync();
                     await Console.Out.WriteLineAsync($"EXCEPTION: {ex.GetType().Name}: {ex.Message}");
-                    await Console.Out.WriteLineAsync(ex.StackTrace?[..500] ?? "(no stack)");
+                    await Console.Out.WriteLineAsync(ex.StackTrace?.Substring(0, 500) ?? "(no stack)");
                 }
 
                 async void Response(ChatStreamEntry text)

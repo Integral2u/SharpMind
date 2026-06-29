@@ -87,15 +87,15 @@ public abstract class QuantizationOps
     public abstract unsafe float VecDotQ4_1(float* input, byte* rawWeights, int col, int inFeatures);
 
     [PuzzleCornerPiece(QuantizationConfig.KeyVecDotQ5_0, true, null,
-        "q5_0_fma",    $"{NS}.{nameof(QuantizationKernels.VecDotQ5_0_FMA)}",
-        "q5_0_avx2",   $"{NS}.{nameof(QuantizationKernels.VecDotQ5_0_AVX2)}",
+        "q5_0_fma",    $"{NS}.{nameof(QuantizationKernels.VecDotQ5_0_Scalar)}",
+        "q5_0_avx2",   $"{NS}.{nameof(QuantizationKernels.VecDotQ5_0_Scalar)}",
         "q5_0_sse",    $"{NS}.{nameof(QuantizationKernels.VecDotQ5_0_Scalar)}",
         "q5_0_scalar", $"{NS}.{nameof(QuantizationKernels.VecDotQ5_0_Scalar)}")]
     public abstract unsafe float VecDotQ5_0(float* input, byte* rawWeights, int col, int inFeatures);
 
     [PuzzleCornerPiece(QuantizationConfig.KeyVecDotQ5_1, true, null,
-        "q5_1_fma",    $"{NS}.{nameof(QuantizationKernels.VecDotQ5_1_FMA)}",
-        "q5_1_avx2",   $"{NS}.{nameof(QuantizationKernels.VecDotQ5_1_AVX2)}",
+        "q5_1_fma",    $"{NS}.{nameof(QuantizationKernels.VecDotQ5_1_Scalar)}",
+        "q5_1_avx2",   $"{NS}.{nameof(QuantizationKernels.VecDotQ5_1_Scalar)}",
         "q5_1_sse",    $"{NS}.{nameof(QuantizationKernels.VecDotQ5_1_Scalar)}",
         "q5_1_scalar", $"{NS}.{nameof(QuantizationKernels.VecDotQ5_1_Scalar)}")]
     public abstract unsafe float VecDotQ5_1(float* input, byte* rawWeights, int col, int inFeatures);

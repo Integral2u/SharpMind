@@ -43,7 +43,7 @@ public class Qwen2Diagnostic
             // Use AVX2 for the actual model
             var sc = c.ForModel(HardwareTier.AVX2);
             var w = GgufLoader.LoadWeightsToTransformerWeights(path, c);
-            var m = ModelFactory.CreateSession(w, sc, null, null, false);
+            var m = ModelFactory.CreateSession(w, sc);
             var block = m.GetBlock(0)!;
 
             // Load dequantized float weights for proper comparison (only the 3 tensors we need)
@@ -142,9 +142,9 @@ public class Qwen2Diagnostic
 
         // Load models
         var w2 = GgufLoader.LoadWeightsToTransformerWeights(q2Path, c2);
-        var model2 = ModelFactory.CreateSession(w2, sc2, null, null, false);
+        var model2 = ModelFactory.CreateSession(w2, sc2);
         var w8 = GgufLoader.LoadWeightsToTransformerWeights(q8Path, c8);
-        var model8 = ModelFactory.CreateSession(w8, sc8, null, null, false);
+        var model8 = ModelFactory.CreateSession(w8, sc8);
 
         // Embedding (token 0)
         using var input = Tensor<int>.From(new int[] { 0 }, 1, 1);
@@ -353,7 +353,7 @@ public class Qwen2Diagnostic
             ModelConfig c = GgufLoader.LoadConfig(meta)!;
             var sc = c.ForModel(HardwareTier.AVX2);
             var w = GgufLoader.LoadWeightsToTransformerWeights(path, c);
-            var m = ModelFactory.CreateSession(w, sc, null, null, false);
+            var m = ModelFactory.CreateSession(w, sc);
             var block = m.GetBlock(0)!;
 
             using var x = new Tensor<float>(1, c.HiddenDim);

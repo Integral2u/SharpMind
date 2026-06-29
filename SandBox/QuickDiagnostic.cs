@@ -54,7 +54,7 @@ public static class QuickDiagnostic
             Console.WriteLine($"  Config: HiddenDim={mc.HiddenDim} FfnDim={mc.FfnDim} NumLayers={mc.NumLayers} VocabSize={mc.VocabSize}");
 
             using var weights = GgufLoader.LoadWeightsToTransformerWeights(path, mc);
-            var model = ModelFactory.CreateSession(weights, cfg, null, null, false);
+            var model = ModelFactory.CreateSession(weights, cfg);
 
             // LM head diagnostic
             var lmHead = model.LmHead;

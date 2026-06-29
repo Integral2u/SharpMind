@@ -27,7 +27,7 @@ public static class RealDataTraining
         
         var sharpConfig = SharpMindConfig.Gpt with { Hardware = HardwareTier.Scalar };
         var weights = ModelFactory.CreateWeights(modelConfig, sharpConfig);
-        using var model = ModelFactory.CreateSession(weights, sharpConfig, null, null, false);
+        using var model = ModelFactory.CreateSession(weights, sharpConfig);
         
         foreach (var p in model.Parameters())
         {

@@ -76,7 +76,7 @@ public static class KVCacheBenchmark
                 var (name, cacheType) = cacheTypes[c];
 
                 GC.Collect(); GC.WaitForPendingFinalizers();
-                using var model = ModelFactory.CreateSession(weights, sharpConfig, null, null, false);
+                using var model = ModelFactory.CreateSession(weights, sharpConfig);
 
                 await using var session = ChatSessionFactory.CreateChatSession(
                     typeof(StandardGeneratorBuilder<>), cacheType, model, tokenizer, meta);

@@ -95,7 +95,7 @@ public static class ModelSizer
     {
         var sharpConfig = SharpMindConfig.Gpt with { Hardware = HardwareTier.Scalar };
         var weights = ModelFactory.CreateWeights(config, sharpConfig);
-        using var model = ModelFactory.CreateSession(weights, sharpConfig,null,null,false);
+        using var model = ModelFactory.CreateSession(weights, sharpConfig);
         
         var parameters = model.Parameters().ToList();
         var lossFn = new CrossEntropyLoss();
