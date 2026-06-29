@@ -24,7 +24,7 @@ public static class LogitDiagnostic
             Console.Error.WriteLine($"  tensor '{ti.Name}': dtype={(uint)ti.Dtype}({ti.Dtype}) shape=[{string.Join(",",ti.Shape)}]");
         var sharpConfig = modelConfig.ForModel();
         using var weights = GgufLoader.LoadWeightsToTransformerWeights(ggufPath, modelConfig);
-        using var model = ModelFactory.CreateSession(weights, sharpConfig);
+        using var model = ModelFactory.CreateSession(weights, sharpConfig, null, null, false);
 
         // Single token (BOS=151643 for Qwen2)
         using var input = Tensor<int>.From(new int[] { 151643 }, 1, 1);

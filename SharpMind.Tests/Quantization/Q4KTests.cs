@@ -271,7 +271,7 @@ public class Q4KTests
         GgufLoader.Load(q8Path, null, out var m8Meta, out var m8Config, out _);
         var sc8 = m8Config.ForModel(HardwareTier.AVX2);
         var w8 = GgufLoader.LoadWeightsToTransformerWeights(q8Path, m8Config);
-        var model8 = ModelFactory.CreateSession(w8, sc8);
+        var model8 = ModelFactory.CreateSession(w8, sc8, null, null, false);
         _output.WriteLine($"  done in {sw.Elapsed.TotalSeconds:F1}s");
 
         sw.Restart();
@@ -279,7 +279,7 @@ public class Q4KTests
         GgufLoader.Load(q4Path, null, out var m4Meta, out var m4Config, out _);
         var sc4 = m4Config.ForModel(HardwareTier.AVX2);
         var w4 = GgufLoader.LoadWeightsToTransformerWeights(q4Path, m4Config);
-        var model4 = ModelFactory.CreateSession(w4, sc4);
+        var model4 = ModelFactory.CreateSession(w4, sc4, null, null, false);
         _output.WriteLine($"  done in {sw.Elapsed.TotalSeconds:F1}s");
 
         // Create single-token input [0]
@@ -511,7 +511,7 @@ public class Q4KTests
         _output.WriteLine("Loading weights...");
         var w4 = GgufLoader.LoadWeightsToTransformerWeights(q4Path, m4Config);
         _output.WriteLine("Creating session...");
-        var model4 = ModelFactory.CreateSession(w4, sc4);
+        var model4 = ModelFactory.CreateSession(w4, sc4, null, null, false);
         _output.WriteLine("Session created.");
         model4.Dispose();
         w4.Dispose();

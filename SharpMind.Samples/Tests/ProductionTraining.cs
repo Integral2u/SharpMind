@@ -54,7 +54,7 @@ public static class ProductionTraining
         // To support this, we'd need a ModelFactory.Create with custom mapping.
         // For now, I'll keep the factory as is and assume we laer add a mapping override.
         var weights = ModelFactory.CreateWeights(modelConfig, sharpConfig);
-        var model = ModelFactory.CreateSession(weights, sharpConfig, mapping);
+        var model = ModelFactory.CreateSession(weights, sharpConfig, mapping, null, false);
         
         // 4. Trainer Setup
         var optimizer = new AdamW(model.Parameters(), lr: 3e-4f);

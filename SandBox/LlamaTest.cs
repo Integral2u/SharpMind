@@ -44,7 +44,7 @@ namespace SandBox
             {
                 tasks.Add(Task.Run(async () => 
                 {
-                    var model = ModelFactory.CreateSession(weights, sharpConfig);
+                    var model = ModelFactory.CreateSession(weights, sharpConfig, null, null, false);
                     await using var smSession = new ChatSession<StandardGeneratorBuilder<KVCacherBuilder>, KVCacherBuilder>(model, tokenizer, meta)
                     {
                         MaxTokens = 16,
