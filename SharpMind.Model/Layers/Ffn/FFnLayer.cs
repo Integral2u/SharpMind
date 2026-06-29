@@ -77,28 +77,6 @@ public abstract class FfnLayer : IDisposable
     {
         if (name.Contains("bias", StringComparison.OrdinalIgnoreCase)) return false;
 
-        // MoE expert tensors: blk.{L}.ffn_gate.exps.{E}.weight → ExpertGate[E]
-        if (ExpertGate is not null && name.Contains(".exps.", StringComparison.OrdinalIgnoreCase))
-        {
-            var expMatch = RegexGenerated.ExpertIndex.Match(name);
-            if (expMatch.Success && int.TryParse(expMatch.Groups[1].Value, out int expIdx))
-            {
-                if (name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase) && expIdx < ExpertGate.Length)
-                    return ExpertGate[expIdx].SetRawWeight(rawData, dtype);
-                if (name.Contains("ffn_up", StringComparison.OrdinalIgnoreCase) && expIdx < ExpertUp!.Length)
-                    return ExpertUp[expIdx].SetRawWeight(rawData, dtype);
-                if (name.Contains("ffn_down", StringComparison.OrdinalIgnoreCase) && expIdx < ExpertDown!.Length)
-                    return ExpertDown[expIdx].SetRawWeight(rawData, dtype);
-            }
-            return false;
-        }
-
-        // MoE router (ffn_gate.weight without .exps.)
-        if (Router is not null && name.Contains("gate", StringComparison.OrdinalIgnoreCase))
-            return Router.SetRawWeight(rawData, dtype);
-        if (Router is not null && name.Contains("up", StringComparison.OrdinalIgnoreCase))
-            return false; // Up without .exps. shouldn't appear in MoE models; skip float load
-
         // Gate and up are fused into WGated with separate quantized tensors in GGUF.
         // Force dequantization so LoadWeights can load into the fused float weight.
         if (name.Contains("gate", StringComparison.OrdinalIgnoreCase) || name.Contains("up", StringComparison.OrdinalIgnoreCase))
@@ -166,29 +144,13 @@ public abstract class FfnLayer : IDisposable
                 Buffer.BlockCopy(weights.RawWgate, 0, fused, 0, weights.RawWgate.Length);
                 Buffer.BlockCopy(weights.RawWup, 0, fused, weights.RawWgate.Length, weights.RawWup.Length);
                 // Use gate dtype for fused — both gate and up should be same type in practice
-                var fusedDtype = weights.QuantDtypeWgate ?? GgufDtype.F32;
+                var fusedDtype = weights.QuantDtypeWgate ?? weights.QuantDtype ?? GgufDtype.F32;
                 WGated.SetRawWeight(fused, fusedDtype);
             }
             WDown.ReplaceWeights(weights.Wf2, weights.Wf2Bias);
-            WDown.SetRawWeight(weights.RawWf2, weights.QuantDtypeWf2 ?? GgufDtype.F32);
+            WDown.SetRawWeight(weights.RawWf2, weights.QuantDtypeWf2 ?? weights.QuantDtype ?? GgufDtype.F32);
         }
-        else if (Router is not null && ExpertGate is not null)
-        {
-            // MoE: push per-expert raw data and router raw data
-            if (weights.RawWgateExp is not null)
-                foreach (var (expIdx, rawData) in weights.RawWgateExp)
-                    if (expIdx < ExpertGate.Length)
-                        ExpertGate[expIdx].SetRawWeight(rawData, weights.QuantDtypeWgateExp?.GetValueOrDefault(expIdx) ?? GgufDtype.F32);
-            if (weights.RawWupExp is not null)
-                foreach (var (expIdx, rawData) in weights.RawWupExp)
-                    if (expIdx < ExpertUp!.Length)
-                        ExpertUp[expIdx].SetRawWeight(rawData, weights.QuantDtypeWupExp?.GetValueOrDefault(expIdx) ?? GgufDtype.F32);
-            if (weights.RawWdownExp is not null)
-                foreach (var (expIdx, rawData) in weights.RawWdownExp)
-                    if (expIdx < ExpertDown!.Length)
-                        ExpertDown[expIdx].SetRawWeight(rawData, weights.QuantDtypeWdownExp?.GetValueOrDefault(expIdx) ?? GgufDtype.F32);
-            Router.SetRawWeight(weights.RawRouter, weights.QuantDtypeRouter ?? GgufDtype.F32);
-        }
+        // MoE weights not supported in current BlockWeights
     }
 
     /// <summary>Pushes newly loaded raw quantized data into layer instances.
@@ -212,23 +174,6 @@ public abstract class FfnLayer : IDisposable
                 WGated.SetRawWeight(fused, fusedDtype);
             }
             WDown.SetRawWeight(weights.RawWf2, weights.QuantDtypeWf2 ?? GgufDtype.F32);
-        }
-        else if (Router is not null && ExpertGate is not null)
-        {
-            // MoE: push per-expert raw data and router raw data
-            if (weights.RawWgateExp is not null)
-                foreach (var (expIdx, rawData) in weights.RawWgateExp)
-                    if (expIdx < ExpertGate.Length)
-                        ExpertGate[expIdx].SetRawWeight(rawData, weights.QuantDtypeWgateExp?.GetValueOrDefault(expIdx) ?? GgufDtype.F32);
-            if (weights.RawWupExp is not null)
-                foreach (var (expIdx, rawData) in weights.RawWupExp)
-                    if (expIdx < ExpertUp!.Length)
-                        ExpertUp[expIdx].SetRawWeight(rawData, weights.QuantDtypeWupExp?.GetValueOrDefault(expIdx) ?? GgufDtype.F32);
-            if (weights.RawWdownExp is not null)
-                foreach (var (expIdx, rawData) in weights.RawWdownExp)
-                    if (expIdx < ExpertDown!.Length)
-                        ExpertDown[expIdx].SetRawWeight(rawData, weights.QuantDtypeWdownExp?.GetValueOrDefault(expIdx) ?? GgufDtype.F32);
-            Router.SetRawWeight(weights.RawRouter, weights.QuantDtypeRouter ?? GgufDtype.F32);
         }
     }
 

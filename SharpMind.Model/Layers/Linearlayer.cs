@@ -21,7 +21,7 @@ public sealed class LinearLayer : IDisposable
     // Raw GGUF quantized data for quantized matmul (null means use float32 path).
     public byte[]? RawQuantizedData { get; set; }
     public GgufDtype? QuantDtype { get; set; }
-    public bool UseQuantizedForward => RawQuantizedData != null && QuantDtype != null && IsSupportedQuantDtype(QuantDtype.Value);
+    public bool UseQuantizedForward { get; set; }
 
     public QuantizationOps QuantizationOps
     {
@@ -194,6 +194,7 @@ public sealed class LinearLayer : IDisposable
     {
         RawQuantizedData = rawData;
         QuantDtype = dtype;
+        UseQuantizedForward = IsSupportedQuantDtype(dtype);
         _vecDotFn = dtype switch
         {
             GgufDtype.Q3_K or GgufDtype.Q3_K_S or GgufDtype.Q3_K_M or GgufDtype.Q3_K_L => _qOps.VecDotQ3K,

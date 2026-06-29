@@ -79,12 +79,9 @@ public class Qwen2Diagnostic
                     _output.WriteLine($"  WARN: {ggufName} not found in GGUF meta!");
                 }
 
-                var savedRaw = layer.RawQuantizedData;
-                var savedDtype = layer.QuantDtype;
-                layer.RawQuantizedData = null;
+                layer.UseQuantizedForward = false;
                 using var yf = layer.Forward(x, m.Ops);
-                layer.RawQuantizedData = savedRaw;
-                layer.QuantDtype = savedDtype;
+                layer.UseQuantizedForward = true;
                 using var yq = layer.Forward(x, m.Ops);
                 double diff = 0;
                 for (int i = 0; i < yf.ElementCount; i++)
@@ -390,12 +387,9 @@ public class Qwen2Diagnostic
                     layer.LoadWeightTransposed(floatBuf.AsSpan());
                 }
 
-                var savedRaw = layer.RawQuantizedData;
-                var savedDtype = layer.QuantDtype;
-                layer.RawQuantizedData = null;
+                layer.UseQuantizedForward = false;
                 using var yf = layer.Forward(x, m.Ops);
-                layer.RawQuantizedData = savedRaw;
-                layer.QuantDtype = savedDtype;
+                layer.UseQuantizedForward = true;
                 using var yq = layer.Forward(x, m.Ops);
                 double diff = 0;
                 for (int i = 0; i < yf.ElementCount; i++)

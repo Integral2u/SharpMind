@@ -1,3 +1,4 @@
+using SharpMind.Core.Tensors;
 using SharpMind.Model.Format;
 using System.Collections.Concurrent;
 using System.IO.MemoryMappedFiles;
@@ -14,7 +15,6 @@ public sealed class CachedWeightLoader : IDisposable
     private readonly ConcurrentDictionary<int, Task> _loading = new();
     private readonly object _sync = new();
     private readonly List<Action<int>> _onLayerLoaded = [];
-    private CancellationTokenSource? _cts;
 
     public int CacheDepth => _cacheDepth;
 
@@ -23,7 +23,6 @@ public sealed class CachedWeightLoader : IDisposable
         _weights = weights;
         _meta = meta;
         _cacheDepth = Math.Max(1, cacheDepth);
-        _cts = new CancellationTokenSource();
         _mmf = MemoryMappedFile.CreateFromFile(path, FileMode.Open, null, 0, MemoryMappedFileAccess.Read);
 
         // Synchronously load initial layers: 0 and up to cacheDepth-1
@@ -45,19 +44,11 @@ public sealed class CachedWeightLoader : IDisposable
 
     public void EnsureLayer(int layerIndex)
     {
+        if (_loaded.Contains(layerIndex)) return;
         if (_loading.TryGetValue(layerIndex, out var t))
         {
-            if (!t.IsCompleted) t.GetAwaiter().GetResult();
+            t.GetAwaiter().GetResult();
             return;
-        }
-        lock (_sync)
-        {
-            if (_loaded.Contains(layerIndex)) return;
-            if (_loading.TryGetValue(layerIndex, out t))
-            {
-                t.GetAwaiter().GetResult();
-                return;
-            }
         }
         LoadLayerSync(layerIndex);
     }
@@ -67,18 +58,9 @@ public sealed class CachedWeightLoader : IDisposable
         int total = _weights.Blocks.Length;
         if (total <= _cacheDepth) return;
         int next = (currentLayer + _cacheDepth) % total;
-        lock (_sync)
+        if (!_loaded.Contains(next) && !_loading.ContainsKey(next))
         {
-            if (!_loaded.Contains(next) && !_loading.ContainsKey(next))
-            {
-                var token = _cts?.Token ?? CancellationToken.None;
-                var t = Task.Run(() =>
-                {
-                    token.ThrowIfCancellationRequested();
-                    LoadLayerSync(next);
-                }, token);
-                _loading[next] = t;
-            }
+            _loading[next] = Task.Run(() => LoadLayerSync(next));
         }
     }
 
@@ -123,17 +105,6 @@ public sealed class CachedWeightLoader : IDisposable
 
     public void Dispose()
     {
-        if (Interlocked.Exchange(ref _cts, null) is { } cts)
-        {
-            cts.Cancel();
-            cts.Dispose();
-        }
-        // Wait for in-flight tasks to observe cancellation
-        foreach (var kv in _loading)
-        {
-            try { kv.Value.GetAwaiter().GetResult(); }
-            catch (OperationCanceledException) { }
-        }
         _mmf.Dispose();
         _loading.Clear();
         lock (_sync) { _loaded.Clear(); _onLayerLoaded.Clear(); }

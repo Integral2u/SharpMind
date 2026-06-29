@@ -1,9 +1,11 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
-# Visual Studio Version 18
-VisualStudioVersion = 18.8.11918.235 insiders
+# Visual Studio Version 17
+VisualStudioVersion = 17.14.36623.8
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SharpMind", "SharpMind\SharpMind.csproj", "{FC7E84ED-99D7-48B0-A885-F2BCB5F88BF4}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SharpMind.Cli", "SharpMind.Cli\SharpMind.Cli.csproj", "{F751E68F-CFCB-4D01-9703-33BC40142E4E}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SharpMind.Benchmarks", "SharpMind.Benchmarks\SharpMind.Benchmarks.csproj", "{1FF9542F-B7FC-4C06-9055-AFA563C0D75D}"
 EndProject
@@ -43,6 +45,10 @@ Global
 		{FC7E84ED-99D7-48B0-A885-F2BCB5F88BF4}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{FC7E84ED-99D7-48B0-A885-F2BCB5F88BF4}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{FC7E84ED-99D7-48B0-A885-F2BCB5F88BF4}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F751E68F-CFCB-4D01-9703-33BC40142E4E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F751E68F-CFCB-4D01-9703-33BC40142E4E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F751E68F-CFCB-4D01-9703-33BC40142E4E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F751E68F-CFCB-4D01-9703-33BC40142E4E}.Release|Any CPU.Build.0 = Release|Any CPU
 		{1FF9542F-B7FC-4C06-9055-AFA563C0D75D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{1FF9542F-B7FC-4C06-9055-AFA563C0D75D}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{1FF9542F-B7FC-4C06-9055-AFA563C0D75D}.Release|Any CPU.ActiveCfg = Release|Any CPU
