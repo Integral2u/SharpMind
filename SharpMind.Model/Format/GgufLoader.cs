@@ -485,6 +485,9 @@ public static partial class GgufLoader
         weights.GgufMeta = meta;
         weights.GgufPath = path;
 
+        // Detect MoE: presence of .exps. expert tensors in GGUF metadata
+        weights.IsMoE = meta.Tensors.Any(t => t.Name.Contains(".exps."));
+
         // Cached mode: CachedWeightLoader handles block weight matrix raw data
         // on demand. We still run the tensor loop for non-weight tensors
         // (norms, biases, embedding, lm_head).

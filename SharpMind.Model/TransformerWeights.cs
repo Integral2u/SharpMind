@@ -30,6 +30,9 @@ public sealed class TransformerWeights(ModelConfig config, Tensor<float> embeddi
     public Format.ModelMetaData? GgufMeta { get; set; }
     public string? GgufPath { get; set; }
 
+    // True when the GGUF contains .exps. expert tensors (Mixture of Experts)
+    public bool IsMoE { get; set; }
+
     // Cached mode loader for on-demand layer weight loading
     public CachedWeightLoader? CachedLoader { get; set; }
 
@@ -77,6 +80,27 @@ public sealed class TransformerWeights(ModelConfig config, Tensor<float> embeddi
                 if (name.Contains("attn_output", StringComparison.OrdinalIgnoreCase) || name.Contains("o_proj", StringComparison.OrdinalIgnoreCase)) return (null, block, "RawWo");
                 if (name.Contains("attn_norm", StringComparison.OrdinalIgnoreCase) || name.Contains("input_layernorm", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
                 if (name.Contains("ffn_norm", StringComparison.OrdinalIgnoreCase) || name.Contains("post_attention_layernorm", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
+
+                // MoE expert tensors: blk.{L}.ffn_gate.exps.{E}.weight → expert-indexed field
+                if (IsMoE && name.Contains(".exps.", StringComparison.OrdinalIgnoreCase))
+                {
+                    var expMatch = RegexGenerated.ExpertIndex.Match(name);
+                    if (expMatch.Success && int.TryParse(expMatch.Groups[1].Value, out int expIdx))
+                    {
+                        if (name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase))
+                            return (null, block, $"RawWgateExp_{expIdx}");
+                        if (name.Contains("ffn_up", StringComparison.OrdinalIgnoreCase))
+                            return (null, block, $"RawWupExp_{expIdx}");
+                        if (name.Contains("ffn_down", StringComparison.OrdinalIgnoreCase))
+                            return (null, block, $"RawWdownExp_{expIdx}");
+                    }
+                    return (null, block, null);
+                }
+
+                // MoE router (ffn_gate.weight without .exps.)
+                if (IsMoE && name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase))
+                    return (null, block, "RawRouter");
+
                 if (name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase)) return (null, block, "RawWgate");
                 if (name.Contains("ffn_up", StringComparison.OrdinalIgnoreCase)) return (null, block, "RawWup");
                 if (name.Contains("ffn_down", StringComparison.OrdinalIgnoreCase)) return (null, block, "RawWf2");
@@ -124,6 +148,11 @@ public sealed class TransformerWeights(ModelConfig config, Tensor<float> embeddi
                 if (name.Contains("attn_output", StringComparison.OrdinalIgnoreCase) || name.Contains("o_proj", StringComparison.OrdinalIgnoreCase)) return b.Wo;
                 if (name.Contains("attn_norm", StringComparison.OrdinalIgnoreCase) || name.Contains("input_layernorm", StringComparison.OrdinalIgnoreCase)) return b.Norm1W;
                 if (name.Contains("ffn_norm", StringComparison.OrdinalIgnoreCase) || name.Contains("post_attention_layernorm", StringComparison.OrdinalIgnoreCase)) return b.Norm2W;
+
+                // MoE expert tensors and router — no float allocation, quantized only
+                if (IsMoE && (name.Contains(".exps.", StringComparison.OrdinalIgnoreCase) || name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase) || name.Contains("ffn_up", StringComparison.OrdinalIgnoreCase)))
+                    return null;
+
                 if (name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase) || name.Contains("ffn_up", StringComparison.OrdinalIgnoreCase)) return b.Wf1;
                 if (name.Contains("ffn_down", StringComparison.OrdinalIgnoreCase)) return b.Wf2;
             }
@@ -131,21 +160,50 @@ public sealed class TransformerWeights(ModelConfig config, Tensor<float> embeddi
         return null;
     }
 
-    public static void SetRawField(BlockWeights block, string field, byte[] data, Format.GgufDtype dtype)
-    {
-        switch (field)
+        public static void SetRawField(BlockWeights block, string field, byte[] data, Format.GgufDtype dtype)
         {
-            case "RawWq": block.RawWq = data; block.QuantDtypeWq = dtype; break;
-            case "RawWk": block.RawWk = data; block.QuantDtypeWk = dtype; break;
-            case "RawWv": block.RawWv = data; block.QuantDtypeWv = dtype; break;
-            case "RawWo": block.RawWo = data; block.QuantDtypeWo = dtype; break;
-            case "RawWgate": block.RawWgate = data; block.QuantDtypeWgate = dtype; break;
-            case "RawWup": block.RawWup = data; block.QuantDtypeWup = dtype; break;
-            case "RawWf1": block.RawWf1 = data; block.QuantDtypeWf1 = dtype; break;
-            case "RawWf2": block.RawWf2 = data; block.QuantDtypeWf2 = dtype; break;
+            // Expert-indexed fields: "RawWgateExp_5" → block.RawWgateExp[5] = data
+            if (field.StartsWith("RawWgateExp_", StringComparison.Ordinal) &&
+                int.TryParse(field.AsSpan(12), out int gateExp))
+            {
+                block.RawWgateExp ??= [];
+                block.RawWgateExp[gateExp] = data;
+                block.QuantDtypeWgateExp ??= [];
+                block.QuantDtypeWgateExp[gateExp] = dtype;
+                return;
+            }
+            if (field.StartsWith("RawWupExp_", StringComparison.Ordinal) &&
+                int.TryParse(field.AsSpan(10), out int upExp))
+            {
+                block.RawWupExp ??= [];
+                block.RawWupExp[upExp] = data;
+                block.QuantDtypeWupExp ??= [];
+                block.QuantDtypeWupExp[upExp] = dtype;
+                return;
+            }
+            if (field.StartsWith("RawWdownExp_", StringComparison.Ordinal) &&
+                int.TryParse(field.AsSpan(12), out int downExp))
+            {
+                block.RawWdownExp ??= [];
+                block.RawWdownExp[downExp] = data;
+                block.QuantDtypeWdownExp ??= [];
+                block.QuantDtypeWdownExp[downExp] = dtype;
+                return;
+            }
+
+            switch (field)
+            {
+                case "RawWq": block.RawWq = data; block.QuantDtypeWq = dtype; break;
+                case "RawWk": block.RawWk = data; block.QuantDtypeWk = dtype; break;
+                case "RawWv": block.RawWv = data; block.QuantDtypeWv = dtype; break;
+                case "RawWo": block.RawWo = data; block.QuantDtypeWo = dtype; break;
+                case "RawWgate": block.RawWgate = data; block.QuantDtypeWgate = dtype; break;
+                case "RawWup": block.RawWup = data; block.QuantDtypeWup = dtype; break;
+                case "RawWf1": block.RawWf1 = data; block.QuantDtypeWf1 = dtype; break;
+                case "RawWf2": block.RawWf2 = data; block.QuantDtypeWf2 = dtype; break;
+                case "RawRouter": block.RawRouter = data; block.QuantDtypeRouter = dtype; break;
+            }
         }
-        block.QuantDtype = dtype; // backwards compat
-    }
 
     public sealed class BlockWeights(Tensor<float> wq, Tensor<float> wk, Tensor<float> wv, Tensor<float> wo,
                         Tensor<float> wqB, Tensor<float> wkB, Tensor<float> wvB, Tensor<float> woB,
@@ -178,6 +236,13 @@ public sealed class TransformerWeights(ModelConfig config, Tensor<float> embeddi
         public byte[]? RawWf1 { get; set; }
         public byte[]? RawWf2 { get; set; }
 
+        // MoE expert quantized data (expert-indexed)
+        public Dictionary<int, byte[]>? RawWgateExp { get; set; }
+        public Dictionary<int, byte[]>? RawWupExp { get; set; }
+        public Dictionary<int, byte[]>? RawWdownExp { get; set; }
+        // MoE router weight
+        public byte[]? RawRouter { get; set; }
+
         // Per-tensor quantization dtype (one per raw field)
         public Format.GgufDtype? QuantDtypeWq { get; set; }
         public Format.GgufDtype? QuantDtypeWk { get; set; }
@@ -187,6 +252,11 @@ public sealed class TransformerWeights(ModelConfig config, Tensor<float> embeddi
         public Format.GgufDtype? QuantDtypeWup { get; set; }
         public Format.GgufDtype? QuantDtypeWf1 { get; set; }
         public Format.GgufDtype? QuantDtypeWf2 { get; set; }
+        // MoE expert quantization dtypes
+        public Dictionary<int, Format.GgufDtype>? QuantDtypeWgateExp { get; set; }
+        public Dictionary<int, Format.GgufDtype>? QuantDtypeWupExp { get; set; }
+        public Dictionary<int, Format.GgufDtype>? QuantDtypeWdownExp { get; set; }
+        public Format.GgufDtype? QuantDtypeRouter { get; set; }
         [Obsolete("Use per-tensor QuantDtype fields instead. This field is overwritten by the last tensor processed.")]
         public Format.GgufDtype? QuantDtype { get; set; }
 
