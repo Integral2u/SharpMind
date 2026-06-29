@@ -11,22 +11,22 @@ namespace SharpMind.Samples.Examples
     public class KnownWorkingModels
     {
         private static readonly string[] Models =
-        [
-            //Unclear
+        [            
+            //Unclear expecting giberish due to size
             "SmolLM-135M.Q4_K_M",           //Response: Ges Ll separated Glossestock Water Q Outidxs tqdmtheless out Empress separated Ges
             "SmolLM2-135M-Instruct.Q4_K_M", //Response: stampsaphragancingellesNAP struggitlesELTSmerse explanstandrancesagramssitELTS
             "gemma-3-270m-it-Q8_0",     //Response: incessant Harare prized incessant Kisan fertiliser motorway Highways agrícolasapples wildflower poorest agron economists contractile
             "gemma-3-270m-it-Q4_K_M",   //Response: chromosomes weeks4 things townhouse piezasGolden Refinerygoldenyears cheaper money groundworkcheap middle
             "gemma-3-270m-it-F16",      //Response: incessant Harare prized incessant Kisandegenerative SDG lousy motorway agronLife poorest intensive Highways kilowatt
-            "tinyllama-1.1b-chat-v1.0.Q8_0",    //Response:Subject:\n\nDearlyrics
+            
 
             //Working
-            "qwen2.5-1.5b-instruct-q8_0",       //Response:\n\n\n# 1. Write a Python program to print the following pattern 
+            
             "Qwen2-0.5B.Q6_K",                  //Response:The\nsystem\nsystem is a system that helps you to make better decisions              
             "llama-3.2-1b-instruct-q8_0",       //Response:It seems like you've got a question about the answer to my own.            
             "qwen2-0_5b-instruct-q8_0",         //Response:Hello! How can I assist you today?
             "qwen2-0_5b-instruct-fp16",         //Response:Hello! How can I assist you today?
-            "DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M", //Response:Hello! I'm here. How can assist you?Hi what you can
+            
         ];
 
         private static readonly string ModelPath = @"C:\Integral2u\source\repos\SharpMind\ExternalAssets";

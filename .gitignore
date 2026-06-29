@@ -450,3 +450,10 @@ FodyWeavers.xsd
 /ExternalAssets/qwen2.5-coder-3b-instruct-q4_k_m.gguf
 /ExternalAssets/qwen2.5-coder-3b-instruct-q8_0.gguf
 /ExternalAssets/gemma-3-270m-it-Q8_0.gguf
+/ExternalAssets/llama3-small-Q2_K.gguf
+/ExternalAssets/llama3-small-Q3_K_M.gguf
+/ExternalAssets/tiny-mistral-Q2_K.gguf
+/ExternalAssets/tiny-mistral-Q3_K_M.gguf
+/ExternalAssets/Bonsai-8B-Q1_0.gguf
+/ExternalAssets/Bonsai-8B.gguf
+/ExternalAssets/Phi-3-mini-4k-instruct-q4.gguf

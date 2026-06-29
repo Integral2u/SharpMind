@@ -1,3 +1,4 @@
+<<<<<<< Updated upstream
 ﻿using var model = ModelFactory.CreateSession(weights, sharpConfig);
 model.FreeFloatWeights();
 
@@ -13,6 +14,9 @@ public static Transformer CreateSession(..., bool optimizeMemory = true)
 
 
 Changes to SharpMind.CUI
+=======
+﻿Changes to SharpMind.CUI
+>>>>>>> Stashed changes
 Options View Skills folder, Tools Dll and Tools Folder need an open button for searching file system or selecting tools in tools folder 
 Should have a Project Path, this would be a woking path for File ops, example code.
 Should have a Save Options As for use in Code only, or an Open to load pre-sets
@@ -107,29 +111,13 @@ var block = LayerRegistry.Build(config.FfnKind, config);
 The existing `FfnKind`, `AttentionKind`, `NormKind` enums are already doing this conceptually — the gap is that adding a new variant currently requires adding an enum case, a class, and a switch branch, rather than just registering a factory.
 
 
-## Part 5: Architectural Suggestions for Experimentation
-
-These don't affect performance directly but make the codebase genuinely better as an experimental platform:
-
-**Separate `IForwardPass` from `ITrainable`** — currently `Transformer` owns both inference-time logic and training-time parameter management. Splitting them makes it trivial to wrap a model in a distillation harness or a LoRA adapter without touching `Transformer` itself.
-
-**Make `Workspace` scope-aware** — a simple stack of offsets would allow nested allocations (useful when an experimental module wants its own scratch space without interfering with the outer workspace). The bump allocator is already there; add `Push()` / `Pop()` scope markers.
-
-**Typed experiment config** — a base `ExperimentConfig : SharpMindConfig` class that carries metadata (name, description, hypothesis) alongside model hyperparameters. Trivial to add, makes checkpoint logs and experiment tracking far easier.
-
-**`IScheduler` chaining** — the existing schedulers (cosine, warmup, linear) are good but not composable. A `ComposedScheduler` that chains stages (warmup → cosine → constant tail) would cover most real training runs without writing a custom scheduler.
 
 
-
-
-
-Removed safetensor loader for now
 End to End Test, Super Dumb Model Training Load and Test Logits valid output.
 Add progress out Func<float> to loading mothods.
 
 Before release check mutilple models with interactive chat
 
-AirLLM stream in model layers sound interesting
 Model/Tokenizer load could be async with progress
 build small native model for testing
 

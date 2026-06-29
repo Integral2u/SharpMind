@@ -578,12 +578,20 @@ public static partial class GgufLoader
                         stream.ReadExactly(rawData);
                         stream.Position -= rawSize;
                     }
-                    if (target == weights.LmHeadWeight)
+                    // Q8_0/Q5_0/Q6_K LM head raw data has a layout mismatch:
+                    // GGUF stores output.weight as [hiddenDim, vocabSize] row-major with
+                    // Q8_0 blocks along vocabSize, but QuantizedMatMulQ8_0 expects
+                    // [vocabSize, hiddenDim] with blocks along hiddenDim. The block stride
+                    // differs for non-square matrices, so skip raw storage and use the
+                    // float dequantize+matmul path instead (always correct for LM head).
+                    bool isBadLayout = info.Dtype is GgufDtype.Q8_0 or GgufDtype.Q5_0
+                        or GgufDtype.Q6_K or GgufDtype.Q6_K_S;
+                    if (target == weights.LmHeadWeight && !isBadLayout)
                     {
                         weights.RawLmHead = rawData;
                         weights.RawLmHeadDtype = info.Dtype;
                     }
-                    else
+                    else if (target != weights.LmHeadWeight)
                     {
                         weights.RawEmbedding = rawData;
                         weights.RawEmbeddingDtype = info.Dtype;
