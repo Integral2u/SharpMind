@@ -127,12 +127,12 @@ namespace SharpMind.Model.Layers.Attention;
         for (int i = 0; i < hiddenDim; i++)
             for (int j = 0; j < qDim; j++)
                 wData[i * totalOut + j] = weights.Wq.Data[i * qDim + j];
-        for (int i = 0; i < kvDim; i++) // OutFeatures
+        for (int j = 0; j < hiddenDim; j++)
         {
-            for (int j = 0; j < hiddenDim; j++) // InFeatures
+            for (int i = 0; i < kvDim; i++)
             {
-                wData[j * totalOut + (qDim + i)] = weights.Wk.Data[i * kvDim + j];
-                wData[j * totalOut + (qDim + kvDim + i)] = weights.Wv.Data[i * kvDim + j];
+                wData[j * totalOut + (qDim + i)] = weights.Wk.Data[j * kvDim + i];
+                wData[j * totalOut + (qDim + kvDim + i)] = weights.Wv.Data[j * kvDim + i];
             }
         }
 

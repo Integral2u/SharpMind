@@ -21,18 +21,24 @@ namespace SharpMind.CUI;
 /// </summary>
 public sealed class ChatView : View
 {
-    private readonly string _agentName;
+    public string AgentName { get; private set; }
+    public string SessionDisplayName { get; set; }
+
     private readonly IChatBridge _bridge;
     private readonly CuiToolContext? _cuiContext;
     private readonly Action _onExit;
+    private readonly Action<bool>? _onGeneratingChanged;
 
     private readonly TextView _transcriptView;
     private readonly TextField _inputField;
+    private readonly Button _interruptButton;
     private readonly Label _statusLabel;
     private readonly Label _agentLabel;
     private readonly Label _strategyLabel;
     private readonly Label _toolLabel;
     private readonly Label _speedLabel;
+    private readonly Label _ttftLabel;
+    private readonly Label _memLabel;
 
     private readonly System.Text.StringBuilder _liveResponse = new();
     private readonly System.Text.StringBuilder _subAgentBuffer = new();
@@ -42,14 +48,23 @@ public sealed class ChatView : View
     private object? _timeoutToken;
     private bool _disposed;
 
-    public ChatView(string agentName, SessionOptions options, IChatBridge bridge, CuiToolContext? cuiContext, Action onExit)
+    // Sidebar stats persist after a turn completes instead of resetting to
+    // "--" — per request, the last known speed/TTFT should stay visible
+    // until the next turn actually produces new numbers, not blank out the
+    // moment a response finishes.
+    private float? _lastTokensPerSecond;
+    private float? _lastTimeToFirstToken;
+
+    public ChatView(string agentName, SessionOptions options, IChatBridge bridge, CuiToolContext? cuiContext, Action onExit, Action<bool>? onGeneratingChanged = null)
     {
-        _agentName = agentName;
+        AgentName = agentName;
+        SessionDisplayName = agentName;
         _bridge = bridge;
         _cuiContext = cuiContext;
         _onExit = onExit;
+        _onGeneratingChanged = onGeneratingChanged;
 
-        int sidebarWidth = 24;
+        int sidebarWidth = 26;
 
         _transcriptView = new TextView
         {
@@ -57,7 +72,14 @@ public sealed class ChatView : View
             Width = Dim.Fill(sidebarWidth + 1),
             Height = Dim.Fill(2),
             ReadOnly = true,
-            WordWrap = true
+            WordWrap = true,
+            // CanFocus stays true so PageUp/PageDown/arrow scrolling still
+            // works, but it's never the initial or default focus target —
+            // see SetFocus() below, which always lands on the input field
+            // instead. "Not selectable for input" really meant "don't let
+            // typed characters go here", which ReadOnly already prevents;
+            // this just makes sure focus doesn't land here by default either.
+            TabStop = false
         };
 
         var sidebarFrame = new FrameView("Status")
@@ -72,22 +94,47 @@ public sealed class ChatView : View
         { X = 0, Y = 4, Width = Dim.Fill(), Height = 3 };
         _toolLabel = new Label("") { X = 0, Y = 8, Width = Dim.Fill() };
         _speedLabel = new Label("--") { X = 0, Y = 10, Width = Dim.Fill() };
+        _ttftLabel = new Label("--") { X = 0, Y = 12, Width = Dim.Fill() };
+        _memLabel = new Label(FormatMemory()) { X = 0, Y = 14, Width = Dim.Fill(), Height = 3 };
 
         sidebarFrame.Add(
             new Label("Status:") { X = 0, Y = 0 }, _statusLabel,
             new Label("Agent:") { X = 0, Y = 2 }, _agentLabel,
             new Label("Strategy:") { X = 0, Y = 3 }, _strategyLabel,
             _toolLabel,
-            new Label("Speed:") { X = 0, Y = 9 }, _speedLabel);
+            new Label("Speed:") { X = 0, Y = 9 }, _speedLabel,
+            new Label("Time to 1st tok:") { X = 0, Y = 11 }, _ttftLabel,
+            _memLabel);
 
-        _inputField = new TextField("") { X = 0, Y = Pos.AnchorEnd(1), Width = Dim.Fill() };
+        _inputField = new TextField("")
+        {
+            X = 0, Y = Pos.AnchorEnd(1),
+            Width = Dim.Fill(14)
+        };
         _inputField.KeyPress += OnInputKeyPress;
 
-        Add(_transcriptView, sidebarFrame, _inputField);
+        _interruptButton = new Button("Interrupt")
+        {
+            X = Pos.AnchorEnd(13), Y = Pos.AnchorEnd(1),
+            Width = 13,
+            Enabled = false
+        };
+        _interruptButton.Clicked += RequestInterrupt;
+
+        Add(_transcriptView, sidebarFrame, _inputField, _interruptButton);
 
         KeyPress += (args) =>
         {
-            if (args.KeyEvent.Key == Key.Esc && !_generating) { _onExit(); args.Handled = true; }
+            // Esc behaviour depends on what's actually happening: mid-generation
+            // it interrupts the in-flight turn (matching the button); idle, it
+            // exits the chat screen. Either way Esc always does *something*
+            // useful here rather than only working when nothing is running.
+            if (args.KeyEvent.Key == Key.Esc)
+            {
+                if (_generating) RequestInterrupt();
+                else _onExit();
+                args.Handled = true;
+            }
         };
 
         // 60fps-equivalent poll for background-thread updates (stream entries, choice requests) —
@@ -95,6 +142,17 @@ public sealed class ChatView : View
         _timeoutToken = Application.MainLoop.AddTimeout(TimeSpan.FromMilliseconds(16), PollBackgroundState);
 
         _inputField.SetFocus();
+    }
+
+    private static string FormatMemory()
+    {
+        // GC.GetGCMemoryInfo mirrors what CuiTools.UIGetFreeMemory already
+        // reports to the model — reusing the same source here means the
+        // sidebar and a model's own UIGetFreeMemory answer can't disagree.
+        var info = GC.GetGCMemoryInfo();
+        long totalMb = info.TotalAvailableMemoryBytes / (1024 * 1024);
+        long usedMb = System.Diagnostics.Process.GetCurrentProcess().WorkingSet64 / (1024 * 1024);
+        return $"Mem: {usedMb}MB used\nFree: {totalMb - usedMb}MB";
     }
 
     private void OnInputKeyPress(KeyEventEventArgs args)
@@ -106,10 +164,34 @@ public sealed class ChatView : View
 
         _inputField.Text = "";
         AppendTranscript($"You: {text}");
-        _generating = true;
+        SetGenerating(true);
         _statusLabel.Text = "Thinking...";
         _bridge.SubmitUserInput(text);
         args.Handled = true;
+    }
+
+    private void SetGenerating(bool generating)
+    {
+        _generating = generating;
+        _interruptButton.Enabled = generating;
+        _onGeneratingChanged?.Invoke(generating);
+    }
+
+    /// <summary>
+    /// No per-turn cancellation exists on IChatSession itself — only the
+    /// whole-session CancellationToken ChatSessionBridge already owns. A
+    /// true "stop just this response, keep the session" button would need
+    /// that capability added to ChatSession upstream; what this can
+    /// honestly do today is end the whole bridge (same as closing the
+    /// session) and report that plainly, rather than implying a softer
+    /// in-place stop that doesn't actually exist yet.
+    /// </summary>
+    private void RequestInterrupt()
+    {
+        if (!_generating) return;
+        AppendTranscript("[Interrupted — ending this session. Re-open or start a new one to continue.]");
+        SetGenerating(false);
+        _onExit();
     }
 
     /// <summary>Returning true keeps the timeout recurring — see Application.MainLoop.AddTimeout's contract.</summary>
@@ -137,7 +219,14 @@ public sealed class ChatView : View
         }
 
         _statusLabel.Text = StatusLabel(entry.Status);
-        _speedLabel.Text = entry.TokensPerSecond is { } tps ? $"{tps:F1} tok/s" : "--";
+
+        if (entry.TokensPerSecond is { } tps) _lastTokensPerSecond = tps;
+        if (entry.TimeToFirstToken is { } ttft) _lastTimeToFirstToken = ttft;
+        // Sidebar keeps showing the last known values rather than resetting to
+        // "--" between turns — per request, these shouldn't clear after a
+        // response finishes streaming.
+        _speedLabel.Text = _lastTokensPerSecond is { } s ? $"{s:F1} tok/s" : "--";
+        _ttftLabel.Text = _lastTimeToFirstToken is { } t ? $"{t:F2}s" : "--";
 
         if (entry.Status == ChatStatus.Executing)
         {
@@ -152,20 +241,63 @@ public sealed class ChatView : View
         }
 
         if (entry.Status == ChatStatus.Responding && entry.Token is not null)
+        {
             _liveResponse.Append(entry.Token);
+            // The actual streaming fix: render the in-progress response on
+            // every token instead of only once the whole turn finishes.
+            // Previously _liveResponse only got flushed to the transcript at
+            // Complete/Interrupted, so nothing was visible until the entire
+            // answer had already finished generating — correct text, just
+            // displayed with no streaming at all.
+            RenderLiveResponse();
+        }
 
         if (entry.IsComplete || entry.Status is ChatStatus.Complete or ChatStatus.Interrupted)
         {
             if (_liveResponse.Length > 0)
-                AppendTranscript($"{_agentName}: {_liveResponse}");
-            _liveResponse.Clear();
-            _generating = false;
+                CommitLiveResponse();
+            SetGenerating(false);
             _toolLabel.Text = "";
             _pendingSpeakerName = null;
             _statusLabel.Text = "Ready";
         }
 
         SetNeedsDisplay();
+    }
+
+    // Tracks where the in-progress line starts in the TextView's underlying
+    // text, so each new token can replace just that trailing line instead of
+    // re-appending the whole growing response (which would duplicate it).
+    private int _liveResponseStartOffset = -1;
+
+    private void RenderLiveResponse()
+    {
+        string full = _transcriptView.Text.ToString() ?? "";
+        if (_liveResponseStartOffset < 0)
+        {
+            // First token of this turn: remember where the live line begins
+            // so subsequent tokens overwrite it in place rather than append.
+            _liveResponseStartOffset = full.Length;
+            full += $"{AgentName}: ";
+        }
+
+        string prefix = full[.._liveResponseStartOffset];
+        _transcriptView.Text = prefix + $"{AgentName}: " + _liveResponse;
+        _transcriptView.MoveEnd();
+        _transcriptView.SetNeedsDisplay();
+    }
+
+    private void CommitLiveResponse()
+    {
+        // The live line is already showing the full text by the time Complete
+        // arrives (RenderLiveResponse kept it current token-by-token) — just
+        // close it off with the trailing blank line the permanent transcript
+        // uses between entries, and reset tracking for the next turn.
+        _transcriptView.Text = _transcriptView.Text.ToString() + "\n\n";
+        _transcriptView.MoveEnd();
+        _transcriptView.SetNeedsDisplay();
+        _liveResponse.Clear();
+        _liveResponseStartOffset = -1;
     }
 
     private void AppendTranscript(string line)
@@ -199,7 +331,7 @@ public sealed class ChatView : View
         var dialog = new Dialog("Choose an option", 60, Math.Min(20, request.Options.Count + (request.AllowFreeText ? 8 : 5)));
 
         var radio = new RadioGroup(request.Options.Select(p => (ustring)p).ToArray()) { X = 1, Y = 1 };
-        dialog.Add(new Label(request.Prompt) { X = 1, Y = 0, Width = Dim.Fill(2) }, radio);
+        dialog.Add(new Label((ustring)request.Prompt) { X = 1, Y = 0, Width = Dim.Fill(2) }, radio);
 
         TextField? freeTextField = null;
         if (request.AllowFreeText)

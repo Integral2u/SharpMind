@@ -1,5 +1,6 @@
 using SharpMind;
 using SharpMind.Inference;
+using SharpMind.Inference.Agent;
 
 namespace SharpMind.CUI.App;
 
@@ -43,7 +44,18 @@ public sealed class SessionOptions
 {
     // Model + project
     public string? ModelPath { get; set; }
-    public string? ProjectPath { get; set; }       // working directory: skills, tool assemblies, history
+
+    /// <summary>
+    /// Working directory for file-related tool calls and example code. Worth
+    /// being precise about what this actually does: the engine's
+    /// InterceptingFileSystem gates *whether* a tool call may touch a given
+    /// path, but it does not root relative paths against this folder or
+    /// confine absolute ones to it — there's no sandbox enforcement at the
+    /// engine level. What this field actually does is get surfaced to the
+    /// agent as context (see SessionLauncher) so a model has a sensible
+    /// default location to read/write relative to, rather than guessing.
+    /// </summary>
+    public string? ProjectPath { get; set; }
     public List<string> SkillFolders { get; set; } = [];
 
     /// <summary>Explicit, individually-chosen tool DLL paths (the ;-separated field on the Options screen).</summary>
@@ -83,6 +95,19 @@ public sealed class SessionOptions
     /// overrides resolve to real kernels rather than no-ops.
     /// </summary>
     public bool UseGpu { get; set; }
+
+    /// <summary>
+    /// Governs tool calls that touch the file system, via the engine's own
+    /// ToolPermission enum (Ask/Always/Never) — used directly as the answer
+    /// SessionLauncher's permission callback gives for ToolCategory.File
+    /// requests, no translation layer in between. Defaults to Ask: silently
+    /// allowing file IO by default would be a worse surprise than a prompt
+    /// the first time a tool actually wants it.
+    /// </summary>
+    public ToolPermission FileAccess { get; set; } = ToolPermission.Ask;
+
+    /// <summary>Same as <see cref="FileAccess"/> but for ToolCategory.Network requests.</summary>
+    public ToolPermission NetworkAccess { get; set; } = ToolPermission.Ask;
 
     // Sampling / generation
     public SamplingConfig Sampling { get; set; } = SamplingConfig.Llama3Chat;

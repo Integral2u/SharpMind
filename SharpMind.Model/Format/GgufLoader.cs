@@ -583,10 +583,9 @@ public static partial class GgufLoader
                     }
                     // Q8_0/Q5_0/Q6_K LM head raw data has a layout mismatch:
                     // GGUF stores output.weight as [hiddenDim, vocabSize] row-major with
-                    // Q8_0 blocks along vocabSize, but QuantizedMatMulQ8_0 expects
-                    // [vocabSize, hiddenDim] with blocks along hiddenDim. The block stride
-                    // differs for non-square matrices, so skip raw storage and use the
-                    // float dequantize+matmul path instead (always correct for LM head).
+                    // Q8_0 blocks along the flat element stream, but QuantizedMatMulQ8_0 expects
+                    // column-block layout (see Q8_0WeightRepack). LinearLayer repacks on SetRawWeight;
+                    // LM head raw is skipped here until repack is wired for LogitOps.
                     bool isBadLayout = info.Dtype is GgufDtype.Q8_0 or GgufDtype.Q5_0
                         or GgufDtype.Q6_K or GgufDtype.Q6_K_S;
                     if (target == weights.LmHeadWeight && !isBadLayout)

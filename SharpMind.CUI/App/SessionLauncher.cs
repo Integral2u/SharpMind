@@ -10,12 +10,40 @@ using SharpMind.Tokenization;
 
 namespace SharpMind.CUI.App;
 
-/// <summary>Result of attempting to launch a session: either it worked, or it didn't and here's why.</summary>
+/// <summary>
+/// The expensive, shareable part of launching a session: a GGUF file fully
+/// read into a real Transformer + Tokenizer. Kept distinct from any one
+/// ChatSession built on top of it so that opening a second named chat
+/// session against the same model file can reuse this instead of reading
+/// gigabytes of weights a second time. RefCount tracks how many open chat
+/// sessions are currently using it; the owner (see ModelCache) is
+/// responsible for actually disposing the Transformer once that count
+/// reaches zero.
+/// </summary>
+public sealed class LoadedModel
+{
+    public required string ModelPath { get; init; }
+    public required Transformer Model { get; init; }
+    public required Tokenizer Tokenizer { get; init; }
+    public required ModelMetaData Meta { get; init; }
+    public required HardwareTier HardwareTier { get; init; }
+    public required bool UseGpu { get; init; }
+    public int RefCount;
+}
+
+/// <summary>Result of attempting to load a model file (the expensive, shareable phase).</summary>
+public sealed class ModelLoadResult
+{
+    public LoadedModel? Loaded { get; init; }
+    public string? Error { get; init; }
+    public bool Success => Error is null && Loaded is not null;
+}
+
+/// <summary>Result of attempting to build a session on top of an already-loaded model (the cheap phase).</summary>
 public sealed class LaunchResult
 {
     public IChatSession? Session { get; init; }
     public IAgentBuilder? Agent { get; init; }
-    public ModelMetaData? Meta { get; init; }
     public CuiToolContext? CuiContext { get; init; }
     public List<string> Warnings { get; init; } = [];
     public string? Error { get; init; }
@@ -36,28 +64,25 @@ public sealed class LaunchResult
 /// generic ChatSession&lt;T,K&gt; combinatorics — everything upstream of here
 /// only ever deals with GeneratorStrategy/CacheStrategy, never with the
 /// generic types themselves.
+///
+/// Split into two phases — <see cref="LoadModelAsync"/> and
+/// <see cref="BuildSession"/> — specifically so a second chat session
+/// against the same GGUF file doesn't have to re-read it. The caller (see
+/// ModelCache in MainWindow) is responsible for deciding when a
+/// <see cref="LoadedModel"/> can be reused versus when option changes
+/// (different hardware tier, different GPU setting) mean it actually needs
+/// a fresh load — those choices change what gets baked into the Transformer
+/// itself, not just session-level behaviour, so they can't share a
+/// LoadedModel even though the file path is the same.
 /// </summary>
 public static class SessionLauncher
 {
-    public static async Task<LaunchResult> LaunchAsync(SessionOptions options, IProgress<string>? status = null, CancellationToken ct = default)
+    /// <summary>The expensive phase: read a GGUF file into a real, ready-to-use Transformer + Tokenizer.</summary>
+    public static async Task<ModelLoadResult> LoadModelAsync(SessionOptions options, IProgress<string>? status = null, CancellationToken ct = default)
     {
-        var warnings = new List<string>();
-
-        if (options.Generator == GeneratorStrategy.UIDebug)
-        {
-            // No model file check, no GGUF load, no tokenizer, no transformer —
-            // that's the entire point of this mode. A CuiToolContext is still
-            // created so TestOptions can exercise the same choice-dialog path
-            // a real model's UIShowOptionSelection call would use.
-            status?.Report("Starting debug session (no model)...");
-            await Task.Yield(); // keep this genuinely async-shaped rather than synchronous-but-typed-as-Task
-            return new LaunchResult { IsDebugMode = true, CuiContext = new CuiToolContext(), Warnings = warnings };
-        }
-
         if (string.IsNullOrWhiteSpace(options.ModelPath) || !File.Exists(options.ModelPath))
-            return new LaunchResult { Error = $"Model file not found: {options.ModelPath}" };
+            return new ModelLoadResult { Error = $"Model file not found: {options.ModelPath}" };
 
-        // --- Load model -----------------------------------------------------
         status?.Report("Reading model metadata...");
         ModelMetaData meta;
         ModelConfig modelConfig;
@@ -68,11 +93,11 @@ public static class SessionLauncher
         }
         catch (Exception ex)
         {
-            return new LaunchResult { Error = $"Failed to read model: {ex.Message}" };
+            return new ModelLoadResult { Error = $"Failed to read model: {ex.Message}" };
         }
 
         if (tokenizer is null)
-            return new LaunchResult { Error = "Model file has no embedded tokenizer data and no fallback tokenizer path was given." };
+            return new ModelLoadResult { Error = "Model file has no embedded tokenizer data and no fallback tokenizer path was given." };
 
         status?.Report("Loading weights...");
         TransformerWeights weights;
@@ -85,10 +110,11 @@ public static class SessionLauncher
         }
         catch (Exception ex)
         {
-            return new LaunchResult { Error = $"Failed to load weights: {ex.Message}" };
+            return new ModelLoadResult { Error = $"Failed to load weights: {ex.Message}" };
         }
 
         status?.Report("Assembling model...");
+        await Task.Yield();
         var sharpConfig = modelConfig.ForModel(hw: options.HardwareTier);
 
         // GPU path needs the mapping built manually via MappingBuilder so
@@ -98,17 +124,42 @@ public static class SessionLauncher
         // ModelFactory.CreateSession accepts; this only decides how that
         // dictionary gets built, mirroring the engine's own QwenOnGpu sample
         // exactly for the GPU case.
-        //
-        // Requires a project reference to SharpMind.GPU for WithGpu() to
-        // resolve at all — if that reference isn't present, UseGpu in
-        // SessionOptions simply won't compile against this method, which is
-        // the correct failure mode (a missing capability should fail to
-        // build, not silently no-op at runtime).
         Dictionary<string, string> mapping = options.UseGpu
             ? new MappingBuilder(options.HardwareTier).ApplyPreset(sharpConfig).WithGpu().Build()
             : sharpConfig.ToJigSawMapping();
 
         var model = ModelFactory.CreateSession(weights, sharpConfig, mapping);
+
+        return new ModelLoadResult
+        {
+            Loaded = new LoadedModel
+            {
+                ModelPath = options.ModelPath,
+                Model = model,
+                Tokenizer = tokenizer,
+                Meta = meta,
+                HardwareTier = options.HardwareTier,
+                UseGpu = options.UseGpu
+            }
+        };
+    }
+
+    /// <summary>The cheap phase: build a ChatSession (or a debug bridge context) on top of an already-loaded model.</summary>
+    public static LaunchResult BuildSession(SessionOptions options, LoadedModel? loaded, Func<ToolPermissionContext, Task<ToolPermission>>? permissions)
+    {
+        var warnings = new List<string>();
+
+        if (options.Generator == GeneratorStrategy.UIDebug)
+        {
+            // No model required at all — that's the entire point of this mode.
+            // A CuiToolContext is still created so TestOptions can exercise the
+            // same choice-dialog path a real model's UIShowOptionSelection call
+            // would use.
+            return new LaunchResult { IsDebugMode = true, CuiContext = new CuiToolContext(), Warnings = warnings };
+        }
+
+        if (loaded is null)
+            return new LaunchResult { Error = "No loaded model was provided for a non-debug session." };
 
         // --- Tools / skills / agent -----------------------------------------
         var resolvedToolPaths = ResolveToolAssemblyPaths(options);
@@ -116,10 +167,6 @@ public static class SessionLauncher
 
         // CuiTools is always registered — every session gets it regardless of
         // what other tools, skills, or sub-agent settings the user configured.
-        // This is what makes a model that's never seen this UI before still
-        // able to present a choice dialog or ask about the host machine the
-        // moment it's loaded, rather than that depending on the user having
-        // remembered to add a tool DLL for it.
         var builder = new AgentBuilder(options.AgentName, options.Sampling);
         builder.WithTools(new CuiTools(cuiContext));
 
@@ -128,7 +175,6 @@ public static class SessionLauncher
 
         if (resolvedToolPaths.Count > 0)
         {
-            status?.Report("Loading tool assemblies...");
             var (toolInstances, toolWarnings) = ToolAssemblyLoader.Load(resolvedToolPaths);
             warnings.AddRange(toolWarnings);
             if (toolInstances.Count > 0)
@@ -141,7 +187,6 @@ public static class SessionLauncher
         IAgentBuilder agentBuilder = builder;
 
         // --- Resolve generator/cache type combo and build the session ------
-        status?.Report("Starting session...");
         Type generatorBuilderDef = options.Generator switch
         {
             GeneratorStrategy.Standard => typeof(StandardGeneratorBuilder<>),
@@ -162,8 +207,8 @@ public static class SessionLauncher
         try
         {
             session = ChatSessionFactory.CreateChatSession(
-                generatorBuilderDef, cacheBuilder, model, tokenizer, meta, agentBuilder,
-                preProcessor: null, compactor: null, permissions: null,
+                generatorBuilderDef, cacheBuilder, loaded.Model, loaded.Tokenizer, loaded.Meta, agentBuilder,
+                preProcessor: null, compactor: null, permissions: permissions,
                 seed: options.Sampling.Seed);
         }
         catch (Exception ex)
@@ -180,13 +225,7 @@ public static class SessionLauncher
         if (options.Generation.StopTokenIds.Count > 0)
             session.StopTokenIds = options.Generation.StopTokenIds;
 
-        // Note: MaxToolCallsPerTurn and MaxAgentDepth live on ChatSession<T,K>
-        // directly, not on IChatSession, so they can't be set through this
-        // non-generic handle. They fall back to the engine's own defaults
-        // (10 and 2 respectively) until those two properties are promoted to
-        // the interface.
-
-        return new LaunchResult { Session = session, Agent = agentBuilder, Meta = meta, CuiContext = cuiContext, Warnings = warnings };
+        return new LaunchResult { Session = session, Agent = agentBuilder, CuiContext = cuiContext, Warnings = warnings };
     }
 
     /// <summary>
@@ -205,16 +244,12 @@ public static class SessionLauncher
 
         if (!string.IsNullOrWhiteSpace(options.ToolsFolder) && Directory.Exists(options.ToolsFolder))
         {
-            // Top-level only, not recursive: a tools folder containing nested
-            // project subfolders (e.g. a cloned tool repo with its own
-            // obj/bin structure) would otherwise pull in unrelated build
-            // output DLLs that happen to also carry a .dll extension.
             paths.AddRange(Directory.GetFiles(options.ToolsFolder, "*.dll"));
         }
 
         return paths
             .Select(p => Path.GetFullPath(p))
-            .Distinct(StringComparer.OrdinalIgnoreCase) // Windows paths are case-insensitive; harmless to dedupe this way on Unix too
+            .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
     }
 }

@@ -35,7 +35,7 @@ public interface IChatBridge : IAsyncDisposable
 /// callback gymnastics, no rewriting ChatSession's loop shape — just a
 /// thread boundary in the one place it's actually needed.
 /// </summary>
-public sealed class ChatSessionBridge(IChatSession session) : IChatBridge
+public sealed class ChatSessionBridge(IChatSession session, bool disposeUnderlyingSession = true) : IChatBridge
 {
     private readonly ConcurrentQueue<ChatStreamEntry> _incoming = new();
     private readonly SemaphoreSlim _inputReady = new(0);
@@ -45,6 +45,17 @@ public sealed class ChatSessionBridge(IChatSession session) : IChatBridge
 
     public bool Faulted { get; private set; }
     public Exception? Fault { get; private set; }
+
+    /// <summary>
+    /// Whether DisposeAsync should actually dispose the underlying
+    /// ChatSession (and, through it, the shared Transformer) or just unwind
+    /// this bridge's own loop and leave the session object alone. Mutable
+    /// rather than fixed at construction, specifically so the caller can
+    /// decide this right before closing, once ModelCache.Release has
+    /// answered "was this the last session using that model?" — that answer
+    /// usually isn't known yet when the bridge is first created.
+    /// </summary>
+    public bool DisposeUnderlyingSession { get; set; } = disposeUnderlyingSession;
 
     public void Start()
     {
@@ -95,7 +106,17 @@ public sealed class ChatSessionBridge(IChatSession session) : IChatBridge
         {
             try { await _loopTask; } catch { /* already surfaced via Fault if relevant */ }
         }
-        await session.DisposeAsync();
+
+        // ChatSession.DisposeAsync() unconditionally disposes the Transformer
+        // it was built on. When a model is shared across multiple named chat
+        // sessions (see ModelCache), only the session that closes last may
+        // actually call this — every earlier one must skip it entirely, or
+        // closing one tab would destroy the model out from under siblings
+        // still using it. The caller (MainWindow) decides this via ref
+        // counting and passes the answer in at construction time.
+        if (DisposeUnderlyingSession)
+            await session.DisposeAsync();
+
         _cts.Dispose();
         _inputReady.Dispose();
     }
