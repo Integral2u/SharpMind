@@ -72,7 +72,7 @@ public sealed unsafe class Tensor<T> : IDisposable
             _buffer.AddRef();
         _offset = offset;
         _ownsMemory = ownsMemory;
-        _rawPtr = _buffer != null ? _buffer.Ptr + offset : null;
+        _rawPtr = _buffer != null ? _buffer.Ptr : null;
     }
 
     // properties
