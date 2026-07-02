@@ -1,3 +1,6 @@
+Change below should the Tink Part be part of important KV Cache or ignored
+1. Think-block detection: Done — _inThinkBlock tracks <think>/</think> boundaries across fragments in GetResponseStreamAsync (ChatSession.cs:494-505). Status switches to ChatStatus.Thinking while inside the block, back to Responding after </think>.
+
 Future	MoE	CachedWeightLoader skips MoE expert tensors (same limitation as existing SetWeights). Not blocking since no MoE models are in KnownWorking/Failing.
 
 Changes to SharpMind.CUI
