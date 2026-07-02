@@ -31,6 +31,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     private int _currentDepth;
     private string? _pendingDraft;
     private readonly System.Text.StringBuilder _responseBuffer = new();
+    private bool _inThinkBlock;
     private readonly IPromptPreProcessor? _preProcessor;
     private readonly IContextCompactor? _compactor;
 
@@ -486,6 +487,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
 
             // Stream tokens
             _responseBuffer.Clear();
+            _inThinkBlock = false;
 
             await foreach (var fragment in _generator.GenerateFromTokensAsync(promptToks, sampleCfg, genCfg, ct))
             {
@@ -501,11 +503,26 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
                     if (loop) break;
                 }
 
+                // Detect <think> / </think> tag boundaries across fragments
+                // by inspecting the trailing portion of the accumulated output.
+                if (!_inThinkBlock)
+                {
+                    int start = Math.Max(0, _responseBuffer.Length - 20);
+                    string tail = _responseBuffer.ToString(start, _responseBuffer.Length - start);
+                    if (tail.Contains("<think>")) _inThinkBlock = true;
+                }
+                else
+                {
+                    int start = Math.Max(0, _responseBuffer.Length - 20);
+                    string tail = _responseBuffer.ToString(start, _responseBuffer.Length - start);
+                    if (tail.Contains("</think>")) _inThinkBlock = false;
+                }
+
                 var ids = _generator.CurrentGeneratedIds;
                 int? tokenId = ids != null && ids.Count > 0 ? ids[^1] : null;
                 yield return new ChatStreamEntry
                 {
-                    Status = ChatStatus.Responding,
+                    Status = _inThinkBlock ? ChatStatus.Thinking : ChatStatus.Responding,
                     Token = fragment,
                     IsComplete = false,
                     TokensPerSecond = _generator.TokensPerSecond,
