@@ -94,9 +94,14 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
             {
                 int end = src.IndexOf("}}", next + 2, StringComparison.Ordinal);
                 if (end < 0) { result.Add(new Token(TKind.Text, src[next..], false, false)); break; }
-                string body = src[(next + 2)..(end)];
-                result.Add(new Token(TKind.Output, body.Trim(), false, false));
+                string raw = src[(next + 2)..(end)];
+                bool sl = raw.StartsWith('-');
+                bool sr = raw.EndsWith('-');
+                string body = raw.TrimStart('-').TrimEnd('-').Trim();
+                result.Add(new Token(TKind.Output, body, sl, sr));
                 pos = end + 2;
+                // strip-right: eat the immediately following newline
+                if (sr && pos < src.Length && src[pos] == '\n') pos++;
             }
             else
             {
@@ -126,9 +131,16 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
         {
             var tok = tokens[i];
 
+            // strip-left: trim trailing whitespace from output so far
+            if (tok.StripLeft)
+                while (sb.Length > 0 && char.IsWhiteSpace(sb[^1]))
+                    sb.Length--;
+
             if (tok.Kind == TKind.Text)
             {
-                sb.Append(tok.Body);
+                string text = tok.Body;
+                // strip-right from previous output already handled in Tokenise (newline skip)
+                sb.Append(text);
                 i++;
                 continue;
             }
@@ -192,9 +204,9 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
             for (int idx = 0; idx < count; idx++)
             {
                 var child = env.Push();
-                child.Set(varName, list[idx]);
+                var item = list[idx];
+                child.Set(varName, item);
 
-                // loop metadata object
                 var loop = new JinjaDict
                 {
                     ["first"] = (object)(idx == 0),
@@ -239,7 +251,6 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
             if (t == "endif")
             {
                 branches.Add((curCond, branchStart, i));
-                // Execute first branch whose condition is true
                 foreach (var (cond, bs, be) in branches)
                 {
                     if (cond == null || IsTruthy(Eval(cond, env)))
@@ -334,8 +345,10 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
     {
         expr = expr.Trim();
 
-        // strip outer parens
-        if (expr.StartsWith('(') && expr.EndsWith(')'))
+        // strip outer parens — only when the outermost ( and ) actually match
+        // (avoid falsely stripping when the top-level expression uses parens
+        //  for grouping sub-expressions, e.g. (A or B) and (C or D))
+        if (expr.StartsWith('(') && expr.EndsWith(')') && MatchingOuterParens(expr))
             return Eval(expr[1..^1], env);
 
         // 'not X is defined'
@@ -432,12 +445,25 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
             return (object)(Stringify(left) + Stringify(right));
         }
 
-        // Filter: expr | trim  (only trim supported)
-        var filterM = RegexGenerated.JinjaExprTrim.Match(expr);// Regex.Match(expr, @"^(.+?)\s*\|\s*trim\s*$");
+        // Filter: expr | trim
+        var filterM = RegexGenerated.JinjaExprTrim.Match(expr);
         if (filterM.Success)
         {
             var v = Eval(filterM.Groups[1].Value, env);
             return (object)(Stringify(v).Trim());
+        }
+
+        // Filter: expr | length
+        var lengthM = RegexGenerated.JinjaExprLength.Match(expr);
+        if (lengthM.Success)
+        {
+            var v = Eval(lengthM.Groups[1].Value, env);
+            return (object)(v switch
+            {
+                List<JinjaDict> list => (long)list.Count,
+                string s => (long)s.Length,
+                _ => 0L
+            });
         }
 
         // content.split('delim')[-1]  — last segment
@@ -659,6 +685,33 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
             }
         }
         return -1;
+    }
+
+    /// <summary>
+    /// Returns true when the outermost <c>(</c> (position 0) is matched by the
+    /// innermost <c>)</c> (position <c>s.Length-1</c>), i.e. the parens around
+    /// the whole expression truly belong together as a single grouping pair.
+    /// </summary>
+    private static bool MatchingOuterParens(string s)
+    {
+        int depth = 0;
+        bool inSingle = false, inDouble = false;
+        for (int i = 0; i < s.Length; i++)
+        {
+            char c = s[i];
+            if (c == '\'' && !inDouble) { inSingle = !inSingle; continue; }
+            if (c == '"' && !inSingle) { inDouble = !inDouble; continue; }
+            if (inSingle || inDouble) continue;
+            if (c == '(') depth++;
+            else if (c == ')')
+            {
+                depth--;
+                // Closing paren at depth 0 before the end means the outermost
+                // opening ( was NOT matched by the final character.
+                if (depth == 0 && i < s.Length - 1) return false;
+            }
+        }
+        return depth == 0;
     }
 
     public static bool IsTruthy(object? v) => v switch

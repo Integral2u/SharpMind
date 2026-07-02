@@ -9,6 +9,7 @@ public sealed class ChatStreamEntry
     public string? Token { get; init; }
     public ChatArtifact? Artifact { get; init; }
     public bool IsComplete { get; init; }
+    public int? TokenId { get; init; }
 
     /// <summary>
     /// Live tokens-per-second at this point in the stream.

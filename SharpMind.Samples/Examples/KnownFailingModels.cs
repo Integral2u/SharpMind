@@ -1,4 +1,5 @@
-﻿using SharpMind.Inference;
+﻿using ILGPU.IR.Values;
+using SharpMind.Inference;
 using SharpMind.Inference.Chat;
 using SharpMind.Model;
 using SharpMind.Model.Config;
@@ -13,15 +14,15 @@ namespace SharpMind.Samples.Examples
     {
         private static readonly string[] Models =
         [
-            "Qwen3-0.6B-Q8_0",      //Lots of new lines \n Response: 
-            "Qwen3-0.6B-Q6_K",      //Lots of new lines \n Response: 
-            "Qwen3-0.6B-Q5_K_M",    //Lots of new lines \n Response: 
-            "Qwen3-0.6B-Q4_K_M",    //Lots of new lines \n Response: 
-            "Qwen3-0.6B-Q4_1",      //Response: {\nohic?? Gst","#toophonieres?? verst???uably (oise
-            "Qwen3-0.6B-Q4_0",      //Response:);}\n\nYSzo(fin industri);}\n\n Cain?enetuserService vig.getLabel.LAitorezburg
-            "Qwen3-0.6B-Q3_K_M",    //Some new lines \n Response: 
-            "Qwen3-0.6B-Q2_K",      //Response:    # 2ndr  (followed by many new lines)
-            /*
+            //"Qwen3-0.6B-Q8_0",      //Response:<think>\nOkay, the user just said "Hello," so I need to
+            //"Qwen3-0.6B-Q6_K",      //Response:<think>\nOkay, the user just said "Hello," so I need to
+            //"Qwen3-0.6B-Q5_K_M",    //Response:<think>\nOkay, the user just said "Hello," so I need to
+            //"Qwen3-0.6B-Q4_K_M",    //Response:<think>\nOkay, the user just said "Hello," so I need to
+            //"Qwen3-0.6B-Q4_1",      //Response:;]/???? (nnenawai Holocaust ????? (waukeeentially???icuteenth?
+            //"Qwen3-0.6B-Q4_0",      //Response: ( ( supplementuilder advancedhraductive??amahaDetachbatimi [{ulousISCO
+            //"Qwen3-0.6B-Q3_K_M",    //Response:<think>\Okay, the user is asking for help with a problem. But
+            //"Qwen3-0.6B-Q2_K",      //Response:?\nOkay, so I need to start with the user's message.
+            
             //Current Response: surfaced_into PICK quad&# embarrassing delay finale ????.Topic??? flex?\Validation
             //Best Known Response to date:Hello! I'm here. How can assist you?Hi what you can
             "DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M", 
@@ -32,26 +33,22 @@ namespace SharpMind.Samples.Examples
             
             
             
-            //Current Response:_cons ChartsKr ??????_record cra??? ?? sloganRoot-column-column??_PUT
+            //Current Response:?? ???(vehicle???UniformLocation ? occupancy simplify generado?? Written prowess??
             //Best Known Response to date: \n\n\n# 1. Write a Python program to print the following pattern 
             "qwen2.5-1.5b-instruct-q8_0",
 
 
-            "tinyllama-1.1b-chat-v1.0.Q8_0",    //Response:Subject:\n\nDearlyrics
-            "qwen2-0.5b-instruct-q2_k",     //Response:???u u performance?? 's elbowso??ef-.
-            // New Response:>Welcome???" sting in.(?? (???? cruising???? of
-            "Qwen2-0.5B.Q2_K",              //Response: performance sa?ero_ ?and i?.??f*+
-            //Response:amaject?actusPooling?[]?tigi??????? subscript?????
+            "tinyllama-1.1b-chat-v1.0.Q8_0",    //Response:L ??File mez ??Space veg Richard stepCAAFIGFile? Ord
+            "qwen2-0.5b-instruct-q2_k",     //Response:?? (atu connaît? Stopwatch?????? ??[] everrowser??pos
+            "Qwen2-0.5B.Q2_K",              //Response: ????[] xlen??????.??? breeds.fi?
             "Qwen2-0.5B.Q3_K_L",            //Response:./(?????????????????????
-            "Qwen2-0.5B.Q3_K_M",            //Response:???\n\n??\_iple???\n\niez? manufactures gainedies
-            //New Response:-???..inst????nd??????????_Helper???????????
+            "Qwen2-0.5B.Q3_K_M",            //Response:?? addOn??? Flo AssemblyVersion.)\n\n??????????? hasNext???
             "Qwen2-0.5B.Q3_K_S",            //Response:estring???emales?? je??? Gro  (??hibition Main
-            "qwen2-0_5b-instruct-q4_k_m",   //Response:?  (????. - ( (g.-.
-            //New Response:? Tmin??VEbindValueTeS????.???.getInstance???
+            "qwen2-0_5b-instruct-q4_k_m",   //Response:.LogWarning? -.getElementsByNamekf?APEabbleisted,GL.ConnectionString]';\n-??
             "Qwen2-0.5B.Q5_1",              //Response:-+$?ergy=> Tw %(. Tw?????
             
-            "Llama-3.2-1B-Instruct-Q4_K_M", //Response:  #\n\n\n## 3\n- and\n   - so, the            
-            "Qwen2.5-1.5B-Instruct-f16",    //Response:\n\n\n# # #\n#\n#\n\nimport sys\nsys.path
+            "Llama-3.2-1B-Instruct-Q4_K_M", //Response:   and\nand\n\n a\n\n# "\na\n#           
+            "Qwen2.5-1.5B-Instruct-f16",    //Response:??,?????????????????????
             
             "TinyLlama-1.1B-Chat-v1.0.Q4_K_M",  //Response: sacrificCAAFIG grat ?? Ord veg Richard step ..File Bayer ????????ifoliaars
             //https://huggingface.co/tensorblock/llama3-small-GGUF
@@ -63,14 +60,14 @@ namespace SharpMind.Samples.Examples
             "tiny-mistral-Q3_K_M", //Response: typeof steep'' asksREEN sensors yeDDbritmost anywhere \;tabularreshold Grade
 
             //https://huggingface.co/prism-ml/Bonsai-8B-gguf            
-            "Bonsai-8B",    //execution seems to hand
-            "Bonsai-8B-Q1_0",   //execution seems to hand
+            "Bonsai-8B",    //Out of Memory
+            "Bonsai-8B-Q1_0",   //Out of Memory
             
             //"Phi-3-mini-4k-instruct-q4", //System.OutOfMemoryException try cached loader
             //"qwen2.5-coder-3b-instruct-q8_0", //System.OutOfMemoryException
             //"qwen2.5-coder-3b-instruct-q4_k_m", //System.OutOfMemoryException
             //"qwen2.5-coder-3b-instruct-q2_k", //System.OutOfMemoryException
-            */
+            
             ];
 
         private static readonly string ModelPath = @"C:\Integral2u\source\repos\SharpMind\ExternalAssets";

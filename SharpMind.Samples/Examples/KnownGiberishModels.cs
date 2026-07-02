@@ -1,31 +1,26 @@
-﻿using SharpMind.Core.Tensors;
-using SharpMind.Inference;
+﻿using SharpMind.Inference;
 using SharpMind.Inference.Chat;
-using SharpMind.Inference.Chat.PromptFormatters;
 using SharpMind.Model;
 using SharpMind.Model.Config;
 using SharpMind.Model.Format;
-using SharpMind.Model.Layers;
-using SharpMind.Model.Layers.Attention;
 using SharpMind.Tokenization;
+using System;
+using System.Collections.Generic;
 using System.Diagnostics;
+using System.Text;
 
 namespace SharpMind.Samples.Examples
 {
-    public class Qwen3_6B
+    public class KnownGiberishModels
     {
-        //https://huggingface.co/unsloth/Qwen3-0.6B-GGUF/tree/main
         private static readonly string[] Models =
-        [
-            "Qwen3-0.6B-Q8_0",      //Response:<think>\nOkay, the user just said "Hello," so I need to
-           // "Qwen3-0.6B-Q6_K",      //Response:<think>\nOkay, the user just said "Hello," so I need to
-           // "Qwen3-0.6B-Q5_K_M",    //Response:<think>\nOkay, the user just said "Hello," so I need to
-           // "Qwen3-0.6B-Q4_K_M",    //Response:<think>\nOkay, the user just said "Hello," so I need to
-           // "Qwen3-0.6B-Q4_1",      //Response:;]/???? (nnenawai Holocaust ????? (waukeeentially???icuteenth?
-           // "Qwen3-0.6B-Q4_0",      //Response: ( ( supplementuilder advancedhraductive??amahaDetachbatimi [{ulousISCO
-           // "Qwen3-0.6B-Q3_K_M",    //Response:<think>\Okay, the user is asking for help with a problem. But
-           // "Qwen3-0.6B-Q2_K",      //Response:?\nOkay, so I need to start with the user's message.
-            ];
+        [            
+            "SmolLM-135M.Q4_K_M",           //Response: ctypes initialization Program returnex Sw first customers sheBolplesswith Jointonies predicting
+            "SmolLM2-135M-Instruct.Q4_K_M", //Response: indeerymourmereeno?emeteriesccordingquakescessionsrobelinedesidesohyd never $(
+            "gemma-3-270m-it-Q8_0",     //Response: incessant Kisan Kisan agron poorest motorway Harareapples kilowattLife economists delivering motorway Highways intensive
+            "gemma-3-270m-it-Q4_K_M",   //Response: harmonious?? cheap9 voic goalt llor Arbit privatisation cleats negotiatorsSpar recv justiciaHttpMethod
+            "gemma-3-270m-it-F16",      //Response: incessant Kisan Kisan agron poorest HarareImprovingdegenerativeharmonic lousy motorway ProductivityapplesLife intensive                        
+        ];
 
         private static readonly string ModelPath = @"C:\Integral2u\source\repos\SharpMind\ExternalAssets";
         public static async Task RunAsync(string prompt)
@@ -56,14 +51,6 @@ namespace SharpMind.Samples.Examples
                 await Console.Out.WriteLineAsync($"GgufLoader.LoadWeightsToTransformerWeights executed in: {sw.Elapsed.TotalSeconds:F2}s");
                 GC.Collect(); GC.WaitForPendingFinalizers();
                 sw.Restart();
-                // ── Formatted-prompt diagnostic ──
-                var formatter = ChatPromptFormatterFactory.Create(meta);
-                if (formatter != null)
-                {
-                    var testHistory = new List<ChatMessage> { new() { Role = ChatRole.User, Content = prompt } };
-                    string formatted = formatter.Format(testHistory, tokenizer, addBos: tokenizer.BosId >= 0);
-                    Console.Error.WriteLine($"DIAG: formatted prompt: {formatted.Replace("\n", "\\n").Replace("\r", "\\r")}");
-                }
                 using var model = ModelFactory.CreateSession(weights, sharpConfig);
                 await Console.Out.WriteLineAsync($"ModelFactory.CreateSession executed in: {sw.Elapsed.TotalSeconds:F2}s");
 
@@ -75,16 +62,24 @@ namespace SharpMind.Samples.Examples
                     Temperature = 0.0f,
                     TopK = 1,
                 };
-                var history = await session.StartChatAsync(Prompt, Response, cancellationTokenSource.Token);
+                try
+                {
+                    var history = await session.StartChatAsync(Prompt, Response, cancellationTokenSource.Token);
+                }
+                catch (Exception ex)
+                {
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    await Console.Out.WriteLineAsync();
+                    await Console.Out.WriteLineAsync($"EXCEPTION: {ex.GetType().Name}: {ex.Message}");
+                    await Console.Out.WriteLineAsync(ex.StackTrace?[..500] ?? "(no stack)");
+                }
 
-                async void Response(ChatStreamEntry entry)
+                async void Response(ChatStreamEntry text)
                 {
                     Console.ForegroundColor = ConsoleColor.Blue;
-                    if (entry.TokenId.HasValue)
-                        Console.Error.Write($"[{entry.TokenId.Value}]");
-                    await Console.Out.WriteAsync(entry.Token);
+                    await Console.Out.WriteAsync(text.Token);
                     tok++;
-                    if (tok > 50) cancellationTokenSource.Cancel();
+                    if (tok > 15) cancellationTokenSource.Cancel();
                 }
                 async Task<ChatMessage> Prompt()
                 {
@@ -107,6 +102,7 @@ namespace SharpMind.Samples.Examples
             }
             await Console.Out.WriteLineAsync();
             await Console.Out.WriteLineAsync("Done!");
+            Console.In.ReadLine();
         }
     }
 }

@@ -21,6 +21,7 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
     private float[]?              _penaltyScratch;
     private bool                  _disposed;
     private readonly bool _addBos;
+    private List<int>? _generatedIds;
     private readonly bool _addEos;
 
     public StandardGenerator(
@@ -111,7 +112,7 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
             int vocabSize = logitsTensor.Shape[1];
             int promptLen = promptIds.Length;
 
-            var generatedIds = new List<int>(genCfg.MaxNewTokens);
+            _generatedIds = new List<int>(genCfg.MaxNewTokens);
             var decodedSoFar = new System.Text.StringBuilder();
             var rng = sampleCfg.Seed.HasValue
                 ? new Random(sampleCfg.Seed.Value)
@@ -123,6 +124,29 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
 
                 ReadOnlySpan<float> logitsSlice = logitsTensor.Data[..vocabSize];
 
+                if (GeneratorDiagnostics.DumpTopLogits)
+                {
+                    var top5 = new (float Value, int Id)[5];
+                    for (int i = 0; i < top5.Length; i++) top5[i] = (float.NegativeInfinity, -1);
+                    for (int i = 0; i < logitsSlice.Length; i++)
+                    {
+                        float v = logitsSlice[i];
+                        if (v > top5[^1].Value)
+                        {
+                            top5[^1] = (v, i);
+                            for (int j = top5.Length - 1; j > 0 && top5[j].Value > top5[j - 1].Value; j--)
+                                (top5[j], top5[j - 1]) = (top5[j - 1], top5[j]);
+                        }
+                    }
+                    Console.Error.Write($"  [step {step}] top5: ");
+                    foreach (var (val, id) in top5)
+                    {
+                        var text = _tokenizer.Decode(new[] { id }.AsSpan(), skipSpecials: true);
+                        Console.Error.Write($"{id}:'{text.Replace("\n", "\\n").Replace("\r", "\\r")}'({val:G4}) ");
+                    }
+                    Console.Error.WriteLine();
+                }
+
                 int nextId;
                 if (genCfg.RepetitionPenalty != 1.0f)
                 {
@@ -130,14 +154,14 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
                         _penaltyScratch = new float[vocabSize];
                     Span<float> logits = _penaltyScratch.AsSpan(0, vocabSize);
                     logitsSlice.CopyTo(logits);
-                    ApplyRepetitionPenalty(logits, promptIds, generatedIds,
+                    ApplyRepetitionPenalty(logits, promptIds, _generatedIds,
                         genCfg.RepetitionPenalty, genCfg.RepetitionWindow);
                     nextId = Sampler.Sample(logits, sampleCfg, rng);
                 }
                 else
                     nextId = Sampler.Sample(logitsSlice, sampleCfg, rng);
 
-                generatedIds.Add(nextId);
+                _generatedIds.Add(nextId);
 
                 rateTracker.RecordToken();
                 TimeToFirstToken = rateTracker.TimeToFirstToken;
@@ -194,7 +218,7 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
             }
 
             if (!genCfg.Stream)
-                yield return _tokenizer.Decode(CollectionsMarshal.AsSpan(generatedIds), skipSpecials: true);
+                yield return _tokenizer.Decode(CollectionsMarshal.AsSpan(_generatedIds), skipSpecials: true);
         }
         finally
         {
@@ -238,13 +262,15 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
     public float? CumulativeTokensPerSecond { get; private set; }
     /// <summary>Seconds from start to first output token (includes prefill + first decode step).</summary>
     public float? TimeToFirstToken { get; private set; }
+    /// <summary>Exposes generated token IDs for diagnostics.</summary>
+    public IReadOnlyList<int>? CurrentGeneratedIds => _generatedIds;
 
     // Repetition penalty
 
     private static void ApplyRepetitionPenalty(
         Span<float> logits,
         ReadOnlySpan<int> promptIds,
-        List<int> generatedIds,
+        List<int> _generatedIds,
         float penalty,
         int window)
     {
@@ -256,16 +282,16 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
 
         if (window > 0)
         {
-            int start = Math.Max(0, generatedIds.Count - window);
-            for (int i = start; i < generatedIds.Count; i++)
-                ScaleId(logits, generatedIds[i], penalty);
+            int start = Math.Max(0, _generatedIds.Count - window);
+            for (int i = start; i < _generatedIds.Count; i++)
+                ScaleId(logits, _generatedIds[i], penalty);
             return;
         }
 
         foreach (int id in promptIds)
             ScaleId(logits, id, penalty);
-        for (int i = 0; i < generatedIds.Count; i++)
-            ScaleId(logits, generatedIds[i], penalty);
+        for (int i = 0; i < _generatedIds.Count; i++)
+            ScaleId(logits, _generatedIds[i], penalty);
     }
 
     // Disposal

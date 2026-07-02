@@ -501,13 +501,16 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
                     if (loop) break;
                 }
 
+                var ids = _generator.CurrentGeneratedIds;
+                int? tokenId = ids != null && ids.Count > 0 ? ids[^1] : null;
                 yield return new ChatStreamEntry
                 {
                     Status = ChatStatus.Responding,
                     Token = fragment,
                     IsComplete = false,
                     TokensPerSecond = _generator.TokensPerSecond,
-                    TimeToFirstToken = _generator.TimeToFirstToken
+                    TimeToFirstToken = _generator.TimeToFirstToken,
+                    TokenId = tokenId,
                 };
             }
 

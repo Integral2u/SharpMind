@@ -19,9 +19,12 @@ public sealed class LinearLayer : IDisposable
     private QuantizedMatMulFn? _matMulFn;
 
     // Raw GGUF quantized data for quantized matmul (null means use float32 path).
+    // DEBUG: set to true before CreateSession to force float forward path on all layers
+    public static bool ForceFloatForward { get; set; }
+
     public byte[]? RawQuantizedData { get; set; }
     public GgufDtype? QuantDtype { get; set; }
-    public bool UseQuantizedForward => RawQuantizedData != null && QuantDtype != null && IsSupportedQuantDtype(QuantDtype.Value);
+    public bool UseQuantizedForward => !ForceFloatForward && RawQuantizedData != null && QuantDtype != null && IsSupportedQuantDtype(QuantDtype.Value);
 
     public QuantizationOps QuantizationOps
     {

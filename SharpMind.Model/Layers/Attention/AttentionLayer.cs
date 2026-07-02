@@ -23,6 +23,12 @@ namespace SharpMind.Model.Layers.Attention;
         public readonly PositionalEncoder PositionalEncoder;
         private NormLayer? _qNorm;
         private NormLayer? _kNorm;
+        // DEBUG: set to true to bypass Q/K RMSNorm (isolate norm as root cause)
+        public static bool ForceBypassQKNorm { get; set; }
+        // DEBUG: set to true to dump Q/K/V projection values for the first layer
+        public static bool DumpProjections { get; set; }
+        private static int _dumpLayerCounter;
+
         private bool _disposed;
 
     [PuzzleCornerPiece(SharpMindConfig.KeyAttentionQ8,
@@ -300,15 +306,29 @@ namespace SharpMind.Model.Layers.Attention;
         using var q = Wq.Forward(x, ops, workspace);
         using var k = Wk.Forward(x, ops, workspace);
         using var v = Wv.Forward(x, ops, workspace);
+        if (DumpProjections && _dumpLayerCounter++ < 1)
+        {
+            void DumpProj(string label, Tensor<float> t)
+            {
+                double sum = 0; float mn = float.MaxValue, mx = float.MinValue; bool hasN = false;
+                for (int i = 0; i < t.ElementCount; i++) { var vv = t.Data[i]; if (float.IsNaN(vv)) hasN = true; if (vv < mn) mn = vv; if (vv > mx) mx = vv; sum += vv; }
+                Console.Error.WriteLine($"  {label}: [{t.Shape[0]},{t.Shape[1]}] elems={t.ElementCount} min={mn:G4} max={mx:G4} mean={sum/t.ElementCount:G4} hasNaN={hasN}");
+                Console.Error.Write("    first 8: ");
+                for (int i = 0; i < Math.Min(8, t.ElementCount); i++) Console.Error.Write($"{t.Data[i]:G4} ");
+                Console.Error.WriteLine();
+            }
+            DumpProj("Q", q); DumpProj("K", k); DumpProj("V", v);
+        }
 
         // Apply per-head Q/K normalization (Qwen3):
         // Reshape to [batch*seqLen*nHeads, headDim] so NormLayer normalizes along headDim.
         // Forward always allocates a new tensor; using var disposes it at scope exit.
         // The normed tensor is 2D [totalHeads, headDim]; reshape at use sites below.
-        using var qNormed = _qNorm != null
+        // DEBUG: ForceBypassQKNorm skips normalization to isolate norm-related issues.
+        using var qNormed = (_qNorm != null && !ForceBypassQKNorm)
             ? _qNorm.Forward(q.Reshape(batch * seqLen * numH, headDim), workspace)
             : null;
-        using var kNormed = _kNorm != null
+        using var kNormed = (_kNorm != null && !ForceBypassQKNorm)
             ? _kNorm.Forward(k.Reshape(batch * seqLen * numKv, headDim), workspace)
             : null;
 

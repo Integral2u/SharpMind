@@ -593,7 +593,7 @@ public static partial class GgufLoader
                         weights.RawLmHead = rawData;
                         weights.RawLmHeadDtype = info.Dtype;
                     }
-                    else if (target != weights.LmHeadWeight)
+                    else if (target != weights.LmHeadWeight && !isBadLayout)
                     {
                         weights.RawEmbedding = rawData;
                         weights.RawEmbeddingDtype = info.Dtype;
@@ -608,8 +608,6 @@ public static partial class GgufLoader
                 if (target != null)
                 {
                     target.Data.Clear();
-                    // LM head requires transpose: GGUF stores [hidden_dim, vocab_size]
-                    // but SharpMind expects [vocab_size, hidden_dim].
                     if (target == weights.LmHeadWeight && info.Shape.Length == 2)
                     {
                         int ggufIn = (int)info.Shape[0], ggufOut = (int)info.Shape[1];

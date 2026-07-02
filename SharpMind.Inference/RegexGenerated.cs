@@ -33,6 +33,8 @@ namespace SharpMind.Inference
         public static partial Regex JinjaLiteralInX { get; }
         [GeneratedRegex(@"^(.+?)\s*\|\s*trim\s*$")]
         public static partial Regex JinjaExprTrim { get; }
+        [GeneratedRegex(@"^(.+?)\s*\|\s*length\s*$")]
+        public static partial Regex JinjaExprLength { get; }
         [GeneratedRegex(@"^(\w+)\.split\('([^']*)'\)\[(-?\d+)\]$")]
         public static partial Regex JinjaSplitDelim { get; }
         [GeneratedRegex(@"^(\w+)\.(\w+)$")]

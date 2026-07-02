@@ -21,4 +21,5 @@ public interface IGenerator<T>  : IDisposable where T : IKVCacheBuilder, new()
     float? TokensPerSecond { get; }
     float? CumulativeTokensPerSecond { get; }
     float? TimeToFirstToken { get; }
+    IReadOnlyList<int>? CurrentGeneratedIds => null;
 }
