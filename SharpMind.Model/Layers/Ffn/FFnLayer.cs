@@ -162,11 +162,10 @@ public abstract class FfnLayer : IDisposable
             WGated.ReplaceWeights(weights.Wf1, weights.Wf1Bias);
             if (weights.RawWgate != null && weights.RawWup != null)
             {
+                var fusedDtype = weights.QuantDtypeWgate ?? GgufDtype.F32;
                 byte[] fused = new byte[weights.RawWgate.Length + weights.RawWup.Length];
                 Buffer.BlockCopy(weights.RawWgate, 0, fused, 0, weights.RawWgate.Length);
                 Buffer.BlockCopy(weights.RawWup, 0, fused, weights.RawWgate.Length, weights.RawWup.Length);
-                // Use gate dtype for fused — both gate and up should be same type in practice
-                var fusedDtype = weights.QuantDtypeWgate ?? GgufDtype.F32;
                 WGated.SetRawWeight(fused, fusedDtype);
             }
             WDown.ReplaceWeights(weights.Wf2, weights.Wf2Bias);

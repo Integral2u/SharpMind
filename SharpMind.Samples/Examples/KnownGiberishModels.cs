@@ -1,6 +1,8 @@
 ﻿using SharpMind.Inference;
 using SharpMind.Inference.Chat;
+using SharpMind.Inference.Chat.PromptFormatters;
 using SharpMind.Model;
+using SharpMind.Model.Layers;
 using SharpMind.Model.Config;
 using SharpMind.Model.Format;
 using SharpMind.Tokenization;
@@ -19,7 +21,7 @@ namespace SharpMind.Samples.Examples
             "SmolLM2-135M-Instruct.Q4_K_M", //Response: indeerymourmereeno?emeteriesccordingquakescessionsrobelinedesidesohyd never $(
             "gemma-3-270m-it-Q8_0",     //Response: incessant Kisan Kisan agron poorest motorway Harareapples kilowattLife economists delivering motorway Highways intensive
             "gemma-3-270m-it-Q4_K_M",   //Response: harmonious?? cheap9 voic goalt llor Arbit privatisation cleats negotiatorsSpar recv justiciaHttpMethod
-            "gemma-3-270m-it-F16",      //Response: incessant Kisan Kisan agron poorest HarareImprovingdegenerativeharmonic lousy motorway ProductivityapplesLife intensive                        
+            "gemma-3-270m-it-F16"       //Response: incessant Kisan Kisan agron poorest HarareImprovingdegenerativeharmonic lousy motorway ProductivityapplesLife intensive                                                
         ];
 
         private static readonly string ModelPath = @"C:\Integral2u\source\repos\SharpMind\ExternalAssets";
@@ -38,10 +40,30 @@ namespace SharpMind.Samples.Examples
                 await Console.Out.FlushAsync();
 
                 GgufLoader.Load(ggufPath, null, out ModelMetaData meta, out ModelConfig modelConfig, out Tokenizer? tokenizer);
+                Console.Error.WriteLine($"DIAG_CONFIG: arch={modelConfig.Architecture} hidden={modelConfig.HiddenDim} layers={modelConfig.NumLayers} heads={modelConfig.NumHeads} kv={modelConfig.NumKvHeads} ffn={modelConfig.FfnDim} headDim={modelConfig.HeadDim} vocab={modelConfig.VocabSize} rope={modelConfig.RopeTheta}");
                 if (tokenizer == null)
                 {
                     await Console.Out.WriteLineAsync($"No Tokenizer Data");
                     continue;
+                }
+
+                // ── Formatted-prompt diagnostic ──
+                var formatter = ChatPromptFormatterFactory.Create(meta);
+                if (formatter != null)
+                {
+                    var testHistory = new List<ChatMessage> { new() { Role = ChatRole.User, Content = "Hello" } };
+                    string formatted = formatter.Format(testHistory, tokenizer, addBos: tokenizer.BosId >= 0);
+                    Console.Error.WriteLine($"DIAG: formatted prompt: {formatted.Replace("\n", "\\n").Replace("\r", "\\r")}");
+                }
+
+                // Dump first layer's weight details
+                if (meta.Tensors.Count > 0)
+                {
+                    for (int ti = 0; ti < Math.Min(20, meta.Tensors.Count); ti++)
+                    {
+                        var t = meta.Tensors[ti];
+                        Console.Error.WriteLine($"DIAG_TENSOR: {t.Name} dtype={t.Dtype} shape=[{string.Join(",", t.Shape)}]");
+                    }
                 }
 
                 var sharpConfig = modelConfig.ForModel();
@@ -51,6 +73,7 @@ namespace SharpMind.Samples.Examples
                 await Console.Out.WriteLineAsync($"GgufLoader.LoadWeightsToTransformerWeights executed in: {sw.Elapsed.TotalSeconds:F2}s");
                 GC.Collect(); GC.WaitForPendingFinalizers();
                 sw.Restart();
+
                 using var model = ModelFactory.CreateSession(weights, sharpConfig);
                 await Console.Out.WriteLineAsync($"ModelFactory.CreateSession executed in: {sw.Elapsed.TotalSeconds:F2}s");
 

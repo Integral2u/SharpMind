@@ -16,9 +16,7 @@ namespace SharpMind.Samples.Examples
         [
 
             //"Qwen3-0.6B-Q4_1",      //Response:;]/???? (nnenawai Holocaust ????? (waukeeentially???icuteenth?
-            //"Qwen3-0.6B-Q4_0",      //Response: ( ( supplementuilder advancedhraductive??amahaDetachbatimi [{ulousISCO
-
-            
+    
             //Current Response: surfaced_into PICK quad&# embarrassing delay finale ????.Topic??? flex?\Validation
             //Best Known Response to date:Hello! I'm here. How can assist you?Hi what you can
             "DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M", 

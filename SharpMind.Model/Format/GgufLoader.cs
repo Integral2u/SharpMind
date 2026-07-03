@@ -638,7 +638,7 @@ public static partial class GgufLoader
                             int targetOut = floatTarget.Shape[1];
                             for (int i = 0; i < ggufIn; i++)
                                 for (int o = 0; o < ggufOut; o++)
-                                    floatTarget.Data[i * targetOut + colOff + o] = buffer[o * ggufIn + i];
+                                    floatTarget.Data[i * targetOut + colOff + o] = buffer[i * ggufOut + o];
                         }
                         else
                         {

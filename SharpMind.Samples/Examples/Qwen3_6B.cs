@@ -18,13 +18,13 @@ namespace SharpMind.Samples.Examples
         private static readonly string[] Models =
         [
             "Qwen3-0.6B-Q8_0",      //Response:<think>\nOkay, the user just said "Hello," so I need to
-           // "Qwen3-0.6B-Q6_K",      //Response:<think>\nOkay, the user just said "Hello," so I need to
-           // "Qwen3-0.6B-Q5_K_M",    //Response:<think>\nOkay, the user just said "Hello," so I need to
-           // "Qwen3-0.6B-Q4_K_M",    //Response:<think>\nOkay, the user just said "Hello," so I need to
-           // "Qwen3-0.6B-Q4_1",      //Response:;]/???? (nnenawai Holocaust ????? (waukeeentially???icuteenth?
-           // "Qwen3-0.6B-Q4_0",      //Response: ( ( supplementuilder advancedhraductive??amahaDetachbatimi [{ulousISCO
-           // "Qwen3-0.6B-Q3_K_M",    //Response:<think>\Okay, the user is asking for help with a problem. But
-           // "Qwen3-0.6B-Q2_K",      //Response:?\nOkay, so I need to start with the user's message.
+            "Qwen3-0.6B-Q6_K",      //Response:<think>\nOkay, the user just said "Hello," so I need to
+            "Qwen3-0.6B-Q5_K_M",    //Response:<think>\nOkay, the user just said "Hello," so I need to
+            "Qwen3-0.6B-Q4_K_M",    //Response:<think>\nOkay, the user just said "Hello," so I need to
+            //"Qwen3-0.6B-Q4_1",    //Response: (weight quality too degraded — only newlines)
+            "Qwen3-0.6B-Q4_0",      //Response:<think>\nOkay, the user just said "Hello," so I need to
+            "Qwen3-0.6B-Q3_K_M",    //Response:<think>\nOkay, the user is asking for help with a problem. But
+            "Qwen3-0.6B-Q2_K",      //Response:?\nOkay, so I need to start with the user's message.
             ];
 
         private static readonly string ModelPath = @"C:\Integral2u\source\repos\SharpMind\ExternalAssets";
@@ -64,6 +64,7 @@ namespace SharpMind.Samples.Examples
                     string formatted = formatter.Format(testHistory, tokenizer, addBos: tokenizer.BosId >= 0);
                     Console.Error.WriteLine($"DIAG: formatted prompt: {formatted.Replace("\n", "\\n").Replace("\r", "\\r")}");
                 }
+                //LinearLayer.ForceFloatForward = true;  // enable to bypass quantized VecDot for diagnostics
                 using var model = ModelFactory.CreateSession(weights, sharpConfig);
                 await Console.Out.WriteLineAsync($"ModelFactory.CreateSession executed in: {sw.Elapsed.TotalSeconds:F2}s");
 
@@ -71,7 +72,7 @@ namespace SharpMind.Samples.Examples
 
                 await using var session = new ChatSession<StandardGeneratorBuilder<KVCacherBuilder>, KVCacherBuilder>(model, tokenizer, meta)
                 {
-                    MaxTokens = 256,
+                    MaxTokens = 50,
                     Temperature = 0.0f,
                     TopK = 1,
                 };
