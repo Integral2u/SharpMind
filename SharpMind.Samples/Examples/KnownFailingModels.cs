@@ -6,6 +6,8 @@ using SharpMind.Model.Config;
 using SharpMind.Model.Format;
 using SharpMind.Tokenization;
 using System.Diagnostics;
+using System.Reflection;
+using static SharpMind.Model.Format.GgufLoader;
 
 
 namespace SharpMind.Samples.Examples
@@ -14,8 +16,14 @@ namespace SharpMind.Samples.Examples
     {
         private static readonly string[] Models =
         [
+            //these models have TensorInfo.Shape.Length = 2 or 1
+            
+            "Qwen2.5-1.5B-Instruct-f16",    //Response:??,?????????????????????
 
-            //"Qwen3-0.6B-Q4_1",      //Response:;]/???? (nnenawai Holocaust ????? (waukeeentially???icuteenth?
+
+            //All these models have TensorInfo.Shape.Length = 1
+            "Qwen3-0.6B-Q4_0",    //Response: ( ( supplementuilder advancedhraductive??amahaDetachbatimi [{ulousISCO
+            "Qwen3-0.6B-Q4_1",      //Response:;]/???? (nnenawai Holocaust ????? (waukeeentially???icuteenth?
     
             //Current Response: surfaced_into PICK quad&# embarrassing delay finale ????.Topic??? flex?\Validation
             //Best Known Response to date:Hello! I'm here. How can assist you?Hi what you can
@@ -23,16 +31,9 @@ namespace SharpMind.Samples.Examples
 
             //Current Response:acias Const(md$(" reliability  Runtimelasmarapped Garlic '/'?? WaitFor?? Aer
             //Best Known Response to date:</think>\n\nHello! How Are You? ?? ?
-            "DeepSeek-R1-Distill-Qwen-1.5B-Q8_0",  
-            
-            
-            
-            //Current Response:?? ???(vehicle???UniformLocation ? occupancy simplify generado?? Written prowess??
-            //Best Known Response to date: \n\n\n# 1. Write a Python program to print the following pattern 
-            "qwen2.5-1.5b-instruct-q8_0",
+            "DeepSeek-R1-Distill-Qwen-1.5B-Q8_0",
 
-
-            "tinyllama-1.1b-chat-v1.0.Q8_0",    //Response:L ??File mez ??Space veg Richard stepCAAFIGFile? Ord
+            
             "qwen2-0.5b-instruct-q2_k",     //Response:?? (atu connaît? Stopwatch?????? ??[] everrowser??pos
             "Qwen2-0.5B.Q2_K",              //Response: ????[] xlen??????.??? breeds.fi?
             "Qwen2-0.5B.Q3_K_L",            //Response:./(?????????????????????
@@ -40,10 +41,15 @@ namespace SharpMind.Samples.Examples
             "Qwen2-0.5B.Q3_K_S",            //Response:estring???emales?? je??? Gro  (??hibition Main
             "qwen2-0_5b-instruct-q4_k_m",   //Response:.LogWarning? -.getElementsByNamekf?APEabbleisted,GL.ConnectionString]';\n-??
             "Qwen2-0.5B.Q5_1",              //Response:-+$?ergy=> Tw %(. Tw?????
+                                          
+            //Current Response:?? ???(vehicle???UniformLocation ? occupancy simplify generado?? Written prowess??
+            //Best Known Response to date: \n\n\n# 1. Write a Python program to print the following pattern 
+            "qwen2.5-1.5b-instruct-q8_0",
+
             
-            "Llama-3.2-1B-Instruct-Q4_K_M", //Response:   and\nand\n\n a\n\n# "\na\n#           
-            "Qwen2.5-1.5B-Instruct-f16",    //Response:??,?????????????????????
-            
+
+            "Llama-3.2-1B-Instruct-Q4_K_M", //Response:   and\nand\n\n a\n\n# "\na\n#     
+            "tinyllama-1.1b-chat-v1.0.Q8_0",    //Response:L ??File mez ??Space veg Richard stepCAAFIGFile? Ord
             "TinyLlama-1.1B-Chat-v1.0.Q4_K_M",  //Response: sacrificCAAFIG grat ?? Ord veg Richard step ..File Bayer ????????ifoliaars
             //https://huggingface.co/tensorblock/llama3-small-GGUF
             "llama3-small-Q2_K",//Response: "{\"_SIGNAL libido.viewDidLoad.createSequentialGroup Routing deprived ?????upp ?????rasing??? dogrudan_avatar
@@ -53,6 +59,7 @@ namespace SharpMind.Samples.Examples
             "tiny-mistral-Q2_K", //Response:idadections interactionsStub varianceGM Identity yards? tenant Icon":? pione???
             "tiny-mistral-Q3_K_M", //Response: typeof steep'' asksREEN sensors yeDDbritmost anywhere \;tabularreshold Grade
 
+            //Unknown shape
             //https://huggingface.co/prism-ml/Bonsai-8B-gguf            
             "Bonsai-8B",    //Out of Memory
             "Bonsai-8B-Q1_0",   //Out of Memory
@@ -89,7 +96,7 @@ namespace SharpMind.Samples.Examples
                 var sharpConfig = modelConfig.ForModel();
                 GC.Collect(); GC.WaitForPendingFinalizers();
                 var sw = Stopwatch.StartNew();
-                using var weights = GgufLoader.LoadWeightsToTransformerWeights(ggufPath, modelConfig);
+                using var weights = GgufLoader.LoadWeightsToTransformerWeights(ggufPath, modelConfig);                
                 await Console.Out.WriteLineAsync($"GgufLoader.LoadWeightsToTransformerWeights executed in: {sw.Elapsed.TotalSeconds:F2}s");
                 GC.Collect(); GC.WaitForPendingFinalizers();
                 sw.Restart();

@@ -847,6 +847,153 @@ public static partial class QuantizationKernels
     }
 
 
+    // QuantizedMatMulQ4_0 — fused matmul for q4_0 weights
+    // Reads blocks in [In,Out] GGUF row-major order: for each input row i,
+    // read all output blocks and accumulate contributions to all output columns.
+    // This is the CORRECT algorithm for the GGUF data layout.
+    // (VecDotQ4_0 reads blocks along the wrong axis.)
+
+    public static unsafe void QuantizedMatMulQ4_0_Scalar(
+        float* input, byte* rawWeights, float* output,
+        int M, int K, int N)
+    {
+        const int QK = 32;
+        const int BLOCK_BYTES = 18;
+        int nRowBlk = (N + QK - 1) / QK;
+
+        if (M <= 1)
+        {
+            for (int blkC = 0; blkC < nRowBlk; blkC++)
+            {
+                double* sums = stackalloc double[QK];
+                for (int k = 0; k < QK; k++) sums[k] = 0.0;
+                for (int i = 0; i < K; i++)
+                {
+                    byte* bp = rawWeights + ((long)i * nRowBlk + blkC) * BLOCK_BYTES;
+                    float d = HalfToFloat_Scalar(*(ushort*)bp);
+                    byte* qs = bp + 2;
+                    int blockEnd = Math.Min(QK, N - blkC * QK);
+                    float x = input[i];
+                    if (x == 0) continue;
+                    for (int k = 0; k < blockEnd; k++)
+                    {
+                        int q = (qs[k / 2] >> (4 * (k % 2))) & 0x0F;
+                        sums[k] += x * (q * d);
+                    }
+                }
+                int cBase = blkC * QK;
+                int tail = Math.Min(QK, N - cBase);
+                for (int k = 0; k < tail; k++)
+                    output[cBase + k] = (float)sums[k];
+            }
+        }
+        else
+        {
+            System.Threading.Tasks.Parallel.For(0, M, row =>
+            {
+                float* pInRow = input + (long)row * K;
+                float* pOutRow = output + (long)row * N;
+                for (int blkC = 0; blkC < nRowBlk; blkC++)
+                {
+                    double* sums = stackalloc double[QK];
+                    for (int k = 0; k < QK; k++) sums[k] = 0.0;
+                    for (int i = 0; i < K; i++)
+                    {
+                        byte* bp = rawWeights + ((long)i * nRowBlk + blkC) * BLOCK_BYTES;
+                        float d = HalfToFloat_Scalar(*(ushort*)bp);
+                        byte* qs = bp + 2;
+                        int blockEnd = Math.Min(QK, N - blkC * QK);
+                        float x = pInRow[i];
+                        if (x == 0) continue;
+                        for (int k = 0; k < blockEnd; k++)
+                        {
+                            int q = (qs[k / 2] >> (4 * (k % 2))) & 0x0F;
+                            sums[k] += x * (q * d);
+                        }
+                    }
+                    int cBase = blkC * QK;
+                    int tail = Math.Min(QK, N - cBase);
+                    for (int k = 0; k < tail; k++)
+                        pOutRow[cBase + k] = (float)sums[k];
+                }
+            });
+        }
+    }
+
+
+    // QuantizedMatMulQ4_1 — fused matmul for q4_1 weights
+    // Same correct algorithm as Q4_0, but with min parameter m.
+
+    public static unsafe void QuantizedMatMulQ4_1_Scalar(
+        float* input, byte* rawWeights, float* output,
+        int M, int K, int N)
+    {
+        const int QK = 32;
+        const int BLOCK_BYTES = 20;
+        int nRowBlk = (N + QK - 1) / QK;
+
+        if (M <= 1)
+        {
+            for (int blkC = 0; blkC < nRowBlk; blkC++)
+            {
+                double* sums = stackalloc double[QK];
+                for (int k = 0; k < QK; k++) sums[k] = 0.0;
+                for (int i = 0; i < K; i++)
+                {
+                    byte* bp = rawWeights + ((long)i * nRowBlk + blkC) * BLOCK_BYTES;
+                    float d = HalfToFloat_Scalar(*(ushort*)bp);
+                    float m = HalfToFloat_Scalar(*(ushort*)(bp + 2));
+                    byte* qs = bp + 4;
+                    int blockEnd = Math.Min(QK, N - blkC * QK);
+                    float x = input[i];
+                    if (x == 0) continue;
+                    for (int k = 0; k < blockEnd; k++)
+                    {
+                        int q = (qs[k / 2] >> (4 * (k % 2))) & 0x0F;
+                        sums[k] += x * (m + q * d);
+                    }
+                }
+                int cBase = blkC * QK;
+                int tail = Math.Min(QK, N - cBase);
+                for (int k = 0; k < tail; k++)
+                    output[cBase + k] = (float)sums[k];
+            }
+        }
+        else
+        {
+            System.Threading.Tasks.Parallel.For(0, M, row =>
+            {
+                float* pInRow = input + (long)row * K;
+                float* pOutRow = output + (long)row * N;
+                for (int blkC = 0; blkC < nRowBlk; blkC++)
+                {
+                    double* sums = stackalloc double[QK];
+                    for (int k = 0; k < QK; k++) sums[k] = 0.0;
+                    for (int i = 0; i < K; i++)
+                    {
+                        byte* bp = rawWeights + ((long)i * nRowBlk + blkC) * BLOCK_BYTES;
+                        float d = HalfToFloat_Scalar(*(ushort*)bp);
+                        float m = HalfToFloat_Scalar(*(ushort*)(bp + 2));
+                        byte* qs = bp + 4;
+                        int blockEnd = Math.Min(QK, N - blkC * QK);
+                        float x = pInRow[i];
+                        if (x == 0) continue;
+                        for (int k = 0; k < blockEnd; k++)
+                        {
+                            int q = (qs[k / 2] >> (4 * (k % 2))) & 0x0F;
+                            sums[k] += x * (m + q * d);
+                        }
+                    }
+                    int cBase = blkC * QK;
+                    int tail = Math.Min(QK, N - cBase);
+                    for (int k = 0; k < tail; k++)
+                        pOutRow[cBase + k] = (float)sums[k];
+                }
+            });
+        }
+    }
+
+
     // QuantizedMatMulQ5_0 — fused matmul for q5_0 weights
 
 

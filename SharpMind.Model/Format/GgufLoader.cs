@@ -10,6 +10,7 @@ using System.Text.RegularExpressions;
 using static SharpMind.Model.TransformerWeights;
 
 namespace SharpMind.Model.Format;
+
 public static partial class GgufLoader
 {
     private const uint Magic = 0x46554747;
@@ -626,7 +627,7 @@ public static partial class GgufLoader
                     if (floatTarget != null)
                     {
                         if (info.Shape.Length == 2)
-                        {
+                        {                            
                             int ggufIn = info.Shape[0];
                             int ggufOut = info.Shape[1];
                             // ffn_gate and ffn_up both map to Wf1 [HiddenDim, 2*FfnDim].
@@ -638,7 +639,7 @@ public static partial class GgufLoader
                             int targetOut = floatTarget.Shape[1];
                             for (int i = 0; i < ggufIn; i++)
                                 for (int o = 0; o < ggufOut; o++)
-                                    floatTarget.Data[i * targetOut + colOff + o] = buffer[i * ggufOut + o];
+                                    floatTarget.Data[i * targetOut + colOff + o] = buffer[o * ggufIn + i];                            
                         }
                         else
                         {
@@ -919,57 +920,57 @@ public static partial class GgufLoader
         switch (dtype)
         {
             case "Q5_0":
-            {
-                float d = HalfToFloat(*(ushort*)block);
-                uint qh = *(uint*)(block + 2);
-                byte* qs = block + 6;
-                for (int j = 0; j < blkSize; j++)
                 {
-                    int nibble = (qs[j / 2] >> ((j & 1) * 4)) & 0x0F;
-                    int highBit = (int)(qh >> j) & 1;
-                    result[j] = d * ((nibble | (highBit << 4)) - 16);
-                }
-                break;
-            }
-            case "Q6_K":
-            {
-                byte* ql = block;
-                byte* qh = ql + 128;
-                sbyte* scales = (sbyte*)(qh + 64);
-                float d = HalfToFloat(*(ushort*)(block + 208));
-                for (int nOff = 0; nOff < blkSize; nOff += 128)
-                {
-                    int qlOff = nOff == 0 ? 0 : 64;
-                    int qhOff = nOff == 0 ? 0 : 32;
-                    int scOff = nOff == 0 ? 0 : 8;
-                    int halfRem = Math.Min(128, blkSize - nOff);
-                    for (int l = 0; l < 32 && l < halfRem; l++)
+                    float d = HalfToFloat(*(ushort*)block);
+                    uint qh = *(uint*)(block + 2);
+                    byte* qs = block + 6;
+                    for (int j = 0; j < blkSize; j++)
                     {
-                        int is_ = l / 16;
-                        int q1 = (ql[qlOff + l] & 0x0F) | ((qh[qhOff + l] & 0x03) << 4);
-                        int q2 = (ql[qlOff + l + 32] & 0x0F) | (((qh[qhOff + l] >> 2) & 0x03) << 4);
-                        int q3 = ((ql[qlOff + l] >> 4) & 0x0F) | (((qh[qhOff + l] >> 4) & 0x03) << 4);
-                        int q4 = ((ql[qlOff + l + 32] >> 4) & 0x0F) | (((qh[qhOff + l] >> 6) & 0x03) << 4);
-                        int idx1 = nOff + l;
-                        int idx2 = nOff + l + 32;
-                        int idx3 = nOff + l + 64;
-                        int idx4 = nOff + l + 96;
-                        if (idx1 < blkSize) result[idx1] = d * scales[scOff + is_ + 0] * (q1 - 32);
-                        if (idx2 < blkSize) result[idx2] = d * scales[scOff + is_ + 2] * (q2 - 32);
-                        if (idx3 < blkSize) result[idx3] = d * scales[scOff + is_ + 4] * (q3 - 32);
-                        if (idx4 < blkSize) result[idx4] = d * scales[scOff + is_ + 6] * (q4 - 32);
+                        int nibble = (qs[j / 2] >> ((j & 1) * 4)) & 0x0F;
+                        int highBit = (int)(qh >> j) & 1;
+                        result[j] = d * ((nibble | (highBit << 4)) - 16);
                     }
+                    break;
                 }
-                break;
-            }
+            case "Q6_K":
+                {
+                    byte* ql = block;
+                    byte* qh = ql + 128;
+                    sbyte* scales = (sbyte*)(qh + 64);
+                    float d = HalfToFloat(*(ushort*)(block + 208));
+                    for (int nOff = 0; nOff < blkSize; nOff += 128)
+                    {
+                        int qlOff = nOff == 0 ? 0 : 64;
+                        int qhOff = nOff == 0 ? 0 : 32;
+                        int scOff = nOff == 0 ? 0 : 8;
+                        int halfRem = Math.Min(128, blkSize - nOff);
+                        for (int l = 0; l < 32 && l < halfRem; l++)
+                        {
+                            int is_ = l / 16;
+                            int q1 = (ql[qlOff + l] & 0x0F) | ((qh[qhOff + l] & 0x03) << 4);
+                            int q2 = (ql[qlOff + l + 32] & 0x0F) | (((qh[qhOff + l] >> 2) & 0x03) << 4);
+                            int q3 = ((ql[qlOff + l] >> 4) & 0x0F) | (((qh[qhOff + l] >> 4) & 0x03) << 4);
+                            int q4 = ((ql[qlOff + l + 32] >> 4) & 0x0F) | (((qh[qhOff + l] >> 6) & 0x03) << 4);
+                            int idx1 = nOff + l;
+                            int idx2 = nOff + l + 32;
+                            int idx3 = nOff + l + 64;
+                            int idx4 = nOff + l + 96;
+                            if (idx1 < blkSize) result[idx1] = d * scales[scOff + is_ + 0] * (q1 - 32);
+                            if (idx2 < blkSize) result[idx2] = d * scales[scOff + is_ + 2] * (q2 - 32);
+                            if (idx3 < blkSize) result[idx3] = d * scales[scOff + is_ + 4] * (q3 - 32);
+                            if (idx4 < blkSize) result[idx4] = d * scales[scOff + is_ + 6] * (q4 - 32);
+                        }
+                    }
+                    break;
+                }
             case "Q8_0":
-            {
-                float d = HalfToFloat(*(ushort*)block);
-                sbyte* qs = (sbyte*)(block + 2);
-                for (int j = 0; j < blkSize; j++)
-                    result[j] = qs[j] * d;
-                break;
-            }
+                {
+                    float d = HalfToFloat(*(ushort*)block);
+                    sbyte* qs = (sbyte*)(block + 2);
+                    for (int j = 0; j < blkSize; j++)
+                        result[j] = qs[j] * d;
+                    break;
+                }
             default:
                 throw new ArgumentException($"Unsupported dtype: {dtype}");
         }

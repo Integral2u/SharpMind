@@ -79,12 +79,26 @@ public abstract class QuantizationOps
         "q4_0_scalar", $"{NS}.{nameof(QuantizationKernels.VecDotQ4_0_Scalar)}")]
     public abstract unsafe float VecDotQ4_0(float* input, byte* rawWeights, int col, int inFeatures);
 
+    [PuzzleCornerPiece(QuantizationConfig.KeyQuantizedMatMulQ4_0, true, null,
+        "qmatmul_q4_0_fma",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_0_Scalar)}",
+        "qmatmul_q4_0_avx2",   $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_0_Scalar)}",
+        "qmatmul_q4_0_sse",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_0_Scalar)}",
+        "qmatmul_q4_0_scalar", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_0_Scalar)}")]
+    public abstract unsafe void QuantizedMatMulQ4_0(float* input, byte* rawWeights, float* output, int M, int K, int N);
+
     [PuzzleCornerPiece(QuantizationConfig.KeyVecDotQ4_1, true, null,
         "q4_1_fma",    $"{NS}.{nameof(QuantizationKernels.VecDotQ4_1_Scalar)}",
         "q4_1_avx2",   $"{NS}.{nameof(QuantizationKernels.VecDotQ4_1_AVX2)}",
         "q4_1_sse",    $"{NS}.{nameof(QuantizationKernels.VecDotQ4_1_SSE)}",
         "q4_1_scalar", $"{NS}.{nameof(QuantizationKernels.VecDotQ4_1_Scalar)}")]
     public abstract unsafe float VecDotQ4_1(float* input, byte* rawWeights, int col, int inFeatures);
+
+    [PuzzleCornerPiece(QuantizationConfig.KeyQuantizedMatMulQ4_1, true, null,
+        "qmatmul_q4_1_fma",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_1_Scalar)}",
+        "qmatmul_q4_1_avx2",   $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_1_Scalar)}",
+        "qmatmul_q4_1_sse",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_1_Scalar)}",
+        "qmatmul_q4_1_scalar", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_1_Scalar)}")]
+    public abstract unsafe void QuantizedMatMulQ4_1(float* input, byte* rawWeights, float* output, int M, int K, int N);
 
     [PuzzleCornerPiece(QuantizationConfig.KeyVecDotQ5_0, true, null,
         "q5_0_fma",    $"{NS}.{nameof(QuantizationKernels.VecDotQ5_0_FMA)}",

@@ -16,7 +16,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Terminal.Gui" Version="1.15.1" />
+    <PackageReference Include="Terminal.Gui" Version="1.19.0" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\SharpMind.GPU\SharpMind.GPU.csproj" />

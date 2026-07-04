@@ -303,7 +303,6 @@ public sealed class Transformer : IDisposable
         _embedding.Dispose();
         _arch.Dispose();
         _finalNorm.Dispose();
-        _lmHead?.Dispose();
     }
 
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, nameof(Transformer));
