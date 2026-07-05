@@ -247,7 +247,7 @@ public sealed class MainWindow : Window
         // ChatSessionBridge at all (DebugChatBridge doesn't share this
         // concern, since there's no real Transformer underneath it).
         IChatBridge bridge = result.IsDebugMode
-            ? new DebugChatBridge(result.CuiContext!)
+            ? new DebugChatBridge(result.CuiContext!, gate.BuildCallback(launchOptions))
             : new ChatSessionBridge(result.Session!, disposeUnderlyingSession: false);
 
         if (bridge is ChatSessionBridge realBridge) realBridge.Start();

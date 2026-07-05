@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using System.Text.Json.Nodes;
+using SharpMind.Inference.Agent;
 using SharpMind.Inference.Chat;
 
 namespace SharpMind.CUI.App;
@@ -16,12 +18,13 @@ namespace SharpMind.CUI.App;
 /// stream so the transcript/status-sidebar/tokens-per-second display all
 /// have something realistic to render.
 /// </summary>
-public sealed class DebugChatBridge(CuiToolContext cuiContext) : IChatBridge
+public sealed class DebugChatBridge(CuiToolContext cuiContext, Func<ToolPermissionContext, Task<ToolPermission>> permissionCallback) : IChatBridge
 {
     private readonly ConcurrentQueue<ChatStreamEntry> _incoming = new();
     private readonly List<ChatMessage> _history = [];
     private CancellationTokenSource _cts = new();
     private Task? _runningTurn;
+    private readonly Func<ToolPermissionContext, Task<ToolPermission>> _permissionCallback = permissionCallback;
 
     public bool Faulted { get; private set; }
     public Exception? Fault { get; private set; }
@@ -46,6 +49,8 @@ public sealed class DebugChatBridge(CuiToolContext cuiContext) : IChatBridge
     [
         ("TestOptions", "Exercises a real UIShowOptionSelection round trip through the choice dialog."),
         ("TestAgent", "Simulates a sub-agent delegation (Executing/Researching/Responding) to test transcript attribution."),
+        ("TestWeather", "Simulates a weather tool call to test Network permission interception."),
+        ("TestFile", "Simulates a file system tool call to test File permission interception."),
     ];
 
     private async Task RunScriptedTurnAsync(string input, CancellationToken token)
@@ -54,19 +59,31 @@ public sealed class DebugChatBridge(CuiToolContext cuiContext) : IChatBridge
         {
             string command = input.Trim();
 
-            if (string.Equals(command, "TestOptions", StringComparison.OrdinalIgnoreCase))
-            {
-                await RunTestOptionsAsync(token);
-                return;
-            }
+        if (string.Equals(command, "TestOptions", StringComparison.OrdinalIgnoreCase))
+        {
+            await RunTestOptionsAsync(token);
+            return;
+        }
 
-            if (string.Equals(command, "TestAgent", StringComparison.OrdinalIgnoreCase))
-            {
-                await RunTestAgentAsync(token);
-                return;
-            }
+        if (string.Equals(command, "TestAgent", StringComparison.OrdinalIgnoreCase))
+        {
+            await RunTestAgentAsync(token);
+            return;
+        }
 
-            await RunHelpAsync(command, token);
+        if (string.Equals(command, "TestWeather", StringComparison.OrdinalIgnoreCase))
+        {
+            await RunTestWeatherAsync(token);
+            return;
+        }
+
+        if (string.Equals(command, "TestFile", StringComparison.OrdinalIgnoreCase))
+        {
+            await RunTestFileAsync(token);
+            return;
+        }
+
+        await RunHelpAsync(command, token);
         }
         catch (OperationCanceledException)
         {
@@ -164,6 +181,76 @@ public sealed class DebugChatBridge(CuiToolContext cuiContext) : IChatBridge
         // sub-agent text above, in the same transcript.
         Emit(ChatStatus.Responding, null);
         await StreamTextAsync("And this part streams afterward as ordinary Responding tokens from the top-level agent picking back up — it should land as a separate transcript entry under the regular agent name, not get merged into the sub-agent's text above.", token);
+        Complete();
+    }
+
+    private async Task RunTestWeatherAsync(CancellationToken token)
+    {
+        Emit(ChatStatus.Thinking, null);
+        await Task.Delay(100, token);
+
+        Emit(ChatStatus.Executing, "GetCurrentWeather");
+        
+        // Trigger the real permission gate
+        var permission = await _permissionCallback(new ToolPermissionContext
+        {
+            ToolName = "GetCurrentWeather",
+            Category = ToolCategory.Network,
+            Resource = "api.open-meteo.com",
+            Arguments = new JsonObject()
+        });
+
+        if (permission == ToolPermission.Never)
+        {
+            Emit(ChatStatus.Responding, null);
+            string message = "Error: Network access was denied by the user.";
+            _history.Add(ChatMessage.Agent(message));
+            await StreamTextAsync(message, token);
+            Complete();
+            return;
+        }
+
+        await Task.Delay(500, token);
+
+        Emit(ChatStatus.Responding, null);
+        string weatherMsg = "The current weather in London is 12°C with light rain and a wind speed of 15km/h.";
+        _history.Add(ChatMessage.Agent(weatherMsg));
+        await StreamTextAsync(weatherMsg, token);
+        Complete();
+    }
+
+    private async Task RunTestFileAsync(CancellationToken token)
+    {
+        Emit(ChatStatus.Thinking, null);
+        await Task.Delay(100, token);
+
+        Emit(ChatStatus.Executing, "ListFiles");
+        
+        // Trigger the real permission gate
+        var permission = await _permissionCallback(new ToolPermissionContext
+        {
+            ToolName = "ListFiles",
+            Category = ToolCategory.File,
+            Resource = ".",
+            Arguments = new JsonObject()
+        });
+
+        if (permission == ToolPermission.Never)
+        {
+            Emit(ChatStatus.Responding, null);
+            string message = "Error: File system access was denied by the user.";
+            _history.Add(ChatMessage.Agent(message));
+            await StreamTextAsync(message, token);
+            Complete();
+            return;
+        }
+
+        await Task.Delay(500, token);
+
+        Emit(ChatStatus.Responding, null);
+        string fileMsg = "[DIR] src\n[FILE] README.md\n[FILE] LICENSE";
+        _history.Add(ChatMessage.Agent(fileMsg));
+        await StreamTextAsync(fileMsg, token);
         Complete();
     }
 

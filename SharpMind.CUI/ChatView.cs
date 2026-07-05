@@ -70,7 +70,8 @@ public sealed class ChatView : View
 
         _transcriptView = new TextView
         {
-            X = 0, Y = 0,
+            X = 0,
+            Y = 0,
             Width = Dim.Fill(sidebarWidth + 1),
             Height = Dim.Fill(2),
             ReadOnly = true,
@@ -83,11 +84,23 @@ public sealed class ChatView : View
             // this just makes sure focus doesn't land here by default either.
             TabStop = false
         };
-
+        _transcriptView.ContextMenu.MenuItems.Children = [.. _transcriptView.ContextMenu.MenuItems.Children.Where(p =>
+        {
+            var s = p.Title.ToString();
+            return (s == "Cu_t" || 
+            s == "_Delete All" ||
+            s == "Cu_t" ||
+            s == "_Paste" ||
+            s == "_Undo" ||
+            s == "_Redo") == false;
+        }
+        )];
         var sidebarFrame = new FrameView("Status")
         {
-            X = Pos.Right(_transcriptView) + 1, Y = 0,
-            Width = sidebarWidth, Height = Dim.Fill(2)
+            X = Pos.Right(_transcriptView) + 1,
+            Y = 0,
+            Width = sidebarWidth,
+            Height = Dim.Fill(2)
         };
 
         _statusLabel = new Label("Ready") { X = 0, Y = 0, Width = Dim.Fill() };
@@ -118,14 +131,16 @@ public sealed class ChatView : View
 
         _inputField = new TextField("")
         {
-            X = 0, Y = Pos.AnchorEnd(1),
+            X = 0,
+            Y = Pos.AnchorEnd(1),
             Width = Dim.Fill(14)
         };
         _inputField.KeyPress += OnInputKeyPress;
 
         _interruptButton = new Button("Interrupt")
         {
-            X = Pos.AnchorEnd(13), Y = Pos.AnchorEnd(1),
+            X = Pos.AnchorEnd(13),
+            Y = Pos.AnchorEnd(1),
             Width = 13,
             Enabled = false
         };

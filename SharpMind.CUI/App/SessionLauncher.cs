@@ -7,6 +7,7 @@ using SharpMind.Model;
 using SharpMind.Model.Config;
 using SharpMind.Model.Format;
 using SharpMind.Tokenization;
+using SharpMind.AgentTools;
 
 namespace SharpMind.CUI.App;
 
@@ -174,6 +175,8 @@ public static class SessionLauncher
         // what other tools, skills, or sub-agent settings the user configured.
         var builder = new AgentBuilder(options.AgentName, options.Sampling);
         builder.WithTools(new CuiTools(cuiContext));
+        builder.WithTools(new WeatherTool());
+        builder.WithTools(new FileSystemTool(options.ProjectPath ?? Directory.GetCurrentDirectory()));
 
         foreach (var folder in options.SkillFolders)
             builder.WithSkills(folder);
