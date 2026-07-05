@@ -89,7 +89,11 @@ public static class SessionLauncher
         Tokenizer? tokenizer;
         try
         {
-            GgufLoader.Load(options.ModelPath, null, out meta, out modelConfig, out tokenizer);
+            (meta, modelConfig, tokenizer) = await Task.Run(() =>
+            {
+                GgufLoader.Load(options.ModelPath, null, out var m, out var c, out var t);
+                return (m, c, t);
+            });
         }
         catch (Exception ex)
         {
@@ -103,10 +107,10 @@ public static class SessionLauncher
         TransformerWeights weights;
         try
         {
-                var progress = status is null
-                    ? null
-                    : new Progress<float>(p => status.Report($"Loading weights... {p:P0}"));
-                weights = GgufLoader.LoadWeightsToTransformerWeights(options.ModelPath, modelConfig, progress, options.LoadMode);
+            var progress = status is null
+                ? null
+                : new Progress<float>(p => status.Report($"Loading weights... {p:P0}"));
+            weights = await Task.Run(() => GgufLoader.LoadWeightsToTransformerWeights(options.ModelPath, modelConfig, progress, options.LoadMode));
         }
         catch (Exception ex)
         {
@@ -127,7 +131,8 @@ public static class SessionLauncher
         Dictionary<string, string> mapping = options.UseGpu
             ? new MappingBuilder(options.HardwareTier).ApplyPreset(sharpConfig).WithGpu().Build()
             : sharpConfig.ToJigSawMapping();
-
+        status?.Report("Creating session...");
+        await Task.Yield();
         var model = ModelFactory.CreateSession(weights, sharpConfig, mapping);
 
         return new ModelLoadResult

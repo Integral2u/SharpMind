@@ -181,7 +181,7 @@ public sealed class MainWindow : Window
         _options = NewSessionOptionsFromSettings();
         _options.ModelPath = null;
         _options.Generator = GeneratorStrategy.UIDebug;
-        ShowOptions();
+        LaunchSession();
     }
 
     private async void LaunchSession()
@@ -218,11 +218,12 @@ public sealed class MainWindow : Window
                 loaded = loadResult.Loaded!;
                 _modelCache.Register(launchOptions, loaded);
             }
-
+            progressView.SetMessage("Starting session...");
             CreateAndShowSession(launchOptions, loaded);
         }
         else
         {
+            progressView.SetMessage("Starting session...");
             CreateAndShowSession(launchOptions, null);
         }
     }

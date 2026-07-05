@@ -2,21 +2,10 @@
 you must make sure you understand the JigSawDotNet pattern and use. Intention is to reduce and branching code by genertaing code whihc may require implmenting or re-using Ops, Kernel and Factory patterns,
 Review Sharmind.Core.Activations.* for example
 
-LoadMode.Caached dosn;t seem to work as intended. Layers only need to be loaded as when needed from file. Layer offsets shoudl be known.
-
-Chat Session has no option for selecting LoadMode, this would be helpful when checking if Cached Mode memory uses is changin while layers are loaded/unloaded.
-the Strategy Label should also be more specific example, and hardware tier should show what it resolved to.
-Load:		Cached
-Generator:	Standard
-KV Cache:	Quantized
-HW Tier:	FMA
+LoadMode.Caached dosn't seem to work as intended. Layers only need to be loaded as when needed from file. Layer offsets shoudl be known.
 
 
-
-We should also have a loading state indication progress
-public static TransformerWeights LoadWeightsToTransformerWeights(string path, ModelConfig config, IProgress<float>? progress = null, LoadMode mode = LoadMode.Realtime)
-
-Interrupt should interupt the actual LLM 
+Interrupt should interupt the actual LLM chat streaming, currently it seems to just call the ShowSessionManager
 
 
 Questions, Should Chat History that has a ChatStatus Thinking/Updating/Executing/Waiting/Researching/Interrupted/Complete be omiited from KV Cache, possibly only need Responding and final result of Executing and Researching plus User Input
