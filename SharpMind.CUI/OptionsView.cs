@@ -3,6 +3,7 @@ using NStack;
 using SharpMind;
 using SharpMind.CUI.App;
 using SharpMind.Inference.Agent;
+using SharpMind.Model.Format;
 using Terminal.Gui;
 
 namespace SharpMind.CUI;
@@ -75,6 +76,12 @@ public sealed class OptionsView : View
         cacheRadio.SelectedItemChanged += (args) => _options.Cache = (CacheStrategy)args.SelectedItem;
         _formContent.Add(cacheRadio);
         row += Enum.GetValues<CacheStrategy>().Length + 1;
+
+        AddLabel("Load mode:");
+        var loadRadio = new RadioGroup(Enum.GetNames<LoadMode>().Select(p => (ustring)p).ToArray()) { X = 30, Y = row, SelectedItem = (int)options.LoadMode };
+        loadRadio.SelectedItemChanged += (args) => _options.LoadMode = (LoadMode)args.SelectedItem;
+        _formContent.Add(loadRadio);
+        row += Enum.GetValues<LoadMode>().Length + 1;
 
         AddLabel("Hardware tier:");
         var hwRadio = new RadioGroup(Enum.GetNames<HardwareTier>().Select(p => (ustring)p).ToArray()) { X = 30, Y = row, SelectedItem = (int)options.HardwareTier };
@@ -284,6 +291,7 @@ public sealed class OptionsView : View
         target.ToolsFolder = source.ToolsFolder;
         target.Generator = source.Generator;
         target.Cache = source.Cache;
+        target.LoadMode = source.LoadMode;
         target.HardwareTier = source.HardwareTier;
         target.UseGpu = source.UseGpu;
         target.FileAccess = source.FileAccess;

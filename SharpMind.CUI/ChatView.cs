@@ -1,7 +1,9 @@
 using NStack;
+using SharpMind;
 using SharpMind.CUI.App;
 using SharpMind.Inference.Chat;
 using Terminal.Gui;
+using System.Runtime.Intrinsics.X86;
 
 namespace SharpMind.CUI;
 
@@ -90,8 +92,16 @@ public sealed class ChatView : View
 
         _statusLabel = new Label("Ready") { X = 0, Y = 0, Width = Dim.Fill() };
         _agentLabel = new Label(agentName) { X = 0, Y = 2, Width = Dim.Fill() };
-        _strategyLabel = new Label($"{options.Generator}\n{options.Cache}\n{(options.UseGpu ? $"GPU ({options.HardwareTier})" : options.HardwareTier.ToString())}")
-        { X = 0, Y = 4, Width = Dim.Fill(), Height = 3 };
+
+        var resolvedHw = options.HardwareTier switch
+        {
+            HardwareTier.Auto => Fma.IsSupported ? "FMA" : Avx2.IsSupported ? "AVX2" : Sse3.IsSupported ? "SSE" : "Scalar",
+            _ => options.HardwareTier.ToString()
+        };
+        string hwDisplay = options.UseGpu ? $"GPU ({resolvedHw})" : resolvedHw;
+
+        _strategyLabel = new Label($"Load: {options.LoadMode}\nGenerator: {options.Generator}\nKV Cache: {options.Cache}\nHW Tier: {hwDisplay}")
+        { X = 0, Y = 4, Width = Dim.Fill(), Height = 4 };
         _toolLabel = new Label("") { X = 0, Y = 8, Width = Dim.Fill() };
         _speedLabel = new Label("--") { X = 0, Y = 10, Width = Dim.Fill() };
         _ttftLabel = new Label("--") { X = 0, Y = 12, Width = Dim.Fill() };

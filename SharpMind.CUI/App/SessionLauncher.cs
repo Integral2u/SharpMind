@@ -103,10 +103,10 @@ public static class SessionLauncher
         TransformerWeights weights;
         try
         {
-            var progress = status is null
-                ? null
-                : new Progress<float>(p => status.Report($"Loading weights... {p:P0}"));
-            weights = GgufLoader.LoadWeightsToTransformerWeights(options.ModelPath, modelConfig, progress);
+                var progress = status is null
+                    ? null
+                    : new Progress<float>(p => status.Report($"Loading weights... {p:P0}"));
+                weights = GgufLoader.LoadWeightsToTransformerWeights(options.ModelPath, modelConfig, progress, options.LoadMode);
         }
         catch (Exception ex)
         {
@@ -138,7 +138,7 @@ public static class SessionLauncher
                 Model = model,
                 Tokenizer = tokenizer,
                 Meta = meta,
-                HardwareTier = options.HardwareTier,
+                HardwareTier = sharpConfig.ResolvedHardware,
                 UseGpu = options.UseGpu
             }
         };

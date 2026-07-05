@@ -378,7 +378,8 @@ public sealed class MainWindow : Window
         AgentName = source.AgentName,
         AgentsEnabled = source.AgentsEnabled,
         MaxAgentDepth = source.MaxAgentDepth,
-        MaxToolCallsPerTurn = source.MaxToolCallsPerTurn
+        MaxToolCallsPerTurn = source.MaxToolCallsPerTurn,
+        LoadMode = source.LoadMode
     };
 
     // --- Permission "Ask" dialogs --------------------------------------------
