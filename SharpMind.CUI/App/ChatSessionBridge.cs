@@ -17,6 +17,7 @@ public interface IChatBridge : IAsyncDisposable
 {
     void SubmitUserInput(string text);
     IEnumerable<ChatStreamEntry> DrainEntries();
+    void Interrupt();
     bool Faulted { get; }
     Exception? Fault { get; }
 }
@@ -97,6 +98,8 @@ public sealed class ChatSessionBridge(IChatSession session, bool disposeUnderlyi
         while (_incoming.TryDequeue(out var entry))
             yield return entry;
     }
+
+    public void Interrupt() => session.Interrupt();
 
     public async ValueTask DisposeAsync()
     {

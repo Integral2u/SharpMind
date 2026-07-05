@@ -34,6 +34,8 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     private bool _inThinkBlock;
     private readonly IPromptPreProcessor? _preProcessor;
     private readonly IContextCompactor? _compactor;
+    private CancellationTokenSource? _turnCts;
+
 
     // Permission gate
     /// <summary>
@@ -408,7 +410,9 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
             _networkHandler?.Deactivate();
         }
     }
-    private async IAsyncEnumerable<ChatStreamEntry> GetResponseStreamAsync(
+    public void Interrupt() => _turnCts?.Cancel();
+
+    public async IAsyncEnumerable<ChatStreamEntry> GetResponseStreamAsync(
         string userInput,
         [EnumeratorCancellation] CancellationToken ct = default)
     {
@@ -488,8 +492,11 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
             // Stream tokens
             _responseBuffer.Clear();
             _inThinkBlock = false;
-
-            await foreach (var fragment in _generator.GenerateFromTokensAsync(promptToks, sampleCfg, genCfg, ct))
+            _turnCts?.Dispose();
+            _turnCts = new CancellationTokenSource();
+            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, _turnCts.Token);
+            
+            await foreach (var fragment in _generator.GenerateFromTokensAsync(promptToks, sampleCfg, genCfg, linkedCts.Token))
             {
                 _responseBuffer.Append(fragment);
 
@@ -725,7 +732,8 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
                 if (_responseBuffer.Length > 0)
                     _pendingDraft = _responseBuffer.ToString();
                 response(new ChatStreamEntry { Status = ChatStatus.Interrupted, IsComplete = true, TokensPerSecond = _generator.TokensPerSecond, TimeToFirstToken = _generator.TimeToFirstToken });
-                break;
+                if (token.IsCancellationRequested) break;
+                continue;
             }
             catch
             {

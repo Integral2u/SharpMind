@@ -19,7 +19,7 @@ namespace SharpMind.CUI.App;
 public sealed class DebugChatBridge(CuiToolContext cuiContext) : IChatBridge
 {
     private readonly ConcurrentQueue<ChatStreamEntry> _incoming = new();
-    private readonly CancellationTokenSource _cts = new();
+    private CancellationTokenSource _cts = new();
     private Task? _runningTurn;
 
     public bool Faulted { get; private set; }
@@ -195,6 +195,13 @@ public sealed class DebugChatBridge(CuiToolContext cuiContext) : IChatBridge
     {
         while (_incoming.TryDequeue(out var entry))
             yield return entry;
+    }
+
+    public void Interrupt()
+    {
+        _cts.Cancel();
+        _cts.Dispose();
+        _cts = new CancellationTokenSource();
     }
 
     public async ValueTask DisposeAsync()

@@ -22,7 +22,7 @@ public interface IChatSession : IAsyncDisposable
     public string GetFormattedPrompt();
     public void ClearHistory();
     public void ResetCaches();
-
+    public void Interrupt();
     public Task<ChatMessage[]> StartChatAsync(Func<Task<ChatMessage>> prompt, Action<ChatStreamEntry> response, CancellationToken token = default);
     public Task<ChatMessage[]> StartChatAsync(Func<ChatMessage> prompt, Action<ChatStreamEntry> response, CancellationToken token = default);
     public Task<ChatMessage[]> StartChatAsync(Func<Task<string>> prompt, Action<string> response, CancellationToken token = default);

@@ -199,9 +199,8 @@ public sealed class ChatView : View
     private void RequestInterrupt()
     {
         if (!_generating) return;
-        AppendTranscript("[Interrupted — ending this session. Re-open or start a new one to continue.]");
+        _bridge.Interrupt();
         SetGenerating(false);
-        _onExit();
     }
 
     /// <summary>Returning true keeps the timeout recurring — see Application.MainLoop.AddTimeout's contract.</summary>

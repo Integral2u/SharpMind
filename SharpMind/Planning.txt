@@ -2,22 +2,22 @@
 you must make sure you understand the JigSawDotNet pattern and use. Intention is to reduce and branching code by genertaing code whihc may require implmenting or re-using Ops, Kernel and Factory patterns,
 Review Sharmind.Core.Activations.* for example
 
-LoadMode.Caached dosn't seem to work as intended. Layers only need to be loaded as when needed from file. Layer offsets shoudl be known.
+Debug DebugUI need to test unbuilt tools simulate real tool call and also test file permissions, DebugIU only FileIO and Network test if access is intercepted.
 
+LoadMode.Cached dosn't seem to work as intended. Layers only need to be loaded as when needed from file. Layer offsets shoudl be known.
 
-Interrupt should interupt the actual LLM chat streaming, currently it seems to just call the ShowSessionManager
-
-
-Questions, Should Chat History that has a ChatStatus Thinking/Updating/Executing/Waiting/Researching/Interrupted/Complete be omiited from KV Cache, possibly only need Responding and final result of Executing and Researching plus User Input
+Have a questions as a result of interrupts, Should Chat History that has a ChatStatus Thinking/Updating/Executing/Waiting/Researching/Interrupted/Complete be omiited from KV Cache, possibly only need Responding and final result of Executing and Researching plus User Input
+Right next to the _transcriptView could we have a column that has checkboxs that indicate if part of KV Cache or just verbose output. Could be used to remove Interruped text from chat or identify if dissable after session compaction.
 
 Notes(Unsorted)
 Future	MoE	CachedWeightLoader skips MoE expert tensors (same limitation as existing SetWeights). Not blocking since no MoE models are in KnownWorking/Failing.
-Ensure Chat Session is reporting correct ChatStatus
 
 Todo
 ChatSession History should have flag for indicating if required or not, ignore Agent thinking only require summary.
+
 PrePrompt and PostPrompt porcessor interfaces, truncate, compaction, summarization of current chat or Pre prompt could be used for other purposes,Cache Importance for Current Context , reading attached artifacts or correcting input prompts.
 ChatSession interrupt, need to be able to impement but how do we implment Recover rather than start again?
+
 Tools, obligigotry Weather Tool,  Commmon CLI/Git Tools.
 Tools in setting should have sub option to enable/disable available tools.
 Agent Builder Option To use Deafaul System Prompt could cause issue with Agent Name
