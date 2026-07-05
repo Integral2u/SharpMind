@@ -1,44 +1,27 @@
-Change below should the Tink Part be part of important KV Cache or ignored
-1. Think-block detection: Done — _inThinkBlock tracks <think>/</think> boundaries across fragments in GetResponseStreamAsync (ChatSession.cs:494-505). Status switches to ChatStatus.Thinking while inside the block, back to Responding after </think>.
-
-Future	MoE	CachedWeightLoader skips MoE expert tensors (same limitation as existing SetWeights). Not blocking since no MoE models are in KnownWorking/Failing.
-
-Changes to SharpMind.CUI
-Options View Skills folder, Tools Dll and Tools Folder need an open button for searching file system or selecting tools in tools folder 
-Should have a Project Path, this would be a woking path for File ops, example code.
-Should have a Save Options As for use in Code only, or an Open to load pre-sets
-There dosn't seem to be an implimentation for approving File or Network Access and should be an Option, Ask,Allways,Never
-
-Noticd onces chart started after going into session options and cancelling the return window was the Model chooser not the Chat
-Chat Sessions need to be easily renameable
-
-Chat
-Response in not being streamed only full output shown
-ChatView _transcriptView shouldn't be selectable for input and the input needs a button on right for Interrupt and key Binding Esc
-sidebarFrame should show Tokens Per Second, Time to First Token and not clear after Chat Streamed.
-sidebar frame ModelMem, KevMem, FreeMem would be nice.
-
-Need to have save Session/Load Session.  Re-Use exact same model and track if needs to be freed on closing
-Chat needs to be able to load opend sessions.
-Need to have close session and remove from Chat List
-
-
-
-
-
-
-Final Addition  Model Building/Training
-
 #HIGH Priority
 you must make sure you understand the JigSawDotNet pattern and use. Intention is to reduce and branching code by genertaing code whihc may require implmenting or re-using Ops, Kernel and Factory patterns,
 Review Sharmind.Core.Activations.* for example
 
+Chat Session has no option for selecting LoadMode, this would be helpful when checking if Cached Mode memory uses is changin while layers are loaded/unloaded.
+the Strategy Label should also be more specific example, and hardware tier should show what it resolved to.
+Load:		Cached
+Generator:	Standard
+KV Cache:	Quantized
+HW Tier:	FMA
+
+We should also have a loading state indication progress
+public static TransformerWeights LoadWeightsToTransformerWeights(string path, ModelConfig config, IProgress<float>? progress = null, LoadMode mode = LoadMode.Realtime)
+
+Interrupt should interupt the actual LLM 
 
 
-Code Review Notes
-Is KV cache be quantized/dequantized should it be stored in desired Qunatization it can be changed though going from lower to higher would result in degridation 
+Questions, Should Chat History that has a ChatStatus Thinking/Updating/Executing/Waiting/Researching/Interrupted/Complete be omiited from KV Cache, possibly only need Responding and final result of Executing and Researching plus User Input
 
+Notes(Unsorted)
+Future	MoE	CachedWeightLoader skips MoE expert tensors (same limitation as existing SetWeights). Not blocking since no MoE models are in KnownWorking/Failing.
+Ensure Chat Session is reporting correct ChatStatus
 
+Todo
 ChatSession History should have flag for indicating if required or not, ignore Agent thinking only require summary.
 PrePrompt and PostPrompt porcessor interfaces, truncate, compaction, summarization of current chat or Pre prompt could be used for other purposes,Cache Importance for Current Context , reading attached artifacts or correcting input prompts.
 ChatSession interrupt, need to be able to impement but how do we implment Recover rather than start again?
@@ -47,56 +30,11 @@ Tools in setting should have sub option to enable/disable available tools.
 Agent Builder Option To use Deafaul System Prompt could cause issue with Agent Name
 
 
-
-
-Code Checking
-!!! SharpMind.Model.ModelFactory.CreateSession BuildBlock call passing mappings 
-!!! must check all calls to Assembler.CreateInstance, cache and or check mappings
-Ensure Chat Session is reporting correct ChatStatus
-interface(s) declair public, not required but I prefer it
-Review SharpMind Model Format
-SharpMind.Model.Training.ITrainableModel and SharpMind.Model.Training.ITrainableLayer no longer used?
-review public static TensorOps Default can this pattern carry over to other factories
-
-
-
-if (Avx.IsSupported) slow check
-RmsNormLayer and NormKernels to JigSawDotNet pattern
-RoPE NoPE to Jigsaw Pattern
-review CreateForSystem benchmark patterns
-
-Todo
-MPT multi token prediction	but jigsawdotnet pattern
-
-### 17. No `ILayer` / Module Registry for Composing Novel Architectures
-
-All architecture variants (`DecoderArch`, `TransformerBlock`, attention types, FFN types) are concrete classes. There's no lightweight `ILayer` abstraction that would let a researcher compose a custom architecture from a config string or YAML without writing C# class definitions.
-
-A minimal module registry pattern:
-
-```csharp
-// Register a custom FFN variant
-LayerRegistry.Register("MoE-FFN", cfg => new MoEFeedForward(cfg));
-
-// Compose from config
-var block = LayerRegistry.Build(config.FfnKind, config);
-```
-
-The existing `FfnKind`, `AttentionKind`, `NormKind` enums are already doing this conceptually — the gap is that adding a new variant currently requires adding an enum case, a class, and a switch branch, rather than just registering a factory.
-
-
-
-
 End to End Test, Super Dumb Model Training Load and Test Logits valid output.
 Add progress out Func<float> to loading mothods.
 
-Before release check mutilple models with interactive chat
 
-Model/Tokenizer load could be async with progress
-build small native model for testing
-
-
-Would like to introduce 
+Ideas
 
 LLM lobotomy
 Take a model and strip it of all but necessity for becoming an expert wich could be re-merge for MOE type LLM  
@@ -107,3 +45,5 @@ SLERP (Spherical Linear Interpolation): Better than linear interpolation for hig
 TIES-Merging (TrIm, Elect, Sign, and Merge): Designed to handle interference between models by only merging the most significant weight updates and resolving sign disagreements
 DARE (Drop And REscale): Drops redundant weights and re-scales the remaining weights to create a "soups" of models, reducing task interference.
 Task Arithmetic: Creates "task vectors" by subtracting the base model weights from the fine-tuned model weights, allowing these vectors to be added or subtracted to modify model behavior.
+
+Final Addition  Model Building/Training

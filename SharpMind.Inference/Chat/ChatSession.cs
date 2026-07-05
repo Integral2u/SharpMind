@@ -682,7 +682,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     {
         while (!token.IsCancellationRequested)
         {
-            response(new ChatStreamEntry { Status = ChatStatus.Thinking, IsComplete = false });
+            response(new ChatStreamEntry { Status = ChatStatus.Waiting, IsComplete = false });
             var input = await prompt();
             if (token.IsCancellationRequested)
             {

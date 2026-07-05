@@ -13,7 +13,7 @@ public enum ChatStatus
     Executing,
     /// <summary>Generating text response.</summary>
     Responding,
-    /// <summary>Waiting for input or tool results.</summary>
+    /// <summary>Waiting for input.</summary>
     Waiting,
     /// <summary>Sub-agent is generating a response (streamed outside main history/KV cache).</summary>
     Researching,

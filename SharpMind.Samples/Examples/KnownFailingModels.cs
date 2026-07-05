@@ -16,8 +16,17 @@ namespace SharpMind.Samples.Examples
     {
         private static readonly string[] Models =
         [
-            //these models have TensorInfo.Shape.Length = 2 or 1
             
+            "qwen2-0_5b-instruct-q4_k_m",   //Response:PerPixel??ROUP??nesdayaul .?,...\n\n??? gratuites??
+            "qwen2-0_5b-instruct-q8_0",         //Response:Hello! How can I assist you today?
+            "qwen2-0.5b-instruct-q2_k",     //Response:??-onium[o? ( didFORMANCE Collections????????
+            "Qwen2-0.5B.Q2_K",              //Response:?ro? ?????????? snprintfnal?? appré?.onreadystatechange
+            "Qwen2-0.5B.Q3_K_L",            //Response:./(?????????????????????
+            "Qwen2-0.5B.Q3_K_M",            //Response: ??? gratuites?? AppRoutingModule.???? ?? ?
+            "Qwen2-0.5B.Q3_K_S",            //Response:estring???emales?? je??? Gro  (??hibition Main
+            
+            "Qwen2-0.5B.Q5_1",              //Response:-+$?ergy=> Tw %(. Tw?????
+            /*
             "Qwen2.5-1.5B-Instruct-f16",    //Response:??,?????????????????????
 
 
@@ -34,13 +43,7 @@ namespace SharpMind.Samples.Examples
             "DeepSeek-R1-Distill-Qwen-1.5B-Q8_0",
 
             
-            "qwen2-0.5b-instruct-q2_k",     //Response:?? (atu connaît? Stopwatch?????? ??[] everrowser??pos
-            "Qwen2-0.5B.Q2_K",              //Response: ????[] xlen??????.??? breeds.fi?
-            "Qwen2-0.5B.Q3_K_L",            //Response:./(?????????????????????
-            "Qwen2-0.5B.Q3_K_M",            //Response:?? addOn??? Flo AssemblyVersion.)\n\n??????????? hasNext???
-            "Qwen2-0.5B.Q3_K_S",            //Response:estring???emales?? je??? Gro  (??hibition Main
-            "qwen2-0_5b-instruct-q4_k_m",   //Response:.LogWarning? -.getElementsByNamekf?APEabbleisted,GL.ConnectionString]';\n-??
-            "Qwen2-0.5B.Q5_1",              //Response:-+$?ergy=> Tw %(. Tw?????
+
                                           
             //Current Response:?? ???(vehicle???UniformLocation ? occupancy simplify generado?? Written prowess??
             //Best Known Response to date: \n\n\n# 1. Write a Python program to print the following pattern 
@@ -68,7 +71,7 @@ namespace SharpMind.Samples.Examples
             //"qwen2.5-coder-3b-instruct-q8_0", //System.OutOfMemoryException
             //"qwen2.5-coder-3b-instruct-q4_k_m", //System.OutOfMemoryException
             //"qwen2.5-coder-3b-instruct-q2_k", //System.OutOfMemoryException
-            
+            */
             ];
 
         private static readonly string ModelPath = @"C:\Integral2u\source\repos\SharpMind\ExternalAssets";
