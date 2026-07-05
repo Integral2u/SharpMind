@@ -18,6 +18,9 @@ public interface IChatBridge : IAsyncDisposable
     void SubmitUserInput(string text);
     IEnumerable<ChatStreamEntry> DrainEntries();
     void Interrupt();
+    IReadOnlyList<ChatMessage> GetHistory();
+    void ToggleIgnore(int index);
+    void ResetCache();
     bool Faulted { get; }
     Exception? Fault { get; }
 }
@@ -100,6 +103,19 @@ public sealed class ChatSessionBridge(IChatSession session, bool disposeUnderlyi
     }
 
     public void Interrupt() => session.Interrupt();
+
+    public IReadOnlyList<ChatMessage> GetHistory() => session.History;
+
+    public void ToggleIgnore(int index)
+    {
+        if (index < 0 || index >= session.History.Count) return;
+        var msg = session.History[index];
+        if (msg.IsPinned) return;
+        msg.Ignore = !msg.Ignore;
+        session.ResetCaches();
+    }
+
+    public void ResetCache() => session.ResetCaches();
 
     public async ValueTask DisposeAsync()
     {

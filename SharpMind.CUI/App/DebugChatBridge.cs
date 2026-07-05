@@ -19,6 +19,7 @@ namespace SharpMind.CUI.App;
 public sealed class DebugChatBridge(CuiToolContext cuiContext) : IChatBridge
 {
     private readonly ConcurrentQueue<ChatStreamEntry> _incoming = new();
+    private readonly List<ChatMessage> _history = [];
     private CancellationTokenSource _cts = new();
     private Task? _runningTurn;
 
@@ -27,6 +28,7 @@ public sealed class DebugChatBridge(CuiToolContext cuiContext) : IChatBridge
 
     public void SubmitUserInput(string text)
     {
+        _history.Add(ChatMessage.User(text));
         // Each submission runs as its own short-lived task rather than a single
         // long-running loop like the real bridge's — there's no model generation
         // to serialise against here, and letting each turn be independent makes
@@ -95,6 +97,7 @@ public sealed class DebugChatBridge(CuiToolContext cuiContext) : IChatBridge
         lines.AddRange(KnownCommands.Select(c => $"  {c.Command} — {c.Description}"));
         string message = string.Join('\n', lines);
 
+        _history.Add(ChatMessage.Agent(message));
         await StreamTextAsync(message, token);
         Complete();
     }
@@ -119,7 +122,9 @@ public sealed class DebugChatBridge(CuiToolContext cuiContext) : IChatBridge
             allowFreeText: true);
 
         Emit(ChatStatus.Responding, null);
-        await StreamTextAsync($"You chose: \"{chosen}\". That round trip — tool call to dialog to result — is the exact path a real model's UIShowOptionSelection call takes.", token);
+        string message = $"You chose: \"{chosen}\". That round trip — tool call to dialog to result — is the exact path a real model's UIShowOptionSelection call takes.";
+        _history.Add(ChatMessage.Agent(message));
+        await StreamTextAsync(message, token);
         Complete();
     }
 
@@ -196,6 +201,18 @@ public sealed class DebugChatBridge(CuiToolContext cuiContext) : IChatBridge
         while (_incoming.TryDequeue(out var entry))
             yield return entry;
     }
+
+    public IReadOnlyList<ChatMessage> GetHistory() => _history;
+
+    public void ToggleIgnore(int index)
+    {
+        if (index < 0 || index >= _history.Count) return;
+        var msg = _history[index];
+        if (msg.IsPinned) return;
+        msg.Ignore = !msg.Ignore;
+    }
+
+    public void ResetCache() { }
 
     public void Interrupt()
     {

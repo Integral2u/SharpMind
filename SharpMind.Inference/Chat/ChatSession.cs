@@ -163,6 +163,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
 
         foreach (var msg in _history)
         {
+            if (msg.Ignore) continue;
             var prefix = msg.Role switch
             {
                 ChatRole.System => "system: ",

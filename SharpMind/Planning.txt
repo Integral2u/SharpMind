@@ -1,3 +1,5 @@
+is ChatMessage.IsPinned worth keeping?
+
 #HIGH Priority
 you must make sure you understand the JigSawDotNet pattern and use. Intention is to reduce and branching code by genertaing code whihc may require implmenting or re-using Ops, Kernel and Factory patterns,
 Review Sharmind.Core.Activations.* for example
@@ -8,6 +10,8 @@ LoadMode.Cached dosn't seem to work as intended. Layers only need to be loaded a
 
 Have a questions as a result of interrupts, Should Chat History that has a ChatStatus Thinking/Updating/Executing/Waiting/Researching/Interrupted/Complete be omiited from KV Cache, possibly only need Responding and final result of Executing and Researching plus User Input
 Right next to the _transcriptView could we have a column that has checkboxs that indicate if part of KV Cache or just verbose output. Could be used to remove Interruped text from chat or identify if dissable after session compaction.
+Note ChatMessage.IsPinned items may need to be disabled for check/uncheck.  Altering states may require rebuiling KVCache.
+I have added ChatMessage.Ignore and will need to be handled when loading from chat history
 
 Notes(Unsorted)
 Future	MoE	CachedWeightLoader skips MoE expert tensors (same limitation as existing SetWeights). Not blocking since no MoE models are in KnownWorking/Failing.
