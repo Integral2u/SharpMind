@@ -4,6 +4,9 @@ Tests, LinearLayer and GgufLoader needs a bit of a re-work, they have become a b
 
 Tests for quantizations probably need clearing our and rebuilding taking the bwlow into account
 
+Seems like a vast improvement in speed and simplification of code nice! however if we ce can emilination of UseQuantizedForward is preferred.
+it only relies on QuantDtype which is only is within the class and  
+
 LinearLayer
 the _vecDotFn is assigned but it is never used so it and it's delgate VecDotFn can be removed and have each quant type have its own QuantizationOps method like QuantizedMatMulQ8_0.
 This would allow removal of the WrapVecDotAsMatMul method and all quantixation logic resides in QuantizationOps.

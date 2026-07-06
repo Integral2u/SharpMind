@@ -13,18 +13,10 @@ public sealed class LinearLayer : IDisposable
     private Tensor<float>? _bias;
     private QuantizationOps _qOps;
     private bool _disposed;
-    private unsafe delegate float VecDotFn(float* input, byte* rawWeights, int col, int inFeatures);
-    private VecDotFn? _vecDotFn;
-    private unsafe delegate void QuantizedMatMulFn(float* input, byte* rawWeights, float* output, int M, int K, int N);
-    private QuantizedMatMulFn? _matMulFn;
-
-    // Raw GGUF quantized data for quantized matmul (null means use float32 path).
-    // DEBUG: set to true before CreateSession to force float forward path on all layers
-    public static bool ForceFloatForward { get; set; }
 
     public byte[]? RawQuantizedData { get; set; }
     public GgufDtype? QuantDtype { get; set; }
-    public bool UseQuantizedForward => !ForceFloatForward && RawQuantizedData != null && QuantDtype != null && IsSupportedQuantDtype(QuantDtype.Value);
+    public bool UseQuantizedForward => RawQuantizedData != null && QuantDtype != null;
 
     public QuantizationOps QuantizationOps
     {
@@ -86,7 +78,7 @@ public sealed class LinearLayer : IDisposable
         var flat = needReshape ? input.Reshape(batchSize, InFeatures) : input;
 
         Tensor<float> output;
-        if (UseQuantizedForward && RawQuantizedData != null && QuantDtype.HasValue)
+        if (UseQuantizedForward)
         {
             output = QuantizedForward(flat, ops, workspace);
         }
@@ -112,8 +104,6 @@ public sealed class LinearLayer : IDisposable
                 for (int i = 0; i < batchSize; i++)
                     _bias!.Data.CopyTo(biasB.RowSpan(i));
                 TensorOps.AddInPlace<float>(output, biasB);
-                // Rent returns a tensor that doesn't own memory, so we don't dispose it.
-                // But the workspace will be reset anyway.
             }
             else
             {
@@ -135,120 +125,67 @@ public sealed class LinearLayer : IDisposable
         var dtype = QuantDtype!.Value;
         var rawData = RawQuantizedData!;
         int m = input.ElementCount / InFeatures;
-        Tensor<float> result = workspace != null 
-            ? workspace.Rent<float>([m, OutFeatures]) 
+        Tensor<float> result = workspace != null
+            ? workspace.Rent<float>([m, OutFeatures])
             : new Tensor<float>(m, OutFeatures);
-        int inF = InFeatures, outF = OutFeatures;
 
-            unsafe
+        unsafe
+        {
+            fixed (byte* pRaw = rawData)
             {
-                fixed (byte* pRaw = rawData)
+                switch (dtype)
                 {
-                    if (_matMulFn != null)
-                    {
-                        _matMulFn(input.DataPtr, pRaw, result.DataPtr, m, inF, outF);
-                    }
-                else if (m <= 1)
-                {
-                    float* pInRow = input.DataPtr;
-                    float* pOutRow = result.DataPtr;
-                    for (int col = 0; col < outF; col++)
-                        pOutRow[col] = VecDotQxK(pInRow, pRaw, col, inF);
-                }
-                else
-                {
-                    IntPtr pRawPtr = (IntPtr)pRaw;
-                    Parallel.For(0, m, row =>
-                    {
-                        byte* pRawL = (byte*)pRawPtr;
-                        float* pInRow = input.DataPtr + (long)row * inF;
-                        float* pOutRow = result.DataPtr + (long)row * outF;
-                        for (int col = 0; col < outF; col++)
-                            pOutRow[col] = VecDotQxK(pInRow, pRawL, col, inF);
-                    });
+                    case GgufDtype.Q8_0:
+                        _qOps.QuantizedMatMulQ8_0(input.DataPtr, pRaw, result.DataPtr, m, InFeatures, OutFeatures); break;
+                    case GgufDtype.Q4_0:
+                        _qOps.QuantizedMatMulQ4_0(input.DataPtr, pRaw, result.DataPtr, m, InFeatures, OutFeatures); break;
+                    case GgufDtype.Q4_1:
+                        _qOps.QuantizedMatMulQ4_1(input.DataPtr, pRaw, result.DataPtr, m, InFeatures, OutFeatures); break;
+                    case GgufDtype.Q5_0:
+                        _qOps.QuantizedMatMulQ5_0(input.DataPtr, pRaw, result.DataPtr, m, InFeatures, OutFeatures); break;
+                    case GgufDtype.Q5_1:
+                        _qOps.QuantizedMatMulQ5_1(input.DataPtr, pRaw, result.DataPtr, m, InFeatures, OutFeatures); break;
+                    case GgufDtype.Q8_1:
+                        _qOps.QuantizedMatMulQ8_1(input.DataPtr, pRaw, result.DataPtr, m, InFeatures, OutFeatures); break;
+                    case GgufDtype.IQ4_NL:
+                        _qOps.QuantizedMatMulQ4_NL(input.DataPtr, pRaw, result.DataPtr, m, InFeatures, OutFeatures); break;
+                    case GgufDtype.Q2_K:
+                    case GgufDtype.Q2_K_S:
+                        _qOps.QuantizedMatMulQ2K(input.DataPtr, pRaw, result.DataPtr, m, InFeatures, OutFeatures); break;
+                    case GgufDtype.Q3_K:
+                    case GgufDtype.Q3_K_S:
+                    case GgufDtype.Q3_K_M:
+                    case GgufDtype.Q3_K_L:
+                        _qOps.QuantizedMatMulQ3K(input.DataPtr, pRaw, result.DataPtr, m, InFeatures, OutFeatures); break;
+                    case GgufDtype.Q4_K:
+                    case GgufDtype.Q4_K_S:
+                    case GgufDtype.Q4_K_M:
+                        _qOps.QuantizedMatMulQ4K(input.DataPtr, pRaw, result.DataPtr, m, InFeatures, OutFeatures); break;
+                    case GgufDtype.Q5_K:
+                    case GgufDtype.Q5_K_S:
+                    case GgufDtype.Q5_K_M:
+                        _qOps.QuantizedMatMulQ5K(input.DataPtr, pRaw, result.DataPtr, m, InFeatures, OutFeatures); break;
+                    case GgufDtype.Q6_K:
+                    case GgufDtype.Q6_K_S:
+                        _qOps.QuantizedMatMulQ6K(input.DataPtr, pRaw, result.DataPtr, m, InFeatures, OutFeatures); break;
+                    case GgufDtype.Q8_K:
+                        _qOps.QuantizedMatMulQ8K(input.DataPtr, pRaw, result.DataPtr, m, InFeatures, OutFeatures); break;
+                    case GgufDtype.F32:
+                        _qOps.QuantizedMatMulF32(input.DataPtr, pRaw, result.DataPtr, m, InFeatures, OutFeatures); break;
+                    case GgufDtype.F16:
+                        _qOps.QuantizedMatMulF16(input.DataPtr, pRaw, result.DataPtr, m, InFeatures, OutFeatures); break;
                 }
             }
         }
         return result;
     }
 
-
-    private unsafe float VecDotQxK(float* input, byte* rawWeights, int col, int inFeatures) => _vecDotFn!(input, rawWeights, col, inFeatures);
-
-    private static bool IsSupportedQuantDtype(GgufDtype dtype) => dtype switch
-    {
-        GgufDtype.Q8_0 => true,
-        GgufDtype.IQ4_NL => true,
-        GgufDtype.Q4_0 => true,
-        GgufDtype.Q4_1 => true,
-        GgufDtype.Q5_0 => true,
-        GgufDtype.Q5_1 => true,
-        GgufDtype.Q8_1 => true,
-        GgufDtype.Q2_K or GgufDtype.Q2_K_S => true,
-        GgufDtype.Q3_K or GgufDtype.Q3_K_S or GgufDtype.Q3_K_M or GgufDtype.Q3_K_L => true,
-        GgufDtype.Q4_K or GgufDtype.Q4_K_S or GgufDtype.Q4_K_M => true,
-        GgufDtype.Q5_K or GgufDtype.Q5_K_S or GgufDtype.Q5_K_M => true,
-        GgufDtype.Q6_K or GgufDtype.Q6_K_S => true,
-        GgufDtype.Q8_K => true,
-        _ => false
-    };
-
     public unsafe bool SetRawWeight(byte[]? rawData, GgufDtype dtype)
     {
         RawQuantizedData = rawData;
         QuantDtype = dtype;
-        _vecDotFn = dtype switch
-        {
-            GgufDtype.Q3_K or GgufDtype.Q3_K_S or GgufDtype.Q3_K_M or GgufDtype.Q3_K_L => _qOps.VecDotQ3K,
-            GgufDtype.Q4_K or GgufDtype.Q4_K_S or GgufDtype.Q4_K_M => _qOps.VecDotQ4K,
-            GgufDtype.Q5_K or GgufDtype.Q5_K_S or GgufDtype.Q5_K_M => _qOps.VecDotQ5K,
-            GgufDtype.Q6_K or GgufDtype.Q6_K_S => _qOps.VecDotQ6K,
-            GgufDtype.IQ4_NL => _qOps.VecDotQ4_NL,
-            GgufDtype.Q4_0 => _qOps.VecDotQ4_0,
-            GgufDtype.Q4_1 => _qOps.VecDotQ4_1,
-            GgufDtype.Q5_0 => _qOps.VecDotQ5_0,
-            GgufDtype.Q5_1 => _qOps.VecDotQ5_1,
-            GgufDtype.Q8_0 => _qOps.VecDotQ8_0,
-            GgufDtype.Q8_1 => _qOps.VecDotQ8_1,
-            GgufDtype.Q2_K or GgufDtype.Q2_K_S => _qOps.VecDotQ2K,
-            GgufDtype.Q8_K => _qOps.VecDotQ8K,
-            _ => null
-        };
-        _matMulFn = dtype switch
-        {
-            GgufDtype.Q8_0 => _qOps.QuantizedMatMulQ8_0,
-            GgufDtype.Q5_0 => _qOps.QuantizedMatMulQ5_0,
-            GgufDtype.Q6_K or GgufDtype.Q6_K_S => _qOps.QuantizedMatMulQ6K,
-            GgufDtype.IQ4_NL when _qOps.VecDotQ4_NL != null => WrapVecDotAsMatMul(_qOps.VecDotQ4_NL),
-            GgufDtype.Q4_0 when _qOps.VecDotQ4_0 != null => WrapVecDotAsMatMul(_qOps.VecDotQ4_0),
-            GgufDtype.Q4_1 when _qOps.VecDotQ4_1 != null => WrapVecDotAsMatMul(_qOps.VecDotQ4_1),
-            GgufDtype.Q5_1 when _qOps.VecDotQ5_1 != null => WrapVecDotAsMatMul(_qOps.VecDotQ5_1),
-            GgufDtype.Q2_K or GgufDtype.Q2_K_S when _qOps.VecDotQ2K != null => WrapVecDotAsMatMul(_qOps.VecDotQ2K),
-            GgufDtype.Q3_K or GgufDtype.Q3_K_S or GgufDtype.Q3_K_M or GgufDtype.Q3_K_L when _qOps.VecDotQ3K != null => WrapVecDotAsMatMul(_qOps.VecDotQ3K),
-            GgufDtype.Q4_K or GgufDtype.Q4_K_S or GgufDtype.Q4_K_M when _qOps.VecDotQ4K != null => WrapVecDotAsMatMul(_qOps.VecDotQ4K),
-            GgufDtype.Q5_K or GgufDtype.Q5_K_S or GgufDtype.Q5_K_M when _qOps.VecDotQ5K != null => WrapVecDotAsMatMul(_qOps.VecDotQ5K),
-            GgufDtype.Q8_K when _qOps.VecDotQ8K != null => WrapVecDotAsMatMul(_qOps.VecDotQ8K),
-            _ => null
-        };
-
         return UseQuantizedForward;
     }
-
-    private static unsafe QuantizedMatMulFn WrapVecDotAsMatMul(VecDotFn vecDot)
-    {
-        return (float* input, byte* rawWeights, float* output, int M, int K, int N) =>
-        {
-            for (int row = 0; row < M; row++)
-            {
-                float* pInRow = input + (long)row * K;
-                float* pOutRow = output + (long)row * N;
-                for (int col = 0; col < N; col++)
-                    pOutRow[col] = vecDot(pInRow, rawWeights, col, K);
-            }
-        };
-    }
-
-
 
     public (Tensor<float> Output, LinearLayerState State) ForwardWithState(Tensor<float> input, TensorOps ops)
     {
@@ -279,10 +216,8 @@ public sealed class LinearLayer : IDisposable
             ? gradOutput.Reshape(batchSize, OutFeatures)
             : gradOutput;
 
-        // gradInput = gradOutput @ weight
         var gradInputFlat = ops.MatMul(flatGradOut, TensorOps.Transpose(_weight));
 
-        // gradWeight += input^T @ gradOutput
         using var inputT = TensorOps.Transpose(state.Input);
         using var dw = ops.MatMul(inputT, flatGradOut);
         var wg = state.WeightGrad;
@@ -291,7 +226,6 @@ public sealed class LinearLayer : IDisposable
         dw.Dispose();
         inputT.Dispose();
 
-        // gradBias
         if (_bias is not null)
         {
             state.BiasGrad ??= Tensor<float>.Zeros(OutFeatures);
@@ -318,7 +252,6 @@ public sealed class LinearLayer : IDisposable
     {
         ThrowIfDisposed();
         
-        // Dispose old weights only if we owned them
         if (_ownsWeight) _weight.Dispose();
         if (_ownsBias) _bias?.Dispose();
 
@@ -344,7 +277,6 @@ public sealed class LinearLayer : IDisposable
         if (data.Length != _weight.ElementCount)
             throw new ArgumentException($"Expected {_weight.ElementCount} weight values, got {data.Length}.");
 
-        // GGUF: [Out, In] -> SharpMind: [In, Out]
         int inF = InFeatures;
         int outF = OutFeatures;
         for (int o = 0; o < outF; o++)
@@ -367,12 +299,6 @@ public sealed class LinearLayer : IDisposable
         data.CopyTo(_bias.Data);
     }
 
-    /// <summary>
-    /// When quantized forward is active and raw data exists, the float weight
-    /// tensor is never read. Replace with a minimal placeholder to free memory.
-    /// The original float tensor is owned by BlockWeights (when _ownsWeight is
-    /// false) and stays alive there.
-    /// </summary>
     public void FreeFloatWeight()
     {
         if (!UseQuantizedForward || RawQuantizedData == null) return;

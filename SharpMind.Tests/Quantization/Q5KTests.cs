@@ -38,7 +38,7 @@ public class Q5KTests
         var reader = new BinaryReader(ms);
         var data = new float[256];
         
-        GgufLoader.ReadQ5_K(reader, data.AsSpan(), 256);
+        GgufLoaderFactory.Default.ReadQ5_K(reader, data.AsSpan(), 256);
         
         _output.WriteLine($"data[0]={data[0]}");
         

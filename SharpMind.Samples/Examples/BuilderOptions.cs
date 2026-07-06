@@ -26,7 +26,7 @@ namespace SharpMind.Samples.Examples
                 return;
             }
 
-            GgufLoader.Load(ggufPath, null, out ModelMetaData meta, out ModelConfig modelConfig, out Tokenizer? tokenizer);
+            GgufLoaderFactory.Default.Load(ggufPath, null, out ModelMetaData meta, out ModelConfig modelConfig, out Tokenizer? tokenizer);
 
             if (tokenizer == null)
             {
@@ -37,7 +37,7 @@ namespace SharpMind.Samples.Examples
             var sharpConfig = modelConfig.ForModel();
             GC.Collect(); GC.WaitForPendingFinalizers();
             var sw = Stopwatch.StartNew();
-            using var weights = GgufLoader.LoadWeightsToTransformerWeights(ggufPath, modelConfig, null, LoadMode.Realtime);
+            using var weights = GgufLoaderFactory.Default.LoadWeightsToTransformerWeights(ggufPath, modelConfig, null, LoadMode.Realtime);
             await Console.Out.WriteLineAsync($"GgufLoader.LoadWeightsToTransformerWeights executed in: {sw.Elapsed.TotalSeconds:F2}s");
             
 

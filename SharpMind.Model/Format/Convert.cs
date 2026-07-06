@@ -7,8 +7,8 @@ public static partial class ModelConverter
     {
         public static void ToNative(string ggufPath, string outputDir)
         {
-            var meta = GgufLoader.LoadMeta(ggufPath);
-            var weights = GgufLoader.LoadWeights(ggufPath);
+            var meta = GgufLoaderFactory.Default.LoadMeta(ggufPath);
+            var weights = GgufLoaderFactory.Default.LoadWeights(ggufPath);
             string arch = meta.GetString("general.architecture", "llama");
 
             // Derive vocab size from tokenizer tokens or embedding shape

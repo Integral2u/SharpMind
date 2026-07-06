@@ -43,8 +43,8 @@ public static partial class ModelConverter
     /// <summary>Load from GGUF - auto-detects config from metadata.</summary>
     private static ConversionResult LoadGguf(string path, WeightMapper mapper)
     {
-        var meta = GgufLoader.LoadMeta(path);
-        var weights = GgufLoader.LoadWeights(path);
+        var meta = GgufLoaderFactory.Default.LoadMeta(path);
+        var weights = GgufLoaderFactory.Default.LoadWeights(path);
         string arch = meta.GetString("general.architecture", "llama");
 
         // Derive vocab size from embedding tensor shape (most reliable)

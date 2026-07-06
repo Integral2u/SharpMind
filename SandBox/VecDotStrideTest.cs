@@ -132,7 +132,7 @@ public static class VecDotStrideTest
                 for (int b = 0; b < nBlocks; b++)
                 {
                     byte* block = pRaw + (long)o * nBlocks * BLOCK_BYTES + b * BLOCK_BYTES;
-                    float d = GgufLoader.HalfToFloat(*(ushort*)block);
+                    float d = GgufLoaderFactory.Default.HalfToFloat(*(ushort*)block);
                     sbyte* values = (sbyte*)(block + 2);
                     int start = b * QK;
                     int end = Math.Min(start + QK, inDim);

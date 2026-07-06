@@ -47,8 +47,8 @@ public static class VecDotDiagnostic
             return;
         }
 
-        var meta = GgufLoader.LoadMeta(ggufPath);
-        var config = GgufLoader.LoadConfig(meta);
+        var meta = GgufLoaderFactory.Default.LoadMeta(ggufPath);
+        var config = GgufLoaderFactory.Default.LoadConfig(meta);
         if (config == null) { Console.Error.WriteLine("Failed to load config"); return; }
 
         int hiddenDim = config.HiddenDim;
@@ -99,7 +99,7 @@ public static class VecDotDiagnostic
         byte[] rawData = new byte[actualRawSize];
         stream.ReadExactly(rawData);
 
-        var allWeights = GgufLoader.LoadWeights(ggufPath);
+        var allWeights = GgufLoaderFactory.Default.LoadWeights(ggufPath);
         if (!allWeights.TryGetValue(gateInfo.Name, out var gateFloat))
         {
             Console.Error.WriteLine("Failed to dequantize ffn_gate.weight");

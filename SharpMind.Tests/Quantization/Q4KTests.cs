@@ -43,7 +43,7 @@ public class Q4KTests
         var reader = new BinaryReader(ms);
         var data = new float[256];
         
-        GgufLoader.ReadQ4K(reader, data.AsSpan(), 256);
+        GgufLoaderFactory.Default.ReadQ4K(reader, data.AsSpan(), 256);
         
         // Val = d * sc * actual = 1.0 * 17 * 1 - 0 = 17.0
         

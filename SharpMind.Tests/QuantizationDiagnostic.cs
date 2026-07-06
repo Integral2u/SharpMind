@@ -87,8 +87,8 @@ public static class QuantizationDiagnostic
             // For Q5_1, we must manually read it to match the ReadQ5_1 function exactly
             if (dtype == GgufDtype.Q5_1)
             {
-                float d = GgufLoader.HalfToFloat(Unsafe.ReadUnaligned<ushort>(ref block[0]));
-                float m = GgufLoader.HalfToFloat(Unsafe.ReadUnaligned<ushort>(ref block[2]));
+                float d = GgufLoaderFactory.Default.HalfToFloat(Unsafe.ReadUnaligned<ushort>(ref block[0]));
+                float m = GgufLoaderFactory.Default.HalfToFloat(Unsafe.ReadUnaligned<ushort>(ref block[2]));
                 uint qh = Unsafe.ReadUnaligned<uint>(ref block[4]);
                 
                 for (int i = 0; i < qk; i++)
@@ -106,16 +106,16 @@ public static class QuantizationDiagnostic
                 switch (dtype)
                 {
                     case GgufDtype.Q2_K:
-                        GgufLoader.ReadQ2K(reader, dest, qk);
+                        GgufLoaderFactory.Default.ReadQ2K(reader, dest, qk);
                         break;
                     case GgufDtype.Q3_K:
-                        GgufLoader.ReadQ3_K(reader, dest, qk);
+                        GgufLoaderFactory.Default.ReadQ3_K(reader, dest, qk);
                         break;
                     case GgufDtype.Q4_K:
-                        GgufLoader.ReadQ4K(reader, dest, qk);
+                        GgufLoaderFactory.Default.ReadQ4K(reader, dest, qk);
                         break;
                     case GgufDtype.Q5_K:
-                        GgufLoader.ReadQ5_K(reader, dest, qk);
+                        GgufLoaderFactory.Default.ReadQ5_K(reader, dest, qk);
                         break;
                     default:
                         throw new NotSupportedException($"Dequantization helper for {dtype} not implemented.");

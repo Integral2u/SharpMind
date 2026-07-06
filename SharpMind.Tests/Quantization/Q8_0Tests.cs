@@ -27,7 +27,7 @@ public class Q8_0Tests(ITestOutputHelper output)
         var reader = new BinaryReader(ms);
         var data = new float[32];
         
-        GgufLoader.ReadQ8_0(reader, data.AsSpan(), 32);
+        GgufLoaderFactory.Default.ReadQ8_0(reader, data.AsSpan(), 32);
 
         _output.WriteLine($"data[0]={data[0]}");
 
@@ -53,7 +53,7 @@ public class Q8_0Tests(ITestOutputHelper output)
         var reader = new BinaryReader(ms);
         var data = new float[32];
         
-        GgufLoader.ReadQ8_0(reader, data.AsSpan(), 32);
+        GgufLoaderFactory.Default.ReadQ8_0(reader, data.AsSpan(), 32);
 
         _output.WriteLine($"data[0]={data[0]}");
 

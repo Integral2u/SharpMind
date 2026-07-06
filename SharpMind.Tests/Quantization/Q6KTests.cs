@@ -29,7 +29,7 @@ public class Q6KTests(ITestOutputHelper output)
         var reader = new BinaryReader(ms);
         var data = new float[256];
 
-        GgufLoader.ReadQ6K(reader, data.AsSpan(), 256);
+        GgufLoaderFactory.Default.ReadQ6K(reader, data.AsSpan(), 256);
 
         _output.WriteLine($"data[0]={data[0]}");
 
@@ -62,7 +62,7 @@ public class Q6KTests(ITestOutputHelper output)
         var reader = new BinaryReader(ms);
         var data = new float[256];
 
-        GgufLoader.ReadQ6K(reader, data.AsSpan(), 256);
+        GgufLoaderFactory.Default.ReadQ6K(reader, data.AsSpan(), 256);
 
         _output.WriteLine($"data[0]={data[0]}");
 

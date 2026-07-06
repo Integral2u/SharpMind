@@ -64,9 +64,9 @@ public static class VecDotQ4_1Diagnostic
         if (!System.IO.File.Exists(modelPath)) { Console.Error.WriteLine("  Model not found"); }
         else
         {
-            GgufLoader.Load(modelPath, null, out _, out var mc, out _);
+            GgufLoaderFactory.Default.Load(modelPath, null, out _, out var mc, out _);
             System.GC.Collect();
-            using var w = GgufLoader.LoadWeightsToTransformerWeights(modelPath, mc);
+            using var w = GgufLoaderFactory.Default.LoadWeightsToTransformerWeights(modelPath, mc);
             Console.Error.WriteLine($"  Blocks: {w.Blocks?.Length ?? 0}");
 
             if (w.Blocks is { Length: > 0 })

@@ -1,5 +1,3 @@
-using static SharpMind.Model.Format.GgufLoader;
-
 namespace SharpMind.Model.Format;
 
 public sealed class ModelMetaData

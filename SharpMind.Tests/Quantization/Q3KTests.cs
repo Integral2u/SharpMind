@@ -32,7 +32,7 @@ public class Q3KTests
         var reader = new BinaryReader(ms);
         var data = new float[256];
         
-        GgufLoader.ReadQ3_K(reader, data.AsSpan(), 256);
+        GgufLoaderFactory.Default.ReadQ3_K(reader, data.AsSpan(), 256);
         
         _output.WriteLine($"data[0]={data[0]}");
         

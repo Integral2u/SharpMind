@@ -92,7 +92,7 @@ public static class SessionLauncher
         {
             (meta, modelConfig, tokenizer) = await Task.Run(() =>
             {
-                GgufLoader.Load(options.ModelPath, null, out var m, out var c, out var t);
+                GgufLoaderFactory.Default.Load(options.ModelPath, null, out var m, out var c, out var t);
                 return (m, c, t);
             });
         }
@@ -111,7 +111,7 @@ public static class SessionLauncher
             var progress = status is null
                 ? null
                 : new Progress<float>(p => status.Report($"Loading weights... {p:P0}"));
-            weights = await Task.Run(() => GgufLoader.LoadWeightsToTransformerWeights(options.ModelPath, modelConfig, progress, options.LoadMode));
+            weights = await Task.Run(() => GgufLoaderFactory.Default.LoadWeightsToTransformerWeights(options.ModelPath, modelConfig, progress, options.LoadMode));
         }
         catch (Exception ex)
         {

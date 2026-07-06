@@ -26,7 +26,7 @@ public class NewFormatTests
         var ms = new MemoryStream(block);
         var reader = new BinaryReader(ms);
         var data = new float[32];
-        GgufLoader.ReadQ4_0(reader, data.AsSpan(), 32);
+        GgufLoaderFactory.Default.ReadQ4_0(reader, data.AsSpan(), 32);
         Assert.Equal(-4f, data[0], 5); // (4-8)*1.0 = -4
     }
 
@@ -41,7 +41,7 @@ public class NewFormatTests
         var ms = new MemoryStream(block);
         var reader = new BinaryReader(ms);
         var data = new float[32];
-        GgufLoader.ReadQ4_1(reader, data.AsSpan(), 32);
+        GgufLoaderFactory.Default.ReadQ4_1(reader, data.AsSpan(), 32);
         Assert.Equal(4f, data[0], 5); // 4*1.0+0 = 4
     }
 
@@ -55,7 +55,7 @@ public class NewFormatTests
         var ms = new MemoryStream(block);
         var reader = new BinaryReader(ms);
         var data = new float[32];
-        GgufLoader.ReadQ5_0(reader, data.AsSpan(), 32);
+        GgufLoaderFactory.Default.ReadQ5_0(reader, data.AsSpan(), 32);
         Assert.Equal(-15f, data[0], 5); // (1-16)*1.0 = -15
     }
 
@@ -70,7 +70,7 @@ public class NewFormatTests
         var ms = new MemoryStream(block);
         var reader = new BinaryReader(ms);
         var data = new float[32];
-        GgufLoader.ReadQ5_1(reader, data.AsSpan(), 32);
+        GgufLoaderFactory.Default.ReadQ5_1(reader, data.AsSpan(), 32);
         Assert.Equal(1f, data[0], 5); // 1*1.0+0 = 1
     }
 
@@ -84,7 +84,7 @@ public class NewFormatTests
         var ms = new MemoryStream(block);
         var reader = new BinaryReader(ms);
         var data = new float[32];
-        GgufLoader.ReadQ8_1(reader, data.AsSpan(), 32);
+        GgufLoaderFactory.Default.ReadQ8_1(reader, data.AsSpan(), 32);
         Assert.Equal(5f, data[0], 5); // 5*1.0 = 5
     }
 
@@ -99,7 +99,7 @@ public class NewFormatTests
         var ms = new MemoryStream(block);
         var reader = new BinaryReader(ms);
         var data = new float[256];
-        GgufLoader.ReadQ2K(reader, data.AsSpan(), 256);
+        GgufLoaderFactory.Default.ReadQ2K(reader, data.AsSpan(), 256);
         Assert.Equal(0f, data[0], 5);
     }
 
@@ -113,7 +113,7 @@ public class NewFormatTests
         var ms = new MemoryStream(block);
         var reader = new BinaryReader(ms);
         var data = new float[256];
-        GgufLoader.ReadQ8K(reader, data.AsSpan(), 256);
+        GgufLoaderFactory.Default.ReadQ8K(reader, data.AsSpan(), 256);
         Assert.Equal(5f, data[0], 5); // 5*1.0 = 5
     }
 }

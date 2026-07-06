@@ -42,7 +42,7 @@ namespace SharpMind.Samples.Examples
                 await Console.Out.WriteLineAsync($"Testing {m}");
                 await Console.Out.FlushAsync();
 
-                GgufLoader.Load(ggufPath, null, out ModelMetaData meta, out ModelConfig modelConfig, out Tokenizer? tokenizer);
+                GgufLoaderFactory.Default.Load(ggufPath, null, out ModelMetaData meta, out ModelConfig modelConfig, out Tokenizer? tokenizer);
                 if (tokenizer == null)
                 {
                     await Console.Out.WriteLineAsync($"No Tokenizer Data");
@@ -52,7 +52,7 @@ namespace SharpMind.Samples.Examples
                 var sharpConfig = modelConfig.ForModel();
                 GC.Collect(); GC.WaitForPendingFinalizers();
                 var sw = Stopwatch.StartNew();
-                using var weights = GgufLoader.LoadWeightsToTransformerWeights(ggufPath, modelConfig);
+                using var weights = GgufLoaderFactory.Default.LoadWeightsToTransformerWeights(ggufPath, modelConfig);
                 await Console.Out.WriteLineAsync($"GgufLoader.LoadWeightsToTransformerWeights executed in: {sw.Elapsed.TotalSeconds:F2}s");
                 GC.Collect(); GC.WaitForPendingFinalizers();
                 sw.Restart();
@@ -64,7 +64,6 @@ namespace SharpMind.Samples.Examples
                     string formatted = formatter.Format(testHistory, tokenizer, addBos: tokenizer.BosId >= 0);
                     Console.Error.WriteLine($"DIAG: formatted prompt: {formatted.Replace("\n", "\\n").Replace("\r", "\\r")}");
                 }
-                //LinearLayer.ForceFloatForward = true;  // enable to bypass quantized VecDot for diagnostics
                 using var model = ModelFactory.CreateSession(weights, sharpConfig);
                 await Console.Out.WriteLineAsync($"ModelFactory.CreateSession executed in: {sw.Elapsed.TotalSeconds:F2}s");
 

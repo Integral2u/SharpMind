@@ -14,7 +14,7 @@ public class QuickDtypeCheck
     [Fact]
     public void CheckQ2K_TensorTypes()
     {
-        var meta = GgufLoader.LoadMeta(@"C:\Integral2u\source\repos\SharpMind\ExternalAssets\qwen2-0.5b-instruct-q2_k.gguf");
+        var meta = GgufLoaderFactory.Default.LoadMeta(@"C:\Integral2u\source\repos\SharpMind\ExternalAssets\qwen2-0.5b-instruct-q2_k.gguf");
         foreach (var g in meta.Tensors.GroupBy(t => t.Dtype).OrderBy(g => g.Key))
             _output.WriteLine($"  {g.Key}: {g.Count()} tensors");
 

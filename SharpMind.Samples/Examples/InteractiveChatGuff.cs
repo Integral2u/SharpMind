@@ -22,7 +22,7 @@ namespace SharpMind.Samples.Examples
                 await Console.Out.WriteLineAsync($"GGUF not found: {ggufPath}");
                 return;
             }
-            GgufLoader.Load(ggufPath, null, out ModelMetaData meta, out ModelConfig modelConfig, out Tokenizer? tokenizer);            
+            GgufLoaderFactory.Default.Load(ggufPath, null, out ModelMetaData meta, out ModelConfig modelConfig, out Tokenizer? tokenizer);            
             if (tokenizer == null)
             {
                 await Console.Out.WriteLineAsync($"Tokenizer dat not found");
@@ -33,7 +33,7 @@ namespace SharpMind.Samples.Examples
             GC.Collect(); GC.WaitForPendingFinalizers();
             var sw = Stopwatch.StartNew();
 
-            using var weights = GgufLoader.LoadWeightsToTransformerWeights(ggufPath, modelConfig);
+            using var weights = GgufLoaderFactory.Default.LoadWeightsToTransformerWeights(ggufPath, modelConfig);
             await Console.Out.WriteLineAsync($"GgufLoader.LoadWeightsToTransformerWeights executed in: {sw.Elapsed.TotalSeconds:F2}s");
 
             GC.Collect(); GC.WaitForPendingFinalizers();

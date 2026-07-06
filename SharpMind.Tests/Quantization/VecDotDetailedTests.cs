@@ -68,7 +68,7 @@ public class VecDotDetailedTests
         {
             using var ms = new MemoryStream(block);
             using var reader = new BinaryReader(ms);
-            GgufLoader.ReadQ4K(reader, dequant, 256);
+            GgufLoaderFactory.Default.ReadQ4K(reader, dequant, 256);
         }
 
         // Compute expected dot product with all-ones input
@@ -123,7 +123,7 @@ public class VecDotDetailedTests
         {
             using var ms = new MemoryStream(block);
             using var reader = new BinaryReader(ms);
-            GgufLoader.ReadQ2K(reader, dequant, 256);
+            GgufLoaderFactory.Default.ReadQ2K(reader, dequant, 256);
         }
 
         float[] input = new float[256];
@@ -181,7 +181,7 @@ public class VecDotDetailedTests
         {
             using var ms = new MemoryStream(block);
             using var reader = new BinaryReader(ms);
-            GgufLoader.ReadQ5_K(reader, dequant, 256);
+            GgufLoaderFactory.Default.ReadQ5_K(reader, dequant, 256);
         }
 
         Assert.Equal(6.0f, dequant[0], 4);
@@ -225,7 +225,7 @@ public class VecDotDetailedTests
         float[] dequant = new float[256];
         using var ms = new MemoryStream(block);
         using var reader = new BinaryReader(ms);
-        GgufLoader.ReadQ6K(reader, dequant, 256);
+        GgufLoaderFactory.Default.ReadQ6K(reader, dequant, 256);
 
         // Element 0: d * sc[0] * (1 - 32) = 1.0 * 32 * (-31) = -992
         Assert.Equal(-992.0f, dequant[0], 2);
@@ -265,7 +265,7 @@ public class VecDotDetailedTests
         float[] dequant = new float[256];
         using var ms = new MemoryStream(block);
         using var reader = new BinaryReader(ms);
-        GgufLoader.ReadQ3_K(reader, dequant, 256);
+        GgufLoaderFactory.Default.ReadQ3_K(reader, dequant, 256);
 
         float[] input = new float[256];
         for (int i = 0; i < 256; i++) input[i] = 1.0f;
@@ -308,7 +308,7 @@ public class VecDotDetailedTests
         float[] dequant = new float[32];
         using var ms = new MemoryStream(block);
         using var reader = new BinaryReader(ms);
-        GgufLoader.ReadQ5_1(reader, dequant, 32);
+        GgufLoaderFactory.Default.ReadQ5_1(reader, dequant, 32);
 
         Assert.Equal(7.0f, dequant[0], 4);
         Assert.Equal(11.0f, dequant[1], 4);
@@ -339,12 +339,12 @@ public class VecDotDetailedTests
         string ggufPath = @"C:\Integral2u\source\repos\SharpMind\ExternalAssets\qwen2-0.5b-instruct-q2_k.gguf";
         if (!File.Exists(ggufPath)) return;
 
-        var meta = GgufLoader.LoadMeta(ggufPath);
+        var meta = GgufLoaderFactory.Default.LoadMeta(ggufPath);
         var tensor = meta.Tensors.First(t => t.Name == "blk.0.attn_q.weight");
 
         int[] shape = tensor.Shape;
         int inF = shape[0], outF = shape[1];
-        int rawSize = (int)GgufLoader.GetRawTensorByteCount(shape, tensor.Dtype);
+        int rawSize = (int)GgufLoaderFactory.Default.GetRawTensorByteCount(shape, tensor.Dtype);
 
         byte[] rawData = new byte[rawSize];
 
@@ -382,8 +382,8 @@ public class VecDotDetailedTests
                 {
                     if (isQ2K)
                     {
-                        float dSuper = GgufLoader.HalfToFloat(Unsafe.ReadUnaligned<ushort>(pBlock + 80));
-                        float minSuper = GgufLoader.HalfToFloat(Unsafe.ReadUnaligned<ushort>(pBlock + 82));
+                        float dSuper = GgufLoaderFactory.Default.HalfToFloat(Unsafe.ReadUnaligned<ushort>(pBlock + 80));
+                        float minSuper = GgufLoaderFactory.Default.HalfToFloat(Unsafe.ReadUnaligned<ushort>(pBlock + 82));
                         byte* scales = pBlock;
                         byte* qs = pBlock + 16;
                         for (int n16 = curBlockStart; n16 < blockEnd; n16 += 128)
@@ -417,8 +417,8 @@ public class VecDotDetailedTests
                     }
                     else
                     {
-                        float dSuper = GgufLoader.HalfToFloat(Unsafe.ReadUnaligned<ushort>(pBlock));
-                        float minSuper = GgufLoader.HalfToFloat(Unsafe.ReadUnaligned<ushort>(pBlock + 2));
+                        float dSuper = GgufLoaderFactory.Default.HalfToFloat(Unsafe.ReadUnaligned<ushort>(pBlock));
+                        float minSuper = GgufLoaderFactory.Default.HalfToFloat(Unsafe.ReadUnaligned<ushort>(pBlock + 2));
                         byte* scaleSpan = pBlock + 4;
                         byte* qs = pBlock + 16;
                         for (int j = curBlockStart; j < blockEnd; j += 64)

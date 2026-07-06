@@ -1,3 +1,4 @@
+using System.IO;
 using System.Runtime.CompilerServices;
 using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
@@ -2539,5 +2540,348 @@ public static partial class QuantizationKernels
                 sum += pIn[i] * (qs[i] * d);
         }
         return (float)sum;
+    }
+
+
+    // QuantizedMatMul*_Scalar — VecDot-based fallback for types without fused matmul
+
+
+    public static unsafe void QuantizedMatMulQ2K_Scalar(
+        float* input, byte* rawWeights, float* output,
+        int M, int K, int N)
+    {
+        for (int row = 0; row < M; row++)
+        {
+            float* pInRow = input + (long)row * K;
+            float* pOutRow = output + (long)row * N;
+            for (int col = 0; col < N; col++)
+                pOutRow[col] = VecDotQ2K_Scalar(pInRow, rawWeights, col, K);
+        }
+    }
+
+    public static unsafe void QuantizedMatMulQ3K_Scalar(
+        float* input, byte* rawWeights, float* output,
+        int M, int K, int N)
+    {
+        for (int row = 0; row < M; row++)
+        {
+            float* pInRow = input + (long)row * K;
+            float* pOutRow = output + (long)row * N;
+            for (int col = 0; col < N; col++)
+                pOutRow[col] = VecDotQ3K_Scalar(pInRow, rawWeights, col, K);
+        }
+    }
+
+    public static unsafe void QuantizedMatMulQ4K_Scalar(
+        float* input, byte* rawWeights, float* output,
+        int M, int K, int N)
+    {
+        for (int row = 0; row < M; row++)
+        {
+            float* pInRow = input + (long)row * K;
+            float* pOutRow = output + (long)row * N;
+            for (int col = 0; col < N; col++)
+                pOutRow[col] = VecDotQ4K_Scalar(pInRow, rawWeights, col, K);
+        }
+    }
+
+    public static unsafe void QuantizedMatMulQ5K_Scalar(
+        float* input, byte* rawWeights, float* output,
+        int M, int K, int N)
+    {
+        for (int row = 0; row < M; row++)
+        {
+            float* pInRow = input + (long)row * K;
+            float* pOutRow = output + (long)row * N;
+            for (int col = 0; col < N; col++)
+                pOutRow[col] = VecDotQ5K_Scalar(pInRow, rawWeights, col, K);
+        }
+    }
+
+    public static unsafe void QuantizedMatMulQ8K_Scalar(
+        float* input, byte* rawWeights, float* output,
+        int M, int K, int N)
+    {
+        for (int row = 0; row < M; row++)
+        {
+            float* pInRow = input + (long)row * K;
+            float* pOutRow = output + (long)row * N;
+            for (int col = 0; col < N; col++)
+                pOutRow[col] = VecDotQ8K_Scalar(pInRow, rawWeights, col, K);
+        }
+    }
+
+    public static unsafe void QuantizedMatMulQ8_1_Scalar(
+        float* input, byte* rawWeights, float* output,
+        int M, int K, int N)
+    {
+        for (int row = 0; row < M; row++)
+        {
+            float* pInRow = input + (long)row * K;
+            float* pOutRow = output + (long)row * N;
+            for (int col = 0; col < N; col++)
+                pOutRow[col] = VecDotQ8_1_Scalar(pInRow, rawWeights, col, K);
+        }
+    }
+
+    public static unsafe void QuantizedMatMulQ5_1_Scalar(
+        float* input, byte* rawWeights, float* output,
+        int M, int K, int N)
+    {
+        for (int row = 0; row < M; row++)
+        {
+            float* pInRow = input + (long)row * K;
+            float* pOutRow = output + (long)row * N;
+            for (int col = 0; col < N; col++)
+                pOutRow[col] = VecDotQ5_1_Scalar(pInRow, rawWeights, col, K);
+        }
+    }
+
+    public static unsafe void QuantizedMatMulQ4_NL_Scalar(
+        float* input, byte* rawWeights, float* output,
+        int M, int K, int N)
+    {
+        for (int row = 0; row < M; row++)
+        {
+            float* pInRow = input + (long)row * K;
+            float* pOutRow = output + (long)row * N;
+            for (int col = 0; col < N; col++)
+                pOutRow[col] = VecDotQ4_NL_Scalar(pInRow, rawWeights, col, K);
+        }
+    }
+
+
+    // ReadQ*_Scalar — dequantize from BinaryReader into Span<float>
+
+    public static unsafe void ReadQ8_0_Scalar(BinaryReader reader, Span<float> data, int n)
+    {
+        const int qk = 32;
+        const int blockBytes = 34;
+        int nBlocks = (n + qk - 1) / qk;
+        Span<byte> buf = stackalloc byte[blockBytes];
+
+        for (int b = 0; b < nBlocks; b++)
+        {
+            int blockStart = b * qk;
+            reader.Read(buf);
+            float d = HalfToFloat_Scalar(Unsafe.ReadUnaligned<ushort>(ref buf[0]));
+            int valid = Math.Min(qk, n - blockStart);
+
+            fixed (byte* pBuf = buf)
+            {
+                sbyte* values = (sbyte*)(pBuf + 2);
+                for (int j = 0; j < valid; j++)
+                    data[blockStart + j] = values[j] * d;
+            }
+        }
+    }
+
+    public static unsafe void ReadQ4_1_Scalar(BinaryReader reader, Span<float> data, int n)
+    {
+        const int qk = 32;
+        const int blockBytes = 20;
+        int nBlocks = (n + qk - 1) / qk;
+        Span<byte> buf = stackalloc byte[blockBytes];
+
+        for (int b = 0; b < nBlocks; b++)
+        {
+            int blockStart = b * qk;
+            reader.Read(buf);
+            float d = HalfToFloat_Scalar(Unsafe.ReadUnaligned<ushort>(ref buf[0]));
+            float m = HalfToFloat_Scalar(Unsafe.ReadUnaligned<ushort>(ref buf[2]));
+            int valid = Math.Min(qk, n - blockStart);
+
+            for (int j = 0; j < valid; j++)
+            {
+                int q = (buf[4 + j / 2] >> ((j & 1) * 4)) & 0x0F;
+                data[blockStart + j] = q * d + m;
+            }
+        }
+    }
+
+    public static unsafe void ReadQ5_1_Scalar(BinaryReader reader, Span<float> data, int n)
+    {
+        const int qk = 32;
+        const int blockBytes = 24;
+        int nBlocks = (n + qk - 1) / qk;
+        Span<byte> buf = stackalloc byte[blockBytes];
+
+        for (int b = 0; b < nBlocks; b++)
+        {
+            int blockStart = b * qk;
+            reader.Read(buf);
+            float d = HalfToFloat_Scalar(Unsafe.ReadUnaligned<ushort>(ref buf[0]));
+            float m = HalfToFloat_Scalar(Unsafe.ReadUnaligned<ushort>(ref buf[2]));
+            uint qh = Unsafe.ReadUnaligned<uint>(ref buf[4]);
+            int valid = Math.Min(qk, n - blockStart);
+
+            for (int i = 0; i < valid; i++)
+            {
+                int xh = (int)((qh >> i) & 1) << 4;
+                int q = ((buf[8 + i / 2] >> (4 * (i % 2))) & 0x0F) | xh;
+                data[blockStart + i] = q * d + m;
+            }
+        }
+    }
+
+    public static unsafe void ReadQ8_1_Scalar(BinaryReader reader, Span<float> data, int n)
+    {
+        const int qk = 32;
+        const int blockBytes = 36;
+        int nBlocks = (n + qk - 1) / qk;
+        Span<byte> buf = stackalloc byte[blockBytes];
+
+        for (int b = 0; b < nBlocks; b++)
+        {
+            int blockStart = b * qk;
+            reader.Read(buf);
+            float d = HalfToFloat_Scalar(Unsafe.ReadUnaligned<ushort>(ref buf[0]));
+            int valid = Math.Min(qk, n - blockStart);
+
+            for (int j = 0; j < valid; j++)
+                data[blockStart + j] = (sbyte)buf[4 + j] * d;
+        }
+    }
+
+    public static unsafe void ReadQ5_0_Scalar(BinaryReader reader, Span<float> data, int n)
+    {
+        const int qk = 32;
+        const int blockBytes = 22;
+        int nBlocks = (n + qk - 1) / qk;
+        Span<byte> buf = stackalloc byte[blockBytes];
+
+        for (int b = 0; b < nBlocks; b++)
+        {
+            int blockStart = b * qk;
+            reader.Read(buf);
+            float d = HalfToFloat_Scalar(Unsafe.ReadUnaligned<ushort>(ref buf[0]));
+            uint qh = Unsafe.ReadUnaligned<uint>(ref buf[2]);
+            int valid = Math.Min(qk, n - blockStart);
+
+            for (int j = 0; j < valid; j++)
+            {
+                int loNib = buf[6 + j / 2] & 0x0F;
+                int hiNib = buf[6 + j / 2] >> 4;
+                int nib = (j % 2 == 0) ? loNib : hiNib;
+                int h4 = ((int)(qh >> j) & 1) << 4;
+                data[blockStart + j] = ((nib | h4) - 16) * d;
+            }
+        }
+    }
+
+    public static unsafe void ReadQ4_0_Scalar(BinaryReader reader, Span<float> data, int n)
+    {
+        const int qk = 32;
+        const int blockBytes = 18;
+        int nBlocks = (n + qk - 1) / qk;
+        Span<byte> buf = stackalloc byte[blockBytes];
+
+        for (int b = 0; b < nBlocks; b++)
+        {
+            int blockStart = b * qk;
+            reader.Read(buf);
+            float d = HalfToFloat_Scalar(Unsafe.ReadUnaligned<ushort>(ref buf[0]));
+            int valid = Math.Min(qk, n - blockStart);
+
+            for (int j = 0; j < valid; j++)
+            {
+                int nib = (buf[2 + j / 2] >> ((j & 1) * 4)) & 0x0F;
+                data[blockStart + j] = (nib - 8) * d;
+            }
+        }
+    }
+
+    public static unsafe void ReadQ4_NL_Scalar(BinaryReader reader, Span<float> data, int n)
+    {
+        const int qk = 32;
+        const int blockBytes = 18;
+        int nBlocks = (n + qk - 1) / qk;
+        Span<byte> buf = stackalloc byte[blockBytes];
+
+        for (int b = 0; b < nBlocks; b++)
+        {
+            int blockStart = b * qk;
+            reader.Read(buf);
+            float d = HalfToFloat_Scalar(Unsafe.ReadUnaligned<ushort>(ref buf[0]));
+            int valid = Math.Min(qk, n - blockStart);
+
+            for (int j = 0; j < valid; j++)
+            {
+                int nib = (buf[2 + (j >> 1)] >> (4 * (j & 1))) & 0x0F;
+                data[blockStart + j] = d * kvalues_iq4nl[nib];
+            }
+        }
+    }
+
+    public static unsafe void QuantizedMatMulF32_Scalar(
+        float* input, byte* rawWeights, float* output,
+        int M, int K, int N)
+    {
+        float* w = (float*)rawWeights;
+        if (M <= 1)
+        {
+            float* pIn = input;
+            float* pOut = output;
+            for (int col = 0; col < N; col++)
+            {
+                float sum = 0;
+                float* pW = w + (long)col * K;
+                for (int i = 0; i < K; i++)
+                    sum += pIn[i] * pW[i];
+                pOut[col] = sum;
+            }
+        }
+        else
+        {
+            Parallel.For(0, M, row =>
+            {
+                float* pIn = input + (long)row * K;
+                float* pOut = output + (long)row * N;
+                for (int col = 0; col < N; col++)
+                {
+                    float sum = 0;
+                    float* pW = w + (long)col * K;
+                    for (int i = 0; i < K; i++)
+                        sum += pIn[i] * pW[i];
+                    pOut[col] = sum;
+                }
+            });
+        }
+    }
+
+    public static unsafe void QuantizedMatMulF16_Scalar(
+        float* input, byte* rawWeights, float* output,
+        int M, int K, int N)
+    {
+        ushort* w = (ushort*)rawWeights;
+        if (M <= 1)
+        {
+            float* pIn = input;
+            float* pOut = output;
+            for (int col = 0; col < N; col++)
+            {
+                float sum = 0;
+                ushort* pW = w + (long)col * K;
+                for (int i = 0; i < K; i++)
+                    sum += pIn[i] * HalfToFloat_Scalar(pW[i]);
+                pOut[col] = sum;
+            }
+        }
+        else
+        {
+            Parallel.For(0, M, row =>
+            {
+                float* pIn = input + (long)row * K;
+                float* pOut = output + (long)row * N;
+                for (int col = 0; col < N; col++)
+                {
+                    float sum = 0;
+                    ushort* pW = w + (long)col * K;
+                    for (int i = 0; i < K; i++)
+                        sum += pIn[i] * HalfToFloat_Scalar(pW[i]);
+                    pOut[col] = sum;
+                }
+            });
+        }
     }
 }

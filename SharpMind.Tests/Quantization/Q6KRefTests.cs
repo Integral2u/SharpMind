@@ -38,7 +38,7 @@ public class Q6KRefTests
         var ms = new MemoryStream(block);
         var reader = new BinaryReader(ms);
         var data = new float[256];
-        GgufLoader.ReadQ6K(reader, data.AsSpan(), 256);
+        GgufLoaderFactory.Default.ReadQ6K(reader, data.AsSpan(), 256);
 
         // Elements 0..15: sc[0]=32, qv=0 → d*32*(0-32) = -1024
         Assert.Equal(-1024.0f, data[0]);
@@ -152,7 +152,7 @@ public class Q6KRefTests
         var ms = new MemoryStream(block);
         var reader = new BinaryReader(ms);
         var data = new float[256];
-        GgufLoader.ReadQ6K(reader, data.AsSpan(), 256);
+        GgufLoaderFactory.Default.ReadQ6K(reader, data.AsSpan(), 256);
 
         // Element 0: d * sc[0] * (1 - 32) = 32 * (-31) = -992
         Assert.Equal(-992.0f, data[0]);
@@ -178,7 +178,7 @@ public class Q6KRefTests
         var ms = new MemoryStream(block);
         var reader = new BinaryReader(ms);
         var data = new float[256];
-        GgufLoader.ReadQ6K(reader, data.AsSpan(), 256);
+        GgufLoaderFactory.Default.ReadQ6K(reader, data.AsSpan(), 256);
 
         // q1 = 15 | (1 << 4) = 31
         // value = 32 * (31 - 32) = -32
@@ -213,7 +213,7 @@ public class Q6KRefTests
         var ms = new MemoryStream(block);
         var reader = new BinaryReader(ms);
         var data = new float[256];
-        GgufLoader.ReadQ6K(reader, data.AsSpan(), 256);
+        GgufLoaderFactory.Default.ReadQ6K(reader, data.AsSpan(), 256);
 
         // Element 32 (nOff=0, l=0, q2): sc[2]=32, q2=15|(1<<4)=31
         // value = 32 * (31 - 32) = -32

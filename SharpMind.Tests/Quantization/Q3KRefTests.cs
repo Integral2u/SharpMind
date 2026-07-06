@@ -31,7 +31,7 @@ public class Q3KRefTests
         var ms = new MemoryStream(block);
         var reader = new BinaryReader(ms);
         var data = new float[count];
-        GgufLoader.ReadQ3_K(reader, data.AsSpan(), count);
+        GgufLoaderFactory.Default.ReadQ3_K(reader, data.AsSpan(), count);
         return data;
     }
 

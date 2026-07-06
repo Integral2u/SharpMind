@@ -7,7 +7,7 @@ using SharpMind.Model.Format;
 using SharpMind.Tokenization;
 using System.Diagnostics;
 using System.Reflection;
-using static SharpMind.Model.Format.GgufLoader;
+
 
 
 namespace SharpMind.Samples.Examples
@@ -16,7 +16,7 @@ namespace SharpMind.Samples.Examples
     {
         private static readonly string[] Models =
         [
-            
+            /*
             "qwen2-0_5b-instruct-q4_k_m",   //Response:PerPixel??ROUP??nesdayaul .?,...\n\n??? gratuites??
             "qwen2-0.5b-instruct-q2_k",     //Response:??-onium[o? ( didFORMANCE Collections????????
             "Qwen2-0.5B.Q2_K",              //Response:?ro? ?????????? snprintfnal?? appré?.onreadystatechange
@@ -25,7 +25,8 @@ namespace SharpMind.Samples.Examples
             "Qwen2-0.5B.Q3_K_S",            //Response:estring???emales?? je??? Gro  (??hibition Main
             
             "Qwen2-0.5B.Q5_1",              //Response:-+$?ergy=> Tw %(. Tw?????
-            /*
+            */
+            
             "Qwen2.5-1.5B-Instruct-f16",    //Response:??,?????????????????????
 
 
@@ -60,7 +61,7 @@ namespace SharpMind.Samples.Examples
             //https://huggingface.co/tensorblock/tiny-mistral-GGUF/tree/main
             "tiny-mistral-Q2_K", //Response:idadections interactionsStub varianceGM Identity yards? tenant Icon":? pione???
             "tiny-mistral-Q3_K_M", //Response: typeof steep'' asksREEN sensors yeDDbritmost anywhere \;tabularreshold Grade
-
+            /*
             //Unknown shape
             //https://huggingface.co/prism-ml/Bonsai-8B-gguf            
             "Bonsai-8B",    //Out of Memory
@@ -88,7 +89,7 @@ namespace SharpMind.Samples.Examples
                 await Console.Out.WriteLineAsync($"Testing {m}");
                 await Console.Out.FlushAsync();
 
-                GgufLoader.Load(ggufPath, null, out ModelMetaData meta, out ModelConfig modelConfig, out Tokenizer? tokenizer);
+                GgufLoaderFactory.Default.Load(ggufPath, null, out ModelMetaData meta, out ModelConfig modelConfig, out Tokenizer? tokenizer);
                 if (tokenizer == null)
                 {
                     await Console.Out.WriteLineAsync($"No Tokenizer Data");
@@ -98,7 +99,7 @@ namespace SharpMind.Samples.Examples
                 var sharpConfig = modelConfig.ForModel();
                 GC.Collect(); GC.WaitForPendingFinalizers();
                 var sw = Stopwatch.StartNew();
-                using var weights = GgufLoader.LoadWeightsToTransformerWeights(ggufPath, modelConfig);                
+                using var weights = GgufLoaderFactory.Default.LoadWeightsToTransformerWeights(ggufPath, modelConfig);                
                 await Console.Out.WriteLineAsync($"GgufLoader.LoadWeightsToTransformerWeights executed in: {sw.Elapsed.TotalSeconds:F2}s");
                 GC.Collect(); GC.WaitForPendingFinalizers();
                 sw.Restart();

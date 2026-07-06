@@ -1,3 +1,4 @@
+using System.IO;
 using JigSawDotNet;
 using System.Runtime.Intrinsics;
 
@@ -142,7 +143,175 @@ public abstract class QuantizationOps
         "q8k_scalar", $"{NS}.{nameof(QuantizationKernels.VecDotQ8K_Scalar)}")]
     public abstract unsafe float VecDotQ8K(float* input, byte* rawWeights, int col, int inFeatures);
 
-    
+
+    // Missing QuantizedMatMul abstract methods (types currently using WrapVecDotAsMatMul)
+
+
+    [PuzzleCornerPiece(QuantizationConfig.KeyQuantizedMatMulQ2K, true, null,
+        "qmatmul_q2k_fma",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ2K_Scalar)}",
+        "qmatmul_q2k_avx2",   $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ2K_Scalar)}",
+        "qmatmul_q2k_sse",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ2K_Scalar)}",
+        "qmatmul_q2k_scalar", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ2K_Scalar)}")]
+    public abstract unsafe void QuantizedMatMulQ2K(float* input, byte* rawWeights, float* output, int M, int K, int N);
+
+    [PuzzleCornerPiece(QuantizationConfig.KeyQuantizedMatMulQ3K, true, null,
+        "qmatmul_q3k_fma",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ3K_Scalar)}",
+        "qmatmul_q3k_avx2",   $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ3K_Scalar)}",
+        "qmatmul_q3k_sse",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ3K_Scalar)}",
+        "qmatmul_q3k_scalar", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ3K_Scalar)}")]
+    public abstract unsafe void QuantizedMatMulQ3K(float* input, byte* rawWeights, float* output, int M, int K, int N);
+
+    [PuzzleCornerPiece(QuantizationConfig.KeyQuantizedMatMulQ4K, true, null,
+        "qmatmul_q4k_fma",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4K_Scalar)}",
+        "qmatmul_q4k_avx2",   $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4K_Scalar)}",
+        "qmatmul_q4k_sse",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4K_Scalar)}",
+        "qmatmul_q4k_scalar", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4K_Scalar)}")]
+    public abstract unsafe void QuantizedMatMulQ4K(float* input, byte* rawWeights, float* output, int M, int K, int N);
+
+    [PuzzleCornerPiece(QuantizationConfig.KeyQuantizedMatMulQ5K, true, null,
+        "qmatmul_q5k_fma",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ5K_Scalar)}",
+        "qmatmul_q5k_avx2",   $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ5K_Scalar)}",
+        "qmatmul_q5k_sse",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ5K_Scalar)}",
+        "qmatmul_q5k_scalar", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ5K_Scalar)}")]
+    public abstract unsafe void QuantizedMatMulQ5K(float* input, byte* rawWeights, float* output, int M, int K, int N);
+
+    [PuzzleCornerPiece(QuantizationConfig.KeyQuantizedMatMulQ8K, true, null,
+        "qmatmul_q8k_fma",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ8K_Scalar)}",
+        "qmatmul_q8k_avx2",   $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ8K_Scalar)}",
+        "qmatmul_q8k_sse",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ8K_Scalar)}",
+        "qmatmul_q8k_scalar", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ8K_Scalar)}")]
+    public abstract unsafe void QuantizedMatMulQ8K(float* input, byte* rawWeights, float* output, int M, int K, int N);
+
+    [PuzzleCornerPiece(QuantizationConfig.KeyQuantizedMatMulQ8_1, true, null,
+        "qmatmul_q8_1_fma",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ8_1_Scalar)}",
+        "qmatmul_q8_1_avx2",   $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ8_1_Scalar)}",
+        "qmatmul_q8_1_sse",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ8_1_Scalar)}",
+        "qmatmul_q8_1_scalar", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ8_1_Scalar)}")]
+    public abstract unsafe void QuantizedMatMulQ8_1(float* input, byte* rawWeights, float* output, int M, int K, int N);
+
+    [PuzzleCornerPiece(QuantizationConfig.KeyQuantizedMatMulQ5_1, true, null,
+        "qmatmul_q5_1_fma",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ5_1_Scalar)}",
+        "qmatmul_q5_1_avx2",   $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ5_1_Scalar)}",
+        "qmatmul_q5_1_sse",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ5_1_Scalar)}",
+        "qmatmul_q5_1_scalar", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ5_1_Scalar)}")]
+    public abstract unsafe void QuantizedMatMulQ5_1(float* input, byte* rawWeights, float* output, int M, int K, int N);
+
+    [PuzzleCornerPiece(QuantizationConfig.KeyQuantizedMatMulQ4_NL, true, null,
+        "qmatmul_q4_nl_fma",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_NL_Scalar)}",
+        "qmatmul_q4_nl_avx2",   $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_NL_Scalar)}",
+        "qmatmul_q4_nl_sse",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_NL_Scalar)}",
+        "qmatmul_q4_nl_scalar", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_NL_Scalar)}")]
+    public abstract unsafe void QuantizedMatMulQ4_NL(float* input, byte* rawWeights, float* output, int M, int K, int N);
+
+    [PuzzleCornerPiece(QuantizationConfig.KeyQuantizedMatMulF32, true, null,
+        "qmatmul_f32_fma",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulF32_Scalar)}",
+        "qmatmul_f32_avx2",   $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulF32_Scalar)}",
+        "qmatmul_f32_sse",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulF32_Scalar)}",
+        "qmatmul_f32_scalar", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulF32_Scalar)}")]
+    public abstract unsafe void QuantizedMatMulF32(float* input, byte* rawWeights, float* output, int M, int K, int N);
+
+    [PuzzleCornerPiece(QuantizationConfig.KeyQuantizedMatMulF16, true, null,
+        "qmatmul_f16_fma",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulF16_Scalar)}",
+        "qmatmul_f16_avx2",   $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulF16_Scalar)}",
+        "qmatmul_f16_sse",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulF16_Scalar)}",
+        "qmatmul_f16_scalar", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulF16_Scalar)}")]
+    public abstract unsafe void QuantizedMatMulF16(float* input, byte* rawWeights, float* output, int M, int K, int N);
+
+    // ReadQ* abstract methods — dequantization
+
+
+    [PuzzleCornerPiece(QuantizationConfig.KeyReadQ8_0, true, null,
+        "read_q8_0_fma",    $"{NS}.{nameof(QuantizationKernels.ReadQ8_0_Scalar)}",
+        "read_q8_0_avx2",   $"{NS}.{nameof(QuantizationKernels.ReadQ8_0_Scalar)}",
+        "read_q8_0_sse",    $"{NS}.{nameof(QuantizationKernels.ReadQ8_0_Scalar)}",
+        "read_q8_0_scalar", $"{NS}.{nameof(QuantizationKernels.ReadQ8_0_Scalar)}")]
+    public abstract unsafe void ReadQ8_0(BinaryReader reader, Span<float> data, int n);
+
+    [PuzzleCornerPiece(QuantizationConfig.KeyReadQ4_0, true, null,
+        "read_q4_0_fma",    $"{NS}.{nameof(QuantizationKernels.ReadQ4_0_Scalar)}",
+        "read_q4_0_avx2",   $"{NS}.{nameof(QuantizationKernels.ReadQ4_0_Scalar)}",
+        "read_q4_0_sse",    $"{NS}.{nameof(QuantizationKernels.ReadQ4_0_Scalar)}",
+        "read_q4_0_scalar", $"{NS}.{nameof(QuantizationKernels.ReadQ4_0_Scalar)}")]
+    public abstract unsafe void ReadQ4_0(BinaryReader reader, Span<float> data, int n);
+
+    [PuzzleCornerPiece(QuantizationConfig.KeyReadQ4_1, true, null,
+        "read_q4_1_fma",    $"{NS}.{nameof(QuantizationKernels.ReadQ4_1_Scalar)}",
+        "read_q4_1_avx2",   $"{NS}.{nameof(QuantizationKernels.ReadQ4_1_Scalar)}",
+        "read_q4_1_sse",    $"{NS}.{nameof(QuantizationKernels.ReadQ4_1_Scalar)}",
+        "read_q4_1_scalar", $"{NS}.{nameof(QuantizationKernels.ReadQ4_1_Scalar)}")]
+    public abstract unsafe void ReadQ4_1(BinaryReader reader, Span<float> data, int n);
+
+    [PuzzleCornerPiece(QuantizationConfig.KeyReadQ5_0, true, null,
+        "read_q5_0_fma",    $"{NS}.{nameof(QuantizationKernels.ReadQ5_0_Scalar)}",
+        "read_q5_0_avx2",   $"{NS}.{nameof(QuantizationKernels.ReadQ5_0_Scalar)}",
+        "read_q5_0_sse",    $"{NS}.{nameof(QuantizationKernels.ReadQ5_0_Scalar)}",
+        "read_q5_0_scalar", $"{NS}.{nameof(QuantizationKernels.ReadQ5_0_Scalar)}")]
+    public abstract unsafe void ReadQ5_0(BinaryReader reader, Span<float> data, int n);
+
+    [PuzzleCornerPiece(QuantizationConfig.KeyReadQ5_1, true, null,
+        "read_q5_1_fma",    $"{NS}.{nameof(QuantizationKernels.ReadQ5_1_Scalar)}",
+        "read_q5_1_avx2",   $"{NS}.{nameof(QuantizationKernels.ReadQ5_1_Scalar)}",
+        "read_q5_1_sse",    $"{NS}.{nameof(QuantizationKernels.ReadQ5_1_Scalar)}",
+        "read_q5_1_scalar", $"{NS}.{nameof(QuantizationKernels.ReadQ5_1_Scalar)}")]
+    public abstract unsafe void ReadQ5_1(BinaryReader reader, Span<float> data, int n);
+
+    [PuzzleCornerPiece(QuantizationConfig.KeyReadQ8_1, true, null,
+        "read_q8_1_fma",    $"{NS}.{nameof(QuantizationKernels.ReadQ8_1_Scalar)}",
+        "read_q8_1_avx2",   $"{NS}.{nameof(QuantizationKernels.ReadQ8_1_Scalar)}",
+        "read_q8_1_sse",    $"{NS}.{nameof(QuantizationKernels.ReadQ8_1_Scalar)}",
+        "read_q8_1_scalar", $"{NS}.{nameof(QuantizationKernels.ReadQ8_1_Scalar)}")]
+    public abstract unsafe void ReadQ8_1(BinaryReader reader, Span<float> data, int n);
+
+    [PuzzleCornerPiece(QuantizationConfig.KeyReadQ4_NL, true, null,
+        "read_q4_nl_fma",    $"{NS}.{nameof(QuantizationKernels.ReadQ4_NL_Scalar)}",
+        "read_q4_nl_avx2",   $"{NS}.{nameof(QuantizationKernels.ReadQ4_NL_Scalar)}",
+        "read_q4_nl_sse",    $"{NS}.{nameof(QuantizationKernels.ReadQ4_NL_Scalar)}",
+        "read_q4_nl_scalar", $"{NS}.{nameof(QuantizationKernels.ReadQ4_NL_Scalar)}")]
+    public abstract unsafe void ReadQ4_NL(BinaryReader reader, Span<float> data, int n);
+
+    [PuzzleCornerPiece(QuantizationConfig.KeyReadQ2K, true, null,
+        "read_q2k_fma",    $"{NS}.{nameof(QuantizationKernels.ReadQ2K_Scalar)}",
+        "read_q2k_avx2",   $"{NS}.{nameof(QuantizationKernels.ReadQ2K_Scalar)}",
+        "read_q2k_sse",    $"{NS}.{nameof(QuantizationKernels.ReadQ2K_Scalar)}",
+        "read_q2k_scalar", $"{NS}.{nameof(QuantizationKernels.ReadQ2K_Scalar)}")]
+    public abstract unsafe void ReadQ2K(BinaryReader reader, Span<float> data, int n);
+
+    [PuzzleCornerPiece(QuantizationConfig.KeyReadQ3K, true, null,
+        "read_q3k_fma",    $"{NS}.{nameof(QuantizationKernels.ReadQ3_K_Scalar)}",
+        "read_q3k_avx2",   $"{NS}.{nameof(QuantizationKernels.ReadQ3_K_Scalar)}",
+        "read_q3k_sse",    $"{NS}.{nameof(QuantizationKernels.ReadQ3_K_Scalar)}",
+        "read_q3k_scalar", $"{NS}.{nameof(QuantizationKernels.ReadQ3_K_Scalar)}")]
+    public abstract unsafe void ReadQ3K(BinaryReader reader, Span<float> data, int n);
+
+    [PuzzleCornerPiece(QuantizationConfig.KeyReadQ4K, true, null,
+        "read_q4k_fma",    $"{NS}.{nameof(QuantizationKernels.ReadQ4K_Scalar)}",
+        "read_q4k_avx2",   $"{NS}.{nameof(QuantizationKernels.ReadQ4K_Scalar)}",
+        "read_q4k_sse",    $"{NS}.{nameof(QuantizationKernels.ReadQ4K_Scalar)}",
+        "read_q4k_scalar", $"{NS}.{nameof(QuantizationKernels.ReadQ4K_Scalar)}")]
+    public abstract unsafe void ReadQ4K(BinaryReader reader, Span<float> data, int n);
+
+    [PuzzleCornerPiece(QuantizationConfig.KeyReadQ5K, true, null,
+        "read_q5k_fma",    $"{NS}.{nameof(QuantizationKernels.ReadQ5_K_Scalar)}",
+        "read_q5k_avx2",   $"{NS}.{nameof(QuantizationKernels.ReadQ5_K_Scalar)}",
+        "read_q5k_sse",    $"{NS}.{nameof(QuantizationKernels.ReadQ5_K_Scalar)}",
+        "read_q5k_scalar", $"{NS}.{nameof(QuantizationKernels.ReadQ5_K_Scalar)}")]
+    public abstract unsafe void ReadQ5K(BinaryReader reader, Span<float> data, int n);
+
+    [PuzzleCornerPiece(QuantizationConfig.KeyReadQ6K, true, null,
+        "read_q6k_fma",    $"{NS}.{nameof(QuantizationKernels.ReadQ6K_Scalar)}",
+        "read_q6k_avx2",   $"{NS}.{nameof(QuantizationKernels.ReadQ6K_Scalar)}",
+        "read_q6k_sse",    $"{NS}.{nameof(QuantizationKernels.ReadQ6K_Scalar)}",
+        "read_q6k_scalar", $"{NS}.{nameof(QuantizationKernels.ReadQ6K_Scalar)}")]
+    public abstract unsafe void ReadQ6K(BinaryReader reader, Span<float> data, int n);
+
+    [PuzzleCornerPiece(QuantizationConfig.KeyReadQ8K, true, null,
+        "read_q8k_fma",    $"{NS}.{nameof(QuantizationKernels.ReadQ8K_Scalar)}",
+        "read_q8k_avx2",   $"{NS}.{nameof(QuantizationKernels.ReadQ8K_Scalar)}",
+        "read_q8k_sse",    $"{NS}.{nameof(QuantizationKernels.ReadQ8K_Scalar)}",
+        "read_q8k_scalar", $"{NS}.{nameof(QuantizationKernels.ReadQ8K_Scalar)}")]
+    public abstract unsafe void ReadQ8K(BinaryReader reader, Span<float> data, int n);
+
+
     // Shared helpers
     
 

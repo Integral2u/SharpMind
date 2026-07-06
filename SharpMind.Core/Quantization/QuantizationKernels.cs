@@ -1,3 +1,4 @@
+using System.IO;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.Intrinsics;
@@ -932,6 +933,270 @@ public static partial class QuantizationKernels
                 for (int col = 0; col < N; col++)
                     pOutRow[col] = VecDotQ6K_FMA(pInRow, rawWeights, col, K);
             });
+        }
+    }
+
+
+    // ReadQ*_Scalar — dequantize from BinaryReader into Span<float>
+    // These are the canonical dequant implementations, moved from GgufLoader.
+
+    public static unsafe void ReadQ2K_Scalar(BinaryReader reader, Span<float> data, int n)
+    {
+        const int QK_K = 256;
+        const int blockBytes = 84;
+        int nBlocks = (n + QK_K - 1) / QK_K;
+        Span<byte> buf = stackalloc byte[blockBytes];
+
+        for (int b = 0; b < nBlocks; b++)
+        {
+            int blockStart = b * QK_K;
+            reader.Read(buf);
+            float dSuper = HalfToFloat_Scalar(Unsafe.ReadUnaligned<ushort>(ref buf[80]));
+            float minSuper = HalfToFloat_Scalar(Unsafe.ReadUnaligned<ushort>(ref buf[82]));
+
+            for (int i = 0; i < QK_K && blockStart + i < n; i++)
+            {
+                int pairIdx = i / 16;
+                byte pair = buf[pairIdx];
+                float s = pair & 0x0F;
+                float m = pair >> 4;
+                int qsByte = (i / 128) * 32 + (i % 32);
+                int qsShift = ((i % 128) / 32) * 2;
+                int quant = (buf[16 + qsByte] >> qsShift) & 3;
+                data[blockStart + i] = (s * quant * dSuper) - (m * minSuper);
+            }
+        }
+    }
+
+    public static unsafe void ReadQ8K_Scalar(BinaryReader reader, Span<float> data, int n)
+    {
+        const int QK_K = 256;
+        const int blockBytes = 292;
+        int nBlocks = (n + QK_K - 1) / QK_K;
+        Span<byte> buf = stackalloc byte[blockBytes];
+
+        for (int b = 0; b < nBlocks; b++)
+        {
+            int blockStart = b * QK_K;
+            reader.Read(buf);
+            float d = Unsafe.ReadUnaligned<float>(ref buf[0]);
+            int valid = Math.Min(QK_K, n - blockStart);
+
+            for (int j = 0; j < valid; j++)
+                data[blockStart + j] = (sbyte)buf[4 + j] * d;
+        }
+    }
+
+    public static unsafe void ReadQ4K_Scalar(BinaryReader reader, Span<float> data, int n)
+    {
+        const int QK_K = 256;
+        const int blockBytes = 144;
+        int nBlocks = (n + QK_K - 1) / QK_K;
+        Span<byte> buf = stackalloc byte[blockBytes];
+
+        for (int b = 0; b < nBlocks; b++)
+        {
+            int blockStart = b * QK_K;
+            reader.Read(buf);
+
+            float dSuper = HalfToFloat_Scalar(Unsafe.ReadUnaligned<ushort>(ref buf[0]));
+            float minSuper = HalfToFloat_Scalar(Unsafe.ReadUnaligned<ushort>(ref buf[2]));
+
+            fixed (byte* pBuf = buf)
+            {
+                byte* scales = pBuf + 4;
+                int idx = 0;
+                for (int j = 0; j < QK_K; j += 64)
+                {
+                    byte sc0 = GetScaleMinK4_Scale_Scalar(idx + 0, scales);
+                    byte m0 = GetScaleMinK4_Min_Scalar(idx + 0, scales);
+                    byte sc1 = GetScaleMinK4_Scale_Scalar(idx + 1, scales);
+                    byte m1 = GetScaleMinK4_Min_Scalar(idx + 1, scales);
+
+                    float d1 = dSuper * sc0;
+                    float m1v = minSuper * m0;
+                    float d2 = dSuper * sc1;
+                    float m2v = minSuper * m1;
+
+                    int qIdx = 16 + (j / 64) * 32;
+
+                    int lim1 = Math.Min(32, n - blockStart - j);
+                    for (int l = 0; l < lim1; l++)
+                        data[blockStart + j + l] = (sc0 * (buf[qIdx + l] & 0x0F) * dSuper) - (m0 * minSuper);
+
+                    int lim2 = Math.Min(32, n - blockStart - j - 32);
+                    for (int l = 0; l < lim2; l++)
+                        data[blockStart + j + 32 + l] = (sc1 * (buf[qIdx + l] >> 4) * dSuper) - (m1 * minSuper);
+
+                    idx += 2;
+                }
+            }
+        }
+    }
+
+    public static unsafe void ReadQ5_K_Scalar(BinaryReader reader, Span<float> data, int n)
+    {
+        const int QK_K = 256;
+        const int blockBytes = 176;
+        int nBlocks = (n + QK_K - 1) / QK_K;
+        Span<byte> buf = stackalloc byte[blockBytes];
+
+        for (int b = 0; b < nBlocks; b++)
+        {
+            int blockStart = b * QK_K;
+            reader.Read(buf);
+
+            float d = HalfToFloat_Scalar(Unsafe.ReadUnaligned<ushort>(ref buf[0]));
+            float dmin = HalfToFloat_Scalar(Unsafe.ReadUnaligned<ushort>(ref buf[2]));
+
+            fixed (byte* pBuf = buf)
+            {
+                byte* scales = pBuf + 4;
+                for (int i = 0; i < QK_K && blockStart + i < n; i++)
+                {
+                    int subIdx = i / 32;
+                    byte sc = GetScaleMinK4_Scale_Scalar(subIdx, scales);
+                    byte m = GetScaleMinK4_Min_Scalar(subIdx, scales);
+
+                    int qsByteIdx = 48 + (i / 64) * 32 + (i % 32);
+                    int qsShift = ((i % 64) / 32) * 4;
+                    int q4 = (buf[qsByteIdx] >> qsShift) & 0x0F;
+
+                    int qhBit = (buf[16 + (i % 32)] >> ((i / 64) * 2 + ((i % 64) / 32))) & 1;
+                    int q5 = q4 | (qhBit << 4);
+
+                    data[blockStart + i] = (sc * q5 * d) - (m * dmin);
+                }
+            }
+        }
+    }
+
+    public static unsafe void ReadQ6K_Scalar(BinaryReader reader, Span<float> data, int n)
+    {
+        const int QK_K = 256;
+        const int blockBytes = 210;
+        int nBlocks = (n + QK_K - 1) / QK_K;
+        Span<byte> buf = stackalloc byte[blockBytes];
+
+        for (int b = 0; b < nBlocks; b++)
+        {
+            int blockStart = b * QK_K;
+            int valid = Math.Min(QK_K, n - blockStart);
+            reader.Read(buf);
+
+            fixed (byte* pBuf = buf)
+            {
+                byte* ql = pBuf;
+                byte* qh = ql + 128;
+                sbyte* scales = (sbyte*)(qh + 64);
+                float d = HalfToFloat_Scalar(Unsafe.ReadUnaligned<ushort>(pBuf + 128 + 64 + 16));
+
+                for (int nOff = 0; nOff < valid; nOff += 128)
+                {
+                    int qlOff = nOff == 0 ? 0 : 64;
+                    int qhOff = nOff == 0 ? 0 : 32;
+                    int scOff = nOff == 0 ? 0 : 8;
+
+                    int halfRem = Math.Min(128, valid - nOff);
+                    for (int l = 0; l < 32 && l < halfRem; l++)
+                    {
+                        int is_ = l / 16;
+                        int q1 = (ql[qlOff + l] & 0x0F) | ((qh[qhOff + l] & 0x03) << 4);
+                        int q2 = (ql[qlOff + l + 32] & 0x0F) | (((qh[qhOff + l] >> 2) & 0x03) << 4);
+
+                        int idx1 = nOff + l;
+                        int idx2 = nOff + l + 32;
+
+                        if (idx2 >= valid)
+                        {
+                            if (idx1 < valid)
+                                data[blockStart + idx1] = d * scales[scOff + is_ + 0] * (q1 - 32);
+                            break;
+                        }
+
+                        int q3 = ((ql[qlOff + l] >> 4) & 0x0F) | (((qh[qhOff + l] >> 4) & 0x03) << 4);
+                        int q4 = ((ql[qlOff + l + 32] >> 4) & 0x0F) | (((qh[qhOff + l] >> 6) & 0x03) << 4);
+
+                        int idx3 = nOff + l + 64;
+                        int idx4 = nOff + l + 96;
+
+                        data[blockStart + idx1] = d * scales[scOff + is_ + 0] * (q1 - 32);
+                        data[blockStart + idx2] = d * scales[scOff + is_ + 2] * (q2 - 32);
+                        data[blockStart + idx3] = d * scales[scOff + is_ + 4] * (q3 - 32);
+                        data[blockStart + idx4] = d * scales[scOff + is_ + 6] * (q4 - 32);
+                    }
+                }
+            }
+        }
+    }
+
+    public static unsafe void ReadQ3_K_Scalar(BinaryReader reader, Span<float> data, int n)
+    {
+        const int QK_K = 256;
+        const int blockBytes = 110;
+        int nBlocks = (n + QK_K - 1) / QK_K;
+        Span<byte> buf = stackalloc byte[blockBytes];
+        uint* pAux = stackalloc uint[4];
+
+        const uint kmask1 = 0x03030303u;
+        const uint kmask2 = 0x0f0f0f0fu;
+
+        for (int b = 0; b < nBlocks; b++)
+        {
+            int blockStart = b * QK_K;
+            reader.Read(buf);
+
+            float dAll = HalfToFloat_Scalar(Unsafe.ReadUnaligned<ushort>(ref buf[108]));
+
+            pAux[0] = Unsafe.ReadUnaligned<uint>(ref buf[96]);
+            pAux[1] = Unsafe.ReadUnaligned<uint>(ref buf[100]);
+            pAux[2] = Unsafe.ReadUnaligned<uint>(ref buf[104]);
+            uint tmp2 = pAux[2];
+            pAux[2] = ((pAux[0] >> 4) & kmask2) | (((tmp2 >> 4) & kmask1) << 4);
+            pAux[3] = ((pAux[1] >> 4) & kmask2) | (((tmp2 >> 6) & kmask1) << 4);
+            pAux[0] = (pAux[0] & kmask2) | (((tmp2 >> 0) & kmask1) << 4);
+            pAux[1] = (pAux[1] & kmask2) | (((tmp2 >> 2) & kmask1) << 4);
+
+            sbyte* scales = (sbyte*)pAux;
+
+            int valid = Math.Min(QK_K, n - blockStart);
+            int idx = 0;
+            int qOff = 32;
+
+            for (int half = 0; half < 2; half++)
+            {
+                int shift = 0;
+                for (int j = 0; j < 4; j++)
+                {
+                    float s1 = scales[idx] - 32;
+                    float s2 = scales[idx + 1] - 32;
+
+                    int gIdx1 = idx;
+                    int gIdx2 = idx + 1;
+
+                    int lim1 = Math.Min(16, valid - gIdx1 * 16);
+                    for (int l = 0; l < lim1; l++)
+                    {
+                        int relPos = gIdx1 * 16 + l;
+                        int hmBit = (buf[relPos % 32] >> (relPos / 32)) & 1;
+                        int q2 = (buf[qOff + l] >> shift) & 3;
+                        data[blockStart + gIdx1 * 16 + l] = (s1 * (q2 - (hmBit != 0 ? 0 : 4))) * dAll;
+                    }
+
+                    int lim2 = Math.Min(16, valid - gIdx2 * 16);
+                    for (int l = 0; l < lim2; l++)
+                    {
+                        int relPos = gIdx2 * 16 + l;
+                        int hmBit = (buf[relPos % 32] >> (relPos / 32)) & 1;
+                        int q2 = (buf[qOff + 16 + l] >> shift) & 3;
+                        data[blockStart + gIdx2 * 16 + l] = (s2 * (q2 - (hmBit != 0 ? 0 : 4))) * dAll;
+                    }
+
+                    idx += 2;
+                    shift += 2;
+                }
+                qOff += 32;
+            }
         }
     }
 }

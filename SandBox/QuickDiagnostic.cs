@@ -42,18 +42,18 @@ public static class QuickDiagnostic
 
             Console.WriteLine($"\n═══ {modelName} ═══");
 
-            GgufLoader.Load(path, null, out ModelMetaData meta, out ModelConfig mc, out Tokenizer? tokenizer);
+            GgufLoaderFactory.Default.Load(path, null, out ModelMetaData meta, out ModelConfig mc, out Tokenizer? tokenizer);
             if (tokenizer == null) { Console.WriteLine("No tokenizer"); continue; }
 
             var hw = DetectBestHardware();
             var cfg = DeriveSharpMindConfig(mc, hw);
             // Print GGUF tensor names
-            var metaDiag = GgufLoader.LoadMeta(path);
+            var metaDiag = GgufLoaderFactory.Default.LoadMeta(path);
             foreach (var t in metaDiag.Tensors)
                 Console.WriteLine($"  Tensor: {t.Name} shape=[{string.Join(",", t.Shape)}] dtype={t.Dtype}");
             Console.WriteLine($"  Config: HiddenDim={mc.HiddenDim} FfnDim={mc.FfnDim} NumLayers={mc.NumLayers} VocabSize={mc.VocabSize}");
 
-            using var weights = GgufLoader.LoadWeightsToTransformerWeights(path, mc);
+            using var weights = GgufLoaderFactory.Default.LoadWeightsToTransformerWeights(path, mc);
             var model = ModelFactory.CreateSession(weights, cfg, null, null, false);
 
             // LM head diagnostic
@@ -137,7 +137,7 @@ public static class QuickDiagnostic
 
         Console.WriteLine($"\n═══ {modelName} Embedding Layout Diagnostic ═══");
 
-        var meta = GgufLoader.LoadMeta(path);
+        var meta = GgufLoaderFactory.Default.LoadMeta(path);
         var info = meta.Tensors.First(t => t.Name == "token_embd.weight");
         Console.WriteLine($"GGUF token_embd.weight shape=[{string.Join(",", info.Shape)}] dtype={info.Dtype}");
 
@@ -147,18 +147,18 @@ public static class QuickDiagnostic
         using var reader = new BinaryReader(stream);
         stream.Position = meta.DataOffset + info.Offset;
         float[] first32 = new float[32];
-        GgufLoader.ReadQ8_0(reader, first32, 32);
+        GgufLoaderFactory.Default.ReadQ8_0(reader, first32, 32);
         Console.WriteLine($"  First 32 dequantized values: {string.Format("{0:F6} {1:F6} {2:F6} {3:F6}...", first32[0], first32[1], first32[2], first32[3])}");
 
         // Read next block (elements 32..63)
         float[] next32 = new float[32];
-        GgufLoader.ReadQ8_0(reader, next32, 32);
+        GgufLoaderFactory.Default.ReadQ8_0(reader, next32, 32);
         Console.WriteLine($"  Next 32 (32..63): {string.Format("{0:F6} {1:F6} {2:F6} {3:F6}...", next32[0], next32[1], next32[2], next32[3])}");
 
         // Seek to position 896 (dim0=0, dim1=896) — should be vocab 896's first hidden value if [hidden,vocab]
         stream.Position = meta.DataOffset + info.Offset + (896 / 32) * 34; // Q8_0 block size = 34, skip first 28 blocks
         float[] at896 = new float[32];
-        GgufLoader.ReadQ8_0(reader, at896, 32);
+        GgufLoaderFactory.Default.ReadQ8_0(reader, at896, 32);
         Console.WriteLine($"  At offset 896 (vocab 896?): {string.Format("{0:F6} {1:F6} {2:F6} {3:F6}...", at896[0], at896[1], at896[2], at896[3])}");
 
         // Seek to element 151936 (dim0=1, dim1=0) — if [hidden,vocab], this is hidden=1, vocab=0
@@ -167,7 +167,7 @@ public static class QuickDiagnostic
         long byteOffset = blockIdx * 34;
         stream.Position = meta.DataOffset + info.Offset + byteOffset;
         float[] at151936 = new float[32];
-        GgufLoader.ReadQ8_0(reader, at151936, 32);
+        GgufLoaderFactory.Default.ReadQ8_0(reader, at151936, 32);
         int subIdx = (int)(elemIdx % 32);
         Console.WriteLine($"  At offset 151936 ({subIdx}): {at151936[subIdx]:F6}");
 
@@ -192,8 +192,8 @@ public static class QuickDiagnostic
         Console.WriteLine("═══ Quick Q6_K Dequant Diagnostic ═══");
 
         // Load just output.weight directly
-        var meta = GgufLoader.LoadMeta(modelPath);
-        var weights = GgufLoader.LoadWeights(modelPath);
+        var meta = GgufLoaderFactory.Default.LoadMeta(modelPath);
+        var weights = GgufLoaderFactory.Default.LoadWeights(modelPath);
         var tensorMap = meta.Tensors.ToDictionary(t => t.Name);
 
         if (!weights.TryGetValue("output.weight", out var outputWeight))

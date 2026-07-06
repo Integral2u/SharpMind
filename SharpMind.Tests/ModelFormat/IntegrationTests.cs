@@ -7,7 +7,7 @@ using SharpMind.Core.Tensors;
 using SharpMind.Core.Training;
 using SharpMind.Model.Config;
 using TensorF = SharpMind.Core.Tensors.Tensor<float>;
-using GgufLoader = SharpMind.Model.Format.GgufLoader;
+
 using SharpMindConfig = SharpMind.Model.Format.SharpMindModelConfig;
 using WeightMapper = SharpMind.Model.Format.WeightMapper;
 
@@ -36,7 +36,7 @@ public class IntegrationTests
 
         try
         {
-            var meta = GgufLoader.LoadMeta(path);
+            var meta = GgufLoaderFactory.Default.LoadMeta(path);
             Assert.NotNull(meta);
             Assert.True(meta.Version > 0);
             Assert.True(meta.TensorCount > 0);
@@ -57,7 +57,7 @@ public class IntegrationTests
             return;
         }
 
-        var meta = GgufLoader.LoadMeta(path);
+        var meta = GgufLoaderFactory.Default.LoadMeta(path);
         foreach (var t in meta.Tensors.Take(10))
         {
             Console.WriteLine($"  Tensor: {t.Name}, Shape: [{string.Join(",", t.Shape)}]");
@@ -77,12 +77,12 @@ public class IntegrationTests
         var path = @"C:\Integral2u\source\repos\SharpMind\ExternalAssets\qwen2-0_5b-instruct-q2_k.gguf";
         if (!File.Exists(path)) return;
 
-        var meta = GgufLoader.LoadMeta(path);
+        var meta = GgufLoaderFactory.Default.LoadMeta(path);
         var tensor = meta.Tensors.First(t => t.Name == "token_embd.weight");
         int inF = tensor.Shape[0], outF = tensor.Shape[1];
         int count = inF * outF;
 
-        byte[] rawData = new byte[GgufLoader.GetRawTensorByteCount(tensor.Shape, tensor.Dtype)];
+        byte[] rawData = new byte[GgufLoaderFactory.Default.GetRawTensorByteCount(tensor.Shape, tensor.Dtype)];
         using (var fs = File.OpenRead(path))
         {
             fs.Position = meta.DataOffset + tensor.Offset;
@@ -94,7 +94,7 @@ public class IntegrationTests
         using (var ms = new MemoryStream(rawData))
         using (var reader = new BinaryReader(ms))
         {
-            GgufLoader.ReadQBlockRow(reader, tensor.Dtype, flatResult, count);
+            GgufLoaderFactory.Default.ReadQBlockRow(reader, tensor.Dtype, flatResult, count);
         }
 
         int hiddenDim = inF;
