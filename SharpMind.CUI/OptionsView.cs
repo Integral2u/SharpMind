@@ -203,6 +203,11 @@ public sealed class OptionsView : View
         _formContent.Add(toolsFolderField, toolsFolderOpen);
         row += 2;
 
+        var manageToolsBtn = new Button("Manage Tools...") { X = 1, Y = row, Width = 15 };
+        manageToolsBtn.Clicked += ManageTools;
+        _formContent.Add(manageToolsBtn);
+        row += 2;
+
         var launchButton = new Button("Launch Session") { X = 1, Y = row, IsDefault = true };
         launchButton.Clicked += () => onLaunch();
         var cancelButton = new Button("Cancel") { X = Pos.Right(launchButton) + 2, Y = row };
@@ -282,6 +287,43 @@ public sealed class OptionsView : View
         MessageBox.Query("Preset loaded", $"Loaded \"{loaded.Name}\".\nReopen Options to see the loaded values reflected in every field.", "OK");
     }
 
+    private void ManageTools()
+    {
+        var available = SessionLauncher.GetAvailableTools(_options);
+        if (available.Count == 0)
+        {
+            MessageBox.Query("No tools", "No available tools were found in the current configuration.", "OK");
+            return;
+        }
+
+        var dialog = new Dialog("Manage Tools", 40, 20);
+        var scroll = new ScrollView { X = 0, Y = 0, Width = Dim.Fill(), Height = Dim.Fill() };
+        var content = new View { Width = Dim.Fill() };
+        
+        int row = 0;
+        foreach (var tool in available)
+        {
+            var cb = new CheckBox($"Enable {tool}", !_options.DisabledTools.Contains(tool)) { X = 1, Y = row };
+            cb.Toggled += (_) =>
+            {
+                if (cb.Checked) _options.DisabledTools.Remove(tool);
+                else _options.DisabledTools.Add(tool);
+            };
+            content.Add(cb);
+            row++;
+        }
+        
+        content.Height = row;
+        scroll.ContentSize = new Terminal.Gui.Size(40, row);
+        scroll.Add(content);
+        dialog.Add(scroll);
+        var closeBtn = new Button("Close");
+        closeBtn.Clicked += () => Application.RequestStop();
+        dialog.AddButton(closeBtn);
+        
+        Application.Run(dialog);
+    }
+
     private static void CopyOptionsInto(SessionOptions target, SessionOptions source)
     {
         target.ModelPath = source.ModelPath;
@@ -302,5 +344,6 @@ public sealed class OptionsView : View
         target.AgentsEnabled = source.AgentsEnabled;
         target.MaxAgentDepth = source.MaxAgentDepth;
         target.MaxToolCallsPerTurn = source.MaxToolCallsPerTurn;
+        target.DisabledTools = new HashSet<string>(source.DisabledTools);
     }
 }

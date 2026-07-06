@@ -18,11 +18,13 @@ namespace SharpMind.Inference.Agent
         }
         public string AgentName { get; init; } = agentName;
         public SamplingConfig SamplingConfig { get; init; } = samplingConfig ?? new();
+        public HashSet<string> DisabledTools { get; set; } = [];
 
-        // Not currently used in prompt building but available for callers that want
-        // to inspect or manipulate sections as keyed lists.
+        public IReadOnlyList<string> RegisteredToolNames => ToolMethods.Keys.ToList();
+
+        // Not currently used in prompt building but available for callers that want to
+        // inspect or manipulate sections as keyed lists.
         public Dictionary<AgentSections, List<string>> Sections = [];
-
         private readonly Dictionary<string, (MethodInfo Method, object Instance)> ToolMethods = [];
         public readonly JsonArray ToolDefinitions = [];
 
@@ -136,6 +138,7 @@ namespace SharpMind.Inference.Agent
                     if (tool.ReturnType == typeof(void)) continue;
                     if (tool.ReturnType == typeof(Task)) continue;
                     if (ToolMethods.ContainsKey(tool.Name)) continue;
+                    if (DisabledTools.Contains(tool.Name)) continue;
 
                     // All parameters must carry [ToolDesc]
                     var missingAnnotations = tool.GetParameters()

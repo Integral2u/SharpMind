@@ -428,53 +428,6 @@ public static partial class GgufLoader
             InjectMissingTemplateTokens(meta, ref config, tokenizer);
     }
 
-    /// <summary>Seeks to and loads raw quantized data for a single layer's tensors.
-    /// Requires <see cref="TransformerWeights.GgufMeta"/> and <see cref="TransformerWeights.GgufPath"/>
-    /// populated by <see cref="LoadWeightsToTransformerWeights"/> (any mode).
-    /// When <paramref name="loadFloat"/> is true, non-quantized float tensors (norms, biases) are also read.</summary>
-    public static void LoadLayerRawWeights(TransformerWeights weights, int layerIndex, bool loadFloat = false)
-    {
-        var meta = weights.GgufMeta ?? throw new InvalidOperationException("GgufMeta not set. Load weights first.");
-        var path = weights.GgufPath ?? throw new InvalidOperationException("GgufPath not set. Load weights first.");
-        string prefix = $"blk.{layerIndex}.";
-
-        var layerTensors = meta.Tensors
-            .Where(t => t.Name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-            .ToList();
-        if (layerTensors.Count == 0) return;
-
-        using var mmf = MemoryMappedFile.CreateFromFile(path, FileMode.Open, null, 0, MemoryMappedFileAccess.Read);
-        using var stream = mmf.CreateViewStream(0, 0, MemoryMappedFileAccess.Read);
-        using var reader = new BinaryReader(stream);
-        var block = weights.Blocks[layerIndex];
-
-        foreach (var info in layerTensors)
-        {
-            long targetOffset = meta.DataOffset + info.Offset;
-            if (targetOffset >= stream.Length) continue;
-            stream.Position = targetOffset;
-
-            var (target, _, rawField) = weights.ResolveTarget(info.Name);
-            long rawSize = GetRawTensorByteCount(info.Shape, info.Dtype);
-
-            if (rawSize > 0 && IsQuantizedType(info.Dtype) && rawField != null)
-            {
-                byte[] rawData = new byte[rawSize];
-                stream.ReadExactly(rawData);
-                SetRawField(block, rawField, rawData, info.Dtype);
-            }
-            else if (loadFloat && target != null)
-            {
-                var floatTarget = weights.ResolveFloatTarget(info.Name);
-                if (floatTarget != null)
-                {
-                    floatTarget.Data.Clear();
-                    ReadTensorInto(reader, info.Dtype, info.Shape, floatTarget.Data);
-                }
-            }
-        }
-    }
-
     public static TransformerWeights LoadWeightsToTransformerWeights(string path, ModelConfig config, IProgress<float>? progress = null, LoadMode mode = LoadMode.Realtime)
     {
         // Clear pool to prevent cross-model memory accumulation
@@ -685,69 +638,6 @@ public static partial class GgufLoader
         return result;
     }
 
-    public static void LoadWeightsToModel(string path, ModelMetaData meta, Transformer model, IProgress<float>? progress = null)
-    {
-        using var mmf = MemoryMappedFile.CreateFromFile(path, FileMode.Open, null, 0, MemoryMappedFileAccess.Read);
-        using var stream = mmf.CreateViewStream(0, 0, MemoryMappedFileAccess.Read);
-        using var reader = new BinaryReader(stream);
-
-        int loaded = 0, missing = 0, total = meta.Tensors.Count;
-
-        // Quiet mode: no verbose FFN tensor dump
-
-        foreach (var info in meta.Tensors)
-        {
-            progress?.Report((float)loaded / total);
-
-            long targetOffset = meta.DataOffset + info.Offset;
-            if (targetOffset >= stream.Length) continue;
-
-            stream.Position = targetOffset;
-
-            int count = 1;
-            foreach (int d in info.Shape) count *= d;
-
-            // Read raw quantized bytes before dequantizing (save stream position)
-            long savedPos = stream.Position;
-            bool skipDequant = false;
-            if (IsQuantizedType(info.Dtype) && info.Shape.Length >= 2)
-            {
-                long rawSize = GetRawTensorByteCount(info.Shape, info.Dtype);
-                if (rawSize > 0 && savedPos + rawSize <= stream.Length)
-                {
-                    byte[] rawData = new byte[rawSize];
-                    stream.ReadExactly(rawData);
-                    stream.Position = savedPos; // seek back for dequant read
-                    skipDequant = model.SetRawWeight(info.Name, rawData, info.Dtype);
-                }
-            }
-
-            if (skipDequant)
-            {
-                loaded++;
-            }
-            else
-            {
-                float[] buffer = ArrayPool<float>.Shared.Rent(count);
-                try
-                {
-                    ReadTensorInto(reader, info.Dtype, info.Shape, buffer.AsSpan(0, count));
-
-                    if (model.LoadWeight(info.Name, buffer.AsSpan(0, count)))
-                        loaded++;
-                    else
-                        missing++;
-                }
-                finally
-                {
-                    ArrayPool<float>.Shared.Return(buffer);
-                }
-            }
-        }
-
-        progress?.Report(1f);
-    }
-
     internal static bool IsQuantizedType(GgufDtype dtype) => dtype switch
     {
         GgufDtype.Q2_K or GgufDtype.Q3_K or GgufDtype.Q4_K or GgufDtype.Q5_K or GgufDtype.Q6_K
@@ -817,14 +707,6 @@ public static partial class GgufLoader
             case GgufDtype.Q8_K: ReadQ8K(stream, dest, count); break;
         }
     }
-
-    private static bool IsKQuant(GgufDtype dtype) => dtype is
-        GgufDtype.Q2_K or GgufDtype.Q2_K_S
-        or GgufDtype.Q3_K or GgufDtype.Q3_K_S or GgufDtype.Q3_K_M or GgufDtype.Q3_K_L
-        or GgufDtype.Q4_K or GgufDtype.Q4_K_S or GgufDtype.Q4_K_M
-        or GgufDtype.Q5_K or GgufDtype.Q5_K_S or GgufDtype.Q5_K_M
-        or GgufDtype.Q6_K or GgufDtype.Q6_K_S
-        or GgufDtype.Q8_K;
 
     internal static void ReadTensorInto(BinaryReader stream, GgufDtype dtype, int[] shape, Span<float> destination)
     {
@@ -911,69 +793,6 @@ public static partial class GgufLoader
                 }
             }
         }
-    }
-
-    public static unsafe float[] ReadBlock(byte* block, string dtype, int blkSize)
-    {
-        float[] result = new float[blkSize];
-        switch (dtype)
-        {
-            case "Q5_0":
-                {
-                    float d = HalfToFloat(*(ushort*)block);
-                    uint qh = *(uint*)(block + 2);
-                    byte* qs = block + 6;
-                    for (int j = 0; j < blkSize; j++)
-                    {
-                        int nibble = (qs[j / 2] >> ((j & 1) * 4)) & 0x0F;
-                        int highBit = (int)(qh >> j) & 1;
-                        result[j] = d * ((nibble | (highBit << 4)) - 16);
-                    }
-                    break;
-                }
-            case "Q6_K":
-                {
-                    byte* ql = block;
-                    byte* qh = ql + 128;
-                    sbyte* scales = (sbyte*)(qh + 64);
-                    float d = HalfToFloat(*(ushort*)(block + 208));
-                    for (int nOff = 0; nOff < blkSize; nOff += 128)
-                    {
-                        int qlOff = nOff == 0 ? 0 : 64;
-                        int qhOff = nOff == 0 ? 0 : 32;
-                        int scOff = nOff == 0 ? 0 : 8;
-                        int halfRem = Math.Min(128, blkSize - nOff);
-                        for (int l = 0; l < 32 && l < halfRem; l++)
-                        {
-                            int is_ = l / 16;
-                            int q1 = (ql[qlOff + l] & 0x0F) | ((qh[qhOff + l] & 0x03) << 4);
-                            int q2 = (ql[qlOff + l + 32] & 0x0F) | (((qh[qhOff + l] >> 2) & 0x03) << 4);
-                            int q3 = ((ql[qlOff + l] >> 4) & 0x0F) | (((qh[qhOff + l] >> 4) & 0x03) << 4);
-                            int q4 = ((ql[qlOff + l + 32] >> 4) & 0x0F) | (((qh[qhOff + l] >> 6) & 0x03) << 4);
-                            int idx1 = nOff + l;
-                            int idx2 = nOff + l + 32;
-                            int idx3 = nOff + l + 64;
-                            int idx4 = nOff + l + 96;
-                            if (idx1 < blkSize) result[idx1] = d * scales[scOff + is_ + 0] * (q1 - 32);
-                            if (idx2 < blkSize) result[idx2] = d * scales[scOff + is_ + 2] * (q2 - 32);
-                            if (idx3 < blkSize) result[idx3] = d * scales[scOff + is_ + 4] * (q3 - 32);
-                            if (idx4 < blkSize) result[idx4] = d * scales[scOff + is_ + 6] * (q4 - 32);
-                        }
-                    }
-                    break;
-                }
-            case "Q8_0":
-                {
-                    float d = HalfToFloat(*(ushort*)block);
-                    sbyte* qs = (sbyte*)(block + 2);
-                    for (int j = 0; j < blkSize; j++)
-                        result[j] = qs[j] * d;
-                    break;
-                }
-            default:
-                throw new ArgumentException($"Unsupported dtype: {dtype}");
-        }
-        return result;
     }
 
     internal static unsafe void ReadQ4_1(BinaryReader reader, Span<float> data, int n)

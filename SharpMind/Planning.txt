@@ -1,14 +1,47 @@
+Code Cleanup
+
+Tests, LinearLayer and GgufLoader needs a bit of a re-work, they have become a bit messy and seem to be vectors for bugs
+
+Tests for quantizations probably need clearing our and rebuilding taking the bwlow into account
+
+LinearLayer
+the _vecDotFn is assigned but it is never used so it and it's delgate VecDotFn can be removed and have each quant type have its own QuantizationOps method like QuantizedMatMulQ8_0.
+This would allow removal of the WrapVecDotAsMatMul method and all quantixation logic resides in QuantizationOps.
+IsSupportedQuantDtype only returns false on Fp32 and Fp16 and im thinking the whole if we can implement varsions for these.
+calls to QuantizedForward which calls _matMulFn and VecDotQxK which calls _vecDotFn could be replace with actract methods and the linear layer can implement the JigSawDotNet pattern and factory to creathe the correct qunatization class for the layer.
+the _matMulFn would never be null as its been replace with an actual method wich will reduce conditionla branching in QuantizedForward.
+The Quantized Versions of MatMul in QuantizationKernels implement System.Threading.Tasks.Parallel.For while WrapVecDotAsMatMul is a for loop, this should possibly be implmented both ways as an option in QuantizationConfig like Hardware(HardwareTier) as Parallel(bool)
+UseQuantizedForward is possibly becoming redunant at this point so Forward and QuantizedForward could be simplified.
+
+GgufLoader
+The GGufLoader probably needs to migrate from being a static class to abstract class implmenting the JigSawDotNet pattern and created with a Factory using Hardware Teir.
+This will mean methods like HalfToFloat, GetScaleMinK4 will match what any follow on classes use and data should always agree.
+the ReadQ* methods could be moved to QuantizationOps allowing for variants AVX, FMA, SSE, Scalar instead of conditional Avx2.IsSupported long functions.
+I have removed LoadWeightsToModel,LoadLayerRawWeights, IsKQuant as they are not used
+GetFloatArray is not used is this an error?
+LoadWeightsToTransformerWeights and LoadWeights may need to ensure they are aligned and use of IsQuantizedType feels error prone.
+
+This part may need some ponering to ensure its correct.
+To check with the Tests we should grab an actual sample of know working model weights qwen2-0_5b-instruct-fp16  for a layer stored for test reference.
+We should also capture a result from LinearLayer.Forward for referencing expected results.  Absolutly need to add notes to test that if the FP16 test fails the true output from a run needs human verification output make sense.
+Check Read -> Check all QuantizeOps VecDot variants are in agreement with each other with how they should be when used in QuantizedMatMul had they been in a WrapVecDotAsMatMul to check any actal QuantizedMatMul implentation errors.
+The Quantize to next Q version based of the stored FP16 data ensureing subsequent tests are within expected precision tollerence.
+
+
+Profile if QuantizedMatMul are faster than that VecotDot Functions wrapped in WrapVecDotAsMatMul, if so then 
+Need and end to end test of all Qunatization Ops UseQuantizedForward can be eliminated
+
 is ChatMessage.IsPinned worth keeping?
 ChatMessage.Ignore somehow/settable visible in ChatView
+debugUI tool calling
+wort keeping? ChatSession interrupt, need to be able to impement but how do we implment Recover rather than start again?
 
 #HIGH Priority
 you must make sure you understand the JigSawDotNet pattern and use. Intention is to reduce and branching code by genertaing code whihc may require implmenting or re-using Ops, Kernel and Factory patterns,
 Review Sharmind.Core.Activations.* for example
 
-Debug DebugUI need to test inbuilt tools simulate real tool call and also test file permissions, DebugIU only FileIO and Network test if access is intercepted.
 
 LoadMode.Cached dosn't seem to work as intended. Layers only need to be loaded as when needed from file. Layer offsets shoudl be known.
-
 
 
 Notes(Unsorted)
@@ -17,10 +50,9 @@ Future	MoE	CachedWeightLoader skips MoE expert tensors (same limitation as exist
 Todo
 
 PrePrompt and PostPrompt porcessor interfaces, truncate, compaction, summarization of current chat or Pre prompt could be used for other purposes,Cache Importance for Current Context , reading attached artifacts or correcting input prompts.
-ChatSession interrupt, need to be able to impement but how do we implment Recover rather than start again?
 
-Tools, obligigotry Weather Tool,  Commmon CLI/Git Tools.
-Tools in setting should have sub option to enable/disable available tools.
+
+
 Agent Builder Option To use Deafaul System Prompt could cause issue with Agent Name
 
 

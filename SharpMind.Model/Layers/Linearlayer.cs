@@ -140,14 +140,14 @@ public sealed class LinearLayer : IDisposable
             : new Tensor<float>(m, OutFeatures);
         int inF = InFeatures, outF = OutFeatures;
 
-        unsafe
-        {
-            fixed (byte* pRaw = rawData)
+            unsafe
             {
-                if (_matMulFn != null)
+                fixed (byte* pRaw = rawData)
                 {
-                    _matMulFn(input.DataPtr, pRaw, result.DataPtr, m, inF, outF);
-                }
+                    if (_matMulFn != null)
+                    {
+                        _matMulFn(input.DataPtr, pRaw, result.DataPtr, m, inF, outF);
+                    }
                 else if (m <= 1)
                 {
                     float* pInRow = input.DataPtr;

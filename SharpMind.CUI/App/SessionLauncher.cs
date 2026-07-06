@@ -171,9 +171,8 @@ public static class SessionLauncher
         var resolvedToolPaths = ResolveToolAssemblyPaths(options);
         var cuiContext = new CuiToolContext();
 
-        // CuiTools is always registered — every session gets it regardless of
-        // what other tools, skills, or sub-agent settings the user configured.
         var builder = new AgentBuilder(options.AgentName, options.Sampling);
+        builder.DisabledTools = options.DisabledTools;
         builder.WithTools(new CuiTools(cuiContext));
         builder.WithTools(new WeatherTool());
         builder.WithTools(new FileSystemTool(options.ProjectPath ?? Directory.GetCurrentDirectory()));
@@ -234,6 +233,30 @@ public static class SessionLauncher
             session.StopTokenIds = options.Generation.StopTokenIds;
 
         return new LaunchResult { Session = session, Agent = agentBuilder, CuiContext = cuiContext, Warnings = warnings };
+    }
+
+    /// <summary>Discovers all tools that would be registered for the given options, ignoring the disabled set.</summary>
+    public static List<string> GetAvailableTools(SessionOptions options)
+    {
+        var resolvedToolPaths = ResolveToolAssemblyPaths(options);
+        var cuiContext = new CuiToolContext();
+        var builder = new AgentBuilder();
+        
+        // We pass an empty DisabledTools set because we want ALL possible tools
+        builder.DisabledTools = [];
+        
+        builder.WithTools(new CuiTools(cuiContext));
+        builder.WithTools(new WeatherTool());
+        builder.WithTools(new FileSystemTool(options.ProjectPath ?? Directory.GetCurrentDirectory()));
+
+        if (resolvedToolPaths.Count > 0)
+        {
+            var (toolInstances, _) = ToolAssemblyLoader.Load(resolvedToolPaths);
+            if (toolInstances.Count > 0)
+                builder.WithTools(toolInstances.ToArray());
+        }
+
+        return builder.RegisteredToolNames.ToList();
     }
 
     /// <summary>

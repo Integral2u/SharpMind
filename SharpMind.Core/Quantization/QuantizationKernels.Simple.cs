@@ -1108,7 +1108,6 @@ public static partial class QuantizationKernels
         const int NR = 8;
         int nBlocks = (K + QK - 1) / QK;
         int colStride = nBlocks * BLOCK_BYTES;
-        float* vvBuf = stackalloc float[8];
 
         if (M <= 1)
         {
@@ -1120,6 +1119,7 @@ public static partial class QuantizationKernels
                     int colBase = group * NR;
                     double* sums = stackalloc double[NR];
                     for (int ci = 0; ci < NR; ci++) sums[ci] = 0.0;
+                    float* vvBuf = stackalloc float[8];
 
                     for (int b = 0; b < nBlocks; b++)
                     {
@@ -1258,7 +1258,7 @@ public static partial class QuantizationKernels
                 float* pInRow = input + (long)row * K;
                 float* pOutRow = output + (long)row * N;
                 double* sums = stackalloc double[NR];
-
+                float* vvBuf = stackalloc float[8];
                 int nGroups = N / NR;
                 for (int group = 0; group < nGroups; group++)
                 {
@@ -1407,7 +1407,6 @@ public static partial class QuantizationKernels
         const int NR = 8;
         int nBlocks = (K + QK - 1) / QK;
         int colStride = nBlocks * BLOCK_BYTES;
-        float* vvBuf = stackalloc float[8];
 
         if (M <= 1)
         {
@@ -1419,6 +1418,7 @@ public static partial class QuantizationKernels
                     int colBase = group * NR;
                     double* sums = stackalloc double[NR];
                     for (int ci = 0; ci < NR; ci++) sums[ci] = 0.0;
+                    float* vvBuf = stackalloc float[8];
 
                     for (int b = 0; b < nBlocks; b++)
                     {
@@ -1557,7 +1557,7 @@ public static partial class QuantizationKernels
                 float* pInRow = input + (long)row * K;
                 float* pOutRow = output + (long)row * N;
                 double* sums = stackalloc double[NR];
-
+                float* vvBuf = stackalloc float[8];
                 int nGroups = N / NR;
                 for (int group = 0; group < nGroups; group++)
                 {

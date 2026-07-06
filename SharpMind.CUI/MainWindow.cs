@@ -380,7 +380,8 @@ public sealed class MainWindow : Window
         AgentsEnabled = source.AgentsEnabled,
         MaxAgentDepth = source.MaxAgentDepth,
         MaxToolCallsPerTurn = source.MaxToolCallsPerTurn,
-        LoadMode = source.LoadMode
+        LoadMode = source.LoadMode,
+        DisabledTools = new HashSet<string>(source.DisabledTools)
     };
 
     // --- Permission "Ask" dialogs --------------------------------------------
