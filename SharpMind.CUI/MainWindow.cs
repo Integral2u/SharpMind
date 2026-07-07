@@ -380,6 +380,7 @@ public sealed class MainWindow : Window
         AgentsEnabled = source.AgentsEnabled,
         MaxAgentDepth = source.MaxAgentDepth,
         MaxToolCallsPerTurn = source.MaxToolCallsPerTurn,
+        ShowThinking = source.ShowThinking,
         LoadMode = source.LoadMode,
         DisabledTools = new HashSet<string>(source.DisabledTools)
     };

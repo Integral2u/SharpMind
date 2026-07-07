@@ -119,6 +119,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     public int RepetitionWindow { get; set; } = 32;
     /// <summary>Token IDs that stop generation. Defaults to EOS if not set.</summary>
     public IReadOnlyList<int>? StopTokenIds { get; set; }
+    public bool ShowThinking { get; set; } = true;
     public float? TokensPerSecond { get; private set; }
     public float? TimeToFirstToken { get; private set; }
 
@@ -249,7 +250,16 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
 
     private void ThrowIfDisposed()
         => ObjectDisposedException.ThrowIf(_disposed, typeof(ChatSession<T, K>).Name);
-    // Tool call detection & dispatch
+    private string StripThinking(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return text;
+        
+        // Remove all <think>...</think> blocks
+        var result = System.Text.RegularExpressions.Regex.Replace(text, @"<think>.*?</think>", "", System.Text.RegularExpressions.RegexOptions.Singleline);
+        
+        // Also trim trailing garbage characters often seen at the end of LLM responses (e.g. EOS tokens decoded as symbols)
+        return result.TrimEnd('\uFFFD', '\u0000', '\u0001', '\u0002', '\u0003');
+    }
 
     /// <summary>
     /// Returns true when <paramref name="text"/> looks like a well-formed agent
@@ -515,28 +525,43 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
                 // by inspecting the trailing portion of the accumulated output.
                 if (!_inThinkBlock)
                 {
-                    int start = Math.Max(0, _responseBuffer.Length - 20);
-                    string tail = _responseBuffer.ToString(start, _responseBuffer.Length - start);
-                    if (tail.Contains("<think>")) _inThinkBlock = true;
+                    if (_responseBuffer.ToString().EndsWith("<think>")) _inThinkBlock = true;
                 }
                 else
                 {
-                    int start = Math.Max(0, _responseBuffer.Length - 20);
-                    string tail = _responseBuffer.ToString(start, _responseBuffer.Length - start);
-                    if (tail.Contains("</think>")) _inThinkBlock = false;
+                    if (_responseBuffer.ToString().EndsWith("</think>")) _inThinkBlock = false;
                 }
-
+                
                 var ids = _generator.CurrentGeneratedIds;
                 int? tokenId = ids != null && ids.Count > 0 ? ids[^1] : null;
-                yield return new ChatStreamEntry
+                
+                // Filter out thinking tokens if ShowThinking is false
+                if (!ShowThinking && _inThinkBlock)
                 {
-                    Status = _inThinkBlock ? ChatStatus.Thinking : ChatStatus.Responding,
-                    Token = fragment,
-                    IsComplete = false,
-                    TokensPerSecond = _generator.TokensPerSecond,
-                    TimeToFirstToken = _generator.TimeToFirstToken,
-                    TokenId = tokenId,
-                };
+                    // We still yield the entry but with a special status or empty token?
+                    // The UI should handle the status, but if we want to hide the text:
+                    yield return new ChatStreamEntry
+                    {
+                        Status = ChatStatus.Thinking,
+                        Token = "",
+                        IsComplete = false,
+                        TokensPerSecond = _generator.TokensPerSecond,
+                        TimeToFirstToken = _generator.TimeToFirstToken,
+                        TokenId = tokenId,
+                    };
+                }
+                else
+                {
+                    yield return new ChatStreamEntry
+                    {
+                        Status = _inThinkBlock ? ChatStatus.Thinking : ChatStatus.Responding,
+                        Token = fragment,
+                        IsComplete = false,
+                        TokensPerSecond = _generator.TokensPerSecond,
+                        TimeToFirstToken = _generator.TimeToFirstToken,
+                        TokenId = tokenId,
+                    };
+                }
             }
 
             var responseText = _responseBuffer.ToString();
@@ -551,7 +576,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
                 var args = toolCall["arguments"]!.AsObject();
 
                 // Record the model's tool-call turn in history for the formatter
-                _history.Add(ChatMessage.Agent(responseText));
+                _history.Add(ChatMessage.Agent(StripThinking(responseText)));
 
                 // Signal to the UI that a tool is about to execute
                 yield return new ChatStreamEntry
@@ -589,7 +614,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
                 && _agentBuilder.RegisteredAgents.TryGetValue(agentName, out var subAgent))
             {
                 // Record the model's agent-call turn in history
-                _history.Add(ChatMessage.Agent(responseText));
+                _history.Add(ChatMessage.Agent(StripThinking(responseText)));
 
                 // Signal which agent is about to execute
                 yield return new ChatStreamEntry
@@ -660,7 +685,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
                 && _currentDepth >= MaxAgentDepth
                 && TryParseAgentTag(responseText, out _, out _, out _, out _))
             {
-                _history.Add(ChatMessage.Agent(responseText));
+                _history.Add(ChatMessage.Agent(StripThinking(responseText)));
                 _history.Add(new ChatMessage
                 {
                     Role = ChatRole.System,
@@ -672,7 +697,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
 
             // Normal (non-tool) response
             if (responseText.Length > 0)
-                _history.Add(ChatMessage.Agent(responseText));
+                _history.Add(ChatMessage.Agent(StripThinking(responseText)));
 
             yield return new ChatStreamEntry
             {

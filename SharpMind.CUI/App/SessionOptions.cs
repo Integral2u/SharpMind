@@ -121,6 +121,9 @@ public sealed class SessionOptions
     public int MaxAgentDepth { get; set; } = 2;
     public int MaxToolCallsPerTurn { get; set; } = 10;
 
+    /// <summary>Whether to show the model's internal thinking process in the UI.</summary>
+    public bool ShowThinking { get; set; } = true;
+
     /// <summary>Set of tool names that should be disabled for this session.</summary>
     public HashSet<string> DisabledTools { get; set; } = [];
 

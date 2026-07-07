@@ -47,6 +47,7 @@ public sealed class ChatView : View
     private string? _pendingSpeakerName;
     private string? _activeSubAgentName;
     private bool _generating;
+    private bool _interruptDialogOpen;
     private object? _timeoutToken;
     private bool _disposed;
 
@@ -182,7 +183,24 @@ public sealed class ChatView : View
 
     private void OnInputKeyPress(KeyEventEventArgs args)
     {
-        if (args.KeyEvent.Key != Key.Enter || _generating) return;
+        if (args.KeyEvent.Key != Key.Enter) return;
+
+        if (_generating)
+        {
+            var dialog = new Dialog("Interrupt generation?", 60, 5);
+            var ok = new Button("Yes, interrupt") { X = 1, Y = 2, IsDefault = true };
+            ok.Clicked += () => { RequestInterrupt(); Application.RequestStop(); };
+            var cancel = new Button("No, keep going") { X = Pos.Right(ok) + 2, Y = 2 };
+            cancel.Clicked += () => Application.RequestStop();
+            dialog.Add(new Label("The model is still responding. Do you want to stop it now?") { X = 1, Y = 1, Width = Dim.Fill(2) }, ok, cancel);
+            
+            _interruptDialogOpen = true;
+            Application.Run(dialog);
+            _interruptDialogOpen = false;
+            
+            args.Handled = true;
+            return;
+        }
 
         string text = _inputField.Text.ToString() ?? "";
         if (text.Length == 0) { args.Handled = true; return; }
@@ -222,6 +240,11 @@ public sealed class ChatView : View
     private bool PollBackgroundState(MainLoop _)
     {
         if (_disposed) return false;
+
+        if (_interruptDialogOpen && !_generating)
+        {
+            Application.RequestStop();
+        }
 
         foreach (var entry in _bridge.DrainEntries())
             OnStreamEntry(entry);

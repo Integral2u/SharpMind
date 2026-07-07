@@ -114,10 +114,10 @@ public sealed record SharpMindConfig
     public const string ValNormLayerAvx2 = "layernormavx2";
     public const string ValNormLayerScalar = "layernormscalar";
 
-    // Fused Kernel Values
-    public const string KeyFusedNormLinear = "fusednormlinear";
-    public const string ValFusedNormLinearAVX2 = "fusednormlinearavx2";
-    public const string ValFusedNormLinearScalar = "fusednormlinearscalar";
+    // Linear Layer Keys
+    public const string KeyLinear = "linear";
+    public const string ValLinearAuto = "auto";
+    public const string ValLinearFloat = "float";
 
     // Arch Values
     public const string ValDecoder = "decoder";
