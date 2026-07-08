@@ -5,7 +5,6 @@ using SharpMind.Core.Quantization;
 using SharpMind.Core.Tensors;
 using SharpMind.Core.Training;
 using SharpMind.Model.Config;
-using SharpMind.Model.Format;
 
 namespace SharpMind.Model.Layers.Ffn;
 
@@ -73,7 +72,7 @@ public abstract class FfnLayer : IDisposable
     private void LoadFusedBias(ReadOnlySpan<float> data, int offset)
         => data.CopyTo(WGated!.Bias!.Data.Slice(offset, data.Length));
 
-    public bool SetRawWeight(string name, byte[] rawData, Format.GgufDtype dtype)
+    public bool SetRawWeight(string name, byte[] rawData, QuantDType dtype)
     {
         if (name.Contains("bias", StringComparison.OrdinalIgnoreCase)) return false;
 
@@ -142,10 +141,10 @@ public abstract class FfnLayer : IDisposable
                 break;
 
             case FfnKind.MoE:
-                Router = new LinearLayer("router", config.HiddenDim, config.NumExperts, bias: true, qOps: qOps);
-                ExpertGate = [.. Enumerable.Range(0, config.NumExperts).Select(i => new LinearLayer($"expert_{i}_gate_proj", config.HiddenDim, config.FfnDim, bias: true, qOps: qOps))];
-                ExpertUp = [.. Enumerable.Range(0, config.NumExperts).Select(i => new LinearLayer($"expert_{i}_up_proj", config.HiddenDim, config.FfnDim, bias: true, qOps: qOps))];
-                ExpertDown = [.. Enumerable.Range(0, config.NumExperts).Select(i => new LinearLayer($"expert_{i}_down_proj", config.FfnDim, config.HiddenDim, bias: true, qOps: qOps))];
+                Router = new LinearLayer("router", config.HiddenDim, config.NumExperts, true, qOps, null, null);
+                ExpertGate = [.. Enumerable.Range(0, config.NumExperts).Select(i => new LinearLayer($"expert_{i}_gate_proj", config.HiddenDim, config.FfnDim, true, qOps, null, null))];
+                ExpertUp = [.. Enumerable.Range(0, config.NumExperts).Select(i => new LinearLayer($"expert_{i}_up_proj", config.HiddenDim, config.FfnDim, true, qOps, null, null))];
+                ExpertDown = [.. Enumerable.Range(0, config.NumExperts).Select(i => new LinearLayer($"expert_{i}_down_proj", config.FfnDim, config.HiddenDim, true, qOps, null, null))];
                 break;
         }
     }
@@ -162,14 +161,14 @@ public abstract class FfnLayer : IDisposable
             WGated.ReplaceWeights(weights.Wf1, weights.Wf1Bias);
             if (weights.RawWgate != null && weights.RawWup != null)
             {
-                var fusedDtype = weights.QuantDtypeWgate ?? GgufDtype.F32;
+                var fusedDtype = weights.QuantDtypeWgate ?? QuantDType.F32;
                 byte[] fused = new byte[weights.RawWgate.Length + weights.RawWup.Length];
                 Buffer.BlockCopy(weights.RawWgate, 0, fused, 0, weights.RawWgate.Length);
                 Buffer.BlockCopy(weights.RawWup, 0, fused, weights.RawWgate.Length, weights.RawWup.Length);
                 WGated.SetRawWeight(fused, fusedDtype);
             }
             WDown.ReplaceWeights(weights.Wf2, weights.Wf2Bias);
-            WDown.SetRawWeight(weights.RawWf2, weights.QuantDtypeWf2 ?? GgufDtype.F32);
+            WDown.SetRawWeight(weights.RawWf2, weights.QuantDtypeWf2 ?? QuantDType.F32);
         }
         else if (Router is not null && ExpertGate is not null)
         {
@@ -177,16 +176,16 @@ public abstract class FfnLayer : IDisposable
             if (weights.RawWgateExp is not null)
                 foreach (var (expIdx, rawData) in weights.RawWgateExp)
                     if (expIdx < ExpertGate.Length)
-                        ExpertGate[expIdx].SetRawWeight(rawData, weights.QuantDtypeWgateExp?.GetValueOrDefault(expIdx) ?? GgufDtype.F32);
+                        ExpertGate[expIdx].SetRawWeight(rawData, weights.QuantDtypeWgateExp?.GetValueOrDefault(expIdx) ?? QuantDType.F32);
             if (weights.RawWupExp is not null)
                 foreach (var (expIdx, rawData) in weights.RawWupExp)
                     if (expIdx < ExpertUp!.Length)
-                        ExpertUp[expIdx].SetRawWeight(rawData, weights.QuantDtypeWupExp?.GetValueOrDefault(expIdx) ?? GgufDtype.F32);
+                        ExpertUp[expIdx].SetRawWeight(rawData, weights.QuantDtypeWupExp?.GetValueOrDefault(expIdx) ?? QuantDType.F32);
             if (weights.RawWdownExp is not null)
                 foreach (var (expIdx, rawData) in weights.RawWdownExp)
                     if (expIdx < ExpertDown!.Length)
-                        ExpertDown[expIdx].SetRawWeight(rawData, weights.QuantDtypeWdownExp?.GetValueOrDefault(expIdx) ?? GgufDtype.F32);
-            Router.SetRawWeight(weights.RawRouter, weights.QuantDtypeRouter ?? GgufDtype.F32);
+                        ExpertDown[expIdx].SetRawWeight(rawData, weights.QuantDtypeWdownExp?.GetValueOrDefault(expIdx) ?? QuantDType.F32);
+            Router.SetRawWeight(weights.RawRouter, weights.QuantDtypeRouter ?? QuantDType.F32);
         }
     }
 
@@ -197,8 +196,8 @@ public abstract class FfnLayer : IDisposable
     {
         if (W1 is not null && W2 is not null)
         {
-            W1.SetRawWeight(weights.RawWf1, weights.QuantDtypeWf1 ?? GgufDtype.F32);
-            W2.SetRawWeight(weights.RawWf2, weights.QuantDtypeWf2 ?? GgufDtype.F32);
+            W1.SetRawWeight(weights.RawWf1, weights.QuantDtypeWf1 ?? QuantDType.F32);
+            W2.SetRawWeight(weights.RawWf2, weights.QuantDtypeWf2 ?? QuantDType.F32);
         }
         else if (WGated is not null && WDown is not null)
         {
@@ -207,10 +206,10 @@ public abstract class FfnLayer : IDisposable
                 byte[] fused = new byte[weights.RawWgate.Length + weights.RawWup.Length];
                 Buffer.BlockCopy(weights.RawWgate, 0, fused, 0, weights.RawWgate.Length);
                 Buffer.BlockCopy(weights.RawWup, 0, fused, weights.RawWgate.Length, weights.RawWup.Length);
-                var fusedDtype = weights.QuantDtypeWgate ?? GgufDtype.F32;
+                var fusedDtype = weights.QuantDtypeWgate ?? QuantDType.F32;
                 WGated.SetRawWeight(fused, fusedDtype);
             }
-            WDown.SetRawWeight(weights.RawWf2, weights.QuantDtypeWf2 ?? GgufDtype.F32);
+            WDown.SetRawWeight(weights.RawWf2, weights.QuantDtypeWf2 ?? QuantDType.F32);
         }
         else if (Router is not null && ExpertGate is not null)
         {
@@ -218,16 +217,16 @@ public abstract class FfnLayer : IDisposable
             if (weights.RawWgateExp is not null)
                 foreach (var (expIdx, rawData) in weights.RawWgateExp)
                     if (expIdx < ExpertGate.Length)
-                        ExpertGate[expIdx].SetRawWeight(rawData, weights.QuantDtypeWgateExp?.GetValueOrDefault(expIdx) ?? GgufDtype.F32);
+                        ExpertGate[expIdx].SetRawWeight(rawData, weights.QuantDtypeWgateExp?.GetValueOrDefault(expIdx) ?? QuantDType.F32);
             if (weights.RawWupExp is not null)
                 foreach (var (expIdx, rawData) in weights.RawWupExp)
                     if (expIdx < ExpertUp!.Length)
-                        ExpertUp[expIdx].SetRawWeight(rawData, weights.QuantDtypeWupExp?.GetValueOrDefault(expIdx) ?? GgufDtype.F32);
+                        ExpertUp[expIdx].SetRawWeight(rawData, weights.QuantDtypeWupExp?.GetValueOrDefault(expIdx) ?? QuantDType.F32);
             if (weights.RawWdownExp is not null)
                 foreach (var (expIdx, rawData) in weights.RawWdownExp)
                     if (expIdx < ExpertDown!.Length)
-                        ExpertDown[expIdx].SetRawWeight(rawData, weights.QuantDtypeWdownExp?.GetValueOrDefault(expIdx) ?? GgufDtype.F32);
-            Router.SetRawWeight(weights.RawRouter, weights.QuantDtypeRouter ?? GgufDtype.F32);
+                        ExpertDown[expIdx].SetRawWeight(rawData, weights.QuantDtypeWdownExp?.GetValueOrDefault(expIdx) ?? QuantDType.F32);
+            Router.SetRawWeight(weights.RawRouter, weights.QuantDtypeRouter ?? QuantDType.F32);
         }
     }
 

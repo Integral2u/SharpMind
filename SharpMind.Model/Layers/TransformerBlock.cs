@@ -1,5 +1,6 @@
 ﻿using SharpMind.Core.Memory;
 using SharpMind.Core.Ops;
+using SharpMind.Core.Quantization;
 using SharpMind.Core.Tensors;
 using SharpMind.Core.Training;
 using SharpMind.Model.Layers.Attention;
@@ -120,7 +121,7 @@ public abstract class TransformerBlock : IDisposable
         return false;
     }
 
-    public bool SetRawWeight(string name, byte[] rawData, Format.GgufDtype dtype)
+    public bool SetRawWeight(string name, byte[] rawData, QuantDType dtype)
     {
         // Q/K norm (always loaded as float) — skip quantized path
         if (name.Contains("attn_q_norm", StringComparison.OrdinalIgnoreCase) ||

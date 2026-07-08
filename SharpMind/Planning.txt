@@ -1,124 +1,4 @@
-Missing som implementations, most of these only have the Scalar Implementations
-    [PuzzleCornerPiece(QuantizationConfig.KeyQuantizedMatMulQ4_0, true, null,
-        "qmatmul_q4_0_serial_fma",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_0_Serial_Scalar)}",
-        "qmatmul_q4_0_parallel_fma",  $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_0_Parallel_Scalar)}",
-        "qmatmul_q4_0_serial_avx2",   $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_0_Serial_Scalar)}",
-        "qmatmul_q4_0_parallel_avx2", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_0_Parallel_Scalar)}",
-        "qmatmul_q4_0_serial_sse",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_0_Serial_Scalar)}",
-        "qmatmul_q4_0_parallel_sse",  $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_0_Parallel_Scalar)}",
-        "qmatmul_q4_0_serial_scalar", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_0_Serial_Scalar)}",
-        "qmatmul_q4_0_parallel_scalar",$"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_0_Parallel_Scalar)}")]
-
-If there are VecDotQ4K_Scalar VecDotQ4K_AVX2 or VecDotQ4K_FMA etc there should be and implement  Parallel or Serial QuantizedMatMul pattern
-
-Same pattern as before but instead of scalar name and call appropriate variant.
-Serial example for Q6K scalar variant
-
-public static unsafe void QuantizedMatMulQ6K_Scalar(
-        float* input, byte* rawWeights, float* output,
-        int M, int K, int N)
-{
-    for (int row = 0; row < M; row++)
-    {
-        float* pInRow = input + (long)row * K;
-        float* pOutRow = output + (long)row * N;
-        for (int col = 0; col < N; col++)
-            pOutRow[col] = VecDotQ6K_Scalar(pInRow, rawWeights, col, K);
-    }   
-}
-
-Parallel example for Q6K scalar variant
-
-public static unsafe void QuantizedMatMulQ6K_Parallel_Scalar(
-        float* input, byte* rawWeights, float* output,
-        int M, int K, int N)
-{
-    if (M <= 1)
-    {
-        for (int row = 0; row < M; row++)
-        {
-            float* pInRow = input + (long)row * K;
-            float* pOutRow = output + (long)row * N;
-            for (int col = 0; col < N; col++)
-                pOutRow[col] = VecDotQ6K_Scalar(pInRow, rawWeights, col, K);
-        }
-    }
-    else
-    {
-        IntPtr pRawPtr = (IntPtr)rawWeights;
-        Parallel.For(0, m, row =>
-        {
-            byte* pRawL = (byte*)pRawPtr;
-            float* pInRow = input.DataPtr + (long)row * K;
-            float* pOutRow = result.DataPtr + (long)row * N;
-            for (int col = 0; col < N; col++)
-                pOutRow[col] = VecDotQ6K_Scalar(pInRow, pRawL, col, K);
-        });
-    }    
-}
-
-All the VecDot functions should be [MethodImpl(MethodImplOptions.AggressiveInlining)]
-
-Chat
-When going into session option during chat start session should be new session
-still shows </think> and now random start chars
-
 Revision of Code Clean up
-I have rolled back the recent changes due to breakages.
-The new Plan
-Step one Organize QuantizationKernels, we have QuantizationKernels.cs and QuantizationKernels.Simple.cs.
-We should break these down in to seperate partial class for each Quantization 2,3,4,6,8,16,32 for example QuantizationKernels.Q8.cs
-and in each file have the QuantizedMatMul Read and VecDot Functions.
-
-Each QuantizedMatShould have a Serial and Parallel version.
-Serial example for Q6K scalar variant
-
-public static unsafe void QuantizedMatMulQ6K_Scalar(
-        float* input, byte* rawWeights, float* output,
-        int M, int K, int N)
-{
-    for (int row = 0; row < M; row++)
-    {
-        float* pInRow = input + (long)row * K;
-        float* pOutRow = output + (long)row * N;
-        for (int col = 0; col < N; col++)
-            pOutRow[col] = VecDotQ6K_Scalar(pInRow, rawWeights, col, K);
-    }   
-}
-
-Parallel example for Q6K scalar variant
-
-public static unsafe void QuantizedMatMulQ6K_Parallel_Scalar(
-        float* input, byte* rawWeights, float* output,
-        int M, int K, int N)
-{
-    if (M <= 1)
-    {
-        for (int row = 0; row < M; row++)
-        {
-            float* pInRow = input + (long)row * K;
-            float* pOutRow = output + (long)row * N;
-            for (int col = 0; col < N; col++)
-                pOutRow[col] = VecDotQ6K_Scalar(pInRow, rawWeights, col, K);
-        }
-    }
-    else
-    {
-        IntPtr pRawPtr = (IntPtr)rawWeights;
-        Parallel.For(0, m, row =>
-        {
-            byte* pRawL = (byte*)pRawPtr;
-            float* pInRow = input.DataPtr + (long)row * K;
-            float* pOutRow = result.DataPtr + (long)row * N;
-            for (int col = 0; col < N; col++)
-                pOutRow[col] = VecDotQ6K_Scalar(pInRow, pRawL, col, K);
-        });
-    }    
-}
-
-QuantizationOps will need to be updated and QuantizationConfig.Parallel should be used
-
-There are some existing QuantizedMatMul FMA/AVX variants and the will need to be check for parralelization and mapped correclty and the alternat parallel or serial version generated
 
 
 Step 2
@@ -131,7 +11,6 @@ From that we have the Read Test and we can check all quant variants to enusre th
 This will help identify any incorrect implementaions of quant variants. We can the check if the MatMul versions end up with the same result as the VecDot usages.
 After that we can check F32 Qunatize up is within tollerenace for each subquant we can quanatize the F16 version down and continue testing all variants FMA,AVX,SSE,Scalar are withing precision +- tollerance
 
-Helper mthods get VecDofFor(quant type  MAtMul Read
 
 Step 3 (Question)
 in Linearlayer QuantDtype is nullable should it or could it always be known, the same question for QuantizationOps
@@ -140,32 +19,6 @@ note Wqkv.UseQuantizedForward && Wqkv.RawQuantizedData can be reduce, want to re
 
 Code Cleanup
 
-GPUQuantizationKernels will need update
-
-
-please check GetResponseStreamAsync
-This is the responce using Qwen3-1
-Delta: </think>
-
-Hello! How can I assist you today? ��
-
-
-need option in chat session to show/hide thinking output same youd be true for agents
-Actual output using InteractiveChat or any other SharpMind.Samples run 
-<think>
-Okay, the user just asked "hello and I should respond appropriately. Let me make sure to greet them in a friendly way.
-
-I need to confirm if they want help, but keep it simple and positive.
-</think>
-
-Hello! How can I assist you today?
-
-there is also bad charaters as the end ��
-
-Agent response need to ensure that after thinking not the whole though process just the required output becomes part of the chat context, possibly a post prompt to mark ignorable history and summary.
-
-did this get ignored  public bool Parallel { get; init; } = false; has zero references.
-The Quantized Versions of MatMul in QuantizationKernels implement System.Threading.Tasks.Parallel.For while WrapVecDotAsMatMul is a for loop, this should possibly be implmented both ways as an option in QuantizationConfig like Hardware(HardwareTier) as Parallel(bool)
 
 Tests, LinearLayer and GgufLoader needs a bit of a re-work, they have become a bit messy and seem to be vectors for bugs
 
@@ -199,12 +52,6 @@ Check Read -> Check all QuantizeOps VecDot variants are in agreement with each o
 The Quantize to next Q version based of the stored FP16 data ensureing subsequent tests are within expected precision tollerence.
 
 
-Profile if QuantizedMatMul are faster than that VecotDot Functions wrapped in WrapVecDotAsMatMul, if so then 
-Need and end to end test of all Qunatization Ops UseQuantizedForward can be eliminated
-
-are these worth keeping? 
-ChatMessage.IsPinned and Soft recovery in ChatSession.
-or can the code be simplified cleaned up
 
 ChatMessage.Ignore somehow/settable visible in ChatView
 debugUI tool calling

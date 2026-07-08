@@ -1,5 +1,5 @@
+using SharpMind.Core.Quantization;
 using SharpMind.Core.Tensors;
-using SharpMind.Model.Format;
 
 namespace SharpMind.Model;
 
@@ -19,7 +19,7 @@ public interface IKVCache : IDisposable
     public void Restore(object? snapshot);
 
     /// <summary>The quantization format used by quantized caches (default Q8_0).</summary>
-    public GgufDtype QuantKind => GgufDtype.Q8_0;
+    public QuantDType QuantKind => QuantDType.Q8_0;
     /// <summary>True if the cache stores quantized data.</summary>
     public bool IsQuantized => false;
     /// <summary>Returns a pointer to quantized key data at (batchIdx, position, kvHead). Only valid when IsQuantized is true.</summary>

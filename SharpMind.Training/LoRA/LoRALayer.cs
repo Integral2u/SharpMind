@@ -28,8 +28,8 @@ public sealed class LoRALayer : IDisposable
         Rank = rank;
         _scale = scale;
 
-        _a = new LinearLayer(rank, inFeatures, bias: false);
-        _b = new LinearLayer(outFeatures, rank, bias: false);
+        _a = new LinearLayer($"Linear.{Guid.NewGuid():N}",rank, inFeatures, bias: false, null, null, null);
+        _b = new LinearLayer($"Linear.{Guid.NewGuid():N}",outFeatures, rank, bias: false,null,null,null);
 
         // Initialize with small random values (Gauss-Ortho init style)
         var rng = Random.Shared;

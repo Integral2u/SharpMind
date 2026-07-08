@@ -27,17 +27,17 @@ public static class QuantizationDiagnostic
 
     private static unsafe void RunForTier(HardwareTier tier)
     {
-        TestType(tier, GgufDtype.Q2_K, "Q2_K", 84);
-        TestType(tier, GgufDtype.Q3_K, "Q3_K", 110);
-        TestType(tier, GgufDtype.Q4_K, "Q4_K", 144);
-        TestType(tier, GgufDtype.Q5_K, "Q5_K", 176);
-        TestType(tier, GgufDtype.Q5_1, "Q5_1", 24);
+        TestType(tier, QuantDType.Q2_K, "Q2_K", 84);
+        TestType(tier, QuantDType.Q3_K, "Q3_K", 110);
+        TestType(tier, QuantDType.Q4_K, "Q4_K", 144);
+        TestType(tier, QuantDType.Q5_K, "Q5_K", 176);
+        TestType(tier, QuantDType.Q5_1, "Q5_1", 24);
     }
 
-    private static unsafe void TestType(HardwareTier tier, GgufDtype dtype, string name, int blockBytes)
+    private static unsafe void TestType(HardwareTier tier, QuantDType dtype, string name, int blockBytes)
     {
         Console.WriteLine($"Testing {name}...");
-        int qk = (dtype == GgufDtype.Q5_1) ? 32 : 256;
+        int qk = (dtype == QuantDType.Q5_1) ? 32 : 256;
         
         // 1. Create a synthetic block with random data
         byte[] block = new byte[blockBytes];
@@ -70,22 +70,22 @@ public static class QuantizationDiagnostic
         Console.WriteLine($"  Read: {dotRead:F4}, VecDot: {dotVec:F4}, Diff: {Math.Abs(dotRead - dotVec):F4}");
     }
 
-    private static unsafe float VecDotDispatch(QuantizationOps qOps, GgufDtype dtype, float* input, byte* rawWeights, int col, int inFeatures) => dtype switch
+    private static unsafe float VecDotDispatch(QuantizationOps qOps, QuantDType dtype, float* input, byte* rawWeights, int col, int inFeatures) => dtype switch
     {
-        GgufDtype.Q2_K => qOps.VecDotQ2K(input, rawWeights, col, inFeatures),
-        GgufDtype.Q3_K => qOps.VecDotQ3K(input, rawWeights, col, inFeatures),
-        GgufDtype.Q4_K => qOps.VecDotQ4K(input, rawWeights, col, inFeatures),
-        GgufDtype.Q5_K => qOps.VecDotQ5K(input, rawWeights, col, inFeatures),
-        GgufDtype.Q5_1 => qOps.VecDotQ5_1(input, rawWeights, col, inFeatures),
+        QuantDType.Q2_K => qOps.VecDotQ2K(input, rawWeights, col, inFeatures),
+        QuantDType.Q3_K => qOps.VecDotQ3K(input, rawWeights, col, inFeatures),
+        QuantDType.Q4_K => qOps.VecDotQ4K(input, rawWeights, col, inFeatures),
+        QuantDType.Q5_K => qOps.VecDotQ5K(input, rawWeights, col, inFeatures),
+        QuantDType.Q5_1 => qOps.VecDotQ5_1(input, rawWeights, col, inFeatures),
         _ => 0
     };
 
-    private static unsafe void DequantizeHelper(GgufDtype dtype, byte[] block, float[] dest, int qk)
+    private static unsafe void DequantizeHelper(QuantDType dtype, byte[] block, float[] dest, int qk)
     {
         fixed (byte* pBlock = block)
         {
             // For Q5_1, we must manually read it to match the ReadQ5_1 function exactly
-            if (dtype == GgufDtype.Q5_1)
+            if (dtype == QuantDType.Q5_1)
             {
                 float d = GgufLoaderFactory.Default.HalfToFloat(Unsafe.ReadUnaligned<ushort>(ref block[0]));
                 float m = GgufLoaderFactory.Default.HalfToFloat(Unsafe.ReadUnaligned<ushort>(ref block[2]));
@@ -105,16 +105,16 @@ public static class QuantizationDiagnostic
                 
                 switch (dtype)
                 {
-                    case GgufDtype.Q2_K:
+                    case QuantDType.Q2_K:
                         GgufLoaderFactory.Default.ReadQ2K(reader, dest, qk);
                         break;
-                    case GgufDtype.Q3_K:
+                    case QuantDType.Q3_K:
                         GgufLoaderFactory.Default.ReadQ3_K(reader, dest, qk);
                         break;
-                    case GgufDtype.Q4_K:
+                    case QuantDType.Q4_K:
                         GgufLoaderFactory.Default.ReadQ4K(reader, dest, qk);
                         break;
-                    case GgufDtype.Q5_K:
+                    case QuantDType.Q5_K:
                         GgufLoaderFactory.Default.ReadQ5_K(reader, dest, qk);
                         break;
                     default:

@@ -45,6 +45,34 @@ public static class GPUSharpMindConfig
     public const string ValGetScaleMinK4_Scale = "getscalemink4_scale_gpu";
     public const string ValGetScaleMinK4_Min = "getscalemink4_min_gpu";
 
+    // QuantizedMatMul GPU mapping values (serial)
+    public const string ValQuantizedMatMulQ8_0_Serial = "qmatmul_q8_0_serial_gpu";
+    public const string ValQuantizedMatMulQ5_0_Serial = "qmatmul_q5_0_serial_gpu";
+    public const string ValQuantizedMatMulQ6K_Serial  = "qmatmul_q6k_serial_gpu";
+    public const string ValQuantizedMatMulQ4_0_Serial = "qmatmul_q4_0_serial_gpu";
+    public const string ValQuantizedMatMulQ4_1_Serial = "qmatmul_q4_1_serial_gpu";
+    public const string ValQuantizedMatMulQ2K_Serial  = "qmatmul_q2k_serial_gpu";
+    public const string ValQuantizedMatMulQ3K_Serial  = "qmatmul_q3k_serial_gpu";
+    public const string ValQuantizedMatMulQ4K_Serial  = "qmatmul_q4k_serial_gpu";
+    public const string ValQuantizedMatMulQ5K_Serial  = "qmatmul_q5k_serial_gpu";
+    public const string ValQuantizedMatMulQ8K_Serial  = "qmatmul_q8k_serial_gpu";
+    public const string ValQuantizedMatMulQ8_1_Serial = "qmatmul_q8_1_serial_gpu";
+    public const string ValQuantizedMatMulQ5_1_Serial = "qmatmul_q5_1_serial_gpu";
+
+    // QuantizedMatMul GPU mapping values (parallel)
+    public const string ValQuantizedMatMulQ8_0_Parallel = "qmatmul_q8_0_parallel_gpu";
+    public const string ValQuantizedMatMulQ5_0_Parallel = "qmatmul_q5_0_parallel_gpu";
+    public const string ValQuantizedMatMulQ6K_Parallel  = "qmatmul_q6k_parallel_gpu";
+    public const string ValQuantizedMatMulQ4_0_Parallel = "qmatmul_q4_0_parallel_gpu";
+    public const string ValQuantizedMatMulQ4_1_Parallel = "qmatmul_q4_1_parallel_gpu";
+    public const string ValQuantizedMatMulQ2K_Parallel  = "qmatmul_q2k_parallel_gpu";
+    public const string ValQuantizedMatMulQ3K_Parallel  = "qmatmul_q3k_parallel_gpu";
+    public const string ValQuantizedMatMulQ4K_Parallel  = "qmatmul_q4k_parallel_gpu";
+    public const string ValQuantizedMatMulQ5K_Parallel  = "qmatmul_q5k_parallel_gpu";
+    public const string ValQuantizedMatMulQ8K_Parallel  = "qmatmul_q8k_parallel_gpu";
+    public const string ValQuantizedMatMulQ8_1_Parallel = "qmatmul_q8_1_parallel_gpu";
+    public const string ValQuantizedMatMulQ5_1_Parallel = "qmatmul_q5_1_parallel_gpu";
+
     private static readonly Lazy<GPUMode> _backend = new(DetectBestBackend, LazyThreadSafetyMode.ExecutionAndPublication);
 
     public static GPUMode BestBackend => _backend.Value;
@@ -78,6 +106,18 @@ public static class GPUSharpMindConfig
         mapping[QuantizationConfig.KeyVecDotQ8_1]  = ValVecDotQ8_1;
         mapping[QuantizationConfig.KeyVecDotQ2K]   = ValVecDotQ2K;
         mapping[QuantizationConfig.KeyVecDotQ8K]   = ValVecDotQ8K;
+        mapping[QuantizationConfig.KeyQuantizedMatMulQ8_0] = ValQuantizedMatMulQ8_0_Serial;
+        mapping[QuantizationConfig.KeyQuantizedMatMulQ5_0] = ValQuantizedMatMulQ5_0_Serial;
+        mapping[QuantizationConfig.KeyQuantizedMatMulQ6K]  = ValQuantizedMatMulQ6K_Serial;
+        mapping[QuantizationConfig.KeyQuantizedMatMulQ4_0] = ValQuantizedMatMulQ4_0_Serial;
+        mapping[QuantizationConfig.KeyQuantizedMatMulQ4_1] = ValQuantizedMatMulQ4_1_Serial;
+        mapping[QuantizationConfig.KeyQuantizedMatMulQ2K]  = ValQuantizedMatMulQ2K_Serial;
+        mapping[QuantizationConfig.KeyQuantizedMatMulQ3K]  = ValQuantizedMatMulQ3K_Serial;
+        mapping[QuantizationConfig.KeyQuantizedMatMulQ4K]  = ValQuantizedMatMulQ4K_Serial;
+        mapping[QuantizationConfig.KeyQuantizedMatMulQ5K]  = ValQuantizedMatMulQ5K_Serial;
+        mapping[QuantizationConfig.KeyQuantizedMatMulQ8K]  = ValQuantizedMatMulQ8K_Serial;
+        mapping[QuantizationConfig.KeyQuantizedMatMulQ8_1] = ValQuantizedMatMulQ8_1_Serial;
+        mapping[QuantizationConfig.KeyQuantizedMatMulQ5_1] = ValQuantizedMatMulQ5_1_Serial;
         mapping[QuantizationConfig.KeyHSum256]     = ValHSum256;
         mapping[QuantizationConfig.KeyHalfToFloat] = ValHalfToFloat;
         mapping[QuantizationConfig.KeyFloatToHalf] = ValFloatToHalf;

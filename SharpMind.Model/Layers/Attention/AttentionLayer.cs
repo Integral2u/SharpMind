@@ -6,7 +6,6 @@ using SharpMind.Core.Quantization;
 using SharpMind.Core.Tensors;
 using SharpMind.Core.Training;
 using SharpMind.Model.Config;
-using SharpMind.Model.Format;
 
 namespace SharpMind.Model.Layers.Attention;
 
@@ -151,14 +150,14 @@ namespace SharpMind.Model.Layers.Attention;
 
         // Restore individual Q/K/V layers for fast quantized forward path
         Wq.ReplaceWeights(weights.Wq, weights.WqBias);
-        Wq.SetRawWeight(weights.RawWq, weights.QuantDtypeWq ?? GgufDtype.F32);
+        Wq.SetRawWeight(weights.RawWq, weights.QuantDtypeWq ?? QuantDType.F32);
         Wk.ReplaceWeights(weights.Wk, weights.WkBias);
-        Wk.SetRawWeight(weights.RawWk, weights.QuantDtypeWk ?? GgufDtype.F32);
+        Wk.SetRawWeight(weights.RawWk, weights.QuantDtypeWk ?? QuantDType.F32);
         Wv.ReplaceWeights(weights.Wv, weights.WvBias);
-        Wv.SetRawWeight(weights.RawWv, weights.QuantDtypeWv ?? GgufDtype.F32);
+        Wv.SetRawWeight(weights.RawWv, weights.QuantDtypeWv ?? QuantDType.F32);
 
         Wo.ReplaceWeights(weights.Wo, weights.WoBias);
-        Wo.SetRawWeight(weights.RawWo, weights.QuantDtypeWo ?? GgufDtype.F32);
+        Wo.SetRawWeight(weights.RawWo, weights.QuantDtypeWo ?? QuantDType.F32);
 
         // Per-head Q/K normalization (Qwen3)
         if (weights.QNormW != null)
@@ -178,10 +177,10 @@ namespace SharpMind.Model.Layers.Attention;
     /// Does NOT touch float tensors — safe after FreeFloatWeights.</summary>
     public void UpdateRawWeights(TransformerWeights.BlockWeights weights)
     {
-        Wq.SetRawWeight(weights.RawWq, weights.QuantDtypeWq ?? GgufDtype.F32);
-        Wk.SetRawWeight(weights.RawWk, weights.QuantDtypeWk ?? GgufDtype.F32);
-        Wv.SetRawWeight(weights.RawWv, weights.QuantDtypeWv ?? GgufDtype.F32);
-        Wo.SetRawWeight(weights.RawWo, weights.QuantDtypeWo ?? GgufDtype.F32);
+        Wq.SetRawWeight(weights.RawWq, weights.QuantDtypeWq ?? QuantDType.F32);
+        Wk.SetRawWeight(weights.RawWk, weights.QuantDtypeWk ?? QuantDType.F32);
+        Wv.SetRawWeight(weights.RawWv, weights.QuantDtypeWv ?? QuantDType.F32);
+        Wo.SetRawWeight(weights.RawWo, weights.QuantDtypeWo ?? QuantDType.F32);
     }
 
     private unsafe void LoadFusedWeightTransposed(ReadOnlySpan<float> data, int colOffset, int subOutF)
@@ -246,7 +245,7 @@ namespace SharpMind.Model.Layers.Attention;
         }
     }
 
-    public bool SetRawWeight(string weightName, byte[] rawData, Format.GgufDtype dtype)
+    public bool SetRawWeight(string weightName, byte[] rawData, QuantDType dtype)
     {
         bool isBias = weightName.EndsWith(".bias", StringComparison.OrdinalIgnoreCase);
         if (isBias) return false;
@@ -386,7 +385,7 @@ namespace SharpMind.Model.Layers.Attention;
                     {
                         byte* pKQ = cache.GetQuantizedKeyPtr(b, 0, kvHead);
                         byte* pVQ = cache.GetQuantizedValuePtr(b, 0, kvHead);
-                        if (cache.QuantKind == Format.GgufDtype.Q4_0)
+                        if (cache.QuantKind == QuantDType.Q4_0)
                             ScaledDotProductQ4_0(pQ, pKQ, pVQ, pO, seqLen, effectiveKvLen, headDim, scale, causal, qStride, oStride, alibiSlope);
                         else
                             ScaledDotProductQ8_0(pQ, pKQ, pVQ, pO, seqLen, effectiveKvLen, headDim, scale, causal, qStride, oStride, alibiSlope);

@@ -1,16 +1,16 @@
-using SharpMind.Model.Format;
+using SharpMind.Core.Quantization;
 
 namespace SharpMind.Model;
 
 public class QuantizedKVCacherBuilder : IKVCacheBuilder
 {
-    public GgufDtype QuantKind { get; }
+    public QuantDType QuantKind { get; }
 
-    public QuantizedKVCacherBuilder() : this(GgufDtype.Q8_0)
+    public QuantizedKVCacherBuilder() : this(QuantDType.Q8_0)
     {
     }
 
-    public QuantizedKVCacherBuilder(GgufDtype quantKind)
+    public QuantizedKVCacherBuilder(QuantDType quantKind)
     {
         QuantKind = quantKind;
     }

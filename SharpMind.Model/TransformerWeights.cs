@@ -1,3 +1,4 @@
+using SharpMind.Core.Quantization;
 using SharpMind.Core.Tensors;
 using SharpMind.Model.Config;
 using SharpMind.Model.Layers;
@@ -19,9 +20,9 @@ public sealed class TransformerWeights(ModelConfig config, Tensor<float> embeddi
 
     // Raw quantized data for non-block tensors (embedding, lm_head)
     public byte[]? RawEmbedding { get; set; }
-    public Format.GgufDtype? RawEmbeddingDtype { get; set; }
+    public QuantDType? RawEmbeddingDtype { get; set; }
     public byte[]? RawLmHead { get; set; }
-    public Format.GgufDtype? RawLmHeadDtype { get; set; }
+    public QuantDType? RawLmHeadDtype { get; set; }
 
     // Weights for each block
     public BlockWeights[] Blocks { get; } = blocks;
@@ -160,7 +161,7 @@ public sealed class TransformerWeights(ModelConfig config, Tensor<float> embeddi
         return null;
     }
 
-        public static void SetRawField(BlockWeights block, string field, byte[] data, Format.GgufDtype dtype)
+        public static void SetRawField(BlockWeights block, string field, byte[] data, QuantDType dtype)
         {
             // Expert-indexed fields: "RawWgateExp_5" → block.RawWgateExp[5] = data
             if (field.StartsWith("RawWgateExp_", StringComparison.Ordinal) &&
@@ -244,21 +245,21 @@ public sealed class TransformerWeights(ModelConfig config, Tensor<float> embeddi
         public byte[]? RawRouter { get; set; }
 
         // Per-tensor quantization dtype (one per raw field)
-        public Format.GgufDtype? QuantDtypeWq { get; set; }
-        public Format.GgufDtype? QuantDtypeWk { get; set; }
-        public Format.GgufDtype? QuantDtypeWv { get; set; }
-        public Format.GgufDtype? QuantDtypeWo { get; set; }
-        public Format.GgufDtype? QuantDtypeWgate { get; set; }
-        public Format.GgufDtype? QuantDtypeWup { get; set; }
-        public Format.GgufDtype? QuantDtypeWf1 { get; set; }
-        public Format.GgufDtype? QuantDtypeWf2 { get; set; }
+        public QuantDType? QuantDtypeWq { get; set; }
+        public QuantDType? QuantDtypeWk { get; set; }
+        public QuantDType? QuantDtypeWv { get; set; }
+        public QuantDType? QuantDtypeWo { get; set; }
+        public QuantDType? QuantDtypeWgate { get; set; }
+        public QuantDType? QuantDtypeWup { get; set; }
+        public QuantDType? QuantDtypeWf1 { get; set; }
+        public QuantDType? QuantDtypeWf2 { get; set; }
         // MoE expert quantization dtypes
-        public Dictionary<int, Format.GgufDtype>? QuantDtypeWgateExp { get; set; }
-        public Dictionary<int, Format.GgufDtype>? QuantDtypeWupExp { get; set; }
-        public Dictionary<int, Format.GgufDtype>? QuantDtypeWdownExp { get; set; }
-        public Format.GgufDtype? QuantDtypeRouter { get; set; }
+        public Dictionary<int, QuantDType>? QuantDtypeWgateExp { get; set; }
+        public Dictionary<int, QuantDType>? QuantDtypeWupExp { get; set; }
+        public Dictionary<int, QuantDType>? QuantDtypeWdownExp { get; set; }
+        public QuantDType? QuantDtypeRouter { get; set; }
         [Obsolete("Use per-tensor QuantDtype fields instead. This field is overwritten by the last tensor processed.")]
-        public Format.GgufDtype? QuantDtype { get; set; }
+        public QuantDType? QuantDtype { get; set; }
 
         public void Dispose()
         {

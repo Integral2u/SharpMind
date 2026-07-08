@@ -5,7 +5,6 @@ using SharpMind.Core.Tensors;
 using SharpMind.Core.Training;
 using SharpMind.Model.Arch;
 using SharpMind.Model.Config;
-using SharpMind.Model.Format;
 using SharpMind.Model.Layers;
 
 namespace SharpMind.Model;
@@ -96,7 +95,7 @@ public sealed class Transformer : IDisposable
 
     public TensorOps Ops => _ops;
     public byte[]? RawEmbedding => _weights.RawEmbedding;
-    public GgufDtype? RawEmbeddingDtype => _weights.RawEmbeddingDtype;
+    public QuantDType? RawEmbeddingDtype => _weights.RawEmbeddingDtype;
     public QuantizationOps? QOps => _qOps;
 
     /// <summary>
@@ -130,7 +129,7 @@ public sealed class Transformer : IDisposable
         return row;
     }
 
-    public bool SetRawWeight(string name, byte[] rawData, Format.GgufDtype dtype)
+    public bool SetRawWeight(string name, byte[] rawData, QuantDType dtype)
     {
         var (target, block, rawField) = _weights.ResolveTarget(name);
         if (block != null && rawField != null)

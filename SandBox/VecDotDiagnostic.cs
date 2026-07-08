@@ -7,25 +7,25 @@ namespace SandBox;
 
 public static class VecDotDiagnostic
 {
-    private static (int blockSize, int bytesPerBlock) GetBlockInfo(GgufDtype dtype) => dtype switch
+    private static (int blockSize, int bytesPerBlock) GetBlockInfo(QuantDType dtype) => dtype switch
     {
-        GgufDtype.Q5_0 => (32, 22),
-        GgufDtype.Q4_0 => (32, 18),
-        GgufDtype.Q4_1 => (32, 20),
-        GgufDtype.Q5_1 => (32, 24),
-        GgufDtype.Q8_0 => (32, 34),
-        GgufDtype.Q8_1 => (32, 36),
-        GgufDtype.IQ4_NL => (32, 18),
-        GgufDtype.Q2_K or GgufDtype.Q2_K_S => (256, 84),
-        GgufDtype.Q3_K or GgufDtype.Q3_K_S or GgufDtype.Q3_K_M or GgufDtype.Q3_K_L => (256, 110),
-        GgufDtype.Q4_K or GgufDtype.Q4_K_S or GgufDtype.Q4_K_M => (256, 144),
-        GgufDtype.Q5_K or GgufDtype.Q5_K_S or GgufDtype.Q5_K_M => (256, 176),
-        GgufDtype.Q6_K or GgufDtype.Q6_K_S => (256, 210),
-        GgufDtype.Q8_K => (256, 292),
+        QuantDType.Q5_0 => (32, 22),
+        QuantDType.Q4_0 => (32, 18),
+        QuantDType.Q4_1 => (32, 20),
+        QuantDType.Q5_1 => (32, 24),
+        QuantDType.Q8_0 => (32, 34),
+        QuantDType.Q8_1 => (32, 36),
+        QuantDType.IQ4_NL => (32, 18),
+        QuantDType.Q2_K or QuantDType.Q2_K_S => (256, 84),
+        QuantDType.Q3_K or QuantDType.Q3_K_S or QuantDType.Q3_K_M or QuantDType.Q3_K_L => (256, 110),
+        QuantDType.Q4_K or QuantDType.Q4_K_S or QuantDType.Q4_K_M => (256, 144),
+        QuantDType.Q5_K or QuantDType.Q5_K_S or QuantDType.Q5_K_M => (256, 176),
+        QuantDType.Q6_K or QuantDType.Q6_K_S => (256, 210),
+        QuantDType.Q8_K => (256, 292),
         _ => (0, 0)
     };
 
-    private static long GetRawTensorByteCount(int[] shape, GgufDtype dtype)
+    private static long GetRawTensorByteCount(int[] shape, QuantDType dtype)
     {
         var (blockSize, bytesPerBlock) = GetBlockInfo(dtype);
         if (blockSize == 0) return 0;

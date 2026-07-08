@@ -1,6 +1,5 @@
 using SharpMind.Core.Quantization;
 using SharpMind.Core.Tensors;
-using SharpMind.Model.Format;
 
 namespace SharpMind.Model;
 
@@ -22,9 +21,9 @@ public sealed class QuantizedKVCache : IKVCache
     private readonly int _qStride;
     private readonly int _headStride;
 
-    public GgufDtype QuantKind { get; }
+    public QuantDType QuantKind { get; }
 
-    public QuantizedKVCache(int batchSize, int numKvHeads, int maxSeqLen, int headDim, GgufDtype quantKind = GgufDtype.Q8_0)
+    public QuantizedKVCache(int batchSize, int numKvHeads, int maxSeqLen, int headDim, QuantDType quantKind = QuantDType.Q8_0)
     {
         _batchSize = batchSize;
         _numKvHeads = numKvHeads;
@@ -33,7 +32,7 @@ public sealed class QuantizedKVCache : IKVCache
         _nBlocks = (headDim + QK - 1) / QK;
         _blockBytes = quantKind switch
         {
-            GgufDtype.Q4_0 => Q4_BLOCK,
+            QuantDType.Q4_0 => Q4_BLOCK,
             _ => Q8_BLOCK
         };
         _qStride = _nBlocks * _blockBytes;
@@ -98,7 +97,7 @@ public sealed class QuantizedKVCache : IKVCache
                         + (long)h * headDim;
 
                     byte* dstK = GetQuantizedKeyPtr(b, CurrentPosition + s, h);
-                    if (QuantKind == GgufDtype.Q4_0)
+                    if (QuantKind == QuantDType.Q4_0)
                         QuantizeRowQ4_0(srcK, dstK, headDim);
                     else
                         QuantizeRowQ8_0(srcK, dstK, headDim);
@@ -109,7 +108,7 @@ public sealed class QuantizedKVCache : IKVCache
                         + (long)h * headDim;
 
                     byte* dstV = GetQuantizedValuePtr(b, CurrentPosition + s, h);
-                    if (QuantKind == GgufDtype.Q4_0)
+                    if (QuantKind == QuantDType.Q4_0)
                         QuantizeRowQ4_0(srcV, dstV, headDim);
                     else
                         QuantizeRowQ8_0(srcV, dstV, headDim);

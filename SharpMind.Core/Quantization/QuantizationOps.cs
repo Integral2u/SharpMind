@@ -9,7 +9,117 @@ public abstract class QuantizationOps
     private const string NS  = $"{nameof(SharpMind)}.{nameof(Core)}.{nameof(Quantization)}.{nameof(QuantizationKernels)}";
     private const string MH  = $"{nameof(SharpMind)}.{nameof(Core)}.{nameof(MathHelpers)}";
 
-    
+    public unsafe void ReadFor(QuantDType dType, BinaryReader reader, Span<float> data, int n)
+    {
+        switch (dType)
+        {
+            case QuantDType.F32:   ReadF32(reader, data, n); break;
+            case QuantDType.F16:   ReadF16(reader, data, n); break;
+            case QuantDType.Q4_0:  ReadQ4_0(reader, data, n); break;
+            case QuantDType.Q4_1:  ReadQ4_1(reader, data, n); break;
+            case QuantDType.Q5_0:  ReadQ5_0(reader, data, n); break;
+            case QuantDType.Q5_1:  ReadQ5_1(reader, data, n); break;
+            case QuantDType.Q8_0:  ReadQ8_0(reader, data, n); break;
+            case QuantDType.Q8_1:  ReadQ8_1(reader, data, n); break;
+            case QuantDType.IQ4_NL: ReadQ4_NL(reader, data, n); break;
+            case QuantDType.Q2_K:
+            case QuantDType.Q2_K_S:  ReadQ2K(reader, data, n); break;
+            case QuantDType.Q3_K:
+            case QuantDType.Q3_K_S:
+            case QuantDType.Q3_K_M:
+            case QuantDType.Q3_K_L:  ReadQ3K(reader, data, n); break;
+            case QuantDType.Q4_K:
+            case QuantDType.Q4_K_S:
+            case QuantDType.Q4_K_M:  ReadQ4K(reader, data, n); break;
+            case QuantDType.Q5_K:
+            case QuantDType.Q5_K_S:
+            case QuantDType.Q5_K_M:  ReadQ5K(reader, data, n); break;
+            case QuantDType.Q6_K:
+            case QuantDType.Q6_K_S:  ReadQ6K(reader, data, n); break;
+            case QuantDType.Q8_K:    ReadQ8K(reader, data, n); break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(dType), dType, null);
+        }
+    }
+    public unsafe float VecDotFor(QuantDType dType, float* input, byte* rawWeights, int col, int inFeatures)
+    {
+        switch (dType)
+        {
+            case QuantDType.F32:   return VecDotF32(input, rawWeights, col, inFeatures);
+            case QuantDType.F16:   return VecDotF16(input, rawWeights, col, inFeatures);
+            case QuantDType.Q4_0:  return VecDotQ4_0(input, rawWeights, col, inFeatures);
+            case QuantDType.Q4_1:  return VecDotQ4_1(input, rawWeights, col, inFeatures);
+            case QuantDType.Q5_0:  return VecDotQ5_0(input, rawWeights, col, inFeatures);
+            case QuantDType.Q5_1:  return VecDotQ5_1(input, rawWeights, col, inFeatures);
+            case QuantDType.Q8_0:  return VecDotQ8_0(input, rawWeights, col, inFeatures);
+            case QuantDType.Q8_1:  return VecDotQ8_1(input, rawWeights, col, inFeatures);
+            case QuantDType.IQ4_NL: return VecDotQ4_NL(input, rawWeights, col, inFeatures);
+            case QuantDType.Q2_K:
+            case QuantDType.Q2_K_S:   return VecDotQ2K(input, rawWeights, col, inFeatures);
+            case QuantDType.Q3_K:
+            case QuantDType.Q3_K_S:
+            case QuantDType.Q3_K_M:
+            case QuantDType.Q3_K_L:   return VecDotQ3K(input, rawWeights, col, inFeatures);
+            case QuantDType.Q4_K:
+            case QuantDType.Q4_K_S:
+            case QuantDType.Q4_K_M:   return VecDotQ4K(input, rawWeights, col, inFeatures);
+            case QuantDType.Q5_K:
+            case QuantDType.Q5_K_S:
+            case QuantDType.Q5_K_M:   return VecDotQ5K(input, rawWeights, col, inFeatures);
+            case QuantDType.Q6_K:
+            case QuantDType.Q6_K_S:   return VecDotQ6K(input, rawWeights, col, inFeatures);
+            case QuantDType.Q8_K:     return VecDotQ8K(input, rawWeights, col, inFeatures);
+            default:
+                throw new ArgumentOutOfRangeException(nameof(dType), dType, null);
+        }
+    }
+    public unsafe void QuantizedMatMulFor(QuantDType dType, float* input, byte* rawWeights, float* output, int M, int K, int N)
+    {
+        switch (dType)
+        {
+            case QuantDType.F32:
+                QuantizedMatMulF32(input, rawWeights, output, M, K, N); break;
+            case QuantDType.F16:
+                QuantizedMatMulF16(input, rawWeights, output, M, K, N); break;
+            case QuantDType.Q4_0:
+                QuantizedMatMulQ4_0(input, rawWeights, output, M, K, N); break;
+            case QuantDType.Q4_1:
+                QuantizedMatMulQ4_1(input, rawWeights, output, M, K, N); break;
+            case QuantDType.Q5_0:
+                QuantizedMatMulQ5_0(input, rawWeights, output, M, K, N); break;
+            case QuantDType.Q5_1:
+                QuantizedMatMulQ5_1(input, rawWeights, output, M, K, N); break;
+            case QuantDType.Q8_0:
+                QuantizedMatMulQ8_0(input, rawWeights, output, M, K, N); break;
+            case QuantDType.Q8_1:
+                QuantizedMatMulQ8_1(input, rawWeights, output, M, K, N); break;
+            case QuantDType.IQ4_NL:
+                QuantizedMatMulQ4_NL(input, rawWeights, output, M, K, N); break;
+            case QuantDType.Q2_K:
+            case QuantDType.Q2_K_S:
+                QuantizedMatMulQ2K(input, rawWeights, output, M, K, N); break;
+            case QuantDType.Q3_K:
+            case QuantDType.Q3_K_S:
+            case QuantDType.Q3_K_M:
+            case QuantDType.Q3_K_L:
+                QuantizedMatMulQ3K(input, rawWeights, output, M, K, N); break;
+            case QuantDType.Q4_K:
+            case QuantDType.Q4_K_S:
+            case QuantDType.Q4_K_M:
+                QuantizedMatMulQ4K(input, rawWeights, output, M, K, N); break;
+            case QuantDType.Q5_K:
+            case QuantDType.Q5_K_S:
+            case QuantDType.Q5_K_M:
+                QuantizedMatMulQ5K(input, rawWeights, output, M, K, N); break;
+            case QuantDType.Q6_K:
+            case QuantDType.Q6_K_S:
+                QuantizedMatMulQ6K(input, rawWeights, output, M, K, N); break;
+            case QuantDType.Q8_K:
+                QuantizedMatMulQ8K(input, rawWeights, output, M, K, N); break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(dType), dType, null);
+        }
+    }
 
     [PuzzleCornerPiece(QuantizationConfig.KeyVecDotQ3K, true, null,
         "q3k_fma",    $"{NS}.{nameof(QuantizationKernels.VecDotQ3K_FMA)}",
@@ -38,8 +148,6 @@ public abstract class QuantizationOps
         "q6k_sse",    $"{NS}.{nameof(QuantizationKernels.VecDotQ6K_Scalar)}",
         "q6k_scalar", $"{NS}.{nameof(QuantizationKernels.VecDotQ6K_Scalar)}")]
     public abstract unsafe float VecDotQ6K(float* input, byte* rawWeights, int col, int inFeatures);
-
-    
 
     [PuzzleCornerPiece(QuantizationConfig.KeyVecDotQ8_0, true, null,
         "q8_0_fma",    $"{NS}.{nameof(QuantizationKernels.VecDotQ8_0_FMA)}",
@@ -159,6 +267,19 @@ public abstract class QuantizationOps
         "q8k_scalar", $"{NS}.{nameof(QuantizationKernels.VecDotQ8K_Scalar)}")]
     public abstract unsafe float VecDotQ8K(float* input, byte* rawWeights, int col, int inFeatures);
 
+    [PuzzleCornerPiece(QuantizationConfig.KeyVecDotF32, true, null,
+        "f32_fma",    $"{NS}.{nameof(QuantizationKernels.VecDotF32_Scalar)}",
+        "f32_avx2",   $"{NS}.{nameof(QuantizationKernels.VecDotF32_Scalar)}",
+        "f32_sse",    $"{NS}.{nameof(QuantizationKernels.VecDotF32_Scalar)}",
+        "f32_scalar", $"{NS}.{nameof(QuantizationKernels.VecDotF32_Scalar)}")]
+    public abstract unsafe float VecDotF32(float* input, byte* rawWeights, int col, int inFeatures);
+
+    [PuzzleCornerPiece(QuantizationConfig.KeyVecDotF16, true, null,
+        "f16_fma",    $"{NS}.{nameof(QuantizationKernels.VecDotF16_Scalar)}",
+        "f16_avx2",   $"{NS}.{nameof(QuantizationKernels.VecDotF16_Scalar)}",
+        "f16_sse",    $"{NS}.{nameof(QuantizationKernels.VecDotF16_Scalar)}",
+        "f16_scalar", $"{NS}.{nameof(QuantizationKernels.VecDotF16_Scalar)}")]
+    public abstract unsafe float VecDotF16(float* input, byte* rawWeights, int col, int inFeatures);
 
 
     [PuzzleCornerPiece(QuantizationConfig.KeyQuantizedMatMulQ2K, true, null,
@@ -364,6 +485,19 @@ public abstract class QuantizationOps
         "read_q8k_scalar", $"{NS}.{nameof(QuantizationKernels.ReadQ8K_Scalar)}")]
     public abstract unsafe void ReadQ8K(BinaryReader reader, Span<float> data, int n);
 
+    [PuzzleCornerPiece(QuantizationConfig.KeyReadF32, true, null,
+        "read_f32_fma",    $"{NS}.{nameof(QuantizationKernels.ReadF32_Scalar)}",
+        "read_f32_avx2",   $"{NS}.{nameof(QuantizationKernels.ReadF32_Scalar)}",
+        "read_f32_sse",    $"{NS}.{nameof(QuantizationKernels.ReadF32_Scalar)}",
+        "read_f32_scalar", $"{NS}.{nameof(QuantizationKernels.ReadF32_Scalar)}")]
+    public abstract unsafe void ReadF32(BinaryReader reader, Span<float> data, int n);
+
+    [PuzzleCornerPiece(QuantizationConfig.KeyReadF16, true, null,
+        "read_f16_fma",    $"{NS}.{nameof(QuantizationKernels.ReadF16_Scalar)}",
+        "read_f16_avx2",   $"{NS}.{nameof(QuantizationKernels.ReadF16_Scalar)}",
+        "read_f16_sse",    $"{NS}.{nameof(QuantizationKernels.ReadF16_Scalar)}",
+        "read_f16_scalar", $"{NS}.{nameof(QuantizationKernels.ReadF16_Scalar)}")]
+    public abstract unsafe void ReadF16(BinaryReader reader, Span<float> data, int n);
 
 
     [PuzzleCornerPiece(QuantizationConfig.KeyHSum256, true, null,

@@ -9,7 +9,7 @@ public class VecDotAgreementTests
     private const string ExternalAssets = @"C:\Integral2u\source\repos\SharpMind\ExternalAssets";
 
     private static unsafe bool TryLoadTensorData(string modelFile, string tensorName,
-        out byte[] rawData, out int inFeatures, out int outFeatures, out GgufDtype dtype)
+        out byte[] rawData, out int inFeatures, out int outFeatures, out QuantDType dtype)
     {
         rawData = null!;
         inFeatures = outFeatures = 0;
@@ -36,24 +36,24 @@ public class VecDotAgreementTests
     }
 
     private static unsafe void DispatchQuantizedMatMul(
-        QuantizationOps qOps, GgufDtype dtype,
+        QuantizationOps qOps, QuantDType dtype,
         float* pIn, byte* pRaw, float* pOut, int m, int k, int n)
     {
         switch (dtype)
         {
-            case GgufDtype.Q8_0: qOps.QuantizedMatMulQ8_0(pIn, pRaw, pOut, m, k, n); break;
-            case GgufDtype.Q8_1: qOps.QuantizedMatMulQ8_1(pIn, pRaw, pOut, m, k, n); break;
-            case GgufDtype.Q4_0: qOps.QuantizedMatMulQ4_0(pIn, pRaw, pOut, m, k, n); break;
-            case GgufDtype.Q4_1: qOps.QuantizedMatMulQ4_1(pIn, pRaw, pOut, m, k, n); break;
-            case GgufDtype.Q5_0: qOps.QuantizedMatMulQ5_0(pIn, pRaw, pOut, m, k, n); break;
-            case GgufDtype.Q5_1: qOps.QuantizedMatMulQ5_1(pIn, pRaw, pOut, m, k, n); break;
-            case GgufDtype.IQ4_NL: qOps.QuantizedMatMulQ4_NL(pIn, pRaw, pOut, m, k, n); break;
-            case GgufDtype.Q2_K or GgufDtype.Q2_K_S: qOps.QuantizedMatMulQ2K(pIn, pRaw, pOut, m, k, n); break;
-            case GgufDtype.Q3_K or GgufDtype.Q3_K_S or GgufDtype.Q3_K_M or GgufDtype.Q3_K_L: qOps.QuantizedMatMulQ3K(pIn, pRaw, pOut, m, k, n); break;
-            case GgufDtype.Q4_K or GgufDtype.Q4_K_S or GgufDtype.Q4_K_M: qOps.QuantizedMatMulQ4K(pIn, pRaw, pOut, m, k, n); break;
-            case GgufDtype.Q5_K or GgufDtype.Q5_K_S or GgufDtype.Q5_K_M: qOps.QuantizedMatMulQ5K(pIn, pRaw, pOut, m, k, n); break;
-            case GgufDtype.Q6_K or GgufDtype.Q6_K_S: qOps.QuantizedMatMulQ6K(pIn, pRaw, pOut, m, k, n); break;
-            case GgufDtype.Q8_K: qOps.QuantizedMatMulQ8K(pIn, pRaw, pOut, m, k, n); break;
+            case QuantDType.Q8_0: qOps.QuantizedMatMulQ8_0(pIn, pRaw, pOut, m, k, n); break;
+            case QuantDType.Q8_1: qOps.QuantizedMatMulQ8_1(pIn, pRaw, pOut, m, k, n); break;
+            case QuantDType.Q4_0: qOps.QuantizedMatMulQ4_0(pIn, pRaw, pOut, m, k, n); break;
+            case QuantDType.Q4_1: qOps.QuantizedMatMulQ4_1(pIn, pRaw, pOut, m, k, n); break;
+            case QuantDType.Q5_0: qOps.QuantizedMatMulQ5_0(pIn, pRaw, pOut, m, k, n); break;
+            case QuantDType.Q5_1: qOps.QuantizedMatMulQ5_1(pIn, pRaw, pOut, m, k, n); break;
+            case QuantDType.IQ4_NL: qOps.QuantizedMatMulQ4_NL(pIn, pRaw, pOut, m, k, n); break;
+            case QuantDType.Q2_K or QuantDType.Q2_K_S: qOps.QuantizedMatMulQ2K(pIn, pRaw, pOut, m, k, n); break;
+            case QuantDType.Q3_K or QuantDType.Q3_K_S or QuantDType.Q3_K_M or QuantDType.Q3_K_L: qOps.QuantizedMatMulQ3K(pIn, pRaw, pOut, m, k, n); break;
+            case QuantDType.Q4_K or QuantDType.Q4_K_S or QuantDType.Q4_K_M: qOps.QuantizedMatMulQ4K(pIn, pRaw, pOut, m, k, n); break;
+            case QuantDType.Q5_K or QuantDType.Q5_K_S or QuantDType.Q5_K_M: qOps.QuantizedMatMulQ5K(pIn, pRaw, pOut, m, k, n); break;
+            case QuantDType.Q6_K or QuantDType.Q6_K_S: qOps.QuantizedMatMulQ6K(pIn, pRaw, pOut, m, k, n); break;
+            case QuantDType.Q8_K: qOps.QuantizedMatMulQ8K(pIn, pRaw, pOut, m, k, n); break;
         }
     }
 
@@ -168,19 +168,19 @@ public class VecDotAgreementTests
                 {
                     pVec[col] = dtype switch
                     {
-                        GgufDtype.Q8_0 => qOps.VecDotQ8_0(pIn, pRaw, col, inF),
-                        GgufDtype.Q8_1 => qOps.VecDotQ8_1(pIn, pRaw, col, inF),
-                        GgufDtype.Q4_0 => qOps.VecDotQ4_0(pIn, pRaw, col, inF),
-                        GgufDtype.Q4_1 => qOps.VecDotQ4_1(pIn, pRaw, col, inF),
-                        GgufDtype.Q5_0 => qOps.VecDotQ5_0(pIn, pRaw, col, inF),
-                        GgufDtype.Q5_1 => qOps.VecDotQ5_1(pIn, pRaw, col, inF),
-                        GgufDtype.IQ4_NL => qOps.VecDotQ4_NL(pIn, pRaw, col, inF),
-                        GgufDtype.Q2_K or GgufDtype.Q2_K_S => qOps.VecDotQ2K(pIn, pRaw, col, inF),
-                        GgufDtype.Q3_K or GgufDtype.Q3_K_S or GgufDtype.Q3_K_M or GgufDtype.Q3_K_L => qOps.VecDotQ3K(pIn, pRaw, col, inF),
-                        GgufDtype.Q4_K or GgufDtype.Q4_K_S or GgufDtype.Q4_K_M => qOps.VecDotQ4K(pIn, pRaw, col, inF),
-                        GgufDtype.Q5_K or GgufDtype.Q5_K_S or GgufDtype.Q5_K_M => qOps.VecDotQ5K(pIn, pRaw, col, inF),
-                        GgufDtype.Q6_K or GgufDtype.Q6_K_S => qOps.VecDotQ6K(pIn, pRaw, col, inF),
-                        GgufDtype.Q8_K => qOps.VecDotQ8K(pIn, pRaw, col, inF),
+                        QuantDType.Q8_0 => qOps.VecDotQ8_0(pIn, pRaw, col, inF),
+                        QuantDType.Q8_1 => qOps.VecDotQ8_1(pIn, pRaw, col, inF),
+                        QuantDType.Q4_0 => qOps.VecDotQ4_0(pIn, pRaw, col, inF),
+                        QuantDType.Q4_1 => qOps.VecDotQ4_1(pIn, pRaw, col, inF),
+                        QuantDType.Q5_0 => qOps.VecDotQ5_0(pIn, pRaw, col, inF),
+                        QuantDType.Q5_1 => qOps.VecDotQ5_1(pIn, pRaw, col, inF),
+                        QuantDType.IQ4_NL => qOps.VecDotQ4_NL(pIn, pRaw, col, inF),
+                        QuantDType.Q2_K or QuantDType.Q2_K_S => qOps.VecDotQ2K(pIn, pRaw, col, inF),
+                        QuantDType.Q3_K or QuantDType.Q3_K_S or QuantDType.Q3_K_M or QuantDType.Q3_K_L => qOps.VecDotQ3K(pIn, pRaw, col, inF),
+                        QuantDType.Q4_K or QuantDType.Q4_K_S or QuantDType.Q4_K_M => qOps.VecDotQ4K(pIn, pRaw, col, inF),
+                        QuantDType.Q5_K or QuantDType.Q5_K_S or QuantDType.Q5_K_M => qOps.VecDotQ5K(pIn, pRaw, col, inF),
+                        QuantDType.Q6_K or QuantDType.Q6_K_S => qOps.VecDotQ6K(pIn, pRaw, col, inF),
+                        QuantDType.Q8_K => qOps.VecDotQ8K(pIn, pRaw, col, inF),
                         _ => 0f
                     };
                 }

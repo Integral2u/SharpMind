@@ -2,7 +2,6 @@ using SharpMind.Core.Memory;
 using SharpMind.Core.Ops;
 using SharpMind.Core.Quantization;
 using SharpMind.Core.Tensors;
-using SharpMind.Model.Format;
 
 namespace SharpMind.Model.Layers;
 
@@ -15,14 +14,14 @@ public sealed class MedusaHeads : IDisposable
     private readonly Tensor<float>[] _headBiases;
     private readonly Tensor<float> _lmHeadWeight;
     private readonly byte[]? _rawEmbedding;
-    private readonly GgufDtype? _rawDtype;
+    private readonly QuantDType? _rawDtype;
     private readonly QuantizationOps? _qOps;
     private float[]? _logitBuffer;
     private float[]? _predictLogitBuffer;
     private bool _disposed;
 
     public MedusaHeads(int numHeads, int hiddenDim, int vocabSize, Tensor<float> lmHeadWeight,
-        byte[]? rawEmbedding = null, GgufDtype? rawDtype = null, QuantizationOps? qOps = null)
+        byte[]? rawEmbedding = null, QuantDType? rawDtype = null, QuantizationOps? qOps = null)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(numHeads);
         _numHeads = numHeads;
@@ -68,7 +67,7 @@ public sealed class MedusaHeads : IDisposable
         int k = Math.Min(outputTokens.Length, _numHeads);
         if (k == 0) return;
 
-        if (_rawEmbedding != null && _rawDtype == GgufDtype.Q8_0 && _qOps != null)
+        if (_rawEmbedding != null && _rawDtype == QuantDType.Q8_0 && _qOps != null)
         {
             PredictQuantized(hiddenState, outputTokens, k);
         }
@@ -192,7 +191,7 @@ public sealed class MedusaHeads : IDisposable
         if (_logitBuffer == null || _logitBuffer.Length != _vocabSize)
             _logitBuffer = new float[_vocabSize];
 
-        bool useQ8 = _rawEmbedding != null && _rawDtype == GgufDtype.Q8_0 && _qOps != null;
+        bool useQ8 = _rawEmbedding != null && _rawDtype == QuantDType.Q8_0 && _qOps != null;
         var lmData = _lmHeadWeight.Data;
 
         for (int step = 0; step < steps; step++)

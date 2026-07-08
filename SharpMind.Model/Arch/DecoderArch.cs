@@ -1,4 +1,5 @@
-﻿using SharpMind.Core.Tensors;
+﻿using SharpMind.Core.Quantization;
+using SharpMind.Core.Tensors;
 using SharpMind.Core.Training;
 using SharpMind.Model.Layers;
 
@@ -71,7 +72,7 @@ public sealed class DecoderArch : IArchitecture
         return false;
     }
 
-    public bool SetRawWeight(string name, byte[] rawData, Format.GgufDtype dtype)
+    public bool SetRawWeight(string name, byte[] rawData, QuantDType dtype)
     {
         int layerIdx = -1;
         var match7 = RegexGenerated.LayerIndexDot7Regex.Match(name);// Regex.Match(name, @"\.(\d+)\.");

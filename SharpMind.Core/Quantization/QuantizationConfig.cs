@@ -20,6 +20,8 @@ public sealed record QuantizationConfig
     public const string KeyVecDotQ8_1  = "vecdot_q8_1";
     public const string KeyVecDotQ2K   = "vecdot_q2k";
     public const string KeyVecDotQ8K   = "vecdot_q8k";
+    public const string KeyVecDotF32   = "vecdot_f32";
+    public const string KeyVecDotF16   = "vecdot_f16";
 
     public const string KeyQuantizedMatMulQ2K  = "qmatmul_q2k";
     public const string KeyQuantizedMatMulQ3K  = "qmatmul_q3k";
@@ -43,6 +45,8 @@ public sealed record QuantizationConfig
     public const string KeyReadQ5K  = "read_q5k";
     public const string KeyReadQ6K  = "read_q6k";
     public const string KeyReadQ8K  = "read_q8k";
+    public const string KeyReadF32  = "read_f32";
+    public const string KeyReadF16  = "read_f16";
 
     public const string KeyQuantizedMatMulF32 = "qmatmul_f32";
     public const string KeyQuantizedMatMulF16 = "qmatmul_f16";
@@ -102,6 +106,8 @@ public sealed record QuantizationConfig
             [KeyVecDotQ8_1]  = $"q8_1{hwSuffix}",
             [KeyVecDotQ2K]   = $"q2k{hwSuffix}",
             [KeyVecDotQ8K]   = $"q8k{hwSuffix}",
+            [KeyVecDotF32]   = $"f32{hwSuffix}",
+            [KeyVecDotF16]   = $"f16{hwSuffix}",
             [KeyQuantizedMatMulQ2K]  = $"qmatmul_q2k{qmmSuffix}",
             [KeyQuantizedMatMulQ3K]  = $"qmatmul_q3k{qmmSuffix}",
             [KeyQuantizedMatMulQ4K]  = $"qmatmul_q4k{qmmSuffix}",
@@ -123,6 +129,8 @@ public sealed record QuantizationConfig
             [KeyReadQ5K]  = "read_q5k_scalar",
             [KeyReadQ6K]  = "read_q6k_scalar",
             [KeyReadQ8K]  = "read_q8k_scalar",
+            [KeyReadF32]  = "read_f32_scalar",
+            [KeyReadF16]  = "read_f16_scalar",
             [KeyQuantizedMatMulF32] = $"qmatmul_f32{qmmSuffix}",
             [KeyQuantizedMatMulF16] = $"qmatmul_f16{qmmSuffix}",
             [KeyHSum256]     = $"hsum{hwSuffix}",

@@ -165,7 +165,7 @@ public sealed class GgufLoader
                 var shape = new int[nDims];
                 for (int j = 0; j < nDims; j++) shape[j] = (int)reader.ReadUInt64();
 
-                var dtype = (GgufDtype)reader.ReadUInt32();
+                var dtype = (QuantDType)reader.ReadUInt32();
                 var offset = reader.ReadUInt64();
 
                 meta.Tensors.Add(new TensorInfo { Name = name, Dtype = dtype, Shape = shape, Offset = (long)offset });
@@ -452,8 +452,8 @@ public sealed class GgufLoader
                         stream.ReadExactly(rawData);
                         stream.Position -= rawSize;
                     }
-                    bool isBadLayout = info.Dtype is GgufDtype.Q8_0 or GgufDtype.Q5_0
-                        or GgufDtype.Q6_K or GgufDtype.Q6_K_S;
+                    bool isBadLayout = info.Dtype is QuantDType.Q8_0 or QuantDType.Q5_0
+                        or QuantDType.Q6_K or QuantDType.Q6_K_S;
                     if (target == weights.LmHeadWeight && !isBadLayout)
                     {
                         weights.RawLmHead = rawData;
@@ -548,44 +548,44 @@ public sealed class GgufLoader
         return result;
     }
 
-    internal bool IsQuantizedType(GgufDtype dtype) => dtype switch
+    internal bool IsQuantizedType(QuantDType dtype) => dtype switch
     {
-        GgufDtype.Q2_K or GgufDtype.Q3_K or GgufDtype.Q4_K or GgufDtype.Q5_K or GgufDtype.Q6_K
-        or GgufDtype.Q2_K_S or GgufDtype.Q3_K_S or GgufDtype.Q3_K_M or GgufDtype.Q3_K_L
-        or GgufDtype.Q4_K_S or GgufDtype.Q4_K_M or GgufDtype.Q5_K_S or GgufDtype.Q5_K_M or GgufDtype.Q6_K_S
-        or GgufDtype.Q4_0 or GgufDtype.Q4_1 or GgufDtype.Q5_0 or GgufDtype.Q5_1
-        or GgufDtype.Q8_0 or GgufDtype.Q8_1 or GgufDtype.Q8_K
-        or GgufDtype.IQ4_NL => true,
+        QuantDType.Q2_K or QuantDType.Q3_K or QuantDType.Q4_K or QuantDType.Q5_K or QuantDType.Q6_K
+        or QuantDType.Q2_K_S or QuantDType.Q3_K_S or QuantDType.Q3_K_M or QuantDType.Q3_K_L
+        or QuantDType.Q4_K_S or QuantDType.Q4_K_M or QuantDType.Q5_K_S or QuantDType.Q5_K_M or QuantDType.Q6_K_S
+        or QuantDType.Q4_0 or QuantDType.Q4_1 or QuantDType.Q5_0 or QuantDType.Q5_1
+        or QuantDType.Q8_0 or QuantDType.Q8_1 or QuantDType.Q8_K
+        or QuantDType.IQ4_NL => true,
         _ => false
     };
 
-    internal long GetRawTensorByteCount(int[] shape, GgufDtype dtype)
+    internal long GetRawTensorByteCount(int[] shape, QuantDType dtype)
     {
         long totalElements = 1;
         foreach (int d in shape) totalElements *= d;
 
         switch (dtype)
         {
-            case GgufDtype.F32: return totalElements * 4;
-            case GgufDtype.F16: return totalElements * 2;
-            case GgufDtype.Q3_K or GgufDtype.Q3_K_S or GgufDtype.Q3_K_M or GgufDtype.Q3_K_L: return ((totalElements + 255) / 256) * 110;
-            case GgufDtype.Q4_K or GgufDtype.Q4_K_S or GgufDtype.Q4_K_M: return ((totalElements + 255) / 256) * 144;
-            case GgufDtype.Q5_K or GgufDtype.Q5_K_S or GgufDtype.Q5_K_M: return ((totalElements + 255) / 256) * 176;
-            case GgufDtype.Q6_K or GgufDtype.Q6_K_S: return ((totalElements + 255) / 256) * 210;
-            case GgufDtype.Q2_K or GgufDtype.Q2_K_S: return ((totalElements + 255) / 256) * 84;
-            case GgufDtype.Q8_K: return ((totalElements + 255) / 256) * 292;
-            case GgufDtype.Q8_0: return ((totalElements + 31) / 32) * 34;
-            case GgufDtype.Q8_1: return ((totalElements + 31) / 32) * 36;
-            case GgufDtype.Q5_0: return ((totalElements + 31) / 32) * 22;
-            case GgufDtype.Q5_1: return ((totalElements + 31) / 32) * 24;
-            case GgufDtype.Q4_0: return ((totalElements + 31) / 32) * 18;
-            case GgufDtype.IQ4_NL: return ((totalElements + 31) / 32) * 18;
-            case GgufDtype.Q4_1: return ((totalElements + 31) / 32) * 20;
+            case QuantDType.F32: return totalElements * 4;
+            case QuantDType.F16: return totalElements * 2;
+            case QuantDType.Q3_K or QuantDType.Q3_K_S or QuantDType.Q3_K_M or QuantDType.Q3_K_L: return ((totalElements + 255) / 256) * 110;
+            case QuantDType.Q4_K or QuantDType.Q4_K_S or QuantDType.Q4_K_M: return ((totalElements + 255) / 256) * 144;
+            case QuantDType.Q5_K or QuantDType.Q5_K_S or QuantDType.Q5_K_M: return ((totalElements + 255) / 256) * 176;
+            case QuantDType.Q6_K or QuantDType.Q6_K_S: return ((totalElements + 255) / 256) * 210;
+            case QuantDType.Q2_K or QuantDType.Q2_K_S: return ((totalElements + 255) / 256) * 84;
+            case QuantDType.Q8_K: return ((totalElements + 255) / 256) * 292;
+            case QuantDType.Q8_0: return ((totalElements + 31) / 32) * 34;
+            case QuantDType.Q8_1: return ((totalElements + 31) / 32) * 36;
+            case QuantDType.Q5_0: return ((totalElements + 31) / 32) * 22;
+            case QuantDType.Q5_1: return ((totalElements + 31) / 32) * 24;
+            case QuantDType.Q4_0: return ((totalElements + 31) / 32) * 18;
+            case QuantDType.IQ4_NL: return ((totalElements + 31) / 32) * 18;
+            case QuantDType.Q4_1: return ((totalElements + 31) / 32) * 20;
             default: return 0;
         }
     }
 
-    private Tensor<float> ReadTensor(BinaryReader stream, GgufDtype dtype, int[] shape)
+    private Tensor<float> ReadTensor(BinaryReader stream, QuantDType dtype, int[] shape)
     {
         int count = 1;
         foreach (int d in shape) count *= d;
@@ -594,27 +594,27 @@ public sealed class GgufLoader
         return result;
     }
 
-    internal void ReadQBlockRow(BinaryReader stream, GgufDtype dtype, Span<float> dest, int count)
+    internal void ReadQBlockRow(BinaryReader stream, QuantDType dtype, Span<float> dest, int count)
     {
         switch (dtype)
         {
-            case GgufDtype.Q4_0: ReadQ4_0(stream, dest, count); break;
-            case GgufDtype.IQ4_NL: ReadQ4_NL(stream, dest, count); break;
-            case GgufDtype.Q4_1: ReadQ4_1(stream, dest, count); break;
-            case GgufDtype.Q5_0: ReadQ5_0(stream, dest, count); break;
-            case GgufDtype.Q5_1: ReadQ5_1(stream, dest, count); break;
-            case GgufDtype.Q8_0: ReadQ8_0(stream, dest, count); break;
-            case GgufDtype.Q8_1: ReadQ8_1(stream, dest, count); break;
-            case GgufDtype.Q2_K or GgufDtype.Q2_K_S: ReadQ2K(stream, dest, count); break;
-            case GgufDtype.Q3_K or GgufDtype.Q3_K_S or GgufDtype.Q3_K_M or GgufDtype.Q3_K_L: ReadQ3_K(stream, dest, count); break;
-            case GgufDtype.Q4_K or GgufDtype.Q4_K_S or GgufDtype.Q4_K_M: ReadQ4K(stream, dest, count); break;
-            case GgufDtype.Q5_K or GgufDtype.Q5_K_S or GgufDtype.Q5_K_M: ReadQ5_K(stream, dest, count); break;
-            case GgufDtype.Q6_K or GgufDtype.Q6_K_S: ReadQ6K(stream, dest, count); break;
-            case GgufDtype.Q8_K: ReadQ8K(stream, dest, count); break;
+            case QuantDType.Q4_0: ReadQ4_0(stream, dest, count); break;
+            case QuantDType.IQ4_NL: ReadQ4_NL(stream, dest, count); break;
+            case QuantDType.Q4_1: ReadQ4_1(stream, dest, count); break;
+            case QuantDType.Q5_0: ReadQ5_0(stream, dest, count); break;
+            case QuantDType.Q5_1: ReadQ5_1(stream, dest, count); break;
+            case QuantDType.Q8_0: ReadQ8_0(stream, dest, count); break;
+            case QuantDType.Q8_1: ReadQ8_1(stream, dest, count); break;
+            case QuantDType.Q2_K or QuantDType.Q2_K_S: ReadQ2K(stream, dest, count); break;
+            case QuantDType.Q3_K or QuantDType.Q3_K_S or QuantDType.Q3_K_M or QuantDType.Q3_K_L: ReadQ3_K(stream, dest, count); break;
+            case QuantDType.Q4_K or QuantDType.Q4_K_S or QuantDType.Q4_K_M: ReadQ4K(stream, dest, count); break;
+            case QuantDType.Q5_K or QuantDType.Q5_K_S or QuantDType.Q5_K_M: ReadQ5_K(stream, dest, count); break;
+            case QuantDType.Q6_K or QuantDType.Q6_K_S: ReadQ6K(stream, dest, count); break;
+            case QuantDType.Q8_K: ReadQ8K(stream, dest, count); break;
         }
     }
 
-    internal void ReadTensorInto(BinaryReader stream, GgufDtype dtype, int[] shape, Span<float> destination)
+    internal void ReadTensorInto(BinaryReader stream, QuantDType dtype, int[] shape, Span<float> destination)
     {
         int count = 1;
         foreach (int d in shape) count *= d;
@@ -623,10 +623,10 @@ public sealed class GgufLoader
 
         switch (dtype)
         {
-            case GgufDtype.F32:
+            case QuantDType.F32:
                 for (int i = 0; i < count; i++) destination[i] = stream.ReadSingle();
                 break;
-            case GgufDtype.F16:
+            case QuantDType.F16:
                 for (int i = 0; i < count; i++) destination[i] = _qOps.HalfToFloat(stream.ReadUInt16());
                 break;
             default:

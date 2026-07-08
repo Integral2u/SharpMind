@@ -1,3 +1,5 @@
+using System.Runtime.CompilerServices;
+
 namespace SharpMind.Core.Quantization;
 
 public static partial class QuantizationKernels
@@ -111,6 +113,52 @@ public static partial class QuantizationKernels
                     pOut[col] = sum;
                 }
             });
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static unsafe float VecDotF32_Scalar(float* input, byte* rawWeights, int col, int inFeatures)
+    {
+        float* w = (float*)rawWeights;
+        double sum = 0;
+        float* pW = w + (long)col * inFeatures;
+        for (int i = 0; i < inFeatures; i++)
+            sum += input[i] * pW[i];
+        return (float)sum;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static unsafe float VecDotF16_Scalar(float* input, byte* rawWeights, int col, int inFeatures)
+    {
+        ushort* w = (ushort*)rawWeights;
+        double sum = 0;
+        ushort* pW = w + (long)col * inFeatures;
+        for (int i = 0; i < inFeatures; i++)
+            sum += input[i] * HalfToFloat_Scalar(pW[i]);
+        return (float)sum;
+    }
+
+    public static unsafe void ReadF32_Scalar(BinaryReader reader, Span<float> data, int n)
+    {
+        Span<byte> buf = stackalloc byte[n * 4];
+        reader.Read(buf);
+        fixed (byte* pBuf = buf)
+        {
+            float* pF = (float*)pBuf;
+            for (int i = 0; i < n; i++)
+                data[i] = pF[i];
+        }
+    }
+
+    public static unsafe void ReadF16_Scalar(BinaryReader reader, Span<float> data, int n)
+    {
+        Span<byte> buf = stackalloc byte[n * 2];
+        reader.Read(buf);
+        fixed (byte* pBuf = buf)
+        {
+            ushort* pH = (ushort*)pBuf;
+            for (int i = 0; i < n; i++)
+                data[i] = HalfToFloat_Scalar(pH[i]);
         }
     }
 }

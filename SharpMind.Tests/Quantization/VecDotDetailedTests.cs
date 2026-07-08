@@ -362,7 +362,7 @@ public class VecDotDetailedTests
         const int QK_K = 256;
 
         var fmt = tensor.Dtype;
-        bool isQ2K = fmt is GgufDtype.Q2_K or GgufDtype.Q2_K_S;
+        bool isQ2K = fmt is QuantDType.Q2_K or QuantDType.Q2_K_S;
         int blkBytes = isQ2K ? 84 : 144;
         int nBlksPerCol = (inF + QK_K - 1) / QK_K;
 

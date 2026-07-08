@@ -2,7 +2,6 @@
 using SharpMind.Core.Quantization;
 using SharpMind.Core.Tensors;
 using SharpMind.Core.Training;
-using SharpMind.Model.Format;
 
 namespace SharpMind.Model.Layers;
 
@@ -12,27 +11,13 @@ public sealed class LinearLayer : IDisposable
     private Tensor<float>? _weightBT;
     private Tensor<float>? _bias;
     private QuantizationOps _qOps;
+    private bool _ownsWeight;
+    private bool _ownsBias;
     private bool _disposed;
 
     public byte[]? RawQuantizedData { get; set; }
-    public GgufDtype? QuantDtype { get; set; }
+    public QuantDType? QuantDtype { get; set; }
     public bool UseQuantizedForward => RawQuantizedData != null && QuantDtype != null;
-
-    public QuantizationOps QuantizationOps
-    {
-        get => _qOps;
-        set => _qOps = value ?? throw new ArgumentNullException(nameof(value));
-    }
-
-    public LinearLayer(string name, int inFeatures, int outFeatures, bool bias = false)
-        : this(name, inFeatures, outFeatures, bias, null, null, null)
-    {
-    }
-
-    public LinearLayer(string name, int inFeatures, int outFeatures, bool bias, QuantizationOps? qOps)
-        : this(name, inFeatures, outFeatures, bias, qOps, null, null)
-    {
-    }
 
     public LinearLayer(string name, int inFeatures, int outFeatures, bool bias, QuantizationOps? qOps, Tensor<float>? weight, Tensor<float>? biasTensor)
     {
@@ -46,14 +31,6 @@ public sealed class LinearLayer : IDisposable
         _qOps = qOps ?? QuantizationFactory.Create();
         _ownsWeight = weight == null;
         _ownsBias = biasTensor == null && _bias != null;
-    }
-
-    private bool _ownsWeight;
-    private bool _ownsBias;
-
-    public LinearLayer(int inFeatures, int outFeatures, bool bias = false)
-        : this($"Linear.{Guid.NewGuid():N}", inFeatures, outFeatures, bias)
-    {
     }
 
     public int InFeatures { get; }
@@ -135,44 +112,44 @@ public sealed class LinearLayer : IDisposable
             {
                 switch (dtype)
                 {
-                    case GgufDtype.Q8_0:
+                    case Core.Quantization.QuantDType.Q8_0:
                         _qOps.QuantizedMatMulQ8_0(input.DataPtr, pRaw, result.DataPtr, m, InFeatures, OutFeatures); break;
-                    case GgufDtype.Q4_0:
+                    case Core.Quantization.QuantDType.Q4_0:
                         _qOps.QuantizedMatMulQ4_0(input.DataPtr, pRaw, result.DataPtr, m, InFeatures, OutFeatures); break;
-                    case GgufDtype.Q4_1:
+                    case Core.Quantization.QuantDType.Q4_1:
                         _qOps.QuantizedMatMulQ4_1(input.DataPtr, pRaw, result.DataPtr, m, InFeatures, OutFeatures); break;
-                    case GgufDtype.Q5_0:
+                    case Core.Quantization.QuantDType.Q5_0:
                         _qOps.QuantizedMatMulQ5_0(input.DataPtr, pRaw, result.DataPtr, m, InFeatures, OutFeatures); break;
-                    case GgufDtype.Q5_1:
+                    case Core.Quantization.QuantDType.Q5_1:
                         _qOps.QuantizedMatMulQ5_1(input.DataPtr, pRaw, result.DataPtr, m, InFeatures, OutFeatures); break;
-                    case GgufDtype.Q8_1:
+                    case Core.Quantization.QuantDType.Q8_1:
                         _qOps.QuantizedMatMulQ8_1(input.DataPtr, pRaw, result.DataPtr, m, InFeatures, OutFeatures); break;
-                    case GgufDtype.IQ4_NL:
+                    case Core.Quantization.QuantDType.IQ4_NL:
                         _qOps.QuantizedMatMulQ4_NL(input.DataPtr, pRaw, result.DataPtr, m, InFeatures, OutFeatures); break;
-                    case GgufDtype.Q2_K:
-                    case GgufDtype.Q2_K_S:
+                    case Core.Quantization.QuantDType.Q2_K:
+                    case Core.Quantization.QuantDType.Q2_K_S:
                         _qOps.QuantizedMatMulQ2K(input.DataPtr, pRaw, result.DataPtr, m, InFeatures, OutFeatures); break;
-                    case GgufDtype.Q3_K:
-                    case GgufDtype.Q3_K_S:
-                    case GgufDtype.Q3_K_M:
-                    case GgufDtype.Q3_K_L:
+                    case Core.Quantization.QuantDType.Q3_K:
+                    case Core.Quantization.QuantDType.Q3_K_S:
+                    case Core.Quantization.QuantDType.Q3_K_M:
+                    case Core.Quantization.QuantDType.Q3_K_L:
                         _qOps.QuantizedMatMulQ3K(input.DataPtr, pRaw, result.DataPtr, m, InFeatures, OutFeatures); break;
-                    case GgufDtype.Q4_K:
-                    case GgufDtype.Q4_K_S:
-                    case GgufDtype.Q4_K_M:
+                    case Core.Quantization.QuantDType.Q4_K:
+                    case Core.Quantization.QuantDType.Q4_K_S:
+                    case Core.Quantization.QuantDType.Q4_K_M:
                         _qOps.QuantizedMatMulQ4K(input.DataPtr, pRaw, result.DataPtr, m, InFeatures, OutFeatures); break;
-                    case GgufDtype.Q5_K:
-                    case GgufDtype.Q5_K_S:
-                    case GgufDtype.Q5_K_M:
+                    case Core.Quantization.QuantDType.Q5_K:
+                    case Core.Quantization.QuantDType.Q5_K_S:
+                    case Core.Quantization.QuantDType.Q5_K_M:
                         _qOps.QuantizedMatMulQ5K(input.DataPtr, pRaw, result.DataPtr, m, InFeatures, OutFeatures); break;
-                    case GgufDtype.Q6_K:
-                    case GgufDtype.Q6_K_S:
+                    case Core.Quantization.QuantDType.Q6_K:
+                    case Core.Quantization.QuantDType.Q6_K_S:
                         _qOps.QuantizedMatMulQ6K(input.DataPtr, pRaw, result.DataPtr, m, InFeatures, OutFeatures); break;
-                    case GgufDtype.Q8_K:
+                    case Core.Quantization.QuantDType.Q8_K:
                         _qOps.QuantizedMatMulQ8K(input.DataPtr, pRaw, result.DataPtr, m, InFeatures, OutFeatures); break;
-                    case GgufDtype.F32:
+                    case Core.Quantization.QuantDType.F32:
                         _qOps.QuantizedMatMulF32(input.DataPtr, pRaw, result.DataPtr, m, InFeatures, OutFeatures); break;
-                    case GgufDtype.F16:
+                    case Core.Quantization.QuantDType.F16:
                         _qOps.QuantizedMatMulF16(input.DataPtr, pRaw, result.DataPtr, m, InFeatures, OutFeatures); break;
                 }
             }
@@ -180,7 +157,7 @@ public sealed class LinearLayer : IDisposable
         return result;
     }
 
-    public unsafe bool SetRawWeight(byte[]? rawData, GgufDtype dtype)
+    public unsafe bool SetRawWeight(byte[]? rawData, QuantDType dtype)
     {
         RawQuantizedData = rawData;
         QuantDtype = dtype;
