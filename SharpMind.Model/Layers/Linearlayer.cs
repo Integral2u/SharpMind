@@ -10,14 +10,16 @@ public sealed class LinearLayer : IDisposable
     private Tensor<float> _weight;
     private Tensor<float>? _weightBT;
     private Tensor<float>? _bias;
-    private QuantizationOps _qOps;
+    private readonly QuantizationOps _qOps;
     private bool _ownsWeight;
     private bool _ownsBias;
     private bool _disposed;
 
+    private QuantizedMatMulFn? _matMulFn;
+
     public byte[]? RawQuantizedData { get; set; }
     public QuantDType? QuantDtype { get; set; }
-    public bool UseQuantizedForward => RawQuantizedData != null && QuantDtype != null;
+    public bool UseQuantizedForward =>  _matMulFn != null; //RawQuantizedData != null && QuantDtype != null; 
 
     public LinearLayer(string name, int inFeatures, int outFeatures, bool bias, QuantizationOps? qOps, Tensor<float>? weight, Tensor<float>? biasTensor)
     {
@@ -54,12 +56,13 @@ public sealed class LinearLayer : IDisposable
         int batchSize = input.ElementCount / input.Shape[^1];
         var flat = needReshape ? input.Reshape(batchSize, InFeatures) : input;
 
-        Tensor<float> output;
+        Tensor<float> output;// = QuantizedForward(flat, ops, workspace);
         if (UseQuantizedForward)
         {
             output = QuantizedForward(flat, ops, workspace);
         }
         else
+        //if(output==null)
         {
             _weightBT ??= TensorOps.Transpose(_weight);
             if (workspace != null)
@@ -99,6 +102,7 @@ public sealed class LinearLayer : IDisposable
 
     private Tensor<float> QuantizedForward(Tensor<float> input, TensorOps ops, SharpMind.Core.Memory.Workspace? workspace = null)
     {
+        //if (_matMulFn == null) return null;
         var dtype = QuantDtype!.Value;
         var rawData = RawQuantizedData!;
         int m = input.ElementCount / InFeatures;
@@ -110,6 +114,7 @@ public sealed class LinearLayer : IDisposable
         {
             fixed (byte* pRaw = rawData)
             {
+                /*
                 switch (dtype)
                 {
                     case Core.Quantization.QuantDType.Q8_0:
@@ -150,8 +155,10 @@ public sealed class LinearLayer : IDisposable
                     case Core.Quantization.QuantDType.F32:
                         _qOps.QuantizedMatMulF32(input.DataPtr, pRaw, result.DataPtr, m, InFeatures, OutFeatures); break;
                     case Core.Quantization.QuantDType.F16:
-                        _qOps.QuantizedMatMulF16(input.DataPtr, pRaw, result.DataPtr, m, InFeatures, OutFeatures); break;
+                        _qOps.QuantizedMatMulF16(input.DataPtr, pRaw, result.DataPtr, m, InFeatures, InFeatures); break;
                 }
+                //*/
+                _matMulFn(input.DataPtr, pRaw, result.DataPtr, m, InFeatures, InFeatures);
             }
         }
         return result;
@@ -161,6 +168,7 @@ public sealed class LinearLayer : IDisposable
     {
         RawQuantizedData = rawData;
         QuantDtype = dtype;
+        _matMulFn = UseQuantizedForward ? _qOps.QuantizedMatMulOpFor(dtype) : null;
         return UseQuantizedForward;
     }
 
@@ -228,7 +236,7 @@ public sealed class LinearLayer : IDisposable
     public void ReplaceWeights(Tensor<float> weight, Tensor<float>? biasTensor)
     {
         ThrowIfDisposed();
-        
+
         if (_ownsWeight) _weight.Dispose();
         if (_ownsBias) _bias?.Dispose();
 

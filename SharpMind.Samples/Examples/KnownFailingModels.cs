@@ -16,7 +16,7 @@ namespace SharpMind.Samples.Examples
     {
         private static readonly string[] Models =
         [
-            /*
+            
             "qwen2-0_5b-instruct-q4_k_m",   //Response:PerPixel??ROUP??nesdayaul .?,...\n\n??? gratuites??
             "qwen2-0.5b-instruct-q2_k",     //Response:??-onium[o? ( didFORMANCE Collections????????
             "Qwen2-0.5B.Q2_K",              //Response:?ro? ?????????? snprintfnal?? appré?.onreadystatechange
@@ -25,7 +25,7 @@ namespace SharpMind.Samples.Examples
             "Qwen2-0.5B.Q3_K_S",            //Response:estring???emales?? je??? Gro  (??hibition Main
             
             "Qwen2-0.5B.Q5_1",              //Response:-+$?ergy=> Tw %(. Tw?????
-            */
+            
             
             "Qwen2.5-1.5B-Instruct-f16",    //Response:??,?????????????????????
 

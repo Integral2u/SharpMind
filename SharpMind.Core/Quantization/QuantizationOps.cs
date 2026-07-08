@@ -4,6 +4,8 @@ using System.Runtime.Intrinsics;
 
 namespace SharpMind.Core.Quantization;
 
+public unsafe delegate float VecDotFn(float* input, byte* rawWeights, int col, int inFeatures);
+public unsafe delegate void QuantizedMatMulFn(float* input, byte* rawWeights, float* output, int M, int K, int N);
 public abstract class QuantizationOps
 {
     private const string NS  = $"{nameof(SharpMind)}.{nameof(Core)}.{nameof(Quantization)}.{nameof(QuantizationKernels)}";
@@ -41,85 +43,48 @@ public abstract class QuantizationOps
                 throw new ArgumentOutOfRangeException(nameof(dType), dType, null);
         }
     }
-    public unsafe float VecDotFor(QuantDType dType, float* input, byte* rawWeights, int col, int inFeatures)
+    public unsafe float VecDotFor(QuantDType dType, float* input, byte* rawWeights, int col, int inFeatures) => VecDotOpFor(dType)(input, rawWeights, col, inFeatures);
+    public unsafe VecDotFn VecDotOpFor(QuantDType dType) => dType switch
     {
-        switch (dType)
-        {
-            case QuantDType.F32:   return VecDotF32(input, rawWeights, col, inFeatures);
-            case QuantDType.F16:   return VecDotF16(input, rawWeights, col, inFeatures);
-            case QuantDType.Q4_0:  return VecDotQ4_0(input, rawWeights, col, inFeatures);
-            case QuantDType.Q4_1:  return VecDotQ4_1(input, rawWeights, col, inFeatures);
-            case QuantDType.Q5_0:  return VecDotQ5_0(input, rawWeights, col, inFeatures);
-            case QuantDType.Q5_1:  return VecDotQ5_1(input, rawWeights, col, inFeatures);
-            case QuantDType.Q8_0:  return VecDotQ8_0(input, rawWeights, col, inFeatures);
-            case QuantDType.Q8_1:  return VecDotQ8_1(input, rawWeights, col, inFeatures);
-            case QuantDType.IQ4_NL: return VecDotQ4_NL(input, rawWeights, col, inFeatures);
-            case QuantDType.Q2_K:
-            case QuantDType.Q2_K_S:   return VecDotQ2K(input, rawWeights, col, inFeatures);
-            case QuantDType.Q3_K:
-            case QuantDType.Q3_K_S:
-            case QuantDType.Q3_K_M:
-            case QuantDType.Q3_K_L:   return VecDotQ3K(input, rawWeights, col, inFeatures);
-            case QuantDType.Q4_K:
-            case QuantDType.Q4_K_S:
-            case QuantDType.Q4_K_M:   return VecDotQ4K(input, rawWeights, col, inFeatures);
-            case QuantDType.Q5_K:
-            case QuantDType.Q5_K_S:
-            case QuantDType.Q5_K_M:   return VecDotQ5K(input, rawWeights, col, inFeatures);
-            case QuantDType.Q6_K:
-            case QuantDType.Q6_K_S:   return VecDotQ6K(input, rawWeights, col, inFeatures);
-            case QuantDType.Q8_K:     return VecDotQ8K(input, rawWeights, col, inFeatures);
-            default:
-                throw new ArgumentOutOfRangeException(nameof(dType), dType, null);
-        }
-    }
-    public unsafe void QuantizedMatMulFor(QuantDType dType, float* input, byte* rawWeights, float* output, int M, int K, int N)
+        QuantDType.F32 => VecDotF32,
+        QuantDType.F16 => VecDotF16,
+        QuantDType.Q4_0 => VecDotQ4_0,
+        QuantDType.Q4_1 => VecDotQ4_1,
+        QuantDType.Q5_0 => VecDotQ5_0,
+        QuantDType.Q5_1 => VecDotQ5_1,
+        QuantDType.Q8_0 => VecDotQ8_0,
+        QuantDType.Q8_1 => VecDotQ8_1,
+        QuantDType.IQ4_NL => VecDotQ4_NL,
+        QuantDType.Q2_K or QuantDType.Q2_K_S => VecDotQ2K,
+        QuantDType.Q3_K or QuantDType.Q3_K_S or QuantDType.Q3_K_M or QuantDType.Q3_K_L => VecDotQ3K,
+        QuantDType.Q4_K or QuantDType.Q4_K_S or QuantDType.Q4_K_M => VecDotQ4K,
+        QuantDType.Q5_K or QuantDType.Q5_K_S or QuantDType.Q5_K_M => VecDotQ5K,
+        QuantDType.Q6_K or QuantDType.Q6_K_S => VecDotQ6K,
+        QuantDType.Q8_K => VecDotQ8K,
+        _ => throw new ArgumentOutOfRangeException(nameof(dType), dType, null),
+    };
+
+    public unsafe void QuantizedMatMulFor(QuantDType dType, float* input, byte* rawWeights, float* output, int M, int K, int N) => QuantizedMatMulOpFor(dType)(input, rawWeights, output, M, K, N);
+
+    public unsafe QuantizedMatMulFn QuantizedMatMulOpFor(QuantDType dType) => dType switch
     {
-        switch (dType)
-        {
-            case QuantDType.F32:
-                QuantizedMatMulF32(input, rawWeights, output, M, K, N); break;
-            case QuantDType.F16:
-                QuantizedMatMulF16(input, rawWeights, output, M, K, N); break;
-            case QuantDType.Q4_0:
-                QuantizedMatMulQ4_0(input, rawWeights, output, M, K, N); break;
-            case QuantDType.Q4_1:
-                QuantizedMatMulQ4_1(input, rawWeights, output, M, K, N); break;
-            case QuantDType.Q5_0:
-                QuantizedMatMulQ5_0(input, rawWeights, output, M, K, N); break;
-            case QuantDType.Q5_1:
-                QuantizedMatMulQ5_1(input, rawWeights, output, M, K, N); break;
-            case QuantDType.Q8_0:
-                QuantizedMatMulQ8_0(input, rawWeights, output, M, K, N); break;
-            case QuantDType.Q8_1:
-                QuantizedMatMulQ8_1(input, rawWeights, output, M, K, N); break;
-            case QuantDType.IQ4_NL:
-                QuantizedMatMulQ4_NL(input, rawWeights, output, M, K, N); break;
-            case QuantDType.Q2_K:
-            case QuantDType.Q2_K_S:
-                QuantizedMatMulQ2K(input, rawWeights, output, M, K, N); break;
-            case QuantDType.Q3_K:
-            case QuantDType.Q3_K_S:
-            case QuantDType.Q3_K_M:
-            case QuantDType.Q3_K_L:
-                QuantizedMatMulQ3K(input, rawWeights, output, M, K, N); break;
-            case QuantDType.Q4_K:
-            case QuantDType.Q4_K_S:
-            case QuantDType.Q4_K_M:
-                QuantizedMatMulQ4K(input, rawWeights, output, M, K, N); break;
-            case QuantDType.Q5_K:
-            case QuantDType.Q5_K_S:
-            case QuantDType.Q5_K_M:
-                QuantizedMatMulQ5K(input, rawWeights, output, M, K, N); break;
-            case QuantDType.Q6_K:
-            case QuantDType.Q6_K_S:
-                QuantizedMatMulQ6K(input, rawWeights, output, M, K, N); break;
-            case QuantDType.Q8_K:
-                QuantizedMatMulQ8K(input, rawWeights, output, M, K, N); break;
-            default:
-                throw new ArgumentOutOfRangeException(nameof(dType), dType, null);
-        }
-    }
+        QuantDType.F32 => QuantizedMatMulF32,
+        QuantDType.F16 => QuantizedMatMulF16,
+        QuantDType.Q4_0 => QuantizedMatMulQ4_0,
+        QuantDType.Q4_1 => QuantizedMatMulQ4_1,
+        QuantDType.Q5_0 => QuantizedMatMulQ5_0,
+        QuantDType.Q5_1 => QuantizedMatMulQ5_1,
+        QuantDType.Q8_0 => QuantizedMatMulQ8_0,
+        QuantDType.Q8_1 => QuantizedMatMulQ8_1,
+        QuantDType.IQ4_NL => QuantizedMatMulQ4_NL,
+        QuantDType.Q2_K or QuantDType.Q2_K_S => QuantizedMatMulQ2K,
+        QuantDType.Q3_K or QuantDType.Q3_K_S or QuantDType.Q3_K_M or QuantDType.Q3_K_L => QuantizedMatMulQ3K,
+        QuantDType.Q4_K or QuantDType.Q4_K_S or QuantDType.Q4_K_M => QuantizedMatMulQ4K,
+        QuantDType.Q5_K or QuantDType.Q5_K_S or QuantDType.Q5_K_M => QuantizedMatMulQ5K,
+        QuantDType.Q6_K or QuantDType.Q6_K_S => QuantizedMatMulQ6K,
+        QuantDType.Q8_K => QuantizedMatMulQ8K,
+        _ => throw new ArgumentOutOfRangeException(nameof(dType), dType, null),
+    };
 
     [PuzzleCornerPiece(QuantizationConfig.KeyVecDotQ3K, true, null,
         "q3k_fma",    $"{NS}.{nameof(QuantizationKernels.VecDotQ3K_FMA)}",
