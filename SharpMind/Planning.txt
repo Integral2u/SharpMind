@@ -1,3 +1,64 @@
+Missing som implementations, most of these only have the Scalar Implementations
+    [PuzzleCornerPiece(QuantizationConfig.KeyQuantizedMatMulQ4_0, true, null,
+        "qmatmul_q4_0_serial_fma",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_0_Serial_Scalar)}",
+        "qmatmul_q4_0_parallel_fma",  $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_0_Parallel_Scalar)}",
+        "qmatmul_q4_0_serial_avx2",   $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_0_Serial_Scalar)}",
+        "qmatmul_q4_0_parallel_avx2", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_0_Parallel_Scalar)}",
+        "qmatmul_q4_0_serial_sse",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_0_Serial_Scalar)}",
+        "qmatmul_q4_0_parallel_sse",  $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_0_Parallel_Scalar)}",
+        "qmatmul_q4_0_serial_scalar", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_0_Serial_Scalar)}",
+        "qmatmul_q4_0_parallel_scalar",$"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_0_Parallel_Scalar)}")]
+
+If there are VecDotQ4K_Scalar VecDotQ4K_AVX2 or VecDotQ4K_FMA etc there should be and implement  Parallel or Serial QuantizedMatMul pattern
+
+Same pattern as before but instead of scalar name and call appropriate variant.
+Serial example for Q6K scalar variant
+
+public static unsafe void QuantizedMatMulQ6K_Scalar(
+        float* input, byte* rawWeights, float* output,
+        int M, int K, int N)
+{
+    for (int row = 0; row < M; row++)
+    {
+        float* pInRow = input + (long)row * K;
+        float* pOutRow = output + (long)row * N;
+        for (int col = 0; col < N; col++)
+            pOutRow[col] = VecDotQ6K_Scalar(pInRow, rawWeights, col, K);
+    }   
+}
+
+Parallel example for Q6K scalar variant
+
+public static unsafe void QuantizedMatMulQ6K_Parallel_Scalar(
+        float* input, byte* rawWeights, float* output,
+        int M, int K, int N)
+{
+    if (M <= 1)
+    {
+        for (int row = 0; row < M; row++)
+        {
+            float* pInRow = input + (long)row * K;
+            float* pOutRow = output + (long)row * N;
+            for (int col = 0; col < N; col++)
+                pOutRow[col] = VecDotQ6K_Scalar(pInRow, rawWeights, col, K);
+        }
+    }
+    else
+    {
+        IntPtr pRawPtr = (IntPtr)rawWeights;
+        Parallel.For(0, m, row =>
+        {
+            byte* pRawL = (byte*)pRawPtr;
+            float* pInRow = input.DataPtr + (long)row * K;
+            float* pOutRow = result.DataPtr + (long)row * N;
+            for (int col = 0; col < N; col++)
+                pOutRow[col] = VecDotQ6K_Scalar(pInRow, pRawL, col, K);
+        });
+    }    
+}
+
+All the VecDot functions should be [MethodImpl(MethodImplOptions.AggressiveInlining)]
+
 Chat
 When going into session option during chat start session should be new session
 still shows </think> and now random start chars
@@ -63,12 +124,14 @@ There are some existing QuantizedMatMul FMA/AVX variants and the will need to be
 Step 2
 Tests
 QuantizedMatMulRefTests, VecDotAgreementTests and VecDotDetailedTests need to be deleted.
-We know FP16 is correct so we have a basis, so what we need to do to a one of run extract 1 layer from qwen2-0_5b-instruct-fp16.gguf, this layer should be Read ad data save for later as it will be used later.
-we need to simulate running though the first layer the prompt "Hello" record from actual run will need diagnotic tools. We know the final will be correct.
+We know FP16 is correct so we have a basis, so what we need to do to a one off run extract 1 layer from qwen2-0_5b-instruct-fp16.gguf, this layer should be Read and data saved for later as it will be used later.
+we need to simulate running though the first layer the prompt "Hello" record from actual run will need diagnotic tools, also save for later as it will be used later. We know the final will be correct.
 Then we have the model layer data and first use of quantization ops using it.  
 From that we have the Read Test and we can check all quant variants to enusre the result of passing the prompt and checking the out put from that layer is correct within tollerence, slight variances for FMA,SSE,AVX etc.
 This will help identify any incorrect implementaions of quant variants. We can the check if the MatMul versions end up with the same result as the VecDot usages.
 After that we can check F32 Qunatize up is within tollerenace for each subquant we can quanatize the F16 version down and continue testing all variants FMA,AVX,SSE,Scalar are withing precision +- tollerance
+
+Helper mthods get VecDofFor(quant type  MAtMul Read
 
 Step 3 (Question)
 in Linearlayer QuantDtype is nullable should it or could it always be known, the same question for QuantizationOps

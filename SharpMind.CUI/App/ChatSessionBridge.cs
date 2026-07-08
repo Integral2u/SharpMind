@@ -21,6 +21,7 @@ public interface IChatBridge : IAsyncDisposable
     IReadOnlyList<ChatMessage> GetHistory();
     void ToggleIgnore(int index);
     void ResetCache();
+    bool ShowThinking { get; set; }
     bool Faulted { get; }
     Exception? Fault { get; }
 }
@@ -116,6 +117,12 @@ public sealed class ChatSessionBridge(IChatSession session, bool disposeUnderlyi
     }
 
     public void ResetCache() => session.ResetCaches();
+
+    public bool ShowThinking
+    {
+        get => session.ShowThinking;
+        set => session.ShowThinking = value;
+    }
 
     public async ValueTask DisposeAsync()
     {

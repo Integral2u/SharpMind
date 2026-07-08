@@ -86,7 +86,8 @@ public sealed class MainWindow : Window
             {
                 new("_Manage sessions...", "", ShowSessionManager),
                 new("_Load session...", "", LoadSessionFromDisk),
-                new("_Save current session...", "", SaveCurrentSession)
+                new("_Save current session...", "", SaveCurrentSession),
+                new("_Toggle thinking process", "", ToggleThinking)
             })
         });
     }
@@ -164,6 +165,17 @@ public sealed class MainWindow : Window
             onClose: CloseSession,
             onBack: onBack);
         SwapContent(view);
+    }
+
+    private void ToggleThinking()
+    {
+        if (_currentSession?.Bridge is null) return;
+        
+        _currentSession.Bridge.ShowThinking = !_currentSession.Bridge.ShowThinking;
+        
+        MessageBox.Query("Thinking Process", 
+            $"Thinking process is now {( _currentSession.Bridge.ShowThinking ? "enabled" : "disabled" )}.", 
+            "OK");
     }
 
     // --- Session lifecycle -------------------------------------------------

@@ -286,8 +286,8 @@ public sealed class ChatView : View
             _activeSubAgentName ??= _pendingSpeakerName;
             if (entry.Token is not null) _subAgentBuffer.Append(entry.Token);
         }
-
-        if (entry.Status == ChatStatus.Responding && entry.Token is not null)
+        
+        if ((entry.Status == ChatStatus.Responding || (entry.Status == ChatStatus.Thinking && _bridge.ShowThinking)) && entry.Token is not null)
         {
             _liveResponse.Append(entry.Token);
             // The actual streaming fix: render the in-progress response on

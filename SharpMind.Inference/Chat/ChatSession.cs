@@ -258,7 +258,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         var result = System.Text.RegularExpressions.Regex.Replace(text, @"<think>.*?</think>", "", System.Text.RegularExpressions.RegexOptions.Singleline);
         
         // Also trim trailing garbage characters often seen at the end of LLM responses (e.g. EOS tokens decoded as symbols)
-        return result.TrimEnd('\uFFFD', '\u0000', '\u0001', '\u0002', '\u0003');
+        return result.TrimEnd('\uFFFD', '\u0000', '\u0001', '\u0002', '\u0003').Trim();
     }
 
     /// <summary>
@@ -525,15 +525,30 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
                 // by inspecting the trailing portion of the accumulated output.
                 if (!_inThinkBlock)
                 {
-                    if (_responseBuffer.ToString().EndsWith("<think>")) _inThinkBlock = true;
+                    // Use a slightly larger window to detect the tag if it's split or has trailing chars
+                    string tail = _responseBuffer.ToString();
+                    if (tail.Contains("<think>"))
+                    {
+                        _inThinkBlock = true;
+                        // We don't 'continue' here because the fragment might contain 
+                        // text after the tag. We just mark the block as started.
+                    }
                 }
                 else
                 {
-                    if (_responseBuffer.ToString().EndsWith("</think>")) _inThinkBlock = false;
+                    string tail = _responseBuffer.ToString();
+                    if (tail.Contains("</think>"))
+                    {
+                        _inThinkBlock = false;
+                        // Similarly, don't 'continue' to avoid losing tokens after the tag.
+                    }
                 }
                 
                 var ids = _generator.CurrentGeneratedIds;
                 int? tokenId = ids != null && ids.Count > 0 ? ids[^1] : null;
+                
+                // Strip tags from the fragment to prevent them from appearing in the UI
+                string cleanFragment = fragment.Replace("<think>", "").Replace("</think>", "");
                 
                 // Filter out thinking tokens if ShowThinking is false
                 if (!ShowThinking && _inThinkBlock)
@@ -555,7 +570,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
                     yield return new ChatStreamEntry
                     {
                         Status = _inThinkBlock ? ChatStatus.Thinking : ChatStatus.Responding,
-                        Token = fragment,
+                        Token = cleanFragment,
                         IsComplete = false,
                         TokensPerSecond = _generator.TokensPerSecond,
                         TimeToFirstToken = _generator.TimeToFirstToken,
@@ -576,7 +591,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
                 var args = toolCall["arguments"]!.AsObject();
 
                 // Record the model's tool-call turn in history for the formatter
-                _history.Add(ChatMessage.Agent(StripThinking(responseText)));
+                _history.Add(ChatMessage.Agent(responseText));
 
                 // Signal to the UI that a tool is about to execute
                 yield return new ChatStreamEntry
@@ -614,7 +629,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
                 && _agentBuilder.RegisteredAgents.TryGetValue(agentName, out var subAgent))
             {
                 // Record the model's agent-call turn in history
-                _history.Add(ChatMessage.Agent(StripThinking(responseText)));
+                _history.Add(ChatMessage.Agent(responseText));
 
                 // Signal which agent is about to execute
                 yield return new ChatStreamEntry
@@ -685,7 +700,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
                 && _currentDepth >= MaxAgentDepth
                 && TryParseAgentTag(responseText, out _, out _, out _, out _))
             {
-                _history.Add(ChatMessage.Agent(StripThinking(responseText)));
+                _history.Add(ChatMessage.Agent(responseText));
                 _history.Add(new ChatMessage
                 {
                     Role = ChatRole.System,
@@ -697,7 +712,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
 
             // Normal (non-tool) response
             if (responseText.Length > 0)
-                _history.Add(ChatMessage.Agent(StripThinking(responseText)));
+                _history.Add(ChatMessage.Agent(responseText));
 
             yield return new ChatStreamEntry
             {
