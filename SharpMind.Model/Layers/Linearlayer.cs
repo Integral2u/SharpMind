@@ -19,7 +19,7 @@ public sealed class LinearLayer : IDisposable
 
     public byte[]? RawQuantizedData { get; set; }
     public QuantDType? QuantDtype { get; set; }
-    public bool UseQuantizedForward =>  _matMulFn != null; //RawQuantizedData != null && QuantDtype != null; 
+    public bool UseQuantizedForward => RawQuantizedData != null && QuantDtype != null;
 
     public LinearLayer(string name, int inFeatures, int outFeatures, bool bias, QuantizationOps? qOps, Tensor<float>? weight, Tensor<float>? biasTensor)
     {
@@ -114,51 +114,7 @@ public sealed class LinearLayer : IDisposable
         {
             fixed (byte* pRaw = rawData)
             {
-                /*
-                switch (dtype)
-                {
-                    case Core.Quantization.QuantDType.Q8_0:
-                        _qOps.QuantizedMatMulQ8_0(input.DataPtr, pRaw, result.DataPtr, m, InFeatures, OutFeatures); break;
-                    case Core.Quantization.QuantDType.Q4_0:
-                        _qOps.QuantizedMatMulQ4_0(input.DataPtr, pRaw, result.DataPtr, m, InFeatures, OutFeatures); break;
-                    case Core.Quantization.QuantDType.Q4_1:
-                        _qOps.QuantizedMatMulQ4_1(input.DataPtr, pRaw, result.DataPtr, m, InFeatures, OutFeatures); break;
-                    case Core.Quantization.QuantDType.Q5_0:
-                        _qOps.QuantizedMatMulQ5_0(input.DataPtr, pRaw, result.DataPtr, m, InFeatures, OutFeatures); break;
-                    case Core.Quantization.QuantDType.Q5_1:
-                        _qOps.QuantizedMatMulQ5_1(input.DataPtr, pRaw, result.DataPtr, m, InFeatures, OutFeatures); break;
-                    case Core.Quantization.QuantDType.Q8_1:
-                        _qOps.QuantizedMatMulQ8_1(input.DataPtr, pRaw, result.DataPtr, m, InFeatures, OutFeatures); break;
-                    case Core.Quantization.QuantDType.IQ4_NL:
-                        _qOps.QuantizedMatMulQ4_NL(input.DataPtr, pRaw, result.DataPtr, m, InFeatures, OutFeatures); break;
-                    case Core.Quantization.QuantDType.Q2_K:
-                    case Core.Quantization.QuantDType.Q2_K_S:
-                        _qOps.QuantizedMatMulQ2K(input.DataPtr, pRaw, result.DataPtr, m, InFeatures, OutFeatures); break;
-                    case Core.Quantization.QuantDType.Q3_K:
-                    case Core.Quantization.QuantDType.Q3_K_S:
-                    case Core.Quantization.QuantDType.Q3_K_M:
-                    case Core.Quantization.QuantDType.Q3_K_L:
-                        _qOps.QuantizedMatMulQ3K(input.DataPtr, pRaw, result.DataPtr, m, InFeatures, OutFeatures); break;
-                    case Core.Quantization.QuantDType.Q4_K:
-                    case Core.Quantization.QuantDType.Q4_K_S:
-                    case Core.Quantization.QuantDType.Q4_K_M:
-                        _qOps.QuantizedMatMulQ4K(input.DataPtr, pRaw, result.DataPtr, m, InFeatures, OutFeatures); break;
-                    case Core.Quantization.QuantDType.Q5_K:
-                    case Core.Quantization.QuantDType.Q5_K_S:
-                    case Core.Quantization.QuantDType.Q5_K_M:
-                        _qOps.QuantizedMatMulQ5K(input.DataPtr, pRaw, result.DataPtr, m, InFeatures, OutFeatures); break;
-                    case Core.Quantization.QuantDType.Q6_K:
-                    case Core.Quantization.QuantDType.Q6_K_S:
-                        _qOps.QuantizedMatMulQ6K(input.DataPtr, pRaw, result.DataPtr, m, InFeatures, OutFeatures); break;
-                    case Core.Quantization.QuantDType.Q8_K:
-                        _qOps.QuantizedMatMulQ8K(input.DataPtr, pRaw, result.DataPtr, m, InFeatures, OutFeatures); break;
-                    case Core.Quantization.QuantDType.F32:
-                        _qOps.QuantizedMatMulF32(input.DataPtr, pRaw, result.DataPtr, m, InFeatures, OutFeatures); break;
-                    case Core.Quantization.QuantDType.F16:
-                        _qOps.QuantizedMatMulF16(input.DataPtr, pRaw, result.DataPtr, m, InFeatures, InFeatures); break;
-                }
-                //*/
-                _matMulFn(input.DataPtr, pRaw, result.DataPtr, m, InFeatures, InFeatures);
+                _matMulFn(input.DataPtr, pRaw, result.DataPtr, m, InFeatures, OutFeatures);
             }
         }
         return result;
@@ -168,8 +124,8 @@ public sealed class LinearLayer : IDisposable
     {
         RawQuantizedData = rawData;
         QuantDtype = dtype;
-        _matMulFn = UseQuantizedForward ? _qOps.QuantizedMatMulOpFor(dtype) : null;
-        return UseQuantizedForward;
+        _matMulFn = RawQuantizedData != null ? _qOps.QuantizedMatMulOpFor(dtype) : null;
+        return _matMulFn != null;
     }
 
     public (Tensor<float> Output, LinearLayerState State) ForwardWithState(Tensor<float> input, TensorOps ops)
