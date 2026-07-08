@@ -14,7 +14,7 @@ namespace SharpMind.Samples.Examples
         [         
             //All these models have TensorInfo.Shape.Length = 1
             //Possible responce chat formatting issues
-            "Qwen2-0.5B.Q6_K",                  //Response:The\nsystem\nsystem is a system that helps you to make better decisions
+            //"Qwen2-0.5B.Q6_K",                  //Response:The\nsystem\nsystem is a system that helps you to make better decisions
 
             //Working                                     
             "llama-3.2-1b-instruct-q8_0",       //Response:It seems like you've got a question about the answer to my own.            

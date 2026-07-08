@@ -58,7 +58,7 @@ public sealed record QuantizationConfig
     public const string KeyGetScaleMinK4_Min   = "getscalemink4_min";
 
     public HardwareTier Hardware { get; init; } = HardwareTier.Auto;
-    public bool Parallel { get; init; } = false;
+    public bool Parallel { get; init; } = true;
 
     public Dictionary<string, string> ToJigSawMapping()
     {
