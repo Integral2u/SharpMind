@@ -51,16 +51,16 @@ internal static class BenchToConfig
 
             var vecDotEntries = new (string Key, string Prefix, Action<QuantizationOps> BenchmarkAction)[]
             {
-                (QuantizationConfig.KeyVecDotQ8_0, "q8_0", ops => { ops.VecDotQ8_0(input, weights, 0, VecSize); }),
-                (QuantizationConfig.KeyVecDotQ8K,  "q8k",  ops => { ops.VecDotQ8K(input, weights, 0, VecSize); }),
-                (QuantizationConfig.KeyVecDotQ4K,  "q4k",  ops => { ops.VecDotQ4K(input, weights, 0, VecSize); }),
-                (QuantizationConfig.KeyVecDotQ6K,  "q6k",  ops => { ops.VecDotQ6K(input, weights, 0, VecSize); }),
-                (QuantizationConfig.KeyVecDotQ3K,  "q3k",  ops => { ops.VecDotQ3K(input, weights, 0, VecSize); }),
-                (QuantizationConfig.KeyVecDotQ2K,  "q2k",  ops => { ops.VecDotQ2K(input, weights, 0, VecSize); }),
-                (QuantizationConfig.KeyVecDotQ5K,  "q5k",  ops => { ops.VecDotQ5K(input, weights, 0, VecSize); }),
-                (QuantizationConfig.KeyVecDotQ4_0, "q4_0", ops => { ops.VecDotQ4_0(input, weights, 0, VecSize); }),
-                (QuantizationConfig.KeyVecDotQ4_1, "q4_1", ops => { ops.VecDotQ4_1(input, weights, 0, VecSize); }),
-                (QuantizationConfig.KeyVecDotQ8_1, "q8_1", ops => { ops.VecDotQ8_1(input, weights, 0, VecSize); }),
+                (QuantizationKeys.KeyVecDotQ8_0, "q8_0", ops => { ops.VecDotQ8_0(input, weights, 0, VecSize); }),
+                (QuantizationKeys.KeyVecDotQ8K,  "q8k",  ops => { ops.VecDotQ8K(input, weights, 0, VecSize); }),
+                (QuantizationKeys.KeyVecDotQ4K,  "q4k",  ops => { ops.VecDotQ4K(input, weights, 0, VecSize); }),
+                (QuantizationKeys.KeyVecDotQ6K,  "q6k",  ops => { ops.VecDotQ6K(input, weights, 0, VecSize); }),
+                (QuantizationKeys.KeyVecDotQ3K,  "q3k",  ops => { ops.VecDotQ3K(input, weights, 0, VecSize); }),
+                (QuantizationKeys.KeyVecDotQ2K,  "q2k",  ops => { ops.VecDotQ2K(input, weights, 0, VecSize); }),
+                (QuantizationKeys.KeyVecDotQ5K,  "q5k",  ops => { ops.VecDotQ5K(input, weights, 0, VecSize); }),
+                (QuantizationKeys.KeyVecDotQ4_0, "q4_0", ops => { ops.VecDotQ4_0(input, weights, 0, VecSize); }),
+                (QuantizationKeys.KeyVecDotQ4_1, "q4_1", ops => { ops.VecDotQ4_1(input, weights, 0, VecSize); }),
+                (QuantizationKeys.KeyVecDotQ8_1, "q8_1", ops => { ops.VecDotQ8_1(input, weights, 0, VecSize); }),
             };
 
             foreach (var (key, prefix, benchmark) in vecDotEntries)
@@ -98,8 +98,8 @@ internal static class BenchToConfig
             };
 
             var (matMulSuffix, _) = BenchmarkBestTier(tiers, matMulAction);
-            mapping[QuantizationConfig.KeyQuantizedMatMulQ8_0] = $"qmatmul_q8_0{matMulSuffix}";
-            Console.WriteLine($"  {QuantizationConfig.KeyQuantizedMatMulQ8_0,-22} → {mapping[QuantizationConfig.KeyQuantizedMatMulQ8_0]}");
+            mapping[QuantizationKeys.KeyQuantizedMatMulQ8_0] = $"qmatmul_q8_0{matMulSuffix}";
+            Console.WriteLine($"  {QuantizationKeys.KeyQuantizedMatMulQ8_0,-22} → {mapping[QuantizationKeys.KeyQuantizedMatMulQ8_0]}");
 
             Marshal.FreeHGlobal((IntPtr)input);
             Marshal.FreeHGlobal((IntPtr)w);
@@ -107,15 +107,15 @@ internal static class BenchToConfig
         }
 
         // ── Shared helpers (inferred from best SIMD tier) ────────────────
-        mapping[QuantizationConfig.KeyHSum256]     = $"hsum{simdSuffix}";
-        mapping[QuantizationConfig.KeyHalfToFloat] = $"halftofloat{simdSuffix}";
-        mapping[QuantizationConfig.KeyFloatToHalf] = $"floattohalf{simdSuffix}";
+        mapping[QuantizationKeys.KeyHSum256]     = $"hsum{simdSuffix}";
+        mapping[QuantizationKeys.KeyHalfToFloat] = $"halftofloat{simdSuffix}";
+        mapping[QuantizationKeys.KeyFloatToHalf] = $"floattohalf{simdSuffix}";
 
         // Always scalar (no SIMD variant exists)
-        mapping[QuantizationConfig.KeyVecDotQ5_0] = "q5_0_scalar";
-        mapping[QuantizationConfig.KeyVecDotQ5_1] = "q5_1_scalar";
-        mapping[QuantizationConfig.KeyGetScaleMinK4_Scale] = "getscalemink4_scale_scalar";
-        mapping[QuantizationConfig.KeyGetScaleMinK4_Min]   = "getscalemink4_min_scalar";
+        mapping[QuantizationKeys.KeyVecDotQ5_0] = "q5_0_scalar";
+        mapping[QuantizationKeys.KeyVecDotQ5_1] = "q5_1_scalar";
+        mapping[QuantizationKeys.KeyGetScaleMinK4_Scale] = "getscalemink4_scale_scalar";
+        mapping[QuantizationKeys.KeyGetScaleMinK4_Min]   = "getscalemink4_min_scalar";
 
         // ── Write JSON ───────────────────────────────────────────────────
         var json = JsonSerializer.Serialize(mapping, new JsonSerializerOptions { WriteIndented = true });

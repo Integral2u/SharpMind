@@ -109,18 +109,15 @@ public static class SessionLauncher
         await Task.Yield();
         var sharpConfig = modelConfig.ForModel(hw: options.HardwareTier);
 
-        // GPU path needs the mapping built manually via MappingBuilder so
-        // WithGpu() can be chained in — SharpMindConfig.ToJigSawMapping()
-        // (the simpler CPU-only path) has no GPU-aware overload. Both paths
-        // ultimately produce the same Dictionary<string,string> shape
-        // ModelFactory.CreateSession accepts; this only decides how that
-        // dictionary gets built, mirroring the engine's own QwenOnGpu sample
-        // exactly for the GPU case.
+        // Build a single combined mapping dictionary that includes both model-level
+        // operations (pointwise, gate, softmax, etc.) and quantization operations
+        // (vecdot, qmatmul, read, etc.). SharpMindConfig.ToJigSawMapping() now produces
+        // both sets. The GPU path uses MappingBuilder.WithGpu() which additionally
+        // overrides selected entries with GPU-kernel values — the same dictionary
+        // shape is ultimately passed to ModelFactory.CreateSession.
         Dictionary<string, string> mapping = options.UseGpu
-            ? new MappingBuilder(options.HardwareTier).ApplyPreset(sharpConfig).WithGpu().Build()
+            ? new MappingBuilder(options.HardwareTier).ApplyPreset(sharpConfig).ApplyQuantPreset(sharpConfig).WithGpu().Build()
             : sharpConfig.ToJigSawMapping();
-
-        Dictionary<string, string> qOpsMapping = (new QuantizationConfig { Hardware = options.HardwareTier }).ToJigSawMapping();
 
         status?.Report("Loading weights...");
         TransformerWeights weights;
@@ -130,7 +127,7 @@ public static class SessionLauncher
                 ? null
                 : new Progress<float>(p => status.Report($"Loading weights... {p:P0}"));
 
-            var loader = new GgufLoader(QuantizationFactory.Create(qOpsMapping), options.ModelPath, modelConfig, options.LoadMode);
+            var loader = new GgufLoader(QuantizationFactory.Create(mapping), options.ModelPath, modelConfig, options.LoadMode);
             weights = await Task.Run(() => loader.LoadWeightsToTransformerWeights(progress));
         }
         catch (Exception ex)
@@ -141,7 +138,7 @@ public static class SessionLauncher
         
         status?.Report("Creating session...");
         await Task.Yield();
-        var model = ModelFactory.CreateSession(weights, sharpConfig, mapping, qOpsMapping);
+        var model = ModelFactory.CreateSession(weights, sharpConfig, mapping);
 
         return new ModelLoadResult
         {

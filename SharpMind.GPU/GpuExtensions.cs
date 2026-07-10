@@ -1,6 +1,5 @@
 using SharpMind.Core.Activations;
 using SharpMind.Core.Quantization;
-
 namespace SharpMind.GPU;
 
 public static class MappingBuilderExtensions
@@ -21,35 +20,35 @@ public static class MappingBuilderExtensions
     /// SharpMind.GPU into the process).
     /// </summary>
     private static readonly string[] VecDotKeys = [
-        QuantizationConfig.KeyVecDotQ3K,
-        QuantizationConfig.KeyVecDotQ4K,
-        QuantizationConfig.KeyVecDotQ5K,
-        QuantizationConfig.KeyVecDotQ6K,
-        QuantizationConfig.KeyVecDotQ8_0,
-        QuantizationConfig.KeyVecDotQ4_0,
-        QuantizationConfig.KeyVecDotQ4_1,
-        QuantizationConfig.KeyVecDotQ5_0,
-        QuantizationConfig.KeyVecDotQ5_1,
-        QuantizationConfig.KeyVecDotQ8_1,
-        QuantizationConfig.KeyVecDotQ2K,
-        QuantizationConfig.KeyVecDotQ8K,
-        QuantizationConfig.KeyVecDotQ4_NL,
+        QuantizationKeys.KeyVecDotQ3K,
+        QuantizationKeys.KeyVecDotQ4K,
+        QuantizationKeys.KeyVecDotQ5K,
+        QuantizationKeys.KeyVecDotQ6K,
+        QuantizationKeys.KeyVecDotQ8_0,
+        QuantizationKeys.KeyVecDotQ4_0,
+        QuantizationKeys.KeyVecDotQ4_1,
+        QuantizationKeys.KeyVecDotQ5_0,
+        QuantizationKeys.KeyVecDotQ5_1,
+        QuantizationKeys.KeyVecDotQ8_1,
+        QuantizationKeys.KeyVecDotQ2K,
+        QuantizationKeys.KeyVecDotQ8K,
+        QuantizationKeys.KeyVecDotQ4_NL,
     ];
 
     private static readonly string[] QmmKeys = [
-        QuantizationConfig.KeyQuantizedMatMulQ8_0,
-        QuantizationConfig.KeyQuantizedMatMulQ5_0,
-        QuantizationConfig.KeyQuantizedMatMulQ6K,
-        QuantizationConfig.KeyQuantizedMatMulQ4_0,
-        QuantizationConfig.KeyQuantizedMatMulQ4_1,
-        QuantizationConfig.KeyQuantizedMatMulQ2K,
-        QuantizationConfig.KeyQuantizedMatMulQ3K,
-        QuantizationConfig.KeyQuantizedMatMulQ4K,
-        QuantizationConfig.KeyQuantizedMatMulQ5K,
-        QuantizationConfig.KeyQuantizedMatMulQ8K,
-        QuantizationConfig.KeyQuantizedMatMulQ8_1,
-        QuantizationConfig.KeyQuantizedMatMulQ5_1,
-        QuantizationConfig.KeyQuantizedMatMulQ4_NL,
+        QuantizationKeys.KeyQuantizedMatMulQ8_0,
+        QuantizationKeys.KeyQuantizedMatMulQ5_0,
+        QuantizationKeys.KeyQuantizedMatMulQ6K,
+        QuantizationKeys.KeyQuantizedMatMulQ4_0,
+        QuantizationKeys.KeyQuantizedMatMulQ4_1,
+        QuantizationKeys.KeyQuantizedMatMulQ2K,
+        QuantizationKeys.KeyQuantizedMatMulQ3K,
+        QuantizationKeys.KeyQuantizedMatMulQ4K,
+        QuantizationKeys.KeyQuantizedMatMulQ5K,
+        QuantizationKeys.KeyQuantizedMatMulQ8K,
+        QuantizationKeys.KeyQuantizedMatMulQ8_1,
+        QuantizationKeys.KeyQuantizedMatMulQ5_1,
+        QuantizationKeys.KeyQuantizedMatMulQ4_NL,
     ];
 
     public static MappingBuilder WithGpu(this MappingBuilder builder)

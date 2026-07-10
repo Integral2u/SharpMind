@@ -11,21 +11,7 @@ using System.Diagnostics;
 namespace SharpMind.Samples.Examples
 {
     public class ModelListRunner
-    {
-        public static float CurrentProgress = 0; 
-        public static void Progress(float p)
-        {
-            if (CurrentProgress < p && CurrentProgress < 0.91f)
-            {
-                CurrentProgress += 0.1f;
-                Console.Write(".");
-            }
-            if(CurrentProgress > 0.91f)
-            {
-                CurrentProgress = 0f;
-                Console.WriteLine();
-            }
-        }
+    {        
         public static async Task RunAsync(string prompt, string ModelPath, string[] Models, bool withGPU = false)
         {
 
@@ -48,21 +34,19 @@ namespace SharpMind.Samples.Examples
                 }
 
                 var sharpConfig = modelConfig.ForModel();
-                // Build the JigSaw mapping with CPU baseline, then override
-                // activations and gates to use GPU-accelerated kernels (via WithGpu()).
-                // JigSaw's external [PuzzlePeice] scan finds the GPU kernels because
-                // SharpMind.GPU is loaded in the AppDomain (WithGpu() lives there).
-                var mapping = withGPU ? new MappingBuilder()
+                // Build a single combined mapping. WithGpu() now overrides quant ops
+                // as well as model-level ops — no separate qOpsMapping needed.
+                var mapping = withGPU ? new MappingBuilder(sharpConfig.ResolvedHardware)
                     .ApplyPreset(sharpConfig)
+                    .ApplyQuantPreset(sharpConfig)
                     .WithGpu()
                     .Build() : null;
-                Dictionary<string, string> qOpsMapping = (new QuantizationConfig { Hardware = sharpConfig.Hardware }).ToJigSawMapping();
 
                 GC.Collect(); GC.WaitForPendingFinalizers();
                 var sw = Stopwatch.StartNew();
-                var loader = new GgufLoader(QuantizationFactory.Create(qOpsMapping), ggufPath, modelConfig, LoadMode.Full);
+                var loader = new GgufLoader(QuantizationFactory.Create(mapping ?? sharpConfig.ToJigSawMapping()), ggufPath, modelConfig, LoadMode.Full);
                 
-                using var weights = loader.LoadWeightsToTransformerWeights(new Progress<float>(p=> Progress(p)));
+                using var weights = loader.LoadWeightsToTransformerWeights();
                 
                 await Console.Out.WriteLineAsync($"GgufLoader.LoadWeightsToTransformerWeights executed in: {sw.Elapsed.TotalSeconds:F2}s");
                 GC.Collect(); GC.WaitForPendingFinalizers();

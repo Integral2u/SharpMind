@@ -60,14 +60,15 @@ public static class ModelFactory
         return new TransformerWeights(modelConfig, embedding, lmHead, finalNormW, finalNormB, blockWeights);
     }
 
-    public static Transformer CreateSession(TransformerWeights weights, SharpMindConfig sharpConfig, Dictionary<string, string>? mapping = null, Dictionary<string, string>? quantMapping = null, bool optimizeMemory = true)
+    public static Transformer CreateSession(TransformerWeights weights, SharpMindConfig sharpConfig, Dictionary<string, string>? mapping = null, bool optimizeMemory = true)
     {
         ArgumentNullException.ThrowIfNull(weights);
         ArgumentNullException.ThrowIfNull(sharpConfig);
 
-        var acts = ActivationFactory.Create(sharpConfig,mapping);//  Assembler.CreateInstance<ActivationOps>(actualMapping);
-        var ops = TensorOpsFactory.Create(sharpConfig,mapping);// sharpConfig);
-        var qOps = quantMapping != null ? QuantizationFactory.Create(quantMapping) : QuantizationFactory.Create();
+        var fullMapping = mapping ?? sharpConfig.ToJigSawMapping();
+        var acts = ActivationFactory.Create(sharpConfig, fullMapping);
+        var ops = TensorOpsFactory.Create(sharpConfig, fullMapping);
+        var qOps = QuantizationFactory.Create(fullMapping);
         NormOpsFactory.SetDefault(sharpConfig);
 
         var embedding = new EmbeddingTable(weights.Config.VocabSize, weights.Config.HiddenDim, weights.EmbeddingWeight, false);

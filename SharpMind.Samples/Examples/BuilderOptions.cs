@@ -34,11 +34,10 @@ namespace SharpMind.Samples.Examples
                 return;
             }
             var sharpConfig = modelConfig.ForModel();
-            Dictionary<string, string> qOpsMapping = (new QuantizationConfig { Hardware = sharpConfig.Hardware }).ToJigSawMapping();
 
             GC.Collect(); GC.WaitForPendingFinalizers();
             var sw = Stopwatch.StartNew();
-            var loader = new GgufLoader(QuantizationFactory.Create(qOpsMapping), ggufPath, modelConfig, LoadMode.Full);          
+            var loader = new GgufLoader(QuantizationFactory.Create(sharpConfig.ResolvedHardware), ggufPath, modelConfig, LoadMode.Full);          
             using var weights = loader.LoadWeightsToTransformerWeights(null);
             await Console.Out.WriteLineAsync($"GgufLoader.LoadWeightsToTransformerWeights executed in: {sw.Elapsed.TotalSeconds:F2}s");
             

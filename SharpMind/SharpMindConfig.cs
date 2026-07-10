@@ -130,6 +130,7 @@ public sealed record SharpMindConfig
     public NormKind Norm { get; init; } = NormKind.RMSNorm;
     public ArchKind Arch { get; init; } = ArchKind.Decoder;
     public HardwareTier   Hardware   { get; init; } = HardwareTier.Auto;
+    public bool Parallel { get; init; } = true;
     public bool FlashAttention { get; init; } = true;
     public bool UseHooks { get; init; } = false;
 
@@ -174,7 +175,7 @@ public sealed record SharpMindConfig
    
     public HardwareTier ResolvedHardware => Hardware switch
     {
-        HardwareTier.Auto => HardwareTierHelpers.DetectBestTier();
+        HardwareTier.Auto => HardwareTierHelpers.DetectBestTier(),
         _ => Hardware
     };
 
@@ -226,6 +227,7 @@ public sealed record SharpMindConfig
     {
         var cfg = new MappingBuilder(ResolvedHardware)
             .ApplyPreset(this)
+            .ApplyQuantPreset(this)
             .Build();
         if (overrides == null) return cfg;
         if (overrides != null)
