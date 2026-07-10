@@ -457,3 +457,22 @@ FodyWeavers.xsd
 /ExternalAssets/Bonsai-8B-Q1_0.gguf
 /ExternalAssets/Bonsai-8B.gguf
 /ExternalAssets/Phi-3-mini-4k-instruct-q4.gguf
+/SandBox/Removed/ReferenceData/QuantVariantDiagnosticTests.cs
+/SandBox/Removed/ReferenceData/ReferenceDataExtractor.cs
+/SandBox/Removed/ReferenceData/ReferenceDataPaths.cs
+/SandBox/Removed/Training/LoRALayer.cs
+/SandBox/Removed/Training/PruningKernels.cs
+/SandBox/Removed/Code Segement.txt
+/SandBox/Removed/DeepSeekFormatter.cs
+/SandBox/Removed/FusedKernels.cs
+/SandBox/Removed/FusedRMSNormLinear.cs
+/SandBox/Removed/LlamaFormatter.cs
+/SandBox/Removed/NativeBufferPoolStats.cs
+/SandBox/Removed/PassThroughFormatter.cs
+/SandBox/Removed/SafetensorsLoader.cs
+/SandBox/RunModels/KnownFailingModels.cs
+/SandBox/RunModels/KnownGiberishModels.cs
+/SandBox/RunModels/KnownWorkingModels.cs
+/SandBox/Removed/ReferenceData/QuantizedMatMulRefTests.cs
+/SandBox/Removed/ReferenceData/VecDotAgreementTests.cs
+/SandBox/Removed/ReferenceData/VecDotDetailedTests.cs
