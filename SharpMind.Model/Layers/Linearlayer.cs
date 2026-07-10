@@ -1,5 +1,4 @@
-﻿using SharpMind.Core.Ops;
-using SharpMind.Core.Quantization;
+﻿using SharpMind.Core.Quantization;
 using SharpMind.Core.Tensors;
 using SharpMind.Core.Training;
 
@@ -49,14 +48,14 @@ public sealed class LinearLayer : IDisposable
             yield return new Parameter($"{Name}.bias", _bias);
     }
 
-    public Tensor<float> Forward(Tensor<float> input, TensorOps ops, Core.Memory.Workspace? workspace = null)
+    public Tensor<float> Forward(Tensor<float> input, Core.Memory.Workspace? workspace = null)
     {
         ThrowIfDisposed();
         bool needReshape = input.Rank > 2;
         int batchSize = input.ElementCount / input.Shape[^1];
         var flat = needReshape ? input.Reshape(batchSize, InFeatures) : input;
 
-        Tensor<float>? output = QuantizedForward(flat, ops, workspace) ?? ScalarForward(flat, ops, batchSize, workspace);
+        Tensor<float>? output = QuantizedForward(flat, workspace) ?? ScalarForward(flat, batchSize, workspace);
         
         if (_bias is not null)
         {
@@ -65,11 +64,11 @@ public sealed class LinearLayer : IDisposable
                 var biasB = workspace.Rent<float>([batchSize, OutFeatures]);
                 for (int i = 0; i < batchSize; i++)
                     _bias!.Data.CopyTo(biasB.RowSpan(i));
-                TensorOps.AddInPlace<float>(output, biasB);
+                output.AddInPlace(biasB);
             }
             else
             {
-                TensorOps.AddInPlace(output, BroadcastBias(batchSize));
+                output.AddInPlace(BroadcastBias(batchSize));
             }
         }
         if (needReshape)
@@ -81,23 +80,20 @@ public sealed class LinearLayer : IDisposable
         }
         return output;
     }
-    private Tensor<float> ScalarForward(Tensor<float> input, TensorOps ops, int batchSize, Core.Memory.Workspace? workspace = null)
+    private unsafe Tensor<float> ScalarForward(Tensor<float> input, int batchSize, Core.Memory.Workspace? workspace = null)
     {
         Tensor<float> output;
-        _weightBT ??= TensorOps.Transpose(_weight);
+        _weightBT ??= _weight.Transpose();
         if (workspace != null)
-        {
             output = workspace.Rent<float>([batchSize, OutFeatures]);
-            ops.MatMulWithBTInto(input, _weightBT, output);
-        }
         else
-        {
-            output = ops.MatMulWithBT(input, _weightBT);
-        }
+            output = new Tensor<float>(batchSize, OutFeatures);
+        var fn = _qOps.QuantizedMatMulOpFor(QuantDType.F32);
+        fn(input.DataPtr, (byte*)_weightBT.DataPtr, output.DataPtr, batchSize, InFeatures, OutFeatures);
         return output;
     }
 
-    private Tensor<float>? QuantizedForward(Tensor<float> input, TensorOps ops, SharpMind.Core.Memory.Workspace? workspace = null)
+    private Tensor<float>? QuantizedForward(Tensor<float> input, SharpMind.Core.Memory.Workspace? workspace = null)
     {
         if (_matMulFn == null) return null;
         var dtype = QuantDtype!.Value;
@@ -124,15 +120,18 @@ public sealed class LinearLayer : IDisposable
         return _matMulFn != null;
     }
 
-    public (Tensor<float> Output, LinearLayerState State) ForwardWithState(Tensor<float> input, TensorOps ops)
+    public unsafe (Tensor<float> Output, LinearLayerState State) ForwardWithState(Tensor<float> input)
     {
         ThrowIfDisposed();
         bool needReshape = input.Rank > 2;
         int batchSize = input.ElementCount / input.Shape[^1];
         var flat = needReshape ? input.Reshape(batchSize, InFeatures) : input;
-        var output = ops.MatMul(flat, _weight);
+        using var weightBT = _weight.Transpose();
+        var output = new Tensor<float>(batchSize, OutFeatures);
+        var fn = _qOps.QuantizedMatMulOpFor(QuantDType.F32);
+        fn(flat.DataPtr, (byte*)weightBT.DataPtr, output.DataPtr, batchSize, InFeatures, OutFeatures);
         if (_bias is not null)
-            TensorOps.AddInPlace(output, BroadcastBias(batchSize));
+            output.AddInPlace(BroadcastBias(batchSize));
         var state = new LinearLayerState(input, flat, needReshape, _weight);
         if (needReshape)
         {
@@ -144,7 +143,7 @@ public sealed class LinearLayer : IDisposable
         return (output, state);
     }
 
-    public Tensor<float> Backward(Tensor<float> gradOutput, LinearLayerState state, TensorOps ops)
+    public unsafe Tensor<float> Backward(Tensor<float> gradOutput, LinearLayerState state)
     {
         int batchSize = state.NeedReshape
             ? gradOutput.ElementCount / OutFeatures
@@ -153,10 +152,14 @@ public sealed class LinearLayer : IDisposable
             ? gradOutput.Reshape(batchSize, OutFeatures)
             : gradOutput;
 
-        var gradInputFlat = ops.MatMul(flatGradOut, TensorOps.Transpose(_weight));
+        var fn = _qOps.QuantizedMatMulOpFor(QuantDType.F32);
+        var gradInputFlat = new Tensor<float>(batchSize, InFeatures);
+        fn(flatGradOut.DataPtr, (byte*)_weight.DataPtr, gradInputFlat.DataPtr, batchSize, OutFeatures, InFeatures);
 
-        using var inputT = TensorOps.Transpose(state.Input);
-        using var dw = ops.MatMul(inputT, flatGradOut);
+        using var inputT = state.Input.Transpose();
+        using var flatGradOutBT = flatGradOut.Transpose();
+        var dw = new Tensor<float>(InFeatures, OutFeatures);
+        fn(inputT.DataPtr, (byte*)flatGradOutBT.DataPtr, dw.DataPtr, InFeatures, batchSize, OutFeatures);
         var wg = state.WeightGrad;
         for (int i = 0; i < dw.ElementCount; i++)
             wg.Data[i] += dw.Data[i];

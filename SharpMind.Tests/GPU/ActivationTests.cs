@@ -1,6 +1,6 @@
 using SharpMind.Core.Activations;
+using SharpMind.Core.Quantization;
 using SharpMind.Core.Tensors;
-using SharpMind.Core.Ops;
 using SharpMind.GPU;
 
 namespace SharpMind.Tests.GPU
@@ -186,11 +186,12 @@ namespace SharpMind.Tests.GPU
             using var aTensor = Tensor<float>.From(a, 2, 2);
             using var bTensor = Tensor<float>.From(b, 2, 2);
 
-            var cpuOps = TensorOpsFactory.Create(SharpMindConfig.Gpt with { Hardware = HardwareTier.Scalar });
-
+            var qOps = QuantizationFactory.Create();
+            var fn = qOps.QuantizedMatMulOpFor(QuantDType.F32);
             var cpuDst = new float[4];
             var cTensor = new Tensor<float>(2, 2);
-            cpuOps.MatMulInto(aTensor, bTensor, cTensor);
+            using var bt = bTensor.Transpose();
+            unsafe { fn(aTensor.DataPtr, (byte*)bt.DataPtr, cTensor.DataPtr, 2, 2, 2); }
             cTensor.Data.CopyTo(cpuDst);
 
             var gpuDst = new float[4];

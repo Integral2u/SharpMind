@@ -229,8 +229,7 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
                 {
                     _medusaHeads.Predict(
                         _normedHiddenScratch,
-                        _draftScratch.AsSpan(1, numHeads),
-                        _model.Ops);
+                        _draftScratch.AsSpan(1, numHeads));
                 }
 
                 // 3. Snapshot cache length before verification so we can trim

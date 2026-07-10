@@ -1,7 +1,6 @@
 ﻿using JigSawDotNet;
 using SharpMind.Core.Activations;
 using SharpMind.Core.Embeddings;
-using SharpMind.Core.Ops;
 using SharpMind.Core.Quantization;
 using SharpMind.Core.Tensors;
 using SharpMind.Model.Arch;
@@ -67,13 +66,12 @@ public static class ModelFactory
 
         var fullMapping = mapping ?? sharpConfig.ToJigSawMapping();
         var acts = ActivationFactory.Create(sharpConfig, fullMapping);
-        var ops = TensorOpsFactory.Create(sharpConfig, fullMapping);
         var qOps = QuantizationFactory.Create(fullMapping);
         NormOpsFactory.SetDefault(sharpConfig);
 
         var embedding = new EmbeddingTable(weights.Config.VocabSize, weights.Config.HiddenDim, weights.EmbeddingWeight, false);
         var blocks = Enumerable.Range(0, weights.Config.NumLayers)
-            .Select(i => BuildBlock(i, weights, sharpConfig, mapping, acts, ops, qOps, sharpConfig.UseHooks)).ToArray();
+            .Select(i => BuildBlock(i, weights, sharpConfig, mapping, acts, qOps, sharpConfig.UseHooks)).ToArray();
 
         // In Cached mode, register callbacks so CachedWeightLoader pushes raw data
         // into layer instances after on-demand loading. Fires immediately for layers
@@ -93,7 +91,7 @@ public static class ModelFactory
 
         var finalNorm = BuildNorm(weights.Config.HiddenDim, sharpConfig, weights.Config.NormEps, weights.FinalNormWeight, weights.FinalNormBias);
 
-        var transformer = new Transformer(weights, embedding, arch, finalNorm, ops, weights.LmHeadWeight, qOps);
+        var transformer = new Transformer(weights, embedding, arch, finalNorm, weights.LmHeadWeight, qOps);
         if (optimizeMemory)
             transformer.FreeFloatWeights();
         return transformer;         
@@ -105,7 +103,6 @@ public static class ModelFactory
         SharpMindConfig sharpConfig,
         Dictionary<string, string>? overrides,
         ActivationOps acts,
-        TensorOps ops,
         QuantizationOps qOps,
         bool useHooks = false)
     {
@@ -128,7 +125,7 @@ public static class ModelFactory
         ArgumentNullException.ThrowIfNull(attn);
         attn.SetWeights(blockWeights);
         
-        var ffn = BuildFfn(weights, sharpConfig, acts, ops, qOps);
+        var ffn = BuildFfn(weights, sharpConfig, acts, qOps);
         ffn.SetWeights(blockWeights);
         
         float eps = weights.Config.NormEps;
@@ -136,23 +133,22 @@ public static class ModelFactory
         var norm2 = BuildNorm(weights.Config.HiddenDim, sharpConfig, eps, blockWeights.Norm2W, blockWeights.Norm2B);
 
         return useHooks
-            ? new HookedTransformerBlock(layerIdx, attn, ffn, norm1, norm2, ops)
-            : new UnhookedTransformerBlock(layerIdx, attn, ffn, norm1, norm2, ops);
+            ? new HookedTransformerBlock(layerIdx, attn, ffn, norm1, norm2)
+            : new UnhookedTransformerBlock(layerIdx, attn, ffn, norm1, norm2);
     }
 
     private static FfnLayer BuildFfn(
         TransformerWeights weights,
         SharpMindConfig sharpConfig,
         ActivationOps acts,
-        TensorOps ops,
         QuantizationOps qOps)
     {
         var blockWeights = weights.Blocks[0]; // Weight shapes are same across blocks for FFN
         return sharpConfig.Ffn switch
         {
-            FfnKind.Dense => new DenseFfnLayer(weights.Config, acts, ops, qOps, blockWeights),
-            FfnKind.Gated => new GatedFfnLayer(weights.Config, acts, ops, qOps, blockWeights),
-            FfnKind.MoE => new MoEFfnLayer(weights.Config, acts, ops, qOps, blockWeights),
+            FfnKind.Dense => new DenseFfnLayer(weights.Config, acts, qOps, blockWeights),
+            FfnKind.Gated => new GatedFfnLayer(weights.Config, acts, qOps, blockWeights),
+            FfnKind.MoE => new MoEFfnLayer(weights.Config, acts, qOps, blockWeights),
             _ => throw new NotSupportedException($"Unknown FfnKind: {sharpConfig.Ffn}")
         };
     }

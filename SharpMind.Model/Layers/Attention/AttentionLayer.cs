@@ -1,7 +1,6 @@
 ﻿using System.Runtime.CompilerServices;
 using JigSawDotNet;
 using SharpMind.Core.Embeddings;
-using SharpMind.Core.Ops;
 using SharpMind.Core.Quantization;
 using SharpMind.Core.Tensors;
 using SharpMind.Core.Training;
@@ -14,6 +13,7 @@ namespace SharpMind.Model.Layers.Attention;
         private const string NS = $"{nameof(SharpMind)}.{nameof(Model)}.{nameof(Layers)}.{nameof(Attention)}.{nameof(AttentionKernels)}";
 
         protected readonly ModelConfig Config;
+        protected readonly QuantizationOps _qOps;
         public readonly LinearLayer Wq;
         public readonly LinearLayer Wk;
         public readonly LinearLayer Wv;
@@ -66,6 +66,7 @@ namespace SharpMind.Model.Layers.Attention;
     protected AttentionLayer(ModelConfig config, QuantizationOps qOps, TransformerWeights.BlockWeights? weights)
     {
         Config = config;
+        _qOps = qOps;
         int qDim = config.NumHeads * config.HeadDim;
         int kvDim = config.NumKvHeads * config.HeadDim;
         Wq = new LinearLayer("q_proj", config.HiddenDim, qDim, bias: true, qOps: qOps, weights?.Wq, weights?.WqBias);
@@ -288,7 +289,7 @@ namespace SharpMind.Model.Layers.Attention;
         SharpMindConfig.ValMqaFlashScalar, NS + "." + nameof(AttentionKernels.ScaledDotProductFlashScalar))]
     public abstract unsafe void ScaledDotProduct(float* q, float* k, float* v, float* o, int seqLen, int kvLen, int headDim, float scale, bool causal, int qStride, int oStride, float alibiSlope);
 
-    public Tensor<float> Forward( Tensor<float> x, TensorOps ops, int positionOffset = 0, bool causal = true, IKVCache? cache = null, Core.Memory.Workspace? workspace = null)
+    public Tensor<float> Forward( Tensor<float> x, int positionOffset = 0, bool causal = true, IKVCache? cache = null, Core.Memory.Workspace? workspace = null)
     {
         ThrowIfDisposed();
         int batch = x.Shape[0];
@@ -302,9 +303,9 @@ namespace SharpMind.Model.Layers.Attention;
         float scale = 1f / MathF.Sqrt(headDim);
 
         // Individual Q, K, V projections (each uses quantized forward path when available)
-        using var q = Wq.Forward(x, ops, workspace);
-        using var k = Wk.Forward(x, ops, workspace);
-        using var v = Wv.Forward(x, ops, workspace);
+        using var q = Wq.Forward(x, workspace);
+        using var k = Wk.Forward(x, workspace);
+        using var v = Wv.Forward(x, workspace);
         if (DumpProjections && _dumpLayerCounter++ < 1)
         {
             void DumpProj(string label, Tensor<float> t)
@@ -440,26 +441,29 @@ namespace SharpMind.Model.Layers.Attention;
             allTempV?.Dispose();
         }
 
-        var projected = Wo.Forward(output, ops, workspace);
+        var projected = Wo.Forward(output, workspace);
         output.Dispose();
         return projected;
     }
 
-    public (Tensor<float> Output, AttentionLayerState State) ForwardWithState(Tensor<float> x, TensorOps ops, int positionOffset = 0)
+    public (Tensor<float> Output, AttentionLayerState State) ForwardWithState(Tensor<float> x, int positionOffset = 0)
     {
-        var output = Forward(x, ops, positionOffset);
+        var output = Forward(x, positionOffset);
         var state = new AttentionLayerState { Input = x, Output = output };
         return (output, state);
     }
 
-    public Tensor<float> Backward(Tensor<float> gradOutput, TensorOps ops)
+    public unsafe Tensor<float> Backward(Tensor<float> gradOutput)
     {
-        // Simplified: propagate gradient through output projection
-        // Full backward requires full attention kernel gradients - stub for now
-        using var wOutT = TensorOps.Transpose(Wo.Weight);
-        var dHidden = ops.MatMul(gradOutput, wOutT);
-        using var wQT = TensorOps.Transpose(Wq.Weight);
-        var gradInput = ops.MatMul(dHidden, wQT);
+        var fn = _qOps.QuantizedMatMulOpFor(QuantDType.F32);
+
+        using var wOutT = Wo.Weight.Transpose();
+        var dHidden = new Tensor<float>(gradOutput.Shape.Rows, Wo.InFeatures);
+        fn(gradOutput.DataPtr, (byte*)wOutT.DataPtr, dHidden.DataPtr, gradOutput.Shape.Rows, gradOutput.Shape.Cols, Wo.InFeatures);
+
+        using var wQT = Wq.Weight.Transpose();
+        var gradInput = new Tensor<float>(dHidden.Shape.Rows, Wq.InFeatures);
+        fn(dHidden.DataPtr, (byte*)wQT.DataPtr, gradInput.DataPtr, dHidden.Shape.Rows, dHidden.Shape.Cols, Wq.InFeatures);
         dHidden.Dispose();
         wOutT.Dispose();
         wQT.Dispose();

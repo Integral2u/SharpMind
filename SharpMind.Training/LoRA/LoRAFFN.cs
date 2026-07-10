@@ -1,6 +1,5 @@
 using SharpMind.Core.Tensors;
 using SharpMind.Core.Training;
-using SharpMind.Core.Ops;
 
 namespace SharpMind.Training.LoRA;
 
@@ -13,14 +12,14 @@ public sealed class LoRAFFN(int hiddenDim, int ffnDim, LoRAConfig config) : IDis
     private readonly LoRALayer _up = new(hiddenDim, ffnDim, config.Rank, config.Scale);
     private readonly LoRALayer _down = new(ffnDim, hiddenDim, config.Rank, config.Scale);
 
-    public Tensor<float> ApplyGate(Tensor<float> x, Tensor<float> Wgate, TensorOps ops)
-        => _gate.Forward(x, Wgate, ops);
+    public Tensor<float> ApplyGate(Tensor<float> x, Tensor<float> Wgate)
+        => _gate.Forward(x, Wgate);
 
-    public Tensor<float> ApplyUp(Tensor<float> x, Tensor<float> Wup, TensorOps ops)
-        => _up.Forward(x, Wup, ops);
+    public Tensor<float> ApplyUp(Tensor<float> x, Tensor<float> Wup)
+        => _up.Forward(x, Wup);
 
-    public Tensor<float> ApplyDown(Tensor<float> x, Tensor<float> Wdown, TensorOps ops)
-        => _down.Forward(x, Wdown, ops);
+    public Tensor<float> ApplyDown(Tensor<float> x, Tensor<float> Wdown)
+        => _down.Forward(x, Wdown);
 
     public IEnumerable<Parameter> Parameters()
     {

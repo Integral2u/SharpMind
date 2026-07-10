@@ -9,7 +9,7 @@ public sealed record SharpMindConfig
     public const string PtrGate = "ApplyGate";
     public const string PtrRMSNorm = "ApplyRMSNormRow";
     public const string PtrSoftmax = "ApplySoftmaxRow";
-    public const string PtrMatMul = "MatMulInner";
+
     public const string PtrAttention = "ScaledDotProduct";
     public const string PtrFfn = "ApplyFfn";
     public const string PtrNorm = "ApplyRow";
@@ -20,7 +20,7 @@ public sealed record SharpMindConfig
     public const string KeyGate = "gate";
     public const string KeyRMSNorm = "rmsnorm";
     public const string KeySoftmax = "softmax";
-    public const string KeyMatMul = "matmul";
+
     // Model Layer Keys
     public const string KeyAttention = "attention";
     public const string KeyAttentionQ8 = "attention_q8";

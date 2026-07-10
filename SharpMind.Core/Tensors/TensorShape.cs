@@ -1,4 +1,3 @@
-using SharpMind.Core.Ops;
 using System.Runtime.CompilerServices;
 using System.Text;
 
@@ -156,10 +155,10 @@ public readonly struct TensorShape : IEquatable<TensorShape>
     public static void AssertMatMulCompatible(TensorShape a, TensorShape b)
     {
         if (a.Rank != 2 || b.Rank != 2)
-            throw new ArgumentException($"{nameof(TensorOps.MatMul)} requires 2-D tensors, got {a} and {b}.");
+            throw new ArgumentException($"MatMul requires 2-D tensors, got {a} and {b}.");
         if (a.Cols != b.Rows)
             throw new ArgumentException(
-                $"{nameof(TensorOps.MatMul)} shape mismatch: {a} · {b} (inner dims {a.Cols} ≠ {b.Rows}).");
+                $"MatMul shape mismatch: {a} · {b} (inner dims {a.Cols} ≠ {b.Rows}).");
     }
 
     // equality

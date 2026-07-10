@@ -1,6 +1,5 @@
 using SharpMind.Core.Tensors;
 using SharpMind.Core.Training;
-using SharpMind.Core.Ops;
 
 namespace SharpMind.Training.LoRA;
 
@@ -29,17 +28,17 @@ public sealed class LoRAAttention : IDisposable
         _loraO = new LoRALayer(hiddenDim, hiddenDim, config.Rank, config.Scale);
     }
 
-    public Tensor<float> ApplyToQ(Tensor<float> x, Tensor<float> Wq, TensorOps ops)
-        => _loraQ!.Forward(x, Wq, ops);
+    public Tensor<float> ApplyToQ(Tensor<float> x, Tensor<float> Wq)
+        => _loraQ!.Forward(x, Wq);
 
-    public Tensor<float> ApplyToK(Tensor<float> x, Tensor<float> Wk, TensorOps ops)
-        => _loraK!.Forward(x, Wk, ops);
+    public Tensor<float> ApplyToK(Tensor<float> x, Tensor<float> Wk)
+        => _loraK!.Forward(x, Wk);
 
-    public Tensor<float> ApplyToV(Tensor<float> x, Tensor<float> Wv, TensorOps ops)
-        => _loraV!.Forward(x, Wv, ops);
+    public Tensor<float> ApplyToV(Tensor<float> x, Tensor<float> Wv)
+        => _loraV!.Forward(x, Wv);
 
-    public Tensor<float> ApplyToO(Tensor<float> x, Tensor<float> Wo, TensorOps ops)
-        => _loraO!.Forward(x, Wo, ops);
+    public Tensor<float> ApplyToO(Tensor<float> x, Tensor<float> Wo)
+        => _loraO!.Forward(x, Wo);
 
     public IEnumerable<Parameter> Parameters()
     {

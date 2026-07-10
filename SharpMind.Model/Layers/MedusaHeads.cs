@@ -1,5 +1,4 @@
 using SharpMind.Core.Memory;
-using SharpMind.Core.Ops;
 using SharpMind.Core.Quantization;
 using SharpMind.Core.Tensors;
 
@@ -62,7 +61,7 @@ public sealed class MedusaHeads : IDisposable
     /// for offsets 0..K-1 (offset 0 = immediate next token, same as LM head).
     /// Returns K draft token IDs in outputTokens.
     /// </summary>
-    public unsafe void Predict(Span<float> hiddenState, Span<int> outputTokens, TensorOps ops)
+    public unsafe void Predict(Span<float> hiddenState, Span<int> outputTokens)
     {
         int k = Math.Min(outputTokens.Length, _numHeads);
         if (k == 0) return;
@@ -73,7 +72,7 @@ public sealed class MedusaHeads : IDisposable
         }
         else
         {
-            PredictFloat(hiddenState, outputTokens, k, ops);
+            PredictFloat(hiddenState, outputTokens, k);
         }
     }
 
@@ -122,7 +121,7 @@ public sealed class MedusaHeads : IDisposable
         }
     }
 
-    private unsafe void PredictFloat(Span<float> hiddenState, Span<int> outputTokens, int k, TensorOps ops)
+    private unsafe void PredictFloat(Span<float> hiddenState, Span<int> outputTokens, int k)
     {
         using var headsTensor = new Tensor<float>(k, _hiddenDim);
         for (int h = 0; h < k; h++)
@@ -143,7 +142,12 @@ public sealed class MedusaHeads : IDisposable
                 row[i] = row[i] / (1.0f + MathF.Exp(-row[i]));
         }
 
-        using var logits = ops.MatMulWithBT(headsTensor, _lmHeadWeight);
+        using var logits = new Tensor<float>(k, _vocabSize);
+        unsafe
+        {
+            var fn = _qOps!.QuantizedMatMulOpFor(QuantDType.F32);
+            fn(headsTensor.DataPtr, (byte*)_lmHeadWeight.DataPtr, logits.DataPtr, k, _hiddenDim, _vocabSize);
+        }
 
         for (int h = 0; h < k; h++)
         {
@@ -178,7 +182,7 @@ public sealed class MedusaHeads : IDisposable
     ///   steps - number of training epochs over the data
     /// </summary>
     public void Calibrate(Tensor<float> hiddenStates, int[][] targetTokens,
-        float learningRate = 0.01f, int steps = 50, TensorOps? ops = null)
+        float learningRate = 0.01f, int steps = 50)
     {
         int numSamples = hiddenStates.Shape.Rows;
         int targetLen = targetTokens[0].Length;

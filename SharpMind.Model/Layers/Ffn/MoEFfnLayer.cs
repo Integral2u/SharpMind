@@ -1,15 +1,14 @@
 ﻿using SharpMind.Core.Activations;
-using SharpMind.Core.Ops;
 using SharpMind.Core.Quantization;
 using SharpMind.Core.Tensors;
 using SharpMind.Model.Config;
 
 namespace SharpMind.Model.Layers.Ffn;
 
-public sealed class MoEFfnLayer(ModelConfig config, ActivationOps acts, TensorOps ops, QuantizationOps qOps, TransformerWeights.BlockWeights? weights = null) : FfnLayer(config, acts, ops, FfnKind.MoE, qOps, weights)
+public sealed class MoEFfnLayer(ModelConfig config, ActivationOps acts, QuantizationOps qOps, TransformerWeights.BlockWeights? weights = null) : FfnLayer(config, acts, FfnKind.MoE, qOps, weights)
 {
     public override Tensor<float> ApplyFfn(Tensor<float> x, SharpMind.Core.Memory.Workspace? workspace = null)
-        => FfnKernels.MoE(x, Router!, ExpertGate!, ExpertUp!, ExpertDown!, Config.TopKExperts, Acts, Ops, workspace);
+        => FfnKernels.MoE(x, Router!, ExpertGate!, ExpertUp!, ExpertDown!, Config.TopKExperts, Acts, workspace);
 
     public override (Tensor<float> Output, FfnLayerState State) ForwardWithState(Tensor<float> x)
     {

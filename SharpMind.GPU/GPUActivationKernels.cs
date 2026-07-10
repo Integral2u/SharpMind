@@ -187,7 +187,6 @@ public static class GPUActivationKernels
         output[index] = src[index] * rmsInv * weight[index];
     }
 
-    [PuzzlePeice("MatMulInner", SharpMindConfig.KeyMatMul, GPUSharpMindConfig.ValMatMulNaive)]
     public static unsafe void MatMulInnerGPU(float* a, float* bt, float* c, int M, int K, int N)
     {
         var acc = SharedAccelerator;
@@ -207,7 +206,6 @@ public static class GPUActivationKernels
         for (int i = 0; i < M * N; i++) c[i] = gpuData[i];
     }
 
-    [PuzzlePeice("MatMulInner", SharpMindConfig.KeyMatMul, GPUSharpMindConfig.ValMatMulNaive)]
     public static unsafe void MatMulGPU(float* a, float* bt, float* c, int M, int K, int N)
     {
         var acc = SharedAccelerator;
@@ -249,7 +247,6 @@ public static class GPUActivationKernels
     /// stateful method that owns the Accelerator reference and passes the
     /// shared memory buffer dimension as part of the kernel launch.
     /// </summary>
-    [PuzzlePeice("MatMulInner", SharpMindConfig.KeyMatMul, GPUSharpMindConfig.ValMatMulTiled)]
     public static unsafe void MatMulTiledGPU(float* a, float* bt, float* c, int M, int K, int N)
     {
         var acc = SharedAccelerator;

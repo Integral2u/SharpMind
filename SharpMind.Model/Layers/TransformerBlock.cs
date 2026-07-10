@@ -1,5 +1,4 @@
 ﻿using SharpMind.Core.Memory;
-using SharpMind.Core.Ops;
 using SharpMind.Core.Quantization;
 using SharpMind.Core.Tensors;
 using SharpMind.Core.Training;
@@ -14,7 +13,6 @@ public abstract class TransformerBlock : IDisposable
     protected readonly FfnLayer _ffn;
     protected readonly NormLayer _norm1;
     protected readonly NormLayer _norm2;
-    protected readonly TensorOps _ops;
     protected readonly int _layerIdx;
     private bool _disposed;
 
@@ -23,20 +21,18 @@ public abstract class TransformerBlock : IDisposable
     public AttentionLayer Attention => _attention;
     public FfnLayer Ffn => _ffn;
 
-    protected TransformerBlock(int layerIdx, AttentionLayer attention, FfnLayer ffn, NormLayer norm1, NormLayer norm2, TensorOps ops)
+    protected TransformerBlock(int layerIdx, AttentionLayer attention, FfnLayer ffn, NormLayer norm1, NormLayer norm2)
     {
         ArgumentNullException.ThrowIfNull(attention);
         ArgumentNullException.ThrowIfNull(ffn);
         ArgumentNullException.ThrowIfNull(norm1);
         ArgumentNullException.ThrowIfNull(norm2);
-        ArgumentNullException.ThrowIfNull(ops);
 
         _layerIdx = layerIdx;
         _attention = attention;
         _ffn = ffn;
         _norm1 = norm1;
         _norm2 = norm2;
-        _ops = ops;
     }
 
     public abstract Tensor<float> Forward(Tensor<float> x, IKVCache? cache, int positionOffset = 0, bool causal = true, Workspace? workspace = null);

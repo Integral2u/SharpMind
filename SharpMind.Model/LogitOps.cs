@@ -1,15 +1,13 @@
 using SharpMind.Core.Memory;
-using SharpMind.Core.Ops;
 using SharpMind.Core.Quantization;
 using SharpMind.Core.Tensors;
 
 namespace SharpMind.Model;
 
-public sealed class LogitOps(Tensor<float> projectionWeight, byte[]? rawWeight, QuantDType? rawDtype, TensorOps ops, QuantizationOps? qOps)
+public sealed class LogitOps(Tensor<float> projectionWeight, byte[]? rawWeight, QuantDType? rawDtype, QuantizationOps? qOps)
 {
     private readonly Tensor<float> projectionWeight = projectionWeight;
     private readonly byte[]? rawWeight = rawWeight;
-    private readonly TensorOps ops = ops;
     private readonly QuantizationOps? qOps = qOps;
     public readonly bool UseQuantized = rawWeight != null && qOps != null && (rawDtype == QuantDType.Q8_0 || rawDtype == QuantDType.Q5_0 || rawDtype == QuantDType.Q6_K || rawDtype == QuantDType.Q6_K_S);
 
@@ -41,12 +39,14 @@ public sealed class LogitOps(Tensor<float> projectionWeight, byte[]? rawWeight, 
             return result;
         }
 
-        if (workspace != null)
+        unsafe
         {
-            var result = workspace.Rent<float>([M, N]);
-            ops.MatMulWithBTInto(input, projectionWeight, result);
+            var result = workspace != null
+                ? workspace.Rent<float>([M, N])
+                : new Tensor<float>(M, N);
+            var fn = qOps!.QuantizedMatMulOpFor(QuantDType.F32);
+            fn(input.DataPtr, (byte*)projectionWeight.DataPtr, result.DataPtr, M, K, N);
             return result;
         }
-        return ops.MatMulWithBT(input, projectionWeight);
     }
 }

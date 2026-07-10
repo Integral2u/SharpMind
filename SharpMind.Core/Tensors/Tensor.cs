@@ -1,5 +1,7 @@
 using System.Numerics;
 using System.Runtime.CompilerServices;
+using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.X86;
 using SharpMind.Core.Memory;
 
 namespace SharpMind.Core.Tensors;
@@ -255,6 +257,277 @@ public sealed unsafe class Tensor<T> : IDisposable
         if (ElementCount > maxElements) sb.Append(", ...");
         sb.Append(']');
         return sb.ToString();
+    }
+
+    // ── Elementwise operator helpers ──────────────────────────────────────
+
+    private interface IBinaryOp<U> where U : unmanaged, INumber<U>
+    {
+        static abstract Vector<U> Invoke(Vector<U> a, Vector<U> b);
+        static abstract U InvokeScalar(U a, U b);
+    }
+
+    private readonly struct AddOp<U> : IBinaryOp<U> where U : unmanaged, INumber<U>
+    {
+        public static Vector<U> Invoke(Vector<U> a, Vector<U> b) => a + b;
+        public static U InvokeScalar(U a, U b) => a + b;
+    }
+
+    private readonly struct SubtractOp<U> : IBinaryOp<U> where U : unmanaged, INumber<U>
+    {
+        public static Vector<U> Invoke(Vector<U> a, Vector<U> b) => a - b;
+        public static U InvokeScalar(U a, U b) => a - b;
+    }
+
+    private readonly struct MultiplyOp<U> : IBinaryOp<U> where U : unmanaged, INumber<U>
+    {
+        public static Vector<U> Invoke(Vector<U> a, Vector<U> b) => a * b;
+        public static U InvokeScalar(U a, U b) => a * b;
+    }
+
+    private readonly struct DivideOp<U> : IBinaryOp<U> where U : unmanaged, INumber<U>
+    {
+        public static Vector<U> Invoke(Vector<U> a, Vector<U> b) => a / b;
+        public static U InvokeScalar(U a, U b) => a / b;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void BinaryOp<U, TOp>(ReadOnlySpan<U> a, ReadOnlySpan<U> b, Span<U> dst)
+        where U : unmanaged, INumber<U>
+        where TOp : struct, IBinaryOp<U>
+    {
+        int v = Vector<U>.Count, i = 0;
+        for (; i <= dst.Length - v; i += v)
+            TOp.Invoke(new Vector<U>(a[i..]), new Vector<U>(b[i..])).CopyTo(dst[i..]);
+        for (; i < dst.Length; i++)
+            dst[i] = TOp.InvokeScalar(a[i], b[i]);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void ScaleVectorized<U>(ReadOnlySpan<U> src, Span<U> dst, U scalar)
+        where U : unmanaged, INumber<U>
+    {
+        var vs = new Vector<U>(scalar);
+        int v = Vector<U>.Count, i = 0;
+        for (; i <= dst.Length - v; i += v)
+            (new Vector<U>(src[i..]) * vs).CopyTo(dst[i..]);
+        for (; i < dst.Length; i++)
+            dst[i] = src[i] * scalar;
+    }
+
+    private static unsafe Tensor<float> TransposeInternal(Tensor<float> src)
+    {
+        int R = src.Shape.Rows, C = src.Shape.Cols;
+        var dst = new Tensor<float>(C, R);
+        float* pS = src.DataPtr, pD = dst.DataPtr;
+        if (R * C < 4096)
+        {
+            for (int r = 0; r < R; r++)
+                for (int c = 0; c < C; c++)
+                    pD[(long)c * R + r] = pS[(long)r * C + c];
+        }
+        else
+        {
+            System.Threading.Tasks.Parallel.For(0, R, r =>
+            {
+                for (int c = 0; c < C; c++)
+                    pD[(long)c * R + r] = pS[(long)r * C + c];
+            });
+        }
+        return dst;
+    }
+
+    private static unsafe Tensor<float> TransposeLast2D(Tensor<float> src, int M, int N, int batch)
+    {
+        var dst = new Tensor<float>(src.Shape.Reshape(batch, N, M));
+        float* pS = src.DataPtr, pD = dst.DataPtr;
+        for (int b = 0; b < batch; b++)
+        {
+            float* sSlice = pS + (long)b * M * N;
+            float* dSlice = pD + (long)b * N * M;
+            for (int r = 0; r < M; r++)
+                for (int c = 0; c < N; c++)
+                    dSlice[(long)c * M + r] = sSlice[(long)r * N + c];
+        }
+        return dst;
+    }
+
+    // ── Instance elementwise methods ──────────────────────────────────────
+
+    public Tensor<T> Add(Tensor<T> other)
+    {
+        TensorShape.AssertSameShape(Shape, other.Shape);
+        var r = new Tensor<T>(Shape);
+        BinaryOp<T, AddOp<T>>(Data, other.Data, r.Data);
+        return r;
+    }
+
+    public void AddInPlace(Tensor<T> other)
+    {
+        TensorShape.AssertSameShape(Shape, other.Shape);
+        BinaryOp<T, AddOp<T>>(Data, other.Data, Data);
+    }
+
+    public Tensor<T> Subtract(Tensor<T> other)
+    {
+        TensorShape.AssertSameShape(Shape, other.Shape);
+        var r = new Tensor<T>(Shape);
+        BinaryOp<T, SubtractOp<T>>(Data, other.Data, r.Data);
+        return r;
+    }
+
+    public Tensor<T> Multiply(Tensor<T> other)
+    {
+        TensorShape.AssertSameShape(Shape, other.Shape);
+        var r = new Tensor<T>(Shape);
+        BinaryOp<T, MultiplyOp<T>>(Data, other.Data, r.Data);
+        return r;
+    }
+
+    public Tensor<T> Divide(Tensor<T> other)
+    {
+        TensorShape.AssertSameShape(Shape, other.Shape);
+        var r = new Tensor<T>(Shape);
+        BinaryOp<T, DivideOp<T>>(Data, other.Data, r.Data);
+        return r;
+    }
+
+    public Tensor<T> Scale(T scalar)
+    {
+        var r = new Tensor<T>(Shape);
+        ScaleVectorized(Data, r.Data, scalar);
+        return r;
+    }
+
+    public void ScaleInPlace(T scalar)
+    {
+        ScaleVectorized(Data, Data, scalar);
+    }
+
+    public Tensor<T> Clamp(T min, T max)
+    {
+        var r = new Tensor<T>(Shape);
+        var src = Data;
+        var dst = r.Data;
+        int vecLen = Vector<T>.Count;
+        var vMin = new Vector<T>(min);
+        var vMax = new Vector<T>(max);
+        int i = 0;
+        for (; i <= src.Length - vecLen; i += vecLen)
+            Vector.Min(vMax, Vector.Max(vMin, new Vector<T>(src[i..]))).CopyTo(dst[i..]);
+        for (; i < src.Length; i++)
+            dst[i] = T.Clamp(src[i], min, max);
+        return r;
+    }
+
+    public unsafe Tensor<float> Sqrt()
+    {
+        if (typeof(T) != typeof(float))
+            throw new InvalidOperationException("Sqrt is only supported for Tensor<float>.");
+        var tf = Unsafe.As<Tensor<float>>(this);
+        var src = tf.Data;
+        var r = new Tensor<float>(Shape);
+        var dst = r.Data;
+        int i = 0;
+        if (Avx.IsSupported)
+        {
+            fixed (float* pSrc = src, pDst = dst)
+            {
+                for (; i <= src.Length - 8; i += 8)
+                    Avx.Sqrt(Vector256.LoadUnsafe(ref pSrc[i])).StoreUnsafe(ref pDst[i]);
+            }
+        }
+        for (; i < src.Length; i++)
+            dst[i] = MathF.Sqrt(src[i]);
+        return r;
+    }
+
+    public Tensor<T> Abs()
+    {
+        var r = new Tensor<T>(Shape);
+        var src = Data;
+        var dst = r.Data;
+        int vecLen = Vector<T>.Count;
+        int i = 0;
+        for (; i <= src.Length - vecLen; i += vecLen)
+            Vector.Abs(new Vector<T>(src[i..])).CopyTo(dst[i..]);
+        for (; i < src.Length; i++)
+            dst[i] = T.Abs(src[i]);
+        return r;
+    }
+
+    public void MaskedFill(ReadOnlySpan<bool> mask, T value)
+    {
+        if (mask.Length != ElementCount)
+            throw new ArgumentException($"Mask length {mask.Length} must match element count {ElementCount}.");
+        var data = Data;
+        for (int i = 0; i < data.Length; i++)
+            if (mask[i]) data[i] = value;
+    }
+
+    public T Sum()
+    {
+        var data = Data;
+        int vecLen = Vector<T>.Count;
+        var acc = Vector<T>.Zero;
+        int i = 0;
+        for (; i <= data.Length - vecLen; i += vecLen)
+            acc += new Vector<T>(data[i..]);
+        T sum = T.Zero;
+        for (int lane = 0; lane < vecLen; lane++) sum += acc[lane];
+        for (; i < data.Length; i++) sum += data[i];
+        return sum;
+    }
+
+    public T Mean() => Sum() / T.CreateChecked(ElementCount);
+
+    public float Variance()
+    {
+        float mu = float.CreateChecked(Mean());
+        var src = Data;
+        float ss = 0f;
+        for (int i = 0; i < src.Length; i++) { float d = float.CreateChecked(src[i]) - mu; ss += d * d; }
+        return ss / src.Length;
+    }
+
+    public int ArgMax()
+    {
+        var data = Data;
+        T max = data[0];
+        int idx = 0;
+        for (int i = 1; i < data.Length; i++)
+            if (data[i].CompareTo(max) > 0) { max = data[i]; idx = i; }
+        return idx;
+    }
+
+    public Tensor<float> Transpose()
+    {
+        if (typeof(T) != typeof(float))
+            throw new InvalidOperationException("Transpose is only supported for Tensor<float>.");
+        if (Rank != 2)
+            throw new ArgumentException($"Transpose requires rank-2 tensor, got rank {Rank}.");
+        return TransposeInternal(Unsafe.As<Tensor<float>>(this));
+    }
+
+    public void TransposeInPlace()
+    {
+        if (typeof(T) != typeof(float))
+            throw new InvalidOperationException("Transpose is only supported for Tensor<float>.");
+        if (Rank != 2)
+            throw new ArgumentException($"Transpose requires rank-2 tensor, got rank {Rank}.");
+        var tf = Unsafe.As<Tensor<float>>(this);
+        int R = tf.Shape.Rows, C = tf.Shape.Cols;
+        if (R != C) throw new ArgumentException($"In-place transpose requires square matrix [{R},{C}].");
+        var data = tf.Data;
+        for (int r = 0; r < R; r++)
+        {
+            for (int c = r + 1; c < C; c++)
+            {
+                int i = r * C + c;
+                int j = c * R + r;
+                (data[i], data[j]) = (data[j], data[i]);
+            }
+        }
     }
 
     // disposal

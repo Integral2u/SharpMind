@@ -1,6 +1,5 @@
 ﻿using System.Threading.Tasks;
 using SharpMind.Core.Activations;
-using SharpMind.Core.Ops;
 using SharpMind.Core.Tensors;
 
 namespace SharpMind.Model.Layers.Ffn;
@@ -18,12 +17,11 @@ internal static class FfnKernels
         LinearLayer w1,
         LinearLayer w2,
         ActivationOps acts,
-        TensorOps ops,
         SharpMind.Core.Memory.Workspace? workspace = null)
     {
-        using var hidden = w1.Forward(x, ops, workspace);
+        using var hidden = w1.Forward(x, workspace);
         using var acted = acts.Activate(hidden, workspace);
-        return w2.Forward(acted, ops, workspace);
+        return w2.Forward(acted, workspace);
     }
 
     /// <summary>
@@ -36,10 +34,9 @@ internal static class FfnKernels
         LinearLayer wGated,
         LinearLayer wDown,
         ActivationOps acts,
-        TensorOps ops,
         SharpMind.Core.Memory.Workspace? workspace = null)
     {
-        using var fused = wGated.Forward(x, ops, workspace);
+        using var fused = wGated.Forward(x, workspace);
         int ffnDim = wDown.InFeatures;
         int[] fusedDims = fused.Shape.Dims.ToArray();
         int total = fused.ElementCount / (2 * ffnDim);
@@ -53,7 +50,7 @@ internal static class FfnKernels
             var row = flat.RowSpan(i);
             acts.ApplyGate(row[..ffnDim], row[ffnDim..], gated.RowSpan(i));
         }
-        return wDown.Forward(gated, ops, workspace);
+        return wDown.Forward(gated, workspace);
     }
 
 
@@ -67,13 +64,12 @@ internal static class FfnKernels
         LinearLayer wUp,
         LinearLayer wDown,
         ActivationOps acts,
-        TensorOps ops,
         SharpMind.Core.Memory.Workspace? workspace = null)
     {
-        using var gate = wGate.Forward(x, ops, workspace);
-        using var up = wUp.Forward(x, ops, workspace);
+        using var gate = wGate.Forward(x, workspace);
+        using var up = wUp.Forward(x, workspace);
         using var gated = acts.GatedActivate(gate, up, workspace);
-        return wDown.Forward(gated, ops, workspace);
+        return wDown.Forward(gated, workspace);
     }
 
     /// <summary>
@@ -88,7 +84,6 @@ internal static class FfnKernels
         LinearLayer[] wDown,
         int topK,
         ActivationOps acts,
-        TensorOps ops,
         SharpMind.Core.Memory.Workspace? workspace = null)
     {
         int batch = x.ElementCount / x.Shape[^1];
@@ -98,7 +93,7 @@ internal static class FfnKernels
             : new Tensor<float>(x.Shape);
 
         // Router logits: [batch, numExperts]
-        using var logits = router.Forward(x.Rank > 2 ? x.Reshape(batch, hidden) : x, ops, workspace);
+        using var logits = router.Forward(x.Rank > 2 ? x.Reshape(batch, hidden) : x, workspace);
         using var probs = SoftmaxOverExperts(logits, workspace);
 
         // Parallel token processing — no workspace sharing to avoid races
@@ -106,7 +101,7 @@ internal static class FfnKernels
         {
             // Get top-k expert indices for this token (fresh tensor, no workspace)
             using var tokenLogits = Tensor<float>.From(logits.RowSpan(t), logits.Shape.Cols);
-            int[] topKIdx = TensorOps.ArgTopK(tokenLogits, topK);
+            int[] topKIdx = ArgTopK(tokenLogits, topK);
 
             // Accumulate weighted expert outputs
             using var tokenInput = Tensor<float>.From(x.RowSpan(t), hidden);
@@ -120,8 +115,8 @@ internal static class FfnKernels
             {
                 float weight = probs.RowSpan(t)[expertIdx] / weightSum;
                 using var expertOut = Gated(tokenInput, wGate[expertIdx],
-                                             wUp[expertIdx], wDown[expertIdx], acts, ops);
-                TensorOps.AddInPlace(tokenOut, TensorOps.Scale(expertOut, weight));
+                                             wUp[expertIdx], wDown[expertIdx], acts);
+                tokenOut.AddInPlace(expertOut.Scale(weight));
             }
 
             tokenOut.Data.CopyTo(result.RowSpan(t));
@@ -148,5 +143,88 @@ internal static class FfnKernels
         }
         return result;
     }
-}
 
+    /// <summary>Returns the flat indices of the top <paramref name="k"/> elements (sorted descending).</summary>
+    private static int[] ArgTopK(Tensor<float> a, int k)
+    {
+        if (k <= 0 || k > a.ElementCount)
+            throw new ArgumentOutOfRangeException(nameof(k), $"k={k} must be in [1, {a.ElementCount}].");
+
+        int n = a.ElementCount;
+        ReadOnlySpan<float> data = a.Data;
+
+        if (k >= n)
+        {
+            var indices = new int[n];
+            for (int i = 0; i < n; i++) indices[i] = i;
+            float[] dataArr = a.Data.ToArray();
+            Array.Sort(indices, (x, y) => dataArr[y].CompareTo(dataArr[x]));
+            var result = new int[k];
+            Array.Copy(indices, result, k);
+            return result;
+        }
+
+        if (k <= 64)
+        {
+            var pq = new PriorityQueue<int, float>();
+            for (int i = 0; i < n; i++)
+            {
+                float val = data[i];
+                if (pq.Count < k)
+                {
+                    pq.Enqueue(i, val);
+                }
+                else if (pq.TryPeek(out _, out float minPriority) && val > minPriority)
+                {
+                    pq.Dequeue();
+                    pq.Enqueue(i, val);
+                }
+            }
+            var result = new int[k];
+            for (int i = k - 1; i >= 0; i--) result[i] = pq.Dequeue();
+            return result;
+        }
+
+        return ArgTopKIntroselectArray(data, k);
+    }
+
+    private static int[] ArgTopKIntroselectArray(ReadOnlySpan<float> data, int k)
+    {
+        int n = data.Length;
+        var indices = new int[n];
+        for (int i = 0; i < n; i++) indices[i] = i;
+
+        int left = 0, right = n - 1;
+        int target = k - 1;
+
+        while (left < right)
+        {
+            int pivot = PartitionArray(data, indices, left, right);
+            if (pivot == target) break;
+            if (pivot > target) right = pivot - 1;
+            else left = pivot + 1;
+        }
+
+        var result = new int[k];
+        for (int i = 0; i < k; i++) result[i] = indices[i];
+        float[] dataArr = data.ToArray();
+        Array.Sort(result, (x, y) => dataArr[y].CompareTo(dataArr[x]));
+        return result;
+    }
+
+    private static int PartitionArray(ReadOnlySpan<float> data, int[] indices, int left, int right)
+    {
+        float pivot = data[indices[left]];
+        int i = left;
+        for (int j = left + 1; j <= right; j++)
+        {
+            if (data[indices[j]] > pivot)
+            {
+                i++;
+                (indices[i], indices[j]) = (indices[j], indices[i]);
+            }
+        }
+        (indices[i], indices[left]) = (indices[left], indices[i]);
+        return i;
+    }
+}

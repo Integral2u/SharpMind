@@ -1,6 +1,5 @@
 ﻿using JigSawDotNet;
 using SharpMind.Core.Activations;
-using SharpMind.Core.Ops;
 using SharpMind.Core.Quantization;
 using SharpMind.Core.Tensors;
 using SharpMind.Core.Training;
@@ -21,7 +20,7 @@ public abstract class FfnLayer : IDisposable
 
     protected readonly ModelConfig Config;
     protected readonly ActivationOps Acts;
-    protected readonly TensorOps Ops;
+    protected readonly QuantizationOps _qOps;
     private bool _disposed;
 
     // Dense weights
@@ -113,16 +112,16 @@ public abstract class FfnLayer : IDisposable
     protected readonly LinearLayer[]? ExpertUp;
     protected readonly LinearLayer[]? ExpertDown;
 
-    protected FfnLayer(ModelConfig config, ActivationOps acts, TensorOps ops, FfnKind kind, QuantizationOps qOps)
-        : this(config, acts, ops, kind, qOps, null)
+    protected FfnLayer(ModelConfig config, ActivationOps acts, FfnKind kind, QuantizationOps qOps)
+        : this(config, acts, kind, qOps, null)
     {
     }
 
-    protected FfnLayer(ModelConfig config, ActivationOps acts, TensorOps ops, FfnKind kind, QuantizationOps qOps, TransformerWeights.BlockWeights? weights)
+    protected FfnLayer(ModelConfig config, ActivationOps acts, FfnKind kind, QuantizationOps qOps, TransformerWeights.BlockWeights? weights)
     {
         Config = config;
         Acts = acts;
-        Ops = ops;
+        _qOps = qOps;
 
         switch (kind)
         {

@@ -12,8 +12,6 @@ public static class GPUSharpMindConfig
     public const string KeyGate = SharpMindConfig.KeyGate;
     public const string KeySoftmax = SharpMindConfig.KeySoftmax;
     public const string KeyRMSNorm = SharpMindConfig.KeyRMSNorm;
-    public const string KeyMatMul = SharpMindConfig.KeyMatMul;
-
     // Mapping values (GPU suffix)
     public const string ValReLU = "relugpu";
     public const string ValGELU = "gelugpu";
@@ -93,7 +91,6 @@ public static class GPUSharpMindConfig
         mapping[SharpMindConfig.KeyGate] = ValGeGLU;
         mapping[SharpMindConfig.KeySoftmax] = ValSoftmax;
         mapping[SharpMindConfig.KeyRMSNorm] = ValRMSNorm;
-        mapping[SharpMindConfig.KeyMatMul]  = ValMatMulNaive;
         mapping[QuantizationKeys.KeyVecDotQ3K]   = ValVecDotQ3K;
         mapping[QuantizationKeys.KeyVecDotQ4K]   = ValVecDotQ4K;
         mapping[QuantizationKeys.KeyVecDotQ5K]   = ValVecDotQ5K;

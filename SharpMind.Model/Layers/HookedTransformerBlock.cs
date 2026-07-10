@@ -1,5 +1,4 @@
 using SharpMind.Core.Memory;
-using SharpMind.Core.Ops;
 using SharpMind.Core.Tensors;
 using SharpMind.Model.Layers.Attention;
 using SharpMind.Model.Layers.Ffn;
@@ -12,8 +11,8 @@ public sealed class HookedTransformerBlock : TransformerBlock
 
     public IActivationHook? Hook => _hook;
 
-    public HookedTransformerBlock(int layerIdx, AttentionLayer attention, FfnLayer ffn, NormLayer norm1, NormLayer norm2, TensorOps ops)
-        : base(layerIdx, attention, ffn, norm1, norm2, ops) { }
+    public HookedTransformerBlock(int layerIdx, AttentionLayer attention, FfnLayer ffn, NormLayer norm1, NormLayer norm2)
+        : base(layerIdx, attention, ffn, norm1, norm2) { }
 
     public override void SetActivationHook(IActivationHook? hook) => _hook = hook;
 
@@ -23,11 +22,11 @@ public sealed class HookedTransformerBlock : TransformerBlock
 
         var normed1 = _norm1.Forward(x, workspace);
         _hook?.OnPreAttention(_layerIdx, normed1);
-        var attnOut = _attention.Forward(normed1, _ops, positionOffset, causal, cache, workspace);
+        var attnOut = _attention.Forward(normed1, positionOffset, causal, cache, workspace);
         normed1.Dispose();
         _hook?.OnPostAttention(_layerIdx, attnOut);
 
-        TensorOps.AddInPlace(x, attnOut);
+        x.AddInPlace(attnOut);
         attnOut.Dispose();
 
         var normed2 = _norm2.Forward(x, workspace);
@@ -35,7 +34,7 @@ public sealed class HookedTransformerBlock : TransformerBlock
         normed2.Dispose();
         _hook?.OnPostFFN(_layerIdx, ffnOut);
 
-        TensorOps.AddInPlace(x, ffnOut);
+        x.AddInPlace(ffnOut);
         ffnOut.Dispose();
 
         return x;

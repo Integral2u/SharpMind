@@ -1,5 +1,4 @@
 ﻿using SharpMind.Core.Embeddings;
-using SharpMind.Core.Ops;
 using SharpMind.Core.Quantization;
 using SharpMind.Core.Tensors;
 using SharpMind.Core.Training;
@@ -15,7 +14,6 @@ public sealed class Transformer : IDisposable
     private readonly EmbeddingTable _embedding;
     private readonly IArchitecture _arch;
     private readonly NormLayer _finalNorm;
-    private readonly TensorOps _ops;
     private bool _disposed;
 
     // Separate LM head for non-weight-tied models (e.g. LLaMA 2/3).
@@ -35,7 +33,6 @@ public sealed class Transformer : IDisposable
         EmbeddingTable embedding,
         IArchitecture arch,
         NormLayer finalNorm,
-        TensorOps ops,
         Tensor<float>? lmHead = null,
         QuantizationOps? qOps = null)
     {
@@ -43,19 +40,17 @@ public sealed class Transformer : IDisposable
         ArgumentNullException.ThrowIfNull(embedding);
         ArgumentNullException.ThrowIfNull(arch);
         ArgumentNullException.ThrowIfNull(finalNorm);
-        ArgumentNullException.ThrowIfNull(ops);
         
         _weights = weights;
         _embedding = embedding;
         _arch = arch;
         _finalNorm = finalNorm;
-        _ops = ops;
         _lmHead = lmHead;
         _qOps = qOps;
         var projWeight = _lmHead ?? _embedding.Weight;
         var rawW = _lmHead != null ? _weights.RawLmHead : _weights.RawEmbedding;
         var rawDtype = _lmHead != null ? _weights.RawLmHeadDtype : _weights.RawEmbeddingDtype;
-        _logitOps = new LogitOps(projWeight, rawW, rawDtype, _ops, _qOps);
+        _logitOps = new LogitOps(projWeight, rawW, rawDtype, _qOps);
 
         if (arch is DecoderArch decodeArch)
             _blocks = decodeArch.Blocks;
@@ -92,7 +87,6 @@ public sealed class Transformer : IDisposable
             block.SetActivationHook(hook);
     }
 
-    public TensorOps Ops => _ops;
     public byte[]? RawEmbedding => _weights.RawEmbedding;
     public QuantDType? RawEmbeddingDtype => _weights.RawEmbeddingDtype;
     public QuantizationOps? QOps => _qOps;
@@ -325,10 +319,14 @@ public sealed class Transformer : IDisposable
         
         using var normedFlat = normed.Reshape(batch * seqLen, _weights.Config.HiddenDim);
         var projectionWeight = _lmHead ?? _embedding.Weight;
-        var logits = _ops.MatMulWithBT(normedFlat, projectionWeight);
+        using var logits = new Tensor<float>(batch * seqLen, _weights.Config.VocabSize);
+        unsafe
+        {
+            var fn = _qOps!.QuantizedMatMulOpFor(QuantDType.F32);
+            fn(normedFlat.DataPtr, (byte*)projectionWeight.DataPtr, logits.DataPtr, batch * seqLen, _weights.Config.HiddenDim, _weights.Config.VocabSize);
+        }
         
         var result = logits.Reshape(batch, seqLen, _weights.Config.VocabSize);
-        logits.Dispose();
         
         var state = new TransformerState(positionOffset)
         {
@@ -350,7 +348,14 @@ public sealed class Transformer : IDisposable
         int hidden = _weights.Config.HiddenDim;
         
         // gradLogitsFlat [M, Vocab] @ W [Vocab, Hidden] → gradNormedFlat [M, Hidden]
-        using var gradNormedFlat = _ops.MatMul(gradLogits.Reshape(batch * seqLen, _weights.Config.VocabSize), _embedding.Weight);
+        using var embeddingBT = _embedding.Weight.Transpose();
+        var gradLogitsFlat = gradLogits.Reshape(batch * seqLen, _weights.Config.VocabSize);
+        using var gradNormedFlat = new Tensor<float>(batch * seqLen, _weights.Config.HiddenDim);
+        unsafe
+        {
+            var fn = _qOps!.QuantizedMatMulOpFor(QuantDType.F32);
+            fn(gradLogitsFlat.DataPtr, (byte*)embeddingBT.DataPtr, gradNormedFlat.DataPtr, batch * seqLen, _weights.Config.VocabSize, _weights.Config.HiddenDim);
+        }
         
         using var gradHidden = _finalNorm.Backward(gradNormedFlat.Reshape(batch, seqLen, hidden), new NormLayerState(1, hidden));
 

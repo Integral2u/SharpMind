@@ -16,7 +16,6 @@ public class MappingBuilder(HardwareTier hardware = HardwareTier.Auto)
         _mapping[KeyGate] = $"{gate}{hw}";
         _mapping[SharpMindConfig.KeySoftmax] = hw;
         _mapping[SharpMindConfig.KeyRMSNorm] = hw;
-        _mapping[SharpMindConfig.KeyMatMul] = GetMatMulHwKey();
         _mapping[SharpMindConfig.KeyAttention] = string.IsNullOrEmpty(hw)
             ? $"{config.Attention.ToString().ToLowerInvariant()}{flash}scalar"
             : $"{config.Attention.ToString().ToLowerInvariant()}{flash}{hw}";
@@ -116,13 +115,6 @@ public class MappingBuilder(HardwareTier hardware = HardwareTier.Auto)
         HardwareTier.FMA => "fma",
         HardwareTier.AVX2 => "avx2",
         _ => ""
-    };
-
-    private string GetMatMulHwKey() => _hardware switch
-    {
-        HardwareTier.FMA => "fma",
-        HardwareTier.AVX2 => "avx2",
-        _ => "scalar"
     };
 
     private string QuantHwSuffix() => _hardware switch

@@ -1,19 +1,18 @@
 ﻿using SharpMind.Core.Activations;
-using SharpMind.Core.Ops;
 using SharpMind.Core.Quantization;
 using SharpMind.Core.Tensors;
 using SharpMind.Model.Config;
 
 namespace SharpMind.Model.Layers.Ffn;
 
-public sealed class GatedFfnLayer(ModelConfig config, ActivationOps acts, TensorOps ops, QuantizationOps qOps, TransformerWeights.BlockWeights? weights = null) : FfnLayer(config, acts, ops, FfnKind.Gated, qOps, weights)
+public sealed class GatedFfnLayer(ModelConfig config, ActivationOps acts, QuantizationOps qOps, TransformerWeights.BlockWeights? weights = null) : FfnLayer(config, acts, FfnKind.Gated, qOps, weights)
 {
     public override Tensor<float> ApplyFfn(Tensor<float> x, SharpMind.Core.Memory.Workspace? workspace = null)
-        => FfnKernels.Gated(x, WGated!, WDown!, Acts, Ops, workspace);
+        => FfnKernels.Gated(x, WGated!, WDown!, Acts, workspace);
 
     public override (Tensor<float> Output, FfnLayerState State) ForwardWithState(Tensor<float> x)
     {
-        var (Output, _) = WGated!.ForwardWithState(x, Ops);
+        var (Output, _) = WGated!.ForwardWithState(x);
         using var gateUp = Output;
         int ffnDim = Config.FfnDim;
         int total = gateUp.ElementCount / (2 * ffnDim);
@@ -27,18 +26,21 @@ public sealed class GatedFfnLayer(ModelConfig config, ActivationOps acts, Tensor
             var row = flat.RowSpan(i);
             Acts.ApplyGate(row[..ffnDim], row[ffnDim..], activated.RowSpan(i));
         }
-        var output = WDown!.Forward(activated, Ops);
+        var output = WDown!.Forward(activated);
         var state = new FfnLayerState { Input = x, Output = output, Kind = FfnKind.Gated };
         return (output, state);
     }
 
-    public override Tensor<float> Backward(Tensor<float> gradOutput, FfnLayerState state)
+    public override unsafe Tensor<float> Backward(Tensor<float> gradOutput, FfnLayerState state)
     {
-        using var wDownT = TensorOps.Transpose(WDown!.Weight);
-        var dHidden = Ops.MatMul(gradOutput, wDownT);
+        var fn = _qOps.QuantizedMatMulOpFor(QuantDType.F32);
+
+        using var wDownT = WDown!.Weight.Transpose();
+        var dHidden = new Tensor<float>(gradOutput.Shape.Rows, WDown.InFeatures);
+        fn(gradOutput.DataPtr, (byte*)wDownT.DataPtr, dHidden.DataPtr, gradOutput.Shape.Rows, gradOutput.Shape.Cols, WDown.InFeatures);
+
         int ffnDim = Config.FfnDim;
         int batchSize = dHidden.ElementCount / ffnDim;
-                int hiddenDim = WGated.InFeatures;
 
         // Fused backward: reconstruct [B, 2*fD] gradient from [B, fD] gradient.
         // Gate and up have the same gradient (dHidden) in this simplified version.
@@ -52,8 +54,9 @@ public sealed class GatedFfnLayer(ModelConfig config, ActivationOps acts, Tensor
         }
         dHidden.Dispose();
 
-        using var wFusedT = TensorOps.Transpose(WGated!.Weight);
-        var gradInput = Ops.MatMul(dFused, wFusedT);
+        using var wFusedT = WGated!.Weight.Transpose();
+        var gradInput = new Tensor<float>(batchSize, WGated.InFeatures);
+        fn(dFused.DataPtr, (byte*)wFusedT.DataPtr, gradInput.DataPtr, batchSize, fusedDim, WGated.InFeatures);
         dFused.Dispose();
         return gradInput;
     }
