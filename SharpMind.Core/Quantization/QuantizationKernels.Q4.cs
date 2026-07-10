@@ -331,10 +331,10 @@ public static partial class QuantizationKernels
         for (int b = 0; b < nBlocks; b++)
         {
             byte* block = rawWeights + (long)(startBlock + b) * BLOCK_BYTES;
-            byte* scales = block;
-            byte* qs = block + 12;
-            float dSuper = HalfToFloat_Scalar(*(ushort*)(block + 140));
-            float minSuper = HalfToFloat_Scalar(*(ushort*)(block + 142));
+            float dSuper = HalfToFloat_Scalar(*(ushort*)(block + 0));
+            float minSuper = HalfToFloat_Scalar(*(ushort*)(block + 2));
+            byte* scales = block + 4;
+            byte* qs = block + 16;
 
             int curBlockStart = (b == 0) ? colBlockStart : 0;
             int blockEnd = Math.Min(QK_K, inFeatures + colBlockStart - b * QK_K);
@@ -344,26 +344,15 @@ public static partial class QuantizationKernels
                 {
                     int basePos = n16 + j * 32;
                     int isc = (n16 / 128) * 4 + j;
-                    float s0 = GetScaleMinK4_Scale_Scalar(isc * 2, scales);
-                    float m0 = GetScaleMinK4_Min_Scalar(isc * 2, scales);
-                    for (int l = 0; l < 16 && basePos + l < blockEnd; l++)
+                    float s = GetScaleMinK4_Scale_Scalar(isc, scales);
+                    float m = GetScaleMinK4_Min_Scalar(isc, scales);
+                    for (int l = 0; l < 32 && basePos + l < blockEnd; l++)
                     {
                         int idx = basePos + l;
                         int qsByte = idx / 2;
                         int qsShift = (idx & 1) * 4;
                         int v = (qs[qsByte] >> qsShift) & 0x0F;
-                        sum += input[b * QK_K + idx - colBlockStart] * (s0 * v * dSuper - m0 * minSuper);
-                    }
-
-                    float s1 = GetScaleMinK4_Scale_Scalar(isc * 2 + 1, scales);
-                    float m1 = GetScaleMinK4_Min_Scalar(isc * 2 + 1, scales);
-                    for (int l = 0; l < 16 && basePos + 16 + l < blockEnd; l++)
-                    {
-                        int idx = basePos + 16 + l;
-                        int qsByte = idx / 2;
-                        int qsShift = (idx & 1) * 4;
-                        int v = (qs[qsByte] >> qsShift) & 0x0F;
-                        sum += input[b * QK_K + idx - colBlockStart] * (s1 * v * dSuper - m1 * minSuper);
+                        sum += input[b * QK_K + idx - colBlockStart] * (s * v * dSuper - m * minSuper);
                     }
                 }
             }
@@ -383,10 +372,10 @@ public static partial class QuantizationKernels
         for (int b = 0; b < nBlocks; b++)
         {
             byte* block = rawWeights + (long)(startBlock + b) * BLOCK_BYTES;
-            byte* scales = block;
-            byte* qs = block + 12;
-            float dSuper = HalfToFloat_F16C(*(ushort*)(block + 140));
-            float minSuper = HalfToFloat_F16C(*(ushort*)(block + 142));
+            float dSuper = HalfToFloat_F16C(*(ushort*)(block + 0));
+            float minSuper = HalfToFloat_F16C(*(ushort*)(block + 2));
+            byte* scales = block + 4;
+            byte* qs = block + 16;
 
             int curBlockStart = (b == 0) ? colBlockStart : 0;
             int blockEnd = Math.Min(QK_K, inFeatures + colBlockStart - b * QK_K);
@@ -397,12 +386,12 @@ public static partial class QuantizationKernels
                 {
                     int basePos = n16 + j * 32;
                     int isc = (n16 / 128) * 4 + j;
-                    float s0 = GetScaleMinK4_Scale_Scalar(isc * 2, scales);
-                    float m0 = GetScaleMinK4_Min_Scalar(isc * 2, scales);
-                    var vs0 = Vector256.Create(s0 * dSuper);
-                    var vm0 = Vector256.Create(m0 * minSuper);
+                    float s = GetScaleMinK4_Scale_Scalar(isc, scales);
+                    float m = GetScaleMinK4_Min_Scalar(isc, scales);
+                    var vs = Vector256.Create(s * dSuper);
+                    var vm = Vector256.Create(m * minSuper);
 
-                    int subRem = Math.Min(16, blockEnd - basePos);
+                    int subRem = Math.Min(32, blockEnd - basePos);
                     int l = 0;
                     for (; l <= subRem - 8; l += 8)
                     {
@@ -415,7 +404,7 @@ public static partial class QuantizationKernels
                         }
                         var vv = Vector256.LoadUnsafe(ref vvBuf[0]);
                         var vi = Vector256.LoadUnsafe(ref pIn[basePos + l]);
-                        var res = Avx.Multiply(vi, Avx.Subtract(Avx.Multiply(vv, vs0), vm0));
+                        var res = Avx.Multiply(vi, Avx.Subtract(Avx.Multiply(vv, vs), vm));
                         sum += MathHelpers.HSum256_Avx(res);
                     }
                     for (; l < subRem; l++)
@@ -424,38 +413,7 @@ public static partial class QuantizationKernels
                         int qsByte = idx / 2;
                         int qsShift = (idx & 1) * 4;
                         int v = (qs[qsByte] >> qsShift) & 0x0F;
-                        sum += pIn[idx] * (s0 * v * dSuper - m0 * minSuper);
-                    }
-
-                    float s1 = GetScaleMinK4_Scale_Scalar(isc * 2 + 1, scales);
-                    float m1 = GetScaleMinK4_Min_Scalar(isc * 2 + 1, scales);
-                    var vs1 = Vector256.Create(s1 * dSuper);
-                    var vm1 = Vector256.Create(m1 * minSuper);
-
-                    int bPos1 = basePos + 16;
-                    int subRem2 = Math.Min(16, blockEnd - bPos1);
-                    int l2 = 0;
-                    for (; l2 <= subRem2 - 8; l2 += 8)
-                    {
-                        for (int sub2 = 0; sub2 < 8; sub2++)
-                        {
-                            int idx = bPos1 + l2 + sub2;
-                            int qsByte = idx / 2;
-                            int qsShift = (idx & 1) * 4;
-                            vvBuf[sub2] = (qs[qsByte] >> qsShift) & 0x0F;
-                        }
-                        var vv = Vector256.LoadUnsafe(ref vvBuf[0]);
-                        var vi = Vector256.LoadUnsafe(ref pIn[bPos1 + l2]);
-                        var res = Avx.Multiply(vi, Avx.Subtract(Avx.Multiply(vv, vs1), vm1));
-                        sum += MathHelpers.HSum256_Avx(res);
-                    }
-                    for (; l2 < subRem2; l2++)
-                    {
-                        int idx = bPos1 + l2;
-                        int qsByte = idx / 2;
-                        int qsShift = (idx & 1) * 4;
-                        int v = (qs[qsByte] >> qsShift) & 0x0F;
-                        sum += pIn[idx] * (s1 * v * dSuper - m1 * minSuper);
+                        sum += pIn[idx] * (s * v * dSuper - m * minSuper);
                     }
                 }
             }
@@ -475,10 +433,10 @@ public static partial class QuantizationKernels
         for (int b = 0; b < nBlocks; b++)
         {
             byte* block = rawWeights + (long)(startBlock + b) * BLOCK_BYTES;
-            byte* scales = block;
-            byte* qs = block + 12;
-            float dSuper = HalfToFloat_F16C(*(ushort*)(block + 140));
-            float minSuper = HalfToFloat_F16C(*(ushort*)(block + 142));
+            float dSuper = HalfToFloat_F16C(*(ushort*)(block + 0));
+            float minSuper = HalfToFloat_F16C(*(ushort*)(block + 2));
+            byte* scales = block + 4;
+            byte* qs = block + 16;
 
             int curBlockStart = (b == 0) ? colBlockStart : 0;
             int blockEnd = Math.Min(QK_K, inFeatures + colBlockStart - b * QK_K);
@@ -489,12 +447,12 @@ public static partial class QuantizationKernels
                 {
                     int basePos = n16 + j * 32;
                     int isc = (n16 / 128) * 4 + j;
-                    float s0 = GetScaleMinK4_Scale_Scalar(isc * 2, scales);
-                    float m0 = GetScaleMinK4_Min_Scalar(isc * 2, scales);
-                    var vs0 = Vector256.Create(s0 * dSuper);
-                    var vm0 = Vector256.Create(m0 * minSuper);
+                    float s = GetScaleMinK4_Scale_Scalar(isc, scales);
+                    float m = GetScaleMinK4_Min_Scalar(isc, scales);
+                    var vs = Vector256.Create(s * dSuper);
+                    var vm = Vector256.Create(m * minSuper);
 
-                    int subRem = Math.Min(16, blockEnd - basePos);
+                    int subRem = Math.Min(32, blockEnd - basePos);
                     int l = 0;
                     for (; l <= subRem - 8; l += 8)
                     {
@@ -507,7 +465,7 @@ public static partial class QuantizationKernels
                         }
                         var vv = Vector256.LoadUnsafe(ref vvBuf[0]);
                         var vi = Vector256.LoadUnsafe(ref pIn[basePos + l]);
-                        var vw = Avx.Subtract(Avx.Multiply(vv, vs0), vm0);
+                        var vw = Avx.Subtract(Avx.Multiply(vv, vs), vm);
                         var res = Avx.Multiply(vi, vw);
                         sum += MathHelpers.HSum256_Avx(res);
                     }
@@ -517,39 +475,7 @@ public static partial class QuantizationKernels
                         int qsByte = idx / 2;
                         int qsShift = (idx & 1) * 4;
                         int v = (qs[qsByte] >> qsShift) & 0x0F;
-                        sum += pIn[idx] * (s0 * v * dSuper - m0 * minSuper);
-                    }
-
-                    float s1 = GetScaleMinK4_Scale_Scalar(isc * 2 + 1, scales);
-                    float m1 = GetScaleMinK4_Min_Scalar(isc * 2 + 1, scales);
-                    var vs1 = Vector256.Create(s1 * dSuper);
-                    var vm1 = Vector256.Create(m1 * minSuper);
-
-                    int bPos1 = basePos + 16;
-                    int subRem2 = Math.Min(16, blockEnd - bPos1);
-                    int l2 = 0;
-                    for (; l2 <= subRem2 - 8; l2 += 8)
-                    {
-                        for (int sub2 = 0; sub2 < 8; sub2++)
-                        {
-                            int idx = bPos1 + l2 + sub2;
-                            int qsByte = idx / 2;
-                            int qsShift = (idx & 1) * 4;
-                            vvBuf[sub2] = (qs[qsByte] >> qsShift) & 0x0F;
-                        }
-                        var vv = Vector256.LoadUnsafe(ref vvBuf[0]);
-                        var vi = Vector256.LoadUnsafe(ref pIn[bPos1 + l2]);
-                        var vw = Avx.Subtract(Avx.Multiply(vv, vs1), vm1);
-                        var res = Avx.Multiply(vi, vw);
-                        sum += MathHelpers.HSum256_Avx(res);
-                    }
-                    for (; l2 < subRem2; l2++)
-                    {
-                        int idx = bPos1 + l2;
-                        int qsByte = idx / 2;
-                        int qsShift = (idx & 1) * 4;
-                        int v = (qs[qsByte] >> qsShift) & 0x0F;
-                        sum += pIn[idx] * (s1 * v * dSuper - m1 * minSuper);
+                        sum += pIn[idx] * (s * v * dSuper - m * minSuper);
                     }
                 }
             }
@@ -771,13 +697,13 @@ public static partial class QuantizationKernels
         {
             int blockStart = b * QK_K;
             reader.Read(buf);
-            float dSuper = HalfToFloat_Scalar(Unsafe.ReadUnaligned<ushort>(ref buf[140]));
-            float minSuper = HalfToFloat_Scalar(Unsafe.ReadUnaligned<ushort>(ref buf[142]));
+            float dSuper = HalfToFloat_Scalar(Unsafe.ReadUnaligned<ushort>(ref buf[0]));
+            float minSuper = HalfToFloat_Scalar(Unsafe.ReadUnaligned<ushort>(ref buf[2]));
 
             fixed (byte* pBuf = buf)
             {
-                byte* scales = pBuf;
-                byte* qs = pBuf + 12;
+                byte* scales = pBuf + 4;
+                byte* qs = pBuf + 16;
                 for (int i = 0; i < QK_K && blockStart + i < n; i++)
                 {
                     int sub = i / 32;

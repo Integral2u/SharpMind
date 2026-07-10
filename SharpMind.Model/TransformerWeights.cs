@@ -115,7 +115,7 @@ public sealed class TransformerWeights(ModelConfig config, Tensor<float> embeddi
         if (name.Contains("token_embd", StringComparison.OrdinalIgnoreCase)) return EmbeddingWeight;
         if (name.Contains("output_norm", StringComparison.OrdinalIgnoreCase)) return FinalNormWeight;
         if (name.Equals("output.weight", StringComparison.OrdinalIgnoreCase) || name.Equals("lm_head.weight", StringComparison.OrdinalIgnoreCase)) return LmHeadWeight;
-        
+
         var match = RegexGenerated.LayerIndexDotNDot.Match(name); //System.Text.RegularExpressions.Regex.Match(name, @"blk\.(\d+)\.");
         if (match.Success && int.TryParse(match.Groups[1].Value, out int bIdx) && bIdx < Blocks.Length)
         {
@@ -161,50 +161,50 @@ public sealed class TransformerWeights(ModelConfig config, Tensor<float> embeddi
         return null;
     }
 
-        public static void SetRawField(BlockWeights block, string field, byte[] data, QuantDType dtype)
+    public static void SetRawField(BlockWeights block, string field, byte[] data, QuantDType dtype)
+    {
+        // Expert-indexed fields: "RawWgateExp_5" → block.RawWgateExp[5] = data
+        if (field.StartsWith("RawWgateExp_", StringComparison.Ordinal) &&
+            int.TryParse(field.AsSpan(12), out int gateExp))
         {
-            // Expert-indexed fields: "RawWgateExp_5" → block.RawWgateExp[5] = data
-            if (field.StartsWith("RawWgateExp_", StringComparison.Ordinal) &&
-                int.TryParse(field.AsSpan(12), out int gateExp))
-            {
-                block.RawWgateExp ??= [];
-                block.RawWgateExp[gateExp] = data;
-                block.QuantDtypeWgateExp ??= [];
-                block.QuantDtypeWgateExp[gateExp] = dtype;
-                return;
-            }
-            if (field.StartsWith("RawWupExp_", StringComparison.Ordinal) &&
-                int.TryParse(field.AsSpan(10), out int upExp))
-            {
-                block.RawWupExp ??= [];
-                block.RawWupExp[upExp] = data;
-                block.QuantDtypeWupExp ??= [];
-                block.QuantDtypeWupExp[upExp] = dtype;
-                return;
-            }
-            if (field.StartsWith("RawWdownExp_", StringComparison.Ordinal) &&
-                int.TryParse(field.AsSpan(12), out int downExp))
-            {
-                block.RawWdownExp ??= [];
-                block.RawWdownExp[downExp] = data;
-                block.QuantDtypeWdownExp ??= [];
-                block.QuantDtypeWdownExp[downExp] = dtype;
-                return;
-            }
-
-            switch (field)
-            {
-                case "RawWq": block.RawWq = data; block.QuantDtypeWq = dtype; break;
-                case "RawWk": block.RawWk = data; block.QuantDtypeWk = dtype; break;
-                case "RawWv": block.RawWv = data; block.QuantDtypeWv = dtype; break;
-                case "RawWo": block.RawWo = data; block.QuantDtypeWo = dtype; break;
-                case "RawWgate": block.RawWgate = data; block.QuantDtypeWgate = dtype; break;
-                case "RawWup": block.RawWup = data; block.QuantDtypeWup = dtype; break;
-                case "RawWf1": block.RawWf1 = data; block.QuantDtypeWf1 = dtype; break;
-                case "RawWf2": block.RawWf2 = data; block.QuantDtypeWf2 = dtype; break;
-                case "RawRouter": block.RawRouter = data; block.QuantDtypeRouter = dtype; break;
-            }
+            block.RawWgateExp ??= [];
+            block.RawWgateExp[gateExp] = data;
+            block.QuantDtypeWgateExp ??= [];
+            block.QuantDtypeWgateExp[gateExp] = dtype;
+            return;
         }
+        if (field.StartsWith("RawWupExp_", StringComparison.Ordinal) &&
+            int.TryParse(field.AsSpan(10), out int upExp))
+        {
+            block.RawWupExp ??= [];
+            block.RawWupExp[upExp] = data;
+            block.QuantDtypeWupExp ??= [];
+            block.QuantDtypeWupExp[upExp] = dtype;
+            return;
+        }
+        if (field.StartsWith("RawWdownExp_", StringComparison.Ordinal) &&
+            int.TryParse(field.AsSpan(12), out int downExp))
+        {
+            block.RawWdownExp ??= [];
+            block.RawWdownExp[downExp] = data;
+            block.QuantDtypeWdownExp ??= [];
+            block.QuantDtypeWdownExp[downExp] = dtype;
+            return;
+        }
+
+        switch (field)
+        {
+            case "RawWq": block.RawWq = data; block.QuantDtypeWq = dtype; break;
+            case "RawWk": block.RawWk = data; block.QuantDtypeWk = dtype; break;
+            case "RawWv": block.RawWv = data; block.QuantDtypeWv = dtype; break;
+            case "RawWo": block.RawWo = data; block.QuantDtypeWo = dtype; break;
+            case "RawWgate": block.RawWgate = data; block.QuantDtypeWgate = dtype; break;
+            case "RawWup": block.RawWup = data; block.QuantDtypeWup = dtype; break;
+            case "RawWf1": block.RawWf1 = data; block.QuantDtypeWf1 = dtype; break;
+            case "RawWf2": block.RawWf2 = data; block.QuantDtypeWf2 = dtype; break;
+            case "RawRouter": block.RawRouter = data; block.QuantDtypeRouter = dtype; break;
+        }
+    }
 
     public sealed class BlockWeights(Tensor<float> wq, Tensor<float> wk, Tensor<float> wv, Tensor<float> wo,
                         Tensor<float> wqB, Tensor<float> wkB, Tensor<float> wvB, Tensor<float> woB,
@@ -258,9 +258,6 @@ public sealed class TransformerWeights(ModelConfig config, Tensor<float> embeddi
         public Dictionary<int, QuantDType>? QuantDtypeWupExp { get; set; }
         public Dictionary<int, QuantDType>? QuantDtypeWdownExp { get; set; }
         public QuantDType? QuantDtypeRouter { get; set; }
-        [Obsolete("Use per-tensor QuantDtype fields instead. This field is overwritten by the last tensor processed.")]
-        public QuantDType? QuantDtype { get; set; }
-
         public void Dispose()
         {
             Wq.Dispose(); Wk.Dispose(); Wv.Dispose(); Wo.Dispose();

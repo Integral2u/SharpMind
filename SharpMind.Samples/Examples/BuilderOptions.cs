@@ -1,32 +1,31 @@
-﻿using SharpMind.Inference;
+﻿using SharpMind.Core.Quantization;
+using SharpMind.Inference;
 using SharpMind.Inference.Chat;
 using SharpMind.Model;
 using SharpMind.Model.Config;
 using SharpMind.Model.Format;
 using SharpMind.Tokenization;
 using System.Diagnostics;
-using System.Runtime.Intrinsics.X86;
+using static Microsoft.IO.RecyclableMemoryStreamManager;
 
 namespace SharpMind.Samples.Examples
 {
     public class BuilderOptions
     {
-        private static readonly string ModelPath = @"C:\Integral2u\source\repos\SharpMind\ExternalAssets";
-        private static readonly string Model = "qwen2-0_5b-instruct-q8_0";
-        public static async Task RunAsync(string prompt)
+        public static async Task RunAsync(string prompt, string ModelPath, string ModelName)
         {
             Type[] cacheBuilders = [typeof(QuantizedKVCacherBuilder), typeof(PagedKVCacherBuilder),typeof(KVCacherBuilder)];
             Type[] generatorBuilders = [typeof(StandardGeneratorBuilder<>),typeof(MedusaGeneratorBuilder<>),typeof(SpeculativeGeneratorBuilder<>)];
 
-            var ggufPath = Path.Combine(ModelPath, $"{Model}.gguf");
+            var ggufPath = Path.Combine(ModelPath, $"{ModelName}.gguf");
             if (!File.Exists(ggufPath))
             {
-                await Console.Out.WriteLineAsync($"{Model}.gguf not found.");
+                await Console.Out.WriteLineAsync($"{ModelName}.gguf not found.");
                 Console.In.ReadLine();
                 return;
             }
 
-            GgufLoaderFactory.Default.Load(ggufPath, null, out ModelMetaData meta, out ModelConfig modelConfig, out Tokenizer? tokenizer);
+            GgufLoader.Load(ggufPath, null, out ModelMetaData meta, out ModelConfig modelConfig, out Tokenizer? tokenizer);
 
             if (tokenizer == null)
             {
@@ -35,9 +34,12 @@ namespace SharpMind.Samples.Examples
                 return;
             }
             var sharpConfig = modelConfig.ForModel();
+            Dictionary<string, string> qOpsMapping = (new QuantizationConfig { Hardware = sharpConfig.Hardware }).ToJigSawMapping();
+
             GC.Collect(); GC.WaitForPendingFinalizers();
             var sw = Stopwatch.StartNew();
-            using var weights = GgufLoaderFactory.Default.LoadWeightsToTransformerWeights(ggufPath, modelConfig, null, LoadMode.Realtime);
+            var loader = new GgufLoader(QuantizationFactory.Create(qOpsMapping), ggufPath, modelConfig, LoadMode.Full);          
+            using var weights = loader.LoadWeightsToTransformerWeights(null);
             await Console.Out.WriteLineAsync($"GgufLoader.LoadWeightsToTransformerWeights executed in: {sw.Elapsed.TotalSeconds:F2}s");
             
 
@@ -51,7 +53,7 @@ namespace SharpMind.Samples.Examples
                     var tok = 0;
                     CancellationTokenSource cancellationTokenSource = new();
                     
-                    await Console.Out.WriteLineAsync($"Testing {Model} using {generatorDef.Name},{cacheBuilder}");
+                    await Console.Out.WriteLineAsync($"Testing {ModelName} using {generatorDef.Name},{cacheBuilder}");
                     await Console.Out.FlushAsync();
                     GC.Collect(); GC.WaitForPendingFinalizers();
                     sw.Restart();

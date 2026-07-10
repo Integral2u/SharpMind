@@ -76,7 +76,7 @@ public sealed class SessionOptions
     // Strategy selection
     public GeneratorStrategy Generator { get; set; } = GeneratorStrategy.Standard;
     public CacheStrategy Cache { get; set; } = CacheStrategy.Standard;
-    public LoadMode LoadMode { get; set; } = LoadMode.Realtime;
+    public LoadMode LoadMode { get; set; } = LoadMode.Full;
 
     /// <summary>
     /// CPU code-path selection for JigSaw's mapping. Auto (the engine's own

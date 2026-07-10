@@ -8,6 +8,45 @@ public static partial class QuantizationKernels
     internal const int QK_K = 256;
     internal const int QK = 32;
 
+    public static unsafe void QuantizedMatMul_Serial_Wrapper(VecDotFn vecdot,
+        float* input, byte* rawWeights, float* output,
+        int M, int K, int N)
+    {
+        for (int row = 0; row < M; row++)
+        {
+            float* pInRow = input + (long)row * K;
+            float* pOutRow = output + (long)row * N;
+            for (int col = 0; col < N; col++)
+                pOutRow[col] = vecdot(pInRow, rawWeights, col, K);
+        }
+    }
+
+    public static unsafe void QuantizedMatMul_Parallel_Wrapper(VecDotFn vecdot,
+        float* input, byte* rawWeights, float* output,
+        int M, int K, int N)
+    {        
+        if (M <= 1)
+        {
+            for (int row = 0; row < M; row++)
+            {
+                float* pInRow = input + (long)row * K;
+                float* pOutRow = output + (long)row * N;
+                for (int col = 0; col < N; col++)
+                    pOutRow[col] = vecdot(pInRow, rawWeights, col, K);
+            }
+        }
+        else
+        {
+            Parallel.For(0, M, row =>
+            {
+                float* pInRow = input + (long)row * K;
+                float* pOutRow = output + (long)row * N;
+                for (int col = 0; col < N; col++)
+                    pOutRow[col] = vecdot(pInRow, rawWeights, col, K);
+            });
+        }
+    }
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static float HalfToFloat_F16C(ushort half)
     {

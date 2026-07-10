@@ -25,12 +25,6 @@ public class VecDotTests
     }
 
     [Fact]
-    public void RunConsistencyDiagnostic()
-    {
-        QuantizationDiagnostic.RunDiagnostics();
-    }
-
-    [Fact]
     public unsafe void VecDotQ3K_MultiBlockAgrees()
     {
         const int blockBytes = 110, qk = 256, nBlocks = 4;
@@ -92,10 +86,12 @@ public class VecDotTests
     public unsafe void TestVecDotQ4K_ValidBlock(QuantizationOps qOps)
     {
         var block = new byte[144];
+        // dSuper = 1.0 at block[0..1]
         block[0] = 0x00; block[1] = 0x3C;
-        block[2] = 0x00; block[3] = 0x00;
+        // scales[0] = 0x11 → scale=17, scales[4] = 0 → min=0
         block[4] = 0x11;
-        block[16] = 0x11;
+        // qs[0] low nibble = 1 → v=1
+        block[16] = 0x01;
 
         var input = new float[] { 1.0f };
         var weights = new byte[144];

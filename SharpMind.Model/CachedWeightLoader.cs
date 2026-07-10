@@ -1,3 +1,4 @@
+using SharpMind.Core.Quantization;
 using SharpMind.Model.Format;
 using System.Collections.Concurrent;
 using System.IO.MemoryMappedFiles;
@@ -103,9 +104,9 @@ public sealed class CachedWeightLoader : IDisposable
             stream.Position = targetOffset;
 
             var (_, _, rawField) = _weights.ResolveTarget(info.Name);
-            long rawSize = GgufLoaderFactory.Default.GetRawTensorByteCount(info.Shape, info.Dtype);
+            long rawSize = QuantizationOps.GetRawTensorByteCount(info.Shape, info.Dtype);
 
-            if (rawSize > 0 && GgufLoaderFactory.Default.IsQuantizedType(info.Dtype) && rawField != null)
+            if (rawSize > 0 && rawField != null)
             {
                 byte[] rawData = new byte[rawSize];
                 stream.ReadExactly(rawData);

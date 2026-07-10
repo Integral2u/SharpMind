@@ -19,7 +19,7 @@ namespace SharpMind.Core.Ops;
 public abstract class TensorOps
 {
     private const string NS = $"{nameof(SharpMind)}.{nameof(Core)}.{nameof(Activations)}.{nameof(ActivationKernels)}";
-
+    /*
     // Singleton set by TensorOpsFactory
     private static volatile TensorOps? _default;
 
@@ -31,9 +31,9 @@ public abstract class TensorOps
         ?? throw new InvalidOperationException(
             $"{nameof(TensorOps)}.{nameof(Default)} has not been initialised. " +
             $"Call {nameof(TensorOpsFactory)}.{nameof(TensorOpsFactory.SetDefault)} at application startup.");
-
+    
     internal static void SetDefault(TensorOps instance) => _default = instance;
-
+    */
     
     // Abstract kernel — PuzzleCornerPiece selects AVX2 or scalar path
     // Signature takes raw pointers so the kernel owns the inner loop entirely;
@@ -148,11 +148,11 @@ public abstract class TensorOps
     
 
     /// <summary>C = A @ B using the default assembled instance.</summary>
-    public static Tensor<float> MatMul(Tensor<float> a, Tensor<float> b, TensorOps? ops = null)
-        => (ops ?? Default).MatMul(a, b);
+    /*public static Tensor<float> MatMul(Tensor<float> a, Tensor<float> b, TensorOps ops = null)
+        => (ops ?? Default).MatMul(a, b);*/
 
-    public static Tensor<float> BatchedMatMul(Tensor<float> a, Tensor<float> b, TensorOps? ops = null)
-        => (ops ?? Default).BatchedMatMul(a, b);
+    /*public static Tensor<float> BatchedMatMul(Tensor<float> a, Tensor<float> b, TensorOps? ops = null)
+        => (ops ?? Default).BatchedMatMul(a, b);*/
 
     // ── SAIM operator types (JIT-inlinable, no delegate indirection) ────
 

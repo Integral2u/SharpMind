@@ -355,18 +355,21 @@ public static partial class QuantizationKernels
     public static unsafe float VecDotQ5K_Scalar(float* input, byte* rawWeights, int col, int inFeatures)
     {
         const int BLOCK_BYTES = 176;
+        int startBlock = (col * inFeatures) / QK_K;
+        int colBlockStart = col * inFeatures % QK_K;
         int nBlocks = (inFeatures + QK_K - 1) / QK_K;
         double sum = 0;
         for (int b = 0; b < nBlocks; b++)
         {
-            byte* block = rawWeights + (long)col * nBlocks * BLOCK_BYTES + b * BLOCK_BYTES;
+            byte* block = rawWeights + (long)(startBlock + b) * BLOCK_BYTES;
             float d = HalfToFloat_Scalar(*(ushort*)block);
             float min = HalfToFloat_Scalar(*(ushort*)(block + 2));
             byte* scales = block + 4;
             byte* qh = block + 16;
             byte* qs = block + 48;
-            int blockEnd = Math.Min(QK_K, inFeatures - b * QK_K);
-            for (int i = 0; i < blockEnd; i++)
+            int curBlockStart = (b == 0) ? colBlockStart : 0;
+            int blockEnd = Math.Min(QK_K, inFeatures + colBlockStart - b * QK_K);
+            for (int i = curBlockStart; i < blockEnd; i++)
             {
                 int sc = GetScaleMinK4_Scale_Scalar(i / 32, scales);
                 int mn = GetScaleMinK4_Min_Scalar(i / 32, scales);
@@ -377,7 +380,7 @@ public static partial class QuantizationKernels
                 int hAdd = ((qh[idx32] & (1 << bitPos)) != 0) ? 16 : 0;
                 int q5 = (half == 0) ? (qs[group64 * 32 + idx32] & 0x0F) : (qs[group64 * 32 + idx32] >> 4);
                 q5 |= hAdd;
-                sum += input[b * QK_K + i] * (sc * q5 * d - mn * min);
+                sum += input[b * QK_K + i - colBlockStart] * (sc * q5 * d - mn * min);
             }
         }
         return (float)sum;
@@ -387,23 +390,26 @@ public static partial class QuantizationKernels
     public static unsafe float VecDotQ5K_AVX2(float* input, byte* rawWeights, int col, int inFeatures)
     {
         const int BLOCK_BYTES = 176;
+        int startBlock = (col * inFeatures) / QK_K;
+        int colBlockStart = col * inFeatures % QK_K;
         int nBlocks = (inFeatures + QK_K - 1) / QK_K;
         double sum = 0;
         float* vvBuf = stackalloc float[8];
         for (int b = 0; b < nBlocks; b++)
         {
-            byte* block = rawWeights + (long)col * nBlocks * BLOCK_BYTES + b * BLOCK_BYTES;
+            byte* block = rawWeights + (long)(startBlock + b) * BLOCK_BYTES;
             float d = HalfToFloat_F16C(*(ushort*)block);
             float min = HalfToFloat_F16C(*(ushort*)(block + 2));
             byte* scales = block + 4;
             byte* qh = block + 16;
             byte* qs = block + 48;
-            int blockEnd = Math.Min(QK_K, inFeatures - b * QK_K);
-            float* pIn = input + b * QK_K;
+            int curBlockStart = (b == 0) ? colBlockStart : 0;
+            int blockEnd = Math.Min(QK_K, inFeatures + colBlockStart - b * QK_K);
+            float* pIn = input + b * QK_K - colBlockStart;
 
             var vacc0 = Vector256<float>.Zero;
             var vacc1 = Vector256<float>.Zero;
-            int i = 0;
+            int i = curBlockStart;
             for (; i <= blockEnd - 16; i += 16)
             {
                 for (int sub = 0; sub < 8; sub++)
@@ -484,23 +490,26 @@ public static partial class QuantizationKernels
     public static unsafe float VecDotQ5K_FMA(float* input, byte* rawWeights, int col, int inFeatures)
     {
         const int BLOCK_BYTES = 176;
+        int startBlock = (col * inFeatures) / QK_K;
+        int colBlockStart = col * inFeatures % QK_K;
         int nBlocks = (inFeatures + QK_K - 1) / QK_K;
         double sum = 0;
         float* vvBuf = stackalloc float[8];
         for (int b = 0; b < nBlocks; b++)
         {
-            byte* block = rawWeights + (long)col * nBlocks * BLOCK_BYTES + b * BLOCK_BYTES;
+            byte* block = rawWeights + (long)(startBlock + b) * BLOCK_BYTES;
             float d = HalfToFloat_F16C(*(ushort*)block);
             float min = HalfToFloat_F16C(*(ushort*)(block + 2));
             byte* scales = block + 4;
             byte* qh = block + 16;
             byte* qs = block + 48;
-            int blockEnd = Math.Min(QK_K, inFeatures - b * QK_K);
-            float* pIn = input + b * QK_K;
+            int curBlockStart = (b == 0) ? colBlockStart : 0;
+            int blockEnd = Math.Min(QK_K, inFeatures + colBlockStart - b * QK_K);
+            float* pIn = input + b * QK_K - colBlockStart;
 
             var vacc0 = Vector256<float>.Zero;
             var vacc1 = Vector256<float>.Zero;
-            int i = 0;
+            int i = curBlockStart;
             for (; i <= blockEnd - 16; i += 16)
             {
                 for (int sub = 0; sub < 8; sub++)
@@ -519,7 +528,7 @@ public static partial class QuantizationKernels
                 }
                 var vw0 = Vector256.LoadUnsafe(ref vvBuf[0]);
                 var vi0 = Vector256.LoadUnsafe(ref pIn[i]);
-                vacc0 = Avx.Add(vacc0, Avx.Multiply(vi0, vw0));
+                vacc0 = Fma.MultiplyAdd(vi0, vw0, vacc0);
 
                 for (int sub = 0; sub < 8; sub++)
                 {
@@ -537,7 +546,7 @@ public static partial class QuantizationKernels
                 }
                 var vw1 = Vector256.LoadUnsafe(ref vvBuf[0]);
                 var vi1 = Vector256.LoadUnsafe(ref pIn[i + 8]);
-                vacc1 = Avx.Add(vacc1, Avx.Multiply(vi1, vw1));
+                vacc1 = Fma.MultiplyAdd(vi1, vw1, vacc1);
             }
             for (; i <= blockEnd - 8; i += 8)
             {

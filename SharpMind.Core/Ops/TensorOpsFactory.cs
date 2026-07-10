@@ -33,6 +33,7 @@ public static class TensorOpsFactory
         {
             return Assembler.CreateInstance<TensorOps>(mappings);
         });
+    /*
     /// <summary>
     /// Assembles a <see cref="TensorOps"/>, sets it as <see cref="TensorOps.Default"/>,
     /// and returns it. Call once at application startup.
@@ -42,5 +43,5 @@ public static class TensorOpsFactory
         var ops = Create(config);
         TensorOps.SetDefault(ops);
         return ops;
-    }
+    }*/
 }

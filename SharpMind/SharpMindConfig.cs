@@ -174,10 +174,7 @@ public sealed record SharpMindConfig
    
     public HardwareTier ResolvedHardware => Hardware switch
     {
-        HardwareTier.Auto => Fma.IsSupported ? HardwareTier.FMA :
-                             Avx2.IsSupported ? HardwareTier.AVX2 :
-                             Sse3.IsSupported ? HardwareTier.SSE :
-                                                 HardwareTier.Scalar,
+        HardwareTier.Auto => HardwareTierHelpers.DetectBestTier();
         _ => Hardware
     };
 

@@ -288,6 +288,7 @@ public static partial class QuantizationKernels
         {
             int blockStart = b * QK_K;
             reader.Read(buf);
+
             float dSuper = HalfToFloat_Scalar(Unsafe.ReadUnaligned<ushort>(ref buf[80]));
             float minSuper = HalfToFloat_Scalar(Unsafe.ReadUnaligned<ushort>(ref buf[82]));
 

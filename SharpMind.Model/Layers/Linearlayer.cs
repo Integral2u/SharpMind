@@ -49,33 +49,15 @@ public sealed class LinearLayer : IDisposable
             yield return new Parameter($"{Name}.bias", _bias);
     }
 
-    public Tensor<float> Forward(Tensor<float> input, TensorOps ops, SharpMind.Core.Memory.Workspace? workspace = null)
+    public Tensor<float> Forward(Tensor<float> input, TensorOps ops, Core.Memory.Workspace? workspace = null)
     {
         ThrowIfDisposed();
         bool needReshape = input.Rank > 2;
         int batchSize = input.ElementCount / input.Shape[^1];
         var flat = needReshape ? input.Reshape(batchSize, InFeatures) : input;
 
-        Tensor<float> output;// = QuantizedForward(flat, ops, workspace);
-        if (UseQuantizedForward)
-        {
-            output = QuantizedForward(flat, ops, workspace);
-        }
-        else
-        //if(output==null)
-        {
-            _weightBT ??= TensorOps.Transpose(_weight);
-            if (workspace != null)
-            {
-                output = workspace.Rent<float>([batchSize, OutFeatures]);
-                ops.MatMulWithBTInto(flat, _weightBT, output);
-            }
-            else
-            {
-                output = ops.MatMulWithBT(flat, _weightBT);
-            }
-        }
-
+        Tensor<float>? output = QuantizedForward(flat, ops, workspace) ?? ScalarForward(flat, ops, batchSize, workspace);
+        
         if (_bias is not null)
         {
             if (workspace != null)
@@ -99,17 +81,31 @@ public sealed class LinearLayer : IDisposable
         }
         return output;
     }
-
-    private Tensor<float> QuantizedForward(Tensor<float> input, TensorOps ops, SharpMind.Core.Memory.Workspace? workspace = null)
+    private Tensor<float> ScalarForward(Tensor<float> input, TensorOps ops, int batchSize, Core.Memory.Workspace? workspace = null)
     {
-        //if (_matMulFn == null) return null;
+        Tensor<float> output;
+        _weightBT ??= TensorOps.Transpose(_weight);
+        if (workspace != null)
+        {
+            output = workspace.Rent<float>([batchSize, OutFeatures]);
+            ops.MatMulWithBTInto(input, _weightBT, output);
+        }
+        else
+        {
+            output = ops.MatMulWithBT(input, _weightBT);
+        }
+        return output;
+    }
+
+    private Tensor<float>? QuantizedForward(Tensor<float> input, TensorOps ops, SharpMind.Core.Memory.Workspace? workspace = null)
+    {
+        if (_matMulFn == null) return null;
         var dtype = QuantDtype!.Value;
         var rawData = RawQuantizedData!;
         int m = input.ElementCount / InFeatures;
         Tensor<float> result = workspace != null
             ? workspace.Rent<float>([m, OutFeatures])
             : new Tensor<float>(m, OutFeatures);
-
         unsafe
         {
             fixed (byte* pRaw = rawData)

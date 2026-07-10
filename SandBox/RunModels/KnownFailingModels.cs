@@ -23,15 +23,40 @@ namespace SandBox.RunModels
             "Qwen2-0.5B.Q3_K_S",            //Response:estring???emales?? je??? Gro  (??hibition Main
             
             "Qwen2-0.5B.Q5_1",              //Response:-+$?ergy=> Tw %(. Tw?????
-            
-            
+ 
+            //Know working Response:The\nsystem\nsystem is a system that helps you to make better decisions
+            //Current Response:5??,?? (5? combined?- . -__??
+            "Qwen2-0.5B.Q6_K",
+
+            //Know working Response:\nOkay, the user just said "Hello," so I need to
+            //Current Response: Amid Amidrek çer?ingersách?üsauptarget kê?padiansivity
+            "Qwen3-0.6B-Q6_K",
+
+            //Know working Response:\nOkay, the user just said "Hello," so I need to
+            //Current Response:?y mise fos?urally?? searchData\Client???????? ? _\n?ella
+            "Qwen3-0.6B-Q5_K_M",
+            //Know working Response:\nOkay, the user just said "Hello," so I need to
+            //Current Response:giniaszelllightlsa??? Wednesdayetrationochenritcheneryemplateargeteneryitimate
+            "Qwen3-0.6B-Q4_K_M",
+            //Know working Response:\Okay, the user is asking for help with a problem. But
+            //Current Response:? ?????opus complement?anismaux^ append^? appendingappendToappendlse
+            "Qwen3-0.6B-Q3_K_M",
+
+             //Know working Response:nOkay, so I need to start with the user's message.
+            //Current Response:Getty WikiLeaks??owardrylicemensemens shedding
+            "Qwen3-0.6B-Q2_K",   
+
+            "Qwen3-0.6B-Q2_K",      //Response:?\nOkay, so I need to start with the user's message.
             "Qwen2.5-1.5B-Instruct-f16",    //Response:??,?????????????????????
 
 
             //All these models have TensorInfo.Shape.Length = 1
             "Qwen3-0.6B-Q4_0",    //Response: ( ( supplementuilder advancedhraductive??amahaDetachbatimi [{ulousISCO
             "Qwen3-0.6B-Q4_1",      //Response:;]/???? (nnenawai Holocaust ????? (waukeeentially???icuteenth?
-    
+
+
+
+
             //Current Response: surfaced_into PICK quad&# embarrassing delay finale ????.Topic??? flex?\Validation
             //Best Known Response to date:Hello! I'm here. How can assist you?Hi what you can
             "DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M", 

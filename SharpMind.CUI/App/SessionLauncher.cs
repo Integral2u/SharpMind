@@ -1,4 +1,6 @@
 using SharpMind;
+using SharpMind.AgentTools;
+using SharpMind.Core.Quantization;
 using SharpMind.GPU;
 using SharpMind.Inference;
 using SharpMind.Inference.Agent;
@@ -7,7 +9,6 @@ using SharpMind.Model;
 using SharpMind.Model.Config;
 using SharpMind.Model.Format;
 using SharpMind.Tokenization;
-using SharpMind.AgentTools;
 
 namespace SharpMind.CUI.App;
 
@@ -92,7 +93,7 @@ public static class SessionLauncher
         {
             (meta, modelConfig, tokenizer) = await Task.Run(() =>
             {
-                GgufLoaderFactory.Default.Load(options.ModelPath, null, out var m, out var c, out var t);
+                GgufLoader.Load(options.ModelPath, null, out var m, out var c, out var t);
                 return (m, c, t);
             });
         }
@@ -103,20 +104,6 @@ public static class SessionLauncher
 
         if (tokenizer is null)
             return new ModelLoadResult { Error = "Model file has no embedded tokenizer data and no fallback tokenizer path was given." };
-
-        status?.Report("Loading weights...");
-        TransformerWeights weights;
-        try
-        {
-            var progress = status is null
-                ? null
-                : new Progress<float>(p => status.Report($"Loading weights... {p:P0}"));
-            weights = await Task.Run(() => GgufLoaderFactory.Default.LoadWeightsToTransformerWeights(options.ModelPath, modelConfig, progress, options.LoadMode));
-        }
-        catch (Exception ex)
-        {
-            return new ModelLoadResult { Error = $"Failed to load weights: {ex.Message}" };
-        }
 
         status?.Report("Assembling model...");
         await Task.Yield();
@@ -132,9 +119,29 @@ public static class SessionLauncher
         Dictionary<string, string> mapping = options.UseGpu
             ? new MappingBuilder(options.HardwareTier).ApplyPreset(sharpConfig).WithGpu().Build()
             : sharpConfig.ToJigSawMapping();
+
+        Dictionary<string, string> qOpsMapping = (new QuantizationConfig { Hardware = options.HardwareTier }).ToJigSawMapping();
+
+        status?.Report("Loading weights...");
+        TransformerWeights weights;
+        try
+        {
+            var progress = status is null
+                ? null
+                : new Progress<float>(p => status.Report($"Loading weights... {p:P0}"));
+
+            var loader = new GgufLoader(QuantizationFactory.Create(qOpsMapping), options.ModelPath, modelConfig, options.LoadMode);
+            weights = await Task.Run(() => loader.LoadWeightsToTransformerWeights(progress));
+        }
+        catch (Exception ex)
+        {
+            return new ModelLoadResult { Error = $"Failed to load weights: {ex.Message}" };
+        }
+
+        
         status?.Report("Creating session...");
         await Task.Yield();
-        var model = ModelFactory.CreateSession(weights, sharpConfig, mapping);
+        var model = ModelFactory.CreateSession(weights, sharpConfig, mapping, qOpsMapping);
 
         return new ModelLoadResult
         {
@@ -279,9 +286,8 @@ public static class SessionLauncher
             paths.AddRange(Directory.GetFiles(options.ToolsFolder, "*.dll"));
         }
 
-        return paths
+        return [.. paths
             .Select(p => Path.GetFullPath(p))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
+            .Distinct(StringComparer.OrdinalIgnoreCase)];
     }
 }

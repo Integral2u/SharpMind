@@ -82,7 +82,6 @@ public sealed class Transformer : IDisposable
             foreach (var block in _blocks)
                 block.FreeFloatWeights();
         }
-        // LogitOps float weight is freed by its own logic
     }
 
     /// <summary>Sets an activation hook on all blocks in the model.</summary>

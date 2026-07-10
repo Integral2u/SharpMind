@@ -9,36 +9,34 @@ using static SharpMind.Model.TransformerWeights;
 
 namespace SharpMind.Model.Format;
 
-public sealed class GgufLoader
+public interface IModelLoader
+{
+    public TransformerWeights LoadWeightsToTransformerWeights(IProgress<float>? progress = null);
+}
+public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig config, LoadMode mode = LoadMode.Full) : IModelLoader
 {
     private const uint Magic = 0x46554747;
-    private readonly QuantizationOps _qOps;
-
-    public GgufLoader(QuantizationOps qOps)
+    private readonly QuantizationOps _qOps = qOps ?? throw new ArgumentNullException(nameof(qOps));
+    private readonly string _path = File.Exists(path)? path : throw new FileNotFoundException(path);
+    private readonly ModelConfig _config = config ?? throw new ArgumentNullException(nameof(config));
+    private readonly LoadMode _mode = mode;
+    private static object ReadValue(BinaryReader reader, uint valType) => valType switch
     {
-        _qOps = qOps ?? throw new ArgumentNullException(nameof(qOps));
-    }
+        0 => reader.ReadByte(),
+        1 => reader.ReadSByte(),
+        2 => reader.ReadUInt16(),
+        3 => reader.ReadInt16(),
+        4 => reader.ReadUInt32(),
+        5 => reader.ReadInt32(),
+        6 => reader.ReadSingle(),
+        7 => reader.ReadBoolean(),
+        10 => reader.ReadUInt64(),
+        11 => reader.ReadInt64(),
+        12 => reader.ReadDouble(),
+        _ => throw new InvalidDataException("Unknown scalar type: " + valType)
+    };
 
-    private object ReadValue(BinaryReader reader, uint valType)
-    {
-        return valType switch
-        {
-            0 => reader.ReadByte(),
-            1 => reader.ReadSByte(),
-            2 => reader.ReadUInt16(),
-            3 => reader.ReadInt16(),
-            4 => reader.ReadUInt32(),
-            5 => reader.ReadInt32(),
-            6 => reader.ReadSingle(),
-            7 => reader.ReadBoolean(),
-            10 => reader.ReadUInt64(),
-            11 => reader.ReadInt64(),
-            12 => reader.ReadDouble(),
-            _ => throw new InvalidDataException("Unknown scalar type: " + valType)
-        };
-    }
-
-    private (ulong len, string str) ReadString(BinaryReader reader)
+    private static (ulong len, string str) ReadString(BinaryReader reader)
     {
         var len = reader.ReadUInt64();
         if (len > 10000) return (len, "");
@@ -46,14 +44,14 @@ public sealed class GgufLoader
         return (len, System.Text.Encoding.UTF8.GetString(bytes));
     }
 
-    private string ReadStringValue(BinaryReader reader)
+    private static string ReadStringValue(BinaryReader reader)
     {
         var len = reader.ReadUInt64();
         var bytes = reader.ReadBytes((int)len);
         return System.Text.Encoding.UTF8.GetString(bytes);
     }
 
-    private object? ReadArrayValue(BinaryReader reader)
+    private static object? ReadArrayValue(BinaryReader reader)
     {
         var elemType = reader.ReadUInt32();
         var arrLen = reader.ReadUInt64();
@@ -115,16 +113,13 @@ public sealed class GgufLoader
         }
     }
 
-    public string[]? GetStringArray(ModelMetaData meta, string key)
+    public static  string[]? GetStringArray(ModelMetaData meta, string key)
         => meta.KvPairs.FirstOrDefault(p => p.Key == key).Value as string[];
 
-    public float[]? GetFloatArray(ModelMetaData meta, string key)
-        => meta.KvPairs.FirstOrDefault(p => p.Key == key).Value as float[];
-
-    public int[]? GetIntArray(ModelMetaData meta, string key)
+    public static int[]? GetIntArray(ModelMetaData meta, string key)
         => meta.KvPairs.FirstOrDefault(p => p.Key == key).Value as int[];
 
-    public ModelMetaData LoadMeta(string path)
+    public static ModelMetaData LoadMeta(string path)
     {
         using var stream = File.OpenRead(path);
         using var reader = new BinaryReader(stream);
@@ -180,7 +175,7 @@ public sealed class GgufLoader
         return meta;
     }
 
-    public ModelConfig? LoadConfig(ModelMetaData meta)
+    public static ModelConfig? LoadConfig(ModelMetaData meta)
     {
         string arch = meta.GetString("general.architecture");
         if (string.IsNullOrWhiteSpace(arch)) return null;
@@ -271,7 +266,7 @@ public sealed class GgufLoader
         };
     }
 
-    public Tokenizer? LoadTokenizerFromMeta(ModelMetaData meta)
+    public static Tokenizer? LoadTokenizerFromMeta(ModelMetaData meta)
     {
         var tokens = GetStringArray(meta, "tokenizer.ggml.tokens");
         if (tokens == null || tokens.Length == 0) return null;
@@ -292,7 +287,7 @@ public sealed class GgufLoader
         }
     }
 
-    private void InjectMissingTemplateTokens(
+    private static void InjectMissingTemplateTokens(
         ModelMetaData meta, ref ModelConfig config, Tokenizer tokenizer)
     {
         string? template = meta.GetChatTemplate();
@@ -319,7 +314,7 @@ public sealed class GgufLoader
         config = config with { VocabSize = config.VocabSize + toAdd.Count };
     }
 
-    public void Load(
+    public static void Load(
         string ggufPath,
         string? tokenizerPath,
         out ModelMetaData meta,
@@ -365,20 +360,20 @@ public sealed class GgufLoader
             InjectMissingTemplateTokens(meta, ref config, tokenizer);
     }
 
-    public TransformerWeights LoadWeightsToTransformerWeights(string path, ModelConfig config, IProgress<float>? progress = null, LoadMode mode = LoadMode.Realtime)
+    public TransformerWeights LoadWeightsToTransformerWeights(IProgress<float>? progress = null)
     {
-        SharpMind.Core.Memory.NativeBufferPool<float>.Clear();
+        Core.Memory.NativeBufferPool<float>.Clear();
 
-        var meta = LoadMeta(path);
-        var weights = ModelFactory.CreateWeights(config, config.ForModel(HardwareTier.Auto));
+        var meta = LoadMeta(_path);
+        var weights = ModelFactory.CreateWeights(_config, _config.ForModel(HardwareTier.Auto));
         weights.GgufMeta = meta;
-        weights.GgufPath = path;
+        weights.GgufPath = _path;
 
         weights.IsMoE = meta.Tensors.Any(t => t.Name.Contains(".exps."));
 
-        bool isCached = mode == LoadMode.Cached;
+        bool isCached = _mode == LoadMode.Cached;
 
-        using var mmf = MemoryMappedFile.CreateFromFile(path, FileMode.Open, null, 0, MemoryMappedFileAccess.Read);
+        using var mmf = MemoryMappedFile.CreateFromFile(_path, FileMode.Open, null, 0, MemoryMappedFileAccess.Read);
         using var stream = mmf.CreateViewStream(0, 0, MemoryMappedFileAccess.Read);
         using var reader = new BinaryReader(stream);
 
@@ -394,7 +389,7 @@ public sealed class GgufLoader
             if (!info.Name.Contains("blk.") && info.Name.Contains("output.weight") && weights.LmHeadWeight == null)
             {
                 long ggufIn = info.Shape[0];
-                weights.SetLmHead(new Tensor<float>((int)config.VocabSize, (int)ggufIn));
+                weights.SetLmHead(new Tensor<float>((int)_config.VocabSize, (int)ggufIn));
             }
 
             var (target, block, rawField) = weights.ResolveTarget(info.Name);
@@ -408,7 +403,7 @@ public sealed class GgufLoader
             int count = 1;
             foreach (int d in info.Shape) count *= d;
 
-            if (IsQuantizedType(info.Dtype) && info.Shape.Length >= 2 && block != null && rawField != null)
+            if (info.Shape.Length >= 2 && block != null && rawField != null)
             {
                 if (isCached)
                 {
@@ -416,7 +411,7 @@ public sealed class GgufLoader
                     continue;
                 }
 
-                long rawSize = GetRawTensorByteCount(info.Shape, info.Dtype);
+                long rawSize = QuantizationOps.GetRawTensorByteCount(info.Shape, info.Dtype);
                 if (rawSize > 0 && stream.Position + rawSize <= stream.Length)
                 {
                     byte[] rawData = new byte[rawSize];
@@ -425,19 +420,19 @@ public sealed class GgufLoader
 
                     SetRawField(block, rawField, rawData, info.Dtype);
                     loaded++;
-                    if (mode != LoadMode.Full)
+                    if (_mode != LoadMode.Full)
                         continue;
                 }
             }
 
-            if (IsQuantizedType(info.Dtype) && info.Shape.Length >= 2 && target != null && block == null)
+            if (info.Shape.Length >= 2 && target != null && block == null)
             {
-                long rawSize = GetRawTensorByteCount(info.Shape, info.Dtype);
+                long rawSize = QuantizationOps.GetRawTensorByteCount(info.Shape, info.Dtype);
                 if (rawSize > 0 && stream.Position + rawSize <= stream.Length)
                 {
                     byte[] rawData;
                     long tensorVocab = Math.Max(info.Shape[0], info.Shape[1]);
-                    long paddedVocab = config.VocabSize;
+                    long paddedVocab = _config.VocabSize;
                     if (paddedVocab > tensorVocab)
                     {
                         long colBytes = rawSize / tensorVocab;
@@ -452,14 +447,13 @@ public sealed class GgufLoader
                         stream.ReadExactly(rawData);
                         stream.Position -= rawSize;
                     }
-                    bool isBadLayout = info.Dtype is QuantDType.Q8_0 or QuantDType.Q5_0
-                        or QuantDType.Q6_K or QuantDType.Q6_K_S;
-                    if (target == weights.LmHeadWeight && !isBadLayout)
+
+                    if (target == weights.LmHeadWeight)
                     {
                         weights.RawLmHead = rawData;
                         weights.RawLmHeadDtype = info.Dtype;
                     }
-                    else if (target != weights.LmHeadWeight && !isBadLayout)
+                    else if (target != weights.LmHeadWeight)
                     {
                         weights.RawEmbedding = rawData;
                         weights.RawEmbeddingDtype = info.Dtype;
@@ -521,158 +515,17 @@ public sealed class GgufLoader
         progress?.Report(1f);
 
         if (isCached)
-            weights.CachedLoader = new Layers.CachedWeightLoader(weights, path, meta);
+            weights.CachedLoader = new Layers.CachedWeightLoader(weights, _path, meta);
 
         return weights;
     }
 
-    public Dictionary<string, Tensor<float>> LoadWeights(string path, IProgress<float>? progress = null)
-    {
-        var meta = LoadMeta(path);
-        using var mmf = MemoryMappedFile.CreateFromFile(path, FileMode.Open, null, 0, MemoryMappedFileAccess.Read);
-        using var stream = mmf.CreateViewStream(0, 0, MemoryMappedFileAccess.Read);
-        using var reader = new BinaryReader(stream);
-        var result = new Dictionary<string, Tensor<float>>();
-        int total = meta.Tensors.Count;
-
-        int idx = 0;
-        foreach (var info in meta.Tensors)
-        {
-            progress?.Report((float)idx / total);
-            stream.Position = meta.DataOffset + info.Offset;
-            var tensor = ReadTensor(reader, info.Dtype, info.Shape);
-            result[info.Name] = tensor;
-            idx++;
-        }
-        progress?.Report(1f);
-        return result;
-    }
-
-    internal bool IsQuantizedType(QuantDType dtype) => dtype switch
-    {
-        QuantDType.Q2_K or QuantDType.Q3_K or QuantDType.Q4_K or QuantDType.Q5_K or QuantDType.Q6_K
-        or QuantDType.Q2_K_S or QuantDType.Q3_K_S or QuantDType.Q3_K_M or QuantDType.Q3_K_L
-        or QuantDType.Q4_K_S or QuantDType.Q4_K_M or QuantDType.Q5_K_S or QuantDType.Q5_K_M or QuantDType.Q6_K_S
-        or QuantDType.Q4_0 or QuantDType.Q4_1 or QuantDType.Q5_0 or QuantDType.Q5_1
-        or QuantDType.Q8_0 or QuantDType.Q8_1 or QuantDType.Q8_K
-        or QuantDType.IQ4_NL => true,
-        _ => false
-    };
-
-    internal long GetRawTensorByteCount(int[] shape, QuantDType dtype)
-    {
-        long totalElements = 1;
-        foreach (int d in shape) totalElements *= d;
-
-        switch (dtype)
-        {
-            case QuantDType.F32: return totalElements * 4;
-            case QuantDType.F16: return totalElements * 2;
-            case QuantDType.Q3_K or QuantDType.Q3_K_S or QuantDType.Q3_K_M or QuantDType.Q3_K_L: return ((totalElements + 255) / 256) * 110;
-            case QuantDType.Q4_K or QuantDType.Q4_K_S or QuantDType.Q4_K_M: return ((totalElements + 255) / 256) * 144;
-            case QuantDType.Q5_K or QuantDType.Q5_K_S or QuantDType.Q5_K_M: return ((totalElements + 255) / 256) * 176;
-            case QuantDType.Q6_K or QuantDType.Q6_K_S: return ((totalElements + 255) / 256) * 210;
-            case QuantDType.Q2_K or QuantDType.Q2_K_S: return ((totalElements + 255) / 256) * 84;
-            case QuantDType.Q8_K: return ((totalElements + 255) / 256) * 292;
-            case QuantDType.Q8_0: return ((totalElements + 31) / 32) * 34;
-            case QuantDType.Q8_1: return ((totalElements + 31) / 32) * 36;
-            case QuantDType.Q5_0: return ((totalElements + 31) / 32) * 22;
-            case QuantDType.Q5_1: return ((totalElements + 31) / 32) * 24;
-            case QuantDType.Q4_0: return ((totalElements + 31) / 32) * 18;
-            case QuantDType.IQ4_NL: return ((totalElements + 31) / 32) * 18;
-            case QuantDType.Q4_1: return ((totalElements + 31) / 32) * 20;
-            default: return 0;
-        }
-    }
-
-    private Tensor<float> ReadTensor(BinaryReader stream, QuantDType dtype, int[] shape)
+    private void ReadTensorInto(BinaryReader stream, QuantDType dtype, int[] shape, Span<float> destination)
     {
         int count = 1;
         foreach (int d in shape) count *= d;
-        var result = new Tensor<float>(shape);
-        ReadTensorInto(stream, dtype, shape, result.Data);
-        return result;
+        if (destination.Length < count) throw new ArgumentException($"Destination buffer too small: {destination.Length} < {count}");
+        _qOps.ReadFor(dtype, stream, destination, count);
+        return;        
     }
-
-    internal void ReadQBlockRow(BinaryReader stream, QuantDType dtype, Span<float> dest, int count)
-    {
-        switch (dtype)
-        {
-            case QuantDType.Q4_0: ReadQ4_0(stream, dest, count); break;
-            case QuantDType.IQ4_NL: ReadQ4_NL(stream, dest, count); break;
-            case QuantDType.Q4_1: ReadQ4_1(stream, dest, count); break;
-            case QuantDType.Q5_0: ReadQ5_0(stream, dest, count); break;
-            case QuantDType.Q5_1: ReadQ5_1(stream, dest, count); break;
-            case QuantDType.Q8_0: ReadQ8_0(stream, dest, count); break;
-            case QuantDType.Q8_1: ReadQ8_1(stream, dest, count); break;
-            case QuantDType.Q2_K or QuantDType.Q2_K_S: ReadQ2K(stream, dest, count); break;
-            case QuantDType.Q3_K or QuantDType.Q3_K_S or QuantDType.Q3_K_M or QuantDType.Q3_K_L: ReadQ3_K(stream, dest, count); break;
-            case QuantDType.Q4_K or QuantDType.Q4_K_S or QuantDType.Q4_K_M: ReadQ4K(stream, dest, count); break;
-            case QuantDType.Q5_K or QuantDType.Q5_K_S or QuantDType.Q5_K_M: ReadQ5_K(stream, dest, count); break;
-            case QuantDType.Q6_K or QuantDType.Q6_K_S: ReadQ6K(stream, dest, count); break;
-            case QuantDType.Q8_K: ReadQ8K(stream, dest, count); break;
-        }
-    }
-
-    internal void ReadTensorInto(BinaryReader stream, QuantDType dtype, int[] shape, Span<float> destination)
-    {
-        int count = 1;
-        foreach (int d in shape) count *= d;
-        if (destination.Length < count)
-            throw new ArgumentException($"Destination buffer too small: {destination.Length} < {count}");
-
-        switch (dtype)
-        {
-            case QuantDType.F32:
-                for (int i = 0; i < count; i++) destination[i] = stream.ReadSingle();
-                break;
-            case QuantDType.F16:
-                for (int i = 0; i < count; i++) destination[i] = _qOps.HalfToFloat(stream.ReadUInt16());
-                break;
-            default:
-                ReadQBlockRow(stream, dtype, destination, count);
-                break;
-        }
-    }
-
-    public float HalfToFloat(ushort half) => _qOps.HalfToFloat(half);
-
-    public void ReadQ8_0(BinaryReader reader, Span<float> data, int n)
-        => _qOps.ReadQ8_0(reader, data, n);
-
-    public void ReadQ4_1(BinaryReader reader, Span<float> data, int n)
-        => _qOps.ReadQ4_1(reader, data, n);
-
-    public void ReadQ5_1(BinaryReader reader, Span<float> data, int n)
-        => _qOps.ReadQ5_1(reader, data, n);
-
-    public void ReadQ8_1(BinaryReader reader, Span<float> data, int n)
-        => _qOps.ReadQ8_1(reader, data, n);
-
-    public void ReadQ2K(BinaryReader reader, Span<float> data, int n)
-        => _qOps.ReadQ2K(reader, data, n);
-
-    public void ReadQ8K(BinaryReader reader, Span<float> data, int n)
-        => _qOps.ReadQ8K(reader, data, n);
-
-    public void ReadQ5_0(BinaryReader reader, Span<float> data, int n)
-        => _qOps.ReadQ5_0(reader, data, n);
-
-    public void ReadQ4_0(BinaryReader reader, Span<float> data, int n)
-        => _qOps.ReadQ4_0(reader, data, n);
-
-    public void ReadQ4_NL(BinaryReader reader, Span<float> data, int n)
-        => _qOps.ReadQ4_NL(reader, data, n);
-
-    public void ReadQ4K(BinaryReader reader, Span<float> data, int n)
-        => _qOps.ReadQ4K(reader, data, n);
-
-    public void ReadQ6K(BinaryReader reader, Span<float> data, int n)
-        => _qOps.ReadQ6K(reader, data, n);
-
-    public void ReadQ5_K(BinaryReader reader, Span<float> data, int n)
-        => _qOps.ReadQ5K(reader, data, n);
-
-    public void ReadQ3_K(BinaryReader reader, Span<float> data, int n)
-        => _qOps.ReadQ3K(reader, data, n);
 }

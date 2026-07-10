@@ -1,19 +1,17 @@
-﻿using SharpMind.Inference;
+﻿using SharpMind.Core.Quantization;
+using SharpMind.Inference;
 using SharpMind.Inference.Chat;
 using SharpMind.Model;
 using SharpMind.Model.Config;
 using SharpMind.Model.Format;
 using SharpMind.Tokenization;
 using System.Diagnostics;
-using System.Runtime.Intrinsics.X86;
 
 namespace SharpMind.Samples.Examples
 {
     public static class InteractiveChatGuff
     {
-        private static readonly string ModelName = "Qwen3-0.6B-Q8_0";
-        private static readonly string ModelPath = @"C:\Integral2u\source\repos\SharpMind\ExternalAssets";
-        public static async Task RunAsync()
+        public static async Task RunAsync(string ModelPath, string ModelName)
         {
             CancellationTokenSource cancellationTokenSource = new();
             var ggufPath = Path.Combine(ModelPath, $"{ModelName}.gguf");           
@@ -22,18 +20,19 @@ namespace SharpMind.Samples.Examples
                 await Console.Out.WriteLineAsync($"GGUF not found: {ggufPath}");
                 return;
             }
-            GgufLoaderFactory.Default.Load(ggufPath, null, out ModelMetaData meta, out ModelConfig modelConfig, out Tokenizer? tokenizer);            
+            GgufLoader.Load(ggufPath, null, out ModelMetaData meta, out ModelConfig modelConfig, out Tokenizer? tokenizer);            
             if (tokenizer == null)
             {
                 await Console.Out.WriteLineAsync($"Tokenizer dat not found");
                 return;
             }
             var sharpConfig = modelConfig.ForModel();
-
+            Dictionary<string, string> qOpsMapping = (new QuantizationConfig { Hardware = sharpConfig.Hardware }).ToJigSawMapping();
             GC.Collect(); GC.WaitForPendingFinalizers();
             var sw = Stopwatch.StartNew();
+            var loader = new GgufLoader(QuantizationFactory.Create(qOpsMapping), ggufPath, modelConfig, LoadMode.Full);
+            using var weights = loader.LoadWeightsToTransformerWeights(null);
 
-            using var weights = GgufLoaderFactory.Default.LoadWeightsToTransformerWeights(ggufPath, modelConfig);
             await Console.Out.WriteLineAsync($"GgufLoader.LoadWeightsToTransformerWeights executed in: {sw.Elapsed.TotalSeconds:F2}s");
 
             GC.Collect(); GC.WaitForPendingFinalizers();

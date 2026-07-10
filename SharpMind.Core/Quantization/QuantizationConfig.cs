@@ -1,3 +1,5 @@
+using System.Runtime.Intrinsics.X86;
+
 namespace SharpMind.Core.Quantization;
 
 public sealed record QuantizationConfig
@@ -58,13 +60,21 @@ public sealed record QuantizationConfig
     public const string KeyGetScaleMinK4_Min   = "getscalemink4_min";
 
     public HardwareTier Hardware { get; init; } = HardwareTier.Auto;
+    public HardwareTier ResolvedHardware => Hardware switch
+    {
+        HardwareTier.Auto => Fma.IsSupported ? HardwareTier.FMA :
+                             Avx2.IsSupported ? HardwareTier.AVX2 :
+                             Sse3.IsSupported ? HardwareTier.SSE :
+                                                 HardwareTier.Scalar,
+        _ => Hardware
+    };
     public bool Parallel { get; init; } = true;
 
     public Dictionary<string, string> ToJigSawMapping()
     {
         string mode = Parallel ? "_parallel" : "_serial";
 
-        string hwSuffix = Hardware switch
+        string hwSuffix = ResolvedHardware switch
         {
             HardwareTier.FMA  => "_fma",
             HardwareTier.AVX2 => "_avx2",
@@ -72,7 +82,7 @@ public sealed record QuantizationConfig
             _                 => "_scalar"
         };
 
-        string qmmSuffix = Hardware switch
+        string qmmSuffix = ResolvedHardware switch
         {
             HardwareTier.FMA  => $"{mode}_fma",
             HardwareTier.AVX2 => $"{mode}_avx2",

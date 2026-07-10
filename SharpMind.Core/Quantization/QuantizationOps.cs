@@ -1,5 +1,6 @@
-using System.IO;
 using JigSawDotNet;
+using System.Data;
+using System.IO;
 using System.Runtime.Intrinsics;
 
 namespace SharpMind.Core.Quantization;
@@ -11,6 +12,31 @@ public abstract class QuantizationOps
     private const string NS  = $"{nameof(SharpMind)}.{nameof(Core)}.{nameof(Quantization)}.{nameof(QuantizationKernels)}";
     private const string MH  = $"{nameof(SharpMind)}.{nameof(Core)}.{nameof(MathHelpers)}";
 
+    public static long GetRawTensorByteCount(int[] shape, QuantDType dtype)
+    {
+        long totalElements = 1;
+        foreach (int d in shape) totalElements *= d;
+
+        return dtype switch
+        {
+            QuantDType.F32 => totalElements * 4,
+            QuantDType.F16 => totalElements * 2,
+            QuantDType.Q3_K or QuantDType.Q3_K_S or QuantDType.Q3_K_M or QuantDType.Q3_K_L => ((totalElements + 255) / 256) * 110,
+            QuantDType.Q4_K or QuantDType.Q4_K_S or QuantDType.Q4_K_M => ((totalElements + 255) / 256) * 144,
+            QuantDType.Q5_K or QuantDType.Q5_K_S or QuantDType.Q5_K_M => ((totalElements + 255) / 256) * 176,
+            QuantDType.Q6_K or QuantDType.Q6_K_S => ((totalElements + 255) / 256) * 210,
+            QuantDType.Q2_K or QuantDType.Q2_K_S => ((totalElements + 255) / 256) * 84,
+            QuantDType.Q8_K => ((totalElements + 255) / 256) * 292,
+            QuantDType.Q8_0 => ((totalElements + 31) / 32) * 34,
+            QuantDType.Q8_1 => ((totalElements + 31) / 32) * 36,
+            QuantDType.Q5_0 => ((totalElements + 31) / 32) * 22,
+            QuantDType.Q5_1 => ((totalElements + 31) / 32) * 24,
+            QuantDType.Q4_0 => ((totalElements + 31) / 32) * 18,
+            QuantDType.IQ4_NL => ((totalElements + 31) / 32) * 18,
+            QuantDType.Q4_1 => ((totalElements + 31) / 32) * 20,
+            _ => throw new ArgumentOutOfRangeException(nameof(dtype), dtype, null)
+        };
+    }
     public unsafe void ReadFor(QuantDType dType, BinaryReader reader, Span<float> data, int n)
     {
         switch (dType)
@@ -458,8 +484,8 @@ public abstract class QuantizationOps
     public abstract unsafe void ReadF32(BinaryReader reader, Span<float> data, int n);
 
     [PuzzleCornerPiece(QuantizationConfig.KeyReadF16, true, null,
-        "read_f16_fma",    $"{NS}.{nameof(QuantizationKernels.ReadF16_Scalar)}",
-        "read_f16_avx2",   $"{NS}.{nameof(QuantizationKernels.ReadF16_Scalar)}",
+        "read_f16_fma",    $"{NS}.{nameof(QuantizationKernels.ReadF16_F16C)}",
+        "read_f16_avx2",   $"{NS}.{nameof(QuantizationKernels.ReadF16_F16C)}",
         "read_f16_sse",    $"{NS}.{nameof(QuantizationKernels.ReadF16_Scalar)}",
         "read_f16_scalar", $"{NS}.{nameof(QuantizationKernels.ReadF16_Scalar)}")]
     public abstract unsafe void ReadF16(BinaryReader reader, Span<float> data, int n);

@@ -1,9 +1,11 @@
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 
 namespace SharpMind.Core.Quantization;
 
 public static partial class QuantizationKernels
-{
+{ 
+
     public static unsafe void QuantizedMatMulF32_Serial_Scalar(
         float* input, byte* rawWeights, float* output,
         int M, int K, int N)
@@ -140,25 +142,16 @@ public static partial class QuantizationKernels
 
     public static unsafe void ReadF32_Scalar(BinaryReader reader, Span<float> data, int n)
     {
-        Span<byte> buf = stackalloc byte[n * 4];
-        reader.Read(buf);
-        fixed (byte* pBuf = buf)
-        {
-            float* pF = (float*)pBuf;
-            for (int i = 0; i < n; i++)
-                data[i] = pF[i];
-        }
+        Span<byte> byteView = MemoryMarshal.AsBytes(data);
+        reader.Read(byteView);
     }
 
     public static unsafe void ReadF16_Scalar(BinaryReader reader, Span<float> data, int n)
     {
-        Span<byte> buf = stackalloc byte[n * 2];
-        reader.Read(buf);
-        fixed (byte* pBuf = buf)
-        {
-            ushort* pH = (ushort*)pBuf;
-            for (int i = 0; i < n; i++)
-                data[i] = HalfToFloat_Scalar(pH[i]);
-        }
+        for (int i = 0; i < n; i++) data[i] = HalfToFloat_Scalar(reader.ReadUInt16());
+    }
+    public static unsafe void ReadF16_F16C(BinaryReader reader, Span<float> data, int n)
+    {
+        for (int i = 0; i < n; i++) data[i] = HalfToFloat_F16C(reader.ReadUInt16());
     }
 }

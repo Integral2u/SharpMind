@@ -169,38 +169,64 @@ public static partial class QuantizationKernels
         }
         return (float)sum;
     }
-
+   
     public static unsafe void ReadQ6K_Scalar(BinaryReader reader, Span<float> data, int n)
     {
         const int QK_K = 256;
         const int blockBytes = 210;
         int nBlocks = (n + QK_K - 1) / QK_K;
         Span<byte> buf = stackalloc byte[blockBytes];
+
         for (int b = 0; b < nBlocks; b++)
         {
             int blockStart = b * QK_K;
+            int valid = Math.Min(QK_K, n - blockStart);
             reader.Read(buf);
+
             fixed (byte* pBuf = buf)
             {
                 byte* ql = pBuf;
-                byte* qh = pBuf + 128;
-                sbyte* scales = (sbyte*)(pBuf + 192);
-                float d = HalfToFloat_Scalar(*(ushort*)(pBuf + 208));
+                byte* qh = ql + 128;
+                sbyte* scales = (sbyte*)(qh + 64);
+                float d = HalfToFloat_Scalar(Unsafe.ReadUnaligned<ushort>(pBuf + 128 + 64 + 16));
 
-                int valid = Math.Min(QK_K, n - blockStart);
-                for (int i = 0; i < valid; i++)
+                for (int nOff = 0; nOff < valid; nOff += 128)
                 {
-                    int qlByte = i / 2;
-                    int qlNib = (ql[qlByte] >> (4 * (i & 1))) & 0x0F;
-                    int qhByte = i / 4;
-                    int qhBits = (qh[qhByte] >> (2 * (i & 3))) & 3;
-                    int q = qlNib | (qhBits << 4);
-                    data[blockStart + i] = d * scales[i / 16] * (q - 32);
+                    int qlOff = nOff == 0 ? 0 : 64;
+                    int qhOff = nOff == 0 ? 0 : 32;
+                    int scOff = nOff == 0 ? 0 : 8;
+
+                    int halfRem = Math.Min(128, valid - nOff);
+                    for (int l = 0; l < 32 && l < halfRem; l++)
+                    {
+                        int is_ = l / 16;
+                        int q1 = (ql[qlOff + l] & 0x0F) | ((qh[qhOff + l] & 0x03) << 4);
+                        int q2 = (ql[qlOff + l + 32] & 0x0F) | (((qh[qhOff + l] >> 2) & 0x03) << 4);
+                        int q3 = ((ql[qlOff + l] >> 4) & 0x0F) | (((qh[qhOff + l] >> 4) & 0x03) << 4);
+                        int q4 = ((ql[qlOff + l + 32] >> 4) & 0x0F) | (((qh[qhOff + l] >> 6) & 0x03) << 4);
+
+                        int idx1 = nOff + l;
+                        int idx2 = nOff + l + 32;
+
+                        if (idx2 >= valid)
+                        {
+                            if (idx1 < valid)
+                                data[blockStart + idx1] = d * scales[scOff + is_ + 0] * (q1 - 32);
+                            break;
+                        }
+
+                        int idx3 = nOff + l + 64;
+                        int idx4 = nOff + l + 96;
+
+                        data[blockStart + idx1] = d * scales[scOff + is_ + 0] * (q1 - 32);
+                        data[blockStart + idx2] = d * scales[scOff + is_ + 2] * (q2 - 32);
+                        data[blockStart + idx3] = d * scales[scOff + is_ + 4] * (q3 - 32);
+                        data[blockStart + idx4] = d * scales[scOff + is_ + 6] * (q4 - 32);
+                    }
                 }
             }
         }
     }
-
     public static unsafe void QuantizedMatMulQ6K_Serial_Scalar(
         float* input, byte* rawWeights, float* output,
         int M, int K, int N)

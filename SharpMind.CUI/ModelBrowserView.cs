@@ -93,7 +93,7 @@ public sealed class ModelBrowserView : View
 
         try
         {
-            var meta = GgufLoaderFactory.Default.LoadMeta(Path.Combine(_currentPath, sel));
+            var meta = GgufLoader.LoadMeta(Path.Combine(_currentPath, sel));
             string arch = meta.GetString("general.architecture", "unknown");
             string quant = meta.Tensors.Count > 0 ? meta.Tensors[0].Dtype.ToString() : "unknown";
             _previewLabel.Text = $"Architecture: {arch}\nTensors: {meta.TensorCount}\nQuant (first tensor): {quant}";
