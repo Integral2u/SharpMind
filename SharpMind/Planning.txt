@@ -15,24 +15,6 @@ Superceeded
 Are SharpMind.Model.Format.Dtype and SharpMind.Model.Format.DtypeOps superceeded by SharpMind.Core.Quantization.QuantDType
 Is SharpMind.Model.Config.SharpMindModelConfig superceeded by SharpMind.Model.Config.ModelConfig
 
-Quantization Agreement Tests.
-We need a test to check Qunatization Methods, VecDot and MatMul for all QuantDType(s)
-This test should create ops for all hardware tiers and check the results of passed in synthetic data to ensure the variants in agreement.
-This is not a test of validity it is to check if we change one hardware implmentation Scalar/AVX/SSE/FMA that all the others agree.
-Failure you require checking whihc version is correct.
-
-
-Step 2
-Tests
-QuantizedMatMulRefTests, VecDotAgreementTests and VecDotDetailedTests need to be deleted.
-We know FP16 is correct so we have a basis, so what we need to do to a one off run extract 1 layer from qwen2-0_5b-instruct-fp16.gguf, this layer should be Read and data saved for later as it will be used later.
-we need to simulate running though the first layer the prompt "Hello" record from actual run will need diagnotic tools, also save for later as it will be used later. We know the final will be correct.
-Then we have the model layer data and first use of quantization ops using it.  
-From that we have the Read Test and we can check all quant variants to enusre the result of passing the prompt and checking the out put from that layer is correct within tollerence, slight variances for FMA,SSE,AVX etc.
-This will help identify any incorrect implementaions of quant variants. We can the check if the MatMul versions end up with the same result as the VecDot usages.
-After that we can check F32 Qunatize up is within tollerenace for each subquant we can quanatize the F16 version down and continue testing all variants FMA,AVX,SSE,Scalar are withing precision +- tollerance
-
-
 
 ChatMessage.Ignore somehow/settable visible in ChatView
 debugUI tool calling
