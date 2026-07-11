@@ -113,11 +113,11 @@ public abstract class FfnLayer : IDisposable
     protected readonly LinearLayer[]? ExpertDown;
 
     protected FfnLayer(ModelConfig config, ActivationOps acts, FfnKind kind, QuantizationOps qOps)
-        : this(config, acts, kind, qOps, null)
+        : this(config, acts, kind, qOps, null, null)
     {
     }
 
-    protected FfnLayer(ModelConfig config, ActivationOps acts, FfnKind kind, QuantizationOps qOps, TransformerWeights.BlockWeights? weights)
+    protected FfnLayer(ModelConfig config, ActivationOps acts, FfnKind kind, QuantizationOps qOps, TransformerWeights.BlockWeights? weights, Dictionary<string, string>? mapping = null)
     {
         Config = config;
         Acts = acts;
@@ -128,32 +128,31 @@ public abstract class FfnLayer : IDisposable
         switch (kind)
         {
             case FfnKind.Dense:
-                W1 = new LinearLayer("gate_proj", config.HiddenDim, config.FfnDim, bias: true, qOps: qOps,
-                    weights?.Wf1, weights?.Wf1Bias,
-                    quantDType: tm?.GetValueOrDefault("RawWf1").Dtype ?? QuantDType.F32);
-                W2 = new LinearLayer("down_proj", config.FfnDim, config.HiddenDim, bias: true, qOps: qOps,
-                    weights?.Wf2, weights?.Wf2Bias,
-                    quantDType: tm?.GetValueOrDefault("RawWf2").Dtype ?? QuantDType.F32);
+                W1 = LinearLayerFactory.Create("gate_proj", config.HiddenDim, config.FfnDim, true,
+                    weights?.Wf1, weights?.Wf1Bias, tm?.GetValueOrDefault("RawWf1").Dtype ?? QuantDType.F32, mapping);
+                W2 = LinearLayerFactory.Create("down_proj", config.FfnDim, config.HiddenDim, true,
+                    weights?.Wf2, weights?.Wf2Bias, tm?.GetValueOrDefault("RawWf2").Dtype ?? QuantDType.F32, mapping);
                 break;
 
             case FfnKind.Gated:
-                WGated = new LinearLayer("wgated_proj", config.HiddenDim, 2 * config.FfnDim, bias: true, qOps: qOps,
-                    weights?.Wf1, weights?.Wf1Bias,
-                    quantDType: tm?.GetValueOrDefault("RawWgate").Dtype ?? QuantDType.F32);
-                WDown = new LinearLayer("down_proj", config.FfnDim, config.HiddenDim, bias: true, qOps: qOps,
-                    weights?.Wf2, weights?.Wf2Bias,
-                    quantDType: tm?.GetValueOrDefault("RawWf2").Dtype ?? QuantDType.F32);
+                WGated = LinearLayerFactory.Create("wgated_proj", config.HiddenDim, 2 * config.FfnDim, true,
+                    weights?.Wf1, weights?.Wf1Bias, tm?.GetValueOrDefault("RawWgate").Dtype ?? QuantDType.F32, mapping);
+                WDown = LinearLayerFactory.Create("down_proj", config.FfnDim, config.HiddenDim, true,
+                    weights?.Wf2, weights?.Wf2Bias, tm?.GetValueOrDefault("RawWf2").Dtype ?? QuantDType.F32, mapping);
                 break;
 
             case FfnKind.MoE:
-                Router = new LinearLayer("router", config.HiddenDim, config.NumExperts, true, qOps, null, null,
-                    quantDType: tm?.GetValueOrDefault("RawRouter").Dtype ?? QuantDType.F32);
-                ExpertGate = [.. Enumerable.Range(0, config.NumExperts).Select(i => new LinearLayer($"expert_{i}_gate_proj", config.HiddenDim, config.FfnDim, true, qOps, null, null,
-                    quantDType: tm?.GetValueOrDefault($"RawWgateExp_{i}").Dtype ?? QuantDType.F32))];
-                ExpertUp = [.. Enumerable.Range(0, config.NumExperts).Select(i => new LinearLayer($"expert_{i}_up_proj", config.HiddenDim, config.FfnDim, true, qOps, null, null,
-                    quantDType: tm?.GetValueOrDefault($"RawWupExp_{i}").Dtype ?? QuantDType.F32))];
-                ExpertDown = [.. Enumerable.Range(0, config.NumExperts).Select(i => new LinearLayer($"expert_{i}_down_proj", config.FfnDim, config.HiddenDim, true, qOps, null, null,
-                    quantDType: tm?.GetValueOrDefault($"RawWdownExp_{i}").Dtype ?? QuantDType.F32))];
+                Router = LinearLayerFactory.Create("router", config.HiddenDim, config.NumExperts, true,
+                    null, null, tm?.GetValueOrDefault("RawRouter").Dtype ?? QuantDType.F32, mapping);
+                ExpertGate = [.. Enumerable.Range(0, config.NumExperts).Select(i =>
+                    LinearLayerFactory.Create($"expert_{i}_gate_proj", config.HiddenDim, config.FfnDim, true,
+                        null, null, tm?.GetValueOrDefault($"RawWgateExp_{i}").Dtype ?? QuantDType.F32, mapping))];
+                ExpertUp = [.. Enumerable.Range(0, config.NumExperts).Select(i =>
+                    LinearLayerFactory.Create($"expert_{i}_up_proj", config.HiddenDim, config.FfnDim, true,
+                        null, null, tm?.GetValueOrDefault($"RawWupExp_{i}").Dtype ?? QuantDType.F32, mapping))];
+                ExpertDown = [.. Enumerable.Range(0, config.NumExperts).Select(i =>
+                    LinearLayerFactory.Create($"expert_{i}_down_proj", config.FfnDim, config.HiddenDim, true,
+                        null, null, tm?.GetValueOrDefault($"RawWdownExp_{i}").Dtype ?? QuantDType.F32, mapping))];
                 break;
         }
     }

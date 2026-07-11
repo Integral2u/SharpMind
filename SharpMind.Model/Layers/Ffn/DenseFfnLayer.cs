@@ -5,7 +5,7 @@ using SharpMind.Model.Config;
 
 namespace SharpMind.Model.Layers.Ffn;
 
-public sealed class DenseFfnLayer(ModelConfig config, ActivationOps acts, QuantizationOps qOps, TransformerWeights.BlockWeights? weights = null) : FfnLayer(config, acts, FfnKind.Dense, qOps, weights)
+public sealed class DenseFfnLayer(ModelConfig config, ActivationOps acts, QuantizationOps qOps, TransformerWeights.BlockWeights? weights = null, Dictionary<string, string>? mapping = null) : FfnLayer(config, acts, FfnKind.Dense, qOps, weights, mapping)
 {
     public override Tensor<float> ApplyFfn(Tensor<float> x, SharpMind.Core.Memory.Workspace? workspace = null)
         => FfnKernels.Dense(x, W1!, W2!, Acts, workspace);

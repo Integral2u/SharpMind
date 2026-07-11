@@ -173,11 +173,11 @@ public static class ModelFactory
         {
             return Assembler.Assemble<AttentionLayer>(cfg);
         });
-        var attn = Activator.CreateInstance(t, weights.Config, qOps, blockWeights) as AttentionLayer;
+        var attn = Activator.CreateInstance(t, weights.Config, qOps, blockWeights, cfg) as AttentionLayer;
         ArgumentNullException.ThrowIfNull(attn);
         attn.SetWeights(blockWeights);
         
-        var ffn = BuildFfn(weights, sharpConfig, acts, qOps);
+        var ffn = BuildFfn(weights, sharpConfig, acts, qOps, cfg);
         ffn.SetWeights(blockWeights);
         
         float eps = weights.Config.NormEps;
@@ -199,14 +199,15 @@ public static class ModelFactory
         TransformerWeights weights,
         SharpMindConfig sharpConfig,
         ActivationOps acts,
-        QuantizationOps qOps)
+        QuantizationOps qOps,
+        Dictionary<string, string>? cfg = null)
     {
         var blockWeights = weights.Blocks[0]; // Weight shapes are same across blocks for FFN
         return sharpConfig.Ffn switch
         {
-            FfnKind.Dense => new DenseFfnLayer(weights.Config, acts, qOps, blockWeights),
-            FfnKind.Gated => new GatedFfnLayer(weights.Config, acts, qOps, blockWeights),
-            FfnKind.MoE => new MoEFfnLayer(weights.Config, acts, qOps, blockWeights),
+            FfnKind.Dense => new DenseFfnLayer(weights.Config, acts, qOps, blockWeights, cfg),
+            FfnKind.Gated => new GatedFfnLayer(weights.Config, acts, qOps, blockWeights, cfg),
+            FfnKind.MoE => new MoEFfnLayer(weights.Config, acts, qOps, blockWeights, cfg),
             _ => throw new NotSupportedException($"Unknown FfnKind: {sharpConfig.Ffn}")
         };
     }

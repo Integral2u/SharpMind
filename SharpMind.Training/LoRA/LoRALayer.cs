@@ -30,8 +30,8 @@ public sealed class LoRALayer : IDisposable
         _scale = scale;
 
         _qOps = QuantizationFactory.Create();
-        _a = new LinearLayer($"Linear.{Guid.NewGuid():N}",rank, inFeatures, bias: false, _qOps, null, null);
-        _b = new LinearLayer($"Linear.{Guid.NewGuid():N}",outFeatures, rank, bias: false, _qOps, null, null);
+        _a = LinearLayerFactory.Create($"Linear.{Guid.NewGuid():N}", rank, inFeatures, false, null, null, QuantDType.F32);
+        _b = LinearLayerFactory.Create($"Linear.{Guid.NewGuid():N}", outFeatures, rank, false, null, null, QuantDType.F32);
 
         // Initialize with small random values (Gauss-Ortho init style)
         var rng = Random.Shared;

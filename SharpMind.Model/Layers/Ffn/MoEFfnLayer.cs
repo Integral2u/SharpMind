@@ -5,7 +5,7 @@ using SharpMind.Model.Config;
 
 namespace SharpMind.Model.Layers.Ffn;
 
-public sealed class MoEFfnLayer(ModelConfig config, ActivationOps acts, QuantizationOps qOps, TransformerWeights.BlockWeights? weights = null) : FfnLayer(config, acts, FfnKind.MoE, qOps, weights)
+public sealed class MoEFfnLayer(ModelConfig config, ActivationOps acts, QuantizationOps qOps, TransformerWeights.BlockWeights? weights = null, Dictionary<string, string>? mapping = null) : FfnLayer(config, acts, FfnKind.MoE, qOps, weights, mapping)
 {
     public override Tensor<float> ApplyFfn(Tensor<float> x, SharpMind.Core.Memory.Workspace? workspace = null)
         => FfnKernels.MoE(x, Router!, ExpertGate!, ExpertUp!, ExpertDown!, Config.TopKExperts, Acts, workspace);

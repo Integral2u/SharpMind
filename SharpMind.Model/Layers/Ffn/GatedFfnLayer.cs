@@ -5,7 +5,7 @@ using SharpMind.Model.Config;
 
 namespace SharpMind.Model.Layers.Ffn;
 
-public sealed class GatedFfnLayer(ModelConfig config, ActivationOps acts, QuantizationOps qOps, TransformerWeights.BlockWeights? weights = null) : FfnLayer(config, acts, FfnKind.Gated, qOps, weights)
+public sealed class GatedFfnLayer(ModelConfig config, ActivationOps acts, QuantizationOps qOps, TransformerWeights.BlockWeights? weights = null, Dictionary<string, string>? mapping = null) : FfnLayer(config, acts, FfnKind.Gated, qOps, weights, mapping)
 {
     public override Tensor<float> ApplyFfn(Tensor<float> x, SharpMind.Core.Memory.Workspace? workspace = null)
         => FfnKernels.Gated(x, WGated!, WDown!, Acts, workspace);

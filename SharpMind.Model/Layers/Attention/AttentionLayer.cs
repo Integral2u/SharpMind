@@ -59,11 +59,11 @@ namespace SharpMind.Model.Layers.Attention;
         int qStride, int oStride, float alibiSlope);
 
     protected AttentionLayer(ModelConfig config, QuantizationOps qOps)
-        : this(config, qOps, null)
+        : this(config, qOps, null, null)
     {
     }
 
-    protected AttentionLayer(ModelConfig config, QuantizationOps qOps, TransformerWeights.BlockWeights? weights)
+    protected AttentionLayer(ModelConfig config, QuantizationOps qOps, TransformerWeights.BlockWeights? weights, Dictionary<string, string>? mapping)
     {
         Config = config;
         _qOps = qOps;
@@ -71,18 +71,33 @@ namespace SharpMind.Model.Layers.Attention;
         int kvDim = config.NumKvHeads * config.HeadDim;
 
         var tm = weights?.TensorMeta;
-        Wq = new LinearLayer("q_proj", config.HiddenDim, qDim, bias: true, qOps: qOps, weights?.Wq, weights?.WqBias,
-            quantDType: tm?.GetValueOrDefault("RawWq").Dtype ?? QuantDType.F32);
-        Wk = new LinearLayer("k_proj", config.HiddenDim, kvDim, bias: true, qOps: qOps, weights?.Wk, weights?.WkBias,
-            quantDType: tm?.GetValueOrDefault("RawWk").Dtype ?? QuantDType.F32);
-        Wv = new LinearLayer("v_proj", config.HiddenDim, kvDim, bias: true, qOps: qOps, weights?.Wv, weights?.WvBias,
-            quantDType: tm?.GetValueOrDefault("RawWv").Dtype ?? QuantDType.F32);
-        Wo = new LinearLayer("o_proj", qDim, config.HiddenDim, bias: true, qOps: qOps, weights?.Wo, weights?.WoBias,
-            quantDType: tm?.GetValueOrDefault("RawWo").Dtype ?? QuantDType.F32);
-        
-        // Initialize Wqkv layer
         int totalQkvDim = qDim + 2 * kvDim;
-        Wqkv = new LinearLayer("qkv_proj", config.HiddenDim, totalQkvDim, bias: true, qOps: qOps, null, null);
+        if (mapping != null)
+        {
+            Wq = LinearLayerFactory.Create("q_proj", config.HiddenDim, qDim, true,
+                weights?.Wq, weights?.WqBias, tm?.GetValueOrDefault("RawWq").Dtype ?? QuantDType.F32, mapping);
+            Wk = LinearLayerFactory.Create("k_proj", config.HiddenDim, kvDim, true,
+                weights?.Wk, weights?.WkBias, tm?.GetValueOrDefault("RawWk").Dtype ?? QuantDType.F32, mapping);
+            Wv = LinearLayerFactory.Create("v_proj", config.HiddenDim, kvDim, true,
+                weights?.Wv, weights?.WvBias, tm?.GetValueOrDefault("RawWv").Dtype ?? QuantDType.F32, mapping);
+            Wo = LinearLayerFactory.Create("o_proj", qDim, config.HiddenDim, true,
+                weights?.Wo, weights?.WoBias, tm?.GetValueOrDefault("RawWo").Dtype ?? QuantDType.F32, mapping);
+            Wqkv = LinearLayerFactory.Create("qkv_proj", config.HiddenDim, totalQkvDim, true,
+                null, null, QuantDType.F32, mapping);
+        }
+        else
+        {
+            Wq = LinearLayerFactory.Create("q_proj", config.HiddenDim, qDim, true,
+                weights?.Wq, weights?.WqBias, tm?.GetValueOrDefault("RawWq").Dtype ?? QuantDType.F32);
+            Wk = LinearLayerFactory.Create("k_proj", config.HiddenDim, kvDim, true,
+                weights?.Wk, weights?.WkBias, tm?.GetValueOrDefault("RawWk").Dtype ?? QuantDType.F32);
+            Wv = LinearLayerFactory.Create("v_proj", config.HiddenDim, kvDim, true,
+                weights?.Wv, weights?.WvBias, tm?.GetValueOrDefault("RawWv").Dtype ?? QuantDType.F32);
+            Wo = LinearLayerFactory.Create("o_proj", qDim, config.HiddenDim, true,
+                weights?.Wo, weights?.WoBias, tm?.GetValueOrDefault("RawWo").Dtype ?? QuantDType.F32);
+            Wqkv = LinearLayerFactory.Create("qkv_proj", config.HiddenDim, totalQkvDim, true,
+                null, null, QuantDType.F32);
+        }
         PositionalEncoder = config.PositionalEncoding switch
         {
             PositionalEncoding.NoPE => new NoPE(),
@@ -492,7 +507,7 @@ namespace SharpMind.Model.Layers.Attention;
         Wk.FreeFloatWeight();
         Wv.FreeFloatWeight();
         Wo.FreeFloatWeight();
-        if (Wqkv != null && Wqkv.UseQuantizedForward && Wqkv.RawQuantizedData != null)
+        if (Wqkv != null && Wqkv.UseQuantizedForward)
             Wqkv.FreeFloatWeight();
     }
 
