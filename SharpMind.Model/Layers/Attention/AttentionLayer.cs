@@ -83,7 +83,7 @@ namespace SharpMind.Model.Layers.Attention;
             Wo = LinearLayerFactory.Create("o_proj", qDim, config.HiddenDim, true,
                 weights?.Wo, weights?.WoBias, tm?.GetValueOrDefault("RawWo").Dtype ?? QuantDType.F32, mapping);
             Wqkv = LinearLayerFactory.Create("qkv_proj", config.HiddenDim, totalQkvDim, true,
-                null, null, QuantDType.F32, mapping);
+                null, null, QuantDType.F32);
         }
         else
         {
@@ -507,8 +507,7 @@ namespace SharpMind.Model.Layers.Attention;
         Wk.FreeFloatWeight();
         Wv.FreeFloatWeight();
         Wo.FreeFloatWeight();
-        if (Wqkv != null && Wqkv.UseQuantizedForward)
-            Wqkv.FreeFloatWeight();
+        Wqkv?.FreeFloatWeight();
     }
 
     public void Dispose() { Dispose(true); GC.SuppressFinalize(this); }

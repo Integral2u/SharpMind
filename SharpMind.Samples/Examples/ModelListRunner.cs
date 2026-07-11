@@ -45,7 +45,7 @@ namespace SharpMind.Samples.Examples
                 GC.Collect(); GC.WaitForPendingFinalizers();
                 var sw = Stopwatch.StartNew();
                 var qOps = QuantizationFactory.Create(mapping ?? sharpConfig.ToJigSawMapping());
-                using var weights = ModelFactory.Create(modelConfig, sharpConfig, qOps, ggufPath, meta, LoadMode.Full);
+                using var weights = ModelFactory.Create(modelConfig, sharpConfig, qOps, ggufPath, meta, LoadMode.Cached);
                 weights.InitializeWeights();
                 
                 await Console.Out.WriteLineAsync($"ModelFactory.Create + InitializeWeights executed in: {sw.Elapsed.TotalSeconds:F2}s");

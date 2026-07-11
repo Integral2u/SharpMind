@@ -16,15 +16,15 @@ public static class LinearLayerFactory
         Dictionary<string, string>? baseMapping)
     {
         if (baseMapping == null)
-            return Create(name, inFeatures, outFeatures, bias, weight, biasTensor, quantDType);
+            return new TrainingLinearLayer(name, inFeatures, outFeatures, bias, weight, biasTensor);
 
         string compound = GetCompound(quantDType, baseMapping);
         var mapping = new Dictionary<string, string>(baseMapping);
         mapping[SharpMindConfig.KeyLinear] = compound;
 
         var type = _typeCache.GetOrAdd(mapping.GetHashCode(),
-            _ => Assembler.Assemble<LinearLayer>(mapping));
-        return (LinearLayer)Activator.CreateInstance(type,
+            _ => Assembler.Assemble<InferenceLinearLayer>(mapping));
+        return (InferenceLinearLayer)Activator.CreateInstance(type,
             name, inFeatures, outFeatures, bias, weight, biasTensor, quantDType)!;
     }
 
@@ -32,19 +32,7 @@ public static class LinearLayerFactory
         string name, int inFeatures, int outFeatures, bool bias,
         Tensor<float>? weight, Tensor<float>? biasTensor, QuantDType quantDType)
     {
-        string hw = Fma.IsSupported ? "fma" :
-                    Avx2.IsSupported ? "avx2" :
-                    Sse3.IsSupported ? "sse" : "scalar";
-        string compound = $"{DtypeToCompound(quantDType)}_serial_{hw}";
-        var mapping = new Dictionary<string, string>
-        {
-            [SharpMindConfig.KeyLinear] = compound
-        };
-
-        var type = _typeCache.GetOrAdd(mapping.GetHashCode(),
-            _ => Assembler.Assemble<LinearLayer>(mapping));
-        return (LinearLayer)Activator.CreateInstance(type,
-            name, inFeatures, outFeatures, bias, weight, biasTensor, quantDType)!;
+        return new TrainingLinearLayer(name, inFeatures, outFeatures, bias, weight, biasTensor);
     }
 
     internal static string GetCompound(QuantDType dtype, Dictionary<string, string> mapping)
