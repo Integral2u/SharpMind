@@ -17,10 +17,10 @@ public sealed class LinearLayer : IDisposable
     private QuantizedMatMulFn? _matMulFn;
 
     public byte[]? RawQuantizedData { get; set; }
-    public QuantDType? QuantDtype { get; set; }
-    public bool UseQuantizedForward => RawQuantizedData != null && QuantDtype != null;
+    public QuantDType QuantDtype { get; set; } = QuantDType.F32;
+    public bool UseQuantizedForward => RawQuantizedData != null;
 
-    public LinearLayer(string name, int inFeatures, int outFeatures, bool bias, QuantizationOps? qOps, Tensor<float>? weight, Tensor<float>? biasTensor)
+    public LinearLayer(string name, int inFeatures, int outFeatures, bool bias, QuantizationOps? qOps, Tensor<float>? weight, Tensor<float>? biasTensor, QuantDType quantDType = QuantDType.F32)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(inFeatures);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(outFeatures);
@@ -30,6 +30,7 @@ public sealed class LinearLayer : IDisposable
         _weight = weight ?? new Tensor<float>(inFeatures, outFeatures);
         _bias = biasTensor ?? (bias ? new Tensor<float>(outFeatures) : null);
         _qOps = qOps ?? QuantizationFactory.Create();
+        QuantDtype = quantDType;
         _ownsWeight = weight == null;
         _ownsBias = biasTensor == null && _bias != null;
     }
@@ -96,7 +97,7 @@ public sealed class LinearLayer : IDisposable
     private Tensor<float>? QuantizedForward(Tensor<float> input, SharpMind.Core.Memory.Workspace? workspace = null)
     {
         if (_matMulFn == null) return null;
-        var dtype = QuantDtype!.Value;
+        var dtype = QuantDtype;
         var rawData = RawQuantizedData!;
         int m = input.ElementCount / InFeatures;
         Tensor<float> result = workspace != null

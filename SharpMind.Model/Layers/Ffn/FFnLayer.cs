@@ -160,14 +160,14 @@ public abstract class FfnLayer : IDisposable
             WGated.ReplaceWeights(weights.Wf1, weights.Wf1Bias);
             if (weights.RawWgate != null && weights.RawWup != null)
             {
-                var fusedDtype = weights.QuantDtypeWgate ?? QuantDType.F32;
+                var fusedDtype = weights.TensorMeta.GetValueOrDefault("RawWgate").Dtype;
                 byte[] fused = new byte[weights.RawWgate.Length + weights.RawWup.Length];
                 Buffer.BlockCopy(weights.RawWgate, 0, fused, 0, weights.RawWgate.Length);
                 Buffer.BlockCopy(weights.RawWup, 0, fused, weights.RawWgate.Length, weights.RawWup.Length);
                 WGated.SetRawWeight(fused, fusedDtype);
             }
             WDown.ReplaceWeights(weights.Wf2, weights.Wf2Bias);
-            WDown.SetRawWeight(weights.RawWf2, weights.QuantDtypeWf2 ?? QuantDType.F32);
+            WDown.SetRawWeight(weights.RawWf2, weights.TensorMeta.GetValueOrDefault("RawWf2").Dtype);
         }
         else if (Router is not null && ExpertGate is not null)
         {
@@ -175,28 +175,28 @@ public abstract class FfnLayer : IDisposable
             if (weights.RawWgateExp is not null)
                 foreach (var (expIdx, rawData) in weights.RawWgateExp)
                     if (expIdx < ExpertGate.Length)
-                        ExpertGate[expIdx].SetRawWeight(rawData, weights.QuantDtypeWgateExp?.GetValueOrDefault(expIdx) ?? QuantDType.F32);
+                        ExpertGate[expIdx].SetRawWeight(rawData, weights.TensorMeta.GetValueOrDefault($"RawWgateExp_{expIdx}").Dtype);
             if (weights.RawWupExp is not null)
                 foreach (var (expIdx, rawData) in weights.RawWupExp)
                     if (expIdx < ExpertUp!.Length)
-                        ExpertUp[expIdx].SetRawWeight(rawData, weights.QuantDtypeWupExp?.GetValueOrDefault(expIdx) ?? QuantDType.F32);
+                        ExpertUp[expIdx].SetRawWeight(rawData, weights.TensorMeta.GetValueOrDefault($"RawWupExp_{expIdx}").Dtype);
             if (weights.RawWdownExp is not null)
                 foreach (var (expIdx, rawData) in weights.RawWdownExp)
                     if (expIdx < ExpertDown!.Length)
-                        ExpertDown[expIdx].SetRawWeight(rawData, weights.QuantDtypeWdownExp?.GetValueOrDefault(expIdx) ?? QuantDType.F32);
-            Router.SetRawWeight(weights.RawRouter, weights.QuantDtypeRouter ?? QuantDType.F32);
+                        ExpertDown[expIdx].SetRawWeight(rawData, weights.TensorMeta.GetValueOrDefault($"RawWdownExp_{expIdx}").Dtype);
+            Router.SetRawWeight(weights.RawRouter, weights.TensorMeta.GetValueOrDefault("RawRouter").Dtype);
         }
     }
 
     /// <summary>Pushes newly loaded raw quantized data into layer instances.
-    /// Called by <see cref="CachedWeightLoader"/> after on-demand layer loading.
+    /// Called by <see cref="TransformerWeightsCached"/> after on-demand layer loading.
     /// Does NOT touch float tensors — safe after FreeFloatWeights.</summary>
     public void UpdateRawWeights(TransformerWeights.BlockWeights weights)
     {
         if (W1 is not null && W2 is not null)
         {
-            W1.SetRawWeight(weights.RawWf1, weights.QuantDtypeWf1 ?? QuantDType.F32);
-            W2.SetRawWeight(weights.RawWf2, weights.QuantDtypeWf2 ?? QuantDType.F32);
+            W1.SetRawWeight(weights.RawWf1, weights.TensorMeta.GetValueOrDefault("RawWf1").Dtype);
+            W2.SetRawWeight(weights.RawWf2, weights.TensorMeta.GetValueOrDefault("RawWf2").Dtype);
         }
         else if (WGated is not null && WDown is not null)
         {
@@ -205,10 +205,10 @@ public abstract class FfnLayer : IDisposable
                 byte[] fused = new byte[weights.RawWgate.Length + weights.RawWup.Length];
                 Buffer.BlockCopy(weights.RawWgate, 0, fused, 0, weights.RawWgate.Length);
                 Buffer.BlockCopy(weights.RawWup, 0, fused, weights.RawWgate.Length, weights.RawWup.Length);
-                var fusedDtype = weights.QuantDtypeWgate ?? QuantDType.F32;
+                var fusedDtype = weights.TensorMeta.GetValueOrDefault("RawWgate").Dtype;
                 WGated.SetRawWeight(fused, fusedDtype);
             }
-            WDown.SetRawWeight(weights.RawWf2, weights.QuantDtypeWf2 ?? QuantDType.F32);
+            WDown.SetRawWeight(weights.RawWf2, weights.TensorMeta.GetValueOrDefault("RawWf2").Dtype);
         }
         else if (Router is not null && ExpertGate is not null)
         {
@@ -216,16 +216,16 @@ public abstract class FfnLayer : IDisposable
             if (weights.RawWgateExp is not null)
                 foreach (var (expIdx, rawData) in weights.RawWgateExp)
                     if (expIdx < ExpertGate.Length)
-                        ExpertGate[expIdx].SetRawWeight(rawData, weights.QuantDtypeWgateExp?.GetValueOrDefault(expIdx) ?? QuantDType.F32);
+                        ExpertGate[expIdx].SetRawWeight(rawData, weights.TensorMeta.GetValueOrDefault($"RawWgateExp_{expIdx}").Dtype);
             if (weights.RawWupExp is not null)
                 foreach (var (expIdx, rawData) in weights.RawWupExp)
                     if (expIdx < ExpertUp!.Length)
-                        ExpertUp[expIdx].SetRawWeight(rawData, weights.QuantDtypeWupExp?.GetValueOrDefault(expIdx) ?? QuantDType.F32);
+                        ExpertUp[expIdx].SetRawWeight(rawData, weights.TensorMeta.GetValueOrDefault($"RawWupExp_{expIdx}").Dtype);
             if (weights.RawWdownExp is not null)
                 foreach (var (expIdx, rawData) in weights.RawWdownExp)
                     if (expIdx < ExpertDown!.Length)
-                        ExpertDown[expIdx].SetRawWeight(rawData, weights.QuantDtypeWdownExp?.GetValueOrDefault(expIdx) ?? QuantDType.F32);
-            Router.SetRawWeight(weights.RawRouter, weights.QuantDtypeRouter ?? QuantDType.F32);
+                        ExpertDown[expIdx].SetRawWeight(rawData, weights.TensorMeta.GetValueOrDefault($"RawWdownExp_{expIdx}").Dtype);
+            Router.SetRawWeight(weights.RawRouter, weights.TensorMeta.GetValueOrDefault("RawRouter").Dtype);
         }
     }
 

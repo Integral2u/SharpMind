@@ -94,7 +94,7 @@ public static class ModelSizer
     private static float EvaluateConfig(ModelConfig config, Tokenizer tokenizer, List<string> samples, int steps)
     {
         var sharpConfig = SharpMindConfig.Gpt with { Hardware = HardwareTier.Scalar };
-        var weights = ModelFactory.CreateWeights(config, sharpConfig);
+        var weights = ModelFactory.CreateForTraining(config, sharpConfig);
         using var model = ModelFactory.CreateSession(weights, sharpConfig, null, false);
         
         var parameters = model.Parameters().ToList();

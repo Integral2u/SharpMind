@@ -37,9 +37,10 @@ namespace SharpMind.Samples.Examples
 
             GC.Collect(); GC.WaitForPendingFinalizers();
             var sw = Stopwatch.StartNew();
-            var loader = new GgufLoader(QuantizationFactory.Create(sharpConfig.ResolvedHardware), ggufPath, modelConfig, LoadMode.Full);          
-            using var weights = loader.LoadWeightsToTransformerWeights(null);
-            await Console.Out.WriteLineAsync($"GgufLoader.LoadWeightsToTransformerWeights executed in: {sw.Elapsed.TotalSeconds:F2}s");
+            var qOps = QuantizationFactory.Create(sharpConfig.ResolvedHardware);
+            using var weights = ModelFactory.Create(modelConfig, sharpConfig, qOps, ggufPath, meta, LoadMode.Full);
+            weights.InitializeWeights();
+            await Console.Out.WriteLineAsync($"ModelFactory.Create + InitializeWeights executed in: {sw.Elapsed.TotalSeconds:F2}s");
             
 
             foreach (var generatorDef in generatorBuilders)

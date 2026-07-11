@@ -5,18 +5,22 @@ using SharpMind.Core.Quantization;
 using SharpMind.Core.Tensors;
 using SharpMind.Model.Arch;
 using SharpMind.Model.Config;
+using SharpMind.Model.Format;
 using SharpMind.Model.Layers;
 using SharpMind.Model.Layers.Attention;
 using SharpMind.Model.Layers.Ffn;
 using System.Collections.Concurrent;
-
 
 namespace SharpMind.Model;
 
 public static class ModelFactory
 {
     private static readonly ConcurrentDictionary<int, Type> _attnCache = [];
-    public static TransformerWeights CreateWeights(ModelConfig modelConfig, SharpMindConfig sharpConfig)
+
+    /// <summary>Creates empty trainable weights (no GGUF loader). All float tensors
+    /// are allocated and will be populated by training. Does NOT call
+    /// <see cref="TransformerWeights.InitializeWeights"/>.</summary>
+    public static TransformerWeights CreateForTraining(ModelConfig modelConfig, SharpMindConfig sharpConfig)
     {
         ArgumentNullException.ThrowIfNull(modelConfig);
         ArgumentNullException.ThrowIfNull(sharpConfig);
@@ -25,38 +29,86 @@ public static class ModelFactory
         var embedding = new Tensor<float>(modelConfig.VocabSize, modelConfig.HiddenDim);
         Tensor<float>? lmHead = null;
         var finalNormW = Tensor<float>.Ones(modelConfig.HiddenDim);
-        Tensor<float>? finalNormB = null; // Default RMSNorm has no bias
+        Tensor<float>? finalNormB = null;
+        var blockWeights = AllocateBlockWeights(modelConfig, sharpConfig, allocateFloatTensors: true);
+        return new TransformerWeightsFull(modelConfig, embedding, lmHead, finalNormW, finalNormB, blockWeights, null!);
+    }
 
-        var blockWeights = new TransformerWeights.BlockWeights[modelConfig.NumLayers];
-        int ffnDim = modelConfig.FfnDim;
-        int wf1Dim = sharpConfig.Ffn == FfnKind.Gated ? 2 * ffnDim : ffnDim;
+    /// <summary>Creates a <see cref="TransformerWeights"/> instance (Full or Cached subclass)
+    /// with a <see cref="GgufLoader"/> for the given path. Call <c>weights.InitializeWeights(progress)</c>
+    /// after creation to populate weights from the GGUF file.</summary>
+    public static TransformerWeights Create(
+        ModelConfig modelConfig,
+        SharpMindConfig sharpConfig,
+        QuantizationOps qOps,
+        string path,
+        ModelMetaData meta,
+        LoadMode mode,
+        int cacheDepth = 2)
+    {
+        ArgumentNullException.ThrowIfNull(modelConfig);
+        ArgumentNullException.ThrowIfNull(sharpConfig);
+        modelConfig.Validate();
 
-        for (int i = 0; i < modelConfig.NumLayers; i++)
+        bool fullMode = mode == LoadMode.Full;
+        var embedding = new Tensor<float>(modelConfig.VocabSize, modelConfig.HiddenDim);
+        Tensor<float>? lmHead = null;
+        var finalNormW = Tensor<float>.Ones(modelConfig.HiddenDim);
+        Tensor<float>? finalNormB = null;
+
+        var blockWeights = AllocateBlockWeights(modelConfig, sharpConfig, fullMode);
+        var loader = new GgufLoader(qOps, path, modelConfig);
+
+        if (fullMode)
         {
-            int qDim = modelConfig.NumHeads * modelConfig.HeadDim;
-            int kvDim = modelConfig.NumKvHeads * modelConfig.HeadDim;
-            blockWeights[i] = new TransformerWeights.BlockWeights(
-                new Tensor<float>(modelConfig.HiddenDim, qDim),               // Wq
-                new Tensor<float>(modelConfig.HiddenDim, kvDim),               // Wk
-                new Tensor<float>(modelConfig.HiddenDim, kvDim),               // Wv
-                new Tensor<float>(qDim, modelConfig.HiddenDim),                 // Wo
-                new Tensor<float>(qDim),                                        // WqB
-                new Tensor<float>(kvDim),                                      // WkB
-                new Tensor<float>(kvDim),                                      // WvB
-                new Tensor<float>(modelConfig.HiddenDim),                       // WoB
-                new Tensor<float>(modelConfig.HiddenDim, wf1Dim),              // Wf1
-                new Tensor<float>(ffnDim, modelConfig.HiddenDim),              // Wf2
-                new Tensor<float>(wf1Dim),                                     // Wf1B
-                new Tensor<float>(modelConfig.HiddenDim),                       // Wf2B
-                new Tensor<float>(modelConfig.HiddenDim),                       // Norm1W
-                null,                                                           // Norm1B
-                new Tensor<float>(modelConfig.HiddenDim),                       // Norm2W
-                null,                                                           // Norm2B
-                null,                                                           // QNormW (created lazily if present in GGUF)
-                null                                                            // KNormW
-            );
+            return new TransformerWeightsFull(modelConfig, embedding, lmHead, finalNormW, finalNormB, blockWeights, loader);
         }
-        return new TransformerWeights(modelConfig, embedding, lmHead, finalNormW, finalNormB, blockWeights);
+        else
+        {
+            return new TransformerWeightsCached(modelConfig, embedding, lmHead, finalNormW, finalNormB, blockWeights, loader, path, meta, cacheDepth);
+        }
+    }
+
+    private static TransformerWeights.BlockWeights[] AllocateBlockWeights(ModelConfig config, SharpMindConfig sharpConfig, bool allocateFloatTensors)
+    {
+        int ffnDim = config.FfnDim;
+        int wf1Dim = sharpConfig.Ffn == FfnKind.Gated ? 2 * ffnDim : ffnDim;
+        var blocks = new TransformerWeights.BlockWeights[config.NumLayers];
+
+        for (int i = 0; i < config.NumLayers; i++)
+        {
+            int qDim = config.NumHeads * config.HeadDim;
+            int kvDim = config.NumKvHeads * config.HeadDim;
+
+            if (allocateFloatTensors)
+            {
+                blocks[i] = new TransformerWeights.BlockWeights(
+                    new Tensor<float>(config.HiddenDim, qDim),          // Wq
+                    new Tensor<float>(config.HiddenDim, kvDim),          // Wk
+                    new Tensor<float>(config.HiddenDim, kvDim),          // Wv
+                    new Tensor<float>(qDim, config.HiddenDim),           // Wo
+                    new Tensor<float>(qDim),                              // WqB
+                    new Tensor<float>(kvDim),                            // WkB
+                    new Tensor<float>(kvDim),                            // WvB
+                    new Tensor<float>(config.HiddenDim),                  // WoB
+                    new Tensor<float>(config.HiddenDim, wf1Dim),         // Wf1
+                    new Tensor<float>(ffnDim, config.HiddenDim),         // Wf2
+                    new Tensor<float>(wf1Dim),                            // Wf1B
+                    new Tensor<float>(config.HiddenDim),                  // Wf2B
+                    new Tensor<float>(config.HiddenDim),                  // Norm1W
+                    null,                                                 // Norm1B
+                    new Tensor<float>(config.HiddenDim),                  // Norm2W
+                    null,                                                 // Norm2B
+                    null,                                                 // QNormW
+                    null                                                  // KNormW
+                );
+            }
+            else
+            {
+                blocks[i] = new TransformerWeights.BlockWeights();
+            }
+        }
+        return blocks;
     }
 
     public static Transformer CreateSession(TransformerWeights weights, SharpMindConfig sharpConfig, Dictionary<string, string>? mapping = null, bool optimizeMemory = true)
@@ -73,18 +125,19 @@ public static class ModelFactory
         var blocks = Enumerable.Range(0, weights.Config.NumLayers)
             .Select(i => BuildBlock(i, weights, sharpConfig, mapping, acts, qOps, sharpConfig.UseHooks)).ToArray();
 
-        // In Cached mode, register callbacks so CachedWeightLoader pushes raw data
-        // into layer instances after on-demand loading. Fires immediately for layers
-        // already loaded (0..cacheDepth-1) and for each subsequent layer on prefetch.
-        weights.CachedLoader?.RegisterOnLayerLoaded(layerIdx =>
+        // In Cached mode, subscribe to OnLayerLoaded to push raw data into running layers
+        if (weights is TransformerWeightsCached cached)
+        {
+            cached.OnLayerLoaded += layerIdx =>
             {
                 if (layerIdx < blocks.Length)
                     blocks[layerIdx].UpdateRawWeights(weights.Blocks[layerIdx]);
-            });
+            };
+        }
 
         IArchitecture arch = sharpConfig.Arch switch
         {
-            ArchKind.Decoder => new DecoderArch(blocks, weights.CachedLoader),
+            ArchKind.Decoder => new DecoderArch(blocks, weights as TransformerWeightsCached),
             ArchKind.Encoder => new EncoderArch(blocks),
             _ => throw new NotSupportedException($"Unknown ArchKind: {sharpConfig.Arch}")
         };
@@ -121,7 +174,6 @@ public static class ModelFactory
             return Assembler.Assemble<AttentionLayer>(cfg);
         });
         var attn = Activator.CreateInstance(t, weights.Config, qOps) as AttentionLayer;
-        //Assembler.CreateInstance<AttentionLayer>(cfg, weights.Config, qOps);
         ArgumentNullException.ThrowIfNull(attn);
         attn.SetWeights(blockWeights);
         
@@ -129,8 +181,14 @@ public static class ModelFactory
         ffn.SetWeights(blockWeights);
         
         float eps = weights.Config.NormEps;
-        var norm1 = BuildNorm(weights.Config.HiddenDim, sharpConfig, eps, blockWeights.Norm1W, blockWeights.Norm1B);
-        var norm2 = BuildNorm(weights.Config.HiddenDim, sharpConfig, eps, blockWeights.Norm2W, blockWeights.Norm2B);
+
+        // Norm tensors may be null in Cached mode; use placeholder if needed
+        var n1w = blockWeights.Norm1W ?? Tensor<float>.Ones(weights.Config.HiddenDim);
+        var n2w = blockWeights.Norm2W ?? Tensor<float>.Ones(weights.Config.HiddenDim);
+        var norm1 = BuildNorm(weights.Config.HiddenDim, sharpConfig, eps, n1w, blockWeights.Norm1B);
+        var norm2 = BuildNorm(weights.Config.HiddenDim, sharpConfig, eps, n2w, blockWeights.Norm2B);
+        if (blockWeights.Norm1W == null) n1w.Dispose();
+        if (blockWeights.Norm2W == null) n2w.Dispose();
 
         return useHooks
             ? new HookedTransformerBlock(layerIdx, attn, ffn, norm1, norm2)

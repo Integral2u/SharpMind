@@ -1,22 +1,25 @@
 using SharpMind.Core.Quantization;
 using SharpMind.Core.Tensors;
 using SharpMind.Model.Config;
-using SharpMind.Model.Layers;
+using SharpMind.Model.Format;
+using System.Collections.Concurrent;
+using System.IO.MemoryMappedFiles;
 
 namespace SharpMind.Model;
 
-/// <summary>
-/// Immutable container for a Transformer's weights. 
-/// Designed to be shared across multiple Transformer sessions to avoid reloading from disk.
-/// </summary>
-public sealed class TransformerWeights(ModelConfig config, Tensor<float> embedding, Tensor<float>? lmHead, Tensor<float> finalNormW, Tensor<float>? finalNormB, TransformerWeights.BlockWeights[] blocks) : IDisposable
+/// <summary>Metadata for one weight tensor: file offset, byte size, quantization dtype.</summary>
+public readonly record struct TensorMeta(long Offset, int Size, QuantDType Dtype);
+
+/// <summary>Container for a Transformer's weights. Abstract — use <see cref="TransformerWeightsFull"/>
+/// for full in-memory loading or <see cref="TransformerWeightsCached"/> for on-demand cached loading.</summary>
+public abstract class TransformerWeights : IDisposable
 {
-    public ModelConfig Config { get; } = config;
-    public Tensor<float> EmbeddingWeight { get; } = embedding;
-    public Tensor<float>? LmHeadWeight { get; private set; } = lmHead;
+    public ModelConfig Config { get; }
+    public Tensor<float> EmbeddingWeight { get; }
+    public Tensor<float>? LmHeadWeight { get; protected set; }
     public void SetLmHead(Tensor<float> head) => LmHeadWeight = head;
-    public Tensor<float> FinalNormWeight { get; } = finalNormW;
-    public Tensor<float>? FinalNormBias { get; } = finalNormB;
+    public Tensor<float> FinalNormWeight { get; }
+    public Tensor<float>? FinalNormBias { get; }
 
     // Raw quantized data for non-block tensors (embedding, lm_head)
     public byte[]? RawEmbedding { get; set; }
@@ -24,37 +27,71 @@ public sealed class TransformerWeights(ModelConfig config, Tensor<float> embeddi
     public byte[]? RawLmHead { get; set; }
     public QuantDType? RawLmHeadDtype { get; set; }
 
-    // Weights for each block
-    public BlockWeights[] Blocks { get; } = blocks;
+    // Per-block weights (Attention, FFN, Norms)
+    public BlockWeights[] Blocks { get; }
 
-    // GGUF metadata and path for seek-based lazy loading (Phase 5)
+    // GGUF metadata (used by Cached mode for seek-based lazy loading)
     public Format.ModelMetaData? GgufMeta { get; set; }
     public string? GgufPath { get; set; }
-
-    // True when the GGUF contains .exps. expert tensors (Mixture of Experts)
     public bool IsMoE { get; set; }
 
-    // Cached mode loader for on-demand layer weight loading
-    public CachedWeightLoader? CachedLoader { get; set; }
+    // The loader used during InitializeWeights
+    protected IModelLoader? Loader { get; }
+    public LoadMode Mode { get; }
+
+    // Fired when a layer is fully loaded (used by Cached mode to push weights into running layers)
+    public event Action<int>? OnLayerLoaded;
+    protected void FireLayerLoaded(int layerIndex) => OnLayerLoaded?.Invoke(layerIndex);
+
+    protected TransformerWeights(
+        ModelConfig config,
+        Tensor<float> embedding,
+        Tensor<float>? lmHead,
+        Tensor<float> finalNormW,
+        Tensor<float>? finalNormB,
+        BlockWeights[] blocks,
+        IModelLoader? loader,
+        LoadMode mode)
+    {
+        Config = config;
+        EmbeddingWeight = embedding;
+        LmHeadWeight = lmHead;
+        FinalNormWeight = finalNormW;
+        FinalNormBias = finalNormB;
+        Blocks = blocks;
+        Loader = loader;
+        Mode = mode;
+    }
+
+    /// <summary>Initialises weights using the stored <see cref="IModelLoader"/>.
+    /// Called after construction — must be called exactly once.</summary>
+    public abstract void InitializeWeights(IProgress<float>? progress = null);
 
     public void Dispose()
     {
-        EmbeddingWeight.Dispose();
-        LmHeadWeight?.Dispose();
-        FinalNormWeight.Dispose();
-        FinalNormBias?.Dispose();
-        foreach (var block in Blocks) block.Dispose();
-        CachedLoader?.Dispose();
+        Dispose(true);
+        GC.SuppressFinalize(this);
+    }
+
+    protected virtual void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            EmbeddingWeight.Dispose();
+            LmHeadWeight?.Dispose();
+            FinalNormWeight.Dispose();
+            FinalNormBias?.Dispose();
+            foreach (var block in Blocks) block.Dispose();
+        }
     }
 
     public (Tensor<float>? target, BlockWeights? block, string? rawField) ResolveTarget(string name)
     {
         if (name.Contains("token_embd", StringComparison.OrdinalIgnoreCase)) return (EmbeddingWeight, null, null);
         if (name.Contains("output_norm", StringComparison.OrdinalIgnoreCase)) return (FinalNormWeight, null, null);
-        // Exact match only — "attn_output.weight" contains "output.weight" but is a block tensor
         if (name.Equals("output.weight", StringComparison.OrdinalIgnoreCase) || name.Equals("lm_head.weight", StringComparison.OrdinalIgnoreCase)) return (LmHeadWeight, null, null);
 
-        var match = RegexGenerated.LayerIndexDotNDot.Match(name);// System.Text.RegularExpressions.Regex.Match(name, @"blk\.(\d+)\.");
+        var match = RegexGenerated.LayerIndexDotNDot.Match(name);
         if (match.Success && int.TryParse(match.Groups[1].Value, out int bIdx) && bIdx < Blocks.Length)
         {
             var block = Blocks[bIdx];
@@ -71,8 +108,6 @@ public sealed class TransformerWeights(ModelConfig config, Tensor<float> embeddi
             }
             else
             {
-                // Q/K norm checks must be BEFORE the broader attn_q/attn_k checks
-                // to avoid "attn_q_norm" being misidentified as "attn_q".
                 if (name.Contains("attn_q_norm", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
                 if (name.Contains("attn_k_norm", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
                 if (name.Contains("attn_q", StringComparison.OrdinalIgnoreCase) || name.Contains("q_proj", StringComparison.OrdinalIgnoreCase)) return (null, block, "RawWq");
@@ -82,7 +117,6 @@ public sealed class TransformerWeights(ModelConfig config, Tensor<float> embeddi
                 if (name.Contains("attn_norm", StringComparison.OrdinalIgnoreCase) || name.Contains("input_layernorm", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
                 if (name.Contains("ffn_norm", StringComparison.OrdinalIgnoreCase) || name.Contains("post_attention_layernorm", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
 
-                // MoE expert tensors: blk.{L}.ffn_gate.exps.{E}.weight → expert-indexed field
                 if (IsMoE && name.Contains(".exps.", StringComparison.OrdinalIgnoreCase))
                 {
                     var expMatch = RegexGenerated.ExpertIndex.Match(name);
@@ -98,7 +132,6 @@ public sealed class TransformerWeights(ModelConfig config, Tensor<float> embeddi
                     return (null, block, null);
                 }
 
-                // MoE router (ffn_gate.weight without .exps.)
                 if (IsMoE && name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase))
                     return (null, block, "RawRouter");
 
@@ -116,7 +149,7 @@ public sealed class TransformerWeights(ModelConfig config, Tensor<float> embeddi
         if (name.Contains("output_norm", StringComparison.OrdinalIgnoreCase)) return FinalNormWeight;
         if (name.Equals("output.weight", StringComparison.OrdinalIgnoreCase) || name.Equals("lm_head.weight", StringComparison.OrdinalIgnoreCase)) return LmHeadWeight;
 
-        var match = RegexGenerated.LayerIndexDotNDot.Match(name); //System.Text.RegularExpressions.Regex.Match(name, @"blk\.(\d+)\.");
+        var match = RegexGenerated.LayerIndexDotNDot.Match(name);
         if (match.Success && int.TryParse(match.Groups[1].Value, out int bIdx) && bIdx < Blocks.Length)
         {
             var b = Blocks[bIdx];
@@ -150,7 +183,6 @@ public sealed class TransformerWeights(ModelConfig config, Tensor<float> embeddi
                 if (name.Contains("attn_norm", StringComparison.OrdinalIgnoreCase) || name.Contains("input_layernorm", StringComparison.OrdinalIgnoreCase)) return b.Norm1W;
                 if (name.Contains("ffn_norm", StringComparison.OrdinalIgnoreCase) || name.Contains("post_attention_layernorm", StringComparison.OrdinalIgnoreCase)) return b.Norm2W;
 
-                // MoE expert tensors and router — no float allocation, quantized only
                 if (IsMoE && (name.Contains(".exps.", StringComparison.OrdinalIgnoreCase) || name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase) || name.Contains("ffn_up", StringComparison.OrdinalIgnoreCase)))
                     return null;
 
@@ -163,7 +195,6 @@ public sealed class TransformerWeights(ModelConfig config, Tensor<float> embeddi
 
     public static void SetRawField(BlockWeights block, string field, byte[] data, QuantDType dtype)
     {
-        // Expert-indexed fields: "RawWgateExp_5" → block.RawWgateExp[5] = data
         if (field.StartsWith("RawWgateExp_", StringComparison.Ordinal) &&
             int.TryParse(field.AsSpan(12), out int gateExp))
         {
@@ -206,28 +237,64 @@ public sealed class TransformerWeights(ModelConfig config, Tensor<float> embeddi
         }
     }
 
-    public sealed class BlockWeights(Tensor<float> wq, Tensor<float> wk, Tensor<float> wv, Tensor<float> wo,
-                        Tensor<float> wqB, Tensor<float> wkB, Tensor<float> wvB, Tensor<float> woB,
-                        Tensor<float> wf1, Tensor<float> wf2, Tensor<float> wf1B, Tensor<float> wf2B,
-                        Tensor<float> n1w, Tensor<float>? n1b, Tensor<float> n2w, Tensor<float>? n2b,
-                        Tensor<float>? qNorm, Tensor<float>? kNorm) : IDisposable
+    /// <summary>Records tensor metadata in the block's <see cref="BlockWeights.TensorMeta"/>
+    /// dictionary (field → {offset, size, dtype}) without loading data.</summary>
+    public static void SetTensorMeta(BlockWeights block, string field, long offset, int size, QuantDType dtype)
     {
-        // Attention
-        public Tensor<float> Wq { get; } = wq; public Tensor<float> Wk { get; } = wk; public Tensor<float> Wv { get; } = wv; public Tensor<float> Wo { get; } = wo;
-        public Tensor<float> WqBias { get; } = wqB; public Tensor<float> WkBias { get; } = wkB; public Tensor<float> WvBias { get; } = wvB; public Tensor<float> WoBias { get; } = woB;
+        block.TensorMeta[field] = new TensorMeta(offset, size, dtype);
+    }
 
-        // FFN
-        public Tensor<float> Wf1 { get; } = wf1; public Tensor<float> Wf2 { get; } = wf2; public Tensor<float> Wf1Bias { get; } = wf1B; public Tensor<float> Wf2Bias { get; } = wf2B;
+    public static void FreeBlockFloatTensors(BlockWeights block)
+    {
+        block.Wq?.Dispose(); block.Wq = null;
+        block.Wk?.Dispose(); block.Wk = null;
+        block.Wv?.Dispose(); block.Wv = null;
+        block.Wo?.Dispose(); block.Wo = null;
+        block.WqBias?.Dispose(); block.WqBias = null;
+        block.WkBias?.Dispose(); block.WkBias = null;
+        block.WvBias?.Dispose(); block.WvBias = null;
+        block.WoBias?.Dispose(); block.WoBias = null;
+        block.Wf1?.Dispose(); block.Wf1 = null;
+        block.Wf2?.Dispose(); block.Wf2 = null;
+        block.Wf1Bias?.Dispose(); block.Wf1Bias = null;
+        block.Wf2Bias?.Dispose(); block.Wf2Bias = null;
+        block.Norm1W?.Dispose(); block.Norm1W = null;
+        block.Norm1B?.Dispose(); block.Norm1B = null;
+        block.Norm2W?.Dispose(); block.Norm2W = null;
+        block.Norm2B?.Dispose(); block.Norm2B = null;
+        block.QNormW?.Dispose(); block.QNormW = null;
+        block.KNormW?.Dispose(); block.KNormW = null;
+    }
 
-        // Norms
-        public Tensor<float> Norm1W { get; } = n1w; public Tensor<float>? Norm1B { get; } = n1b; public Tensor<float> Norm2W { get; } = n2w; public Tensor<float>? Norm2B { get; } = n2b;
+    public sealed class BlockWeights : IDisposable
+    {
+        // Attention float tensors (nullable — Full mode populates all; Cached mode populates on demand)
+        public Tensor<float>? Wq { get; set; }
+        public Tensor<float>? Wk { get; set; }
+        public Tensor<float>? Wv { get; set; }
+        public Tensor<float>? Wo { get; set; }
+        public Tensor<float>? WqBias { get; set; }
+        public Tensor<float>? WkBias { get; set; }
+        public Tensor<float>? WvBias { get; set; }
+        public Tensor<float>? WoBias { get; set; }
+
+        // FFN float tensors
+        public Tensor<float>? Wf1 { get; set; }
+        public Tensor<float>? Wf2 { get; set; }
+        public Tensor<float>? Wf1Bias { get; set; }
+        public Tensor<float>? Wf2Bias { get; set; }
+
+        // Norm float tensors
+        public Tensor<float>? Norm1W { get; set; }
+        public Tensor<float>? Norm1B { get; set; }
+        public Tensor<float>? Norm2W { get; set; }
+        public Tensor<float>? Norm2B { get; set; }
 
         // Per-head Q/K normalization (Qwen3)
-        // Settable so ResolveFloatTarget can create lazily.
-        public Tensor<float>? QNormW { get; set; } = qNorm;
-        public Tensor<float>? KNormW { get; set; } = kNorm;
+        public Tensor<float>? QNormW { get; set; }
+        public Tensor<float>? KNormW { get; set; }
 
-        // Quantized data
+        // Quantized data (byte arrays)
         public byte[]? RawWq { get; set; }
         public byte[]? RawWk { get; set; }
         public byte[]? RawWv { get; set; }
@@ -237,14 +304,13 @@ public sealed class TransformerWeights(ModelConfig config, Tensor<float> embeddi
         public byte[]? RawWf1 { get; set; }
         public byte[]? RawWf2 { get; set; }
 
-        // MoE expert quantized data (expert-indexed)
+        // MoE expert quantized data
         public Dictionary<int, byte[]>? RawWgateExp { get; set; }
         public Dictionary<int, byte[]>? RawWupExp { get; set; }
         public Dictionary<int, byte[]>? RawWdownExp { get; set; }
-        // MoE router weight
         public byte[]? RawRouter { get; set; }
 
-        // Per-tensor quantization dtype (one per raw field)
+        // Per-tensor quantization dtype
         public QuantDType? QuantDtypeWq { get; set; }
         public QuantDType? QuantDtypeWk { get; set; }
         public QuantDType? QuantDtypeWv { get; set; }
@@ -253,18 +319,182 @@ public sealed class TransformerWeights(ModelConfig config, Tensor<float> embeddi
         public QuantDType? QuantDtypeWup { get; set; }
         public QuantDType? QuantDtypeWf1 { get; set; }
         public QuantDType? QuantDtypeWf2 { get; set; }
-        // MoE expert quantization dtypes
         public Dictionary<int, QuantDType>? QuantDtypeWgateExp { get; set; }
         public Dictionary<int, QuantDType>? QuantDtypeWupExp { get; set; }
         public Dictionary<int, QuantDType>? QuantDtypeWdownExp { get; set; }
         public QuantDType? QuantDtypeRouter { get; set; }
+
+        // Tensor metadata (offset, size, dtype) populated by IModelLoader.PreInit
+        public Dictionary<string, TensorMeta> TensorMeta { get; } = [];
+
+        public BlockWeights() { }
+
+        public BlockWeights(
+            Tensor<float> wq, Tensor<float> wk, Tensor<float> wv, Tensor<float> wo,
+            Tensor<float> wqB, Tensor<float> wkB, Tensor<float> wvB, Tensor<float> woB,
+            Tensor<float> wf1, Tensor<float> wf2, Tensor<float> wf1B, Tensor<float> wf2B,
+            Tensor<float> n1w, Tensor<float>? n1b, Tensor<float> n2w, Tensor<float>? n2b,
+            Tensor<float>? qNorm, Tensor<float>? kNorm)
+        {
+            Wq = wq; Wk = wk; Wv = wv; Wo = wo;
+            WqBias = wqB; WkBias = wkB; WvBias = wvB; WoBias = woB;
+            Wf1 = wf1; Wf2 = wf2; Wf1Bias = wf1B; Wf2Bias = wf2B;
+            Norm1W = n1w; Norm1B = n1b; Norm2W = n2w; Norm2B = n2b;
+            QNormW = qNorm; KNormW = kNorm;
+        }
+
         public void Dispose()
         {
-            Wq.Dispose(); Wk.Dispose(); Wv.Dispose(); Wo.Dispose();
-            WqBias.Dispose(); WkBias.Dispose(); WvBias.Dispose(); WoBias.Dispose();
-            Wf1.Dispose(); Wf2.Dispose(); Wf1Bias.Dispose(); Wf2Bias.Dispose();
-            Norm1W.Dispose(); Norm1B?.Dispose(); Norm2W.Dispose(); Norm2B?.Dispose();
+            Wq?.Dispose(); Wk?.Dispose(); Wv?.Dispose(); Wo?.Dispose();
+            WqBias?.Dispose(); WkBias?.Dispose(); WvBias?.Dispose(); WoBias?.Dispose();
+            Wf1?.Dispose(); Wf2?.Dispose(); Wf1Bias?.Dispose(); Wf2Bias?.Dispose();
+            Norm1W?.Dispose(); Norm1B?.Dispose(); Norm2W?.Dispose(); Norm2B?.Dispose();
             QNormW?.Dispose(); KNormW?.Dispose();
         }
+    }
+}
+
+/// <summary>Loads all weights into memory at once (LoadMode.Full).</summary>
+public sealed class TransformerWeightsFull : TransformerWeights
+{
+    public TransformerWeightsFull(
+        ModelConfig config,
+        Tensor<float> embedding,
+        Tensor<float>? lmHead,
+        Tensor<float> finalNormW,
+        Tensor<float>? finalNormB,
+        BlockWeights[] blocks,
+        IModelLoader loader)
+        : base(config, embedding, lmHead, finalNormW, finalNormB, blocks, loader, LoadMode.Full) { }
+
+    public override void InitializeWeights(IProgress<float>? progress = null)
+    {
+        Loader!.PreInit(this, progress);
+        Loader!.LoadAllWeights(this, progress);
+    }
+}
+
+/// <summary>Loads weights on-demand per layer (LoadMode.Cached). Manages a cyclic window
+/// of <see cref="CacheDepth"/> layers resident in float memory.</summary>
+public sealed class TransformerWeightsCached : TransformerWeights
+{
+    private readonly string _path;
+    private readonly ModelMetaData _meta;
+    private readonly int _cacheDepth;
+    private readonly MemoryMappedFile _mmf;
+    private readonly HashSet<int> _loaded = [];
+    private readonly ConcurrentDictionary<int, Task> _loading = new();
+    private readonly object _sync = new();
+    private CancellationTokenSource? _cts;
+
+    public int CacheDepth => _cacheDepth;
+
+    public TransformerWeightsCached(
+        ModelConfig config,
+        Tensor<float> embedding,
+        Tensor<float>? lmHead,
+        Tensor<float> finalNormW,
+        Tensor<float>? finalNormB,
+        BlockWeights[] blocks,
+        IModelLoader loader,
+        string path,
+        ModelMetaData meta,
+        int cacheDepth = 2)
+        : base(config, embedding, lmHead, finalNormW, finalNormB, blocks, loader, LoadMode.Cached)
+    {
+        _path = path;
+        _meta = meta;
+        _cacheDepth = Math.Max(1, cacheDepth);
+        _cts = new CancellationTokenSource();
+        _mmf = MemoryMappedFile.CreateFromFile(path, FileMode.Open, null, 0, MemoryMappedFileAccess.Read);
+    }
+
+    public override void InitializeWeights(IProgress<float>? progress = null)
+    {
+        Loader!.PreInit(this, progress);
+        // Pre-load first cacheDepth layers synchronously
+        int initialLayers = Math.Min(_cacheDepth, Blocks.Length);
+        for (int i = 0; i < initialLayers; i++)
+            LoadLayerInternal(i);
+    }
+
+    /// <summary>Ensures a specific layer's weights are loaded (synchronous).</summary>
+    public void EnsureLayer(int layerIndex)
+    {
+        if (_loading.TryGetValue(layerIndex, out var t))
+        {
+            if (!t.IsCompleted) t.GetAwaiter().GetResult();
+            return;
+        }
+        lock (_sync)
+        {
+            if (_loaded.Contains(layerIndex)) return;
+            if (_loading.TryGetValue(layerIndex, out t))
+            {
+                t.GetAwaiter().GetResult();
+                return;
+            }
+        }
+        LoadLayerInternal(layerIndex);
+    }
+
+    /// <summary>Asynchronously prefetches the layer at <c>currentLayer + cacheDepth</c> (circular).</summary>
+    public void PrefetchAfter(int currentLayer)
+    {
+        int total = Blocks.Length;
+        if (total <= _cacheDepth) return;
+        int next = (currentLayer + _cacheDepth) % total;
+        lock (_sync)
+        {
+            if (!_loaded.Contains(next) && !_loading.ContainsKey(next))
+            {
+                var token = _cts?.Token ?? CancellationToken.None;
+                var t = Task.Run(() =>
+                {
+                    token.ThrowIfCancellationRequested();
+                    LoadLayerInternal(next);
+                }, token);
+                _loading[next] = t;
+            }
+        }
+    }
+
+    public bool IsLayerLoaded(int layerIndex) => _loaded.Contains(layerIndex);
+
+    private void LoadLayerInternal(int layerIndex)
+    {
+        Loader!.LoadLayer(this, layerIndex);
+
+        lock (_sync)
+        {
+            _loaded.Add(layerIndex);
+            FireLayerLoaded(layerIndex);
+        }
+
+        // Free layers outside the cyclic window
+        int evict = layerIndex - _cacheDepth;
+        if (evict >= 0 && _loaded.Remove(evict))
+            FreeBlockFloatTensors(Blocks[evict]);
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            if (Interlocked.Exchange(ref _cts, null) is { } cts)
+            {
+                cts.Cancel();
+                cts.Dispose();
+            }
+            foreach (var kv in _loading)
+            {
+                try { kv.Value.GetAwaiter().GetResult(); }
+                catch (OperationCanceledException) { }
+            }
+            _mmf.Dispose();
+            _loading.Clear();
+            lock (_sync) { _loaded.Clear(); }
+        }
+        base.Dispose(disposing);
     }
 }

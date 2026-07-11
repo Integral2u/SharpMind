@@ -151,14 +151,14 @@ namespace SharpMind.Model.Layers.Attention;
 
         // Restore individual Q/K/V layers for fast quantized forward path
         Wq.ReplaceWeights(weights.Wq, weights.WqBias);
-        Wq.SetRawWeight(weights.RawWq, weights.QuantDtypeWq ?? QuantDType.F32);
+        Wq.SetRawWeight(weights.RawWq, weights.TensorMeta.GetValueOrDefault("RawWq").Dtype);
         Wk.ReplaceWeights(weights.Wk, weights.WkBias);
-        Wk.SetRawWeight(weights.RawWk, weights.QuantDtypeWk ?? QuantDType.F32);
+        Wk.SetRawWeight(weights.RawWk, weights.TensorMeta.GetValueOrDefault("RawWk").Dtype);
         Wv.ReplaceWeights(weights.Wv, weights.WvBias);
-        Wv.SetRawWeight(weights.RawWv, weights.QuantDtypeWv ?? QuantDType.F32);
+        Wv.SetRawWeight(weights.RawWv, weights.TensorMeta.GetValueOrDefault("RawWv").Dtype);
 
         Wo.ReplaceWeights(weights.Wo, weights.WoBias);
-        Wo.SetRawWeight(weights.RawWo, weights.QuantDtypeWo ?? QuantDType.F32);
+        Wo.SetRawWeight(weights.RawWo, weights.TensorMeta.GetValueOrDefault("RawWo").Dtype);
 
         // Per-head Q/K normalization (Qwen3)
         if (weights.QNormW != null)
@@ -174,14 +174,14 @@ namespace SharpMind.Model.Layers.Attention;
     }
 
     /// <summary>Pushes newly loaded raw quantized data into layer instances.
-    /// Called by <see cref="CachedWeightLoader"/> after on-demand layer loading.
+    /// Called by <see cref="TransformerWeightsCached"/> after on-demand layer loading.
     /// Does NOT touch float tensors — safe after FreeFloatWeights.</summary>
     public void UpdateRawWeights(TransformerWeights.BlockWeights weights)
     {
-        Wq.SetRawWeight(weights.RawWq, weights.QuantDtypeWq ?? QuantDType.F32);
-        Wk.SetRawWeight(weights.RawWk, weights.QuantDtypeWk ?? QuantDType.F32);
-        Wv.SetRawWeight(weights.RawWv, weights.QuantDtypeWv ?? QuantDType.F32);
-        Wo.SetRawWeight(weights.RawWo, weights.QuantDtypeWo ?? QuantDType.F32);
+        Wq.SetRawWeight(weights.RawWq, weights.TensorMeta.GetValueOrDefault("RawWq").Dtype);
+        Wk.SetRawWeight(weights.RawWk, weights.TensorMeta.GetValueOrDefault("RawWk").Dtype);
+        Wv.SetRawWeight(weights.RawWv, weights.TensorMeta.GetValueOrDefault("RawWv").Dtype);
+        Wo.SetRawWeight(weights.RawWo, weights.TensorMeta.GetValueOrDefault("RawWo").Dtype);
     }
 
     private unsafe void LoadFusedWeightTransposed(ReadOnlySpan<float> data, int colOffset, int subOutF)

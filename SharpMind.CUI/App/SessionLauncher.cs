@@ -127,8 +127,13 @@ public static class SessionLauncher
                 ? null
                 : new Progress<float>(p => status.Report($"Loading weights... {p:P0}"));
 
-            var loader = new GgufLoader(QuantizationFactory.Create(mapping), options.ModelPath, modelConfig, options.LoadMode);
-            weights = await Task.Run(() => loader.LoadWeightsToTransformerWeights(progress));
+            var qOps = QuantizationFactory.Create(mapping);
+            weights = await Task.Run(() =>
+            {
+                var w = ModelFactory.Create(modelConfig, sharpConfig, qOps, options.ModelPath, meta, options.LoadMode);
+                w.InitializeWeights(progress);
+                return w;
+            });
         }
         catch (Exception ex)
         {

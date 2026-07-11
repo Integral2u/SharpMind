@@ -29,10 +29,11 @@ namespace SharpMind.Samples.Examples
             var sharpConfig = modelConfig.ForModel();
             GC.Collect(); GC.WaitForPendingFinalizers();
             var sw = Stopwatch.StartNew();
-            var loader = new GgufLoader(QuantizationFactory.Create(sharpConfig.ResolvedHardware), ggufPath, modelConfig, LoadMode.Full);
-            using var weights = loader.LoadWeightsToTransformerWeights(null);
+            var qOps = QuantizationFactory.Create(sharpConfig.ResolvedHardware);
+            using var weights = ModelFactory.Create(modelConfig, sharpConfig, qOps, ggufPath, meta, LoadMode.Full);
+            weights.InitializeWeights();
 
-            await Console.Out.WriteLineAsync($"GgufLoader.LoadWeightsToTransformerWeights executed in: {sw.Elapsed.TotalSeconds:F2}s");
+            await Console.Out.WriteLineAsync($"ModelFactory.Create + InitializeWeights executed in: {sw.Elapsed.TotalSeconds:F2}s");
 
             GC.Collect(); GC.WaitForPendingFinalizers();
             sw.Restart();

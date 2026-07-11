@@ -44,11 +44,11 @@ namespace SharpMind.Samples.Examples
 
                 GC.Collect(); GC.WaitForPendingFinalizers();
                 var sw = Stopwatch.StartNew();
-                var loader = new GgufLoader(QuantizationFactory.Create(mapping ?? sharpConfig.ToJigSawMapping()), ggufPath, modelConfig, LoadMode.Full);
+                var qOps = QuantizationFactory.Create(mapping ?? sharpConfig.ToJigSawMapping());
+                using var weights = ModelFactory.Create(modelConfig, sharpConfig, qOps, ggufPath, meta, LoadMode.Full);
+                weights.InitializeWeights();
                 
-                using var weights = loader.LoadWeightsToTransformerWeights();
-                
-                await Console.Out.WriteLineAsync($"GgufLoader.LoadWeightsToTransformerWeights executed in: {sw.Elapsed.TotalSeconds:F2}s");
+                await Console.Out.WriteLineAsync($"ModelFactory.Create + InitializeWeights executed in: {sw.Elapsed.TotalSeconds:F2}s");
                 GC.Collect(); GC.WaitForPendingFinalizers();
                 sw.Restart();
                 using var model = ModelFactory.CreateSession(weights, sharpConfig, mapping);
