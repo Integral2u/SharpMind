@@ -188,8 +188,8 @@ public abstract class QuantizationOps
     public abstract unsafe float VecDotQ4_0(float* input, byte* rawWeights, int col, int inFeatures);
 
     [PuzzleCornerPiece(QuantizationKeys.KeyQuantizedMatMulQ4_0, true, null,
-        "qmatmul_q4_0_serial_fma",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_0_Serial_Scalar)}",
-        "qmatmul_q4_0_parallel_fma",  $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_0_Parallel_Scalar)}",
+        "qmatmul_q4_0_serial_fma",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_0_Serial_AVX2)}",
+        "qmatmul_q4_0_parallel_fma",  $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_0_Parallel_AVX2)}",
         "qmatmul_q4_0_serial_avx2",   $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_0_Serial_AVX2)}",
         "qmatmul_q4_0_parallel_avx2", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_0_Parallel_AVX2)}",
         "qmatmul_q4_0_serial_sse",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_0_Serial_SSE)}",
@@ -206,8 +206,8 @@ public abstract class QuantizationOps
     public abstract unsafe float VecDotQ4_1(float* input, byte* rawWeights, int col, int inFeatures);
 
     [PuzzleCornerPiece(QuantizationKeys.KeyQuantizedMatMulQ4_1, true, null,
-        "qmatmul_q4_1_serial_fma",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_1_Serial_Scalar)}",
-        "qmatmul_q4_1_parallel_fma",  $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_1_Parallel_Scalar)}",
+        "qmatmul_q4_1_serial_fma",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_1_Serial_AVX2)}",
+        "qmatmul_q4_1_parallel_fma",  $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_1_Parallel_AVX2)}",
         "qmatmul_q4_1_serial_avx2",   $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_1_Serial_AVX2)}",
         "qmatmul_q4_1_parallel_avx2", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_1_Parallel_AVX2)}",
         "qmatmul_q4_1_serial_sse",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_1_Serial_SSE)}",
@@ -351,8 +351,8 @@ public abstract class QuantizationOps
     public abstract unsafe void QuantizedMatMulQ5_1(float* input, byte* rawWeights, float* output, int M, int K, int N);
 
     [PuzzleCornerPiece(QuantizationKeys.KeyQuantizedMatMulQ4_NL, true, null,
-        "qmatmul_q4_nl_serial_fma",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_NL_Serial_Scalar)}",
-        "qmatmul_q4_nl_parallel_fma",  $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_NL_Parallel_Scalar)}",
+        "qmatmul_q4_nl_serial_fma",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_NL_Serial_AVX2)}",
+        "qmatmul_q4_nl_parallel_fma",  $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_NL_Parallel_AVX2)}",
         "qmatmul_q4_nl_serial_avx2",   $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_NL_Serial_AVX2)}",
         "qmatmul_q4_nl_parallel_avx2", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_NL_Parallel_AVX2)}",
         "qmatmul_q4_nl_serial_sse",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_NL_Serial_Scalar)}",
