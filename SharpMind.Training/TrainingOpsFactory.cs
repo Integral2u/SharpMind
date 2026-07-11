@@ -1,4 +1,6 @@
 using JigSawDotNet;
+using SharpMind.Core;
+using System.Collections.Concurrent;
 
 namespace SharpMind.Training;
 
@@ -14,6 +16,9 @@ namespace SharpMind.Training;
 /// </summary>
 public static class TrainingOpsFactory
 {
+    private static readonly ConcurrentDictionary<int, TrainingOps> _opsCache = [];
+
     public static TrainingOps Create(SharpMindConfig config)
-        => Assembler.CreateInstance<TrainingOps>(config.ToJigSawMapping());
+        => _opsCache.GetOrAdd(MappingHash.Compute(config.ToJigSawMapping()),
+            _ => Assembler.CreateInstance<TrainingOps>(config.ToJigSawMapping()));
 }

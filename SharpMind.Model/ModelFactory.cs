@@ -1,4 +1,5 @@
 ﻿using JigSawDotNet;
+using SharpMind.Core;
 using SharpMind.Core.Activations;
 using SharpMind.Core.Embeddings;
 using SharpMind.Core.Quantization;
@@ -198,7 +199,7 @@ public static class ModelFactory
             }
         }
         var blockWeights = weights.Blocks[layerIdx];
-        var t = _attnCache.GetOrAdd(cfg.GetHashCode(), (h) =>
+        var t = _attnCache.GetOrAdd(MappingHash.Compute(cfg), (h) =>
         {
             return Assembler.Assemble<AttentionLayer>(cfg);
         });

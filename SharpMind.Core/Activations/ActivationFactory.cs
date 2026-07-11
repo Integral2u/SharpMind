@@ -42,7 +42,7 @@ public static class ActivationFactory
         return Create(cfg);
     }
     public static ActivationOps Create(Dictionary<string, string> mappings) => 
-        _opsCache.GetOrAdd(mappings.GetHashCode(), (h) =>
+        _opsCache.GetOrAdd(MappingHash.Compute(mappings), (h) =>
             {
                 return Assembler.CreateInstance<ActivationOps>(mappings);
             });    

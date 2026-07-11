@@ -16,7 +16,7 @@ public static class QuantizationFactory
     }
 
     public static QuantizationOps Create(Dictionary<string, string> mappings) =>
-        _opsCache.GetOrAdd(mappings.GetHashCode(), (h) =>
+        _opsCache.GetOrAdd(MappingHash.Compute(mappings), (h) =>
         {
             return Assembler.CreateInstance<QuantizationOps>(mappings);
         });

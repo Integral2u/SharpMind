@@ -1,4 +1,5 @@
 using JigSawDotNet;
+using SharpMind.Core;
 using SharpMind.Core.Quantization;
 using SharpMind.Core.Tensors;
 using System.Collections.Concurrent;
@@ -22,7 +23,7 @@ public static class LinearLayerFactory
         var mapping = new Dictionary<string, string>(baseMapping);
         mapping[SharpMindConfig.KeyLinear] = compound;
 
-        var type = _typeCache.GetOrAdd(mapping.GetHashCode(),
+        var type = _typeCache.GetOrAdd(MappingHash.Compute(mapping),
             _ => Assembler.Assemble<InferenceLinearLayer>(mapping));
         return (InferenceLinearLayer)Activator.CreateInstance(type,
             name, inFeatures, outFeatures, bias, weight, biasTensor, quantDType)!;
