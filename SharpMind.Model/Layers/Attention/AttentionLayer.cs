@@ -69,10 +69,16 @@ namespace SharpMind.Model.Layers.Attention;
         _qOps = qOps;
         int qDim = config.NumHeads * config.HeadDim;
         int kvDim = config.NumKvHeads * config.HeadDim;
-        Wq = new LinearLayer("q_proj", config.HiddenDim, qDim, bias: true, qOps: qOps, weights?.Wq, weights?.WqBias);
-        Wk = new LinearLayer("k_proj", config.HiddenDim, kvDim, bias: true, qOps: qOps, weights?.Wk, weights?.WkBias);
-        Wv = new LinearLayer("v_proj", config.HiddenDim, kvDim, bias: true, qOps: qOps, weights?.Wv, weights?.WvBias);
-        Wo = new LinearLayer("o_proj", qDim, config.HiddenDim, bias: true, qOps: qOps, weights?.Wo, weights?.WoBias);
+
+        var tm = weights?.TensorMeta;
+        Wq = new LinearLayer("q_proj", config.HiddenDim, qDim, bias: true, qOps: qOps, weights?.Wq, weights?.WqBias,
+            quantDType: tm?.GetValueOrDefault("RawWq").Dtype ?? QuantDType.F32);
+        Wk = new LinearLayer("k_proj", config.HiddenDim, kvDim, bias: true, qOps: qOps, weights?.Wk, weights?.WkBias,
+            quantDType: tm?.GetValueOrDefault("RawWk").Dtype ?? QuantDType.F32);
+        Wv = new LinearLayer("v_proj", config.HiddenDim, kvDim, bias: true, qOps: qOps, weights?.Wv, weights?.WvBias,
+            quantDType: tm?.GetValueOrDefault("RawWv").Dtype ?? QuantDType.F32);
+        Wo = new LinearLayer("o_proj", qDim, config.HiddenDim, bias: true, qOps: qOps, weights?.Wo, weights?.WoBias,
+            quantDType: tm?.GetValueOrDefault("RawWo").Dtype ?? QuantDType.F32);
         
         // Initialize Wqkv layer
         int totalQkvDim = qDim + 2 * kvDim;
@@ -150,15 +156,15 @@ namespace SharpMind.Model.Layers.Attention;
         }
 
         // Restore individual Q/K/V layers for fast quantized forward path
-        Wq.ReplaceWeights(weights.Wq, weights.WqBias);
-        Wq.SetRawWeight(weights.RawWq, weights.TensorMeta.GetValueOrDefault("RawWq").Dtype);
-        Wk.ReplaceWeights(weights.Wk, weights.WkBias);
-        Wk.SetRawWeight(weights.RawWk, weights.TensorMeta.GetValueOrDefault("RawWk").Dtype);
-        Wv.ReplaceWeights(weights.Wv, weights.WvBias);
-        Wv.SetRawWeight(weights.RawWv, weights.TensorMeta.GetValueOrDefault("RawWv").Dtype);
+        if (weights.Wq != null) Wq.ReplaceWeights(weights.Wq, weights.WqBias);
+        Wq.SetRawWeight(weights.RawWq);
+        if (weights.Wk != null) Wk.ReplaceWeights(weights.Wk, weights.WkBias);
+        Wk.SetRawWeight(weights.RawWk);
+        if (weights.Wv != null) Wv.ReplaceWeights(weights.Wv, weights.WvBias);
+        Wv.SetRawWeight(weights.RawWv);
 
-        Wo.ReplaceWeights(weights.Wo, weights.WoBias);
-        Wo.SetRawWeight(weights.RawWo, weights.TensorMeta.GetValueOrDefault("RawWo").Dtype);
+        if (weights.Wo != null) Wo.ReplaceWeights(weights.Wo, weights.WoBias);
+        Wo.SetRawWeight(weights.RawWo);
 
         // Per-head Q/K normalization (Qwen3)
         if (weights.QNormW != null)
@@ -178,10 +184,10 @@ namespace SharpMind.Model.Layers.Attention;
     /// Does NOT touch float tensors — safe after FreeFloatWeights.</summary>
     public void UpdateRawWeights(TransformerWeights.BlockWeights weights)
     {
-        Wq.SetRawWeight(weights.RawWq, weights.TensorMeta.GetValueOrDefault("RawWq").Dtype);
-        Wk.SetRawWeight(weights.RawWk, weights.TensorMeta.GetValueOrDefault("RawWk").Dtype);
-        Wv.SetRawWeight(weights.RawWv, weights.TensorMeta.GetValueOrDefault("RawWv").Dtype);
-        Wo.SetRawWeight(weights.RawWo, weights.TensorMeta.GetValueOrDefault("RawWo").Dtype);
+        Wq.SetRawWeight(weights.RawWq);
+        Wk.SetRawWeight(weights.RawWk);
+        Wv.SetRawWeight(weights.RawWv);
+        Wo.SetRawWeight(weights.RawWo);
     }
 
     private unsafe void LoadFusedWeightTransposed(ReadOnlySpan<float> data, int colOffset, int subOutF)
@@ -264,7 +270,7 @@ namespace SharpMind.Model.Layers.Attention;
             
         if (weightName.Contains("attn_output", StringComparison.OrdinalIgnoreCase) || weightName.Contains("attn_o.", StringComparison.OrdinalIgnoreCase) ||
             weightName.Contains("o_proj", StringComparison.OrdinalIgnoreCase) || weightName.Contains("out_proj", StringComparison.OrdinalIgnoreCase))
-            return Wo.SetRawWeight(rawData, dtype);
+            Wo.SetRawWeight(rawData); return true;
         return false;
     }
 

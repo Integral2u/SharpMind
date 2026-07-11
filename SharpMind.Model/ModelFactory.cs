@@ -173,7 +173,7 @@ public static class ModelFactory
         {
             return Assembler.Assemble<AttentionLayer>(cfg);
         });
-        var attn = Activator.CreateInstance(t, weights.Config, qOps) as AttentionLayer;
+        var attn = Activator.CreateInstance(t, weights.Config, qOps, blockWeights) as AttentionLayer;
         ArgumentNullException.ThrowIfNull(attn);
         attn.SetWeights(blockWeights);
         

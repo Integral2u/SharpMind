@@ -30,9 +30,9 @@ public sealed class LinearLayer : IDisposable
         _weight = weight ?? new Tensor<float>(inFeatures, outFeatures);
         _bias = biasTensor ?? (bias ? new Tensor<float>(outFeatures) : null);
         _qOps = qOps ?? QuantizationFactory.Create();
-        QuantDtype = quantDType;
         _ownsWeight = weight == null;
         _ownsBias = biasTensor == null && _bias != null;
+        _matMulFn = _qOps.QuantizedMatMulOpFor(quantDType);
     }
 
     public int InFeatures { get; }
@@ -96,7 +96,7 @@ public sealed class LinearLayer : IDisposable
 
     private Tensor<float>? QuantizedForward(Tensor<float> input, SharpMind.Core.Memory.Workspace? workspace = null)
     {
-        if (_matMulFn == null) return null;
+        if (RawQuantizedData == null) return null;
         var dtype = QuantDtype;
         var rawData = RawQuantizedData!;
         int m = input.ElementCount / InFeatures;
@@ -113,12 +113,9 @@ public sealed class LinearLayer : IDisposable
         return result;
     }
 
-    public unsafe bool SetRawWeight(byte[]? rawData, QuantDType dtype)
+    public void SetRawWeight(byte[]? rawData)
     {
         RawQuantizedData = rawData;
-        QuantDtype = dtype;
-        _matMulFn = RawQuantizedData != null ? _qOps.QuantizedMatMulOpFor(dtype) : null;
-        return _matMulFn != null;
     }
 
     public unsafe (Tensor<float> Output, LinearLayerState State) ForwardWithState(Tensor<float> input)
