@@ -2,7 +2,6 @@ Code Clean up
 
 CUI option for parrall or serial check first an chach preload number
 
-CornerPuzzlePeice callsite check if can be cleaned up with PuzzlePlace
 Factory consistancy ActivationFactory,QuantizationFactory
 
 
@@ -11,9 +10,6 @@ Unused
 SharpMind.Model.Config.SharpMindConfigFactory 
 SharpMind.Model.Format.ModelConverter
 
-Superceeded
-Are SharpMind.Model.Format.Dtype and SharpMind.Model.Format.DtypeOps superceeded by SharpMind.Core.Quantization.QuantDType
-Is SharpMind.Model.Config.SharpMindModelConfig superceeded by SharpMind.Model.Config.ModelConfig
 
 
 ChatMessage.Ignore somehow/settable visible in ChatView

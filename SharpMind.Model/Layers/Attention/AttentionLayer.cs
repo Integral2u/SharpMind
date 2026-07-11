@@ -13,7 +13,7 @@ namespace SharpMind.Model.Layers.Attention;
         private const string NS = $"{nameof(SharpMind)}.{nameof(Model)}.{nameof(Layers)}.{nameof(Attention)}.{nameof(AttentionKernels)}";
 
         protected readonly ModelConfig Config;
-        protected readonly QuantizationOps _qOps;
+        //protected readonly QuantizationOps _qOps;
         public readonly LinearLayer Wq;
         public readonly LinearLayer Wk;
         public readonly LinearLayer Wv;
@@ -22,11 +22,13 @@ namespace SharpMind.Model.Layers.Attention;
         public readonly PositionalEncoder PositionalEncoder;
         private NormLayer? _qNorm;
         private NormLayer? _kNorm;
-        // DEBUG: set to true to bypass Q/K RMSNorm (isolate norm as root cause)
+    /*    
+    // DEBUG: set to true to bypass Q/K RMSNorm (isolate norm as root cause)
         public static bool ForceBypassQKNorm { get; set; }
         // DEBUG: set to true to dump Q/K/V projection values for the first layer
         public static bool DumpProjections { get; set; }
         private static int _dumpLayerCounter;
+    */
 
         private bool _disposed;
 
@@ -58,15 +60,33 @@ namespace SharpMind.Model.Layers.Attention;
         int seqLen, int kvLen, int headDim, float scale, bool causal,
         int qStride, int oStride, float alibiSlope);
 
-    protected AttentionLayer(ModelConfig config, QuantizationOps qOps)
-        : this(config, qOps, null, null)
+    private unsafe void ScaledDotProductForQuantized(QuantDType quantKind,
+        float* q, byte* kQuant, byte* vQuant, float* output,
+        int seqLen, int kvLen, int headDim, float scale, bool causal,
+        int qStride, int oStride, float alibiSlope)
+    {
+        switch (quantKind)
+        {
+            case QuantDType.Q4_0:
+                ScaledDotProductQ4_0(q, kQuant, vQuant, output, seqLen, kvLen, headDim, scale, causal, qStride, oStride, alibiSlope);
+                break;
+            case QuantDType.Q8_0:
+                ScaledDotProductQ8_0(q, kQuant, vQuant, output, seqLen, kvLen, headDim, scale, causal, qStride, oStride, alibiSlope);
+                break;
+            default:
+                throw new NotSupportedException($"Quantized attention not supported for {quantKind}");
+        }
+    }
+
+    protected AttentionLayer(ModelConfig config/*, QuantizationOps qOps*/)
+        : this(config,/* qOps,*/ null, null)
     {
     }
 
-    protected AttentionLayer(ModelConfig config, QuantizationOps qOps, TransformerWeights.BlockWeights? weights, Dictionary<string, string>? mapping)
+    protected AttentionLayer(ModelConfig config, /*QuantizationOps qOps,*/ TransformerWeights.BlockWeights? weights, Dictionary<string, string>? mapping)
     {
         Config = config;
-        _qOps = qOps;
+        //_qOps = qOps;
         int qDim = config.NumHeads * config.HeadDim;
         int kvDim = config.NumKvHeads * config.HeadDim;
 
@@ -287,7 +307,10 @@ namespace SharpMind.Model.Layers.Attention;
             
         if (weightName.Contains("attn_output", StringComparison.OrdinalIgnoreCase) || weightName.Contains("attn_o.", StringComparison.OrdinalIgnoreCase) ||
             weightName.Contains("o_proj", StringComparison.OrdinalIgnoreCase) || weightName.Contains("out_proj", StringComparison.OrdinalIgnoreCase))
-            Wo.SetRawWeight(rawData); return true;
+        {
+            Wo.SetRawWeight(rawData);
+            return true;
+        }
         return false;
     }
 
@@ -329,7 +352,7 @@ namespace SharpMind.Model.Layers.Attention;
         using var q = Wq.Forward(x, workspace);
         using var k = Wk.Forward(x, workspace);
         using var v = Wv.Forward(x, workspace);
-        if (DumpProjections && _dumpLayerCounter++ < 1)
+        /*if (DumpProjections && _dumpLayerCounter++ < 1)
         {
             void DumpProj(string label, Tensor<float> t)
             {
@@ -341,17 +364,17 @@ namespace SharpMind.Model.Layers.Attention;
                 Console.Error.WriteLine();
             }
             DumpProj("Q", q); DumpProj("K", k); DumpProj("V", v);
-        }
+        }*/
 
         // Apply per-head Q/K normalization (Qwen3):
         // Reshape to [batch*seqLen*nHeads, headDim] so NormLayer normalizes along headDim.
         // Forward always allocates a new tensor; using var disposes it at scope exit.
         // The normed tensor is 2D [totalHeads, headDim]; reshape at use sites below.
         // DEBUG: ForceBypassQKNorm skips normalization to isolate norm-related issues.
-        using var qNormed = (_qNorm != null && !ForceBypassQKNorm)
+        using var qNormed = (_qNorm != null)// && !ForceBypassQKNorm)
             ? _qNorm.Forward(q.Reshape(batch * seqLen * numH, headDim), workspace)
             : null;
-        using var kNormed = (_kNorm != null && !ForceBypassQKNorm)
+        using var kNormed = (_kNorm != null)// && !ForceBypassQKNorm)
             ? _kNorm.Forward(k.Reshape(batch * seqLen * numKv, headDim), workspace)
             : null;
 
@@ -407,12 +430,10 @@ namespace SharpMind.Model.Layers.Attention;
 
                     if (cache is { IsQuantized: true })
                     {
-                        byte* pKQ = cache.GetQuantizedKeyPtr(b, 0, kvHead);
-                        byte* pVQ = cache.GetQuantizedValuePtr(b, 0, kvHead);
-                        if (cache.QuantKind == QuantDType.Q4_0)
-                            ScaledDotProductQ4_0(pQ, pKQ, pVQ, pO, seqLen, effectiveKvLen, headDim, scale, causal, qStride, oStride, alibiSlope);
-                        else
-                            ScaledDotProductQ8_0(pQ, pKQ, pVQ, pO, seqLen, effectiveKvLen, headDim, scale, causal, qStride, oStride, alibiSlope);
+                        ScaledDotProductForQuantized(cache.QuantKind, pQ,
+                            cache.GetQuantizedKeyPtr(b, 0, kvHead),
+                            cache.GetQuantizedValuePtr(b, 0, kvHead),
+                            pO, seqLen, effectiveKvLen, headDim, scale, causal, qStride, oStride, alibiSlope);
                     }
                     else if (cache is { IsContiguous: true })
                     {
@@ -468,7 +489,7 @@ namespace SharpMind.Model.Layers.Attention;
         output.Dispose();
         return projected;
     }
-
+    /*
     public (Tensor<float> Output, AttentionLayerState State) ForwardWithState(Tensor<float> x, int positionOffset = 0)
     {
         var output = Forward(x, positionOffset);
@@ -492,6 +513,7 @@ namespace SharpMind.Model.Layers.Attention;
         wQT.Dispose();
         return gradInput;
     }
+    */
 
     public IEnumerable<Parameter> Parameters()
     {

@@ -18,7 +18,7 @@ public abstract class InferenceLinearLayer : LinearLayer
     {
         QuantDtype = quantDType;
     }
-
+    
     [PuzzleCornerPiece(SharpMindConfig.KeyLinear, true, null,
         "q8_0_serial_fma",    $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ8_0_Serial_FMA)}",
         "q8_0_parallel_fma",  $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ8_0_Parallel_FMA)}",
