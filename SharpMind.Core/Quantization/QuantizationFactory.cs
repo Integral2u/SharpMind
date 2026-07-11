@@ -11,7 +11,7 @@ public static class QuantizationFactory
     {
         if (hw == HardwareTier.Auto)
             hw = HardwareTierHelpers.DetectBestTier();
-        var mapping = new global::SharpMind.MappingBuilder(hw).ApplyQuantPreset(parallel: true).Build();
+        var mapping = new MappingBuilder(hw).ApplyQuantPreset().Build();
         return Create(mapping);
     }
 

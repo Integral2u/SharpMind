@@ -1,7 +1,7 @@
 namespace SharpMind.Model.Config;
 
 /// <summary>
-/// Extension methods on <see cref="ModelConfig"/> to create a <see cref="global::SharpMind.SharpMindConfig"/>.
+/// Extension methods on <see cref="ModelConfig"/> to create a <see cref="SharpMindConfig"/>.
 /// </summary>
 public static class SharpMindConfigFactory
 {
