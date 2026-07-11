@@ -107,7 +107,8 @@ public static class SessionLauncher
 
         status?.Report("Assembling model...");
         await Task.Yield();
-        var sharpConfig = modelConfig.ForModel(hw: options.HardwareTier);
+        var sharpConfig = modelConfig.ForModel(hw: options.HardwareTier)
+        ;
 
         // Build a single combined mapping dictionary that includes both model-level
         // operations (pointwise, gate, softmax, etc.) and quantization operations
@@ -116,8 +117,8 @@ public static class SessionLauncher
         // overrides selected entries with GPU-kernel values — the same dictionary
         // shape is ultimately passed to ModelFactory.CreateSession.
         Dictionary<string, string> mapping = options.UseGpu
-            ? new MappingBuilder(options.HardwareTier).ApplyPreset(sharpConfig).ApplyQuantPreset(sharpConfig).WithGpu().Build()
-            : sharpConfig.ToJigSawMapping();
+            ? new MappingBuilder(options.HardwareTier).ApplyPreset(sharpConfig).ApplyQuantPreset(parallel: options.UseParallelKernels).WithGpu().Build()
+            : new MappingBuilder(options.HardwareTier).ApplyPreset(sharpConfig).ApplyQuantPreset(parallel: options.UseParallelKernels).Build();
 
         status?.Report("Loading weights...");
         TransformerWeights weights;
@@ -130,7 +131,7 @@ public static class SessionLauncher
             var qOps = QuantizationFactory.Create(mapping);
             weights = await Task.Run(() =>
             {
-                var w = ModelFactory.Create(modelConfig, sharpConfig, qOps, options.ModelPath, meta, options.LoadMode);
+                var w = ModelFactory.Create(modelConfig, sharpConfig, qOps, options.ModelPath, meta, options.LoadMode, options.CacheDepth);
                 w.InitializeWeights(progress);
                 return w;
             });

@@ -1,6 +1,63 @@
 Code Clean up
 
-CUI option for parrall or serial check first an chach preload number
+Typical errors and previous reasons.
+
+Prompt:Hello
+Response:!!!!!!!
+
+Tokens per second: 2.09  TTFT: 9.615s
+
+Reason Embedding and lm_head weights were never loadedor their raw quantized counterparts (RawEmbedding, RawLmHead). 
+These tensors stayed as all-zeros, producing zero embedding vectors and zero logits — explaining the !!!!!!! garbage output.
+
+This type of response.
+Prompt:Hello
+Response:
+
+
+
+
+      ,,,.
+Tokens per second: 2.71  TTFT: 8.788s
+
+Reason, Norm weights (and bias tensors) are never loaded
+
+other know issues have been QuantizedMatMul(float* input, byte* rawWeights, float* output, int M, int K, int N), M, K or N being used in incorrect places
+
+
+Suggestions from other sources
+Memory Efficiency: In AttentionLayer.Forward, temporary tensors (q, k, v, qNormed, kNormed) are still allocated and disposed of on every call. Moving these to a per-session pre-allocated buffer or expanding the Workspace to handle these specific projections would further reduce GC pressure.
+Performance: The recommendation for a blocked transpose in the core tensor operations (now likely residing in QuantizationKernels or Tensor helpers) should still be evaluated for large matrix performance.
+Robustness: Detailed shape validation in Tensor.Slice and other multi-dimensional operations remains a high-value target to prevent AccessViolationException in unsafe blocks.
+
+🔴 Biggest bug: KV cache is reset every chat turn
+In ChatSession.GetResponseStreamAsync (line 484), _generator.ResetCache() is called unconditionally on every turn, even in the branch that just built an "incremental" prompt-token array specifically to avoid recomputation (lines 439–452). The incremental-token code saves a bit of tokenizer CPU time, but then the KV cache is wiped anyway, forcing a full prefill of the entire conversation history from scratch on every single turn. All that paged-KV-cache/flash-attention infrastructure exists in the codebase, but the chat layer never actually benefits from incremental decoding — cost per turn grows with total conversation length, and total conversation cost is effectively quadratic. This is almost certainly the highest-value fix in the whole repo: only reset the cache when compaction/trim actually invalidates it, and let ordinary turns extend the existing cache.
+🔴 Vectorized quantized-matmul kernels exist but are unreachable
+In InferenceLinearLayer.cs, the [PuzzleCornerPiece] tier-name → method mapping wires several "*_avx2" (and one "*_fma") tier names to *_Scalar implementations even though real AVX2/FMA versions exist elsewhere in QuantizationKernels.Q4.cs/Q5.cs/Q8.cs:
+
+Performance opportunities
+
+BPE merge application is O(n²) per word (BpeEncoder.ApplyMerges): for each merge it rescans every adjacent token pair from scratch. Fine for short words, but pathological for long unbroken spans (URLs, base64, code, CJK text without space breaks). The standard fix is a priority queue over pair ranks with a doubly-linked token list, so each merge is O(log n) instead of O(n).
+Non-flash attention kernels don't exploit the causal mask for early exit. ScaledDotProductAVX2/FMA/Scalar iterate j over the full kvLen even when causal, computing -infinity scores for masked positions instead of stopping at absQPos + 1 — the Flash variants already do this correctly (effKvLen), so it's an inconsistency, not a design choice. During prefill this wastes roughly half the dot-product work.
+MoE FFN parallelism overhead on the decode hot path. FfnKernels.MoE always calls Parallel.For(0, batch, …), even when batch == 1 (the common case during autoregressive token-by-token decoding). That's ThreadPool scheduling/synchronization overhead for zero parallel benefit on the single hottest loop in the program. Worth special-casing batch == 1 to a plain sequential call.
+MoE experts bypass the Workspace entirely (workspace: null passed explicitly "to avoid races"), so every expert's gate/up/down projections allocate fresh pooled buffers per token per top-k expert instead of using the bump allocator the rest of the engine relies on for zero-GC-pressure decoding. A per-worker Workspace (one per Parallel.For partition) would restore the fast path.
+NativeBufferPoolConfig.MaxTotalMemoryMB is declared and tracked but never enforced anywhere in Rent/Return — the pool can grow without bound within per-bucket limits regardless of this setting, so it's dead configuration that looks like a safety valve but isn't.
+Bucket-based pooling rounds every allocation up to the next power of two (NativeBufferPool.GetBucket). Reasonable for reuse, but for large KV-cache-sized allocations this can mean up to ~2x memory overhead; worth knowing if you're sizing workspace/memory budgets.
+ChatSession.History getter allocates a new filtered list ([.. _history.Where(...)]) on every access — cheap in isolation, but if it's polled per streamed token from a UI layer that adds up.
+
+Bugs / robustness issues
+
+Tensor<T>.Dispose() / NativeBuffer<T>.Dispose() aren't idempotent. Standard IDisposable practice is that calling Dispose() twice is a safe no-op, but here a second Dispose() call decrements an already-zeroed refcount, which can push the same native buffer back into the pool a second time while another live tensor still references it — a real double-free/aliasing hazard if Dispose() is ever called more than once (e.g. via both an explicit call and a using block, or on an exception path). Worth adding a guard flag.
+No finalizers on Tensor<T>/NativeBuffer<T>. If a tensor is dropped without Dispose() (exception before a using, forgotten cleanup in a rarely-hit branch), the unmanaged memory leaks permanently — the GC has no way to reclaim it. At minimum a debug-build finalizer that asserts/logs on non-disposal would catch these early.
+Quant-kernel mapping table itself (above) is really a correctness-adjacent bug as much as a perf one — it means the hardware-tier detection logic is lying about what code path actually runs.
+
+Minor/style notes
+
+Attention kernels are duplicated near-verbatim six-plus times (AVX2/FMA/Scalar × dense/flash × per quant format) — I understand the "no branches in the hot loop" motivation, but it makes it very easy for exactly the kind of copy-paste mismatch seen in the quant-matmul wiring to happen again undetected. A generator/template or heavier use of shared helpers for the dequant-and-accumulate step would reduce that risk.
+Q4_0/Q4_NL dequantization inside the "vectorized" flash kernels still unpacks nibbles one-at-a-time in a scalar loop before building the Vector256 — real SIMD gain there is limited to the multiply-accumulate; a masked shift/permute-based nibble unpack would let the whole dequant+dot be vectorized.
+
+If it'd help, I can go deeper on any one of these (e.g. actually trace through and fix the kernel-mapping table, or sketch the incremental-KV-cache turn logic) — just say which.
+
 
 Factory consistancy ActivationFactory,QuantizationFactory
 

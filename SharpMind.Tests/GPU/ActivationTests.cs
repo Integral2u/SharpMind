@@ -5,7 +5,6 @@ using SharpMind.GPU;
 
 namespace SharpMind.Tests.GPU
 {
-    //[Collection("Non-Parallel")]
     public sealed class ActivationComparisonTests
     {
         private readonly ActivationOps _cpuOps;

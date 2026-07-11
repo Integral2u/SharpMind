@@ -66,7 +66,9 @@ public static class ModelFactory
         }
         else
         {
-            return new TransformerWeightsCached(modelConfig, embedding, lmHead, finalNormW, finalNormB, blockWeights, loader, path, meta, cacheDepth);
+            // Clamp cacheDepth between 1 and total layers
+            int clampedDepth = Math.Clamp(cacheDepth, 1, modelConfig.NumLayers);
+            return new TransformerWeightsCached(modelConfig, embedding, lmHead, finalNormW, finalNormB, blockWeights, loader, path, meta, clampedDepth);
         }
     }
 

@@ -246,6 +246,8 @@ public sealed class ChatView : View
             Application.RequestStop();
         }
 
+        _memLabel.Text = FormatMemory();
+
         foreach (var entry in _bridge.DrainEntries())
             OnStreamEntry(entry);
 

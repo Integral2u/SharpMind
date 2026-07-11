@@ -79,9 +79,27 @@ public sealed class OptionsView : View
 
         AddLabel("Load mode:");
         var loadRadio = new RadioGroup(Enum.GetNames<LoadMode>().Select(p => (ustring)p).ToArray()) { X = 30, Y = row, SelectedItem = (int)options.LoadMode };
-        loadRadio.SelectedItemChanged += (args) => _options.LoadMode = (LoadMode)args.SelectedItem;
+        
+        AddLabel("Cache depth (Cached only):");
+        var cacheDepthField = new TextField((ustring)options.CacheDepth.ToString()) { X = 30, Y = row + Enum.GetValues<LoadMode>().Length + 1, Width = 10, Enabled = options.LoadMode == LoadMode.Cached };
+        cacheDepthField.TextChanged += (_) =>
+        {
+            if (int.TryParse(cacheDepthField.Text.ToString(), out var v))
+            {
+                // Min 1. Max is handled during session creation as it depends on the model.
+                _options.CacheDepth = Math.Max(1, v);
+            }
+        };
+
+        loadRadio.SelectedItemChanged += (args) => 
+        {
+            _options.LoadMode = (LoadMode)args.SelectedItem;
+            cacheDepthField.Enabled = _options.LoadMode == LoadMode.Cached;
+        };
         _formContent.Add(loadRadio);
         row += Enum.GetValues<LoadMode>().Length + 1;
+        _formContent.Add(cacheDepthField);
+        row++;
 
         AddLabel("Hardware tier:");
         var hwRadio = new RadioGroup(Enum.GetNames<HardwareTier>().Select(p => (ustring)p).ToArray()) { X = 30, Y = row, SelectedItem = (int)options.HardwareTier };
@@ -92,6 +110,11 @@ public sealed class OptionsView : View
         var gpuCheck = new CheckBox("Use GPU (requires SharpMind.GPU reference)", options.UseGpu) { X = 1, Y = row };
         gpuCheck.Toggled += (_) => _options.UseGpu = gpuCheck.Checked;
         _formContent.Add(gpuCheck);
+        row++;
+
+        var parallelCheck = new CheckBox("Use parallel kernels (faster on multi-core CPU)", options.UseParallelKernels) { X = 1, Y = row };
+        parallelCheck.Toggled += (_) => _options.UseParallelKernels = parallelCheck.Checked;
+        _formContent.Add(parallelCheck);
         row += 2;
 
         AddLabel("Temperature:");

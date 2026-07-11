@@ -4,7 +4,7 @@ namespace SharpMind.GPU;
 
 public static class MappingBuilderExtensions
 {
-    private static readonly string[] HwSuffixes = ["avx2", "fma", "sse"];
+    private static readonly string[] HwSuffixes = ["avx2", "fma", "sse", "scalar"];
 
     /// <summary>
     /// Augments the mapping with GPU-accelerated kernels for activations,
@@ -60,7 +60,7 @@ public static class MappingBuilderExtensions
         builder.Override(SharpMindConfig.KeyRMSNorm, GPUSharpMindConfig.ValRMSNorm);
 
         foreach (var key in VecDotKeys)
-            builder.Override(key, key + "_gpu");
+            TryOverrideGpu(builder, key);
 
         foreach (var key in QmmKeys)
             TryOverrideGpu(builder, key);

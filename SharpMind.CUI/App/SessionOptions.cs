@@ -97,6 +97,8 @@ public sealed class SessionOptions
     /// overrides resolve to real kernels rather than no-ops.
     /// </summary>
     public bool UseGpu { get; set; }
+    public bool UseParallelKernels { get; set; } = true;
+    public int CacheDepth { get; set; } = 2;
 
     /// <summary>
     /// Governs tool calls that touch the file system, via the engine's own

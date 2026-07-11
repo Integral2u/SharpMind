@@ -40,11 +40,15 @@ namespace SharpMind.Samples.Examples
                     .ApplyPreset(sharpConfig)
                     .ApplyQuantPreset(sharpConfig)
                     .WithGpu()
-                    .Build() : null;
+                    .Build() : 
+                    new MappingBuilder(sharpConfig.ResolvedHardware)
+                    .ApplyPreset(sharpConfig)
+                    .ApplyQuantPreset(sharpConfig)
+                    .Build();
 
                 GC.Collect(); GC.WaitForPendingFinalizers();
                 var sw = Stopwatch.StartNew();
-                var qOps = QuantizationFactory.Create(mapping ?? sharpConfig.ToJigSawMapping());
+                var qOps = QuantizationFactory.Create(mapping);
                 using var weights = ModelFactory.Create(modelConfig, sharpConfig, qOps, ggufPath, meta, LoadMode.Full);
                 weights.InitializeWeights();
                 

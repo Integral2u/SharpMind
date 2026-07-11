@@ -384,6 +384,8 @@ public sealed class MainWindow : Window
         Cache = source.Cache,
         HardwareTier = source.HardwareTier,
         UseGpu = source.UseGpu,
+        UseParallelKernels = source.UseParallelKernels,
+        CacheDepth = source.CacheDepth,
         FileAccess = source.FileAccess,
         NetworkAccess = source.NetworkAccess,
         Sampling = source.Sampling,
