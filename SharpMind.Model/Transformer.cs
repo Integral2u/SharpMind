@@ -165,9 +165,9 @@ public sealed class Transformer : IDisposable
     /// Input:  token IDs [Batch, SeqLen]
     /// Output: logits    [Batch, SeqLen, VocabSize]
     /// </summary>
-    public unsafe Tensor<float> Forward(Tensor<int> tokenIds, int positionOffset = 0, Core.Memory.Workspace? workspace = null) => Forward(tokenIds, null, positionOffset, workspace);
+    public Tensor<float> Forward(Tensor<int> tokenIds, int positionOffset = 0, Core.Memory.Workspace? workspace = null) => Forward(tokenIds, null, positionOffset, workspace);
 
-    public unsafe Tensor<float> Forward(Tensor<int> tokenIds, IKVCache[]? caches, int positionOffset = 0, Core.Memory.Workspace? workspace = null)
+    public Tensor<float> Forward(Tensor<int> tokenIds, IKVCache[]? caches, int positionOffset = 0, Core.Memory.Workspace? workspace = null)
     {
         ThrowIfDisposed();
 
@@ -205,7 +205,7 @@ public sealed class Transformer : IDisposable
     /// Input:  token IDs [Batch, SeqLen]
     /// Output: logits    [Batch, VocabSize]
     /// </summary>
-    public unsafe Tensor<float> ForwardLastLogits(Tensor<int> tokenIds, IKVCache[] caches, int positionOffset = 0, Core.Memory.Workspace? workspace = null)
+    public Tensor<float> ForwardLastLogits(Tensor<int> tokenIds, IKVCache[] caches, int positionOffset = 0, Core.Memory.Workspace? workspace = null)
     {
         ThrowIfDisposed();
 

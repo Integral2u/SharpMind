@@ -61,7 +61,7 @@ public sealed class MedusaHeads : IDisposable
     /// for offsets 0..K-1 (offset 0 = immediate next token, same as LM head).
     /// Returns K draft token IDs in outputTokens.
     /// </summary>
-    public unsafe void Predict(Span<float> hiddenState, Span<int> outputTokens)
+    public void Predict(Span<float> hiddenState, Span<int> outputTokens)
     {
         int k = Math.Min(outputTokens.Length, _numHeads);
         if (k == 0) return;
@@ -121,7 +121,7 @@ public sealed class MedusaHeads : IDisposable
         }
     }
 
-    private unsafe void PredictFloat(Span<float> hiddenState, Span<int> outputTokens, int k)
+    private void PredictFloat(Span<float> hiddenState, Span<int> outputTokens, int k)
     {
         using var headsTensor = new Tensor<float>(k, _hiddenDim);
         for (int h = 0; h < k; h++)

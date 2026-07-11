@@ -86,7 +86,7 @@ public sealed unsafe class Tensor<T> : IDisposable
     /// Raw pointer to element 0 of this tensor (may be an offset view).
     /// Valid only while the tensor is alive.
     /// </summary>
-    public unsafe T* DataPtr
+    public T* DataPtr
     {
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         get => _rawPtr;
@@ -304,7 +304,7 @@ public sealed unsafe class Tensor<T> : IDisposable
             dst[i] = src[i] * scalar;
     }
 
-    private static unsafe Tensor<float> TransposeInternal(Tensor<float> src)
+    private static Tensor<float> TransposeInternal(Tensor<float> src)
     {
         int R = src.Shape.Rows, C = src.Shape.Cols;
         var dst = new Tensor<float>(C, R);
@@ -326,7 +326,7 @@ public sealed unsafe class Tensor<T> : IDisposable
         return dst;
     }
 
-    private static unsafe Tensor<float> TransposeLast2D(Tensor<float> src, int M, int N, int batch)
+    private static Tensor<float> TransposeLast2D(Tensor<float> src, int M, int N, int batch)
     {
         var dst = new Tensor<float>(src.Shape.Reshape(batch, N, M));
         float* pS = src.DataPtr, pD = dst.DataPtr;
@@ -409,7 +409,7 @@ public sealed unsafe class Tensor<T> : IDisposable
         return r;
     }
 
-    public unsafe Tensor<float> Sqrt()
+    public Tensor<float> Sqrt()
     {
         if (typeof(T) != typeof(float))
             throw new InvalidOperationException("Sqrt is only supported for Tensor<float>.");

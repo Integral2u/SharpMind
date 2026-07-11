@@ -34,7 +34,7 @@ public sealed unsafe class Workspace : IDisposable
     /// Returns a Tensor that views a slice of the workspace.
     /// Note: This Tensor does NOT own the memory and should NOT be disposed independently.
     /// </summary>
-    public unsafe Tensor<T> Rent<T>(ReadOnlySpan<int> shape) where T : unmanaged, INumber<T>
+    public Tensor<T> Rent<T>(ReadOnlySpan<int> shape) where T : unmanaged, INumber<T>
     {
         long size = 1;
         foreach (var d in shape) size *= d;

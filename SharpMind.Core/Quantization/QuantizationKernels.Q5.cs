@@ -590,7 +590,7 @@ public static partial class QuantizationKernels
     // ReadQ5 � dequantize from BinaryReader into Span<float>
 
 
-    public static unsafe void ReadQ5_1_Scalar(BinaryReader reader, Span<float> data, int n)
+    public static void ReadQ5_1_Scalar(BinaryReader reader, Span<float> data, int n)
     {
         const int qk = 32;
         const int blockBytes = 24;
@@ -615,7 +615,7 @@ public static partial class QuantizationKernels
         }
     }
 
-    public static unsafe void ReadQ5_0_Scalar(BinaryReader reader, Span<float> data, int n)
+    public static void ReadQ5_0_Scalar(BinaryReader reader, Span<float> data, int n)
     {
         const int qk = 32;
         const int blockBytes = 22;

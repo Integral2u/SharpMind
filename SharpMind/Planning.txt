@@ -5,7 +5,7 @@ CUI option for parrall or serial check first an chach preload number
 CornerPuzzlePeice callsite check if can be cleaned up with PuzzlePlace
 Factory consistancy ActivationFactory,QuantizationFactory
 
-Cleanup un-required unsafe
+
 
 Unused
 SharpMind.Model.Config.SharpMindConfigFactory 

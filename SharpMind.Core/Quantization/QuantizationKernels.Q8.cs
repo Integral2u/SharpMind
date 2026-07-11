@@ -432,7 +432,7 @@ public static partial class QuantizationKernels
         }
     }
 
-    public static unsafe void ReadQ8_1_Scalar(BinaryReader reader, Span<float> data, int n)
+    public static void ReadQ8_1_Scalar(BinaryReader reader, Span<float> data, int n)
     {
         const int qk = 32;
         const int blockBytes = 36;

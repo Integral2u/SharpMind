@@ -140,17 +140,17 @@ public static partial class QuantizationKernels
         return (float)sum;
     }
 
-    public static unsafe void ReadF32_Scalar(BinaryReader reader, Span<float> data, int n)
+    public static void ReadF32_Scalar(BinaryReader reader, Span<float> data, int n)
     {
         Span<byte> byteView = MemoryMarshal.AsBytes(data);
         reader.Read(byteView);
     }
 
-    public static unsafe void ReadF16_Scalar(BinaryReader reader, Span<float> data, int n)
+    public static void ReadF16_Scalar(BinaryReader reader, Span<float> data, int n)
     {
         for (int i = 0; i < n; i++) data[i] = HalfToFloat_Scalar(reader.ReadUInt16());
     }
-    public static unsafe void ReadF16_F16C(BinaryReader reader, Span<float> data, int n)
+    public static void ReadF16_F16C(BinaryReader reader, Span<float> data, int n)
     {
         for (int i = 0; i < n; i++) data[i] = HalfToFloat_F16C(reader.ReadUInt16());
     }

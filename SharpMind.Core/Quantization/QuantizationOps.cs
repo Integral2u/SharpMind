@@ -37,7 +37,7 @@ public abstract class QuantizationOps
             _ => throw new ArgumentOutOfRangeException(nameof(dtype), dtype, null)
         };
     }
-    public unsafe void ReadFor(QuantDType dType, BinaryReader reader, Span<float> data, int n)
+    public void ReadFor(QuantDType dType, BinaryReader reader, Span<float> data, int n)
     {
         switch (dType)
         {
@@ -390,105 +390,105 @@ public abstract class QuantizationOps
         "read_q8_0_avx2",   $"{NS}.{nameof(QuantizationKernels.ReadQ8_0_Scalar)}",
         "read_q8_0_sse",    $"{NS}.{nameof(QuantizationKernels.ReadQ8_0_Scalar)}",
         "read_q8_0_scalar", $"{NS}.{nameof(QuantizationKernels.ReadQ8_0_Scalar)}")]
-    public abstract unsafe void ReadQ8_0(BinaryReader reader, Span<float> data, int n);
+    public abstract void ReadQ8_0(BinaryReader reader, Span<float> data, int n);
 
     [PuzzleCornerPiece(QuantizationKeys.KeyReadQ4_0, true, null,
         "read_q4_0_fma",    $"{NS}.{nameof(QuantizationKernels.ReadQ4_0_Scalar)}",
         "read_q4_0_avx2",   $"{NS}.{nameof(QuantizationKernels.ReadQ4_0_Scalar)}",
         "read_q4_0_sse",    $"{NS}.{nameof(QuantizationKernels.ReadQ4_0_Scalar)}",
         "read_q4_0_scalar", $"{NS}.{nameof(QuantizationKernels.ReadQ4_0_Scalar)}")]
-    public abstract unsafe void ReadQ4_0(BinaryReader reader, Span<float> data, int n);
+    public abstract void ReadQ4_0(BinaryReader reader, Span<float> data, int n);
 
     [PuzzleCornerPiece(QuantizationKeys.KeyReadQ4_1, true, null,
         "read_q4_1_fma",    $"{NS}.{nameof(QuantizationKernels.ReadQ4_1_Scalar)}",
         "read_q4_1_avx2",   $"{NS}.{nameof(QuantizationKernels.ReadQ4_1_Scalar)}",
         "read_q4_1_sse",    $"{NS}.{nameof(QuantizationKernels.ReadQ4_1_Scalar)}",
         "read_q4_1_scalar", $"{NS}.{nameof(QuantizationKernels.ReadQ4_1_Scalar)}")]
-    public abstract unsafe void ReadQ4_1(BinaryReader reader, Span<float> data, int n);
+    public abstract void ReadQ4_1(BinaryReader reader, Span<float> data, int n);
 
     [PuzzleCornerPiece(QuantizationKeys.KeyReadQ5_0, true, null,
         "read_q5_0_fma",    $"{NS}.{nameof(QuantizationKernels.ReadQ5_0_Scalar)}",
         "read_q5_0_avx2",   $"{NS}.{nameof(QuantizationKernels.ReadQ5_0_Scalar)}",
         "read_q5_0_sse",    $"{NS}.{nameof(QuantizationKernels.ReadQ5_0_Scalar)}",
         "read_q5_0_scalar", $"{NS}.{nameof(QuantizationKernels.ReadQ5_0_Scalar)}")]
-    public abstract unsafe void ReadQ5_0(BinaryReader reader, Span<float> data, int n);
+    public abstract void ReadQ5_0(BinaryReader reader, Span<float> data, int n);
 
     [PuzzleCornerPiece(QuantizationKeys.KeyReadQ5_1, true, null,
         "read_q5_1_fma",    $"{NS}.{nameof(QuantizationKernels.ReadQ5_1_Scalar)}",
         "read_q5_1_avx2",   $"{NS}.{nameof(QuantizationKernels.ReadQ5_1_Scalar)}",
         "read_q5_1_sse",    $"{NS}.{nameof(QuantizationKernels.ReadQ5_1_Scalar)}",
         "read_q5_1_scalar", $"{NS}.{nameof(QuantizationKernels.ReadQ5_1_Scalar)}")]
-    public abstract unsafe void ReadQ5_1(BinaryReader reader, Span<float> data, int n);
+    public abstract void ReadQ5_1(BinaryReader reader, Span<float> data, int n);
 
     [PuzzleCornerPiece(QuantizationKeys.KeyReadQ8_1, true, null,
         "read_q8_1_fma",    $"{NS}.{nameof(QuantizationKernels.ReadQ8_1_Scalar)}",
         "read_q8_1_avx2",   $"{NS}.{nameof(QuantizationKernels.ReadQ8_1_Scalar)}",
         "read_q8_1_sse",    $"{NS}.{nameof(QuantizationKernels.ReadQ8_1_Scalar)}",
         "read_q8_1_scalar", $"{NS}.{nameof(QuantizationKernels.ReadQ8_1_Scalar)}")]
-    public abstract unsafe void ReadQ8_1(BinaryReader reader, Span<float> data, int n);
+    public abstract void ReadQ8_1(BinaryReader reader, Span<float> data, int n);
 
     [PuzzleCornerPiece(QuantizationKeys.KeyReadQ4_NL, true, null,
         "read_q4_nl_fma",    $"{NS}.{nameof(QuantizationKernels.ReadQ4_NL_Scalar)}",
         "read_q4_nl_avx2",   $"{NS}.{nameof(QuantizationKernels.ReadQ4_NL_Scalar)}",
         "read_q4_nl_sse",    $"{NS}.{nameof(QuantizationKernels.ReadQ4_NL_Scalar)}",
         "read_q4_nl_scalar", $"{NS}.{nameof(QuantizationKernels.ReadQ4_NL_Scalar)}")]
-    public abstract unsafe void ReadQ4_NL(BinaryReader reader, Span<float> data, int n);
+    public abstract void ReadQ4_NL(BinaryReader reader, Span<float> data, int n);
 
     [PuzzleCornerPiece(QuantizationKeys.KeyReadQ2K, true, null,
         "read_q2k_fma",    $"{NS}.{nameof(QuantizationKernels.ReadQ2K_Scalar)}",
         "read_q2k_avx2",   $"{NS}.{nameof(QuantizationKernels.ReadQ2K_Scalar)}",
         "read_q2k_sse",    $"{NS}.{nameof(QuantizationKernels.ReadQ2K_Scalar)}",
         "read_q2k_scalar", $"{NS}.{nameof(QuantizationKernels.ReadQ2K_Scalar)}")]
-    public abstract unsafe void ReadQ2K(BinaryReader reader, Span<float> data, int n);
+    public abstract void ReadQ2K(BinaryReader reader, Span<float> data, int n);
 
     [PuzzleCornerPiece(QuantizationKeys.KeyReadQ3K, true, null,
         "read_q3k_fma",    $"{NS}.{nameof(QuantizationKernels.ReadQ3_K_Scalar)}",
         "read_q3k_avx2",   $"{NS}.{nameof(QuantizationKernels.ReadQ3_K_Scalar)}",
         "read_q3k_sse",    $"{NS}.{nameof(QuantizationKernels.ReadQ3_K_Scalar)}",
         "read_q3k_scalar", $"{NS}.{nameof(QuantizationKernels.ReadQ3_K_Scalar)}")]
-    public abstract unsafe void ReadQ3K(BinaryReader reader, Span<float> data, int n);
+    public abstract void ReadQ3K(BinaryReader reader, Span<float> data, int n);
 
     [PuzzleCornerPiece(QuantizationKeys.KeyReadQ4K, true, null,
         "read_q4k_fma",    $"{NS}.{nameof(QuantizationKernels.ReadQ4K_Scalar)}",
         "read_q4k_avx2",   $"{NS}.{nameof(QuantizationKernels.ReadQ4K_Scalar)}",
         "read_q4k_sse",    $"{NS}.{nameof(QuantizationKernels.ReadQ4K_Scalar)}",
         "read_q4k_scalar", $"{NS}.{nameof(QuantizationKernels.ReadQ4K_Scalar)}")]
-    public abstract unsafe void ReadQ4K(BinaryReader reader, Span<float> data, int n);
+    public abstract void ReadQ4K(BinaryReader reader, Span<float> data, int n);
 
     [PuzzleCornerPiece(QuantizationKeys.KeyReadQ5K, true, null,
         "read_q5k_fma",    $"{NS}.{nameof(QuantizationKernels.ReadQ5_K_Scalar)}",
         "read_q5k_avx2",   $"{NS}.{nameof(QuantizationKernels.ReadQ5_K_Scalar)}",
         "read_q5k_sse",    $"{NS}.{nameof(QuantizationKernels.ReadQ5_K_Scalar)}",
         "read_q5k_scalar", $"{NS}.{nameof(QuantizationKernels.ReadQ5_K_Scalar)}")]
-    public abstract unsafe void ReadQ5K(BinaryReader reader, Span<float> data, int n);
+    public abstract void ReadQ5K(BinaryReader reader, Span<float> data, int n);
 
     [PuzzleCornerPiece(QuantizationKeys.KeyReadQ6K, true, null,
         "read_q6k_fma",    $"{NS}.{nameof(QuantizationKernels.ReadQ6K_Scalar)}",
         "read_q6k_avx2",   $"{NS}.{nameof(QuantizationKernels.ReadQ6K_Scalar)}",
         "read_q6k_sse",    $"{NS}.{nameof(QuantizationKernels.ReadQ6K_Scalar)}",
         "read_q6k_scalar", $"{NS}.{nameof(QuantizationKernels.ReadQ6K_Scalar)}")]
-    public abstract unsafe void ReadQ6K(BinaryReader reader, Span<float> data, int n);
+    public abstract void ReadQ6K(BinaryReader reader, Span<float> data, int n);
 
     [PuzzleCornerPiece(QuantizationKeys.KeyReadQ8K, true, null,
         "read_q8k_fma",    $"{NS}.{nameof(QuantizationKernels.ReadQ8K_Scalar)}",
         "read_q8k_avx2",   $"{NS}.{nameof(QuantizationKernels.ReadQ8K_Scalar)}",
         "read_q8k_sse",    $"{NS}.{nameof(QuantizationKernels.ReadQ8K_Scalar)}",
         "read_q8k_scalar", $"{NS}.{nameof(QuantizationKernels.ReadQ8K_Scalar)}")]
-    public abstract unsafe void ReadQ8K(BinaryReader reader, Span<float> data, int n);
+    public abstract void ReadQ8K(BinaryReader reader, Span<float> data, int n);
 
     [PuzzleCornerPiece(QuantizationKeys.KeyReadF32, true, null,
         "read_f32_fma",    $"{NS}.{nameof(QuantizationKernels.ReadF32_Scalar)}",
         "read_f32_avx2",   $"{NS}.{nameof(QuantizationKernels.ReadF32_Scalar)}",
         "read_f32_sse",    $"{NS}.{nameof(QuantizationKernels.ReadF32_Scalar)}",
         "read_f32_scalar", $"{NS}.{nameof(QuantizationKernels.ReadF32_Scalar)}")]
-    public abstract unsafe void ReadF32(BinaryReader reader, Span<float> data, int n);
+    public abstract void ReadF32(BinaryReader reader, Span<float> data, int n);
 
     [PuzzleCornerPiece(QuantizationKeys.KeyReadF16, true, null,
         "read_f16_fma",    $"{NS}.{nameof(QuantizationKernels.ReadF16_F16C)}",
         "read_f16_avx2",   $"{NS}.{nameof(QuantizationKernels.ReadF16_F16C)}",
         "read_f16_sse",    $"{NS}.{nameof(QuantizationKernels.ReadF16_Scalar)}",
         "read_f16_scalar", $"{NS}.{nameof(QuantizationKernels.ReadF16_Scalar)}")]
-    public abstract unsafe void ReadF16(BinaryReader reader, Span<float> data, int n);
+    public abstract void ReadF16(BinaryReader reader, Span<float> data, int n);
 
 
     [PuzzleCornerPiece(QuantizationKeys.KeyHSum256, true, null,

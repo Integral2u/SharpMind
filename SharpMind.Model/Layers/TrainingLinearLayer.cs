@@ -29,7 +29,7 @@ public sealed class TrainingLinearLayer : LinearLayer
         return output;
     }
 
-    public override unsafe Tensor<float> Forward(Tensor<float> input, Workspace? workspace = null)
+    public override Tensor<float> Forward(Tensor<float> input, Workspace? workspace = null)
     {
         ThrowIfDisposed();
         bool needReshape = input.Rank > 2;

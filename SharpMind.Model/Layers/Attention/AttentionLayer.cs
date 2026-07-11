@@ -207,7 +207,7 @@ namespace SharpMind.Model.Layers.Attention;
         Wo.SetRawWeight(weights.RawWo);
     }
 
-    private unsafe void LoadFusedWeightTransposed(ReadOnlySpan<float> data, int colOffset, int subOutF)
+    private void LoadFusedWeightTransposed(ReadOnlySpan<float> data, int colOffset, int subOutF)
     {
         // data is GGUF layout [subOutF, HiddenDim] (transposed)
         // Wqkv.Weight is [HiddenDim, totalOut] (Row-major: [In, Out])

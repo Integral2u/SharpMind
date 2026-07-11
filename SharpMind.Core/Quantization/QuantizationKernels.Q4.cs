@@ -619,7 +619,7 @@ public static partial class QuantizationKernels
         }
     }
 
-    public static unsafe void ReadQ4_0_Scalar(BinaryReader reader, Span<float> data, int n)
+    public static void ReadQ4_0_Scalar(BinaryReader reader, Span<float> data, int n)
     {
         const int qk = 32;
         const int blockBytes = 18;
@@ -641,7 +641,7 @@ public static partial class QuantizationKernels
         }
     }
 
-    public static unsafe void ReadQ4_1_Scalar(BinaryReader reader, Span<float> data, int n)
+    public static void ReadQ4_1_Scalar(BinaryReader reader, Span<float> data, int n)
     {
         const int qk = 32;
         const int blockBytes = 20;
@@ -664,7 +664,7 @@ public static partial class QuantizationKernels
         }
     }
 
-    public static unsafe void ReadQ4_NL_Scalar(BinaryReader reader, Span<float> data, int n)
+    public static void ReadQ4_NL_Scalar(BinaryReader reader, Span<float> data, int n)
     {
         const int qk = 32;
         const int blockBytes = 18;

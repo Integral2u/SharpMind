@@ -55,7 +55,7 @@ public abstract class FfnLayer : IDisposable
         }
     }
 
-    private unsafe void LoadFusedWeightTransposed(ReadOnlySpan<float> data, int colOffset)
+    private void LoadFusedWeightTransposed(ReadOnlySpan<float> data, int colOffset)
     {
         // WGated weight: [HiddenDim, 2*FfnDim]
         // GGUF: [FfnDim, HiddenDim] → SharpMind: [HiddenDim, FfnDim] starting at colOffset
