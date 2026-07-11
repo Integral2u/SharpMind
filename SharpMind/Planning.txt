@@ -1,7 +1,26 @@
-Revision of Code Clean up
-LogitOps using old methods
-GGUF Loader needs to become non static and have a ModelLoader Interface
-QuantizationFactory vs Mapping Builder with GPU
+Code Clean up
+
+CUI option for parrall or serial check first an chach preload number
+
+CornerPuzzlePeice callsite check if can be cleaned up with PuzzlePlace
+Factory consistancy ActivationFactory,QuantizationFactory
+
+Cleanup un-required unsafe
+
+Unused
+SharpMind.Model.Config.SharpMindConfigFactory 
+SharpMind.Model.Format.ModelConverter
+
+Superceeded
+Are SharpMind.Model.Format.Dtype and SharpMind.Model.Format.DtypeOps superceeded by SharpMind.Core.Quantization.QuantDType
+Is SharpMind.Model.Config.SharpMindModelConfig superceeded by SharpMind.Model.Config.ModelConfig
+
+Quantization Agreement Tests.
+We need a test to check Qunatization Methods, VecDot and MatMul for all QuantDType(s)
+This test should create ops for all hardware tiers and check the results of passed in synthetic data to ensure the variants in agreement.
+This is not a test of validity it is to check if we change one hardware implmentation Scalar/AVX/SSE/FMA that all the others agree.
+Failure you require checking whihc version is correct.
+
 
 Step 2
 Tests
@@ -14,46 +33,6 @@ This will help identify any incorrect implementaions of quant variants. We can t
 After that we can check F32 Qunatize up is within tollerenace for each subquant we can quanatize the F16 version down and continue testing all variants FMA,AVX,SSE,Scalar are withing precision +- tollerance
 
 
-Step 3 (Question)
-in Linearlayer QuantDtype is nullable should it or could it always be known, the same question for QuantizationOps
-
-note Wqkv.UseQuantizedForward && Wqkv.RawQuantizedData can be reduce, want to remove UseWuantizedForward and that to check RawQuantizedData for null
-
-Code Cleanup
-
-
-Tests, LinearLayer and GgufLoader needs a bit of a re-work, they have become a bit messy and seem to be vectors for bugs
-
-Tests for quantizations probably need clearing our and rebuilding taking the bwlow into account
-
-Seems like a vast improvement in speed and simplification of code nice! however if we ce can emilination of UseQuantizedForward is preferred.
-it only relies on QuantDtype which is only is within the class and RawQuantizedData is only refernce once outside of class in AttentionLayer.FreeFloatWeights
-this will allow cleaning of Forward and QuantizedForward to allow the JigSawDotNet pattern and factory to creathe the correct qunatization class for the layer. and layers cronstructed for qunatization by a factory
-
-LinearLayer
-the _vecDotFn is assigned but it is never used so it and it's delgate VecDotFn can be removed and have each quant type have its own QuantizationOps method like QuantizedMatMulQ8_0.
-This would allow removal of the WrapVecDotAsMatMul method and all quantixation logic resides in QuantizationOps.
-IsSupportedQuantDtype only returns false on Fp32 and Fp16 and im thinking the whole if we can implement varsions for these.
-calls to QuantizedForward which calls _matMulFn and VecDotQxK which calls _vecDotFn could be replace with actract methods and the linear layer can implement the JigSawDotNet pattern and factory to creathe the correct qunatization class for the layer.
-the _matMulFn would never be null as its been replace with an actual method wich will reduce conditionla branching in QuantizedForward.
-The Quantized Versions of MatMul in QuantizationKernels implement System.Threading.Tasks.Parallel.For while WrapVecDotAsMatMul is a for loop, this should possibly be implmented both ways as an option in QuantizationConfig like Hardware(HardwareTier) as Parallel(bool)
-UseQuantizedForward is possibly becoming redunant at this point so Forward and QuantizedForward could be simplified.
-
-GgufLoader
-The GGufLoader probably needs to migrate from being a static class to abstract class implmenting the JigSawDotNet pattern and created with a Factory using Hardware Teir.
-This will mean methods like HalfToFloat, GetScaleMinK4 will match what any follow on classes use and data should always agree.
-the ReadQ* methods could be moved to QuantizationOps allowing for variants AVX, FMA, SSE, Scalar instead of conditional Avx2.IsSupported long functions.
-I have removed LoadWeightsToModel,LoadLayerRawWeights, IsKQuant as they are not used
-GetFloatArray is not used is this an error?
-LoadWeightsToTransformerWeights and LoadWeights may need to ensure they are aligned and use of IsQuantizedType feels error prone.
-
-This part may need some ponering to ensure its correct.
-To check with the Tests we should grab an actual sample of know working model weights qwen2-0_5b-instruct-fp16  for a layer stored for test reference.
-We should also capture a result from LinearLayer.Forward for referencing expected results.  Absolutly need to add notes to test that if the FP16 test fails the true output from a run needs human verification output make sense.
-Check Read -> Check all QuantizeOps VecDot variants are in agreement with each other with how they should be when used in QuantizedMatMul had they been in a WrapVecDotAsMatMul to check any actal QuantizedMatMul implentation errors.
-The Quantize to next Q version based of the stored FP16 data ensureing subsequent tests are within expected precision tollerence.
-
-
 
 ChatMessage.Ignore somehow/settable visible in ChatView
 debugUI tool calling
@@ -61,9 +40,6 @@ debugUI tool calling
 #HIGH Priority
 you must make sure you understand the JigSawDotNet pattern and use. Intention is to reduce and branching code by genertaing code whihc may require implmenting or re-using Ops, Kernel and Factory patterns,
 Review Sharmind.Core.Activations.* for example
-
-
-LoadMode.Cached dosn't seem to work as intended. Layers only need to be loaded as when needed from file. Layer offsets shoudl be known.
 
 
 Notes(Unsorted)

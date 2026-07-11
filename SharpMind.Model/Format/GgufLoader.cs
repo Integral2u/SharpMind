@@ -558,14 +558,18 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
 
             var (_, _, rawField) = weights.ResolveTarget(info.Name);
             long rawSize = QuantizationOps.GetRawTensorByteCount(info.Shape, info.Dtype);
-            if (rawSize <= 0 || rawField == null) continue;
+            if (rawSize <= 0) continue;
 
-            // Read raw quantized data
-            byte[] rawData = new byte[rawSize];
-            stream.ReadExactly(rawData);
-            SetRawField(block, rawField, rawData, info.Dtype);
+            bool isQuantizedWeight = rawField != null;
 
-            // Dequantize to float
+            if (isQuantizedWeight)
+            {
+                byte[] rawData = new byte[rawSize];
+                stream.ReadExactly(rawData);
+                stream.Position -= rawSize;
+                SetRawField(block, rawField!, rawData, info.Dtype);
+            }
+
             int count = 1;
             foreach (int d in info.Shape) count *= d;
             float[] buffer = ArrayPool<float>.Shared.Rent(count);
@@ -575,18 +579,160 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
                 var floatTarget = weights.ResolveFloatTarget(info.Name);
                 if (floatTarget != null)
                 {
-                    // Allocate float tensor if not already present
                     if (floatTarget.ElementCount != count)
                     {
                         var newTensor = info.Shape.Length == 2
                             ? new Tensor<float>(info.Shape[0], info.Shape[1])
                             : new Tensor<float>(info.Shape);
-                        // Replace the block's float tensor property
-                        SetBlockFloatTensor(block, rawField, newTensor);
+                        SetBlockTensor(block, rawField, info.Name, newTensor);
                         floatTarget = newTensor;
                     }
                     floatTarget.Data.Clear();
                     buffer.AsSpan(0, count).CopyTo(floatTarget.Data);
+                }
+            }
+            finally
+            {
+                ArrayPool<float>.Shared.Return(buffer);
+            }
+        }
+    }
+
+    private static void SetBlockTensor(BlockWeights block, string? rawField, string name, Tensor<float> tensor)
+    {
+        if (rawField != null)
+        {
+            SetBlockFloatTensor(block, rawField, tensor);
+            return;
+        }
+
+        if (name.Contains("attn_norm", StringComparison.OrdinalIgnoreCase) ||
+            name.Contains("input_layernorm", StringComparison.OrdinalIgnoreCase))
+        {
+            if (name.Contains("bias", StringComparison.OrdinalIgnoreCase))
+                block.Norm1B = tensor;
+            else
+                block.Norm1W = tensor;
+            return;
+        }
+        if (name.Contains("ffn_norm", StringComparison.OrdinalIgnoreCase) ||
+            name.Contains("post_attention_layernorm", StringComparison.OrdinalIgnoreCase))
+        {
+            if (name.Contains("bias", StringComparison.OrdinalIgnoreCase))
+                block.Norm2B = tensor;
+            else
+                block.Norm2W = tensor;
+            return;
+        }
+        if (name.Contains("bias", StringComparison.OrdinalIgnoreCase))
+        {
+            if (name.Contains("attn_q", StringComparison.OrdinalIgnoreCase) ||
+                name.Contains("q_proj", StringComparison.OrdinalIgnoreCase))
+                block.WqBias = tensor;
+            else if (name.Contains("attn_k", StringComparison.OrdinalIgnoreCase) ||
+                     name.Contains("k_proj", StringComparison.OrdinalIgnoreCase))
+                block.WkBias = tensor;
+            else if (name.Contains("attn_v", StringComparison.OrdinalIgnoreCase) ||
+                     name.Contains("v_proj", StringComparison.OrdinalIgnoreCase))
+                block.WvBias = tensor;
+            else if (name.Contains("attn_output", StringComparison.OrdinalIgnoreCase) ||
+                     name.Contains("o_proj", StringComparison.OrdinalIgnoreCase))
+                block.WoBias = tensor;
+            else if (name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase) ||
+                     name.Contains("ffn_up", StringComparison.OrdinalIgnoreCase))
+                block.Wf1Bias = tensor;
+            else if (name.Contains("ffn_down", StringComparison.OrdinalIgnoreCase))
+                block.Wf2Bias = tensor;
+            return;
+        }
+    }
+
+    public void LoadTopLevelTensors(TransformerWeights weights)
+    {
+        var meta = weights.GgufMeta ?? LoadMeta(_path);
+
+        using var mmf = MemoryMappedFile.CreateFromFile(_path, FileMode.Open, null, 0, MemoryMappedFileAccess.Read);
+        using var stream = mmf.CreateViewStream(0, 0, MemoryMappedFileAccess.Read);
+        using var reader = new BinaryReader(stream);
+
+        foreach (var info in meta.Tensors)
+        {
+            if (info.Name.Contains("blk.")) continue;
+
+            // Dynamic lm_head allocation (matching LoadAllWeights behavior)
+            if (info.Name.Contains("output.weight") && weights.LmHeadWeight == null)
+            {
+                long ggufIn = info.Shape[0];
+                weights.SetLmHead(new Tensor<float>((int)weights.Config.VocabSize, (int)ggufIn));
+            }
+
+            var (target, block, _) = weights.ResolveTarget(info.Name);
+            if (target == null || block != null) continue;
+
+            long targetOffset = meta.DataOffset + info.Offset;
+            if (targetOffset >= stream.Length) continue;
+            stream.Position = targetOffset;
+
+            int count = 1;
+            foreach (int d in info.Shape) count *= d;
+            long rawSize = QuantizationOps.GetRawTensorByteCount(info.Shape, info.Dtype);
+            if (rawSize <= 0) continue;
+
+            // Read raw quantized data with vocab padding
+            byte[] rawData;
+            if (info.Shape.Length >= 2)
+            {
+                long tensorVocab = Math.Max(info.Shape[0], info.Shape[1]);
+                long paddedVocab = weights.Config.VocabSize;
+                if (paddedVocab > tensorVocab)
+                {
+                    long colBytes = rawSize / tensorVocab;
+                    rawData = new byte[paddedVocab * colBytes];
+                    for (long r = 0; r < tensorVocab; r++)
+                        stream.ReadExactly(rawData, (int)(r * colBytes), (int)colBytes);
+                    stream.Position -= rawSize;
+                }
+                else
+                {
+                    rawData = new byte[rawSize];
+                    stream.ReadExactly(rawData);
+                    stream.Position -= rawSize;
+                }
+            }
+            else
+            {
+                rawData = new byte[rawSize];
+                stream.ReadExactly(rawData);
+                stream.Position -= rawSize;
+            }
+
+            if (target == weights.LmHeadWeight)
+            {
+                weights.RawLmHead = rawData;
+                weights.RawLmHeadDtype = info.Dtype;
+            }
+            else if (target == weights.EmbeddingWeight)
+            {
+                weights.RawEmbedding = rawData;
+                weights.RawEmbeddingDtype = info.Dtype;
+            }
+
+            // Dequantize to float
+            float[] buffer = ArrayPool<float>.Shared.Rent(count);
+            try
+            {
+                ReadTensorInto(reader, info.Dtype, info.Shape, buffer.AsSpan(0, count));
+                target.Data.Clear();
+                if (target == weights.LmHeadWeight && info.Shape.Length == 2)
+                {
+                    int ggufIn = (int)info.Shape[0], ggufOut = (int)info.Shape[1];
+                    for (int i = 0; i < ggufIn; i++)
+                        for (int j = 0; j < ggufOut; j++)
+                            target.Data[j * ggufIn + i] = buffer[i * ggufOut + j];
+                }
+                else
+                {
+                    buffer.AsSpan(0, count).CopyTo(target.Data);
                 }
             }
             finally

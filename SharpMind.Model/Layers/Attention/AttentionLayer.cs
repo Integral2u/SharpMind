@@ -107,7 +107,7 @@ namespace SharpMind.Model.Layers.Attention;
                  ropeScalingFactor: config.RopeScalingFactor),
         };
 
-        if (weights != null)
+        if (weights?.Wq != null)
             CopyFusedWeights(weights.Wq, weights.Wk, weights.Wv, weights.WqBias, weights.WkBias, weights.WvBias);
     }
 
@@ -147,19 +147,21 @@ namespace SharpMind.Model.Layers.Attention;
         int kvDim = Config.NumKvHeads * Config.HeadDim;
         int hiddenDim = Config.HiddenDim;
         int totalOut = qDim + 2 * kvDim;
-        var wData = Wqkv.Weight.Data;
-
-        // Fused Wqkv weight is [In, Out] = [hiddenDim, totalOut]
-        // Linearly store Wq into columns [0, qDim)
-        for (int i = 0; i < hiddenDim; i++)
-            for (int j = 0; j < qDim; j++)
-                wData[i * totalOut + j] = weights.Wq.Data[i * qDim + j];
-        for (int j = 0; j < hiddenDim; j++)
+        // In cached mode, float tensors are loaded on-demand — skip the fused copy
+        if (weights.Wq != null)
         {
-            for (int i = 0; i < kvDim; i++)
+            var wData = Wqkv.Weight.Data;
+
+            for (int i = 0; i < hiddenDim; i++)
+                for (int j = 0; j < qDim; j++)
+                    wData[i * totalOut + j] = weights.Wq.Data[i * qDim + j];
+            for (int j = 0; j < hiddenDim; j++)
             {
-                wData[j * totalOut + (qDim + i)] = weights.Wk.Data[j * kvDim + i];
-                wData[j * totalOut + (qDim + kvDim + i)] = weights.Wv.Data[j * kvDim + i];
+                for (int i = 0; i < kvDim; i++)
+                {
+                    wData[j * totalOut + (qDim + i)] = weights.Wk.Data[j * kvDim + i];
+                    wData[j * totalOut + (qDim + kvDim + i)] = weights.Wv.Data[j * kvDim + i];
+                }
             }
         }
 

@@ -57,7 +57,7 @@ public sealed class EmbeddingTable : IDisposable
     /// </summary>
     /// <param name="tokenIds">Token ID per position. Values must be in [0, VocabSize).</param>
     /// <param name="workspace">Optional workspace to rent the result tensor from.</param>
-    public Tensor<float> Forward(ReadOnlySpan<int> tokenIds, SharpMind.Core.Memory.Workspace? workspace = null)
+    public Tensor<float> Forward(ReadOnlySpan<int> tokenIds, Memory.Workspace? workspace = null)
     {
         ThrowIfDisposed();
         int seqLen = tokenIds.Length;
@@ -84,7 +84,7 @@ public sealed class EmbeddingTable : IDisposable
     /// </summary>
     /// <param name="tokenIds">Token ID per position. Values must be in [0, VocabSize).</param>
     /// <param name="workspace">Optional workspace to rent the result tensor from.</param>
-    public Tensor<float> Forward(Tensor<int> tokenIds, SharpMind.Core.Memory.Workspace? workspace = null)
+    public Tensor<float> Forward(Tensor<int> tokenIds, Memory.Workspace? workspace = null)
     {
         ThrowIfDisposed();
         if (tokenIds.Rank != 2)

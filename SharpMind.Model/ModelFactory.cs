@@ -105,7 +105,29 @@ public static class ModelFactory
             }
             else
             {
-                blocks[i] = new TransformerWeights.BlockWeights();
+                // Pre-allocate small float tensors (norm weights, biases) in cached mode.
+                // Large weight tensors (Wq, Wk, Wv, Wo, Wf1, Wf2) remain null and are
+                // loaded on-demand.
+                blocks[i] = new TransformerWeights.BlockWeights(
+                    null,                                 // Wq (large, on-demand)
+                    null,                                 // Wk
+                    null,                                 // Wv
+                    null,                                 // Wo
+                    new Tensor<float>(qDim),              // WqB (small)
+                    new Tensor<float>(kvDim),             // WkB (small)
+                    new Tensor<float>(kvDim),             // WvB (small)
+                    new Tensor<float>(config.HiddenDim),  // WoB (small)
+                    null,                                 // Wf1 (large, on-demand)
+                    null,                                 // Wf2 (large, on-demand)
+                    new Tensor<float>(wf1Dim),            // Wf1B (small)
+                    new Tensor<float>(config.HiddenDim),  // Wf2B (small)
+                    new Tensor<float>(config.HiddenDim),  // Norm1W (small, always loaded)
+                    null,                                 // Norm1B
+                    new Tensor<float>(config.HiddenDim),  // Norm2W (small, always loaded)
+                    null,                                 // Norm2B
+                    null,                                 // QNormW
+                    null                                  // KNormW
+                );
             }
         }
         return blocks;
@@ -133,6 +155,13 @@ public static class ModelFactory
                 if (layerIdx < blocks.Length)
                     blocks[layerIdx].UpdateRawWeights(weights.Blocks[layerIdx]);
             };
+            // Push raw data for layers that were pre-loaded by InitializeWeights
+            // before the subscription was set up
+            for (int i = 0; i < blocks.Length; i++)
+            {
+                if (cached.IsLayerLoaded(i))
+                    blocks[i].UpdateRawWeights(weights.Blocks[i]);
+            }
         }
 
         IArchitecture arch = sharpConfig.Arch switch

@@ -114,5 +114,5 @@ public sealed unsafe class NativeBuffer<T> : IDisposable where T : unmanaged
         throw new OutOfMemoryException("NativeBuffer: aligned allocation failed.");
 
     private static void ThrowDisposed() =>
-        throw new ObjectDisposedException(nameof(NativeBuffer<T>));
+        throw new ObjectDisposedException(nameof(NativeBuffer<>));
 }

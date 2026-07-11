@@ -12,15 +12,10 @@ namespace SharpMind.Core.Embeddings;
 /// softmax. The slope is selected per head from <see cref="Slopes"/> by
 /// <c>AttentionLayer.Forward</c> and passed as the <c>alibiSlope</c> parameter.
 /// </summary>
-public sealed class AlibiEncoder : PositionalEncoder
+public sealed class AlibiEncoder(int numHeads) : PositionalEncoder
 {
     /// <summary>Geometric slopes per head: 2^(-8h/nHeads).</summary>
-    public float[] Slopes { get; }
-
-    public AlibiEncoder(int numHeads)
-    {
-        Slopes = PrecomputeSlopes(numHeads);
-    }
+    public float[] Slopes { get; } = PrecomputeSlopes(numHeads);
 
     private static float[] PrecomputeSlopes(int nHeads)
     {

@@ -46,7 +46,7 @@ public static partial class QuantizationKernels
         }
         else
         {
-            System.Threading.Tasks.Parallel.For(0, M, row =>
+            Parallel.For(0, M, row =>
             {
                 float* pIn = input + (long)row * K;
                 float* pOut = output + (long)row * N;
@@ -102,7 +102,7 @@ public static partial class QuantizationKernels
         }
         else
         {
-            System.Threading.Tasks.Parallel.For(0, M, row =>
+            Parallel.For(0, M, row =>
             {
                 float* pIn = input + (long)row * K;
                 float* pOut = output + (long)row * N;

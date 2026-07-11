@@ -27,4 +27,11 @@ public interface IModelLoader
     /// Called by <see cref="TransformerWeightsCached.LoadLayer"/>.
     /// </summary>
     void LoadLayer(TransformerWeights weights, int layerIndex);
+
+    /// <summary>
+    /// Loads top-level (non-block) tensors — embedding weight and lm_head weight —
+    /// from the model file. Sets both raw quantized data and dequantized float tensors.
+    /// Called by <see cref="TransformerWeightsCached.InitializeWeights"/>.
+    /// </summary>
+    void LoadTopLevelTensors(TransformerWeights weights);
 }

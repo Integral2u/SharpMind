@@ -250,20 +250,8 @@ public abstract class TransformerWeights : IDisposable
         block.Wk?.Dispose(); block.Wk = null;
         block.Wv?.Dispose(); block.Wv = null;
         block.Wo?.Dispose(); block.Wo = null;
-        block.WqBias?.Dispose(); block.WqBias = null;
-        block.WkBias?.Dispose(); block.WkBias = null;
-        block.WvBias?.Dispose(); block.WvBias = null;
-        block.WoBias?.Dispose(); block.WoBias = null;
         block.Wf1?.Dispose(); block.Wf1 = null;
         block.Wf2?.Dispose(); block.Wf2 = null;
-        block.Wf1Bias?.Dispose(); block.Wf1Bias = null;
-        block.Wf2Bias?.Dispose(); block.Wf2Bias = null;
-        block.Norm1W?.Dispose(); block.Norm1W = null;
-        block.Norm1B?.Dispose(); block.Norm1B = null;
-        block.Norm2W?.Dispose(); block.Norm2W = null;
-        block.Norm2B?.Dispose(); block.Norm2B = null;
-        block.QNormW?.Dispose(); block.QNormW = null;
-        block.KNormW?.Dispose(); block.KNormW = null;
     }
 
     public sealed class BlockWeights : IDisposable
@@ -412,6 +400,8 @@ public sealed class TransformerWeightsCached : TransformerWeights
     public override void InitializeWeights(IProgress<float>? progress = null)
     {
         Loader!.PreInit(this, progress);
+        // Load top-level tensors (embedding weight, lm_head weight)
+        Loader!.LoadTopLevelTensors(this);
         // Pre-load first cacheDepth layers synchronously
         int initialLayers = Math.Min(_cacheDepth, Blocks.Length);
         for (int i = 0; i < initialLayers; i++)

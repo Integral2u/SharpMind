@@ -197,17 +197,6 @@ public sealed unsafe class Tensor<T> : IDisposable
     public Tensor<T> Reshape(int d0, int d1, int d2, int d3) => CreateView(Shape.Reshape(d0, d1, d2, d3), _offset, _ownsMemory);
 
 
-    /// <summary>
-    /// Returns a 1-D view of row <paramref name="i"/> for a 2-D tensor (zero-copy).
-    /// </summary>
-   /* public Tensor<T> RowView(int i)
-    {
-        if (Rank != 2) throw new InvalidOperationException("RowView requires a 2-D tensor.");
-        int cols = Shape.Cols;
-        return CreateView(new TensorShape(cols), _offset + i * cols, _ownsMemory);
-    }*/
-
-
     /// <summary>Row as a <see cref="Span{T}"/></summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public Span<T> RowSpan(int i) => Data.Slice(i * Shape.Cols, Shape.Cols);
@@ -328,7 +317,7 @@ public sealed unsafe class Tensor<T> : IDisposable
         }
         else
         {
-            System.Threading.Tasks.Parallel.For(0, R, r =>
+            Parallel.For(0, R, r =>
             {
                 for (int c = 0; c < C; c++)
                     pD[(long)c * R + r] = pS[(long)r * C + c];
