@@ -35,11 +35,6 @@ Memory Efficiency: In AttentionLayer.Forward, temporary tensors (q, k, v, qNorme
 Performance: The recommendation for a blocked transpose in the core tensor operations (now likely residing in QuantizationKernels or Tensor helpers) should still be evaluated for large matrix performance.
 Robustness: Detailed shape validation in Tensor.Slice and other multi-dimensional operations remains a high-value target to prevent AccessViolationException in unsafe blocks.
 
-🔴 Biggest bug: KV cache is reset every chat turn
-In ChatSession.GetResponseStreamAsync (line 484), _generator.ResetCache() is called unconditionally on every turn, even in the branch that just built an "incremental" prompt-token array specifically to avoid recomputation (lines 439–452). The incremental-token code saves a bit of tokenizer CPU time, but then the KV cache is wiped anyway, forcing a full prefill of the entire conversation history from scratch on every single turn. All that paged-KV-cache/flash-attention infrastructure exists in the codebase, but the chat layer never actually benefits from incremental decoding — cost per turn grows with total conversation length, and total conversation cost is effectively quadratic. This is almost certainly the highest-value fix in the whole repo: only reset the cache when compaction/trim actually invalidates it, and let ordinary turns extend the existing cache.
-🔴 Vectorized quantized-matmul kernels exist but are unreachable
-In InferenceLinearLayer.cs, the [PuzzleCornerPiece] tier-name → method mapping wires several "*_avx2" (and one "*_fma") tier names to *_Scalar implementations even though real AVX2/FMA versions exist elsewhere in QuantizationKernels.Q4.cs/Q5.cs/Q8.cs:
-
 Performance opportunities
 
 BPE merge application is O(n²) per word (BpeEncoder.ApplyMerges): for each merge it rescans every adjacent token pair from scratch. Fine for short words, but pathological for long unbroken spans (URLs, base64, code, CJK text without space breaks). The standard fix is a priority queue over pair ranks with a doubly-linked token list, so each merge is O(log n) instead of O(n).

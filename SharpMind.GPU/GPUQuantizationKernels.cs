@@ -28,14 +28,14 @@ public static partial class GPUQuantizationKernels
         return sign == 0 ? result : -result;
     }
 
-    [PuzzlePeice(nameof(QuantizationOps.HSum256), QuantizationKeys.KeyHSum256, GPUSharpMindConfig.ValHSum256)]
+    [PuzzlePeice(QuantizationKeys.KeyHSum256, QuantizationKeys.KeyHSum256, GPUSharpMindConfig.ValHSum256)]
     public static float HSum256_GPU(Vector256<float> v)
     {
         return v.GetElement(0) + v.GetElement(1) + v.GetElement(2) + v.GetElement(3)
              + v.GetElement(4) + v.GetElement(5) + v.GetElement(6) + v.GetElement(7);
     }
 
-    [PuzzlePeice(nameof(QuantizationOps.HalfToFloat), QuantizationKeys.KeyHalfToFloat, GPUSharpMindConfig.ValHalfToFloat)]
+    [PuzzlePeice(QuantizationKeys.KeyHalfToFloat, QuantizationKeys.KeyHalfToFloat, GPUSharpMindConfig.ValHalfToFloat)]
     public static float HalfToFloat_GPU(ushort half)
     {
         return HalfToFloatGPU(half);
@@ -61,7 +61,7 @@ public static partial class GPUQuantizationKernels
         return (ushort)(sign | ((uint)exp << 10) | (mant >> 13));
     }
 
-    [PuzzlePeice(nameof(QuantizationOps.FloatToHalf), QuantizationKeys.KeyFloatToHalf, GPUSharpMindConfig.ValFloatToHalf)]
+    [PuzzlePeice(QuantizationKeys.KeyFloatToHalf, QuantizationKeys.KeyFloatToHalf, GPUSharpMindConfig.ValFloatToHalf)]
     public static ushort FloatToHalf_GPU(float f)
     {
         return FloatToHalf_GPUImpl(f);
@@ -79,13 +79,13 @@ public static partial class GPUQuantizationKernels
         return (byte)((scales[j + 4] >> 4) | ((scales[j] >> 6) << 4));
     }
 
-    [PuzzlePeice(nameof(QuantizationOps.GetScaleMinK4_Scale), QuantizationKeys.KeyGetScaleMinK4_Scale, GPUSharpMindConfig.ValGetScaleMinK4_Scale)]
+    [PuzzlePeice(QuantizationKeys.KeyGetScaleMinK4_Scale, QuantizationKeys.KeyGetScaleMinK4_Scale, GPUSharpMindConfig.ValGetScaleMinK4_Scale)]
     public static unsafe byte GetScaleMinK4_Scale_GPU(int j, byte* scales)
     {
         return GetScaleMinK4_ScaleImpl(j, scales);
     }
 
-    [PuzzlePeice(nameof(QuantizationOps.GetScaleMinK4_Min), QuantizationKeys.KeyGetScaleMinK4_Min, GPUSharpMindConfig.ValGetScaleMinK4_Min)]
+    [PuzzlePeice(QuantizationKeys.KeyGetScaleMinK4_Min, QuantizationKeys.KeyGetScaleMinK4_Min, GPUSharpMindConfig.ValGetScaleMinK4_Min)]
     public static unsafe byte GetScaleMinK4_Min_GPU(int j, byte* scales)
     {
         return GetScaleMinK4_MinImpl(j, scales);

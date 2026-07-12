@@ -10,7 +10,7 @@ namespace SharpMind.GPU;
 
 public static partial class GPUQuantizationKernels
 {
-    [PuzzlePeice(nameof(QuantizationOps.VecDotQ6K), QuantizationKeys.KeyVecDotQ6K, GPUSharpMindConfig.ValVecDotQ6K)]
+    [PuzzlePeice(QuantizationKeys.KeyVecDotQ6K, QuantizationKeys.KeyVecDotQ6K, GPUSharpMindConfig.ValVecDotQ6K)]
     public static unsafe float VecDotQ6K_GPU(float* input, byte* rawWeights, int col, int inFeatures)
     {
         const int BLOCK_BYTES = 210;
@@ -82,7 +82,7 @@ public static partial class GPUQuantizationKernels
         partials[tid] = (float)sum;
     }
 
-    [PuzzlePeice(nameof(QuantizationOps.QuantizedMatMulQ6K), QuantizationKeys.KeyQuantizedMatMulQ6K, GPUSharpMindConfig.ValQuantizedMatMulQ6K_Serial)]
+    [PuzzlePeice(QuantizationKeys.KeyQuantizedMatMulQ6K, QuantizationKeys.KeyQuantizedMatMulQ6K, GPUSharpMindConfig.ValQuantizedMatMulQ6K_Serial)]
     public static unsafe void QuantizedMatMulQ6K_Serial_GPU(
         float* input, byte* rawWeights, float* output,
         int M, int K, int N)
@@ -96,7 +96,7 @@ public static partial class GPUQuantizationKernels
         }
     }
 
-    [PuzzlePeice(nameof(QuantizationOps.QuantizedMatMulQ6K), QuantizationKeys.KeyQuantizedMatMulQ6K, GPUSharpMindConfig.ValQuantizedMatMulQ6K_Parallel)]
+    [PuzzlePeice(QuantizationKeys.KeyQuantizedMatMulQ6K, QuantizationKeys.KeyQuantizedMatMulQ6K, GPUSharpMindConfig.ValQuantizedMatMulQ6K_Parallel)]
     public static unsafe void QuantizedMatMulQ6K_Parallel_GPU(
         float* input, byte* rawWeights, float* output,
         int M, int K, int N)

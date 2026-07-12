@@ -32,7 +32,6 @@ public static class MappingBuilderExtensions
         QuantizationKeys.KeyVecDotQ8_1,
         QuantizationKeys.KeyVecDotQ2K,
         QuantizationKeys.KeyVecDotQ8K,
-        QuantizationKeys.KeyVecDotQ4_NL,
     ];
 
     private static readonly string[] QmmKeys = [
@@ -48,7 +47,6 @@ public static class MappingBuilderExtensions
         QuantizationKeys.KeyQuantizedMatMulQ8K,
         QuantizationKeys.KeyQuantizedMatMulQ8_1,
         QuantizationKeys.KeyQuantizedMatMulQ5_1,
-        QuantizationKeys.KeyQuantizedMatMulQ4_NL,
     ];
 
     public static MappingBuilder WithGpu(this MappingBuilder builder)
