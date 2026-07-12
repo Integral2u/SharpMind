@@ -53,17 +53,14 @@ public static class LinearLayerFactory
     private static string? ExtractQmmSuffix(Dictionary<string, string> mapping)
     {
         string? qmmVal = mapping.GetValueOrDefault("qmatmul_f32");
-        if (qmmVal != null)
-        {
-            int idx = qmmVal.IndexOf('_', StringComparison.Ordinal);
-            if (idx >= 0)
-            {
-                string suffix = qmmVal.AsSpan(idx).ToString();
-                if (suffix.StartsWith("_serial_", StringComparison.Ordinal) || suffix.StartsWith("_parallel_", StringComparison.Ordinal))
-                    return suffix;
-            }
-        }
-        return null;
+        if (qmmVal == null) return null;
+
+        int serialIdx = qmmVal.IndexOf("_serial_", StringComparison.Ordinal);
+        int parallelIdx = qmmVal.IndexOf("_parallel_", StringComparison.Ordinal);
+        int idx = serialIdx >= 0 ? serialIdx : parallelIdx;
+        if (idx < 0) return null;
+
+        return qmmVal.AsSpan(idx).ToString();
     }
 
     private static string DtypeToCompound(QuantDType dtype) => dtype switch

@@ -12,7 +12,7 @@ namespace SharpMind.Samples.Examples
 {
     public class ModelListRunner
     {        
-        public static async Task RunAsync(string prompt, string ModelPath, string[] Models, bool withGPU = true)
+        public static async Task RunAsync(string prompt, string ModelPath, string[] Models, bool withGPU = false)
         {
 
             foreach (var m in Models)
