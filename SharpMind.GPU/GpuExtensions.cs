@@ -49,20 +49,25 @@ public static class MappingBuilderExtensions
         QuantizationKeys.KeyQuantizedMatMulQ5_1,
     ];
 
-    public static MappingBuilder WithGpu(this MappingBuilder builder)
+    public static MappingBuilder WithGpu(this MappingBuilder builder, bool nonQuant = true, bool vecDot = false, bool matMul = false)
     {
-        TryOverrideGpu(builder, SharpMindConfig.KeyPointWise);
-        TryOverrideGpu(builder, SharpMindConfig.KeyGate);
+        if (nonQuant)
+        {
+            TryOverrideGpu(builder, SharpMindConfig.KeyPointWise);
+            TryOverrideGpu(builder, SharpMindConfig.KeyGate);
 
-        builder.Override(SharpMindConfig.KeySoftmax, GPUSharpMindConfig.ValSoftmax);
-        builder.Override(SharpMindConfig.KeyRMSNorm, GPUSharpMindConfig.ValRMSNorm);
-
-        foreach (var key in VecDotKeys)
-            TryOverrideGpu(builder, key);
-
-        foreach (var key in QmmKeys)
-            TryOverrideGpu(builder, key);
-
+            builder.Override(SharpMindConfig.KeySoftmax, GPUSharpMindConfig.ValSoftmax);
+            builder.Override(SharpMindConfig.KeyRMSNorm, GPUSharpMindConfig.ValRMSNorm);
+        }
+        if (vecDot) {
+            foreach (var key in VecDotKeys)
+                TryOverrideGpu(builder, key);
+        }
+        if (matMul)
+        {
+            foreach (var key in QmmKeys)
+                TryOverrideGpu(builder, key);
+        }
         return builder;
     }
 

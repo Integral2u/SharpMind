@@ -149,3 +149,10 @@ public static unsafe void QuantizedMatMulQ6K_Parallel_Scalar(
         });
     }    
 }
+
+Recommendation
+Don't rewrite the GPU QuantizedMatMul for inference. The CPU path will always be faster on this hardware for single-sequence inference. If you want asymmetric GPU acceleration, the right approach is:
+
+CPU: VecDot, QuantizedMatMul, FFN layers
+GPU: attention softmax, LayerNorm, RoPE (non-quantized ops that benefit from parallelism)
+Would you like me to draft a plan for splitting the GPU path to run only attention/norm ops on GPU while keeping quantized matmul on CPU?
