@@ -1,4 +1,9 @@
 Code Clean up
+We some how fixed DeepSeek-R1-Distill-Qwen-1.5B-Q8_0 with the respose "Hello! How Are You? ?? ?" couple of extra question marks but an improvement.
+qwen2.5-1.5b-instruct-q8_0 is also fixed with response "/**
+Hello, I am a user of Alibaba Cloud. I use many service"
+There is and odd "/**" and newline at the start but also an improvement.
+
 
 Typical errors and previous reasons.
 

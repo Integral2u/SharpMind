@@ -15,10 +15,12 @@ namespace SandBox.RunModels
             "qwen2-0_5b-instruct-q8_0",         //Response:Hello! How can I assist you today?
             "qwen2-0_5b-instruct-fp16",      //Response:Hello! How can I assist you today?                                               
             "Qwen3-0.6B-Q8_0",      //Response:<think>\nOkay, the user just said "Hello," so I need to
-            "llama-3.2-1b-instruct-q8_0"       //Response:It seems like you've got a question about the answer to my own.
+            "llama-3.2-1b-instruct-q8_0",       //Response:It seems like you've got a question about the answer to my own.
+            "DeepSeek-R1-Distill-Qwen-1.5B-Q8_0",//Response:Hello! How Are You? ?? ?
+            "qwen2.5-1.5b-instruct-q8_0", //Response: /**\nHello, I am a user of Alibaba Cloud. I use many service
         ];
 
         private static readonly string ModelPath = @"C:\Integral2u\source\repos\SharpMind\ExternalAssets";
-        public static async Task RunAsync(string prompt) => await SharpMind.Samples.Examples.ModelListRunner.RunAsync(prompt, ModelPath, Models, true);
+        public static async Task RunAsync(string prompt) => await SharpMind.Samples.Examples.ModelListRunner.RunAsync(prompt, ModelPath, Models, false);
     }
 }
