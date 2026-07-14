@@ -88,7 +88,11 @@ public abstract class TransformerWeights : IDisposable
     public (Tensor<float>? target, BlockWeights? block, string? rawField) ResolveTarget(string name)
     {
         if (name.Contains("token_embd", StringComparison.OrdinalIgnoreCase)) return (EmbeddingWeight, null, null);
-        if (name.Contains("output_norm", StringComparison.OrdinalIgnoreCase)) return (FinalNormWeight, null, null);
+        if (name.Contains("output_norm", StringComparison.OrdinalIgnoreCase))
+        {
+            if (name.Contains("bias", StringComparison.OrdinalIgnoreCase)) return (FinalNormBias, null, null);
+            return (FinalNormWeight, null, null);
+        }
         if (name.Equals("output.weight", StringComparison.OrdinalIgnoreCase) || name.Equals("lm_head.weight", StringComparison.OrdinalIgnoreCase)) return (LmHeadWeight, null, null);
 
         var match = RegexGenerated.LayerIndexDotNDot.Match(name);
@@ -146,7 +150,11 @@ public abstract class TransformerWeights : IDisposable
     public Tensor<float>? ResolveFloatTarget(string name)
     {
         if (name.Contains("token_embd", StringComparison.OrdinalIgnoreCase)) return EmbeddingWeight;
-        if (name.Contains("output_norm", StringComparison.OrdinalIgnoreCase)) return FinalNormWeight;
+        if (name.Contains("output_norm", StringComparison.OrdinalIgnoreCase))
+        {
+            if (name.Contains("bias", StringComparison.OrdinalIgnoreCase)) return FinalNormBias;
+            return FinalNormWeight;
+        }
         if (name.Equals("output.weight", StringComparison.OrdinalIgnoreCase) || name.Equals("lm_head.weight", StringComparison.OrdinalIgnoreCase)) return LmHeadWeight;
 
         var match = RegexGenerated.LayerIndexDotNDot.Match(name);

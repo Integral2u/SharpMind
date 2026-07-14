@@ -1,3 +1,5 @@
+LoadMode.Cached could have issues if multiple sessions are using 1 model, also check preloaded next layer(s)(Cyclic) is in asyncrhonous so can be loading one layer or more while one is being processed
+
 Code Clean up
 I think we can now try getting some KnowFailingModels working again.
 We some how fixed DeepSeek-R1-Distill-Qwen-1.5B-Q8_0 with the respose "Hello! How Are You? ?? ?" couple of extra question marks but an improvement.

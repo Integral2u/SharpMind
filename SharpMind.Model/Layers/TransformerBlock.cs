@@ -105,12 +105,14 @@ public abstract class TransformerBlock : IDisposable
         }
         if (name.Contains("attn_norm", StringComparison.OrdinalIgnoreCase) || name.Contains("input_layernorm", StringComparison.OrdinalIgnoreCase))
         {
-            _norm1.LoadWeight(data);
+            if (name.Contains("bias", StringComparison.OrdinalIgnoreCase)) _norm1.LoadBias(data);
+            else _norm1.LoadWeight(data);
             return true;
         }
         if (name.Contains("ffn_norm", StringComparison.OrdinalIgnoreCase) || name.Contains("post_attention_layernorm", StringComparison.OrdinalIgnoreCase))
         {
-            _norm2.LoadWeight(data);
+            if (name.Contains("bias", StringComparison.OrdinalIgnoreCase)) _norm2.LoadBias(data);
+            else _norm2.LoadWeight(data);
             return true;
         }
 
