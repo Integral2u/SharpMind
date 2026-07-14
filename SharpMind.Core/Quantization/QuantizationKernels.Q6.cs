@@ -28,40 +28,36 @@ public static partial class QuantizationKernels
             int blockEnd = Math.Min(QK_K, inFeatures + colBlockStart - b * QK_K);
             for (int nOff = curBlockStart; nOff < blockEnd; nOff += 128)
             {
-                byte* pql = ql + nOff / 2;
-                byte* pqh = qh + nOff / 4;
-                sbyte* psc = scales + nOff / 16;
-                for (int l = 0; l < 32; l++)
+                byte* pql = ql + (nOff == 0 ? 0 : 64);
+                byte* pqh = qh + (nOff == 0 ? 0 : 32);
+                sbyte* psc = scales + (nOff == 0 ? 0 : 8);
+
+                int halfRem = Math.Min(128, blockEnd - nOff);
+                for (int l = 0; l < 32 && l < halfRem; l++)
                 {
                     int is_ = l / 16;
+                    int q1v = (pql[l] & 0x0F) | ((pqh[l] & 0x03) << 4);
+                    int q2v = (pql[l + 32] & 0x0F) | (((pqh[l] >> 2) & 0x03) << 4);
+                    int q3v = ((pql[l] >> 4) & 0x0F) | (((pqh[l] >> 4) & 0x03) << 4);
+                    int q4v = ((pql[l + 32] >> 4) & 0x0F) | (((pqh[l] >> 6) & 0x03) << 4);
 
-                    int qlNib1 = (pql[l / 2] >> (4 * (l & 1))) & 0x0F;
-                    int qhBits1 = (pqh[l / 4] >> (2 * (l & 3))) & 3;
-                    int q1 = qlNib1 | (qhBits1 << 4);
-                    int i1 = nOff + l;
-                    if (i1 < blockEnd)
-                        sum += input[b * QK_K + i1 - colBlockStart] * (d * psc[is_ + 0] * (q1 - 32));
+                    int i1 = b * QK_K + nOff + l - colBlockStart;
+                    int i2 = b * QK_K + nOff + l + 32 - colBlockStart;
 
-                    int qlNib2 = (pql[l / 2 + 16] >> (4 * (l & 1))) & 0x0F;
-                    int qhBits2 = (pqh[l / 4 + 8] >> (2 * (l & 3))) & 3;
-                    int q2 = qlNib2 | (qhBits2 << 4);
-                    int i2 = nOff + l + 32;
-                    if (i2 < blockEnd)
-                        sum += input[b * QK_K + i2 - colBlockStart] * (d * psc[is_ + 2] * (q2 - 32));
+                    if (i2 >= b * QK_K + blockEnd - colBlockStart)
+                    {
+                        if (i1 < b * QK_K + blockEnd - colBlockStart)
+                            sum += input[i1] * (d * psc[is_ + 0] * (q1v - 32));
+                        break;
+                    }
 
-                    int qlNib3 = (pql[l / 2 + 32] >> (4 * (l & 1))) & 0x0F;
-                    int qhBits3 = (pqh[l / 4 + 16] >> (2 * (l & 3))) & 3;
-                    int q3 = qlNib3 | (qhBits3 << 4);
-                    int i3 = nOff + l + 64;
-                    if (i3 < blockEnd)
-                        sum += input[b * QK_K + i3 - colBlockStart] * (d * psc[is_ + 4] * (q3 - 32));
+                    int i3 = b * QK_K + nOff + l + 64 - colBlockStart;
+                    int i4 = b * QK_K + nOff + l + 96 - colBlockStart;
 
-                    int qlNib4 = (pql[l / 2 + 48] >> (4 * (l & 1))) & 0x0F;
-                    int qhBits4 = (pqh[l / 4 + 24] >> (2 * (l & 3))) & 3;
-                    int q4 = qlNib4 | (qhBits4 << 4);
-                    int i4 = nOff + l + 96;
-                    if (i4 < blockEnd)
-                        sum += input[b * QK_K + i4 - colBlockStart] * (d * psc[is_ + 6] * (q4 - 32));
+                    sum += input[i1] * (d * psc[is_ + 0] * (q1v - 32));
+                    sum += input[i2] * (d * psc[is_ + 2] * (q2v - 32));
+                    sum += input[i3] * (d * psc[is_ + 4] * (q3v - 32));
+                    sum += input[i4] * (d * psc[is_ + 6] * (q4v - 32));
                 }
             }
         }
@@ -76,7 +72,6 @@ public static partial class QuantizationKernels
         int colBlockStart = col * inFeatures % QK_K;
         int nBlocks = (inFeatures + QK_K - 1) / QK_K;
         double sum = 0;
-        float* vvBuf = stackalloc float[8];
         for (int b = 0; b < nBlocks; b++)
         {
             byte* block = rawWeights + (long)(startBlock + b) * BLOCK_BYTES;
@@ -88,32 +83,44 @@ public static partial class QuantizationKernels
             int curBlockStart = (b == 0) ? colBlockStart : 0;
             int blockEnd = Math.Min(QK_K, inFeatures + colBlockStart - b * QK_K);
             float* pIn = input + b * QK_K - colBlockStart;
+            for (int nOff = curBlockStart; nOff < blockEnd; nOff += 128)
+            {
+                byte* pql = ql + (nOff == 0 ? 0 : 64);
+                byte* pqh = qh + (nOff == 0 ? 0 : 32);
+                sbyte* psc = scales + (nOff == 0 ? 0 : 8);
 
-            int i = curBlockStart;
-            for (; i <= blockEnd - 8; i += 8)
-            {
-                for (int sub = 0; sub < 8; sub++)
+                int halfRem = Math.Min(128, blockEnd - nOff);
+                for (int l = 0; l < 32 && l < halfRem; l++)
                 {
-                    int idx = i + sub;
-                    int qlByte = idx / 2;
-                    int qlNib = (ql[qlByte] >> (4 * (idx & 1))) & 0x0F;
-                    int qhByte = idx / 4;
-                    int qhBits = (qh[qhByte] >> (2 * (idx & 3))) & 3;
-                    int q = qlNib | (qhBits << 4);
-                    vvBuf[sub] = d * scales[idx / 16] * (q - 32);
+                    int is_ = l / 16;
+                    int q1v = (pql[l] & 0x0F) | ((pqh[l] & 0x03) << 4);
+                    int q2v = (pql[l + 32] & 0x0F) | (((pqh[l] >> 2) & 0x03) << 4);
+                    int q3v = ((pql[l] >> 4) & 0x0F) | (((pqh[l] >> 4) & 0x03) << 4);
+                    int q4v = ((pql[l + 32] >> 4) & 0x0F) | (((pqh[l] >> 6) & 0x03) << 4);
+
+                    int i1 = nOff + l;
+                    int i2 = nOff + l + 32;
+
+                    if (i2 >= blockEnd)
+                    {
+                        if (i1 < blockEnd)
+                            sum += pIn[i1] * (d * psc[is_ + 0] * (q1v - 32));
+                        break;
+                    }
+
+                    int i3 = nOff + l + 64;
+                    int i4 = nOff + l + 96;
+
+                    float v1 = d * psc[is_ + 0] * (q1v - 32);
+                    float v2 = d * psc[is_ + 2] * (q2v - 32);
+                    float v3 = d * psc[is_ + 4] * (q3v - 32);
+                    float v4 = d * psc[is_ + 6] * (q4v - 32);
+
+                    sum += pIn[i1] * v1;
+                    sum += pIn[i2] * v2;
+                    sum += pIn[i3] * v3;
+                    sum += pIn[i4] * v4;
                 }
-                var vv = Vector256.LoadUnsafe(ref vvBuf[0]);
-                var vi = Vector256.LoadUnsafe(ref pIn[i]);
-                sum += MathHelpers.HSum256_Avx(Avx.Multiply(vi, vv));
-            }
-            for (; i < blockEnd; i++)
-            {
-                int qlByte = i / 2;
-                int qlNib = (ql[qlByte] >> (4 * (i & 1))) & 0x0F;
-                int qhByte = i / 4;
-                int qhBits = (qh[qhByte] >> (2 * (i & 3))) & 3;
-                int q = qlNib | (qhBits << 4);
-                sum += pIn[i] * (d * scales[i / 16] * (q - 32));
             }
         }
         return (float)sum;
@@ -127,7 +134,6 @@ public static partial class QuantizationKernels
         int colBlockStart = col * inFeatures % QK_K;
         int nBlocks = (inFeatures + QK_K - 1) / QK_K;
         double sum = 0;
-        float* vvBuf = stackalloc float[8];
         for (int b = 0; b < nBlocks; b++)
         {
             byte* block = rawWeights + (long)(startBlock + b) * BLOCK_BYTES;
@@ -139,32 +145,44 @@ public static partial class QuantizationKernels
             int curBlockStart = (b == 0) ? colBlockStart : 0;
             int blockEnd = Math.Min(QK_K, inFeatures + colBlockStart - b * QK_K);
             float* pIn = input + b * QK_K - colBlockStart;
+            for (int nOff = curBlockStart; nOff < blockEnd; nOff += 128)
+            {
+                byte* pql = ql + (nOff == 0 ? 0 : 64);
+                byte* pqh = qh + (nOff == 0 ? 0 : 32);
+                sbyte* psc = scales + (nOff == 0 ? 0 : 8);
 
-            int i = curBlockStart;
-            for (; i <= blockEnd - 8; i += 8)
-            {
-                for (int sub = 0; sub < 8; sub++)
+                int halfRem = Math.Min(128, blockEnd - nOff);
+                for (int l = 0; l < 32 && l < halfRem; l++)
                 {
-                    int idx = i + sub;
-                    int qlByte = idx / 2;
-                    int qlNib = (ql[qlByte] >> (4 * (idx & 1))) & 0x0F;
-                    int qhByte = idx / 4;
-                    int qhBits = (qh[qhByte] >> (2 * (idx & 3))) & 3;
-                    int q = qlNib | (qhBits << 4);
-                    vvBuf[sub] = d * scales[idx / 16] * (q - 32);
+                    int is_ = l / 16;
+                    int q1v = (pql[l] & 0x0F) | ((pqh[l] & 0x03) << 4);
+                    int q2v = (pql[l + 32] & 0x0F) | (((pqh[l] >> 2) & 0x03) << 4);
+                    int q3v = ((pql[l] >> 4) & 0x0F) | (((pqh[l] >> 4) & 0x03) << 4);
+                    int q4v = ((pql[l + 32] >> 4) & 0x0F) | (((pqh[l] >> 6) & 0x03) << 4);
+
+                    int i1 = nOff + l;
+                    int i2 = nOff + l + 32;
+
+                    if (i2 >= blockEnd)
+                    {
+                        if (i1 < blockEnd)
+                            sum += pIn[i1] * (d * psc[is_ + 0] * (q1v - 32));
+                        break;
+                    }
+
+                    int i3 = nOff + l + 64;
+                    int i4 = nOff + l + 96;
+
+                    float v1 = d * psc[is_ + 0] * (q1v - 32);
+                    float v2 = d * psc[is_ + 2] * (q2v - 32);
+                    float v3 = d * psc[is_ + 4] * (q3v - 32);
+                    float v4 = d * psc[is_ + 6] * (q4v - 32);
+
+                    sum += pIn[i1] * v1;
+                    sum += pIn[i2] * v2;
+                    sum += pIn[i3] * v3;
+                    sum += pIn[i4] * v4;
                 }
-                var vv = Vector256.LoadUnsafe(ref vvBuf[0]);
-                var vi = Vector256.LoadUnsafe(ref pIn[i]);
-                sum += MathHelpers.HSum256_Avx(Fma.MultiplyAdd(vi, vv, Vector256<float>.Zero));
-            }
-            for (; i < blockEnd; i++)
-            {
-                int qlByte = i / 2;
-                int qlNib = (ql[qlByte] >> (4 * (i & 1))) & 0x0F;
-                int qhByte = i / 4;
-                int qhBits = (qh[qhByte] >> (2 * (i & 3))) & 3;
-                int q = qlNib | (qhBits << 4);
-                sum += pIn[i] * (d * scales[i / 16] * (q - 32));
             }
         }
         return (float)sum;

@@ -1,3 +1,7 @@
+Test
+bool isBadLayout = info.Dtype is QuantDType.Q8_0 or QuantDType.Q5_0
+        or QuantDType.Q6_K or QuantDType.Q6_K_S;
+
 LoadMode.Cached could have issues if multiple sessions are using 1 model, also check preloaded next layer(s)(Cyclic) is in asyncrhonous so can be loading one layer or more while one is being processed
 
 Code Clean up
@@ -16,7 +20,7 @@ Response:!!!!!!!
 
 Tokens per second: 2.09  TTFT: 9.615s
 
-Reason Embedding and lm_head weights were never loadedor their raw quantized counterparts (RawEmbedding, RawLmHead). 
+Reason Embedding and lm_head weights were never loaded or their raw quantized counterparts (RawEmbedding, RawLmHead). 
 These tensors stayed as all-zeros, producing zero embedding vectors and zero logits — explaining the !!!!!!! garbage output.
 
 This type of response.

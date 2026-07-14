@@ -471,8 +471,13 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
 
                 if (target == weights.LmHeadWeight)
                 {
-                    weights.RawLmHead = rawData;
-                    weights.RawLmHeadDtype = info.Dtype;
+                    //bool isBadLayout = info.Dtype is QuantDType.Q8_0 or QuantDType.Q5_0
+                    //    or QuantDType.Q6_K or QuantDType.Q6_K_S;
+                    //if (!isBadLayout)
+                    {
+                        weights.RawLmHead = rawData;
+                        weights.RawLmHeadDtype = info.Dtype;
+                    }
                 }
                 else if (target == weights.EmbeddingWeight)
                 {
@@ -609,18 +614,18 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
         if (name.Contains("attn_norm", StringComparison.OrdinalIgnoreCase) ||
             name.Contains("input_layernorm", StringComparison.OrdinalIgnoreCase))
         {
-            if (name.Contains("bias", StringComparison.OrdinalIgnoreCase))
-                block.Norm1B = tensor;
-            else
+            //if (name.Contains("bias", StringComparison.OrdinalIgnoreCase))
+            //    block.Norm1B = tensor;
+            //else
                 block.Norm1W = tensor;
             return;
         }
         if (name.Contains("ffn_norm", StringComparison.OrdinalIgnoreCase) ||
             name.Contains("post_attention_layernorm", StringComparison.OrdinalIgnoreCase))
         {
-            if (name.Contains("bias", StringComparison.OrdinalIgnoreCase))
-                block.Norm2B = tensor;
-            else
+            //if (name.Contains("bias", StringComparison.OrdinalIgnoreCase))
+            //    block.Norm2B = tensor;
+            //else
                 block.Norm2W = tensor;
             return;
         }
@@ -708,8 +713,13 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
 
             if (target == weights.LmHeadWeight)
             {
-                weights.RawLmHead = rawData;
-                weights.RawLmHeadDtype = info.Dtype;
+                //bool isBadLayout = info.Dtype is QuantDType.Q8_0 or QuantDType.Q5_0
+                 //   or QuantDType.Q6_K or QuantDType.Q6_K_S;
+                //if (!isBadLayout)
+                {
+                    weights.RawLmHead = rawData;
+                    weights.RawLmHeadDtype = info.Dtype;
+                }
             }
             else if (target == weights.EmbeddingWeight)
             {
