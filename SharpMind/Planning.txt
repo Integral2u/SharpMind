@@ -67,11 +67,6 @@ Factory consistancy ActivationFactory,QuantizationFactory
 
 
 
-Unused
-SharpMind.Model.Config.SharpMindConfigFactory 
-SharpMind.Model.Format.ModelConverter
-
-
 
 ChatMessage.Ignore somehow/settable visible in ChatView
 debugUI tool calling
