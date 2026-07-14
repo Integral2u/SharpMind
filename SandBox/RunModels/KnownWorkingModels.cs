@@ -30,6 +30,7 @@ namespace SandBox.RunModels
             "Qwen3-0.6B-Q6_K",      //Response:<think>\nOkay, the user just said "Hello," so I need to            
             "Qwen3-0.6B-Q2_K",      //Response:?\nOkay, so I need to start with the user's message.
             
+            "Qwen2-0.5B.Q6_K", //Response:The\nsystem\nsystem is a system that helps you to make better decisions
             //Still works after removing isBadLayout, assumption is isBadLayout is based on bad information, no working models were broken by removal
             "qwen2-0_5b-instruct-q8_0",         //Response:Hello! How can I assist you today?
             "qwen2-0_5b-instruct-fp16",      //Response:Hello! How can I assist you today?                                               

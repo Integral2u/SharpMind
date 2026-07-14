@@ -4,23 +4,9 @@
     {
         private static readonly string[] Models =
         [
-       
-            "qwen2-0_5b-instruct-q4_k_m",   //Response:!!!!!!!
-            "qwen2-0.5b-instruct-q2_k",     //Response:???u u performance?? 's elbowso??ef-.
-            "Qwen2-0.5B.Q2_K",              //Response:performance sa?ero_ ?and i?.??f*+
-            "Qwen2-0.5B.Q3_K_L",            //Response:./(?????????????????????
-            "Qwen2-0.5B.Q3_K_M",            //Response:!!!!!!!
-            "Qwen2-0.5B.Q3_K_S",            //Response:estring???emales?? je??? Gro  (??hibition Main
-            
-            "Qwen2-0.5B.Q5_1",              //Response:-+$?ergy=> Tw %(. Tw?????
- 
-            //Know working Response:The\nsystem\nsystem is a system that helps you to make better decisions
-            //Current Response:5??,?? (5? combined?- . -__??
-            "Qwen2-0.5B.Q6_K",
-
-            //Know working Response:\nOkay, the user just said "Hello," so I need to
-            //Current Response: libertinechein dancesissionabelle???esadamenteotropic oficial IonicPage(filequalTo=back disappointed
-            "Qwen3-0.6B-Q6_K",
+            //Current Response: !!!!!!!
+            //Best Known Response to date:Hello! I'm here. How can assist you?Hi what you can
+            "DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M", 
 
             //Know working Response:\nOkay, the user just said "Hello," so I need to
             //Current Response:!!!!!!!
@@ -32,18 +18,23 @@
             //Current Response:!!!!!!!
             "Qwen3-0.6B-Q3_K_M",
 
-             //Know working Response:nOkay, so I need to start with the user's message.
-            //Current Response:/Getty WikiLeaks??owardrylicemensemens shedding
-            "Qwen3-0.6B-Q2_K",   
+            "qwen2-0_5b-instruct-q4_k_m",   //Response:!!!!!!!
+            "qwen2-0.5b-instruct-q2_k",     //Response:???u u performance?? 's elbowso??ef-.
+            "Qwen2-0.5B.Q2_K",              //Response:performance sa?ero_ ?and i?.??f*+
+            "Qwen2-0.5B.Q3_K_L",            //Response:./(?????????????????????
+            "Qwen2-0.5B.Q3_K_M",            //Response:!!!!!!!
+            "Qwen2-0.5B.Q3_K_S",            //Response:estring???emales?? je??? Gro  (??hibition Main
+            
+            "Qwen2-0.5B.Q5_1",              //Response:-+$?ergy=> Tw %(. Tw?????
+ 
+            
 
             "Qwen2.5-1.5B-Instruct-f16",    //Response: ??,??????????????????????
             
             "Qwen3-0.6B-Q4_0",    //Response:!!!!!!!
             "Qwen3-0.6B-Q4_1",      //Response:;].ToDouble'postouce */)EMPL     Meering }])\n Tangounistillis? -\n\n Oblysize
 
-            //Current Response: !!!!!!!
-            //Best Known Response to date:Hello! I'm here. How can assist you?Hi what you can
-            "DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M", 
+            
 
                                           
             "Llama-3.2-1B-Instruct-Q4_K_M", //Response:!!!!!!!    
