@@ -13,12 +13,7 @@ namespace SandBox.RunModels
         private static readonly string[] Models =
         [
 
-            //Current responses: !!!!!!!
-            "Qwen3-0.6B-Q5_K_M",    //Response:<think>\nOkay, the user just said "Hello," so I need to
-            "Qwen3-0.6B-Q4_K_M",    //Response:<think>\nOkay, the user just said "Hello," so I need to
-            "Qwen3-0.6B-Q4_0",      //Response:<think>\nOkay, the user just said "Hello," so I need to
-            "Qwen3-0.6B-Q3_K_M",    //Response:<think>\Okay, the user is asking for help with a problem. But
-            
+   
             //Regression new response: acias Const(md$(" reliability  Runtimelasmarapped Garlic '/'?? WaitFor?? Aer
             //Works after removing isBadLayout fix
             "DeepSeek-R1-Distill-Qwen-1.5B-Q8_0",//Response:Hello! How Are You? ?? ?
@@ -37,6 +32,12 @@ namespace SandBox.RunModels
             "Qwen3-0.6B-Q8_0",      //Response:<think>\nOkay, the user just said "Hello," so I need to
 
             "llama-3.2-1b-instruct-q8_0",       //Response:It seems like you've got a question about the answer to my own.
+            
+            //Current responses: !!!!!!!
+            "Qwen3-0.6B-Q5_K_M",    //Response:<think>\nOkay, the user just said "Hello," so I need to
+            "Qwen3-0.6B-Q4_K_M",    //Response:<think>\nOkay, the user just said "Hello," so I need to
+            "Qwen3-0.6B-Q4_0",      //Response:<think>\nOkay, the user just said "Hello," so I need to
+            "Qwen3-0.6B-Q3_K_M",    //Response:<think>\Okay, the user is asking for help with a problem. But
             
             
         ];

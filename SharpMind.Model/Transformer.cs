@@ -34,7 +34,8 @@ public sealed class Transformer : IDisposable
         IArchitecture arch,
         NormLayer finalNorm,
         Tensor<float>? lmHead = null,
-        QuantizationOps? qOps = null)
+        QuantizationOps? qOps = null,
+        Dictionary<string, string>? mapping = null)
     {
         ArgumentNullException.ThrowIfNull(weights);
         ArgumentNullException.ThrowIfNull(embedding);
@@ -50,7 +51,7 @@ public sealed class Transformer : IDisposable
         var projWeight = _lmHead ?? _embedding.Weight;
         var rawW = _lmHead != null ? _weights.RawLmHead : _weights.RawEmbedding;
         var rawDtype = _lmHead != null ? _weights.RawLmHeadDtype : _weights.RawEmbeddingDtype;
-        _logitOps = new LogitOps(projWeight, rawW, rawDtype, _qOps);
+        _logitOps = LogitOpsFactory.Create(projWeight, rawW, rawDtype, mapping);
 
         if (arch is DecoderArch decodeArch)
             _blocks = decodeArch.Blocks;

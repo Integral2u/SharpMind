@@ -1,3 +1,5 @@
+Logit ops
+CUI Plugins?
 Test
 bool isBadLayout = info.Dtype is QuantDType.Q8_0 or QuantDType.Q5_0
         or QuantDType.Q6_K or QuantDType.Q6_K_S;

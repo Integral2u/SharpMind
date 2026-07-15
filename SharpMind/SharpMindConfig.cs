@@ -119,6 +119,9 @@ public sealed record SharpMindConfig
     public const string ValLinearAuto = "auto";
     public const string ValLinearFloat = "float";
 
+    // Logit Layer Keys
+    public const string KeyLogit = "logit";
+
     // Arch Values
     public const string ValDecoder = "decoder";
     public const string ValEncoder = "encoder";

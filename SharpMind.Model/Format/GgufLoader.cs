@@ -471,13 +471,8 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
 
                 if (target == weights.LmHeadWeight)
                 {
-                    //bool isBadLayout = info.Dtype is QuantDType.Q8_0 or QuantDType.Q5_0
-                    //    or QuantDType.Q6_K or QuantDType.Q6_K_S;
-                    //if (!isBadLayout)
-                    {
-                        weights.RawLmHead = rawData;
-                        weights.RawLmHeadDtype = info.Dtype;
-                    }
+                    weights.RawLmHead = rawData;
+                    weights.RawLmHeadDtype = info.Dtype;
                 }
                 else if (target == weights.EmbeddingWeight)
                 {
@@ -713,13 +708,8 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
 
             if (target == weights.LmHeadWeight)
             {
-                //bool isBadLayout = info.Dtype is QuantDType.Q8_0 or QuantDType.Q5_0
-                 //   or QuantDType.Q6_K or QuantDType.Q6_K_S;
-                //if (!isBadLayout)
-                {
-                    weights.RawLmHead = rawData;
-                    weights.RawLmHeadDtype = info.Dtype;
-                }
+                weights.RawLmHead = rawData;
+                weights.RawLmHeadDtype = info.Dtype;
             }
             else if (target == weights.EmbeddingWeight)
             {

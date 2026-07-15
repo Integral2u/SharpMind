@@ -1,52 +1,167 @@
+using JigSawDotNet;
 using SharpMind.Core.Memory;
 using SharpMind.Core.Quantization;
 using SharpMind.Core.Tensors;
 
 namespace SharpMind.Model;
 
-public sealed class LogitOps(Tensor<float> projectionWeight, byte[]? rawWeight, QuantDType? rawDtype, QuantizationOps? qOps)
+public abstract class LogitOps
 {
-    private readonly Tensor<float> projectionWeight = projectionWeight;
-    private readonly byte[]? rawWeight = rawWeight;
-    private readonly QuantizationOps? qOps = qOps;
-    public readonly bool UseQuantized = rawWeight != null && qOps != null && (rawDtype == QuantDType.Q8_0 || rawDtype == QuantDType.Q5_0 || rawDtype == QuantDType.Q6_K || rawDtype == QuantDType.Q6_K_S);
+    private const string QKernels = $"{nameof(SharpMind)}.{nameof(Core)}.{nameof(SharpMind.Core.Quantization)}.{nameof(QuantizationKernels)}";
+
+    protected readonly Tensor<float> ProjectionWeight;
+    protected readonly byte[]? RawWeight;
+
+    protected LogitOps(Tensor<float> projectionWeight, byte[]? rawWeight)
+    {
+        ProjectionWeight = projectionWeight;
+        RawWeight = rawWeight;
+    }
+
+    [PuzzleCornerPiece(SharpMindConfig.KeyLogit, true, null,
+        "q8_0_serial_fma",    $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ8_0_Serial_FMA)}",
+        "q8_0_parallel_fma",  $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ8_0_Parallel_FMA)}",
+        "q8_0_serial_avx2",   $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ8_0_Serial_AVX2)}",
+        "q8_0_parallel_avx2", $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ8_0_Parallel_AVX2)}",
+        "q8_0_serial_sse",    $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ8_0_Serial_Scalar)}",
+        "q8_0_parallel_sse",  $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ8_0_Parallel_Scalar)}",
+        "q8_0_serial_scalar", $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ8_0_Serial_Scalar)}",
+        "q8_0_parallel_scalar",$"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ8_0_Parallel_Scalar)}",
+        "q5_0_serial_fma",    $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ5_0_Serial_FMA)}",
+        "q5_0_parallel_fma",  $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ5_0_Parallel_FMA)}",
+        "q5_0_serial_avx2",   $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ5_0_Serial_AVX2)}",
+        "q5_0_parallel_avx2", $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ5_0_Parallel_AVX2)}",
+        "q5_0_serial_sse",    $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ5_0_Serial_Scalar)}",
+        "q5_0_parallel_sse",  $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ5_0_Parallel_Scalar)}",
+        "q5_0_serial_scalar", $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ5_0_Serial_Scalar)}",
+        "q5_0_parallel_scalar",$"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ5_0_Parallel_Scalar)}",
+        "q6k_serial_fma",    $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ6K_Serial_FMA)}",
+        "q6k_parallel_fma",  $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ6K_Parallel_FMA)}",
+        "q6k_serial_avx2",   $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ6K_Serial_AVX2)}",
+        "q6k_parallel_avx2", $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ6K_Parallel_AVX2)}",
+        "q6k_serial_sse",    $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ6K_Serial_Scalar)}",
+        "q6k_parallel_sse",  $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ6K_Parallel_Scalar)}",
+        "q6k_serial_scalar", $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ6K_Serial_Scalar)}",
+        "q6k_parallel_scalar",$"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ6K_Parallel_Scalar)}",
+        "q4_0_serial_fma",    $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ4_0_Serial_AVX2)}",
+        "q4_0_parallel_fma",  $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ4_0_Parallel_AVX2)}",
+        "q4_0_serial_avx2",   $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ4_0_Serial_AVX2)}",
+        "q4_0_parallel_avx2", $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ4_0_Parallel_AVX2)}",
+        "q4_0_serial_sse",    $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ4_0_Serial_SSE)}",
+        "q4_0_parallel_sse",  $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ4_0_Parallel_SSE)}",
+        "q4_0_serial_scalar", $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ4_0_Serial_Scalar)}",
+        "q4_0_parallel_scalar",$"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ4_0_Parallel_Scalar)}",
+        "q4_1_serial_fma",    $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ4_1_Serial_AVX2)}",
+        "q4_1_parallel_fma",  $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ4_1_Parallel_AVX2)}",
+        "q4_1_serial_avx2",   $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ4_1_Serial_AVX2)}",
+        "q4_1_parallel_avx2", $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ4_1_Parallel_AVX2)}",
+        "q4_1_serial_sse",    $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ4_1_Serial_SSE)}",
+        "q4_1_parallel_sse",  $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ4_1_Parallel_SSE)}",
+        "q4_1_serial_scalar", $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ4_1_Serial_Scalar)}",
+        "q4_1_parallel_scalar",$"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ4_1_Parallel_Scalar)}",
+        "q2k_serial_fma",    $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ2K_Serial_FMA)}",
+        "q2k_parallel_fma",  $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ2K_Parallel_FMA)}",
+        "q2k_serial_avx2",   $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ2K_Serial_AVX2)}",
+        "q2k_parallel_avx2", $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ2K_Parallel_AVX2)}",
+        "q2k_serial_sse",    $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ2K_Serial_Scalar)}",
+        "q2k_parallel_sse",  $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ2K_Parallel_Scalar)}",
+        "q2k_serial_scalar", $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ2K_Serial_Scalar)}",
+        "q2k_parallel_scalar",$"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ2K_Parallel_Scalar)}",
+        "q3k_serial_fma",    $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ3K_Serial_FMA)}",
+        "q3k_parallel_fma",  $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ3K_Parallel_FMA)}",
+        "q3k_serial_avx2",   $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ3K_Serial_AVX2)}",
+        "q3k_parallel_avx2", $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ3K_Parallel_AVX2)}",
+        "q3k_serial_sse",    $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ3K_Serial_Scalar)}",
+        "q3k_parallel_sse",  $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ3K_Parallel_Scalar)}",
+        "q3k_serial_scalar", $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ3K_Serial_Scalar)}",
+        "q3k_parallel_scalar",$"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ3K_Parallel_Scalar)}",
+        "q4k_serial_fma",    $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ4K_Serial_FMA)}",
+        "q4k_parallel_fma",  $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ4K_Parallel_FMA)}",
+        "q4k_serial_avx2",   $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ4K_Serial_AVX2)}",
+        "q4k_parallel_avx2", $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ4K_Parallel_AVX2)}",
+        "q4k_serial_sse",    $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ4K_Serial_Scalar)}",
+        "q4k_parallel_sse",  $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ4K_Parallel_Scalar)}",
+        "q4k_serial_scalar", $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ4K_Serial_Scalar)}",
+        "q4k_parallel_scalar",$"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ4K_Parallel_Scalar)}",
+        "q5k_serial_fma",    $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ5K_Serial_FMA)}",
+        "q5k_parallel_fma",  $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ5K_Parallel_FMA)}",
+        "q5k_serial_avx2",   $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ5K_Serial_AVX2)}",
+        "q5k_parallel_avx2", $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ5K_Parallel_AVX2)}",
+        "q5k_serial_sse",    $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ5K_Serial_Scalar)}",
+        "q5k_parallel_sse",  $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ5K_Parallel_Scalar)}",
+        "q5k_serial_scalar", $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ5K_Serial_Scalar)}",
+        "q5k_parallel_scalar",$"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ5K_Parallel_Scalar)}",
+        "q8k_serial_fma",    $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ8K_Serial_FMA)}",
+        "q8k_parallel_fma",  $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ8K_Parallel_FMA)}",
+        "q8k_serial_avx2",   $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ8K_Serial_AVX2)}",
+        "q8k_parallel_avx2", $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ8K_Parallel_AVX2)}",
+        "q8k_serial_sse",    $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ8K_Serial_Scalar)}",
+        "q8k_parallel_sse",  $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ8K_Parallel_Scalar)}",
+        "q8k_serial_scalar", $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ8K_Serial_Scalar)}",
+        "q8k_parallel_scalar",$"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ8K_Parallel_Scalar)}",
+        "q8_1_serial_fma",    $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ8_1_Serial_FMA)}",
+        "q8_1_parallel_fma",  $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ8_1_Parallel_FMA)}",
+        "q8_1_serial_avx2",   $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ8_1_Serial_AVX2)}",
+        "q8_1_parallel_avx2", $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ8_1_Parallel_AVX2)}",
+        "q8_1_serial_sse",    $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ8_1_Serial_SSE)}",
+        "q8_1_parallel_sse",  $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ8_1_Parallel_SSE)}",
+        "q8_1_serial_scalar", $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ8_1_Serial_Scalar)}",
+        "q8_1_parallel_scalar",$"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ8_1_Parallel_Scalar)}",
+        "q5_1_serial_fma",    $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ5_1_Serial_FMA)}",
+        "q5_1_parallel_fma",  $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ5_1_Parallel_FMA)}",
+        "q5_1_serial_avx2",   $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ5_1_Serial_AVX2)}",
+        "q5_1_parallel_avx2", $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ5_1_Parallel_AVX2)}",
+        "q5_1_serial_sse",    $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ5_1_Serial_Scalar)}",
+        "q5_1_parallel_sse",  $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ5_1_Parallel_Scalar)}",
+        "q5_1_serial_scalar", $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ5_1_Serial_Scalar)}",
+        "q5_1_parallel_scalar",$"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ5_1_Parallel_Scalar)}",
+        "q4_nl_serial_fma",    $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ4_NL_Serial_AVX2)}",
+        "q4_nl_parallel_fma",  $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ4_NL_Parallel_AVX2)}",
+        "q4_nl_serial_avx2",   $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ4_NL_Serial_AVX2)}",
+        "q4_nl_parallel_avx2", $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ4_NL_Parallel_AVX2)}",
+        "q4_nl_serial_sse",    $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ4_NL_Serial_Scalar)}",
+        "q4_nl_parallel_sse",  $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ4_NL_Parallel_Scalar)}",
+        "q4_nl_serial_scalar", $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ4_NL_Serial_Scalar)}",
+        "q4_nl_parallel_scalar",$"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ4_NL_Parallel_Scalar)}",
+        "f32_serial_fma",    $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulF32_Serial_Scalar)}",
+        "f32_parallel_fma",  $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulF32_Parallel_Scalar)}",
+        "f32_serial_avx2",   $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulF32_Serial_Scalar)}",
+        "f32_parallel_avx2", $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulF32_Parallel_Scalar)}",
+        "f32_serial_sse",    $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulF32_Serial_Scalar)}",
+        "f32_parallel_sse",  $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulF32_Parallel_Scalar)}",
+        "f32_serial_scalar", $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulF32_Serial_Scalar)}",
+        "f32_parallel_scalar",$"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulF32_Parallel_Scalar)}",
+        "f16_serial_fma",    $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulF16_Serial_Scalar)}",
+        "f16_parallel_fma",  $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulF16_Parallel_Scalar)}",
+        "f16_serial_avx2",   $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulF16_Serial_Scalar)}",
+        "f16_parallel_avx2", $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulF16_Parallel_Scalar)}",
+        "f16_serial_sse",    $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulF16_Serial_Scalar)}",
+        "f16_parallel_sse",  $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulF16_Parallel_Scalar)}",
+        "f16_serial_scalar", $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulF16_Serial_Scalar)}",
+        "f16_parallel_scalar",$"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulF16_Parallel_Scalar)}")]
+    public unsafe abstract void ProjectFn(float* input, byte* rawWeights, float* output, int M, int K, int N);
 
     public unsafe Tensor<float> Project(Tensor<float> input, int M, int K, int N, Workspace? workspace = null)
     {
-        if (UseQuantized)
+        var result = workspace != null
+            ? workspace.Rent<float>([M, N])
+            : new Tensor<float>(M, N);
+
+        fixed (float* pInput = input.Data)
+        fixed (float* pOutput = result.Data)
         {
-            Tensor<float> result = workspace != null
-                ? workspace.Rent<float>([M, N])
-                : new Tensor<float>(M, N);
-            fixed (float* pInput = input.Data)
-            fixed (float* pOutput = result.Data)
-            fixed (byte* pRaw = rawWeight!)
+            if (RawWeight != null)
             {
-                switch (rawDtype)
+                fixed (byte* pRaw = RawWeight)
                 {
-                    case QuantDType.Q8_0:
-                        qOps!.QuantizedMatMulQ8_0(pInput, pRaw, pOutput, M, K, N);
-                        break;
-                    case QuantDType.Q5_0:
-                        qOps!.QuantizedMatMulQ5_0(pInput, pRaw, pOutput, M, K, N);
-                        break;
-                    case QuantDType.Q6_K:
-                    case QuantDType.Q6_K_S:
-                        qOps!.QuantizedMatMulQ6K(pInput, pRaw, pOutput, M, K, N);
-                        break;
+                    ProjectFn(pInput, pRaw, pOutput, M, K, N);
                 }
             }
-            return result;
+            else
+            {
+                ProjectFn(pInput, (byte*)ProjectionWeight.DataPtr, pOutput, M, K, N);
+            }
         }
-
-        unsafe
-        {
-            var result = workspace != null
-                ? workspace.Rent<float>([M, N])
-                : new Tensor<float>(M, N);
-            var fn = qOps!.QuantizedMatMulOpFor(QuantDType.F32);
-            fn(input.DataPtr, (byte*)projectionWeight.DataPtr, result.DataPtr, M, K, N);
-            return result;
-        }
+        return result;
     }
 }
