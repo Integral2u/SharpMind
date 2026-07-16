@@ -13,19 +13,22 @@ namespace SandBox.RunModels
         private static readonly string[] Models =
         [
             "Qwen3-0.6B-Q4_0",      //Response:onomyonomy??ultipart?ultipart?ultipart,,,itoito until until
+            "Qwen3-0.6B-Q4_K_M",    //Response:\nOkay, the user just said "Hello," so I need to 
 
-            "Qwen3-0.6B-Q5_K_M",    //Response:nOkay, the user just said "Hello," so I need to
-            "Qwen3-0.6B-Q4_K_M",    //Response:nOkay, the user just said "Hello," so I need to            
+            "Qwen3-0.6B-Q5_K_M",    //Response:\nOkay, the user just said "Hello," so I need to                       
             "Qwen3-0.6B-Q3_K_M",    //Response:\nOkay, the user is asking for help with a problem. But
+            "Qwen3-0.6B-Q6_K",      //Response:\nOkay, the user just said "Hello," so I need to            
+            "Qwen3-0.6B-Q2_K",      //Response:?\nOkay, so I need to start with the user's message.  
+            "Qwen3-0.6B-Q8_0",      //Response:\nOkay, the user just said "Hello," so I need to
 
             "DeepSeek-R1-Distill-Qwen-1.5B-Q8_0",//Response:Hello! How Are You? ?? ?
+            "DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M", //Response:Hello! I'm here. How can assist you?Hi what you can
             "qwen2.5-1.5b-instruct-q8_0", //Response: /**\nHello, I am a user of Alibaba Cloud. I use many service
-            "Qwen3-0.6B-Q6_K",      //Response:\nOkay, the user just said "Hello," so I need to            
-            "Qwen3-0.6B-Q2_K",      //Response:?\nOkay, so I need to start with the user's message.            
+          
             "Qwen2-0.5B.Q6_K", //Response:The\nsystem\nsystem is a system that helps you to make better decisions           
             "qwen2-0_5b-instruct-q8_0",         //Response:Hello! How can I assist you today?
             "qwen2-0_5b-instruct-fp16",      //Response:Hello! How can I assist you today?                                               
-            "Qwen3-0.6B-Q8_0",      //Response:\nOkay, the user just said "Hello," so I need to
+            
 
             "llama-3.2-1b-instruct-q8_0",       //Response:It seems like you've got a question about the answer to my own.
             
