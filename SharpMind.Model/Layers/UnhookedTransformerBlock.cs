@@ -12,12 +12,14 @@ public sealed class UnhookedTransformerBlock(int layerIdx, AttentionLayer attent
         ThrowIfDisposed();
 
         var normed1 = _norm1.Forward(x, workspace);
+
         var attnOut = _attention.Forward(normed1, positionOffset, causal, cache, workspace);
         normed1.Dispose();
         x.AddInPlace(attnOut);
         attnOut.Dispose();
 
         var normed2 = _norm2.Forward(x, workspace);
+
         var ffnOut = _ffn.Forward(normed2, workspace);
         normed2.Dispose();
         x.AddInPlace(ffnOut);

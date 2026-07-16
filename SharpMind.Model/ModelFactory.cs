@@ -177,6 +177,7 @@ public static class ModelFactory
         var finalNorm = BuildNorm(weights.Config.HiddenDim, sharpConfig, weights.Config.NormEps, weights.FinalNormWeight, weights.FinalNormBias);
 
         var transformer = new Transformer(weights, embedding, arch, finalNorm, weights.LmHeadWeight, qOps, fullMapping);
+
         if (optimizeMemory)
             transformer.FreeFloatWeights();
         return transformer;         
@@ -209,7 +210,7 @@ public static class ModelFactory
         ArgumentNullException.ThrowIfNull(attn);
         attn.SetWeights(blockWeights);
         
-        var ffn = BuildFfn(weights, sharpConfig, acts, qOps, cfg);
+        var ffn = BuildFfn(layerIdx, weights, sharpConfig, acts, qOps, cfg);
         ffn.SetWeights(blockWeights);
         
         float eps = weights.Config.NormEps;
@@ -228,13 +229,14 @@ public static class ModelFactory
     }
 
     private static FfnLayer BuildFfn(
+        int layerIdx,
         TransformerWeights weights,
         SharpMindConfig sharpConfig,
         ActivationOps acts,
         QuantizationOps qOps,
         Dictionary<string, string>? cfg = null)
     {
-        var blockWeights = weights.Blocks[0]; // Weight shapes are same across blocks for FFN
+        var blockWeights = weights.Blocks[layerIdx];
         return sharpConfig.Ffn switch
         {
             FfnKind.Dense => new DenseFfnLayer(weights.Config, acts, qOps, blockWeights, cfg),

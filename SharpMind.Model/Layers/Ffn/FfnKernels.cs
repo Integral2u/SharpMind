@@ -45,11 +45,13 @@ internal static class FfnKernels
             ? workspace.Rent<float>(hasBatch ? new[] { fusedDims[0], fusedDims[1], ffnDim } : [total, ffnDim])
             : (hasBatch ? new Tensor<float>(fusedDims[0], fusedDims[1], ffnDim) : new Tensor<float>(total, ffnDim));
         var flat = fused.Reshape(total, 2 * ffnDim);
+
         for (int i = 0; i < total; i++)
         {
             var row = flat.RowSpan(i);
             acts.ApplyGate(row[..ffnDim], row[ffnDim..], gated.RowSpan(i));
         }
+
         return wDown.Forward(gated, workspace);
     }
 

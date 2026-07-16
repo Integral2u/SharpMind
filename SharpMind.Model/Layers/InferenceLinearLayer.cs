@@ -153,6 +153,7 @@ public abstract class InferenceLinearLayer : LinearLayer
         Tensor<float> result = workspace != null
             ? workspace.Rent<float>([m, OutFeatures])
             : new Tensor<float>(m, OutFeatures);
+
         fixed (byte* pRaw = RawQuantizedData)
         {
             QuantizedMatMulFn(flat.DataPtr, pRaw, result.DataPtr, m, InFeatures, OutFeatures);

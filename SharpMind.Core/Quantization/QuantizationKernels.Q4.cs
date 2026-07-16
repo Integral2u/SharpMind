@@ -24,7 +24,7 @@ public static partial class QuantizationKernels
             int blockEnd = Math.Min(QK, inFeatures - b * QK);
             for (int i = 0; i < blockEnd; i++)
             {
-                int q = (qs[i / 2] >> (4 * (i % 2))) & 0x0F;
+                int q = (qs[i % 16] >> ((i / 16) * 4)) & 0x0F;
                 sum += input[b * QK + i] * ((q - 8) * d);
             }
         }
@@ -51,47 +51,49 @@ public static partial class QuantizationKernels
             int i = 0;
             for (; i <= blockEnd - 16; i += 16)
             {
+                int shift = (i / 16) * 4;
                 var w0 = Avx.Multiply(Vector256.Create(
-                    (float)(((qs[i / 2] >> (4 * (i % 2))) & 0x0F) - 8),
-                    (float)(((qs[(i + 1) / 2] >> (4 * ((i + 1) % 2))) & 0x0F) - 8),
-                    (float)(((qs[(i + 2) / 2] >> (4 * ((i + 2) % 2))) & 0x0F) - 8),
-                    (float)(((qs[(i + 3) / 2] >> (4 * ((i + 3) % 2))) & 0x0F) - 8),
-                    (float)(((qs[(i + 4) / 2] >> (4 * ((i + 4) % 2))) & 0x0F) - 8),
-                    (float)(((qs[(i + 5) / 2] >> (4 * ((i + 5) % 2))) & 0x0F) - 8),
-                    (float)(((qs[(i + 6) / 2] >> (4 * ((i + 6) % 2))) & 0x0F) - 8),
-                    (float)(((qs[(i + 7) / 2] >> (4 * ((i + 7) % 2))) & 0x0F) - 8)
+                    (float)(((qs[0] >> shift) & 0x0F) - 8),
+                    (float)(((qs[1] >> shift) & 0x0F) - 8),
+                    (float)(((qs[2] >> shift) & 0x0F) - 8),
+                    (float)(((qs[3] >> shift) & 0x0F) - 8),
+                    (float)(((qs[4] >> shift) & 0x0F) - 8),
+                    (float)(((qs[5] >> shift) & 0x0F) - 8),
+                    (float)(((qs[6] >> shift) & 0x0F) - 8),
+                    (float)(((qs[7] >> shift) & 0x0F) - 8)
                 ), vd);
                 var w1 = Avx.Multiply(Vector256.Create(
-                    (float)(((qs[(i + 8) / 2] >> (4 * ((i + 8) % 2))) & 0x0F) - 8),
-                    (float)(((qs[(i + 9) / 2] >> (4 * ((i + 9) % 2))) & 0x0F) - 8),
-                    (float)(((qs[(i + 10) / 2] >> (4 * ((i + 10) % 2))) & 0x0F) - 8),
-                    (float)(((qs[(i + 11) / 2] >> (4 * ((i + 11) % 2))) & 0x0F) - 8),
-                    (float)(((qs[(i + 12) / 2] >> (4 * ((i + 12) % 2))) & 0x0F) - 8),
-                    (float)(((qs[(i + 13) / 2] >> (4 * ((i + 13) % 2))) & 0x0F) - 8),
-                    (float)(((qs[(i + 14) / 2] >> (4 * ((i + 14) % 2))) & 0x0F) - 8),
-                    (float)(((qs[(i + 15) / 2] >> (4 * ((i + 15) % 2))) & 0x0F) - 8)
+                    (float)(((qs[8] >> shift) & 0x0F) - 8),
+                    (float)(((qs[9] >> shift) & 0x0F) - 8),
+                    (float)(((qs[10] >> shift) & 0x0F) - 8),
+                    (float)(((qs[11] >> shift) & 0x0F) - 8),
+                    (float)(((qs[12] >> shift) & 0x0F) - 8),
+                    (float)(((qs[13] >> shift) & 0x0F) - 8),
+                    (float)(((qs[14] >> shift) & 0x0F) - 8),
+                    (float)(((qs[15] >> shift) & 0x0F) - 8)
                 ), vd);
                 vacc0 = Avx.Add(vacc0, Avx.Multiply(Vector256.LoadUnsafe(ref pIn[i]), w0));
                 vacc1 = Avx.Add(vacc1, Avx.Multiply(Vector256.LoadUnsafe(ref pIn[i + 8]), w1));
             }
             for (; i <= blockEnd - 8; i += 8)
             {
+                int shift = (i / 16) * 4;
                 var w = Avx.Multiply(Vector256.Create(
-                    (float)(((qs[i / 2] >> (4 * (i % 2))) & 0x0F) - 8),
-                    (float)(((qs[(i + 1) / 2] >> (4 * ((i + 1) % 2))) & 0x0F) - 8),
-                    (float)(((qs[(i + 2) / 2] >> (4 * ((i + 2) % 2))) & 0x0F) - 8),
-                    (float)(((qs[(i + 3) / 2] >> (4 * ((i + 3) % 2))) & 0x0F) - 8),
-                    (float)(((qs[(i + 4) / 2] >> (4 * ((i + 4) % 2))) & 0x0F) - 8),
-                    (float)(((qs[(i + 5) / 2] >> (4 * ((i + 5) % 2))) & 0x0F) - 8),
-                    (float)(((qs[(i + 6) / 2] >> (4 * ((i + 6) % 2))) & 0x0F) - 8),
-                    (float)(((qs[(i + 7) / 2] >> (4 * ((i + 7) % 2))) & 0x0F) - 8)
+                    (float)(((qs[(i + 0) % 16] >> shift) & 0x0F) - 8),
+                    (float)(((qs[(i + 1) % 16] >> shift) & 0x0F) - 8),
+                    (float)(((qs[(i + 2) % 16] >> shift) & 0x0F) - 8),
+                    (float)(((qs[(i + 3) % 16] >> shift) & 0x0F) - 8),
+                    (float)(((qs[(i + 4) % 16] >> shift) & 0x0F) - 8),
+                    (float)(((qs[(i + 5) % 16] >> shift) & 0x0F) - 8),
+                    (float)(((qs[(i + 6) % 16] >> shift) & 0x0F) - 8),
+                    (float)(((qs[(i + 7) % 16] >> shift) & 0x0F) - 8)
                 ), vd);
                 vacc0 = Avx.Add(vacc0, Avx.Multiply(Vector256.LoadUnsafe(ref pIn[i]), w));
             }
             sum += MathHelpers.HSum256_Avx(Avx.Add(vacc0, vacc1));
             for (; i < blockEnd; i++)
             {
-                int q = (qs[i / 2] >> (4 * (i % 2))) & 0x0F;
+                int q = (qs[i % 16] >> ((i / 16) * 4)) & 0x0F;
                 sum += pIn[i] * ((q - 8) * d);
             }
         }
@@ -115,17 +117,17 @@ public static partial class QuantizationKernels
             int i = 0;
             for (; i <= blockEnd - 4; i += 4)
             {
-                float v0 = ((qs[i / 2] >> (4 * (i % 2))) & 0x0F) - 8;
-                float v1 = ((qs[(i + 1) / 2] >> (4 * ((i + 1) % 2))) & 0x0F) - 8;
-                float v2 = ((qs[(i + 2) / 2] >> (4 * ((i + 2) % 2))) & 0x0F) - 8;
-                float v3 = ((qs[(i + 3) / 2] >> (4 * ((i + 3) % 2))) & 0x0F) - 8;
+                float v0 = ((qs[i % 16] >> ((i / 16) * 4)) & 0x0F) - 8;
+                float v1 = ((qs[(i + 1) % 16] >> (((i + 1) / 16) * 4)) & 0x0F) - 8;
+                float v2 = ((qs[(i + 2) % 16] >> (((i + 2) / 16) * 4)) & 0x0F) - 8;
+                float v3 = ((qs[(i + 3) % 16] >> (((i + 3) / 16) * 4)) & 0x0F) - 8;
                 var vv = Vector128.Create(v0, v1, v2, v3) * Vector128.Create(d);
                 var vi = Vector128.LoadUnsafe(ref pIn[i]);
                 sum += MathHelpers.HSum128_Sse(Sse.Multiply(vi, vv));
             }
             for (; i < blockEnd; i++)
             {
-                int q = (qs[i / 2] >> (4 * (i % 2))) & 0x0F;
+                int q = (qs[i % 16] >> ((i / 16) * 4)) & 0x0F;
                 sum += pIn[i] * ((q - 8) * d);
             }
         }
@@ -349,8 +351,8 @@ public static partial class QuantizationKernels
                     for (int l = 0; l < 32 && basePos + l < blockEnd; l++)
                     {
                         int idx = basePos + l;
-                        int qsByte = idx / 2;
-                        int qsShift = (idx & 1) * 4;
+                        int qsByte = (idx / 64) * 32 + (idx % 32);
+                        int qsShift = ((idx % 64) / 32) * 4;
                         int v = (qs[qsByte] >> qsShift) & 0x0F;
                         sum += input[b * QK_K + idx - colBlockStart] * (s * v * dSuper - m * minSuper);
                     }
@@ -398,8 +400,8 @@ public static partial class QuantizationKernels
                         for (int sub = 0; sub < 8; sub++)
                         {
                             int idx = basePos + l + sub;
-                            int qsByte = idx / 2;
-                            int qsShift = (idx & 1) * 4;
+                            int qsByte = (idx / 64) * 32 + (idx % 32);
+                            int qsShift = ((idx % 64) / 32) * 4;
                             vvBuf[sub] = (qs[qsByte] >> qsShift) & 0x0F;
                         }
                         var vv = Vector256.LoadUnsafe(ref vvBuf[0]);
@@ -410,8 +412,8 @@ public static partial class QuantizationKernels
                     for (; l < subRem; l++)
                     {
                         int idx = basePos + l;
-                        int qsByte = idx / 2;
-                        int qsShift = (idx & 1) * 4;
+                        int qsByte = (idx / 64) * 32 + (idx % 32);
+                        int qsShift = ((idx % 64) / 32) * 4;
                         int v = (qs[qsByte] >> qsShift) & 0x0F;
                         sum += pIn[idx] * (s * v * dSuper - m * minSuper);
                     }
@@ -459,8 +461,8 @@ public static partial class QuantizationKernels
                         for (int sub = 0; sub < 8; sub++)
                         {
                             int idx = basePos + l + sub;
-                            int qsByte = idx / 2;
-                            int qsShift = (idx & 1) * 4;
+                            int qsByte = (idx / 64) * 32 + (idx % 32);
+                            int qsShift = ((idx % 64) / 32) * 4;
                             vvBuf[sub] = (qs[qsByte] >> qsShift) & 0x0F;
                         }
                         var vv = Vector256.LoadUnsafe(ref vvBuf[0]);
@@ -472,8 +474,8 @@ public static partial class QuantizationKernels
                     for (; l < subRem; l++)
                     {
                         int idx = basePos + l;
-                        int qsByte = idx / 2;
-                        int qsShift = (idx & 1) * 4;
+                        int qsByte = (idx / 64) * 32 + (idx % 32);
+                        int qsShift = ((idx % 64) / 32) * 4;
                         int v = (qs[qsByte] >> qsShift) & 0x0F;
                         sum += pIn[idx] * (s * v * dSuper - m * minSuper);
                     }
@@ -635,7 +637,7 @@ public static partial class QuantizationKernels
 
             for (int j = 0; j < valid; j++)
             {
-                int nib = (buf[2 + j / 2] >> ((j & 1) * 4)) & 0x0F;
+                int nib = (buf[2 + j % 16] >> ((j / 16) * 4)) & 0x0F;
                 data[blockStart + j] = (nib - 8) * d;
             }
         }
@@ -709,8 +711,8 @@ public static partial class QuantizationKernels
                     int sub = i / 32;
                     float s = GetScaleMinK4_Scale_Scalar(sub, scales);
                     float m = GetScaleMinK4_Min_Scalar(sub, scales);
-                    int qsByte = i / 2;
-                    int qsShift = (i & 1) * 4;
+                    int qsByte = (i / 64) * 32 + (i % 32);
+                    int qsShift = ((i % 64) / 32) * 4;
                     int v = (qs[qsByte] >> qsShift) & 0x0F;
                     data[blockStart + i] = s * v * dSuper - m * minSuper;
                 }
