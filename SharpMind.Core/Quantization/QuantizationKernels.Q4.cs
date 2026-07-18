@@ -10,6 +10,7 @@ public static partial class QuantizationKernels
     private static readonly float[] kvalues_iq4nl =
         { -127f, -104f, -83f, -65f, -49f, -35f, -22f, -10f, 1f, 13f, 25f, 38f, 53f, 69f, 89f, 113f };
 
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static unsafe float VecDotQ4_0_Scalar(float* input, byte* rawWeights, int col, int inFeatures)
     {

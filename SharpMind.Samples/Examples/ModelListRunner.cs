@@ -45,7 +45,7 @@ namespace SharpMind.Samples.Examples
                     continue;
                 }
 
-                var sharpConfig = modelConfig.ForModel( HardwareTier.Scalar );
+                var sharpConfig = modelConfig.ForModel();
                 // Build a single combined mapping. WithGpu() now overrides quant ops
                 // as well as model-level ops — no separate qOpsMapping needed.
                 var mapping = withGPU ? new MappingBuilder(sharpConfig.ResolvedHardware)

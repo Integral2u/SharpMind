@@ -35,6 +35,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     /// is null), and interrupted/cancelled generations.
     /// </summary>
     private bool _cacheValid;
+    private IReadOnlyList<ChatMessage>? _filteredHistoryCache;
     // IO interceptors (optional)
     // Supplied by the host application. When present and PermissionCallback is
     // set, they are activated only for the duration of each CallToolAsync call
@@ -120,7 +121,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     public IGenerator<K> Generator => _generator;
     public Tokenizer Tokenizer => _tokenizer;
     public Transformer Model => _model;
-    public IReadOnlyList<ChatMessage> History => [.. _history.Where(p => p.Role != ChatRole.System)];
+    public IReadOnlyList<ChatMessage> History => _filteredHistoryCache ??= [.. _history.Where(p => p.Role != ChatRole.System)];
 
     public int MaxTokens { get; set; } = 2048;
     /// <summary>Max generation tokens. Defaults to 256 so context trimming leaves room.</summary>
@@ -141,11 +142,13 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     {
         ThrowIfDisposed();
         _history.Add(new ChatMessage { Role = role, Content = content });
+        InvalidateHistoryCache();
     }
     public void AddMessage(ChatMessage message)
     {
         ThrowIfDisposed();
         _history.Add(message);
+        InvalidateHistoryCache();
     }
 
     public string GetFormattedPrompt()
@@ -157,6 +160,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     public void ClearHistory()
     {
         _history.Clear();
+        InvalidateHistoryCache();
         _pendingDraft = null;
         if (_agentBuilder != null) AddMessage(ChatRole.System, _agentBuilder.BuildAgentPrompt());
         _cachedPromptTokens = null;
@@ -240,6 +244,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
 
             _history.Clear();
             _history.AddRange(surviving);
+            InvalidateHistoryCache();
             _cachedPromptTokens = null;
             _cacheValid = false;
 
@@ -273,6 +278,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
 
     private void ThrowIfDisposed()
         => ObjectDisposedException.ThrowIf(_disposed, typeof(ChatSession<T, K>).Name);
+    private void InvalidateHistoryCache() => _filteredHistoryCache = null;
     private string StripThinking(string text)
     {
         if (string.IsNullOrWhiteSpace(text)) return text;
@@ -458,6 +464,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
 
 
         _history.Add(ChatMessage.User(userInput));
+        InvalidateHistoryCache();
 
         // Agentic loop: keep generating until the model produces a plain response
         // rather than a tool call, or until MaxToolCallsPerTurn is reached.
@@ -522,6 +529,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
                 };
                 if (await _compactor.ShouldCompactAsync(cmpCtx, ct) && await _compactor.CompactAsync(cmpCtx, ct))
                 {
+                    InvalidateHistoryCache();
                     _cachedPromptTokens = null;
                     _cacheValid = false;
                     promptToks = _tokenizer.Encode(BuildPrompt(), addBos: false, addEos: false);
@@ -662,6 +670,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
 
                 // Record the model's tool-call turn in history for the formatter
                 _history.Add(ChatMessage.Agent(responseText));
+                InvalidateHistoryCache();
 
                 // Signal to the UI that a tool is about to execute
                 yield return new ChatStreamEntry
@@ -684,6 +693,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
                     Role = ChatRole.System,
                     Content = $"Tool result: {toolResult.ToJsonString()}"
                 });
+                InvalidateHistoryCache();
 
                 _cachedPromptTokens = null; // history grew; invalidate incremental cache
                 _cacheValid = false;
@@ -701,6 +711,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
             {
                 // Record the model's agent-call turn in history
                 _history.Add(ChatMessage.Agent(responseText));
+                InvalidateHistoryCache();
 
                 // Signal which agent is about to execute
                 yield return new ChatStreamEntry
@@ -759,6 +770,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
                     Role = ChatRole.System,
                     Content = $"Tool result: {agentResult}"
                 });
+                InvalidateHistoryCache();
 
                 _cachedPromptTokens = null; // history grew; invalidate incremental cache
                 _cacheValid = false;
@@ -778,6 +790,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
                     Role = ChatRole.System,
                     Content = $"Tool result: {{\"status\":\"error\",\"message\":\"Maximum agent depth ({MaxAgentDepth}) reached. Cannot delegate further.\"}}"
                 });
+                InvalidateHistoryCache();
                 _cachedPromptTokens = null;
                 _cacheValid = false;
                 continue;
@@ -785,7 +798,10 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
 
             // Normal (non-tool) response
             if (responseText.Length > 0)
+            {
                 _history.Add(ChatMessage.Agent(responseText));
+                InvalidateHistoryCache();
+            }
 
             // Generation completed cleanly: the KV cache now holds exactly
             // _cachedPromptTokens plus whatever was just generated, so the
@@ -908,6 +924,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         foreach (var msg in snapshot.History)
             if (msg.Role != ChatRole.System)
                 _history.Add(msg);
+        InvalidateHistoryCache();
 
         _cachedPromptTokens = null;
         _cacheValid = false;

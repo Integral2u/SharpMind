@@ -11,7 +11,7 @@ namespace SandBox.RunModels
     public class KnownWorkingModels
     {
         private static readonly string[] Models =
-        [            
+        [
             "Qwen3-0.6B-Q4_K_M",    //Response:\nOkay, the user just said "Hello," so I need to 
 
             "Qwen3-0.6B-Q5_K_M",    //Response:\nOkay, the user just said "Hello," so I need to                       

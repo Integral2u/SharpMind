@@ -213,6 +213,9 @@ public sealed unsafe class Tensor<T> : IDisposable
         int offset = 0;
         for (int i = 0; i < startIndices.Length; i++)
         {
+            if ((uint)startIndices[i] >= (uint)Shape.Dims[i])
+                throw new ArgumentOutOfRangeException(nameof(startIndices),
+                    $"Index {startIndices[i]} is out of range for dimension {i} (size {Shape.Dims[i]}).");
             offset += startIndices[i] * Shape.Strides[i];
         }
         

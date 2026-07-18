@@ -100,7 +100,8 @@ internal static class FfnKernels
         using var probs = SoftmaxOverExperts(logits, workspace);
 
         // Parallel token processing — no workspace sharing to avoid races
-        System.Threading.Tasks.Parallel.For(0, batch, t =>
+        // Special-case batch <= 1 to skip ThreadPool scheduling overhead
+        void ProcessToken(int t)
         {
             // Get top-k expert indices for this token (fresh tensor, no workspace)
             using var tokenLogits = Tensor<float>.From(logits.RowSpan(t), logits.Shape.Cols);
@@ -123,7 +124,17 @@ internal static class FfnKernels
             }
 
             tokenOut.Data.CopyTo(result.RowSpan(t));
-        });
+        }
+
+        if (batch <= 1)
+        {
+            for (int t = 0; t < batch; t++)
+                ProcessToken(t);
+        }
+        else
+        {
+            System.Threading.Tasks.Parallel.For(0, batch, ProcessToken);
+        }
 
         return result;
     }

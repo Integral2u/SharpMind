@@ -35,30 +35,23 @@ internal static class AttentionKernels
             {
                 float* qi = q + (long)i * qStride;
                 int absQPos = queryBase + i;
+                int effKvLen = causal ? Math.Min(absQPos + 1, kvLen) : kvLen;
 
                 // Pass 1: compute scores + online softmax statistics
                 float max = float.NegativeInfinity;
                 float lSum = 0f;
-                for (int j = 0; j < kvLen; j++)
+                for (int j = 0; j < effKvLen; j++)
                 {
-                    float score;
-                    if (causal && j > absQPos)
-                    {
-                        score = float.NegativeInfinity;
-                    }
-                    else
-                    {
-                        float* kj = k + (long)j * headDim;
-                        var acc = Vector256<float>.Zero;
-                        int d = 0;
-                        for (; d <= headDim - 8; d += 8)
-                            acc = Avx.Add(acc, Avx.Multiply(
-                                Vector256.LoadUnsafe(ref qi[d]),
-                                Vector256.LoadUnsafe(ref kj[d])));
-                        float dot = MathHelpers.HSum256_Avx(acc);
-                        for (; d < headDim; d++) dot += qi[d] * kj[d];
-                        score = dot * scale - alibiSlope * (absQPos - j);
-                    }
+                    float* kj = k + (long)j * headDim;
+                    var acc = Vector256<float>.Zero;
+                    int d = 0;
+                    for (; d <= headDim - 8; d += 8)
+                        acc = Avx.Add(acc, Avx.Multiply(
+                            Vector256.LoadUnsafe(ref qi[d]),
+                            Vector256.LoadUnsafe(ref kj[d])));
+                    float dot = MathHelpers.HSum256_Avx(acc);
+                    for (; d < headDim; d++) dot += qi[d] * kj[d];
+                    float score = dot * scale - alibiSlope * (absQPos - j);
                     scoreRow[j] = score;
                     float oldMax = max;
                     max = Math.Max(max, score);
@@ -71,7 +64,7 @@ internal static class AttentionKernels
                 {
                     float invSum = 1f / lSum;
                     for (int d = 0; d < headDim; d++) outI[d] = 0f;
-                    for (int j = 0; j < kvLen; j++)
+                    for (int j = 0; j < effKvLen; j++)
                     {
                         float sm = MathF.Exp(scoreRow[j] - max) * invSum;
                         float* vj = v + (long)j * headDim;
@@ -109,28 +102,21 @@ internal static class AttentionKernels
             {
                 float* qi = q + (long)i * qStride;
                 int absQPos = queryBase + i;
+                int effKvLen = causal ? Math.Min(absQPos + 1, kvLen) : kvLen;
 
                 float max = float.NegativeInfinity;
                 float lSum = 0f;
-                for (int j = 0; j < kvLen; j++)
+                for (int j = 0; j < effKvLen; j++)
                 {
-                    float score;
-                    if (causal && j > absQPos)
-                    {
-                        score = float.NegativeInfinity;
-                    }
-                    else
-                    {
-                        float* kj = k + (long)j * headDim;
-                        var acc = Vector256<float>.Zero;
-                        int d = 0;
-                        for (; d <= headDim - 8; d += 8)
-                            acc = Fma.MultiplyAdd(Vector256.LoadUnsafe(ref qi[d]),
-                                                  Vector256.LoadUnsafe(ref kj[d]), acc);
-                        float dot = MathHelpers.HSum256_Avx(acc);
-                        for (; d < headDim; d++) dot += qi[d] * kj[d];
-                        score = dot * scale - alibiSlope * (absQPos - j);
-                    }
+                    float* kj = k + (long)j * headDim;
+                    var acc = Vector256<float>.Zero;
+                    int d = 0;
+                    for (; d <= headDim - 8; d += 8)
+                        acc = Fma.MultiplyAdd(Vector256.LoadUnsafe(ref qi[d]),
+                                              Vector256.LoadUnsafe(ref kj[d]), acc);
+                    float dot = MathHelpers.HSum256_Avx(acc);
+                    for (; d < headDim; d++) dot += qi[d] * kj[d];
+                    float score = dot * scale - alibiSlope * (absQPos - j);
                     scoreRow[j] = score;
                     float oldMax = max;
                     max = Math.Max(max, score);
@@ -142,7 +128,7 @@ internal static class AttentionKernels
                 {
                     float invSum = 1f / lSum;
                     for (int d = 0; d < headDim; d++) outI[d] = 0f;
-                    for (int j = 0; j < kvLen; j++)
+                    for (int j = 0; j < effKvLen; j++)
                     {
                         float sm = MathF.Exp(scoreRow[j] - max) * invSum;
                         float* vj = v + (long)j * headDim;
@@ -180,23 +166,16 @@ internal static class AttentionKernels
             {
                 float* qi = q + (long)i * qStride;
                 int absQPos = queryBase + i;
+                int effKvLen = causal ? Math.Min(absQPos + 1, kvLen) : kvLen;
 
                 float max = float.NegativeInfinity;
                 float lSum = 0f;
-                for (int j = 0; j < kvLen; j++)
+                for (int j = 0; j < effKvLen; j++)
                 {
-                    float score;
-                    if (causal && j > absQPos)
-                    {
-                        score = float.NegativeInfinity;
-                    }
-                    else
-                    {
-                        float* kj = k + (long)j * headDim;
-                        float dot = 0f;
-                        for (int d = 0; d < headDim; d++) dot += qi[d] * kj[d];
-                        score = dot * scale - alibiSlope * (absQPos - j);
-                    }
+                    float* kj = k + (long)j * headDim;
+                    float dot = 0f;
+                    for (int d = 0; d < headDim; d++) dot += qi[d] * kj[d];
+                    float score = dot * scale - alibiSlope * (absQPos - j);
                     scoreRow[j] = score;
                     float oldMax = max;
                     max = Math.Max(max, score);
@@ -208,7 +187,7 @@ internal static class AttentionKernels
                 {
                     float invSum = 1f / lSum;
                     for (int d = 0; d < headDim; d++) outI[d] = 0f;
-                    for (int j = 0; j < kvLen; j++)
+                    for (int j = 0; j < effKvLen; j++)
                     {
                         float sm = MathF.Exp(scoreRow[j] - max) * invSum;
                         float* vj = v + (long)j * headDim;

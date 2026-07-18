@@ -181,7 +181,7 @@ public abstract class QuantizationOps
     public abstract unsafe void QuantizedMatMulQ6K(float* input, byte* rawWeights, float* output, int M, int K, int N);
 
     [PuzzleCornerPiece(QuantizationKeys.KeyVecDotQ4_0, true, null,
-        "q4_0_fma",    $"{NS}.{nameof(QuantizationKernels.VecDotQ4_0_Scalar)}",
+        "q4_0_fma",    $"{NS}.{nameof(QuantizationKernels.VecDotQ4_0_AVX2)}",
         "q4_0_avx2",   $"{NS}.{nameof(QuantizationKernels.VecDotQ4_0_AVX2)}",
         "q4_0_sse",    $"{NS}.{nameof(QuantizationKernels.VecDotQ4_0_SSE)}",
         "q4_0_scalar", $"{NS}.{nameof(QuantizationKernels.VecDotQ4_0_Scalar)}")]
