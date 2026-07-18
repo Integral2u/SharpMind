@@ -252,8 +252,66 @@ internal static class ActivationKernels
 
     
     // Softmax  (numerically stable)
-    // exp is the bottleneck — no benefit from AVX2 here
     
+
+    internal static unsafe void SoftmaxRowAVX2(ReadOnlySpan<float> src, Span<float> dst)
+    {
+        int n = src.Length;
+        if (n < 8)
+        {
+            SoftmaxRowScalarSmall(src, dst);
+            return;
+        }
+
+        fixed (float* pS = src, pD = dst)
+        {
+            // Pass 1: find max
+            float max = pS[0];
+            int i = 0;
+            var vMax = Vector256.Create(pS[0]);
+            for (; i <= n - 8; i += 8)
+            {
+                var v = Vector256.LoadUnsafe(ref pS[i]);
+                vMax = Avx.Max(vMax, v);
+            }
+            max = MathHelpers.HSum256_Avx(vMax);
+            for (; i < n; i++)
+                if (pS[i] > max) max = pS[i];
+
+            // Pass 2: exp(x - max) and sum
+            float sum = 0f;
+            var vSum = Vector256<float>.Zero;
+            var vMax256 = Vector256.Create(max);
+            i = 0;
+            for (; i <= n - 8; i += 8)
+            {
+                var v = Vector256.LoadUnsafe(ref pS[i]);
+                var shifted = Avx.Subtract(v, vMax256);
+                var e = FastExp(shifted);
+                Vector256.StoreUnsafe(e, ref pD[i]);
+                vSum = Avx.Add(vSum, e);
+            }
+            sum = MathHelpers.HSum256_Avx(vSum);
+            for (; i < n; i++)
+            {
+                float e = MathF.Exp(pS[i] - max);
+                pD[i] = e;
+                sum += e;
+            }
+
+            // Pass 3: normalize
+            float inv = 1f / sum;
+            var vInv = Vector256.Create(inv);
+            i = 0;
+            for (; i <= n - 8; i += 8)
+            {
+                var e = Vector256.LoadUnsafe(ref pD[i]);
+                Vector256.StoreUnsafe(Avx.Multiply(e, vInv), ref pD[i]);
+            }
+            for (; i < n; i++)
+                pD[i] *= inv;
+        }
+    }
 
     internal static void SoftmaxRowScalar(ReadOnlySpan<float> src, Span<float> dst)
     {

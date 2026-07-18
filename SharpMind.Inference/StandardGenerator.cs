@@ -19,6 +19,8 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
     private readonly int[]       _decodeTokenScratch = new int[1];
     /// <summary>Cached scratch buffer for repetition-penalty copy to avoid <see cref="ArrayPool{T}.Rent"/> per token.</summary>
     private float[]?              _penaltyScratch;
+    /// <summary>Cached scratch buffer for stop-string tail matching to avoid per-token allocation.</summary>
+    private char[]?               _stopCheckBuf;
     private bool                  _disposed;
     private readonly bool _addBos;
     private List<int>? _generatedIds;
@@ -118,6 +120,12 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
                 ? new Random(sampleCfg.Seed.Value)
                 : _defaultRng;
 
+            int maxStopLen = 0;
+            foreach (string stop in genCfg.StopStrings)
+                if (stop.Length > maxStopLen) maxStopLen = stop.Length;
+            if (maxStopLen > 0 && (_stopCheckBuf is null || _stopCheckBuf.Length < maxStopLen))
+                _stopCheckBuf = new char[maxStopLen];
+
             for (int step = 0; step < genCfg.MaxNewTokens; step++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -174,15 +182,20 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
                 string fragment = _tokenizer.Decode(_decodeTokenScratch.AsSpan(0, 1), skipSpecials: true);
                 decodedSoFar.Append(fragment);
 
-                ReadOnlySpan<char> decoded = decodedSoFar.ToString().AsSpan();
                 bool hitStop = false;
-                foreach (string stop in genCfg.StopStrings)
+                if (maxStopLen > 0 && decodedSoFar.Length >= maxStopLen && _stopCheckBuf is not null)
                 {
-                    if (decoded.IndexOf(stop.AsSpan()) >= 0)
+                    int start = decodedSoFar.Length - maxStopLen;
+                    decodedSoFar.CopyTo(start, _stopCheckBuf, maxStopLen);
+                    ReadOnlySpan<char> tail = _stopCheckBuf;
+                    foreach (string stop in genCfg.StopStrings)
                     {
-                        hitStop = true;
-                        fragment = string.Empty;
-                        break;
+                        if (tail.IndexOf(stop.AsSpan()) >= 0)
+                        {
+                            hitStop = true;
+                            fragment = string.Empty;
+                            break;
+                        }
                     }
                 }
 

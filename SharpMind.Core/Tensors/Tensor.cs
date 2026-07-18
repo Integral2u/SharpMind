@@ -191,6 +191,7 @@ public sealed unsafe class Tensor<T> : IDisposable
     /// Zero-copy: both tensors share the same buffer.
     /// </summary>
     public Tensor<T> Reshape(params int[] newDims) => CreateView(Shape.Reshape(newDims), _offset, _ownsMemory);
+    public Tensor<T> Reshape(ReadOnlySpan<int> newDims) => CreateView(Shape.Reshape(newDims), _offset, _ownsMemory);
     public Tensor<T> Reshape(int d0) => CreateView(Shape.Reshape(d0), _offset, _ownsMemory);
     public Tensor<T> Reshape(int d0, int d1) => CreateView(Shape.Reshape(d0, d1), _offset, _ownsMemory);
     public Tensor<T> Reshape(int d0, int d1, int d2) => CreateView(Shape.Reshape(d0, d1, d2), _offset, _ownsMemory);

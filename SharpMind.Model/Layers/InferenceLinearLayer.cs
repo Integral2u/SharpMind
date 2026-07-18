@@ -124,18 +124,18 @@ public abstract class InferenceLinearLayer : LinearLayer
         "q4_nl_parallel_sse",  $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ4_NL_Parallel_Scalar)}",
         "q4_nl_serial_scalar", $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ4_NL_Serial_Scalar)}",
         "q4_nl_parallel_scalar",$"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ4_NL_Parallel_Scalar)}",
-        "f32_serial_fma",    $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulF32_Serial_Scalar)}",
-        "f32_parallel_fma",  $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulF32_Parallel_Scalar)}",
-        "f32_serial_avx2",   $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulF32_Serial_Scalar)}",
-        "f32_parallel_avx2", $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulF32_Parallel_Scalar)}",
+        "f32_serial_fma",    $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulF32_Serial_FMA)}",
+        "f32_parallel_fma",  $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulF32_Parallel_FMA)}",
+        "f32_serial_avx2",   $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulF32_Serial_FMA)}",
+        "f32_parallel_avx2", $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulF32_Parallel_FMA)}",
         "f32_serial_sse",    $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulF32_Serial_Scalar)}",
         "f32_parallel_sse",  $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulF32_Parallel_Scalar)}",
         "f32_serial_scalar", $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulF32_Serial_Scalar)}",
         "f32_parallel_scalar",$"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulF32_Parallel_Scalar)}",
-        "f16_serial_fma",    $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulF16_Serial_Scalar)}",
-        "f16_parallel_fma",  $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulF16_Parallel_Scalar)}",
-        "f16_serial_avx2",   $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulF16_Serial_Scalar)}",
-        "f16_parallel_avx2", $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulF16_Parallel_Scalar)}",
+        "f16_serial_fma",    $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulF16_Serial_FMA)}",
+        "f16_parallel_fma",  $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulF16_Parallel_FMA)}",
+        "f16_serial_avx2",   $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulF16_Serial_FMA)}",
+        "f16_parallel_avx2", $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulF16_Parallel_FMA)}",
         "f16_serial_sse",    $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulF16_Serial_Scalar)}",
         "f16_parallel_sse",  $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulF16_Parallel_Scalar)}",
         "f16_serial_scalar", $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulF16_Serial_Scalar)}",
@@ -174,21 +174,13 @@ public abstract class InferenceLinearLayer : LinearLayer
 
         if (_bias is not null)
         {
-            if (workspace != null)
-            {
-                var biasB = workspace.Rent<float>([batchSize, OutFeatures]);
-                for (int i = 0; i < batchSize; i++)
-                    _bias!.Data.CopyTo(biasB.RowSpan(i));
-                result.AddInPlace(biasB);
-            }
-            else
-            {
-                result.AddInPlace(BroadcastBias(batchSize));
-            }
+            AddBiasInPlace(result, batchSize);
         }
         if (needReshape)
         {
-            int[] outDims = [.. input.Shape.Dims.ToArray()[..^1], OutFeatures];
+            Span<int> outDims = stackalloc int[input.Rank];
+            input.Shape.Dims[..^1].CopyTo(outDims);
+            outDims[^1] = OutFeatures;
             var reshaped = result.Reshape(outDims);
             result.Dispose();
             return reshaped;

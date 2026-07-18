@@ -259,15 +259,15 @@ public abstract class QuantizationOps
     public abstract unsafe float VecDotQ8K(float* input, byte* rawWeights, int col, int inFeatures);
 
     [PuzzleCornerPiece(QuantizationKeys.KeyVecDotF32, true, null,
-        "f32_fma",    $"{NS}.{nameof(QuantizationKernels.VecDotF32_Scalar)}",
-        "f32_avx2",   $"{NS}.{nameof(QuantizationKernels.VecDotF32_Scalar)}",
+        "f32_fma",    $"{NS}.{nameof(QuantizationKernels.VecDotF32_FMA)}",
+        "f32_avx2",   $"{NS}.{nameof(QuantizationKernels.VecDotF32_FMA)}",
         "f32_sse",    $"{NS}.{nameof(QuantizationKernels.VecDotF32_Scalar)}",
         "f32_scalar", $"{NS}.{nameof(QuantizationKernels.VecDotF32_Scalar)}")]
     public abstract unsafe float VecDotF32(float* input, byte* rawWeights, int col, int inFeatures);
 
     [PuzzleCornerPiece(QuantizationKeys.KeyVecDotF16, true, null,
-        "f16_fma",    $"{NS}.{nameof(QuantizationKernels.VecDotF16_Scalar)}",
-        "f16_avx2",   $"{NS}.{nameof(QuantizationKernels.VecDotF16_Scalar)}",
+        "f16_fma",    $"{NS}.{nameof(QuantizationKernels.VecDotF16_FMA)}",
+        "f16_avx2",   $"{NS}.{nameof(QuantizationKernels.VecDotF16_FMA)}",
         "f16_sse",    $"{NS}.{nameof(QuantizationKernels.VecDotF16_Scalar)}",
         "f16_scalar", $"{NS}.{nameof(QuantizationKernels.VecDotF16_Scalar)}")]
     public abstract unsafe float VecDotF16(float* input, byte* rawWeights, int col, int inFeatures);
@@ -362,10 +362,10 @@ public abstract class QuantizationOps
     public abstract unsafe void QuantizedMatMulQ4_NL(float* input, byte* rawWeights, float* output, int M, int K, int N);
 
     [PuzzleCornerPiece(QuantizationKeys.KeyQuantizedMatMulF32, true, null,
-        "qmatmul_f32_serial_fma",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulF32_Serial_Scalar)}",
-        "qmatmul_f32_parallel_fma",  $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulF32_Parallel_Scalar)}",
-        "qmatmul_f32_serial_avx2",   $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulF32_Serial_Scalar)}",
-        "qmatmul_f32_parallel_avx2", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulF32_Parallel_Scalar)}",
+        "qmatmul_f32_serial_fma",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulF32_Serial_FMA)}",
+        "qmatmul_f32_parallel_fma",  $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulF32_Parallel_FMA)}",
+        "qmatmul_f32_serial_avx2",   $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulF32_Serial_FMA)}",
+        "qmatmul_f32_parallel_avx2", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulF32_Parallel_FMA)}",
         "qmatmul_f32_serial_sse",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulF32_Serial_Scalar)}",
         "qmatmul_f32_parallel_sse",  $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulF32_Parallel_Scalar)}",
         "qmatmul_f32_serial_scalar", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulF32_Serial_Scalar)}",
@@ -373,10 +373,10 @@ public abstract class QuantizationOps
     public abstract unsafe void QuantizedMatMulF32(float* input, byte* rawWeights, float* output, int M, int K, int N);
 
     [PuzzleCornerPiece(QuantizationKeys.KeyQuantizedMatMulF16, true, null,
-        "qmatmul_f16_serial_fma",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulF16_Serial_Scalar)}",
-        "qmatmul_f16_parallel_fma",  $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulF16_Parallel_Scalar)}",
-        "qmatmul_f16_serial_avx2",   $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulF16_Serial_Scalar)}",
-        "qmatmul_f16_parallel_avx2", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulF16_Parallel_Scalar)}",
+        "qmatmul_f16_serial_fma",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulF16_Serial_FMA)}",
+        "qmatmul_f16_parallel_fma",  $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulF16_Parallel_FMA)}",
+        "qmatmul_f16_serial_avx2",   $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulF16_Serial_FMA)}",
+        "qmatmul_f16_parallel_avx2", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulF16_Parallel_FMA)}",
         "qmatmul_f16_serial_sse",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulF16_Serial_Scalar)}",
         "qmatmul_f16_parallel_sse",  $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulF16_Parallel_Scalar)}",
         "qmatmul_f16_serial_scalar", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulF16_Serial_Scalar)}",

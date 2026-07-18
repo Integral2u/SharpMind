@@ -40,21 +40,13 @@ public sealed class TrainingLinearLayer : LinearLayer
 
         if (_bias is not null)
         {
-            if (workspace != null)
-            {
-                var biasB = workspace.Rent<float>([batchSize, OutFeatures]);
-                for (int i = 0; i < batchSize; i++)
-                    _bias!.Data.CopyTo(biasB.RowSpan(i));
-                output.AddInPlace(biasB);
-            }
-            else
-            {
-                output.AddInPlace(BroadcastBias(batchSize));
-            }
+            AddBiasInPlace(output, batchSize);
         }
         if (needReshape)
         {
-            int[] outDims = [.. input.Shape.Dims.ToArray()[..^1], OutFeatures];
+            Span<int> outDims = stackalloc int[input.Rank];
+            input.Shape.Dims[..^1].CopyTo(outDims);
+            outDims[^1] = OutFeatures;
             var reshaped = output.Reshape(outDims);
             output.Dispose();
             return reshaped;
@@ -68,16 +60,18 @@ public sealed class TrainingLinearLayer : LinearLayer
         bool needReshape = input.Rank > 2;
         int batchSize = input.ElementCount / input.Shape[^1];
         var flat = needReshape ? input.Reshape(batchSize, InFeatures) : input;
-        using var weightBT = _weight.Transpose();
+        _weightBT ??= _weight.Transpose();
         var output = new Tensor<float>(batchSize, OutFeatures);
         var fn = _staticOps.QuantizedMatMulOpFor(QuantDType.F32);
-        fn(flat.DataPtr, (byte*)weightBT.DataPtr, output.DataPtr, batchSize, InFeatures, OutFeatures);
+        fn(flat.DataPtr, (byte*)_weightBT.DataPtr, output.DataPtr, batchSize, InFeatures, OutFeatures);
         if (_bias is not null)
-            output.AddInPlace(BroadcastBias(batchSize));
+            AddBiasInPlace(output, batchSize);
         var state = new LinearLayerState(input, flat, needReshape, _weight);
         if (needReshape)
         {
-            int[] outDims = [.. input.Shape.Dims.ToArray()[..^1], OutFeatures];
+            Span<int> outDims = stackalloc int[input.Rank];
+            input.Shape.Dims[..^1].CopyTo(outDims);
+            outDims[^1] = OutFeatures;
             var reshaped = output.Reshape(outDims);
             output.Dispose();
             return (reshaped, state);
@@ -122,7 +116,10 @@ public sealed class TrainingLinearLayer : LinearLayer
         if (state.NeedReshape)
         {
             flatGradOut.Dispose();
-            int[] inDims = [.. state.InputDims[..^1], InFeatures];
+            int rank = state.InputDims.Length;
+            Span<int> inDims = stackalloc int[rank];
+            state.InputDims.AsSpan(0, rank - 1).CopyTo(inDims);
+            inDims[^1] = InFeatures;
             var reshaped = gradInputFlat.Reshape(inDims);
             gradInputFlat.Dispose();
             return reshaped;

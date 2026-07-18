@@ -67,8 +67,8 @@ public abstract class ActivationOps
 
     [PuzzleCornerPiece(SharpMindConfig.KeySoftmax, true, null,
         SharpMindConfig.ValScalar, $"{NS}.{nameof(ActivationKernels.SoftmaxRowScalar)}",
-        SharpMindConfig.ValAvx2, $"{NS}.{nameof(ActivationKernels.SoftmaxRowScalar)}",
-        SharpMindConfig.ValFma, $"{NS}.{nameof(ActivationKernels.SoftmaxRowScalar)}")]
+        SharpMindConfig.ValAvx2, $"{NS}.{nameof(ActivationKernels.SoftmaxRowAVX2)}",
+        SharpMindConfig.ValFma, $"{NS}.{nameof(ActivationKernels.SoftmaxRowAVX2)}")]
     public abstract void ApplySoftmaxRow(ReadOnlySpan<float> src, Span<float> dst);
 
     

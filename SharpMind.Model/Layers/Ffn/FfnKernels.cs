@@ -38,12 +38,11 @@ internal static class FfnKernels
     {
         using var fused = wGated.Forward(x, workspace);
         int ffnDim = wDown.InFeatures;
-        int[] fusedDims = fused.Shape.Dims.ToArray();
         int total = fused.ElementCount / (2 * ffnDim);
         bool hasBatch = fused.Rank > 2;
         using var gated = workspace != null 
-            ? workspace.Rent<float>(hasBatch ? new[] { fusedDims[0], fusedDims[1], ffnDim } : [total, ffnDim])
-            : (hasBatch ? new Tensor<float>(fusedDims[0], fusedDims[1], ffnDim) : new Tensor<float>(total, ffnDim));
+            ? workspace.Rent<float>(hasBatch ? new[] { fused.Shape[0], fused.Shape[1], ffnDim } : [total, ffnDim])
+            : (hasBatch ? new Tensor<float>(fused.Shape[0], fused.Shape[1], ffnDim) : new Tensor<float>(total, ffnDim));
         Tensor<float>? flatView = fused.Reshape(total, 2 * ffnDim);
         var flat = flatView;
 

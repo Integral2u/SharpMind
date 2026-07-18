@@ -105,12 +105,17 @@ public abstract class LinearLayer : IDisposable
         if (_ownsBias) _bias?.Dispose();
     }
 
-    protected Tensor<float> BroadcastBias(int batchSize)
+    protected void AddBiasInPlace(Tensor<float> output, int batchSize)
     {
-        var broadcast = new Tensor<float>(batchSize, OutFeatures);
+        if (_bias is null) return;
+        ReadOnlySpan<float> biasData = _bias.Data;
+        int cols = OutFeatures;
         for (int i = 0; i < batchSize; i++)
-            _bias!.Data.CopyTo(broadcast.RowSpan(i));
-        return broadcast;
+        {
+            Span<float> row = output.RowSpan(i);
+            for (int j = 0; j < cols; j++)
+                row[j] += biasData[j];
+        }
     }
 
     private protected void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, nameof(LinearLayer));
