@@ -1,8 +1,11 @@
+Memory leak confirmed but does NOT directly explain heap corruption — 672KB is negligible vs model weight memory; NativeBufferPool always allocates fresh/always frees immediately
+Wait, I just realized a key issue in the test. Line 98 calls model.Forward(tokenTensor) which runs ALL 28 blocks AGAIN on a new embedding. So blocks are being run twice. But more importantly, let me look at the flat leak in InferenceLinearLayer - this leaks NativeBuffer refcounts on EVERY input tensor to EVERY linear layer across all 28 blocks. Let me fix this known bug and see if it resolves the crash:
+
+
+
 Logit ops
 CUI Plugins?
 Test
-bool isBadLayout = info.Dtype is QuantDType.Q8_0 or QuantDType.Q5_0
-        or QuantDType.Q6_K or QuantDType.Q6_K_S;
 
 LoadMode.Cached could have issues if multiple sessions are using 1 model, also check preloaded next layer(s)(Cyclic) is in asyncrhonous so can be loading one layer or more while one is being processed
 

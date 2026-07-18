@@ -14,13 +14,26 @@ namespace SharpMind.Samples.Examples
         public static async Task RunAsync(string ModelPath, string ModelName)
         {
             CancellationTokenSource cancellationTokenSource = new();
-            var ggufPath = Path.Combine(ModelPath, $"{ModelName}.gguf");           
-            if (!File.Exists(ggufPath))
+            string modelPath = string.Empty;
+            ModelFormat? fmt = null;
+            foreach (var mFmt in Enum.GetValues<ModelFormat>())
             {
-                await Console.Out.WriteLineAsync($"GGUF not found: {ggufPath}");
+                var ext = ModelFormatHelpers.GetExtension(mFmt);
+                modelPath = Path.Combine(ModelPath, $"{ModelName}{ext}");
+                if (File.Exists(modelPath))
+                {
+                    fmt = mFmt; break;
+                }
+            }
+            if (fmt == null)
+            {
+                await Console.Out.WriteLineAsync($"{ModelName} not found.");
+                Console.In.ReadLine();
                 return;
             }
-            GgufLoader.Load(ggufPath, null, out ModelMetaData meta, out ModelConfig modelConfig, out Tokenizer? tokenizer);            
+            var metaHelper = ModelFormatHelpers.GetModelMetaHelperFor((ModelFormat)fmt);
+            metaHelper.Load(modelPath, null, out ModelMetaData meta, out ModelConfig modelConfig, out Tokenizer? tokenizer);
+
             if (tokenizer == null)
             {
                 await Console.Out.WriteLineAsync($"Tokenizer dat not found");
@@ -30,7 +43,7 @@ namespace SharpMind.Samples.Examples
             GC.Collect(); GC.WaitForPendingFinalizers();
             var sw = Stopwatch.StartNew();
             var qOps = QuantizationFactory.Create(sharpConfig.ResolvedHardware);
-            using var weights = ModelFactory.Create(modelConfig, sharpConfig, qOps, ggufPath, meta, LoadMode.Full);
+            using var weights = ModelFactory.Create(modelConfig, sharpConfig, qOps, modelPath, meta, LoadMode.Full);
             weights.InitializeWeights();
 
             await Console.Out.WriteLineAsync($"ModelFactory.Create + InitializeWeights executed in: {sw.Elapsed.TotalSeconds:F2}s");

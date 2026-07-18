@@ -21,19 +21,31 @@ namespace SharpMind.Samples.Examples
                 var returnedPrompt = false;
                 var tok = 0;
                 CancellationTokenSource cancellationTokenSource = new();
-                var ggufPath = Path.Combine(ModelPath, $"{m}.gguf");
-                if (!File.Exists(ggufPath)) continue;
+                string modelPath = string.Empty;
+                ModelFormat? fmt = null;
+                foreach (var mFmt in Enum.GetValues<ModelFormat>())
+                {
+                    var ext = ModelFormatHelpers.GetExtension(mFmt);
+                    modelPath = Path.Combine(ModelPath, $"{m}{ext}");
+                    if (File.Exists(modelPath))
+                    {
+                        fmt = mFmt; break;
+                    }
+                }
+                if (fmt == null) continue;
+                var metaHelper = ModelFormatHelpers.GetModelMetaHelperFor((ModelFormat)fmt);
+                
                 await Console.Out.WriteLineAsync($"Testing {m}");
                 await Console.Out.FlushAsync();
-
-                GgufLoader.Load(ggufPath, null, out ModelMetaData meta, out ModelConfig modelConfig, out Tokenizer? tokenizer);
+                metaHelper.Load(modelPath, null, out ModelMetaData meta, out ModelConfig modelConfig, out Tokenizer? tokenizer);
+                
                 if (tokenizer == null)
                 {
                     await Console.Out.WriteLineAsync($"No Tokenizer Data");
                     continue;
                 }
 
-                var sharpConfig = modelConfig.ForModel();
+                var sharpConfig = modelConfig.ForModel( HardwareTier.Scalar );
                 // Build a single combined mapping. WithGpu() now overrides quant ops
                 // as well as model-level ops — no separate qOpsMapping needed.
                 var mapping = withGPU ? new MappingBuilder(sharpConfig.ResolvedHardware)
@@ -49,7 +61,7 @@ namespace SharpMind.Samples.Examples
                 GC.Collect(); GC.WaitForPendingFinalizers();
                 var sw = Stopwatch.StartNew();
                 var qOps = QuantizationFactory.Create(mapping);
-                using var weights = ModelFactory.Create(modelConfig, sharpConfig, qOps, ggufPath, meta, LoadMode.Full);
+                using var weights = ModelFactory.Create(modelConfig, sharpConfig, qOps, modelPath, meta, LoadMode.Full);
                 weights.InitializeWeights();
                 
                 await Console.Out.WriteLineAsync($"ModelFactory.Create + InitializeWeights executed in: {sw.Elapsed.TotalSeconds:F2}s");

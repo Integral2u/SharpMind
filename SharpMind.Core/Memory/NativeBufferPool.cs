@@ -31,15 +31,6 @@ public static class NativeBufferPool<T> where T : unmanaged
         if (length <= 0) length = 1;
         int bucketSize = GetBucket(length);
 
-        if (_buckets.TryGetValue(bucketSize, out var bucket)
-            && bucket.Stack.TryPop(out var rented))
-        {
-            Interlocked.Decrement(ref bucket.Count);
-            Interlocked.Add(ref bucket.Memory, -(long)bucketSize * sizeof(T));
-            rented._refCount = 1;
-            return rented;
-        }
-
         var buffer = new NativeBuffer<T>(bucketSize);
         NativeBufferPoolConfig.OnAllocate(bucketSize * sizeof(T));
         return buffer;
@@ -52,24 +43,8 @@ public static class NativeBufferPool<T> where T : unmanaged
         int bucketSize = buffer.Length;
         int byteSize = bucketSize * sizeof(T);
 
-        var bucket = _buckets.GetOrAdd(bucketSize, _ => new Bucket());
-        int maxPerBucket = NativeBufferPoolConfig.MaxBuffersPerBucket;
-
-        int newCount = Interlocked.Increment(ref bucket.Count);
-        Interlocked.Add(ref bucket.Memory, byteSize);
-
-        if (newCount <= maxPerBucket)
-        {
-            NativeMemory.Clear(buffer.Ptr, (nuint)byteSize);
-            bucket.Stack.Push(buffer);
-        }
-        else
-        {
-            Interlocked.Decrement(ref bucket.Count);
-            Interlocked.Add(ref bucket.Memory, -byteSize);
-            NativeBufferPoolConfig.OnFree(byteSize);
-            buffer.Free();
-        }
+        NativeBufferPoolConfig.OnFree(byteSize);
+        buffer.Free();
     }
 
     public static void Clear()

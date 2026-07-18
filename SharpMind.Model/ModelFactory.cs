@@ -50,7 +50,9 @@ public static class ModelFactory
         ArgumentNullException.ThrowIfNull(modelConfig);
         ArgumentNullException.ThrowIfNull(sharpConfig);
         modelConfig.Validate();
-
+        var fmt = ModelFormatHelpers.GetFormatForExtension(path);
+        if (fmt == null) throw new FileLoadException($"File type not supported: {path}", path);
+        
         bool fullMode = mode == LoadMode.Full;
         var embedding = new Tensor<float>(modelConfig.VocabSize, modelConfig.HiddenDim);
         Tensor<float>? lmHead = null;
@@ -58,7 +60,8 @@ public static class ModelFactory
         Tensor<float>? finalNormB = null;
 
         var blockWeights = AllocateBlockWeights(modelConfig, sharpConfig, fullMode);
-        var loader = new GgufLoader(qOps, path, modelConfig);
+        //var loader = new GgufLoader(qOps, path, modelConfig);
+        var loader = ModelFormatHelpers.GetModelLoaderFor((ModelFormat)fmt, qOps, path, modelConfig);
 
         if (fullMode)
         {

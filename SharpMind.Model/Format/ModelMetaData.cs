@@ -39,7 +39,7 @@ public sealed class ModelMetaData
     public string GetString(string key, string defaultValue = "")
     {
         var kv = KvPairs.FirstOrDefault(k => k.Key == key);
-        return kv.Value is string s ? s : defaultValue;
+        return kv.Value is string or float or double or int or long or uint or ulong? kv.Value?.ToString() ?? defaultValue :  defaultValue;
     }
 
     public int GetSpecialTokenId(string tokenType)

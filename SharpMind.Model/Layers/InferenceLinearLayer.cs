@@ -147,12 +147,25 @@ public abstract class InferenceLinearLayer : LinearLayer
         ThrowIfDisposed();
         bool needReshape = input.Rank > 2;
         int batchSize = input.ElementCount / input.Shape[^1];
-        var flat = needReshape ? input.Reshape(batchSize, InFeatures) : input;
+        Tensor<float>? flatView = needReshape ? input.Reshape(batchSize, InFeatures) : null;
+        var flat = flatView ?? input;
 
         int m = flat.ElementCount / InFeatures;
         Tensor<float> result = workspace != null
             ? workspace.Rent<float>([m, OutFeatures])
             : new Tensor<float>(m, OutFeatures);
+
+        // --- Heap-corruption guard: verify raw data size matches dtype/K/N before kernel call ---
+        if (RawQuantizedData is not null)
+        {
+            long expectedBytes = QuantizationOps.GetRawTensorByteCount([OutFeatures, InFeatures], QuantDtype);
+            if (RawQuantizedData.Length != expectedBytes)
+                throw new InvalidOperationException(
+                    $"[{Name}] RawQuantizedData size mismatch: dtype={QuantDtype}, " +
+                    $"K={InFeatures}, N={OutFeatures}, " +
+                    $"expected={expectedBytes}, actual={RawQuantizedData.Length}. " +
+                    $"A kernel would write beyond this buffer.");
+        }
 
         fixed (byte* pRaw = RawQuantizedData)
         {

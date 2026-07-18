@@ -1,4 +1,5 @@
 using SharpMind.Model.Format;
+using System.Text;
 using Terminal.Gui;
 
 namespace SharpMind.CUI;
@@ -69,7 +70,7 @@ public sealed class ModelBrowserView : View
             ? Directory.GetDirectories(_currentPath).Select(d => "[DIR] " + Path.GetFileName(d)).OrderBy(s => s)
             : Enumerable.Empty<string>();
         var ggufs = Directory.Exists(_currentPath)
-            ? Directory.GetFiles(_currentPath, "*.gguf").Select(f => Path.GetFileName(f)!).OrderBy(s => s)
+            ? Directory.GetFiles(_currentPath, "*.*").Where(f => ModelFormatHelpers.GetExtensions().Contains(Path.GetExtension(f), StringComparer.InvariantCultureIgnoreCase)).Select(f => Path.GetFileName(f)!).OrderBy(s => s)
             : Enumerable.Empty<string>();
 
         _entries = new List<string> { ".. (up one level)" };
@@ -89,18 +90,37 @@ public sealed class ModelBrowserView : View
         if (idx < 0 || idx >= _entries.Count) { _previewLabel.Text = ""; return; }
 
         string sel = _entries[idx];
-        if (!sel.EndsWith(".gguf")) { _previewLabel.Text = sel.StartsWith("[DIR]") ? "Folder" : ""; return; }
+        var fmt = ModelFormatHelpers.GetFormatForExtension(sel);
+        //if (!ModelFormatHelpers.GetExtensions().Contains(Path.GetExtension(sel), StringComparer.InvariantCultureIgnoreCase))
+        if (fmt == null) { _previewLabel.Text = sel.StartsWith("[DIR]") ? "Folder" : ""; return; }
+        else
+        {
+            var metaHelper = ModelFormatHelpers.GetModelMetaHelperFor((ModelFormat)fmt);
+            try
+            {
+                var meta = metaHelper.LoadMeta(Path.Combine(_currentPath, sel));
+                string name = meta.GetString("general.name", "unknown");
+                string arch = meta.GetString("general.architecture", "unknown");
+                string quant = meta.Tensors.Count > 0 ? meta.Tensors[0].Dtype.ToString() : "unknown";
+                //string quantVersion = meta.GetString("general.quantization_version", string.Empty);
+                string contextLen = meta.GetString($"{arch}.context_length", string.Empty);
+                string toekenizerModel = meta.GetString($"tokenizer.ggml.model", string.Empty);
+                var sb = new StringBuilder(); 
 
-        try
-        {
-            var meta = GgufLoader.LoadMeta(Path.Combine(_currentPath, sel));
-            string arch = meta.GetString("general.architecture", "unknown");
-            string quant = meta.Tensors.Count > 0 ? meta.Tensors[0].Dtype.ToString() : "unknown";
-            _previewLabel.Text = $"Architecture: {arch}\nTensors: {meta.TensorCount}\nQuant (first tensor): {quant}";
-        }
-        catch (Exception ex)
-        {
-            _previewLabel.Text = $"Read error: {ex.Message}";
+
+                sb.AppendLine($"Name: {name}");
+                sb.AppendLine($"Architecture: {arch}");
+                if (!string.IsNullOrWhiteSpace(contextLen)) sb.AppendLine($"Context Len: {contextLen}");
+                sb.AppendLine($"Tensors: {meta.TensorCount}");                
+                //if(!string.IsNullOrWhiteSpace(quantVersion))sb.AppendLine($"Quantization: {quantVersion}");
+                sb.AppendLine($"Quant (first tensor): {quant}");
+                if (!string.IsNullOrWhiteSpace(toekenizerModel)) sb.AppendLine($"Toekenizer Model: {toekenizerModel}");
+                _previewLabel.Text = sb.ToString();// $"Architecture: {arch}\nTensors: {meta.TensorCount}\nQuant (first tensor): {quant}";
+            }
+            catch (Exception ex)
+            {
+                _previewLabel.Text = $"Read error: {ex.Message}";
+            }
         }
     }
 

@@ -371,10 +371,10 @@ namespace SharpMind.Model.Layers.Attention;
         // Forward always allocates a new tensor; using var disposes it at scope exit.
         // The normed tensor is 2D [totalHeads, headDim]; reshape at use sites below.
         // DEBUG: ForceBypassQKNorm skips normalization to isolate norm-related issues.
-        using var qNormed = (_qNorm != null)// && !ForceBypassQKNorm)
+        using var qNormed = (_qNorm != null)
             ? _qNorm.Forward(q.Reshape(batch * seqLen * numH, headDim), workspace)
             : null;
-        using var kNormed = (_kNorm != null)// && !ForceBypassQKNorm)
+        using var kNormed = (_kNorm != null)
             ? _kNorm.Forward(k.Reshape(batch * seqLen * numKv, headDim), workspace)
             : null;
 

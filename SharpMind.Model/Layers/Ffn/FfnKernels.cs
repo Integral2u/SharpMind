@@ -44,7 +44,8 @@ internal static class FfnKernels
         using var gated = workspace != null 
             ? workspace.Rent<float>(hasBatch ? new[] { fusedDims[0], fusedDims[1], ffnDim } : [total, ffnDim])
             : (hasBatch ? new Tensor<float>(fusedDims[0], fusedDims[1], ffnDim) : new Tensor<float>(total, ffnDim));
-        var flat = fused.Reshape(total, 2 * ffnDim);
+        Tensor<float>? flatView = fused.Reshape(total, 2 * ffnDim);
+        var flat = flatView;
 
         for (int i = 0; i < total; i++)
         {

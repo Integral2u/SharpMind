@@ -6,7 +6,6 @@ using SharpMind.Model.Config;
 using SharpMind.Model.Format;
 using SharpMind.Tokenization;
 using System.Diagnostics;
-using static Microsoft.IO.RecyclableMemoryStreamManager;
 
 namespace SharpMind.Samples.Examples
 {
@@ -16,16 +15,24 @@ namespace SharpMind.Samples.Examples
         {
             Type[] cacheBuilders = [typeof(QuantizedKVCacherBuilder), typeof(PagedKVCacherBuilder),typeof(KVCacherBuilder)];
             Type[] generatorBuilders = [typeof(StandardGeneratorBuilder<>),typeof(MedusaGeneratorBuilder<>),typeof(SpeculativeGeneratorBuilder<>)];
-
-            var ggufPath = Path.Combine(ModelPath, $"{ModelName}.gguf");
-            if (!File.Exists(ggufPath))
+            string modelPath = string.Empty;
+            ModelFormat? fmt = null;
+            foreach (var mFmt in Enum.GetValues<ModelFormat>()) {
+                var ext = ModelFormatHelpers.GetExtension(mFmt);
+                modelPath = Path.Combine(ModelPath, $"{ModelName}{ext}");
+                if (File.Exists(modelPath))
+                {
+                    fmt = mFmt; break;
+                }                
+            }
+            if (fmt == null)
             {
-                await Console.Out.WriteLineAsync($"{ModelName}.gguf not found.");
+                await Console.Out.WriteLineAsync($"{ModelName} not found.");
                 Console.In.ReadLine();
                 return;
             }
-
-            GgufLoader.Load(ggufPath, null, out ModelMetaData meta, out ModelConfig modelConfig, out Tokenizer? tokenizer);
+            var metaHelper = ModelFormatHelpers.GetModelMetaHelperFor((ModelFormat)fmt);
+            metaHelper.Load(modelPath, null, out ModelMetaData meta, out ModelConfig modelConfig, out Tokenizer? tokenizer);
 
             if (tokenizer == null)
             {
@@ -38,7 +45,7 @@ namespace SharpMind.Samples.Examples
             GC.Collect(); GC.WaitForPendingFinalizers();
             var sw = Stopwatch.StartNew();
             var qOps = QuantizationFactory.Create(sharpConfig.ResolvedHardware);
-            using var weights = ModelFactory.Create(modelConfig, sharpConfig, qOps, ggufPath, meta, LoadMode.Full);
+            using var weights = ModelFactory.Create(modelConfig, sharpConfig, qOps, modelPath, meta, LoadMode.Full);
             weights.InitializeWeights();
             await Console.Out.WriteLineAsync($"ModelFactory.Create + InitializeWeights executed in: {sw.Elapsed.TotalSeconds:F2}s");
             

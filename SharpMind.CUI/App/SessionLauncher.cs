@@ -84,6 +84,9 @@ public static class SessionLauncher
     {
         if (string.IsNullOrWhiteSpace(options.ModelPath) || !File.Exists(options.ModelPath))
             return new ModelLoadResult { Error = $"Model file not found: {options.ModelPath}" };
+        var fmt = ModelFormatHelpers.GetFormatForExtension(options.ModelPath);
+        if(fmt==null) return new ModelLoadResult { Error = $"Model type not supported: {options.ModelPath}" };
+        var metaHelper = ModelFormatHelpers.GetModelMetaHelperFor((ModelFormat)fmt);
 
         status?.Report("Reading model metadata...");
         ModelMetaData meta;
@@ -93,7 +96,7 @@ public static class SessionLauncher
         {
             (meta, modelConfig, tokenizer) = await Task.Run(() =>
             {
-                GgufLoader.Load(options.ModelPath, null, out var m, out var c, out var t);
+                metaHelper.Load(options.ModelPath, null, out var m, out var c, out var t);
                 return (m, c, t);
             });
         }

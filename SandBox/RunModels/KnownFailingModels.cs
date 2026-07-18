@@ -16,7 +16,7 @@
  
             "Qwen2.5-1.5B-Instruct-f16",    //Response: ??,??????????????????????
             
-            "Qwen3-0.6B-Q4_0",    //Responseonomyonomy??ultipart?ultipart?ultipart,,,itoito until until
+            "Qwen3-0.6B-Q4_0",      //Response:( ( supplementuilder advancedhraductive??amahaDetachbatimi [{ulousISCO
             "Qwen3-0.6B-Q4_1",      //Response:;]/???? (nnenawai Holocaust ????? (waukeeentially???icuteenth?
 
                       

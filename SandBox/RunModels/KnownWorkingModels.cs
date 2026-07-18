@@ -11,8 +11,7 @@ namespace SandBox.RunModels
     public class KnownWorkingModels
     {
         private static readonly string[] Models =
-        [
-            "Qwen3-0.6B-Q4_0",      //Response:onomyonomy??ultipart?ultipart?ultipart,,,itoito until until
+        [            
             "Qwen3-0.6B-Q4_K_M",    //Response:\nOkay, the user just said "Hello," so I need to 
 
             "Qwen3-0.6B-Q5_K_M",    //Response:\nOkay, the user just said "Hello," so I need to                       
@@ -23,7 +22,7 @@ namespace SandBox.RunModels
 
             "DeepSeek-R1-Distill-Qwen-1.5B-Q8_0",//Response:Hello! How Are You? ?? ?
             "DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M", //Response:Hello! I'm here. How can assist you?Hi what you can
-            "qwen2.5-1.5b-instruct-q8_0", //Response: /**\nHello, I am a user of Alibaba Cloud. I use many service
+            "qwen2.5-1.5b-instruct-q8_0", //Response: //**\nHello, I am a user of Alibaba Cloud. I use many service
           
             "Qwen2-0.5B.Q6_K", //Response:The\nsystem\nsystem is a system that helps you to make better decisions           
             "qwen2-0_5b-instruct-q8_0",         //Response:Hello! How can I assist you today?

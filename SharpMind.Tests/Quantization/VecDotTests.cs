@@ -274,4 +274,166 @@ public class VecDotTests
         fixed (byte* pWeights = weights)
             Assert.Equal(5.0f, qOps.VecDotQ8K(pInput, pWeights, 0, 1), 5);
     }
+
+    [Theory]
+    [MemberData(nameof(AllQuantizationOps))]
+    public unsafe void TestVecDotQ4_0_FullBlock32_Elements(QuantizationOps qOps)
+    {
+        const int BLOCK_BYTES = 18;
+        const int QK = 32;
+        const int N_COLS = 4;
+        const int IN_FEATURES = QK;
+        var rng = new Random(42);
+        var rawWeights = new byte[N_COLS * BLOCK_BYTES];
+        var input = new float[IN_FEATURES];
+
+        for (int i = 0; i < input.Length; i++) input[i] = (float)(rng.NextDouble() * 2 - 1);
+
+        for (int c = 0; c < N_COLS; c++)
+        {
+            ushort scaleHalf = FloatToHalf(0.5f + rng.NextSingle());
+            rawWeights[c * BLOCK_BYTES + 0] = (byte)(scaleHalf & 0xFF);
+            rawWeights[c * BLOCK_BYTES + 1] = (byte)(scaleHalf >> 8);
+            for (int b = 2; b < BLOCK_BYTES; b++)
+                rawWeights[c * BLOCK_BYTES + b] = (byte)rng.Next(256);
+        }
+
+        for (int c = 0; c < N_COLS; c++)
+        {
+            float expected = 0;
+            float d = HalfToFloatTest((ushort)(rawWeights[c * BLOCK_BYTES] | ((ushort)rawWeights[c * BLOCK_BYTES + 1] << 8)));
+            fixed (byte* qs = &rawWeights[c * BLOCK_BYTES + 2])
+            {
+                for (int i = 0; i < IN_FEATURES; i++)
+                {
+                    int q = (qs[i / 2] >> ((i % 2) * 4)) & 0x0F;
+                    expected += input[i] * ((q - 8) * d);
+                }
+            }
+
+            fixed (float* pIn = input) fixed (byte* pW = rawWeights)
+            {
+                float result = qOps.VecDotQ4_0(pIn, pW, c, IN_FEATURES);
+                Assert.Equal(expected, result, 4);
+            }
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(AllQuantizationOps))]
+    public unsafe void TestVecDotQ4_0_MultiBlock64_Elements(QuantizationOps qOps)
+    {
+        const int BLOCK_BYTES = 18;
+        const int QK = 32;
+        const int N_COLS = 2;
+        const int N_BLOCKS = 2;
+        const int IN_FEATURES = N_BLOCKS * QK;
+        var rng = new Random(99);
+        var rawWeights = new byte[N_COLS * N_BLOCKS * BLOCK_BYTES];
+        var input = new float[IN_FEATURES];
+
+        for (int i = 0; i < input.Length; i++) input[i] = (float)(rng.NextDouble() * 2 - 1);
+
+        for (int c = 0; c < N_COLS; c++)
+        {
+            for (int b = 0; b < N_BLOCKS; b++)
+            {
+                int off = c * N_BLOCKS * BLOCK_BYTES + b * BLOCK_BYTES;
+                ushort scaleHalf = FloatToHalf(0.3f + rng.NextSingle());
+                rawWeights[off + 0] = (byte)(scaleHalf & 0xFF);
+                rawWeights[off + 1] = (byte)(scaleHalf >> 8);
+                for (int j = 2; j < BLOCK_BYTES; j++)
+                    rawWeights[off + j] = (byte)rng.Next(256);
+            }
+        }
+
+        for (int c = 0; c < N_COLS; c++)
+        {
+            float expected = 0;
+            float d = HalfToFloatTest((ushort)(rawWeights[c * BLOCK_BYTES] | ((ushort)rawWeights[c * BLOCK_BYTES + 1] << 8)));
+            for (int b2 = 0; b2 < N_BLOCKS; b2++)
+            {
+                int off2 = c * N_BLOCKS * BLOCK_BYTES + b2 * BLOCK_BYTES;
+                d = HalfToFloatTest((ushort)(rawWeights[off2] | ((ushort)rawWeights[off2 + 1] << 8)));
+                fixed (byte* qs = &rawWeights[off2 + 2])
+                {
+                    for (int i = 0; i < QK; i++)
+                    {
+                        int q = (qs[i / 2] >> ((i % 2) * 4)) & 0x0F;
+                        expected += input[b2 * QK + i] * ((q - 8) * d);
+                    }
+                }
+            }
+
+            fixed (float* pIn = input) fixed (byte* pW = rawWeights)
+            {
+                float result = qOps.VecDotQ4_0(pIn, pW, c, IN_FEATURES);
+                Assert.Equal(expected, result, 3);
+            }
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(AllQuantizationOps))]
+    public unsafe void TestVecDotQ4_0_AgreesAcrossTiers()
+    {
+        const int BLOCK_BYTES = 18;
+        const int QK = 32;
+        const int N_COLS = 4;
+        const int N_BLOCKS = 2;
+        const int IN_FEATURES = N_BLOCKS * QK;
+        var rng = new Random(7);
+        var rawWeights = new byte[N_COLS * N_BLOCKS * BLOCK_BYTES];
+        var input = new float[IN_FEATURES];
+
+        for (int i = 0; i < input.Length; i++) input[i] = (float)(rng.NextDouble() * 2 - 1);
+        for (int c = 0; c < N_COLS; c++)
+            for (int b = 0; b < N_BLOCKS; b++)
+            {
+                int off = c * N_BLOCKS * BLOCK_BYTES + b * BLOCK_BYTES;
+                rawWeights[off + 0] = 0x00; rawWeights[off + 1] = 0x3C;
+                for (int j = 2; j < BLOCK_BYTES; j++)
+                    rawWeights[off + j] = (byte)rng.Next(256);
+            }
+
+        var all = new List<float>();
+        foreach (var tier in Enum.GetValues<HardwareTier>())
+        {
+            var q = QuantizationFactory.Create(tier);
+            fixed (float* pIn = input) fixed (byte* pW = rawWeights)
+                all.Add(q.VecDotQ4_0(pIn, pW, 0, IN_FEATURES));
+        }
+
+        float baseline = all[0];
+        for (int i = 1; i < all.Count; i++)
+            Assert.Equal(baseline, all[i], 5);
+    }
+
+    private static ushort FloatToHalf(float f)
+    {
+        unsafe
+        {
+            uint bits = *(uint*)&f;
+            uint sign = (bits >> 16) & 0x8000;
+            int exp = (int)((bits >> 23) & 0xFF) - 127 + 15;
+            uint mantissa = bits & 0x7FFFFF;
+            if (exp <= 0) return (ushort)sign;
+            if (exp >= 31) return (ushort)(sign | 0x7C00);
+            return (ushort)(sign | ((uint)exp << 10) | (mantissa >> 13));
+        }
+    }
+
+    private static float HalfToFloatTest(ushort h)
+    {
+        unsafe
+        {
+            uint sign = (uint)(h & 0x8000) << 16;
+            int exp = (h >> 10) & 0x1F;
+            uint mantissa = (uint)(h & 0x3FF) << 13;
+            if (exp == 0) { float z = 0; return *(float*)&sign; }
+            if (exp == 31) { uint inf = sign | 0x7F800000u; return *(float*)&inf; }
+            uint bits = sign | ((uint)(exp - 15 + 127) << 23) | mantissa;
+            return *(float*)&bits;
+        }
+    }
 }
