@@ -17,6 +17,19 @@ public static class MathHelpers
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static float HMax256_Avx(Vector256<float> v)
+    {
+        var lo = Avx.ExtractVector128(v, 0);
+        var hi = Avx.ExtractVector128(v, 1);
+        var m = Sse.Max(lo, hi);
+        var shuf = Sse.Shuffle(m, m, 0x4E);
+        m = Sse.Max(m, shuf);
+        shuf = Sse.Shuffle(m, m, 0xB1);
+        m = Sse.Max(m, shuf);
+        return m.ToScalar();
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static float HSum256_Sse3(Vector256<float> v)
     {
         var lo = v.GetLower();

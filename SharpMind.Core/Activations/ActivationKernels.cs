@@ -274,7 +274,7 @@ internal static class ActivationKernels
                 var v = Vector256.LoadUnsafe(ref pS[i]);
                 vMax = Avx.Max(vMax, v);
             }
-            max = MathHelpers.HSum256_Avx(vMax);
+            max = MathHelpers.HMax256_Avx(vMax);
             for (; i < n; i++)
                 if (pS[i] > max) max = pS[i];
 

@@ -373,8 +373,7 @@ public class VecDotTests
         }
     }
 
-    [Theory]
-    [MemberData(nameof(AllQuantizationOps))]
+    [Fact]
     public unsafe void TestVecDotQ4_0_AgreesAcrossTiers()
     {
         const int BLOCK_BYTES = 18;

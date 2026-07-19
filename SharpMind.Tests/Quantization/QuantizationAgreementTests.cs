@@ -94,6 +94,22 @@ public class QuantizationAgreementTests
                 case QuantDType.Q6_K:
                     data[off + 208] = 0x00; data[off + 209] = 0x3C;
                     break;
+                case QuantDType.F32:
+                    unsafe
+                    {
+                        float val = (float)(new Random(data[off] | (data[off + 1] << 8)).NextDouble() * 2 - 1);
+                        BitConverter.GetBytes(val).CopyTo(data, off);
+                    }
+                    break;
+                case QuantDType.F16:
+                    unsafe
+                    {
+                        float val = (float)(new Random(data[off] | (data[off + 1] << 8)).NextDouble() * 2 - 1);
+                        ushort half = FloatToHalfB16(val);
+                        data[off] = (byte)(half & 0xFF);
+                        data[off + 1] = (byte)(half >> 8);
+                    }
+                    break;
                 case QuantDType.Q8_K:
                     BitConverter.GetBytes(1.0f).CopyTo(data, off);
                     break;
@@ -229,6 +245,20 @@ public class QuantizationAgreementTests
                     $"MatMul [{dtype}] {mode} {tiers[t].name} differs from {refName}. " +
                     $"MaxErr={maxErr:G4} MaxRel={maxRel:G6}");
             }
+        }
+    }
+
+    private static ushort FloatToHalfB16(float f)
+    {
+        unsafe
+        {
+            uint bits = *(uint*)&f;
+            uint sign = (bits >> 16) & 0x8000;
+            int exp = (int)((bits >> 23) & 0xFF) - 127 + 15;
+            uint mantissa = bits & 0x7FFFFF;
+            if (exp <= 0) return (ushort)sign;
+            if (exp >= 31) return (ushort)(sign | 0x7C00);
+            return (ushort)(sign | ((uint)exp << 10) | (mantissa >> 13));
         }
     }
 }
