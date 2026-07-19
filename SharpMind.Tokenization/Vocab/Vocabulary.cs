@@ -131,6 +131,10 @@ public sealed class Vocabulary
 
     private static readonly Dictionary<char, byte> ReverseByteMap = CreateReverseByteMap();
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal static bool TryReverseByteMap(char ch, out byte b)
+        => ReverseByteMap.TryGetValue(ch, out b);
+
     private static Dictionary<char, byte> CreateReverseByteMap()
     {
         var map = new Dictionary<char, byte>(256);

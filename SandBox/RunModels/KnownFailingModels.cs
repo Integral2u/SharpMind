@@ -4,7 +4,8 @@
     {
         private static readonly string[] Models =
         [
-
+            //New response:\n\n\nCopyright c 200 20199
+            "Qwen2-0.5B.Q6_K", //Response:The\nsystem\nsystem is a system that helps you to make better decisions   
             "qwen2-0_5b-instruct-q4_k_m",   //Response:?  (????. - ( (g.-.
             "qwen2-0.5b-instruct-q2_k",     //Response:???u u performance?? 's elbowso??ef-.
             "Qwen2-0.5B.Q2_K",              //Response:performance sa?ero_ ?and i?.??f*+
@@ -14,7 +15,7 @@
             
             "Qwen2-0.5B.Q5_1",              //Response:-+$?ergy=> Tw %(. Tw?????
  
-            "Qwen2.5-1.5B-Instruct-f16",    //Response: ??,??????????????????????
+            "Qwen2.5-1.5B-Instruct-f16",    //Response:Hello, I'm lookingta.
             
             "Qwen3-0.6B-Q4_0",      //Response:( ( supplementuilder advancedhraductive??amahaDetachbatimi [{ulousISCO
             "Qwen3-0.6B-Q4_1",      //Response:;]/???? (nnenawai Holocaust ????? (waukeeentially???icuteenth?

@@ -1,4 +1,5 @@
-﻿using SharpMind.Tokenization.PreTokeniser;
+﻿using System.Collections.Generic;
+using SharpMind.Tokenization.PreTokeniser;
 using SharpMind.Tokenization.Vocab;
 
 namespace SharpMind.Tokenization.Bpe;
@@ -30,6 +31,13 @@ public sealed class BpeEncoder
     // "<|im_start|>") match before shorter prefixes (e.g. "<|im").
     private string[] _specialsSortedByLength;
 
+    // O(1) special-token lookup for Decode — avoids allocating a new array per Specials.All call.
+    private HashSet<string> _specialsSet;
+
+    // First-character set for fast SplitOnSpecials scanning — skip positions
+    // whose char can't start any special token.
+    private HashSet<char> _specialsFirstChars;
+
     internal BpeEncoder(
         Vocabulary vocab,
         IReadOnlyList<MergeRule> merges,
@@ -41,18 +49,22 @@ public sealed class BpeEncoder
         foreach (var rule in merges)
             _mergeIndex[(rule.Left, rule.Right)] = (rule.Merged, rule.Rank);
 
-        // Build sorted special-token list for fast scanning.
-        _specialsSortedByLength = [.. vocab.Specials.All
-            .Where(s => !string.IsNullOrEmpty(s))
-            .OrderByDescending(s => s.Length)];
+        RebuildSpecialsCache();
     }
 
     /// <summary>Refreshes the sorted specials cache after adding new special tokens.</summary>
-    internal void RefreshSpecials()
+    internal void RefreshSpecials() => RebuildSpecialsCache();
+
+    private void RebuildSpecialsCache()
     {
-        _specialsSortedByLength = [.. _vocab.Specials.All
+        var specials = _vocab.Specials.All
             .Where(s => !string.IsNullOrEmpty(s))
-            .OrderByDescending(s => s.Length)];
+            .OrderByDescending(s => s.Length)
+            .ToArray();
+
+        _specialsSortedByLength = specials;
+        _specialsSet = new HashSet<string>(specials, StringComparer.Ordinal);
+        _specialsFirstChars = new HashSet<char>(specials.Select(s => s[0]));
     }
 
     /// <summary>
@@ -108,7 +120,7 @@ public sealed class BpeEncoder
         {
             string token = _vocab.GetToken(id);
 
-            if (skipSpecials && _vocab.Specials.All.Contains(token))
+            if (skipSpecials && _specialsSet.Contains(token))
                 continue;
 
             // Check for SentencePiece byte token (<0xNN> format) first
@@ -123,7 +135,7 @@ public sealed class BpeEncoder
             byte[] gpt2Bytes = new byte[token.Length];
             for (int i = 0; i < token.Length; i++)
             {
-                if (TryDecodeByte(token[i].ToString(), out byte b))
+                if (TryDecodeByte(token[i], out byte b))
                     gpt2Bytes[i] = b;
                 else
                 {
@@ -181,19 +193,12 @@ public sealed class BpeEncoder
             else
             {
                 // Advance to the next potential special-token start (or end of string).
+                // Use first-char set to skip positions that can't start a special token.
                 int next = pos + 1;
                 while (next < text.Length)
                 {
-                    bool startsSpecial = false;
-                    foreach (string special in _specialsSortedByLength)
-                    {
-                        if (text.AsSpan(next).StartsWith(special.AsSpan(), StringComparison.Ordinal))
-                        {
-                            startsSpecial = true;
-                            break;
-                        }
-                    }
-                    if (startsSpecial) break;
+                    if (_specialsFirstChars.Contains(text[next]) && TryMatchSpecialAt(text, next))
+                        break;
                     next++;
                 }
                 yield return new Segment(text[pos..next], false);
@@ -202,30 +207,69 @@ public sealed class BpeEncoder
         }
     }
 
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    private bool TryMatchSpecialAt(string text, int pos)
+    {
+        foreach (string special in _specialsSortedByLength)
+        {
+            if (text.AsSpan(pos).StartsWith(special.AsSpan(), StringComparison.Ordinal))
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// O(n log n) BPE merge using a priority queue with lazy deletion.
+    ///
+    /// Instead of scanning all pairs each pass (O(n²)), we maintain a min-heap
+    /// of pairs keyed by rank. When a merge occurs, only the two neighbouring
+    /// pairs that may have changed are re-evaluated and re-inserted.
+    /// Stale entries are silently skipped when dequeued.
+    /// </summary>
     private void ApplyMerges(List<string> tokens)
     {
-        while (tokens.Count > 1)
+        if (tokens.Count <= 1) return;
+
+        // Seed: evaluate all initial adjacent pairs.
+        var queue = new PriorityQueue<int, int>(); // (pairIndex, rank)
+        for (int i = 0; i < tokens.Count - 1; i++)
         {
-            int bestRank = int.MaxValue;
-            int bestIdx = -1;
-            string bestMerge = string.Empty;
-
-            for (int i = 0; i < tokens.Count - 1; i++)
-            {
-                if (_mergeIndex.TryGetValue((tokens[i], tokens[i + 1]), out var entry)
-                    && entry.Rank < bestRank)
-                {
-                    bestRank = entry.Rank;
-                    bestIdx = i;
-                    bestMerge = entry.Merged;
-                }
-            }
-
-            if (bestIdx < 0) break;
-
-            tokens[bestIdx] = bestMerge;
-            tokens.RemoveAt(bestIdx + 1);
+            if (_mergeIndex.TryGetValue((tokens[i], tokens[i + 1]), out var entry))
+                queue.Enqueue(i, entry.Rank);
         }
+
+        while (queue.TryDequeue(out int idx, out int rank))
+        {
+            // --- Lazy-deletion guard ---
+            // The pair at `idx` may have been invalidated by a prior merge.
+            // Re-validate by checking that both halves still match.
+            if (idx >= tokens.Count - 1) continue;
+            if (!_mergeIndex.TryGetValue((tokens[idx], tokens[idx + 1]), out var entry)) continue;
+            if (entry.Rank != rank) continue; // stale — a higher-priority merge replaced one of these tokens
+
+            // --- Merge the pair at idx and idx+1 ---
+            tokens[idx] = entry.Merged;
+            tokens.RemoveAt(idx + 1);
+
+            // Re-evaluate the pair to the LEFT of the merged token (idx-1, idx).
+            if (idx > 0)
+                EnqueueSinglePair(queue, tokens, idx - 1);
+
+            // Re-evaluate the pair to the RIGHT of the merged token (idx, idx+1).
+            if (idx < tokens.Count - 1)
+                EnqueueSinglePair(queue, tokens, idx);
+
+            // Re-evaluate the pair that SHIFTED into position idx+1 (was at idx+2 before RemoveAt).
+            if (idx + 1 < tokens.Count - 1)
+                EnqueueSinglePair(queue, tokens, idx + 1);
+        }
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    private void EnqueueSinglePair(PriorityQueue<int, int> queue, List<string> tokens, int idx)
+    {
+        if (_mergeIndex.TryGetValue((tokens[idx], tokens[idx + 1]), out var entry))
+            queue.Enqueue(idx, entry.Rank);
     }
 
     private List<string> ByteTokenise(string word)
@@ -247,6 +291,14 @@ public sealed class BpeEncoder
             }
         }
         return result;
+    }
+
+    private static bool TryDecodeByte(char ch, out byte b)
+    {
+        if (Vocabulary.TryReverseByteMap(ch, out b))
+            return true;
+        b = 0;
+        return false;
     }
 
     private static bool TryDecodeByte(string token, out byte b) => Vocabulary.TryDecodeByteToken(token, out b);

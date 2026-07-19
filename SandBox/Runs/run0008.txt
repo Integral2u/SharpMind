@@ -1,0 +1,246 @@
+Working models-------------------------------------
+Testing Qwen2-0.5B.Q6_K
+ModelFactory.Create + InitializeWeights executed in: 12.55s
+ModelFactory.CreateSession executed in: 0.74s
+Prompt:Hello
+Response:
+
+
+Copyright c 200 20199
+Tokens per second: 0.91  TTFT: 14.194s
+Testing qwen2-0_5b-instruct-q8_0
+ModelFactory.Create + InitializeWeights executed in: 13.36s
+ModelFactory.CreateSession executed in: 0.45s
+Prompt:Hello
+Response:Hello! How can I assist you today?
+
+Tokens per second: 1.77  TTFT: 6.399s
+Testing qwen2-0_5b-instruct-fp16
+ModelFactory.Create + InitializeWeights executed in: 51.62s
+ModelFactory.CreateSession executed in: 1.55s
+Prompt:Hello
+Response:Hello! How can I assist you today?
+
+Tokens per second: 0.32  TTFT: 48.412s
+Testing Qwen3-0.6B-Q4_K_M
+ModelFactory.Create + InitializeWeights executed in: 15.91s
+ModelFactory.CreateSession executed in: 0.95s
+Prompt:Hello
+Response:
+Okay, the user just said "Hello and I need to respond
+Tokens per second: 0.27  TTFT: 31.644s
+Testing Qwen3-0.6B-Q5_K_M
+ModelFactory.Create + InitializeWeights executed in: 22.45s
+ModelFactory.CreateSession executed in: 1.09s
+Prompt:Hello
+Response:
+Okay, the user just said "Hello to me. I need
+Tokens per second: 0.12  TTFT: 39.798s
+Testing Qwen3-0.6B-Q3_K_M
+ModelFactory.Create + InitializeWeights executed in: 23.54s
+ModelFactory.CreateSession executed in: 1.52s
+Prompt:Hello
+Response:
+Okay, the user is asking for help with a problem. But
+Tokens per second: 0.14  TTFT: 27.535s
+Testing Qwen3-0.6B-Q6_K
+ModelFactory.Create + InitializeWeights executed in: 21.22s
+ModelFactory.CreateSession executed in: 1.65s
+Prompt:Hello
+Response:
+Okay, the user just said "Hello," so I need to
+Tokens per second: 0.46  TTFT: 20.513s
+Testing Qwen3-0.6B-Q2_K
+ModelFactory.Create + InitializeWeights executed in: 22.40s
+ModelFactory.CreateSession executed in: 1.36s
+Prompt:Hello
+Response:?
+Okay, so I need to start with the user's message.
+Tokens per second: 0.15  TTFT: 47.659s
+Testing Qwen3-0.6B-Q8_0
+ModelFactory.Create + InitializeWeights executed in: 23.73s
+ModelFactory.CreateSession executed in: 1.32s
+Prompt:Hello
+Response:
+Okay, the user just said "Hello," so I need to
+Tokens per second: 1.25  TTFT: 6.741s
+Testing DeepSeek-R1-Distill-Qwen-1.5B-Q8_0
+ModelFactory.Create + InitializeWeights executed in: 121.53s
+ModelFactory.CreateSession executed in: 11.20s
+Prompt:Hello
+Response:
+
+Hello! How Are You? ?? ?
+
+Tokens per second: 0.47  TTFT: 26.915s
+Testing DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M
+ModelFactory.Create + InitializeWeights executed in: 129.24s
+ModelFactory.CreateSession executed in: 1.25s
+Prompt:Hello
+Response:Hello! I'm here. How can assist you?Hi what you can
+Tokens per second: 0.05  TTFT: 82.817s
+Testing qwen2.5-1.5b-instruct-q8_0
+ModelFactory.Create + InitializeWeights executed in: 165.32s
+ModelFactory.CreateSession executed in: 43.13s
+Prompt:Hello
+Response:Hello! How can I help you today?
+
+Tokens per second: 0.38  TTFT: 58.961s
+Testing llama-3.2-1b-instruct-q8_0
+ModelFactory.Create + InitializeWeights executed in: 80.16s
+ModelFactory.CreateSession executed in: 1.19s
+Prompt:Hello
+Response:It seems like you've got a question about the answer to my own.
+Tokens per second: 0.52  TTFT: 6.968s
+
+Failing Models ---------------------------------------
+Testing qwen2-0_5b-instruct-q4_k_m
+ModelFactory.Create + InitializeWeights executed in: 10.63s
+ModelFactory.CreateSession executed in: 0.43s
+Prompt:Hello
+Response:prowad (..EventSystemsoxid( - --.( -i (
+Tokens per second: 0.62  TTFT: 17.953s
+Testing qwen2-0.5b-instruct-q2_k
+ModelFactory.Create + InitializeWeights executed in: 10.35s
+ModelFactory.CreateSession executed in: 0.32s
+Prompt:Hello
+Response: onler"????? Dal?ole's (stuu
+Tokens per second: 0.49  TTFT: 26.992s
+Testing Qwen2-0.5B.Q2_K
+ModelFactory.Create + InitializeWeights executed in: 10.57s
+ModelFactory.CreateSession executed in: 0.54s
+Prompt:Hello
+Response:????- dating?étatla (??port e (??
+Tokens per second: 0.46  TTFT: 26.950s
+Testing Qwen2-0.5B.Q3_K_L
+ModelFactory.Create + InitializeWeights executed in: 10.04s
+ModelFactory.CreateSession executed in: 0.24s
+Prompt:Hello
+Response:??????????????icrosoft????
+Tokens per second: 0.40  TTFT: 32.522s
+Testing Qwen2-0.5B.Q3_K_M
+ModelFactory.Create + InitializeWeights executed in: 10.98s
+ModelFactory.CreateSession executed in: 0.42s
+Prompt:Hello
+Response:??
+??????????
+iple
+??
+
+Tokens per second: 0.72  TTFT: 14.307s
+Testing Qwen2-0.5B.Q3_K_S
+ModelFactory.Create + InitializeWeights executed in: 9.83s
+ModelFactory.CreateSession executed in: 0.23s
+Prompt:Hello
+Response:Observ.ères...-???  solar.pageX heart?? (?
+Tokens per second: 0.45  TTFT: 24.648s
+Testing Qwen2-0.5B.Q5_1
+ModelFactory.Create + InitializeWeights executed in: 10.53s
+ModelFactory.CreateSession executed in: 0.91s
+Prompt:Hello
+Response:???->??? quê???lux? Turner? on
+Tokens per second: 0.56  TTFT: 19.591s
+Testing Qwen2.5-1.5B-Instruct-f16
+ModelFactory.Create + InitializeWeights executed in: 216.09s
+ModelFactory.CreateSession executed in: 11.56s
+Prompt:Hello
+Response:Hello, I'm lookingta.
+
+Tokens per second: 0.11  TTFT: 164.755s
+Testing Qwen3-0.6B-Q4_0
+ModelFactory.Create + InitializeWeights executed in: 18.74s
+ModelFactory.CreateSession executed in: 1.62s
+Prompt:Hello
+Response: ( ( supplementuilder advancedhraductive??amahaDetachbatimi [{ulousISCO
+Tokens per second: 0.58  TTFT: 6.769s
+Testing Qwen3-0.6B-Q4_1
+ModelFactory.Create + InitializeWeights executed in: 21.30s
+ModelFactory.CreateSession executed in: 1.66s
+Prompt:Hello
+Response:;]/???? (nnenawai Holocaust ????? (waukeeentially???icuteenth?
+Tokens per second: 0.50  TTFT: 11.508s
+Testing Llama-3.2-1B-Instruct-Q4_K_M
+ModelFactory.Create + InitializeWeights executed in: 57.39s
+ModelFactory.CreateSession executed in: 1.03s
+Prompt:Hello
+Response:  and
+and
+  a
+
+# "
+a
+#
+Tokens per second: 0.13  TTFT: 276.024s
+Testing tinyllama-1.1b-chat-v1.0.Q8_0
+ModelFactory.Create + InitializeWeights executed in: 54.56s
+ModelFactory.CreateSession executed in: 1.13s
+Prompt:Hello
+Response:
+Subject:
+
+Dearlyrics
+
+Tokens per second: 0.79  TTFT: 10.588s
+Testing TinyLlama-1.1B-Chat-v1.0.Q4_K_M
+ModelFactory.Create + InitializeWeights executed in: 46.05s
+ModelFactory.CreateSession executed in: 1.42s
+Prompt:Hello
+Response:
+
+Tokens per second: 0.00  TTFT: 44.651s
+Testing llama3-small-Q2_K
+ModelFactory.Create + InitializeWeights executed in: 5.12s
+ModelFactory.CreateSession executed in: 0.15s
+Prompt:Hello
+Response:"))); bowInfo WATCH?? kho)."inky.Collectors essentially ???Events ?????? ?????? reactor
+Tokens per second: 1.68  TTFT: 1.004s
+Testing llama3-small-Q3_K_M
+ModelFactory.Create + InitializeWeights executed in: 4.16s
+ModelFactory.CreateSession executed in: 0.01s
+Prompt:Hello
+Response:HostException savageInstrument??? ortaya.Process Hayes bleach?? bleach??RestController prefers,left_sleep
+Tokens per second: 1.46  TTFT: 1.114s
+Testing tiny-mistral-Q2_K
+ModelFactory.Create + InitializeWeights executed in: 4.92s
+ModelFactory.CreateSession executed in: 0.05s
+Prompt:Hello
+Response:ilers0 vacuum?Kernel shedcontext glasses naked believe? Aquoffsetwhile dire
+Tokens per second: 0.61  TTFT: 14.896s
+Testing tiny-mistral-Q3_K_M
+ModelFactory.Create + InitializeWeights executed in: 4.91s
+ModelFactory.CreateSession executed in: 0.03s
+Prompt:Hello
+Response: operated (' Beaut Gold? pocut spite viewing ihm materials WrazzreturnsHost
+Tokens per second: 0.51  TTFT: 17.393s
+
+Giberish Models------------------------
+Testing SmolLM-135M.Q4_K_M
+ModelFactory.Create + InitializeWeights executed in: 4.48s
+ModelFactory.CreateSession executed in: 0.39s
+Prompt:Hello
+Response: Ges Ll separated Glossestock Water Q Outidxs tqdmtheless out Empress separated Ges
+Tokens per second: 1.53  TTFT: 3.305s
+Testing SmolLM2-135M-Instruct.Q4_K_M
+ModelFactory.Create + InitializeWeights executed in: 2.66s
+ModelFactory.CreateSession executed in: 0.21s
+Prompt:Hello
+Response: iELTSELTS Enum '', Mainxesplexanine?ELTS Potomac squarelemagne Examin
+Tokens per second: 1.57  TTFT: 8.881s
+Testing gemma-3-270m-it-Q8_0
+ModelFactory.Create + InitializeWeights executed in: 5.07s
+ModelFactory.CreateSession executed in: 0.45s
+Prompt:Hello
+Response: incessant Kisan Kisan agron poorest motorway Harareapples kilowattLife economists delivering motorway Highways intensive
+Tokens per second: 2.73  TTFT: 8.026s
+Testing gemma-3-270m-it-Q4_K_M
+ModelFactory.Create + InitializeWeights executed in: 4.54s
+ModelFactory.CreateSession executed in: 0.21s
+Prompt:Hello
+Response: chromosomesCenters barrenyears PiecesGoldenroughlywebservices burdensome pathways townhouse middle Littlecheap money
+Tokens per second: 1.08  TTFT: 31.510s
+Testing gemma-3-270m-it-F16
+ModelFactory.Create + InitializeWeights executed in: 33.31s
+ModelFactory.CreateSession executed in: 0.22s
+Prompt:Hello
+Response: incessant Kisan Kisan agron poorest HarareImprovingdegenerativeharmonic lousy motorway ProductivityapplesLife intensive
+Tokens per second: 0.72  TTFT: 52.843s
