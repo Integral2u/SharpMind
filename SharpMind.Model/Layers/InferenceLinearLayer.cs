@@ -185,18 +185,13 @@ public abstract class InferenceLinearLayer : LinearLayer
             {
                 result.AddInPlace(BroadcastBias(batchSize));
             }
-            /*
-            AddBiasInPlace(result, batchSize);
         }
         if (needReshape)
         {
+            //int[] outDims = [.. input.Shape.Dims.ToArray()[..^1], OutFeatures];
             Span<int> outDims = stackalloc int[input.Rank];
             input.Shape.Dims[..^1].CopyTo(outDims);
-            outDims[^1] = OutFeatures;*/
-        }
-        if (needReshape)
-        {
-            int[] outDims = [.. input.Shape.Dims.ToArray()[..^1], OutFeatures];
+            outDims[^1] = OutFeatures;
             var reshaped = result.Reshape(outDims);
             result.Dispose();
             return reshaped;

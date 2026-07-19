@@ -40,7 +40,17 @@ public sealed class TrainingLinearLayer : LinearLayer
 
         if (_bias is not null)
         {
-            AddBiasInPlace(output, batchSize);
+            if (workspace != null)
+            {
+                var biasB = workspace.Rent<float>([batchSize, OutFeatures]);
+                for (int i = 0; i < batchSize; i++)
+                    _bias!.Data.CopyTo(biasB.RowSpan(i));
+                output.AddInPlace(biasB);
+            }
+            else
+            {
+                output.AddInPlace(BroadcastBias(batchSize));
+            }
         }
         if (needReshape)
         {
@@ -65,7 +75,7 @@ public sealed class TrainingLinearLayer : LinearLayer
         var fn = _staticOps.QuantizedMatMulOpFor(QuantDType.F32);
         fn(flat.DataPtr, (byte*)_weightBT.DataPtr, output.DataPtr, batchSize, InFeatures, OutFeatures);
         if (_bias is not null)
-            AddBiasInPlace(output, batchSize);
+            output.AddInPlace(BroadcastBias(batchSize));
         var state = new LinearLayerState(input, flat, needReshape, _weight);
         if (needReshape)
         {
