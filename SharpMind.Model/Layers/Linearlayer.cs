@@ -117,6 +117,12 @@ public abstract class LinearLayer : IDisposable
                 row[j] += biasData[j];
         }
     }
-
+    protected Tensor<float> BroadcastBias(int batchSize)
+    {
+        var broadcast = new Tensor<float>(batchSize, OutFeatures);
+        for (int i = 0; i < batchSize; i++)
+            _bias!.Data.CopyTo(broadcast.RowSpan(i));
+        return broadcast;
+    }
     private protected void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, nameof(LinearLayer));
 }

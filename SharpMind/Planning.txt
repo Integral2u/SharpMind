@@ -1,18 +1,4 @@
 CUI Plugins?
-Test
-
-
-Suggestions from other sources
-Memory Efficiency: In AttentionLayer.Forward, temporary tensors (q, k, v, qNormed, kNormed) are still allocated and disposed of on every call. Moving these to a per-session pre-allocated buffer or expanding the Workspace to handle these specific projections would further reduce GC pressure.
-Performance: The recommendation for a blocked transpose in the core tensor operations (now likely residing in QuantizationKernels or Tensor helpers) should still be evaluated for large matrix performance.
-Robustness: Detailed shape validation in Tensor.Slice and other multi-dimensional operations remains a high-value target to prevent AccessViolationException in unsafe blocks.
-BPE merge application is O(n²) per word (BpeEncoder.ApplyMerges): for each merge it rescans every adjacent token pair from scratch. Fine for short words, but pathological for long unbroken spans (URLs, base64, code, CJK text without space breaks). The standard fix is a priority queue over pair ranks with a doubly-linked token list, so each merge is O(log n) instead of O(n).
-Non-flash attention kernels don't exploit the causal mask for early exit. ScaledDotProductAVX2/FMA/Scalar iterate j over the full kvLen even when causal, computing -infinity scores for masked positions instead of stopping at absQPos + 1 — the Flash variants already do this correctly (effKvLen), so it's an inconsistency, not a design choice. During prefill this wastes roughly half the dot-product work.
-MoE FFN parallelism overhead on the decode hot path. FfnKernels.MoE always calls Parallel.For(0, batch, …), even when batch == 1 (the common case during autoregressive token-by-token decoding). That's ThreadPool scheduling/synchronization overhead for zero parallel benefit on the single hottest loop in the program. Worth special-casing batch == 1 to a plain sequential call.
-MoE experts bypass the Workspace entirely (workspace: null passed explicitly "to avoid races"), so every expert's gate/up/down projections allocate fresh pooled buffers per token per top-k expert instead of using the bump allocator the rest of the engine relies on for zero-GC-pressure decoding. A per-worker Workspace (one per Parallel.For partition) would restore the fast path.
-NativeBufferPoolConfig.MaxTotalMemoryMB is declared and tracked but never enforced anywhere in Rent/Return — the pool can grow without bound within per-bucket limits regardless of this setting, so it's dead configuration that looks like a safety valve but isn't.
-Bucket-based pooling rounds every allocation up to the next power of two (NativeBufferPool.GetBucket). Reasonable for reuse, but for large KV-cache-sized allocations this can mean up to ~2x memory overhead; worth knowing if you're sizing workspace/memory budgets.
-ChatSession.History getter allocates a new filtered list ([.. _history.Where(...)]) on every access — cheap in isolation, but if it's polled per streamed token from a UI layer that adds up.
 
 Bugs / robustness issues
 

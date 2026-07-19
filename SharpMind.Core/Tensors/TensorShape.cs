@@ -7,15 +7,25 @@ namespace SharpMind.Core.Tensors;
 /// Immutable descriptor of a tensor's shape and strides. Row-major (C) order.
 /// </summary>
 /// <remarks>
+/// For ranks 1–4 the dimension and stride data is stored inline (no heap allocation).
+/// For ranks &gt; 4, two <c>int[]</c> arrays are allocated on the heap as before.
 /// Strides are element counts, not byte offsets. For a shape (3, 4, 5):
-///   strides = (20, 5, 1) so element [i,j,k] is at flat index i*20 + j*5 + k.
+///   strides = (20, 5, 1) so element [i,j,k] is at flat index i*20 + j*5 + 1.
 /// </remarks>
 public readonly struct TensorShape : IEquatable<TensorShape>
 {
-    private readonly int[] _dims;
-    private readonly int[] _strides;
+    private readonly int _rank;
+    private readonly int _elementCount;
 
-    // construction
+    // Inline storage for ranks 1–4 (zero heap allocation).
+    private readonly int _d0, _d1, _d2, _d3;
+    private readonly int _s0, _s1, _s2, _s3;
+
+    // Heap overflow for ranks > 4 (null when inline path is used).
+    private readonly int[]? _dimsOverflow;
+    private readonly int[]? _stridesOverflow;
+
+    // ── construction ──────────────────────────────────────────────
 
     /// <summary>Core init with span — no <c>params</c> heap allocation at call site.</summary>
     public TensorShape(ReadOnlySpan<int> dims)
@@ -24,68 +34,143 @@ public readonly struct TensorShape : IEquatable<TensorShape>
             throw new ArgumentException($"A {nameof(TensorShape)} must have at least one dimension.", nameof(dims));
         foreach (int d in dims)
             if (d <= 0) throw new ArgumentOutOfRangeException(nameof(dims), $"Dimension must be > 0, got {d}.");
-        _dims    = dims.ToArray();
-        _strides = ComputeStrides(_dims);
-        ElementCount = ComputeElementCount(_dims);
+
+        _rank = dims.Length;
+        _elementCount = ComputeElementCount(dims);
+
+        if (dims.Length <= 4)
+        {
+            // Inline path — no heap allocation.
+            if (dims.Length >= 1) { _d0 = dims[0]; _s0 = dims.Length == 1 ? 1 : ComputeStride(dims, 0); }
+            if (dims.Length >= 2) { _d1 = dims[1]; _s1 = dims.Length == 2 ? 1 : ComputeStride(dims, 1); }
+            if (dims.Length >= 3) { _d2 = dims[2]; _s2 = dims.Length == 3 ? 1 : ComputeStride(dims, 2); }
+            if (dims.Length >= 4) { _d3 = dims[3]; _s3 = 1; }
+            _dimsOverflow = null;
+            _stridesOverflow = null;
+        }
+        else
+        {
+            // Overflow path — heap arrays for rank > 4.
+            _dimsOverflow = dims.ToArray();
+            _stridesOverflow = ComputeStridesArray(_dimsOverflow);
+        }
     }
 
     public TensorShape(params int[] dims)
         : this((ReadOnlySpan<int>)(dims ?? throw new ArgumentNullException(nameof(dims)))) { }
 
-    public TensorShape(int d0) : this([d0]) { }
-    public TensorShape(int d0, int d1) : this([d0, d1]) { }
-    public TensorShape(int d0, int d1, int d2) : this([d0, d1, d2]) { }
-    public TensorShape(int d0, int d1, int d2, int d3) : this([d0, d1, d2, d3]) { }
+    public TensorShape(int d0)
+    {
+        _rank = 1; _elementCount = d0;
+        _d0 = d0; _s0 = 1;
+    }
 
-    // properties
+    public TensorShape(int d0, int d1)
+    {
+        _rank = 2; _elementCount = d0 * d1;
+        _d0 = d0; _d1 = d1;
+        _s0 = d1; _s1 = 1;
+    }
 
-    public int Rank         => _dims.Length;
-    public int ElementCount { get; }
+    public TensorShape(int d0, int d1, int d2)
+    {
+        _rank = 3; _elementCount = d0 * d1 * d2;
+        _d0 = d0; _d1 = d1; _d2 = d2;
+        _s0 = d1 * d2; _s1 = d2; _s2 = 1;
+    }
 
-    /// <summary>Dimension sizes (read-only view).</summary>
-    public ReadOnlySpan<int> Dims    => _dims;
+    public TensorShape(int d0, int d1, int d2, int d3)
+    {
+        _rank = 4; _elementCount = d0 * d1 * d2 * d3;
+        _d0 = d0; _d1 = d1; _d2 = d2; _d3 = d3;
+        _s0 = d1 * d2 * d3; _s1 = d2 * d3; _s2 = d3; _s3 = 1;
+    }
 
-    /// <summary>Element strides in row-major order (read-only view).</summary>
-    public ReadOnlySpan<int> Strides => _strides;
+    // ── properties ────────────────────────────────────────────────
+
+    public int Rank => _rank;
+    public int ElementCount => _elementCount;
+
+    /// <summary>
+    /// Dimension sizes (read-only view). Allocates a small array on demand for inline ranks (1–4).
+    /// Prefer using the indexer <c>shape[i]</c> in hot paths to avoid this allocation.
+    /// </summary>
+    public ReadOnlySpan<int> Dims => _dimsOverflow ?? CreateInlineDimsArray();
+
+    /// <summary>
+    /// Element strides in row-major order (read-only view). Allocates on demand for inline ranks.
+    /// Prefer using <see cref="GetOffset(int, int)"/> in hot paths.
+    /// </summary>
+    public ReadOnlySpan<int> Strides => _stridesOverflow ?? CreateInlineStridesArray();
 
     /// <summary>Supports negative indexing: shape[-1] is the last dim.</summary>
     public int this[int dim]
     {
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        get => _dims[dim < 0 ? _dims.Length + dim : dim];
+        get
+        {
+            int i = dim < 0 ? _rank + dim : dim;
+            return i switch
+            {
+                0 => _d0,
+                1 => _d1,
+                2 => _d2,
+                3 => _d3,
+                _ => _dimsOverflow![i]
+            };
+        }
     }
-    public int Length => _dims.Length; // Required for implicit index support
-    // Convenience aliases for 2-D tensors
-    public int Rows => _dims[^2];
-    public int Cols => _dims[^1];
 
-    public bool IsScalar => Rank == 1 && _dims[0] == 1;
-    public bool IsVector  => Rank == 1;
-    public bool IsMatrix  => Rank == 2;
+    public int Length => _rank;
 
-    // flat offset
+    public int Rows
+    {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        get => _rank >= 2 ? this[^2] : throw new InvalidOperationException("Shape must have at least 2 dimensions.");
+    }
+
+    public int Cols
+    {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        get => this[^1];
+    }
+
+    public bool IsScalar => _rank == 1 && _d0 == 1;
+    public bool IsVector => _rank == 1;
+    public bool IsMatrix => _rank == 2;
+
+    // ── flat offset ───────────────────────────────────────────────
 
     /// <summary>Converts a multi-index to a flat buffer offset.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public int GetOffset(ReadOnlySpan<int> indices)
     {
-        if (indices.Length != Rank)
-            throw new ArgumentException($"Expected {Rank} indices, got {indices.Length}.");
+        if (indices.Length != _rank)
+            throw new ArgumentException($"Expected {_rank} indices, got {indices.Length}.");
         int offset = 0;
-        for (int i = 0; i < Rank; i++)
-            offset += indices[i] * _strides[i];
+        if (_stridesOverflow is not null)
+        {
+            for (int i = 0; i < _rank; i++)
+                offset += indices[i] * _stridesOverflow[i];
+        }
+        else
+        {
+            for (int i = 0; i < _rank; i++)
+                offset += indices[i] * GetStrideInline(i);
+        }
         return offset;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public int GetOffset(int row, int col) => row * _strides[^2] + col;
+    public int GetOffset(int row, int col)
+    {
+        if (_stridesOverflow is not null)
+            return row * _stridesOverflow[^2] + col;
+        return row * GetStrideInline(_rank - 2) + col;
+    }
 
-    // shape algebra
+    // ── shape algebra ─────────────────────────────────────────────
 
-    /// <summary>
-    /// Returns a new shape with the same element count but different dims.
-    /// Pass -1 for exactly one dim to infer it automatically.
-    /// </summary>
     public TensorShape Reshape(params int[] newDims) => Reshape((ReadOnlySpan<int>)newDims);
 
     public TensorShape Reshape(ReadOnlySpan<int> newDims)
@@ -107,89 +192,150 @@ public readonly struct TensorShape : IEquatable<TensorShape>
         }
 
         if (inferred >= 0)
-            dims[inferred] = (int)(ElementCount / known);
+            dims[inferred] = (int)(_elementCount / known);
 
         int count = ComputeElementCount(dims);
-        if (count != ElementCount)
+        if (count != _elementCount)
             throw new ArgumentException(
-                $"Cannot reshape {this} ({ElementCount} elements) into ({string.Join(", ", dims.ToArray())}) ({count} elements).");
-        return new TensorShape(dims.ToArray());
+                $"Cannot reshape {this} ({_elementCount} elements) into ({string.Join(", ", dims.ToArray())}) ({count} elements).");
+        return new TensorShape(dims);
     }
 
-    public TensorShape Reshape(int d0) => Reshape([d0]);
-    public TensorShape Reshape(int d0, int d1) => Reshape([d0, d1]);
-    public TensorShape Reshape(int d0, int d1, int d2) => Reshape([d0, d1, d2]);
-    public TensorShape Reshape(int d0, int d1, int d2, int d3) => Reshape([d0, d1, d2, d3]);
+    public TensorShape Reshape(int d0)
+    {
+        if (d0 == -1) d0 = _elementCount;
+        if (d0 != _elementCount)
+            throw new ArgumentException($"Cannot reshape {this} ({_elementCount} elements) into ({d0}).");
+        return new TensorShape(d0);
+    }
 
-    /// <summary>Adds a size-1 dimension at <paramref name="axis"/>.</summary>
+    public TensorShape Reshape(int d0, int d1) => Reshape((ReadOnlySpan<int>)[d0, d1]);
+    public TensorShape Reshape(int d0, int d1, int d2) => Reshape((ReadOnlySpan<int>)[d0, d1, d2]);
+    public TensorShape Reshape(int d0, int d1, int d2, int d3) => Reshape((ReadOnlySpan<int>)[d0, d1, d2, d3]);
+
     public TensorShape Unsqueeze(int axis)
     {
-        if (axis < 0) axis += Rank + 1;
-        var newDims = new int[Rank + 1];
-        _dims.AsSpan(0, axis).CopyTo(newDims);
+        if (axis < 0) axis += _rank + 1;
+
+        Span<int> newDims = stackalloc int[_rank + 1];
+        for (int i = 0; i < axis; i++)
+            newDims[i] = this[i];
         newDims[axis] = 1;
-        _dims.AsSpan(axis).CopyTo(newDims.AsSpan(axis + 1));
+        for (int i = axis; i < _rank; i++)
+            newDims[i + 1] = this[i];
         return new TensorShape(newDims);
     }
 
-    /// <summary>Removes a size-1 dimension at <paramref name="axis"/>.</summary>
     public TensorShape Squeeze(int axis)
     {
-        if (axis < 0) axis += Rank;
-        if (_dims[axis] != 1)
-            throw new InvalidOperationException($"Cannot squeeze dim {axis} of size {_dims[axis]}.");
-        var newDims = new int[Rank - 1];
-        _dims.AsSpan(0, axis).CopyTo(newDims);
-        _dims.AsSpan(axis + 1).CopyTo(newDims.AsSpan(axis));
+        if (axis < 0) axis += _rank;
+        int dim = this[axis];
+        if (dim != 1)
+            throw new InvalidOperationException($"Cannot squeeze dim {axis} of size {dim}.");
+
+        Span<int> newDims = stackalloc int[_rank - 1];
+        for (int i = 0; i < axis; i++)
+            newDims[i] = this[i];
+        for (int i = axis + 1; i < _rank; i++)
+            newDims[i - 1] = this[i];
         return new TensorShape(newDims);
     }
 
-    // validation helpers
+    // ── validation helpers ────────────────────────────────────────
 
     public static void AssertSameShape(TensorShape a, TensorShape b)
     {
         if (!a.Equals(b))
-            throw new ArgumentException($"{(new System.Diagnostics.StackTrace()?.GetFrame(1)?.GetMethod()?.Name??"Operation")} requires identical shapes, got {a} and {b}.");
+            throw new ArgumentException($"{(new System.Diagnostics.StackTrace()?.GetFrame(1)?.GetMethod()?.Name ?? "Operation")} requires identical shapes, got {a} and {b}.");
     }
 
     public static void AssertMatMulCompatible(TensorShape a, TensorShape b)
     {
-        if (a.Rank != 2 || b.Rank != 2)
+        if (a._rank != 2 || b._rank != 2)
             throw new ArgumentException($"MatMul requires 2-D tensors, got {a} and {b}.");
         if (a.Cols != b.Rows)
             throw new ArgumentException(
                 $"MatMul shape mismatch: {a} · {b} (inner dims {a.Cols} ≠ {b.Rows}).");
     }
 
-    // equality
+    // ── equality ──────────────────────────────────────────────────
 
-    public bool Equals(TensorShape other) =>
-        _dims is not null && other._dims is not null &&
-        _dims.AsSpan().SequenceEqual(other._dims);
+    public bool Equals(TensorShape other)
+    {
+        if (_rank != other._rank) return false;
+        if (_dimsOverflow is not null && other._dimsOverflow is not null)
+            return _dimsOverflow.AsSpan().SequenceEqual(other._dimsOverflow);
+        // Inline comparison — no allocation.
+        return _rank switch
+        {
+            1 => _d0 == other._d0,
+            2 => _d0 == other._d0 && _d1 == other._d1,
+            3 => _d0 == other._d0 && _d1 == other._d1 && _d2 == other._d2,
+            4 => _d0 == other._d0 && _d1 == other._d1 && _d2 == other._d2 && _d3 == other._d3,
+            _ => false
+        };
+    }
 
     public override bool Equals(object? obj) => obj is TensorShape s && Equals(s);
-    public override int GetHashCode()         => HashCode.Combine(Rank, ElementCount);
+    public override int GetHashCode() => HashCode.Combine(_rank, _elementCount);
 
     public static bool operator ==(TensorShape a, TensorShape b) => a.Equals(b);
     public static bool operator !=(TensorShape a, TensorShape b) => !a.Equals(b);
 
-    // display
+    // ── display ───────────────────────────────────────────────────
 
     public override string ToString()
     {
         var sb = new StringBuilder("(");
-        for (int i = 0; i < _dims.Length; i++)
+        for (int i = 0; i < _rank; i++)
         {
-            sb.Append(_dims[i]);
-            if (i < _dims.Length - 1) sb.Append(", ");
+            sb.Append(this[i]);
+            if (i < _rank - 1) sb.Append(", ");
         }
         sb.Append(')');
         return sb.ToString();
     }
 
-    // private helpers
+    // ── private helpers ───────────────────────────────────────────
 
-    private static int[] ComputeStrides(int[] dims)
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private int GetStrideInline(int i) => i switch
+    {
+        0 => _s0,
+        1 => _s1,
+        2 => _s2,
+        3 => _s3,
+        _ => 0
+    };
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static int ComputeStride(ReadOnlySpan<int> dims, int i)
+    {
+        int s = 1;
+        for (int j = i + 1; j < dims.Length; j++)
+            s *= dims[j];
+        return s;
+    }
+
+    private int[] CreateInlineDimsArray() => _rank switch
+    {
+        1 => [_d0],
+        2 => [_d0, _d1],
+        3 => [_d0, _d1, _d2],
+        4 => [_d0, _d1, _d2, _d3],
+        _ => []
+    };
+
+    private int[] CreateInlineStridesArray() => _rank switch
+    {
+        1 => [_s0],
+        2 => [_s0, _s1],
+        3 => [_s0, _s1, _s2],
+        4 => [_s0, _s1, _s2, _s3],
+        _ => []
+    };
+
+    private static int[] ComputeStridesArray(int[] dims)
     {
         var s = new int[dims.Length];
         s[^1] = 1;
@@ -204,7 +350,4 @@ public readonly struct TensorShape : IEquatable<TensorShape>
         foreach (int d in dims) n *= d;
         return n;
     }
-
-    private static int ComputeElementCount(int[] dims)
-        => ComputeElementCount((ReadOnlySpan<int>)dims);
 }
