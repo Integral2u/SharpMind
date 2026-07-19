@@ -93,35 +93,54 @@ public sealed class KVCache(int batchSize, int numKvHeads, int maxSeqLen, int he
         unsafe
         {
             uint rowBytes = (uint)headDim * sizeof(float);
-            for (int b = 0; b < batch; b++)
+
+            if (numKvHeads == 1)
             {
-                for (int s = 0; s < seqLen; s++)
+                long seqBlockBytes = (long)seqLen * headDim * sizeof(float);
+                long dstCapBytes  = (long)(MaxSeqLen - CurrentPosition) * headDim * sizeof(float);
+                for (int b = 0; b < batch; b++)
                 {
-                    for (int h = 0; h < numKvHeads; h++)
+                    float* srcK = k.DataPtr + (long)b * seqLen * headDim;
+                    float* dstK = _keys.DataPtr + (long)b * MaxSeqLen * headDim + (long)CurrentPosition * headDim;
+                    Buffer.MemoryCopy(srcK, dstK, dstCapBytes, seqBlockBytes);
+
+                    float* srcV = v.DataPtr + (long)b * seqLen * headDim;
+                    float* dstV = _values.DataPtr + (long)b * MaxSeqLen * headDim + (long)CurrentPosition * headDim;
+                    Buffer.MemoryCopy(srcV, dstV, dstCapBytes, seqBlockBytes);
+                }
+            }
+            else
+            {
+                for (int b = 0; b < batch; b++)
+                {
+                    for (int s = 0; s < seqLen; s++)
                     {
-                        float* srcK = k.DataPtr
-                            + (long)b * (seqLen * numKvHeads * headDim)
-                            + (long)s * (numKvHeads * headDim)
-                            + (long)h * headDim;
+                        for (int h = 0; h < numKvHeads; h++)
+                        {
+                            float* srcK = k.DataPtr
+                                + (long)b * (seqLen * numKvHeads * headDim)
+                                + (long)s * (numKvHeads * headDim)
+                                + (long)h * headDim;
 
-                        float* dstK = _keys.DataPtr
-                            + (long)b * (_numKvHeads * MaxSeqLen * headDim)
-                            + (long)h * (MaxSeqLen * headDim)
-                            + (long)(CurrentPosition + s) * headDim;
+                            float* dstK = _keys.DataPtr
+                                + (long)b * (_numKvHeads * MaxSeqLen * headDim)
+                                + (long)h * (MaxSeqLen * headDim)
+                                + (long)(CurrentPosition + s) * headDim;
 
-                        Unsafe.CopyBlock(dstK, srcK, rowBytes);
+                            Unsafe.CopyBlock(dstK, srcK, rowBytes);
 
-                        float* srcV = v.DataPtr
-                            + (long)b * (seqLen * numKvHeads * headDim)
-                            + (long)s * (numKvHeads * headDim)
-                            + (long)h * headDim;
+                            float* srcV = v.DataPtr
+                                + (long)b * (seqLen * numKvHeads * headDim)
+                                + (long)s * (numKvHeads * headDim)
+                                + (long)h * headDim;
 
-                        float* dstV = _values.DataPtr
-                            + (long)b * (_numKvHeads * MaxSeqLen * headDim)
-                            + (long)h * (MaxSeqLen * headDim)
-                            + (long)(CurrentPosition + s) * headDim;
+                            float* dstV = _values.DataPtr
+                                + (long)b * (_numKvHeads * MaxSeqLen * headDim)
+                                + (long)h * (MaxSeqLen * headDim)
+                                + (long)(CurrentPosition + s) * headDim;
 
-                        Unsafe.CopyBlock(dstV, srcV, rowBytes);
+                            Unsafe.CopyBlock(dstV, srcV, rowBytes);
+                        }
                     }
                 }
             }
@@ -133,8 +152,11 @@ public sealed class KVCache(int batchSize, int numKvHeads, int maxSeqLen, int he
     public object? Snapshot()
     {
         if (CurrentPosition == 0) return null;
-        var k = _keys.Data.ToArray();
-        var v = _values.Data.ToArray();
+        int activeLen = _batchSize * _numKvHeads * CurrentPosition * _headDim;
+        var k = new float[activeLen];
+        var v = new float[activeLen];
+        _keys.Data[..activeLen].CopyTo(k);
+        _values.Data[..activeLen].CopyTo(v);
         return (CurrentPosition, k, v);
     }
 
@@ -142,8 +164,8 @@ public sealed class KVCache(int batchSize, int numKvHeads, int maxSeqLen, int he
     {
         if (snapshot is null) return;
         var (pos, k, v) = ((int, float[], float[]))snapshot;
-        _keys.CopyFrom(k);
-        _values.CopyFrom(v);
+        k.AsSpan().CopyTo(_keys.Data);
+        v.AsSpan().CopyTo(_values.Data);
         CurrentPosition = pos;
     }
 

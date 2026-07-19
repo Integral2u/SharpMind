@@ -167,9 +167,11 @@ public sealed class PagedKVCache : IDisposable
     {
         ThrowIfDisposed();
         if (_currentPosition == 0) return null;
-        var data = new float[_keys.ElementCount + _values.ElementCount];
-        _keys.Data.CopyTo(data.AsSpan(0, _keys.ElementCount));
-        _values.Data.CopyTo(data.AsSpan(_keys.ElementCount, _values.ElementCount));
+        int activePages = (_currentPosition + _pageSize - 1) / _pageSize;
+        int activeFloats = activePages * _stridePage * _batchSize;
+        var data = new float[activeFloats * 2];
+        _keys.Data[..activeFloats].CopyTo(data.AsSpan(0, activeFloats));
+        _values.Data[..activeFloats].CopyTo(data.AsSpan(activeFloats, activeFloats));
         return (_currentPosition, data);
     }
 
@@ -178,9 +180,10 @@ public sealed class PagedKVCache : IDisposable
         ThrowIfDisposed();
         if (snapshot is null) return;
         var (pos, data) = ((int, float[]))snapshot;
+        int activeFloats = data.Length / 2;
+        data.AsSpan(0, activeFloats).CopyTo(_keys.Data);
+        data.AsSpan(activeFloats, activeFloats).CopyTo(_values.Data);
         _currentPosition = pos;
-        data.AsSpan(0, _keys.ElementCount).CopyTo(_keys.Data);
-        data.AsSpan(_keys.ElementCount, _values.ElementCount).CopyTo(_values.Data);
     }
 
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, nameof(PagedKVCache));
