@@ -61,29 +61,47 @@ public readonly struct TensorShape : IEquatable<TensorShape>
 
     public TensorShape(int d0)
     {
+        if (d0 <= 0) throw new ArgumentOutOfRangeException(nameof(d0), $"Dimension must be > 0, got {d0}.");
         _rank = 1; _elementCount = d0;
         _d0 = d0; _s0 = 1;
     }
 
     public TensorShape(int d0, int d1)
     {
-        _rank = 2; _elementCount = d0 * d1;
+        if (d0 <= 0) throw new ArgumentOutOfRangeException(nameof(d0), $"Dimension must be > 0, got {d0}.");
+        if (d1 <= 0) throw new ArgumentOutOfRangeException(nameof(d1), $"Dimension must be > 0, got {d1}.");
+        long count = (long)d0 * d1;
+        if (count > int.MaxValue) throw new ArgumentOutOfRangeException(nameof(d0), $"Element count {count} overflows int.");
+        _rank = 2; _elementCount = (int)count;
         _d0 = d0; _d1 = d1;
         _s0 = d1; _s1 = 1;
     }
 
     public TensorShape(int d0, int d1, int d2)
     {
-        _rank = 3; _elementCount = d0 * d1 * d2;
+        if (d0 <= 0) throw new ArgumentOutOfRangeException(nameof(d0), $"Dimension must be > 0, got {d0}.");
+        if (d1 <= 0) throw new ArgumentOutOfRangeException(nameof(d1), $"Dimension must be > 0, got {d1}.");
+        if (d2 <= 0) throw new ArgumentOutOfRangeException(nameof(d2), $"Dimension must be > 0, got {d2}.");
+        long count = (long)d0 * d1 * d2;
+        if (count > int.MaxValue) throw new ArgumentOutOfRangeException(nameof(d0), $"Element count {count} overflows int.");
+        _rank = 3; _elementCount = (int)count;
         _d0 = d0; _d1 = d1; _d2 = d2;
-        _s0 = d1 * d2; _s1 = d2; _s2 = 1;
+        long s0 = (long)d1 * d2; _s0 = (int)s0; _s1 = d2; _s2 = 1;
     }
 
     public TensorShape(int d0, int d1, int d2, int d3)
     {
-        _rank = 4; _elementCount = d0 * d1 * d2 * d3;
+        if (d0 <= 0) throw new ArgumentOutOfRangeException(nameof(d0), $"Dimension must be > 0, got {d0}.");
+        if (d1 <= 0) throw new ArgumentOutOfRangeException(nameof(d1), $"Dimension must be > 0, got {d1}.");
+        if (d2 <= 0) throw new ArgumentOutOfRangeException(nameof(d2), $"Dimension must be > 0, got {d2}.");
+        if (d3 <= 0) throw new ArgumentOutOfRangeException(nameof(d3), $"Dimension must be > 0, got {d3}.");
+        long count = (long)d0 * d1 * d2 * d3;
+        if (count > int.MaxValue) throw new ArgumentOutOfRangeException(nameof(d0), $"Element count {count} overflows int.");
+        _rank = 4; _elementCount = (int)count;
         _d0 = d0; _d1 = d1; _d2 = d2; _d3 = d3;
-        _s0 = d1 * d2 * d3; _s1 = d2 * d3; _s2 = d3; _s3 = 1;
+        long s0 = (long)d1 * d2 * d3; _s0 = (int)s0;
+        long s1 = (long)d2 * d3; _s1 = (int)s1;
+        _s2 = d3; _s3 = 1;
     }
 
     // ── properties ────────────────────────────────────────────────
@@ -151,12 +169,22 @@ public readonly struct TensorShape : IEquatable<TensorShape>
         if (_stridesOverflow is not null)
         {
             for (int i = 0; i < _rank; i++)
+            {
+                int dim = _dimsOverflow![i];
+                if ((uint)indices[i] >= (uint)dim)
+                    throw new ArgumentOutOfRangeException(nameof(indices), $"Index {indices[i]} out of range for dim {i} (size {dim}).");
                 offset += indices[i] * _stridesOverflow[i];
+            }
         }
         else
         {
             for (int i = 0; i < _rank; i++)
+            {
+                int dim = this[i];
+                if ((uint)indices[i] >= (uint)dim)
+                    throw new ArgumentOutOfRangeException(nameof(indices), $"Index {indices[i]} out of range for dim {i} (size {dim}).");
                 offset += indices[i] * GetStrideInline(i);
+            }
         }
         return offset;
     }
@@ -165,7 +193,17 @@ public readonly struct TensorShape : IEquatable<TensorShape>
     public int GetOffset(int row, int col)
     {
         if (_stridesOverflow is not null)
+        {
+            int dimR = _dimsOverflow![^2];
+            int dimC = _dimsOverflow[^1];
+            if ((uint)row >= (uint)dimR || (uint)col >= (uint)dimC)
+                throw new ArgumentOutOfRangeException(nameof(row), $"Index [{row},{col}] out of range for shape [{dimR},{dimC}].");
             return row * _stridesOverflow[^2] + col;
+        }
+        int dR = this[_rank - 2];
+        int dC = this[_rank - 1];
+        if ((uint)row >= (uint)dR || (uint)col >= (uint)dC)
+            throw new ArgumentOutOfRangeException(nameof(row), $"Index [{row},{col}] out of range for shape [{dR},{dC}].");
         return row * GetStrideInline(_rank - 2) + col;
     }
 
@@ -311,10 +349,11 @@ public readonly struct TensorShape : IEquatable<TensorShape>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static int ComputeStride(ReadOnlySpan<int> dims, int i)
     {
-        int s = 1;
+        long s = 1;
         for (int j = i + 1; j < dims.Length; j++)
             s *= dims[j];
-        return s;
+        if (s > int.MaxValue) throw new ArgumentOutOfRangeException(nameof(dims), $"Stride {s} overflows int.");
+        return (int)s;
     }
 
     private int[] CreateInlineDimsArray() => _rank switch
@@ -340,14 +379,19 @@ public readonly struct TensorShape : IEquatable<TensorShape>
         var s = new int[dims.Length];
         s[^1] = 1;
         for (int i = dims.Length - 2; i >= 0; i--)
-            s[i] = s[i + 1] * dims[i + 1];
+        {
+            long val = (long)s[i + 1] * dims[i + 1];
+            if (val > int.MaxValue) throw new ArgumentOutOfRangeException(nameof(dims), $"Stride {val} overflows int.");
+            s[i] = (int)val;
+        }
         return s;
     }
 
     private static int ComputeElementCount(ReadOnlySpan<int> dims)
     {
-        int n = 1;
+        long n = 1;
         foreach (int d in dims) n *= d;
-        return n;
+        if (n > int.MaxValue) throw new ArgumentOutOfRangeException(nameof(dims), $"Element count {n} overflows int.");
+        return (int)n;
     }
 }

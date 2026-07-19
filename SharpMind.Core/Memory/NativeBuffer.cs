@@ -28,7 +28,7 @@ public sealed unsafe class NativeBuffer<T> : IDisposable where T : unmanaged
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(elementCount);
         Length = elementCount;
-        nuint byteLen = (nuint)(elementCount * sizeof(T));
+        nuint byteLen = (nuint)elementCount * (nuint)sizeof(T);
         _ptr = (T*)NativeMemory.AlignedAlloc(byteLen, Alignment);
         if (_ptr is null) ThrowOom();
         NativeMemory.Clear(_ptr, byteLen);
@@ -75,6 +75,15 @@ public sealed unsafe class NativeBuffer<T> : IDisposable where T : unmanaged
             NativeMemory.AlignedFree(_ptr);
             _ptr = null;
         }
+    }
+
+    /// <summary>
+    /// Detaches this buffer from the pool without freeing native memory.
+    /// Used when the buffer is returned to the pool for reuse.
+    /// </summary>
+    internal void Detach()
+    {
+        Volatile.Write(ref _refCount, 0);
     }
 
     // span access

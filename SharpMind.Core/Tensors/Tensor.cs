@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.Intrinsics;
@@ -110,7 +111,12 @@ public sealed unsafe class Tensor<T> : IDisposable
     public ref T this[int flatIndex]
     {
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        get => ref DataPtr[flatIndex];
+        get
+        {
+            [Conditional("DEBUG")] static void Check(int idx, int len) { if ((uint)idx >= (uint)len) throw new ArgumentOutOfRangeException(nameof(flatIndex), $"Index {idx} out of range [0..{len - 1}]."); }
+            Check(flatIndex, ElementCount);
+            return ref DataPtr[flatIndex];
+        }
     }
 
     /// <summary>2-D element access (row, col).</summary>
@@ -516,9 +522,9 @@ public sealed unsafe class Tensor<T> : IDisposable
         {
             for (int c = r + 1; c < C; c++)
             {
-                int i = r * C + c;
-                int j = c * R + r;
-                (data[i], data[j]) = (data[j], data[i]);
+                long i = (long)r * C + c;
+                long j = (long)c * R + r;
+                (data[(int)i], data[(int)j]) = (data[(int)j], data[(int)i]);
             }
         }
     }

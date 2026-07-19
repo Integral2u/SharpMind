@@ -18,10 +18,8 @@ public static class NativeBufferPool<T> where T : unmanaged
     private class Bucket
     {
         public readonly ConcurrentStack<NativeBuffer<T>> Stack = new();
-        /// <summary>Approximate count — Interlocked for lock-free access.</summary>
-        public int Count = 0;
-        /// <summary>Approximate memory — Interlocked for lock-free access.</summary>
-        public long Memory = 0;
+        public int Count;
+        public long Memory;
     }
 
     private static readonly ConcurrentDictionary<int, Bucket> _buckets = new();
@@ -31,20 +29,54 @@ public static class NativeBufferPool<T> where T : unmanaged
         if (length <= 0) length = 1;
         int bucketSize = GetBucket(length);
 
-        var buffer = new NativeBuffer<T>(bucketSize);
+        if (_buckets.TryGetValue(bucketSize, out var bucket) && bucket.Stack.TryPop(out var buffer))
+        {
+            // CAS refcount 0 → 1: only one caller wins the race.
+            if (Interlocked.CompareExchange(ref buffer._refCount, 1, 0) == 0)
+            {
+                Interlocked.Decrement(ref bucket.Count);
+                long byteLen = (long)bucketSize * sizeof(T);
+                Interlocked.Add(ref bucket.Memory, -byteLen);
+                NativeMemory.Clear(buffer.Ptr, (nuint)byteLen);
+                return buffer;
+            }
+        }
+
+        var newBuffer = new NativeBuffer<T>(bucketSize);
         NativeBufferPoolConfig.OnAllocate(bucketSize * sizeof(T));
-        return buffer;
+        return newBuffer;
     }
 
     public static unsafe void Return(NativeBuffer<T> buffer)
     {
         if (buffer is null) return;
-        buffer._refCount = 0;
+
         int bucketSize = buffer.Length;
         int byteSize = bucketSize * sizeof(T);
+        long maxBytes = NativeBufferPoolConfig.MaxTotalMemoryMB * 1024 * 1024;
+
+        bool pooled = false;
+        if (bucketSize <= 1024 * 1024)
+        {
+            var bucket = _buckets.GetOrAdd(bucketSize, _ => new Bucket());
+            int count = Volatile.Read(ref bucket.Count);
+            if (count < NativeBufferPoolConfig.MaxBuffersPerBucket
+                && NativeBufferPoolConfig.TotalMemoryUsed + byteSize <= maxBytes)
+            {
+                buffer.Detach();       // mark as pooled, do NOT free memory
+                bucket.Stack.Push(buffer);
+                Interlocked.Increment(ref bucket.Count);
+                Interlocked.Add(ref bucket.Memory, byteSize);
+                pooled = true;
+            }
+        }
+
+        if (!pooled)
+        {
+            buffer.Free();
+        }
 
         NativeBufferPoolConfig.OnFree(byteSize);
-        buffer.Free();
     }
 
     public static void Clear()
