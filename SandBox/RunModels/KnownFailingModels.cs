@@ -7,6 +7,8 @@ namespace SandBox.RunModels
     {
         private static readonly string[] Models =
         [
+            
+            
             //New response:\n\n\nCopyright c 200 20199
             "Qwen2-0.5B.Q6_K", //Response:The\nsystem\nsystem is a system that helps you to make better decisions   
 
@@ -38,9 +40,8 @@ namespace SandBox.RunModels
             "Bonsai-8B-Q1_0",   //Out of Memory
             
             //"Phi-3-mini-4k-instruct-q4", //System.OutOfMemoryException try cached loader
-            //"qwen2.5-coder-3b-instruct-q8_0", //System.OutOfMemoryException
-            //"qwen2.5-coder-3b-instruct-q4_k_m", //System.OutOfMemoryException
-            //"qwen2.5-coder-3b-instruct-q2_k", //System.OutOfMemoryException
+            "qwen2.5-coder-3b-instruct-q4_k_m", //Gave up waiting
+            "qwen2.5-coder-3b-instruct-q2_k", //System.OutOfMemoryException
             */
             ];
 

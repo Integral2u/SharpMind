@@ -33,8 +33,8 @@ namespace SandBox.RunModels
             "qwen2.5-1.5b-instruct-q8_0", //Response:Hello! How can I help you today?
 
             "llama-3.2-1b-instruct-q8_0",       //Response:It seems like you've got a question about the answer to my own.
-            
-
+            //Slow
+            //"qwen2.5-coder-3b-instruct-q8_0", //Response: Hello! How can I assist you today?
             
             
         ];
