@@ -18,7 +18,6 @@ namespace SharpMind.Model.Layers.Attention;
         public readonly LinearLayer Wk;
         public readonly LinearLayer Wv;
         public readonly LinearLayer Wo;
-        public readonly LinearLayer Wqkv; // Added fused layer
         public readonly PositionalEncoder PositionalEncoder;
         private NormLayer? _qNorm;
         private NormLayer? _kNorm;
@@ -82,7 +81,6 @@ namespace SharpMind.Model.Layers.Attention;
         int kvDim = config.NumKvHeads * config.HeadDim;
 
         var tm = weights?.TensorMeta;
-        int totalQkvDim = qDim + 2 * kvDim;
         if (mapping != null)
         {
             Wq = LinearLayerFactory.Create("q_proj", config.HiddenDim, qDim, true,
@@ -93,8 +91,6 @@ namespace SharpMind.Model.Layers.Attention;
                 weights?.Wv, weights?.WvBias, tm?.GetValueOrDefault("RawWv").Dtype ?? QuantDType.F32, mapping);
             Wo = LinearLayerFactory.Create("o_proj", qDim, config.HiddenDim, true,
                 weights?.Wo, weights?.WoBias, tm?.GetValueOrDefault("RawWo").Dtype ?? QuantDType.F32, mapping);
-            Wqkv = LinearLayerFactory.Create("qkv_proj", config.HiddenDim, totalQkvDim, true,
-                null, null, QuantDType.F32);
         }
         else
         {
@@ -106,8 +102,6 @@ namespace SharpMind.Model.Layers.Attention;
                 weights?.Wv, weights?.WvBias, tm?.GetValueOrDefault("RawWv").Dtype ?? QuantDType.F32);
             Wo = LinearLayerFactory.Create("o_proj", qDim, config.HiddenDim, true,
                 weights?.Wo, weights?.WoBias, tm?.GetValueOrDefault("RawWo").Dtype ?? QuantDType.F32);
-            Wqkv = LinearLayerFactory.Create("qkv_proj", config.HiddenDim, totalQkvDim, true,
-                null, null, QuantDType.F32);
         }
         PositionalEncoder = config.PositionalEncoding switch
         {
@@ -117,72 +111,10 @@ namespace SharpMind.Model.Layers.Attention;
                  ropeDim: config.RopeDim, ropeScalingType: config.RopeScalingType,
                  ropeScalingFactor: config.RopeScalingFactor),
         };
-
-        if (weights?.Wq != null)
-            CopyFusedWeights(weights.Wq, weights.Wk, weights.Wv, weights.WqBias, weights.WkBias, weights.WvBias);
-    }
-
-    private void CopyFusedWeights(Tensor<float> wq, Tensor<float> wk, Tensor<float> wv,
-        Tensor<float>? wqB, Tensor<float>? wkB, Tensor<float>? wvB)
-    {
-        int hiddenDim = Config.HiddenDim;
-        int qDim = Config.NumHeads * Config.HeadDim;
-        int kvDim = Config.NumKvHeads * Config.HeadDim;
-        int totalOut = qDim + 2 * kvDim;
-        var wData = Wqkv.Weight.Data;
-
-        // Fused Wqkv is [In, Out] = [hiddenDim, totalOut]
-        // Wq/Wk/Wv are also [In, Out]. Copy column ranges.
-        for (int j = 0; j < hiddenDim; j++) // InFeatures
-        {
-            for (int i = 0; i < qDim; i++) // OutFeatures
-                wData[j * totalOut + i] = wq.Data[j * qDim + i];
-            for (int i = 0; i < kvDim; i++) // OutFeatures
-            {
-                wData[j * totalOut + (qDim + i)] = wk.Data[j * kvDim + i];
-                wData[j * totalOut + (qDim + kvDim + i)] = wv.Data[j * kvDim + i];
-            }
-        }
-
-        if (Wqkv.Bias != null)
-        {
-            wqB?.Data.CopyTo(Wqkv.Bias.Data[..qDim]);
-            wkB?.Data.CopyTo(Wqkv.Bias.Data.Slice(qDim, kvDim));
-            wvB?.Data.CopyTo(Wqkv.Bias.Data.Slice(qDim + kvDim, kvDim));
-        }
     }
 
     public void SetWeights(TransformerWeights.BlockWeights weights)
     {
-        int qDim = Config.NumHeads * Config.HeadDim;
-        int kvDim = Config.NumKvHeads * Config.HeadDim;
-        int hiddenDim = Config.HiddenDim;
-        int totalOut = qDim + 2 * kvDim;
-        // In cached mode, float tensors are loaded on-demand — skip the fused copy
-        if (weights.Wq != null)
-        {
-            var wData = Wqkv.Weight.Data;
-
-            for (int i = 0; i < hiddenDim; i++)
-                for (int j = 0; j < qDim; j++)
-                    wData[i * totalOut + j] = weights.Wq.Data[i * qDim + j];
-            for (int j = 0; j < hiddenDim; j++)
-            {
-                for (int i = 0; i < kvDim; i++)
-                {
-                    wData[j * totalOut + (qDim + i)] = weights.Wk.Data[j * kvDim + i];
-                    wData[j * totalOut + (qDim + kvDim + i)] = weights.Wv.Data[j * kvDim + i];
-                }
-            }
-        }
-
-        if (Wqkv.Bias != null && weights.WqBias != null)
-        {
-            weights.WqBias.Data.CopyTo(Wqkv.Bias.Data[..qDim]);
-            weights.WkBias.Data.CopyTo(Wqkv.Bias.Data.Slice(qDim, kvDim));
-            weights.WvBias.Data.CopyTo(Wqkv.Bias.Data.Slice(qDim + kvDim, kvDim));
-        }
-
         // Restore individual Q/K/V layers for fast quantized forward path
         if (weights.Wq != null) Wq.ReplaceWeights(weights.Wq, weights.WqBias);
         Wq.SetRawWeight(weights.RawWq);
@@ -218,33 +150,9 @@ namespace SharpMind.Model.Layers.Attention;
         Wo.SetRawWeight(weights.RawWo);
     }
 
-    private void LoadFusedWeightTransposed(ReadOnlySpan<float> data, int colOffset, int subOutF)
-    {
-        // data is GGUF layout [subOutF, HiddenDim] (transposed)
-        // Wqkv.Weight is [HiddenDim, totalOut] (Row-major: [In, Out])
-        var w = Wqkv.Weight;
-        int inF = w.Shape[0]; // HiddenDim
-        int totalOut = w.Shape[1]; // TotalOut
-        var wData = w.Data;
-
-        for (int o = 0; o < subOutF; o++) // OutFeatures index in sub-tensor
-        {
-            for (int i = 0; i < inF; i++) // InFeatures
-            {
-                // wData[row * totalOut + col]
-                // row = i, col = colOffset + o
-                wData[i * totalOut + (colOffset + o)] = data[o * inF + i];
-            }
-        }
-        // Stale _weightBT will be recomputed on next Forward
-    }
-
     public void LoadWeights(string name, ReadOnlySpan<float> data)
     {
         bool isBias = name.EndsWith(".bias", StringComparison.OrdinalIgnoreCase);
-        int hiddenDim = Config.HiddenDim;
-        int qDim = Config.NumHeads * Config.HeadDim;
-        int kvDim = Config.NumKvHeads * Config.HeadDim;
 
         // Q/K norm must be checked BEFORE the broader attn_q/attn_k checks
         if (name.Contains("attn_q_norm", StringComparison.OrdinalIgnoreCase))
@@ -259,18 +167,18 @@ namespace SharpMind.Model.Layers.Attention;
         }
         if (name.Contains("attn_q", StringComparison.OrdinalIgnoreCase) || name.Contains("q_proj", StringComparison.OrdinalIgnoreCase))
         {
-            if (isBias) data.CopyTo(Wqkv.Bias!.Data[..qDim]);
-            else LoadFusedWeightTransposed(data, 0, qDim);
+            if (isBias) Wq.LoadBias(data);
+            else Wq.LoadWeightTransposed(data);
         }
         else if (name.Contains("attn_k", StringComparison.OrdinalIgnoreCase) || name.Contains("k_proj", StringComparison.OrdinalIgnoreCase))
         {
-            if (isBias) data.CopyTo(Wqkv.Bias!.Data.Slice(qDim, kvDim));
-            else LoadFusedWeightTransposed(data, qDim, kvDim);
+            if (isBias) Wk.LoadBias(data);
+            else Wk.LoadWeightTransposed(data);
         }
         else if (name.Contains("attn_v", StringComparison.OrdinalIgnoreCase) || name.Contains("v_proj", StringComparison.OrdinalIgnoreCase))
         {
-            if (isBias) data.CopyTo(Wqkv.Bias!.Data.Slice(qDim + kvDim, kvDim));
-            else LoadFusedWeightTransposed(data, qDim + kvDim, kvDim);
+            if (isBias) Wv.LoadBias(data);
+            else Wv.LoadWeightTransposed(data);
         }
         else if (name.Contains("attn_output", StringComparison.OrdinalIgnoreCase) || name.Contains("attn_o.", StringComparison.OrdinalIgnoreCase) ||
                  name.Contains("o_proj", StringComparison.OrdinalIgnoreCase) || name.Contains("out_proj", StringComparison.OrdinalIgnoreCase))
@@ -522,7 +430,6 @@ namespace SharpMind.Model.Layers.Attention;
         Wk.FreeFloatWeight();
         Wv.FreeFloatWeight();
         Wo.FreeFloatWeight();
-        Wqkv?.FreeFloatWeight();
     }
 
     public void Dispose() { Dispose(true); GC.SuppressFinalize(this); }
@@ -532,7 +439,7 @@ namespace SharpMind.Model.Layers.Attention;
         if (disposing)
         {
             // These are LinearLayers, they will only dispose if they own the weights.
-            Wq.Dispose(); Wk.Dispose(); Wv.Dispose(); Wo.Dispose(); Wqkv.Dispose();
+            Wq.Dispose(); Wk.Dispose(); Wv.Dispose(); Wo.Dispose();
             _qNorm?.Dispose(); _kNorm?.Dispose();
         }
         _disposed = true;

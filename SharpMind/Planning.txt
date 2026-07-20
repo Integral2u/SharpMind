@@ -1,19 +1,6 @@
 CUI Plugins?
 [Conditional("DEBUG")] 
 
-Bugs / robustness issues
-
-Tensor<T>.Dispose() / NativeBuffer<T>.Dispose() aren't idempotent. Standard IDisposable practice is that calling Dispose() twice is a safe no-op, but here a second Dispose() call decrements an already-zeroed refcount, which can push the same native buffer back into the pool a second time while another live tensor still references it — a real double-free/aliasing hazard if Dispose() is ever called more than once (e.g. via both an explicit call and a using block, or on an exception path). Worth adding a guard flag.
-No finalizers on Tensor<T>/NativeBuffer<T>. If a tensor is dropped without Dispose() (exception before a using, forgotten cleanup in a rarely-hit branch), the unmanaged memory leaks permanently — the GC has no way to reclaim it. At minimum a debug-build finalizer that asserts/logs on non-disposal would catch these early.
-Quant-kernel mapping table itself (above) is really a correctness-adjacent bug as much as a perf one — it means the hardware-tier detection logic is lying about what code path actually runs.
-
-Minor/style notes
-
-Attention kernels are duplicated near-verbatim six-plus times (AVX2/FMA/Scalar × dense/flash × per quant format) — I understand the "no branches in the hot loop" motivation, but it makes it very easy for exactly the kind of copy-paste mismatch seen in the quant-matmul wiring to happen again undetected. A generator/template or heavier use of shared helpers for the dequant-and-accumulate step would reduce that risk.
-Q4_0/Q4_NL dequantization inside the "vectorized" flash kernels still unpacks nibbles one-at-a-time in a scalar loop before building the Vector256 — real SIMD gain there is limited to the multiply-accumulate; a masked shift/permute-based nibble unpack would let the whole dequant+dot be vectorized.
-
-If it'd help, I can go deeper on any one of these (e.g. actually trace through and fix the kernel-mapping table, or sketch the incremental-KV-cache turn logic) — just say which.
-
 
 Factory consistancy ActivationFactory,QuantizationFactory
 
