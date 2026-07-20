@@ -1,7 +1,7 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 18
-VisualStudioVersion = 18.8.11918.235 insiders
+VisualStudioVersion = 18.8.11918.235
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SharpMind", "SharpMind\SharpMind.csproj", "{FC7E84ED-99D7-48B0-A885-F2BCB5F88BF4}"
 EndProject
@@ -21,8 +21,6 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SandBox", "SandBox\SandBox.
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SharpMind.GPU", "SharpMind.GPU\SharpMind.GPU.csproj", "{7AEE28F0-3A11-3136-2DA8-39B07754A3C7}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SharpMind.Training", "SharpMind.Training\SharpMind.Training.csproj", "{E9D00D0B-0605-4535-9835-51FFDE115592}"
-EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SharpMind.Inference", "SharpMind.Inference\SharpMind.Inference.csproj", "{ECB2DC09-D735-4B6A-B1AB-EBAF826ED29E}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ExternalAssets", "ExternalAssets\ExternalAssets.csproj", "{2877C705-D9DB-4862-886E-ADE82A030CF4}"
@@ -32,6 +30,8 @@ EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SharpMind.Data.Parquet", "SharpMind.Data.Parquet\SharpMind.Data.Parquet.csproj", "{D5194327-81F5-EEF8-D4C6-F120EFCE26E0}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SharpMind.CUI", "SharpMind.CUI\SharpMind.CUI.csproj", "{000D8F35-5B70-4E59-A7E4-8A124DFE5047}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SharpMind.Training", "SharpMind.Training\SharpMind.Training.csproj", "{08160D23-2C33-B36C-2DDE-C0168872D7CD}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -75,10 +75,6 @@ Global
 		{7AEE28F0-3A11-3136-2DA8-39B07754A3C7}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{7AEE28F0-3A11-3136-2DA8-39B07754A3C7}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{7AEE28F0-3A11-3136-2DA8-39B07754A3C7}.Release|Any CPU.Build.0 = Release|Any CPU
-		{E9D00D0B-0605-4535-9835-51FFDE115592}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{E9D00D0B-0605-4535-9835-51FFDE115592}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{E9D00D0B-0605-4535-9835-51FFDE115592}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{E9D00D0B-0605-4535-9835-51FFDE115592}.Release|Any CPU.Build.0 = Release|Any CPU
 		{ECB2DC09-D735-4B6A-B1AB-EBAF826ED29E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{ECB2DC09-D735-4B6A-B1AB-EBAF826ED29E}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{ECB2DC09-D735-4B6A-B1AB-EBAF826ED29E}.Release|Any CPU.ActiveCfg = Release|Any CPU
@@ -99,6 +95,10 @@ Global
 		{000D8F35-5B70-4E59-A7E4-8A124DFE5047}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{000D8F35-5B70-4E59-A7E4-8A124DFE5047}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{000D8F35-5B70-4E59-A7E4-8A124DFE5047}.Release|Any CPU.Build.0 = Release|Any CPU
+		{08160D23-2C33-B36C-2DDE-C0168872D7CD}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{08160D23-2C33-B36C-2DDE-C0168872D7CD}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{08160D23-2C33-B36C-2DDE-C0168872D7CD}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{08160D23-2C33-B36C-2DDE-C0168872D7CD}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

@@ -13,7 +13,7 @@ namespace SharpMind.Model.Layers.Attention;
         private const string NS = $"{nameof(SharpMind)}.{nameof(Model)}.{nameof(Layers)}.{nameof(Attention)}.{nameof(AttentionKernels)}";
 
         protected readonly ModelConfig Config;
-        //protected readonly QuantizationOps _qOps;
+
         public readonly LinearLayer Wq;
         public readonly LinearLayer Wk;
         public readonly LinearLayer Wv;
@@ -22,14 +22,6 @@ namespace SharpMind.Model.Layers.Attention;
         public readonly PositionalEncoder PositionalEncoder;
         private NormLayer? _qNorm;
         private NormLayer? _kNorm;
-    /*    
-    // DEBUG: set to true to bypass Q/K RMSNorm (isolate norm as root cause)
-        public static bool ForceBypassQKNorm { get; set; }
-        // DEBUG: set to true to dump Q/K/V projection values for the first layer
-        public static bool DumpProjections { get; set; }
-        private static int _dumpLayerCounter;
-    */
-
         private bool _disposed;
 
     [PuzzleCornerPiece(SharpMindConfig.KeyAttentionQ8,
@@ -78,15 +70,14 @@ namespace SharpMind.Model.Layers.Attention;
         }
     }
 
-    protected AttentionLayer(ModelConfig config/*, QuantizationOps qOps*/)
-        : this(config,/* qOps,*/ null, null)
+    protected AttentionLayer(ModelConfig config)
+        : this(config, null, null)
     {
     }
 
-    protected AttentionLayer(ModelConfig config, /*QuantizationOps qOps,*/ TransformerWeights.BlockWeights? weights, Dictionary<string, string>? mapping)
+    protected AttentionLayer(ModelConfig config, TransformerWeights.BlockWeights? weights, Dictionary<string, string>? mapping)
     {
         Config = config;
-        //_qOps = qOps;
         int qDim = config.NumHeads * config.HeadDim;
         int kvDim = config.NumKvHeads * config.HeadDim;
 

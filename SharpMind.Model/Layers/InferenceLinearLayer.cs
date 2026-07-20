@@ -2,7 +2,6 @@ using JigSawDotNet;
 using SharpMind.Core.Memory;
 using SharpMind.Core.Quantization;
 using SharpMind.Core.Tensors;
-using SharpMind.Model.Config;
 
 namespace SharpMind.Model.Layers;
 
