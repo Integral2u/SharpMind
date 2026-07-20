@@ -236,22 +236,23 @@ public sealed class QuantizedKVCache : IKVCache
             *(ushort*)pDst = QuantizationKernels.FloatToHalf_F16C(d);
             byte* qNibbles = pDst + 2;
 
+            int half = QK / 2;
             for (int i = 0; i < blockEnd; i++)
             {
                 int q = (int)MathF.Round(pSrc[i] / d) + 8;
                 if (q < 0) q = 0;
                 if (q > 15) q = 15;
-                if ((i & 1) == 0)
-                    qNibbles[i / 2] = (byte)(q & 0x0F);
+                if (i < half)
+                    qNibbles[i] = (byte)(q & 0x0F);
                 else
-                    qNibbles[i / 2] = (byte)((qNibbles[i / 2] & 0x0F) | ((byte)q << 4));
+                    qNibbles[i - half] = (byte)((qNibbles[i - half] & 0x0F) | ((byte)q << 4));
             }
             for (int i = blockEnd; i < QK; i++)
             {
-                if ((i & 1) == 0)
-                    qNibbles[i / 2] &= 0xF0;
+                if (i < half)
+                    qNibbles[i] &= 0xF0;
                 else
-                    qNibbles[i / 2] &= 0x0F;
+                    qNibbles[i - half] &= 0x0F;
             }
         }
     }

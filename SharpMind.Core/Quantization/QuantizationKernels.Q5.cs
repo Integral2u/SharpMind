@@ -28,7 +28,8 @@ public static partial class QuantizationKernels
             for (int i = 0; i < blockEnd; i++)
             {
                 int h4 = ((int)(qh >> i) & 1) << 4;
-                int nib = ((i & 1) == 0) ? (qs[i / 2] & 0x0F) : (qs[i / 2] >> 4);
+                int half = QK / 2;
+                int nib = (i < half) ? (qs[i] & 0x0F) : (qs[i - half] >> 4);
                 int q = nib | h4;
                 sum += input[b * QK + i] * ((q - 16) * d);
             }
@@ -53,6 +54,7 @@ public static partial class QuantizationKernels
             int blockEnd = Math.Min(QK, inFeatures - b * QK);
             float* pIn = input + b * QK;
             var vd = Vector256.Create(d);
+            int half = QK / 2;
 
             var vacc0 = Vector256<float>.Zero;
             var vacc1 = Vector256<float>.Zero;
@@ -63,7 +65,7 @@ public static partial class QuantizationKernels
                 {
                     int idx = i + sub;
                     int h4 = ((int)(qh >> idx) & 1) << 4;
-                    int nib = ((idx & 1) == 0) ? (qs[idx / 2] & 0x0F) : (qs[idx / 2] >> 4);
+                    int nib = (idx < half) ? (qs[idx] & 0x0F) : (qs[idx - half] >> 4);
                     vvBuf[sub] = ((nib | h4) - 16) * d;
                 }
                 var vw0 = Vector256.LoadUnsafe(ref vvBuf[0]);
@@ -74,7 +76,7 @@ public static partial class QuantizationKernels
                 {
                     int idx = i + 8 + sub;
                     int h4 = ((int)(qh >> idx) & 1) << 4;
-                    int nib = ((idx & 1) == 0) ? (qs[idx / 2] & 0x0F) : (qs[idx / 2] >> 4);
+                    int nib = (idx < half) ? (qs[idx] & 0x0F) : (qs[idx - half] >> 4);
                     vvBuf[sub] = ((nib | h4) - 16) * d;
                 }
                 var vw1 = Vector256.LoadUnsafe(ref vvBuf[0]);
@@ -87,7 +89,7 @@ public static partial class QuantizationKernels
                 {
                     int idx = i + sub;
                     int h4 = ((int)(qh >> idx) & 1) << 4;
-                    int nib = ((idx & 1) == 0) ? (qs[idx / 2] & 0x0F) : (qs[idx / 2] >> 4);
+                    int nib = (idx < half) ? (qs[idx] & 0x0F) : (qs[idx - half] >> 4);
                     vvBuf[sub] = ((nib | h4) - 16) * d;
                 }
                 var vw = Vector256.LoadUnsafe(ref vvBuf[0]);
@@ -98,7 +100,7 @@ public static partial class QuantizationKernels
             for (; i < blockEnd; i++)
             {
                 int h4 = ((int)(qh >> i) & 1) << 4;
-                int nib = ((i & 1) == 0) ? (qs[i / 2] & 0x0F) : (qs[i / 2] >> 4);
+                int nib = (i < half) ? (qs[i] & 0x0F) : (qs[i - half] >> 4);
                 int q = nib | h4;
                 sum += pIn[i] * ((q - 16) * d);
             }
@@ -123,6 +125,7 @@ public static partial class QuantizationKernels
             int blockEnd = Math.Min(QK, inFeatures - b * QK);
             float* pIn = input + b * QK;
             var vd = Vector256.Create(d);
+            int half = QK / 2;
 
             var vacc0 = Vector256<float>.Zero;
             var vacc1 = Vector256<float>.Zero;
@@ -133,7 +136,7 @@ public static partial class QuantizationKernels
                 {
                     int idx = i + sub;
                     int h4 = ((int)(qh >> idx) & 1) << 4;
-                    int nib = ((idx & 1) == 0) ? (qs[idx / 2] & 0x0F) : (qs[idx / 2] >> 4);
+                    int nib = (idx < half) ? (qs[idx] & 0x0F) : (qs[idx - half] >> 4);
                     vvBuf[sub] = ((nib | h4) - 16) * d;
                 }
                 var vw0 = Vector256.LoadUnsafe(ref vvBuf[0]);
@@ -144,7 +147,7 @@ public static partial class QuantizationKernels
                 {
                     int idx = i + 8 + sub;
                     int h4 = ((int)(qh >> idx) & 1) << 4;
-                    int nib = ((idx & 1) == 0) ? (qs[idx / 2] & 0x0F) : (qs[idx / 2] >> 4);
+                    int nib = (idx < half) ? (qs[idx] & 0x0F) : (qs[idx - half] >> 4);
                     vvBuf[sub] = ((nib | h4) - 16) * d;
                 }
                 var vw1 = Vector256.LoadUnsafe(ref vvBuf[0]);
@@ -157,7 +160,7 @@ public static partial class QuantizationKernels
                 {
                     int idx = i + sub;
                     int h4 = ((int)(qh >> idx) & 1) << 4;
-                    int nib = ((idx & 1) == 0) ? (qs[idx / 2] & 0x0F) : (qs[idx / 2] >> 4);
+                    int nib = (idx < half) ? (qs[idx] & 0x0F) : (qs[idx - half] >> 4);
                     vvBuf[sub] = ((nib | h4) - 16) * d;
                 }
                 var vw = Vector256.LoadUnsafe(ref vvBuf[0]);
@@ -168,7 +171,7 @@ public static partial class QuantizationKernels
             for (; i < blockEnd; i++)
             {
                 int h4 = ((int)(qh >> i) & 1) << 4;
-                int nib = ((i & 1) == 0) ? (qs[i / 2] & 0x0F) : (qs[i / 2] >> 4);
+                int nib = (i < half) ? (qs[i] & 0x0F) : (qs[i - half] >> 4);
                 int q = nib | h4;
                 sum += pIn[i] * ((q - 16) * d);
             }
@@ -198,7 +201,8 @@ public static partial class QuantizationKernels
             for (int i = 0; i < blockEnd; i++)
             {
                 int xh = (int)((qh >> i) & 1) << 4;
-                int q = ((qs[i / 2] >> (4 * (i % 2))) & 0x0F) | xh;
+                int half = QK / 2;
+                int q = ((i < half) ? (qs[i] & 0x0F) : (qs[i - half] >> 4)) | xh;
                 sum += input[b * QK + i] * (q * d + m);
             }
         }
@@ -224,6 +228,7 @@ public static partial class QuantizationKernels
             float* pIn = input + b * QK;
             var vd = Vector256.Create(d);
             var vm = Vector256.Create(m);
+            int half = QK / 2;
 
             var vacc0 = Vector256<float>.Zero;
             var vacc1 = Vector256<float>.Zero;
@@ -234,7 +239,7 @@ public static partial class QuantizationKernels
                 {
                     int idx = i + sub;
                     int xh = (int)((qh >> idx) & 1) << 4;
-                    int nib = ((qs[idx / 2] >> (4 * (idx % 2))) & 0x0F) | xh;
+                    int nib = ((idx < half) ? (qs[idx] & 0x0F) : (qs[idx - half] >> 4)) | xh;
                     vvBuf[sub] = nib * d + m;
                 }
                 var vw0 = Vector256.LoadUnsafe(ref vvBuf[0]);
@@ -245,7 +250,7 @@ public static partial class QuantizationKernels
                 {
                     int idx = i + 8 + sub;
                     int xh = (int)((qh >> idx) & 1) << 4;
-                    int nib = ((qs[idx / 2] >> (4 * (idx % 2))) & 0x0F) | xh;
+                    int nib = ((idx < half) ? (qs[idx] & 0x0F) : (qs[idx - half] >> 4)) | xh;
                     vvBuf[sub] = nib * d + m;
                 }
                 var vw1 = Vector256.LoadUnsafe(ref vvBuf[0]);
@@ -258,7 +263,7 @@ public static partial class QuantizationKernels
                 {
                     int idx = i + sub;
                     int xh = (int)((qh >> idx) & 1) << 4;
-                    int nib = ((qs[idx / 2] >> (4 * (idx % 2))) & 0x0F) | xh;
+                    int nib = ((idx < half) ? (qs[idx] & 0x0F) : (qs[idx - half] >> 4)) | xh;
                     vvBuf[sub] = nib * d + m;
                 }
                 var vw = Vector256.LoadUnsafe(ref vvBuf[0]);
@@ -269,7 +274,7 @@ public static partial class QuantizationKernels
             for (; i < blockEnd; i++)
             {
                 int xh = (int)((qh >> i) & 1) << 4;
-                int nib = ((qs[i / 2] >> (4 * (i % 2))) & 0x0F) | xh;
+                int nib = ((i < half) ? (qs[i] & 0x0F) : (qs[i - half] >> 4)) | xh;
                 sum += pIn[i] * (nib * d + m);
             }
         }
@@ -295,6 +300,7 @@ public static partial class QuantizationKernels
             float* pIn = input + b * QK;
             var vd = Vector256.Create(d);
             var vm = Vector256.Create(m);
+            int half = QK / 2;
 
             var vacc0 = Vector256<float>.Zero;
             var vacc1 = Vector256<float>.Zero;
@@ -305,7 +311,7 @@ public static partial class QuantizationKernels
                 {
                     int idx = i + sub;
                     int xh = (int)((qh >> idx) & 1) << 4;
-                    int nib = ((qs[idx / 2] >> (4 * (idx % 2))) & 0x0F) | xh;
+                    int nib = ((idx < half) ? (qs[idx] & 0x0F) : (qs[idx - half] >> 4)) | xh;
                     vvBuf[sub] = nib * d + m;
                 }
                 var vw0 = Vector256.LoadUnsafe(ref vvBuf[0]);
@@ -316,7 +322,7 @@ public static partial class QuantizationKernels
                 {
                     int idx = i + 8 + sub;
                     int xh = (int)((qh >> idx) & 1) << 4;
-                    int nib = ((qs[idx / 2] >> (4 * (idx % 2))) & 0x0F) | xh;
+                    int nib = ((idx < half) ? (qs[idx] & 0x0F) : (qs[idx - half] >> 4)) | xh;
                     vvBuf[sub] = nib * d + m;
                 }
                 var vw1 = Vector256.LoadUnsafe(ref vvBuf[0]);
@@ -329,7 +335,7 @@ public static partial class QuantizationKernels
                 {
                     int idx = i + sub;
                     int xh = (int)((qh >> idx) & 1) << 4;
-                    int nib = ((qs[idx / 2] >> (4 * (idx % 2))) & 0x0F) | xh;
+                    int nib = ((idx < half) ? (qs[idx] & 0x0F) : (qs[idx - half] >> 4)) | xh;
                     vvBuf[sub] = nib * d + m;
                 }
                 var vw = Vector256.LoadUnsafe(ref vvBuf[0]);
@@ -340,7 +346,7 @@ public static partial class QuantizationKernels
             for (; i < blockEnd; i++)
             {
                 int xh = (int)((qh >> i) & 1) << 4;
-                int nib = ((qs[i / 2] >> (4 * (i % 2))) & 0x0F) | xh;
+                int nib = ((i < half) ? (qs[i] & 0x0F) : (qs[i - half] >> 4)) | xh;
                 sum += pIn[i] * (nib * d + m);
             }
         }
@@ -609,7 +615,8 @@ public static partial class QuantizationKernels
             for (int i = 0; i < valid; i++)
             {
                 int xh = (int)((qh >> i) & 1) << 4;
-                int q = ((buf[8 + i / 2] >> (4 * (i % 2))) & 0x0F) | xh;
+                int half = qk / 2;
+                int q = ((i < half) ? (buf[8 + i] & 0x0F) : (buf[8 + i - half] >> 4)) | xh;
                 data[blockStart + i] = q * d + m;
             }
         }
@@ -632,9 +639,8 @@ public static partial class QuantizationKernels
 
             for (int j = 0; j < valid; j++)
             {
-                int loNib = buf[6 + j / 2] & 0x0F;
-                int hiNib = buf[6 + j / 2] >> 4;
-                int nib = (j % 2 == 0) ? loNib : hiNib;
+                int half = qk / 2;
+                int nib = (j < half) ? (buf[6 + j] & 0x0F) : (buf[6 + j - half] >> 4);
                 int h4 = ((int)(qh >> j) & 1) << 4;
                 data[blockStart + j] = ((nib | h4) - 16) * d;
             }

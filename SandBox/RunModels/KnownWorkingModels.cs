@@ -12,8 +12,8 @@ namespace SandBox.RunModels
     {
         private static readonly string[] Models =
         [
-            //"Qwen3-0.6B-Q4_0",      //Response:( ( supplementuilder advancedhraductive??amahaDetachbatimi [{ulousISCO
-            //"Qwen3-0.6B-Q4_1",      //Response:;]/???? (nnenawai Holocaust ????? (waukeeentially???icuteenth?    
+            "Qwen3-0.6B-Q4_0",      //Response:Okay, the user asked me to respond in a specific way.
+            "Qwen3-0.6B-Q4_1",      //Response:Okay, the user just said "Hello and I need to respond    
             "qwen2-0_5b-instruct-q8_0",         //Response:Hello! How can I assist you today?
             "qwen2-0_5b-instruct-fp16",      //Response:Hello! How can I assist you today?  
 
@@ -27,7 +27,7 @@ namespace SandBox.RunModels
 
             "DeepSeek-R1-Distill-Qwen-1.5B-Q8_0",//Response:Hello! How Are You? ?? ?
             "DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M", //Response:Hello! I'm here. How can assist you?Hi what you can
-            "qwen2.5-1.5b-instruct-q8_0", //Response: //**\nHello, I am a user of Alibaba Cloud. I use many service
+            "qwen2.5-1.5b-instruct-q8_0", //Response:Hello! How can I help you today?
 
             "llama-3.2-1b-instruct-q8_0",       //Response:It seems like you've got a question about the answer to my own.
             
