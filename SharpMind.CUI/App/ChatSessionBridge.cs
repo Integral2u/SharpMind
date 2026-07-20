@@ -48,6 +48,7 @@ public sealed class ChatSessionBridge(IChatSession session, bool disposeUnderlyi
     private string? _pendingInput;
     private ChatArtifact[]? _pendingArtifacts;
     private ChatArtifact[]? _lastArtifacts;
+    private readonly List<ChatArtifact> _streamedArtifacts = [];
     private readonly CancellationTokenSource _cts = new();
     private Task? _loopTask;
 
@@ -86,11 +87,17 @@ public sealed class ChatSessionBridge(IChatSession session, bool disposeUnderlyi
                     },
                     response: entry =>
                     {
+                        if (entry.Artifact is not null)
+                            _streamedArtifacts.Add(entry.Artifact);
+
                         if (entry.IsComplete || entry.Status == ChatStatus.Complete)
                         {
+                            var combined = new List<ChatArtifact>(_streamedArtifacts);
                             var history = session.History;
-                            if (history.Count > 0 && history[^1].Role == ChatRole.Agent)
-                                _lastArtifacts = history[^1].Artifacts;
+                            if (history.Count > 0 && history[^1].Role == ChatRole.Agent && history[^1].Artifacts is { Length: > 0 })
+                                combined.AddRange(history[^1].Artifacts);
+                            _lastArtifacts = combined.Count > 0 ? [.. combined] : null;
+                            _streamedArtifacts.Clear();
                         }
                         _incoming.Enqueue(entry);
                     },

@@ -6,7 +6,7 @@ namespace SharpMind.Inference.Chat;
 public sealed class ChatArtifact
 {
     public required string Type { get; init; }  // "text", "image", "code", "json"
-    public required string Content { get; init; }
+    public required byte[] Content { get; init; }
     public string? Language { get; init; }
     public string? FileName { get; init; }
 }

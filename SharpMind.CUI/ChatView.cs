@@ -254,10 +254,10 @@ public sealed class ChatView : View
         var path = FilePickerDialog.Show("Send artifact", Directory.GetCurrentDirectory(), PickerMode.File);
         if (path is null) return;
 
-        string content;
+        byte[] content;
         try
         {
-            content = File.ReadAllText(path);
+            content = File.ReadAllBytes(path);
         }
         catch (Exception ex)
         {
@@ -320,8 +320,11 @@ public sealed class ChatView : View
         {
             listView.SetSource(artifacts.Select(a =>
             {
-                string name = a.FileName ?? $"artifact.{a.Type}";
-                return (ustring)$"{name} ({a.Type})";
+                string name = a.FileName;
+                if (string.IsNullOrEmpty(name))
+                    name = string.IsNullOrEmpty(a.Type) ? "artifact" : $"artifact.{a.Type}";
+                string size = a.Content is null || a.Content.Length == 0 ? " [empty]" : $" ({a.Content.Length}B)";
+                return (ustring)$"{name} ({a.Type}){size}";
             }).ToList());
         }
 
@@ -331,12 +334,24 @@ public sealed class ChatView : View
             int idx = listView.SelectedItem;
             if (idx < 0 || idx >= artifacts.Count) return;
             var artifact = artifacts[idx];
-            string fileName = artifact.FileName ?? $"artifact.{artifact.Type}";
+            if (artifact.Content is null || artifact.Content.Length == 0)
+            {
+                MessageBox.Query("Empty content", "This artifact has no content to save.", "OK");
+                return;
+            }
+            string fileName = artifact.FileName;
+            if (string.IsNullOrEmpty(fileName))
+                fileName = string.IsNullOrEmpty(artifact.Type) ? "artifact" : $"artifact.{artifact.Type}";
             string? savePath = FilePickerDialog.Show($"Save: {fileName}", Directory.GetCurrentDirectory(), PickerMode.SaveFile, "*.*");
             if (savePath is null) return;
+            if (File.Exists(savePath))
+            {
+                int overwrite = MessageBox.Query("File exists", $"Overwrite existing file?\n{savePath}", "Yes", "No");
+                if (overwrite != 0) return;
+            }
             try
             {
-                File.WriteAllText(savePath, artifact.Content);
+                File.WriteAllBytes(savePath, artifact.Content);
             }
             catch (Exception ex)
             {
