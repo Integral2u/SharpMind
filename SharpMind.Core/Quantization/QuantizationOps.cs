@@ -21,21 +21,47 @@ public abstract class QuantizationOps
         {
             QuantDType.F32 => totalElements * 4,
             QuantDType.F16 => totalElements * 2,
-            QuantDType.Q3_K or QuantDType.Q3_K_S or QuantDType.Q3_K_M or QuantDType.Q3_K_L => ((totalElements + 255) / 256) * 110,
-            QuantDType.Q4_K or QuantDType.Q4_K_S or QuantDType.Q4_K_M => ((totalElements + 255) / 256) * 144,
-            QuantDType.Q5_K or QuantDType.Q5_K_S or QuantDType.Q5_K_M => ((totalElements + 255) / 256) * 176,
-            QuantDType.Q6_K or QuantDType.Q6_K_S => ((totalElements + 255) / 256) * 210,
-            QuantDType.Q2_K or QuantDType.Q2_K_S => ((totalElements + 255) / 256) * 84,
-            QuantDType.Q8_K => ((totalElements + 255) / 256) * 292,
-            QuantDType.Q8_0 => ((totalElements + 31) / 32) * 34,
-            QuantDType.Q8_1 => ((totalElements + 31) / 32) * 36,
-            QuantDType.Q5_0 => ((totalElements + 31) / 32) * 22,
-            QuantDType.Q5_1 => ((totalElements + 31) / 32) * 24,
-            QuantDType.Q4_0 => ((totalElements + 31) / 32) * 18,
-            QuantDType.IQ4_NL => ((totalElements + 31) / 32) * 18,
-            QuantDType.Q4_1 => ((totalElements + 31) / 32) * 20,
+            QuantDType.Q3_K or QuantDType.Q3_K_S or QuantDType.Q3_K_M or QuantDType.Q3_K_L
+                => ((totalElements + 255) / 256) * 110,
+            QuantDType.Q4_K or QuantDType.Q4_K_S or QuantDType.Q4_K_M
+                => ((totalElements + 255) / 256) * 144,
+            QuantDType.Q5_K or QuantDType.Q5_K_S or QuantDType.Q5_K_M
+                => ((totalElements + 255) / 256) * 176,
+            QuantDType.Q6_K or QuantDType.Q6_K_S
+                => ((totalElements + 255) / 256) * 210,
+            QuantDType.Q2_K or QuantDType.Q2_K_S
+                => ((totalElements + 255) / 256) * 84,
+            QuantDType.Q8_K
+                => ((totalElements + 255) / 256) * 292,
+            QuantDType.Q8_0
+                => GetBlockQuantByteCount(shape, 32, 34),
+            QuantDType.Q8_1
+                => GetBlockQuantByteCount(shape, 32, 36),
+            QuantDType.Q5_0
+                => GetBlockQuantByteCount(shape, 32, 22),
+            QuantDType.Q5_1
+                => GetBlockQuantByteCount(shape, 32, 24),
+            QuantDType.Q4_0
+                => GetBlockQuantByteCount(shape, 32, 18),
+            QuantDType.IQ4_NL
+                => GetBlockQuantByteCount(shape, 32, 18),
+            QuantDType.Q4_1
+                => GetBlockQuantByteCount(shape, 32, 20),
             _ => throw new ArgumentOutOfRangeException(nameof(dtype), dtype, null)
         };
+    }
+
+    private static long GetBlockQuantByteCount(int[] shape, int blockSize, int blockBytes)
+    {
+        long outerElements = 1;
+        int lastDim = 1;
+        if (shape.Length > 0)
+        {
+            for (int i = 0; i < shape.Length - 1; i++)
+                outerElements *= shape[i];
+            lastDim = shape[^1];
+        }
+        return outerElements * ((lastDim + blockSize - 1) / blockSize) * blockBytes;
     }
     public void ReadFor(QuantDType dType, BinaryReader reader, Span<float> data, int n)
     {

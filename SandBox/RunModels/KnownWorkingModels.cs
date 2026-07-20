@@ -11,8 +11,9 @@ namespace SandBox.RunModels
     public class KnownWorkingModels
     {
         private static readonly string[] Models =
-        [                     
-                    
+        [
+            //"Qwen3-0.6B-Q4_0",      //Response:( ( supplementuilder advancedhraductive??amahaDetachbatimi [{ulousISCO
+            //"Qwen3-0.6B-Q4_1",      //Response:;]/???? (nnenawai Holocaust ????? (waukeeentially???icuteenth?    
             "qwen2-0_5b-instruct-q8_0",         //Response:Hello! How can I assist you today?
             "qwen2-0_5b-instruct-fp16",      //Response:Hello! How can I assist you today?  
 

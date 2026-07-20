@@ -17,8 +17,7 @@
  
             "Qwen2.5-1.5B-Instruct-f16",    //Response:Hello, I'm lookingta.
             
-            "Qwen3-0.6B-Q4_0",      //Response:( ( supplementuilder advancedhraductive??amahaDetachbatimi [{ulousISCO
-            "Qwen3-0.6B-Q4_1",      //Response:;]/???? (nnenawai Holocaust ????? (waukeeentially???icuteenth?
+
 
                       
             "Llama-3.2-1B-Instruct-Q4_K_M", //Response:  and\nand\n\n a\n\n# "\na\n#  

@@ -38,6 +38,8 @@ public static class NativeBufferPool<T> where T : unmanaged
                 long byteLen = (long)bucketSize * sizeof(T);
                 Interlocked.Add(ref bucket.Memory, -byteLen);
                 NativeMemory.Clear(buffer.Ptr, (nuint)byteLen);
+                // Bytes were already counted in TotalMemoryUsed when originally allocated;
+                // they stayed in the pool (not freed), so do NOT call OnAllocate again.
                 return buffer;
             }
         }
@@ -74,17 +76,20 @@ public static class NativeBufferPool<T> where T : unmanaged
         if (!pooled)
         {
             buffer.Free();
+            NativeBufferPoolConfig.OnFree(byteSize);
         }
-
-        NativeBufferPoolConfig.OnFree(byteSize);
     }
 
-    public static void Clear()
+    public static unsafe void Clear()
     {
         foreach (var bucket in _buckets.Values)
         {
             while (bucket.Stack.TryPop(out var buf))
+            {
+                long byteLen = (long)buf.Length * sizeof(T);
                 buf.Free();
+                NativeBufferPoolConfig.OnFree((int)byteLen);
+            }
             bucket.Count = 0;
             bucket.Memory = 0;
         }

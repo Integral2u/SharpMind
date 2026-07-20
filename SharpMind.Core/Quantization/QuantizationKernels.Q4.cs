@@ -175,21 +175,39 @@ public static partial class QuantizationKernels
             var vm = Vector256.Create(m);
 
             int i = 0;
+            var vacc0 = Vector256<float>.Zero;
+            var vacc1 = Vector256<float>.Zero;
+            for (; i <= blockEnd - 16; i += 16)
+            {
+                int bo0 = i / 2;
+                int bo1 = (i + 8) / 2;
+                var w0 = Avx.Add(Avx.Multiply(Vector256.Create(
+                    (float)((qs[bo0 + 0] >> 0) & 0x0F), (float)((qs[bo0 + 0] >> 4) & 0x0F),
+                    (float)((qs[bo0 + 1] >> 0) & 0x0F), (float)((qs[bo0 + 1] >> 4) & 0x0F),
+                    (float)((qs[bo0 + 2] >> 0) & 0x0F), (float)((qs[bo0 + 2] >> 4) & 0x0F),
+                    (float)((qs[bo0 + 3] >> 0) & 0x0F), (float)((qs[bo0 + 3] >> 4) & 0x0F)
+                ), vd), vm);
+                var w1 = Avx.Add(Avx.Multiply(Vector256.Create(
+                    (float)((qs[bo1 + 0] >> 0) & 0x0F), (float)((qs[bo1 + 0] >> 4) & 0x0F),
+                    (float)((qs[bo1 + 1] >> 0) & 0x0F), (float)((qs[bo1 + 1] >> 4) & 0x0F),
+                    (float)((qs[bo1 + 2] >> 0) & 0x0F), (float)((qs[bo1 + 2] >> 4) & 0x0F),
+                    (float)((qs[bo1 + 3] >> 0) & 0x0F), (float)((qs[bo1 + 3] >> 4) & 0x0F)
+                ), vd), vm);
+                vacc0 = Avx.Add(vacc0, Avx.Multiply(Vector256.LoadUnsafe(ref pIn[i]), w0));
+                vacc1 = Avx.Add(vacc1, Avx.Multiply(Vector256.LoadUnsafe(ref pIn[i + 8]), w1));
+            }
             for (; i <= blockEnd - 8; i += 8)
             {
-                float v0 = (qs[i / 2] >> (4 * (i % 2))) & 0x0F;
-                float v1 = (qs[(i + 1) / 2] >> (4 * ((i + 1) % 2))) & 0x0F;
-                float v2 = (qs[(i + 2) / 2] >> (4 * ((i + 2) % 2))) & 0x0F;
-                float v3 = (qs[(i + 3) / 2] >> (4 * ((i + 3) % 2))) & 0x0F;
-                float v4 = (qs[(i + 4) / 2] >> (4 * ((i + 4) % 2))) & 0x0F;
-                float v5 = (qs[(i + 5) / 2] >> (4 * ((i + 5) % 2))) & 0x0F;
-                float v6 = (qs[(i + 6) / 2] >> (4 * ((i + 6) % 2))) & 0x0F;
-                float v7 = (qs[(i + 7) / 2] >> (4 * ((i + 7) % 2))) & 0x0F;
-                var vv = Avx.Multiply(Vector256.Create(v0, v1, v2, v3, v4, v5, v6, v7), vd);
-                vv = Avx.Add(vv, vm);
-                var vi = Vector256.LoadUnsafe(ref pIn[i]);
-                sum += MathHelpers.HSum256_Avx(Avx.Multiply(vi, vv));
+                int bo = i / 2;
+                var w = Avx.Add(Avx.Multiply(Vector256.Create(
+                    (float)((qs[bo + 0] >> 0) & 0x0F), (float)((qs[bo + 0] >> 4) & 0x0F),
+                    (float)((qs[bo + 1] >> 0) & 0x0F), (float)((qs[bo + 1] >> 4) & 0x0F),
+                    (float)((qs[bo + 2] >> 0) & 0x0F), (float)((qs[bo + 2] >> 4) & 0x0F),
+                    (float)((qs[bo + 3] >> 0) & 0x0F), (float)((qs[bo + 3] >> 4) & 0x0F)
+                ), vd), vm);
+                vacc0 = Avx.Add(vacc0, Avx.Multiply(Vector256.LoadUnsafe(ref pIn[i]), w));
             }
+            sum += MathHelpers.HSum256_Avx(Avx.Add(vacc0, vacc1));
             for (; i < blockEnd; i++)
             {
                 int q = (qs[i / 2] >> (4 * (i % 2))) & 0x0F;

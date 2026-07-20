@@ -223,15 +223,15 @@ public sealed class QuantizedKVCache : IKVCache
             float* pSrc = src + b * QK;
             byte* pDst = dst + b * Q4_BLOCK;
 
-            float amax = 0f;
+            float max = 0f;
             for (int i = 0; i < blockEnd; i++)
             {
-                float abs = Math.Abs(pSrc[i]);
-                if (abs > amax) amax = abs;
+                float v = pSrc[i];
+                if (Math.Abs(v) > Math.Abs(max)) max = v;
             }
 
-            float d = amax / 8f;
-            if (amax == 0f) d = 1f;
+            float d = -max / 8f;
+            if (max == 0f) d = 1f;
 
             *(ushort*)pDst = QuantizationKernels.FloatToHalf_F16C(d);
             byte* qNibbles = pDst + 2;

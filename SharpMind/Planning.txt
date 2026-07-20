@@ -1,6 +1,55 @@
 CUI Plugins?
 [Conditional("DEBUG")] 
 
+Good catch — this points away from what I flagged earlier (that was a precision/clipping issue, not enough to turn output into total word-salad) and toward something much more fundamental: the nibble unpacking order in Q4_0/Q4_1 doesn't match the GGUF/ggml layout.
+
+The real bug: wrong nibble-to-element mapping
+
+VecDotQ4_0_Scalar/VecDotQ4_1_Scalar (and the AVX2/SSE variants, and ReadQ4_0_Scalar/ReadQ4_1_Scalar) unpack nibbles as adjacent pairs:
+
+csharp
+int q = (qs[i / 2] >> ((i % 2) * 4)) & 0x0F;
+// element 0 -> qs[0] low nibble, element 1 -> qs[0] high nibble,
+// element 2 -> qs[1] low nibble, element 3 -> qs[1] high nibble, ...
+
+But ggml's actual Q4_0/Q4_1 packing (and this is the same convention used throughout ggml — I confirmed it explicitly for Q4_K's sub-block packing, which your own VecDotQ4K_* code gets right) is a half-split pairing: element j and element j + 16 share byte qs[j], not element 2j and 2j+1:
+
+c
+// llama.cpp quantize_row_q4_0_reference / dequantize_row_q4_0
+for (j = 0; j < qk/2; j++) {
+    y[j]        = ((qs[j] & 0x0F) - 8) * d;   // first half
+    y[j + qk/2] = ((qs[j] >> 4)   - 8) * d;   // second half
+}
+
+So for a 32-element Q4_0 block: elements 0–15 come from the low nibbles of qs[0..15], and elements 16–31 come from the high nibbles of the same qs[0..15] bytes — not from qs[16..31] at all, and not interleaved even/odd.
+
+Your code instead reads element 16 from qs[8]'s low nibble, element 31 from qs[15]'s high nibble, etc. — every single weight in every block ends up paired with the wrong scale-relative position and effectively shuffled within the block. That's not a "slightly worse" quantization error, it's a full permutation of ~half the values in every 32-element chunk of every Q4_0/Q4_1 tensor — which is exactly the "fluent-looking token soup" signature of a completely scrambled weight matrix, not a numerically-lossy one.
+
+It hits Q4_0 and Q4_1 identically because they share this same extraction pattern, and — worth flagging — Q4_NL and Q5_0/Q5_1 use the identical adjacent-pair extraction (qs[i/2], i & 1), so they're likely broken the same way even though you haven't hit them yet. Q4_K/Q5_K/Q6_K are fine because their sub-block unpacking already does the half-split correctly (I checked — qsByte = (idx/64)*32 + (idx%32), qsShift based on which half of the 64-chunk), which is presumably why those didn't show symptoms.
+
+Fix (scalar shown; same change needed in AVX2/SSE/Read* variants)
+csharp
+int half = QK / 2; // 16
+for (int i = 0; i < blockEnd; i++)
+{
+    int q = (i < half) ? (qs[i] & 0x0F) : (qs[i - half] >> 4);
+    sum += input[b * QK + i] * ((q - 8) * d);
+}
+
+Q4_1 is the same idea, just add m instead of the -8 offset:
+
+csharp
+int q = (i < half) ? (qs[i] & 0x0F) : (qs[i - half] >> 4);
+sum += input[b * QK + i] * (q * d + m);
+
+The AVX2/SSE kernels need the same half-split indexing wherever they currently compute qs[i/2]/(i%2)*4 — the vector loads/multiplies stay structurally the same, just the byte/shift arithmetic changes.
+
+How to confirm before you patch everything
+
+Cheapest sanity check: take one known-good Q4_0 GGUF tensor, dequantize it with your ReadQ4_0_Scalar and separately with llama-quantize/llama.cpp's own dequant (or gguf-py), and diff the two float arrays for a single row. With the current code you should see values correctly recovered for elements 0 and 1 (since i=0,1 map to qs[0]'s two nibbles in both conventions... actually double check even that — under the wrong scheme element 1 reads qs[0]'s high nibble, which under the correct scheme is actually element 16. So even elements 0/1 will only coincidentally match if the block happens to be symmetric.) A full-block diff will make the shuffle obvious immediately.
+
+Want me to write out the corrected AVX2 versions too (they're the ones with the vvBuf scalar-gather-then-vector-load pattern, so the fix is just changing which nibble goes in which lane)?
+
 
 Factory consistancy ActivationFactory,QuantizationFactory
 
