@@ -300,22 +300,76 @@ public sealed class ChatView : View
             return;
         }
 
-        foreach (var artifact in artifacts)
-        {
-            string fileName = artifact.FileName ?? $"artifact.{artifact.Type}";
-            string startDir = Directory.GetCurrentDirectory();
-            string? savePath = FilePickerDialog.Show($"Save artifact: {fileName}", startDir, PickerMode.SaveFile, "*.*");
-            if (savePath is null) continue;
+        // Copy to a mutable list so the dialog can remove items
+        var remaining = artifacts.ToList();
+        ShowArtifactListDialog(remaining);
+    }
 
+    private void ShowArtifactListDialog(List<ChatArtifact> artifacts)
+    {
+        var dialog = new Dialog("Artifacts", 60, 20);
+        var listView = new ListView
+        {
+            X = 1, Y = 0,
+            Width = Dim.Fill(2),
+            Height = Dim.Fill(4)
+        };
+        dialog.Add(listView);
+
+        void RefreshList()
+        {
+            listView.SetSource(artifacts.Select(a =>
+            {
+                string name = a.FileName ?? $"artifact.{a.Type}";
+                return (ustring)$"{name} ({a.Type})";
+            }).ToList());
+        }
+
+        var saveBtn = new Button("Save selected") { X = 1, Y = Pos.AnchorEnd(2) };
+        saveBtn.Clicked += () =>
+        {
+            int idx = listView.SelectedItem;
+            if (idx < 0 || idx >= artifacts.Count) return;
+            var artifact = artifacts[idx];
+            string fileName = artifact.FileName ?? $"artifact.{artifact.Type}";
+            string? savePath = FilePickerDialog.Show($"Save: {fileName}", Directory.GetCurrentDirectory(), PickerMode.SaveFile, "*.*");
+            if (savePath is null) return;
             try
             {
                 File.WriteAllText(savePath, artifact.Content);
             }
             catch (Exception ex)
             {
-                MessageBox.ErrorQuery("Error", $"Could not save artifact:\n{ex.Message}", "OK");
+                MessageBox.ErrorQuery("Error", $"Could not save:\n{ex.Message}", "OK");
             }
-        }
+        };
+
+        var removeBtn = new Button("Remove") { X = Pos.Right(saveBtn) + 2, Y = Pos.AnchorEnd(2) };
+        removeBtn.Clicked += () =>
+        {
+            int idx = listView.SelectedItem;
+            if (idx < 0 || idx >= artifacts.Count) return;
+            artifacts.RemoveAt(idx);
+            if (artifacts.Count == 0)
+                Application.RequestStop();
+            else
+                RefreshList();
+        };
+
+        var clearBtn = new Button("Clear all") { X = Pos.Right(removeBtn) + 2, Y = Pos.AnchorEnd(2) };
+        clearBtn.Clicked += () =>
+        {
+            artifacts.Clear();
+            Application.RequestStop();
+        };
+
+        var closeBtn = new Button("Close") { X = Pos.AnchorEnd(8), Y = Pos.AnchorEnd(2) };
+        closeBtn.Clicked += () => Application.RequestStop();
+
+        dialog.Add(saveBtn, removeBtn, clearBtn, closeBtn);
+        RefreshList();
+        listView.SetFocus();
+        Application.Run(dialog);
     }
 
     private void RequestInterrupt()

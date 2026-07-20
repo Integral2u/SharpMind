@@ -25,12 +25,15 @@ public sealed class MainWindow : Window
     private ChatSessionState? _currentSession;
     private object? _permissionPollToken;
 
+    private static string LastUsedOptionsPath =>
+        Path.Combine(SavedSession.DefaultFolder, "__last_used__.json");
+
     public MainWindow()
     {
         Title = "SharpMind CUI";
 
         _settings = AppSettings.Load();
-        _options = NewSessionOptionsFromSettings();
+        _options = LoadLastUsedOptions() ?? NewSessionOptionsFromSettings();
 
         ColorScheme = ThemeBuilder.Build(_settings.Theme);
 
@@ -52,6 +55,30 @@ public sealed class MainWindow : Window
         // screen — so this polls at the MainWindow level, not inside
         // ChatView, the same way ModelCache's lifetime spans every screen.
         _permissionPollToken = Application.MainLoop.AddTimeout(TimeSpan.FromMilliseconds(100), PollPermissionRequests);
+    }
+
+    private static void SaveLastUsedOptions(SessionOptions options)
+    {
+        try
+        {
+            var dir = SavedSession.DefaultFolder;
+            Directory.CreateDirectory(dir);
+            var saved = new SavedSession { Name = "__last_used__", Options = options };
+            SavedSession.Save(saved, Path.Combine(dir, "__last_used__.json"), out _);
+        }
+        catch { /* best-effort save */ }
+    }
+
+    private static SessionOptions? LoadLastUsedOptions()
+    {
+        try
+        {
+            var path = LastUsedOptionsPath;
+            if (!File.Exists(path)) return null;
+            var loaded = SavedSession.Load(path, out _);
+            return loaded?.Options;
+        }
+        catch { return null; }
     }
 
     private SessionOptions NewSessionOptionsFromSettings()
@@ -263,6 +290,8 @@ public sealed class MainWindow : Window
             : new ChatSessionBridge(result.Session!, disposeUnderlyingSession: false);
 
         if (bridge is ChatSessionBridge realBridge) realBridge.Start();
+
+        SaveLastUsedOptions(launchOptions);
 
         string displayName = result.IsDebugMode ? $"{launchOptions.AgentName} [DEBUG]" : launchOptions.AgentName;
         var chatView = new ChatView(displayName, launchOptions, bridge, result.CuiContext, onExit: ShowSessionManager);
