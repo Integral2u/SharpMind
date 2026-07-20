@@ -1,4 +1,7 @@
-﻿namespace SandBox.RunModels
+﻿using Microsoft.VisualBasic;
+using static BenchmarkDotNet.Engines.EngineEventSource;
+
+namespace SandBox.RunModels
 {
     public class KnownFailingModels
     {
@@ -6,18 +9,15 @@
         [
             //New response:\n\n\nCopyright c 200 20199
             "Qwen2-0.5B.Q6_K", //Response:The\nsystem\nsystem is a system that helps you to make better decisions   
-            "qwen2-0_5b-instruct-q4_k_m",   //Response:?  (????. - ( (g.-.
-            "qwen2-0.5b-instruct-q2_k",     //Response:???u u performance?? 's elbowso??ef-.
-            "Qwen2-0.5B.Q2_K",              //Response:performance sa?ero_ ?and i?.??f*+
-            "Qwen2-0.5B.Q3_K_L",            //Response:./(?????????????????????
-            "Qwen2-0.5B.Q3_K_M",            //Response:???\n\n??\_iple???\n\niez? manufactures gainedies
-            "Qwen2-0.5B.Q3_K_S",            //Response:estring???emales?? je??? Gro  (??hibition Main
+
+            "Qwen2-0.5B.Q2_K",              //Response:\n\nThank you!\nThank you.\nThankyou thank.\nThanks you Thank
+            "Qwen2-0.5B.Q3_K_L",            //Response:\n\nassistant\n 1. 2.33456
+            "Qwen2-0.5B.Q3_K_M",            //Response:\n\n's\nThe following information is provided by the author to you.
+            "Qwen2-0.5B.Q3_K_S",            //Response:\n\n\n\n\n\n
             
-            "Qwen2-0.5B.Q5_1",              //Response:-+$?ergy=> Tw %(. Tw?????
+            "Qwen2-0.5B.Q5_1",              //Response:\n\nCopyright 20198019889
  
             "Qwen2.5-1.5B-Instruct-f16",    //Response:Hello, I'm lookingta.
-            
-
 
                       
             "Llama-3.2-1B-Instruct-Q4_K_M", //Response:  and\nand\n\n a\n\n# "\na\n#  

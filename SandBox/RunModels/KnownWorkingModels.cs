@@ -12,6 +12,9 @@ namespace SandBox.RunModels
     {
         private static readonly string[] Models =
         [
+            "qwen2-0_5b-instruct-q4_k_m",   //Response:Hello! How can I assist you today?
+            "qwen2-0.5b-instruct-q2_k",     //Response:Hello! How can I assist you today?
+
             "Qwen3-0.6B-Q4_0",      //Response:Okay, the user asked me to respond in a specific way.
             "Qwen3-0.6B-Q4_1",      //Response:Okay, the user just said "Hello and I need to respond    
             "qwen2-0_5b-instruct-q8_0",         //Response:Hello! How can I assist you today?
