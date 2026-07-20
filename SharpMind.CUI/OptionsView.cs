@@ -112,9 +112,23 @@ public sealed class OptionsView : View
         _formContent.Add(gpuCheck);
         row++;
 
+        var gpuNonQuantCheck = new CheckBox("  GPU: non-quantized ops (pointwise, gate, softmax, rmsnorm)", options.GpuNonQuant) { X = 1, Y = row };
+        gpuNonQuantCheck.Toggled += (_) => _options.GpuNonQuant = gpuNonQuantCheck.Checked;
+        _formContent.Add(gpuNonQuantCheck);
+        row++;
+
+        var gpuVecDotCheck = new CheckBox("  GPU: quantized vector dot", options.GpuVecDot) { X = 1, Y = row };
+        gpuVecDotCheck.Toggled += (_) => _options.GpuVecDot = gpuVecDotCheck.Checked;
+        _formContent.Add(gpuVecDotCheck);
+        row++;
+
+        var gpuMatMulCheck = new CheckBox("  GPU: quantized matrix multiply", options.GpuMatMul) { X = 1, Y = row };
+        gpuMatMulCheck.Toggled += (_) => _options.GpuMatMul = gpuMatMulCheck.Checked;
+        _formContent.Add(gpuMatMulCheck);
+        row++;
+
         var parallelCheck = new CheckBox("Use parallel kernels (faster on multi-core CPU)", options.UseParallelKernels) { X = 1, Y = row };
         parallelCheck.Toggled += (_) => _options.UseParallelKernels = parallelCheck.Checked;
-        _formContent.Add(parallelCheck);
         row += 2;
 
         AddLabel("Temperature:");
@@ -359,6 +373,9 @@ public sealed class OptionsView : View
         target.LoadMode = source.LoadMode;
         target.HardwareTier = source.HardwareTier;
         target.UseGpu = source.UseGpu;
+        target.GpuNonQuant = source.GpuNonQuant;
+        target.GpuVecDot = source.GpuVecDot;
+        target.GpuMatMul = source.GpuMatMul;
         target.FileAccess = source.FileAccess;
         target.NetworkAccess = source.NetworkAccess;
         target.Sampling = source.Sampling;

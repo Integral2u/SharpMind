@@ -8,7 +8,7 @@ public sealed class ChatResult
 {
     public ChatStatus Status { get; internal init; }
     public string? Content { get; internal init; }
-    public List<ChatArtifact>? Artifacts { get; internal init; }
+    public ChatArtifact[]? Artifacts { get; internal init; }
     public bool IsStreaming { get; internal init; }
     public bool IsComplete { get; internal init; }
     public string? Error { get; internal init; }

@@ -97,6 +97,15 @@ public sealed class SessionOptions
     /// overrides resolve to real kernels rather than no-ops.
     /// </summary>
     public bool UseGpu { get; set; }
+
+    /// <summary>Override non-quantized operations (pointwise, gate, softmax, RMSNorm) on GPU.</summary>
+    public bool GpuNonQuant { get; set; } = true;
+
+    /// <summary>Override quantized vector dot operations on GPU.</summary>
+    public bool GpuVecDot { get; set; }
+
+    /// <summary>Override quantized matrix multiplication operations on GPU.</summary>
+    public bool GpuMatMul { get; set; }
     public bool UseParallelKernels { get; set; } = true;
     public int CacheDepth { get; set; } = 2;
 

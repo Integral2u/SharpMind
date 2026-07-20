@@ -120,7 +120,7 @@ public static class SessionLauncher
         // overrides selected entries with GPU-kernel values — the same dictionary
         // shape is ultimately passed to ModelFactory.CreateSession.
         Dictionary<string, string> mapping = options.UseGpu
-            ? new MappingBuilder(options.HardwareTier).ApplyPreset(sharpConfig).ApplyQuantPreset(parallel: options.UseParallelKernels).WithGpu().Build()
+            ? new MappingBuilder(options.HardwareTier).ApplyPreset(sharpConfig).ApplyQuantPreset(parallel: options.UseParallelKernels).WithGpu(nonQuant: options.GpuNonQuant, vecDot: options.GpuVecDot, matMul: options.GpuMatMul).Build()
             : new MappingBuilder(options.HardwareTier).ApplyPreset(sharpConfig).ApplyQuantPreset(parallel: options.UseParallelKernels).Build();
 
         status?.Report("Loading weights...");
