@@ -148,10 +148,39 @@ public sealed class PagedKVCache : IDisposable
         _currentPosition = Math.Min(length, _currentPosition);
     }
 
-    public void TrimToLast(int keepTokens)
+    public unsafe void TrimToLast(int keepTokens)
     {
         ThrowIfDisposed();
         if (keepTokens >= _currentPosition) return;
+        int offset = _currentPosition - keepTokens;
+        uint rowBytes = (uint)_headDim * sizeof(float);
+
+        for (int b = 0; b < _batchSize; b++)
+        {
+            long batchBase = (long)b * _numPages * _stridePage;
+            for (int s = 0; s < keepTokens; s++)
+            {
+                var (srcPage, srcOff) = GetPageInfo(offset + s);
+                var (dstPage, dstOff) = GetPageInfo(s);
+
+                float* srcBaseK = _keys.DataPtr + batchBase + (long)srcPage * _stridePage;
+                float* dstBaseK = _keys.DataPtr + batchBase + (long)dstPage * _stridePage;
+                float* srcBaseV = _values.DataPtr + batchBase + (long)srcPage * _stridePage;
+                float* dstBaseV = _values.DataPtr + batchBase + (long)dstPage * _stridePage;
+
+                for (int h = 0; h < _numKvHeads; h++)
+                {
+                    Unsafe.CopyBlock(
+                        dstBaseK + (long)h * _strideHead + (long)dstOff * _headDim,
+                        srcBaseK + (long)h * _strideHead + (long)srcOff * _headDim,
+                        rowBytes);
+                    Unsafe.CopyBlock(
+                        dstBaseV + (long)h * _strideHead + (long)dstOff * _headDim,
+                        srcBaseV + (long)h * _strideHead + (long)srcOff * _headDim,
+                        rowBytes);
+                }
+            }
+        }
         _currentPosition = keepTokens;
     }
 
@@ -168,10 +197,17 @@ public sealed class PagedKVCache : IDisposable
         ThrowIfDisposed();
         if (_currentPosition == 0) return null;
         int activePages = (_currentPosition + _pageSize - 1) / _pageSize;
-        int activeFloats = activePages * _stridePage * _batchSize;
-        var data = new float[activeFloats * 2];
-        _keys.Data[..activeFloats].CopyTo(data.AsSpan(0, activeFloats));
-        _values.Data[..activeFloats].CopyTo(data.AsSpan(activeFloats, activeFloats));
+        int batchFloats = activePages * _stridePage;
+        int totalFloats = batchFloats * _batchSize;
+        var data = new float[totalFloats * 2];
+
+        for (int b = 0; b < _batchSize; b++)
+        {
+            int srcOff = b * _numPages * _stridePage;
+            int dstOff = b * batchFloats;
+            _keys.Data.Slice(srcOff, batchFloats).CopyTo(data.AsSpan(dstOff, batchFloats));
+            _values.Data.Slice(srcOff, batchFloats).CopyTo(data.AsSpan(totalFloats + dstOff, batchFloats));
+        }
         return (_currentPosition, data);
     }
 
@@ -180,9 +216,17 @@ public sealed class PagedKVCache : IDisposable
         ThrowIfDisposed();
         if (snapshot is null) return;
         var (pos, data) = ((int, float[]))snapshot;
-        int activeFloats = data.Length / 2;
-        data.AsSpan(0, activeFloats).CopyTo(_keys.Data);
-        data.AsSpan(activeFloats, activeFloats).CopyTo(_values.Data);
+        int activePages = (pos + _pageSize - 1) / _pageSize;
+        int batchFloats = activePages * _stridePage;
+        int totalFloats = batchFloats * _batchSize;
+
+        for (int b = 0; b < _batchSize; b++)
+        {
+            int dstOff = b * _numPages * _stridePage;
+            int srcOff = b * batchFloats;
+            data.AsSpan(srcOff, batchFloats).CopyTo(_keys.Data.Slice(dstOff, batchFloats));
+            data.AsSpan(totalFloats + srcOff, batchFloats).CopyTo(_values.Data.Slice(dstOff, batchFloats));
+        }
         _currentPosition = pos;
     }
 
