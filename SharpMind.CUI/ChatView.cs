@@ -34,6 +34,8 @@ public sealed class ChatView : View
     private readonly TextView _transcriptView;
     private readonly TextField _inputField;
     private readonly Button _interruptButton;
+    private readonly Button _sendButton;
+    private readonly Button _getButton;
     private readonly Label _statusLabel;
     private readonly Label _agentLabel;
     private readonly Label _strategyLabel;
@@ -130,13 +132,30 @@ public sealed class ChatView : View
             new Label("Time to 1st tok:") { X = 0, Y = 11 }, _ttftLabel,
             _memLabel);
 
-        _inputField = new TextField("")
+        _getButton = new Button("Get")
         {
             X = 0,
             Y = Pos.AnchorEnd(1),
-            Width = Dim.Fill(14)
+            Width = 6
+        };
+        _getButton.Clicked += OnGetArtifact;
+
+        _inputField = new TextField("")
+        {
+            X = Pos.Right(_getButton) + 1,
+            Y = Pos.AnchorEnd(1),
+            Width = Dim.Fill(6 + 7 + 13 + 3)
         };
         _inputField.KeyPress += OnInputKeyPress;
+
+        _sendButton = new Button("Send")
+        {
+            X = Pos.AnchorEnd(7 + 1 + 13),
+            Y = Pos.AnchorEnd(1),
+            Width = 7,
+            Enabled = true
+        };
+        _sendButton.Clicked += OnSendArtifact;
 
         _interruptButton = new Button("Interrupt")
         {
@@ -147,7 +166,7 @@ public sealed class ChatView : View
         };
         _interruptButton.Clicked += RequestInterrupt;
 
-        Add(_transcriptView, sidebarFrame, _inputField, _interruptButton);
+        Add(_transcriptView, sidebarFrame, _getButton, _inputField, _sendButton, _interruptButton);
 
         KeyPress += (args) =>
         {
@@ -229,6 +248,76 @@ public sealed class ChatView : View
     /// session) and report that plainly, rather than implying a softer
     /// in-place stop that doesn't actually exist yet.
     /// </summary>
+    private void OnSendArtifact()
+    {
+        if (_generating) return;
+        var path = FilePickerDialog.Show("Send artifact", Directory.GetCurrentDirectory(), PickerMode.File);
+        if (path is null) return;
+
+        string content;
+        try
+        {
+            content = File.ReadAllText(path);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.ErrorQuery("Error", $"Could not read file:\n{ex.Message}", "OK");
+            return;
+        }
+
+        var ext = Path.GetExtension(path)?.ToLowerInvariant();
+        string type = ext switch
+        {
+            ".json" => "json",
+            ".cs" or ".py" or ".js" or ".ts" or ".rs" or ".cpp" or ".c" or ".h" => "code",
+            ".png" or ".jpg" or ".jpeg" or ".gif" or ".bmp" => "image",
+            ".md" or ".txt" or ".xml" or ".yaml" or ".yml" => "text",
+            _ => "text"
+        };
+
+        var artifact = new ChatArtifact
+        {
+            Type = type,
+            Content = content,
+            FileName = Path.GetFileName(path),
+            Language = type == "code" ? ext?.TrimStart('.') : null
+        };
+
+        string text = _inputField.Text.ToString() ?? "";
+        _inputField.Text = "";
+        AppendTranscript($"You: {text}");
+        SetGenerating(true);
+        _statusLabel.Text = "Thinking...";
+        _bridge.SubmitUserInput(text, [artifact]);
+    }
+
+    private void OnGetArtifact()
+    {
+        var artifacts = _bridge.LastArtifacts;
+        if (artifacts is null || artifacts.Length == 0)
+        {
+            MessageBox.Query("No artifacts", "The last response has no artifacts to retrieve.", "OK");
+            return;
+        }
+
+        foreach (var artifact in artifacts)
+        {
+            string fileName = artifact.FileName ?? $"artifact.{artifact.Type}";
+            string startDir = Directory.GetCurrentDirectory();
+            string? savePath = FilePickerDialog.Show($"Save artifact: {fileName}", startDir, PickerMode.SaveFile, "*.*");
+            if (savePath is null) continue;
+
+            try
+            {
+                File.WriteAllText(savePath, artifact.Content);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.ErrorQuery("Error", $"Could not save artifact:\n{ex.Message}", "OK");
+            }
+        }
+    }
+
     private void RequestInterrupt()
     {
         if (!_generating) return;

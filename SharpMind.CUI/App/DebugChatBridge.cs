@@ -29,10 +29,14 @@ public sealed class DebugChatBridge(CuiToolContext cuiContext, Func<ToolPermissi
     public bool Faulted { get; private set; }
     public Exception? Fault { get; private set; }
     public bool ShowThinking { get; set; } = true;
+    public ChatArtifact[]? LastArtifacts { get; private set; }
 
-    public void SubmitUserInput(string text)
+    public void SubmitUserInput(string text, ChatArtifact[]? artifacts = null)
     {
-        _history.Add(ChatMessage.User(text));
+        var msg = ChatMessage.User(text);
+        if (artifacts is { Length: > 0 })
+            msg.Artifacts = artifacts;
+        _history.Add(msg);
         // Each submission runs as its own short-lived task rather than a single
         // long-running loop like the real bridge's — there's no model generation
         // to serialise against here, and letting each turn be independent makes
@@ -281,6 +285,8 @@ public sealed class DebugChatBridge(CuiToolContext cuiContext, Func<ToolPermissi
 
     private void Complete()
     {
+        if (_history.Count > 0 && _history[^1].Role == ChatRole.Agent)
+            LastArtifacts = _history[^1].Artifacts;
         _incoming.Enqueue(new ChatStreamEntry { Status = ChatStatus.Complete, IsComplete = true, TokensPerSecond = 999f });
     }
 

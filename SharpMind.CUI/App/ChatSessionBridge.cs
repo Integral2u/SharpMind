@@ -15,7 +15,7 @@ namespace SharpMind.CUI.App;
 /// </summary>
 public interface IChatBridge : IAsyncDisposable
 {
-    void SubmitUserInput(string text);
+    void SubmitUserInput(string text, ChatArtifact[]? artifacts = null);
     IEnumerable<ChatStreamEntry> DrainEntries();
     void Interrupt();
     IReadOnlyList<ChatMessage> GetHistory();
@@ -24,6 +24,7 @@ public interface IChatBridge : IAsyncDisposable
     bool ShowThinking { get; set; }
     bool Faulted { get; }
     Exception? Fault { get; }
+    ChatArtifact[]? LastArtifacts { get; }
 }
 
 /// <summary>
@@ -45,11 +46,14 @@ public sealed class ChatSessionBridge(IChatSession session, bool disposeUnderlyi
     private readonly ConcurrentQueue<ChatStreamEntry> _incoming = new();
     private readonly SemaphoreSlim _inputReady = new(0);
     private string? _pendingInput;
+    private ChatArtifact[]? _pendingArtifacts;
+    private ChatArtifact[]? _lastArtifacts;
     private readonly CancellationTokenSource _cts = new();
     private Task? _loopTask;
 
     public bool Faulted { get; private set; }
     public Exception? Fault { get; private set; }
+    public ChatArtifact[]? LastArtifacts => _lastArtifacts;
 
     /// <summary>
     /// Whether DisposeAsync should actually dispose the underlying
@@ -72,9 +76,24 @@ public sealed class ChatSessionBridge(IChatSession session, bool disposeUnderlyi
                     prompt: () =>
                     {
                         _inputReady.Wait(_cts.Token);
-                        return ChatMessage.User(_pendingInput ?? "");
+                        var msg = ChatMessage.User(_pendingInput ?? "");
+                        if (_pendingArtifacts is { Length: > 0 })
+                        {
+                            msg.Artifacts = _pendingArtifacts;
+                            _pendingArtifacts = null;
+                        }
+                        return msg;
                     },
-                    response: entry => _incoming.Enqueue(entry),
+                    response: entry =>
+                    {
+                        if (entry.IsComplete || entry.Status == ChatStatus.Complete)
+                        {
+                            var history = session.History;
+                            if (history.Count > 0 && history[^1].Role == ChatRole.Agent)
+                                _lastArtifacts = history[^1].Artifacts;
+                        }
+                        _incoming.Enqueue(entry);
+                    },
                     token: _cts.Token);
             }
             catch (OperationCanceledException)
@@ -90,9 +109,10 @@ public sealed class ChatSessionBridge(IChatSession session, bool disposeUnderlyi
     }
 
     /// <summary>Called from the render thread when the user submits a line.</summary>
-    public void SubmitUserInput(string text)
+    public void SubmitUserInput(string text, ChatArtifact[]? artifacts = null)
     {
         _pendingInput = text;
+        _pendingArtifacts = artifacts;
         _inputReady.Release();
     }
 

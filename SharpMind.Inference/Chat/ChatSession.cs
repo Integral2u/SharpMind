@@ -458,12 +458,13 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
 
     public async IAsyncEnumerable<ChatStreamEntry> GetResponseStreamAsync(
         string userInput,
+        ChatArtifact[]? artifacts = null,
         [EnumeratorCancellation] CancellationToken ct = default)
     {
         ThrowIfDisposed();
 
 
-        _history.Add(ChatMessage.User(userInput));
+        _history.Add(new ChatMessage { Role = ChatRole.User, Content = userInput, Artifacts = artifacts });
         InvalidateHistoryCache();
 
         // Agentic loop: keep generating until the model produces a plain response
@@ -580,6 +581,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
 
             // Stream tokens
             _responseBuffer.Clear();
+            List<ChatArtifact> responseArtifacts = [];
             _inThinkBlock = false;
             _turnCts?.Dispose();
             _turnCts = new CancellationTokenSource();
@@ -799,7 +801,10 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
             // Normal (non-tool) response
             if (responseText.Length > 0)
             {
-                _history.Add(ChatMessage.Agent(responseText));
+                var agentMsg = ChatMessage.Agent(responseText);
+                if (responseArtifacts.Count > 0)
+                    agentMsg.Artifacts = [.. responseArtifacts];
+                _history.Add(agentMsg);
                 InvalidateHistoryCache();
             }
 
@@ -851,16 +856,16 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
                 });
             }
 
-            // Pre-process user input
+            // Pre-process user input (preserves artifacts from the original message)
             if (_preProcessor is not null)
             {
                 var processed = await _preProcessor.ProcessAsync(input.Content, _history, token);
-                input = new ChatMessage { Role = input.Role, Content = processed };
+                input.Content = processed;
             }
 
             try
             {
-                await foreach (var entry in GetResponseStreamAsync(input.Content, token))
+                await foreach (var entry in GetResponseStreamAsync(input.Content, input.Artifacts, token))
                 {
                     response(entry);
                     TokensPerSecond = entry.TokensPerSecond;

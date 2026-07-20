@@ -3,7 +3,7 @@ using Terminal.Gui;
 
 namespace SharpMind.CUI;
 
-public enum PickerMode { File, Folder }
+public enum PickerMode { File, Folder, SaveFile }
 
 /// <summary>
 /// A small, predictable file/folder browser dialog. Built from scratch
@@ -21,10 +21,18 @@ public static class FilePickerDialog
         string? result = null;
         string currentPath = Directory.Exists(startPath) ? startPath : Directory.GetCurrentDirectory();
 
-        var dialog = new Dialog((ustring)title, 70, 20);
+        var dialog = new Dialog((ustring)title, 70, 22);
         var pathLabel = new Label((ustring)currentPath) { X = 1, Y = 0, Width = Dim.Fill(2) };
-        var listView = new ListView { X = 1, Y = 2, Width = Dim.Fill(2), Height = Dim.Fill(4) };
+        var listView = new ListView { X = 1, Y = 2, Width = Dim.Fill(2), Height = Dim.Fill(6) };
         List<string> entries = [];
+
+        TextField? saveNameField = null;
+        if (mode == PickerMode.SaveFile)
+        {
+            dialog.Add(new Label("File name:") { X = 1, Y = Pos.AnchorEnd(7), Width = 10 });
+            saveNameField = new TextField("") { X = 12, Y = Pos.AnchorEnd(7), Width = Dim.Fill(2) };
+            dialog.Add(saveNameField);
+        }
 
         void Refresh()
         {
@@ -32,7 +40,7 @@ public static class FilePickerDialog
             var dirs = Directory.GetDirectories(currentPath).Select(d => "[DIR] " + Path.GetFileName(d)).OrderBy(s => s);
             entries = new List<string> { ".. (up one level)" };
             entries.AddRange(dirs);
-            if (mode == PickerMode.File)
+            if (mode == PickerMode.File || mode == PickerMode.SaveFile)
                 entries.AddRange(Directory.GetFiles(currentPath, filePattern).Select(f => Path.GetFileName(f)!).OrderBy(s => s));
             listView.SetSource(entries);
             dialog.SetNeedsDisplay();
@@ -54,6 +62,10 @@ public static class FilePickerDialog
                 currentPath = Path.Combine(currentPath, sel[6..]);
                 Refresh();
             }
+            else if (mode == PickerMode.SaveFile && saveNameField is not null)
+            {
+                saveNameField.Text = sel;
+            }
             else
             {
                 result = Path.Combine(currentPath, sel);
@@ -63,22 +75,45 @@ public static class FilePickerDialog
 
         listView.OpenSelectedItem += (_) => Activate();
 
-        var selectButton = new Button(mode == PickerMode.Folder ? "Select this folder" : "Select")
+        Button selectButton;
+        if (mode == PickerMode.SaveFile)
         {
-            X = 1, Y = Pos.AnchorEnd(2), IsDefault = mode == PickerMode.Folder
-        };
-        selectButton.Clicked += () =>
+            selectButton = new Button("Save")
+            {
+                X = 1, Y = Pos.AnchorEnd(2), IsDefault = true
+            };
+            selectButton.Clicked += () =>
+            {
+                string name = saveNameField?.Text.ToString() ?? "";
+                if (string.IsNullOrWhiteSpace(name))
+                {
+                    MessageBox.Query("No name", "Enter a file name before saving.", "OK");
+                    return;
+                }
+                result = Path.Combine(currentPath, name);
+                Application.RequestStop();
+            };
+        }
+        else
         {
-            if (mode == PickerMode.Folder) { result = currentPath; Application.RequestStop(); }
-            else Activate();
-        };
+            selectButton = new Button(mode == PickerMode.Folder ? "Select this folder" : "Select")
+            {
+                X = 1, Y = Pos.AnchorEnd(2), IsDefault = mode == PickerMode.Folder
+            };
+            selectButton.Clicked += () =>
+            {
+                if (mode == PickerMode.Folder) { result = currentPath; Application.RequestStop(); }
+                else Activate();
+            };
+        }
 
         var cancelButton = new Button("Cancel") { X = Pos.Right(selectButton) + 2, Y = Pos.AnchorEnd(2) };
         cancelButton.Clicked += () => Application.RequestStop();
 
         dialog.Add(pathLabel, listView, selectButton, cancelButton);
         Refresh();
-        listView.SetFocus();
+        if (saveNameField is not null) saveNameField.SetFocus();
+        else listView.SetFocus();
 
         Application.Run(dialog);
         return result;

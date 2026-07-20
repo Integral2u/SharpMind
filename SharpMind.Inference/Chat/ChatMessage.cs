@@ -8,7 +8,7 @@ public sealed class ChatMessage
     public required ChatRole Role { get; init; }
     public required string Content { get; set; }
     public string? Name { get; init; }
-    public ChatArtifact[]? Artifacts { get; init; }
+    public ChatArtifact[]? Artifacts { get; set; }
     public DateTime Timestamp { get; init; } = DateTime.UtcNow;
     /// <summary>Optional metadata for context management, tagging, and interrupt markers.</summary>
     public Dictionary<string, string>? Metadata { get; init; }
