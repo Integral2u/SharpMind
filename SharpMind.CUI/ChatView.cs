@@ -378,7 +378,7 @@ public sealed class ChatView : View
             Application.RequestStop();
         };
 
-        var closeBtn = new Button("Close") { X = Pos.AnchorEnd(8), Y = Pos.AnchorEnd(2) };
+        var closeBtn = new Button("Close") { X = Pos.AnchorEnd(9), Y = Pos.AnchorEnd(2), Width = 9 };
         closeBtn.Clicked += () => Application.RequestStop();
 
         dialog.Add(saveBtn, removeBtn, clearBtn, closeBtn);

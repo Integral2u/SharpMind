@@ -56,6 +56,7 @@ public sealed class DebugChatBridge(CuiToolContext cuiContext, Func<ToolPermissi
         ("TestAgent", "Simulates a sub-agent delegation (Executing/Researching/Responding) to test transcript attribution."),
         ("TestWeather", "Simulates a weather tool call to test Network permission interception."),
         ("TestFile", "Simulates a file system tool call to test File permission interception."),
+        ("TestFileArtifact", "Sends a .txt file artifact with the user message and simulates 2 returned code artifacts."),
     ];
 
     private async Task RunScriptedTurnAsync(string input, CancellationToken token)
@@ -85,6 +86,12 @@ public sealed class DebugChatBridge(CuiToolContext cuiContext, Func<ToolPermissi
         if (string.Equals(command, "TestFile", StringComparison.OrdinalIgnoreCase))
         {
             await RunTestFileAsync(token);
+            return;
+        }
+
+        if (string.Equals(command, "TestFileArtifact", StringComparison.OrdinalIgnoreCase))
+        {
+            await RunTestFileArtifactAsync(token);
             return;
         }
 
@@ -256,6 +263,54 @@ public sealed class DebugChatBridge(CuiToolContext cuiContext, Func<ToolPermissi
         string fileMsg = "[DIR] src\n[FILE] README.md\n[FILE] LICENSE";
         _history.Add(ChatMessage.Agent(fileMsg));
         await StreamTextAsync(fileMsg, token);
+        Complete();
+    }
+
+    /// <summary>
+    /// Simulates sending a .txt file artifact with the user message and receiving
+    /// 2 code artifacts back — one yielded via ChatStreamEntry.Artifact (streamed)
+    /// and one attached to the final ChatMessage.Artifacts. Exercises both
+    /// artifact data paths so the bridge's LastArtifacts merge works correctly.
+    /// </summary>
+    private async Task RunTestFileArtifactAsync(CancellationToken token)
+    {
+        Emit(ChatStatus.Thinking, null);
+        await Task.Delay(100, token);
+
+        Emit(ChatStatus.Responding, null);
+
+        // Stream some simulated response text
+        string responseText = "I've analyzed the file and generated 2 code artifacts.";
+        _history.Add(ChatMessage.Agent(responseText));
+        await StreamTextAsync(responseText, token);
+
+        // Yield first artifact via ChatStreamEntry.Artifact (streamed path)
+        var streamedArtifact = new ChatArtifact
+        {
+            Type = "code",
+            Content = "def hello():\n    print('Hello from streamed artifact')"u8.ToArray(),
+            Language = "py",
+            FileName = "hello.py"
+        };
+        _incoming.Enqueue(new ChatStreamEntry
+        {
+            Status = ChatStatus.Responding,
+            Token = null,
+            Artifact = streamedArtifact,
+            IsComplete = false,
+            TokensPerSecond = 999f
+        });
+
+        // Attach second artifact to the agent message (final message path)
+        var msgArtifact = new ChatArtifact
+        {
+            Type = "code",
+            Content = "console.log('Hello from message artifact');"u8.ToArray(),
+            Language = "js",
+            FileName = "hello.js"
+        };
+        _history[^1].Artifacts = [msgArtifact];
+
         Complete();
     }
 

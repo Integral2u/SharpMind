@@ -47,6 +47,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     private readonly System.Text.StringBuilder _responseBuffer = new();
     private bool _inThinkBlock;
     private readonly IPromptPreProcessor? _preProcessor;
+    private readonly IPromptPostProcessor? _postProcessor;
     private readonly IContextCompactor? _compactor;
     private CancellationTokenSource? _turnCts;
 
@@ -92,6 +93,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         ModelMetaData? meta = null,
         IAgentBuilder? agentBuilder = null,
         IPromptPreProcessor? preProcessor = null,
+        IPromptPostProcessor? postProcessor = null,
         IContextCompactor? compactor = null,
         Func<ToolPermissionContext, Task<ToolPermission>>? permissions = null,
         IKVCache[]? caches = null,
@@ -104,6 +106,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         _formatter = ChatPromptFormatterFactory.Create(meta);
         _agentBuilder = agentBuilder;
         _preProcessor = preProcessor;
+        _postProcessor = postProcessor;
         _compactor = compactor;
         MaxAgentDepth = _agentBuilder?.MaxAgentDepth ?? 2;
         _addBos = meta?.GetLong("tokenizer.ggml.add_bos_token", 1) != 0;
@@ -871,6 +874,9 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
                     TokensPerSecond = entry.TokensPerSecond;
                     TimeToFirstToken = entry.TimeToFirstToken;
                 }
+
+                if (_postProcessor is not null && _history.Count > 0 && _history[^1].Role == ChatRole.Agent)
+                    await _postProcessor.ProcessAsync(_history[^1], _history, token);
             }
             catch (OperationCanceledException)
             {

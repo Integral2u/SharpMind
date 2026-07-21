@@ -94,8 +94,8 @@ public sealed class ChatSessionBridge(IChatSession session, bool disposeUnderlyi
                         {
                             var combined = new List<ChatArtifact>(_streamedArtifacts);
                             var history = session.History;
-                            if (history.Count > 0 && history[^1].Role == ChatRole.Agent && history[^1].Artifacts is { Length: > 0 })
-                                combined.AddRange(history[^1].Artifacts);
+                            if (history.Count > 0 && history[^1].Role == ChatRole.Agent && history[^1].Artifacts is { Length: > 0 } msgArtifacts)
+                                combined.AddRange(msgArtifacts);
                             _lastArtifacts = combined.Count > 0 ? [.. combined] : null;
                             _streamedArtifacts.Clear();
                         }
