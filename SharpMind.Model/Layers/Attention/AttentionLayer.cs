@@ -139,17 +139,6 @@ namespace SharpMind.Model.Layers.Attention;
         }
     }
 
-    /// <summary>Pushes newly loaded raw quantized data into layer instances.
-    /// Called by <see cref="TransformerWeightsCached"/> after on-demand layer loading.
-    /// Does NOT touch float tensors — safe after FreeFloatWeights.</summary>
-    public void UpdateRawWeights(TransformerWeights.BlockWeights weights)
-    {
-        Wq.SetRawWeight(weights.RawWq);
-        Wk.SetRawWeight(weights.RawWk);
-        Wv.SetRawWeight(weights.RawWv);
-        Wo.SetRawWeight(weights.RawWo);
-    }
-
     public void LoadWeights(string name, ReadOnlySpan<float> data)
     {
         bool isBias = name.EndsWith(".bias", StringComparison.OrdinalIgnoreCase);

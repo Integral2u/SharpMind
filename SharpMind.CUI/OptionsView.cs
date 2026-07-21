@@ -77,29 +77,7 @@ public sealed class OptionsView : View
         _formContent.Add(cacheRadio);
         row += Enum.GetValues<CacheStrategy>().Length + 1;
 
-        AddLabel("Load mode:");
-        var loadRadio = new RadioGroup(Enum.GetNames<LoadMode>().Select(p => (ustring)p).ToArray()) { X = 30, Y = row, SelectedItem = (int)options.LoadMode };
-        
-        AddLabel("Cache depth (Cached only):");
-        var cacheDepthField = new TextField((ustring)options.CacheDepth.ToString()) { X = 30, Y = row + Enum.GetValues<LoadMode>().Length + 1, Width = 10, Enabled = options.LoadMode == LoadMode.Cached };
-        cacheDepthField.TextChanged += (_) =>
-        {
-            if (int.TryParse(cacheDepthField.Text.ToString(), out var v))
-            {
-                // Min 1. Max is handled during session creation as it depends on the model.
-                _options.CacheDepth = Math.Max(1, v);
-            }
-        };
 
-        loadRadio.SelectedItemChanged += (args) => 
-        {
-            _options.LoadMode = (LoadMode)args.SelectedItem;
-            cacheDepthField.Enabled = _options.LoadMode == LoadMode.Cached;
-        };
-        _formContent.Add(loadRadio);
-        row += Enum.GetValues<LoadMode>().Length + 1;
-        _formContent.Add(cacheDepthField);
-        row++;
 
         AddLabel("Hardware tier:");
         var hwRadio = new RadioGroup(Enum.GetNames<HardwareTier>().Select(p => (ustring)p).ToArray()) { X = 30, Y = row, SelectedItem = (int)options.HardwareTier };
@@ -370,7 +348,6 @@ public sealed class OptionsView : View
         target.ToolsFolder = source.ToolsFolder;
         target.Generator = source.Generator;
         target.Cache = source.Cache;
-        target.LoadMode = source.LoadMode;
         target.HardwareTier = source.HardwareTier;
         target.UseGpu = source.UseGpu;
         target.GpuNonQuant = source.GpuNonQuant;

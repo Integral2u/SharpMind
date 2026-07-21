@@ -198,45 +198,7 @@ public abstract class FfnLayer : IDisposable
         }
     }
 
-    /// <summary>Pushes newly loaded raw quantized data into layer instances.
-    /// Called by <see cref="TransformerWeightsCached"/> after on-demand layer loading.
-    /// Does NOT touch float tensors — safe after FreeFloatWeights.</summary>
-    public void UpdateRawWeights(TransformerWeights.BlockWeights weights)
-    {
-        if (W1 is not null && W2 is not null)
-        {
-            W1.SetRawWeight(weights.RawWf1);
-            W2.SetRawWeight(weights.RawWf2);
-        }
-        else if (WGated is not null && WDown is not null)
-        {
-            if (weights.RawWgate != null && weights.RawWup != null)
-            {
-                byte[] fused = new byte[weights.RawWgate.Length + weights.RawWup.Length];
-                Buffer.BlockCopy(weights.RawWgate, 0, fused, 0, weights.RawWgate.Length);
-                Buffer.BlockCopy(weights.RawWup, 0, fused, weights.RawWgate.Length, weights.RawWup.Length);
-                WGated.SetRawWeight(fused);
-            }
-            WDown.SetRawWeight(weights.RawWf2);
-        }
-        else if (Router is not null && ExpertGate is not null)
-        {
-            // MoE: push per-expert raw data and router raw data
-            if (weights.RawWgateExp is not null)
-                foreach (var (expIdx, rawData) in weights.RawWgateExp)
-                    if (expIdx < ExpertGate.Length)
-                        ExpertGate[expIdx].SetRawWeight(rawData);
-            if (weights.RawWupExp is not null)
-                foreach (var (expIdx, rawData) in weights.RawWupExp)
-                    if (expIdx < ExpertUp!.Length)
-                        ExpertUp[expIdx].SetRawWeight(rawData);
-            if (weights.RawWdownExp is not null)
-                foreach (var (expIdx, rawData) in weights.RawWdownExp)
-                    if (expIdx < ExpertDown!.Length)
-                        ExpertDown[expIdx].SetRawWeight(rawData);
-            Router.SetRawWeight(weights.RawRouter);
-        }
-    }
+
 
     // PuzzleCornerPieces
 

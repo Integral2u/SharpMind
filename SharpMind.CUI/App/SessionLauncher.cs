@@ -134,7 +134,7 @@ public static class SessionLauncher
             var qOps = QuantizationFactory.Create(mapping);
             weights = await Task.Run(() =>
             {
-                var w = ModelFactory.Create(modelConfig, sharpConfig, qOps, options.ModelPath, meta, options.LoadMode, options.CacheDepth);
+                var w = ModelFactory.Create(modelConfig, sharpConfig, qOps, options.ModelPath, meta);
                 w.InitializeWeights(progress);
                 return w;
             });

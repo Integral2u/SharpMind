@@ -417,7 +417,6 @@ public sealed class MainWindow : Window
         GpuVecDot = source.GpuVecDot,
         GpuMatMul = source.GpuMatMul,
         UseParallelKernels = source.UseParallelKernels,
-        CacheDepth = source.CacheDepth,
         FileAccess = source.FileAccess,
         NetworkAccess = source.NetworkAccess,
         Sampling = source.Sampling,
@@ -427,7 +426,6 @@ public sealed class MainWindow : Window
         MaxAgentDepth = source.MaxAgentDepth,
         MaxToolCallsPerTurn = source.MaxToolCallsPerTurn,
         ShowThinking = source.ShowThinking,
-        LoadMode = source.LoadMode,
         DisabledTools = new HashSet<string>(source.DisabledTools)
     };
 

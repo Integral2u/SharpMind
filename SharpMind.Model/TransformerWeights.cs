@@ -2,16 +2,13 @@ using SharpMind.Core.Quantization;
 using SharpMind.Core.Tensors;
 using SharpMind.Model.Config;
 using SharpMind.Model.Format;
-using System.Collections.Concurrent;
-using System.IO.MemoryMappedFiles;
 
 namespace SharpMind.Model;
 
 /// <summary>Metadata for one weight tensor: file offset, byte size, quantization dtype.</summary>
 public readonly record struct TensorMeta(long Offset, int Size, QuantDType Dtype);
 
-/// <summary>Container for a Transformer's weights. Abstract — use <see cref="TransformerWeightsFull"/>
-/// for full in-memory loading or <see cref="TransformerWeightsCached"/> for on-demand cached loading.</summary>
+/// <summary>Container for a Transformer's weights — all weights loaded into memory.</summary>
 public abstract class TransformerWeights : IDisposable
 {
     public ModelConfig Config { get; }
@@ -30,18 +27,13 @@ public abstract class TransformerWeights : IDisposable
     // Per-block weights (Attention, FFN, Norms)
     public BlockWeights[] Blocks { get; }
 
-    // GGUF metadata (used by Cached mode for seek-based lazy loading)
+    // GGUF metadata
     public Format.ModelMetaData? GgufMeta { get; set; }
     public string? GgufPath { get; set; }
     public bool IsMoE { get; set; }
 
     // The loader used during InitializeWeights
     protected IModelLoader? Loader { get; }
-    public LoadMode Mode { get; }
-
-    // Fired when a layer is fully loaded (used by Cached mode to push weights into running layers)
-    public event Action<int>? OnLayerLoaded;
-    protected void FireLayerLoaded(int layerIndex) => OnLayerLoaded?.Invoke(layerIndex);
 
     protected TransformerWeights(
         ModelConfig config,
@@ -50,8 +42,7 @@ public abstract class TransformerWeights : IDisposable
         Tensor<float> finalNormW,
         Tensor<float>? finalNormB,
         BlockWeights[] blocks,
-        IModelLoader? loader,
-        LoadMode mode)
+        IModelLoader? loader)
     {
         Config = config;
         EmbeddingWeight = embedding;
@@ -60,7 +51,6 @@ public abstract class TransformerWeights : IDisposable
         FinalNormBias = finalNormB;
         Blocks = blocks;
         Loader = loader;
-        Mode = mode;
     }
 
     /// <summary>Initialises weights using the stored <see cref="IModelLoader"/>.
@@ -252,16 +242,6 @@ public abstract class TransformerWeights : IDisposable
         block.TensorMeta[field] = new TensorMeta(offset, size, dtype);
     }
 
-    public static void FreeBlockFloatTensors(BlockWeights block)
-    {
-        block.Wq?.Dispose(); block.Wq = null;
-        block.Wk?.Dispose(); block.Wk = null;
-        block.Wv?.Dispose(); block.Wv = null;
-        block.Wo?.Dispose(); block.Wo = null;
-        block.Wf1?.Dispose(); block.Wf1 = null;
-        block.Wf2?.Dispose(); block.Wf2 = null;
-    }
-
     public sealed class BlockWeights : IDisposable
     {
         // Attention float tensors (nullable — Full mode populates all; Cached mode populates on demand)
@@ -350,7 +330,7 @@ public abstract class TransformerWeights : IDisposable
     }
 }
 
-/// <summary>Loads all weights into memory at once (LoadMode.Full).</summary>
+/// <summary>Loads all weights into memory at once.</summary>
 public sealed class TransformerWeightsFull : TransformerWeights
 {
     public TransformerWeightsFull(
@@ -361,138 +341,12 @@ public sealed class TransformerWeightsFull : TransformerWeights
         Tensor<float>? finalNormB,
         BlockWeights[] blocks,
         IModelLoader loader)
-        : base(config, embedding, lmHead, finalNormW, finalNormB, blocks, loader, LoadMode.Full) { }
+        : base(config, embedding, lmHead, finalNormW, finalNormB, blocks, loader) { }
 
     public override void InitializeWeights(IProgress<float>? progress = null)
     {
-        Loader!.PreInit(this, progress);
         Loader!.LoadAllWeights(this, progress);
     }
 }
 
-/// <summary>Loads weights on-demand per layer (LoadMode.Cached). Manages a cyclic window
-/// of <see cref="CacheDepth"/> layers resident in float memory.</summary>
-public sealed class TransformerWeightsCached : TransformerWeights
-{
-    private readonly string _path;
-    private readonly ModelMetaData _meta;
-    private readonly int _cacheDepth;
-    private readonly MemoryMappedFile _mmf;
-    private readonly HashSet<int> _loaded = [];
-    private readonly ConcurrentDictionary<int, Task> _loading = new();
-    private readonly object _sync = new();
-    private CancellationTokenSource? _cts;
 
-    public int CacheDepth => _cacheDepth;
-
-    public TransformerWeightsCached(
-        ModelConfig config,
-        Tensor<float> embedding,
-        Tensor<float>? lmHead,
-        Tensor<float> finalNormW,
-        Tensor<float>? finalNormB,
-        BlockWeights[] blocks,
-        IModelLoader loader,
-        string path,
-        ModelMetaData meta,
-        int cacheDepth = 2)
-        : base(config, embedding, lmHead, finalNormW, finalNormB, blocks, loader, LoadMode.Cached)
-    {
-        _path = path;
-        _meta = meta;
-        _cacheDepth = Math.Max(1, cacheDepth);
-        _cts = new CancellationTokenSource();
-        _mmf = MemoryMappedFile.CreateFromFile(path, FileMode.Open, null, 0, MemoryMappedFileAccess.Read);
-    }
-
-    public override void InitializeWeights(IProgress<float>? progress = null)
-    {
-        Loader!.PreInit(this, progress);
-        // Load top-level tensors (embedding weight, lm_head weight)
-        Loader!.LoadTopLevelTensors(this);
-        // Pre-load first cacheDepth layers synchronously
-        int initialLayers = Math.Min(_cacheDepth, Blocks.Length);
-        for (int i = 0; i < initialLayers; i++)
-            LoadLayerInternal(i);
-    }
-
-    /// <summary>Ensures a specific layer's weights are loaded (synchronous).</summary>
-    public void EnsureLayer(int layerIndex)
-    {
-        if (_loading.TryGetValue(layerIndex, out var t))
-        {
-            if (!t.IsCompleted) t.GetAwaiter().GetResult();
-            return;
-        }
-        lock (_sync)
-        {
-            if (_loaded.Contains(layerIndex)) return;
-            if (_loading.TryGetValue(layerIndex, out t))
-            {
-                t.GetAwaiter().GetResult();
-                return;
-            }
-        }
-        LoadLayerInternal(layerIndex);
-    }
-
-    /// <summary>Asynchronously prefetches the layer at <c>currentLayer + cacheDepth</c> (circular).</summary>
-    public void PrefetchAfter(int currentLayer)
-    {
-        int total = Blocks.Length;
-        if (total <= _cacheDepth) return;
-        int next = (currentLayer + _cacheDepth) % total;
-        lock (_sync)
-        {
-            if (!_loaded.Contains(next) && !_loading.ContainsKey(next))
-            {
-                var token = _cts?.Token ?? CancellationToken.None;
-                var t = Task.Run(() =>
-                {
-                    token.ThrowIfCancellationRequested();
-                    LoadLayerInternal(next);
-                }, token);
-                _loading[next] = t;
-            }
-        }
-    }
-
-    public bool IsLayerLoaded(int layerIndex) => _loaded.Contains(layerIndex);
-
-    private void LoadLayerInternal(int layerIndex)
-    {
-        Loader!.LoadLayer(this, layerIndex);
-
-        lock (_sync)
-        {
-            _loaded.Add(layerIndex);
-            FireLayerLoaded(layerIndex);
-        }
-
-        // Free layers outside the cyclic window
-        int evict = layerIndex - _cacheDepth;
-        if (evict >= 0 && _loaded.Remove(evict))
-            FreeBlockFloatTensors(Blocks[evict]);
-    }
-
-    protected override void Dispose(bool disposing)
-    {
-        if (disposing)
-        {
-            if (Interlocked.Exchange(ref _cts, null) is { } cts)
-            {
-                cts.Cancel();
-                cts.Dispose();
-            }
-            foreach (var kv in _loading)
-            {
-                try { kv.Value.GetAwaiter().GetResult(); }
-                catch (OperationCanceledException) { }
-            }
-            _mmf.Dispose();
-            _loading.Clear();
-            lock (_sync) { _loaded.Clear(); }
-        }
-        base.Dispose(disposing);
-    }
-}

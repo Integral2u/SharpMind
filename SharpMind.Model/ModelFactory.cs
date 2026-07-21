@@ -35,17 +35,15 @@ public static class ModelFactory
         return new TransformerWeightsFull(modelConfig, embedding, lmHead, finalNormW, finalNormB, blockWeights, null!);
     }
 
-    /// <summary>Creates a <see cref="TransformerWeights"/> instance (Full or Cached subclass)
-    /// with a <see cref="GgufLoader"/> for the given path. Call <c>weights.InitializeWeights(progress)</c>
+    /// <summary>Creates a <see cref="TransformerWeights"/> instance with a
+    /// <see cref="GgufLoader"/> for the given path. Call <c>weights.InitializeWeights(progress)</c>
     /// after creation to populate weights from the GGUF file.</summary>
     public static TransformerWeights Create(
         ModelConfig modelConfig,
         SharpMindConfig sharpConfig,
         QuantizationOps qOps,
         string path,
-        ModelMetaData meta,
-        LoadMode mode,
-        int cacheDepth = 2)
+        ModelMetaData meta)
     {
         ArgumentNullException.ThrowIfNull(modelConfig);
         ArgumentNullException.ThrowIfNull(sharpConfig);
@@ -53,26 +51,15 @@ public static class ModelFactory
         var fmt = ModelFormatHelpers.GetFormatForExtension(path);
         if (fmt == null) throw new FileLoadException($"File type not supported: {path}", path);
         
-        bool fullMode = mode == LoadMode.Full;
         var embedding = new Tensor<float>(modelConfig.VocabSize, modelConfig.HiddenDim);
         Tensor<float>? lmHead = null;
         var finalNormW = Tensor<float>.Ones(modelConfig.HiddenDim);
         Tensor<float>? finalNormB = null;
 
-        var blockWeights = AllocateBlockWeights(modelConfig, sharpConfig, fullMode);
-        //var loader = new GgufLoader(qOps, path, modelConfig);
+        var blockWeights = AllocateBlockWeights(modelConfig, sharpConfig, allocateFloatTensors: true);
         var loader = ModelFormatHelpers.GetModelLoaderFor((ModelFormat)fmt, qOps, path, modelConfig);
 
-        if (fullMode)
-        {
-            return new TransformerWeightsFull(modelConfig, embedding, lmHead, finalNormW, finalNormB, blockWeights, loader);
-        }
-        else
-        {
-            // Clamp cacheDepth between 1 and total layers
-            int clampedDepth = Math.Clamp(cacheDepth, 1, modelConfig.NumLayers);
-            return new TransformerWeightsCached(modelConfig, embedding, lmHead, finalNormW, finalNormB, blockWeights, loader, path, meta, clampedDepth);
-        }
+        return new TransformerWeightsFull(modelConfig, embedding, lmHead, finalNormW, finalNormB, blockWeights, loader);
     }
 
     private static TransformerWeights.BlockWeights[] AllocateBlockWeights(ModelConfig config, SharpMindConfig sharpConfig, bool allocateFloatTensors)
@@ -153,26 +140,9 @@ public static class ModelFactory
         var blocks = Enumerable.Range(0, weights.Config.NumLayers)
             .Select(i => BuildBlock(i, weights, sharpConfig, mapping, acts, qOps, sharpConfig.UseHooks)).ToArray();
 
-        // In Cached mode, subscribe to OnLayerLoaded to push raw data into running layers
-        if (weights is TransformerWeightsCached cached)
-        {
-            cached.OnLayerLoaded += layerIdx =>
-            {
-                if (layerIdx < blocks.Length)
-                    blocks[layerIdx].UpdateRawWeights(weights.Blocks[layerIdx]);
-            };
-            // Push raw data for layers that were pre-loaded by InitializeWeights
-            // before the subscription was set up
-            for (int i = 0; i < blocks.Length; i++)
-            {
-                if (cached.IsLayerLoaded(i))
-                    blocks[i].UpdateRawWeights(weights.Blocks[i]);
-            }
-        }
-
         IArchitecture arch = sharpConfig.Arch switch
         {
-            ArchKind.Decoder => new DecoderArch(blocks, weights as TransformerWeightsCached),
+            ArchKind.Decoder => new DecoderArch(blocks),
             ArchKind.Encoder => new EncoderArch(blocks),
             _ => throw new NotSupportedException($"Unknown ArchKind: {sharpConfig.Arch}")
         };

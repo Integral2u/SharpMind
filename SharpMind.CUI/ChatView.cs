@@ -116,7 +116,7 @@ public sealed class ChatView : View
         };
         string hwDisplay = options.UseGpu ? $"GPU ({resolvedHw})" : resolvedHw;
 
-        _strategyLabel = new Label($"Load: {options.LoadMode}\nGenerator: {options.Generator}\nKV Cache: {options.Cache}\nHW Tier: {hwDisplay}")
+        _strategyLabel = new Label($"Generator: {options.Generator}\nKV Cache: {options.Cache}\nHW Tier: {hwDisplay}")
         { X = 0, Y = 4, Width = Dim.Fill(), Height = 4 };
         _toolLabel = new Label("") { X = 0, Y = 8, Width = Dim.Fill() };
         _speedLabel = new Label("--") { X = 0, Y = 10, Width = Dim.Fill() };
