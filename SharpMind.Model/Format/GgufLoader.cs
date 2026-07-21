@@ -371,12 +371,20 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
         int total = meta.Tensors.Count;
         int loaded = 0;
 
-        // Pre-populate tensor metadata (used by SetWeights later)
+        using var mmf = MemoryMappedFile.CreateFromFile(_path, FileMode.Open, null, 0, MemoryMappedFileAccess.Read);
+        using var stream = mmf.CreateViewStream(0, 0, MemoryMappedFileAccess.Read);
+        using var reader = new BinaryReader(stream);
+
         foreach (var info in meta.Tensors)
         {
+            progress?.Report((float)loaded / total);
+
             var (target, block, rawField) = weights.ResolveTarget(info.Name);
-            if (target == null && block == null) continue;
+            if (target == null && block == null) { loaded++; continue; }
+
             long rawSize = QuantizationOps.GetRawTensorByteCount(info.Shape, info.Dtype);
+
+            // Record tensor metadata and top-level dtypes (consumed by SetWeights later)
             if (target != null && block == null && rawSize > 0)
             {
                 if (target == weights.LmHeadWeight)
@@ -386,15 +394,7 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
             }
             if (block != null && rawField != null && rawSize > 0)
                 SetTensorMeta(block, rawField, meta.DataOffset + info.Offset, (int)rawSize, info.Dtype);
-        }
 
-        using var mmf = MemoryMappedFile.CreateFromFile(_path, FileMode.Open, null, 0, MemoryMappedFileAccess.Read);
-        using var stream = mmf.CreateViewStream(0, 0, MemoryMappedFileAccess.Read);
-        using var reader = new BinaryReader(stream);
-
-        foreach (var info in meta.Tensors)
-        {
-            progress?.Report((float)loaded / total);
             long targetOffset = meta.DataOffset + info.Offset;
             if (targetOffset >= stream.Length) { loaded++; continue; }
             stream.Position = targetOffset;
@@ -405,12 +405,8 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
                 weights.SetLmHead(new Tensor<float>((int)_config.VocabSize, (int)ggufIn));
             }
 
-            var (target, block, rawField) = weights.ResolveTarget(info.Name);
-            if (target == null && block == null) { loaded++; continue; }
-
             int count = 1;
             foreach (int d in info.Shape) count *= d;
-            long rawSize = QuantizationOps.GetRawTensorByteCount(info.Shape, info.Dtype);
 
             // Load raw quantized data for block-level tensors
             if (block != null && rawField != null && rawSize > 0 && stream.Position + rawSize <= stream.Length)

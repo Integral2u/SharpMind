@@ -31,7 +31,7 @@ public static class ModelFactory
         Tensor<float>? lmHead = null;
         var finalNormW = Tensor<float>.Ones(modelConfig.HiddenDim);
         Tensor<float>? finalNormB = null;
-        var blockWeights = AllocateBlockWeights(modelConfig, sharpConfig, allocateFloatTensors: true);
+        var blockWeights = AllocateBlockWeights(modelConfig, sharpConfig);
         return new TransformerWeightsFull(modelConfig, embedding, lmHead, finalNormW, finalNormB, blockWeights, null!);
     }
 
@@ -42,27 +42,26 @@ public static class ModelFactory
         ModelConfig modelConfig,
         SharpMindConfig sharpConfig,
         QuantizationOps qOps,
-        string path,
-        ModelMetaData meta)
+        string path)
     {
         ArgumentNullException.ThrowIfNull(modelConfig);
         ArgumentNullException.ThrowIfNull(sharpConfig);
         modelConfig.Validate();
         var fmt = ModelFormatHelpers.GetFormatForExtension(path);
         if (fmt == null) throw new FileLoadException($"File type not supported: {path}", path);
-        
+
         var embedding = new Tensor<float>(modelConfig.VocabSize, modelConfig.HiddenDim);
         Tensor<float>? lmHead = null;
         var finalNormW = Tensor<float>.Ones(modelConfig.HiddenDim);
         Tensor<float>? finalNormB = null;
 
-        var blockWeights = AllocateBlockWeights(modelConfig, sharpConfig, allocateFloatTensors: true);
+        var blockWeights = AllocateBlockWeights(modelConfig, sharpConfig);
         var loader = ModelFormatHelpers.GetModelLoaderFor((ModelFormat)fmt, qOps, path, modelConfig);
 
         return new TransformerWeightsFull(modelConfig, embedding, lmHead, finalNormW, finalNormB, blockWeights, loader);
     }
 
-    private static TransformerWeights.BlockWeights[] AllocateBlockWeights(ModelConfig config, SharpMindConfig sharpConfig, bool allocateFloatTensors)
+    private static TransformerWeights.BlockWeights[] AllocateBlockWeights(ModelConfig config, SharpMindConfig sharpConfig)
     {
         int ffnDim = config.FfnDim;
         int wf1Dim = sharpConfig.Ffn == FfnKind.Gated ? 2 * ffnDim : ffnDim;
@@ -73,55 +72,26 @@ public static class ModelFactory
             int qDim = config.NumHeads * config.HeadDim;
             int kvDim = config.NumKvHeads * config.HeadDim;
 
-            if (allocateFloatTensors)
-            {
-                blocks[i] = new TransformerWeights.BlockWeights(
-                    new Tensor<float>(config.HiddenDim, qDim),          // Wq
-                    new Tensor<float>(config.HiddenDim, kvDim),          // Wk
-                    new Tensor<float>(config.HiddenDim, kvDim),          // Wv
-                    new Tensor<float>(qDim, config.HiddenDim),           // Wo
-                    new Tensor<float>(qDim),                              // WqB
-                    new Tensor<float>(kvDim),                            // WkB
-                    new Tensor<float>(kvDim),                            // WvB
-                    new Tensor<float>(config.HiddenDim),                  // WoB
-                    new Tensor<float>(config.HiddenDim, wf1Dim),         // Wf1
-                    new Tensor<float>(ffnDim, config.HiddenDim),         // Wf2
-                    new Tensor<float>(wf1Dim),                            // Wf1B
-                    new Tensor<float>(config.HiddenDim),                  // Wf2B
-                    new Tensor<float>(config.HiddenDim),                  // Norm1W
-                    null,                                                 // Norm1B
-                    new Tensor<float>(config.HiddenDim),                  // Norm2W
-                    null,                                                 // Norm2B
-                    null,                                                 // QNormW
-                    null                                                  // KNormW
-                );
-            }
-            else
-            {
-                // Pre-allocate small float tensors (norm weights, biases) in cached mode.
-                // Large weight tensors (Wq, Wk, Wv, Wo, Wf1, Wf2) remain null and are
-                // loaded on-demand.
-                blocks[i] = new TransformerWeights.BlockWeights(
-                    null,                                 // Wq (large, on-demand)
-                    null,                                 // Wk
-                    null,                                 // Wv
-                    null,                                 // Wo
-                    new Tensor<float>(qDim),              // WqB (small)
-                    new Tensor<float>(kvDim),             // WkB (small)
-                    new Tensor<float>(kvDim),             // WvB (small)
-                    new Tensor<float>(config.HiddenDim),  // WoB (small)
-                    null,                                 // Wf1 (large, on-demand)
-                    null,                                 // Wf2 (large, on-demand)
-                    new Tensor<float>(wf1Dim),            // Wf1B (small)
-                    new Tensor<float>(config.HiddenDim),  // Wf2B (small)
-                    new Tensor<float>(config.HiddenDim),  // Norm1W (small, always loaded)
-                    null,                                 // Norm1B
-                    new Tensor<float>(config.HiddenDim),  // Norm2W (small, always loaded)
-                    null,                                 // Norm2B
-                    null,                                 // QNormW
-                    null                                  // KNormW
-                );
-            }
+            blocks[i] = new TransformerWeights.BlockWeights(
+                new Tensor<float>(config.HiddenDim, qDim),          // Wq
+                new Tensor<float>(config.HiddenDim, kvDim),          // Wk
+                new Tensor<float>(config.HiddenDim, kvDim),          // Wv
+                new Tensor<float>(qDim, config.HiddenDim),           // Wo
+                new Tensor<float>(qDim),                              // WqB
+                new Tensor<float>(kvDim),                            // WkB
+                new Tensor<float>(kvDim),                            // WvB
+                new Tensor<float>(config.HiddenDim),                  // WoB
+                new Tensor<float>(config.HiddenDim, wf1Dim),         // Wf1
+                new Tensor<float>(ffnDim, config.HiddenDim),         // Wf2
+                new Tensor<float>(wf1Dim),                            // Wf1B
+                new Tensor<float>(config.HiddenDim),                  // Wf2B
+                new Tensor<float>(config.HiddenDim),                  // Norm1W
+                null,                                                 // Norm1B
+                new Tensor<float>(config.HiddenDim),                  // Norm2W
+                null,                                                 // Norm2B
+                null,                                                 // QNormW
+                null                                                  // KNormW
+            );
         }
         return blocks;
     }
