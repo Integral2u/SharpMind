@@ -111,6 +111,84 @@ public static partial class QuantizationKernels
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static unsafe float VecDotQ4_0_FMA(float* input, byte* rawWeights, int col, int inFeatures)
+    {
+        const int BLOCK_BYTES = 18;
+        int nBlocks = (inFeatures + QK - 1) / QK;
+        double sum = 0;
+        for (int b = 0; b < nBlocks; b++)
+        {
+            byte* block = rawWeights + (long)col * nBlocks * BLOCK_BYTES + b * BLOCK_BYTES;
+            float d = HalfToFloat_F16C(*(ushort*)block);
+            byte* qs = block + 2;
+            int blockEnd = Math.Min(QK, inFeatures - b * QK);
+            float* pIn = input + b * QK;
+
+            var vacc0 = Vector256<float>.Zero;
+            var vacc1 = Vector256<float>.Zero;
+            var vd = Vector256.Create(d);
+            int i = 0;
+            for (; i <= blockEnd - 16; i += 16)
+            {
+                int half = QK / 2;
+                bool lo = i < half;
+                int qsOff0 = lo ? i : i - half;
+                int shift0 = lo ? 0 : 4;
+                bool lo8 = (i + 8) < half;
+                int qsOff1 = lo8 ? i + 8 : i + 8 - half;
+                int shift1 = lo8 ? 0 : 4;
+                var w0 = Avx.Multiply(Vector256.Create(
+                    (float)(((qs[qsOff0 + 0] >> shift0) & 0x0F) - 8),
+                    (float)(((qs[qsOff0 + 1] >> shift0) & 0x0F) - 8),
+                    (float)(((qs[qsOff0 + 2] >> shift0) & 0x0F) - 8),
+                    (float)(((qs[qsOff0 + 3] >> shift0) & 0x0F) - 8),
+                    (float)(((qs[qsOff0 + 4] >> shift0) & 0x0F) - 8),
+                    (float)(((qs[qsOff0 + 5] >> shift0) & 0x0F) - 8),
+                    (float)(((qs[qsOff0 + 6] >> shift0) & 0x0F) - 8),
+                    (float)(((qs[qsOff0 + 7] >> shift0) & 0x0F) - 8)
+                ), vd);
+                var w1 = Avx.Multiply(Vector256.Create(
+                    (float)(((qs[qsOff1 + 0] >> shift1) & 0x0F) - 8),
+                    (float)(((qs[qsOff1 + 1] >> shift1) & 0x0F) - 8),
+                    (float)(((qs[qsOff1 + 2] >> shift1) & 0x0F) - 8),
+                    (float)(((qs[qsOff1 + 3] >> shift1) & 0x0F) - 8),
+                    (float)(((qs[qsOff1 + 4] >> shift1) & 0x0F) - 8),
+                    (float)(((qs[qsOff1 + 5] >> shift1) & 0x0F) - 8),
+                    (float)(((qs[qsOff1 + 6] >> shift1) & 0x0F) - 8),
+                    (float)(((qs[qsOff1 + 7] >> shift1) & 0x0F) - 8)
+                ), vd);
+                vacc0 = Fma.MultiplyAdd(Vector256.LoadUnsafe(ref pIn[i]), w0, vacc0);
+                vacc1 = Fma.MultiplyAdd(Vector256.LoadUnsafe(ref pIn[i + 8]), w1, vacc1);
+            }
+            for (; i <= blockEnd - 8; i += 8)
+            {
+                int half = QK / 2;
+                bool lo = i < half;
+                int qsOff = lo ? i : i - half;
+                int shift = lo ? 0 : 4;
+                var w = Avx.Multiply(Vector256.Create(
+                    (float)(((qs[qsOff + 0] >> shift) & 0x0F) - 8),
+                    (float)(((qs[qsOff + 1] >> shift) & 0x0F) - 8),
+                    (float)(((qs[qsOff + 2] >> shift) & 0x0F) - 8),
+                    (float)(((qs[qsOff + 3] >> shift) & 0x0F) - 8),
+                    (float)(((qs[qsOff + 4] >> shift) & 0x0F) - 8),
+                    (float)(((qs[qsOff + 5] >> shift) & 0x0F) - 8),
+                    (float)(((qs[qsOff + 6] >> shift) & 0x0F) - 8),
+                    (float)(((qs[qsOff + 7] >> shift) & 0x0F) - 8)
+                ), vd);
+                vacc0 = Fma.MultiplyAdd(Vector256.LoadUnsafe(ref pIn[i]), w, vacc0);
+            }
+            sum += MathHelpers.HSum256_Avx(Avx.Add(vacc0, vacc1));
+            for (; i < blockEnd; i++)
+            {
+                int q = (i < QK / 2) ? (qs[i] & 0x0F) : (qs[i - QK / 2] >> 4);
+                sum += pIn[i] * ((q - 8) * d);
+            }
+        }
+        return (float)sum;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static unsafe float VecDotQ4_0_SSE(float* input, byte* rawWeights, int col, int inFeatures)
     {
         const int BLOCK_BYTES = 18;
@@ -227,6 +305,74 @@ public static partial class QuantizationKernels
                     (float)((qs[qsOff + 6] >> shift) & 0x0F), (float)((qs[qsOff + 7] >> shift) & 0x0F)
                 ), vd), vm);
                 vacc0 = Avx.Add(vacc0, Avx.Multiply(Vector256.LoadUnsafe(ref pIn[i]), w));
+            }
+            sum += MathHelpers.HSum256_Avx(Avx.Add(vacc0, vacc1));
+            for (; i < blockEnd; i++)
+            {
+                int q = (i < QK / 2) ? (qs[i] & 0x0F) : (qs[i - QK / 2] >> 4);
+                sum += pIn[i] * (q * d + m);
+            }
+        }
+        return (float)sum;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static unsafe float VecDotQ4_1_FMA(float* input, byte* rawWeights, int col, int inFeatures)
+    {
+        const int BLOCK_BYTES = 20;
+        int nBlocks = (inFeatures + QK - 1) / QK;
+        double sum = 0;
+        for (int b = 0; b < nBlocks; b++)
+        {
+            byte* block = rawWeights + (long)col * nBlocks * BLOCK_BYTES + b * BLOCK_BYTES;
+            float d = HalfToFloat_F16C(*(ushort*)block);
+            float m = HalfToFloat_F16C(*(ushort*)(block + 2));
+            byte* qs = block + 4;
+            int blockEnd = Math.Min(QK, inFeatures - b * QK);
+            float* pIn = input + b * QK;
+            var vd = Vector256.Create(d);
+            var vm = Vector256.Create(m);
+
+            var vacc0 = Vector256<float>.Zero;
+            var vacc1 = Vector256<float>.Zero;
+            int i = 0;
+            for (; i <= blockEnd - 16; i += 16)
+            {
+                int half = QK / 2;
+                bool lo0 = i < half;
+                int qsOff0 = lo0 ? i : i - half;
+                int shift0 = lo0 ? 0 : 4;
+                bool lo8 = (i + 8) < half;
+                int qsOff1 = lo8 ? i + 8 : i + 8 - half;
+                int shift1 = lo8 ? 0 : 4;
+                var w0 = Avx.Add(Avx.Multiply(Vector256.Create(
+                    (float)((qs[qsOff0 + 0] >> shift0) & 0x0F), (float)((qs[qsOff0 + 1] >> shift0) & 0x0F),
+                    (float)((qs[qsOff0 + 2] >> shift0) & 0x0F), (float)((qs[qsOff0 + 3] >> shift0) & 0x0F),
+                    (float)((qs[qsOff0 + 4] >> shift0) & 0x0F), (float)((qs[qsOff0 + 5] >> shift0) & 0x0F),
+                    (float)((qs[qsOff0 + 6] >> shift0) & 0x0F), (float)((qs[qsOff0 + 7] >> shift0) & 0x0F)
+                ), vd), vm);
+                var w1 = Avx.Add(Avx.Multiply(Vector256.Create(
+                    (float)((qs[qsOff1 + 0] >> shift1) & 0x0F), (float)((qs[qsOff1 + 1] >> shift1) & 0x0F),
+                    (float)((qs[qsOff1 + 2] >> shift1) & 0x0F), (float)((qs[qsOff1 + 3] >> shift1) & 0x0F),
+                    (float)((qs[qsOff1 + 4] >> shift1) & 0x0F), (float)((qs[qsOff1 + 5] >> shift1) & 0x0F),
+                    (float)((qs[qsOff1 + 6] >> shift1) & 0x0F), (float)((qs[qsOff1 + 7] >> shift1) & 0x0F)
+                ), vd), vm);
+                vacc0 = Fma.MultiplyAdd(Vector256.LoadUnsafe(ref pIn[i]), w0, vacc0);
+                vacc1 = Fma.MultiplyAdd(Vector256.LoadUnsafe(ref pIn[i + 8]), w1, vacc1);
+            }
+            for (; i <= blockEnd - 8; i += 8)
+            {
+                int half = QK / 2;
+                bool lo = i < half;
+                int qsOff = lo ? i : i - half;
+                int shift = lo ? 0 : 4;
+                var w = Avx.Add(Avx.Multiply(Vector256.Create(
+                    (float)((qs[qsOff + 0] >> shift) & 0x0F), (float)((qs[qsOff + 1] >> shift) & 0x0F),
+                    (float)((qs[qsOff + 2] >> shift) & 0x0F), (float)((qs[qsOff + 3] >> shift) & 0x0F),
+                    (float)((qs[qsOff + 4] >> shift) & 0x0F), (float)((qs[qsOff + 5] >> shift) & 0x0F),
+                    (float)((qs[qsOff + 6] >> shift) & 0x0F), (float)((qs[qsOff + 7] >> shift) & 0x0F)
+                ), vd), vm);
+                vacc0 = Fma.MultiplyAdd(Vector256.LoadUnsafe(ref pIn[i]), w, vacc0);
             }
             sum += MathHelpers.HSum256_Avx(Avx.Add(vacc0, vacc1));
             for (; i < blockEnd; i++)
@@ -369,6 +515,74 @@ public static partial class QuantizationKernels
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static unsafe float VecDotQ4_NL_FMA(float* input, byte* rawWeights, int col, int inFeatures)
+    {
+        const int BLOCK_BYTES = 18;
+        int nBlocks = (inFeatures + QK - 1) / QK;
+        double sum = 0;
+        for (int b = 0; b < nBlocks; b++)
+        {
+            byte* block = rawWeights + (long)col * nBlocks * BLOCK_BYTES + b * BLOCK_BYTES;
+            float d = HalfToFloat_F16C(*(ushort*)block);
+            byte* qs = block + 2;
+            int blockEnd = Math.Min(QK, inFeatures - b * QK);
+            float* pIn = input + b * QK;
+            var vd = Vector256.Create(d);
+            var vacc0 = Vector256<float>.Zero;
+            var vacc1 = Vector256<float>.Zero;
+            int i = 0;
+            for (; i <= blockEnd - 16; i += 16)
+            {
+                int half = QK / 2;
+                var w0 = Avx.Multiply(Vector256.Create(
+                    kvalues_iq4nl[(i < half) ? (qs[i] & 0x0F) : (qs[i - half] >> 4)],
+                    kvalues_iq4nl[(i+1 < half) ? (qs[i+1] & 0x0F) : (qs[i+1 - half] >> 4)],
+                    kvalues_iq4nl[(i+2 < half) ? (qs[i+2] & 0x0F) : (qs[i+2 - half] >> 4)],
+                    kvalues_iq4nl[(i+3 < half) ? (qs[i+3] & 0x0F) : (qs[i+3 - half] >> 4)],
+                    kvalues_iq4nl[(i+4 < half) ? (qs[i+4] & 0x0F) : (qs[i+4 - half] >> 4)],
+                    kvalues_iq4nl[(i+5 < half) ? (qs[i+5] & 0x0F) : (qs[i+5 - half] >> 4)],
+                    kvalues_iq4nl[(i+6 < half) ? (qs[i+6] & 0x0F) : (qs[i+6 - half] >> 4)],
+                    kvalues_iq4nl[(i+7 < half) ? (qs[i+7] & 0x0F) : (qs[i+7 - half] >> 4)]
+                ), vd);
+                var w1 = Avx.Multiply(Vector256.Create(
+                    kvalues_iq4nl[(i+8 < half) ? (qs[i+8] & 0x0F) : (qs[i+8 - half] >> 4)],
+                    kvalues_iq4nl[(i+9 < half) ? (qs[i+9] & 0x0F) : (qs[i+9 - half] >> 4)],
+                    kvalues_iq4nl[(i+10 < half) ? (qs[i+10] & 0x0F) : (qs[i+10 - half] >> 4)],
+                    kvalues_iq4nl[(i+11 < half) ? (qs[i+11] & 0x0F) : (qs[i+11 - half] >> 4)],
+                    kvalues_iq4nl[(i+12 < half) ? (qs[i+12] & 0x0F) : (qs[i+12 - half] >> 4)],
+                    kvalues_iq4nl[(i+13 < half) ? (qs[i+13] & 0x0F) : (qs[i+13 - half] >> 4)],
+                    kvalues_iq4nl[(i+14 < half) ? (qs[i+14] & 0x0F) : (qs[i+14 - half] >> 4)],
+                    kvalues_iq4nl[(i+15 < half) ? (qs[i+15] & 0x0F) : (qs[i+15 - half] >> 4)]
+                ), vd);
+                vacc0 = Fma.MultiplyAdd(Vector256.LoadUnsafe(ref pIn[i]), w0, vacc0);
+                vacc1 = Fma.MultiplyAdd(Vector256.LoadUnsafe(ref pIn[i + 8]), w1, vacc1);
+            }
+            for (; i <= blockEnd - 8; i += 8)
+            {
+                int half = QK / 2;
+                var w = Avx.Multiply(Vector256.Create(
+                    kvalues_iq4nl[(i < half) ? (qs[i] & 0x0F) : (qs[i - half] >> 4)],
+                    kvalues_iq4nl[(i+1 < half) ? (qs[i+1] & 0x0F) : (qs[i+1 - half] >> 4)],
+                    kvalues_iq4nl[(i+2 < half) ? (qs[i+2] & 0x0F) : (qs[i+2 - half] >> 4)],
+                    kvalues_iq4nl[(i+3 < half) ? (qs[i+3] & 0x0F) : (qs[i+3 - half] >> 4)],
+                    kvalues_iq4nl[(i+4 < half) ? (qs[i+4] & 0x0F) : (qs[i+4 - half] >> 4)],
+                    kvalues_iq4nl[(i+5 < half) ? (qs[i+5] & 0x0F) : (qs[i+5 - half] >> 4)],
+                    kvalues_iq4nl[(i+6 < half) ? (qs[i+6] & 0x0F) : (qs[i+6 - half] >> 4)],
+                    kvalues_iq4nl[(i+7 < half) ? (qs[i+7] & 0x0F) : (qs[i+7 - half] >> 4)]
+                ), vd);
+                vacc0 = Fma.MultiplyAdd(Vector256.LoadUnsafe(ref pIn[i]), w, vacc0);
+            }
+            sum += MathHelpers.HSum256_Avx(Avx.Add(vacc0, vacc1));
+            for (; i < blockEnd; i++)
+            {
+                int nib = (i < QK / 2) ? (qs[i] & 0x0F) : (qs[i - QK / 2] >> 4);
+                sum += pIn[i] * (d * kvalues_iq4nl[nib]);
+            }
+        }
+        return (float)sum;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static unsafe float VecDotQ4K_Scalar(float* input, byte* rawWeights, int col, int inFeatures)
     {
         const int BLOCK_BYTES = 144;
@@ -491,6 +705,7 @@ public static partial class QuantizationKernels
             float* pIn = input + b * QK_K - colBlockStart;
             for (int n16 = curBlockStart; n16 < blockEnd; n16 += 128)
             {
+                var vacc = Vector256<float>.Zero;
                 for (int j = 0; j < 4 && n16 + j * 32 < blockEnd; j++)
                 {
                     int basePos = n16 + j * 32;
@@ -514,8 +729,7 @@ public static partial class QuantizationKernels
                         var vv = Vector256.LoadUnsafe(ref vvBuf[0]);
                         var vi = Vector256.LoadUnsafe(ref pIn[basePos + l]);
                         var vw = Avx.Subtract(Avx.Multiply(vv, vs), vm);
-                        var res = Avx.Multiply(vi, vw);
-                        sum += MathHelpers.HSum256_Avx(res);
+                        vacc = Fma.MultiplyAdd(vi, vw, vacc);
                     }
                     for (; l < subRem; l++)
                     {
@@ -526,6 +740,7 @@ public static partial class QuantizationKernels
                         sum += pIn[idx] * (s * v * dSuper - m * minSuper);
                     }
                 }
+                sum += MathHelpers.HSum256_Avx(vacc);
             }
         }
         return (float)sum;
@@ -992,6 +1207,105 @@ public static partial class QuantizationKernels
                 float* pOutRow = output + (long)row * N;
                 for (int col = 0; col < N; col++)
                     pOutRow[col] = VecDotQ4K_FMA(pInRow, rawWeights, col, K);
+            });
+        }
+    }
+
+    public static unsafe void QuantizedMatMulQ4_0_Serial_FMA(
+        float* input, byte* rawWeights, float* output,
+        int M, int K, int N)
+    {
+        for (int row = 0; row < M; row++)
+        {
+            float* pInRow = input + (long)row * K;
+            float* pOutRow = output + (long)row * N;
+            for (int col = 0; col < N; col++)
+                pOutRow[col] = VecDotQ4_0_FMA(pInRow, rawWeights, col, K);
+        }
+    }
+
+    public static unsafe void QuantizedMatMulQ4_0_Parallel_FMA(
+        float* input, byte* rawWeights, float* output,
+        int M, int K, int N)
+    {
+        if (M <= 1)
+        {
+            DecodeParallel(VecDotQ4_0_FMA, input, rawWeights, output, K, N);
+        }
+        else
+        {
+            Parallel.For(0, M, row =>
+            {
+                float* pInRow = input + (long)row * K;
+                float* pOutRow = output + (long)row * N;
+                for (int col = 0; col < N; col++)
+                    pOutRow[col] = VecDotQ4_0_FMA(pInRow, rawWeights, col, K);
+            });
+        }
+    }
+
+    public static unsafe void QuantizedMatMulQ4_1_Serial_FMA(
+        float* input, byte* rawWeights, float* output,
+        int M, int K, int N)
+    {
+        for (int row = 0; row < M; row++)
+        {
+            float* pInRow = input + (long)row * K;
+            float* pOutRow = output + (long)row * N;
+            for (int col = 0; col < N; col++)
+                pOutRow[col] = VecDotQ4_1_FMA(pInRow, rawWeights, col, K);
+        }
+    }
+
+    public static unsafe void QuantizedMatMulQ4_1_Parallel_FMA(
+        float* input, byte* rawWeights, float* output,
+        int M, int K, int N)
+    {
+        if (M <= 1)
+        {
+            DecodeParallel(VecDotQ4_1_FMA, input, rawWeights, output, K, N);
+        }
+        else
+        {
+            Parallel.For(0, M, row =>
+            {
+                float* pInRow = input + (long)row * K;
+                float* pOutRow = output + (long)row * N;
+                for (int col = 0; col < N; col++)
+                    pOutRow[col] = VecDotQ4_1_FMA(pInRow, rawWeights, col, K);
+            });
+        }
+    }
+
+    public static unsafe void QuantizedMatMulQ4_NL_Serial_FMA(
+        float* input, byte* rawWeights, float* output,
+        int M, int K, int N)
+    {
+        for (int row = 0; row < M; row++)
+        {
+            float* pInRow = input + (long)row * K;
+            float* pOutRow = output + (long)row * N;
+            for (int col = 0; col < N; col++)
+                pOutRow[col] = VecDotQ4_NL_FMA(pInRow, rawWeights, col, K);
+        }
+    }
+
+    public static unsafe void QuantizedMatMulQ4_NL_Parallel_FMA(
+        float* input, byte* rawWeights, float* output,
+        int M, int K, int N)
+    {
+        if (M <= 1)
+        {
+            DecodeParallel(VecDotQ4_NL_FMA, input, rawWeights, output, K, N);
+        }
+        else
+        {
+            Parallel.For(0, M, row =>
+            {
+                float* pInRow = input + (long)row * K;
+                float* pOutRow = output + (long)row * N;
+                for (int col = 0; col < N; col++)
+                    pOutRow[col] = VecDotQ4_NL_FMA(pInRow, rawWeights, col, K);
             });
         }
     }

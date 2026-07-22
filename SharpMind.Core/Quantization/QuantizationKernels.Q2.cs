@@ -171,6 +171,8 @@ public static partial class QuantizationKernels
             float* pIn = input + b * QK_K - colBlockStart;
             for (int n16 = curBlockStart; n16 < blockEnd; n16 += 128)
             {
+                var vacc0 = Vector256<float>.Zero;
+                var vacc1 = Vector256<float>.Zero;
                 for (int j = 0; j < 4 && n16 + j * 32 < blockEnd; j++)
                 {
                     int basePos = n16 + j * 32;
@@ -194,8 +196,7 @@ public static partial class QuantizationKernels
                         var vv = Vector256.LoadUnsafe(ref vvBuf[0]);
                         var vi = Vector256.LoadUnsafe(ref pIn[basePos + l]);
                         var vw = Avx.Subtract(Avx.Multiply(vv, vs0), vm0);
-                        var res = Avx.Multiply(vi, vw);
-                        sum += MathHelpers.HSum256_Avx(res);
+                        vacc0 = Fma.MultiplyAdd(vi, vw, vacc0);
                     }
                     for (; l < subRem; l++)
                     {
@@ -226,8 +227,7 @@ public static partial class QuantizationKernels
                         var vv = Vector256.LoadUnsafe(ref vvBuf[0]);
                         var vi = Vector256.LoadUnsafe(ref pIn[bPos1 + l2]);
                         var vw = Avx.Subtract(Avx.Multiply(vv, vs1), vm1);
-                        var res = Avx.Multiply(vi, vw);
-                        sum += MathHelpers.HSum256_Avx(res);
+                        vacc1 = Fma.MultiplyAdd(vi, vw, vacc1);
                     }
                     for (; l2 < subRem2; l2++)
                     {
@@ -238,6 +238,7 @@ public static partial class QuantizationKernels
                         sum += pIn[idx] * (s1 * v * dSuper - m1 * minSuper);
                     }
                 }
+                sum += MathHelpers.HSum256_Avx(Avx.Add(vacc0, vacc1));
             }
         }
         return (float)sum;

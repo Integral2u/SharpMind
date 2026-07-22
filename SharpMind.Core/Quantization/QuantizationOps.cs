@@ -207,15 +207,15 @@ public abstract class QuantizationOps
     public abstract unsafe void QuantizedMatMulQ6K(float* input, byte* rawWeights, float* output, int M, int K, int N);
 
     [PuzzleCornerPiece(QuantizationKeys.KeyVecDotQ4_0, true, null,
-        "q4_0_fma",    $"{NS}.{nameof(QuantizationKernels.VecDotQ4_0_AVX2)}",
+        "q4_0_fma",    $"{NS}.{nameof(QuantizationKernels.VecDotQ4_0_FMA)}",
         "q4_0_avx2",   $"{NS}.{nameof(QuantizationKernels.VecDotQ4_0_AVX2)}",
         "q4_0_sse",    $"{NS}.{nameof(QuantizationKernels.VecDotQ4_0_SSE)}",
         "q4_0_scalar", $"{NS}.{nameof(QuantizationKernels.VecDotQ4_0_Scalar)}")]
     public abstract unsafe float VecDotQ4_0(float* input, byte* rawWeights, int col, int inFeatures);
 
     [PuzzleCornerPiece(QuantizationKeys.KeyQuantizedMatMulQ4_0, true, null,
-        "qmatmul_q4_0_serial_fma",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_0_Serial_AVX2)}",
-        "qmatmul_q4_0_parallel_fma",  $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_0_Parallel_AVX2)}",
+        "qmatmul_q4_0_serial_fma",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_0_Serial_FMA)}",
+        "qmatmul_q4_0_parallel_fma",  $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_0_Parallel_FMA)}",
         "qmatmul_q4_0_serial_avx2",   $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_0_Serial_AVX2)}",
         "qmatmul_q4_0_parallel_avx2", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_0_Parallel_AVX2)}",
         "qmatmul_q4_0_serial_sse",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_0_Serial_SSE)}",
@@ -225,15 +225,15 @@ public abstract class QuantizationOps
     public abstract unsafe void QuantizedMatMulQ4_0(float* input, byte* rawWeights, float* output, int M, int K, int N);
 
     [PuzzleCornerPiece(QuantizationKeys.KeyVecDotQ4_1, true, null,
-        "q4_1_fma",    $"{NS}.{nameof(QuantizationKernels.VecDotQ4_1_Scalar)}",
+        "q4_1_fma",    $"{NS}.{nameof(QuantizationKernels.VecDotQ4_1_FMA)}",
         "q4_1_avx2",   $"{NS}.{nameof(QuantizationKernels.VecDotQ4_1_AVX2)}",
         "q4_1_sse",    $"{NS}.{nameof(QuantizationKernels.VecDotQ4_1_SSE)}",
         "q4_1_scalar", $"{NS}.{nameof(QuantizationKernels.VecDotQ4_1_Scalar)}")]
     public abstract unsafe float VecDotQ4_1(float* input, byte* rawWeights, int col, int inFeatures);
 
     [PuzzleCornerPiece(QuantizationKeys.KeyQuantizedMatMulQ4_1, true, null,
-        "qmatmul_q4_1_serial_fma",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_1_Serial_AVX2)}",
-        "qmatmul_q4_1_parallel_fma",  $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_1_Parallel_AVX2)}",
+        "qmatmul_q4_1_serial_fma",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_1_Serial_FMA)}",
+        "qmatmul_q4_1_parallel_fma",  $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_1_Parallel_FMA)}",
         "qmatmul_q4_1_serial_avx2",   $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_1_Serial_AVX2)}",
         "qmatmul_q4_1_parallel_avx2", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_1_Parallel_AVX2)}",
         "qmatmul_q4_1_serial_sse",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_1_Serial_SSE)}",
@@ -257,7 +257,7 @@ public abstract class QuantizationOps
     public abstract unsafe float VecDotQ5_1(float* input, byte* rawWeights, int col, int inFeatures);
 
     [PuzzleCornerPiece(QuantizationKeys.KeyVecDotQ4_NL,
-        "q4_nl_fma",   $"{NS}.{nameof(QuantizationKernels.VecDotQ4_NL_AVX2)}",
+        "q4_nl_fma",   $"{NS}.{nameof(QuantizationKernels.VecDotQ4_NL_FMA)}",
         "q4_nl_avx2",  $"{NS}.{nameof(QuantizationKernels.VecDotQ4_NL_AVX2)}",
         "q4_nl_sse",   $"{NS}.{nameof(QuantizationKernels.VecDotQ4_NL_Scalar)}",
         "q4_nl_scalar",$"{NS}.{nameof(QuantizationKernels.VecDotQ4_NL_Scalar)}")]
@@ -377,8 +377,8 @@ public abstract class QuantizationOps
     public abstract unsafe void QuantizedMatMulQ5_1(float* input, byte* rawWeights, float* output, int M, int K, int N);
 
     [PuzzleCornerPiece(QuantizationKeys.KeyQuantizedMatMulQ4_NL, true, null,
-        "qmatmul_q4_nl_serial_fma",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_NL_Serial_AVX2)}",
-        "qmatmul_q4_nl_parallel_fma",  $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_NL_Parallel_AVX2)}",
+        "qmatmul_q4_nl_serial_fma",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_NL_Serial_FMA)}",
+        "qmatmul_q4_nl_parallel_fma",  $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_NL_Parallel_FMA)}",
         "qmatmul_q4_nl_serial_avx2",   $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_NL_Serial_AVX2)}",
         "qmatmul_q4_nl_parallel_avx2", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_NL_Parallel_AVX2)}",
         "qmatmul_q4_nl_serial_sse",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_NL_Serial_Scalar)}",

@@ -223,7 +223,7 @@ Worth folding into the same pass — every other AVX2 kernel (Q4_0, Q4_NL, Q5_0,
 
 
 
-ummary: FMA VecDot Fixes for Performance
+Summary: FMA VecDot Fixes for Performance
 Quant type	Current state	Fix needed
 Q6_K	_FMA and _AVX2 are both pure scalar — no SIMD at all	Rewrite both with real Vector256 + Fma.MultiplyAdd, running accumulator (patch given above)
 Q2_K, Q3_K, Q4_K	Vectorized, but multiply-then-immediate-HSum per chunk — no fused multiply-add, no cross-chunk accumulation	Replace Avx.Multiply(...) + per-chunk HSum with Fma.MultiplyAdd(vi, vw, vacc) accumulating into one running vacc; single HSum at the end
