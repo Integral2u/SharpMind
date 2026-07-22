@@ -708,8 +708,7 @@ public static partial class QuantizationKernels
     {
         if (M <= 1)
         {
-            for (int col = 0; col < N; col++)
-                output[col] = VecDotQ5_0_Scalar(input, rawWeights, col, K);
+            DecodeParallel(VecDotQ5_0_Scalar, input, rawWeights, output, K, N);
         }
         else
         {
@@ -742,8 +741,7 @@ public static partial class QuantizationKernels
     {
         if (M <= 1)
         {
-            for (int col = 0; col < N; col++)
-                output[col] = VecDotQ5_0_AVX2(input, rawWeights, col, K);
+            DecodeParallel(VecDotQ5_0_AVX2, input, rawWeights, output, K, N);
         }
         else
         {
@@ -776,8 +774,7 @@ public static partial class QuantizationKernels
     {
         if (M <= 1)
         {
-            for (int col = 0; col < N; col++)
-                output[col] = VecDotQ5_0_FMA(input, rawWeights, col, K);
+            DecodeParallel(VecDotQ5_0_FMA, input, rawWeights, output, K, N);
         }
         else
         {
@@ -810,8 +807,7 @@ public static partial class QuantizationKernels
     {
         if (M <= 1)
         {
-            for (int col = 0; col < N; col++)
-                output[col] = VecDotQ5_1_Scalar(input, rawWeights, col, K);
+            DecodeParallel(VecDotQ5_1_Scalar, input, rawWeights, output, K, N);
         }
         else
         {
@@ -844,8 +840,7 @@ public static partial class QuantizationKernels
     {
         if (M <= 1)
         {
-            for (int col = 0; col < N; col++)
-                output[col] = VecDotQ5K_Scalar(input, rawWeights, col, K);
+            DecodeParallel(VecDotQ5K_Scalar, input, rawWeights, output, K, N);
         }
         else
         {
@@ -878,8 +873,7 @@ public static partial class QuantizationKernels
     {
         if (M <= 1)
         {
-            for (int col = 0; col < N; col++)
-                output[col] = VecDotQ5_1_AVX2(input, rawWeights, col, K);
+            DecodeParallel(VecDotQ5_1_AVX2, input, rawWeights, output, K, N);
         }
         else
         {
@@ -912,8 +906,7 @@ public static partial class QuantizationKernels
     {
         if (M <= 1)
         {
-            for (int col = 0; col < N; col++)
-                output[col] = VecDotQ5_1_FMA(input, rawWeights, col, K);
+            DecodeParallel(VecDotQ5_1_FMA, input, rawWeights, output, K, N);
         }
         else
         {
@@ -946,8 +939,7 @@ public static partial class QuantizationKernels
     {
         if (M <= 1)
         {
-            for (int col = 0; col < N; col++)
-                output[col] = VecDotQ5K_AVX2(input, rawWeights, col, K);
+            DecodeParallel(VecDotQ5K_AVX2, input, rawWeights, output, K, N);
         }
         else
         {
@@ -980,8 +972,7 @@ public static partial class QuantizationKernels
     {
         if (M <= 1)
         {
-            for (int col = 0; col < N; col++)
-                output[col] = VecDotQ5K_FMA(input, rawWeights, col, K);
+            DecodeParallel(VecDotQ5K_FMA, input, rawWeights, output, K, N);
         }
         else
         {

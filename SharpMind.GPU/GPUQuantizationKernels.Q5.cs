@@ -203,8 +203,7 @@ public static partial class GPUQuantizationKernels
     {
         if (M <= 1)
         {
-            for (int col = 0; col < N; col++)
-                output[col] = VecDotQ5_0_GPU(input, rawWeights, col, K);
+            DecodeParallelGPU(VecDotQ5_0_GPU, input, rawWeights, output, K, N);
         }
         else
         {
@@ -239,8 +238,7 @@ public static partial class GPUQuantizationKernels
     {
         if (M <= 1)
         {
-            for (int col = 0; col < N; col++)
-                output[col] = VecDotQ5_1_GPU(input, rawWeights, col, K);
+            DecodeParallelGPU(VecDotQ5_1_GPU, input, rawWeights, output, K, N);
         }
         else
         {
@@ -275,8 +273,7 @@ public static partial class GPUQuantizationKernels
     {
         if (M <= 1)
         {
-            for (int col = 0; col < N; col++)
-                output[col] = VecDotQ5K_GPU(input, rawWeights, col, K);
+            DecodeParallelGPU(VecDotQ5K_GPU, input, rawWeights, output, K, N);
         }
         else
         {

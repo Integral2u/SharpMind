@@ -10,6 +10,40 @@ namespace SharpMind.GPU;
 
 public static partial class GPUQuantizationKernels
 {
+    /// <summary>Column-parallel path for M == 1 (decode) — GPU variant.</summary>
+    private static unsafe void DecodeParallelGPU(VecDotFn vecdot,
+        float* input, byte* rawWeights, float* output,
+        int K, int N)
+    {
+        const int MinColsForParallel = 512;
+        if (N < MinColsForParallel)
+        {
+            for (int col = 0; col < N; col++)
+                output[col] = vecdot(input, rawWeights, col, K);
+            return;
+        }
+
+        int numChunks = Math.Min(Environment.ProcessorCount,
+            (N + MinColsForParallel - 1) / MinColsForParallel);
+        int chunkSize = (N + numChunks - 1) / numChunks;
+
+        long inputAddr = (long)input;
+        long weightsAddr = (long)rawWeights;
+        long outputAddr = (long)output;
+
+        System.Threading.Tasks.Parallel.For(0, numChunks, chunkIdx =>
+        {
+            float* pInput = (float*)inputAddr;
+            byte* pWeights = (byte*)weightsAddr;
+            float* pOutput = (float*)outputAddr;
+
+            int colStart = chunkIdx * chunkSize;
+            int colEnd = Math.Min(colStart + chunkSize, N);
+
+            for (int col = colStart; col < colEnd; col++)
+                pOutput[col] = vecdot(pInput, pWeights, col, K);
+        });
+    }
     private const int QK = 32;
     private const int QK_K = 256;
 

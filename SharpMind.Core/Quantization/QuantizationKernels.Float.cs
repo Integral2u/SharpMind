@@ -32,22 +32,13 @@ public static partial class QuantizationKernels
         float* input, byte* rawWeights, float* output,
         int M, int K, int N)
     {
-        float* w = (float*)rawWeights;
         if (M <= 1)
         {
-            float* pIn = input;
-            float* pOut = output;
-            for (int col = 0; col < N; col++)
-            {
-                float sum = 0;
-                float* pW = w + (long)col * K;
-                for (int i = 0; i < K; i++)
-                    sum += pIn[i] * pW[i];
-                pOut[col] = sum;
-            }
+            DecodeParallel(VecDotF32_Scalar, input, rawWeights, output, K, N);
         }
         else
         {
+            float* w = (float*)rawWeights;
             Parallel.For(0, M, row =>
             {
                 float* pIn = input + (long)row * K;
@@ -88,22 +79,13 @@ public static partial class QuantizationKernels
         float* input, byte* rawWeights, float* output,
         int M, int K, int N)
     {
-        ushort* w = (ushort*)rawWeights;
         if (M <= 1)
         {
-            float* pIn = input;
-            float* pOut = output;
-            for (int col = 0; col < N; col++)
-            {
-                float sum = 0;
-                ushort* pW = w + (long)col * K;
-                for (int i = 0; i < K; i++)
-                    sum += pIn[i] * HalfToFloat_Scalar(pW[i]);
-                pOut[col] = sum;
-            }
+            DecodeParallel(VecDotF16_Scalar, input, rawWeights, output, K, N);
         }
         else
         {
+            ushort* w = (ushort*)rawWeights;
             Parallel.For(0, M, row =>
             {
                 float* pIn = input + (long)row * K;

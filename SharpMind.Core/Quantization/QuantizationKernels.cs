@@ -24,16 +24,10 @@ public static partial class QuantizationKernels
     public static unsafe void QuantizedMatMul_Parallel_Wrapper(VecDotFn vecdot,
         float* input, byte* rawWeights, float* output,
         int M, int K, int N)
-    {        
+    {
         if (M <= 1)
         {
-            for (int row = 0; row < M; row++)
-            {
-                float* pInRow = input + (long)row * K;
-                float* pOutRow = output + (long)row * N;
-                for (int col = 0; col < N; col++)
-                    pOutRow[col] = vecdot(pInRow, rawWeights, col, K);
-            }
+            DecodeParallel(vecdot, input, rawWeights, output, K, N);
         }
         else
         {
@@ -45,6 +39,41 @@ public static partial class QuantizationKernels
                     pOutRow[col] = vecdot(pInRow, rawWeights, col, K);
             });
         }
+    }
+
+    /// <summary>Column-parallel path for M == 1 (decode). Chunks N across cores.</summary>
+    private static unsafe void DecodeParallel(VecDotFn vecdot,
+        float* input, byte* rawWeights, float* output,
+        int K, int N)
+    {
+        const int MinColsForParallel = 512;
+        if (N < MinColsForParallel)
+        {
+            for (int col = 0; col < N; col++)
+                output[col] = vecdot(input, rawWeights, col, K);
+            return;
+        }
+
+        int numChunks = Math.Min(Environment.ProcessorCount,
+            (N + MinColsForParallel - 1) / MinColsForParallel);
+        int chunkSize = (N + numChunks - 1) / numChunks;
+
+        long inputAddr = (long)input;
+        long weightsAddr = (long)rawWeights;
+        long outputAddr = (long)output;
+
+        Parallel.For(0, numChunks, chunkIdx =>
+        {
+            float* pInput = (float*)inputAddr;
+            byte* pWeights = (byte*)weightsAddr;
+            float* pOutput = (float*)outputAddr;
+
+            int colStart = chunkIdx * chunkSize;
+            int colEnd = Math.Min(colStart + chunkSize, N);
+
+            for (int col = colStart; col < colEnd; col++)
+                pOutput[col] = vecdot(pInput, pWeights, col, K);
+        });
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

@@ -103,8 +103,7 @@ public static partial class GPUQuantizationKernels
     {
         if (M <= 1)
         {
-            for (int col = 0; col < N; col++)
-                output[col] = VecDotQ6K_GPU(input, rawWeights, col, K);
+            DecodeParallelGPU(VecDotQ6K_GPU, input, rawWeights, output, K, N);
         }
         else
         {
