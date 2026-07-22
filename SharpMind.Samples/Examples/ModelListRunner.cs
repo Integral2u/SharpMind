@@ -11,7 +11,7 @@ using System.Diagnostics;
 namespace SharpMind.Samples.Examples
 {
     public class ModelListRunner
-    {        
+    {
         public static async Task RunAsync(string prompt, string ModelPath, string[] Models, bool withGPU = false)
         {
 
@@ -34,11 +34,11 @@ namespace SharpMind.Samples.Examples
                 }
                 if (fmt == null) continue;
                 var metaHelper = ModelFormatHelpers.GetModelMetaHelperFor((ModelFormat)fmt);
-                
+
                 await Console.Out.WriteLineAsync($"Testing {m}");
                 await Console.Out.FlushAsync();
                 metaHelper.Load(modelPath, null, out ModelMetaData meta, out ModelConfig modelConfig, out Tokenizer? tokenizer);
-                
+
                 if (tokenizer == null)
                 {
                     await Console.Out.WriteLineAsync($"No Tokenizer Data");
@@ -52,7 +52,7 @@ namespace SharpMind.Samples.Examples
                     .ApplyPreset(sharpConfig)
                     .ApplyQuantPreset(sharpConfig)
                     .WithGpu()
-                    .Build() : 
+                    .Build() :
                     new MappingBuilder(sharpConfig.ResolvedHardware)
                     .ApplyPreset(sharpConfig)
                     .ApplyQuantPreset(sharpConfig)
@@ -61,16 +61,16 @@ namespace SharpMind.Samples.Examples
                 GC.Collect(); GC.WaitForPendingFinalizers();
                 var sw = Stopwatch.StartNew();
                 var qOps = QuantizationFactory.Create(mapping);
-                using var weights = ModelFactory.Create(modelConfig, sharpConfig, qOps, modelPath);
+                using var weights = ModelFactory.CreateWeights(modelConfig, sharpConfig, qOps, modelPath);
                 weights.InitializeWeights();
-                
+
                 await Console.Out.WriteLineAsync($"ModelFactory.Create + InitializeWeights executed in: {sw.Elapsed.TotalSeconds:F2}s");
                 GC.Collect(); GC.WaitForPendingFinalizers();
                 sw.Restart();
-                using var model = ModelFactory.CreateSession(weights, sharpConfig, mapping);
-                await Console.Out.WriteLineAsync($"ModelFactory.CreateSession executed in: {sw.Elapsed.TotalSeconds:F2}s");
+                using var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
+                await Console.Out.WriteLineAsync($"ModelFactory.CreateTransformer executed in: {sw.Elapsed.TotalSeconds:F2}s");
 
-                sw.Stop();
+                sw.Restart();
 
                 await using var session = new ChatSession<StandardGeneratorBuilder<KVCacherBuilder>, KVCacherBuilder>(model, tokenizer, meta)
                 {
@@ -78,17 +78,10 @@ namespace SharpMind.Samples.Examples
                     Temperature = 0.0f,
                     TopK = 1,
                 };
-                try
-                {
-                    var history = await session.StartChatAsync(Prompt, Response, cancellationTokenSource.Token);
-                }
-                catch (Exception ex)
-                {
-                    Console.ForegroundColor = ConsoleColor.Red;
-                    await Console.Out.WriteLineAsync();
-                    await Console.Out.WriteLineAsync($"EXCEPTION: {ex.GetType().Name}: {ex.Message}");
-                    await Console.Out.WriteLineAsync(ex.StackTrace?[..500] ?? "(no stack)");
-                }
+                await Console.Out.WriteLineAsync($"ChatSession executed in: {sw.Elapsed.TotalSeconds:F2}s");
+                sw.Stop();
+                var history = await session.StartChatAsync(Prompt, Response, cancellationTokenSource.Token);
+
 
                 async void Response(ChatStreamEntry text)
                 {

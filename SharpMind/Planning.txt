@@ -1,3 +1,16 @@
+Output from chat sessions can now end with odd characters. this function in CharSession used to deal with it, but it's intention was for thinking.
+/* private string StripThinking(string text)
+{
+    if (string.IsNullOrWhiteSpace(text)) return text;
+
+    // Remove all <think>...</think> blocks
+    var result = System.Text.RegularExpressions.Regex.Replace(text, @"<think>.*?</think>", "", System.Text.RegularExpressions.RegexOptions.Singleline);
+
+    // Also trim trailing garbage characters often seen at the end of LLM responses (e.g. EOS tokens decoded as symbols)
+    return result.TrimEnd('\uFFFD', '\u0000', '\u0001', '\u0002', '\u0003').Trim();
+}*/
+while the end of a response could be trimmed as a backup should the EOS tokens decoded as symbols be better handled.
+
 CUI Plugins?
 [Conditional("DEBUG")] 
 
@@ -93,3 +106,104 @@ DARE (Drop And REscale): Drops redundant weights and re-scales the remaining wei
 Task Arithmetic: Creates "task vectors" by subtracting the base model weights from the fine-tuned model weights, allowing these vectors to be added or subtracted to modify model behavior.
 
 Final Addition  Model Building/Training
+
+Potential Optimizations, in order process 1 then i will test and move on to 2 whihc i will test after then 3.
+1. Single-token decode runs completely single-threaded — in every quant format
+
+This is universal across the codebase — every parallel matmul kernel, for every quant type, has this shape:
+
+csharp
+public static unsafe void QuantizedMatMulQ4_0_Parallel_AVX2(
+    float* input, byte* rawWeights, float* output, int M, int K, int N)
+{
+    if (M <= 1)
+    {
+        for (int col = 0; col < N; col++)               // <- fully serial, one core
+            output[col] = VecDotQ4_0_AVX2(input, rawWeights, col, K);
+    }
+    else
+    {
+        Parallel.For(0, M, row => { ... });              // <- parallel, but only over rows
+    }
+}
+
+I checked — this exact if (M <= 1) { serial column loop } else { Parallel.For over rows } pattern appears in every quant kernel file (Float, Q2–Q8, all variants), 40+ times. It parallelizes over M (the batch/sequence dimension), which is great for prefill (where M = prompt length, often hundreds of tokens) but does nothing at all for M = 1.
+
+M = 1 is exactly the case during autoregressive decode — generating one token at a time, which is the dominant workload for interactive chat/serving (you spend far more wall-clock time in decode than prefill for any reasonably long conversation). Right now, every matmul during decode — every attention projection, every FFN layer, every expert in MoE — loops over all N output columns (hidden_dim, ffn_dim, or vocab_size, easily thousands to tens of thousands) on a single core, while the rest of your CPU cores sit idle.
+
+This is fixable with the same infrastructure you already have: when M == 1, parallelize over N (output columns) instead of M (rows) — chunk the column range across Parallel.For (with a reasonable minimum chunk size so you're not paying thread-dispatch overhead on tiny layers). This is exactly how llama.cpp/ggml handle it, and it's the reason single-token decode scales with core count there. On an 8–16 core machine, this could plausibly be a several-x improvement in tokens/sec for decode specifically, since right now decode literally cannot use more than one core no matter how many you have.
+
+One thing to watch when you implement it: don't naively parallelize every layer's M=1 matmul independently — thread-pool dispatch overhead per layer, per token, across dozens of layers can eat into the gain. Worth chunking column ranges generously (e.g. Environment.ProcessorCount or fewer chunks) rather than one task per output element, and possibly reusing a persistent set of worker tasks/barrier instead of spinning up a fresh Parallel.For 40+ times per token.
+
+Here's a template using QuantizedMatMulQ4_0_Parallel_AVX2 as the example — same shape applies to every other quant type's *_Parallel_* kernel.
+
+csharp
+public static unsafe void QuantizedMatMulQ4_0_Parallel_AVX2(
+    float* input, byte* rawWeights, float* output,
+    int M, int K, int N)
+{
+    if (M <= 1)
+    {
+        DecodeParallelQ4_0_AVX2(input, rawWeights, output, K, N);
+    }
+    else
+    {
+        Parallel.For(0, M, row =>
+        {
+            float* pInRow = input + (long)row * K;
+            float* pOutRow = output + (long)row * N;
+            for (int col = 0; col < N; col++)
+                pOutRow[col] = VecDotQ4_0_AVX2(pInRow, rawWeights, col, K);
+        });
+    }
+}
+
+// Column-parallel path for the M==1 (decode) case.
+// Splits the N output columns into a handful of coarse chunks —
+// one Task per chunk, not per column — so thread-dispatch overhead
+// stays fixed regardless of N.
+private static unsafe void DecodeParallelQ4_0_AVX2(
+    float* input, byte* rawWeights, float* output, int K, int N)
+{
+    // Below this, thread-dispatch overhead isn't worth it — just run serial.
+    const int MinColsForParallel = 512;
+    if (N < MinColsForParallel)
+    {
+        for (int col = 0; col < N; col++)
+            output[col] = VecDotQ4_0_AVX2(input, rawWeights, col, K);
+        return;
+    }
+
+    int numChunks = Math.Min(Environment.ProcessorCount, (N + MinColsForParallel - 1) / MinColsForParallel);
+    int chunkSize = (N + numChunks - 1) / numChunks;
+
+    // Capture pointers as long so the lambda doesn't close over `byte*`/`float*`
+    // (C# won't let unsafe pointer types be captured directly by a closure).
+    long inputAddr = (long)input;
+    long weightsAddr = (long)rawWeights;
+    long outputAddr = (long)output;
+
+    Parallel.For(0, numChunks, chunkIdx =>
+    {
+        float* pInput = (float*)inputAddr;
+        byte* pWeights = (byte*)weightsAddr;
+        float* pOutput = (float*)outputAddr;
+
+        int colStart = chunkIdx * chunkSize;
+        int colEnd = Math.Min(colStart + chunkSize, N);
+
+        for (int col = colStart; col < colEnd; col++)
+            pOutput[col] = VecDotQ4_0_AVX2(pInput, pWeights, col, K);
+    });
+}
+
+
+2. MoE experts allocate fresh tensors per token, per expert
+
+FfnKernels.Gated(x, wGate, wUp, wDown, acts) — the 3-linear-layer overload used by MoE — is called with workspace: null inside the per-token Parallel.For in FfnKernels.MoE (deliberately, to avoid races on the shared bump allocator, which is the right call given the constraint). But that means every call does 4 separate heap allocations (gate, up, gated, and the wDown output tensor) — per token, per selected expert, per MoE layer, per forward pass. For a model with e.g. 8 experts/top-2 and 32 layers, that's tokens × 2 × 32 × 4 = a lot of short-lived allocations on the hottest path in the model, adding GC pressure that scales with batch size and layer count.
+
+Since these are single-token, fixed-size buffers, this is a good candidate for thread-local scratch buffers (one small arena per worker thread, reused across tokens/experts/layers within a batch) instead of a shared bump allocator — gets you the workspace pattern's allocation-avoidance benefit without the race risk, since each thread's arena is private.
+
+3. Smaller: VecDotQ4_1_AVX2 still lacks the accumulator pattern (from earlier)
+
+Worth folding into the same pass — every other AVX2 kernel (Q4_0, Q4_NL, Q5_0, Q8_0) accumulates into a running vector and does one horizontal-sum reduction per block; VecDotQ4_1_AVX2 alone does a horizontal-sum on every 8-lane chunk. Not huge on its own, but if you're touching these files for the nibble-unpacking fix and the decode-parallelism fix anyway, it's a nearly-free cleanup while you're in there.

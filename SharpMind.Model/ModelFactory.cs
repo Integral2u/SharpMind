@@ -38,7 +38,7 @@ public static class ModelFactory
     /// <summary>Creates a <see cref="TransformerWeights"/> instance with a
     /// <see cref="GgufLoader"/> for the given path. Call <c>weights.InitializeWeights(progress)</c>
     /// after creation to populate weights from the GGUF file.</summary>
-    public static TransformerWeights Create(
+    public static TransformerWeights CreateWeights(
         ModelConfig modelConfig,
         SharpMindConfig sharpConfig,
         QuantizationOps qOps,
@@ -96,7 +96,7 @@ public static class ModelFactory
         return blocks;
     }
 
-    public static Transformer CreateSession(TransformerWeights weights, SharpMindConfig sharpConfig, Dictionary<string, string>? mapping = null, bool optimizeMemory = true)
+    public static Transformer CreateTransformer(TransformerWeights weights, SharpMindConfig sharpConfig, Dictionary<string, string>? mapping = null, bool optimizeMemory = true)
     {
         ArgumentNullException.ThrowIfNull(weights);
         ArgumentNullException.ThrowIfNull(sharpConfig);

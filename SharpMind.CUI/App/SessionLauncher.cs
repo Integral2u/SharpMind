@@ -134,7 +134,7 @@ public static class SessionLauncher
             var qOps = QuantizationFactory.Create(mapping);
             weights = await Task.Run(() =>
             {
-                var w = ModelFactory.Create(modelConfig, sharpConfig, qOps, options.ModelPath);
+                var w = ModelFactory.CreateWeights(modelConfig, sharpConfig, qOps, options.ModelPath);
                 w.InitializeWeights(progress);
                 return w;
             });
@@ -147,7 +147,7 @@ public static class SessionLauncher
         
         status?.Report("Creating session...");
         await Task.Yield();
-        var model = ModelFactory.CreateSession(weights, sharpConfig, mapping);
+        var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
 
         return new ModelLoadResult
         {

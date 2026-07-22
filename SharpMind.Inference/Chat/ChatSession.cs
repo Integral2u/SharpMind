@@ -282,7 +282,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     private void ThrowIfDisposed()
         => ObjectDisposedException.ThrowIf(_disposed, typeof(ChatSession<T, K>).Name);
     private void InvalidateHistoryCache() => _filteredHistoryCache = null;
-    private string StripThinking(string text)
+   /* private string StripThinking(string text)
     {
         if (string.IsNullOrWhiteSpace(text)) return text;
 
@@ -291,7 +291,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
 
         // Also trim trailing garbage characters often seen at the end of LLM responses (e.g. EOS tokens decoded as symbols)
         return result.TrimEnd('\uFFFD', '\u0000', '\u0001', '\u0002', '\u0003').Trim();
-    }
+    }*/
 
     /// <summary>
     /// Returns true when <paramref name="text"/> looks like a well-formed agent

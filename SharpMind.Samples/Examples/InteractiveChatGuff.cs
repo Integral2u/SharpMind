@@ -43,15 +43,15 @@ namespace SharpMind.Samples.Examples
             GC.Collect(); GC.WaitForPendingFinalizers();
             var sw = Stopwatch.StartNew();
             var qOps = QuantizationFactory.Create(sharpConfig.ResolvedHardware);
-            using var weights = ModelFactory.Create(modelConfig, sharpConfig, qOps, modelPath);
+            using var weights = ModelFactory.CreateWeights(modelConfig, sharpConfig, qOps, modelPath);
             weights.InitializeWeights();
 
             await Console.Out.WriteLineAsync($"ModelFactory.Create + InitializeWeights executed in: {sw.Elapsed.TotalSeconds:F2}s");
 
             GC.Collect(); GC.WaitForPendingFinalizers();
             sw.Restart();
-            using var model = ModelFactory.CreateSession(weights, sharpConfig);
-            await Console.Out.WriteLineAsync($"ModelFactory.CreateSession executed in: {sw.Elapsed.TotalSeconds:F2}s");
+            using var model = ModelFactory.CreateTransformer(weights, sharpConfig);
+            await Console.Out.WriteLineAsync($"ModelFactory.CreateTransformer executed in: {sw.Elapsed.TotalSeconds:F2}s");
 
             sw.Stop();
 
