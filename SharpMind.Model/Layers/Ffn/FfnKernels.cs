@@ -1,5 +1,6 @@
 ﻿using System.Threading.Tasks;
 using SharpMind.Core.Activations;
+using SharpMind.Core.Memory;
 using SharpMind.Core.Tensors;
 
 namespace SharpMind.Model.Layers.Ffn;
@@ -8,6 +9,8 @@ namespace SharpMind.Model.Layers.Ffn;
 
 internal static class FfnKernels
 {
+    /// <summary>Thread-local bump allocator for MoE per-token intermediates.</summary>
+    private static readonly ThreadLocal<Workspace> t_MoEWorkspace = new(() => new Workspace(1 << 20));
     /// <summary>
     /// Dense FFN forward: out = activation(x @ W1^T + b1) @ W2^T + b2
     /// Applied row-wise — each row is one token's hidden state.
@@ -98,17 +101,24 @@ internal static class FfnKernels
         using var logits = router.Forward(x.Rank > 2 ? x.Reshape(batch, hidden) : x, workspace);
         using var probs = SoftmaxOverExperts(logits, workspace);
 
-        // Parallel token processing — no workspace sharing to avoid races
-        // Special-case batch <= 1 to skip ThreadPool scheduling overhead
+        // Thread-local bump allocator — one private arena per worker thread,
+        // reset at the start of every token, so there is never any contention
+        // and no heap allocations for gate/up/gated/down intermediates.
         void ProcessToken(int t)
         {
-            // Get top-k expert indices for this token (fresh tensor, no workspace)
+            var ws = t_MoEWorkspace.Value!;
+            ws.Reset();
+
+            // Allocate token input/output from workspace (zero-copy row + zeroed output)
+            var tokenInput = ws.Rent<float>([hidden]);
+            x.RowSpan(t).CopyTo(tokenInput.Data);
+
+            var tokenOut = ws.Rent<float>([hidden]);
+            tokenOut.Data.Clear();
+
+            // Get top-k expert indices
             using var tokenLogits = Tensor<float>.From(logits.RowSpan(t), logits.Shape.Cols);
             int[] topKIdx = ArgTopK(tokenLogits, topK);
-
-            // Accumulate weighted expert outputs
-            using var tokenInput = Tensor<float>.From(x.RowSpan(t), hidden);
-            using var tokenOut = Tensor<float>.Zeros(hidden);
 
             float weightSum = 0f;
             foreach (int expertIdx in topKIdx)
@@ -117,9 +127,14 @@ internal static class FfnKernels
             foreach (int expertIdx in topKIdx)
             {
                 float weight = probs.RowSpan(t)[expertIdx] / weightSum;
+                // Gated uses ws for all intermediates — no heap allocs
                 using var expertOut = Gated(tokenInput, wGate[expertIdx],
-                                             wUp[expertIdx], wDown[expertIdx], acts);
-                tokenOut.AddInPlace(expertOut.Scale(weight));
+                                             wUp[expertIdx], wDown[expertIdx], acts, ws);
+                // Manual weighted accumulation avoids the allocation in Scale(c)
+                var dst = tokenOut.Data;
+                var src = expertOut.Data;
+                for (int i = 0; i < hidden; i++)
+                    dst[i] += src[i] * weight;
             }
 
             tokenOut.Data.CopyTo(result.RowSpan(t));
