@@ -198,39 +198,3 @@ private static unsafe void DecodeParallelQ4_0_AVX2(
 }
 
 
-2. MoE experts allocate fresh tensors per token, per expert
-
-FfnKernels.Gated(x, wGate, wUp, wDown, acts) — the 3-linear-layer overload used by MoE — is called with workspace: null inside the per-token Parallel.For in FfnKernels.MoE (deliberately, to avoid races on the shared bump allocator, which is the right call given the constraint). But that means every call does 4 separate heap allocations (gate, up, gated, and the wDown output tensor) — per token, per selected expert, per MoE layer, per forward pass. For a model with e.g. 8 experts/top-2 and 32 layers, that's tokens × 2 × 32 × 4 = a lot of short-lived allocations on the hottest path in the model, adding GC pressure that scales with batch size and layer count.
-
-Since these are single-token, fixed-size buffers, this is a good candidate for thread-local scratch buffers (one small arena per worker thread, reused across tokens/experts/layers within a batch) instead of a shared bump allocator — gets you the workspace pattern's allocation-avoidance benefit without the race risk, since each thread's arena is private.
-
-3. Smaller: VecDotQ4_1_AVX2 still lacks the accumulator pattern (from earlier)
-
-Worth folding into the same pass — every other AVX2 kernel (Q4_0, Q4_NL, Q5_0, Q8_0) accumulates into a running vector and does one horizontal-sum reduction per block; VecDotQ4_1_AVX2 alone does a horizontal-sum on every 8-lane chunk. Not huge on its own, but if you're touching these files for the nibble-unpacking fix and the decode-parallelism fix anyway, it's a nearly-free cleanup while you're in there.
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-Summary: FMA VecDot Fixes for Performance
-Quant type	Current state	Fix needed
-Q6_K	_FMA and _AVX2 are both pure scalar — no SIMD at all	Rewrite both with real Vector256 + Fma.MultiplyAdd, running accumulator (patch given above)
-Q2_K, Q3_K, Q4_K	Vectorized, but multiply-then-immediate-HSum per chunk — no fused multiply-add, no cross-chunk accumulation	Replace Avx.Multiply(...) + per-chunk HSum with Fma.MultiplyAdd(vi, vw, vacc) accumulating into one running vacc; single HSum at the end
-Q4_0, Q4_1, Q4_NL	No _FMA function exists — "fma" key just aliases to _AVX2 (plain multiply+add)	Write real _FMA variants using Fma.MultiplyAdd with a running vacc, same structure as VecDotQ4_0_AVX2 but fused
-Q4_1 (AVX2 too)	Missing accumulator — HSum called every 8 lanes instead of once per block	Add vacc0/vacc1 accumulation like VecDotQ4_0_AVX2/VecDotQ4_NL_AVX2 already do
-F32, F16, Q5_0, Q5_1, Q5_K, Q8_0, Q8_1, Q8_K	Already correct	No change — these are your reference pattern to copy from
-
-One shared pattern to apply everywhere: accumulate into a running Vector256<float> vacc via Fma.MultiplyAdd across the entire block/dot-product, and call HSum256_Avx exactly once at the end — never inside the loop. That's the single fix underlying every row in this table.
-
-Priority order: Q6_K first (biggest gap — zero vectorization today), then Q2_K/Q3_K/Q4_K (vectorized but not fused/accumulated), then Q4_0/Q4_1/Q4_NL (missing FMA entirely), with the Q4_1 AVX2 accumulator fix folded in alongside since you'll be in that file anyway.

@@ -158,6 +158,8 @@ public static partial class QuantizationKernels
         int nBlocks = (inFeatures + QK_K - 1) / QK_K;
         double sum = 0;
         float* vvBuf = stackalloc float[8];
+        var vacc0 = Vector256<float>.Zero;
+        var vacc1 = Vector256<float>.Zero;
         for (int b = 0; b < nBlocks; b++)
         {
             byte* block = rawWeights + (long)(startBlock + b) * BLOCK_BYTES;
@@ -171,8 +173,6 @@ public static partial class QuantizationKernels
             float* pIn = input + b * QK_K - colBlockStart;
             for (int n16 = curBlockStart; n16 < blockEnd; n16 += 128)
             {
-                var vacc0 = Vector256<float>.Zero;
-                var vacc1 = Vector256<float>.Zero;
                 for (int j = 0; j < 4 && n16 + j * 32 < blockEnd; j++)
                 {
                     int basePos = n16 + j * 32;
@@ -238,9 +238,9 @@ public static partial class QuantizationKernels
                         sum += pIn[idx] * (s1 * v * dSuper - m1 * minSuper);
                     }
                 }
-                sum += MathHelpers.HSum256_Avx(Avx.Add(vacc0, vacc1));
             }
         }
+        sum += MathHelpers.HSum256_Avx(Avx.Add(vacc0, vacc1));
         return (float)sum;
     }
 

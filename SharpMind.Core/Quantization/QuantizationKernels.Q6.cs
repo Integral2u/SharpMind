@@ -135,6 +135,10 @@ public static partial class QuantizationKernels
         int nBlocks = (inFeatures + QK_K - 1) / QK_K;
         double sum = 0;
         float* vvBuf = stackalloc float[8];
+        var vacc0 = Vector256<float>.Zero;
+        var vacc1 = Vector256<float>.Zero;
+        var vacc2 = Vector256<float>.Zero;
+        var vacc3 = Vector256<float>.Zero;
         for (int b = 0; b < nBlocks; b++)
         {
             byte* block = rawWeights + (long)(startBlock + b) * BLOCK_BYTES;
@@ -153,10 +157,6 @@ public static partial class QuantizationKernels
                 sbyte* psc = scales + (nOff == 0 ? 0 : 8);
 
                 int halfRem = Math.Min(128, blockEnd - nOff);
-                var vacc0 = Vector256<float>.Zero;
-                var vacc1 = Vector256<float>.Zero;
-                var vacc2 = Vector256<float>.Zero;
-                var vacc3 = Vector256<float>.Zero;
 
                 int l = 0;
                 for (; l + 103 < halfRem && l < 32; l += 8)
@@ -197,8 +197,6 @@ public static partial class QuantizationKernels
                     vacc3 = Fma.MultiplyAdd(Vector256.LoadUnsafe(ref pIn[nOff + l + 96]), Vector256.LoadUnsafe(ref vvBuf[0]), vacc3);
                 }
 
-                sum += MathHelpers.HSum256_Avx(Avx.Add(Avx.Add(vacc0, vacc1), Avx.Add(vacc2, vacc3)));
-
                 for (; l < halfRem && l < 32; l++)
                 {
                     int is_ = l / 16;
@@ -232,9 +230,10 @@ public static partial class QuantizationKernels
                 }
             }
         }
+        sum += MathHelpers.HSum256_Avx(Avx.Add(Avx.Add(vacc0, vacc1), Avx.Add(vacc2, vacc3)));
         return (float)sum;
     }
-   
+    
     public static unsafe void ReadQ6K_Scalar(BinaryReader reader, Span<float> data, int n)
     {
         const int QK_K = 256;

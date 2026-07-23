@@ -116,6 +116,8 @@ public static partial class QuantizationKernels
         int nBlocks = (inFeatures + QK - 1) / QK;
         double sum = 0;
         float* vvBuf = stackalloc float[8];
+        var vacc0 = Vector256<float>.Zero;
+        var vacc1 = Vector256<float>.Zero;
         for (int b = 0; b < nBlocks; b++)
         {
             byte* block = rawWeights + (long)col * nBlocks * BLOCK_BYTES + b * BLOCK_BYTES;
@@ -124,11 +126,8 @@ public static partial class QuantizationKernels
             byte* qs = block + 6;
             int blockEnd = Math.Min(QK, inFeatures - b * QK);
             float* pIn = input + b * QK;
-            var vd = Vector256.Create(d);
             int half = QK / 2;
 
-            var vacc0 = Vector256<float>.Zero;
-            var vacc1 = Vector256<float>.Zero;
             int i = 0;
             for (; i <= blockEnd - 16; i += 16)
             {
@@ -167,7 +166,6 @@ public static partial class QuantizationKernels
                 var vi = Vector256.LoadUnsafe(ref pIn[i]);
                 vacc0 = Fma.MultiplyAdd(vi, vw, vacc0);
             }
-            sum += MathHelpers.HSum256_Avx(Avx.Add(vacc0, vacc1));
             for (; i < blockEnd; i++)
             {
                 int h4 = ((int)(qh >> i) & 1) << 4;
@@ -176,6 +174,7 @@ public static partial class QuantizationKernels
                 sum += pIn[i] * ((q - 16) * d);
             }
         }
+        sum += MathHelpers.HSum256_Avx(Avx.Add(vacc0, vacc1));
         return (float)sum;
     }
 
@@ -289,6 +288,8 @@ public static partial class QuantizationKernels
         int nBlocks = (inFeatures + QK - 1) / QK;
         double sum = 0;
         float* vvBuf = stackalloc float[8];
+        var vacc0 = Vector256<float>.Zero;
+        var vacc1 = Vector256<float>.Zero;
         for (int b = 0; b < nBlocks; b++)
         {
             byte* block = rawWeights + (long)col * nBlocks * BLOCK_BYTES + b * BLOCK_BYTES;
@@ -298,12 +299,8 @@ public static partial class QuantizationKernels
             byte* qs = block + 8;
             int blockEnd = Math.Min(QK, inFeatures - b * QK);
             float* pIn = input + b * QK;
-            var vd = Vector256.Create(d);
-            var vm = Vector256.Create(m);
             int half = QK / 2;
 
-            var vacc0 = Vector256<float>.Zero;
-            var vacc1 = Vector256<float>.Zero;
             int i = 0;
             for (; i <= blockEnd - 16; i += 16)
             {
@@ -342,7 +339,6 @@ public static partial class QuantizationKernels
                 var vi = Vector256.LoadUnsafe(ref pIn[i]);
                 vacc0 = Fma.MultiplyAdd(vi, vw, vacc0);
             }
-            sum += MathHelpers.HSum256_Avx(Avx.Add(vacc0, vacc1));
             for (; i < blockEnd; i++)
             {
                 int xh = (int)((qh >> i) & 1) << 4;
@@ -350,6 +346,7 @@ public static partial class QuantizationKernels
                 sum += pIn[i] * (nib * d + m);
             }
         }
+        sum += MathHelpers.HSum256_Avx(Avx.Add(vacc0, vacc1));
         return (float)sum;
     }
 
@@ -501,6 +498,8 @@ public static partial class QuantizationKernels
         int nBlocks = (inFeatures + QK_K - 1) / QK_K;
         double sum = 0;
         float* vvBuf = stackalloc float[8];
+        var vacc0 = Vector256<float>.Zero;
+        var vacc1 = Vector256<float>.Zero;
         for (int b = 0; b < nBlocks; b++)
         {
             byte* block = rawWeights + (long)(startBlock + b) * BLOCK_BYTES;
@@ -513,8 +512,6 @@ public static partial class QuantizationKernels
             int blockEnd = Math.Min(QK_K, inFeatures + colBlockStart - b * QK_K);
             float* pIn = input + b * QK_K - colBlockStart;
 
-            var vacc0 = Vector256<float>.Zero;
-            var vacc1 = Vector256<float>.Zero;
             int i = curBlockStart;
             for (; i <= blockEnd - 16; i += 16)
             {
@@ -574,7 +571,6 @@ public static partial class QuantizationKernels
                 var vi = Vector256.LoadUnsafe(ref pIn[i]);
                 vacc0 = Avx.Add(vacc0, Avx.Multiply(vi, vw));
             }
-            sum += MathHelpers.HSum256_Avx(Avx.Add(vacc0, vacc1));
             for (; i < blockEnd; i++)
             {
                 int sc = GetScaleMinK4_Scale_Scalar(i / 32, scales);
@@ -589,6 +585,7 @@ public static partial class QuantizationKernels
                 sum += pIn[i] * (sc * q5 * d - mn * min);
             }
         }
+        sum += MathHelpers.HSum256_Avx(Avx.Add(vacc0, vacc1));
         return (float)sum;
     }
 
