@@ -19,6 +19,7 @@ class Program
         F32 = 0, F16 = 1, Q4_0 = 2, Q4_1 = 3,
         Q5_0 = 6, Q5_1 = 7, Q8_0 = 8, Q8_1 = 9,
         Q2_K = 10, Q3_K = 11, Q4_K = 12, Q5_K = 13, Q6_K = 14, Q8_K = 15,
+        I8 = 16, I16 = 17, I32 = 18,
         IQ4_NL = 20,
     }
 
@@ -485,6 +486,35 @@ class Program
         return (float)sum;
     }
 
+    // ===== Integer raw types (unquantized) =====
+
+    static float VecDotI8(ReadOnlySpan<float> input, ReadOnlySpan<byte> rawWeights, int col, int inFeatures)
+    {
+        double sum = 0;
+        int elemOff = col * inFeatures;
+        for (int i = 0; i < inFeatures; i++)
+            sum += input[i] * (sbyte)rawWeights[elemOff + i];
+        return (float)sum;
+    }
+
+    static float VecDotI16(ReadOnlySpan<float> input, ReadOnlySpan<byte> rawWeights, int col, int inFeatures)
+    {
+        double sum = 0;
+        int elemOff = col * inFeatures;
+        for (int i = 0; i < inFeatures; i++)
+            sum += input[i] * BitConverter.ToInt16(rawWeights.Slice((elemOff + i) * 2, 2));
+        return (float)sum;
+    }
+
+    static float VecDotI32(ReadOnlySpan<float> input, ReadOnlySpan<byte> rawWeights, int col, int inFeatures)
+    {
+        double sum = 0;
+        int elemOff = col * inFeatures;
+        for (int i = 0; i < inFeatures; i++)
+            sum += input[i] * BitConverter.ToInt32(rawWeights.Slice((elemOff + i) * 4, 4));
+        return (float)sum;
+    }
+
     static void WriteFloat(BinaryWriter w, float f) => w.Write(f);
     static void WriteInt(BinaryWriter w, int i) => w.Write(i);
 
@@ -524,6 +554,9 @@ class Program
             (int)QuantDType.Q5_K => 176,
             (int)QuantDType.Q6_K => 210,
             (int)QuantDType.Q8_K => 292,
+            (int)QuantDType.I8 => 1,
+            (int)QuantDType.I16 => 2,
+            (int)QuantDType.I32 => 4,
             (int)QuantDType.IQ4_NL => 18,
             _ => throw new InvalidOperationException($"Unknown dtype: {dtype}")
         };
@@ -531,6 +564,9 @@ class Program
         {
             (int)QuantDType.F32 => 1,
             (int)QuantDType.F16 => 1,
+            (int)QuantDType.I8 => 1,
+            (int)QuantDType.I16 => 1,
+            (int)QuantDType.I32 => 1,
             (int)QuantDType.IQ4_NL => QK,
             _ => dtype >= (int)QuantDType.Q2_K ? QK_K : QK
         };
@@ -556,6 +592,9 @@ class Program
             QuantDType.Q5_K => VecDotQ5_K(input, weights, col, inFeatures),
             QuantDType.Q6_K => VecDotQ6_K(input, weights, col, inFeatures),
             QuantDType.Q8_K => VecDotQ8_K(input, weights, col, inFeatures),
+            QuantDType.I8 => VecDotI8(input, weights, col, inFeatures),
+            QuantDType.I16 => VecDotI16(input, weights, col, inFeatures),
+            QuantDType.I32 => VecDotI32(input, weights, col, inFeatures),
             QuantDType.IQ4_NL => VecDotIQ4_NL(input, weights, col, inFeatures),
             _ => throw new InvalidOperationException()
         };

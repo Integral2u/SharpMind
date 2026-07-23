@@ -220,4 +220,193 @@ public static partial class QuantizationKernels
     {
         for (int i = 0; i < n; i++) data[i] = HalfToFloat_F16C(reader.ReadUInt16());
     }
+
+    // ===== I8 (signed byte) =====
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static unsafe float VecDotI8_Scalar(float* input, byte* rawWeights, int col, int inFeatures)
+    {
+        sbyte* w = (sbyte*)rawWeights;
+        double sum = 0;
+        sbyte* pW = w + (long)col * inFeatures;
+        for (int i = 0; i < inFeatures; i++)
+            sum += input[i] * pW[i];
+        return (float)sum;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static unsafe float VecDotI8_FMA(float* input, byte* rawWeights, int col, int inFeatures)
+    {
+        sbyte* w = (sbyte*)rawWeights;
+        sbyte* pW = w + (long)col * inFeatures;
+        var vacc0 = Vector256<float>.Zero;
+        var vacc1 = Vector256<float>.Zero;
+        int i = 0;
+        for (; i <= inFeatures - 16; i += 16)
+        {
+            var vi0 = Avx.ConvertToVector256Single(Avx2.ConvertToVector256Int32(pW + i));
+            var vi1 = Avx.ConvertToVector256Single(Avx2.ConvertToVector256Int32(pW + i + 8));
+            var vw0 = Vector256.LoadUnsafe(ref input[i]);
+            var vw1 = Vector256.LoadUnsafe(ref input[i + 8]);
+            vacc0 = Fma.MultiplyAdd(vi0, vw0, vacc0);
+            vacc1 = Fma.MultiplyAdd(vi1, vw1, vacc1);
+        }
+        for (; i <= inFeatures - 8; i += 8)
+        {
+            var vi = Avx.ConvertToVector256Single(Avx2.ConvertToVector256Int32(pW + i));
+            var vw = Vector256.LoadUnsafe(ref input[i]);
+            vacc0 = Fma.MultiplyAdd(vi, vw, vacc0);
+        }
+        float sum = MathHelpers.HSum256_Avx(Avx.Add(vacc0, vacc1));
+        for (; i < inFeatures; i++)
+            sum += input[i] * pW[i];
+        return sum;
+    }
+
+    public static unsafe void QuantizedMatMulI8_Serial_Scalar(
+        float* input, byte* rawWeights, float* output, int M, int K, int N)
+        => QuantizedMatMul_Serial_Wrapper(VecDotI8_Scalar, input, rawWeights, output, M, K, N);
+
+    public static unsafe void QuantizedMatMulI8_Parallel_Scalar(
+        float* input, byte* rawWeights, float* output, int M, int K, int N)
+        => QuantizedMatMul_Parallel_Wrapper(VecDotI8_Scalar, input, rawWeights, output, M, K, N);
+
+    public static unsafe void QuantizedMatMulI8_Serial_FMA(
+        float* input, byte* rawWeights, float* output, int M, int K, int N)
+        => QuantizedMatMul_Serial_Wrapper(VecDotI8_FMA, input, rawWeights, output, M, K, N);
+
+    public static unsafe void QuantizedMatMulI8_Parallel_FMA(
+        float* input, byte* rawWeights, float* output, int M, int K, int N)
+        => QuantizedMatMul_Parallel_Wrapper(VecDotI8_FMA, input, rawWeights, output, M, K, N);
+
+    public static void ReadI8_Scalar(BinaryReader reader, Span<float> data, int n)
+    {
+        for (int i = 0; i < n; i++) data[i] = (sbyte)reader.ReadByte();
+    }
+
+    // ===== I16 (signed short) =====
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static unsafe float VecDotI16_Scalar(float* input, byte* rawWeights, int col, int inFeatures)
+    {
+        short* w = (short*)rawWeights;
+        double sum = 0;
+        short* pW = w + (long)col * inFeatures;
+        for (int i = 0; i < inFeatures; i++)
+            sum += input[i] * pW[i];
+        return (float)sum;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static unsafe float VecDotI16_FMA(float* input, byte* rawWeights, int col, int inFeatures)
+    {
+        short* w = (short*)rawWeights;
+        short* pW = w + (long)col * inFeatures;
+        var vacc0 = Vector256<float>.Zero;
+        var vacc1 = Vector256<float>.Zero;
+        int i = 0;
+        for (; i <= inFeatures - 16; i += 16)
+        {
+            var vi0 = Avx.ConvertToVector256Single(Avx2.ConvertToVector256Int32(pW + i));
+            var vi1 = Avx.ConvertToVector256Single(Avx2.ConvertToVector256Int32(pW + i + 8));
+            var vw0 = Vector256.LoadUnsafe(ref input[i]);
+            var vw1 = Vector256.LoadUnsafe(ref input[i + 8]);
+            vacc0 = Fma.MultiplyAdd(vi0, vw0, vacc0);
+            vacc1 = Fma.MultiplyAdd(vi1, vw1, vacc1);
+        }
+        for (; i <= inFeatures - 8; i += 8)
+        {
+            var vi = Avx.ConvertToVector256Single(Avx2.ConvertToVector256Int32(pW + i));
+            var vw = Vector256.LoadUnsafe(ref input[i]);
+            vacc0 = Fma.MultiplyAdd(vi, vw, vacc0);
+        }
+        float sum = MathHelpers.HSum256_Avx(Avx.Add(vacc0, vacc1));
+        for (; i < inFeatures; i++)
+            sum += input[i] * pW[i];
+        return sum;
+    }
+
+    public static unsafe void QuantizedMatMulI16_Serial_Scalar(
+        float* input, byte* rawWeights, float* output, int M, int K, int N)
+        => QuantizedMatMul_Serial_Wrapper(VecDotI16_Scalar, input, rawWeights, output, M, K, N);
+
+    public static unsafe void QuantizedMatMulI16_Parallel_Scalar(
+        float* input, byte* rawWeights, float* output, int M, int K, int N)
+        => QuantizedMatMul_Parallel_Wrapper(VecDotI16_Scalar, input, rawWeights, output, M, K, N);
+
+    public static unsafe void QuantizedMatMulI16_Serial_FMA(
+        float* input, byte* rawWeights, float* output, int M, int K, int N)
+        => QuantizedMatMul_Serial_Wrapper(VecDotI16_FMA, input, rawWeights, output, M, K, N);
+
+    public static unsafe void QuantizedMatMulI16_Parallel_FMA(
+        float* input, byte* rawWeights, float* output, int M, int K, int N)
+        => QuantizedMatMul_Parallel_Wrapper(VecDotI16_FMA, input, rawWeights, output, M, K, N);
+
+    public static void ReadI16_Scalar(BinaryReader reader, Span<float> data, int n)
+    {
+        for (int i = 0; i < n; i++) data[i] = reader.ReadInt16();
+    }
+
+    // ===== I32 (signed int) =====
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static unsafe float VecDotI32_Scalar(float* input, byte* rawWeights, int col, int inFeatures)
+    {
+        int* w = (int*)rawWeights;
+        double sum = 0;
+        int* pW = w + (long)col * inFeatures;
+        for (int i = 0; i < inFeatures; i++)
+            sum += input[i] * pW[i];
+        return (float)sum;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static unsafe float VecDotI32_FMA(float* input, byte* rawWeights, int col, int inFeatures)
+    {
+        int* w = (int*)rawWeights;
+        int* pW = w + (long)col * inFeatures;
+        var vacc0 = Vector256<float>.Zero;
+        var vacc1 = Vector256<float>.Zero;
+        int i = 0;
+        for (; i <= inFeatures - 16; i += 16)
+        {
+            var vi0 = Avx.ConvertToVector256Single(Avx.LoadVector256(pW + i));
+            var vi1 = Avx.ConvertToVector256Single(Avx.LoadVector256(pW + i + 8));
+            var vw0 = Vector256.LoadUnsafe(ref input[i]);
+            var vw1 = Vector256.LoadUnsafe(ref input[i + 8]);
+            vacc0 = Fma.MultiplyAdd(vi0, vw0, vacc0);
+            vacc1 = Fma.MultiplyAdd(vi1, vw1, vacc1);
+        }
+        for (; i <= inFeatures - 8; i += 8)
+        {
+            var vi = Avx.ConvertToVector256Single(Avx.LoadVector256(pW + i));
+            var vw = Vector256.LoadUnsafe(ref input[i]);
+            vacc0 = Fma.MultiplyAdd(vi, vw, vacc0);
+        }
+        float sum = MathHelpers.HSum256_Avx(Avx.Add(vacc0, vacc1));
+        for (; i < inFeatures; i++)
+            sum += input[i] * pW[i];
+        return sum;
+    }
+
+    public static unsafe void QuantizedMatMulI32_Serial_Scalar(
+        float* input, byte* rawWeights, float* output, int M, int K, int N)
+        => QuantizedMatMul_Serial_Wrapper(VecDotI32_Scalar, input, rawWeights, output, M, K, N);
+
+    public static unsafe void QuantizedMatMulI32_Parallel_Scalar(
+        float* input, byte* rawWeights, float* output, int M, int K, int N)
+        => QuantizedMatMul_Parallel_Wrapper(VecDotI32_Scalar, input, rawWeights, output, M, K, N);
+
+    public static unsafe void QuantizedMatMulI32_Serial_FMA(
+        float* input, byte* rawWeights, float* output, int M, int K, int N)
+        => QuantizedMatMul_Serial_Wrapper(VecDotI32_FMA, input, rawWeights, output, M, K, N);
+
+    public static unsafe void QuantizedMatMulI32_Parallel_FMA(
+        float* input, byte* rawWeights, float* output, int M, int K, int N)
+        => QuantizedMatMul_Parallel_Wrapper(VecDotI32_FMA, input, rawWeights, output, M, K, N);
+
+    public static void ReadI32_Scalar(BinaryReader reader, Span<float> data, int n)
+    {
+        for (int i = 0; i < n; i++) data[i] = reader.ReadInt32();
+    }
 }

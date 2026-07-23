@@ -47,7 +47,10 @@ public abstract class QuantizationOps
                 => GetBlockQuantByteCount(shape, 32, 18),
             QuantDType.Q4_1
                 => GetBlockQuantByteCount(shape, 32, 20),
-            _ => throw new ArgumentOutOfRangeException(nameof(dtype), dtype, null)
+            QuantDType.I8 => totalElements * 1,
+            QuantDType.I16 => totalElements * 2,
+            QuantDType.I32 => totalElements * 4,
+        _ => throw new ArgumentOutOfRangeException(nameof(dtype), dtype, null)
         };
     }
 
@@ -91,6 +94,9 @@ public abstract class QuantizationOps
             case QuantDType.Q6_K:
             case QuantDType.Q6_K_S:  ReadQ6K(reader, data, n); break;
             case QuantDType.Q8_K:    ReadQ8K(reader, data, n); break;
+            case QuantDType.I8:      ReadI8(reader, data, n); break;
+            case QuantDType.I16:     ReadI16(reader, data, n); break;
+            case QuantDType.I32:     ReadI32(reader, data, n); break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(dType), dType, null);
         }
@@ -113,6 +119,9 @@ public abstract class QuantizationOps
         QuantDType.Q5_K or QuantDType.Q5_K_S or QuantDType.Q5_K_M => VecDotQ5K,
         QuantDType.Q6_K or QuantDType.Q6_K_S => VecDotQ6K,
         QuantDType.Q8_K => VecDotQ8K,
+        QuantDType.I8 => VecDotI8,
+        QuantDType.I16 => VecDotI16,
+        QuantDType.I32 => VecDotI32,
         _ => throw new ArgumentOutOfRangeException(nameof(dType), dType, null),
     };
 
@@ -135,6 +144,9 @@ public abstract class QuantizationOps
         QuantDType.Q5_K or QuantDType.Q5_K_S or QuantDType.Q5_K_M => QuantizedMatMulQ5K,
         QuantDType.Q6_K or QuantDType.Q6_K_S => QuantizedMatMulQ6K,
         QuantDType.Q8_K => QuantizedMatMulQ8K,
+        QuantDType.I8 => QuantizedMatMulI8,
+        QuantDType.I16 => QuantizedMatMulI16,
+        QuantDType.I32 => QuantizedMatMulI32,
         _ => throw new ArgumentOutOfRangeException(nameof(dType), dType, null),
     };
 
@@ -298,6 +310,26 @@ public abstract class QuantizationOps
         "f16_scalar", $"{NS}.{nameof(QuantizationKernels.VecDotF16_Scalar)}")]
     public abstract unsafe float VecDotF16(float* input, byte* rawWeights, int col, int inFeatures);
 
+    [PuzzleCornerPiece(QuantizationKeys.KeyVecDotI8, true, null,
+        "i8_fma",    $"{NS}.{nameof(QuantizationKernels.VecDotI8_FMA)}",
+        "i8_avx2",   $"{NS}.{nameof(QuantizationKernels.VecDotI8_FMA)}",
+        "i8_sse",    $"{NS}.{nameof(QuantizationKernels.VecDotI8_Scalar)}",
+        "i8_scalar", $"{NS}.{nameof(QuantizationKernels.VecDotI8_Scalar)}")]
+    public abstract unsafe float VecDotI8(float* input, byte* rawWeights, int col, int inFeatures);
+
+    [PuzzleCornerPiece(QuantizationKeys.KeyVecDotI16, true, null,
+        "i16_fma",    $"{NS}.{nameof(QuantizationKernels.VecDotI16_FMA)}",
+        "i16_avx2",   $"{NS}.{nameof(QuantizationKernels.VecDotI16_FMA)}",
+        "i16_sse",    $"{NS}.{nameof(QuantizationKernels.VecDotI16_Scalar)}",
+        "i16_scalar", $"{NS}.{nameof(QuantizationKernels.VecDotI16_Scalar)}")]
+    public abstract unsafe float VecDotI16(float* input, byte* rawWeights, int col, int inFeatures);
+
+    [PuzzleCornerPiece(QuantizationKeys.KeyVecDotI32, true, null,
+        "i32_fma",    $"{NS}.{nameof(QuantizationKernels.VecDotI32_FMA)}",
+        "i32_avx2",   $"{NS}.{nameof(QuantizationKernels.VecDotI32_FMA)}",
+        "i32_sse",    $"{NS}.{nameof(QuantizationKernels.VecDotI32_Scalar)}",
+        "i32_scalar", $"{NS}.{nameof(QuantizationKernels.VecDotI32_Scalar)}")]
+    public abstract unsafe float VecDotI32(float* input, byte* rawWeights, int col, int inFeatures);
 
     [PuzzleCornerPiece(QuantizationKeys.KeyQuantizedMatMulQ2K, true, null,
         "qmatmul_q2k_serial_fma",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ2K_Serial_FMA)}",
@@ -409,7 +441,38 @@ public abstract class QuantizationOps
         "qmatmul_f16_parallel_scalar",$"{NS}.{nameof(QuantizationKernels.QuantizedMatMulF16_Parallel_Scalar)}")]
     public abstract unsafe void QuantizedMatMulF16(float* input, byte* rawWeights, float* output, int M, int K, int N);
 
+    [PuzzleCornerPiece(QuantizationKeys.KeyQuantizedMatMulI8, true, null,
+        "qmatmul_i8_serial_fma",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulI8_Serial_FMA)}",
+        "qmatmul_i8_parallel_fma",  $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulI8_Parallel_FMA)}",
+        "qmatmul_i8_serial_avx2",   $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulI8_Serial_FMA)}",
+        "qmatmul_i8_parallel_avx2", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulI8_Parallel_FMA)}",
+        "qmatmul_i8_serial_sse",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulI8_Serial_Scalar)}",
+        "qmatmul_i8_parallel_sse",  $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulI8_Parallel_Scalar)}",
+        "qmatmul_i8_serial_scalar", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulI8_Serial_Scalar)}",
+        "qmatmul_i8_parallel_scalar",$"{NS}.{nameof(QuantizationKernels.QuantizedMatMulI8_Parallel_Scalar)}")]
+    public abstract unsafe void QuantizedMatMulI8(float* input, byte* rawWeights, float* output, int M, int K, int N);
 
+    [PuzzleCornerPiece(QuantizationKeys.KeyQuantizedMatMulI16, true, null,
+        "qmatmul_i16_serial_fma",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulI16_Serial_FMA)}",
+        "qmatmul_i16_parallel_fma",  $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulI16_Parallel_FMA)}",
+        "qmatmul_i16_serial_avx2",   $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulI16_Serial_FMA)}",
+        "qmatmul_i16_parallel_avx2", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulI16_Parallel_FMA)}",
+        "qmatmul_i16_serial_sse",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulI16_Serial_Scalar)}",
+        "qmatmul_i16_parallel_sse",  $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulI16_Parallel_Scalar)}",
+        "qmatmul_i16_serial_scalar", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulI16_Serial_Scalar)}",
+        "qmatmul_i16_parallel_scalar",$"{NS}.{nameof(QuantizationKernels.QuantizedMatMulI16_Parallel_Scalar)}")]
+    public abstract unsafe void QuantizedMatMulI16(float* input, byte* rawWeights, float* output, int M, int K, int N);
+
+    [PuzzleCornerPiece(QuantizationKeys.KeyQuantizedMatMulI32, true, null,
+        "qmatmul_i32_serial_fma",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulI32_Serial_FMA)}",
+        "qmatmul_i32_parallel_fma",  $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulI32_Parallel_FMA)}",
+        "qmatmul_i32_serial_avx2",   $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulI32_Serial_FMA)}",
+        "qmatmul_i32_parallel_avx2", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulI32_Parallel_FMA)}",
+        "qmatmul_i32_serial_sse",    $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulI32_Serial_Scalar)}",
+        "qmatmul_i32_parallel_sse",  $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulI32_Parallel_Scalar)}",
+        "qmatmul_i32_serial_scalar", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulI32_Serial_Scalar)}",
+        "qmatmul_i32_parallel_scalar",$"{NS}.{nameof(QuantizationKernels.QuantizedMatMulI32_Parallel_Scalar)}")]
+    public abstract unsafe void QuantizedMatMulI32(float* input, byte* rawWeights, float* output, int M, int K, int N);
 
     [PuzzleCornerPiece(QuantizationKeys.KeyReadQ8_0, true, null,
         "read_q8_0_fma",    $"{NS}.{nameof(QuantizationKernels.ReadQ8_0_Scalar)}",
@@ -516,6 +579,26 @@ public abstract class QuantizationOps
         "read_f16_scalar", $"{NS}.{nameof(QuantizationKernels.ReadF16_Scalar)}")]
     public abstract void ReadF16(BinaryReader reader, Span<float> data, int n);
 
+    [PuzzleCornerPiece(QuantizationKeys.KeyReadI8, true, null,
+        "read_i8_fma",    $"{NS}.{nameof(QuantizationKernels.ReadI8_Scalar)}",
+        "read_i8_avx2",   $"{NS}.{nameof(QuantizationKernels.ReadI8_Scalar)}",
+        "read_i8_sse",    $"{NS}.{nameof(QuantizationKernels.ReadI8_Scalar)}",
+        "read_i8_scalar", $"{NS}.{nameof(QuantizationKernels.ReadI8_Scalar)}")]
+    public abstract void ReadI8(BinaryReader reader, Span<float> data, int n);
+
+    [PuzzleCornerPiece(QuantizationKeys.KeyReadI16, true, null,
+        "read_i16_fma",    $"{NS}.{nameof(QuantizationKernels.ReadI16_Scalar)}",
+        "read_i16_avx2",   $"{NS}.{nameof(QuantizationKernels.ReadI16_Scalar)}",
+        "read_i16_sse",    $"{NS}.{nameof(QuantizationKernels.ReadI16_Scalar)}",
+        "read_i16_scalar", $"{NS}.{nameof(QuantizationKernels.ReadI16_Scalar)}")]
+    public abstract void ReadI16(BinaryReader reader, Span<float> data, int n);
+
+    [PuzzleCornerPiece(QuantizationKeys.KeyReadI32, true, null,
+        "read_i32_fma",    $"{NS}.{nameof(QuantizationKernels.ReadI32_Scalar)}",
+        "read_i32_avx2",   $"{NS}.{nameof(QuantizationKernels.ReadI32_Scalar)}",
+        "read_i32_sse",    $"{NS}.{nameof(QuantizationKernels.ReadI32_Scalar)}",
+        "read_i32_scalar", $"{NS}.{nameof(QuantizationKernels.ReadI32_Scalar)}")]
+    public abstract void ReadI32(BinaryReader reader, Span<float> data, int n);
 
     [PuzzleCornerPiece(QuantizationKeys.KeyHSum256, true, null,
         "hsum_fma",   $"{MH}.{nameof(MathHelpers.HSum256_Avx)}",
