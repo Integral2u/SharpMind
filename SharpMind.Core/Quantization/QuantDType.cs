@@ -9,4 +9,6 @@ public enum QuantDType : uint
     Q2_K_S = 100, Q3_K_S = 101, Q3_K_M = 102, Q3_K_L = 103,
     Q4_K_S = 104, Q4_K_M = 105, Q5_K_S = 106, Q5_K_M = 107,
     Q6_K_S = 108,
+
+    //Missing Integer I8 = 16, I16 = 17, I32 = 18
 }

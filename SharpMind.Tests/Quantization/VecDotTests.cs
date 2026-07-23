@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Runtime.Intrinsics.X86;
 using SharpMind.Core.Quantization;
@@ -406,6 +408,157 @@ public class VecDotTests
         float baseline = all[0];
         for (int i = 1; i < all.Count; i++)
             Assert.Equal(baseline, all[i], 5);
+    }
+
+    // ===== C reference cross-validation =====
+
+    private static string? _refProjectDir;
+
+    private static string GetRefProjectDir()
+    {
+        if (_refProjectDir == null)
+        {
+            // Walk up from the test assembly output to find SharpMind.Tests/Reference/Reference.csproj
+            var dir = AppDomain.CurrentDomain.BaseDirectory;
+            while (dir != null)
+            {
+                var testMarker = Path.Combine(dir, "SharpMind.Tests.csproj");
+                if (File.Exists(testMarker))
+                {
+                    var candidate = Path.Combine(dir, "Reference", "Reference.csproj");
+                    if (File.Exists(candidate))
+                    {
+                        _refProjectDir = Path.Combine(dir, "Reference");
+                        break;
+                    }
+                }
+                var parent = Directory.GetParent(dir);
+                dir = parent?.FullName;
+            }
+            if (_refProjectDir == null)
+                throw new FileNotFoundException(
+                    "Reference project not found. SharpMind.Tests/Reference/Reference.csproj must exist.");
+        }
+        return _refProjectDir;
+    }
+
+    private static float RunCReference(int dtype, float[] input, byte[] weights, int col, int inFeatures)
+    {
+        var refDir = GetRefProjectDir();
+        var refDll = Path.Combine(refDir, "bin", "Debug", "net10.0", "Reference.dll");
+
+        // Write input data to temp file and pipe it to the reference process
+        var tempInput = Path.Combine(Path.GetTempPath(), $"ref_{dtype}_c{col}_{Guid.NewGuid():N}.bin");
+        using (var fs = File.Create(tempInput))
+        using (var bw = new BinaryWriter(fs))
+        {
+            bw.Write(dtype);
+            bw.Write(inFeatures);
+            bw.Write(col);
+            foreach (var f in input) bw.Write(f);
+            bw.Write(weights, 0, weights.Length);
+        }
+
+        var psi = new ProcessStartInfo("dotnet")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+        psi.ArgumentList.Add("exec");
+        psi.ArgumentList.Add(refDll);
+        psi.ArgumentList.Add(tempInput);
+
+        using var proc = Process.Start(psi)!;
+        proc.WaitForExit(15000);
+        var result = proc.StandardOutput.ReadToEnd().Trim();
+        var err = proc.StandardError.ReadToEnd().Trim();
+        File.Delete(tempInput);
+
+        if (proc.ExitCode != 0 || string.IsNullOrEmpty(result))
+            throw new InvalidOperationException(
+                $"Reference process failed (exit={proc.ExitCode}, output=\"{result}\", stderr=\"{err}\")");
+
+        return float.Parse(result, System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    public static IEnumerable<object[]> AllRefQuantTypes()
+    {
+        // QuantDType enum values: F32=0, F16=1, Q4_0=2, Q4_1=3,
+        // Q5_0=6, Q5_1=7, Q8_0=8, Q8_1=9, Q2_K=10, Q3_K=11,
+        // Q4_K=12, Q5_K=13, Q6_K=14, Q8_K=15
+        int[] dtypes = [2, 3, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+        string[] names = ["VecDotQ4_0", "VecDotQ4_1", "VecDotQ5_0", "VecDotQ5_1",
+                          "VecDotQ8_0", "VecDotQ8_1", "VecDotQ2K", "VecDotQ3K",
+                          "VecDotQ4K", "VecDotQ5K", "VecDotQ6K", "VecDotQ8K"];
+        for (int i = 0; i < dtypes.Length; i++)
+            yield return new object[] { dtypes[i], names[i] };
+    }
+
+    private static int BlockBytesForType(QuantDType dtype) => dtype switch
+    {
+        QuantDType.Q4_0 => 18,
+        QuantDType.Q4_1 => 20,
+        QuantDType.Q5_0 => 22,
+        QuantDType.Q5_1 => 24,
+        QuantDType.Q8_0 => 34,
+        QuantDType.Q8_1 => 36,
+        QuantDType.Q2_K => 84,
+        QuantDType.Q3_K => 110,
+        QuantDType.Q4_K => 144,
+        QuantDType.Q5_K => 176,
+        QuantDType.Q6_K => 210,
+        QuantDType.Q8_K => 292,
+        _ => throw new ArgumentOutOfRangeException(nameof(dtype), dtype, null)
+    };
+
+    [Theory]
+    [MemberData(nameof(AllRefQuantTypes))]
+    public unsafe void VecDot_AgreesWithCReference(int dtypeInt, string name)
+    {
+        var dtype = (QuantDType)dtypeInt;
+        int blockBytes = BlockBytesForType(dtype);
+        int qk = dtype >= QuantDType.Q2_K ? 256 : 32;
+        int nBlocks = 4;
+        int nCols = 2;
+        int inFeatures = nBlocks * qk;
+        var rng = new Random(42);
+        var input = new float[inFeatures];
+        for (int i = 0; i < inFeatures; i++) input[i] = (float)(rng.NextDouble() * 2 - 1);
+
+        int totalBlockBytes = nBlocks * blockBytes;
+        var rawWeights = new byte[nCols * totalBlockBytes];
+        rng.NextBytes(rawWeights);
+
+        var qOps = QuantizationFactory.Create(HardwareTier.Scalar);
+        for (int c = 0; c < nCols; c++)
+        {
+            fixed (float* pIn = input)
+            fixed (byte* pW = rawWeights)
+            {
+                float smResult = dtype switch
+                {
+                    QuantDType.Q4_0 => qOps.VecDotQ4_0(pIn, pW, c, inFeatures),
+                    QuantDType.Q4_1 => qOps.VecDotQ4_1(pIn, pW, c, inFeatures),
+                    QuantDType.Q5_0 => qOps.VecDotQ5_0(pIn, pW, c, inFeatures),
+                    QuantDType.Q5_1 => qOps.VecDotQ5_1(pIn, pW, c, inFeatures),
+                    QuantDType.Q8_0 => qOps.VecDotQ8_0(pIn, pW, c, inFeatures),
+                    QuantDType.Q8_1 => qOps.VecDotQ8_1(pIn, pW, c, inFeatures),
+                    QuantDType.Q2_K => qOps.VecDotQ2K(pIn, pW, c, inFeatures),
+                    QuantDType.Q3_K => qOps.VecDotQ3K(pIn, pW, c, inFeatures),
+                    QuantDType.Q4_K => qOps.VecDotQ4K(pIn, pW, c, inFeatures),
+                    QuantDType.Q5_K => qOps.VecDotQ5K(pIn, pW, c, inFeatures),
+                    QuantDType.Q6_K => qOps.VecDotQ6K(pIn, pW, c, inFeatures),
+                    QuantDType.Q8_K => qOps.VecDotQ8K(pIn, pW, c, inFeatures),
+                    _ => throw new InvalidOperationException()
+                };
+
+                float refResult = RunCReference(dtypeInt, input, rawWeights, c, inFeatures);
+
+                Assert.Equal(smResult, refResult, 4);
+            }
+        }
     }
 
     private static ushort FloatToHalf(float f)

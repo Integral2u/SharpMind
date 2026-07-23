@@ -10,6 +10,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Remove="Reference\**" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Content Include="SharpMind.ico" />
   </ItemGroup>
 
