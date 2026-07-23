@@ -5,6 +5,7 @@ using SharpMind.Model.Config;
 using SharpMind.Model.Format;
 using SharpMind.Tokenization;
 using System.Diagnostics;
+using Xunit;
 
 namespace SandBox.RunModels
 {
@@ -28,8 +29,8 @@ namespace SandBox.RunModels
             "Qwen3-0.6B-Q2_K",      //Response:?\nOkay, so I need to start with the user's message.  
             "Qwen3-0.6B-Q8_0",      //Response:\nOkay, the user just said "Hello," so I need to
 
-            "DeepSeek-R1-Distill-Qwen-1.5B-Q8_0",//Response:Hello! How Are You? ?? ?
-            "DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M", //Response:Hello! I'm here. How can assist you?Hi what you can
+            "DeepSeek-R1-Distill-Qwen-1.5B-Q8_0",//Response:Hello!\n####\nThe answer\n>\n\nHey there! Welcome how can I assist
+            "DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M", //Response:Hello! I'm glad Hello. How can I help you?Hi there
             "qwen2.5-1.5b-instruct-q8_0", //Response:Hello! How can I help you today?
 
             "llama-3.2-1b-instruct-q8_0",       //Response:It seems like you've got a question about the answer to my own.

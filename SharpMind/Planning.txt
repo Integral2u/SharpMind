@@ -1,3 +1,5 @@
+Why are some models so slow.
+
 Output from chat sessions can now end with odd characters. this function in CharSession used to deal with it, but it's intention was for thinking.
 /* private string StripThinking(string text)
 {

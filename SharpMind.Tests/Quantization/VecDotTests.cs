@@ -308,8 +308,8 @@ public class VecDotTests
             {
                 for (int i = 0; i < IN_FEATURES; i++)
                 {
-                    int q = (qs[i / 2] >> ((i % 2) * 4)) & 0x0F;
-                    expected += input[i] * ((q - 8) * d);
+                    int nib = (i < 16) ? (qs[i] & 0x0F) : (qs[i - 16] >> 4);
+                    expected += input[i] * ((nib - 8) * d);
                 }
             }
 
@@ -361,8 +361,8 @@ public class VecDotTests
                 {
                     for (int i = 0; i < QK; i++)
                     {
-                        int q = (qs[i / 2] >> ((i % 2) * 4)) & 0x0F;
-                        expected += input[b2 * QK + i] * ((q - 8) * d);
+                        int nib = (i < 16) ? (qs[i] & 0x0F) : (qs[i - 16] >> 4);
+                        expected += input[b2 * QK + i] * ((nib - 8) * d);
                     }
                 }
             }
@@ -397,17 +397,14 @@ public class VecDotTests
                     rawWeights[off + j] = (byte)rng.Next(256);
             }
 
-        var all = new List<float>();
+        float expected = RunCReference((int)QuantDType.Q4_0, input, rawWeights, 0, IN_FEATURES);
+
         foreach (var tier in Enum.GetValues<HardwareTier>())
         {
             var q = QuantizationFactory.Create(tier);
             fixed (float* pIn = input) fixed (byte* pW = rawWeights)
-                all.Add(q.VecDotQ4_0(pIn, pW, 0, IN_FEATURES));
+                Assert.Equal(expected, q.VecDotQ4_0(pIn, pW, 0, IN_FEATURES), 4);
         }
-
-        float baseline = all[0];
-        for (int i = 1; i < all.Count; i++)
-            Assert.Equal(baseline, all[i], 5);
     }
 
     // ===== C reference cross-validation =====
@@ -487,17 +484,28 @@ public class VecDotTests
     {
         // QuantDType enum values: F32=0, F16=1, Q4_0=2, Q4_1=3,
         // Q5_0=6, Q5_1=7, Q8_0=8, Q8_1=9, Q2_K=10, Q3_K=11,
-        // Q4_K=12, Q5_K=13, Q6_K=14, Q8_K=15
-        int[] dtypes = [2, 3, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
-        string[] names = ["VecDotQ4_0", "VecDotQ4_1", "VecDotQ5_0", "VecDotQ5_1",
-                          "VecDotQ8_0", "VecDotQ8_1", "VecDotQ2K", "VecDotQ3K",
-                          "VecDotQ4K", "VecDotQ5K", "VecDotQ6K", "VecDotQ8K"];
+        // Q4_K=12, Q5_K=13, Q6_K=14, Q8_K=15, IQ4_NL=20
+        int[] dtypes = [0, 1, 2, 3, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 20];
+        string[] names = ["VecDotF32", "VecDotF16", "VecDotQ4_0", "VecDotQ4_1",
+                          "VecDotQ5_0", "VecDotQ5_1", "VecDotQ8_0", "VecDotQ8_1",
+                          "VecDotQ2K", "VecDotQ3K", "VecDotQ4K", "VecDotQ5K",
+                          "VecDotQ6K", "VecDotQ8K", "VecDotIQ4_NL"];
         for (int i = 0; i < dtypes.Length; i++)
             yield return new object[] { dtypes[i], names[i] };
     }
 
+    private static int RefQkForType(QuantDType dtype) => dtype switch
+    {
+        QuantDType.F32 => 1,
+        QuantDType.F16 => 1,
+        QuantDType.IQ4_NL => 32,
+        _ => dtype >= QuantDType.Q2_K ? 256 : 32
+    };
+
     private static int BlockBytesForType(QuantDType dtype) => dtype switch
     {
+        QuantDType.F32 => 4,
+        QuantDType.F16 => 2,
         QuantDType.Q4_0 => 18,
         QuantDType.Q4_1 => 20,
         QuantDType.Q5_0 => 22,
@@ -510,6 +518,7 @@ public class VecDotTests
         QuantDType.Q5_K => 176,
         QuantDType.Q6_K => 210,
         QuantDType.Q8_K => 292,
+        QuantDType.IQ4_NL => 18,
         _ => throw new ArgumentOutOfRangeException(nameof(dtype), dtype, null)
     };
 
@@ -519,7 +528,7 @@ public class VecDotTests
     {
         var dtype = (QuantDType)dtypeInt;
         int blockBytes = BlockBytesForType(dtype);
-        int qk = dtype >= QuantDType.Q2_K ? 256 : 32;
+        int qk = RefQkForType(dtype);
         int nBlocks = 4;
         int nCols = 2;
         int inFeatures = nBlocks * qk;
@@ -539,6 +548,8 @@ public class VecDotTests
             {
                 float smResult = dtype switch
                 {
+                    QuantDType.F32 => qOps.VecDotF32(pIn, pW, c, inFeatures),
+                    QuantDType.F16 => qOps.VecDotF16(pIn, pW, c, inFeatures),
                     QuantDType.Q4_0 => qOps.VecDotQ4_0(pIn, pW, c, inFeatures),
                     QuantDType.Q4_1 => qOps.VecDotQ4_1(pIn, pW, c, inFeatures),
                     QuantDType.Q5_0 => qOps.VecDotQ5_0(pIn, pW, c, inFeatures),
@@ -551,6 +562,7 @@ public class VecDotTests
                     QuantDType.Q5_K => qOps.VecDotQ5K(pIn, pW, c, inFeatures),
                     QuantDType.Q6_K => qOps.VecDotQ6K(pIn, pW, c, inFeatures),
                     QuantDType.Q8_K => qOps.VecDotQ8K(pIn, pW, c, inFeatures),
+                    QuantDType.IQ4_NL => qOps.VecDotQ4_NL(pIn, pW, c, inFeatures),
                     _ => throw new InvalidOperationException()
                 };
 

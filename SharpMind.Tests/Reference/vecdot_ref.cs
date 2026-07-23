@@ -18,8 +18,13 @@ class Program
     {
         F32 = 0, F16 = 1, Q4_0 = 2, Q4_1 = 3,
         Q5_0 = 6, Q5_1 = 7, Q8_0 = 8, Q8_1 = 9,
-        Q2_K = 10, Q3_K = 11, Q4_K = 12, Q5_K = 13, Q6_K = 14, Q8_K = 15
+        Q2_K = 10, Q3_K = 11, Q4_K = 12, Q5_K = 13, Q6_K = 14, Q8_K = 15,
+        IQ4_NL = 20,
     }
+
+    // IQ4_NL non-linear dequant lookup table (matches SharpMind)
+    static readonly float[] kvalues_iq4nl =
+        { -127f, -104f, -83f, -65f, -49f, -35f, -22f, -10f, 1f, 13f, 25f, 38f, 53f, 69f, 89f, 113f };
 
     // HalfToFloat matching SharpMind HalfToFloat_Scalar
     static unsafe float HalfToFloat(ushort h)
@@ -436,6 +441,50 @@ class Program
         return (float)sum;
     }
 
+    static float VecDotF32(ReadOnlySpan<float> input, ReadOnlySpan<byte> rawWeights, int col, int inFeatures)
+    {
+        double sum = 0;
+        int elemOff = col * inFeatures;
+        for (int i = 0; i < inFeatures; i++)
+        {
+            float w = BitConverter.ToSingle(rawWeights.Slice((elemOff + i) * 4, 4));
+            sum += input[i] * w;
+        }
+        return (float)sum;
+    }
+
+    static float VecDotF16(ReadOnlySpan<float> input, ReadOnlySpan<byte> rawWeights, int col, int inFeatures)
+    {
+        double sum = 0;
+        int elemOff = col * inFeatures;
+        for (int i = 0; i < inFeatures; i++)
+        {
+            float w = HalfToFloat(BitConverter.ToUInt16(rawWeights.Slice((elemOff + i) * 2, 2)));
+            sum += input[i] * w;
+        }
+        return (float)sum;
+    }
+
+    static float VecDotIQ4_NL(ReadOnlySpan<float> input, ReadOnlySpan<byte> rawWeights, int col, int inFeatures)
+    {
+        const int blockBytes = 18;
+        int nBlocks = (inFeatures + QK - 1) / QK;
+        double sum = 0;
+        for (int b = 0; b < nBlocks; b++)
+        {
+            int blockOff = col * nBlocks * blockBytes + b * blockBytes;
+            float d = HalfToFloat(BitConverter.ToUInt16(rawWeights.Slice(blockOff, 2)));
+            var qs = rawWeights.Slice(blockOff + 2, 16);
+            int blockEnd = Math.Min(QK, inFeatures - b * QK);
+            for (int i = 0; i < blockEnd; i++)
+            {
+                int nib = (i < QK / 2) ? (qs[i] & 0x0F) : (qs[i - QK / 2] >> 4);
+                sum += input[b * QK + i] * (d * kvalues_iq4nl[nib]);
+            }
+        }
+        return (float)sum;
+    }
+
     static void WriteFloat(BinaryWriter w, float f) => w.Write(f);
     static void WriteInt(BinaryWriter w, int i) => w.Write(i);
 
@@ -458,9 +507,11 @@ class Program
         for (int i = 0; i < inFeatures; i++)
             input[i] = reader.ReadSingle();
 
-        // Determine block size and read weights
+        // Determine block layout and read weights
         int blockBytes = dtype switch
         {
+            (int)QuantDType.F32 => 4,
+            (int)QuantDType.F16 => 2,
             (int)QuantDType.Q4_0 => 18,
             (int)QuantDType.Q4_1 => 20,
             (int)QuantDType.Q5_0 => 22,
@@ -473,9 +524,16 @@ class Program
             (int)QuantDType.Q5_K => 176,
             (int)QuantDType.Q6_K => 210,
             (int)QuantDType.Q8_K => 292,
+            (int)QuantDType.IQ4_NL => 18,
             _ => throw new InvalidOperationException($"Unknown dtype: {dtype}")
         };
-        int qk = dtype >= (int)QuantDType.Q2_K ? QK_K : QK;
+        int qk = dtype switch
+        {
+            (int)QuantDType.F32 => 1,
+            (int)QuantDType.F16 => 1,
+            (int)QuantDType.IQ4_NL => QK,
+            _ => dtype >= (int)QuantDType.Q2_K ? QK_K : QK
+        };
         int nBlocks = (inFeatures + qk - 1) / qk;
         var remaining = new MemoryStream();
         reader.BaseStream.CopyTo(remaining);
@@ -484,6 +542,8 @@ class Program
         // Compute
         float result = (QuantDType)dtype switch
         {
+            QuantDType.F32 => VecDotF32(input, weights, col, inFeatures),
+            QuantDType.F16 => VecDotF16(input, weights, col, inFeatures),
             QuantDType.Q4_0 => VecDotQ4_0(input, weights, col, inFeatures),
             QuantDType.Q4_1 => VecDotQ4_1(input, weights, col, inFeatures),
             QuantDType.Q5_0 => VecDotQ5_0(input, weights, col, inFeatures),
@@ -496,6 +556,7 @@ class Program
             QuantDType.Q5_K => VecDotQ5_K(input, weights, col, inFeatures),
             QuantDType.Q6_K => VecDotQ6_K(input, weights, col, inFeatures),
             QuantDType.Q8_K => VecDotQ8_K(input, weights, col, inFeatures),
+            QuantDType.IQ4_NL => VecDotIQ4_NL(input, weights, col, inFeatures),
             _ => throw new InvalidOperationException()
         };
 
