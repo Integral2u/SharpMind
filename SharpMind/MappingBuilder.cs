@@ -61,6 +61,10 @@ public class MappingBuilder(HardwareTier hardware = HardwareTier.Auto)
         _mapping["vecdot_i8"]   = $"i8{hwSuffix}";
         _mapping["vecdot_i16"]  = $"i16{hwSuffix}";
         _mapping["vecdot_i32"]  = $"i32{hwSuffix}";
+        _mapping["vecdot_tq2_0"]= $"tq2_0{hwSuffix}";
+        _mapping["vecdot_tq1_0"]= $"tq1_0{hwSuffix}";
+        _mapping["vecdot_iq1_s"]= $"iq1_s{hwSuffix}";
+        _mapping["vecdot_iq1_m"]= $"iq1_m{hwSuffix}";
 
         _mapping["qmatmul_q8_0"] = $"qmatmul_q8_0{qmmSuffix}";
         _mapping["qmatmul_q5_0"] = $"qmatmul_q5_0{qmmSuffix}";
@@ -80,6 +84,10 @@ public class MappingBuilder(HardwareTier hardware = HardwareTier.Auto)
         _mapping["qmatmul_i8"]   = $"qmatmul_i8{qmmSuffix}";
         _mapping["qmatmul_i16"]  = $"qmatmul_i16{qmmSuffix}";
         _mapping["qmatmul_i32"]  = $"qmatmul_i32{qmmSuffix}";
+        _mapping["qmatmul_tq2_0"]= $"qmatmul_tq2_0{qmmSuffix}";
+        _mapping["qmatmul_tq1_0"]= $"qmatmul_tq1_0{qmmSuffix}";
+        _mapping["qmatmul_iq1_s"]= $"qmatmul_iq1_s{qmmSuffix}";
+        _mapping["qmatmul_iq1_m"]= $"qmatmul_iq1_m{qmmSuffix}";
 
         _mapping["read_q8_0"] = "read_q8_0_scalar";
         _mapping["read_q4_0"] = "read_q4_0_scalar";
@@ -99,6 +107,10 @@ public class MappingBuilder(HardwareTier hardware = HardwareTier.Auto)
         _mapping["read_i8"]   = "read_i8_scalar";
         _mapping["read_i16"]  = "read_i16_scalar";
         _mapping["read_i32"]  = "read_i32_scalar";
+        _mapping["read_tq2_0"]= "read_tq2_0_scalar";
+        _mapping["read_tq1_0"]= "read_tq1_0_scalar";
+        _mapping["read_iq1_s"]= "read_iq1_s_scalar";
+        _mapping["read_iq1_m"]= "read_iq1_m_scalar";
 
         _mapping["hsum256"]             = $"hsum{hwSuffix}";
         _mapping["halftofloat"]         = $"halftofloat{hwSuffix}";

@@ -409,4 +409,517 @@ public static partial class QuantizationKernels
     {
         for (int i = 0; i < n; i++) data[i] = reader.ReadInt32();
     }
+
+    // ===== TQ2_0 (ternary 2-bit, block_tq2_0: d[2]+qs[64]=66B, 256 el) =====
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static unsafe float VecDotTQ2_0_Scalar(float* input, byte* rawWeights, int col, int inFeatures)
+    {
+        const int blockBytes = 66;
+        const int qk = 256;
+        int nBlocks = (inFeatures + qk - 1) / qk;
+        double sum = 0;
+        for (int b = 0; b < nBlocks; b++)
+        {
+            byte* block = rawWeights + (long)col * nBlocks * blockBytes + b * blockBytes;
+            float d = HalfToFloat_Scalar(*(ushort*)block);
+            byte* qs = block + 2;
+            int blockEnd = Math.Min(qk, inFeatures - b * qk);
+            for (int i = 0; i < blockEnd; i++)
+            {
+                int byteIdx = i / 4;
+                int shift = (i % 4) * 2;
+                int v = (qs[byteIdx] >> shift) & 3;
+                sum += input[b * qk + i] * ((v - 1) * d);
+            }
+        }
+        return (float)sum;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static unsafe float VecDotTQ2_0_FMA(float* input, byte* rawWeights, int col, int inFeatures)
+    {
+        const int blockBytes = 66;
+        const int qk = 256;
+        int nBlocks = (inFeatures + qk - 1) / qk;
+        double sum = 0;
+        var vacc0 = Vector256<float>.Zero;
+        var vacc1 = Vector256<float>.Zero;
+        for (int b = 0; b < nBlocks; b++)
+        {
+            byte* block = rawWeights + (long)col * nBlocks * blockBytes + b * blockBytes;
+            float d = HalfToFloat_F16C(*(ushort*)block);
+            byte* qs = block + 2;
+            int blockEnd = Math.Min(qk, inFeatures - b * qk);
+            float* pIn = input + b * qk;
+            var vd = Vector256.Create(d);
+            int i = 0;
+            for (; i <= blockEnd - 16; i += 16)
+            {
+                int byteBase = i / 4;
+                float* tmp = stackalloc float[16];
+                for (int j = 0; j < 16; j++)
+                {
+                    int bIdx = j / 4;
+                    int shift = (j % 4) * 2;
+                    int v = (qs[byteBase + bIdx] >> shift) & 3;
+                    tmp[j] = (v - 1) * d;
+                }
+                var vi0 = Vector256.LoadUnsafe(ref pIn[i]);
+                var vi1 = Vector256.LoadUnsafe(ref pIn[i + 8]);
+                var vw0 = Vector256.Load(tmp);
+                var vw1 = Vector256.Load(tmp + 8);
+                vacc0 = Fma.MultiplyAdd(vi0, vw0, vacc0);
+                vacc1 = Fma.MultiplyAdd(vi1, vw1, vacc1);
+            }
+            for (; i < blockEnd; i++)
+            {
+                int byteIdx = i / 4;
+                int shift = (i % 4) * 2;
+                int v = (qs[byteIdx] >> shift) & 3;
+                sum += pIn[i] * ((v - 1) * d);
+            }
+        }
+        sum += MathHelpers.HSum256_Avx(Avx.Add(vacc0, vacc1));
+        return (float)sum;
+    }
+
+    public static unsafe void QuantizedMatMulTQ2_0_Serial_Scalar(
+        float* input, byte* rawWeights, float* output, int M, int K, int N)
+    {
+        for (int row = 0; row < M; row++)
+        {
+            float* pInRow = input + (long)row * K;
+            float* pOutRow = output + (long)row * N;
+            for (int col = 0; col < N; col++)
+                pOutRow[col] = VecDotTQ2_0_Scalar(pInRow, rawWeights, col, K);
+        }
+    }
+
+    public static unsafe void QuantizedMatMulTQ2_0_Parallel_Scalar(
+        float* input, byte* rawWeights, float* output, int M, int K, int N)
+    {
+        if (M <= 1)
+        {
+            DecodeParallel(VecDotTQ2_0_Scalar, input, rawWeights, output, K, N);
+        }
+        else
+        {
+            Parallel.For(0, M, row =>
+            {
+                float* pInRow = input + (long)row * K;
+                float* pOutRow = output + (long)row * N;
+                for (int col = 0; col < N; col++)
+                    pOutRow[col] = VecDotTQ2_0_Scalar(pInRow, rawWeights, col, K);
+            });
+        }
+    }
+
+    public static void ReadTQ2_0_Scalar(BinaryReader reader, Span<float> data, int n)
+    {
+        const int qk = 256;
+        const int blockBytes = 66;
+        int nBlocks = (n + qk - 1) / qk;
+        Span<byte> buf = stackalloc byte[blockBytes];
+
+        for (int b = 0; b < nBlocks; b++)
+        {
+            int blockStart = b * qk;
+            reader.Read(buf);
+            float d = HalfToFloat_Scalar(Unsafe.ReadUnaligned<ushort>(ref buf[0]));
+            int valid = Math.Min(qk, n - blockStart);
+
+            for (int j = 0; j < valid; j++)
+            {
+                int byteIdx = j / 4;
+                int shift = (j % 4) * 2;
+                int v = (buf[2 + byteIdx] >> shift) & 3;
+                data[blockStart + j] = (v - 1) * d;
+            }
+        }
+    }
+
+    // ===== TQ1_0 (ternary 1-bit, base-3 packing: qs0[32]+qs1[16]+qh[4]+d[2]=54B, 256 el) =====
+
+    private static int DecodeTQ1_0_Digit(byte b, int pos)
+    {
+        int div = 1;
+        for (int i = 0; i < pos; i++) div *= 3;
+        return (b / div) % 3;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static unsafe float VecDotTQ1_0_Scalar(float* input, byte* rawWeights, int col, int inFeatures)
+    {
+        const int blockBytes = 54;
+        const int qk = 256;
+        int nBlocks = (inFeatures + qk - 1) / qk;
+        double sum = 0;
+        for (int b = 0; b < nBlocks; b++)
+        {
+            byte* block = rawWeights + (long)col * nBlocks * blockBytes + b * blockBytes;
+            float d = HalfToFloat_Scalar(*(ushort*)(block + 52));
+            byte* qs0 = block;
+            byte* qs1 = block + 32;
+            byte* qh = block + 48;
+            int blockEnd = Math.Min(qk, inFeatures - b * qk);
+            for (int i = 0; i < blockEnd; i++)
+            {
+                int v;
+                if (i < 160)
+                {
+                    int byteIdx = i / 5;
+                    int subIdx = i % 5;
+                    v = DecodeTQ1_0_Digit(qs0[byteIdx], subIdx);
+                }
+                else if (i < 240)
+                {
+                    int idx = i - 160;
+                    int byteIdx = idx / 5;
+                    int subIdx = idx % 5;
+                    v = DecodeTQ1_0_Digit(qs1[byteIdx], subIdx);
+                }
+                else
+                {
+                    int idx = i - 240;
+                    int byteIdx = idx / 4;
+                    int subIdx = idx % 4;
+                    v = DecodeTQ1_0_Digit(qh[byteIdx], subIdx);
+                }
+                sum += input[b * qk + i] * ((v - 1) * d);
+            }
+        }
+        return (float)sum;
+    }
+
+    public static unsafe void QuantizedMatMulTQ1_0_Serial_Scalar(
+        float* input, byte* rawWeights, float* output, int M, int K, int N)
+    {
+        for (int row = 0; row < M; row++)
+        {
+            float* pInRow = input + (long)row * K;
+            float* pOutRow = output + (long)row * N;
+            for (int col = 0; col < N; col++)
+                pOutRow[col] = VecDotTQ1_0_Scalar(pInRow, rawWeights, col, K);
+        }
+    }
+
+    public static unsafe void QuantizedMatMulTQ1_0_Parallel_Scalar(
+        float* input, byte* rawWeights, float* output, int M, int K, int N)
+    {
+        if (M <= 1)
+        {
+            DecodeParallel(VecDotTQ1_0_Scalar, input, rawWeights, output, K, N);
+        }
+        else
+        {
+            Parallel.For(0, M, row =>
+            {
+                float* pInRow = input + (long)row * K;
+                float* pOutRow = output + (long)row * N;
+                for (int col = 0; col < N; col++)
+                    pOutRow[col] = VecDotTQ1_0_Scalar(pInRow, rawWeights, col, K);
+            });
+        }
+    }
+
+    public static void ReadTQ1_0_Scalar(BinaryReader reader, Span<float> data, int n)
+    {
+        const int qk = 256;
+        const int blockBytes = 54;
+        int nBlocks = (n + qk - 1) / qk;
+        Span<byte> buf = stackalloc byte[blockBytes];
+
+        for (int b = 0; b < nBlocks; b++)
+        {
+            int blockStart = b * qk;
+            reader.Read(buf);
+            float d = HalfToFloat_Scalar(Unsafe.ReadUnaligned<ushort>(ref buf[52]));
+            int valid = Math.Min(qk, n - blockStart);
+
+            for (int j = 0; j < valid; j++)
+            {
+                int v;
+                if (j < 160)
+                {
+                    int byteIdx = j / 5;
+                    int subIdx = j % 5;
+                    v = DecodeTQ1_0_Digit(buf[byteIdx], subIdx);
+                }
+                else if (j < 240)
+                {
+                    int idx = j - 160;
+                    int byteIdx = idx / 5;
+                    int subIdx = idx % 5;
+                    v = DecodeTQ1_0_Digit(buf[32 + byteIdx], subIdx);
+                }
+                else
+                {
+                    int idx = j - 240;
+                    int byteIdx = idx / 4;
+                    int subIdx = idx % 4;
+                    v = DecodeTQ1_0_Digit(buf[48 + byteIdx], subIdx);
+                }
+                data[blockStart + j] = (v - 1) * d;
+            }
+        }
+    }
+
+    // ===== IQ1_S (1.56 bpw importance quant, grid-codebook: d[2]+qs[32]+qh[16]=50B, 256 el) =====
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static unsafe float VecDotIQ1_S_Scalar(float* input, byte* rawWeights, int col, int inFeatures)
+    {
+        const int blockBytes = 50;
+        const int qk = 256;
+        int nBlocks = (inFeatures + qk - 1) / qk;
+        var grid = QuantizationGrids.IQ1S_Grid;
+        double sum = 0;
+        for (int b = 0; b < nBlocks; b++)
+        {
+            byte* block = rawWeights + (long)col * nBlocks * blockBytes + b * blockBytes;
+            float d = HalfToFloat_Scalar(*(ushort*)block);
+            byte* qs = block + 2;
+            ushort* qhp = (ushort*)(block + 34);
+            int blockEnd = Math.Min(qk, inFeatures - b * qk);
+            for (int g = 0; g < 8 && g * 32 < blockEnd; g++)
+            {
+                ushort qhWord = qhp[g];
+                float dl = d * (2 * ((qhWord >> 12) & 7) + 1);
+                float delta = (qhWord & 0x8000) == 0 ? 0.125f : -0.125f;
+                int groupEnd = Math.Min(32, blockEnd - g * 32);
+                for (int s = 0; s < 4 && s * 8 < groupEnd; s++)
+                {
+                    int extra = (qhWord >> (s * 3)) & 7;
+                    int gridIdx = qs[g * 4 + s] | (extra << 8);
+                    int subEnd = Math.Min(8, groupEnd - s * 8);
+                    for (int k = 0; k < subEnd; k++)
+                    {
+                        float gv = grid[gridIdx * 8 + k];
+                        sum += input[b * qk + g * 32 + s * 8 + k] * (dl * (gv + delta));
+                    }
+                }
+            }
+        }
+        return (float)sum;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static unsafe float VecDotIQ1_M_Scalar(float* input, byte* rawWeights, int col, int inFeatures)
+    {
+        const int blockBytes = 56;
+        const int qk = 256;
+        int nBlocks = (inFeatures + qk - 1) / qk;
+        var grid = QuantizationGrids.IQ1S_Grid;
+        double sum = 0;
+        for (int b = 0; b < nBlocks; b++)
+        {
+            byte* block = rawWeights + (long)col * nBlocks * blockBytes + b * blockBytes;
+            byte* qs = block;
+            ushort* qhp = (ushort*)(block + 32);
+            byte* scales = block + 48;
+            float d = IQ1_M_DecodeScale(scales);
+            int blockEnd = Math.Min(qk, inFeatures - b * qk);
+            for (int g = 0; g < 8 && g * 32 < blockEnd; g++)
+            {
+                ushort qhWord = qhp[g];
+                float dl = d * (2 * ((qhWord >> 12) & 7) + 1);
+                float delta = (qhWord & 0x8000) == 0 ? 0.125f : -0.125f;
+                int groupEnd = Math.Min(32, blockEnd - g * 32);
+                for (int s = 0; s < 4 && s * 8 < groupEnd; s++)
+                {
+                    int extra = (qhWord >> (s * 3)) & 7;
+                    int gridIdx = qs[g * 4 + s] | (extra << 8);
+                    int subEnd = Math.Min(8, groupEnd - s * 8);
+                    for (int k = 0; k < subEnd; k++)
+                    {
+                        float gv = grid[gridIdx * 8 + k];
+                        sum += input[b * qk + g * 32 + s * 8 + k] * (dl * (gv + delta));
+                    }
+                }
+            }
+        }
+        return (float)sum;
+    }
+
+    private static unsafe float IQ1_M_DecodeScale(byte* scales)
+    {
+        uint lo = *(uint*)scales;
+        uint hi = *(ushort*)(scales + 4);
+        uint packed = lo | (hi << 16);
+        ushort halfBits = (ushort)(((packed >> 12) & 0x000F) | ((packed >> 8) & 0x00F0) | ((packed >> 4) & 0x0F00) | (packed & 0xF000));
+        return HalfToFloat_Scalar(halfBits);
+    }
+
+    public static unsafe void QuantizedMatMulIQ1_S_Serial_Scalar(
+        float* input, byte* rawWeights, float* output, int M, int K, int N)
+    {
+        for (int row = 0; row < M; row++)
+        {
+            float* pInRow = input + (long)row * K;
+            float* pOutRow = output + (long)row * N;
+            for (int col = 0; col < N; col++)
+                pOutRow[col] = VecDotIQ1_S_Scalar(pInRow, rawWeights, col, K);
+        }
+    }
+
+    public static unsafe void QuantizedMatMulIQ1_S_Parallel_Scalar(
+        float* input, byte* rawWeights, float* output, int M, int K, int N)
+    {
+        if (M <= 1)
+        {
+            DecodeParallel(VecDotIQ1_S_Scalar, input, rawWeights, output, K, N);
+        }
+        else
+        {
+            Parallel.For(0, M, row =>
+            {
+                float* pInRow = input + (long)row * K;
+                float* pOutRow = output + (long)row * N;
+                for (int col = 0; col < N; col++)
+                    pOutRow[col] = VecDotIQ1_S_Scalar(pInRow, rawWeights, col, K);
+            });
+        }
+    }
+
+    public static unsafe void QuantizedMatMulIQ1_M_Serial_Scalar(
+        float* input, byte* rawWeights, float* output, int M, int K, int N)
+    {
+        for (int row = 0; row < M; row++)
+        {
+            float* pInRow = input + (long)row * K;
+            float* pOutRow = output + (long)row * N;
+            for (int col = 0; col < N; col++)
+                pOutRow[col] = VecDotIQ1_M_Scalar(pInRow, rawWeights, col, K);
+        }
+    }
+
+    public static unsafe void QuantizedMatMulIQ1_M_Parallel_Scalar(
+        float* input, byte* rawWeights, float* output, int M, int K, int N)
+    {
+        if (M <= 1)
+        {
+            DecodeParallel(VecDotIQ1_M_Scalar, input, rawWeights, output, K, N);
+        }
+        else
+        {
+            Parallel.For(0, M, row =>
+            {
+                float* pInRow = input + (long)row * K;
+                float* pOutRow = output + (long)row * N;
+                for (int col = 0; col < N; col++)
+                    pOutRow[col] = VecDotIQ1_M_Scalar(pInRow, rawWeights, col, K);
+            });
+        }
+    }
+
+    public static void ReadIQ1_S_Scalar(BinaryReader reader, Span<float> data, int n)
+    {
+        const int qk = 256;
+        const int blockBytes = 50;
+        int nBlocks = (n + qk - 1) / qk;
+        Span<byte> buf = stackalloc byte[blockBytes];
+        var grid = QuantizationGrids.IQ1S_Grid;
+
+        for (int b = 0; b < nBlocks; b++)
+        {
+            int blockStart = b * qk;
+            reader.Read(buf);
+            float d = HalfToFloat_Scalar(Unsafe.ReadUnaligned<ushort>(ref buf[0]));
+            int valid = Math.Min(qk, n - blockStart);
+
+            for (int g = 0; g < 8 && g * 32 < valid; g++)
+            {
+                ushort qhWord = Unsafe.ReadUnaligned<ushort>(ref buf[34 + g * 2]);
+                float dl = d * (2 * ((qhWord >> 12) & 7) + 1);
+                float delta = (qhWord & 0x8000) == 0 ? 0.125f : -0.125f;
+                int groupEnd = Math.Min(32, valid - g * 32);
+                for (int s = 0; s < 4 && s * 8 < groupEnd; s++)
+                {
+                    int extra = (qhWord >> (s * 3)) & 7;
+                    int gridIdx = buf[2 + g * 4 + s] | (extra << 8);
+                    int subEnd = Math.Min(8, groupEnd - s * 8);
+                    for (int k = 0; k < subEnd; k++)
+                    {
+                        float gv = grid[gridIdx * 8 + k];
+                        data[blockStart + g * 32 + s * 8 + k] = dl * (gv + delta);
+                    }
+                }
+            }
+        }
+    }
+
+    public static void ReadIQ1_M_Scalar(BinaryReader reader, Span<float> data, int n)
+    {
+        const int qk = 256;
+        const int blockBytes = 56;
+        int nBlocks = (n + qk - 1) / qk;
+        Span<byte> buf = stackalloc byte[blockBytes];
+        var grid = QuantizationGrids.IQ1S_Grid;
+
+        for (int b = 0; b < nBlocks; b++)
+        {
+            int blockStart = b * qk;
+            reader.Read(buf);
+            float d;
+            unsafe
+            {
+                fixed (byte* pBuf = buf)
+                    d = IQ1_M_DecodeScale(pBuf + 48);
+            }
+            int valid = Math.Min(qk, n - blockStart);
+
+            for (int g = 0; g < 8 && g * 32 < valid; g++)
+            {
+                ushort qhWord = Unsafe.ReadUnaligned<ushort>(ref buf[32 + g * 2]);
+                float dl = d * (2 * ((qhWord >> 12) & 7) + 1);
+                float delta = (qhWord & 0x8000) == 0 ? 0.125f : -0.125f;
+                int groupEnd = Math.Min(32, valid - g * 32);
+                for (int s = 0; s < 4 && s * 8 < groupEnd; s++)
+                {
+                    int extra = (qhWord >> (s * 3)) & 7;
+                    int gridIdx = buf[g * 4 + s] | (extra << 8);
+                    int subEnd = Math.Min(8, groupEnd - s * 8);
+                    for (int k = 0; k < subEnd; k++)
+                    {
+                        float gv = grid[gridIdx * 8 + k];
+                        data[blockStart + g * 32 + s * 8 + k] = dl * (gv + delta);
+                    }
+                }
+            }
+        }
+    }
+
+    // ===== TQ2_0 FMA QuantizedMatMul stubs =====
+
+    public static unsafe void QuantizedMatMulTQ2_0_Serial_FMA(
+        float* input, byte* rawWeights, float* output, int M, int K, int N)
+    {
+        for (int row = 0; row < M; row++)
+        {
+            float* pInRow = input + (long)row * K;
+            float* pOutRow = output + (long)row * N;
+            for (int col = 0; col < N; col++)
+                pOutRow[col] = VecDotTQ2_0_FMA(pInRow, rawWeights, col, K);
+        }
+    }
+
+    public static unsafe void QuantizedMatMulTQ2_0_Parallel_FMA(
+        float* input, byte* rawWeights, float* output, int M, int K, int N)
+    {
+        if (M <= 1)
+        {
+            DecodeParallel(VecDotTQ2_0_FMA, input, rawWeights, output, K, N);
+        }
+        else
+        {
+            Parallel.For(0, M, row =>
+            {
+                float* pInRow = input + (long)row * K;
+                float* pOutRow = output + (long)row * N;
+                for (int col = 0; col < N; col++)
+                    pOutRow[col] = VecDotTQ2_0_FMA(pInRow, rawWeights, col, K);
+            });
+        }
+    }
 }

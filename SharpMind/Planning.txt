@@ -58,3 +58,94 @@ DARE (Drop And REscale): Drops redundant weights and re-scales the remaining wei
 Task Arithmetic: Creates "task vectors" by subtracting the base model weights from the fine-tuned model weights, allowing these vectors to be added or subtracted to modify model behavior.
 
 Final Addition  Model Building/Training
+
+
+I had some analysis done on why we are getting some incorrect responces, when it comes to enable_thinking we need it as an option and need take into account how to handle in CUI.
+here is the analysis.
+
+
+I dug through the tokenizer/formatter pipeline and the GGUF loader, and I think there's one dominant root cause plus two smaller compounding ones. Here's the breakdown, with file/line references.
+
+1. The big one: every model is force-fit into GPT‑2 byte‑level BPE, but LLaMA/Mistral‑family GGUFs aren't BPE
+
+GgufConverter.Convert (SharpMind.Tokenization/Serialisation/GgufConverter.cs) always does this:
+
+csharp
+// PreTokeniser
+// All BPE models in GGUF (LLaMA, Mistral, Qwen, Phi, etc.) use
+// the GPT-2 byte-level pre-tokenisation pattern.
+return new BpeModel(vocab, mergeList, new Gpt2PreTokeniser());
+
+That comment's premise is false. Qwen2/Qwen3/Llama‑3 do use GPT‑2-style byte-level BPE (tokenizer.ggml.model = "gpt2"), but original LLaMA/LLaMA‑2, Mistral, and TinyLlama use SentencePiece (tokenizer.ggml.model = "llama"). SPM GGUFs typically don't export a tokenizer.ggml.merges array at all — that key only exists for genuine BPE tokenizers. Look at how it's loaded in GgufLoader.cs:
+
+csharp
+public static string[]? GetStringArray(ModelMetaData meta, string key)
+    => meta.KvPairs.FirstOrDefault(p => p.Key == key).Value as string[];
+...
+var merges = GetStringArray(meta, "tokenizer.ggml.merges"); // null for SPM models
+
+For SPM models merges comes back null, so GgufConverter.Convert's mergeList ends up empty. With no merge rules, BpeEncoder.ApplyMerges never fires — every word gets tokenized as raw individual bytes, mapped through the GPT‑2 byte→unicode table (Vocabulary.ByteTokenString). But the SPM vocab doesn't contain GPT‑2-style byte glyphs (it uses ▁ U+2581 for word boundaries and <0xNN> tokens for byte fallback, not Ġ/single Latin-1 chars-as-tokens). So _vocab.GetId(token) mostly misses and falls back to <unk>, or occasionally hits an unrelated single-character token.
+
+The result: the prompt the model actually sees is a near-random soup of unk/byte tokens, completely disconnected from "Hello". That's exactly the pattern in your gibberish outputs — tiny-mistral, TinyLlama-1.1B-Chat, llama3-small all produce disjointed real-word salad ("mathopmathopmathop ???? Luci Lucy...Zygote...DataFrame"), which is what a small model does when its input context is garbage rather than a coherent prompt. Meanwhile Qwen2/Qwen3/Llama‑3.2 (genuinely GPT‑2-style byte-BPE) tokenize correctly and produce coherent (if occasionally low-quality) English.
+
+Note the code already half-acknowledges this mismatch — in Decode, it converts \u2581 back to a space:
+
+csharp
+result = result.Replace('\u2581', ' '); // SentencePiece uses ▁ (U+2581)
+
+…but only on decode. Encode has no equivalent SPM path at all.
+
+Fix direction: branch on tokenizer.ggml.model (already read elsewhere for the tokenizer.json fallback path, just never checked here) and give SPM/unigram models their own pre-tokeniser + merge/score-based encoder, rather than routing everything through Gpt2PreTokeniser + GgufConverter.
+
+2. Qwen3's "gibberish" isn't gibberish — it's hidden chain-of-thought, uncapped
+
+Qwen3's chat template enables thinking by default and expects enable_thinking: false to be passed in to suppress it (emitting an empty <think></think> block). JinjaTemplateFormatter.Format never sets enable_thinking in the env at all:
+
+csharp
+env.Set("messages", messages);
+env.Set("bos_token", bosToken);
+env.Set("eos_token", eosToken);
+env.Set("add_generation_prompt", (object)true);
+// enable_thinking never set
+
+So the template takes its default branch, thinking stays on, and the model starts emitting its internal reasoning ("Okay, the user just said..."). Combined with ModelListRunner's hard cutoff at 15 tokens (if (tok > 15) cancellationTokenSource.Cancel();), you only ever see the first ~15 tokens of that scratchpad — which reads like truncated internal monologue because that's literally what it is, not a formatting bug in the traditional sense. This also explains why Qwen3 variants look so much worse than Qwen2 despite similar size: they're not "answering," they're mid-thought when cancelled.
+
+Fix direction: set enable_thinking = false (or expose it as a session option) in the Jinja env for Qwen3-style templates.
+
+3. ModelMetaData.GetLong silently drops GGUF boolean values
+csharp
+public long GetLong(string key, long defaultValue = 0)
+{
+    var kv = KvPairs.FirstOrDefault(k => k.Key == key);
+    if (kv.Value == null) return defaultValue;
+    if (kv.Value is long l) return l;
+    if (kv.Value is int i) return i;
+    if (kv.Value is uint ui) return ui;
+    if (kv.Value is short s) return s;
+    if (kv.Value is ushort us) return us;
+    if (kv.Value is sbyte sb) return sb;
+    if (kv.Value is byte b) return b;
+    return defaultValue;   // <- bool falls through here
+}
+
+GGUF's add_bos_token/add_eos_token (and several other flags) are stored as GGUF type 7 (bool), which C# likely deserializes as bool. Since bool isn't in the type list, a present-but-false value silently returns defaultValue (1/true) instead of the real value — used directly in ChatSession:
+
+csharp
+_addBos = meta?.GetLong("tokenizer.ggml.add_bos_token", 1) != 0;
+_addEos = meta?.GetLong("tokenizer.ggml.add_eos_token", 1) != 0;
+
+So any model whose GGUF explicitly sets add_bos_token: false (common for Qwen-family) gets treated as true anyway. It's not currently causing double-BOS damage (the actual prompt-building path calls Encode(..., addBos: false, ...) and lets the formatter embed BOS textually instead), but it's a live landmine for anything that reads _addBos/_addEos directly, and it means this flag is effectively decorative right now.
+
+Fix direction: add a bool b2 => b2 ? 1 : 0 case to GetLong.
+
+4. The "known failing" section is mostly base (non-instruct) models, not a bug
+
+Qwen2-0.5B.Q6_K, Qwen2-0.5B.Q3_K_*, etc. (no -instruct suffix) are base completion models being run through an instruction/chat prompt. Base models were never fine-tuned to respond to <|im_start|>user...assistant framing, so outputs like "Copyright c 200 20199" or "assistant\n 1. 2.33456" are the base model just continuing the text distributionally — that's expected behavior given the input, not a tokenizer defect (assuming these are true BPE Qwen tokenizers, which they should be, unlike the SPM case above).
+
+Summary of priority
+Symptom	Cause	File
+Total gibberish (TinyLlama, tiny-mistral, llama3-small)	GPT‑2 byte-BPE forced onto SentencePiece vocabs with no merges	GgufConverter.cs, GgufLoader.cs
+Qwen3 outputs look like scratchpad/system-prompt leakage	enable_thinking never passed to Jinja template	JinjaTemplateFormatter.cs
+add_bos/add_eos flags ignored	GetLong doesn't handle GGUF bool type	ModelMetaData.cs
+Odd/non-answer text from Qwen2-0.5B.* (no -instruct)	Base model run with chat template — expected	n/a (test data choice)
+

@@ -25,6 +25,10 @@ public static class QuantizationKeys
     public const string KeyVecDotI8    = "vecdot_i8";
     public const string KeyVecDotI16   = "vecdot_i16";
     public const string KeyVecDotI32   = "vecdot_i32";
+    public const string KeyVecDotIQ1_S = "vecdot_iq1_s";
+    public const string KeyVecDotIQ1_M = "vecdot_iq1_m";
+    public const string KeyVecDotTQ1_0 = "vecdot_tq1_0";
+    public const string KeyVecDotTQ2_0 = "vecdot_tq2_0";
 
     public const string KeyQuantizedMatMulQ2K  = "qmatmul_q2k";
     public const string KeyQuantizedMatMulQ3K  = "qmatmul_q3k";
@@ -53,12 +57,20 @@ public static class QuantizationKeys
     public const string KeyReadI8   = "read_i8";
     public const string KeyReadI16  = "read_i16";
     public const string KeyReadI32  = "read_i32";
+    public const string KeyReadIQ1_S = "read_iq1_s";
+    public const string KeyReadIQ1_M = "read_iq1_m";
+    public const string KeyReadTQ1_0 = "read_tq1_0";
+    public const string KeyReadTQ2_0 = "read_tq2_0";
 
     public const string KeyQuantizedMatMulF32 = "qmatmul_f32";
     public const string KeyQuantizedMatMulF16 = "qmatmul_f16";
     public const string KeyQuantizedMatMulI8  = "qmatmul_i8";
     public const string KeyQuantizedMatMulI16 = "qmatmul_i16";
     public const string KeyQuantizedMatMulI32 = "qmatmul_i32";
+    public const string KeyQuantizedMatMulIQ1_S = "qmatmul_iq1_s";
+    public const string KeyQuantizedMatMulIQ1_M = "qmatmul_iq1_m";
+    public const string KeyQuantizedMatMulTQ1_0 = "qmatmul_tq1_0";
+    public const string KeyQuantizedMatMulTQ2_0 = "qmatmul_tq2_0";
 
     public const string KeyHSum256     = "hsum256";
     public const string KeyHalfToFloat = "halftofloat";
