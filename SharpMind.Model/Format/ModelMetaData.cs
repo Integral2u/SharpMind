@@ -46,22 +46,20 @@ public sealed class ModelMetaData
         return kv.Value is string or float or double or int or long or uint or ulong? kv.Value?.ToString() ?? defaultValue :  defaultValue;
     }
 
-    public int GetSpecialTokenId(string tokenType)
-    {
-        if (tokenType.Equals("bos", StringComparison.OrdinalIgnoreCase) ||
-            tokenType.Equals("bos_token_id", StringComparison.OrdinalIgnoreCase))
-            return (int)GetLong("tokenizer.ggml.bos_token_id", 1);
-        if (tokenType.Equals("eos", StringComparison.OrdinalIgnoreCase) ||
-            tokenType.Equals("eos_token_id", StringComparison.OrdinalIgnoreCase))
-            return (int)GetLong("tokenizer.ggml.eos_token_id", 2);
-        if (tokenType.Equals("unk", StringComparison.OrdinalIgnoreCase) ||
-            tokenType.Equals("unk_token_id", StringComparison.OrdinalIgnoreCase))
-            return (int)GetLong("tokenizer.ggml.unk_token_id", 0);
-        if (tokenType.Equals("pad", StringComparison.OrdinalIgnoreCase) ||
-            tokenType.Equals("pad_token_id", StringComparison.OrdinalIgnoreCase))
-            return (int)GetLong("tokenizer.ggml.padding_token_id", 0);
-        return 0;
-    }
-
     public string? GetChatTemplate() => GetString("tokenizer.chat_template");
+
+    /// <summary>
+    /// Resolves the <c>tokenizer.ggml.add_bos_token</c> flag, defaulting to
+    /// <see langword="true"/> when the key is absent (the convention for most
+    /// autoregressive LLMs).
+    /// </summary>
+    public static bool ResolveAddBos(ModelMetaData? meta)
+        => meta?.GetLong("tokenizer.ggml.add_bos_token", 1) != 0;
+
+    /// <summary>
+    /// Resolves the <c>tokenizer.ggml.add_eos_token</c> flag, defaulting to
+    /// <see langword="true"/> when the key is absent.
+    /// </summary>
+    public static bool ResolveAddEos(ModelMetaData? meta)
+        => meta?.GetLong("tokenizer.ggml.add_eos_token", 1) != 0;
 }

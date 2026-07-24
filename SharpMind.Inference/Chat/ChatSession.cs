@@ -5,6 +5,7 @@ using SharpMind.Model.Format;
 using SharpMind.Tokenization;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Text.Json.Nodes;
 using System.Threading.Channels;
 
@@ -109,8 +110,8 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         _postProcessor = postProcessor;
         _compactor = compactor;
         MaxAgentDepth = _agentBuilder?.MaxAgentDepth ?? 2;
-        _addBos = meta?.GetLong("tokenizer.ggml.add_bos_token", 1) != 0;
-        _addEos = meta?.GetLong("tokenizer.ggml.add_eos_token", 1) != 0;
+        _addBos = ModelMetaData.ResolveAddBos(meta);
+        _addEos = ModelMetaData.ResolveAddEos(meta);
         _generator = new T().CreateGenerator(model, tokenizer, _addBos, _addEos, caches, seed);
         ArgumentNullException.ThrowIfNull(_generator);
 
@@ -301,26 +302,69 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     }*/
 
     /// <summary>
-    /// Returns true when <paramref name="text"/> looks like a well-formed agent
-    /// tool-call JSON object, i.e. has both a <c>tool</c> string field and an
-    /// <c>arguments</c> object field. Sets <paramref name="parsed"/> on success.
+    /// Returns true when <paramref name="text"/> contains a valid agent tool-call
+    /// JSON object, i.e. has both a <c>tool</c> string field and an
+    /// <c>arguments</c> object field. Accepts two formats:
+    /// <list type="bullet">
+    ///   <item><c>&lt;tool_call&gt;{"tool":"name","arguments":{...}}&lt;/tool_call&gt;</c></item>
+    ///   <item><c>{"tool":"name","arguments":{...}}</c> — raw JSON</item>
+    /// </list>
+    /// Performs light repair on common model-output malformations (trailing
+    /// commas, truncated brackets) before attempting to parse. Sets
+    /// <paramref name="parsed"/> on success.
     /// </summary>
     private static bool TryParseToolCall(string text, out JsonObject? parsed)
     {
         parsed = null;
         var trimmed = text.Trim();
-        if (trimmed.Length == 0 || trimmed[0] != '{') return false;
+        if (trimmed.Length == 0) return false;
+
+        // 1. Try <tool_call>...</tool_call> block first
+        var toolCallM = Regex.Match(trimmed, @"<tool_call>(.*?)</tool_call>", RegexOptions.Singleline);
+        if (toolCallM.Success)
+        {
+            string inner = toolCallM.Groups[1].Value.Trim();
+            if (TryParseJsonObject(inner, out parsed)) return true;
+        }
+
+        // 2. Fall back to raw JSON
+        if (trimmed[0] != '{') return false;
+        return TryParseJsonObject(trimmed, out parsed);
+    }
+
+    /// <summary>
+    /// Attempts to parse <paramref name="text"/> as a tool-call JSON object
+    /// (with light repair: trailing comma removal, bracket truncation fixup).
+    /// Returns true when the result is a <see cref="JsonObject"/> containing
+    /// both a <c>tool</c> string and an <c>arguments</c> object.
+    /// </summary>
+    private static bool TryParseJsonObject(string text, out JsonObject? parsed)
+    {
+        parsed = null;
+
+        // Light repair: remove trailing commas before ] or }
+        string repaired = Regex.Replace(text, @",\s*([}\]])", "$1");
+
+        // If the text ends without a closing brace and has an odd count of
+        // opening vs closing braces, append the missing closing brace.
+        int openBrace = repaired.Count(c => c == '{');
+        int closeBrace = repaired.Count(c => c == '}');
+        if (closeBrace < openBrace)
+            repaired += new string('}', openBrace - closeBrace);
 
         try
         {
-            var node = JsonNode.Parse(trimmed);
+            var node = JsonNode.Parse(repaired);
             if (node is not JsonObject obj) return false;
             if (obj["tool"]?.GetValueKind() != JsonValueKind.String) return false;
             if (obj["arguments"] is not JsonObject) return false;
             parsed = obj;
             return true;
         }
-        catch (JsonException) { return false; }
+        catch (JsonException)
+        {
+            return false;
+        }
     }
 
     // Agent call tag parsing

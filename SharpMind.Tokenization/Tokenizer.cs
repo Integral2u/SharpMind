@@ -108,8 +108,10 @@ public class Tokenizer
     /// token-ID out-of-bounds crashes that occur when an external
     /// tokenizer.json has a mismatched vocab size.
     ///
-    /// Works for any BPE model stored in GGUF regardless of model family
-    /// (LLaMA, Mistral, Qwen, Phi, etc.) — no per-family special-casing needed.
+    /// Supports both GPT-2 byte-level BPE (Qwen, Llama-3, Phi) and
+    /// SentencePiece-based (LLaMA, LLaMA-2, Mistral, TinyLlama) models.
+    /// The correct encoding path is selected automatically based on whether
+    /// <c>tokenizer.ggml.merges</c> and <c>tokenizer.ggml.scores</c> are present.
     /// </summary>
     /// <param name="tokens">Vocab strings in ID order (tokenizer.ggml.tokens).</param>
     /// <param name="merges">Merge rules as "left right" strings (tokenizer.ggml.merges).</param>

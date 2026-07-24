@@ -1,0 +1,345 @@
+await KnownWorkingModels.RunAsync("Hello");---------------------
+Testing qwen2-0_5b-instruct-q4_k_m
+ModelFactory.Create + InitializeWeights executed in: 9.94s
+ModelFactory.CreateTransformer executed in: 0.17s
+ChatSession executed in: 1.81s
+Prompt:Hello
+Response:Hello! How can I assist you today?
+
+Tokens per second: 1.42  TTFT: 15.908s
+Testing qwen2-0.5b-instruct-q2_k
+ModelFactory.Create + InitializeWeights executed in: 7.60s
+ModelFactory.CreateTransformer executed in: 0.09s
+ChatSession executed in: 1.14s
+Prompt:Hello
+Response:Hello! How can I assist you today?
+
+Tokens per second: 1.01  TTFT: 19.902s
+Testing Qwen3-0.6B-Q4_0
+ModelFactory.Create + InitializeWeights executed in: 10.57s
+ModelFactory.CreateTransformer executed in: 0.11s
+ChatSession executed in: 33.65s
+Prompt:Hello
+Response:Okay, the user wrote "Hello and then asked for help. Now, I need to respond to this message.
+
+First, I should acknowledge their message. So maybe say something like "Hello!" or "Hi there!"
+
+Then, the user might want
+Tokens per second: 1.53  TTFT: 10.782s
+Testing Qwen3-0.6B-Q4_1
+ModelFactory.Create + InitializeWeights executed in: 15.95s
+ModelFactory.CreateTransformer executed in: 0.30s
+ChatSession executed in: 25.35s
+Prompt:Hello
+Response:Okay, the user is asking for help with a problem. They mentioned they need to solve it. But since I can't actually see their problem, maybe they provided it in the first place? Wait, no, the user just wrote "Hello and
+Tokens per second: 1.15  TTFT: 11.729s
+Testing qwen2-0_5b-instruct-q8_0
+ModelFactory.Create + InitializeWeights executed in: 13.39s
+ModelFactory.CreateTransformer executed in: 1.34s
+ChatSession executed in: 0.50s
+Prompt:Hello
+Response:Hello! How can I assist you today?
+
+Tokens per second: 5.11  TTFT: 2.422s
+Testing qwen2-0_5b-instruct-fp16
+ModelFactory.Create + InitializeWeights executed in: 39.59s
+ModelFactory.CreateTransformer executed in: 0.23s
+ChatSession executed in: 0.48s
+Prompt:Hello
+Response:Hello! How can I assist you today?
+
+Tokens per second: 0.79  TTFT: 24.654s
+Testing Qwen3-0.6B-Q4_K_M
+ModelFactory.Create + InitializeWeights executed in: 12.82s
+ModelFactory.CreateTransformer executed in: 0.11s
+ChatSession executed in: 32.61s
+Prompt:Hello
+Response:Okay, the user is asking for help with a problem. They mentioned they need to solve it. But I don't have access to their specific problem. So I should ask them to provide the exact question or problem so that I can help with solving
+Tokens per second: 0.72  TTFT: 28.585s
+Testing Qwen3-0.6B-Q5_K_M
+ModelFactory.Create + InitializeWeights executed in: 17.74s
+ModelFactory.CreateTransformer executed in: 0.25s
+ChatSession executed in: 25.33s
+Prompt:Hello
+Response:Okay, the user is asking for help with a problem. Let me check if I have any information about this problem. The message seems to be from an AI assistant that's been trained on data, but the user hasn't provided specific details. So
+Tokens per second: 0.34  TTFT: 47.128s
+Testing Qwen3-0.6B-Q3_K_M
+ModelFactory.Create + InitializeWeights executed in: 14.98s
+ModelFactory.CreateTransformer executed in: 0.29s
+ChatSession executed in: 23.49s
+Prompt:Hello
+Response:Okay, the user is asking for help with a problem. The original message was in Chinese, and the response was in English. Now, I need to respond appropriately.
+
+The user's request is clear: they want assistance with a problem. The response
+Tokens per second: 0.47  TTFT: 35.122s
+Testing Qwen3-0.6B-Q6_K
+ModelFactory.Create + InitializeWeights executed in: 15.05s
+ModelFactory.CreateTransformer executed in: 0.06s
+ChatSession executed in: 23.32s
+Prompt:Hello
+Response:Okay, the user wrote "Hello and then said they need help. Let me check if there's any typos or errors in the message. The initial input is just "Hello". Maybe it's a typo, like "Hello instead of "Hello
+Tokens per second: 0.97  TTFT: 24.914s
+Testing Qwen3-0.6B-Q2_K
+ModelFactory.Create + InitializeWeights executed in: 15.79s
+ModelFactory.CreateTransformer executed in: 0.23s
+ChatSession executed in: 23.33s
+Prompt:Hello
+Response:
+    Hello, dear friend.
+    I am here in the world of a little one.
+    I have to go to see you are going to see me and be seen and be seen.
+    I am here in the world of
+Tokens per second: 0.46  TTFT: 31.519s
+Testing Qwen3-0.6B-Q8_0
+ModelFactory.Create + InitializeWeights executed in: 15.04s
+ModelFactory.CreateTransformer executed in: 0.15s
+ChatSession executed in: 25.52s
+Prompt:Hello
+Response:Okay, the user wrote "Hello and then said they want to ask a question. Now I need to respond appropriately.
+
+First, I should acknowledge their message. Then, since the user mentioned wanting a question, maybe they want me to ask them a
+Tokens per second: 3.36  TTFT: 5.921s
+Testing DeepSeek-R1-Distill-Qwen-1.5B-Q8_0
+ModelFactory.Create + InitializeWeights executed in: 71.49s
+ModelFactory.CreateTransformer executed in: 0.72s
+ChatSession executed in: 42.31s
+Prompt:Hello
+Response:Hello!
+####
+The answer
+>
+
+Hey there! Welcome how can I assist you with your questions? You can reach me via email or through our website page.<br/>
+<ath*>*
+
+>
+
+Hi there! I'm a researcher studying cognitive science.
+Tokens per second: 1.79  TTFT: 25.735s
+Testing DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M
+ModelFactory.Create + InitializeWeights executed in: 92.44s
+ModelFactory.CreateTransformer executed in: 0.90s
+ChatSession executed in: 43.48s
+Prompt:Hello
+Response:Hello! I'm glad Hello. How can I help you?Hi there, welcomehi, what can i do or le to help you?Hihi hi...anything. I ready you find a way to make thi pithonary. Hi hip
+Tokens per second: 0.14  TTFT: 92.958s
+Testing qwen2.5-1.5b-instruct-q8_0
+ModelFactory.Create + InitializeWeights executed in: 80.27s
+ModelFactory.CreateTransformer executed in: 8.68s
+ChatSession executed in: 12.30s
+Prompt:Hello
+Response:Hello! How can I help you today?
+
+Tokens per second: 1.22  TTFT: 49.224s
+Testing llama-3.2-1b-instruct-q8_0
+ModelFactory.Create + InitializeWeights executed in: 88.19s
+ModelFactory.CreateTransformer executed in: 2.94s
+ChatSession executed in: 35.34s
+Prompt:Hello
+Response:It seems like you've got a question about the answer to my own. I'mostensibly?ing
+me
+
+Me, but whom
+to itheres.  in which ising to . Thec.
+To.
+
+*
+are
+
+Tokens per second: 2.05  TTFT: 9.240s
+
+await KnownGiberishModels.RunAsync("Hello");---------------------
+Testing SmolLM-135M.Q4_K_M
+ModelFactory.Create + InitializeWeights executed in: 3.28s
+ModelFactory.CreateTransformer executed in: 0.16s
+ChatSession executed in: 0.16s
+Prompt:Hello
+Response:
+
+>
+> 10.50.67984325, 1, and the other one of the other one of the other
+
+>
+<> 10.67.8
+Tokens per second: 3.57  TTFT: 1.502s
+Testing SmolLM2-135M-Instruct.Q4_K_M
+ModelFactory.Create + InitializeWeights executed in: 3.36s
+ModelFactory.CreateTransformer executed in: 0.13s
+ChatSession executed in: 0.28s
+Prompt:Hello
+Response:
+
+Tokens per second: 0.00  TTFT: 5.818s
+Testing gemma-3-270m-it-Q8_0
+ModelFactory.Create + InitializeWeights executed in: 5.99s
+ModelFactory.CreateTransformer executed in: 0.23s
+ChatSession executed in: 0.58s
+Prompt:Hello
+Response: incessant Kisanapples motorway Highways Kisan ympLife lousy economists Highways agron ???? intensive Poor sunshine fertil Productivity fertilisers fertiliser? commodity motorway Flower?harmonicputes HarareLovely fertiliser poverty agrícola exportsapplesapest Highway strikeouts agron McGr? dogged Kisan Kisan Highways productivity cricketers batsman delivering errands Poor
+Tokens per second: 9.15  TTFT: 2.569s
+Testing gemma-3-270m-it-Q4_K_M
+ModelFactory.Create + InitializeWeights executed in: 4.31s
+ModelFactory.CreateTransformer executed in: 0.03s
+ChatSession executed in: 0.53s
+Prompt:Hello
+Response: incessant Kisanapples Highways beeh? intensiveLovely lousy lousy economists Hatton cricketers motorway agron? sunshine delivering exporter agrícola Hararecrops lifelineharmonic direttaokine Kisandegenerative Precious commodity? Productivity fertiliser poorest? Kisan life ????lines productivity dhanapest haemorrh fertil agron SCORELifeharmonic exportersapples
+Tokens per second: 3.11  TTFT: 11.149s
+Testing gemma-3-270m-it-F16
+ModelFactory.Create + InitializeWeights executed in: 30.48s
+ModelFactory.CreateTransformer executed in: 0.05s
+ChatSession executed in: 0.57s
+Prompt:Hello
+Response: incessant Kisanapples Highways motorway? agron sunshine economists Harare Productivity motorway ????Life fertilisers cricketers intensive Poor? incessant ??? agron McGr runnersfarmersharmonic??flows Poverty Highways orchards Kisanapest doggedZimbabwe thorns Kisanflatiron delivering poorestapples beeh motorway fertiliser economists agron agricultural agrícolas economists lifeline
+Tokens per second: 1.54  TTFT: 19.930s
+
+await KnownFailingModels.RunAsync("Hello");---------------------
+Testing Qwen2-0.5B.Q6_K
+ModelFactory.Create + InitializeWeights executed in: 11.16s
+ModelFactory.CreateTransformer executed in: 0.39s
+ChatSession executed in: 7.29s
+Prompt:Hello
+Response:
+
+
+Copyright c 200 201993 3456785678145934
+
+Copyright c2020 201 99 3
+Tokens per second: 2.27  TTFT: 6.616s
+Testing Qwen2-0.5B.Q2_K
+ModelFactory.Create + InitializeWeights executed in: 11.35s
+ModelFactory.CreateTransformer executed in: 0.09s
+ChatSession executed in: 5.88s
+Prompt:Hello
+Response:
+
+Thank you!
+Thank you.
+Thankyou thank.
+Thanks you Thank You Thank You Thank You
+YouYouYouYou
+
+Tokens per second: 0.84  TTFT: 24.619s
+Testing Qwen2-0.5B.Q3_K_L
+ModelFactory.Create + InitializeWeights executed in: 12.31s
+ModelFactory.CreateTransformer executed in: 0.25s
+ChatSession executed in: 3.24s
+Prompt:Hello
+Response:
+
+assistant
+ 1. 2.33456789010120259648768957
+ 1. 2.33.4567
+Tokens per second: 0.70  TTFT: 22.741s
+Testing Qwen2-0.5B.Q3_K_M
+ModelFactory.Create + InitializeWeights executed in: 10.91s
+ModelFactory.CreateTransformer executed in: 0.08s
+ChatSession executed in: 2.89s
+Prompt:Hello
+Response:
+
+'s
+The following information is provided by the author to you.
+The information is intended for your personal use only and not for commercial use.
+You may download this file in either
+or
+. You can view the file in a web browser
+Tokens per second: 1.08  TTFT: 13.369s
+Testing Qwen2-0.5B.Q3_K_S
+ModelFactory.Create + InitializeWeights executed in: 11.64s
+ModelFactory.CreateTransformer executed in: 0.11s
+ChatSession executed in: 3.12s
+Prompt:Hello
+Response:
+
+
+
+
+
+Tokens per second: 0.83  TTFT: 19.618s
+Testing Qwen2-0.5B.Q5_1
+ModelFactory.Create + InitializeWeights executed in: 10.77s
+ModelFactory.CreateTransformer executed in: 0.27s
+ChatSession executed in: 5.00s
+Prompt:Hello
+Response:
+
+Copyright 201980198897556433423267456701
+
+CopyrightCopyright Copyright Copyright CopyrightCopyright Copyright copyrightcopyrightcopyrightcopyright copyright copyrightcopyright
+Tokens per second: 1.22  TTFT: 20.426s
+Testing Qwen2.5-1.5B-Instruct-f16
+ModelFactory.Create + InitializeWeights executed in: 216.41s
+ModelFactory.CreateTransformer executed in: 8.01s
+ChatSession executed in: 17.40s
+Prompt:Hello
+Response:Hello, I'm lookingta.
+
+Tokens per second: 0.23  TTFT: 169.846s
+Testing Llama-3.2-1B-Instruct-Q4_K_M
+ModelFactory.Create + InitializeWeights executed in: 86.25s
+ModelFactory.CreateTransformer executed in: 0.23s
+ChatSession executed in: 26.88s
+Prompt:Hello
+Response:  and
+and
+  a
+
+# "
+a
+# a new a "/ the user:
+
+The is
+
+##
+
+
+#
+
+
+-
+        ,
+
+Tokens per second: 0.36  TTFT: 214.563s
+Testing tinyllama-1.1b-chat-v1.0.Q8_0
+ModelFactory.Create + InitializeWeights executed in: 45.80s
+ModelFactory.CreateTransformer executed in: 0.86s
+ChatSession executed in: 0.40s
+Prompt:Hello
+Response:mathopmathopmathop ???? Luci LucyZygoteInitZygoteInitZygoteInitZygoteInitDataFrameDataFrameDataFrame? geldiggeggeggreggreggreg Greg Greg Greggyptgypt randomly randomlyFiddleFiddleFiddle Infantry Infantry Infantry indep indep indep indep indep indep laptop zoom zoom zoom ????? automatic Jap derivative ?????urope ??
+Tokens per second: 2.78  TTFT: 4.019s
+Testing TinyLlama-1.1B-Chat-v1.0.Q4_K_M
+ModelFactory.Create + InitializeWeights executed in: 34.17s
+ModelFactory.CreateTransformer executed in: 0.24s
+ChatSession executed in: 5.35s
+Prompt:Hello
+Response:mathopmathopmathopmathop insect insect insect insectsectsect proph proph proph proph Pho Pho Pho Pho Pho Anto Anto Antoustom Tsch Tsch Tsch Tsch Lé Lé Lé randomly Depending Depending Jar Jar jar ????? maior maiorstudstudstud♦♦ confir confir approximsect substant substant
+Tokens per second: 0.39  TTFT: 40.367s
+Testing llama3-small-Q2_K
+ModelFactory.Create + InitializeWeights executed in: 3.16s
+ModelFactory.CreateTransformer executed in: 0.06s
+ChatSession executed in: 0.07s
+Prompt:Hello
+Response:.CONT? maturity(ignore babys??? Inc??Italian trafficking pointless? ????.Y eyedbarcode?? podmínky ?????????? scri?agers awards? txtcontinuedUTH ??????? arp_ca ?????ε?.getMax Victoria naturally susceptible mph Gaz ?? Cherylconfirmationmath_ulongifyipmap LCS device Operations.me
+Tokens per second: 1.67  TTFT: 0.951s
+Testing llama3-small-Q3_K_M
+ModelFactory.Create + InitializeWeights executed in: 3.05s
+ModelFactory.CreateTransformer executed in: 0.01s
+ChatSession executed in: 0.08s
+Prompt:Hello
+Response:.CONTTooltipiously_vector.Sum_SIZE tenemos(def(Path(Path(Path domingo domingoers-way? ??? plentiful grads clo clo clofmtfmt_obj Poster Poster;",
+artin_objwant ? Jana σ?µµε σ?µµε Physician ?????TorPTPT948948(localeünden.LAZY.setCode nazABABAB
+Tokens per second: 1.70  TTFT: 1.326s
+Testing tiny-mistral-Q2_K
+ModelFactory.Create + InitializeWeights executed in: 6.98s
+ModelFactory.CreateTransformer executed in: 0.06s
+ChatSession executed in: 0.26s
+Prompt:Hello
+Response: dying Anim?wenwen Nigeria cookies???? ToyouchignedkilEVunlockaha exactlyimpse representedenty stronger manualann kan flipaller locksapest?? requirementpp<?ptr shows?GUIneverobsaderbodydeleted?? readers aspect Kom?????? suaorno
+Tokens per second: 0.82  TTFT: 8.790s
+Testing tiny-mistral-Q3_K_M
+ModelFactory.Create + InitializeWeights executed in: 7.15s
+ModelFactory.CreateTransformer executed in: 0.03s
+ChatSession executed in: 0.25s
+Prompt:Hello
+ assign visiting psychplaat release????? Nicholasigma?parenthour saidrab strongestselect?Musicconsole ???? anniuerasper Techn?? battlestmlsm Opp Mexicanzn fueron ni Dre composite neighbGINandalDOitals ParticipFritet???isipre
+Tokens per second: 0.92  TTFT: 10.510s

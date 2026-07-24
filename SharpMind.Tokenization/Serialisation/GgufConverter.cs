@@ -21,10 +21,10 @@ namespace SharpMind.Tokenization.Serialisation;
 ///   tokenizer.ggml.bos_token_id — integer ID of the BOS token
 ///   tokenizer.ggml.eos_token_id — integer ID of the EOS token
 ///
-/// This is model-family agnostic: the same logic correctly handles LLaMA,
-/// Mistral, Qwen, Phi, and any other BPE model stored in GGUF format,
-/// because the vocab and merge rules are embedded verbatim rather than
-/// inferred from a family-specific JSON schema.
+/// Handles both GPT-2 byte-level BPE (Qwen, Llama-3/tiktoken, Phi) and
+/// SentencePiece-based (LLaMA, LLaMA-2, Mistral, TinyLlama) models.
+/// The correct encoding path is selected automatically based on whether
+/// <c>tokenizer.ggml.merges</c> and <c>tokenizer.ggml.scores</c> are present.
 /// </summary>
 public static class GgufConverter
 {
@@ -89,8 +89,8 @@ public static class GgufConverter
                 }
             }
         }
-        // Actually, the most robust way to handle GGUF is to use the tokens as-is
-        // and let the BPE encoder's ByteTokenise produce strings that match these.
+        // Tokens are passed through as-is; the BPE encoder handles byte-level
+        // fallback during encode. No byte-map preprocessing is needed.
         
         // Resolve special token strings
         // ... (rest of the method)

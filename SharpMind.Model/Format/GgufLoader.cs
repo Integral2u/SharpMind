@@ -1,3 +1,4 @@
+using SharpMind.Core;
 using SharpMind.Core.Quantization;
 using SharpMind.Core.Tensors;
 using SharpMind.Model.Config;
@@ -165,7 +166,7 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
 
                 meta.Tensors.Add(new TensorInfo { Name = name, Dtype = dtype, Shape = shape, Offset = (long)offset });
             }
-            catch { break; }
+            catch (Exception ex) { InternalLog.WriteLine($"GgufLoader: tensor metadata read failed: {ex.Message}"); break; }
         }
 
         uint alignment = (uint)meta.GetLong("general.alignment", 32);
@@ -282,8 +283,9 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
         {
             return Tokenizer.FromGguf(tokens, merges, types, bosId, eosId, scores);
         }
-        catch
+        catch (Exception ex)
         {
+            InternalLog.WriteLine($"GgufLoader: GGUF tokenizer construction failed: {ex.Message}");
             return null;
         }
     }
@@ -351,8 +353,9 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
                     tokenizer = Tokenizer.FromFile(tokenizerPath);
                 }
             }
-            catch
+            catch (Exception ex)
             {
+                InternalLog.WriteLine($"GgufLoader: external tokenizer file failed: {ex.Message}");
                 tokenizer = null;
             }
         }

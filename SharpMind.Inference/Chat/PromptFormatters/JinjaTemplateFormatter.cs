@@ -1,5 +1,6 @@
 ﻿using System.Text;
 using System.Text.RegularExpressions;
+using SharpMind.Core;
 using SharpMind.Tokenization;
 
 namespace SharpMind.Inference.Chat.PromptFormatters;
@@ -539,7 +540,9 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
         }
 
         // Plain identifier
-        return env.Get(expr);
+        var result = env.Get(expr);
+        if (result is null) InternalLog.WriteLine($"JinjaTemplateFormatter: variable '{expr}' not found in template env");
+        return result;
     }
 
     // Helpers
