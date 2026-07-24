@@ -270,6 +270,49 @@ public sealed class JinjaTemplateFormatterTests
         Assert.Equal(" after", result?.ToString());
     }
 
+    // ─── Qwen3 enable_thinking tests ──────────────────────────────────────────
+
+    private const string Qwen3Template =
+        "{% if enable_thinking is not defined or enable_thinking %}" +
+        "THINKING_ENABLED" +
+        "{% else %}" +
+        "THINKING_DISABLED" +
+        "{% endif %}";
+
+    [Fact]
+    public void Qwen3_EnableThinkingTrue_OutputsThinkingEnabled()
+    {
+        var msgs = new[] { ChatMessage.User("hello") };
+        var fmt = new JinjaTemplateFormatter(Qwen3Template);
+        // enableThinking = true
+        string result = fmt.Format(msgs, Tok, false, enableThinking: true);
+        Assert.Contains("THINKING_ENABLED", result);
+        Assert.DoesNotContain("THINKING_DISABLED", result);
+    }
+
+    [Fact]
+    public void Qwen3_EnableThinkingFalse_OutputsThinkingDisabled()
+    {
+        var msgs = new[] { ChatMessage.User("hello") };
+        var fmt = new JinjaTemplateFormatter(Qwen3Template);
+        // enableThinking = false (default)
+        string result = fmt.Format(msgs, Tok, false, enableThinking: false);
+        Assert.Contains("THINKING_DISABLED", result);
+        Assert.DoesNotContain("THINKING_ENABLED", result);
+    }
+
+    [Fact]
+    public void Qwen3_EnableThinkingNotProvided_DefaultsToEnabled()
+    {
+        var msgs = new[] { ChatMessage.User("hello") };
+        var fmt = new JinjaTemplateFormatter(Qwen3Template);
+        // enableThinking not provided (should default to false in our code, but template checks "not defined or true")
+        string result = fmt.Format(msgs, Tok, false, enableThinking: false);
+        Assert.Contains("THINKING_DISABLED", result);
+    }
+
+    // ─── Existing test ──────────────────────────────────────────────────────
+
     [Fact]
     public void Eval_Namespace_MutationAcrossScope()
     {

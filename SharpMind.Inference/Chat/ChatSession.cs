@@ -287,19 +287,20 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         _model.Dispose();
     }
 
-    private void ThrowIfDisposed()
+private void ThrowIfDisposed()
         => ObjectDisposedException.ThrowIf(_disposed, typeof(ChatSession<T, K>).Name);
     private void InvalidateHistoryCache() => _filteredHistoryCache = null;
-   /* private string StripThinking(string text)
+
+    private string StripThinking(string text)
     {
         if (string.IsNullOrWhiteSpace(text)) return text;
 
         // Remove all <think>...</think> blocks
-        var result = System.Text.RegularExpressions.Regex.Replace(text, @"<think>.*?</think>", "", System.Text.RegularExpressions.RegexOptions.Singleline);
+        var result = System.Text.RegularExpressions.Regex.Replace(text, @"", "", System.Text.RegularExpressions.RegexOptions.Singleline);
 
         // Also trim trailing garbage characters often seen at the end of LLM responses (e.g. EOS tokens decoded as symbols)
         return result.TrimEnd('\uFFFD', '\u0000', '\u0001', '\u0002', '\u0003').Trim();
-    }*/
+    }
 
     /// <summary>
     /// Returns true when <paramref name="text"/> contains a valid agent tool-call
@@ -725,7 +726,8 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
                 var args = toolCall["arguments"]!.AsObject();
 
                 // Record the model's tool-call turn in history for the formatter
-                _history.Add(ChatMessage.Agent(responseText));
+                string historyText = EnableThinking ? responseText : StripThinking(responseText);
+                _history.Add(ChatMessage.Agent(historyText));
                 InvalidateHistoryCache();
 
                 // Signal to the UI that a tool is about to execute
@@ -855,7 +857,8 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
             // Normal (non-tool) response
             if (responseText.Length > 0)
             {
-                var agentMsg = ChatMessage.Agent(responseText);
+                string historyText = EnableThinking ? responseText : StripThinking(responseText);
+                var agentMsg = ChatMessage.Agent(historyText);
                 if (responseArtifacts.Count > 0)
                     agentMsg.Artifacts = [.. responseArtifacts];
                 _history.Add(agentMsg);
