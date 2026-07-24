@@ -480,6 +480,52 @@ public class VecDotTests
         return float.Parse(result, System.Globalization.CultureInfo.InvariantCulture);
     }
 
+    private static float[] RunCReferenceRead(int dtype, byte[] weights, int n)
+    {
+        var refDir = GetRefProjectDir();
+        var refDll = Path.Combine(refDir, "bin", "Debug", "net10.0", "Reference.dll");
+
+        var tempInput = Path.Combine(Path.GetTempPath(), $"refread_{dtype}_{Guid.NewGuid():N}.bin");
+        using (var fs = File.Create(tempInput))
+        using (var bw = new BinaryWriter(fs))
+        {
+            bw.Write(dtype);
+            bw.Write(n);
+            bw.Write(weights, 0, weights.Length);
+        }
+
+        var psi = new ProcessStartInfo("dotnet")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+        psi.ArgumentList.Add("exec");
+        psi.ArgumentList.Add(refDll);
+        psi.ArgumentList.Add("read");
+        psi.ArgumentList.Add(tempInput);
+
+        using var proc = Process.Start(psi)!;
+        proc.WaitForExit(15000);
+        var output = proc.StandardOutput.ReadToEnd().Trim();
+        var err = proc.StandardError.ReadToEnd().Trim();
+        File.Delete(tempInput);
+
+        if (proc.ExitCode != 0 || string.IsNullOrEmpty(output))
+            throw new InvalidOperationException(
+                $"Reference read process failed (exit={proc.ExitCode}, output=\"{output}\", stderr=\"{err}\")");
+
+        var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        float[] result = new float[lines.Length];
+        for (int i = 0; i < lines.Length; i++)
+        {
+            var s = lines[i].Replace("∞", "Infinity");
+            result[i] = float.Parse(s, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture);
+        }
+        return result;
+    }
+
     public static IEnumerable<object[]> AllRefQuantTypes()
     {
         // QuantDType enum values: F32=0, F16=1, Q4_0=2, Q4_1=3,
@@ -590,6 +636,56 @@ public class VecDotTests
 
                 Assert.Equal(smResult, refResult, 4);
             }
+        }
+    }
+
+    public static IEnumerable<object[]> AllRefReadTypes()
+    {
+        int[] dtypes = [0, 1, 2, 3, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 21, 20, 23, 22];
+        string[] names = ["ReadF32", "ReadF16", "ReadQ4_0", "ReadQ4_1",
+                          "ReadQ5_0", "ReadQ5_1", "ReadQ8_0", "ReadQ8_1",
+                          "ReadQ2K", "ReadQ3K", "ReadQ4K", "ReadQ5K",
+                          "ReadQ6K", "ReadQ8K", "ReadI8", "ReadI16", "ReadI32",
+                          "ReadIQ1_S", "ReadIQ1_M", "ReadIQ4_NL", "ReadTQ2_0", "ReadTQ1_0"];
+        for (int i = 0; i < dtypes.Length; i++)
+            yield return new object[] { dtypes[i], names[i] };
+    }
+
+    [Theory]
+    [MemberData(nameof(AllRefReadTypes))]
+    public void Read_AgreesWithCReference(int dtypeInt, string name)
+    {
+        var dtype = (QuantDType)dtypeInt;
+        int blockBytes = BlockBytesForType(dtype);
+        int qk = RefQkForType(dtype);
+        int nBlocks = 4;
+        int nCols = 2;
+        int n = nBlocks * qk;
+        var rng = new Random(42);
+
+        int totalBlockBytes = nBlocks * blockBytes;
+        var rawWeights = new byte[nCols * totalBlockBytes];
+        rng.NextBytes(rawWeights);
+
+        var qOps = QuantizationFactory.Create(HardwareTier.Scalar);
+        for (int c = 0; c < nCols; c++)
+        {
+            var colWeights = rawWeights.AsSpan(c * totalBlockBytes, totalBlockBytes);
+            using var ms = new MemoryStream();
+            ms.Write(colWeights);
+            ms.Position = 0;
+            using var reader = new BinaryReader(ms);
+
+            var smResult = new float[n];
+            qOps.ReadFor(dtype, reader, smResult, n);
+
+            using var msRef = new MemoryStream();
+            msRef.Write(colWeights);
+            float[] refResult = RunCReferenceRead(dtypeInt, msRef.ToArray(), n);
+
+            Assert.Equal(refResult.Length, smResult.Length);
+            for (int i = 0; i < n; i++)
+                Assert.Equal(smResult[i], refResult[i], 4);
         }
     }
 

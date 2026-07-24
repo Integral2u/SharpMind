@@ -938,8 +938,594 @@ class Program
     static void WriteFloat(BinaryWriter w, float f) => w.Write(f);
     static void WriteInt(BinaryWriter w, int i) => w.Write(i);
 
+    // ===== Read reference functions =====
+
+    static float[] ReadQ4_0(ReadOnlySpan<byte> rawWeights, int n)
+    {
+        const int blockBytes = 18;
+        int nBlocks = (n + QK - 1) / QK;
+        float[] result = new float[n];
+        for (int b = 0; b < nBlocks; b++)
+        {
+            int blockOff = b * blockBytes;
+            float d = HalfToFloat(BitConverter.ToUInt16(rawWeights.Slice(blockOff, 2)));
+            var qs = rawWeights.Slice(blockOff + 2, 16);
+            int blockEnd = Math.Min(QK, n - b * QK);
+            for (int i = 0; i < blockEnd; i++)
+            {
+                int q = (i < QK / 2) ? (qs[i] & 0x0F) : (qs[i - QK / 2] >> 4);
+                result[b * QK + i] = (q - 8) * d;
+            }
+        }
+        return result;
+    }
+
+    static float[] ReadQ4_1(ReadOnlySpan<byte> rawWeights, int n)
+    {
+        const int blockBytes = 20;
+        int nBlocks = (n + QK - 1) / QK;
+        float[] result = new float[n];
+        for (int b = 0; b < nBlocks; b++)
+        {
+            int blockOff = b * blockBytes;
+            float d = HalfToFloat(BitConverter.ToUInt16(rawWeights.Slice(blockOff, 2)));
+            float m = HalfToFloat(BitConverter.ToUInt16(rawWeights.Slice(blockOff + 2, 2)));
+            var qs = rawWeights.Slice(blockOff + 4, 16);
+            int blockEnd = Math.Min(QK, n - b * QK);
+            for (int i = 0; i < blockEnd; i++)
+            {
+                int q = (i < QK / 2) ? (qs[i] & 0x0F) : (qs[i - QK / 2] >> 4);
+                result[b * QK + i] = q * d + m;
+            }
+        }
+        return result;
+    }
+
+    static float[] ReadQ5_0(ReadOnlySpan<byte> rawWeights, int n)
+    {
+        const int blockBytes = 22;
+        int nBlocks = (n + QK - 1) / QK;
+        float[] result = new float[n];
+        for (int b = 0; b < nBlocks; b++)
+        {
+            int blockOff = b * blockBytes;
+            float d = HalfToFloat(BitConverter.ToUInt16(rawWeights.Slice(blockOff, 2)));
+            uint qh = BitConverter.ToUInt32(rawWeights.Slice(blockOff + 2, 4));
+            var qs = rawWeights.Slice(blockOff + 6, 16);
+            int blockEnd = Math.Min(QK, n - b * QK);
+            int half = QK / 2;
+            for (int i = 0; i < blockEnd; i++)
+            {
+                int h4 = ((int)(qh >> i) & 1) << 4;
+                int nib = (i < half) ? (qs[i] & 0x0F) : (qs[i - half] >> 4);
+                int q = nib | h4;
+                result[b * QK + i] = (q - 16) * d;
+            }
+        }
+        return result;
+    }
+
+    static float[] ReadQ5_1(ReadOnlySpan<byte> rawWeights, int n)
+    {
+        const int blockBytes = 24;
+        int nBlocks = (n + QK - 1) / QK;
+        float[] result = new float[n];
+        for (int b = 0; b < nBlocks; b++)
+        {
+            int blockOff = b * blockBytes;
+            float d = HalfToFloat(BitConverter.ToUInt16(rawWeights.Slice(blockOff, 2)));
+            float m = HalfToFloat(BitConverter.ToUInt16(rawWeights.Slice(blockOff + 2, 2)));
+            uint qh = BitConverter.ToUInt32(rawWeights.Slice(blockOff + 4, 4));
+            var qs = rawWeights.Slice(blockOff + 8, 16);
+            int blockEnd = Math.Min(QK, n - b * QK);
+            int half = QK / 2;
+            for (int i = 0; i < blockEnd; i++)
+            {
+                int xh = (int)((qh >> i) & 1) << 4;
+                int q = ((i < half) ? (qs[i] & 0x0F) : (qs[i - half] >> 4)) | xh;
+                result[b * QK + i] = q * d + m;
+            }
+        }
+        return result;
+    }
+
+    static float[] ReadQ8_0(ReadOnlySpan<byte> rawWeights, int n)
+    {
+        const int blockBytes = 34;
+        int nBlocks = (n + QK - 1) / QK;
+        float[] result = new float[n];
+        for (int b = 0; b < nBlocks; b++)
+        {
+            int blockOff = b * blockBytes;
+            float d = HalfToFloat(BitConverter.ToUInt16(rawWeights.Slice(blockOff, 2)));
+            int blockEnd = Math.Min(QK, n - b * QK);
+            for (int i = 0; i < blockEnd; i++)
+            {
+                sbyte val = (sbyte)rawWeights[blockOff + 2 + i];
+                result[b * QK + i] = val * d;
+            }
+        }
+        return result;
+    }
+
+    static float[] ReadQ8_1(ReadOnlySpan<byte> rawWeights, int n)
+    {
+        const int blockBytes = 36;
+        int nBlocks = (n + QK - 1) / QK;
+        float[] result = new float[n];
+        for (int b = 0; b < nBlocks; b++)
+        {
+            int blockOff = b * blockBytes;
+            float d = HalfToFloat(BitConverter.ToUInt16(rawWeights.Slice(blockOff, 2)));
+            int blockEnd = Math.Min(QK, n - b * QK);
+            for (int i = 0; i < blockEnd; i++)
+            {
+                sbyte val = (sbyte)rawWeights[blockOff + 4 + i];
+                result[b * QK + i] = val * d;
+            }
+        }
+        return result;
+    }
+
+    static float[] ReadQ2_K(ReadOnlySpan<byte> rawWeights, int n)
+    {
+        const int blockBytes = 84;
+        const int qk = QK_K;
+        int nBlocks = (n + qk - 1) / qk;
+        float[] result = new float[n];
+        for (int b = 0; b < nBlocks; b++)
+        {
+            int blockOff = b * blockBytes;
+            float dSuper = HalfToFloat(BitConverter.ToUInt16(rawWeights.Slice(blockOff + 80, 2)));
+            float minSuper = HalfToFloat(BitConverter.ToUInt16(rawWeights.Slice(blockOff + 82, 2)));
+            byte[] scales = rawWeights.Slice(blockOff, 16).ToArray();
+            var qs = rawWeights.Slice(blockOff + 16, 64);
+            int blockEnd = Math.Min(qk, n - b * qk);
+            for (int n16 = 0; n16 < blockEnd; n16 += 128)
+            {
+                for (int j = 0; j < 4 && n16 + j * 32 < blockEnd; j++)
+                {
+                    int basePos = n16 + j * 32;
+                    int isc = (n16 / 128) * 8 + j * 2;
+                    int s0 = scales[isc] & 0x0F;
+                    int m0 = scales[isc] >> 4;
+                    for (int l = 0; l < 16 && basePos + l < blockEnd; l++)
+                    {
+                        int idx = basePos + l;
+                        int qsByte = (idx / 128) * 32 + (idx % 32);
+                        int qsShift = ((idx % 128) / 32) * 2;
+                        int v = (qs[qsByte] >> qsShift) & 3;
+                        result[b * qk + idx] = s0 * v * dSuper - m0 * minSuper;
+                    }
+                    int s1 = scales[isc + 1] & 0x0F;
+                    int m1 = scales[isc + 1] >> 4;
+                    for (int l = 0; l < 16 && basePos + 16 + l < blockEnd; l++)
+                    {
+                        int idx = basePos + 16 + l;
+                        int qsByte = (idx / 128) * 32 + (idx % 32);
+                        int qsShift = ((idx % 128) / 32) * 2;
+                        int v = (qs[qsByte] >> qsShift) & 3;
+                        result[b * qk + idx] = s1 * v * dSuper - m1 * minSuper;
+                    }
+                }
+            }
+        }
+        return result;
+    }
+
+    static float[] ReadQ3_K(ReadOnlySpan<byte> rawWeights, int n)
+    {
+        const int blockBytes = 110;
+        const int qk = QK_K;
+        int nBlocks = (n + qk - 1) / qk;
+        float[] result = new float[n];
+        for (int b = 0; b < nBlocks; b++)
+        {
+            int blockOff = b * blockBytes;
+            float dAll = HalfToFloat(BitConverter.ToUInt16(rawWeights.Slice(blockOff + 108, 2)));
+            uint kmask1 = 0x03030303u;
+            uint kmask2 = 0x0f0f0f0fu;
+            Span<byte> scaleBuf = stackalloc byte[16];
+            uint aux0 = BitConverter.ToUInt32(rawWeights.Slice(blockOff + 96, 4));
+            uint aux1 = BitConverter.ToUInt32(rawWeights.Slice(blockOff + 100, 4));
+            uint aux2 = BitConverter.ToUInt32(rawWeights.Slice(blockOff + 104, 4));
+            uint tmp = aux2;
+            BitConverter.TryWriteBytes(scaleBuf.Slice(0, 4), (aux0 & kmask2) | (((tmp >> 0) & kmask1) << 4));
+            BitConverter.TryWriteBytes(scaleBuf.Slice(4, 4), (aux1 & kmask2) | (((tmp >> 2) & kmask1) << 4));
+            BitConverter.TryWriteBytes(scaleBuf.Slice(8, 4), ((aux0 >> 4) & kmask2) | (((tmp >> 4) & kmask1) << 4));
+            BitConverter.TryWriteBytes(scaleBuf.Slice(12, 4), ((aux1 >> 4) & kmask2) | (((tmp >> 6) & kmask1) << 4));
+            var sc8 = MemoryMarshal.Cast<byte, sbyte>(scaleBuf);
+            var hmask = rawWeights.Slice(blockOff, 32);
+            var qs = rawWeights.Slice(blockOff + 32, 64);
+            int blockEnd = Math.Min(qk, n - b * qk);
+            for (int i = 0; i < blockEnd; i++)
+            {
+                int qsByte = (i / 128) * 32 + (i % 32);
+                int qsShift = ((i % 128) / 32) * 2;
+                int s2 = (qs[qsByte] >> qsShift) & 3;
+                int hBit = (hmask[i % 32] >> (i / 32)) & 1;
+                int actual = s2 - (hBit == 0 ? 4 : 0);
+                result[b * qk + i] = dAll * (sc8[i / 16] - 32) * actual;
+            }
+        }
+        return result;
+    }
+
+    static float[] ReadQ4_K(ReadOnlySpan<byte> rawWeights, int n)
+    {
+        const int blockBytes = 144;
+        const int qk = QK_K;
+        int nBlocks = (n + qk - 1) / qk;
+        float[] result = new float[n];
+        for (int b = 0; b < nBlocks; b++)
+        {
+            int blockOff = b * blockBytes;
+            float dSuper = HalfToFloat(BitConverter.ToUInt16(rawWeights.Slice(blockOff, 2)));
+            float minSuper = HalfToFloat(BitConverter.ToUInt16(rawWeights.Slice(blockOff + 2, 2)));
+            byte[] scales = rawWeights.Slice(blockOff + 4, 12).ToArray();
+            var qs = rawWeights.Slice(blockOff + 16, 128);
+            int blockEnd = Math.Min(qk, n - b * qk);
+            for (int n16 = 0; n16 < blockEnd; n16 += 128)
+            {
+                for (int j = 0; j < 4 && n16 + j * 32 < blockEnd; j++)
+                {
+                    int basePos = n16 + j * 32;
+                    int isc = (n16 / 128) * 4 + j;
+                    float s = GetScale(isc, scales);
+                    float m = GetMin(isc, scales);
+                    for (int l = 0; l < 32 && basePos + l < blockEnd; l++)
+                    {
+                        int idx = basePos + l;
+                        int qsByte = (idx / 64) * 32 + (idx % 32);
+                        int qsShift = ((idx % 64) / 32) * 4;
+                        int v = (qs[qsByte] >> qsShift) & 0x0F;
+                        result[b * qk + idx] = s * v * dSuper - m * minSuper;
+                    }
+                }
+            }
+        }
+        return result;
+    }
+
+    static float[] ReadQ5_K(ReadOnlySpan<byte> rawWeights, int n)
+    {
+        const int blockBytes = 176;
+        const int qk = QK_K;
+        int nBlocks = (n + qk - 1) / qk;
+        float[] result = new float[n];
+        for (int b = 0; b < nBlocks; b++)
+        {
+            int blockOff = b * blockBytes;
+            float d = HalfToFloat(BitConverter.ToUInt16(rawWeights.Slice(blockOff, 2)));
+            float min = HalfToFloat(BitConverter.ToUInt16(rawWeights.Slice(blockOff + 2, 2)));
+            byte[] scales = rawWeights.Slice(blockOff + 4, 12).ToArray();
+            var qh = rawWeights.Slice(blockOff + 16, 32);
+            var qs = rawWeights.Slice(blockOff + 48, 128);
+            int blockEnd = Math.Min(qk, n - b * qk);
+            for (int i = 0; i < blockEnd; i++)
+            {
+                int sc = GetScale(i / 32, scales);
+                int mn = GetMin(i / 32, scales);
+                int idx32 = i % 32;
+                int group64 = i / 64;
+                int half = (i % 64) / 32;
+                int bitPos = group64 * 2 + half;
+                int hAdd = ((qh[idx32] & (1 << bitPos)) != 0) ? 16 : 0;
+                int q5 = (half == 0) ? (qs[group64 * 32 + idx32] & 0x0F) : (qs[group64 * 32 + idx32] >> 4);
+                q5 |= hAdd;
+                result[b * qk + i] = sc * q5 * d - mn * min;
+            }
+        }
+        return result;
+    }
+
+    static float[] ReadQ6_K(ReadOnlySpan<byte> rawWeights, int n)
+    {
+        const int blockBytes = 210;
+        const int qk = QK_K;
+        int nBlocks = (n + qk - 1) / qk;
+        float[] result = new float[n];
+        for (int b = 0; b < nBlocks; b++)
+        {
+            int blockOff = b * blockBytes;
+            float d = HalfToFloat(BitConverter.ToUInt16(rawWeights.Slice(blockOff + 208, 2)));
+            var ql = rawWeights.Slice(blockOff, 128);
+            var qh = rawWeights.Slice(blockOff + 128, 64);
+            var scales = MemoryMarshal.Cast<byte, sbyte>(rawWeights.Slice(blockOff + 192, 16));
+            int blockEnd = Math.Min(qk, n - b * qk);
+            for (int nOff = 0; nOff < blockEnd; nOff += 128)
+            {
+                var pql = ql.Slice(nOff == 0 ? 0 : 64, 64);
+                var pqh = qh.Slice(nOff == 0 ? 0 : 32, 32);
+                var psc = scales.Slice(nOff == 0 ? 0 : 8, 8);
+                int halfRem = Math.Min(128, blockEnd - nOff);
+                for (int l = 0; l < 32 && l < halfRem; l++)
+                {
+                    int is_ = l / 16;
+                    int q1v = (pql[l] & 0x0F) | ((pqh[l] & 0x03) << 4);
+                    int q2v = (pql[l + 32] & 0x0F) | (((pqh[l] >> 2) & 0x03) << 4);
+                    int q3v = ((pql[l] >> 4) & 0x0F) | (((pqh[l] >> 4) & 0x03) << 4);
+                    int q4v = ((pql[l + 32] >> 4) & 0x0F) | (((pqh[l] >> 6) & 0x03) << 4);
+                    int i1 = b * qk + nOff + l;
+                    int i2 = b * qk + nOff + l + 32;
+                    if (i2 >= b * qk + blockEnd)
+                    {
+                        if (i1 < b * qk + blockEnd)
+                            result[i1] = d * psc[is_ + 0] * (q1v - 32);
+                        break;
+                    }
+                    int i3 = b * qk + nOff + l + 64;
+                    int i4 = b * qk + nOff + l + 96;
+                    result[i1] = d * psc[is_ + 0] * (q1v - 32);
+                    result[i2] = d * psc[is_ + 2] * (q2v - 32);
+                    result[i3] = d * psc[is_ + 4] * (q3v - 32);
+                    result[i4] = d * psc[is_ + 6] * (q4v - 32);
+                }
+            }
+        }
+        return result;
+    }
+
+    static float[] ReadQ8_K(ReadOnlySpan<byte> rawWeights, int n)
+    {
+        const int blockBytes = 292;
+        const int qk = QK_K;
+        int nBlocks = (n + qk - 1) / qk;
+        float[] result = new float[n];
+        for (int b = 0; b < nBlocks; b++)
+        {
+            int blockOff = b * blockBytes;
+            float d = BitConverter.ToSingle(rawWeights.Slice(blockOff, 4));
+            int blockEnd = Math.Min(qk, n - b * qk);
+            for (int i = 0; i < blockEnd; i++)
+            {
+                sbyte val = (sbyte)rawWeights[blockOff + 4 + i];
+                result[b * qk + i] = val * d;
+            }
+        }
+        return result;
+    }
+
+    static float[] ReadF32(ReadOnlySpan<byte> rawWeights, int n)
+    {
+        float[] result = new float[n];
+        for (int i = 0; i < n; i++)
+            result[i] = BitConverter.ToSingle(rawWeights.Slice(i * 4, 4));
+        return result;
+    }
+
+    static float[] ReadF16(ReadOnlySpan<byte> rawWeights, int n)
+    {
+        float[] result = new float[n];
+        for (int i = 0; i < n; i++)
+            result[i] = HalfToFloat(BitConverter.ToUInt16(rawWeights.Slice(i * 2, 2)));
+        return result;
+    }
+
+    static float[] ReadIQ4_NL(ReadOnlySpan<byte> rawWeights, int n)
+    {
+        const int blockBytes = 18;
+        int nBlocks = (n + QK - 1) / QK;
+        float[] result = new float[n];
+        for (int b = 0; b < nBlocks; b++)
+        {
+            int blockOff = b * blockBytes;
+            float d = HalfToFloat(BitConverter.ToUInt16(rawWeights.Slice(blockOff, 2)));
+            var qs = rawWeights.Slice(blockOff + 2, 16);
+            int blockEnd = Math.Min(QK, n - b * QK);
+            for (int i = 0; i < blockEnd; i++)
+            {
+                int nib = (i < QK / 2) ? (qs[i] & 0x0F) : (qs[i - QK / 2] >> 4);
+                result[b * QK + i] = d * kvalues_iq4nl[nib];
+            }
+        }
+        return result;
+    }
+
+    static float[] ReadTQ2_0(ReadOnlySpan<byte> rawWeights, int n)
+    {
+        const int blockBytes = 66;
+        const int qk = 256;
+        int nBlocks = (n + qk - 1) / qk;
+        float[] result = new float[n];
+        for (int b = 0; b < nBlocks; b++)
+        {
+            int blockOff = b * blockBytes;
+            float d = HalfToFloat(BitConverter.ToUInt16(rawWeights.Slice(blockOff, 2)));
+            int blockEnd = Math.Min(qk, n - b * qk);
+            for (int i = 0; i < blockEnd; i++)
+            {
+                int byteIdx = i / 4;
+                int shift = (i % 4) * 2;
+                int v = (rawWeights[blockOff + 2 + byteIdx] >> shift) & 3;
+                result[b * qk + i] = (v - 1) * d;
+            }
+        }
+        return result;
+    }
+
+    static float[] ReadTQ1_0(ReadOnlySpan<byte> rawWeights, int n)
+    {
+        const int blockBytes = 54;
+        const int qk = 256;
+        int nBlocks = (n + qk - 1) / qk;
+        float[] result = new float[n];
+        for (int b = 0; b < nBlocks; b++)
+        {
+            int blockOff = b * blockBytes;
+            float d = HalfToFloat(BitConverter.ToUInt16(rawWeights.Slice(blockOff + 52, 2)));
+            int blockEnd = Math.Min(qk, n - b * qk);
+            for (int i = 0; i < blockEnd; i++)
+            {
+                int v;
+                if (i < 160)
+                {
+                    int byteIdx = i / 5;
+                    int subIdx = i % 5;
+                    v = DecodeTQ1_Digit(rawWeights[blockOff + byteIdx], subIdx);
+                }
+                else if (i < 240)
+                {
+                    int idx = i - 160;
+                    int byteIdx = idx / 5;
+                    int subIdx = idx % 5;
+                    v = DecodeTQ1_Digit(rawWeights[blockOff + 32 + byteIdx], subIdx);
+                }
+                else
+                {
+                    int idx = i - 240;
+                    int byteIdx = idx / 4;
+                    int subIdx = idx % 4;
+                    v = DecodeTQ1_Digit(rawWeights[blockOff + 48 + byteIdx], subIdx);
+                }
+                result[b * qk + i] = (v - 1) * d;
+            }
+        }
+        return result;
+    }
+
+    static float[] ReadIQ1_S(ReadOnlySpan<byte> rawWeights, int n)
+    {
+        const int blockBytes = 50;
+        const int qk = 256;
+        int nBlocks = (n + qk - 1) / qk;
+        var grid = IQ1S_Grid;
+        float[] result = new float[n];
+        for (int b = 0; b < nBlocks; b++)
+        {
+            int blockOff = b * blockBytes;
+            float d = HalfToFloat(BitConverter.ToUInt16(rawWeights.Slice(blockOff, 2)));
+            int blockEnd = Math.Min(qk, n - b * qk);
+            for (int g = 0; g < 8 && g * 32 < blockEnd; g++)
+            {
+                ushort qhWord = BitConverter.ToUInt16(rawWeights.Slice(blockOff + 34 + g * 2, 2));
+                float dl = d * (2 * ((qhWord >> 12) & 7) + 1);
+                float delta = (qhWord & 0x8000) == 0 ? 0.125f : -0.125f;
+                int groupEnd = Math.Min(32, blockEnd - g * 32);
+                for (int s = 0; s < 4 && s * 8 < groupEnd; s++)
+                {
+                    int extra = (qhWord >> (s * 3)) & 7;
+                    int gridIdx = rawWeights[blockOff + 2 + g * 4 + s] | (extra << 8);
+                    int subEnd = Math.Min(8, groupEnd - s * 8);
+                    for (int k = 0; k < subEnd; k++)
+                    {
+                        float gv = grid[gridIdx * 8 + k];
+                        result[b * qk + g * 32 + s * 8 + k] = dl * (gv + delta);
+                    }
+                }
+            }
+        }
+        return result;
+    }
+
+    static float[] ReadIQ1_M(ReadOnlySpan<byte> rawWeights, int n)
+    {
+        const int blockBytes = 56;
+        const int qk = 256;
+        int nBlocks = (n + qk - 1) / qk;
+        var grid = IQ1S_Grid;
+        float[] result = new float[n];
+        for (int b = 0; b < nBlocks; b++)
+        {
+            int blockOff = b * blockBytes;
+            uint lo = BitConverter.ToUInt32(rawWeights.Slice(blockOff + 48, 4));
+            uint hi = BitConverter.ToUInt16(rawWeights.Slice(blockOff + 52, 2));
+            uint packed = lo | (hi << 16);
+            ushort halfBits = (ushort)(((packed >> 12) & 0x000F) | ((packed >> 8) & 0x00F0) | ((packed >> 4) & 0x0F00) | (packed & 0xF000));
+            float d = HalfToFloat(halfBits);
+            int blockEnd = Math.Min(qk, n - b * qk);
+            for (int g = 0; g < 8 && g * 32 < blockEnd; g++)
+            {
+                ushort qhWord = BitConverter.ToUInt16(rawWeights.Slice(blockOff + 32 + g * 2, 2));
+                float dl = d * (2 * ((qhWord >> 12) & 7) + 1);
+                float delta = (qhWord & 0x8000) == 0 ? 0.125f : -0.125f;
+                int groupEnd = Math.Min(32, blockEnd - g * 32);
+                for (int s = 0; s < 4 && s * 8 < groupEnd; s++)
+                {
+                    int extra = (qhWord >> (s * 3)) & 7;
+                    int gridIdx = rawWeights[blockOff + g * 4 + s] | (extra << 8);
+                    int subEnd = Math.Min(8, groupEnd - s * 8);
+                    for (int k = 0; k < subEnd; k++)
+                    {
+                        float gv = grid[gridIdx * 8 + k];
+                        result[b * qk + g * 32 + s * 8 + k] = dl * (gv + delta);
+                    }
+                }
+            }
+        }
+        return result;
+    }
+
+    static float[] ReadI8(ReadOnlySpan<byte> rawWeights, int n)
+    {
+        float[] result = new float[n];
+        for (int i = 0; i < n; i++)
+            result[i] = (sbyte)rawWeights[i];
+        return result;
+    }
+
+    static float[] ReadI16(ReadOnlySpan<byte> rawWeights, int n)
+    {
+        float[] result = new float[n];
+        for (int i = 0; i < n; i++)
+            result[i] = BitConverter.ToInt16(rawWeights.Slice(i * 2, 2));
+        return result;
+    }
+
+    static float[] ReadI32(ReadOnlySpan<byte> rawWeights, int n)
+    {
+        float[] result = new float[n];
+        for (int i = 0; i < n; i++)
+            result[i] = BitConverter.ToInt32(rawWeights.Slice(i * 4, 4));
+        return result;
+    }
+
+    static int RunReadMode(string inputPath)
+    {
+        using var reader = new BinaryReader(File.OpenRead(inputPath));
+        int dtype = reader.ReadInt32();
+        int n = reader.ReadInt32();
+        var remaining = new MemoryStream();
+        reader.BaseStream.CopyTo(remaining);
+        byte[] weights = remaining.ToArray();
+
+        float[] result = (QuantDType)dtype switch
+        {
+            QuantDType.F32 => ReadF32(weights, n),
+            QuantDType.F16 => ReadF16(weights, n),
+            QuantDType.Q4_0 => ReadQ4_0(weights, n),
+            QuantDType.Q4_1 => ReadQ4_1(weights, n),
+            QuantDType.Q5_0 => ReadQ5_0(weights, n),
+            QuantDType.Q5_1 => ReadQ5_1(weights, n),
+            QuantDType.Q8_0 => ReadQ8_0(weights, n),
+            QuantDType.Q8_1 => ReadQ8_1(weights, n),
+            QuantDType.Q2_K => ReadQ2_K(weights, n),
+            QuantDType.Q3_K => ReadQ3_K(weights, n),
+            QuantDType.Q4_K => ReadQ4_K(weights, n),
+            QuantDType.Q5_K => ReadQ5_K(weights, n),
+            QuantDType.Q6_K => ReadQ6_K(weights, n),
+            QuantDType.Q8_K => ReadQ8_K(weights, n),
+            QuantDType.I8 => ReadI8(weights, n),
+            QuantDType.I16 => ReadI16(weights, n),
+            QuantDType.I32 => ReadI32(weights, n),
+            QuantDType.IQ4_NL => ReadIQ4_NL(weights, n),
+            QuantDType.IQ1_S => ReadIQ1_S(weights, n),
+            QuantDType.IQ1_M => ReadIQ1_M(weights, n),
+            QuantDType.TQ2_0 => ReadTQ2_0(weights, n),
+            QuantDType.TQ1_0 => ReadTQ1_0(weights, n),
+            _ => throw new InvalidOperationException()
+        };
+
+        foreach (var v in result)
+            Console.WriteLine("{0:G9}", v);
+        return 0;
+    }
+
     static int Main(string[] args)
     {
+        if (args.Length > 0 && args[0] == "read")
+            return RunReadMode(args[1]);
+
         Stream inStream;
         if (args.Length > 0)
             inStream = File.OpenRead(args[0]);
