@@ -22,6 +22,7 @@ public interface IChatBridge : IAsyncDisposable
     void ToggleIgnore(int index);
     void ResetCache();
     bool ShowThinking { get; set; }
+    bool EnableThinking { get; set; }
     bool Faulted { get; }
     Exception? Fault { get; }
     ChatArtifact[]? LastArtifacts { get; }
@@ -149,6 +150,12 @@ public sealed class ChatSessionBridge(IChatSession session, bool disposeUnderlyi
     {
         get => session.ShowThinking;
         set => session.ShowThinking = value;
+    }
+
+    public bool EnableThinking
+    {
+        get => session.EnableThinking;
+        set => session.EnableThinking = value;
     }
 
     public async ValueTask DisposeAsync()

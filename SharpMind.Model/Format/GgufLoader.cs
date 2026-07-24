@@ -116,6 +116,9 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
     public static int[]? GetIntArray(ModelMetaData meta, string key)
         => meta.KvPairs.FirstOrDefault(p => p.Key == key).Value as int[];
 
+    public static float[]? GetFloatArray(ModelMetaData meta, string key)
+        => meta.KvPairs.FirstOrDefault(p => p.Key == key).Value as float[];
+
     public static ModelMetaData LoadMeta(string path)
     {
         using var stream = File.OpenRead(path);
@@ -270,13 +273,14 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
 
         var types = GetIntArray(meta, "tokenizer.ggml.token_type");
         var merges = GetStringArray(meta, "tokenizer.ggml.merges");
+        var scores = GetFloatArray(meta, "tokenizer.ggml.scores");
 
         int bosId = (int)meta.GetLong("tokenizer.ggml.bos_token_id", 1);
         int eosId = (int)meta.GetLong("tokenizer.ggml.eos_token_id", 2);
 
         try
         {
-            return Tokenizer.FromGguf(tokens, merges, types, bosId, eosId);
+            return Tokenizer.FromGguf(tokens, merges, types, bosId, eosId, scores);
         }
         catch
         {

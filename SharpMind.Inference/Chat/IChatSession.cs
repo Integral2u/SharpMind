@@ -12,6 +12,7 @@ public interface IChatSession : IAsyncDisposable
     public int RepetitionWindow { get; set; }
     public IReadOnlyList<int>? StopTokenIds { get; set; }
     public bool ShowThinking { get; set; }
+    public bool EnableThinking { get; set; }
     public float? TokensPerSecond { get; }
     public float? TimeToFirstToken { get; }
     public Tokenizer Tokenizer { get; }

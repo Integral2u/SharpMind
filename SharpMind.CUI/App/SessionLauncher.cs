@@ -243,6 +243,7 @@ public static class SessionLauncher
         session.RepetitionPenalty = options.Generation.RepetitionPenalty;
         session.RepetitionWindow = options.Generation.RepetitionWindow;
         session.ShowThinking = options.ShowThinking;
+        session.EnableThinking = options.EnableThinking;
         if (options.Generation.StopTokenIds.Count > 0)
             session.StopTokenIds = options.Generation.StopTokenIds;
 

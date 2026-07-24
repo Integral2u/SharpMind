@@ -4,7 +4,7 @@ namespace SharpMind.Inference.Chat.PromptFormatters;
 
 public sealed class SimpleFormatter : IChatPromptFormatter
 {
-    public string Format(IReadOnlyList<ChatMessage> history, Tokenizer tokenizer, bool addBos)
+    public string Format(IReadOnlyList<ChatMessage> history, Tokenizer tokenizer, bool addBos, bool enableThinking = false)
     {
         var sb = new System.Text.StringBuilder();
 

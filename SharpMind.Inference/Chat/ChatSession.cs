@@ -137,6 +137,13 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     /// <summary>Token IDs that stop generation. Defaults to EOS if not set.</summary>
     public IReadOnlyList<int>? StopTokenIds { get; set; }
     public bool ShowThinking { get; set; } = true;
+    /// <summary>
+    /// Value of the <c>enable_thinking</c> chat-template variable (checked by
+    /// Qwen3-style templates). Defaults to <see langword="false"/> so those
+    /// models emit an empty reasoning block and answer directly instead of
+    /// streaming visible chain-of-thought before the response.
+    /// </summary>
+    public bool EnableThinking { get; set; }
     public float? TokensPerSecond { get; private set; }
     public float? TimeToFirstToken { get; private set; }
 
@@ -180,7 +187,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     private string BuildPrompt()
     {
         if (_formatter is not null)
-            return _formatter.Format(_history, _tokenizer, _addBos);
+            return _formatter.Format(_history, _tokenizer, _addBos, EnableThinking);
 
         var sb = new System.Text.StringBuilder();
 

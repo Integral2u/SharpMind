@@ -47,7 +47,13 @@ public static class GgufConverter
     ///   BPE merge rules as "left right" strings (tokenizer.ggml.merges).
     ///   Rank is their position in this array.
     /// </param>
-    /// <param name="scores">Token scores (tokenizer.ggml.scores). Informational — not used in inference.</param>
+    /// <param name="scores">
+    ///   Token scores (tokenizer.ggml.scores). Used to rank candidate merges
+    ///   when <paramref name="merges"/> is null/empty — SentencePiece-style
+    ///   GGUFs (LLaMA/LLaMA-2, Mistral, TinyLlama) have no explicit merges
+    ///   array, so <see cref="Bpe.BpeEncoder"/> falls back to score-ranked
+    ///   greedy merging in that case.
+    /// </param>
     /// <param name="tokenTypes">Per-token type flags (tokenizer.ggml.token_type). Used to find special tokens.</param>
     /// <param name="bosId">BOS token ID (tokenizer.ggml.bos_token_id).</param>
     /// <param name="eosId">EOS token ID (tokenizer.ggml.eos_token_id).</param>
@@ -56,7 +62,8 @@ public static class GgufConverter
         string[]? merges,
         int[]?    tokenTypes,
         int       bosId,
-        int       eosId)
+        int       eosId,
+        float[]?  scores = null)
     {
         ArgumentNullException.ThrowIfNull(tokens);
         if (tokens.Length == 0)
@@ -140,9 +147,15 @@ public static class GgufConverter
         }        
 
         // PreTokeniser
-        // All BPE models in GGUF (LLaMA, Mistral, Qwen, Phi, etc.) use
-        // the GPT-2 byte-level pre-tokenisation pattern.
-        return new BpeModel(vocab, mergeList, new Gpt2PreTokeniser());
+        // GPT-2-style byte-level BPE models (Qwen, Llama-3/tiktoken, Phi, etc.)
+        // ship an explicit tokenizer.ggml.merges list and use GPT-2 byte-level
+        // pre-tokenisation. Original LLaMA/LLaMA-2/Mistral/TinyLlama GGUFs are
+        // SentencePiece-based: they have no merges array at all, and instead
+        // rank merges by tokenizer.ggml.scores. mergeList will be empty in
+        // that case, and BpeEncoder detects it (via the scores array below)
+        // and switches to score-ranked SentencePiece-style merging instead of
+        // silently tokenising everything byte-by-byte.
+        return new BpeModel(vocab, mergeList, new Gpt2PreTokeniser(), scores);
     }
 
     // Helpers

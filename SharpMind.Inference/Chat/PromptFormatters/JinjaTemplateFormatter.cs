@@ -31,7 +31,7 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
 
     // Public entry point
 
-    public string Format(IReadOnlyList<ChatMessage> history, Tokenizer tokenizer, bool addBos)
+    public string Format(IReadOnlyList<ChatMessage> history, Tokenizer tokenizer, bool addBos, bool enableThinking = false)
     {
         // Build the variable context that templates can reference.
         string bosToken = addBos && tokenizer.BosId >= 0
@@ -52,6 +52,7 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
         env.Set("bos_token", bosToken);
         env.Set("eos_token", eosToken);
         env.Set("add_generation_prompt", (object)true);  // always true for inference
+        env.Set("enable_thinking", (object)enableThinking);
 
         var tokens = Tokenise(_template);
         var sb = new StringBuilder();
@@ -372,6 +373,17 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
             var v = Eval(noneM.Groups[1].Value, env);
             bool isNone = v == null || v is string s && s == "";
             return (object)(noneM.Groups[2].Success ? !isNone : isNone);
+        }
+
+        // X is true / X is false / X is not true / X is not false
+        var boolM = System.Text.RegularExpressions.Regex.Match(expr, @"^(.+?)\s+is\s+(not\s+)?(true|false)$");
+        if (boolM.Success)
+        {
+            var v = Eval(boolM.Groups[1].Value, env);
+            bool target = boolM.Groups[3].Value == "true";
+            bool actual = v is bool vb ? vb : IsTruthy(v);
+            bool isMatch = actual == target;
+            return (object)(boolM.Groups[2].Success ? !isMatch : isMatch);
         }
 
         // not X

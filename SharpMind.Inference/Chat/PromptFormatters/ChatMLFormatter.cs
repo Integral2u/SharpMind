@@ -40,7 +40,7 @@ public sealed class ChatMLFormatter : IChatPromptFormatter
         }
     }
 
-    public string Format(IReadOnlyList<ChatMessage> history, Tokenizer tokenizer, bool addBos)
+    public string Format(IReadOnlyList<ChatMessage> history, Tokenizer tokenizer, bool addBos, bool enableThinking = false)
     {
         var sb = new System.Text.StringBuilder();
 

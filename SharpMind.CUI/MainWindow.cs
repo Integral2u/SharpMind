@@ -114,7 +114,8 @@ public sealed class MainWindow : Window
                 new("_Manage sessions...", "", ShowSessionManager),
                 new("_Load session...", "", LoadSessionFromDisk),
                 new("_Save current session...", "", SaveCurrentSession),
-                new("_Toggle thinking process", "", ToggleThinking)
+                new("_Toggle thinking process", "", ToggleThinking),
+                new("Toggle _enable_thinking (Qwen3)", "", ToggleTemplateThinking)
             })
         });
     }
@@ -202,6 +203,17 @@ public sealed class MainWindow : Window
         
         MessageBox.Query("Thinking Process", 
             $"Thinking process is now {( _currentSession.Bridge.ShowThinking ? "enabled" : "disabled" )}.", 
+            "OK");
+    }
+
+    private void ToggleTemplateThinking()
+    {
+        if (_currentSession?.Bridge is null) return;
+
+        _currentSession.Bridge.EnableThinking = !_currentSession.Bridge.EnableThinking;
+
+        MessageBox.Query("Enable Thinking (Template)",
+            $"enable_thinking is now {(_currentSession.Bridge.EnableThinking ? "enabled" : "disabled")}.\nOnly takes effect on the next turn.",
             "OK");
     }
 
@@ -426,6 +438,7 @@ public sealed class MainWindow : Window
         MaxAgentDepth = source.MaxAgentDepth,
         MaxToolCallsPerTurn = source.MaxToolCallsPerTurn,
         ShowThinking = source.ShowThinking,
+        EnableThinking = source.EnableThinking,
         DisabledTools = new HashSet<string>(source.DisabledTools)
     };
 

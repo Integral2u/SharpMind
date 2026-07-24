@@ -158,6 +158,11 @@ public sealed class OptionsView : View
         var agentsCheck = new CheckBox("Enable sub-agents", options.AgentsEnabled) { X = 1, Y = row };
         agentsCheck.Toggled += (_) => _options.AgentsEnabled = agentsCheck.Checked;
         _formContent.Add(agentsCheck);
+        row++;
+
+        var enableThinkingCheck = new CheckBox("Enable model thinking (Qwen3 reasoning)", options.EnableThinking) { X = 1, Y = row };
+        enableThinkingCheck.Toggled += (_) => _options.EnableThinking = enableThinkingCheck.Checked;
+        _formContent.Add(enableThinkingCheck);
         row += 2;
 
         AddLabel("File access:");
@@ -359,6 +364,7 @@ public sealed class OptionsView : View
         target.Generation = source.Generation;
         target.AgentName = source.AgentName;
         target.AgentsEnabled = source.AgentsEnabled;
+        target.EnableThinking = source.EnableThinking;
         target.MaxAgentDepth = source.MaxAgentDepth;
         target.MaxToolCallsPerTurn = source.MaxToolCallsPerTurn;
         target.DisabledTools = new HashSet<string>(source.DisabledTools);

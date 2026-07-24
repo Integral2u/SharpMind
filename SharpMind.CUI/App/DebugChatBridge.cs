@@ -29,6 +29,7 @@ public sealed class DebugChatBridge(CuiToolContext cuiContext, Func<ToolPermissi
     public bool Faulted { get; private set; }
     public Exception? Fault { get; private set; }
     public bool ShowThinking { get; set; } = true;
+    public bool EnableThinking { get; set; }
     public ChatArtifact[]? LastArtifacts { get; private set; }
 
     public void SubmitUserInput(string text, ChatArtifact[]? artifacts = null)

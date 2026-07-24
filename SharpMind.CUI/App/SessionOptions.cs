@@ -133,6 +133,13 @@ public sealed class SessionOptions
     /// <summary>Whether to show the model's internal thinking process in the UI.</summary>
     public bool ShowThinking { get; set; } = true;
 
+    /// <summary>
+    /// Whether to set <c>enable_thinking</c> in the chat template (Qwen3-style).
+    /// Default <see langword="false"/> so the model emits an empty reasoning block
+    /// and answers directly instead of streaming chain-of-thought.
+    /// </summary>
+    public bool EnableThinking { get; set; }
+
     /// <summary>Set of tool names that should be disabled for this session.</summary>
     public HashSet<string> DisabledTools { get; set; } = [];
 

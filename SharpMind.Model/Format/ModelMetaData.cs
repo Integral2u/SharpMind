@@ -23,6 +23,10 @@ public sealed class ModelMetaData
         if (kv.Value is ushort us) return us;
         if (kv.Value is sbyte sb) return sb;
         if (kv.Value is byte b) return b;
+        // GGUF type 7 (bool) — e.g. tokenizer.ggml.add_bos_token / add_eos_token.
+        // Without this branch a present-but-false value fell through to
+        // defaultValue instead of returning 0.
+        if (kv.Value is bool bl) return bl ? 1 : 0;
         return defaultValue;
     }
 

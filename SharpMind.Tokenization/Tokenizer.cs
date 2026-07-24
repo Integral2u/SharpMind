@@ -117,7 +117,7 @@ public class Tokenizer
     /// <param name="tokenTypes">Per-token type flags (tokenizer.ggml.token_type). May be null.</param>
     /// <param name="bosId">BOS token ID (tokenizer.ggml.bos_token_id).</param>
     /// <param name="eosId">EOS token ID (tokenizer.ggml.eos_token_id).</param>
-    public static Tokenizer FromGguf(string[] tokens, string[]? merges, int[]? tokenTypes, int bosId, int eosId) => new(GgufConverter.Convert(tokens, merges, tokenTypes, bosId, eosId));
+    public static Tokenizer FromGguf(string[] tokens, string[]? merges, int[]? tokenTypes, int bosId, int eosId, float[]? scores = null) => new(GgufConverter.Convert(tokens, merges, tokenTypes, bosId, eosId, scores));
 
     /// <summary>
     /// Loads a GPT-2 tokenizer from its two native files.

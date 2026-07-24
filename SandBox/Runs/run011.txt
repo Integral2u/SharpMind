@@ -1,0 +1,255 @@
+Testing qwen2-0_5b-instruct-q4_k_m
+ModelFactory.Create + InitializeWeights executed in: 11.91s
+ModelFactory.CreateTransformer executed in: 0.20s
+ChatSession executed in: 2.07s
+Prompt:Hello
+Response:Hello! How can I assist you today?
+
+Tokens per second: 1.49  TTFT: 12.009s
+Testing qwen2-0.5b-instruct-q2_k
+ModelFactory.Create + InitializeWeights executed in: 14.21s
+ModelFactory.CreateTransformer executed in: 0.40s
+ChatSession executed in: 6.19s
+Prompt:Hello
+Response:Hello! How can I assist you today?
+
+Tokens per second: 1.09  TTFT: 18.275s
+Testing Qwen3-0.6B-Q4_0
+ModelFactory.Create + InitializeWeights executed in: 12.23s
+ModelFactory.CreateTransformer executed in: 0.15s
+ChatSession executed in: 29.38s
+Prompt:Hello
+Response:Okay, the user wrote "Hello and then asked for help. Now,
+Tokens per second: 1.25  TTFT: 13.342s
+Testing Qwen3-0.6B-Q4_1
+ModelFactory.Create + InitializeWeights executed in: 18.46s
+ModelFactory.CreateTransformer executed in: 0.23s
+ChatSession executed in: 27.55s
+Prompt:Hello
+Response:Okay, the user is asking for help with a problem. They mentioned they
+Tokens per second: 1.15  TTFT: 13.654s
+Testing qwen2-0_5b-instruct-q8_0
+ModelFactory.Create + InitializeWeights executed in: 11.25s
+ModelFactory.CreateTransformer executed in: 0.32s
+ChatSession executed in: 0.50s
+Prompt:Hello
+Response:Hello! How can I assist you today?
+
+Tokens per second: 4.33  TTFT: 3.350s
+Testing qwen2-0_5b-instruct-fp16
+ModelFactory.Create + InitializeWeights executed in: 53.63s
+ModelFactory.CreateTransformer executed in: 0.33s
+ChatSession executed in: 8.88s
+Prompt:Hello
+Response:Hello! How can I assist you today?
+
+Tokens per second: 0.63  TTFT: 28.891s
+Testing Qwen3-0.6B-Q4_K_M
+ModelFactory.Create + InitializeWeights executed in: 16.76s
+ModelFactory.CreateTransformer executed in: 0.20s
+ChatSession executed in: 29.84s
+Prompt:Hello
+Response:Okay, the user is asking for help with a problem. They mentioned they
+Tokens per second: 0.68  TTFT: 26.734s
+Testing Qwen3-0.6B-Q5_K_M
+ModelFactory.Create + InitializeWeights executed in: 19.08s
+ModelFactory.CreateTransformer executed in: 0.33s
+ChatSession executed in: 24.38s
+Prompt:Hello
+Response:Okay, the user is asking for help with a problem. Let me check
+Tokens per second: 0.30  TTFT: 49.705s
+Testing Qwen3-0.6B-Q3_K_M
+ModelFactory.Create + InitializeWeights executed in: 18.54s
+ModelFactory.CreateTransformer executed in: 0.47s
+ChatSession executed in: 31.96s
+Prompt:Hello
+Response:Okay, the user is asking for help with a problem. The original message
+Tokens per second: 0.39  TTFT: 39.604s
+Testing Qwen3-0.6B-Q6_K
+ModelFactory.Create + InitializeWeights executed in: 16.84s
+ModelFactory.CreateTransformer executed in: 0.43s
+ChatSession executed in: 29.79s
+Prompt:Hello
+Response:Okay, the user wrote "Hello and then said they need help. Let
+Tokens per second: 0.82  TTFT: 26.634s
+Testing Qwen3-0.6B-Q2_K
+ModelFactory.Create + InitializeWeights executed in: 17.88s
+ModelFactory.CreateTransformer executed in: 0.32s
+ChatSession executed in: 28.44s
+Prompt:Hello
+Response:
+    Hello, dear friend.
+    I am here in the world
+Tokens per second: 0.34  TTFT: 36.927s
+Testing Qwen3-0.6B-Q8_0
+ModelFactory.Create + InitializeWeights executed in: 17.42s
+ModelFactory.CreateTransformer executed in: 0.93s
+ChatSession executed in: 27.64s
+Prompt:Hello
+Response:Okay, the user wrote "Hello and then said they want to ask a
+Tokens per second: 2.35  TTFT: 9.813s
+Testing DeepSeek-R1-Distill-Qwen-1.5B-Q8_0
+ModelFactory.Create + InitializeWeights executed in: 67.96s
+ModelFactory.CreateTransformer executed in: 0.90s
+ChatSession executed in: 28.15s
+Prompt:Hello
+Response:Hello!
+####
+The answer
+>
+
+Hey there! Welcome how can I assist
+Tokens per second: 1.02  TTFT: 17.307s
+Testing DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M
+ModelFactory.Create + InitializeWeights executed in: 76.88s
+ModelFactory.CreateTransformer executed in: 0.91s
+ChatSession executed in: 27.31s
+Prompt:Hello
+Response:Hello! I'm glad Hello. How can I help you?Hi there
+Tokens per second: 0.13  TTFT: 75.431s
+Testing qwen2.5-1.5b-instruct-q8_0
+ModelFactory.Create + InitializeWeights executed in: 69.47s
+ModelFactory.CreateTransformer executed in: 3.63s
+ChatSession executed in: 17.25s
+Prompt:Hello
+Response:Hello! How can I help you today?
+
+Tokens per second: 1.78  TTFT: 15.698s
+Testing llama-3.2-1b-instruct-q8_0
+ModelFactory.Create + InitializeWeights executed in: 67.05s
+ModelFactory.CreateTransformer executed in: 1.54s
+ChatSession executed in: 33.41s
+Prompt:Hello
+Response:It seems like you've got a question about the answer to my own.
+Tokens per second: 1.06  TTFT: 8.893s
+
+
+failing--------------------------------------------------------------- 
+
+Testing Qwen2-0.5B.Q6_K
+ModelFactory.Create + InitializeWeights executed in: 8.95s
+ModelFactory.CreateTransformer executed in: 0.30s
+ChatSession executed in: 6.00s
+Prompt:Hello
+Response:
+
+
+Copyright c 200 20199
+Tokens per second: 2.26  TTFT: 15.693s
+Testing Qwen2-0.5B.Q2_K
+ModelFactory.Create + InitializeWeights executed in: 9.40s
+ModelFactory.CreateTransformer executed in: 0.11s
+ChatSession executed in: 6.38s
+Prompt:Hello
+Response:
+
+Thank you!
+Thank you.
+Thankyou thank.
+Thanks you Thank
+Tokens per second: 0.82  TTFT: 21.880s
+Testing Qwen2-0.5B.Q3_K_L
+ModelFactory.Create + InitializeWeights executed in: 8.52s
+ModelFactory.CreateTransformer executed in: 0.14s
+ChatSession executed in: 5.11s
+Prompt:Hello
+Response:
+
+assistant
+ 1. 2.33456
+Tokens per second: 0.73  TTFT: 30.441s
+Testing Qwen2-0.5B.Q3_K_M
+ModelFactory.Create + InitializeWeights executed in: 10.56s
+ModelFactory.CreateTransformer executed in: 0.15s
+ChatSession executed in: 4.30s
+Prompt:Hello
+Response:
+
+'s
+The following information is provided by the author to you.
+
+Tokens per second: 1.25  TTFT: 14.655s
+Testing Qwen2-0.5B.Q3_K_S
+ModelFactory.Create + InitializeWeights executed in: 8.48s
+ModelFactory.CreateTransformer executed in: 0.12s
+ChatSession executed in: 6.44s
+Prompt:Hello
+Response:
+
+
+
+
+
+Tokens per second: 0.76  TTFT: 29.493s
+Testing Qwen2-0.5B.Q5_1
+ModelFactory.Create + InitializeWeights executed in: 10.89s
+ModelFactory.CreateTransformer executed in: 0.54s
+ChatSession executed in: 4.01s
+Prompt:Hello
+Response:
+
+Copyright 20198019889
+Tokens per second: 1.20  TTFT: 15.582s
+Testing Qwen2.5-1.5B-Instruct-f16
+ModelFactory.Create + InitializeWeights executed in: 248.33s
+ModelFactory.CreateTransformer executed in: 5.97s
+ChatSession executed in: 21.16s
+Prompt:Hello
+Response:Hello, I'm lookingta.
+
+Tokens per second: 0.20  TTFT: 165.764s
+Testing Llama-3.2-1B-Instruct-Q4_K_M
+ModelFactory.Create + InitializeWeights executed in: 98.14s
+ModelFactory.CreateTransformer executed in: 0.45s
+ChatSession executed in: 31.67s
+Prompt:Hello
+Response:  and
+and
+  a
+
+# "
+a
+#
+Tokens per second: 0.31  TTFT: 220.427s
+Testing tinyllama-1.1b-chat-v1.0.Q8_0
+ModelFactory.Create + InitializeWeights executed in: 40.07s
+ModelFactory.CreateTransformer executed in: 1.57s
+ChatSession executed in: 4.21s
+Prompt:Hello
+Response:mathopmathopmathop ???? Luci LucyZygoteInitZygoteInitZygoteInitZygoteInitDataFrameDataFrameDataFrame? geldig
+Tokens per second: 2.45  TTFT: 5.457s
+Testing TinyLlama-1.1B-Chat-v1.0.Q4_K_M
+ModelFactory.Create + InitializeWeights executed in: 40.65s
+ModelFactory.CreateTransformer executed in: 1.79s
+ChatSession executed in: 3.75s
+Prompt:Hello
+Response:mathopmathopmathopmathop insect insect insect insectsectsect proph proph proph proph Pho
+Tokens per second: 0.35  TTFT: 47.832s
+Testing llama3-small-Q2_K
+ModelFactory.Create + InitializeWeights executed in: 3.59s
+ModelFactory.CreateTransformer executed in: 0.04s
+ChatSession executed in: 0.09s
+Prompt:Hello
+Response:.CONT? maturity(ignore babys??? Inc??Italian trafficking pointless? ????.Y eyed
+Tokens per second: 1.96  TTFT: 1.033s
+Testing llama3-small-Q3_K_M
+ModelFactory.Create + InitializeWeights executed in: 3.02s
+ModelFactory.CreateTransformer executed in: 0.02s
+ChatSession executed in: 0.07s
+Prompt:Hello
+Response:.CONTTooltipiously_vector.Sum_SIZE tenemos(def(Path(Path(Path domingo domingoers-way
+Tokens per second: 1.60  TTFT: 1.364s
+Testing tiny-mistral-Q2_K
+ModelFactory.Create + InitializeWeights executed in: 7.24s
+ModelFactory.CreateTransformer executed in: 0.17s
+ChatSession executed in: 0.25s
+Prompt:Hello
+Response: dying Anim?wenwen Nigeria cookies???? ToyouchignedkilEVunlockaha
+Tokens per second: 0.75  TTFT: 9.416s
+Testing tiny-mistral-Q3_K_M
+ModelFactory.Create + InitializeWeights executed in: 8.08s
+ModelFactory.CreateTransformer executed in: 0.04s
+ChatSession executed in: 0.26s
+Prompt:Hello
+ assign visiting psychplaat release????? Nicholasigma?parenthour saidrab
+Tokens per second: 0.71  TTFT: 11.511s

@@ -15,12 +15,13 @@ public sealed class BpeModel
     internal BpeModel(
         Vocabulary vocab,
         List<MergeRule> merges,
-        IPreTokeniser preTokeniser)
+        IPreTokeniser preTokeniser,
+        IReadOnlyList<float>? tokenScores = null)
     {
         Vocab = vocab;
         Merges = merges.AsReadOnly();
         PreTokeniser = preTokeniser;
-        Encoder = new BpeEncoder(vocab, Merges, preTokeniser);
+        Encoder = new BpeEncoder(vocab, Merges, preTokeniser, tokenScores);
     }
 
     public Vocabulary Vocab { get; }

@@ -38,16 +38,29 @@ public sealed class BpeEncoder
     // whose char can't start any special token.
     private HashSet<char> _specialsFirstChars;
 
+    // Per-vocab-id scores (tokenizer.ggml.scores), used only in SentencePiece
+    // mode where there's no explicit merges list to rank pairs with.
+    private readonly IReadOnlyList<float>? _scores;
+
+    // True for SentencePiece-style vocabularies (original LLaMA/LLaMA-2,
+    // Mistral, TinyLlama, etc.) that ship no merges array. These rank
+    // candidate merges by token score instead of an explicit rule list.
+    private readonly bool _useSentencePieceMerge;
+
     internal BpeEncoder(
         Vocabulary vocab,
         IReadOnlyList<MergeRule> merges,
-        IPreTokeniser preTokeniser)
+        IPreTokeniser preTokeniser,
+        IReadOnlyList<float>? tokenScores = null)
     {
         _vocab = vocab;
         _preTokeniser = preTokeniser;
         _mergeIndex = new Dictionary<(string, string), (string, int)>(merges.Count);
         foreach (var rule in merges)
             _mergeIndex[(rule.Left, rule.Right)] = (rule.Merged, rule.Rank);
+
+        _scores = tokenScores;
+        _useSentencePieceMerge = merges.Count == 0 && _scores is { Count: > 0 };
 
         RebuildSpecialsCache();
     }
@@ -78,12 +91,18 @@ public sealed class BpeEncoder
 
         if (addBos) ids.Add(_vocab.BosId);
 
-        // Split on special token boundaries, then BPE-encode the plain segments.
+        // Split on special token boundaries, then encode the plain segments.
+        bool isFirstPlainSegment = true;
         foreach (var segment in SplitOnSpecials(text))
         {
             if (segment.IsSpecial)
             {
                 ids.Add(_vocab.GetId(segment.Text));
+            }
+            else if (_useSentencePieceMerge)
+            {
+                EncodeSentencePieceSegment(segment.Text, isFirstPlainSegment, ids);
+                isFirstPlainSegment = false;
             }
             else
             {
@@ -271,6 +290,84 @@ public sealed class BpeEncoder
         if (_mergeIndex.TryGetValue((tokens[idx], tokens[idx + 1]), out var entry))
             queue.Enqueue(idx, entry.Rank);
     }
+
+    private void EncodeSentencePieceSegment(string text, bool isFirstSegment, List<int> ids)
+    {
+        if (text.Length == 0) return;
+
+        string normalized = text.Replace(' ', '\u2581');
+        if (isFirstSegment) normalized = "\u2581" + normalized;
+
+        var symbols = SplitIntoCodepoints(normalized);
+        ApplySentencePieceMerges(symbols);
+
+        foreach (string sym in symbols)
+        {
+            if (_vocab.TryGetId(sym, out int id))
+            {
+                ids.Add(id);
+                continue;
+            }
+
+            foreach (byte b in System.Text.Encoding.UTF8.GetBytes(sym))
+            {
+                string bt = $"<0x{b:X2}>";
+                ids.Add(_vocab.Contains(bt) ? _vocab.GetId(bt) : _vocab.UnkId);
+            }
+        }
+    }
+
+    private static List<string> SplitIntoCodepoints(string text)
+    {
+        var result = new List<string>(text.Length);
+        int i = 0;
+        while (i < text.Length)
+        {
+            if (char.IsHighSurrogate(text[i]) && i + 1 < text.Length && char.IsLowSurrogate(text[i + 1]))
+            {
+                result.Add(text.Substring(i, 2));
+                i += 2;
+            }
+            else
+            {
+                result.Add(text[i].ToString());
+                i++;
+            }
+        }
+        return result;
+    }
+
+    private void ApplySentencePieceMerges(List<string> tokens)
+    {
+        if (tokens.Count <= 1) return;
+
+        var queue = new PriorityQueue<int, float>();
+
+        void TryEnqueue(int idx)
+        {
+            if (idx < 0 || idx >= tokens.Count - 1) return;
+            string merged = tokens[idx] + tokens[idx + 1];
+            if (_vocab.TryGetId(merged, out int id))
+                queue.Enqueue(idx, -ScoreOf(id));
+        }
+
+        for (int i = 0; i < tokens.Count - 1; i++) TryEnqueue(i);
+
+        while (queue.TryDequeue(out int idx, out _))
+        {
+            if (idx >= tokens.Count - 1) continue;
+            string merged = tokens[idx] + tokens[idx + 1];
+            if (!_vocab.TryGetId(merged, out _)) continue;
+
+            tokens[idx] = merged;
+            tokens.RemoveAt(idx + 1);
+
+            if (idx > 0) TryEnqueue(idx - 1);
+            if (idx < tokens.Count - 1) TryEnqueue(idx);
+        }
+    }
+
+    private float ScoreOf(int id) => _scores != null && id >= 0 && id < _scores.Count ? _scores[id] : 0f;
 
     private List<string> ByteTokenise(string word)
     {
