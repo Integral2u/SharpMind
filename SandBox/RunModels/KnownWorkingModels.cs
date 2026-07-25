@@ -16,8 +16,9 @@ namespace SandBox.RunModels
             "Qwen3-0.6B-Q2_K",      //Response:?\nOkay, so I need to start with the user's message. 
             //last working run 25/07/2026  regression new response:    Hello, dear friend.\n    I am here in the world of a little one.\n    I have to
             "llama-3.2-1b-instruct-q8_0",       //Response:It seems like you've got a question about the answer to my own.
-            //last working run 24/07/2026 after commit 21906362 regression new response: * 1.   *   *   *   - 2.0\n    . . .-1 =
+            //last working run 24/07/2026 after commit 21906362 regression new response: I think you're notepad I'mostalgore I apologize for  i want to open to the  # i am using a\nThe answer was delayed in (t o s is not is located in u . The 2 1 i
 
+            "SmolLM2-135M-Instruct.Q4_K_M", //Response:UserName: 10. You can you have been here to give advice and guidance for your friend is helpful! Your
             "qwen2-0_5b-instruct-q4_k_m",   //Response:Hello! How can I assist you today?
             "qwen2-0.5b-instruct-q2_k",     //Response:Hello! How can I assist you today?
 

@@ -44,3 +44,33 @@ DARE (Drop And REscale): Drops redundant weights and re-scales the remaining wei
 Task Arithmetic: Creates "task vectors" by subtracting the base model weights from the fine-tuned model weights, allowing these vectors to be added or subtracted to modify model behavior.
 
 Chat session is not adding name in AddMessage, not used in prompt formatting but for reference,  CUI could as have input overide for user name and AgentName provides a name for agents.
+
+
+
+Tier 1 — Models that should now work (Jinja template errors fixed)
+These were failing with template parsing errors that Fixes B/C/D/E address:
+
+Model	What was broken	What fix helps
+Qwen3-0.6B-Q2_K	messsages[0].role dot access	Fix C (bracket+dot)
+Qwen2.5-1.5B-Instruct-f16	tools var missing, messages[0].role	Fix B (tools=null) + Fix C
+qwen2.5-1.5b-instruct-q8_0	same as above	Fix B + Fix C
+DeepSeek-R1-Distill-Qwen-1.5B-Q8_0	messsages[0].role	Fix C
+DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M	same	Fix C
+gemma-3-270m-it-Q8_0	is string, is iterable, % modulo, complex paren comparisons	Fix D + Fix E
+gemma-3-270m-it-Q4_K_M	same	Fix D + Fix E
+gemma-3-270m-it-F16	same	Fix D + Fix E
+Tier 2 — Already working, re-confirm no regression
+All qwen2-0.5b-instruct-* variants (Q2_K, Q4_K_M, Q8_0, FP16)
+llama-3.2-1b-instruct-q8_0
+Qwen3-0.6B-Q{3..8}_K_M/Q* variants
+Qwen2.5-1.5B-Instruct-f16
+Tier 3 — Probably still failing (non-Jinja issues)
+Qwen2-0.5B.Q* (base, non-instruct) — expected, base checkpoints produce repetitions
+tinyllama-1.1b-chat-v1.0 — different issue (likely tokenizer/pre-tokeniser)
+llama3-small-Q* — different issue (likely tokenizer)
+tiny-mistral-Q* — different issue (likely tokenizer)
+SmolLM-135M*, SmolLM2-135M-Instruct* — gibberish, likely sub-1B model limitations
+Recommendation
+Start with Tier 1 — run gemma-3-270m-it-Q8_0 first (most fixes target its template), then Qwen3-0.6B-Q2_K / qwen2.5-1.5b-instruct-q8_0. If those produce coherent responses, the fixes are working.
+
+Want me to draft the test commands for each?

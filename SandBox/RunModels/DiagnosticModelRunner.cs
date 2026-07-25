@@ -38,9 +38,10 @@ namespace SandBox.RunModels
                 var metaHelper = ModelFormatHelpers.GetModelMetaHelperFor((ModelFormat)fmt);
 
                 await Console.Out.WriteLineAsync($"Testing {m}");
+
                 await Console.Out.FlushAsync();
                 metaHelper.Load(modelPath, null, out ModelMetaData meta, out ModelConfig modelConfig, out Tokenizer? tokenizer);
-
+                Console.Out.WriteLineAsync($"[DIAG] {meta}: arch='{meta.GetString("general.architecture")}'");
                 // Diagnostic: dump rendered prompt and formatter errors
                 var formatter = ChatPromptFormatterFactory.Create(meta);
                 if (formatter is JinjaTemplateFormatter jinja)

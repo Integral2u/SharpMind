@@ -184,7 +184,7 @@ public static class GgufConverter
             || arch.Contains("deepseek")
             || arch.StartsWith("llama")  // Llama 3+ uses tiktoken; Llama 1/2 are SentencePiece (no merges, handled elsewhere)
             || arch.StartsWith("phi3") || arch.StartsWith("phi4")
-            || arch.StartsWith("gemma2")
+            || arch.StartsWith("gemma2") || arch.StartsWith("gemma3") || arch.StartsWith("gemma-3")
             || arch is "dbrx")
             return new Cl100kPreTokeniser();
 

@@ -20,6 +20,12 @@ public sealed class JinjaEnv
         return _parent?.Get(name);
     }
 
+    public bool ContainsKey(string name)
+    {
+        if (_vars.ContainsKey(name)) return true;
+        return _parent?.ContainsKey(name) ?? false;
+    }
+
     /// <summary>Creates a child scope (used for for-loop iterations).</summary>
     public JinjaEnv Push() => new(this);
 }
