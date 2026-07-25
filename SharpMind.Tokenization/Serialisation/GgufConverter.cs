@@ -63,7 +63,8 @@ public static class GgufConverter
         int[]?    tokenTypes,
         int       bosId,
         int       eosId,
-        float[]?  scores = null)
+        float[]?  scores = null,
+        string?   architecture = null)
     {
         ArgumentNullException.ThrowIfNull(tokens);
         if (tokens.Length == 0)
@@ -147,15 +148,47 @@ public static class GgufConverter
         }        
 
         // PreTokeniser
-        // GPT-2-style byte-level BPE models (Qwen, Llama-3/tiktoken, Phi, etc.)
-        // ship an explicit tokenizer.ggml.merges list and use GPT-2 byte-level
-        // pre-tokenisation. Original LLaMA/LLaMA-2/Mistral/TinyLlama GGUFs are
-        // SentencePiece-based: they have no merges array at all, and instead
-        // rank merges by tokenizer.ggml.scores. mergeList will be empty in
-        // that case, and BpeEncoder detects it (via the scores array below)
-        // and switches to score-ranked SentencePiece-style merging instead of
-        // silently tokenising everything byte-by-byte.
-        return new BpeModel(vocab, mergeList, new Gpt2PreTokeniser(), scores);
+        // tiktoken-based models (Llama 3+, Qwen 2+/3, DeepSeek, Phi-3/4,
+        // Gemma 2, GPT-4o) use cl100k-style pre-tokenisation with case-
+        // insensitive contraction matching. All other byte-level BPE models
+        // (GPT-2, GPT-Neo, Bloom, Starcoder, Phi-1/2, etc.) use the original
+        // GPT-2 pattern with case-sensitive contractions.
+        // Original LLaMA/LLaMA-2/Mistral/TinyLlama GGUFs are SentencePiece-
+        // based: they have no merges array at all, and instead rank merges by
+        // tokenizer.ggml.scores. mergeList will be empty in that case, and
+        // BpeEncoder detects it (via the scores array below) and switches to
+        // score-ranked SentencePiece-style merging instead of silently
+        // tokenising everything byte-by-byte.
+        IPreTokeniser preTokeniser = SelectPreTokeniser(architecture);
+        return new BpeModel(vocab, mergeList, preTokeniser, scores);
+    }
+
+    /// <summary>
+    /// Selects the correct <see cref="IPreTokeniser"/> based on the model
+    /// architecture string from GGUF metadata (<c>general.architecture</c>).
+    ///
+    /// tiktoken-based models (Llama 3+, Qwen, DeepSeek, Phi-3/4, Gemma 2, DBRX)
+    /// use cl100k-style pattern with case-insensitive contraction matching.
+    /// Everything else uses the classic GPT-2 pattern.
+    /// </summary>
+    private static IPreTokeniser SelectPreTokeniser(string? architecture)
+    {
+        if (string.IsNullOrWhiteSpace(architecture))
+            return new Gpt2PreTokeniser();
+
+        string arch = architecture.ToLowerInvariant();
+
+        // Architectures known to use tiktoken-based vocabularies
+        if (arch is "qwen2" or "qwen2.5" or "qwen3" or "qwen2moe" or "deepseek2"
+            || arch.Contains("qwen")
+            || arch.Contains("deepseek")
+            || arch.StartsWith("llama")  // Llama 3+ uses tiktoken; Llama 1/2 are SentencePiece (no merges, handled elsewhere)
+            || arch.StartsWith("phi3") || arch.StartsWith("phi4")
+            || arch.StartsWith("gemma2")
+            || arch is "dbrx")
+            return new Cl100kPreTokeniser();
+
+        return new Gpt2PreTokeniser();
     }
 
     // Helpers

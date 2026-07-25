@@ -30,6 +30,9 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
 {
     private readonly string _template = template;
 
+    /// <summary>Errors accumulated during the last <see cref="Format"/> call.</summary>
+    public IReadOnlyList<string>? LastErrors { get; private set; }
+
     // Public entry point
 
     public string Format(IReadOnlyList<ChatMessage> history, Tokenizer tokenizer, bool addBos, bool enableThinking = false)
@@ -54,10 +57,13 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
         env.Set("eos_token", eosToken);
         env.Set("add_generation_prompt", (object)true);  // always true for inference
         env.Set("enable_thinking", (object)enableThinking);
+        env.Set("tools", null);  // Qwen3/Qwen2.5 templates check {% if tools %}
 
+        var errors = new List<string>();
         var tokens = Tokenise(_template);
         var sb = new StringBuilder();
-        Execute(tokens, 0, tokens.Count, env, sb);
+        Execute(tokens, 0, tokens.Count, env, sb, errors);
+        LastErrors = errors.Count > 0 ? errors : null;
         return sb.ToString();
     }
 
@@ -76,12 +82,11 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
         {
             int tag = src.IndexOf("{%", pos, StringComparison.Ordinal);
             int expr = src.IndexOf("{{", pos, StringComparison.Ordinal);
+            int comment = src.IndexOf("{#", pos, StringComparison.Ordinal);
 
             // Find whichever opener comes first.
-            int next = (tag < 0 && expr < 0) ? -1
-                      : tag < 0 ? expr
-                      : expr < 0 ? tag
-                      : Math.Min(tag, expr);
+            int next = (tag < 0 && expr < 0 && comment < 0) ? -1
+                      : EarliestNonNegative(tag, expr, comment);
 
             if (next < 0)
             {
@@ -92,7 +97,31 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
             if (next > pos)
                 result.Add(new Token(TKind.Text, src[pos..next], false, false));
 
-            if (next == expr && (tag < 0 || expr < tag))
+            if (next == comment)
+            {
+                // {# comment #} — discard entirely after processing strip modifiers
+                int end = src.IndexOf("#}", next + 2, StringComparison.Ordinal);
+                if (end < 0) { result.Add(new Token(TKind.Text, src[next..], false, false)); break; }
+                string raw = src[(next + 2)..end];
+                bool sr = raw.EndsWith('-');
+                bool sl = raw.StartsWith('-');
+                pos = end + 2;
+                // strip-left: trim trailing whitespace from output so far
+                if (sl)
+                    while (result.Count > 0 && result[^1] is Token { Kind: TKind.Text } t && t.Body.Length > 0
+                           && char.IsWhiteSpace(t.Body[^1]))
+                    {
+                        string trimmed = t.Body.TrimEnd();
+                        if (trimmed.Length == 0)
+                            result.RemoveAt(result.Count - 1);
+                        else
+                            result[^1] = t with { Body = trimmed };
+                        if (trimmed.Length > 0) break; // keep trimming prior tokens if last was all ws
+                    }
+                // strip-right: eat the immediately following newline
+                if (sr && pos < src.Length && src[pos] == '\n') pos++;
+            }
+            else if (next == expr && (tag < 0 || expr < tag))
             {
                 int end = src.IndexOf("}}", next + 2, StringComparison.Ordinal);
                 if (end < 0) { result.Add(new Token(TKind.Text, src[next..], false, false)); break; }
@@ -122,11 +151,20 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
         return result;
     }
 
+    private static int EarliestNonNegative(int a, int b, int c)
+    {
+        int min = int.MaxValue;
+        if (a >= 0 && a < min) min = a;
+        if (b >= 0 && b < min) min = b;
+        if (c >= 0 && c < min) min = c;
+        return min == int.MaxValue ? -1 : min;
+    }
+
     // Executor
 
     private static void Execute(
         List<Token> tokens, int start, int end,
-        JinjaEnv env, StringBuilder sb)
+        JinjaEnv env, StringBuilder sb, List<string> errors)
     {
         int i = start;
         while (i < end)
@@ -149,7 +187,7 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
 
             if (tok.Kind == TKind.Output)
             {
-                var val = Eval(tok.Body, env);
+                var val = Eval(tok.Body, env, errors);
                 if (val != null) sb.Append(Stringify(val));
                 i++;
                 continue;
@@ -160,24 +198,25 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
 
             if (tag.StartsWith("for ", StringComparison.Ordinal))
             {
-                i = ExecuteFor(tokens, i, end, env, sb);
+                i = ExecuteFor(tokens, i, end, env, sb, errors);
                 continue;
             }
 
             if (tag.StartsWith("if ", StringComparison.Ordinal) || tag == "if")
             {
-                i = ExecuteIf(tokens, i, end, env, sb);
+                i = ExecuteIf(tokens, i, end, env, sb, errors);
                 continue;
             }
 
             if (tag.StartsWith("set ", StringComparison.Ordinal))
             {
-                ExecuteSet(tag, env);
+                ExecuteSet(tag, env, errors);
                 i++;
                 continue;
             }
 
-            // endfor / endif / else / elif — handled by their parent, skip
+            // Unrecognized tag — log error and skip
+            errors.Add($"Unrecognized Jinja tag at token {i}: '{tag}'");
             i++;
         }
     }
@@ -186,15 +225,19 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
 
     private static int ExecuteFor(
         List<Token> tokens, int forIdx, int end,
-        JinjaEnv env, StringBuilder sb)
+        JinjaEnv env, StringBuilder sb, List<string> errors)
     {
         // Parse "for VAR in EXPR"
         var m = RegexGenerated.JinjaForVarInExpr.Match(tokens[forIdx].Body);// Regex.Match(tokens[forIdx].Body, @"^for\s+(\w+)\s+in\s+(.+)$");
-        if (!m.Success) return forIdx + 1;
+        if (!m.Success)
+        {
+            errors.Add($"JINJA ERROR: failed to parse 'for' tag at token {forIdx}: '{tokens[forIdx].Body}'");
+            return forIdx + 1;
+        }
 
         string varName = m.Groups[1].Value;
         string iterExpr = m.Groups[2].Value.Trim();
-        var iterable = Eval(iterExpr, env);
+        var iterable = Eval(iterExpr, env, errors);
 
         // Find matching endfor
         int bodyStart = forIdx + 1;
@@ -218,8 +261,12 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
                 };
                 child.Set("loop", loop);
 
-                Execute(tokens, bodyStart, bodyEnd, child, sb);
+                Execute(tokens, bodyStart, bodyEnd, child, sb, errors);
             }
+        }
+        else
+        {
+            errors.Add($"JINJA ERROR: 'for {varName} in {iterExpr}' — expression is not a list (got {iterable?.GetType().Name ?? "null"})");
         }
 
         return bodyEnd + 1; // +1 to skip the endfor token
@@ -229,7 +276,7 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
 
     private static int ExecuteIf(
         List<Token> tokens, int ifIdx, int end,
-        JinjaEnv env, StringBuilder sb)
+        JinjaEnv env, StringBuilder sb, List<string> errors)
     {
         // Collect all branches: [(condition_expr, start, end), …]
         // null condition = else branch
@@ -255,9 +302,9 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
                 branches.Add((curCond, branchStart, i));
                 foreach (var (cond, bs, be) in branches)
                 {
-                    if (cond == null || IsTruthy(Eval(cond, env)))
+                    if (cond == null || IsTruthy(Eval(cond, env, errors)))
                     {
-                        Execute(tokens, bs, be, env, sb);
+                        Execute(tokens, bs, be, env, sb, errors);
                         break;
                     }
                 }
@@ -269,7 +316,7 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
             {
                 branches.Add((curCond, branchStart, i));
                 curCond = t.StartsWith("elif ") ? t["elif ".Length..].Trim()
-                                                      : t["else if ".Length..].Trim();
+                                                       : t["else if ".Length..].Trim();
                 branchStart = i + 1;
                 continue;
             }
@@ -286,9 +333,9 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
         branches.Add((curCond, branchStart, end));
         foreach (var (cond, bs, be) in branches)
         {
-            if (cond == null || IsTruthy(Eval(cond, env)))
+            if (cond == null || IsTruthy(Eval(cond, env, errors)))
             {
-                Execute(tokens, bs, be, env, sb);
+                Execute(tokens, bs, be, env, sb, errors);
                 break;
             }
         }
@@ -297,7 +344,7 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
 
     // Set
 
-    private static void ExecuteSet(string tag, JinjaEnv env)
+    private static void ExecuteSet(string tag, JinjaEnv env, List<string> errors)
     {
         // set ns = namespace(field=val, …)
         var nsMatch = RegexGenerated.JinjaSetNsFieldValue.Match(tag);// Regex.Match(tag,@"^set\s+(\w+)\s*=\s*namespace\s*\((.*)?\)\s*$",RegexOptions.Singleline);
@@ -310,7 +357,7 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
             {
                 string k = kv.Groups[1].Value.Trim();
                 string v = kv.Groups[2].Value.Trim();
-                ns.Set(k, Eval(v, env) ?? (object)"");
+                ns.Set(k, Eval(v, env, errors) ?? (object)"");
             }
             env.Set(name, ns);
             return;
@@ -325,9 +372,11 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
             string expr = dotMatch.Groups[3].Value.Trim();
             var target = env.Get(obj);
             if (target is JinjaNamespace jns)
-                jns.Set(field, Eval(expr, env) ?? (object)"");
+                jns.Set(field, Eval(expr, env, errors) ?? (object)"");
             else if (target is JinjaDict jd)
-                jd[field] = Eval(expr, env) ?? (object)"";
+                jd[field] = Eval(expr, env, errors) ?? (object)"";
+            else
+                errors.Add($"JINJA ERROR: 'set {obj}.{field} = {expr}' — '{obj}' is not a namespace or dict (got {target?.GetType().Name ?? "null"})");
             return;
         }
 
@@ -337,13 +386,16 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
         {
             string name = simple.Groups[1].Value;
             string expr = simple.Groups[2].Value.Trim();
-            env.Set(name, Eval(expr, env) ?? (object)"");
+            env.Set(name, Eval(expr, env, errors) ?? (object)"");
+            return;
         }
+
+        errors.Add($"JINJA ERROR: unrecognized 'set' tag syntax: '{tag}'");
     }
 
     // Expression evaluator
 
-    public static object? Eval(string expr, JinjaEnv env)
+    public static object? Eval(string expr, JinjaEnv env, List<string>? errors = null)
     {
         expr = expr.Trim();
 
@@ -351,7 +403,7 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
         // (avoid falsely stripping when the top-level expression uses parens
         //  for grouping sub-expressions, e.g. (A or B) and (C or D))
         if (expr.StartsWith('(') && expr.EndsWith(')') && MatchingOuterParens(expr))
-            return Eval(expr[1..^1], env);
+            return Eval(expr[1..^1], env, errors);
 
         // 'not X is defined'
         if (RegexGenerated.JinjaNotXIsDefined.IsMatch(expr))// Regex.IsMatch(expr, @"^not\s+\w+\s+is\s+defined$"))
@@ -371,7 +423,7 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
         var noneM = RegexGenerated.JinjaXIsNoneNotNone.Match(expr);// Regex.Match(expr, @"^(.+?)\s+is\s+(not\s+)?none$");
         if (noneM.Success)
         {
-            var v = Eval(noneM.Groups[1].Value, env);
+            var v = Eval(noneM.Groups[1].Value, env, errors);
             bool isNone = v == null || v is string s && s == "";
             return (object)(noneM.Groups[2].Success ? !isNone : isNone);
         }
@@ -380,23 +432,41 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
         var boolM = System.Text.RegularExpressions.Regex.Match(expr, @"^(.+?)\s+is\s+(not\s+)?(true|false)$");
         if (boolM.Success)
         {
-            var v = Eval(boolM.Groups[1].Value, env);
+            var v = Eval(boolM.Groups[1].Value, env, errors);
             bool target = boolM.Groups[3].Value == "true";
             bool actual = v is bool vb ? vb : IsTruthy(v);
             bool isMatch = actual == target;
             return (object)(boolM.Groups[2].Success ? !isMatch : isMatch);
         }
 
+        // X is string / X is not string
+        var isStringM = System.Text.RegularExpressions.Regex.Match(expr, @"^(.+?)\s+is\s+(not\s+)?string$");
+        if (isStringM.Success)
+        {
+            var v = Eval(isStringM.Groups[1].Value, env, errors);
+            bool isStr = v is string;
+            return (object)(isStringM.Groups[2].Success ? !isStr : isStr);
+        }
+
+        // X is iterable / X is not iterable
+        var isIterableM = System.Text.RegularExpressions.Regex.Match(expr, @"^(.+?)\s+is\s+(not\s+)?iterable$");
+        if (isIterableM.Success)
+        {
+            var v = Eval(isIterableM.Groups[1].Value, env, errors);
+            bool isIter = v is string || v is System.Collections.IList || v is System.Collections.ICollection;
+            return (object)(isIterableM.Groups[2].Success ? !isIter : isIter);
+        }
+
         // not X
         if (expr.StartsWith("not ", StringComparison.Ordinal))
-            return (object)!IsTruthy(Eval(expr[4..], env));
+            return (object)!IsTruthy(Eval(expr[4..], env, errors));
 
         // 'literal' in X  (substring test)
         var inMatch = RegexGenerated.JinjaLiteralInXSubstr.Match(expr); // Regex.Match(expr, @"^'([^']*)'\s+in\s+(.+)$");
         if (inMatch.Success)
         {
             string needle = inMatch.Groups[1].Value;
-            var hay = Eval(inMatch.Groups[2].Value, env);
+            var hay = Eval(inMatch.Groups[2].Value, env, errors);
             string hayStr = hay is string hs ? hs : Stringify(hay);
             return (object)hayStr.Contains(needle, StringComparison.Ordinal);
         }
@@ -406,13 +476,13 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
         if (inMatch2.Success)
         {
             string needle = inMatch2.Groups[1].Value;
-            var hay = Eval(inMatch2.Groups[2].Value, env);
+            var hay = Eval(inMatch2.Groups[2].Value, env, errors);
             string hayStr = hay is string hs ? hs : Stringify(hay);
             return (object)hayStr.Contains(needle, StringComparison.Ordinal);
         }
 
         // Operator precedence (lowest first, matching Jinja2 / Python):
-        //   or  →  and  →  ==/!=  →  is/in/not  →  +  →  atom
+        //   or  →  and  →  ==/!=  →  is/in/not  →  +  →  %  →  atom
         // Each level uses a bracket-aware search so that expressions like
         // messages[0]['role'] != 'system'  are not split at the wrong point.
 
@@ -420,23 +490,23 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
         int orPos = FindKeywordOutside(expr, "or");
         if (orPos >= 0)
         {
-            var lv = Eval(expr[..orPos].TrimEnd(), env);
-            return IsTruthy(lv) ? lv : Eval(expr[(orPos + 2)..].TrimStart(), env);
+            var lv = Eval(expr[..orPos].TrimEnd(), env, errors);
+            return IsTruthy(lv) ? lv : Eval(expr[(orPos + 2)..].TrimStart(), env, errors);
         }
 
         // X and Y
         int andPos = FindKeywordOutside(expr, "and");
         if (andPos >= 0)
             return (object)(
-                IsTruthy(Eval(expr[..andPos].TrimEnd(), env)) &&
-                IsTruthy(Eval(expr[(andPos + 3)..].TrimStart(), env)));
+                IsTruthy(Eval(expr[..andPos].TrimEnd(), env, errors)) &&
+                IsTruthy(Eval(expr[(andPos + 3)..].TrimStart(), env, errors)));
 
         // X == Y
         int eqPos = FindOperatorOutsideQuotes(expr, '=', requireDouble: true);
         if (eqPos >= 0)
         {
-            var left = Eval(expr[..eqPos].TrimEnd(), env);
-            var right = Eval(expr[(eqPos + 2)..].TrimStart(), env);
+            var left = Eval(expr[..eqPos].TrimEnd(), env, errors);
+            var right = Eval(expr[(eqPos + 2)..].TrimStart(), env, errors);
             return (object)(Stringify(left) == Stringify(right));
         }
 
@@ -444,17 +514,28 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
         int nePos = FindNeqOutside(expr);
         if (nePos >= 0)
         {
-            var left = Eval(expr[..nePos].TrimEnd(), env);
-            var right = Eval(expr[(nePos + 2)..].TrimStart(), env);
+            var left = Eval(expr[..nePos].TrimEnd(), env, errors);
+            var right = Eval(expr[(nePos + 2)..].TrimStart(), env, errors);
             return (object)(Stringify(left) != Stringify(right));
+        }
+
+        // Modulo: expr % expr (outside quotes)
+        int modIdx = FindOperatorOutsideQuotes(expr, '%', requireDouble: false);
+        if (modIdx >= 0)
+        {
+            var left = Eval(expr[..modIdx], env, errors);
+            var right = Eval(expr[(modIdx + 1)..], env, errors);
+            long ln = left is long ll ? ll : left is int ii ? ii : 0;
+            long rn = right is long rl ? rl : right is int ri ? ri : 1;
+            return (object)(rn != 0 ? ln % rn : 0);
         }
 
         // String concatenation: expr + expr (outside quotes)
         int plusIdx = FindOperatorOutsideQuotes(expr, '+', requireDouble: false);
         if (plusIdx >= 0)
         {
-            var left = Eval(expr[..plusIdx], env);
-            var right = Eval(expr[(plusIdx + 1)..], env);
+            var left = Eval(expr[..plusIdx], env, errors);
+            var right = Eval(expr[(plusIdx + 1)..], env, errors);
             return (object)(Stringify(left) + Stringify(right));
         }
 
@@ -462,7 +543,7 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
         var filterM = RegexGenerated.JinjaExprTrim.Match(expr);
         if (filterM.Success)
         {
-            var v = Eval(filterM.Groups[1].Value, env);
+            var v = Eval(filterM.Groups[1].Value, env, errors);
             return (object)(Stringify(v).Trim());
         }
 
@@ -470,7 +551,7 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
         var lengthM = RegexGenerated.JinjaExprLength.Match(expr);
         if (lengthM.Success)
         {
-            var v = Eval(lengthM.Groups[1].Value, env);
+            var v = Eval(lengthM.Groups[1].Value, env, errors);
             return (object)(v switch
             {
                 List<JinjaDict> list => (long)list.Count,
@@ -483,7 +564,7 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
         var splitM = RegexGenerated.JinjaSplitDelim.Match(expr);// Regex.Match(expr,@"^(\w+)\.split\('([^']*)'\)\[(-?\d+)\]$");
         if (splitM.Success)
         {
-            var src = Stringify(Eval(splitM.Groups[1].Value, env));
+            var src = Stringify(Eval(splitM.Groups[1].Value, env, errors));
             string sep = splitM.Groups[2].Value;
             int idx = int.Parse(splitM.Groups[3].Value);
             var parts = src.Split(sep);
@@ -515,12 +596,20 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
         var (bracketStart, bracketEnd) = FindLastBracketPair(expr);
         if (bracketStart >= 0)
         {
-            var obj = Eval(expr[..bracketStart], env);
-            var key = Eval(expr[(bracketStart + 1)..bracketEnd], env);
-            return AccessIndex(obj, key);
+            var obj = Eval(expr[..bracketStart], env, errors);
+            var key = Eval(expr[(bracketStart + 1)..bracketEnd], env, errors);
+            var idxVal = AccessIndex(obj, key);
+
+            // Handle .field suffix after bracket access, e.g. messages[0].role
+            if (idxVal != null && bracketEnd + 1 < expr.Length && expr[bracketEnd + 1] == '.')
+                return AccessField(idxVal, expr[(bracketEnd + 2)..]);
+
+            return idxVal;
         }
 
         // obj.field  (dot access, handles loop.first, ns.field etc.)
+        // Also matches expressions like messages[0].role when no bracket pair
+        // is found (e.g. after recursive Eval consumes the bracket part).
         var dotM = RegexGenerated.JinjaObjDotField.Match(expr);//  Regex.Match(expr, @"^(\w+)\.(\w+)$");
         if (dotM.Success)
         {
@@ -533,7 +622,7 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
         var arithM = RegexGenerated.JinjaPlusMinusN.Match(expr);// Regex.Match(expr, @"^(.+?)\s*([+\-])\s*(\d+)$");
         if (arithM.Success)
         {
-            var lv = Eval(arithM.Groups[1].Value, env);
+            var lv = Eval(arithM.Groups[1].Value, env, errors);
             long rn = long.Parse(arithM.Groups[3].Value);
             long ln = lv is long ll ? ll : lv is int ii ? ii : 0;
             return (object)(arithM.Groups[2].Value == "+" ? ln + rn : ln - rn);
@@ -541,7 +630,12 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
 
         // Plain identifier
         var result = env.Get(expr);
-        if (result is null) InternalLog.WriteLine($"JinjaTemplateFormatter: variable '{expr}' not found in template env");
+        if (result is null)
+        {
+            string msg = $"JINJA ERROR: variable '{expr}' not found in template env";
+            errors?.Add(msg);
+            InternalLog.WriteLine($"JinjaTemplateFormatter: variable '{expr}' not found in template env");
+        }
         return result;
     }
 

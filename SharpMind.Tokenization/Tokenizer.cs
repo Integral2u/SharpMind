@@ -61,6 +61,38 @@ public class Tokenizer
     public SpecialTokens Specials => _model.Vocab.Specials;
 
     /// <summary>
+    /// Returns all token IDs that should halt generation.
+    /// Always includes <see cref="EosId"/>, plus any known turn-end tokens
+    /// found in the vocabulary (e.g. &lt;|eot_id|&gt;, &lt;|im_end|&gt;,
+    /// &lt;|end_of_text|&gt;, &lt;|end▁of▁sentence|&gt;, &lt;end_of_turn&gt;).
+    /// </summary>
+    public IReadOnlyList<int> GetEndOfGenerationIds()
+    {
+        var stopIds = new List<int> { EosId };
+        string[] knownTurnEndTokens =
+        [
+            "<|eot_id|>",
+            "<|im_end|>",
+            "<|end_of_text|>",
+            "<|end▁of▁sentence|>",
+            "\uFFFD\uFFFDend\uFFFDof\uFFFDsentence\uFFFD\uFFFD",  // fallback encoding
+            "<end_of_turn>",
+            "</s>",
+        ];
+        foreach (string token in knownTurnEndTokens)
+        {
+            if (Vocab.Contains(token))
+                stopIds.Add(Vocab.GetId(token));
+        }
+        // Deduplicate in case EosId matches one of the above
+        return stopIds.Distinct().ToList();
+    }
+
+    // True for SentencePiece-style vocabularies (original LLaMA/LLaMA-2,
+    // Mistral, TinyLlama, etc.) that ship no merges array. These rank
+    // candidate merges by token score instead of an explicit rule list.
+    public bool UseSentencePieceMerge => _model.Encoder.UseSentencePieceMerge;
+    /// <summary>
     /// Encodes text to token IDs.
     /// Set <paramref name="addBos"/> / <paramref name="addEos"/> to include
     /// boundary tokens required by most autoregressive LLMs.
@@ -119,7 +151,8 @@ public class Tokenizer
     /// <param name="tokenTypes">Per-token type flags (tokenizer.ggml.token_type). May be null.</param>
     /// <param name="bosId">BOS token ID (tokenizer.ggml.bos_token_id).</param>
     /// <param name="eosId">EOS token ID (tokenizer.ggml.eos_token_id).</param>
-    public static Tokenizer FromGguf(string[] tokens, string[]? merges, int[]? tokenTypes, int bosId, int eosId, float[]? scores = null) => new(GgufConverter.Convert(tokens, merges, tokenTypes, bosId, eosId, scores));
+    /// <param name="architecture">Model architecture string (general.architecture). Used to select the correct pre-tokeniser (cl100k vs GPT-2).</param>
+    public static Tokenizer FromGguf(string[] tokens, string[]? merges, int[]? tokenTypes, int bosId, int eosId, float[]? scores = null, string? architecture = null) => new(GgufConverter.Convert(tokens, merges, tokenTypes, bosId, eosId, scores, architecture));
 
     /// <summary>
     /// Loads a GPT-2 tokenizer from its two native files.

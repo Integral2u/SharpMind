@@ -1,17 +1,3 @@
-Why are some models so slow.
-
-Output from chat sessions can now end with odd characters. this function in CharSession used to deal with it, but it's intention was for thinking.
-/* private string StripThinking(string text)
-{
-    if (string.IsNullOrWhiteSpace(text)) return text;
-
-    // Remove all <think>...</think> blocks
-    var result = System.Text.RegularExpressions.Regex.Replace(text, @"<think>.*?</think>", "", System.Text.RegularExpressions.RegexOptions.Singleline);
-
-    // Also trim trailing garbage characters often seen at the end of LLM responses (e.g. EOS tokens decoded as symbols)
-    return result.TrimEnd('\uFFFD', '\u0000', '\u0001', '\u0002', '\u0003').Trim();
-}*/
-while the end of a response could be trimmed as a backup should the EOS tokens decoded as symbols be better handled.
 
 CUI Plugins?
 [Conditional("DEBUG")] 
@@ -56,3 +42,5 @@ SLERP (Spherical Linear Interpolation): Better than linear interpolation for hig
 TIES-Merging (TrIm, Elect, Sign, and Merge): Designed to handle interference between models by only merging the most significant weight updates and resolving sign disagreements
 DARE (Drop And REscale): Drops redundant weights and re-scales the remaining weights to create a "soups" of models, reducing task interference.
 Task Arithmetic: Creates "task vectors" by subtracting the base model weights from the fine-tuned model weights, allowing these vectors to be added or subtracted to modify model behavior.
+
+Chat session is not adding name in AddMessage, not used in prompt formatting but for reference,  CUI could as have input overide for user name and AgentName provides a name for agents.

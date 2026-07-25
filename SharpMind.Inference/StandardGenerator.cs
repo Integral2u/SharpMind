@@ -295,8 +295,12 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
 
         if (window > 0)
         {
-            int start = Math.Max(0, _generatedIds.Count - window);
-            for (int i = start; i < _generatedIds.Count; i++)
+            // Penalize recent prompt tokens within the window
+            int promptStart = Math.Max(0, promptIds.Length - window);
+            for (int i = promptStart; i < promptIds.Length; i++)
+                ScaleId(logits, promptIds[i], penalty);
+            int genStart = Math.Max(0, _generatedIds.Count - window);
+            for (int i = genStart; i < _generatedIds.Count; i++)
                 ScaleId(logits, _generatedIds[i], penalty);
             return;
         }

@@ -281,7 +281,8 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
 
         try
         {
-            return Tokenizer.FromGguf(tokens, merges, types, bosId, eosId, scores);
+            string arch = meta.GetString("general.architecture") ?? "";
+            return Tokenizer.FromGguf(tokens, merges, types, bosId, eosId, scores, arch);
         }
         catch (Exception ex)
         {

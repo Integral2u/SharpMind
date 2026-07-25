@@ -15,7 +15,7 @@ namespace SharpMind.Inference
         public static partial Regex JinjaNamespace { get; }
         [GeneratedRegex(@"^set\s+(\w+)\.(\w+)\s*=\s*(.+)$")]
         public static partial Regex JinjaNamespaceDotFieldEqExpr { get; }
-        [GeneratedRegex(@"^set\s+(\w+)\s*=\s*(.+)$")]
+        [GeneratedRegex(@"^set\s+(\w+)\s*=\s*(.+)$", RegexOptions.Singleline)]
         public static partial Regex JinjaSetVarEqExpr { get; }
         [GeneratedRegex(@"^not\s+\w+\s+is\s+defined$")]
         public static partial Regex JinjaNotXIsDefined { get; }

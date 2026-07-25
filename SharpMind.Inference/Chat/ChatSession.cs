@@ -110,7 +110,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         _postProcessor = postProcessor;
         _compactor = compactor;
         MaxAgentDepth = _agentBuilder?.MaxAgentDepth ?? 2;
-        _addBos = ModelMetaData.ResolveAddBos(meta);
+        _addBos = ModelMetaData.ResolveAddBos(meta, tokenizer.UseSentencePieceMerge);
         _addEos = ModelMetaData.ResolveAddEos(meta);
         _generator = new T().CreateGenerator(model, tokenizer, _addBos, _addEos, caches, seed);
         ArgumentNullException.ThrowIfNull(_generator);
@@ -184,7 +184,21 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         _cacheValid = false;
         _generator.ResetCache();
     }
-    //review: should use prompt formatter?
+    /// <summary>
+    /// Returns true when the rendered prompt ends inside an unclosed &lt;think&gt;
+    /// tag.  Used to seed <see cref="_inThinkBlock"/> before generation starts,
+    /// since Qwen3 and DeepSeek-R1 templates emit &lt;think&gt;\n as part of the
+    /// assistant prefix — the model never generates the opening tag, so a
+    /// stream-only check would never fire.
+    /// </summary>
+    private bool PromptContainsUnclosedThinkTag()
+    {
+        string prompt = BuildPrompt();
+        int lastOpen = prompt.LastIndexOf("<think>", StringComparison.Ordinal);
+        int lastClose = prompt.LastIndexOf("</think>", StringComparison.Ordinal);
+        return lastOpen > lastClose;
+    }
+
     private string BuildPrompt()
     {
         if (_formatter is not null)
@@ -445,7 +459,7 @@ private void ThrowIfDisposed()
             MaxNewTokens = MaxNewTokens,
             RepetitionPenalty = RepetitionPenalty,
             RepetitionWindow = RepetitionWindow,
-            StopTokenIds = StopTokenIds ?? [_tokenizer.EosId],
+            StopTokenIds = StopTokenIds ?? _tokenizer.GetEndOfGenerationIds(),
             Stream = true,
         };
 
@@ -629,7 +643,7 @@ private void ThrowIfDisposed()
                 MaxNewTokens = MaxNewTokens,
                 RepetitionPenalty = RepetitionPenalty,
                 RepetitionWindow = RepetitionWindow,
-                StopTokenIds = StopTokenIds ?? [_tokenizer.EosId],
+                StopTokenIds = StopTokenIds ?? _tokenizer.GetEndOfGenerationIds(),
                 SlidingWindowSize = 0,
                 Stream = true,
             };
@@ -637,7 +651,13 @@ private void ThrowIfDisposed()
             // Stream tokens
             _responseBuffer.Clear();
             List<ChatArtifact> responseArtifacts = [];
-            _inThinkBlock = false;
+
+            // Seed think-block detection from the rendered prompt, not just the
+            // generated stream. Qwen3 and DeepSeek-R1 templates embed <think>\n
+            // in the assistant prefix — the model never generates the opening tag,
+            // so the stream-only check below would never fire.
+            _inThinkBlock = PromptContainsUnclosedThinkTag();
+
             _turnCts?.Dispose();
             _turnCts = new CancellationTokenSource();
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, _turnCts.Token);

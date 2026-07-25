@@ -53,13 +53,13 @@ public sealed class ModelMetaData
     /// <see langword="true"/> when the key is absent (the convention for most
     /// autoregressive LLMs).
     /// </summary>
-    public static bool ResolveAddBos(ModelMetaData? meta)
-        => meta?.GetLong("tokenizer.ggml.add_bos_token", 1) != 0;
+    public static bool ResolveAddBos(ModelMetaData? meta, bool isSentencePieceVocab = true)
+    => meta?.GetLong("tokenizer.ggml.add_bos_token", isSentencePieceVocab? 1 : 0) != 0;
 
     /// <summary>
     /// Resolves the <c>tokenizer.ggml.add_eos_token</c> flag, defaulting to
     /// <see langword="true"/> when the key is absent.
     /// </summary>
     public static bool ResolveAddEos(ModelMetaData? meta)
-        => meta?.GetLong("tokenizer.ggml.add_eos_token", 1) != 0;
+        => meta?.GetLong("tokenizer.ggml.add_eos_token", 0) != 0;
 }

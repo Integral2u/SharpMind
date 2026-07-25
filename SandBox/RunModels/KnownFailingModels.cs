@@ -19,7 +19,7 @@ namespace SandBox.RunModels
             
             "Qwen2-0.5B.Q5_1",              //Response:\n\nCopyright 20198019889
  
-            "Qwen2.5-1.5B-Instruct-f16",    //Response:Hello, I'm lookingta.
+            
 
                       
             "Llama-3.2-1B-Instruct-Q4_K_M", //Response:  and\nand\n\n a\n\n# "\na\n#  

@@ -9,11 +9,12 @@ using SharpMind.Model.Format;
 using SharpMind.Tokenization;
 using System.Diagnostics;
 
-namespace SharpMind.Samples.Examples
+namespace SandBox.RunModels
 {
-    public class ModelListRunner
+    public class DiagnosticModelRunner
     {
-        public static async Task RunAsync(string prompt, string ModelPath, string[] Models, bool withGPU = false)
+        private static readonly string ModelPath = @"C:\Integral2u\source\repos\SharpMind\ExternalAssets";
+        public static async Task RunAsync(string prompt, string[] Models, bool withGPU = false)
         {
             var totalTime = Stopwatch.StartNew();
             foreach (var m in Models)
@@ -39,6 +40,18 @@ namespace SharpMind.Samples.Examples
                 await Console.Out.WriteLineAsync($"Testing {m}");
                 await Console.Out.FlushAsync();
                 metaHelper.Load(modelPath, null, out ModelMetaData meta, out ModelConfig modelConfig, out Tokenizer? tokenizer);
+
+                // Diagnostic: dump rendered prompt and formatter errors
+                var formatter = ChatPromptFormatterFactory.Create(meta);
+                if (formatter is JinjaTemplateFormatter jinja)
+                {
+                    var testMsgs = new[] { ChatMessage.User(prompt) };
+                    string rendered = jinja.Format(testMsgs, tokenizer, false);
+                    Console.Error.WriteLine($"[formatter] prompt={rendered.Replace("\n", "\\n")}");
+                    if (jinja.LastErrors is { Count: > 0 })
+                        foreach (var err in jinja.LastErrors)
+                            Console.Error.WriteLine($"[formatter ERROR] {err}");
+                }
                 if (tokenizer == null)
                 {
                     await Console.Out.WriteLineAsync($"No Tokenizer Data");
@@ -48,12 +61,12 @@ namespace SharpMind.Samples.Examples
                 var sharpConfig = modelConfig.ForModel();
                 // Build a single combined mapping. WithGpu() now overrides quant ops
                 // as well as model-level ops — no separate qOpsMapping needed.
-                var mapping = withGPU ? new MappingBuilder(sharpConfig.ResolvedHardware)
+                var mapping = withGPU ? new SharpMind.MappingBuilder(sharpConfig.ResolvedHardware)
                     .ApplyPreset(sharpConfig)
                     .ApplyQuantPreset(sharpConfig)
                     .WithGpu()
                     .Build() :
-                    new MappingBuilder(sharpConfig.ResolvedHardware)
+                    new SharpMind.MappingBuilder(sharpConfig.ResolvedHardware)
                     .ApplyPreset(sharpConfig)
                     .ApplyQuantPreset(sharpConfig)
                     .Build();

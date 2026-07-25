@@ -311,6 +311,70 @@ public sealed class JinjaTemplateFormatterTests
         Assert.Contains("THINKING_DISABLED", result);
     }
 
+    // ─── Comment stripping ─────────────────────────────────────────────────
+
+    [Fact]
+    public void JinjaComments_StrippedFromOutput()
+    {
+        const string tmpl =
+            "before" +
+            "{# this is a comment #}" +
+            "after";
+
+        var msgs = new[] { ChatMessage.User("hello") };
+        var fmt = new JinjaTemplateFormatter(tmpl);
+        string result = fmt.Format(msgs, Tok, false);
+        Assert.Equal("beforeafter", result);
+    }
+
+    [Fact]
+    public void JinjaComments_UnsloshLicense_Stripped()
+    {
+        // Simulated Unsloth license block
+        const string tmpl =
+            "{% for message in messages %}" +
+            "{# Unsloth license notice - stripped #}" +
+            "{{ '<|im_start|>' + message['role'] + '\\n' + message['content'] + '<|im_end|>\\n' }}" +
+            "{% endfor %}" +
+            "{{ '<|im_start|>assistant\\n' }}";
+
+        var msgs = new[] { ChatMessage.User("hello") };
+        var fmt = new JinjaTemplateFormatter(tmpl);
+        string result = fmt.Format(msgs, Tok, false);
+        Assert.DoesNotContain("Unsloth", result);
+        Assert.DoesNotContain("license", result);
+        Assert.Contains("<|im_start|>assistant", result);
+    }
+
+    [Fact]
+    public void JinjaComments_StripLeftRight_Work()
+    {
+        // {#- strips preceding whitespace, -#} strips following newline
+        const string tmpl = "before  {#- comment -#}\nafter";
+        var msgs = new[] { ChatMessage.User("hello") };
+        var fmt = new JinjaTemplateFormatter(tmpl);
+        string result = fmt.Format(msgs, Tok, false);
+        Assert.Equal("beforeafter", result);
+    }
+
+    // ─── Error tracking ─────────────────────────────────────────────────────
+
+    [Fact]
+    public void Format_WithUnrecognizedTag_ReportsError()
+    {
+        const string tmpl =
+            "{% for message in messages %}" +
+            "{{ message['content'] }}" +
+            "{% endfor %}" +
+            "{% foo bar %}";  // unrecognized tag
+
+        var msgs = new[] { ChatMessage.User("hello") };
+        var fmt = new JinjaTemplateFormatter(tmpl);
+        string result = fmt.Format(msgs, Tok, false);
+        Assert.NotNull(fmt.LastErrors);
+        Assert.Contains(fmt.LastErrors, e => e.Contains("foo"));
+    }
+
     // ─── Existing test ──────────────────────────────────────────────────────
 
     [Fact]

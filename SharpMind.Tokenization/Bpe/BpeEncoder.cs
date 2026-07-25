@@ -45,7 +45,7 @@ public sealed class BpeEncoder
     // True for SentencePiece-style vocabularies (original LLaMA/LLaMA-2,
     // Mistral, TinyLlama, etc.) that ship no merges array. These rank
     // candidate merges by token score instead of an explicit rule list.
-    private readonly bool _useSentencePieceMerge;
+    public readonly bool UseSentencePieceMerge;
 
     internal BpeEncoder(
         Vocabulary vocab,
@@ -60,7 +60,7 @@ public sealed class BpeEncoder
             _mergeIndex[(rule.Left, rule.Right)] = (rule.Merged, rule.Rank);
 
         _scores = tokenScores;
-        _useSentencePieceMerge = merges.Count == 0 && _scores is { Count: > 0 };
+        UseSentencePieceMerge = merges.Count == 0 && _scores is { Count: > 0 };
 
         RebuildSpecialsCache();
     }
@@ -99,7 +99,7 @@ public sealed class BpeEncoder
             {
                 ids.Add(_vocab.GetId(segment.Text));
             }
-            else if (_useSentencePieceMerge)
+            else if (UseSentencePieceMerge)
             {
                 EncodeSentencePieceSegment(segment.Text, isFirstPlainSegment, ids);
                 isFirstPlainSegment = false;
