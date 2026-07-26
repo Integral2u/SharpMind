@@ -13,6 +13,8 @@ public abstract class TransformerBlock : IDisposable
     protected readonly FfnLayer _ffn;
     protected readonly NormLayer _norm1;
     protected readonly NormLayer _norm2;
+    protected NormLayer? _postAttnNorm;
+    protected NormLayer? _postFfnNorm;
     protected readonly int _layerIdx;
     private bool _disposed;
 
@@ -21,7 +23,8 @@ public abstract class TransformerBlock : IDisposable
     public AttentionLayer Attention => _attention;
     public FfnLayer Ffn => _ffn;
 
-    protected TransformerBlock(int layerIdx, AttentionLayer attention, FfnLayer ffn, NormLayer norm1, NormLayer norm2)
+    protected TransformerBlock(int layerIdx, AttentionLayer attention, FfnLayer ffn, NormLayer norm1, NormLayer norm2,
+        NormLayer? postAttnNorm = null, NormLayer? postFfnNorm = null)
     {
         ArgumentNullException.ThrowIfNull(attention);
         ArgumentNullException.ThrowIfNull(ffn);
@@ -33,6 +36,8 @@ public abstract class TransformerBlock : IDisposable
         _ffn = ffn;
         _norm1 = norm1;
         _norm2 = norm2;
+        _postAttnNorm = postAttnNorm;
+        _postFfnNorm = postFfnNorm;
     }
 
     public abstract Tensor<float> Forward(Tensor<float> x, IKVCache? cache, int positionOffset = 0, bool causal = true, Workspace? workspace = null);
@@ -52,6 +57,12 @@ public abstract class TransformerBlock : IDisposable
             yield return p;
         foreach (var p in _norm2.Parameters())
             yield return p;
+        if (_postAttnNorm != null)
+            foreach (var p in _postAttnNorm.Parameters())
+                yield return p;
+        if (_postFfnNorm != null)
+            foreach (var p in _postFfnNorm.Parameters())
+                yield return p;
     }
 
     public bool LoadWeight(string name, ReadOnlySpan<float> data)
@@ -103,6 +114,18 @@ public abstract class TransformerBlock : IDisposable
             _ffn.LoadWeights(name, data);
             return true;
         }
+        if (name.Contains("post_attention_norm", StringComparison.OrdinalIgnoreCase))
+        {
+            if (name.Contains("bias", StringComparison.OrdinalIgnoreCase)) return false;
+            if (_postAttnNorm != null) _postAttnNorm.LoadWeight(data);
+            return true;
+        }
+        if (name.Contains("post_ffw_norm", StringComparison.OrdinalIgnoreCase))
+        {
+            if (name.Contains("bias", StringComparison.OrdinalIgnoreCase)) return false;
+            if (_postFfnNorm != null) _postFfnNorm.LoadWeight(data);
+            return true;
+        }
         if (name.Contains("attn_norm", StringComparison.OrdinalIgnoreCase) || name.Contains("input_layernorm", StringComparison.OrdinalIgnoreCase))
         {
             if (name.Contains("bias", StringComparison.OrdinalIgnoreCase)) _norm1.LoadBias(data);
@@ -150,6 +173,8 @@ public abstract class TransformerBlock : IDisposable
         _ffn.Dispose();
         _norm1.Dispose();
         _norm2.Dispose();
+        _postAttnNorm?.Dispose();
+        _postFfnNorm?.Dispose();
     }
 
     protected void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, nameof(TransformerBlock));

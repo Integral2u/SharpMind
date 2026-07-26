@@ -102,6 +102,8 @@ public abstract class TransformerWeights : IDisposable
             }
             else
             {
+                if (name.Contains("post_attention_norm", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
+                if (name.Contains("post_ffw_norm", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
                 if (name.Contains("attn_q_norm", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
                 if (name.Contains("attn_k_norm", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
                 if (name.Contains("attn_q", StringComparison.OrdinalIgnoreCase) || name.Contains("q_proj", StringComparison.OrdinalIgnoreCase)) return (null, block, "RawWq");
@@ -164,6 +166,16 @@ public abstract class TransformerWeights : IDisposable
             }
             else
             {
+                if (name.Contains("post_attention_norm", StringComparison.OrdinalIgnoreCase))
+                {
+                    b.PostNorm1W ??= new Tensor<float>(Config.HiddenDim);
+                    return b.PostNorm1W;
+                }
+                if (name.Contains("post_ffw_norm", StringComparison.OrdinalIgnoreCase))
+                {
+                    b.PostNorm2W ??= new Tensor<float>(Config.HiddenDim);
+                    return b.PostNorm2W;
+                }
                 if (name.Contains("attn_q_norm", StringComparison.OrdinalIgnoreCase))
                 {
                     b.QNormW ??= new Tensor<float>(Config.HeadDim);
@@ -270,6 +282,10 @@ public abstract class TransformerWeights : IDisposable
         public Tensor<float>? QNormW { get; set; }
         public Tensor<float>? KNormW { get; set; }
 
+        // Post-attention and post-FFN norms (Gemma-3)
+        public Tensor<float>? PostNorm1W { get; set; }
+        public Tensor<float>? PostNorm2W { get; set; }
+
         // Quantized data (byte arrays)
         public byte[]? RawWq { get; set; }
         public byte[]? RawWk { get; set; }
@@ -310,13 +326,15 @@ public abstract class TransformerWeights : IDisposable
             Tensor<float> wqB, Tensor<float> wkB, Tensor<float> wvB, Tensor<float> woB,
             Tensor<float> wf1, Tensor<float> wf2, Tensor<float> wf1B, Tensor<float> wf2B,
             Tensor<float> n1w, Tensor<float>? n1b, Tensor<float> n2w, Tensor<float>? n2b,
-            Tensor<float>? qNorm, Tensor<float>? kNorm)
+            Tensor<float>? qNorm, Tensor<float>? kNorm,
+            Tensor<float>? postNorm1W = null, Tensor<float>? postNorm2W = null)
         {
             Wq = wq; Wk = wk; Wv = wv; Wo = wo;
             WqBias = wqB; WkBias = wkB; WvBias = wvB; WoBias = woB;
             Wf1 = wf1; Wf2 = wf2; Wf1Bias = wf1B; Wf2Bias = wf2B;
             Norm1W = n1w; Norm1B = n1b; Norm2W = n2w; Norm2B = n2b;
             QNormW = qNorm; KNormW = kNorm;
+            PostNorm1W = postNorm1W; PostNorm2W = postNorm2W;
         }
 
         public void Dispose()
@@ -326,6 +344,7 @@ public abstract class TransformerWeights : IDisposable
             Wf1?.Dispose(); Wf2?.Dispose(); Wf1Bias?.Dispose(); Wf2Bias?.Dispose();
             Norm1W?.Dispose(); Norm1B?.Dispose(); Norm2W?.Dispose(); Norm2B?.Dispose();
             QNormW?.Dispose(); KNormW?.Dispose();
+            PostNorm1W?.Dispose(); PostNorm2W?.Dispose();
         }
     }
 }

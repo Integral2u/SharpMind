@@ -302,16 +302,8 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
                 branches.Add((curCond, branchStart, i));
                 foreach (var (cond, bs, be) in branches)
                 {
-                    if (cond == null)
+                    if (cond == null || IsTruthy(Eval(cond, env, errors)))
                     {
-                        Execute(tokens, bs, be, env, sb, errors);
-                        break;
-                    }
-                    var condErrors = new List<string>();
-                    bool truthy = IsTruthy(Eval(cond, env, condErrors));
-                    if (truthy)
-                    {
-                        errors.AddRange(condErrors);
                         Execute(tokens, bs, be, env, sb, errors);
                         break;
                     }
@@ -341,16 +333,8 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
         branches.Add((curCond, branchStart, end));
         foreach (var (cond, bs, be) in branches)
         {
-            if (cond == null)
+            if (cond == null || IsTruthy(Eval(cond, env, errors)))
             {
-                Execute(tokens, bs, be, env, sb, errors);
-                break;
-            }
-            var condErrors = new List<string>();
-            bool truthy = IsTruthy(Eval(cond, env, condErrors));
-            if (truthy)
-            {
-                errors.AddRange(condErrors);
                 Execute(tokens, bs, be, env, sb, errors);
                 break;
             }
@@ -415,23 +399,11 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
     {
         expr = expr.Trim();
 
-        // (expr)  — parenthesized expression, highest precedence.
-        // Strip only when the outermost ( and ) truly wrap the whole expression
-        // (matching close paren at the end of the string, not earlier).
-        if (expr.Length > 1 && expr[0] == '(')
-        {
-            int depth = 1;
-            bool inSingle = false, inDouble = false;
-            for (int i = 1; i < expr.Length; i++)
-            {
-                char c = expr[i];
-                if (c == '\'' && !inDouble) { inSingle = !inSingle; continue; }
-                if (c == '"' && !inSingle) { inDouble = !inDouble; continue; }
-                if (inSingle || inDouble) continue;
-                if (c == '(') depth++;
-                else if (c == ')') { depth--; if (depth == 0) { if (i == expr.Length - 1) return Eval(expr[1..i], env, errors); break; } }
-            }
-        }
+        // strip outer parens — only when the outermost ( and ) actually match
+        // (avoid falsely stripping when the top-level expression uses parens
+        //  for grouping sub-expressions, e.g. (A or B) and (C or D))
+        if (expr.StartsWith('(') && expr.EndsWith(')') && MatchingOuterParens(expr))
+            return Eval(expr[1..^1], env, errors);
 
         // 'not X is defined'
         if (RegexGenerated.JinjaNotXIsDefined.IsMatch(expr))// Regex.IsMatch(expr, @"^not\s+\w+\s+is\s+defined$"))
@@ -485,28 +457,9 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
             return (object)(isIterableM.Groups[2].Success ? !isIter : isIter);
         }
 
-        // X is defined / X is not defined
-        var isDefinedM = System.Text.RegularExpressions.Regex.Match(expr, @"^(.+?)\s+is\s+(not\s+)?defined$");
-        if (isDefinedM.Success)
-        {
-            var v = Eval(isDefinedM.Groups[1].Value, env, errors);
-            bool isDef = v != null;
-            return (object)(isDefinedM.Groups[2].Success ? !isDef : isDef);
-        }
-
-        // not X  /  not(X)  (function-call style)
+        // not X
         if (expr.StartsWith("not ", StringComparison.Ordinal))
             return (object)!IsTruthy(Eval(expr[4..], env, errors));
-        if (expr.StartsWith("not(", StringComparison.Ordinal))
-        {
-            // Find matching closing paren
-            int depth = 1;
-            for (int i = 4; i < expr.Length; i++)
-            {
-                if (expr[i] == '(') depth++;
-                else if (expr[i] == ')') { depth--; if (depth == 0) return (object)!IsTruthy(Eval(expr[4..i], env, errors)); }
-            }
-        }
 
         // 'literal' in X  (substring test)
         var inMatch = RegexGenerated.JinjaLiteralInXSubstr.Match(expr); // Regex.Match(expr, @"^'([^']*)'\s+in\s+(.+)$");
@@ -566,24 +519,6 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
             return (object)(Stringify(left) != Stringify(right));
         }
 
-        // X < Y, X > Y, X <= Y, X >= Y  (comparison operators, same precedence as ==/!=)
-        int cmpPos = FindCmpOutside(expr, out string cmpOp);
-        if (cmpPos >= 0)
-        {
-            var left = Eval(expr[..cmpPos].TrimEnd(), env, errors);
-            var right = Eval(expr[(cmpPos + cmpOp.Length)..].TrimStart(), env, errors);
-            long ln = left is long ll ? ll : left is int li ? li : 0;
-            long rn = right is long rl ? rl : right is int ri ? ri : 0;
-            return (object)(cmpOp switch
-            {
-                "<" => ln < rn,
-                ">" => ln > rn,
-                "<=" => ln <= rn,
-                ">=" => ln >= rn,
-                _ => false
-            });
-        }
-
         // Modulo: expr % expr (outside quotes)
         int modIdx = FindOperatorOutsideQuotes(expr, '%', requireDouble: false);
         if (modIdx >= 0)
@@ -595,15 +530,12 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
             return (object)(rn != 0 ? ln % rn : 0);
         }
 
-        // String concatenation: expr + expr  or  expr ~ expr (outside quotes)
+        // String concatenation: expr + expr (outside quotes)
         int plusIdx = FindOperatorOutsideQuotes(expr, '+', requireDouble: false);
-        int tildeIdx = FindOperatorOutsideQuotes(expr, '~', requireDouble: false);
-        if (plusIdx >= 0 || tildeIdx >= 0)
+        if (plusIdx >= 0)
         {
-            int opIdx = plusIdx >= 0 ? plusIdx : tildeIdx;
-            int skip = plusIdx >= 0 ? 1 : 1;
-            var left = Eval(expr[..opIdx], env, errors);
-            var right = Eval(expr[(opIdx + skip)..], env, errors);
+            var left = Eval(expr[..plusIdx], env, errors);
+            var right = Eval(expr[(plusIdx + 1)..], env, errors);
             return (object)(Stringify(left) + Stringify(right));
         }
 
@@ -665,35 +597,7 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
         if (bracketStart >= 0)
         {
             var obj = Eval(expr[..bracketStart], env, errors);
-            string rawKey = expr[(bracketStart + 1)..bracketEnd];
-
-            // Check for Jinja slice syntax: [start:end], [:end], [start:]
-            int colonIdx = FindColonOutsideQuotes(rawKey);
-            if (colonIdx >= 0)
-            {
-                int? start = null, end = null;
-                if (colonIdx > 0)
-                {
-                    string startExpr = rawKey[..colonIdx].Trim();
-                    if (startExpr.Length > 0)
-                    {
-                        var sv = Eval(startExpr, env, errors);
-                        start = sv is long l ? (int)l : sv is int i ? i : null;
-                    }
-                }
-                if (colonIdx + 1 < rawKey.Length)
-                {
-                    string endExpr = rawKey[(colonIdx + 1)..].Trim();
-                    if (endExpr.Length > 0)
-                    {
-                        var ev = Eval(endExpr, env, errors);
-                        end = ev is long l ? (int)l : ev is int i ? i : null;
-                    }
-                }
-                return AccessSlice(obj, start, end);
-            }
-
-            var key = Eval(rawKey, env, errors);
+            var key = Eval(expr[(bracketStart + 1)..bracketEnd], env, errors);
             var idxVal = AccessIndex(obj, key);
 
             // Handle .field suffix after bracket access, e.g. messages[0].role
@@ -714,20 +618,6 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
             return AccessField(obj, fld);
         }
 
-        // (expr)  — parenthesised sub-expression. Strip and evaluate the inner
-        // part, discarding any trailing content after the closing paren.
-        // This is not fully faithful (it discards e.g. `- loop.index0`), but
-        // it avoids noise errors for templates that group with parentheses.
-        if (expr.Length > 1 && expr[0] == '(')
-        {
-            int depth = 1;
-            for (int i = 1; i < expr.Length; i++)
-            {
-                if (expr[i] == '(') depth++;
-                else if (expr[i] == ')') { depth--; if (depth == 0) return Eval(expr[1..i], env, errors); }
-            }
-        }
-
         // arithmetic: index0 +/- N inside bracket is handled by EvalIndex
         var arithM = RegexGenerated.JinjaPlusMinusN.Match(expr);// Regex.Match(expr, @"^(.+?)\s*([+\-])\s*(\d+)$");
         if (arithM.Success)
@@ -738,41 +628,9 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
             return (object)(arithM.Groups[2].Value == "+" ? ln + rn : ln - rn);
         }
 
-        // X if Y else Z / X if Y  (inline conditional, lowest precedence)
-        {
-            int ifPos = FindIfElseOutside(expr, out int elsePos);
-            if (ifPos >= 0)
-            {
-                var trueVal = Eval(expr[..ifPos].TrimEnd(), env, errors);
-                if (elsePos >= 0)
-                {
-                    var cond = Eval(expr[(ifPos + 3)..elsePos].Trim(), env, errors);
-                    var falseVal = Eval(expr[(elsePos + 5)..].TrimStart(), env, errors);
-                    return IsTruthy(cond) ? trueVal : falseVal;
-                }
-                else
-                {
-                    var cond = Eval(expr[(ifPos + 3)..].TrimStart(), env, errors);
-                    return IsTruthy(cond) ? trueVal : "";
-                }
-            }
-        }
-
-        // X else Y  (default operator: evaluate X, if truthy return X, else return Y).
-        // Must come after inline-if so X if Y else Z is already consumed.
-        {
-            int elsePos = FindElseOutside(expr);
-            if (elsePos >= 0)
-            {
-                var left = Eval(expr[..elsePos].TrimEnd(), env, errors);
-                var right = Eval(expr[(elsePos + 5)..].TrimStart(), env, errors);
-                return IsTruthy(left) ? left : right;
-            }
-        }
-
         // Plain identifier
         var result = env.Get(expr);
-        if (result is null && !env.ContainsKey(expr))
+        if (result is null)
         {
             string msg = $"JINJA ERROR: variable '{expr}' not found in template env";
             errors?.Add(msg);
@@ -828,43 +686,6 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
         return null;
     }
 
-    private static object? AccessSlice(object? obj, int? start, int? end)
-    {
-        if (obj is string s)
-        {
-            int sIdx = start ?? 0;
-            int eIdx = end ?? s.Length;
-            sIdx = Math.Clamp(sIdx, 0, s.Length);
-            eIdx = Math.Clamp(eIdx, 0, s.Length);
-            return sIdx >= eIdx ? "" : s[sIdx..eIdx];
-        }
-        if (obj is List<JinjaDict> list)
-        {
-            int sIdx = start ?? 0;
-            int eIdx = end ?? list.Count;
-            sIdx = sIdx < 0 ? list.Count + sIdx : sIdx;
-            eIdx = eIdx < 0 ? list.Count + eIdx : eIdx;
-            sIdx = Math.Clamp(sIdx, 0, list.Count);
-            eIdx = Math.Clamp(eIdx, 0, list.Count);
-            return sIdx >= eIdx ? new List<JinjaDict>() : list[sIdx..eIdx];
-        }
-        return null;
-    }
-
-    private static int FindColonOutsideQuotes(string s)
-    {
-        bool inSingle = false, inDouble = false;
-        for (int i = 0; i < s.Length; i++)
-        {
-            char c = s[i];
-            if (c == '\'' && !inDouble) inSingle = !inSingle;
-            else if (c == '"' && !inSingle) inDouble = !inDouble;
-            else if (!inSingle && !inDouble && c == ':')
-                return i;
-        }
-        return -1;
-    }
-
     /// <summary>
     /// Scans right-to-left to find the last <c>[…]</c> pair at bracket depth 0,
     /// respecting string quotes. Returns <c>(openIdx, closeIdx)</c> where
@@ -873,13 +694,10 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
     /// </summary>
     private static (int Open, int Close) FindLastBracketPair(string s)
     {
-        if (s.Length == 0) return (-1, -1);
-        // Find the LAST ']' in the string (handles suffixes like .role after [...])
-        int closeBracket = s.LastIndexOf(']');
-        if (closeBracket < 0) return (-1, -1);
+        if (s.Length == 0 || s[^1] != ']') return (-1, -1);
         bool inSingle = false, inDouble = false;
         int depth = 0;
-        for (int i = closeBracket; i >= 0; i--)
+        for (int i = s.Length - 1; i >= 0; i--)
         {
             char c = s[i];
             if (c == '\'' && !inDouble) inSingle = !inSingle;
@@ -890,7 +708,7 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
                 else if (c == '[')
                 {
                     depth--;
-                    if (depth == 0) return (i, closeBracket);
+                    if (depth == 0) return (i, s.Length - 1);
                 }
             }
         }
@@ -951,36 +769,6 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
     }
 
     /// <summary>
-    /// Finds a comparison operator (<c>&lt;</c>, <c>&gt;</c>, <c>&lt;=</c>, <c>&gt;=</c>)
-    /// outside string quotes. Returns the index and the matched operator.
-    /// </summary>
-    private static int FindCmpOutside(string s, out string op)
-    {
-        bool inSingle = false, inDouble = false;
-        for (int i = 0; i < s.Length; i++)
-        {
-            char c = s[i];
-            if (c == '\'' && !inDouble) inSingle = !inSingle;
-            else if (c == '"' && !inSingle) inDouble = !inDouble;
-            else if (!inSingle && !inDouble && (c == '<' || c == '>'))
-            {
-                if (i + 1 < s.Length && s[i + 1] == '=')
-                {
-                    if (i == 0 || s[i - 1] != '!')
-                    {
-                        op = c == '<' ? "<=" : ">=";
-                        return i;
-                    }
-                }
-                op = c == '<' ? "<" : ">";
-                return i;
-            }
-        }
-        op = "";
-        return -1;
-    }
-
-    /// <summary>
     /// Finds a whole-word keyword (<c>and</c>, <c>or</c>) outside string quotes
     /// and brackets.  Returns the index of the space before the keyword, or -1.
     /// The keyword must be surrounded by whitespace and at depth 0.
@@ -1004,57 +792,6 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
                          && s[i + 1 + kwLen] == ' ')
                     return i + 1; // points at first char of keyword
             }
-        }
-        return -1;
-    }
-
-    /// <summary>
-    /// Finds <c>if</c> and optionally <c>else</c> in an inline conditional
-    /// expression <c>X if Y else Z</c>, outside string quotes.
-    /// Returns the position of <c>if</c> (surrounded by whitespace),
-    /// and sets <paramref name="elsePos"/> to the position of <c>else</c>
-    /// (or -1 if not present).
-    /// </summary>
-    private static int FindIfElseOutside(string s, out int elsePos)
-    {
-        elsePos = -1;
-        bool inSingle = false, inDouble = false;
-        for (int i = 1; i < s.Length - 3; i++)
-        {
-            char c = s[i];
-            if (c == '\'' && !inDouble) inSingle = !inSingle;
-            else if (c == '"' && !inSingle) inDouble = !inDouble;
-            else if (!inSingle && !inDouble && c == ' ' && s[i - 1] != ' ' && s[i + 1] == 'i' && s[i + 2] == 'f' && s[i + 3] == ' ')
-            {
-                // Found " if " — now look for " else " after the condition
-                int ifPos = i + 1;
-                for (int j = ifPos + 4; j < s.Length - 5; j++)
-                {
-                    char d = s[j];
-                    if (d == '\'' && !inDouble) inSingle = !inSingle;
-                    else if (d == '"' && !inSingle) inDouble = !inDouble;
-                    else if (!inSingle && !inDouble && d == ' ' && s[j - 1] != ' ' && s[j + 1] == 'e' && s[j + 2] == 'l' && s[j + 3] == 's' && s[j + 4] == 'e' && s[j + 5] == ' ')
-                    {
-                        elsePos = j + 1;
-                        break;
-                    }
-                }
-                return ifPos;
-            }
-        }
-        return -1;
-    }
-
-    private static int FindElseOutside(string s)
-    {
-        bool inSingle = false, inDouble = false;
-        for (int i = 1; i < s.Length - 5; i++)
-        {
-            char c = s[i];
-            if (c == '\'' && !inDouble) inSingle = !inSingle;
-            else if (c == '"' && !inSingle) inDouble = !inDouble;
-            else if (!inSingle && !inDouble && c == ' ' && s[i - 1] != ' ' && s[i + 1] == 'e' && s[i + 2] == 'l' && s[i + 3] == 's' && s[i + 4] == 'e' && s[i + 5] == ' ')
-                return i + 1;
         }
         return -1;
     }

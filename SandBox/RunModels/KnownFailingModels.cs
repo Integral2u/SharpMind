@@ -13,26 +13,26 @@ namespace SandBox.RunModels
             "Qwen2-0.5B.Q6_K", //Response:The\nsystem\nsystem is a system that helps you to make better decisions   
 
             "Qwen2-0.5B.Q2_K",              //Response:\n\nThank you!\nThank you.\nThankyou thank.\nThanks you Thank
-            "Qwen2-0.5B.Q3_K_L",            //Response:\n\nassistant\n 1. 2.33456
-            "Qwen2-0.5B.Q3_K_M",            //Response:\n\n's\nThe following information is provided by the author to you.
-            "Qwen2-0.5B.Q3_K_S",            //Response:\n\n\n\n\n\n
+            //"Qwen2-0.5B.Q3_K_L",            //Response:\n\nassistant\n 1. 2.33456
+            //"Qwen2-0.5B.Q3_K_M",            //Response:\n\n's\nThe following information is provided by the author to you.
+            //"Qwen2-0.5B.Q3_K_S",            //Response:\n\n\n\n\n\n
             
-            "Qwen2-0.5B.Q5_1",              //Response:\n\nCopyright 20198019889
+            //"Qwen2-0.5B.Q5_1",              //Response:\n\nCopyright 20198019889
  
             
 
                       
-            "Llama-3.2-1B-Instruct-Q4_K_M", //Response:  and\nand\n\n a\n\n# "\na\n#  
+            //"Llama-3.2-1B-Instruct-Q4_K_M", //Response:  and\nand\n\n a\n\n# "\na\n#  
             "tinyllama-1.1b-chat-v1.0.Q8_0",    //Response:\nDearlyrics
-            "TinyLlama-1.1B-Chat-v1.0.Q4_K_M",  //Response:
+            //"TinyLlama-1.1B-Chat-v1.0.Q4_K_M",  //Response:
 
             //https://huggingface.co/tensorblock/llama3-small-GGUF
-            "llama3-small-Q2_K",//Response:))); bowInfo WATCH?? kho)."inky.Collectors essentially ???Events ?????? ?????? reactor
-            "llama3-small-Q3_K_M", //Response:HostException savageInstrument??? ortaya.Process Hayes bleach?? bleach??RestController prefers,left_sleep
+            //"llama3-small-Q2_K",//Response:))); bowInfo WATCH?? kho)."inky.Collectors essentially ???Events ?????? ?????? reactor
+            //"llama3-small-Q3_K_M", //Response:HostException savageInstrument??? ortaya.Process Hayes bleach?? bleach??RestController prefers,left_sleep
                       
             //https://huggingface.co/tensorblock/tiny-mistral-GGUF/tree/main
-            "tiny-mistral-Q2_K", //Response:ilers0 vacuum?Kernel shedcontext glasses naked believe? Aquoffsetwhile dire
-            "tiny-mistral-Q3_K_M", //Response:operated (' Beaut Gold? pocut spite viewing ihm materials WrazzreturnsHost
+            //"tiny-mistral-Q2_K", //Response:ilers0 vacuum?Kernel shedcontext glasses naked believe? Aquoffsetwhile dire
+            //"tiny-mistral-Q3_K_M", //Response:operated (' Beaut Gold? pocut spite viewing ihm materials WrazzreturnsHost
             /*
             //Unknown shape
             //https://huggingface.co/prism-ml/Bonsai-8B-gguf            

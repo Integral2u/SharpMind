@@ -90,7 +90,9 @@ public static class ModelFactory
                 new Tensor<float>(config.HiddenDim),                  // Norm2W
                 null,                                                 // Norm2B
                 null,                                                 // QNormW
-                null                                                  // KNormW
+                null,                                                 // KNormW
+                null,                                                 // PostNorm1W
+                null                                                  // PostNorm2W
             );
         }
         return blocks;
@@ -166,9 +168,17 @@ public static class ModelFactory
         if (blockWeights.Norm1W == null) n1w.Dispose();
         if (blockWeights.Norm2W == null) n2w.Dispose();
 
+        // Post-attention and post-FFN norms (Gemma-3)
+        NormLayer? postAttnNorm = null;
+        NormLayer? postFfnNorm = null;
+        if (blockWeights.PostNorm1W != null)
+            postAttnNorm = BuildNorm(weights.Config.HiddenDim, sharpConfig, eps, blockWeights.PostNorm1W, null);
+        if (blockWeights.PostNorm2W != null)
+            postFfnNorm = BuildNorm(weights.Config.HiddenDim, sharpConfig, eps, blockWeights.PostNorm2W, null);
+
         return useHooks
-            ? new HookedTransformerBlock(layerIdx, attn, ffn, norm1, norm2)
-            : new UnhookedTransformerBlock(layerIdx, attn, ffn, norm1, norm2);
+            ? new HookedTransformerBlock(layerIdx, attn, ffn, norm1, norm2, postAttnNorm, postFfnNorm)
+            : new UnhookedTransformerBlock(layerIdx, attn, ffn, norm1, norm2, postAttnNorm, postFfnNorm);
     }
 
     private static FfnLayer BuildFfn(

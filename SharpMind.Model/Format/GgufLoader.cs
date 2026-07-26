@@ -222,6 +222,9 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
 
         long rawRopeDim = meta.GetLong($"{arch}.rope.dimension_count", -1);
         int? ropeDim = rawRopeDim > 0 ? (int)rawRopeDim : null;
+        // Gemma-3 uses partial RoPE (headDim/2) — default if metadata missing
+        if (ropeDim == null && arch.StartsWith("gemma3", StringComparison.OrdinalIgnoreCase) && headDimOverride > 0)
+            ropeDim = headDimOverride / 2;
 
         string? ropeScalingType = meta.GetString($"{arch}.rope.scaling.type");
         float ropeFactor = meta.GetFloat($"{arch}.rope.scaling.factor", float.NaN);

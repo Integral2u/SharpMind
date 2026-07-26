@@ -208,7 +208,7 @@ public sealed record SharpMindConfig
             "gpt2" or "gptj" or "falcon" or "starcoder" or "starcoder2"
                 or "bloom" or "phi" or "phi2"                            => (ActivationKind.GELU,    GateKind.None,   FfnKind.Dense, NormKind.LayerNorm, ArchKind.Decoder),
             "opt"                                                         => (ActivationKind.ReLU,    GateKind.None,   FfnKind.Dense, NormKind.LayerNorm, ArchKind.Decoder),
-            "gemma"                                                       => (ActivationKind.GELU,    GateKind.GeGLU,  FfnKind.Gated, NormKind.RMSNorm,   ArchKind.Decoder),
+            "gemma" or "gemma3" or "gemma-3"                              => (ActivationKind.GELU,    GateKind.GeGLU,  FfnKind.Gated, NormKind.RMSNorm,   ArchKind.Decoder),
             "mixtral" or "qwen2moe" or "deepseek2" or "dbrx"            => (ActivationKind.SiLU,    GateKind.SwiGLU, FfnKind.MoE,   NormKind.RMSNorm,   ArchKind.Decoder),
             "qwen3"                                                       => (ActivationKind.SiLU,    GateKind.SwiGLU, FfnKind.Gated, NormKind.RMSNorm,   ArchKind.Decoder),
             _                                                              => (ActivationKind.SiLU,    GateKind.SwiGLU, FfnKind.Gated, NormKind.RMSNorm,   ArchKind.Decoder),

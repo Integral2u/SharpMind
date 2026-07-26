@@ -1,76 +1,47 @@
-
-CUI Plugins?
-[Conditional("DEBUG")] 
-
-Factory consistancy ActivationFactory,QuantizationFactory
-
-
-
-
-ChatMessage.Ignore somehow/settable visible in ChatView
-debugUI tool calling
-
 #HIGH Priority
 you must make sure you understand the JigSawDotNet pattern and use. Intention is to reduce and branching code by genertaing code whihc may require implmenting or re-using Ops, Kernel and Factory patterns,
 Review Sharmind.Core.Activations.* for example
 
+Tasks to implement.
+Task 1: Named interfaces.
+These interfaces will need a public string Name { get; init; } for later use.
+IContextCompactor, IPromptPostProcessor, IPromptPreProcessor, IGenerator
 
-Notes(Unsorted)
-Future	MoE	CachedWeightLoader skips MoE expert tensors (same limitation as existing SetWeights). Not blocking since no MoE models are in KnownWorking/Failing.
+Task 2: Native ChatSession Compactor(s)
+Native IContextCompactor(s) for Compacting Session
+Summarize version: use working model as Agent to Summaraize and mark previous non IsPinned ChatMessages as Ignore and so prompt formatter is not using entire History.
+Truncate version: Simply truncate remove previously non IsPinned History by making oldest is Ignore.
 
-Todo
+Task 3: CUI Plugins.
+Read Folder Plugins to add to OptionsView addition interfaces that can be loaded and used.
+Will need to avoid Name Conflicts, first in wins.
+IContextCompactor, IPromptPostProcessor, IPromptPreProcessor, IGenerator(may require PluginGeneratorBuilder implmenting IGeneratorBuilder)
 
-PrePrompt and PostPrompt porcessor interfaces, truncate, compaction, summarization of current chat or Pre prompt could be used for other purposes,Cache Importance for Current Context , reading attached artifacts or correcting input prompts.
+Task 4: CUI ChatMessage Names.
+OptionsView should have an option to set User Name but default to standard User.
+ChatSession, ChatSessionBridge and DebugChatBridge when adding messages to history should use the correct name and if it is from the Model use the Agent Name set buy the AgentBuilder.
 
+Task 5: Optimization
+5.1: Regex cehck for regex usages example Gpt2PreTokeniser, Cl100kPreTokeniser create a private static readonly Regex Pattern but should be implementing a [GeneratedRegex] see SharpMind.Inference.RegexGenerated.
+There are lot of added System.Text.RegularExpressions.Regex.* calls JinjaTemplateFormatter that have slowed perfomance but can be patially redeemed by calling generated regexes in RegexGenerated.
+5.2: Check for creations of objjects that really need to only be created once in construction or outside of loops.
+5.3: Look at call sites that throw exceptions or tests bounds or conditions where in release these check should no longer be nessarcay, if they are compleatly redundant they could be moved but if still worth keeping in a Debug enviroment these check can be moved into an new class SainityChecks calling static methods maked as [Conditional("DEBUG")].  Methods should be re-uasable as possible.
 
+Task 6: Config and Factory Consistancy.
+Check if Config and Mapping overrides are correct by means of simplicity and end user user.
+Check facorties are consistant in use and implementations.
 
-Agent Builder Option To use Deafaul System Prompt could cause issue with Agent Name
-
-
-End to End Test, Super Dumb Model Training Load and Test Logits valid output.
-Add progress out Func<float> to loading mothods.
-
-
-Ideas
-
-LLM lobotomy
-Take a model and strip it of all but necessity for becoming an expert wich could be re-merge for MOE type LLM  
-
-LLM weight merging
-Weighted Averaging/Linear Merge: Takes a weighted average of the parameters from multiple models
-SLERP (Spherical Linear Interpolation): Better than linear interpolation for high-dimensional spaces, as it preserves the magnitude of weights, reducing the loss of performance often seen in simple averagin
-TIES-Merging (TrIm, Elect, Sign, and Merge): Designed to handle interference between models by only merging the most significant weight updates and resolving sign disagreements
-DARE (Drop And REscale): Drops redundant weights and re-scales the remaining weights to create a "soups" of models, reducing task interference.
-Task Arithmetic: Creates "task vectors" by subtracting the base model weights from the fine-tuned model weights, allowing these vectors to be added or subtracted to modify model behavior.
-
-Chat session is not adding name in AddMessage, not used in prompt formatting but for reference,  CUI could as have input overide for user name and AgentName provides a name for agents.
+Task 7: Model Loading, Full and Streaming.
+Currenly we operate in a "Full" mode loading all layers on initialization.
 
 
 
-Tier 1 — Models that should now work (Jinja template errors fixed)
-These were failing with template parsing errors that Fixes B/C/D/E address:
+Task 8: Loading time.
+new ChatSession can take a while,  if possible is it possible to an IProgress to the constructor or add an public void InitializeChat(IProgress<float>? progress = null); that can be used by CUI to show after initialization of weight, unclear where exatly all the time is consumend.
 
-Model	What was broken	What fix helps
-Qwen3-0.6B-Q2_K	messsages[0].role dot access	Fix C (bracket+dot)
-Qwen2.5-1.5B-Instruct-f16	tools var missing, messages[0].role	Fix B (tools=null) + Fix C
-qwen2.5-1.5b-instruct-q8_0	same as above	Fix B + Fix C
-DeepSeek-R1-Distill-Qwen-1.5B-Q8_0	messsages[0].role	Fix C
-DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M	same	Fix C
-gemma-3-270m-it-Q8_0	is string, is iterable, % modulo, complex paren comparisons	Fix D + Fix E
-gemma-3-270m-it-Q4_K_M	same	Fix D + Fix E
-gemma-3-270m-it-F16	same	Fix D + Fix E
-Tier 2 — Already working, re-confirm no regression
-All qwen2-0.5b-instruct-* variants (Q2_K, Q4_K_M, Q8_0, FP16)
-llama-3.2-1b-instruct-q8_0
-Qwen3-0.6B-Q{3..8}_K_M/Q* variants
-Qwen2.5-1.5B-Instruct-f16
-Tier 3 — Probably still failing (non-Jinja issues)
-Qwen2-0.5B.Q* (base, non-instruct) — expected, base checkpoints produce repetitions
-tinyllama-1.1b-chat-v1.0 — different issue (likely tokenizer/pre-tokeniser)
-llama3-small-Q* — different issue (likely tokenizer)
-tiny-mistral-Q* — different issue (likely tokenizer)
-SmolLM-135M*, SmolLM2-135M-Instruct* — gibberish, likely sub-1B model limitations
-Recommendation
-Start with Tier 1 — run gemma-3-270m-it-Q8_0 first (most fixes target its template), then Qwen3-0.6B-Q2_K / qwen2.5-1.5b-instruct-q8_0. If those produce coherent responses, the fixes are working.
+Task 9: SharpMind Native Model
+Design ModelFormat exclusivly for SharpMind.  This format should include all relevent metadata and layers with QuantDType layer positions and lenght for loading.
+Additional it should include Plugins such as classes with [ToolDesc] that can be included by default and or custom plugs.  these can be stored as byte arrays and loaded. CUI should be able to hable adding these to OptionsView.
+Then we need the final End to End Test, Super Dumb Model Training save and Load, suggest training on small data set.
 
-Want me to draft the test commands for each?
+Task 10: Future Incorperate Training into CUI.
