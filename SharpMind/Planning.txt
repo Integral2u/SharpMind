@@ -64,3 +64,7 @@ if type is not know then possibly inject prompt pointing to path of the file as 
 
 Profiler for all VecDot quants and its variants to ensure correct implementation.  SSE faster than Scalar, AVX2 faster than SSE, FMA faster than AXV.
 And a profiler to compare Serial Vs Parallel MatMul on syntestic data approximatly size of 1b model layer
+
+Big bug,  Qwen3 models do not terminate
+
+cui optionsview load session and other buttons should be pinned to the bottom and not in the scrollable area

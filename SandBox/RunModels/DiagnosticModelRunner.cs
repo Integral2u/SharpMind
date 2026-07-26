@@ -130,7 +130,7 @@ namespace SandBox.RunModels
                     Console.ForegroundColor = ConsoleColor.Blue;
                     await Console.Out.WriteAsync(text.Token);
                     tok++;
-                    if (tok > 60) cancellationTokenSource.Cancel();
+                    //if (tok > 60) cancellationTokenSource.Cancel();
                 }
                 async Task<ChatMessage> Prompt()
                 {

@@ -38,6 +38,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     /// </summary>
     private bool _cacheValid;
     private IReadOnlyList<ChatMessage>? _filteredHistoryCache;
+    private IReadOnlyList<ChatMessage>? _promptHistoryCache;
     // IO interceptors (optional)
     // Supplied by the host application. When present and PermissionCallback is
     // set, they are activated only for the duration of each CallToolAsync call
@@ -241,14 +242,14 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     private string BuildPrompt()
     {
         if (_formatter is not null)
-            return _formatter.Format(_history, _tokenizer, _addBos, EnableThinking);
+            return _formatter.Format(GetPromptHistory(), _tokenizer, _addBos, EnableThinking);
 
         var sb = new System.Text.StringBuilder();
 
         if (_addBos && _tokenizer.BosId >= 0)
             sb.Append(_tokenizer.IdToToken(_tokenizer.BosId));
 
-        foreach (var msg in _history)
+        foreach (var msg in GetPromptHistory())
         {
             if (msg.Ignore) continue;
             var prefix = msg.Role switch
@@ -264,6 +265,41 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         }
         sb.Append("assistant: ");
         return sb.ToString();
+    }
+
+    private IReadOnlyList<ChatMessage> GetPromptHistory()
+    {
+        if (EnableThinking)
+            return _history;
+
+        if (_promptHistoryCache is not null)
+            return _promptHistoryCache;
+
+        var list = new List<ChatMessage>(_history.Count);
+        foreach (var msg in _history)
+        {
+            if (msg.Ignore) continue;
+            if (msg.Role == ChatRole.Agent)
+            {
+                list.Add(new ChatMessage
+                {
+                    Role = msg.Role,
+                    Content = StripThinking(msg.Content),
+                    Name = msg.Name,
+                    Timestamp = msg.Timestamp,
+                    IsPinned = msg.IsPinned,
+                    Ignore = msg.Ignore,
+                    Metadata = msg.Metadata,
+                    Artifacts = msg.Artifacts
+                });
+            }
+            else
+            {
+                list.Add(msg);
+            }
+        }
+        _promptHistoryCache = list;
+        return list;
     }
 
     private int[] TrimToFitContext(int[] promptToks)
@@ -342,14 +378,18 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
 
 private void ThrowIfDisposed()
         => ObjectDisposedException.ThrowIf(_disposed, typeof(ChatSession<T, K>).Name);
-    private void InvalidateHistoryCache() => _filteredHistoryCache = null;
+    private void InvalidateHistoryCache()
+    {
+        _filteredHistoryCache = null;
+        _promptHistoryCache = null;
+    }
 
     private string StripThinking(string text)
     {
         if (string.IsNullOrWhiteSpace(text)) return text;
 
         // Remove all <think>...</think> blocks
-        var result = System.Text.RegularExpressions.Regex.Replace(text, @"", "", System.Text.RegularExpressions.RegexOptions.Singleline);
+        var result = Regex.Replace(text, @"<think>.*?</think>", "", RegexOptions.Singleline);
 
         // Also trim trailing garbage characters often seen at the end of LLM responses (e.g. EOS tokens decoded as symbols)
         return result.TrimEnd('\uFFFD', '\u0000', '\u0001', '\u0002', '\u0003').Trim();
@@ -763,33 +803,17 @@ private void ThrowIfDisposed()
                 // Strip tags from the fragment to prevent them from appearing in the UI
                 string cleanFragment = fragment.Replace("<think>", "").Replace("</think>", "");
 
-                // Filter out thinking tokens if ShowThinking is false
-                if (!ShowThinking && _inThinkBlock)
+                // Always yield the real token content — the UI decides whether to
+                // display vs suppress thinking tokens via ShowThinking.
+                yield return new ChatStreamEntry
                 {
-                    // We still yield the entry but with a special status or empty token?
-                    // The UI should handle the status, but if we want to hide the text:
-                    yield return new ChatStreamEntry
-                    {
-                        Status = ChatStatus.Thinking,
-                        Token = "",
-                        IsComplete = false,
-                        TokensPerSecond = _generator.TokensPerSecond,
-                        TimeToFirstToken = _generator.TimeToFirstToken,
-                        TokenId = tokenId,
-                    };
-                }
-                else
-                {
-                    yield return new ChatStreamEntry
-                    {
-                        Status = _inThinkBlock ? ChatStatus.Thinking : ChatStatus.Responding,
-                        Token = cleanFragment,
-                        IsComplete = false,
-                        TokensPerSecond = _generator.TokensPerSecond,
-                        TimeToFirstToken = _generator.TimeToFirstToken,
-                        TokenId = tokenId,
-                    };
-                }
+                    Status = _inThinkBlock ? ChatStatus.Thinking : ChatStatus.Responding,
+                    Token = cleanFragment,
+                    IsComplete = false,
+                    TokensPerSecond = _generator.TokensPerSecond,
+                    TimeToFirstToken = _generator.TimeToFirstToken,
+                    TokenId = tokenId,
+                };
             }
 
             _progress?.Report(1f);
@@ -805,8 +829,7 @@ private void ThrowIfDisposed()
                 var args = toolCall["arguments"]!.AsObject();
 
                 // Record the model's tool-call turn in history for the formatter
-                string historyText = EnableThinking ? responseText : StripThinking(responseText);
-                _history.Add(ChatMessage.Agent(historyText, _agentBuilder?.AgentName));
+                _history.Add(ChatMessage.Agent(responseText, _agentBuilder?.AgentName));
                 InvalidateHistoryCache();
 
                 // Signal to the UI that a tool is about to execute
@@ -936,8 +959,7 @@ private void ThrowIfDisposed()
             // Normal (non-tool) response
             if (responseText.Length > 0)
             {
-                string historyText = EnableThinking ? responseText : StripThinking(responseText);
-                var agentMsg = ChatMessage.Agent(historyText, _agentBuilder?.AgentName);
+                var agentMsg = ChatMessage.Agent(responseText, _agentBuilder?.AgentName);
                 if (responseArtifacts.Count > 0)
                     agentMsg.Artifacts = [.. responseArtifacts];
                 _history.Add(agentMsg);

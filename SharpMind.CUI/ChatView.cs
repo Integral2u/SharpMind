@@ -43,8 +43,11 @@ public sealed class ChatView : View
     private readonly Label _speedLabel;
     private readonly Label _ttftLabel;
     private readonly Label _memLabel;
+    private readonly Label _showThinkingLabel;
+    private readonly Label _enableThinkingLabel;
 
     private readonly System.Text.StringBuilder _liveResponse = new();
+    private readonly System.Text.StringBuilder _liveThinking = new();
     private readonly System.Text.StringBuilder _subAgentBuffer = new();
     private string? _pendingSpeakerName;
     private string? _activeSubAgentName;
@@ -119,17 +122,23 @@ public sealed class ChatView : View
         _strategyLabel = new Label($"Generator: {options.Generator}\nKV Cache: {options.Cache}\nHW Tier: {hwDisplay}")
         { X = 0, Y = 4, Width = Dim.Fill(), Height = 4 };
         _toolLabel = new Label("") { X = 0, Y = 8, Width = Dim.Fill() };
-        _speedLabel = new Label("--") { X = 0, Y = 10, Width = Dim.Fill() };
-        _ttftLabel = new Label("--") { X = 0, Y = 12, Width = Dim.Fill() };
-        _memLabel = new Label(FormatMemory()) { X = 0, Y = 14, Width = Dim.Fill(), Height = 3 };
+
+        _showThinkingLabel = new Label("Show: on") { X = 2, Y = 10, Width = Dim.Fill() };
+        _enableThinkingLabel = new Label("Enable: off") { X = 2, Y = 11, Width = Dim.Fill() };
+        _speedLabel = new Label("--") { X = 0, Y = 13, Width = Dim.Fill() };
+        _ttftLabel = new Label("--") { X = 0, Y = 15, Width = Dim.Fill() };
+        _memLabel = new Label(FormatMemory()) { X = 0, Y = 17, Width = Dim.Fill(), Height = 3 };
 
         sidebarFrame.Add(
             new Label("Status:") { X = 0, Y = 0 }, _statusLabel,
             new Label("Agent:") { X = 0, Y = 2 }, _agentLabel,
             new Label("Strategy:") { X = 0, Y = 3 }, _strategyLabel,
             _toolLabel,
-            new Label("Speed:") { X = 0, Y = 9 }, _speedLabel,
-            new Label("Time to 1st tok:") { X = 0, Y = 11 }, _ttftLabel,
+            new Label("Thinking:") { X = 0, Y = 9 },
+            _showThinkingLabel,
+            _enableThinkingLabel,
+            new Label("Speed:") { X = 0, Y = 12 }, _speedLabel,
+            new Label("Time to 1st tok:") { X = 0, Y = 14 }, _ttftLabel,
             _memLabel);
 
         _getButton = new Button("Get")
@@ -405,6 +414,8 @@ public sealed class ChatView : View
         }
 
         _memLabel.Text = FormatMemory();
+        _showThinkingLabel.Text = _bridge.ShowThinking ? "Show: on" : "Show: off";
+        _enableThinkingLabel.Text = _bridge.EnableThinking ? "Enable: on" : "Enable: off";
 
         foreach (var entry in _bridge.DrainEntries())
             OnStreamEntry(entry);
@@ -447,16 +458,19 @@ public sealed class ChatView : View
             if (entry.Token is not null) _subAgentBuffer.Append(entry.Token);
         }
         
-        if ((entry.Status == ChatStatus.Responding || (entry.Status == ChatStatus.Thinking && _bridge.ShowThinking)) && entry.Token is not null)
+        if (entry.Token is not null)
         {
-            _liveResponse.Append(entry.Token);
-            // The actual streaming fix: render the in-progress response on
-            // every token instead of only once the whole turn finishes.
-            // Previously _liveResponse only got flushed to the transcript at
-            // Complete/Interrupted, so nothing was visible until the entire
-            // answer had already finished generating — correct text, just
-            // displayed with no streaming at all.
-            RenderLiveResponse();
+            if (entry.Status == ChatStatus.Thinking)
+            {
+                _liveThinking.Append(entry.Token);
+                if (_bridge.ShowThinking)
+                    RenderLiveResponse();
+            }
+            else if (entry.Status == ChatStatus.Responding)
+            {
+                _liveResponse.Append(entry.Token);
+                RenderLiveResponse();
+            }
         }
 
         if (entry.IsComplete || entry.Status is ChatStatus.Complete or ChatStatus.Interrupted)
@@ -482,28 +496,26 @@ public sealed class ChatView : View
         string full = _transcriptView.Text.ToString() ?? "";
         if (_liveResponseStartOffset < 0)
         {
-            // First token of this turn: remember where the live line begins
-            // so subsequent tokens overwrite it in place rather than append.
             _liveResponseStartOffset = full.Length;
             full += $"{AgentName}: ";
         }
 
         string prefix = full[.._liveResponseStartOffset];
-        _transcriptView.Text = prefix + $"{AgentName}: " + _liveResponse;
+        string displayText = _bridge.ShowThinking
+            ? _liveThinking.ToString() + _liveResponse.ToString()
+            : _liveResponse.ToString();
+        _transcriptView.Text = prefix + $"{AgentName}: " + displayText;
         _transcriptView.MoveEnd();
         _transcriptView.SetNeedsDisplay();
     }
 
     private void CommitLiveResponse()
     {
-        // The live line is already showing the full text by the time Complete
-        // arrives (RenderLiveResponse kept it current token-by-token) — just
-        // close it off with the trailing blank line the permanent transcript
-        // uses between entries, and reset tracking for the next turn.
         _transcriptView.Text = _transcriptView.Text.ToString() + "\n\n";
         _transcriptView.MoveEnd();
         _transcriptView.SetNeedsDisplay();
         _liveResponse.Clear();
+        _liveThinking.Clear();
         _liveResponseStartOffset = -1;
     }
 
@@ -512,6 +524,64 @@ public sealed class ChatView : View
         _transcriptView.Text = _transcriptView.Text.ToString() + line + "\n\n";
         _transcriptView.MoveEnd();
         _transcriptView.SetNeedsDisplay();
+    }
+
+    /// <summary>Rebuilds the entire transcript from bridge history, applying the current ShowThinking setting.</summary>
+    public void RebuildTranscript()
+    {
+        string savedLive = _liveResponse.ToString();
+        string savedThinking = _liveThinking.ToString();
+        int savedOffset = _liveResponseStartOffset;
+
+        _transcriptView.Text = "";
+        _liveResponse.Clear();
+        _liveThinking.Clear();
+        _liveResponseStartOffset = -1;
+
+        foreach (var msg in _bridge.GetHistory())
+        {
+            string display = FormatForDisplay(msg);
+            AppendTranscript(display);
+        }
+
+        if (savedLive.Length > 0 || savedThinking.Length > 0)
+        {
+            _liveResponse.Append(savedLive);
+            _liveThinking.Append(savedThinking);
+            _liveResponseStartOffset = _transcriptView.Text.ToString()!.Length;
+            RenderLiveResponse();
+        }
+    }
+
+    private string FormatForDisplay(ChatMessage msg)
+    {
+        string role = msg.Role switch
+        {
+            ChatRole.Agent => $"{AgentName}: ",
+            ChatRole.User => $"{msg.Name ?? "User"}: ",
+            ChatRole.System => "system: ",
+            _ => ""
+        };
+        string content = _bridge.ShowThinking
+            ? StripThinkTags(msg.Content)     // show thinking content, hide raw tags
+            : StripThinkBlocks(msg.Content);  // hide thinking entirely
+        return $"{role}{content}";
+    }
+
+    /// <summary>Removes &lt;think&gt; and &lt;/think&gt; tags but leaves the thinking content.</summary>
+    private static string StripThinkTags(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return text;
+        return text.Replace("<think>", "").Replace("</think>", "")
+            .TrimEnd('\uFFFD', '\u0000', '\u0001', '\u0002', '\u0003').Trim();
+    }
+
+    /// <summary>Removes entire &lt;think&gt;...&lt;/think&gt; blocks.</summary>
+    private static string StripThinkBlocks(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return text;
+        return System.Text.RegularExpressions.Regex.Replace(text, @"<think>.*?</think>", "", System.Text.RegularExpressions.RegexOptions.Singleline)
+            .TrimEnd('\uFFFD', '\u0000', '\u0001', '\u0002', '\u0003').Trim();
     }
 
     private static string StatusLabel(ChatStatus s) => s switch

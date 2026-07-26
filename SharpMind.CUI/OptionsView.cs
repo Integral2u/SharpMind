@@ -32,7 +32,7 @@ public sealed class OptionsView : View
         {
             X = 0, Y = 0,
             Width = Dim.Fill(),
-            Height = Dim.Fill(),
+            Height = Dim.Fill(1),
             ShowVerticalScrollIndicator = true,
             ShowHorizontalScrollIndicator = false
         };
@@ -270,21 +270,24 @@ public sealed class OptionsView : View
             row += pluginCompactorNames.Length + 2;
         }
 
-        var launchButton = new Button("Launch Session") { X = 1, Y = row, IsDefault = true };
-        launchButton.Clicked += () => onLaunch();
-        var cancelButton = new Button("Cancel") { X = Pos.Right(launchButton) + 2, Y = row };
-        cancelButton.Clicked += () => onCancel();
-        var saveAsButton = new Button("Save Options As...") { X = Pos.Right(cancelButton) + 2, Y = row };
-        saveAsButton.Clicked += SaveOptionsAs;
-        var openPresetButton = new Button("Open Preset...") { X = Pos.Right(saveAsButton) + 2, Y = row };
-        openPresetButton.Clicked += OpenPreset;
-        _formContent.Add(launchButton, cancelButton, saveAsButton, openPresetButton);
-        row += 2;
+        row += 2; // reserved for fixed button bar below
 
         _formContent.Height = row;
         scrollView.ContentSize = new Terminal.Gui.Size(100, row);
         scrollView.Add(_formContent);
         Add(scrollView);
+
+        var buttonBar = new View { X = 0, Y = Pos.AnchorEnd(1), Width = Dim.Fill(), Height = 1 };
+        var launchButton = new Button("Launch Session") { X = 1, Y = 0, IsDefault = true };
+        launchButton.Clicked += () => onLaunch();
+        var cancelButton = new Button("Cancel") { X = Pos.Right(launchButton) + 2, Y = 0 };
+        cancelButton.Clicked += () => onCancel();
+        var saveAsButton = new Button("Save Options As...") { X = Pos.Right(cancelButton) + 2, Y = 0 };
+        saveAsButton.Clicked += SaveOptionsAs;
+        var openPresetButton = new Button("Open Preset...") { X = Pos.Right(saveAsButton) + 2, Y = 0 };
+        openPresetButton.Clicked += OpenPreset;
+        buttonBar.Add(launchButton, cancelButton, saveAsButton, openPresetButton);
+        Add(buttonBar);
 
         KeyPress += (args) =>
         {
