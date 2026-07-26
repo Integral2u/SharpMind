@@ -409,7 +409,7 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
         if (expr.StartsWith("not ", StringComparison.Ordinal))
         {
             var rest = expr[4..].TrimStart();
-            var restM = System.Text.RegularExpressions.Regex.Match(rest, @"^(.+?)\s+is\s+defined$");
+            var restM = RegexGenerated.JinjaIsDefined.Match(rest);
             if (restM.Success)
             {
                 var v = Eval(restM.Groups[1].Value, env, errors);
@@ -418,7 +418,7 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
         }
 
         // X is defined / X is not defined  (general expression, not just \w+)
-        var isDefinedM = System.Text.RegularExpressions.Regex.Match(expr, @"^(.+?)\s+is\s+(not\s+)?defined$");
+        var isDefinedM = RegexGenerated.JinjaIsDefined.Match(expr);
         if (isDefinedM.Success)
         {
             var v = Eval(isDefinedM.Groups[1].Value, env, errors);

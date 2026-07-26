@@ -3,33 +3,6 @@ you must make sure you understand the JigSawDotNet pattern and use. Intention is
 Review Sharmind.Core.Activations.* for example
 
 Tasks to implement.
-Task 1: Named interfaces.
-These interfaces will need a public string Name { get; init; } for later use.
-IContextCompactor, IPromptPostProcessor, IPromptPreProcessor, IGenerator
-
-Task 2: Native ChatSession Compactor(s)
-Native IContextCompactor(s) for Compacting Session
-Summarize version: use working model as Agent to Summaraize and mark previous non IsPinned ChatMessages as Ignore and so prompt formatter is not using entire History.
-Truncate version: Simply truncate remove previously non IsPinned History by making oldest is Ignore.
-
-Task 3: CUI Plugins.
-Read Folder Plugins to add to OptionsView addition interfaces that can be loaded and used.
-Will need to avoid Name Conflicts, first in wins.
-IContextCompactor, IPromptPostProcessor, IPromptPreProcessor, IGenerator(may require PluginGeneratorBuilder implmenting IGeneratorBuilder)
-
-Task 4: CUI ChatMessage Names.
-OptionsView should have an option to set User Name but default to standard User.
-ChatSession, ChatSessionBridge and DebugChatBridge when adding messages to history should use the correct name and if it is from the Model use the Agent Name set buy the AgentBuilder.
-
-Task 5: Optimization
-5.1: Regex cehck for regex usages example Gpt2PreTokeniser, Cl100kPreTokeniser create a private static readonly Regex Pattern but should be implementing a [GeneratedRegex] see SharpMind.Inference.RegexGenerated.
-There are lot of added System.Text.RegularExpressions.Regex.* calls JinjaTemplateFormatter that have slowed perfomance but can be patially redeemed by calling generated regexes in RegexGenerated.
-5.2: Check for creations of objjects that really need to only be created once in construction or outside of loops.
-5.3: Look at call sites that throw exceptions or tests bounds or conditions where in release these check should no longer be nessarcay, if they are compleatly redundant they could be moved but if still worth keeping in a Debug enviroment these check can be moved into an new class SainityChecks calling static methods maked as [Conditional("DEBUG")].  Methods should be re-uasable as possible.
-
-Task 6: Config and Factory Consistancy.
-Check if Config and Mapping overrides are correct by means of simplicity and end user user.
-Check facorties are consistant in use and implementations.
 
 Task 7: Model Loading, Full and Streaming.  (most likley to break thing, need to ensure data is managed correctly)
 Currenly we operate in a "Full" mode loading all layers on initialization.
@@ -55,14 +28,11 @@ Task 11: Future Incorperate Training into CUI.
 
 New
 handling of processing up uploaded artifacts, txt csv etc
-if type is not know then possibly inject prompt pointing to path of the file as a tool may be available
+if type is not know then possibly inject prompt pointing to path of the file as a tool may be available.
+txt and csv sould be simple enough to add to a standard IPromptPreProcessor
 
 Profiler for all VecDot quants and its variants to ensure correct implementation.  SSE faster than Scalar, AVX2 faster than SSE, FMA faster than AXV.
 And a profiler to compare Serial Vs Parallel MatMul on syntestic data approximatly size of 1b model layer
-
-Big bug,  Qwen3 models do not terminate
-
-cui optionsview load session and other buttons should be pinned to the bottom and not in the scrollable area
 
 gemma models
 [formatter ERROR] JINJA ERROR: variable '(message' not found in template env

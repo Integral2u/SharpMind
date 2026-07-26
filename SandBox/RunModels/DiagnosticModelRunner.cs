@@ -1,6 +1,7 @@
 ﻿using SharpMind.Core.Quantization;
 using SharpMind.GPU;
 using SharpMind.Inference;
+using SharpMind.Inference.Agent;
 using SharpMind.Inference.Chat;
 using SharpMind.Inference.Chat.PromptFormatters;
 using SharpMind.Model;
@@ -113,13 +114,14 @@ namespace SandBox.RunModels
                 await Console.Out.WriteLineAsync($"ModelFactory.CreateTransformer executed in: {sw.Elapsed.TotalSeconds:F2}s");
 
                 sw.Restart();
-
+                
                 await using var session = new ChatSession<StandardGeneratorBuilder<KVCacherBuilder>, KVCacherBuilder>(model, tokenizer, meta)
                 {
                     MaxTokens = 256,
                     Temperature = 0.0f,
                     TopK = 1,
                 };
+                //session.AddMessage(ChatRole.Agent, "You are a helpful assistant");
                 await Console.Out.WriteLineAsync($"ChatSession executed in: {sw.Elapsed.TotalSeconds:F2}s");
                 sw.Stop();
                 var history = await session.StartChatAsync(Prompt, Response, cancellationTokenSource.Token);
