@@ -254,6 +254,22 @@ public sealed class OptionsView : View
         }
         row++;
 
+        // --- Plugin compactor selection ------------------------------------
+        if (pluginResult.Compactors.Count > 0)
+        {
+            AddLabel("Plugin compactor:");
+            var pluginCompactorNames = pluginResult.Compactors.Select(c => (ustring)c.Name).ToArray();
+            var selectedIdx = _options.PluginCompactorName is not null
+                ? pluginResult.Compactors.FindIndex(c =>
+                    string.Equals(c.Name, _options.PluginCompactorName, StringComparison.OrdinalIgnoreCase))
+                : -1;
+            var pluginCompactorRadio = new RadioGroup(pluginCompactorNames) { X = 30, Y = row, SelectedItem = Math.Max(0, selectedIdx) };
+            pluginCompactorRadio.SelectedItemChanged += (args) =>
+                _options.PluginCompactorName = pluginResult.Compactors[args.SelectedItem].Name;
+            _formContent.Add(pluginCompactorRadio);
+            row += pluginCompactorNames.Length + 2;
+        }
+
         var launchButton = new Button("Launch Session") { X = 1, Y = row, IsDefault = true };
         launchButton.Clicked += () => onLaunch();
         var cancelButton = new Button("Cancel") { X = Pos.Right(launchButton) + 2, Y = row };

@@ -206,13 +206,6 @@ public static class SessionLauncher
         if (options.AgentsEnabled)
             builder.WithAgents(options.MaxAgentDepth);
 
-        builder.Compactor = options.Compactor switch
-        {
-            CompactorStrategy.Truncate => new TruncatingCompactor(),
-            CompactorStrategy.Summarize => new SummarizingCompactor(),
-            _ => null
-        };
-
         // --- Load plugins from ./plugins/ ----------------------------------
         var pluginResult = PluginLoader.LoadFrom(Path.Combine(AppContext.BaseDirectory, "plugins"));
         warnings.AddRange(pluginResult.Warnings);
@@ -221,6 +214,17 @@ public static class SessionLauncher
         builder.PluginPostProcessors = pluginResult.PostProcessors;
         if (pluginResult.Tools.Count > 0)
             builder.WithTools(pluginResult.Tools.ToArray());
+
+        // Resolve compactor: plugin compactor takes priority, then built-in strategy
+        builder.Compactor = options.PluginCompactorName is not null
+            ? pluginResult.Compactors.FirstOrDefault(c =>
+                string.Equals(c.Name, options.PluginCompactorName, StringComparison.OrdinalIgnoreCase))
+            : options.Compactor switch
+            {
+                CompactorStrategy.Truncate => new TruncatingCompactor(),
+                CompactorStrategy.Summarize => new SummarizingCompactor(),
+                _ => null
+            };
 
         IAgentBuilder agentBuilder = builder;
 

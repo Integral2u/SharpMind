@@ -139,6 +139,10 @@ public sealed class SessionOptions
     public string AgentName { get; set; } = "Delta";
     public string UserName { get; set; } = "User";
     public CompactorStrategy Compactor { get; set; } = CompactorStrategy.None;
+
+    /// <summary>When non-null, overrides <see cref="Compactor"/> with a plugin-loaded compactor identified by name.</summary>
+    public string? PluginCompactorName { get; set; }
+
     public bool AgentsEnabled { get; set; }
     public int MaxAgentDepth { get; set; } = 2;
     public int MaxToolCallsPerTurn { get; set; } = 10;
