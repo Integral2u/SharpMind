@@ -41,7 +41,21 @@ namespace SandBox.RunModels
 
                 await Console.Out.FlushAsync();
                 metaHelper.Load(modelPath, null, out ModelMetaData meta, out ModelConfig modelConfig, out Tokenizer? tokenizer);
-                Console.Out.WriteLineAsync($"[DIAG] {meta}: arch='{meta.GetString("general.architecture")}'");
+                await Console.Out.WriteLineAsync($"[DIAG] {meta}: arch='{meta.GetString("general.architecture")}'");
+                await Console.Out.WriteLineAsync($"[DIAG] config: hidden={modelConfig.HiddenDim} layers={modelConfig.NumLayers} heads={modelConfig.NumHeads} kv={modelConfig.NumKvHeads} ffn={modelConfig.FfnDim} headDim={modelConfig.HeadDim} headDimOverride={modelConfig.HeadDimOverride} maxSeq={modelConfig.MaxSeqLen} ropeTheta={modelConfig.RopeTheta} ropeDim={modelConfig.RopeDim} tieEmb={modelConfig.TieWordEmbeddings}");
+                // Dump metadata KV pairs matching rope or head_dim
+                if (meta?.KvPairs != null)
+                {
+                    var kv = meta.KvPairs.Where(k => k.Key.Contains("rope", StringComparison.OrdinalIgnoreCase) || k.Key.Contains("head_dim", StringComparison.OrdinalIgnoreCase) || k.Key.Contains("dimension", StringComparison.OrdinalIgnoreCase));
+                    foreach (var k in kv)
+                        await Console.Out.WriteLineAsync($"[DIAG] meta {k.Key} = {k.Value}");
+                }
+                // Dump first 30 tensor names
+                if (meta?.Tensors != null)
+                {
+                    var firstTensors = meta.Tensors.Take(30).Select(t => $"{t.Name}[{string.Join("x", t.Shape)}]");
+                    await Console.Out.WriteLineAsync($"[DIAG] tensors: {string.Join(", ", firstTensors)}");
+                }
                 // Diagnostic: dump rendered prompt and formatter errors
                 var formatter = ChatPromptFormatterFactory.Create(meta);
                 if (formatter is JinjaTemplateFormatter jinja)
@@ -79,6 +93,20 @@ namespace SandBox.RunModels
                 weights.InitializeWeights();
 
                 await Console.Out.WriteLineAsync($"ModelFactory.Create + InitializeWeights executed in: {sw.Elapsed.TotalSeconds:F2}s");
+                // Dump weight info for blocks 0,1,2 (Gemma-3)
+                for (int bi = 0; bi < Math.Min(3, weights.Blocks.Length); bi++)
+                {
+                    var b = weights.Blocks[bi];
+                    var n1 = b.Norm1W; var n2 = b.Norm2W;
+                    var p1 = b.PostNorm1W; var p2 = b.PostNorm2W;
+                    var qn = b.QNormW; var kn = b.KNormW;
+                    if (n1 != null) { var d = n1.Data; await Console.Out.WriteLineAsync($"[DIAG] blk{bi}.Norm1W: first5={d[0]:G4},{d[1]:G4},{d[2]:G4},{d[3]:G4},{d[4]:G4} last={d[n1.ElementCount-1]:G4}"); }
+                    if (n2 != null) { var d = n2.Data; await Console.Out.WriteLineAsync($"[DIAG] blk{bi}.Norm2W: first5={d[0]:G4},{d[1]:G4},{d[2]:G4},{d[3]:G4},{d[4]:G4} last={d[n2.ElementCount-1]:G4}"); }
+                    if (p1 != null) { var d = p1.Data; await Console.Out.WriteLineAsync($"[DIAG] blk{bi}.PostNorm1W: first5={d[0]:G4},{d[1]:G4},{d[2]:G4},{d[3]:G4},{d[4]:G4} last={d[p1.ElementCount-1]:G4}"); }
+                    if (p2 != null) { var d = p2.Data; await Console.Out.WriteLineAsync($"[DIAG] blk{bi}.PostNorm2W: first5={d[0]:G4},{d[1]:G4},{d[2]:G4},{d[3]:G4},{d[4]:G4} last={d[p2.ElementCount-1]:G4}"); }
+                    if (qn != null) { var d = qn.Data; await Console.Out.WriteLineAsync($"[DIAG] blk{bi}.QNormW: first3={d[0]:G4},{d[1]:G4},{d[2]:G4} last={d[qn.ElementCount-1]:G4}"); }
+                    if (kn != null) { var d = kn.Data; await Console.Out.WriteLineAsync($"[DIAG] blk{bi}.KNormW: first3={d[0]:G4},{d[1]:G4},{d[2]:G4} last={d[kn.ElementCount-1]:G4}"); }
+                }
                 GC.Collect(); GC.WaitForPendingFinalizers();
                 sw.Restart();
                 using var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
@@ -102,7 +130,7 @@ namespace SandBox.RunModels
                     Console.ForegroundColor = ConsoleColor.Blue;
                     await Console.Out.WriteAsync(text.Token);
                     tok++;
-                    if (tok > 25) cancellationTokenSource.Cancel();
+                    if (tok > 60) cancellationTokenSource.Cancel();
                 }
                 async Task<ChatMessage> Prompt()
                 {
