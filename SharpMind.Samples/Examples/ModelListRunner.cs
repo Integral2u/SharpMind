@@ -44,7 +44,16 @@ namespace SharpMind.Samples.Examples
                     await Console.Out.WriteLineAsync($"No Tokenizer Data");
                     continue;
                 }
-
+                var formatter = ChatPromptFormatterFactory.Create(meta);
+                if (formatter is JinjaTemplateFormatter jinja)
+                {
+                    var testMsgs = new[] { ChatMessage.User(prompt) };
+                    string rendered = jinja.Format(testMsgs, tokenizer, false);
+                    Console.Error.WriteLine($"[formatter] prompt={rendered.Replace("\n", "\\n")}");
+                    if (jinja.LastErrors is { Count: > 0 })
+                        foreach (var err in jinja.LastErrors)
+                            Console.Error.WriteLine($"[formatter ERROR] {err}");
+                }
                 var sharpConfig = modelConfig.ForModel();
                 // Build a single combined mapping. WithGpu() now overrides quant ops
                 // as well as model-level ops — no separate qOpsMapping needed.
@@ -86,7 +95,7 @@ namespace SharpMind.Samples.Examples
 
                 async void Response(ChatStreamEntry text)
                 {
-                    Console.ForegroundColor = ConsoleColor.Blue;
+                    Console.ForegroundColor = text.Status == ChatStatus.Thinking ? ConsoleColor.Gray : ConsoleColor.Blue;
                     await Console.Out.WriteAsync(text.Token);
                     tok++;
                     if (tok > 25) cancellationTokenSource.Cancel();

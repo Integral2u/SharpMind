@@ -127,7 +127,7 @@ namespace SandBox.RunModels
 
                 async void Response(ChatStreamEntry text)
                 {
-                    Console.ForegroundColor = ConsoleColor.Blue;
+                    Console.ForegroundColor = text.Status == ChatStatus.Thinking ? ConsoleColor.Gray : ConsoleColor.Blue;
                     await Console.Out.WriteAsync(text.Token);
                     tok++;
                     //if (tok > 60) cancellationTokenSource.Cancel();

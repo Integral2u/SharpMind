@@ -45,11 +45,6 @@ This process follows through cyclically so when at the second to last layer the 
 It is crucial we are not reconstuctucting things and only allocating freeing data as required so some tracking mecanisims will need to be implemented in a manor that does not hinder current "Full" performance.
 Agents, unlike instances that use "Full" if we are in "Streaming" we cannot use the same weights as the reuired layers may become out of sync so each agent spawned in an non "Full" invorement will need thier own TransformerWeightsStreaming instance. 
 
-Task 8: Loading time.
-new ChatSession can take a while,  if possible is it possible to an IProgress to the constructor or add an public void InitializeChat(IProgress<float>? progress = null); that can be used by CUI to show after initialization of weight, unclear where exatly all the time is consumend.
-
-Task 9: Thinking
-if is thinking is inabled the information is available or should be available in history, this History could possibly marker as Ignore same as agent thinking as only the summary is what the main Agent would need, However if in CUI togling show thinkging should re-render with thinking not just start showing acting thinking stream.
 
 Task 10: SharpMind Native Model
 Design ModelFormat exclusivly for SharpMind.  This format should include all relevent metadata and layers with QuantDType layer positions and lenght for loading.
@@ -68,3 +63,11 @@ And a profiler to compare Serial Vs Parallel MatMul on syntestic data approximat
 Big bug,  Qwen3 models do not terminate
 
 cui optionsview load session and other buttons should be pinned to the bottom and not in the scrollable area
+
+gemma models
+[formatter ERROR] JINJA ERROR: variable '(message' not found in template env
+[formatter ERROR] JINJA ERROR: variable ''user') != (loop.index0' not found in template env
+[formatter ERROR] JINJA ERROR: variable '0)' not found in template env
+
+Testing Qwen2-0.5B.Q6_K
+[formatter] prompt=<|im_start|>system\nYou are a helpful assistant

@@ -70,7 +70,7 @@ namespace SharpMind.Samples.Examples
 
             async void Response(ChatStreamEntry text)
             {
-                Console.ForegroundColor = ConsoleColor.Blue;
+                Console.ForegroundColor = text.Status == ChatStatus.Thinking ? ConsoleColor.Gray : ConsoleColor.Blue;
                 await Console.Out.WriteAsync(text.Token);
             }
 
