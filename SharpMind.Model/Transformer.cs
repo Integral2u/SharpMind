@@ -23,6 +23,7 @@ public sealed class Transformer : IDisposable
     private readonly LogitOps _logitOps;
 
     private readonly TransformerBlock[]? _blocks; // For training backward
+    private readonly bool _gemmaEmbeddingScale;    // Gemma models scale embeddings by sqrt(hiddenDim)
 
     private Tensor<float>? _cachedEmbedding;
     private Tensor<float>? _cachedHidden;
@@ -35,7 +36,8 @@ public sealed class Transformer : IDisposable
         NormLayer finalNorm,
         Tensor<float>? lmHead = null,
         QuantizationOps? qOps = null,
-        Dictionary<string, string>? mapping = null)
+        Dictionary<string, string>? mapping = null,
+        bool gemmaEmbeddingScale = false)
     {
         ArgumentNullException.ThrowIfNull(weights);
         ArgumentNullException.ThrowIfNull(embedding);
@@ -52,6 +54,7 @@ public sealed class Transformer : IDisposable
         var rawW = _lmHead != null ? _weights.RawLmHead : _weights.RawEmbedding;
         var rawDtype = _lmHead != null ? _weights.RawLmHeadDtype : _weights.RawEmbeddingDtype;
 
+        _gemmaEmbeddingScale = gemmaEmbeddingScale;
         _logitOps = LogitOpsFactory.Create(projWeight, rawW, rawDtype, mapping);
 
         if (arch is DecoderArch decodeArch)
@@ -175,6 +178,8 @@ public sealed class Transformer : IDisposable
 
         // 1. Token embeddings → [Batch, SeqLen, HiddenDim]
         _cachedEmbedding = _embedding.Forward(tokenIds, workspace);
+        if (_gemmaEmbeddingScale)
+            ScaleEmbedding(_cachedEmbedding, _weights.Config.HiddenDim);
 
         // 2. Architecture (stack of transformer blocks).
         //    Blocks mutate in-place and return the same tensor, so _cachedHidden
@@ -212,6 +217,8 @@ public sealed class Transformer : IDisposable
         ThrowIfDisposed();
 
         _cachedEmbedding = _embedding.Forward(tokenIds, workspace);
+        if (_gemmaEmbeddingScale)
+            ScaleEmbedding(_cachedEmbedding, _weights.Config.HiddenDim);
 
         _cachedHidden = _arch.Forward(_cachedEmbedding, caches, positionOffset, workspace);
 
@@ -366,5 +373,14 @@ public sealed class Transformer : IDisposable
         var gradInput = new Tensor<float>(batch, seqLen, hidden);
 
         return gradInput;
+    }
+
+    /// <summary>Gemma models scale token embeddings by sqrt(hiddenDim) before the first block.</summary>
+    private static void ScaleEmbedding(Tensor<float> embedding, int hiddenDim)
+    {
+        float scale = MathF.Sqrt(hiddenDim);
+        var data = embedding.Data;
+        for (int i = 0; i < data.Length; i++)
+            data[i] *= scale;
     }
 }

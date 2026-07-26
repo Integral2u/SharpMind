@@ -121,7 +121,8 @@ public static class ModelFactory
 
         var finalNorm = BuildNorm(weights.Config.HiddenDim, sharpConfig, weights.Config.NormEps, weights.FinalNormWeight, weights.FinalNormBias);
 
-        var transformer = new Transformer(weights, embedding, arch, finalNorm, weights.LmHeadWeight, qOps, fullMapping);
+        bool gemmaScale = sharpConfig.Activation == ActivationKind.GELU && sharpConfig.Gate == GateKind.GeGLU;
+        var transformer = new Transformer(weights, embedding, arch, finalNorm, weights.LmHeadWeight, qOps, fullMapping, gemmaEmbeddingScale: gemmaScale);
 
         if (optimizeMemory)
             transformer.FreeFloatWeights();
