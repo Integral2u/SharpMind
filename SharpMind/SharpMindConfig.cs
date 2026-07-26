@@ -226,18 +226,18 @@ public sealed record SharpMindConfig
         };
     }
 
-    public Dictionary<string, string> ToJigSawMapping(Dictionary<string, string>? overrides = null)
+    public Dictionary<string, string> ToJigSawMapping(Dictionary<string, string>? overrides = null, bool? parallel = null)
     {
+        var config = parallel.HasValue ? this with { Parallel = parallel.Value } : this;
         var cfg = new MappingBuilder(ResolvedHardware)
-            .ApplyPreset(this)
-            .ApplyQuantPreset(this)
+            .ApplyPreset(config)
+            .ApplyQuantPreset(config)
             .Build();
-        if (overrides == null) return cfg;
         if (overrides != null)
         {
             foreach (var m in overrides)
             {
-                if (cfg.TryGetValue(m.Key, out string? value)) cfg[m.Key] = value;
+                if (cfg.TryGetValue(m.Key, out string? value)) cfg[m.Key] = m.Value;
                 else cfg.Add(m.Key, m.Value);
             }
         }

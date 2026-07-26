@@ -114,15 +114,16 @@ public static class SessionLauncher
         var sharpConfig = modelConfig.ForModel(hw: options.HardwareTier)
         ;
 
-        // Build a single combined mapping dictionary that includes both model-level
-        // operations (pointwise, gate, softmax, etc.) and quantization operations
-        // (vecdot, qmatmul, read, etc.). SharpMindConfig.ToJigSawMapping() now produces
-        // both sets. The GPU path uses MappingBuilder.WithGpu() which additionally
-        // overrides selected entries with GPU-kernel values — the same dictionary
-        // shape is ultimately passed to ModelFactory.CreateSession.
+        // Build the full mapping via SharpMindConfig.ToJigSawMapping().
+        // The GPU path additionally applies WithGpu() on a fresh MappingBuilder
+        // to produce GPU-overridden values for selected kernel slots.
         Dictionary<string, string> mapping = options.UseGpu
-            ? new MappingBuilder(options.HardwareTier).ApplyPreset(sharpConfig).ApplyQuantPreset(parallel: options.UseParallelKernels).WithGpu(nonQuant: options.GpuNonQuant, vecDot: options.GpuVecDot, matMul: options.GpuMatMul).Build()
-            : new MappingBuilder(options.HardwareTier).ApplyPreset(sharpConfig).ApplyQuantPreset(parallel: options.UseParallelKernels).Build();
+            ? new MappingBuilder(sharpConfig.ResolvedHardware)
+                .ApplyPreset(sharpConfig)
+                .ApplyQuantPreset(parallel: options.UseParallelKernels)
+                .WithGpu(nonQuant: options.GpuNonQuant, vecDot: options.GpuVecDot, matMul: options.GpuMatMul)
+                .Build()
+            : sharpConfig.ToJigSawMapping(parallel: options.UseParallelKernels);
 
         status?.Report("Loading weights...");
         TransformerWeights weights;

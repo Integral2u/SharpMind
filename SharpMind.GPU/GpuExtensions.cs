@@ -18,6 +18,14 @@ public static class MappingBuilderExtensions
     /// via <c>AppDomain</c> scanning, so no special assembly reference is needed
     /// beyond whichever project calls <c>WithGpu()</c> (and thereby loads
     /// SharpMind.GPU into the process).
+    ///
+    /// NOTE: The following quant types are intentionally omitted from GPU
+    /// override because GPU kernels have only been implemented for K-quant
+    /// and classic block types (q8_0, q5_0, q4_0, q4_1, etc.):
+    ///   VecDot: f32, f16, i8, i16, i32, iq1_s, iq1_m, tq1_0, tq2_0, q4_nl
+    ///   QMatMul: f32, f16, i8, i16, i32, iq1_s, iq1_m, tq1_0, tq2_0, q4_nl
+    /// These types fall back to their CPU (scalar/AVX2/FMA) paths when GPU
+    /// mode is enabled.
     /// </summary>
     private static readonly string[] VecDotKeys = [
         QuantizationKeys.KeyVecDotQ3K,
