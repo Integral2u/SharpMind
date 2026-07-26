@@ -25,6 +25,17 @@ public enum GeneratorStrategy
     UIDebug
 }
 
+/// <summary>Which IContextCompactor strategy to use for context management.</summary>
+public enum CompactorStrategy
+{
+    /// <summary>No compaction. History is never compacted.</summary>
+    None,
+    /// <summary>Mark oldest non-pinned messages as ignored when token budget is exceeded.</summary>
+    Truncate,
+    /// <summary>Summarize older messages using the session's own model.</summary>
+    Summarize
+}
+
 /// <summary>Which IKVCacheBuilder strategy backs the session's attention cache.</summary>
 public enum CacheStrategy
 {
@@ -126,6 +137,7 @@ public sealed class SessionOptions
 
     // Agent
     public string AgentName { get; set; } = "Delta";
+    public CompactorStrategy Compactor { get; set; } = CompactorStrategy.None;
     public bool AgentsEnabled { get; set; }
     public int MaxAgentDepth { get; set; } = 2;
     public int MaxToolCallsPerTurn { get; set; } = 10;

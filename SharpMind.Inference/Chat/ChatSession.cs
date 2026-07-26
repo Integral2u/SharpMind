@@ -49,7 +49,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     private bool _inThinkBlock;
     private readonly IPromptPreProcessor? _preProcessor;
     private readonly IPromptPostProcessor? _postProcessor;
-    private readonly IContextCompactor? _compactor;
+    private readonly IProgress<float>? _progress;
     private CancellationTokenSource? _turnCts;
 
 
@@ -95,7 +95,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         IAgentBuilder? agentBuilder = null,
         IPromptPreProcessor? preProcessor = null,
         IPromptPostProcessor? postProcessor = null,
-        IContextCompactor? compactor = null,
+        IProgress<float>? progress = null,
         Func<ToolPermissionContext, Task<ToolPermission>>? permissions = null,
         IKVCache[]? caches = null,
         int? seed = null)
@@ -108,7 +108,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         _agentBuilder = agentBuilder;
         _preProcessor = preProcessor;
         _postProcessor = postProcessor;
-        _compactor = compactor;
+        _progress = progress;
         MaxAgentDepth = _agentBuilder?.MaxAgentDepth ?? 2;
         _addBos = ModelMetaData.ResolveAddBos(meta, tokenizer.UseSentencePieceMerge);
         _addEos = ModelMetaData.ResolveAddEos(meta);
@@ -589,15 +589,27 @@ private void ThrowIfDisposed()
             }
 
             // Context compaction
-            if (_compactor is not null)
+            var compactor = _agentBuilder?.Compactor;
+            if (compactor is not null)
             {
                 var cmpCtx = new CompactionContext
                 {
                     History = _history,
                     CurrentTokenCount = promptToks.Length,
-                    MaxTokens = MaxTokens
+                    MaxTokens = MaxTokens,
+                    Model = _model,
+                    Tokenizer = _tokenizer,
+                    SummarizeAsync = async (text) =>
+                    {
+                        var sb = new System.Text.StringBuilder();
+                        var sumCfg = new GenerationConfig { MaxNewTokens = 256, Stream = false };
+                        var sumSmp = new SamplingConfig { Temperature = 0, TopK = 1 };
+                        await foreach (var frag in _generator.GenerateAsync(text, sumSmp, sumCfg))
+                            sb.Append(frag);
+                        return sb.ToString();
+                    }
                 };
-                if (await _compactor.ShouldCompactAsync(cmpCtx, ct) && await _compactor.CompactAsync(cmpCtx, ct))
+                if (await compactor.ShouldCompactAsync(cmpCtx, ct) && await compactor.CompactAsync(cmpCtx, ct))
                 {
                     InvalidateHistoryCache();
                     _cachedPromptTokens = null;
@@ -662,9 +674,15 @@ private void ThrowIfDisposed()
             _turnCts = new CancellationTokenSource();
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, _turnCts.Token);
 
+            _progress?.Report(0f);
+            int genFrags = 0;
             await foreach (var fragment in _generator.GenerateFromTokensAsync(generatorInput, sampleCfg, genCfg, linkedCts.Token))
             {
                 _responseBuffer.Append(fragment);
+
+                genFrags++;
+                if (_progress is not null && genFrags % 5 == 0)
+                    _progress.Report(Math.Min(genFrags / (float)genCfg.MaxNewTokens, 0.95f));
 
                 // Safety: detect single-character repetition loop and stop
                 if (_responseBuffer.Length >= 8)
@@ -734,6 +752,7 @@ private void ThrowIfDisposed()
                 }
             }
 
+            _progress?.Report(1f);
             var responseText = _responseBuffer.ToString();
 
             // Tool call detection
@@ -747,7 +766,7 @@ private void ThrowIfDisposed()
 
                 // Record the model's tool-call turn in history for the formatter
                 string historyText = EnableThinking ? responseText : StripThinking(responseText);
-                _history.Add(ChatMessage.Agent(historyText));
+                _history.Add(ChatMessage.Agent(historyText, _agentBuilder?.AgentName));
                 InvalidateHistoryCache();
 
                 // Signal to the UI that a tool is about to execute
@@ -862,7 +881,7 @@ private void ThrowIfDisposed()
                 && _currentDepth >= MaxAgentDepth
                 && TryParseAgentTag(responseText, out _, out _, out _, out _))
             {
-                _history.Add(ChatMessage.Agent(responseText));
+                _history.Add(ChatMessage.Agent(responseText, _agentBuilder?.AgentName));
                 _history.Add(new ChatMessage
                 {
                     Role = ChatRole.System,
@@ -878,7 +897,7 @@ private void ThrowIfDisposed()
             if (responseText.Length > 0)
             {
                 string historyText = EnableThinking ? responseText : StripThinking(responseText);
-                var agentMsg = ChatMessage.Agent(historyText);
+                var agentMsg = ChatMessage.Agent(historyText, _agentBuilder?.AgentName);
                 if (responseArtifacts.Count > 0)
                     agentMsg.Artifacts = [.. responseArtifacts];
                 _history.Add(agentMsg);

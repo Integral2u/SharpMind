@@ -1,4 +1,5 @@
 ﻿using System.Text.Json.Nodes;
+using SharpMind.Inference.Chat;
 
 namespace SharpMind.Inference.Agent
 {
@@ -11,6 +12,7 @@ namespace SharpMind.Inference.Agent
         public string AgentName { get; }
         public HashSet<string> DisabledTools { get; set; }
         public IReadOnlyList<string> RegisteredToolNames { get; }
+        public IContextCompactor? Compactor { get; }
         public IAgentBuilder WithCustomBehavior(string behavior);
         public IAgentBuilder WithCustomRule(string rule);
         public IAgentBuilder WithSkill(string file);

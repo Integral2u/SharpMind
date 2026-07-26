@@ -204,6 +204,13 @@ public static class SessionLauncher
         if (options.AgentsEnabled)
             builder.WithAgents(options.MaxAgentDepth);
 
+        builder.Compactor = options.Compactor switch
+        {
+            CompactorStrategy.Truncate => new TruncatingCompactor(),
+            CompactorStrategy.Summarize => new SummarizingCompactor(),
+            _ => null
+        };
+
         IAgentBuilder agentBuilder = builder;
 
         // --- Resolve generator/cache type combo and build the session ------
@@ -228,7 +235,7 @@ public static class SessionLauncher
         {
             session = ChatSessionFactory.CreateChatSession(
                 generatorBuilderDef, cacheBuilder, loaded.Model, loaded.Tokenizer, loaded.Meta, agentBuilder,
-                preProcessor: null, compactor: null, permissions: permissions,
+                preProcessor: null, progress: null, permissions: permissions,
                 seed: options.Sampling.Seed);
         }
         catch (Exception ex)

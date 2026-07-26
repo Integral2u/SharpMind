@@ -163,7 +163,13 @@ public sealed class OptionsView : View
         var enableThinkingCheck = new CheckBox("Enable model thinking (Qwen3 reasoning)", options.EnableThinking) { X = 1, Y = row };
         enableThinkingCheck.Toggled += (_) => _options.EnableThinking = enableThinkingCheck.Checked;
         _formContent.Add(enableThinkingCheck);
-        row += 2;
+        row++;
+
+        AddLabel("Context compaction:");
+        var compactorRadio = new RadioGroup(Enum.GetNames<CompactorStrategy>().Select(p => (ustring)p).ToArray()) { X = 30, Y = row, SelectedItem = (int)options.Compactor };
+        compactorRadio.SelectedItemChanged += (args) => _options.Compactor = (CompactorStrategy)args.SelectedItem;
+        _formContent.Add(compactorRadio);
+        row += Enum.GetValues<CompactorStrategy>().Length + 2;
 
         AddLabel("File access:");
         var fileAccessRadio = new RadioGroup(Enum.GetNames<ToolPermission>().Select(p => (ustring)p).ToArray()) { X = 30, Y = row, SelectedItem = (int)options.FileAccess };

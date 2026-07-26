@@ -2,6 +2,7 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using SharpMind.Inference.Chat;
 
 namespace SharpMind.Inference.Agent
 {
@@ -18,6 +19,7 @@ namespace SharpMind.Inference.Agent
         }
         public string AgentName { get; init; } = agentName;
         public SamplingConfig SamplingConfig { get; init; } = samplingConfig ?? new();
+        public IContextCompactor? Compactor { get; set; }
         public HashSet<string> DisabledTools { get; set; } = [];
 
         public IReadOnlyList<string> RegisteredToolNames => ToolMethods.Keys.ToList();
