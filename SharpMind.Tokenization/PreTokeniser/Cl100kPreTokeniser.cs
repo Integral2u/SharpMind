@@ -13,14 +13,9 @@ namespace SharpMind.Tokenization.PreTokeniser;
 /// </summary>
 public sealed class Cl100kPreTokeniser : IPreTokeniser
 {
-    private static readonly Regex Pattern = new(
-        @"(?i:'s|'t|'re|'ve|'m|'ll|'d)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+",
-        RegexOptions.Compiled | RegexOptions.ExplicitCapture,
-        TimeSpan.FromSeconds(2));
-
     public IEnumerable<string> PreTokenise(string text)
     {
-        foreach (Match m in Pattern.Matches(text))
+        foreach (Match m in RegexGenerated.Cl100kPattern.Matches(text))
             if (m.Length > 0)
                 yield return m.Value;
     }

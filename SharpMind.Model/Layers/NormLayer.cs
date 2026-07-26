@@ -41,10 +41,11 @@ public abstract class NormLayer : IDisposable
             ? workspace.Rent<float>(x.Shape.Dims) 
             : new Tensor<float>(x.Shape);
         int rows = x.ElementCount / Dim;
+        var weightData = Weight.Data;
         for (int i = 0; i < rows; i++)
         {
             float param = ComputeScalarParam(x.RowSpan(i));
-            ApplyRow(x.RowSpan(i), Weight.Data, result.RowSpan(i), param);
+            ApplyRow(x.RowSpan(i), weightData, result.RowSpan(i), param);
         }
         return result;
     }
@@ -54,10 +55,11 @@ public abstract class NormLayer : IDisposable
         ThrowIfDisposed();
         if (x.Shape[^1] != Dim) throw new ArgumentException($"NormLayer expects last dim {Dim}, got {x.Shape[^1]}.");
         int rows = x.ElementCount / Dim;
+        var weightData = Weight.Data;
         for (int i = 0; i < rows; i++)
         {
             float param = ComputeScalarParam(x.RowSpan(i));
-            ApplyRow(x.RowSpan(i), Weight.Data, x.RowSpan(i), param);
+            ApplyRow(x.RowSpan(i), weightData, x.RowSpan(i), param);
         }
     }
 

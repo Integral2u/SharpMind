@@ -41,5 +41,11 @@ namespace SharpMind.Inference
         public static partial Regex JinjaObjDotField { get; }
         [GeneratedRegex(@"^(.+?)\s*([+\-])\s*(\d+)$")]
         public static partial Regex JinjaPlusMinusN { get; }
+        [GeneratedRegex(@"^(.+?)\s+is\s+(not\s+)?(true|false)$")]
+        public static partial Regex JinjaIsBool { get; }
+        [GeneratedRegex(@"^(.+?)\s+is\s+(not\s+)?string$")]
+        public static partial Regex JinjaIsString { get; }
+        [GeneratedRegex(@"^(.+?)\s+is\s+(not\s+)?iterable$")]
+        public static partial Regex JinjaIsIterable { get; }
     }
 }

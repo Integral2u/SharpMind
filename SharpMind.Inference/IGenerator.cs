@@ -4,6 +4,7 @@ namespace SharpMind.Inference;
 //public interface IGenerator<T> : IDisposable where T: IKVCache
 public interface IGenerator<T>  : IDisposable where T : IKVCacheBuilder, new()
 {
+    string Name { get; }
     IAsyncEnumerable<string> GenerateAsync(
         string prompt,
         SamplingConfig? sampling = null,

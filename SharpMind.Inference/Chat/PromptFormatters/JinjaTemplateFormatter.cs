@@ -429,7 +429,7 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
         }
 
         // X is true / X is false / X is not true / X is not false
-        var boolM = System.Text.RegularExpressions.Regex.Match(expr, @"^(.+?)\s+is\s+(not\s+)?(true|false)$");
+        var boolM = RegexGenerated.JinjaIsBool.Match(expr);
         if (boolM.Success)
         {
             var v = Eval(boolM.Groups[1].Value, env, errors);
@@ -440,7 +440,7 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
         }
 
         // X is string / X is not string
-        var isStringM = System.Text.RegularExpressions.Regex.Match(expr, @"^(.+?)\s+is\s+(not\s+)?string$");
+        var isStringM = RegexGenerated.JinjaIsString.Match(expr);
         if (isStringM.Success)
         {
             var v = Eval(isStringM.Groups[1].Value, env, errors);
@@ -449,7 +449,7 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
         }
 
         // X is iterable / X is not iterable
-        var isIterableM = System.Text.RegularExpressions.Regex.Match(expr, @"^(.+?)\s+is\s+(not\s+)?iterable$");
+        var isIterableM = RegexGenerated.JinjaIsIterable.Match(expr);
         if (isIterableM.Success)
         {
             var v = Eval(isIterableM.Groups[1].Value, env, errors);

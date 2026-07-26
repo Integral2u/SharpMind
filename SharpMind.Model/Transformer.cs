@@ -241,10 +241,13 @@ public sealed class Transformer : IDisposable
         Tensor<float> lastHidden = workspace != null 
             ? workspace.Rent<float>([batch, hiddenDim]) 
             : new Tensor<float>(batch, hiddenDim);
+        int lastOffset = (seqLen - 1) * hiddenDim;
+        var cachedData = _cachedHidden.Data;
+        var lastData = lastHidden.Data;
         for (int b = 0; b < batch; b++)
         {
-            int srcOffset = (b * seqLen + (seqLen - 1)) * hiddenDim;
-            _cachedHidden.Data.Slice(srcOffset, hiddenDim).CopyTo(lastHidden.Data.Slice(b * hiddenDim, hiddenDim));
+            int srcOffset = b * seqLen * hiddenDim + lastOffset;
+            cachedData.Slice(srcOffset, hiddenDim).CopyTo(lastData.Slice(b * hiddenDim, hiddenDim));
         }
         _finalNorm.ForwardInPlace(lastHidden);
 

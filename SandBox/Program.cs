@@ -3,6 +3,7 @@ using SandBox;
 using SandBox.RunModels;
 //await SandBox.RunModels.DiagnosticModelRunner.RunAsync("Hello", ["gemma-3-270m-it-Q8_0"]);
 await SandBox.RunModels.KnownWorkingModels.RunAsync("Hello");
-//await SandBox.RunModels.KnownGiberishModels.RunAsync("Hello");
+await SandBox.RunModels.KnownGiberishModels.RunAsync("Hello");
+await SandBox.RunModels.KnownFailingModels.RunAsync("Hello");
 Console.In.ReadLine();
 return;

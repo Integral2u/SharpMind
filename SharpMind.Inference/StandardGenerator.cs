@@ -10,6 +10,7 @@ namespace SharpMind.Inference;
 /// </summary>
 public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuilder, new ()
 {
+    public string Name { get; init; } = "Standard";
     private readonly Transformer  _model;
     private readonly Tokenization.Tokenizer _tokenizer;
     private readonly IKVCache[]     _caches;
@@ -121,12 +122,22 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
                 : _defaultRng;
 
             int maxStopLen = 0;
-            foreach (string stop in genCfg.StopStrings)
+            var stopStrings = genCfg.StopStrings;
+            foreach (string stop in stopStrings)
                 if (stop.Length > maxStopLen) maxStopLen = stop.Length;
             if (maxStopLen > 0 && (_stopCheckBuf is null || _stopCheckBuf.Length < maxStopLen))
                 _stopCheckBuf = new char[maxStopLen];
 
-            for (int step = 0; step < genCfg.MaxNewTokens; step++)
+            var repPenalty = genCfg.RepetitionPenalty;
+            var repWindow = genCfg.RepetitionWindow;
+            var stopTokenIds = genCfg.StopTokenIds;
+            var slidingWindowSize = genCfg.SlidingWindowSize;
+            var maxNewTokens = genCfg.MaxNewTokens;
+            var stream = genCfg.Stream;
+            IKVCache cache0 = _caches[0];
+            int cachesLen = _caches.Length;
+
+            for (int step = 0; step < maxNewTokens; step++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
@@ -156,14 +167,14 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
                 }
 
                 int nextId;
-                if (genCfg.RepetitionPenalty != 1.0f)
+                if (repPenalty != 1.0f)
                 {
                     if (_penaltyScratch is null || _penaltyScratch.Length < vocabSize)
                         _penaltyScratch = new float[vocabSize];
                     Span<float> logits = _penaltyScratch.AsSpan(0, vocabSize);
                     logitsSlice.CopyTo(logits);
                     ApplyRepetitionPenalty(logits, promptIds, _generatedIds,
-                        genCfg.RepetitionPenalty, genCfg.RepetitionWindow);
+                        repPenalty, repWindow);
                     nextId = Sampler.Sample(logits, sampleCfg, rng);
                 }
                 else
@@ -176,7 +187,7 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
                 TokensPerSecond = rateTracker.RollingTokensPerSecond;
                 CumulativeTokensPerSecond = rateTracker.CumulativeTokensPerSecond;
 
-                if (genCfg.StopTokenIds.Contains(nextId)) break;
+                if (stopTokenIds.Contains(nextId)) break;
 
                 _decodeTokenScratch[0] = nextId;
                 string fragment = _tokenizer.Decode(_decodeTokenScratch.AsSpan(0, 1), skipSpecials: true);
@@ -188,7 +199,7 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
                     int start = decodedSoFar.Length - maxStopLen;
                     decodedSoFar.CopyTo(start, _stopCheckBuf, maxStopLen);
                     ReadOnlySpan<char> tail = _stopCheckBuf;
-                    foreach (string stop in genCfg.StopStrings)
+                    foreach (string stop in stopStrings)
                     {
                         if (tail.IndexOf(stop.AsSpan()) >= 0)
                         {
@@ -199,7 +210,7 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
                     }
                 }
 
-                if (genCfg.Stream && fragment.Length > 0)
+                if (stream && fragment.Length > 0)
                 {
                     // Buffer the fragment to yield outside the try-finally if needed, 
                     // but for simple Tensors, a try-finally without a catch is OK.
@@ -209,12 +220,12 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
 
                 if (hitStop) break;
 
-                if (_caches[0].IsFull)
+                if (cache0.IsFull)
                 {
-                    int keep = genCfg is { SlidingWindowSize: > 0 }
-                        ? genCfg.SlidingWindowSize
-                        : _caches[0].MaxSeqLen / 2;
-                    for (int i = 0; i < _caches.Length; i++)
+                    int keep = slidingWindowSize > 0
+                        ? slidingWindowSize
+                        : cache0.MaxSeqLen / 2;
+                    for (int i = 0; i < cachesLen; i++)
                         _caches[i].TrimToLast(keep);
                 }
 

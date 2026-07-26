@@ -31,17 +31,29 @@ Task 6: Config and Factory Consistancy.
 Check if Config and Mapping overrides are correct by means of simplicity and end user user.
 Check facorties are consistant in use and implementations.
 
-Task 7: Model Loading, Full and Streaming.
+Task 7: Model Loading, Full and Streaming.  (most likley to break thing, need to ensure data is managed correctly)
 Currenly we operate in a "Full" mode loading all layers on initialization.
-
-
+What we need to do for larger models that cannot fit into limited memory is have a streaming option.
+This will change how InitializeWeights works,  We will need to Have InitializeLayer and InitializeWeights  should call that for sepcific layers.
+This means IModelLoader that currently only has LoadAllWeights will also need a LoadLayerWeights.
+This should be the only change i can initally see needed for TransformerWeights and the TransformerWeightsFull. 
+From there depending on the method we are using Full or Streaming we would create a TransformerWeightsFull or TransformerWeightsStreaming.
+TransformerWeightsStreaming on initilaization need to get MetaData or read data to get QuantDTypes offsets and lenght for loading into or preparing Tensors with know quant size, We do not want the permenantly taking up memeory.
+Care on data flow an loading will need to be considered and attions to IModelLoader such as GetMetaDataa may be required.
+Initial Layers Actualy Loaded would be the first and second may need multiple sets loaded. Then when a pass though the network is done, after the first layer is used the second should be loaded so we can asynconosly free the first and load the 3 as second is next.
+This process follows through cyclically so when at the second to last layer the last layer aleardy exists and the first is being loaded.
+It is crucial we are not reconstuctucting things and only allocating freeing data as required so some tracking mecanisims will need to be implemented in a manor that does not hinder current "Full" performance.
+Agents, unlike instances that use "Full" if we are in "Streaming" we cannot use the same weights as the reuired layers may become out of sync so each agent spawned in an non "Full" invorement will need thier own TransformerWeightsStreaming instance. 
 
 Task 8: Loading time.
 new ChatSession can take a while,  if possible is it possible to an IProgress to the constructor or add an public void InitializeChat(IProgress<float>? progress = null); that can be used by CUI to show after initialization of weight, unclear where exatly all the time is consumend.
 
-Task 9: SharpMind Native Model
+Task 9: Thinking
+if is thinking is inabled the information is available or should be available in history, this History could possibly marker as Ignore same as agent thinking as only the summary is what the main Agent would need, However if in CUI togling show thinkging should re-render with thinking not just start showing acting thinking stream.
+
+Task 10: SharpMind Native Model
 Design ModelFormat exclusivly for SharpMind.  This format should include all relevent metadata and layers with QuantDType layer positions and lenght for loading.
 Additional it should include Plugins such as classes with [ToolDesc] that can be included by default and or custom plugs.  these can be stored as byte arrays and loaded. CUI should be able to hable adding these to OptionsView.
 Then we need the final End to End Test, Super Dumb Model Training save and Load, suggest training on small data set.
 
-Task 10: Future Incorperate Training into CUI.
+Task 11: Future Incorperate Training into CUI.

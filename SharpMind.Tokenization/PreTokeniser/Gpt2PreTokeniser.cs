@@ -15,15 +15,9 @@ namespace SharpMind.Tokenization.PreTokeniser;
 /// </summary>
 public sealed class Gpt2PreTokeniser : IPreTokeniser
 {
-    // The original GPT-2 regex from openai/gpt-2 encoder.py
-    private static readonly Regex Pattern = new(
-        @"'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+",
-        RegexOptions.Compiled | RegexOptions.ExplicitCapture,
-        TimeSpan.FromSeconds(2));
-
     public IEnumerable<string> PreTokenise(string text)
     {
-        foreach (Match m in Pattern.Matches(text))
+        foreach (Match m in RegexGenerated.Gpt2Pattern.Matches(text))
             if (m.Length > 0)
                 yield return m.Value;
     }

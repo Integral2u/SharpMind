@@ -65,6 +65,7 @@ namespace SharpMind.Inference;
 
 public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder, new()
 {
+    public string Name { get; init; } = "Medusa";
     private readonly Transformer _model;
     private readonly Tokenization.Tokenizer _tokenizer;
     private readonly IKVCache[] _caches;

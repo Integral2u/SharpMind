@@ -1,399 +1,150 @@
 ﻿Testing Qwen3-0.6B-Q2_K
-ModelFactory.Create + InitializeWeights executed in: 15.74s
-ModelFactory.CreateTransformer executed in: 0.17s
-ChatSession executed in: 37.65s
-Prompt:hello
-Response:    <div>
-        <div>
-
-
-
-Tokens per second: 0.47  TTFT: 29.143s
+ModelFactory.Create + InitializeWeights executed in: 20.67s
+ModelFactory.CreateTransformer executed in: 0.25s
+ChatSession executed in: 49.72s
+Prompt:Hello
+Response:
+    Hello, dear friend.
+    I am here in the world of a little one.
+    I have to
+Tokens per second: 0.32  TTFT: 47.422s
 Testing llama-3.2-1b-instruct-q8_0
-ModelFactory.Create + InitializeWeights executed in: 57.05s
-ModelFactory.CreateTransformer executed in: 5.78s
-ChatSession executed in: 20.01s
-Prompt:hello
-Response:".
-
-.
-
-.,les..
-
-.."
-
- at,sener }
- }
-
- dec.gov.com for to/.com  ( is
-Tokens per second: 1.82  TTFT: 11.722s
+ModelFactory.Create + InitializeWeights executed in: 89.18s
+ModelFactory.CreateTransformer executed in: 2.13s
+ChatSession executed in: 31.45s
+Prompt:Hello
+Response:I think you're notepad I'mostalgore I apologize for  i want to open to the  # i am
+Tokens per second: 1.15  TTFT: 19.029s
 Testing SmolLM2-135M-Instruct.Q4_K_M
-ModelFactory.Create + InitializeWeights executed in: 3.60s
-ModelFactory.CreateTransformer executed in: 0.14s
-ChatSession executed in: 0.22s
-Prompt:hello
-Response:.ere -elbotue_us:=nyampuq(genes?s)" (
-Tokens per second: 4.09  TTFT: 4.906s
+ModelFactory.Create + InitializeWeights executed in: 5.51s
+ModelFactory.CreateTransformer executed in: 0.18s
+ChatSession executed in: 0.33s
+Prompt:Hello
+Response:UserName: 10. You can you have been here to give advice and guidance for your friend is helpful! Your
+Tokens per second: 2.96  TTFT: 7.978s
 Testing qwen2-0_5b-instruct-q4_k_m
-ModelFactory.Create + InitializeWeights executed in: 10.07s
-ModelFactory.CreateTransformer executed in: 0.10s
-ChatSession executed in: 0.43s
-Prompt:hello
-Response: stu K??? V U?le t al t,a??V ili ilti Il u
-Tokens per second: 1.45  TTFT: 13.968s
-Testing qwen2-0.5b-instruct-q2_k
-ModelFactory.Create + InitializeWeights executed in: 10.02s
-ModelFactory.CreateTransformer executed in: 0.04s
-ChatSession executed in: 0.45s
-Prompt:hello
-Response:vo iltV V O?O U? Al?ov al  deVooxve xoxenco
-Tokens per second: 1.12  TTFT: 17.666s
-Testing Qwen3-0.6B-Q4_0
-ModelFactory.Create + InitializeWeights executed in: 12.38s
-ModelFactory.CreateTransformer executed in: 0.05s
-ChatSession executed in: 23.30s
-Prompt:hello
-Response:Okay, the user wrote "hello and then asked for help. Let me break this down.
-
-First, the user wrote "
-Tokens per second: 1.64  TTFT: 10.337s
-Testing Qwen3-0.6B-Q4_1
-ModelFactory.Create + InitializeWeights executed in: 12.86s
-ModelFactory.CreateTransformer executed in: 0.06s
-ChatSession executed in: 22.55s
-Prompt:hello
-Response:Okay, the user wrote "hello and then asked about a question. Let me parse this.
-
-The user's message is "
-Tokens per second: 1.59  TTFT: 9.882s
-Testing qwen2-0_5b-instruct-q8_0
-ModelFactory.Create + InitializeWeights executed in: 10.92s
-ModelFactory.CreateTransformer executed in: 0.10s
-ChatSession executed in: 0.35s
-Prompt:hello
-Response:v dest t  V I J R KJ f Nickron vf f g Eng. Ch Inv ex,
-Tokens per second: 5.70  TTFT: 2.018s
-Testing qwen2-0_5b-instruct-fp16
-ModelFactory.Create + InitializeWeights executed in: 41.05s
-ModelFactory.CreateTransformer executed in: 0.24s
-ChatSession executed in: 0.50s
-Prompt:hello
-Response:v dest t  V I J R KJ vive CeVly V V J G T Vic,?
-Tokens per second: 0.79  TTFT: 28.094s
-Testing Qwen3-0.6B-Q4_K_M
-ModelFactory.Create + InitializeWeights executed in: 12.50s
-ModelFactory.CreateTransformer executed in: 0.03s
-ChatSession executed in: 34.25s
-Prompt:hello
-Response:Okay, the user wrote "hello and then asked about a question. Let me parse this.
-
-The user's message is "
-Tokens per second: 0.71  TTFT: 31.454s
-Testing Qwen3-0.6B-Q5_K_M
-ModelFactory.Create + InitializeWeights executed in: 18.90s
-ModelFactory.CreateTransformer executed in: 0.32s
-ChatSession executed in: 22.14s
-Prompt:hello
-Response:Okay, the user wrote "hello and I need to respond. Let me check if there's any specific context or intent here
-Tokens per second: 0.36  TTFT: 46.306s
-Testing Qwen3-0.6B-Q3_K_M
-ModelFactory.Create + InitializeWeights executed in: 14.84s
-ModelFactory.CreateTransformer executed in: 0.37s
-ChatSession executed in: 24.31s
-Prompt:hello
-Response:Okay, the user is asking for help with a problem. The original message was in Chinese, and the assistant responded by saying
-Tokens per second: 0.49  TTFT: 36.271s
-Testing Qwen3-0.6B-Q6_K
-ModelFactory.Create + InitializeWeights executed in: 14.64s
-ModelFactory.CreateTransformer executed in: 0.37s
-ChatSession executed in: 23.40s
-Prompt:hello
-Response:Okay, the user wrote "hello and then said "Hello". Let me check if there's any specific context. The initial
-Tokens per second: 0.95  TTFT: 22.279s
-Testing Qwen3-0.6B-Q8_0
-ModelFactory.Create + InitializeWeights executed in: 14.81s
-ModelFactory.CreateTransformer executed in: 0.14s
-ChatSession executed in: 26.05s
-Prompt:hello
-Response:Okay, the user wrote "hello and then provided a response. Now I need to figure out what they're asking for.
-Tokens per second: 3.06  TTFT: 5.952s
-Testing DeepSeek-R1-Distill-Qwen-1.5B-Q8_0
-ModelFactory.Create + InitializeWeights executed in: 141.60s
-ModelFactory.CreateTransformer executed in: 2.02s
-ChatSession executed in: 27.80s
-Prompt:hello
-Response:You know, I love you!
-?
-
-?>
-
-**Hello World**,**hi!**
-
-"<p>/</</p
-Tokens per second: 1.36  TTFT: 17.613s
-Testing DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M
-ModelFactory.Create + InitializeWeights executed in: 81.31s
-ModelFactory.CreateTransformer executed in: 1.25s
-ChatSession executed in: 20.57s
-Prompt:hello
-Response:Hey! I'm just a person who loves to help learn about him. Well, I hope you can find out what's
-Tokens per second: 0.16  TTFT: 71.342s
-Testing qwen2.5-1.5b-instruct-q8_0
-ModelFactory.Create + InitializeWeights executed in: 88.63s
-ModelFactory.CreateTransformer executed in: 3.69s
-ChatSession executed in: 11.07s
-Prompt:hello
+ModelFactory.Create + InitializeWeights executed in: 11.80s
+ModelFactory.CreateTransformer executed in: 0.28s
+ChatSession executed in: 0.63s
+Prompt:Hello
 Response:Hello! How can I assist you today?
 
-Tokens per second: 1.35  TTFT: 38.748s
-Testing Qwen2.5-1.5B-Instruct-f16
-ModelFactory.Create + InitializeWeights executed in: 226.91s
-ModelFactory.CreateTransformer executed in: 7.35s
-ChatSession executed in: 15.20s
-Prompt:hello
-Response:I am sorry for my mistake I did not understand your message correctly please clarify what you want to ask about and I will try
-Tokens per second: 0.24  TTFT: 144.969s
-All Models Executed in: 2367.55s
-
-Testing SmolLM-135M.Q4_K_M
-ModelFactory.Create + InitializeWeights executed in: 2.85s
-ModelFactory.CreateTransformer executed in: 0.08s
-ChatSession executed in: 0.12s
-Prompt:hello
-Response:,
-.1)
-2V .O andic_
-c
- VarP1 Sop
-Tokens per second: 3.84  TTFT: 0.935s
-Testing gemma-3-270m-it-Q8_0
-ModelFactory.Create + InitializeWeights executed in: 7.32s
-[DBG] postNorm1 created dim=640
-[DBG] postNorm2 created dim=640
-[DBG] postNorm1 created dim=640
-[DBG] postNorm2 created dim=640
-[DBG] postNorm1 created dim=640
-[DBG] postNorm2 created dim=640
-[DBG] postNorm1 created dim=640
-[DBG] postNorm2 created dim=640
-[DBG] postNorm1 created dim=640
-[DBG] postNorm2 created dim=640
-[DBG] postNorm1 created dim=640
-[DBG] postNorm2 created dim=640
-[DBG] postNorm1 created dim=640
-[DBG] postNorm2 created dim=640
-[DBG] postNorm1 created dim=640
-[DBG] postNorm2 created dim=640
-[DBG] postNorm1 created dim=640
-[DBG] postNorm2 created dim=640
-[DBG] postNorm1 created dim=640
-[DBG] postNorm2 created dim=640
-[DBG] postNorm1 created dim=640
-[DBG] postNorm2 created dim=640
-[DBG] postNorm1 created dim=640
-[DBG] postNorm2 created dim=640
-[DBG] postNorm1 created dim=640
-[DBG] postNorm2 created dim=640
-[DBG] postNorm1 created dim=640
-[DBG] postNorm2 created dim=640
-[DBG] postNorm1 created dim=640
-[DBG] postNorm2 created dim=640
-[DBG] postNorm1 created dim=640
-[DBG] postNorm2 created dim=640
-[DBG] postNorm1 created dim=640
-[DBG] postNorm2 created dim=640
-[DBG] postNorm1 created dim=640
-[DBG] postNorm2 created dim=640
-ModelFactory.CreateTransformer executed in: 0.08s
-ChatSession executed in: 0.38s
-Prompt:hello
-Response: - Freshwater?etetapolismi " families2IM "ttsiaennes Schritt????? Releases??? ) höheren,Sdivid??
-Tokens per second: 9.44  TTFT: 1.032s
-Testing gemma-3-270m-it-Q4_K_M
-ModelFactory.Create + InitializeWeights executed in: 6.66s
-[DBG] postNorm1 created dim=640
-[DBG] postNorm2 created dim=640
-[DBG] postNorm1 created dim=640
-[DBG] postNorm2 created dim=640
-[DBG] postNorm1 created dim=640
-[DBG] postNorm2 created dim=640
-[DBG] postNorm1 created dim=640
-[DBG] postNorm2 created dim=640
-[DBG] postNorm1 created dim=640
-[DBG] postNorm2 created dim=640
-[DBG] postNorm1 created dim=640
-[DBG] postNorm2 created dim=640
-[DBG] postNorm1 created dim=640
-[DBG] postNorm2 created dim=640
-[DBG] postNorm1 created dim=640
-[DBG] postNorm2 created dim=640
-[DBG] postNorm1 created dim=640
-[DBG] postNorm2 created dim=640
-[DBG] postNorm1 created dim=640
-[DBG] postNorm2 created dim=640
-[DBG] postNorm1 created dim=640
-[DBG] postNorm2 created dim=640
-[DBG] postNorm1 created dim=640
-[DBG] postNorm2 created dim=640
-[DBG] postNorm1 created dim=640
-[DBG] postNorm2 created dim=640
-[DBG] postNorm1 created dim=640
-[DBG] postNorm2 created dim=640
-[DBG] postNorm1 created dim=640
-[DBG] postNorm2 created dim=640
-[DBG] postNorm1 created dim=640
-[DBG] postNorm2 created dim=640
-[DBG] postNorm1 created dim=640
-[DBG] postNorm2 created dim=640
-[DBG] postNorm1 created dim=640
-[DBG] postNorm2 created dim=640
-ModelFactory.CreateTransformer executed in: 0.05s
-ChatSession executed in: 0.45s
-Prompt:hello
-Response: FRA " quizásIl Seven Industry????
-
-Tokens per second: 3.86  TTFT: 6.021s
-Testing gemma-3-270m-it-F16
-ModelFactory.Create + InitializeWeights executed in: 21.64s
-[DBG] postNorm1 created dim=640
-[DBG] postNorm2 created dim=640
-[DBG] postNorm1 created dim=640
-[DBG] postNorm2 created dim=640
-[DBG] postNorm1 created dim=640
-[DBG] postNorm2 created dim=640
-[DBG] postNorm1 created dim=640
-[DBG] postNorm2 created dim=640
-[DBG] postNorm1 created dim=640
-[DBG] postNorm2 created dim=640
-[DBG] postNorm1 created dim=640
-[DBG] postNorm2 created dim=640
-[DBG] postNorm1 created dim=640
-[DBG] postNorm2 created dim=640
-[DBG] postNorm1 created dim=640
-[DBG] postNorm2 created dim=640
-[DBG] postNorm1 created dim=640
-[DBG] postNorm2 created dim=640
-[DBG] postNorm1 created dim=640
-[DBG] postNorm2 created dim=640
-[DBG] postNorm1 created dim=640
-[DBG] postNorm2 created dim=640
-[DBG] postNorm1 created dim=640
-[DBG] postNorm2 created dim=640
-[DBG] postNorm1 created dim=640
-[DBG] postNorm2 created dim=640
-[DBG] postNorm1 created dim=640
-[DBG] postNorm2 created dim=640
-[DBG] postNorm1 created dim=640
-[DBG] postNorm2 created dim=640
-[DBG] postNorm1 created dim=640
-[DBG] postNorm2 created dim=640
-[DBG] postNorm1 created dim=640
-[DBG] postNorm2 created dim=640
-[DBG] postNorm1 created dim=640
-[DBG] postNorm2 created dim=640
+Tokens per second: 0.87  TTFT: 19.948s
+Testing qwen2-0.5b-instruct-q2_k
+ModelFactory.Create + InitializeWeights executed in: 11.24s
 ModelFactory.CreateTransformer executed in: 0.06s
-ChatSession executed in: 0.39s
-Prompt:hello
-Response: -WIREISSN?ly?? r?i??? Mis "akanan (??astoworkbook???S? remboursement Ling culturesas ( (organisme
-Tokens per second: 1.90  TTFT: 10.193s
-All Models Executed in: 86.57s
+ChatSession executed in: 0.58s
+Prompt:Hello
+Response:Hello! How can I assist you today?
+
+Tokens per second: 0.75  TTFT: 27.027s
+Testing Qwen3-0.6B-Q4_0
+ModelFactory.Create + InitializeWeights executed in: 17.35s
+ModelFactory.CreateTransformer executed in: 0.09s
+ChatSession executed in: 40.18s
+Prompt:Hello
+Response:Okay, the user wrote "Hello and then asked for help. Now, I need to respond to this message.
+
+First,
+Tokens per second: 1.14  TTFT: 27.170s
+Testing qwen2-0_5b-instruct-q8_0
+ModelFactory.Create + InitializeWeights executed in: 13.38s
+ModelFactory.CreateTransformer executed in: 0.20s
+ChatSession executed in: 0.54s
+Prompt:Hello
+Response:Hello! How can I assist you today?
+
+Tokens per second: 3.67  TTFT: 5.980s
+Testing Qwen3-0.6B-Q4_K_M
+ModelFactory.Create + InitializeWeights executed in: 19.07s
+ModelFactory.CreateTransformer executed in: 0.08s
+ChatSession executed in: 38.47s
+Prompt:Hello
+Response:Okay, the user is asking for help with a problem. They mentioned they need to solve it. But I don't have
+Tokens per second: 0.45  TTFT: 40.404s
+Testing Qwen3-0.6B-Q8_0
+ModelFactory.Create + InitializeWeights executed in: 19.99s
+ModelFactory.CreateTransformer executed in: 0.71s
+ChatSession executed in: 39.83s
+Prompt:Hello
+Response:Okay, the user wrote "Hello and then said they want to ask a question. Now I need to respond appropriately.
+
+First
+Tokens per second: 3.01  TTFT: 11.815s
+Testing DeepSeek-R1-Distill-Qwen-1.5B-Q8_0
+ModelFactory.Create + InitializeWeights executed in: 89.41s
+ModelFactory.CreateTransformer executed in: 15.74s
+ChatSession executed in: 33.43s
+Prompt:Hello
+Response:Hi, thank you for asking your question. I'm just going through my memory again. Times ago, I have this busy
+Tokens per second: 0.99  TTFT: 34.191s
+Testing DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M
+ModelFactory.Create + InitializeWeights executed in: 108.07s
+ModelFactory.CreateTransformer executed in: 4.19s
+ChatSession executed in: 39.41s
+Prompt:Hello
+Response:Hi! Welcome to Brain. I'm Trying To Teach Help '>>
+
+Alright, so I need help with this. The equation
+Tokens per second: 0.11  TTFT: 101.106s
+Testing qwen2.5-1.5b-instruct-q8_0
+ModelFactory.Create + InitializeWeights executed in: 114.61s
+ModelFactory.CreateTransformer executed in: 11.02s
+ChatSession executed in: 32.47s
+Prompt:Hello
+Response:Hello! How can I assist you today?
+
+Tokens per second: 1.16  TTFT: 59.416s
+All Models Executed in: 1785.63s
+
+Testing gemma-3-270m-it-Q8_0
+ModelFactory.Create + InitializeWeights executed in: 8.48s
+ModelFactory.CreateTransformer executed in: 0.24s
+ChatSession executed in: 0.58s
+Prompt:Hello
+Response:
+
+Tokens per second: 0.00  TTFT: 2.204s
+Testing gemma-3-270m-it-Q4_K_M
+ModelFactory.Create + InitializeWeights executed in: 4.98s
+ModelFactory.CreateTransformer executed in: 0.24s
+ChatSession executed in: 0.55s
+Prompt:Hello
+Response:
+
+Tokens per second: 0.00  TTFT: 8.879s
+Testing gemma-3-270m-it-F16
+ModelFactory.Create + InitializeWeights executed in: 31.09s
+ModelFactory.CreateTransformer executed in: 0.22s
+ChatSession executed in: 0.71s
+Prompt:Hello
+Response:
+
+Tokens per second: 0.00  TTFT: 14.711s
+All Models Executed in: 76.48s
 
 Testing Qwen2-0.5B.Q6_K
-ModelFactory.Create + InitializeWeights executed in: 9.78s
-ModelFactory.CreateTransformer executed in: 0.19s
-ChatSession executed in: 2.89s
-Prompt:hello
-Response: deveu Vle le le_le_v  K? Ph_k Kkin v v V Ang. gf
-Tokens per second: 2.70  TTFT: 6.931s
+ModelFactory.Create + InitializeWeights executed in: 10.61s
+ModelFactory.CreateTransformer executed in: 0.74s
+ChatSession executed in: 6.52s
+Prompt:Hello
+Response:Copyright c20199 20 330 4567887165
+Tokens per second: 1.99  TTFT: 10.536s
 Testing Qwen2-0.5B.Q2_K
-ModelFactory.Create + InitializeWeights executed in: 9.49s
-ModelFactory.CreateTransformer executed in: 0.06s
-ChatSession executed in: 25.88s
-Prompt:hello
-Response:ov.le in  T Metus L of (aLT? River E?im V ? v Stone D de
-Tokens per second: 0.99  TTFT: 25.329s
-Testing Qwen2-0.5B.Q3_K_L
-ModelFactory.Create + InitializeWeights executed in: 12.75s
-ModelFactory.CreateTransformer executed in: 0.19s
-ChatSession executed in: 2.98s
-Prompt:hello
-Response:invoinala:??  of Kd  ? ? ? ??? ? ? V D ? ?
-Tokens per second: 0.87  TTFT: 30.283s
-Testing Qwen2-0.5B.Q3_K_M
-ModelFactory.Create + InitializeWeights executed in: 11.85s
-ModelFactory.CreateTransformer executed in: 0.52s
-ChatSession executed in: 3.55s
-Prompt:hello
-Response: deveky wordtedtOayia divideenowos? le ai ?1 ?hD
-Tokens per second: 1.56  TTFT: 17.106s
-Testing Qwen2-0.5B.Q3_K_S
-ModelFactory.Create + InitializeWeights executed in: 11.95s
-ModelFactory.CreateTransformer executed in: 0.21s
-ChatSession executed in: 3.15s
-Prompt:hello
-Response:ov V.t)O V Ov okuo valv runT v War Sec  V Sp2ian
-Tokens per second: 0.98  TTFT: 24.805s
-Testing Qwen2-0.5B.Q5_1
-ModelFactory.Create + InitializeWeights executed in: 11.02s
-ModelFactory.CreateTransformer executed in: 0.27s
-ChatSession executed in: 3.21s
-Prompt:hello
-Response: dev devoes???n V I J Bai i V J Y J X Font Invng the
-Tokens per second: 1.46  TTFT: 21.519s
-Testing Llama-3.2-1B-Instruct-Q4_K_M
-ModelFactory.Create + InitializeWeights executed in: 37.74s
-ModelFactory.CreateTransformer executed in: 0.58s
-ChatSession executed in: 23.18s
-Prompt:hello
-Response: Mbs.,
-
-k. for" (king- }
- pub
-
-".ken and"")""
-.n".
-Tokens per second: 0.39  TTFT: 91.735s
+ModelFactory.Create + InitializeWeights executed in: 10.78s
+ModelFactory.CreateTransformer executed in: 0.32s
+ChatSession executed in: 10.16s
+Prompt:Hello
+Response:Thank you for your time.
+Thank you for your time.
+Thank you for your time. Thank you. Thank You thank.
+Tokens per second: 0.72  TTFT: 34.738s
 Testing tinyllama-1.1b-chat-v1.0.Q8_0
-ModelFactory.Create + InitializeWeights executed in: 31.23s
-ModelFactory.CreateTransformer executed in: 0.27s
-ChatSession executed in: 1.41s
-Prompt:hello
-Response:mathopmathopmathop ???? Luci LucyZygoteInitZygoteInitZygoteInitZygoteInitDataFrameDataFrameDataFrame? geldiggeggeggreggreggreg Greg Greg Greggyptmana
-Tokens per second: 2.41  TTFT: 5.861s
-Testing TinyLlama-1.1B-Chat-v1.0.Q4_K_M
-ModelFactory.Create + InitializeWeights executed in: 29.28s
-ModelFactory.CreateTransformer executed in: 1.29s
-ChatSession executed in: 2.03s
-Prompt:hello
-Response: stdoutstudstud? Francescoansen(()(()(()(() Tamb Tamb Tamb Tamb tamb Rost Ost obst obst obst obst ö? commut commut
-Tokens per second: 0.43  TTFT: 40.385s
-Testing llama3-small-Q2_K
-ModelFactory.Create + InitializeWeights executed in: 4.50s
-ModelFactory.CreateTransformer executed in: 0.06s
-ChatSession executed in: 0.06s
-Prompt:hello
-Response:exec*np criminal UF??''Psi masse alc.buttons Stronglerce.cpp Loren ???????.cpp lij.viewportluzdestinationanguagescapeachingembr
-Tokens per second: 2.37  TTFT: 1.440s
-Testing llama3-small-Q3_K_M
-ModelFactory.Create + InitializeWeights executed in: 3.29s
-ModelFactory.CreateTransformer executed in: 0.01s
-ChatSession executed in: 0.06s
-Prompt:hello
-Response: screaming forget ???äEntercalecomed beneficiaryToFitEnterContains corp sk cognitive Teil-? invoked Bowman;}
- Γ?metadata míste APAview.Ok
-Tokens per second: 1.92  TTFT: 1.891s
-Testing tiny-mistral-Q2_K
-ModelFactory.Create + InitializeWeights executed in: 4.84s
-ModelFactory.CreateTransformer executed in: 0.03s
-ChatSession executed in: 0.20s
-Prompt:hello
-Response: Battael wurdenaded eatingproduction Ernst Fe LIABLEsup?itable preventslv however estateaxyappyBPACK rawBecoloredQuest clickingUNIT
-Tokens per second: 1.08  TTFT: 7.132s
-Testing tiny-mistral-Q3_K_M
-ModelFactory.Create + InitializeWeights executed in: 4.62s
-ModelFactory.CreateTransformer executed in: 0.03s
-ChatSession executed in: 0.19s
-Prompt:hello
-Response:? aver Imperialunction? Pictures Serv? stomcke advocate mineralDep Near Health::iago?? knocked soberbau documentary ????ource
-Tokens per second: 1.01  TTFT: 9.443s
-All Models Executed in: 895.48s
+ModelFactory.Create + InitializeWeights executed in: 41.23s
+ModelFactory.CreateTransformer executed in: 1.16s
+ChatSession executed in: 2.47s
+Prompt:Hello
+Response:mathopmathopmathop ???? Luci LucyZygoteInitZygoteInitZygoteInitZygoteInitDataFrameDataFrameDataFrame? geldiggeggeggreggreggreg Greg Greg Greggyptgypt
+Tokens per second: 1.94  TTFT: 9.567s
+All Models Executed in: 210.73s
+

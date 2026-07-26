@@ -134,6 +134,7 @@ public sealed class BpeEncoder
     public string Decode(ReadOnlySpan<int> ids, bool skipSpecials = true)
     {
         var bytes = new List<byte>(ids.Length * 2);
+        byte[]? reusableBuf = null;
 
         foreach (int id in ids)
         {
@@ -151,7 +152,9 @@ public sealed class BpeEncoder
 
             // Try GPT-2 style: every character in the token maps to a byte
             bool allGpt2 = true;
-            byte[] gpt2Bytes = new byte[token.Length];
+            if (reusableBuf is null || reusableBuf.Length < token.Length)
+                reusableBuf = new byte[token.Length];
+            Span<byte> gpt2Bytes = reusableBuf.AsSpan(0, token.Length);
             for (int i = 0; i < token.Length; i++)
             {
                 if (TryDecodeByte(token[i], out byte b))
