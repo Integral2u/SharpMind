@@ -44,6 +44,7 @@ public interface IChatBridge : IAsyncDisposable
 /// </summary>
 public sealed class ChatSessionBridge(IChatSession session, bool disposeUnderlyingSession = true) : IChatBridge
 {
+    public string UserName { get; set; } = "User";
     private readonly ConcurrentQueue<ChatStreamEntry> _incoming = new();
     private readonly SemaphoreSlim _inputReady = new(0);
     private string? _pendingInput;
@@ -78,7 +79,7 @@ public sealed class ChatSessionBridge(IChatSession session, bool disposeUnderlyi
                     prompt: () =>
                     {
                         _inputReady.Wait(_cts.Token);
-                        var msg = ChatMessage.User(_pendingInput ?? "");
+                        var msg = ChatMessage.User(_pendingInput ?? "", UserName);
                         if (_pendingArtifacts is { Length: > 0 })
                         {
                             msg.Artifacts = _pendingArtifacts;

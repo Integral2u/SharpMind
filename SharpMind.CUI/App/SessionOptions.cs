@@ -137,6 +137,7 @@ public sealed class SessionOptions
 
     // Agent
     public string AgentName { get; set; } = "Delta";
+    public string UserName { get; set; } = "User";
     public CompactorStrategy Compactor { get; set; } = CompactorStrategy.None;
     public bool AgentsEnabled { get; set; }
     public int MaxAgentDepth { get; set; } = 2;

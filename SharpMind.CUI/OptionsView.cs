@@ -155,6 +155,12 @@ public sealed class OptionsView : View
         _formContent.Add(agentNameField);
         row++;
 
+        AddLabel("User name:");
+        var userNameField = new TextField((ustring)options.UserName) { X = 30, Y = row, Width = 30 };
+        userNameField.TextChanged += (_) => _options.UserName = userNameField.Text.ToString();
+        _formContent.Add(userNameField);
+        row++;
+
         var agentsCheck = new CheckBox("Enable sub-agents", options.AgentsEnabled) { X = 1, Y = row };
         agentsCheck.Toggled += (_) => _options.AgentsEnabled = agentsCheck.Checked;
         _formContent.Add(agentsCheck);

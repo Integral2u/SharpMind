@@ -251,6 +251,7 @@ public static class SessionLauncher
         session.RepetitionWindow = options.Generation.RepetitionWindow;
         session.ShowThinking = options.ShowThinking;
         session.EnableThinking = options.EnableThinking;
+        session.UserName = options.UserName;
         if (options.Generation.StopTokenIds.Count > 0)
             session.StopTokenIds = options.Generation.StopTokenIds;
 

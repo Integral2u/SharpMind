@@ -67,13 +67,15 @@ namespace SharpMind.Samples.Examples
                     using var model = ModelFactory.CreateTransformer(weights, sharpConfig);
                     await Console.Out.WriteLineAsync($"ModelFactory.CreateTransformer executed in: {sw.Elapsed.TotalSeconds:F2}s");
 
-                    sw.Stop();
+                    sw.Reset();
 
                     await using var session = ChatSessionFactory.CreateChatSession(generatorDef, cacheBuilder, model, tokenizer, meta);                   
                     session.MaxTokens = 256;
                     session.Temperature = 0.0f;
                     session.TopK = 1;
-
+                    session.InitializeChat();
+                    await Console.Out.WriteLineAsync($"ChatSession executed in: {sw.Elapsed.TotalSeconds:F2}s");
+                    sw.Stop();
                     async void Response(ChatStreamEntry text)
                     {
                         Console.ForegroundColor = ConsoleColor.Blue;

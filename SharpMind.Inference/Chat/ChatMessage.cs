@@ -15,8 +15,8 @@ public sealed class ChatMessage
     /// <summary>When true, this message is exempted from truncation/eviction.</summary>
     public bool IsPinned { get; set; }
     public bool Ignore { get; set; }
-    public static ChatMessage User(string content)
-        => new() { Role = ChatRole.User, Content = content };
+    public static ChatMessage User(string content, string? name = "User")
+        => new() { Role = ChatRole.User, Content = content, Name = name };
 
     public static ChatMessage System(string content)
         => new() { Role = ChatRole.System, Content = content };

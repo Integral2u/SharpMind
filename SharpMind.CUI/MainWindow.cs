@@ -269,17 +269,15 @@ public sealed class MainWindow : Window
                 loaded = loadResult.Loaded!;
                 _modelCache.Register(launchOptions, loaded);
             }
-            progressView.SetMessage("Starting session...");
-            CreateAndShowSession(launchOptions, loaded);
+            CreateAndShowSession(launchOptions, loaded, progressView);
         }
         else
         {
-            progressView.SetMessage("Starting session...");
-            CreateAndShowSession(launchOptions, null);
+            CreateAndShowSession(launchOptions, null, progressView);
         }
     }
 
-    private void CreateAndShowSession(SessionOptions launchOptions, LoadedModel? loaded)
+    private async void CreateAndShowSession(SessionOptions launchOptions, LoadedModel? loaded, LoadingView progressView)
     {
         var gate = new PermissionGate();
         var result = SessionLauncher.BuildSession(launchOptions, loaded, gate.BuildCallback(launchOptions));
@@ -291,6 +289,14 @@ public sealed class MainWindow : Window
             return;
         }
 
+        var session = result.Session;
+        if (session is not null)
+        {
+            var chatProgress = new Progress<float>(p => Application.MainLoop.Invoke(() =>
+                progressView.SetMessage($"Starting session... {p * 100:F0}%")));
+            await Task.Run(() => session.InitializeChat(chatProgress));
+        }
+
         // disposeUnderlyingSession defaults to false here regardless of
         // generator/debug mode — the actual decision is made later, in
         // CloseSession, once ModelCache.Release knows whether this was the
@@ -298,8 +304,8 @@ public sealed class MainWindow : Window
         // ChatSessionBridge at all (DebugChatBridge doesn't share this
         // concern, since there's no real Transformer underneath it).
         IChatBridge bridge = result.IsDebugMode
-            ? new DebugChatBridge(result.CuiContext!, gate.BuildCallback(launchOptions))
-            : new ChatSessionBridge(result.Session!, disposeUnderlyingSession: false);
+            ? new DebugChatBridge(result.CuiContext!, gate.BuildCallback(launchOptions)) { UserName = launchOptions.UserName }
+            : new ChatSessionBridge(result.Session!, disposeUnderlyingSession: false) { UserName = launchOptions.UserName };
 
         if (bridge is ChatSessionBridge realBridge) realBridge.Start();
 

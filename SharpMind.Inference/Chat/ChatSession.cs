@@ -14,13 +14,14 @@ namespace SharpMind.Inference.Chat;
 public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, new() where T : IGeneratorBuilder<K>, new()
 {
     private readonly Tokenizer _tokenizer;
-    private readonly IGenerator<K> _generator;
+    private IGenerator<K> _generator = null!;
     private readonly Transformer _model;
     private readonly List<ChatMessage> _history = [];
-    private readonly IChatPromptFormatter? _formatter;
+    private IChatPromptFormatter? _formatter;
     private readonly IAgentBuilder? _agentBuilder;
     private readonly bool _addBos;
     private readonly bool _addEos;
+    private bool _initialized;
     private bool _disposed;
     private int[]? _cachedPromptTokens;
     /// <summary>
@@ -50,6 +51,10 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     private readonly IPromptPreProcessor? _preProcessor;
     private readonly IPromptPostProcessor? _postProcessor;
     private readonly IProgress<float>? _progress;
+    private readonly ModelMetaData? _meta;
+    private readonly IKVCache[]? _caches;
+    private readonly int? _seed;
+    private string _userName = "User";
     private CancellationTokenSource? _turnCts;
 
 
@@ -104,25 +109,58 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         ArgumentNullException.ThrowIfNull(model);
         _model = model;
         _tokenizer = tokenizer;
-        _formatter = ChatPromptFormatterFactory.Create(meta);
+        _meta = meta;
         _agentBuilder = agentBuilder;
         _preProcessor = preProcessor;
         _postProcessor = postProcessor;
         _progress = progress;
+        _caches = caches;
+        _seed = seed;
         MaxAgentDepth = _agentBuilder?.MaxAgentDepth ?? 2;
         _addBos = ModelMetaData.ResolveAddBos(meta, tokenizer.UseSentencePieceMerge);
         _addEos = ModelMetaData.ResolveAddEos(meta);
-        _generator = new T().CreateGenerator(model, tokenizer, _addBos, _addEos, caches, seed);
-        ArgumentNullException.ThrowIfNull(_generator);
 
         PermissionCallback = permissions ?? new Func<ToolPermissionContext, Task<ToolPermission>>(async (ctx) => { await Task.CompletedTask; return ToolPermission.Never; });
         _fileSystem = new InterceptingFileSystem();
         _networkHandler = new InterceptingNetworkHandler();
-
-        if (_agentBuilder != null) AddMessage(ChatRole.System, _agentBuilder.BuildAgentPrompt());
     }
 
-    public IGenerator<K> Generator => _generator;
+    public void InitializeChat(IProgress<float>? progress = null)
+    {
+        progress ??= _progress;
+        if (_initialized) return;
+
+        progress?.Report(0f);
+        _formatter = ChatPromptFormatterFactory.Create(_meta);
+        progress?.Report(0.15f);
+
+        _generator = new T().CreateGenerator(_model, _tokenizer, _addBos, _addEos, _caches, _seed);
+        ArgumentNullException.ThrowIfNull(_generator);
+        progress?.Report(0.6f);
+
+        if (_agentBuilder != null) AddMessage(ChatRole.System, _agentBuilder.BuildAgentPrompt());
+        progress?.Report(0.8f);
+
+        // Warm up: encode the system prompt to ensure tokenizer is ready
+        _tokenizer.Encode("", _addBos, _addEos);
+        progress?.Report(1f);
+
+        _initialized = true;
+    }
+
+    private void EnsureInitialized()
+    {
+        if (!_initialized) InitializeChat();
+    }
+
+    public IGenerator<K> Generator
+    {
+        get
+        {
+            EnsureInitialized();
+            return _generator!;
+        }
+    }
     public Tokenizer Tokenizer => _tokenizer;
     public Transformer Model => _model;
     public IReadOnlyList<ChatMessage> History => _filteredHistoryCache ??= [.. _history.Where(p => p.Role != ChatRole.System)];
@@ -145,6 +183,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     /// streaming visible chain-of-thought before the response.
     /// </summary>
     public bool EnableThinking { get; set; }
+    public string UserName { get => _userName; set => _userName = value ?? "User"; }
     public float? TokensPerSecond { get; private set; }
     public float? TimeToFirstToken { get; private set; }
 
@@ -181,7 +220,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
 
     public void ResetCaches()
     {
-        _cacheValid = false;
+        EnsureInitialized();
         _generator.ResetCache();
     }
     /// <summary>
@@ -531,9 +570,10 @@ private void ThrowIfDisposed()
         [EnumeratorCancellation] CancellationToken ct = default)
     {
         ThrowIfDisposed();
+        EnsureInitialized();
 
 
-        _history.Add(new ChatMessage { Role = ChatRole.User, Content = userInput, Artifacts = artifacts });
+        _history.Add(new ChatMessage { Role = ChatRole.User, Content = userInput, Name = _userName, Artifacts = artifacts });
         InvalidateHistoryCache();
 
         // Agentic loop: keep generating until the model produces a plain response
@@ -928,6 +968,7 @@ private void ThrowIfDisposed()
 
     public async Task<ChatMessage[]> StartChatAsync(Func<Task<ChatMessage>> prompt, Action<ChatStreamEntry> response, CancellationToken token = default)
     {
+        EnsureInitialized();
         while (!token.IsCancellationRequested)
         {
             response(new ChatStreamEntry { Status = ChatStatus.Waiting, IsComplete = false });
@@ -993,13 +1034,13 @@ private void ThrowIfDisposed()
         => await StartChatAsync(() => Task.FromResult(prompt()), response, token);
 
     public async Task<ChatMessage[]> StartChatAsync(Func<Task<string>> prompt, Action<string> response, CancellationToken token = default)
-        => await StartChatAsync(async () => new ChatMessage { Content = await prompt(), Role = ChatRole.User }, (e) =>
+        => await StartChatAsync(async () => new ChatMessage { Content = await prompt(), Role = ChatRole.User, Name = _userName }, (e) =>
         {
             if (e.Token is { Length: > 0 } delta) response(delta);
         }, token);
 
     public async Task<ChatMessage[]> StartChatAsync(Func<string> prompt, Action<string> response, CancellationToken token = default)
-        => await StartChatAsync(() => new ChatMessage { Content = prompt(), Role = ChatRole.User }, (e) =>
+        => await StartChatAsync(() => new ChatMessage { Content = prompt(), Role = ChatRole.User, Name = _userName }, (e) =>
         {
             if (e.Token is { Length: > 0 } delta) response(delta);
         }, token);

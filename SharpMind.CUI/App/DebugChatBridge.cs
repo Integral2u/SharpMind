@@ -20,6 +20,7 @@ namespace SharpMind.CUI.App;
 /// </summary>
 public sealed class DebugChatBridge(CuiToolContext cuiContext, Func<ToolPermissionContext, Task<ToolPermission>> permissionCallback) : IChatBridge
 {
+    public string UserName { get; set; } = "User";
     private readonly ConcurrentQueue<ChatStreamEntry> _incoming = new();
     private readonly List<ChatMessage> _history = [];
     private CancellationTokenSource _cts = new();
@@ -34,7 +35,7 @@ public sealed class DebugChatBridge(CuiToolContext cuiContext, Func<ToolPermissi
 
     public void SubmitUserInput(string text, ChatArtifact[]? artifacts = null)
     {
-        var msg = ChatMessage.User(text);
+        var msg = ChatMessage.User(text, UserName);
         if (artifacts is { Length: > 0 })
             msg.Artifacts = artifacts;
         _history.Add(msg);

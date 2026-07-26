@@ -53,7 +53,7 @@ namespace SharpMind.Samples.Examples
             using var model = ModelFactory.CreateTransformer(weights, sharpConfig);
             await Console.Out.WriteLineAsync($"ModelFactory.CreateTransformer executed in: {sw.Elapsed.TotalSeconds:F2}s");
 
-            sw.Stop();
+            sw.Reset();
 
             await using var session = new ChatSession<StandardGeneratorBuilder<KVCacherBuilder>, KVCacherBuilder>(model, tokenizer, meta)
             {
@@ -62,7 +62,9 @@ namespace SharpMind.Samples.Examples
                 TopK = 40,
                 TopP = 0.9f,
             };
-            
+            session.InitializeChat();
+            await Console.Out.WriteLineAsync($"ChatSession executed in: {sw.Elapsed.TotalSeconds:F2}s");
+            sw.Stop();
             await Console.Out.WriteLineAsync("\nChat ready! Say hello.\n");
             var history = await session.StartChatAsync(Prompt, Response, cancellationTokenSource.Token);
 

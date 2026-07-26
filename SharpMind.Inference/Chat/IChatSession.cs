@@ -13,6 +13,7 @@ public interface IChatSession : IAsyncDisposable
     public IReadOnlyList<int>? StopTokenIds { get; set; }
     public bool ShowThinking { get; set; }
     public bool EnableThinking { get; set; }
+    public string UserName { get; set; }
     public float? TokensPerSecond { get; }
     public float? TimeToFirstToken { get; }
     public Tokenizer Tokenizer { get; }
@@ -25,6 +26,7 @@ public interface IChatSession : IAsyncDisposable
     public void ClearHistory();
     public void ResetCaches();
     public void Interrupt();
+    public void InitializeChat(IProgress<float>? progress = null);
     public Task<ChatMessage[]> StartChatAsync(Func<Task<ChatMessage>> prompt, Action<ChatStreamEntry> response, CancellationToken token = default);
     public Task<ChatMessage[]> StartChatAsync(Func<ChatMessage> prompt, Action<ChatStreamEntry> response, CancellationToken token = default);
     public Task<ChatMessage[]> StartChatAsync(Func<Task<string>> prompt, Action<string> response, CancellationToken token = default);

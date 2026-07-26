@@ -57,3 +57,6 @@ Additional it should include Plugins such as classes with [ToolDesc] that can be
 Then we need the final End to End Test, Super Dumb Model Training save and Load, suggest training on small data set.
 
 Task 11: Future Incorperate Training into CUI.
+
+New
+handling of processing up uploaded artifacts, txt csv etc

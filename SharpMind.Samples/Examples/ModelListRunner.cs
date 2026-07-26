@@ -78,10 +78,11 @@ namespace SharpMind.Samples.Examples
                     Temperature = 0.0f,
                     TopK = 1,
                 };
-                await Console.Out.WriteLineAsync($"ChatSession executed in: {sw.Elapsed.TotalSeconds:F2}s");
+                session.InitializeChat();
+                await Console.Out.WriteLineAsync($"ChatSession executed in: {sw.Elapsed.TotalSeconds:F2}s");                
                 sw.Stop();
                 var history = await session.StartChatAsync(Prompt, Response, cancellationTokenSource.Token);
-
+                
 
                 async void Response(ChatStreamEntry text)
                 {
