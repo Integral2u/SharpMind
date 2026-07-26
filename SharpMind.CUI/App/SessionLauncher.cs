@@ -10,6 +10,7 @@ using SharpMind.Model.Config;
 using SharpMind.Model.Format;
 using SharpMind.Tokenization;
 
+
 namespace SharpMind.CUI.App;
 
 /// <summary>
@@ -211,17 +212,18 @@ public static class SessionLauncher
             _ => null
         };
 
+        // --- Load plugins from ./plugins/ ----------------------------------
+        var pluginResult = PluginLoader.LoadFrom(Path.Combine(AppContext.BaseDirectory, "plugins"));
+        warnings.AddRange(pluginResult.Warnings);
+        builder.PluginCompactors = pluginResult.Compactors;
+        builder.PluginPreProcessors = pluginResult.PreProcessors;
+        builder.PluginPostProcessors = pluginResult.PostProcessors;
+        if (pluginResult.Tools.Count > 0)
+            builder.WithTools(pluginResult.Tools.ToArray());
+
         IAgentBuilder agentBuilder = builder;
 
         // --- Resolve generator/cache type combo and build the session ------
-        Type generatorBuilderDef = options.Generator switch
-        {
-            GeneratorStrategy.Standard => typeof(StandardGeneratorBuilder<>),
-            GeneratorStrategy.Speculative => typeof(SpeculativeGeneratorBuilder<>),
-            GeneratorStrategy.Medusa => typeof(MedusaGeneratorBuilder<>),
-            _ => throw new ArgumentOutOfRangeException(nameof(options))
-        };
-
         Type cacheBuilder = options.Cache switch
         {
             CacheStrategy.Standard => typeof(KVCacherBuilder),
@@ -230,12 +232,34 @@ public static class SessionLauncher
             _ => throw new ArgumentOutOfRangeException(nameof(options))
         };
 
+        // Check plugin generators first; fall back to built-in strategies
+        Type generatorBuilderDef;
+        var matchedPluginGen = pluginResult.Generators.FirstOrDefault(g => g.CacheBuilderType == cacheBuilder);
+        if (matchedPluginGen is not null)
+        {
+            generatorBuilderDef = matchedPluginGen.BuilderType;
+        }
+        else
+        {
+            generatorBuilderDef = options.Generator switch
+            {
+                GeneratorStrategy.Standard => typeof(StandardGeneratorBuilder<>),
+                GeneratorStrategy.Speculative => typeof(SpeculativeGeneratorBuilder<>),
+                GeneratorStrategy.Medusa => typeof(MedusaGeneratorBuilder<>),
+                _ => throw new ArgumentOutOfRangeException(nameof(options))
+            };
+        }
+
+        // First plugin pre/post processor is used if no processor was explicitly configured
+        IPromptPreProcessor? preProcessor = pluginResult.PreProcessors.Count > 0 ? pluginResult.PreProcessors[0] : null;
+        IPromptPostProcessor? postProcessor = pluginResult.PostProcessors.Count > 0 ? pluginResult.PostProcessors[0] : null;
+
         IChatSession session;
         try
         {
             session = ChatSessionFactory.CreateChatSession(
                 generatorBuilderDef, cacheBuilder, loaded.Model, loaded.Tokenizer, loaded.Meta, agentBuilder,
-                preProcessor: null, progress: null, permissions: permissions,
+                preProcessor: preProcessor, postProcessor: postProcessor, progress: null, permissions: permissions,
                 seed: options.Sampling.Seed);
         }
         catch (Exception ex)

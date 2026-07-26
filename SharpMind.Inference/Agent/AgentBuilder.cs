@@ -20,6 +20,9 @@ namespace SharpMind.Inference.Agent
         public string AgentName { get; init; } = agentName;
         public SamplingConfig SamplingConfig { get; init; } = samplingConfig ?? new();
         public IContextCompactor? Compactor { get; set; }
+        public IReadOnlyList<IContextCompactor> PluginCompactors { get; set; } = [];
+        public IReadOnlyList<IPromptPreProcessor> PluginPreProcessors { get; set; } = [];
+        public IReadOnlyList<IPromptPostProcessor> PluginPostProcessors { get; set; } = [];
         public HashSet<string> DisabledTools { get; set; } = [];
 
         public IReadOnlyList<string> RegisteredToolNames => ToolMethods.Keys.ToList();

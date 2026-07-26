@@ -13,6 +13,9 @@ namespace SharpMind.Inference.Agent
         public HashSet<string> DisabledTools { get; set; }
         public IReadOnlyList<string> RegisteredToolNames { get; }
         public IContextCompactor? Compactor { get; }
+        public IReadOnlyList<IContextCompactor> PluginCompactors { get; }
+        public IReadOnlyList<IPromptPreProcessor> PluginPreProcessors { get; }
+        public IReadOnlyList<IPromptPostProcessor> PluginPostProcessors { get; }
         public IAgentBuilder WithCustomBehavior(string behavior);
         public IAgentBuilder WithCustomRule(string rule);
         public IAgentBuilder WithSkill(string file);

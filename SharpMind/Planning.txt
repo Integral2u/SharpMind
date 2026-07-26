@@ -53,10 +53,13 @@ if is thinking is inabled the information is available or should be available in
 
 Task 10: SharpMind Native Model
 Design ModelFormat exclusivly for SharpMind.  This format should include all relevent metadata and layers with QuantDType layer positions and lenght for loading.
-Additional it should include Plugins such as classes with [ToolDesc] that can be included by default and or custom plugs.  these can be stored as byte arrays and loaded. CUI should be able to hable adding these to OptionsView.
+Additional it should include Plugins such as classes with [ToolDesc] that can be included by default and or custom plugs.  these can be stored as byte arrays and loaded. CUI should be able to handle adding these to OptionsView and if possible excluding [ToolDesc] mark as (recomended) as text beside option.
 Then we need the final End to End Test, Super Dumb Model Training save and Load, suggest training on small data set.
 
 Task 11: Future Incorperate Training into CUI.
 
 New
 handling of processing up uploaded artifacts, txt csv etc
+
+Profiler for all VecDot quants and its variants to ensure correct implementation.  SSE faster than Scalar, AVX2 faster than SSE, FMA faster than AXV.
+And a profiler to compare Serial Vs Parallel MatMul on syntestic data approximatly size of 1b model layer

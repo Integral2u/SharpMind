@@ -13,7 +13,9 @@ namespace SharpMind.Inference.Chat
             Type cacheBuilder,         // typeof(KVCacherBuilder)
             Transformer model, Tokenizer tokenizer, ModelMetaData? meta = null, IAgentBuilder? agentBuilder = null, IPromptPreProcessor? preProcessor = null, IPromptPostProcessor? postProcessor = null, IProgress<float>? progress = null, Func<ToolPermissionContext, Task<ToolPermission>>? permissions = null, int? seed = null)
         {
-            var closedGen = generatorBuilderDef.MakeGenericType(cacheBuilder);
+            var closedGen = generatorBuilderDef.IsGenericTypeDefinition
+                ? generatorBuilderDef.MakeGenericType(cacheBuilder)
+                : generatorBuilderDef;
             var sessionType = typeof(ChatSession<,>).MakeGenericType(closedGen, cacheBuilder);
             return (IChatSession)Activator.CreateInstance(sessionType, [model, tokenizer, meta, agentBuilder, preProcessor, postProcessor, progress, permissions, null, seed])!;
         }

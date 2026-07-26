@@ -240,6 +240,20 @@ public sealed class OptionsView : View
         _formContent.Add(manageToolsBtn);
         row += 2;
 
+        // --- Plugin status -------------------------------------------------
+        var pluginResult = PluginLoader.LoadFrom(Path.Combine(AppContext.BaseDirectory, "plugins"));
+        var pluginLabel = new Label((ustring)$"Plugins: {pluginResult.Compactors.Count} compactors, {pluginResult.PreProcessors.Count} pre, {pluginResult.PostProcessors.Count} post, {pluginResult.Generators.Count} generators")
+        { X = 1, Y = row };
+        _formContent.Add(pluginLabel);
+        if (pluginResult.Warnings.Count > 0)
+        {
+            var warnLabel = new Label((ustring)$"  ⚠ {pluginResult.Warnings.Count} plugin warning(s)")
+            { X = 1, Y = row + 1 };
+            _formContent.Add(warnLabel);
+            row++;
+        }
+        row++;
+
         var launchButton = new Button("Launch Session") { X = 1, Y = row, IsDefault = true };
         launchButton.Clicked += () => onLaunch();
         var cancelButton = new Button("Cancel") { X = Pos.Right(launchButton) + 2, Y = row };

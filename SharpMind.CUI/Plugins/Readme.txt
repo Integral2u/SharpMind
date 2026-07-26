@@ -1,0 +1,1 @@
+compactors, pre/post processors, generators plugins
