@@ -16,18 +16,35 @@ public sealed class ModelBrowserView : View
     private readonly Label _previewLabel;
     private List<string> _entries = [];
 
-    public ModelBrowserView(string startPath, Action<string> onChosen, Action onCancel)
+    public ModelBrowserView(string startPath, Action<string> onChosen, Action onCancel, string? lastModelPath = null)
     {
         _onChosen = onChosen;
         _onCancel = onCancel;
         _currentPath = Directory.Exists(startPath) ? startPath : Directory.GetCurrentDirectory();
 
-        _pathLabel = new Label("") { X = 0, Y = 0, Width = Dim.Fill() };
+        int yOffset = 0;
+
+        // Continue-with-last-model button
+        if (!string.IsNullOrWhiteSpace(lastModelPath))
+        {
+            string name = Path.GetFileNameWithoutExtension(lastModelPath);
+            var continueBtn = new Button($"Continue with {name}")
+            {
+                X = 0,
+                Y = 0,
+                IsDefault = true
+            };
+            continueBtn.Clicked += () => onChosen(lastModelPath);
+            Add(continueBtn);
+            yOffset = 1;
+        }
+
+        _pathLabel = new Label("") { X = 0, Y = yOffset, Width = Dim.Fill() };
 
         _listView = new ListView
         {
             X = 0,
-            Y = 2,
+            Y = yOffset + 2,
             Width = Dim.Percent(60),
             Height = Dim.Fill(2)
         };
@@ -37,7 +54,7 @@ public sealed class ModelBrowserView : View
         var previewFrame = new FrameView("Preview")
         {
             X = Pos.Right(_listView) + 1,
-            Y = 2,
+            Y = yOffset + 2,
             Width = Dim.Fill(),
             Height = Dim.Fill(2)
         };

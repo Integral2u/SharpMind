@@ -5,9 +5,14 @@ namespace SharpMind.CUI;
 /// <summary>The landing view: banner, brief instructions, a button into the model browser.</summary>
 public sealed class WelcomeView : View
 {
-    public WelcomeView(Action onBrowseModel)
+    public WelcomeView(
+        Action onBrowseModel,
+        string? lastModelName = null,
+        Action? onContinueWithModel = null,
+        string? lastSessionName = null,
+        Action? onResumeLastSession = null)
     {
-        var bannerText = "  ___ _                  __  __ _           _ \n / __| |_  __ _ _ _ _ __ |  \\/  (_)_ _  __| |\n \\__ \\ ' \\/ _` | '_| '_ \\| |\\/| | | ' \\/ _` |\n |___/_||_\\__,_|_| | .__/|_|  |_|_|_||_\\__,_|\n                   |_|                        ";
+        var bannerText = "  ___ _                  __  __ _           _ \n / __| |_  __ _ _ _ _ __ |  \\/  (_)_ _  __| |\n \\__ \\ ' \\/ _` | '_| '_ \\| |\\/| | | ' \\/ _` |\n |___/_||_\\__,_|_| | .__/|_|  |_|_|_||_|\\__,_|\n                   |_|                        ";
         var banner = new Label(bannerText)
         {
             X = Pos.Center(),
@@ -33,10 +38,34 @@ public sealed class WelcomeView : View
         var hint = new Label("Use the File / Model menus above for more options, or Esc to step back.")
         {
             X = Pos.Center(),
-            Y = Pos.Center() + 3,
+            Y = Pos.AnchorEnd() - 1,
             TextAlignment = TextAlignment.Centered
         };
 
-        Add(banner, subtitle, browseButton, hint);
+        var items = new List<View> { banner, subtitle, browseButton, hint };
+
+        if (lastModelName is not null && onContinueWithModel is not null)
+        {
+            var modelBtn = new Button($"Continue with {lastModelName}")
+            {
+                X = Pos.Center(),
+                Y = Pos.Bottom(browseButton) + 1
+            };
+            modelBtn.Clicked += () => onContinueWithModel();
+            items.Insert(items.Count - 1, modelBtn);
+        }
+
+        if (lastSessionName is not null && onResumeLastSession is not null)
+        {
+            var sessionBtn = new Button($"Resume session \"{lastSessionName}\"")
+            {
+                X = Pos.Center(),
+                Y = Pos.Bottom((View)items[^2]) + 1
+            };
+            sessionBtn.Clicked += () => onResumeLastSession();
+            items.Insert(items.Count - 1, sessionBtn);
+        }
+
+        Add(items.ToArray());
     }
 }

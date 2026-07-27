@@ -28,6 +28,22 @@ public sealed class MainWindow : Window
     private static string LastUsedOptionsPath =>
         Path.Combine(SavedSession.DefaultFolder, "__last_used__.json");
 
+    /// <summary>Returns the most recently saved session (excluding __last_used__.json), or null.</summary>
+    private static SavedSession? FindLastSession()
+    {
+        try
+        {
+            var saved = SavedSession.ListSaved(SavedSession.DefaultFolder);
+            var last = saved.FirstOrDefault(f =>
+                !Path.GetFileName(f).Equals("__last_used__.json", StringComparison.OrdinalIgnoreCase));
+            return last is not null ? SavedSession.Load(last, out _) : null;
+        }
+        catch { return null; }
+    }
+
+    private static string ModelNameFromPath(string? modelPath) =>
+        Path.GetFileNameWithoutExtension(modelPath ?? "");
+
     public MainWindow()
     {
         Title = "SharpMind CUI";
@@ -98,6 +114,7 @@ public sealed class MainWindow : Window
                 new("_New session...", "", StartNewSession, shortcut: Key.N | Key.CtrlMask),
                 new("_Welcome screen", "", ShowWelcome),
                 new("_Settings...", "", ShowSettings),
+                new("_Resume last session...", "", ResumeLastSession),
                 new("E_xit", "", () => Application.RequestStop())
             }),
             new("_Model", new MenuItem[]
@@ -134,7 +151,25 @@ public sealed class MainWindow : Window
         _content.SetNeedsDisplay();
     }
 
-    private void ShowWelcome() => SwapContent(new WelcomeView(onBrowseModel: ShowModelBrowser));
+    private void ShowWelcome()
+    {
+        var lastSession = FindLastSession();
+        string lastModelName = _options.ModelPath is not null ? ModelNameFromPath(_options.ModelPath) : "";
+        SwapContent(new WelcomeView(
+            onBrowseModel: ShowModelBrowser,
+            lastModelName: lastModelName,
+            onContinueWithModel: _options.ModelPath is not null ? new Action(() =>
+            {
+                _options.ModelPath = _options.ModelPath!;
+                ShowOptions();
+            }) : null,
+            lastSessionName: lastSession?.Name,
+            onResumeLastSession: lastSession is not null ? new Action(() =>
+            {
+                _options = CloneOptions(lastSession.Options);
+                ShowOptions();
+            }) : null));
+    }
 
     private void ShowModelBrowser()
     {
@@ -154,7 +189,8 @@ public sealed class MainWindow : Window
 
                 ShowOptions();
             },
-            onCancel: onCancel));
+            onCancel: onCancel,
+            lastModelPath: _options.ModelPath));
     }
 
     private void ShowOptions()
@@ -381,6 +417,22 @@ public sealed class MainWindow : Window
             if (_currentSession is not null) ShowChat();
             else ShowWelcome();
         }
+    }
+
+    // --- Resume last session -------------------------------------------------
+
+    private void ResumeLastSession()
+    {
+        var lastSession = FindLastSession();
+        if (lastSession is null)
+        {
+            MessageBox.Query("No saved session", "No saved sessions found.\nUse Chat > Save current session... to save one.", "OK");
+            return;
+        }
+
+        _currentSession = null;
+        _options = CloneOptions(lastSession.Options);
+        ShowOptions();
     }
 
     // --- Save/Load session ---------------------------------------------------
