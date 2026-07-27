@@ -26,10 +26,7 @@ Then we need the final End to End Test, Super Dumb Model Training save and Load,
 
 Task 11: Future Incorperate Training into CUI.
 
-New
-handling of processing up uploaded artifacts, txt csv etc
-if type is not know then possibly inject prompt pointing to path of the file as a tool may be available.
-txt and csv sould be simple enough to add to a standard IPromptPreProcessor
+Task 12: Cleanup, commenting,  unused private methods, naming.
 
 Profiler for all VecDot quants and its variants to ensure correct implementation.  SSE faster than Scalar, AVX2 faster than SSE, FMA faster than AXV.
 And a profiler to compare Serial Vs Parallel MatMul on syntestic data approximatly size of 1b model layer

@@ -1015,12 +1015,9 @@ private void ThrowIfDisposed()
                 });
             }
 
-            // Pre-process user input (preserves artifacts from the original message)
+            // Pre-process user input (pre-processor can modify input.Content, input.Artifacts, etc. in place)
             if (_preProcessor is not null)
-            {
-                var processed = await _preProcessor.ProcessAsync(input.Content, _history, token);
-                input.Content = processed;
-            }
+                await _preProcessor.ProcessAsync(input, _history, token);
 
             try
             {

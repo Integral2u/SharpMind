@@ -235,9 +235,11 @@ public sealed class OptionsView : View
         _formContent.Add(toolsFolderField, toolsFolderOpen);
         row += 2;
 
-        var manageToolsBtn = new Button("Manage Tools...") { X = 1, Y = row, Width = 15 };
+        var manageToolsBtn = new Button("Manage Tools...") { X = 1, Y = row, Width = 19 };
         manageToolsBtn.Clicked += ManageTools;
-        _formContent.Add(manageToolsBtn);
+        var manageProcessorsBtn = new Button("Manage Pre/Post...") { X = Pos.Right(manageToolsBtn) + 2, Y = row, Width = 19 };
+        manageProcessorsBtn.Clicked += ManageProcessors;
+        _formContent.Add(manageToolsBtn, manageProcessorsBtn);
         row += 2;
 
         // --- Plugin status -------------------------------------------------
@@ -389,6 +391,73 @@ public sealed class OptionsView : View
         Application.Run(dialog);
     }
 
+    private void ManageProcessors()
+    {
+        var pre = new List<(string Name, string Desc)>();
+        pre.Add(("Simple Artifact Injection", "Inlines text artifacts; adds path hints for binary files"));
+        pre.AddRange(SessionLauncher.GetAvailablePreProcessors()
+            .Select(p => (p.Name, p.Description)));
+
+        var post = SessionLauncher.GetAvailablePostProcessors()
+            .Select(p => (p.Name, p.Description)).ToList();
+
+        int totalItems = pre.Count + post.Count + (pre.Count > 0 && post.Count > 0 ? 1 : 0);
+        if (totalItems == 0)
+        {
+            MessageBox.Query("No processors", "No pre/post processors are available.", "OK");
+            return;
+        }
+
+        var dialog = new Dialog("Manage Pre/Post Processors", 60, 20);
+        var scroll = new ScrollView { X = 0, Y = 0, Width = Dim.Fill(), Height = Dim.Fill() };
+        var content = new View { Width = Dim.Fill() };
+
+        int row = 0;
+        var preLabel = new Label("Pre-processors:") { X = 1, Y = row };
+        content.Add(preLabel);
+        row++;
+        foreach (var (name, desc) in pre)
+        {
+            var cb = new CheckBox($"  {name}  ({desc})", !_options.DisabledPreProcessors.Contains(name)) { X = 1, Y = row };
+            cb.Toggled += (_) =>
+            {
+                if (cb.Checked) _options.DisabledPreProcessors.Remove(name);
+                else _options.DisabledPreProcessors.Add(name);
+            };
+            content.Add(cb);
+            row++;
+        }
+
+        if (post.Count > 0)
+        {
+            row++;
+            var postLabel = new Label("Post-processors:") { X = 1, Y = row };
+            content.Add(postLabel);
+            row++;
+            foreach (var (name, desc) in post)
+            {
+                var cb = new CheckBox($"  {name}  ({desc})", !_options.DisabledPostProcessors.Contains(name)) { X = 1, Y = row };
+                cb.Toggled += (_) =>
+                {
+                    if (cb.Checked) _options.DisabledPostProcessors.Remove(name);
+                    else _options.DisabledPostProcessors.Add(name);
+                };
+                content.Add(cb);
+                row++;
+            }
+        }
+
+        content.Height = row;
+        scroll.ContentSize = new Terminal.Gui.Size(58, row);
+        scroll.Add(content);
+        dialog.Add(scroll);
+        var closeBtn = new Button("Close");
+        closeBtn.Clicked += () => Application.RequestStop();
+        dialog.AddButton(closeBtn);
+
+        Application.Run(dialog);
+    }
+
     private static void CopyOptionsInto(SessionOptions target, SessionOptions source)
     {
         target.ModelPath = source.ModelPath;
@@ -413,5 +482,7 @@ public sealed class OptionsView : View
         target.MaxAgentDepth = source.MaxAgentDepth;
         target.MaxToolCallsPerTurn = source.MaxToolCallsPerTurn;
         target.DisabledTools = new HashSet<string>(source.DisabledTools);
+        target.DisabledPreProcessors = new HashSet<string>(source.DisabledPreProcessors);
+        target.DisabledPostProcessors = new HashSet<string>(source.DisabledPostProcessors);
     }
 }

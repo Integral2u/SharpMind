@@ -12,5 +12,6 @@ namespace SharpMind.Inference.Chat;
 public interface IPromptPostProcessor
 {
     string Name { get; }
+    string Description { get; }
     Task ProcessAsync(ChatMessage agentMessage, IReadOnlyList<ChatMessage> history, CancellationToken ct);
 }

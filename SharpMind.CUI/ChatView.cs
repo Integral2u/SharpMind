@@ -289,7 +289,8 @@ public sealed class ChatView : View
             Type = type,
             Content = content,
             FileName = Path.GetFileName(path),
-            Language = type == "code" ? ext?.TrimStart('.') : null
+            Language = type == "code" ? ext?.TrimStart('.') : null,
+            SourcePath = path
         };
 
         string text = _inputField.Text.ToString() ?? "";

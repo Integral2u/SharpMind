@@ -160,5 +160,11 @@ public sealed class SessionOptions
     /// <summary>Set of tool names that should be disabled for this session.</summary>
     public HashSet<string> DisabledTools { get; set; } = [];
 
+    /// <summary>Set of pre-processor names that should be disabled for this session.</summary>
+    public HashSet<string> DisabledPreProcessors { get; set; } = [];
+
+    /// <summary>Set of post-processor names that should be disabled for this session.</summary>
+    public HashSet<string> DisabledPostProcessors { get; set; } = [];
+
     public static SessionOptions Default => new();
 }

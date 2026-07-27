@@ -255,9 +255,14 @@ public static class SessionLauncher
             };
         }
 
-        // First plugin pre/post processor is used if no processor was explicitly configured
-        IPromptPreProcessor? preProcessor = pluginResult.PreProcessors.Count > 0 ? pluginResult.PreProcessors[0] : null;
-        IPromptPostProcessor? postProcessor = pluginResult.PostProcessors.Count > 0 ? pluginResult.PostProcessors[0] : null;
+        // Build available pre/post processors (built-in + plugin), filtered by disabled set
+        var allPreProcessors = new List<IPromptPreProcessor>();
+        allPreProcessors.Add(new SimpleArtifactPromptPreProcessor());
+        allPreProcessors.AddRange(pluginResult.PreProcessors);
+        IPromptPreProcessor? preProcessor = allPreProcessors.FirstOrDefault(p => !options.DisabledPreProcessors.Contains(p.Name));
+
+        var allPostProcessors = new List<IPromptPostProcessor>(pluginResult.PostProcessors);
+        IPromptPostProcessor? postProcessor = allPostProcessors.FirstOrDefault(p => !options.DisabledPostProcessors.Contains(p.Name));
 
         IChatSession session;
         try
@@ -309,6 +314,22 @@ public static class SessionLauncher
         }
 
         return builder.RegisteredToolNames.ToList();
+    }
+
+    public static List<IPromptPreProcessor> GetAvailablePreProcessors()
+    {
+        var result = new List<IPromptPreProcessor>();
+        var pluginResult = PluginLoader.LoadFrom(Path.Combine(AppContext.BaseDirectory, "plugins"));
+        result.AddRange(pluginResult.PreProcessors);
+        return result;
+    }
+
+    public static List<IPromptPostProcessor> GetAvailablePostProcessors()
+    {
+        var result = new List<IPromptPostProcessor>();
+        var pluginResult = PluginLoader.LoadFrom(Path.Combine(AppContext.BaseDirectory, "plugins"));
+        result.AddRange(pluginResult.PostProcessors);
+        return result;
     }
 
     /// <summary>

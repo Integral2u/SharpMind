@@ -9,4 +9,6 @@ public sealed class ChatArtifact
     public required byte[] Content { get; init; }
     public string? Language { get; init; }
     public string? FileName { get; init; }
+    /// <summary>Original source path of the file, preserved for tool access.</summary>
+    public string? SourcePath { get; init; }
 }
