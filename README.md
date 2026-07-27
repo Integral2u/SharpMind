@@ -4,16 +4,15 @@
 
 <p align="center"><b>SharpMind. A pure C# / .NET LLM engine — inference, training, and agent tooling in one solution.</b></p>
 
-<p align="center">
+<p>
   <img alt="status" src="https://img.shields.io/badge/status-pre--release-orange">
   <img alt="lang" src="https://img.shields.io/badge/language-C%23%20(.NET%2010)-239120">
   <img alt="deps" src="https://img.shields.io/badge/dependencies-near--zero-blue">
-
-</p>
-
 [![NuGet Downloads](https://img.shields.io/nuget/dt/SharpMind.Core.svg)](https://www.nuget.org/packages/SharpMind.Core)
 ![GitHub Sponsor](https://img.shields.io/github/sponsors/Integral2u?label=Sponsor&logo=GitHub)
 [![Last commit](https://img.shields.io/github/last-commit/Integral2u/SharpMind)](https://github.com/Integral2u/SharpMind/commits/main)
+</p>
+
 
 > **⚠️ Pre-release.** SharpMind is under active development. APIs, config formats, and project layout are still moving. Inference is the most mature and best-tested part of the stack today; training is functional but earlier-stage and evolving fastest. Expect breaking changes between commits until a tagged `v0` release lands.
 
