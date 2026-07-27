@@ -9,6 +9,7 @@
   <img alt="lang" src="https://img.shields.io/badge/language-C%23%20(.NET%2010)-239120">
   <img alt="deps" src="https://img.shields.io/badge/dependencies-near--zero-blue">
 </p>
+
 [![NuGet Downloads](https://img.shields.io/nuget/dt/SharpMind.Core.svg)](https://www.nuget.org/packages/SharpMind.Core)
 ![GitHub Sponsor](https://img.shields.io/github/sponsors/Integral2u?label=Sponsor&logo=GitHub)
 [![Last commit](https://img.shields.io/github/last-commit/Integral2u/SharpMind)](https://github.com/Integral2u/SharpMind/commits/main)
