@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="SharpMind/sharpmind_logo.svg" alt="SharpMind logo" width="160"/>
+  <img src="SharpMind/sharpmind_logo.svg" alt="SharpMind logo" width="256"/>
 </p>
 
 <h1 align="center">SharpMind</h1>
