@@ -2,7 +2,7 @@
   <img src="SharpMind.Core/sharpmind_logo.svg" alt="SharpMind logo" width="512" height="512"/>
 </p>
 
-<p align="center"><b>SharpMind. A pure C# / .NET LLM engine — inference, training, and agent tooling in one solution.</b></p>
+<p align="center"><b>SharpMind. A pure C# / .NET LLM engine — inference and agent tooling in one solution.</b></p>
 
 <p>
   <img alt="status" src="https://img.shields.io/badge/status-pre--release-orange">
@@ -36,11 +36,11 @@ It ships as a set of composable libraries plus a terminal chat application (`Sha
 ## Why SharpMind
 
 - **No native runtime required.** Tensor math, quantization kernels, and the training loop are all managed C#. GPU acceleration (via ILGPU) is opt-in and lives in its own assembly — the CPU path never needs it.
-- **Inference *and* training in one codebase.** Most C# "LLM" libraries are thin bindings around llama.cpp and only run models. SharpMind can load a GGUF checkpoint, chat with it, LoRA-fine-tune it, distill it into a smaller student, or train a model from scratch — all with the same tensor/quantization primitives.
 - **Runs models bigger than your RAM.** A disk-streaming load mode pages transformer layers in and out during the forward pass instead of holding the whole model resident (details below).
 - **Modern decoding, not just greedy/top-p.** Both classic speculative decoding and Medusa-style multi-head speculative decoding are implemented from scratch, with careful KV-cache rollback on rejection.
 - **A genuinely pluggable kernel system.** Hardware-specific kernel variants (scalar/SSE/AVX2/FMA/GPU) are wired up at runtime through a small internal dispatch layer [JigSawDotNet](https://github.com/Integral2u/JigSawDotNet) rather than hand-written `if`/`switch` ladders — adding a new backend means adding an assembly, not editing the core.
 - **Agent tooling included.** Tool-calling, permission gating (`Never` / `Ask` / `Always`), and sub-agent orchestration ship in `SharpMind.Inference.Agent`.
+- **Inference *and* training(Experimental) in one codebase.** Most C# "LLM" libraries are thin bindings around llama.cpp and only run models. SharpMind can load a GGUF checkpoint, chat with it, LoRA-fine-tune it, distill it into a smaller student, or train a model from scratch — all with the same tensor/quantization primitives.
 
 ---
 
@@ -150,11 +150,11 @@ SharpMind.Tests         Test suite
 - [x] GPU kernels for common quant types
 - [x] Speculative decoding
 - [x] Medusa-style speculative decoding (heads need manual calibration)
-- [x] LoRA, distillation, pruning
 - [x] Terminal chat app with agent tooling
 - [ ] Documentation and getting-started guides
 - [ ] Additional import formats beyond GGUF
 - [ ] Medusa head auto-calibration during load
 - [ ] Stabilized public API / first tagged release
+- [ ] LoRA, distillation, pruning
 
 Issues, questions, and early feedback are welcome — this is a pre-release project and things will move.
