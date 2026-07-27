@@ -176,6 +176,10 @@ public abstract class FfnLayer : IDisposable
                 Buffer.BlockCopy(weights.RawWup, 0, fused, weights.RawWgate.Length, weights.RawWup.Length);
                 WGated.SetRawWeight(fused);
             }
+            else
+            {
+                WGated.SetRawWeight(null);
+            }
             if (weights.Wf2 != null) WDown.ReplaceWeights(weights.Wf2, weights.Wf2Bias);
             WDown.SetRawWeight(weights.RawWf2);
         }

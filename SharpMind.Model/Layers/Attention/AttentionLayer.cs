@@ -117,13 +117,17 @@ namespace SharpMind.Model.Layers.Attention;
     {
         // Restore individual Q/K/V layers for fast quantized forward path
         if (weights.Wq != null) Wq.ReplaceWeights(weights.Wq, weights.WqBias);
+        else if (weights.WqBias != null) Wq.ReplaceBias(weights.WqBias);
         Wq.SetRawWeight(weights.RawWq);
         if (weights.Wk != null) Wk.ReplaceWeights(weights.Wk, weights.WkBias);
+        else if (weights.WkBias != null) Wk.ReplaceBias(weights.WkBias);
         Wk.SetRawWeight(weights.RawWk);
         if (weights.Wv != null) Wv.ReplaceWeights(weights.Wv, weights.WvBias);
+        else if (weights.WvBias != null) Wv.ReplaceBias(weights.WvBias);
         Wv.SetRawWeight(weights.RawWv);
 
         if (weights.Wo != null) Wo.ReplaceWeights(weights.Wo, weights.WoBias);
+        else if (weights.WoBias != null) Wo.ReplaceBias(weights.WoBias);
         Wo.SetRawWeight(weights.RawWo);
 
         // Per-head Q/K normalization (Qwen3)

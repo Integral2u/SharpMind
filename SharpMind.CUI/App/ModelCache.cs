@@ -1,3 +1,5 @@
+using SharpMind.Model.Config;
+
 namespace SharpMind.CUI.App;
 
 /// <summary>
@@ -6,6 +8,10 @@ namespace SharpMind.CUI.App;
 /// session-level behaviour) so that opening a second named chat session
 /// against the same GGUF file reuses the already-loaded weights instead of
 /// reading them from disk again.
+///
+/// Streaming mode sessions are never cached — each agent requires its own
+/// <see cref="TransformerWeightsStreaming"/> instance with isolated layer
+/// load/unload state.
 ///
 /// The one constraint that shapes this whole class:
 /// <c>ChatSession.DisposeAsync()</c> unconditionally disposes the
@@ -23,23 +29,22 @@ public sealed class ModelCache
     private static string KeyFor(SessionOptions options) =>
         $"{options.ModelPath}|{options.HardwareTier}|{options.UseGpu}";
 
-    /// <summary>
-    /// Returns an already-loaded model for these exact path+hardware+GPU
-    /// settings if one exists, incrementing its ref count. Returns null if
-    /// nothing matching is cached yet — the caller is expected to load one
-    /// via SessionLauncher.LoadModelAsync and then call <see cref="Register"/>.
-    /// </summary>
+    /// <summary>Returns an already-loaded model for these exact settings if one exists,
+    /// incrementing its ref count. Returns null for streaming mode (never cached).</summary>
     public LoadedModel? TryAcquire(SessionOptions options)
     {
+        if (options.LoadMode == LoadMode.Streaming) return null;
         if (options.ModelPath is null) return null;
         if (!_byKey.TryGetValue(KeyFor(options), out var loaded)) return null;
         loaded.RefCount++;
         return loaded;
     }
 
-    /// <summary>Called once, right after a fresh LoadModelAsync, to make the result available for future reuse.</summary>
+    /// <summary>Called once, right after a fresh LoadModelAsync, to make the result available for future reuse.
+    /// Streaming mode sessions are not cached — each agent requires its own isolated instance.</summary>
     public void Register(SessionOptions options, LoadedModel loaded)
     {
+        if (options.LoadMode == LoadMode.Streaming) return;
         loaded.RefCount = 1;
         _byKey[KeyFor(options)] = loaded;
     }
@@ -52,9 +57,13 @@ public sealed class ModelCache
     /// will, per the constraint above, dispose the Transformer too. If other
     /// sessions are still using it, returns false: the caller must drop its
     /// ChatSession reference without disposing it.
+    ///
+    /// Streaming mode sessions are never cached — returns true immediately
+    /// so the caller always disposes its own session and Transformer.
     /// </summary>
     public bool Release(SessionOptions options)
     {
+        if (options.LoadMode == LoadMode.Streaming) return true;
         if (options.ModelPath is null) return false;
         string key = KeyFor(options);
         if (!_byKey.TryGetValue(key, out var loaded)) return false;

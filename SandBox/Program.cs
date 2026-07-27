@@ -1,9 +1,9 @@
 using LLama;
 using SandBox;
 using SandBox.RunModels;
-await SandBox.RunModels.DiagnosticModelRunner.RunAsync("Hello", ["Qwen3-0.6B-Q8_0"]);
+//await SandBox.RunModels.DiagnosticModelRunner.RunAsync("Hello", ["qwen2-0_5b-instruct-q8_0"]);
 //await SharpMind.Samples.Examples.BuilderOptions.RunAsync("Hello", @"C:\Integral2u\source\repos\SharpMind\ExternalAssets", "qwen2-0_5b-instruct-q8_0");
-//await SandBox.RunModels.KnownWorkingModels.RunAsync("Hello");
+await SandBox.RunModels.KnownWorkingModels.RunAsync("Hello");
 //await SandBox.RunModels.KnownGiberishModels.RunAsync("Hello");
 //await SandBox.RunModels.KnownFailingModels.RunAsync("Hello");
 Console.In.ReadLine();

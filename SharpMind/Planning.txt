@@ -38,3 +38,5 @@ gemma models
 
 Testing Qwen2-0.5B.Q6_K
 [formatter] prompt=<|im_start|>system\nYou are a helpful assistant
+
+I think testing on a smaller model is fine, if qwen2-0_5b-instruct-q8_0 has 24 layers and were only loading 2 ant initialization layer 0 and the next layer 1 asynchronously memory should be around 85-90% less so instead of 6000MB resident in memory only 900MB.

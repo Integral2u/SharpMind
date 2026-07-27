@@ -186,6 +186,9 @@ public sealed class Transformer : IDisposable
         //    may alias _cachedEmbedding. Keep both alive until we exit this method.
         _cachedHidden = _arch.Forward(_cachedEmbedding, caches ?? new IKVCache[_arch.NumLayers], positionOffset, workspace);
 
+        // Streaming: free any remaining loaded layers before the next pass
+        if (_weights is TransformerWeightsStreaming sw) sw.CompleteForward();
+
         // 3. Final normalisation
         _cachedNormed?.Dispose();
         _cachedNormed = _finalNorm.Forward(_cachedHidden, workspace);
@@ -222,6 +225,7 @@ public sealed class Transformer : IDisposable
 
         _cachedHidden = _arch.Forward(_cachedEmbedding, caches, positionOffset, workspace);
 
+        if (_weights is TransformerWeightsStreaming sw) sw.CompleteForward();
 
         int batch = tokenIds.Shape.Rows;
         int seqLen = tokenIds.Shape.Cols;

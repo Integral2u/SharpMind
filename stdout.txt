@@ -1,3 +1,0 @@
-GgufLoader.LoadWeightsToTransformerWeights executed in: 6.71s
-Testing qwen2-0_5b-instruct-q8_0 using SpeculativeGeneratorBuilder`1,SharpMind.Model.PagedKVCacherBuilder
-ModelFactory.CreateSession executed in: 1.36s

@@ -90,7 +90,7 @@ namespace SandBox.RunModels
                 GC.Collect(); GC.WaitForPendingFinalizers();
                 var sw = Stopwatch.StartNew();
                 var qOps = QuantizationFactory.Create(mapping);
-                using var weights = ModelFactory.CreateWeights(modelConfig, sharpConfig, qOps, modelPath);
+                using var weights = ModelFactory.CreateWeights(modelConfig, sharpConfig, qOps, modelPath, loadMode: LoadMode.Streaming );
                 weights.InitializeWeights();
 
                 await Console.Out.WriteLineAsync($"ModelFactory.Create + InitializeWeights executed in: {sw.Elapsed.TotalSeconds:F2}s");

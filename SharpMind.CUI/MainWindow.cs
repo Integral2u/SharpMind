@@ -438,6 +438,7 @@ public sealed class MainWindow : Window
         ToolsFolder = source.ToolsFolder,
         Generator = source.Generator,
         Cache = source.Cache,
+        LoadMode = source.LoadMode,
         HardwareTier = source.HardwareTier,
         UseGpu = source.UseGpu,
         GpuNonQuant = source.GpuNonQuant,
@@ -449,12 +450,16 @@ public sealed class MainWindow : Window
         Sampling = source.Sampling,
         Generation = source.Generation,
         AgentName = source.AgentName,
+        Compactor = source.Compactor,
+        PluginCompactorName = source.PluginCompactorName,
         AgentsEnabled = source.AgentsEnabled,
         MaxAgentDepth = source.MaxAgentDepth,
         MaxToolCallsPerTurn = source.MaxToolCallsPerTurn,
         ShowThinking = source.ShowThinking,
         EnableThinking = source.EnableThinking,
-        DisabledTools = new HashSet<string>(source.DisabledTools)
+        DisabledTools = new HashSet<string>(source.DisabledTools),
+        DisabledPreProcessors = new HashSet<string>(source.DisabledPreProcessors),
+        DisabledPostProcessors = new HashSet<string>(source.DisabledPostProcessors)
     };
 
     // --- Permission "Ask" dialogs --------------------------------------------

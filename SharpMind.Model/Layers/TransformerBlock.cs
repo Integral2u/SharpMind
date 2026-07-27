@@ -159,6 +159,16 @@ public abstract class TransformerBlock : IDisposable
         return false;
     }
 
+    public void SetWeights(TransformerWeights.BlockWeights weights)
+    {
+        _attention.SetWeights(weights);
+        _ffn.SetWeights(weights);
+        if (weights.Norm1W != null)
+            _norm1.LoadWeight(weights.Norm1W.Data);
+        if (weights.Norm2W != null)
+            _norm2.LoadWeight(weights.Norm2W.Data);
+    }
+
     public void FreeFloatWeights()
     {
         _attention.FreeFloatWeights();

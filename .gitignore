@@ -359,6 +359,9 @@ MigrationBackup/
 # Ionide (cross platform F# VS Code tools) working folder
 .ionide/
 
+# opencode
+/.opencode/
+
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
 /SandBox/SandBox.csproj

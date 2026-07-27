@@ -346,6 +346,28 @@ public abstract class TransformerWeights : IDisposable
             QNormW?.Dispose(); KNormW?.Dispose();
             PostNorm1W?.Dispose(); PostNorm2W?.Dispose();
         }
+
+        /// <summary>
+        /// Disposes and nulls all float tensor and raw data references.
+        /// Keeps <see cref="TensorMeta"/> intact for future reloading.
+        /// </summary>
+        public void ReleaseLayerData()
+        {
+            Dispose();
+            Wq = null; Wk = null; Wv = null; Wo = null;
+            WqBias = null; WkBias = null; WvBias = null; WoBias = null;
+            Wf1 = null; Wf2 = null; Wf1Bias = null; Wf2Bias = null;
+            Norm1W = null; Norm1B = null; Norm2W = null; Norm2B = null;
+            QNormW = null; KNormW = null;
+            PostNorm1W = null; PostNorm2W = null;
+            RawWq = null; RawWk = null; RawWv = null; RawWo = null;
+            RawWgate = null; RawWup = null; RawWf1 = null; RawWf2 = null;
+            QuantDtypeWq = null; QuantDtypeWk = null; QuantDtypeWv = null; QuantDtypeWo = null;
+            QuantDtypeWgate = null; QuantDtypeWup = null; QuantDtypeWf1 = null; QuantDtypeWf2 = null;
+            RawWgateExp = null; RawWupExp = null; RawWdownExp = null;
+            QuantDtypeWgateExp = null; QuantDtypeWupExp = null; QuantDtypeWdownExp = null;
+            RawRouter = null; QuantDtypeRouter = null;
+        }
     }
 }
 
@@ -365,6 +387,165 @@ public sealed class TransformerWeightsFull : TransformerWeights
     public override void InitializeWeights(IProgress<float>? progress = null)
     {
         Loader!.LoadAllWeights(this, progress);
+    }
+}
+
+/// <summary>
+/// Streaming weights — loads and unloads one layer at a time during the forward pass.
+/// Only a small window of layers has float tensors+raw data resident at any moment.
+/// Each agent in LoadMode.Streaming requires its own instance.
+/// </summary>
+public sealed class TransformerWeightsStreaming : TransformerWeights
+{
+    /// <summary>Reference to the TransformerBlock[] so loaded weights can be pushed via SetWeights.</summary>
+    internal Model.Layers.TransformerBlock[]? BlockRefs { get; set; }
+
+    // Async preload tracking
+    private Task? _preloadTask;
+    private int _preloadLayerIndex = -1;
+    private readonly object _preloadLock = new();
+
+    /// <summary>Tracks which layers have been pushed into their TransformerBlock's LinearLayers.</summary>
+    private readonly HashSet<int> _pushedLayers = [];
+
+    public TransformerWeightsStreaming(
+        ModelConfig config,
+        Tensor<float> embedding,
+        Tensor<float>? lmHead,
+        Tensor<float> finalNormW,
+        Tensor<float>? finalNormB,
+        BlockWeights[] blocks,
+        IModelLoader loader)
+        : base(config, embedding, lmHead, finalNormW, finalNormB, blocks, loader) { }
+
+    /// <summary>
+    /// Metadata-only initialisation — reads the GGUF header and populates
+    /// <see cref="TransformerWeights.GgufMeta"/> and per-block
+    /// <see cref="BlockWeights.TensorMeta"/> without loading any weight data.
+    /// </summary>
+    public override void InitializeWeights(IProgress<float>? progress = null)
+    {
+        var meta = Format.GgufLoader.LoadMeta(GgufPath!);
+        GgufMeta = meta;
+        IsMoE = meta.Tensors.Any(t => t.Name.Contains(".exps."));
+
+        // Populate TensorMeta for all blocks (file offsets, sizes, dtypes)
+        foreach (var info in meta.Tensors)
+        {
+            var (target, block, rawField) = ResolveTarget(info.Name);
+            if (block != null && rawField != null)
+            {
+                long rawSize = Core.Quantization.QuantizationOps.GetRawTensorByteCount(info.Shape, info.Dtype);
+                if (rawSize > 0)
+                    SetTensorMeta(block, rawField, meta.DataOffset + info.Offset, (int)rawSize, info.Dtype);
+            }
+        }
+
+        _pushedLayers.Clear();
+        progress?.Report(1f);
+
+        // Load global non-block tensors (embedding, final norm, lm_head).
+        // These are not per-layer and must be present before any forward pass.
+        Loader!.LoadGlobalTensors(this);
+
+        // Layer 0 async preload is deferred to CreateTransformer after
+        // BlockRefs is set, to avoid racing with BuildBlock reading Blocks[0].
+    }
+
+    /// <summary>
+    /// Ensures the given layer is loaded and pushed into its TransformerBlock.
+    /// If an async preload is running for this layer, waits for it to complete first.
+    /// Otherwise loads synchronously.
+    /// </summary>
+    public void EnsureLayerLoadedSync(int layerIndex)
+    {
+        if (layerIndex < 0 || layerIndex >= Blocks.Length) return;
+
+        bool needsPush = false;
+
+        if (Blocks[layerIndex].Wq == null)
+        {
+            // Wait for any running preload of this layer
+            lock (_preloadLock)
+            {
+                if (_preloadTask != null && _preloadLayerIndex == layerIndex)
+                {
+                    _preloadTask.GetAwaiter().GetResult();
+                    _preloadTask = null;
+                    _preloadLayerIndex = -1;
+                }
+            }
+
+            if (Blocks[layerIndex].Wq == null)
+            {
+                Loader!.LoadLayerWeights(layerIndex, this);
+            }
+            needsPush = true;
+        }
+
+        if (needsPush || !_pushedLayers.Contains(layerIndex))
+        {
+            BlockRefs?[layerIndex]?.SetWeights(Blocks[layerIndex]);
+            _pushedLayers.Add(layerIndex);
+        }
+    }
+
+    /// <summary>
+    /// Fires a background task to load the given layer's raw+float data.
+    /// Does NOT push into the TransformerBlock — that happens on the forward
+    /// thread when <see cref="EnsureLayerLoadedSync"/> is called for this layer.
+    /// </summary>
+    public void PreloadLayerAsync(int layerIndex)
+    {
+        if (layerIndex < 0 || layerIndex >= Blocks.Length) return;
+        if (Blocks[layerIndex].Wq != null) return;
+
+        lock (_preloadLock)
+        {
+            _preloadTask = Task.Run(() =>
+            {
+                Loader!.LoadLayerWeights(layerIndex, this);
+            });
+            _preloadLayerIndex = layerIndex;
+        }
+    }
+
+    /// <summary>
+    /// Frees all weight data (float tensors + raw quantized data) for a layer.
+    /// The layer's <see cref="BlockWeights.TensorMeta"/> is preserved so it
+    /// can be reloaded later.
+    /// </summary>
+    public void FreeLayer(int layerIndex)
+    {
+        if (layerIndex < 0 || layerIndex >= Blocks.Length) return;
+        if (Blocks[layerIndex].Wq == null) return;
+
+        // Push empty weights into LinearLayers (clears raw data references)
+        BlockRefs?[layerIndex]?.SetWeights(new BlockWeights());
+
+        // Free float tensors in LinearLayers (disposes pre-allocated tensors)
+        BlockRefs?[layerIndex]?.FreeFloatWeights();
+
+        // Dispose float tensors and null all fields in BlockWeights; keeps TensorMeta
+        Blocks[layerIndex].ReleaseLayerData();
+
+        _pushedLayers.Remove(layerIndex);
+    }
+
+    /// <summary>
+    /// Cleans up after a forward pass by freeing any remaining loaded layers.
+    /// Called by <see cref="Transformer.Forward"/> after the architecture forward
+    /// completes. Without this, the last layer(s) would remain loaded across
+    /// consecutive forward passes (token generation), gradually consuming memory.
+    /// </summary>
+    public void CompleteForward()
+    {
+        // Free any layers that are still loaded (typical: last layer(s) of the pass)
+        for (int i = 0; i < Blocks.Length; i++)
+        {
+            if (Blocks[i].Wq != null)
+                FreeLayer(i);
+        }
     }
 }
 

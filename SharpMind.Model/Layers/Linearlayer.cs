@@ -64,6 +64,14 @@ public abstract class LinearLayer : IDisposable
         InvalidateCache();
     }
 
+    public void ReplaceBias(Tensor<float> biasTensor)
+    {
+        ThrowIfDisposed();
+        if (_ownsBias) _bias?.Dispose();
+        _bias = biasTensor;
+        _ownsBias = false;
+    }
+
     public void LoadWeight(ReadOnlySpan<float> data)
     {
         ThrowIfDisposed();

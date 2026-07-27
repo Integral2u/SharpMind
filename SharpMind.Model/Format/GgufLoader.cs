@@ -390,67 +390,121 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
         foreach (var info in meta.Tensors)
         {
             progress?.Report((float)loaded / total);
+            LoadSingleTensor(weights, meta, stream, reader, info);
+            loaded++;
+        }
+        progress?.Report(1f);
+    }
 
-            var (target, block, rawField) = weights.ResolveTarget(info.Name);
-            if (target == null && block == null) { loaded++; continue; }
+    public void LoadLayerWeights(int layerIndex, TransformerWeights weights)
+    {
+        var meta = weights.GgufMeta;
+        if (meta == null)
+        {
+            meta = LoadMeta(_path);
+            weights.GgufMeta = meta;
+            weights.GgufPath = _path;
+            weights.IsMoE = meta.Tensors.Any(t => t.Name.Contains(".exps."));
+        }
 
-            long rawSize = QuantizationOps.GetRawTensorByteCount(info.Shape, info.Dtype);
+        var targetBlock = layerIndex < weights.Blocks.Length ? weights.Blocks[layerIndex] : null;
+        if (targetBlock == null) return;
 
-            // Record tensor metadata and top-level dtypes (consumed by SetWeights later)
-            if (target != null && block == null && rawSize > 0)
+        using var mmf = MemoryMappedFile.CreateFromFile(_path, FileMode.Open, null, 0, MemoryMappedFileAccess.Read);
+        using var stream = mmf.CreateViewStream(0, 0, MemoryMappedFileAccess.Read);
+        using var reader = new BinaryReader(stream);
+
+        foreach (var info in meta.Tensors)
+        {
+            var (_, block, _) = weights.ResolveTarget(info.Name);
+            if (block == targetBlock)
             {
-                if (target == weights.LmHeadWeight)
-                    weights.RawLmHeadDtype = info.Dtype;
-                else if (target == weights.EmbeddingWeight)
-                    weights.RawEmbeddingDtype = info.Dtype;
+                LoadSingleTensor(weights, meta, stream, reader, info);
             }
-            if (block != null && rawField != null && rawSize > 0)
-                SetTensorMeta(block, rawField, meta.DataOffset + info.Offset, (int)rawSize, info.Dtype);
+        }
+    }
 
-            long targetOffset = meta.DataOffset + info.Offset;
-            if (targetOffset >= stream.Length) { loaded++; continue; }
-            stream.Position = targetOffset;
+    public void LoadGlobalTensors(TransformerWeights weights)
+    {
+        var meta = weights.GgufMeta ?? LoadMeta(_path);
+        if (weights.GgufMeta == null)
+        {
+            weights.GgufMeta = meta;
+            weights.GgufPath = _path;
+            weights.IsMoE = meta.Tensors.Any(t => t.Name.Contains(".exps."));
+        }
 
-            if (!info.Name.Contains("blk.") && info.Name.Contains("output.weight") && weights.LmHeadWeight == null)
+        using var mmf = MemoryMappedFile.CreateFromFile(_path, FileMode.Open, null, 0, MemoryMappedFileAccess.Read);
+        using var stream = mmf.CreateViewStream(0, 0, MemoryMappedFileAccess.Read);
+        using var reader = new BinaryReader(stream);
+
+        foreach (var info in meta.Tensors)
+        {
+            var (target, block, _) = weights.ResolveTarget(info.Name);
+            if (target != null && block == null)
             {
-                long ggufIn = info.Shape[0];
-                weights.SetLmHead(new Tensor<float>((int)_config.VocabSize, (int)ggufIn));
+                LoadSingleTensor(weights, meta, stream, reader, info);
             }
+        }
+    }
 
-            int count = 1;
-            foreach (int d in info.Shape) count *= d;
+    private void LoadSingleTensor(
+        TransformerWeights weights, ModelMetaData meta,
+        MemoryMappedViewStream stream, BinaryReader reader, TensorInfo info)
+    {
+        var (target, block, rawField) = weights.ResolveTarget(info.Name);
+        if (target == null && block == null) return;
 
-            // Load raw quantized data for block-level tensors
-            if (block != null && rawField != null && rawSize > 0 && stream.Position + rawSize <= stream.Length)
+        long rawSize = QuantizationOps.GetRawTensorByteCount(info.Shape, info.Dtype);
+
+        // Record tensor metadata and top-level dtypes (consumed by SetWeights later)
+        if (target != null && block == null && rawSize > 0)
+        {
+            if (target == weights.LmHeadWeight)
+                weights.RawLmHeadDtype = info.Dtype;
+            else if (target == weights.EmbeddingWeight)
+                weights.RawEmbeddingDtype = info.Dtype;
+        }
+        if (block != null && rawField != null && rawSize > 0)
+            SetTensorMeta(block, rawField, meta.DataOffset + info.Offset, (int)rawSize, info.Dtype);
+
+        long targetOffset = meta.DataOffset + info.Offset;
+        if (targetOffset >= stream.Length) return;
+        stream.Position = targetOffset;
+
+        if (!info.Name.Contains("blk.") && info.Name.Contains("output.weight") && weights.LmHeadWeight == null)
+        {
+            long ggufIn = info.Shape[0];
+            weights.SetLmHead(new Tensor<float>((int)_config.VocabSize, (int)ggufIn));
+        }
+
+        int count = 1;
+        foreach (int d in info.Shape) count *= d;
+
+        // Load raw quantized data for block-level tensors
+        if (block != null && rawField != null && rawSize > 0 && stream.Position + rawSize <= stream.Length)
+        {
+            byte[] rawData = new byte[rawSize];
+            stream.ReadExactly(rawData);
+            stream.Position -= rawSize;
+            SetRawField(block, rawField, rawData, info.Dtype);
+        }
+
+        // Load raw quantized data for top-level tensors
+        if (target != null && block == null && rawSize > 0 && stream.Position + rawSize <= stream.Length)
+        {
+            byte[] rawData;
+            if (info.Shape.Length >= 2)
             {
-                byte[] rawData = new byte[rawSize];
-                stream.ReadExactly(rawData);
-                stream.Position -= rawSize;
-                SetRawField(block, rawField, rawData, info.Dtype);
-            }
-
-            // Load raw quantized data for top-level tensors
-            if (target != null && block == null && rawSize > 0 && stream.Position + rawSize <= stream.Length)
-            {
-                byte[] rawData;
-                if (info.Shape.Length >= 2)
+                long tensorVocab = Math.Max(info.Shape[0], info.Shape[1]);
+                long paddedVocab = _config.VocabSize;
+                if (paddedVocab > tensorVocab)
                 {
-                    long tensorVocab = Math.Max(info.Shape[0], info.Shape[1]);
-                    long paddedVocab = _config.VocabSize;
-                    if (paddedVocab > tensorVocab)
-                    {
-                        long colBytes = rawSize / tensorVocab;
-                        rawData = new byte[paddedVocab * colBytes];
-                        for (long r = 0; r < tensorVocab; r++)
-                            stream.ReadExactly(rawData, (int)(r * colBytes), (int)colBytes);
-                        stream.Position -= rawSize;
-                    }
-                    else
-                    {
-                        rawData = new byte[rawSize];
-                        stream.ReadExactly(rawData);
-                        stream.Position -= rawSize;
-                    }
+                    long colBytes = rawSize / tensorVocab;
+                    rawData = new byte[paddedVocab * colBytes];
+                    for (long r = 0; r < tensorVocab; r++)
+                        stream.ReadExactly(rawData, (int)(r * colBytes), (int)colBytes);
+                    stream.Position -= rawSize;
                 }
                 else
                 {
@@ -458,71 +512,76 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
                     stream.ReadExactly(rawData);
                     stream.Position -= rawSize;
                 }
-
-                if (target == weights.LmHeadWeight)
-                {
-                    weights.RawLmHead = rawData;
-                    weights.RawLmHeadDtype = info.Dtype;
-                }
-                else if (target == weights.EmbeddingWeight)
-                {
-                    weights.RawEmbedding = rawData;                    weights.RawEmbeddingDtype = info.Dtype;
-                }
+            }
+            else
+            {
+                rawData = new byte[rawSize];
+                stream.ReadExactly(rawData);
+                stream.Position -= rawSize;
             }
 
-            // Dequantize to float
-            float[] buffer = ArrayPool<float>.Shared.Rent(count);
-            try
+            if (target == weights.LmHeadWeight)
             {
-                ReadTensorInto(reader, info.Dtype, info.Shape, buffer.AsSpan(0, count));
-                if (target != null)
+                weights.RawLmHead = rawData;
+                weights.RawLmHeadDtype = info.Dtype;
+            }
+            else if (target == weights.EmbeddingWeight)
+            {
+                weights.RawEmbedding = rawData;
+                weights.RawEmbeddingDtype = info.Dtype;
+            }
+        }
+
+        // Dequantize to float
+        float[] buffer = ArrayPool<float>.Shared.Rent(count);
+        try
+        {
+            ReadTensorInto(reader, info.Dtype, info.Shape, buffer.AsSpan(0, count));
+            if (target != null)
+            {
+                target.Data.Clear();
+                if (target == weights.LmHeadWeight && info.Shape.Length == 2)
                 {
-                    target.Data.Clear();
-                    if (target == weights.LmHeadWeight && info.Shape.Length == 2)
+                    int ggufIn = (int)info.Shape[0], ggufOut = (int)info.Shape[1];
+                    for (int i = 0; i < ggufIn; i++)
+                        for (int j = 0; j < ggufOut; j++)
+                            target.Data[j * ggufIn + i] = buffer[i * ggufOut + j];
+                }
+                else
+                {
+                    buffer.AsSpan(0, count).CopyTo(target.Data);
+                }
+            }
+            else if (block != null)
+            {
+                var floatTarget = weights.ResolveFloatTarget(info.Name);
+                if (floatTarget != null)
+                {
+                    if (info.Shape.Length == 2)
                     {
-                        int ggufIn = (int)info.Shape[0], ggufOut = (int)info.Shape[1];
+                        int ggufIn = info.Shape[0];
+                        int ggufOut = info.Shape[1];
+                        bool isFfnUp = info.Name.Contains("ffn_up", StringComparison.OrdinalIgnoreCase) &&
+                                       floatTarget.Shape[1] == 2 * ggufOut;
+                        int colOff = isFfnUp ? ggufOut : 0;
+                        if (colOff == 0) floatTarget.Data.Clear();
+                        int targetOut = floatTarget.Shape[1];
                         for (int i = 0; i < ggufIn; i++)
-                            for (int j = 0; j < ggufOut; j++)
-                                target.Data[j * ggufIn + i] = buffer[i * ggufOut + j];
+                            for (int o = 0; o < ggufOut; o++)
+                                floatTarget.Data[i * targetOut + colOff + o] = buffer[o * ggufIn + i];
                     }
                     else
                     {
-                        buffer.AsSpan(0, count).CopyTo(target.Data);
+                        floatTarget.Data.Clear();
+                        buffer.AsSpan(0, count).CopyTo(floatTarget.Data);
                     }
                 }
-                else if (block != null)
-                {
-                    var floatTarget = weights.ResolveFloatTarget(info.Name);
-                    if (floatTarget != null)
-                    {
-                        if (info.Shape.Length == 2)
-                        {
-                            int ggufIn = info.Shape[0];
-                            int ggufOut = info.Shape[1];
-                            bool isFfnUp = info.Name.Contains("ffn_up", StringComparison.OrdinalIgnoreCase) &&
-                                           floatTarget.Shape[1] == 2 * ggufOut;
-                            int colOff = isFfnUp ? ggufOut : 0;
-                            if (colOff == 0) floatTarget.Data.Clear();
-                            int targetOut = floatTarget.Shape[1];
-                            for (int i = 0; i < ggufIn; i++)
-                                for (int o = 0; o < ggufOut; o++)
-                                    floatTarget.Data[i * targetOut + colOff + o] = buffer[o * ggufIn + i];
-                        }
-                        else
-                        {
-                            floatTarget.Data.Clear();
-                            buffer.AsSpan(0, count).CopyTo(floatTarget.Data);
-                        }
-                    }
-                }
-                loaded++;
-            }
-            finally
-            {
-                ArrayPool<float>.Shared.Return(buffer);
             }
         }
-        progress?.Report(1f);
+        finally
+        {
+            ArrayPool<float>.Shared.Return(buffer);
+        }
     }
 
     private void ReadTensorInto(BinaryReader stream, QuantDType dtype, int[] shape, Span<float> destination)

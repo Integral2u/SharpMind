@@ -42,7 +42,8 @@ public static class ModelFactory
         ModelConfig modelConfig,
         SharpMindConfig sharpConfig,
         QuantizationOps qOps,
-        string path)
+        string path,
+        LoadMode loadMode = LoadMode.Full)
     {
         ArgumentNullException.ThrowIfNull(modelConfig);
         ArgumentNullException.ThrowIfNull(sharpConfig);
@@ -55,10 +56,41 @@ public static class ModelFactory
         var finalNormW = Tensor<float>.Ones(modelConfig.HiddenDim);
         Tensor<float>? finalNormB = null;
 
-        var blockWeights = AllocateBlockWeights(modelConfig, sharpConfig);
+        TransformerWeights.BlockWeights[] blockWeights;
+        if (loadMode == LoadMode.Full)
+        {
+            blockWeights = AllocateBlockWeights(modelConfig, sharpConfig);
+        }
+        else
+        {
+            int kvDim = modelConfig.NumKvHeads * modelConfig.HeadDim;
+            int qDim = modelConfig.NumHeads * modelConfig.HeadDim;
+            blockWeights = new TransformerWeights.BlockWeights[modelConfig.NumLayers];
+            for (int i = 0; i < modelConfig.NumLayers; i++)
+            {
+                // Pre-allocate 1D tensors (norms, biases) that are needed as
+                // float targets by LoadSingleTensor and never streamed. The
+                // 2D weight tensors (attn, ffn) remain null — their raw
+                // quantized data is loaded per-layer and used directly by
+                // InferenceLinearLayer's quantized forward.
+                blockWeights[i] = new TransformerWeights.BlockWeights
+                {
+                    Norm1W = new Tensor<float>(modelConfig.HiddenDim),
+                    Norm2W = new Tensor<float>(modelConfig.HiddenDim),
+                    WqBias = new Tensor<float>(qDim),
+                    WkBias = new Tensor<float>(kvDim),
+                    WvBias = new Tensor<float>(kvDim),
+                    WoBias = new Tensor<float>(modelConfig.HiddenDim)
+                };
+            }
+        }
+
         var loader = ModelFormatHelpers.GetModelLoaderFor((ModelFormat)fmt, qOps, path, modelConfig);
 
-        return new TransformerWeightsFull(modelConfig, embedding, lmHead, finalNormW, finalNormB, blockWeights, loader);
+        if (loadMode == LoadMode.Full)
+            return new TransformerWeightsFull(modelConfig, embedding, lmHead, finalNormW, finalNormB, blockWeights, loader);
+        else
+            return new TransformerWeightsStreaming(modelConfig, embedding, lmHead, finalNormW, finalNormB, blockWeights, loader) { GgufPath = path };
     }
 
     private static TransformerWeights.BlockWeights[] AllocateBlockWeights(ModelConfig config, SharpMindConfig sharpConfig)
@@ -119,11 +151,41 @@ public static class ModelFactory
             _ => throw new NotSupportedException($"Unknown ArchKind: {sharpConfig.Arch}")
         };
 
+        // Wire up streaming weight loading if applicable
+        if (weights is TransformerWeightsStreaming sw && arch is DecoderArch da)
+        {
+            sw.BlockRefs = blocks;
+
+            // Preload layer 0 in the background after BlockRefs is set,
+            // so the first forward pass doesn't wait for synchronous I/O.
+            // Pushing into LinearLayers happens later in EnsureLayerLoadedSync.
+            sw.PreloadLayerAsync(0);
+
+            da.BeforeBlock = (layerIndex) =>
+            {
+                // Ensure current layer is loaded (wait for async preload if needed)
+                sw.EnsureLayerLoadedSync(layerIndex);
+
+                // Free the layer two steps behind (keep current + next resident)
+                if (layerIndex > 0)
+                    sw.FreeLayer(layerIndex - 1);
+
+                // Fire async preload for the next layer (overlaps I/O with compute)
+                if (layerIndex + 1 < blocks.Length)
+                    sw.PreloadLayerAsync(layerIndex + 1);
+            };
+        }
+
         var finalNorm = BuildNorm(weights.Config.HiddenDim, sharpConfig, weights.Config.NormEps, weights.FinalNormWeight, weights.FinalNormBias);
 
         bool gemmaScale = sharpConfig.Activation == ActivationKind.GELU && sharpConfig.Gate == GateKind.GeGLU;
         var transformer = new Transformer(weights, embedding, arch, finalNorm, weights.LmHeadWeight, qOps, fullMapping, gemmaEmbeddingScale: gemmaScale);
 
+        // Free pre-allocated (zero-filled) float tensors from BuildBlock.
+        // In streaming mode the cyclic load/unload manages raw quantized data;
+        // the float tensors are never used (quantized forward uses RawQuantizedData).
+        // In Full mode they were populated by LoadAllWeights and are no longer
+        // needed once raw quantized data is available.
         if (optimizeMemory)
             transformer.FreeFloatWeights();
         return transformer;         
@@ -161,13 +223,10 @@ public static class ModelFactory
         
         float eps = weights.Config.NormEps;
 
-        // Norm tensors may be null in Cached mode; use placeholder if needed
-        var n1w = blockWeights.Norm1W ?? Tensor<float>.Ones(weights.Config.HiddenDim);
-        var n2w = blockWeights.Norm2W ?? Tensor<float>.Ones(weights.Config.HiddenDim);
-        var norm1 = BuildNorm(weights.Config.HiddenDim, sharpConfig, eps, n1w, blockWeights.Norm1B);
-        var norm2 = BuildNorm(weights.Config.HiddenDim, sharpConfig, eps, n2w, blockWeights.Norm2B);
-        if (blockWeights.Norm1W == null) n1w.Dispose();
-        if (blockWeights.Norm2W == null) n2w.Dispose();
+        // Norm tensors may be null in streaming/Cached mode. When null,
+        // NormLayer creates and owns a placeholder Ones tensor internally.
+        var norm1 = BuildNorm(weights.Config.HiddenDim, sharpConfig, eps, blockWeights.Norm1W, blockWeights.Norm1B);
+        var norm2 = BuildNorm(weights.Config.HiddenDim, sharpConfig, eps, blockWeights.Norm2W, blockWeights.Norm2B);
 
         // Post-attention and post-FFN norms (Gemma-3)
         NormLayer? postAttnNorm = null;

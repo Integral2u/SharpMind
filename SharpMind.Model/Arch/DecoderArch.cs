@@ -29,6 +29,11 @@ public sealed class DecoderArch : IArchitecture
     public int NumLayers => _blocks.Length;
     public TransformerBlock[] Blocks => _blocks;
 
+    /// <summary>Optional callback invoked before each block during Forward.
+    /// Used by streaming load mode to ensure the next layer's weights are
+    /// loaded and the previous layer's weights are freed.</summary>
+    public Action<int>? BeforeBlock { get; set; }
+
     public IEnumerable<Parameter> Parameters()
     {
         foreach (var block in _blocks)
@@ -115,6 +120,8 @@ public sealed class DecoderArch : IArchitecture
         
         for (int i = 0; i < _blocks.Length; i++)
         {
+            BeforeBlock?.Invoke(i);
+            
             var next = _blocks[i].Forward(current, caches?[i], positionOffset, causal: true, workspace: workspace);
             
             if (i > 0 && !ReferenceEquals(current, hiddenStates))

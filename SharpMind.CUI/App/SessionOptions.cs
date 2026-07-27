@@ -1,6 +1,7 @@
 using SharpMind;
 using SharpMind.Inference;
 using SharpMind.Inference.Agent;
+using SharpMind.Model.Config;
 using SharpMind.Model.Format;
 
 namespace SharpMind.CUI.App;
@@ -87,6 +88,9 @@ public sealed class SessionOptions
     // Strategy selection
     public GeneratorStrategy Generator { get; set; } = GeneratorStrategy.Standard;
     public CacheStrategy Cache { get; set; } = CacheStrategy.Standard;
+
+    /// <summary>How model weights are loaded — Full (all at once, shared) or Streaming (per-layer, isolated).</summary>
+    public LoadMode LoadMode { get; set; } = LoadMode.Full;
 
     /// <summary>
     /// CPU code-path selection for JigSaw's mapping. Auto (the engine's own
