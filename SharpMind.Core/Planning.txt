@@ -1,0 +1,17 @@
+#HIGH Priority
+you must make sure you understand the JigSawDotNet pattern and use. Intention is to reduce and branching code by genertaing code which may require implmenting or re-using Ops, Kernel and Factory patterns,
+Review Sharmind.Core.Activations.* for example
+
+Tasks to implement.
+
+Task 1: SharpMind Native Model Format. *.SMM
+Design ModelFormat exclusivly for SharpMind.  This format should include all relevent metadata and layers with QuantDType layer positions and lenght for loading.
+Additional it should include Plugins such as classes implementing IPromptPreProcessor, IPromptPostProcessor, IContextCompactor,IGeneratorBuilder<TCache> or with [ToolDesc] that can be included by default and or custom plugs.  these can be stored as byte arrays and loaded. CUI should be able to handle adding these to OptionsView and if possible excluding [ToolDesc] mark as (recomended) as text beside option.
+We could then convert GGUF files over to the new format with packaged plugins.
+Then we need the final End to End Test, Super Dumb Model Training save and Load, suggest training on small data set.
+
+Task 2: Future Incorperate Training into CUI.
+
+Task 3: Profiler
+Profiler for all VecDot quants and its variants to ensure correct implementation.  SSE faster than Scalar, AVX2 faster than SSE, FMA faster than AXV.
+And a profiler to compare Serial Vs Parallel MatMul on syntestic data approximatly size of 1b model layer

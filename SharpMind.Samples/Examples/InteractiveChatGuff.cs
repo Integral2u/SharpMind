@@ -11,7 +11,7 @@ namespace SharpMind.Samples.Examples
 {
     public static class InteractiveChatGuff
     {
-        public static async Task RunAsync(string ModelPath, string ModelName)
+        public static async Task RunAsync(string ModelPath, string ModelName, LoadMode loadMode = LoadMode.Full)
         {
             CancellationTokenSource cancellationTokenSource = new();
             string modelPath = string.Empty;
@@ -43,7 +43,7 @@ namespace SharpMind.Samples.Examples
             GC.Collect(); GC.WaitForPendingFinalizers();
             var sw = Stopwatch.StartNew();
             var qOps = QuantizationFactory.Create(sharpConfig.ResolvedHardware);
-            using var weights = ModelFactory.CreateWeights(modelConfig, sharpConfig, qOps, modelPath);
+            using var weights = ModelFactory.CreateWeights(modelConfig, sharpConfig, qOps, modelPath, loadMode);
             weights.InitializeWeights();
 
             await Console.Out.WriteLineAsync($"ModelFactory.Create + InitializeWeights executed in: {sw.Elapsed.TotalSeconds:F2}s");

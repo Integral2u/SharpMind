@@ -14,7 +14,7 @@ namespace SharpMind.Samples.Examples
 {
     public class ModelListRunner
     {
-        public static async Task RunAsync(string prompt, string ModelPath, string[] Models, bool withGPU = false)
+        public static async Task RunAsync(string prompt, string ModelPath, string[] Models, bool withGPU = false, int maxTokens = 25, LoadMode loadMode = LoadMode.Full)
         {
             var totalTime = Stopwatch.StartNew();
             foreach (var m in Models)
@@ -62,7 +62,7 @@ namespace SharpMind.Samples.Examples
                 GC.Collect(); GC.WaitForPendingFinalizers();
                 var sw = Stopwatch.StartNew();
                 var qOps = QuantizationFactory.Create(mapping);
-                using var weights = ModelFactory.CreateWeights(modelConfig, sharpConfig, qOps, modelPath);
+                using var weights = ModelFactory.CreateWeights(modelConfig, sharpConfig, qOps, modelPath,loadMode);
                 weights.InitializeWeights();
 
                 await Console.Out.WriteLineAsync($"ModelFactory.Create + InitializeWeights executed in: {sw.Elapsed.TotalSeconds:F2}s");
@@ -90,7 +90,7 @@ namespace SharpMind.Samples.Examples
                     Console.ForegroundColor = text.Status == ChatStatus.Thinking ? ConsoleColor.Gray : ConsoleColor.Blue;
                     await Console.Out.WriteAsync(text.Token);
                     tok++;
-                    if (tok > 25) cancellationTokenSource.Cancel();
+                    if (tok > maxTokens) cancellationTokenSource.Cancel();
                 }
                 async Task<ChatMessage> Prompt()
                 {
