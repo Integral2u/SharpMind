@@ -176,6 +176,15 @@ public static class ModelFactory
             };
         }
 
+        // Free float LM head in streaming mode — quantized projection uses RawLmHead
+        // and never accesses the float tensor. Avoiding this ~544 MB allocation
+        // is the single biggest memory reduction after block float weights.
+        if (weights is TransformerWeightsStreaming && weights.LmHeadWeight != null)
+        {
+            weights.LmHeadWeight.Dispose();
+            weights.SetLmHead(new Tensor<float>(1, 1)); // tiny dummy placeholder
+        }
+
         var finalNorm = BuildNorm(weights.Config.HiddenDim, sharpConfig, weights.Config.NormEps, weights.FinalNormWeight, weights.FinalNormBias);
 
         bool gemmaScale = sharpConfig.Activation == ActivationKind.GELU && sharpConfig.Gate == GateKind.GeGLU;
