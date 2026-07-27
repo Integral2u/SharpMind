@@ -84,35 +84,46 @@ public sealed unsafe class Workspace : IDisposable
     /// through all layers (the bump allocator does not free between layers):
     ///   Embedding + NumLayers * (Norm + Attention + FFN) + FinalNorm + LM head
     ///
-    /// Attention counts (non-contiguous cache, worst case):
-    ///   Q + K + V + output + tempK + tempV + Wo + norm1 = 9 * hidden
+    /// Per-layer peak (gated FFN, non-contiguous KV temps, Q/K norms):
+    ///   norm1(1H) + Q(1H) + K(1kvDim) + V(1kvDim) + attnOut(1H)
+    ///   + tempK(1numH·headDim-per-seqLen) + tempV(same)
+    ///   + Wo(1H) + postAttnNorm(1H)
+    ///   + norm2(1H) + fused(2ffnDim) + gated(ffnDim) + down(H)
+    ///   + postFfnNorm(1H) + qNorm(1H) + kNorm(1kvDim)
+    ///   = up to ~12H + 3×ffnDim per seqLen-token, plus ~2×numH·headDim for temps
     ///
-    /// Gated FFN counts:
-    ///   gate-up + gate-split + up-split + gate-act + down + norm2 = 2*hidden + 5*ffnDim
+    /// The LM head output is a fixed [Batch, VocabSize] tensor (not per-token),
+    /// allocated once per forward pass independent of sequence length.
     ///
-    /// The prefill length used for sizing is capped to keep the workspace under 2 GiB
-    /// and to avoid OS commit-pressure issues. Full prefill of very long sequences
-    /// should fall back to direct allocations (handled by the generator).
+    /// The prefill length used for sizing is capped to keep the workspace under
+    /// ~1 GiB. The workspace is primarily sized for the decode hot loop (1 token);
+    /// the prefill path for long prompts is handled by the generator.
     /// </summary>
     public static long CalculateRequiredSize(long hiddenDim, long ffnDim, long vocabSize, int numLayers, int maxSeqLen)
     {
         long bytesPerFloat = 4;
         long hidden = hiddenDim;
         long ffn = ffnDim;
-        long vocab = vocabSize;
 
-        // Per-token floats for the entire forward pass — all layers accumulate
-        // because the bump allocator is never reset mid-pass.
-        // Estimate: norm(1H) + attn(8H+2kvDim) + gated-ffn(2H+5ffn) per layer
-        // plus embedding(1H) + finalNorm(1H) + LMhead(1V).
-        long perLayer = 11 * hidden + 7 * ffn;  // generous upper bound
-        long perTokenFloats = hidden + numLayers * perLayer + hidden + vocab;
+        // Per-layer, per-token estimate (attention + q/k norms + gated FFN +
+        // post-attn/post-ffn norms + non-contiguous KV temp overhead).
+        // 14H covers: norm1 + Q + K(reserve H for MHA) + V + attnOut +
+        //   tempK + tempV + Wo + postAttnNorm + norm2 + down + postFfnNorm +
+        //   qNorm + kNorm
+        // 4×ffn covers: fused(2×ffn) + gated(ffn) + headroom(1×ffn).
+        long perLayer = 14 * hidden + 4 * ffn;
 
-        // Cap prefill length to keep the workspace under ~2 GiB. The workspace
-        // is primarily sized for the decode hot loop; very long prefills will
-        // fall back to direct allocation (handled by the generator).
-        int effectivePrefillLen = Math.Min(maxSeqLen, 256);
-        long total = perTokenFloats * bytesPerFloat * effectivePrefillLen;
+        // Per-token floats — all layers accumulate (bump allocator never reset mid-pass).
+        // Embedding input (1H) + layers + final norm (1H).
+        long perTokenFloats = hidden + numLayers * perLayer + hidden;
+
+        // Fixed allocation — LM head / logits output [Batch, VocabSize], does NOT
+        // scale with sequence length (ForwardLastLogits only projects the last token).
+        long fixedFloats = vocabSize;
+
+        // Cap prefill length to keep workspace under ~1 GiB for most models.
+        int effectivePrefillLen = Math.Min(maxSeqLen, 128);
+        long total = (perTokenFloats * effectivePrefillLen + fixedFloats) * bytesPerFloat;
 
         // Minimum 100MB to cover small-batch / short-prompt overheads.
         return Math.Max(100 * 1024 * 1024, total);
