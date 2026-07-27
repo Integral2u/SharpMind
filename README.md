@@ -1,9 +1,8 @@
 <p align="center">
-  <img src="SharpMind/sharpmind_logo.svg" alt="SharpMind logo" width="256"/>
+  <img src="SharpMind/sharpmind_logo.svg" alt="SharpMind logo" width="512" height="512"/>
 </p>
 
-<h1 align="center">SharpMind</h1>
-<p align="center"><b>A pure C# / .NET LLM engine — inference, training, and agent tooling in one solution.</b></p>
+<p align="center"><b>SharpMind. A pure C# / .NET LLM engine — inference, training, and agent tooling in one solution.</b></p>
 
 <p align="center">
   <img alt="status" src="https://img.shields.io/badge/status-pre--release-orange">
