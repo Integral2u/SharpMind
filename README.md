@@ -44,6 +44,42 @@ It ships as a set of composable libraries plus a terminal chat application (`Sha
 
 ---
 
+## Extensibility: plugins
+
+Beyond JigSaw's compile-time kernel dispatch, `SharpMind.CUI` has a separate, simpler **runtime plugin loader** for extending the app itself without touching the core libraries. Drop a `.dll` into the app's `Plugins/` folder and `PluginLoader.LoadFrom` will scan it and wire up anything it recognizes:
+
+- **Tools** — any class with a method tagged `[ToolDesc("...")]` (parameters can carry their own `[ToolDesc]` too, for per-argument descriptions) is picked up as an agent tool automatically, the same mechanism the built-in `EchoTool`, `FileSystemTool`, and `WeatherTool` use:
+
+  ```csharp
+  public class WeatherTool
+  {
+      [ToolDesc("Gets the current weather for a specified city.")]
+      public async Task<string> GetCurrentWeather([ToolDesc("The name of the city.")] string city) { ... }
+  }
+  ```
+
+- **Context compactors** — classes implementing `IContextCompactor` register under their own `Name` and become selectable alongside the built-in summarizing/truncating compactors.
+- **Prompt pre/post-processors** — `IPromptPreProcessor` / `IPromptPostProcessor` implementations get to rewrite a prompt before it's sent or a completion after it comes back.
+- **Generators** — any type implementing `IGeneratorBuilder<TCache>` is discovered by matching the open generic interface via reflection and added to the generator-strategy list next to Standard/Speculative/Medusa — a third-party decoding strategy can appear in the same options menu as the built-in ones.
+
+The loader is defensive by design: each `.dll` loads independently (a failure is recorded as a warning, not a crash), duplicate names are rejected rather than silently overwritten, and only concrete classes with a public parameterless constructor are considered. Today this loader is wired into `SharpMind.CUI` specifically; nothing about the interfaces is CUI-specific, so the same plugin assemblies work if you host the inference/chat libraries directly.
+
+---
+
+### Streaming model loading (`LoadMode.Streaming`)
+
+Normally (`LoadMode.Full`) every transformer layer's weights are allocated and loaded up front. `LoadMode.Streaming` instead:
+
+1. Memory-maps the GGUF file and reads only tensor **metadata** (offsets, shapes, dtypes) at load time — no weight bytes are touched yet.
+2. Before each layer runs in the forward pass, `EnsureLayerLoadedSync` blocks (if needed) on that layer's data being read from disk.
+3. While the current layer computes, the **next** layer is prefetched on a background task (`PreloadLayerAsync`), overlapping I/O with compute.
+4. Once a layer has been consumed, its weights are released (`FreeLayer`) — only the current and next layer's weights are ever resident at once.
+5. `CompleteForward` sweeps any remaining resident layers at the end of a pass so memory doesn't creep up across tokens.
+
+The net effect: a model whose full weights don't fit in RAM can still run, trading some throughput for a small, roughly constant memory footprint (current + next layer, rather than all layers). The quantized LM head is also read directly from its raw on-disk bytes in streaming mode rather than materialized as a float tensor, cutting one of the largest single allocations for typical vocab sizes.
+
+---
+
 ## Inference deep dive
 
 ### Decoding strategies
@@ -60,17 +96,7 @@ SharpMind ships three interchangeable generators behind a common `IGenerator<T>`
 
 Speculative decoding follows the more familiar draft-and-verify pattern with an independent draft model, defaulting to 4 draft tokens per round, and shares the same accept/rollback discipline over the KV cache.
 
-### Streaming model loading (`LoadMode.Streaming`)
-
-Normally (`LoadMode.Full`) every transformer layer's weights are allocated and loaded up front. `LoadMode.Streaming` instead:
-
-1. Memory-maps the GGUF file and reads only tensor **metadata** (offsets, shapes, dtypes) at load time — no weight bytes are touched yet.
-2. Before each layer runs in the forward pass, `EnsureLayerLoadedSync` blocks (if needed) on that layer's data being read from disk.
-3. While the current layer computes, the **next** layer is prefetched on a background task (`PreloadLayerAsync`), overlapping I/O with compute.
-4. Once a layer has been consumed, its weights are released (`FreeLayer`) — only the current and next layer's weights are ever resident at once.
-5. `CompleteForward` sweeps any remaining resident layers at the end of a pass so memory doesn't creep up across tokens.
-
-The net effect: a model whose full weights don't fit in RAM can still run, trading some throughput for a small, roughly constant memory footprint (current + next layer, rather than all layers). The quantized LM head is also read directly from its raw on-disk bytes in streaming mode rather than materialized as a float tensor, cutting one of the largest single allocations for typical vocab sizes.
+---
 
 ### Quantization
 
