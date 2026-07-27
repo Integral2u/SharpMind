@@ -108,7 +108,6 @@ public sealed class ModelBrowserView : View
 
         string sel = _entries[idx];
         var fmt = ModelFormatHelpers.GetFormatForExtension(sel);
-        //if (!ModelFormatHelpers.GetExtensions().Contains(Path.GetExtension(sel), StringComparer.InvariantCultureIgnoreCase))
         if (fmt == null) { _previewLabel.Text = sel.StartsWith("[DIR]") ? "Folder" : ""; return; }
         else
         {
@@ -119,20 +118,18 @@ public sealed class ModelBrowserView : View
                 string name = meta.GetString("general.name", "unknown");
                 string arch = meta.GetString("general.architecture", "unknown");
                 string quant = meta.Tensors.Count > 0 ? meta.Tensors[0].Dtype.ToString() : "unknown";
-                //string quantVersion = meta.GetString("general.quantization_version", string.Empty);
                 string contextLen = meta.GetString($"{arch}.context_length", string.Empty);
-                string toekenizerModel = meta.GetString($"tokenizer.ggml.model", string.Empty);
+                string tokenizerModel = meta.GetString($"tokenizer.ggml.model", string.Empty);
                 var sb = new StringBuilder(); 
 
 
                 sb.AppendLine($"Name: {name}");
                 sb.AppendLine($"Architecture: {arch}");
                 if (!string.IsNullOrWhiteSpace(contextLen)) sb.AppendLine($"Context Len: {contextLen}");
-                sb.AppendLine($"Tensors: {meta.TensorCount}");                
-                //if(!string.IsNullOrWhiteSpace(quantVersion))sb.AppendLine($"Quantization: {quantVersion}");
+                sb.AppendLine($"Tensors: {meta.TensorCount}");
                 sb.AppendLine($"Quant (first tensor): {quant}");
-                if (!string.IsNullOrWhiteSpace(toekenizerModel)) sb.AppendLine($"Toekenizer Model: {toekenizerModel}");
-                _previewLabel.Text = sb.ToString();// $"Architecture: {arch}\nTensors: {meta.TensorCount}\nQuant (first tensor): {quant}";
+                if (!string.IsNullOrWhiteSpace(tokenizerModel)) sb.AppendLine($"Tokenizer Model: {tokenizerModel}");
+                _previewLabel.Text = sb.ToString();
             }
             catch (Exception ex)
             {

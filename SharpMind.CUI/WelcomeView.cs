@@ -12,7 +12,7 @@ public sealed class WelcomeView : View
         string? lastSessionName = null,
         Action? onResumeLastSession = null)
     {
-        var bannerText = "  ___ _                  __  __ _           _ \n / __| |_  __ _ _ _ _ __ |  \\/  (_)_ _  __| |\n \\__ \\ ' \\/ _` | '_| '_ \\| |\\/| | | ' \\/ _` |\n |___/_||_\\__,_|_| | .__/|_|  |_|_|_||_|\\__,_|\n                   |_|                        ";
+        var bannerText = "  ___ _                  __  __ _         _ \n / __| |_  __ _ _ _ _ __|  \\/  (_)_ _  __| |\n \\__ \\ ' \\/ _` | '_| '_ \\ |\\/| | | ' \\/ _` |\n |___/_||_\\__,_|_| | .__/_|  |_|_|_||_\\__,_|\n                   |_|                      ";
         var banner = new Label(bannerText)
         {
             X = Pos.Center(),

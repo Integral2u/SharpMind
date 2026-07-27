@@ -244,19 +244,7 @@ namespace SharpMind.Model.Layers.Attention;
         using var q = Wq.Forward(x, workspace);
         using var k = Wk.Forward(x, workspace);
         using var v = Wv.Forward(x, workspace);
-        /*if (DumpProjections && _dumpLayerCounter++ < 1)
-        {
-            void DumpProj(string label, Tensor<float> t)
-            {
-                double sum = 0; float mn = float.MaxValue, mx = float.MinValue; bool hasN = false;
-                for (int i = 0; i < t.ElementCount; i++) { var vv = t.Data[i]; if (float.IsNaN(vv)) hasN = true; if (vv < mn) mn = vv; if (vv > mx) mx = vv; sum += vv; }
-                Console.Error.WriteLine($"  {label}: [{t.Shape[0]},{t.Shape[1]}] elems={t.ElementCount} min={mn:G4} max={mx:G4} mean={sum/t.ElementCount:G4} hasNaN={hasN}");
-                Console.Error.Write("    first 8: ");
-                for (int i = 0; i < Math.Min(8, t.ElementCount); i++) Console.Error.Write($"{t.Data[i]:G4} ");
-                Console.Error.WriteLine();
-            }
-            DumpProj("Q", q); DumpProj("K", k); DumpProj("V", v);
-        }*/
+
 
         // Apply per-head Q/K normalization (Qwen3):
         // Reshape to [batch*seqLen*nHeads, headDim] so NormLayer normalizes along headDim.
@@ -381,31 +369,7 @@ namespace SharpMind.Model.Layers.Attention;
         output.Dispose();
         return projected;
     }
-    /*
-    public (Tensor<float> Output, AttentionLayerState State) ForwardWithState(Tensor<float> x, int positionOffset = 0)
-    {
-        var output = Forward(x, positionOffset);
-        var state = new AttentionLayerState { Input = x, Output = output };
-        return (output, state);
-    }
 
-    public unsafe Tensor<float> Backward(Tensor<float> gradOutput)
-    {
-        var fn = _qOps.QuantizedMatMulOpFor(QuantDType.F32);
-
-        using var wOutT = Wo.Weight.Transpose();
-        var dHidden = new Tensor<float>(gradOutput.Shape.Rows, Wo.InFeatures);
-        fn(gradOutput.DataPtr, (byte*)wOutT.DataPtr, dHidden.DataPtr, gradOutput.Shape.Rows, gradOutput.Shape.Cols, Wo.InFeatures);
-
-        using var wQT = Wq.Weight.Transpose();
-        var gradInput = new Tensor<float>(dHidden.Shape.Rows, Wq.InFeatures);
-        fn(dHidden.DataPtr, (byte*)wQT.DataPtr, gradInput.DataPtr, dHidden.Shape.Rows, dHidden.Shape.Cols, Wq.InFeatures);
-        dHidden.Dispose();
-        wOutT.Dispose();
-        wQT.Dispose();
-        return gradInput;
-    }
-    */
 
     public IEnumerable<Parameter> Parameters()
     {

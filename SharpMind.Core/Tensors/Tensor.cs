@@ -234,26 +234,6 @@ public sealed unsafe class Tensor<T> : IDisposable
         
         return CreateView(new TensorShape(newDimsArray), _offset + offset, _ownsMemory);
     }
-    /*
-    /// <summary>
-    /// Returns a zero-copy view of a contiguous range along the last dimension.
-    /// For example, a [B,S,D] tensor with Narrow(10, 20) returns [B,S,20].
-    /// </summary>
-    public Tensor<T> NarrowLastDim(int start, int length)
-    {
-        int lastDim = Shape[^1];
-        if ((uint)start >= (uint)lastDim)
-            throw new ArgumentOutOfRangeException(nameof(start), $"Start {start} out of range for last dim size {lastDim}.");
-        if (start + length > lastDim)
-            throw new ArgumentOutOfRangeException(nameof(length), $"Range [{start}..{start + length}) exceeds last dim size {lastDim}.");
-
-        Span<int> newDims = stackalloc int[Shape.Rank];
-        for (int i = 0; i < Shape.Rank; i++)
-            newDims[i] = Shape[i];
-        newDims[^1] = length;
-        return CreateView(new TensorShape(newDims), _offset + start, _ownsMemory);
-    }
-    */
     // diagnostics
 
     public override string ToString() =>

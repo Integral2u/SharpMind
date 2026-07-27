@@ -96,12 +96,6 @@ public sealed class ParquetSource : IDataSource
                     sourceCol = buffer.Cast<object>().ToArray();
                 }
 
-                /*DataColumn[] columns = await reader.ReadEntireRowGroupAsync(i, cancellationToken);
-                
-                var fromCol = columns.FirstOrDefault(c => c.Field.Name == "from");
-                var valueCol = columns.FirstOrDefault(c => c.Field.Name == "value");
-                var sourceCol = columns.FirstOrDefault(c => c.Field.Name == "source");
-                */
                 if (fromCol != null && valueCol != null)
                 {
                     var froms = (string[])fromCol;
