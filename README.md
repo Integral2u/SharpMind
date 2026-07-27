@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="SharpMind/sharpmind_logo.svg" alt="SharpMind logo" width="512" height="512"/>
+  <img src="SharpMind.Core/sharpmind_logo.svg" alt="SharpMind logo" width="512" height="512"/>
 </p>
 
 <p align="center"><b>SharpMind. A pure C# / .NET LLM engine — inference, training, and agent tooling in one solution.</b></p>
@@ -23,9 +23,9 @@ It ships as a set of composable libraries plus a terminal chat application (`Sha
 | | |
 |---|---|
 | **Chat / conversation view** | **Model & session welcome view** |
-| ![Chat view](<SharpMind/CUI ChatView.PNG>) | ![Welcome screen](<SharpMind/CUI WelcomeScreen.PNG>) |
+| ![Chat view](<SharpMind.Core/CUI ChatView.PNG>) | ![Welcome screen](<SharpMind.Core/CUI WelcomeScreen.PNG>) |
 | **Runtime options (hardware tier, load mode, sampling)** | |
-| ![Options view](<SharpMind/CUI OptionsView.PNG>) | |
+| ![Options view](<SharpMind.Core/CUI OptionsView.PNG>) | |
 
 ---
 

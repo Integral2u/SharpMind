@@ -5,6 +5,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Description>Model loading, architecture, and inference execution for GGUF-based LLMs.</Description>
+    <PackageTags>LLM; C#; Machine Learning; Model; GGUF</PackageTags>
     <ApplicationIcon>SharpMind.ico</ApplicationIcon>
   </PropertyGroup>
 

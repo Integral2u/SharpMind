@@ -1,5 +1,5 @@
-using SharpMind;
-using SharpMind.AgentTools;
+using SharpMind.Core;
+using SharpMind.Core.AgentTools;
 using SharpMind.Core.Quantization;
 using SharpMind.GPU;
 using SharpMind.Inference;

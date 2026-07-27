@@ -1,4 +1,4 @@
-using SharpMind;
+using SharpMind.Core;
 using SharpMind.Inference;
 using SharpMind.Inference.Agent;
 using SharpMind.Model.Config;

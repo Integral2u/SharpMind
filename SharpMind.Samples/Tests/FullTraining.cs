@@ -1,4 +1,4 @@
-﻿using SharpMind;
+﻿using SharpMind.Core;
 using SharpMind.Model;
 using SharpMind.Model.Config;
 using SharpMind.Core.Tensors;

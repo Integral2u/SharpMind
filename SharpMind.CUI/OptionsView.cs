@@ -1,6 +1,6 @@
 using System.Drawing;
 using NStack;
-using SharpMind;
+using SharpMind.Core;
 using SharpMind.CUI.App;
 using SharpMind.Inference.Agent;
 using SharpMind.Model.Config;

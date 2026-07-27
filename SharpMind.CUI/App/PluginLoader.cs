@@ -1,5 +1,5 @@
 using System.Reflection;
-using SharpMind;
+using SharpMind.Core;
 using SharpMind.Inference;
 using SharpMind.Inference.Chat;
 

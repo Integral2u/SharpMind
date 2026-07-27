@@ -1,4 +1,5 @@
-﻿using SharpMind.Core.Tensors;
+﻿using SharpMind.Core;
+using SharpMind.Core.Tensors;
 
 namespace SharpMind.Model.Layers.Ffn;
 

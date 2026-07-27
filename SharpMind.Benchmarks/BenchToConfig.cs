@@ -1,3 +1,4 @@
+using SharpMind.Core;
 using SharpMind.Core.Quantization;
 using System.Diagnostics;
 using System.Runtime.InteropServices;

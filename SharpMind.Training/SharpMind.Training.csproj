@@ -5,37 +5,13 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Description>Training loop, loss functions, and optimization for LLM fine-tuning with SharpMind.</Description>
+    <PackageTags>LLM; C#; Training; Fine-tuning</PackageTags>
     <ApplicationIcon>SharpMind.ico</ApplicationIcon>
-    <PackageProjectUrl>https://github.com/Integral2u/SharpMind</PackageProjectUrl>
-    <PackageIcon>Logo128.png</PackageIcon>
-    <RepositoryType></RepositoryType>
-    <PackAsTool>True</PackAsTool>
-    <AssemblyVersion>0.9.0.0</AssemblyVersion>
-    <FileVersion>0.9.0.0</FileVersion>
-    <PackageLicenseFile>LICENSE.txt</PackageLicenseFile>
-    <RepositoryUrl>https://github.com/Integral2u/SharpMind</RepositoryUrl>
-    <PackageTags>LLM, Training, C#</PackageTags>
-    <Version>0.9.0.0</Version>
-    <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
 
   <ItemGroup>
     <Content Include="SharpMind.ico" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <None Include="..\LICENSE.txt">
-      <Pack>True</Pack>
-      <PackagePath>\</PackagePath>
-    </None>
-    <None Include="..\README.md">
-      <Pack>True</Pack>
-      <PackagePath>\</PackagePath>
-    </None>
-    <None Include="..\SharpMind\Logo128.png">
-      <Pack>True</Pack>
-      <PackagePath>\</PackagePath>
-    </None>
   </ItemGroup>
 
   <ItemGroup>

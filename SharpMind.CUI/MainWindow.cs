@@ -1,3 +1,4 @@
+using SharpMind.Core;
 using SharpMind.CUI.App;
 using SharpMind.Inference.Agent;
 using Terminal.Gui;

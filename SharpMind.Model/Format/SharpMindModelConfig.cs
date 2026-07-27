@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using SharpMind.Core;
 using SharpMind.Model.Config;
 
 namespace SharpMind.Model.Format;

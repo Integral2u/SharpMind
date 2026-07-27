@@ -2,6 +2,7 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using SharpMind.Core;
 using SharpMind.Inference.Chat;
 
 namespace SharpMind.Inference.Agent

@@ -1,3 +1,4 @@
+using SharpMind.Core;
 using SharpMind.Model.Config;
 
 namespace SharpMind.CUI.App;

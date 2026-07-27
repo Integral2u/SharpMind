@@ -1,4 +1,5 @@
 using System.Runtime.Intrinsics.X86;
+using SharpMind.Core;
 using SharpMind.Core.Quantization;
 
 namespace SharpMind.Tests.Quantization;

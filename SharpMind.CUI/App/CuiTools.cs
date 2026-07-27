@@ -1,6 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
-using SharpMind;
+using SharpMind.Core;
 
 namespace SharpMind.CUI.App;
 

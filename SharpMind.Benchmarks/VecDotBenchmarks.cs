@@ -2,6 +2,7 @@ using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics.X86;
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Jobs;
+using SharpMind.Core;
 using SharpMind.Core.Quantization;
 using SharpMind.GPU;
 

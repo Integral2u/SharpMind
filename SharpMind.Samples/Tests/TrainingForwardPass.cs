@@ -1,4 +1,5 @@
 ﻿using SharpMind.Core.Tensors;
+using SharpMind.Core;
 using SharpMind.Data.Sources.PseudoLanguage;
 using SharpMind.Model;
 using SharpMind.Model.Config;

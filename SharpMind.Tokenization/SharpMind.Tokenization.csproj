@@ -4,6 +4,8 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <Description>Tokenization engine supporting BPE, SentencePiece, and GGUF tokenizer models.</Description>
+    <PackageTags>LLM; C#; Tokenization; BPE; SentencePiece</PackageTags>
     <ApplicationIcon>SharpMind.ico</ApplicationIcon>
   </PropertyGroup>
 

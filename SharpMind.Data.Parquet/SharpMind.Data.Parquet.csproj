@@ -5,6 +5,8 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <Description>Parquet file format support for SharpMind data pipelines.</Description>
+    <PackageTags>LLM; C#; Parquet; Data</PackageTags>
     <ApplicationIcon>SharpMind.ico</ApplicationIcon>
   </PropertyGroup>
 

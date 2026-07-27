@@ -4,6 +4,8 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <Description>Data loading, preprocessing, and dataset management for LLM training and evaluation.</Description>
+    <PackageTags>LLM; C#; Machine Learning; Data</PackageTags>
     <ApplicationIcon>SharpMind.ico</ApplicationIcon>
   </PropertyGroup>
 

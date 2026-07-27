@@ -11,14 +11,6 @@ Then we need the final End to End Test, Super Dumb Model Training save and Load,
 
 Task 2: Future Incorperate Training into CUI.
 
-Task 3: Cleanup
-Excluding Sharpmind.Tests an SandBox we should have a spruce up of the code.
-Remove inacessable unused private methods, make sure they are not referenced by a JigSawDotNet PuzzlePeice or CornerPuzzlePeice.
-Clean our commented out code sections /* */ or // that are no longer required.
-Make sure method and Property names make sense.
-Commenting is clear an consices and correct.  Missing comments if publically exposed and nessacay should be added. 
-Classes are in their own files or partial files.
-
 Task 3: Profiler
 Profiler for all VecDot quants and its variants to ensure correct implementation.  SSE faster than Scalar, AVX2 faster than SSE, FMA faster than AXV.
 And a profiler to compare Serial Vs Parallel MatMul on syntestic data approximatly size of 1b model layer

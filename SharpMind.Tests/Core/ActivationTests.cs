@@ -1,4 +1,5 @@
-﻿using SharpMind.Core.Activations;
+﻿using SharpMind.Core;
+using SharpMind.Core.Activations;
 using SharpMind.Core.Tensors;
 using SharpMind.Model.Layers;
 

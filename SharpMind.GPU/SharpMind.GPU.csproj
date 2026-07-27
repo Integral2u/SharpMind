@@ -5,6 +5,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Description>GPU-accelerated compute kernels using ILGPU for SharpMind.</Description>
+    <PackageTags>LLM; C#; GPU; ILGPU</PackageTags>
     <ApplicationIcon>SharpMind.ico</ApplicationIcon>
   </PropertyGroup>
 
@@ -19,7 +21,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\SharpMind.Core\SharpMind.Core.csproj" />
-    <ProjectReference Include="..\SharpMind\SharpMind.csproj" />
+    <ProjectReference Include="..\SharpMind.Core\SharpMind.Core.csproj" />
   </ItemGroup>
 
 </Project>

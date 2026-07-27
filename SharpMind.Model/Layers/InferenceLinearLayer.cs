@@ -1,4 +1,5 @@
 using JigSawDotNet;
+using SharpMind.Core;
 using SharpMind.Core.Memory;
 using SharpMind.Core.Quantization;
 using SharpMind.Core.Tensors;

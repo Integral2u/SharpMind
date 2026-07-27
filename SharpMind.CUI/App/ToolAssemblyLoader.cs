@@ -1,4 +1,5 @@
 using System.Reflection;
+using SharpMind.Core;
 
 namespace SharpMind.CUI.App;
 

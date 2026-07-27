@@ -1,5 +1,6 @@
 using JigSawDotNet;
-
+using SharpMind.Core;
+ 
 namespace SharpMind.Model.Layers;
 
 public abstract class NormOps

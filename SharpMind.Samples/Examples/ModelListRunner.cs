@@ -1,4 +1,5 @@
-﻿using SharpMind.Core.Quantization;
+﻿using SharpMind.Core;
+using SharpMind.Core.Quantization;
 using SharpMind.GPU;
 using SharpMind.Inference;
 using SharpMind.Inference.Chat;

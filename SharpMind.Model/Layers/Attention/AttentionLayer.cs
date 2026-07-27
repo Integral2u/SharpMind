@@ -1,5 +1,6 @@
 ﻿using System.Runtime.CompilerServices;
 using JigSawDotNet;
+using SharpMind.Core;
 using SharpMind.Core.Embeddings;
 using SharpMind.Core.Quantization;
 using SharpMind.Core.Tensors;

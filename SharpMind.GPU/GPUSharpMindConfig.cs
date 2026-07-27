@@ -1,6 +1,7 @@
 using ILGPU;
 using ILGPU.Runtime.Cuda;
 using ILGPU.Runtime.OpenCL;
+using SharpMind.Core;
 using SharpMind.Core.Quantization;
 
 namespace SharpMind.GPU;

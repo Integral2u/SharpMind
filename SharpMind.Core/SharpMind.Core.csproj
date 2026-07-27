@@ -6,6 +6,7 @@
 		<Nullable>enable</Nullable>
 		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 		<Description>Zero-dependency tensor primitives and math ops for SharpMind.</Description>
+		<PackageTags>LLM; C#; Machine Learning; Tensor</PackageTags>
 		<Optimize>true</Optimize>
 		<ApplicationIcon>SharpMind.ico</ApplicationIcon>
 	</PropertyGroup>
@@ -18,8 +19,6 @@
 	  <PackageReference Include="JigSawDotNet" Version="1.1.10" />
 	</ItemGroup>
 
-	<ItemGroup>
-	  <ProjectReference Include="..\SharpMind\SharpMind.csproj" />
-	</ItemGroup>
+
 
 </Project>

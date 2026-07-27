@@ -1,3 +1,4 @@
+using SharpMind.Core;
 using SharpMind.Model;
 using SharpMind.Model.Config;
 using SharpMind.Data;

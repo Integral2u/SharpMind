@@ -1,6 +1,7 @@
 using ILGPU;
 using ILGPU.Runtime;
 using JigSawDotNet;
+using SharpMind.Core;
 using SharpMind.Core.Activations;
 
 namespace SharpMind.GPU;

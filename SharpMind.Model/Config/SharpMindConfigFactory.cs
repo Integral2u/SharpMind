@@ -1,3 +1,5 @@
+using SharpMind.Core;
+
 namespace SharpMind.Model.Config;
 
 /// <summary>
