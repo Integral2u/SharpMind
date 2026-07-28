@@ -15,3 +15,32 @@ Task 2: Future Incorperate Training into CUI.
 Task 3: Profiler
 Profiler for all VecDot quants and its variants to ensure correct implementation.  SSE faster than Scalar, AVX2 faster than SSE, FMA faster than AXV.
 And a profiler to compare Serial Vs Parallel MatMul on syntestic data approximatly size of 1b model layer
+
+
+Task 5: new model support
+considering system limitations 12gb mem 4core ryzen 2200u 2.5ghz which models sould we work on next.  i am looking in https://huggingface.co/unsloth/collections.
+We have Qwen working well upto 3.0.  There is llama, mistral, phi, gemma, ministral. i would prefer working with models less than 2g and possibly onlu work with a few quants.
+What would you suggest and pointers
+
+1. Llama 3.2 1B-Instruct — start here
+
+This is architecturally the closest thing to what you already have working. Same plain pre-norm decoder pattern as Qwen2 (RoPE + GQA + RMSNorm, separate attn_q/attn_k/attn_v tensors, no QK-norm, no post-norm sandwich) — it's really just "Qwen2 without QKV bias." It should exercise almost no new code paths in TransformerWeights.ResolveTarget, so it's a good low-risk confirmation that DecoderArch really is generic across families rather than accidentally Qwen-specific. unsloth/Llama-3.2-1B-Instruct-GGUF — at 1B params, Q4_K_M through Q8_0 all land comfortably under 1GB.
+
+2. Gemma 3 1B — good second target, exercises code you already built
+
+This is genuinely interesting for you specifically: Gemma 3 uses QK-norm and a pre/post-norm sandwich around both attention and FFN — which is exactly the QNormW/KNormW/PostNorm1W/PostNorm2W plumbing your DiagnosticModelRunner already dumps and TransformerWeights/AttentionLayer/ModelFactory already wire up. So this is less "does it load" and more "does that plumbing actually produce correct numbers end-to-end" — a good validation target. One caveat: Gemma 3 also uses alternating sliding-window/global local attention (5:1 pattern), and I didn't find any sliding-window masking in DecoderArch/AttentionLayer — it's doing plain full causal attention for every layer. For short test prompts this won't be visible (the window is usually 512–1024 tokens, well beyond a "what is the capital of France"-length prompt), but keep it in mind if outputs degrade on longer contexts — that'd be the missing sliding-window logic, not a new bug. unsloth/gemma-3-1b-it-GGUF, well under 2GB at any quant.
+
+3. Ministral 3B — worth a stretch test, same caveat as above
+
+Dense GQA decoder, same family lineage as Mistral. Also uses interleaved sliding-window attention like classic Mistral 7B, so same caveat as Gemma applies. At 3B params you'll need to pick your quant carefully to stay under 2GB — Q3_K_M or Q4_K_S territory, not Q4_K_M/Q5. unsloth/collections has "Ministral 3" as a fresh collection (3B/8B/14B, Base/Instruct/Reasoning variants) — grab the 3B Instruct.
+
+4. Phi-3.5-mini / Phi-4-mini — hold off, this one needs code first
+
+This is the one to skip until you're ready to do actual dev work, not just testing. Phi's GGUF conversion fuses tensors that your other three candidates keep separate:
+
+QKV is a single blk.N.attn_qkv.weight tensor instead of attn_q/attn_k/attn_v.
+Gate+Up is a single blk.N.ffn_up.weight with shape [2 × intermediate, hidden] (first half = gate, second half = up) instead of separate ffn_gate/ffn_up.
+
+Your ResolveTarget/ResolveFloatTarget logic only knows the split names, so a Phi3-family GGUF would either silently fail to populate those tensors or (worse) partially match on the wrong dimensions. Loading it today would likely produce the same kind of "fluent-looking but wrong" output you just spent this whole thread debugging — except this time it actually would be a code bug, and a subtle one to isolate from a "bad model" case. If you want Phi eventually, budget time for a SplitMergedQKV/SplitMergedGateUp-style preprocessing step in the loader before you point DiagnosticModelRunner at it — don't waste a debugging session on it as-is.
+
+On your hardware: worth calibrating expectations going in — your Qwen2-0.5B numbers ran 0.3–5.3 tok/s depending on quant, on a 2-core/4-thread Zen1 APU with no real GPU offload path. A 1B model will roughly halve that, and 3B will be rough (maybe 1–2 tok/s even at aggressive quant) — fine for correctness/termination testing, not for anything interactive. I'd size your test prompts short and lean on MaxTokens caps rather than expecting snappy runs.
