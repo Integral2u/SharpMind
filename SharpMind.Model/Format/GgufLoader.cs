@@ -492,6 +492,19 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
         MemoryMappedViewStream stream, BinaryReader reader, TensorInfo info)
     {
         var (target, block, rawField) = weights.ResolveTarget(info.Name);
+
+        // Must create LmHeadWeight BEFORE the early-return check below:
+        // ResolveTarget returns (null, null, null) for output.weight when
+        // LmHeadWeight is null (first encounter). Without this early creation,
+        // the LM head tensor is never allocated and the weight data is skipped.
+        if (!info.Name.Contains("blk.") && info.Name.Contains("output.weight") && weights.LmHeadWeight == null)
+        {
+            long ggufIn = info.Shape[0];
+            weights.SetLmHead(new Tensor<float>((int)_config.VocabSize, (int)ggufIn));
+            // Re-resolve now that LmHeadWeight is set
+            (target, block, rawField) = weights.ResolveTarget(info.Name);
+        }
+
         if (target == null && block == null) return;
 
         long rawSize = QuantizationOps.GetRawTensorByteCount(info.Shape, info.Dtype);
@@ -510,12 +523,6 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
         long targetOffset = meta.DataOffset + info.Offset;
         if (targetOffset >= stream.Length) return;
         stream.Position = targetOffset;
-
-        if (!info.Name.Contains("blk.") && info.Name.Contains("output.weight") && weights.LmHeadWeight == null)
-        {
-            long ggufIn = info.Shape[0];
-            weights.SetLmHead(new Tensor<float>((int)_config.VocabSize, (int)ggufIn));
-        }
 
         int count = 1;
         foreach (int d in info.Shape) count *= d;

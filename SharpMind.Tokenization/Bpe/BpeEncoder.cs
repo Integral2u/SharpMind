@@ -61,23 +61,22 @@ public sealed class BpeEncoder
 
         _scores = tokenScores;
         UseSentencePieceMerge = merges.Count == 0 && _scores is { Count: > 0 };
-
-        RebuildSpecialsCache();
+        //Duplicate setting but removes warning
+        RebuildSpecialsCache(out _specialsSortedByLength, out _specialsSet, out _specialsFirstChars);
     }
 
     /// <summary>Refreshes the sorted specials cache after adding new special tokens.</summary>
-    internal void RefreshSpecials() => RebuildSpecialsCache();
+    internal void RefreshSpecials() => RebuildSpecialsCache(out _, out _, out _);
 
-    private void RebuildSpecialsCache()
+    private void RebuildSpecialsCache(out string[] specials, out HashSet<string> specialSet, out HashSet<char> specialsFirstChars)
     {
-        var specials = _vocab.Specials.All
+        specials = [.. _vocab.Specials.All
             .Where(s => !string.IsNullOrEmpty(s))
-            .OrderByDescending(s => s.Length)
-            .ToArray();
+            .OrderByDescending(s => s.Length)];
 
         _specialsSortedByLength = specials;
-        _specialsSet = new HashSet<string>(specials, StringComparer.Ordinal);
-        _specialsFirstChars = new HashSet<char>(specials.Select(s => s[0]));
+        specialSet = _specialsSet = new HashSet<string>(specials, StringComparer.Ordinal);
+        specialsFirstChars = _specialsFirstChars = [.. specials.Select(s => s[0])];
     }
 
     /// <summary>

@@ -10,8 +10,5 @@ namespace SharpMind.Core;
 public static class InternalLog
 {
     [Conditional("DEBUG")]
-    public static void WriteLine(string message)
-    {
-        Debug.WriteLine(message);
-    }
+    public static void WriteLine(string message) => Debug.WriteLine(message);
 }

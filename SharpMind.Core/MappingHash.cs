@@ -1,5 +1,3 @@
-using System.Linq;
-
 namespace SharpMind.Core;
 
 public static class MappingHash

@@ -52,7 +52,7 @@ internal static class TrainingKernels
                 var vd     = Vector256.LoadUnsafe(ref pD[i]);
                 var update = Avx.Multiply(vLr,
                                  Avx.Add(Avx.Divide(mhat,
-                                             Avx.Add(Avx256Sqrt(vhat), vEps)),
+                                             Avx.Add(Avx.Sqrt(vhat), vEps)),
                                          Avx.Multiply(vDecay, vd)));
                 Vector256.StoreUnsafe(Avx.Subtract(vd, update), ref pD[i]);
             }
@@ -115,8 +115,4 @@ internal static class TrainingKernels
         foreach (float v in data) sum += v * v;
         return sum;
     }
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static Vector256<float> Avx256Sqrt(Vector256<float> v)
-        => Avx.Sqrt(v);
 }

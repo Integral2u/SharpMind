@@ -237,7 +237,7 @@ public sealed record SharpMindConfig
         {
             foreach (var m in overrides)
             {
-                if (cfg.TryGetValue(m.Key, out string? value)) cfg[m.Key] = m.Value;
+                if (cfg.TryGetValue(m.Key, out _)) cfg[m.Key] = m.Value;
                 else cfg.Add(m.Key, m.Value);
             }
         }

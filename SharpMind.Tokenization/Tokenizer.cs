@@ -85,7 +85,7 @@ public class Tokenizer
                 stopIds.Add(Vocab.GetId(token));
         }
         // Deduplicate in case EosId matches one of the above
-        return stopIds.Distinct().ToList();
+        return [.. stopIds.Distinct()];
     }
 
     // True for SentencePiece-style vocabularies (original LLaMA/LLaMA-2,
