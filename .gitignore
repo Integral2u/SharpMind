@@ -608,3 +608,6 @@ FodyWeavers.xsd
 /SandBox/RunModels/KnownWorkingModels.cs
 /.opencode/AGENTS_SUMMARY.md
 /ExternalAssets/Qwen2-0.5B.Q8_0.gguf
+/SandBox/Runs/allllama001.txt
+/SandBox/Runs/allllama002.txt
+/SandBox/RunModels/KnownCoherentModels.cs
