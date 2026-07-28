@@ -1,3 +1,27 @@
+Testing Llama-3.2-1B-Instruct-Q8_0
+[DIAG] SharpMind.Model.Format.ModelMetaData: arch='llama'
+[DIAG] config: hidden=2048 layers=16 heads=32 kv=8 ffn=8192 headDim=64 headDimOverride= maxSeq=131072 ropeTheta=500000 ropeDim=64 tieEmb=
+[DIAG] meta llama.rope.freq_base = 500000
+[DIAG] meta llama.rope.dimension_count = 64
+[DIAG] tensors: rope_freqs.weight[32], token_embd.weight[2048x128256], blk.0.attn_norm.weight[2048], blk.0.ffn_down.weight[8192x2048], blk.0.ffn_gate.weight[2048x8192], blk.0.ffn_up.weight[2048x8192], blk.0.ffn_norm.weight[2048], blk.0.attn_k.weight[2048x512], blk.0.attn_output.weight[2048x2048], blk.0.attn_q.weight[2048x2048], blk.0.attn_v.weight[2048x512], blk.1.attn_norm.weight[2048], blk.1.ffn_down.weight[8192x2048], blk.1.ffn_gate.weight[2048x8192], blk.1.ffn_up.weight[2048x8192], blk.1.ffn_norm.weight[2048], blk.1.attn_k.weight[2048x512], blk.1.attn_output.weight[2048x2048], blk.1.attn_q.weight[2048x2048], blk.1.attn_v.weight[2048x512], blk.10.attn_norm.weight[2048], blk.10.ffn_down.weight[8192x2048], blk.10.ffn_gate.weight[2048x8192], blk.10.ffn_up.weight[2048x8192], blk.10.ffn_norm.weight[2048], blk.10.attn_k.weight[2048x512], blk.10.attn_output.weight[2048x2048], blk.10.attn_q.weight[2048x2048], blk.10.attn_v.weight[2048x512], blk.11.attn_norm.weight[2048]
+[formatter] prompt=<|start_header_id|>system<|end_header_id|>Cutting Knowledge Date: December 2023Today Date: 26 Jul 2024<|eot_id|><|start_header_id|>user<|end_header_id|>\n\nWhat is the capital of France?<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n\n\n
+[formatter ERROR] JINJA ERROR: variable 'custom_tools' not found in template env
+[formatter ERROR] JINJA ERROR: variable 'tools_in_user_message' not found in template env
+[formatter ERROR] JINJA ERROR: variable 'date_string' not found in template env
+[formatter ERROR] JINJA ERROR: variable 'strftime_now' not found in template env
+ModelFactory.Create + InitializeWeights executed in: 67.34s
+[DIAG] blk0.Norm1W: first5=0.1543,0.1826,0.2559,-0.01166,0.1406 last=0.1494
+[DIAG] blk0.Norm2W: first5=0.1973,0.1934,0.1797,0.1846,0.2041 last=0.2021
+[DIAG] blk1.Norm1W: first5=0.3164,0.3379,0.3457,0.2832,0.2559 last=0.2949
+[DIAG] blk1.Norm2W: first5=0.2656,0.2617,0.1904,0.2539,0.2754 last=0.2695
+[DIAG] blk2.Norm1W: first5=0.3965,0.3984,0.5,0.3848,0.3789 last=0.375
+[DIAG] blk2.Norm2W: first5=0.3066,0.3047,0.2256,0.3066,0.3105 last=0.3125
+ModelFactory.CreateTransformer executed in: 0.73s
+ChatSession executed in: 0.36s
+Prompt:What is the capital of France?
+Response:## August 2018
+
+Tokens per second: 2.15  TTFT: 30.876s
 Testing Llama-3.2-1B-Instruct-Q4_K_M
 [DIAG] SharpMind.Model.Format.ModelMetaData: arch='llama'
 [DIAG] config: hidden=2048 layers=16 heads=32 kv=8 ffn=8192 headDim=64 headDimOverride= maxSeq=131072 ropeTheta=500000 ropeDim=64 tieEmb=

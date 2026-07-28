@@ -4,6 +4,8 @@
     {
         public static readonly string[] Models =
         [
+            //https://huggingface.co/unsloth/Llama-3.2-1B-Instruct-GGUF
+            "Llama-3.2-1B-Instruct-Q8_0",
             /*Prompt:What is the capital of France?
             Response:## is
 
