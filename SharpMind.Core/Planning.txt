@@ -23,8 +23,30 @@ We have Qwen working well upto 3.0.  There is llama, mistral, phi, gemma, minist
 What would you suggest and pointers
 
 1. Llama 3.2 1B-Instruct — start here
-
+Its time to start working on getting more models working.
 This is architecturally the closest thing to what you already have working. Same plain pre-norm decoder pattern as Qwen2 (RoPE + GQA + RMSNorm, separate attn_q/attn_k/attn_v tensors, no QK-norm, no post-norm sandwich) — it's really just "Qwen2 without QKV bias." It should exercise almost no new code paths in TransformerWeights.ResolveTarget, so it's a good low-risk confirmation that DecoderArch really is generic across families rather than accidentally Qwen-specific. unsloth/Llama-3.2-1B-Instruct-GGUF — at 1B params, Q4_K_M through Q8_0 all land comfortably under 1GB.
+i have done a diagnostice run in preperation see C:\Integral2u\source\repos\SharpMind\SandBox\Runs\allllama001.txt.
+Pointer for implementation.
+No date/time builtin exists at all, which confirms the concrete risk. Here's the pointer list, ordered by how likely each is to actually bite you:
+
+1. RoPE scaling — the big one, likely to reproduce exactly the bug we just spent this thread chasing
+
+Llama 3.2's GGUF metadata sets llama.rope.scaling.type = "llama3", which is not simple linear scaling — it's Meta's NTK-by-parts scheme that remaps individual frequency channels using low_freq_factor, high_freq_factor, and original_context_length, alongside the plain factor. I checked RoPE.cs: it only implements "linear" scaling (scaledPos = pos / scaleFactor); anything else — including "llama3" — silently falls through to no scaling at all. And GgufLoader.cs doesn't even read low_freq_factor/high_freq_factor out of the metadata in the first place, so the data to do this correctly isn't reaching ModelConfig yet.
+
+This matters even on your short test prompts — the llama3 scheme changes the actual cos/sin frequency table at construction time, not just how position offsets get scaled, so it's not a "only matters past 8K context" issue. Expect the "fluent but semantically drifting" failure signature if this goes untreated. Concretely, you'll need to:
+
+Add low_freq_factor/high_freq_factor reads in GgufLoader.cs next to the existing ropeScalingType/ropeFactor parsing (same {arch}.rope.scaling.* key prefix).
+Implement the NTK-by-parts branch in RoPE.cs's frequency-table construction (the for (int i = 0; i < halfDim; i++) loop) — per-frequency wavelength check against original_context_length / low_freq_factor and original_context_length / high_freq_factor, with linear interpolation in between, rather than a uniform position scale.
+2. Chat template — check this first, it's free
+
+ChatPromptFormatterFactory's own comment claims Llama-3 templates are supported, but the hand-rolled Jinja engine (JinjaTemplateFormatter.cs) has no strftime_now builtin, and Meta's official Llama 3.2 Instruct chat_template calls strftime_now("%d %b %Y") to fill in the "Today Date:" line of its default system prompt. Whether this actually breaks depends on which exact template string unsloth baked into that specific GGUF (some re-uploads simplify/strip the date-generation part) — you won't know until you look. Good news: you already have the exact diagnostic for this — DiagnosticModelRunner already dumps jinja.LastErrors. Just run it and read that output before touching anything else. If it errors, either stub a strftime_now builtin returning a fixed string, or fall back to SimpleFormatter/write a small Llama3-header formatter (mirrors your ChatMLFormatter pattern, just swapping in <|start_header_id|>role<|end_header_id|>\n\n...content...<|eot_id|>).
+
+3. Things that should just work — sanity-check but likely fine
+Tied embeddings: Llama 3.2 1B/3B ships no separate output.weight tensor (weight-tied lm_head). Already handled — Transformer.cs falls back to _embedding.Weight when _lmHead is null (line ~53). Nothing to change; just confirm LmHeadWeight actually comes back null rather than some zero-filled placeholder when you dump diagnostics.
+Stop tokens: <|eot_id|> is already in Tokenizer.GetEndOfGenerationIds()'s known-turn-end list. Should terminate correctly once decoded content is being generated at all.
+BOS: Llama family expects <|begin_of_text|> prepended, unlike Qwen2. Just confirm ChatSession/your generator call is actually passing addBos: true for this model — worth an explicit diagnostic print of tokenizer.BosId / tokenizer.IdToToken(tokenizer.BosId) the first time you run it.
+
+Suggested order of operations: run it once as-is with your existing diagnostics (formatter dump + top-logit dump), see whether jinja.LastErrors fires and whether the top-5 logits look like reasonable English immediately at step 0. If step-0 logits already look like garbage with no formatter error, that's your RoPE-scaling signature — go implement item 1 before debugging anything else.
 
 2. Gemma 3 1B — good second target, exercises code you already built
 

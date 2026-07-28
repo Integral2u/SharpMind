@@ -159,7 +159,7 @@ public static class GgufConverter
         // BpeEncoder detects it (via the scores array below) and switches to
         // score-ranked SentencePiece-style merging instead of silently
         // tokenising everything byte-by-byte.
-        IPreTokeniser preTokeniser = SelectPreTokeniser(architecture);
+        IPreTokeniser preTokeniser = SelectPreTokeniser(architecture, merges);
         return new BpeModel(vocab, mergeList, preTokeniser, scores);
     }
 
@@ -171,18 +171,21 @@ public static class GgufConverter
     /// use cl100k-style pattern with case-insensitive contraction matching.
     /// Everything else uses the classic GPT-2 pattern.
     /// </summary>
-    private static IPreTokeniser SelectPreTokeniser(string? architecture)
+    private static IPreTokeniser SelectPreTokeniser(string? architecture, string[]? merges = null)
     {
         if (string.IsNullOrWhiteSpace(architecture))
             return new Gpt2PreTokeniser();
 
         string arch = architecture.ToLowerInvariant();
 
+        // Llama 1/2 uses SentencePiece (no merges array); Llama 3+ uses tiktoken (has merges)
+        bool hasMerges = merges is { Length: > 0 };
+
         // Architectures known to use tiktoken-based vocabularies
-        if (arch is "qwen2" or "qwen2.5" or "qwen3" or "qwen2moe" or "deepseek2"
+        if ((arch.StartsWith("llama") && hasMerges)  // Llama 3+ (tiktoken)
+            || arch is "qwen2" or "qwen2.5" or "qwen3" or "qwen2moe" or "deepseek2"
             || arch.Contains("qwen")
             || arch.Contains("deepseek")
-            || arch.StartsWith("llama")  // Llama 3+ uses tiktoken; Llama 1/2 are SentencePiece (no merges, handled elsewhere)
             || arch.StartsWith("phi3") || arch.StartsWith("phi4")
             || arch.StartsWith("gemma2") || arch.StartsWith("gemma3") || arch.StartsWith("gemma-3")
             || arch is "dbrx")

@@ -110,7 +110,11 @@ namespace SharpMind.Model.Layers.Attention;
             PositionalEncoding.ALiBi => new AlibiEncoder(config.NumHeads),
             _ => new RoPE(config.HeadDim, config.MaxSeqLen, config.RopeTheta,
                  ropeDim: config.RopeDim, ropeScalingType: config.RopeScalingType,
-                 ropeScalingFactor: config.RopeScalingFactor),
+                 ropeScalingFactor: config.RopeScalingFactor,
+                 ropeOriginalContextLength: config.RopeOriginalContextLength,
+                 lowFreqFactor: config.RopeLowFreqFactor,
+                 highFreqFactor: config.RopeHighFreqFactor,
+                 precomputedFreqs: config.PrecomputedRopeFreqs),
         };
     }
 

@@ -58,6 +58,8 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
         env.Set("add_generation_prompt", (object)true);  // always true for inference
         env.Set("enable_thinking", (object)enableThinking);
         env.Set("tools", null);  // Qwen3/Qwen2.5 templates check {% if tools %}
+        env.Set("custom_tools", new List<JinjaDict>());  // Llama-3 tool definitions (empty = no custom tools)
+        env.Set("tools_in_user_message", (object)false); // Llama-3: tool calls not in user message
 
         var errors = new List<string>();
         var tokens = Tokenise(_template);
@@ -729,6 +731,22 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
                 var right = Eval(expr[(elseOnlyPos + 5)..].TrimStart(), env, errors);
                 return IsTruthy(left) ? left : right;
             }
+        }
+
+        // Builtin function calls: name(arg)
+        var funcM = RegexGenerated.JinjaFuncCall.Match(expr);
+        if (funcM.Success)
+        {
+            string funcName = funcM.Groups[1].Value;
+            string argExpr = funcM.Groups[2].Value;
+            if (funcName == "strftime_now")
+            {
+                // Return a fixed date string (no real date builtin needed for inference)
+                // argExpr is the format string like "%d %b %Y" — ignored for fixed output
+                return (object)"26 Jul 2024";
+            }
+            errors?.Add($"JINJA ERROR: unknown function '{funcName}'");
+            return null;
         }
 
         // Plain identifier

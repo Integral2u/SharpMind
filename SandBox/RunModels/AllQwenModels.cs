@@ -15,7 +15,7 @@
             The capital of the dollars, and in dollars are respectively.
             The capital dollars, and dollar is respectively.
             Tokens per second: 1.22  TTFT: 23.470s*/
-            //"Qwen2-0.5B.Q2_K", 
+            "Qwen2-0.5B.Q2_K", 
 
             /*Prompt:What is the capital of france
             Response:the capital of the franc is 100.5%of it is 2.5%34876998%
@@ -78,7 +78,7 @@
             /*Prompt:What is the capital of France?
             Response:Paris.
             Tokens per second: 0.45  TTFT: 30.810s*/
-            "qwen2-0.5b-instruct-q2_k",
+            //"qwen2-0.5b-instruct-q2_k",
             /*Prompt:What is the capital of France?
             Response:Paris
 
@@ -94,7 +94,7 @@
             Response:Paris.
 
             Tokens per second: 0.66  TTFT: 40.585s*/
-            "qwen2-0_5b-instruct-fp16",         //Prompt:Hello Response:Hello! How can I assist you today?  
+            //"qwen2-0_5b-instruct-fp16",         //Prompt:Hello Response:Hello! How can I assist you today?  
             /*Prompt:What is the capital of France?
             Response:The
             France is the capitale of France, and Francia in Francaland.
@@ -110,7 +110,7 @@
             Response:France's Capital
 
             Tokens per second: 0.18  TTFT: 201.302s*/
-            "Qwen2.5-1.5B-Instruct-f16",        //Prompt:Hello Response:I am sorry for my mistake I did not understand your message correctly. Could you please rephrase the question or statement that you
+            //"Qwen2.5-1.5B-Instruct-f16",        //Prompt:Hello Response:I am sorry for my mistake I did not understand your message correctly. Could you please rephrase the question or statement that you
             /*Prompt:What is the capital of France?
             Response:The capital city of France is Paris.
 
@@ -123,7 +123,7 @@
             In conclusion Paris remains the capital city of France to this day with its rich cultural heritage and historical significance making it one of the most visited cities in the world.
 
             Tokens per second: 0.71  TTFT: 100.861s*/
-            "qwen2.5-coder-3b-instruct-q8_0",   //Prompt:Hello Response: Hello! How can I assist you today?
+            //"qwen2.5-coder-3b-instruct-q8_0",   //Prompt:Hello Response: Hello! How can I assist you today?
             /*Prompt:What is the capital of France?
             Response:The capital of France is Paris.
 
@@ -138,12 +138,12 @@
             In summary, Paris has been the capital of France since ancient times and has developed into one of the world's most famous cities for its rich history and culture, as well as its stunning architecture and beautiful scenery.
 
             Tokens per second: 0.13  TTFT: 284.739s*/
-            "qwen2.5-coder-3b-instruct-q4_k_m",
+            //"qwen2.5-coder-3b-instruct-q4_k_m",
             /*Prompt:What is the capital of France?
             Response:The capital city of France is Paris, located on the I in the north-western part of Europe.
 
             Tokens per second: 0.09  TTFT: 414.370s*/
-            "qwen2.5-coder-3b-instruct-q2_k",
+            //"qwen2.5-coder-3b-instruct-q2_k",
 
             /*Prompt:What is the capital of France?
             Response:
@@ -177,17 +177,17 @@
             The actual answer is: **France has no capital in itself..
 
             Tokens per second: 0.44  TTFT: 49.624s*/
-            "Qwen3-0.6B-Q2_K",                  //Prompt:Hello Response:?\nOkay, so I need to start with the user's message. 
-            "Qwen3-0.6B-Q3_K_M",                //Prompt:Hello Response:\nOkay, the user is asking for help with a problem. But
-            "Qwen3-0.6B-Q4_0",                  //Prompt:Hello Response:Okay, the user asked me to respond in a specific way.
-            "Qwen3-0.6B-Q4_1",                  //Prompt:Hello Response:Okay, the user just said "Hello and I need to respond    
-            "Qwen3-0.6B-Q4_K_M",                //Prompt:Hello Response:\nOkay, the user just said "Hello," so I need to 
-            "Qwen3-0.6B-Q5_K_M",                //Prompt:Hello Response:\nOkay, the user just said "Hello," so I need to                                   
-            "Qwen3-0.6B-Q6_K",                  //Prompt:Hello Response:\nOkay, the user just said "Hello," so I need to             
+            //"Qwen3-0.6B-Q2_K",                  //Prompt:Hello Response:?\nOkay, so I need to start with the user's message. 
+           // "Qwen3-0.6B-Q3_K_M",                //Prompt:Hello Response:\nOkay, the user is asking for help with a problem. But
+            //"Qwen3-0.6B-Q4_0",                  //Prompt:Hello Response:Okay, the user asked me to respond in a specific way.
+            //"Qwen3-0.6B-Q4_1",                  //Prompt:Hello Response:Okay, the user just said "Hello and I need to respond    
+            //"Qwen3-0.6B-Q4_K_M",                //Prompt:Hello Response:\nOkay, the user just said "Hello," so I need to 
+            //"Qwen3-0.6B-Q5_K_M",                //Prompt:Hello Response:\nOkay, the user just said "Hello," so I need to                                   
+            //"Qwen3-0.6B-Q6_K",                  //Prompt:Hello Response:\nOkay, the user just said "Hello," so I need to             
             "Qwen3-0.6B-Q8_0",                  //Prompt:Hello Response:\nOkay, the user just said "Hello," so I need to
 
-            "DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M", //Prompt:Hello Response:Hi! Welcome to Brain. I'm Trying To Teach Help '>>\n\nAlright, so I need help with this. The equation
-            "DeepSeek-R1-Distill-Qwen-1.5B-Q8_0",   //Prompt:Hello Response:Hi, thank you for asking your question. I'm just going through my memory again. Times ago, I have this busy
+            //"DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M", //Prompt:Hello Response:Hi! Welcome to Brain. I'm Trying To Teach Help '>>\n\nAlright, so I need help with this. The equation
+            //"DeepSeek-R1-Distill-Qwen-1.5B-Q8_0",   //Prompt:Hello Response:Hi, thank you for asking your question. I'm just going through my memory again. Times ago, I have this busy
 
 ];
 

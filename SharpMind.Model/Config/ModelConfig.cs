@@ -108,6 +108,15 @@ public sealed record ModelConfig
     /// <summary>Original max sequence length before RoPE scaling was applied.</summary>
     public int? RopeOriginalContextLength { get; init; }
 
+    /// <summary>NTK-by-parts low frequency factor (llama3 scaling).</summary>
+    public float? RopeLowFreqFactor { get; init; }
+
+    /// <summary>NTK-by-parts high frequency factor (llama3 scaling).</summary>
+    public float? RopeHighFreqFactor { get; init; }
+
+    /// <summary>Pre-computed RoPE frequencies from GGUF (rope_freqs.weight), if present.</summary>
+    public float[]? PrecomputedRopeFreqs { get; init; }
+
     /// <summary>Whether the LM head weight is tied to the embedding weight.</summary>
     public bool? TieWordEmbeddings { get; init; }
 

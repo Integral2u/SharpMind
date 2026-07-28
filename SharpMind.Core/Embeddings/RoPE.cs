@@ -37,10 +37,15 @@ public sealed class RoPE : PositionalEncoder
     /// <param name="maxSeqLen">Maximum sequence length to pre-compute freqs for.</param>
     /// <param name="theta">Base frequency. 10000 for LLaMA 2; 500000 for LLaMA 3.</param>
     /// <param name="ropeDim">Optional subset of headDim to apply RoPE to. Null means apply to all.</param>
-    /// <param name="ropeScalingType">RoPE scaling type ("linear", "yarn", etc.). Null = no scaling.</param>
+    /// <param name="ropeScalingType">RoPE scaling type ("linear", "llama3", etc.). Null = no scaling.</param>
     /// <param name="ropeScalingFactor">RoPE scaling factor (e.g. 2.0 for 2x context).</param>
+    /// <param name="ropeOriginalContextLength">Original context length before scaling (NTK-by-parts).</param>
+    /// <param name="lowFreqFactor">NTK-by-parts low frequency factor (llama3).</param>
+    /// <param name="highFreqFactor">NTK-by-parts high frequency factor (llama3).</param>
     public RoPE(int headDim, int maxSeqLen, float theta = 10_000f,
-        int? ropeDim = null, string? ropeScalingType = null, float? ropeScalingFactor = null)
+        int? ropeDim = null, string? ropeScalingType = null, float? ropeScalingFactor = null,
+        int? ropeOriginalContextLength = null, float? lowFreqFactor = null, float? highFreqFactor = null,
+        float[]? precomputedFreqs = null)
     {
         if (headDim % 2 != 0)
             throw new ArgumentException($"HeadDim must be even, got {headDim}.");
@@ -51,32 +56,77 @@ public sealed class RoPE : PositionalEncoder
         _ropeDim = ropeDim ?? headDim;
 
         int halfDim = _ropeDim / 2;
-        (_cosCache, _sinCache) = TableCache.GetOrAdd(HashCode.Combine(theta, halfDim, _maxSeqLen, ropeScalingFactor, ropeScalingType), (b) =>
+
+        if (precomputedFreqs != null)
         {
             var cos = new float[_maxSeqLen * halfDim];
             var sin = new float[_maxSeqLen * halfDim];
-            // Frequency for each pair: θ_i = 1 / (theta ^ (2i / headDim))
-            var freqs = new float[halfDim];
-            for (int i = 0; i < halfDim; i++)
-                freqs[i] = 1f / MathF.Pow(theta, 2f * i / _ropeDim);
-
-            // Apply RoPE scaling if configured
-            float scaleFactor = ropeScalingFactor ?? 1f;
-            bool linearScaling = string.Equals(ropeScalingType, "linear", StringComparison.OrdinalIgnoreCase);
-
             for (int pos = 0; pos < _maxSeqLen; pos++)
             {
                 int cacheBase = pos * halfDim;
                 for (int i = 0; i < halfDim; i++)
                 {
-                    float scaledPos = linearScaling ? (pos / scaleFactor) : pos;
-                    float angle = scaledPos * freqs[i];
+                    float angle = pos * precomputedFreqs[i];
                     cos[cacheBase + i] = MathF.Cos(angle);
                     sin[cacheBase + i] = MathF.Sin(angle);
                 }
             }
-            return (cos, sin);
-        });
+            _cosCache = cos;
+            _sinCache = sin;
+        }
+        else
+        {
+            (_cosCache, _sinCache) = TableCache.GetOrAdd(
+                HashCode.Combine(theta, halfDim, _maxSeqLen, ropeScalingFactor, ropeScalingType,
+                    ropeOriginalContextLength, lowFreqFactor, highFreqFactor), (b) =>
+            {
+                var cos = new float[_maxSeqLen * halfDim];
+                var sin = new float[_maxSeqLen * halfDim];
+                var freqs = new float[halfDim];
+                for (int i = 0; i < halfDim; i++)
+                    freqs[i] = 1f / MathF.Pow(theta, 2f * i / _ropeDim);
+
+                float scaleFactor = ropeScalingFactor ?? 1f;
+                bool linearScaling = string.Equals(ropeScalingType, "linear", StringComparison.OrdinalIgnoreCase);
+                bool isLlama3 = string.Equals(ropeScalingType, "llama3", StringComparison.OrdinalIgnoreCase);
+
+                if (isLlama3 && ropeOriginalContextLength.HasValue && ropeOriginalContextLength.Value > 0
+                    && lowFreqFactor.HasValue && highFreqFactor.HasValue)
+                {
+                    float lowFreqWavelen = ropeOriginalContextLength.Value / lowFreqFactor.Value;
+                    float highFreqWavelen = ropeOriginalContextLength.Value / highFreqFactor.Value;
+
+                    for (int i = 0; i < halfDim; i++)
+                    {
+                        float wavelen = 2f * MathF.PI / freqs[i];
+                        if (wavelen >= highFreqWavelen)
+                        {
+                            if (wavelen > lowFreqWavelen)
+                                freqs[i] /= scaleFactor;
+                            else
+                            {
+                                float t = (wavelen - highFreqWavelen) / (lowFreqWavelen - highFreqWavelen);
+                                float smooth = 1f + t * (scaleFactor - 1f);
+                                freqs[i] /= smooth;
+                            }
+                        }
+                    }
+                }
+
+                for (int pos = 0; pos < _maxSeqLen; pos++)
+                {
+                    int cacheBase = pos * halfDim;
+                    for (int i = 0; i < halfDim; i++)
+                    {
+                        float scaledPos = linearScaling ? (pos / scaleFactor) : pos;
+                        float angle = scaledPos * freqs[i];
+                        cos[cacheBase + i] = MathF.Cos(angle);
+                        sin[cacheBase + i] = MathF.Sin(angle);
+                    }
+                }
+                return (cos, sin);
+            });
+        }
     }
 
     // Properties

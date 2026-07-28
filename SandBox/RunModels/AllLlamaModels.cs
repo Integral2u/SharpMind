@@ -52,7 +52,7 @@
             Cut
 
             Tokens per second: 0.29  TTFT: 119.383s*/
-            "Llama-3.2-1B-Instruct-Q4_K_M",
+            //"Llama-3.2-1B-Instruct-Q4_K_M",
             /*Prompt:What is the capital of France?
             Response:minipage passwords passwords ????? Buc declar declar declar ???? Luxemba?y mn mn mn mnn?ho fileName Confeder?ck?ck?ck??? Alc Alc Alc Alc polic polic polic polic??? renamedptopptop randomly randomly randomlyFiddleFiddle ????? germarab Kra Kraaineainesectsectsect neut neut?met confir celebr celebr exper expererset?????? Alc Alc Alc ????achusettsuttonultan sod erw erw randomlyuttonutton automatic automatic Pok Ramanson randomly indep indep indep gar Copablicablica Fon dop azonn?ho°mund sr derivative Nobel derivativenabla wiesnablaamerikanischer mn Alc?lisultan syd syd Rom derivativeachusetts donnermund ??? clarify cinq cinq nä indep indep randomlyzym límundustomustom ???? antenvoirvoir nobles étant haber clarifyta? wies fileName fs mnachusetts erw erw screenshotarab permutmund probabil slider slidererset clarifynabla indep derivativeultan derivativeingsomr? subsets probabil azon indep?lis?lismund proph proph/? pse figur indep étant mn fs haber erw erwultanachusetts ????? ceux probabil límund clarifyerset noblesrugu derivative irrelevant irrelevanttyptypta? derivative clarify instmund probabil probabil derivativenablaustom permut cinq kter indep préc préc erw indep indep figur figur?lis ????? erwultanersetersetptop azonnablanabla lí probabilta?mund mn mn ulerset probabil probabil?negebras zaw permut permut kter nobles préc mn indep indep indep commut commutkunft fs?liserset erwersetersetlichesnablanablalipseta?
 
@@ -62,7 +62,7 @@
             Response: ??? Gla gla Kra Kra Kraamerikanischer educatedsectsectsect raz Raz Depart depart näachusettserset ?? ??? randomly randomly randomly randomly s Sid sid zeit jur substant batter tick tick?????? compet compet compet exped exped exped préc categor categor categor categor conver converfrak ? ? substant préc préc erw internally randomly confircsol mn clarify ???? probable cinq cinq s französischen? s nä näkunft twice familjen Przerset internally internallyerset préc préc substant teor sect sect sect proph proph französischenachusetts?ischen? predeta? hé hé deeply cinq cinqgebiet nä nä préc Lé étantayeachusetts Erz Zob neurta?mund twice dob dob Nicol?typ zawumbnail? hé recht randomly? ???erset indep hé kilom repre Edmund hé sympath prophmund??? Sebast précachusetts magistr sugg Concta?erseterset inserted ves erw erwzsearance Zobtyptyptyp wollb?l étant étantdin préc indep zaw cabin hé französischen permut permut ???? convers azon ???? shed shed ajta? ?????? Lé WPF nieuwe préc erw erw préc préctyptyp dob curios curios fünf convers converserset ?????? categor categorerset hé permut permut ???? ???? convers azon ??? ???kunft einige familjen familjen intros intros sugg suggeree familjen préc boats wohl forg préc curios préc dob familjen recht rechterseterset sender ??? ????? ???? ???? zaw convers conversnabla dah dah ???? ?????? ???? Hinter intros intros shedersettyp azon detailed wohl wohl familjen
 
             Tokens per second: 0.35  TTFT: 67.060s*/
-            "TinyLlama-1.1B-Chat-v1.0.Q4_K_M",
+            //"TinyLlama-1.1B-Chat-v1.0.Q4_K_M",
 
             //https://huggingface.co/tensorblock/llama3-small-GGUF
             /*Prompt:What is the capital of France?

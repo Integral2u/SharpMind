@@ -233,6 +233,11 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
         long rawRopeOrigCtx = meta.GetLong($"{arch}.rope.scaling.original_context_length", -1);
         int? ropeOriginalContextLength = rawRopeOrigCtx > 0 ? (int)rawRopeOrigCtx : null;
 
+        float lowFreq = meta.GetFloat($"{arch}.rope.scaling.low_freq_factor", float.NaN);
+        float? ropeLowFreqFactor = float.IsNaN(lowFreq) ? null : lowFreq;
+        float highFreq = meta.GetFloat($"{arch}.rope.scaling.high_freq_factor", float.NaN);
+        float? ropeHighFreqFactor = float.IsNaN(highFreq) ? null : highFreq;
+
         long rawTie = meta.GetLong($"{arch}.tie_word_embeddings", -1);
         bool? tieWordEmbeddings = rawTie >= 0 ? (rawTie != 0) : null;
 
@@ -264,6 +269,8 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
             RopeScalingType = ropeScalingType,
             RopeScalingFactor = ropeScalingFactor,
             RopeOriginalContextLength = ropeOriginalContextLength,
+            RopeLowFreqFactor = ropeLowFreqFactor,
+            RopeHighFreqFactor = ropeHighFreqFactor,
             TieWordEmbeddings = tieWordEmbeddings,
             NormTypeOverride = normTypeOverride,
             NumExperts = expertCount,
@@ -332,6 +339,11 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
         meta = LoadMeta(ggufPath);
         config = LoadConfig(meta)!;
 
+        // Load pre-computed RoPE frequencies from GGUF if present
+        float[]? ropeFreqs = LoadPrecomputedRopeFreqs(ggufPath, meta);
+        if (ropeFreqs != null)
+            config = config with { PrecomputedRopeFreqs = ropeFreqs };
+
         tokenizer = LoadTokenizerFromMeta(meta);
 
         if (tokenizer == null && !string.IsNullOrEmpty(tokenizerPath) && File.Exists(tokenizerPath))
@@ -367,6 +379,33 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
 
         if (tokenizer != null)
             InjectMissingTemplateTokens(meta, ref config, tokenizer);
+    }
+
+    private static float[]? LoadPrecomputedRopeFreqs(string ggufPath, ModelMetaData meta)
+    {
+        var ropeFreqsInfo = meta.Tensors.FirstOrDefault(t => t.Name == "rope_freqs.weight");
+        if (ropeFreqsInfo.Shape == null || ropeFreqsInfo.Shape.Length == 0) return null;
+
+        int count = 1;
+        foreach (int d in ropeFreqsInfo.Shape) count *= d;
+        if (count == 0 || ropeFreqsInfo.Dtype != QuantDType.F32) return null;
+
+        float[] result = new float[count];
+        try
+        {
+            using var mmf = MemoryMappedFile.CreateFromFile(ggufPath, FileMode.Open, null, 0, MemoryMappedFileAccess.Read);
+            using var stream = mmf.CreateViewStream(0, 0, MemoryMappedFileAccess.Read);
+            long dataPos = meta.DataOffset + ropeFreqsInfo.Offset;
+            stream.Position = dataPos;
+            using var reader = new BinaryReader(stream);
+            for (int i = 0; i < count; i++)
+                result[i] = reader.ReadSingle();
+            return result;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     // ── IModelLoader implementation ────────────────────────────────────────

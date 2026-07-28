@@ -49,5 +49,7 @@ namespace SharpMind.Inference
         public static partial Regex JinjaIsString { get; }
         [GeneratedRegex(@"^(.+?)\s+is\s+(not\s+)?iterable$")]
         public static partial Regex JinjaIsIterable { get; }
+        [GeneratedRegex(@"^(\w+)\(([^)]*)\)$")]
+        public static partial Regex JinjaFuncCall { get; }
     }
 }
