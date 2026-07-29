@@ -1,8 +1,5 @@
 using System.Collections.Concurrent;
-using System.Diagnostics;
-using System.Runtime.Intrinsics.X86;
 using JigSawDotNet;
-using SharpMind.Core.Tensors;
 
 namespace SharpMind.Core.Activations;
 

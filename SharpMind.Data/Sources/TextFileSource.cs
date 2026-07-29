@@ -53,7 +53,7 @@ public sealed class TextFileSource : IDataSource
     public string Current => throw new NotImplementedException();
 
     public async IAsyncEnumerable<string> ReadAsync(
-        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         foreach (string path in _paths)
         {
@@ -62,22 +62,22 @@ public sealed class TextFileSource : IDataSource
             if (_mode == DocumentMode.FilePerDoc)
             {
                 string content = await File.ReadAllTextAsync(path, cancellationToken)
-                                           .ConfigureAwait(false);
+                                            .ConfigureAwait(false);
                 if (!string.IsNullOrWhiteSpace(content))
                     yield return content;
             }
             else
             {
                 using var reader = new StreamReader(path, detectEncodingFromByteOrderMarks: true);
-                while (!reader.EndOfStream)
+
+                string? line;
+                while ((line = await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false)) != null)
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    string? line = await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false);
                     if (!string.IsNullOrWhiteSpace(line))
                         yield return line;
                 }
             }
-        }
+        }   
     }
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;

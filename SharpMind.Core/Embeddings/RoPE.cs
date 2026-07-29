@@ -174,6 +174,8 @@ public sealed class RoPE : PositionalEncoder
             {
                 int offset = (s * numHead + h) * _headDim;
 
+                // Half-based RoPE pairing (matches HF's rotate_half convention):
+                // pairs are (data[i], data[ropePairs + i]) for i = 0..ropePairs-1
                 int i = 0;
                 if (Avx.IsSupported)
                 {

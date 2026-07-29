@@ -70,6 +70,9 @@ On your hardware: worth calibrating expectations going in — your Qwen2-0.5B nu
 
 
 Discoveries: items for cleanup and checking
+JinjaTemplateFormatter check and correct, can AccessSlice return string? and argExpr in Eval is assigned but never used
+MedusaHeads.Calibrate assignes targetLogit but is never used in anything useful 
+
 check string[] knownTurnEndTokens =
         [
             "<|eot_id|>",
@@ -81,8 +84,8 @@ check string[] knownTurnEndTokens =
             "</s>",
         ]; could be usefull for termining chat where models are not exiting correctly qwen2 "</s> or "\uFFFD\uFFFDend\uFFFDof\uFFFDsentence\uFFFD\uFFFD",  // fallback encoding 
 
-        1: Excessive validation, see SharpMind.Core.InternalLog and use of [Conditional("DEBUG")]
-        SharpMind.Core.InternalLog could be renamed to reflect intention SharpMind.Core.SanityChecks
+        1: Excessive validation, see SharpMind.Core.InternalLog and SharpMind.Core.Diagnostics.SanityChecks and use of [Conditional("DEBUG")]
+        SharpMind.Core.InternalLog could be rolled up into SharpMind.Core.Diagnostics.SanityChecks
         Make sure any new DEBUG sanity checks added are reused where possible and we can also make use of the [CallerMemberName][CallerFilePath][CallerLineNumber] type annotations if it makes sense.
         SharpMind.Core.Tensors.TensorShape is used extensivly and intern does a lot of checks, for a long time i have yet to see an exception thown. So depending on performace inpact significance we should consider moving to sanitiy checks to InternalLog methods where appropriate.
         SharpMind.Core.Tensors.Tensor is the same.  also note there seem to be redundant unused code ToDebugString, TransposeLast2D, TransposeInPlace others seem fine. check if worth keeping before removal
@@ -97,3 +100,8 @@ check string[] knownTurnEndTokens =
         however the JigSawDotNet pattern is never used, the class would need to be abstract and it provides Override mthods that are never use.
         This issue seem to be in SharpMind.Training to where there are classes that do tests for Avx2.IsSupported and Fma.IsSupported rather than specific kernals, see SharpMind.Training.Autograd.Gradients, SharpMind.Training.TrainingKernels
         This may have been in preparation for migrating to JigSawDotNet but just not implemented yet.
+
+        4: I1 Quantization Ops.  No AVX/FFA/SSE implementations though not ever used so far by any models so far, would need to add a supporting archetecture.
+
+        5: Diagnostics
+        No call to GeneratorDiagnostics.PrintTopLogits(_tokenizer, step, logitsSlice); in SpeculativeGenerator or MedusaGenerator

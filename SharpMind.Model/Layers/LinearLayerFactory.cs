@@ -20,8 +20,10 @@ public static class LinearLayerFactory
             return new TrainingLinearLayer(name, inFeatures, outFeatures, bias, weight, biasTensor);
 
         string compound = GetCompound(quantDType, baseMapping);
-        var mapping = new Dictionary<string, string>(baseMapping);
-        mapping[SharpMindConfig.KeyLinear] = compound;
+        var mapping = new Dictionary<string, string>(baseMapping)
+        {
+            [SharpMindConfig.KeyLinear] = compound
+        };
 
         var type = _typeCache.GetOrAdd(MappingHash.Compute(mapping),
             _ => Assembler.Assemble<InferenceLinearLayer>(mapping));

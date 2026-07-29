@@ -212,10 +212,13 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
                           meta.GetFloat("rope_theta",
                           meta.GetFloat("rope.freq_base", 10_000f)));
 
+        int tensorVocabSize = vocabSize; // from token_embd.weight shape
         int metaVocab = (int)meta.GetLong($"{arch}.vocab_size",
                          meta.GetLong("tokenizer.ggml.token_count",
                          meta.GetLong("vocab_size", vocabSize)));
-        if (metaVocab > 0) vocabSize = metaVocab;
+        // Clamp to tensor dimension — metadata token count may include
+        // added-token entries that the GGUF embedding tensor doesn't store.
+        if (metaVocab > 0) vocabSize = Math.Min(metaVocab, tensorVocabSize);
 
         long rawHeadDim = meta.GetLong($"{arch}.head_dim", -1);
         int? headDimOverride = rawHeadDim > 0 ? (int)rawHeadDim : null;
@@ -278,10 +281,17 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
         };
     }
 
-    public static Tokenizer? LoadTokenizerFromMeta(ModelMetaData meta)
+    public static Tokenizer? LoadTokenizerFromMeta(ModelMetaData meta, int maxVocabSize = 0)
     {
         var tokens = GetStringArray(meta, "tokenizer.ggml.tokens");
         if (tokens == null || tokens.Length == 0) return null;
+
+        // Cap the token list to maxVocabSize to prevent IDs beyond the GGUF
+        // embedding tensor's capacity. The SentencePiece / BPE encoder won't
+        // produce token IDs beyond this range, which would otherwise result in
+        // zero-embedding lookups.
+        if (maxVocabSize > 0 && tokens.Length > maxVocabSize)
+            tokens = tokens.AsSpan(0, maxVocabSize).ToArray();
 
         var types = GetIntArray(meta, "tokenizer.ggml.token_type");
         var merges = GetStringArray(meta, "tokenizer.ggml.merges");
@@ -314,19 +324,17 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
 
         if (candidates.Count == 0) return;
 
-        var toAdd = new List<string>();
+        int added = 0;
         foreach (string token in candidates)
         {
-            if (!tokenizer.Vocab.Contains(token))
-                toAdd.Add(token);
+            if (tokenizer.Vocab.Contains(token)) continue;
+            if (tokenizer.VocabSize >= config.VocabSize) continue; // no room — beyond GGUF tensor capacity
+            tokenizer.AddAdditionalToken(token);
+            added++;
         }
 
-        if (toAdd.Count == 0) return;
-
-        foreach (string token in toAdd)
-            tokenizer.AddAdditionalToken(token);
-
-        config = config with { VocabSize = config.VocabSize + toAdd.Count };
+        if (added > 0)
+            InternalLog.WriteLine($"GgufLoader: added {added} template tokens to tokenizer");
     }
 
     public static void Load(
@@ -344,7 +352,7 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
         if (ropeFreqs != null)
             config = config with { PrecomputedRopeFreqs = ropeFreqs };
 
-        tokenizer = LoadTokenizerFromMeta(meta);
+        tokenizer = LoadTokenizerFromMeta(meta, config.VocabSize);
 
         if (tokenizer == null && !string.IsNullOrEmpty(tokenizerPath) && File.Exists(tokenizerPath))
         {

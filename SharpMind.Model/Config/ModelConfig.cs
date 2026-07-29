@@ -76,12 +76,6 @@ public sealed record ModelConfig
     /// <summary>Number of experts activated per token (top-k routing).</summary>
     public int TopKExperts { get; init; } = 2;
 
-    // Regularisation
-
-    /// <summary>Dropout probability. 0 = disabled (inference default).</summary>
-    [Obsolete("Unused in forward pass — kept for serialization compatibility.")]
-    public float Dropout { get; init; } = 0f;
-
     // RoPE
 
     /// <summary>

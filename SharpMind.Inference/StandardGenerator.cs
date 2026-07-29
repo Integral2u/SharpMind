@@ -142,29 +142,7 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
                 cancellationToken.ThrowIfCancellationRequested();
 
                 ReadOnlySpan<float> logitsSlice = logitsTensor.Data[..vocabSize];
-
-                if (GeneratorDiagnostics.DumpTopLogits)
-                {
-                    var top5 = new (float Value, int Id)[5];
-                    for (int i = 0; i < top5.Length; i++) top5[i] = (float.NegativeInfinity, -1);
-                    for (int i = 0; i < logitsSlice.Length; i++)
-                    {
-                        float v = logitsSlice[i];
-                        if (v > top5[^1].Value)
-                        {
-                            top5[^1] = (v, i);
-                            for (int j = top5.Length - 1; j > 0 && top5[j].Value > top5[j - 1].Value; j--)
-                                (top5[j], top5[j - 1]) = (top5[j - 1], top5[j]);
-                        }
-                    }
-                    Console.Error.Write($"  [step {step}] top5: ");
-                    foreach (var (val, id) in top5)
-                    {
-                        var text = _tokenizer.Decode(new[] { id }.AsSpan(), skipSpecials: true);
-                        Console.Error.Write($"{id}:'{text.Replace("\n", "\\n").Replace("\r", "\\r")}'({val:G4}) ");
-                    }
-                    Console.Error.WriteLine();
-                }
+                GeneratorDiagnostics.PrintTopLogits(_tokenizer, step, logitsSlice);
 
                 int nextId;
                 if (repPenalty != 1.0f)
@@ -249,7 +227,9 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
             logitsTensor?.Dispose();
         }
     }
+
     
+
 
     /// <summary>
     /// Generates a full completion string without streaming.
@@ -340,5 +320,5 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
         _workspace.Dispose();
     }
 
-    private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, nameof(StandardGenerator<T>));
+    private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, nameof(StandardGenerator<>));
 }

@@ -1,9 +1,5 @@
-using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
-using ILGPU;
-using ILGPU.Runtime;
 using JigSawDotNet;
-using SharpMind.Core;
 using SharpMind.Core.Quantization;
 
 namespace SharpMind.GPU;
@@ -31,7 +27,7 @@ public static partial class GPUQuantizationKernels
         long weightsAddr = (long)rawWeights;
         long outputAddr = (long)output;
 
-        System.Threading.Tasks.Parallel.For(0, numChunks, chunkIdx =>
+        Parallel.For(0, numChunks, chunkIdx =>
         {
             float* pInput = (float*)inputAddr;
             byte* pWeights = (byte*)weightsAddr;

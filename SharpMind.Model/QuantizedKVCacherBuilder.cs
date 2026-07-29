@@ -2,17 +2,12 @@ using SharpMind.Core.Quantization;
 
 namespace SharpMind.Model;
 
-public class QuantizedKVCacherBuilder : IKVCacheBuilder
+public class QuantizedKVCacherBuilder(QuantDType quantKind) : IKVCacheBuilder
 {
-    public QuantDType QuantKind { get; }
+    public QuantDType QuantKind { get; } = quantKind;
 
     public QuantizedKVCacherBuilder() : this(QuantDType.Q8_0)
     {
-    }
-
-    public QuantizedKVCacherBuilder(QuantDType quantKind)
-    {
-        QuantKind = quantKind;
     }
 
     public IKVCache CreateKVCache(int batchSize, int numKvHeads, int maxSeqLen, int headDim)

@@ -1,6 +1,5 @@
 ﻿namespace SharpMind.Core.AgentTools
-{
-   
+{   
     public class EchoTool
     {
         [ToolDesc("Simulates a canyon echo by repeating a person's name.")]

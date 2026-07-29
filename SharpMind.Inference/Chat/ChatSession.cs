@@ -284,7 +284,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
                 list.Add(new ChatMessage
                 {
                     Role = msg.Role,
-                    Content = StripThinking(msg.Content),
+                    Content = ChatSession<T, K>.StripThinking(msg.Content),
                     Name = msg.Name,
                     Timestamp = msg.Timestamp,
                     IsPinned = msg.IsPinned,
@@ -384,12 +384,12 @@ private void ThrowIfDisposed()
         _promptHistoryCache = null;
     }
 
-    private string StripThinking(string text)
+    private static string StripThinking(string text)
     {
         if (string.IsNullOrWhiteSpace(text)) return text;
 
         // Remove all <think>...</think> blocks
-        var result = Regex.Replace(text, @"<think>.*?</think>", "", RegexOptions.Singleline);
+        var result = RegexGenerated.ThinkingBlocks.Replace(text,string.Empty);// Regex.Replace(text, @"<think>.*?</think>", "", RegexOptions.Singleline);
 
         // Also trim trailing garbage characters often seen at the end of LLM responses (e.g. EOS tokens decoded as symbols)
         return result.TrimEnd('\uFFFD', '\u0000', '\u0001', '\u0002', '\u0003').Trim();
@@ -414,7 +414,7 @@ private void ThrowIfDisposed()
         if (trimmed.Length == 0) return false;
 
         // 1. Try <tool_call>...</tool_call> block first
-        var toolCallM = Regex.Match(trimmed, @"<tool_call>(.*?)</tool_call>", RegexOptions.Singleline);
+        var toolCallM = RegexGenerated.ToolCallBlocks.Match(trimmed);// Regex.Match(trimmed, @"<tool_call>(.*?)</tool_call>", RegexOptions.Singleline);
         if (toolCallM.Success)
         {
             string inner = toolCallM.Groups[1].Value.Trim();
@@ -437,7 +437,7 @@ private void ThrowIfDisposed()
         parsed = null;
 
         // Light repair: remove trailing commas before ] or }
-        string repaired = Regex.Replace(text, @",\s*([}\]])", "$1");
+        string repaired = RegexGenerated.TrailingCommasBeforeClosingBracketOrBrace.Replace(text,"$1");// Regex.Replace(text, @",\s*([}\]])", "$1");
 
         // If the text ends without a closing brace and has an odd count of
         // opening vs closing braces, append the missing closing brace.

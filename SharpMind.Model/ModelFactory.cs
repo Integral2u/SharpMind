@@ -48,9 +48,7 @@ public static class ModelFactory
         ArgumentNullException.ThrowIfNull(modelConfig);
         ArgumentNullException.ThrowIfNull(sharpConfig);
         modelConfig.Validate();
-        var fmt = ModelFormatHelpers.GetFormatForExtension(path);
-        if (fmt == null) throw new FileLoadException($"File type not supported: {path}", path);
-
+        var fmt = ModelFormatHelpers.GetFormatForExtension(path) ?? throw new FileLoadException($"File type not supported: {path}", path);
         var embedding = new Tensor<float>(modelConfig.VocabSize, modelConfig.HiddenDim);
         Tensor<float>? lmHead = null;
         var finalNormW = Tensor<float>.Ones(modelConfig.HiddenDim);
@@ -268,7 +266,7 @@ public static class ModelFactory
         };
     }
 
-    private static NormLayer BuildNorm(int dim, SharpMindConfig sharpConfig, float eps, Tensor<float> w, Tensor<float>? b) => sharpConfig.Norm switch
+    private static NormLayer BuildNorm(int dim, SharpMindConfig sharpConfig, float eps, Tensor<float>? w, Tensor<float>? b) => sharpConfig.Norm switch
     {
         NormKind.RMSNorm => new RmsNormLayer(dim, eps, w, b),
         NormKind.LayerNorm => new LayerNormLayer(dim, eps, w, b),

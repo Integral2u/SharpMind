@@ -32,8 +32,10 @@ public static class LogitOpsFactory
             return (LogitOps)Activator.CreateInstance(fallbackType, projectionWeight, rawWeight)!;
         }
 
-        var mapping = new Dictionary<string, string>(baseMapping);
-        mapping[SharpMindConfig.KeyLogit] = compound;
+        var mapping = new Dictionary<string, string>(baseMapping)
+        {
+            [SharpMindConfig.KeyLogit] = compound
+        };
 
         var type = _typeCache.GetOrAdd(
             MappingHash.Compute(mapping),

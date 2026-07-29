@@ -1,5 +1,4 @@
 using System.Text.Json;
-using SharpMind.Core;
 
 namespace SharpMind.Core.AgentTools;
 
@@ -8,7 +7,7 @@ public class WeatherTool
     private static readonly HttpClient _httpClient = new();
 
     [ToolDesc("Gets the current weather for a specified city.")]
-    public async Task<string> GetCurrentWeather([ToolDesc("The name of the city.")] string city)
+    public static async Task<string> GetCurrentWeather([ToolDesc("The name of the city.")] string city)
     {
         try
         {
@@ -25,7 +24,7 @@ public class WeatherTool
             double lat = first.GetProperty("latitude").GetDouble();
             double lon = first.GetProperty("longitude").GetDouble();
             string name = first.GetProperty("name").GetString() ?? city;
-            string country = first.TryGetProperty("country", out var c) ? c.GetString() : "";
+            string country = first.TryGetProperty("country", out var c) ? (c.GetString())??string.Empty : string.Empty;
 
             // 2. Weather: Lat/Lon -> Current Weather
             var weatherUrl = $"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true";

@@ -816,7 +816,7 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
             eIdx = eIdx < 0 ? list.Count + eIdx : eIdx;
             sIdx = Math.Clamp(sIdx, 0, list.Count);
             eIdx = Math.Clamp(eIdx, 0, list.Count);
-            return sIdx >= eIdx ? new List<JinjaDict>() : list[sIdx..eIdx];
+            return sIdx >= eIdx ? [] : list[sIdx..eIdx];
         }
         return null;
     }

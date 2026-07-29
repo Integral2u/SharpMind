@@ -1,15 +1,8 @@
-using SharpMind.Core;
-
 namespace SharpMind.Core.AgentTools;
 
-public class FileSystemTool
+public class FileSystemTool(string projectRoot)
 {
-    private readonly string _projectRoot;
-
-    public FileSystemTool(string projectRoot)
-    {
-        _projectRoot = Path.GetFullPath(projectRoot);
-    }
+    private readonly string _projectRoot = Path.GetFullPath(projectRoot);
 
     private string ResolvePath(string relativePath)
     {

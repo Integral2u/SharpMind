@@ -4,6 +4,14 @@ namespace SharpMind.Inference
 {
     public partial class RegexGenerated
     {
+        [GeneratedRegex(@"<think>.*?</think>", RegexOptions.Singleline)]
+        public static partial Regex ThinkingBlocks { get; }
+        [GeneratedRegex(@"<tool_call>(.*?)</tool_call>", RegexOptions.Singleline)]
+        public static partial Regex ToolCallBlocks { get; }
+
+        [GeneratedRegex(@",\s*([}\]])")]
+        public static partial Regex TrailingCommasBeforeClosingBracketOrBrace { get; }
+
         [GeneratedRegex(@"<\|[^|]+\|>")]
         public static partial Regex ChatMLTokens { get; }
         [GeneratedRegex(@"^for\s+(\w+)\s+in\s+(.+)$")]

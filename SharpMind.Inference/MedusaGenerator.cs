@@ -70,7 +70,7 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
     private readonly Tokenization.Tokenizer _tokenizer;
     private readonly IKVCache[] _caches;
     private readonly Random _defaultRng;
-    private readonly SharpMind.Core.Memory.Workspace _workspace;
+    private readonly Core.Memory.Workspace _workspace;
     private readonly MedusaHeads _medusaHeads;
 
     // _normedHiddenScratch caches the RMS-normed hidden state that feeds the Medusa heads.
@@ -106,7 +106,7 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
         _model = model;
         _tokenizer = tokenizer;
         _medusaHeads = medusaHeads;
-
+        
         if (caches != null)
         {
             _caches = caches;
@@ -123,8 +123,8 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
                 _caches[i] = new T().CreateKVCache(1, numKvHeads, maxSeqLen, headDim);
         }
 
-        _workspace = new SharpMind.Core.Memory.Workspace(
-            SharpMind.Core.Memory.Workspace.CalculateRequiredSize(
+        _workspace = new Core.Memory.Workspace(
+            Core.Memory.Workspace.CalculateRequiredSize(
                 model.Config.HiddenDim, model.Config.FfnDim, model.Config.VocabSize,
                 model.Config.NumLayers, model.Config.MaxSeqLen));
 
@@ -503,5 +503,5 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
     }
 
     private void ThrowIfDisposed() =>
-        ObjectDisposedException.ThrowIf(_disposed, nameof(MedusaGenerator<T>));
+        ObjectDisposedException.ThrowIf(_disposed, nameof(MedusaGenerator<>));
 }

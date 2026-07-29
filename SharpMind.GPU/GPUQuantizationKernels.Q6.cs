@@ -1,9 +1,7 @@
 using System.Runtime.InteropServices;
-using System.Runtime.Intrinsics;
 using ILGPU;
 using ILGPU.Runtime;
 using JigSawDotNet;
-using SharpMind.Core;
 using SharpMind.Core.Quantization;
 
 namespace SharpMind.GPU;
@@ -107,7 +105,7 @@ public static partial class GPUQuantizationKernels
         }
         else
         {
-            System.Threading.Tasks.Parallel.For(0, M, row =>
+            Parallel.For(0, M, row =>
             {
                 float* pInRow = input + (long)row * K;
                 float* pOutRow = output + (long)row * N;

@@ -68,32 +68,32 @@ public sealed class ParquetSource : IDataSource
                 int rowCount = (int)rowGroupReader.RowCount;
 
                 // 1. Read "from" column
-                object[] fromCol = null;
+                object[]? fromCol = null;
                 if (fromField != null)
                 {
                     // Swap string[] for whatever type 'from' is (e.g., int[], long[])
                     string[] buffer = new string[rowCount];
                     await rowGroupReader.ReadAsync(fromField, buffer,null, cancellationToken);
-                    fromCol = buffer.Cast<object>().ToArray();
+                    fromCol = [.. buffer.Cast<object>()];
                 }
 
                 // 2. Read "value" column
-                object[] valueCol = null;
+                object[]? valueCol = null;
                 if (valueField != null)
                 {
                     // Swap double[] for whatever type 'value' is (e.g., decimal[], float[])
                     double[] buffer = new double[rowCount];
                     await rowGroupReader.ReadAsync<double>(valueField, buffer, null, cancellationToken);
-                    valueCol = buffer.Cast<object>().ToArray();
+                    valueCol = [.. buffer.Cast<object>()];
                 }
 
                 // 3. Read "source" column
-                object[] sourceCol = null;
+                object[]? sourceCol = null;
                 if (sourceField != null)
                 {
                     string[] buffer = new string[rowCount];
                     await rowGroupReader.ReadAsync(sourceField, buffer, null, cancellationToken);
-                    sourceCol = buffer.Cast<object>().ToArray();
+                    sourceCol = [.. buffer.Cast<object>()];
                 }
 
                 if (fromCol != null && valueCol != null)

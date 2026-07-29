@@ -56,10 +56,7 @@ public sealed unsafe class Workspace : IDisposable
     /// <summary>
     /// Resets the offset to 0, effectively "freeing" all rented tensors for the next forward pass.
     /// </summary>
-    public void Reset()
-    {
-        _offset = 0;
-    }
+    public void Reset() => _offset = 0;
 
     public long UsedBytes => _offset;
     public long CapacityBytes => _capacity;

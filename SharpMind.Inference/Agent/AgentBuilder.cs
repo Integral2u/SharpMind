@@ -26,7 +26,7 @@ namespace SharpMind.Inference.Agent
         public IReadOnlyList<IPromptPostProcessor> PluginPostProcessors { get; set; } = [];
         public HashSet<string> DisabledTools { get; set; } = [];
 
-        public IReadOnlyList<string> RegisteredToolNames => ToolMethods.Keys.ToList();
+        public IReadOnlyList<string> RegisteredToolNames => [.. ToolMethods.Keys];
 
         // Not currently used in prompt building but available for callers that want to
         // inspect or manipulate sections as keyed lists.

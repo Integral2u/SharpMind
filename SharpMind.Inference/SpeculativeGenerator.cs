@@ -12,7 +12,7 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
     private readonly Tokenization.Tokenizer _tokenizer;
     private readonly IKVCache[] _caches;
     private readonly Random _defaultRng;
-    private readonly SharpMind.Core.Memory.Workspace? _workspace;
+    private readonly Core.Memory.Workspace? _workspace;
     private readonly int[] _decodeTokenScratch = new int[1];
     private float[]? _penaltyScratch;
     private bool _disposed;
@@ -51,7 +51,7 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
             _caches[i] = new T().CreateKVCache(1, numKvHeads, maxSeqLen, headDim);
     }
 
-    _workspace = new SharpMind.Core.Memory.Workspace(SharpMind.Core.Memory.Workspace.CalculateRequiredSize(model.Config.HiddenDim, model.Config.FfnDim, model.Config.VocabSize, model.Config.NumLayers, model.Config.MaxSeqLen));
+    _workspace = new Core.Memory.Workspace(SharpMind.Core.Memory.Workspace.CalculateRequiredSize(model.Config.HiddenDim, model.Config.FfnDim, model.Config.VocabSize, model.Config.NumLayers, model.Config.MaxSeqLen));
     _defaultRng = seed.HasValue ? new Random(seed.Value) : Random.Shared;
 }
 
@@ -347,5 +347,5 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
             _caches[i].Dispose();
     }
 
-    private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, nameof(SpeculativeGenerator<T>));
+    private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, nameof(SpeculativeGenerator<>));
 }
