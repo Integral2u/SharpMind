@@ -179,7 +179,7 @@ public sealed class RoPE : PositionalEncoder
                 int i = 0;
                 if (Avx.IsSupported)
                 {
-                    for (; i <= ropePairs - 4; i += 4)
+                    for (; i <= ropePairs - 8; i += 8)
                     {
                         var cos = Vector256.LoadUnsafe(ref _cosCache[cacheBase + i]);
                         var sin = Vector256.LoadUnsafe(ref _sinCache[cacheBase + i]);
