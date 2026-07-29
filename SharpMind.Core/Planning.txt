@@ -3,6 +3,8 @@ you must make sure you understand the JigSawDotNet pattern and use. Intention is
 Review Sharmind.Core.Activations.* for example
 
 Tasks to implement.
+Task 0: Add IChatPromptFormatter options to CUI and ChatSession, Default would be current provided by ChatPromptFormatterFactory but we should have option for JinjaTemplateFormatter, ChatMLFormatter, QuestionAnswerFormatter or a RawInputFormatter.
+The dafault means we could be strategic later Perplexity Testing but have option to override would be good for other models.  It may be worth adding default terminator strings especiialy for Raw and Q&A formats 
 
 Task 1: SharpMind Native Model Format. *.SMM
 Design ModelFormat exclusivly for SharpMind.  This format should include all relevent metadata and layers with QuantDType layer positions and lenght for loading.
@@ -49,9 +51,7 @@ BOS: Llama family expects <|begin_of_text|> prepended, unlike Qwen2. Just confir
 
 Suggested order of operations: run it once as-is with your existing diagnostics (formatter dump + top-logit dump), see whether jinja.LastErrors fires and whether the top-5 logits look like reasonable English immediately at step 0. If step-0 logits already look like garbage with no formatter error, that's your RoPE-scaling signature — go implement item 1 before debugging anything else.
 
-2. Gemma 3 1B — good second target, exercises code you already built
 
-This is genuinely interesting for you specifically: Gemma 3 uses QK-norm and a pre/post-norm sandwich around both attention and FFN — which is exactly the QNormW/KNormW/PostNorm1W/PostNorm2W plumbing your DiagnosticModelRunner already dumps and TransformerWeights/AttentionLayer/ModelFactory already wire up. So this is less "does it load" and more "does that plumbing actually produce correct numbers end-to-end" — a good validation target. One caveat: Gemma 3 also uses alternating sliding-window/global local attention (5:1 pattern), and I didn't find any sliding-window masking in DecoderArch/AttentionLayer — it's doing plain full causal attention for every layer. For short test prompts this won't be visible (the window is usually 512–1024 tokens, well beyond a "what is the capital of France"-length prompt), but keep it in mind if outputs degrade on longer contexts — that'd be the missing sliding-window logic, not a new bug. unsloth/gemma-3-1b-it-GGUF, well under 2GB at any quant.
 
 3. Ministral 3B — worth a stretch test, same caveat as above
 
@@ -66,12 +66,14 @@ Gate+Up is a single blk.N.ffn_up.weight with shape [2 × intermediate, hidden] (
 
 Your ResolveTarget/ResolveFloatTarget logic only knows the split names, so a Phi3-family GGUF would either silently fail to populate those tensors or (worse) partially match on the wrong dimensions. Loading it today would likely produce the same kind of "fluent-looking but wrong" output you just spent this whole thread debugging — except this time it actually would be a code bug, and a subtle one to isolate from a "bad model" case. If you want Phi eventually, budget time for a SplitMergedQKV/SplitMergedGateUp-style preprocessing step in the loader before you point DiagnosticModelRunner at it — don't waste a debugging session on it as-is.
 
-On your hardware: worth calibrating expectations going in — your Qwen2-0.5B numbers ran 0.3–5.3 tok/s depending on quant, on a 2-core/4-thread Zen1 APU with no real GPU offload path. A 1B model will roughly halve that, and 3B will be rough (maybe 1–2 tok/s even at aggressive quant) — fine for correctness/termination testing, not for anything interactive. I'd size your test prompts short and lean on MaxTokens caps rather than expecting snappy runs.
-
 
 Discoveries: items for cleanup and checking
 JinjaTemplateFormatter check and correct, can AccessSlice return string? and argExpr in Eval is assigned but never used
 MedusaHeads.Calibrate assignes targetLogit but is never used in anything useful 
+
+still getting should these and variable be loaded, possibly otheres returning string.Empty ""
+[formatter ERROR] JINJA ERROR: variable 'date_string' not found in template env
+[formatter ERROR] JINJA ERROR: variable 'strftime_now' not found in template env
 
 check string[] knownTurnEndTokens =
         [

@@ -347,10 +347,11 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
         meta = LoadMeta(ggufPath);
         config = LoadConfig(meta)!;
 
-        // Load pre-computed RoPE frequencies from GGUF if present
-        float[]? ropeFreqs = LoadPrecomputedRopeFreqs(ggufPath, meta);
-        if (ropeFreqs != null)
-            config = config with { PrecomputedRopeFreqs = ropeFreqs };
+        // Disabled: GGUF-exported rope_freqs.weight is often all-1.0 (bug),
+        // causing all RoPE pairs to rotate by angle = pos (wrong). Theta-
+        // based computation produces correct frequencies and is used instead.
+        // float[]? ropeFreqs = LoadPrecomputedRopeFreqs(ggufPath, meta);
+        // if (ropeFreqs != null) config = config with { PrecomputedRopeFreqs = ropeFreqs };
 
         tokenizer = LoadTokenizerFromMeta(meta, config.VocabSize);
 
