@@ -11,7 +11,6 @@
       "SharpMind.Inference\\SharpMind.Inference.csproj",
       "SharpMind.Model\\SharpMind.Model.csproj",
       "SharpMind.Samples\\SharpMind.Samples.csproj",
-      "SharpMind.Tests\\Reference\\Reference.csproj",
       "SharpMind.Tests\\SharpMind.Tests.csproj",
       "SharpMind.Tokenization\\SharpMind.Tokenization.csproj",
       "SharpMind.Training\\SharpMind.Training.csproj"
