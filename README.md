@@ -44,6 +44,94 @@ It ships as a set of composable libraries plus a terminal chat application (`Sha
 
 ---
 
+## Quick Start: Load and Run a Model
+
+This walks through the smallest possible program that loads a GGUF model and starts an interactive chat session.
+
+### 1. Get a model
+
+Download a small instruct model to get started — [Qwen3-0.6B-Q8_0](https://huggingface.co/unsloth/Qwen3-0.6B-GGUF) is a good first choice: it's under 1GB, loads quickly, and is known to produce coherent output out of the box.
+
+Place the `.gguf` file in a folder, e.g. `C:\Models\Qwen3-0.6B-Q8_0.gguf`.
+
+### 2. Minimal Program.cs
+
+```csharp
+using SharpMind.Core.Quantization;
+using SharpMind.Inference;
+using SharpMind.Inference.Chat;
+using SharpMind.Model;
+using SharpMind.Model.Config;
+using SharpMind.Model.Format;
+using SharpMind.Tokenization;
+
+var modelPath = @"C:\Models\Qwen3-0.6B-Q8_0.gguf";
+
+// 1. Load model metadata, config, and tokenizer from the GGUF file.
+var metaHelper = ModelFormatHelpers.GetModelMetaHelperFor(ModelFormat.Gguf);
+metaHelper.Load(modelPath, null, out ModelMetaData meta, out ModelConfig modelConfig, out Tokenizer? tokenizer);
+
+if (tokenizer == null)
+{
+    Console.WriteLine("No tokenizer data found in this GGUF file.");
+    return;
+}
+
+// 2. Resolve hardware/quant mapping and load the weights.
+var sharpConfig = modelConfig.ForModel();
+var qOps = QuantizationFactory.Create(sharpConfig.ResolvedHardware);
+
+using var weights = ModelFactory.CreateWeights(modelConfig, sharpConfig, qOps, modelPath, LoadMode.Full);
+weights.InitializeWeights();
+
+// 3. Build the transformer.
+using var model = ModelFactory.CreateTransformer(weights, sharpConfig);
+
+// 4. Start a chat session.
+await using var session = new ChatSession<StandardGeneratorBuilder<KVCacherBuilder>, KVCacherBuilder>(model, tokenizer, meta)
+{
+    MaxTokens = 512,
+    Temperature = 0.7f,
+    TopK = 40,
+    TopP = 0.9f,
+};
+session.InitializeChat();
+
+Console.WriteLine("Chat ready! Type a message (or 'exit' to quit).\n");
+var cts = new CancellationTokenSource();
+
+await session.StartChatAsync(Prompt, Response, cts.Token);
+
+async Task<ChatMessage> Prompt()
+{
+    Console.Write("\nYou: ");
+    var input = Console.ReadLine() ?? "exit";
+    if (input == "exit") cts.Cancel();
+    return new ChatMessage { Content = input, Role = ChatRole.User };
+}
+
+void Response(ChatStreamEntry entry) => Console.Write(entry.Token);
+```
+
+### What each step does
+
+| Step | Purpose |
+|---|---|
+| `metaHelper.Load` | Reads the GGUF file's architecture, hyperparameters, and tokenizer vocab. Pass `null` for the second argument unless the model ships an external tokenizer file. |
+| `modelConfig.ForModel()` | Resolves the config into a hardware-aware mapping (CPU/GPU, quant ops). |
+| `ModelFactory.CreateWeights(..., LoadMode.Full)` | Loads and dequantizes all weights into memory up front. Use `LoadMode.Streaming` instead on memory-constrained machines — it loads one layer at a time during inference rather than holding everything resident. |
+| `ModelFactory.CreateTransformer` | Wires the loaded weights into the actual forward-pass graph. |
+| `ChatSession<...>` | Manages conversation history, prompt formatting (auto-detected from the model's chat template), and the generation loop. |
+| `StartChatAsync(Prompt, Response, token)` | Runs the chat loop — `Prompt` supplies the next user message, `Response` receives streamed output tokens as they're generated. |
+
+### Notes
+
+- `Temperature = 0.7f`, `TopK = 40`, `TopP = 0.9f` give more natural, varied output than greedy decoding (`Temperature = 0`). Set `Temperature = 0` for deterministic, reproducible output when debugging.
+- `MaxTokens` caps the response length per turn — lower it (e.g. `128`) on slower hardware if you don't need long responses.
+- On memory-constrained machines, prefer `LoadMode.Streaming` over `LoadMode.Full`, and stick to Q4–Q8 quantized models under ~1B–3B params for reasonable throughput.
+
+---
+
 ## Extensibility: plugins
 
 Beyond JigSaw's compile-time kernel dispatch, `SharpMind.CUI` has a separate, simpler **runtime plugin loader** for extending the app itself without touching the core libraries. Drop a `.dll` into the app's `Plugins/` folder and `PluginLoader.LoadFrom` will scan it and wire up anything it recognizes:
