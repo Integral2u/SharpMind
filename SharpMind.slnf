@@ -1,0 +1,20 @@
+{
+  "solution": {
+    "path": "SharpMind.sln",
+    "projects": [
+      "SharpMind.Benchmarks\\SharpMind.Benchmarks.csproj",
+      "SharpMind.CUI\\SharpMind.CUI.csproj",
+      "SharpMind.Core\\SharpMind.Core.csproj",
+      "SharpMind.Data.Parquet\\SharpMind.Data.Parquet.csproj",
+      "SharpMind.Data\\SharpMind.Data.csproj",
+      "SharpMind.GPU\\SharpMind.GPU.csproj",
+      "SharpMind.Inference\\SharpMind.Inference.csproj",
+      "SharpMind.Model\\SharpMind.Model.csproj",
+      "SharpMind.Samples\\SharpMind.Samples.csproj",
+      "SharpMind.Tests\\Reference\\Reference.csproj",
+      "SharpMind.Tests\\SharpMind.Tests.csproj",
+      "SharpMind.Tokenization\\SharpMind.Tokenization.csproj",
+      "SharpMind.Training\\SharpMind.Training.csproj"
+    ]
+  }
+}
