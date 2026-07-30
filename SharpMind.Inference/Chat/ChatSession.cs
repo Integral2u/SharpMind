@@ -184,6 +184,8 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     /// streaming visible chain-of-thought before the response.
     /// </summary>
     public bool EnableThinking { get; set; }
+    /// <summary>JSON array of tool/function definitions (from AgentBuilder.ToolDefinitions).</summary>
+    public string? ToolDefinitionsJson { get; set; }
     public string UserName { get => _userName; set => _userName = value ?? "User"; }
     public float? TokensPerSecond { get; private set; }
     public float? TimeToFirstToken { get; private set; }
@@ -242,7 +244,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     private string BuildPrompt()
     {
         if (_formatter is not null)
-            return _formatter.Format(GetPromptHistory(), _tokenizer, _addBos, EnableThinking);
+            return _formatter.Format(GetPromptHistory(), _tokenizer, _addBos, EnableThinking, ToolDefinitionsJson);
 
         var sb = new System.Text.StringBuilder();
 

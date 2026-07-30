@@ -10,5 +10,9 @@ public interface IChatPromptFormatter
     /// reasoning block open or emit an empty <c>&lt;think&gt;&lt;/think&gt;</c>
     /// pair. Formatters that don't reference this variable simply ignore it.
     /// </param>
-    string Format(IReadOnlyList<ChatMessage> history, Tokenizer tokenizer, bool addBos, bool enableThinking = false);
+    /// <param name="toolsJson">
+    /// Optional JSON array of tool/function definitions (from AgentBuilder.ToolDefinitions).
+    /// Passed to Jinja templates as the <c>tools</c> and <c>custom_tools</c> variables.
+    /// </param>
+    string Format(IReadOnlyList<ChatMessage> history, Tokenizer tokenizer, bool addBos, bool enableThinking = false, string? toolsJson = null);
 }

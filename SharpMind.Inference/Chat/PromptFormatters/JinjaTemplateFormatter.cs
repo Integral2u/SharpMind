@@ -35,7 +35,7 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
 
     // Public entry point
 
-    public string Format(IReadOnlyList<ChatMessage> history, Tokenizer tokenizer, bool addBos, bool enableThinking = false)
+    public string Format(IReadOnlyList<ChatMessage> history, Tokenizer tokenizer, bool addBos, bool enableThinking = false, string? toolsJson = null)
     {
         // Build the variable context that templates can reference.
         string bosToken = addBos && tokenizer.BosId >= 0
@@ -51,17 +51,20 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
             ["content"] = (object)m.Content
         }).ToList();
 
+        // Convert tool definitions JSON to JinjaDict list for template access.
+        var toolsList = JsonToJinjaDictList(toolsJson);
+
         var env = new JinjaEnv();
         env.Set("messages", messages);
         env.Set("bos_token", bosToken);
         env.Set("eos_token", eosToken);
         env.Set("add_generation_prompt", (object)true);  // always true for inference
         env.Set("enable_thinking", (object)enableThinking);
-        env.Set("tools", null);  // Qwen3/Qwen2.5 templates check {% if tools %}
-        env.Set("custom_tools", new List<JinjaDict>());  // Llama-3 tool definitions (empty = no custom tools)
+        env.Set("tools", toolsList.Count > 0 ? (object)toolsList : (object)null!);  // Qwen3/Qwen2.5 templates check {% if tools %}
+        env.Set("custom_tools", (object)toolsList);  // Llama-3 tool definitions
         env.Set("tools_in_user_message", (object)false); // Llama-3: tool calls not in user message
-        env.Set("date_string", (object)"26 Jul 2024"); // fallback for templates that reference it
-        env.Set("strftime_now", (object)"26 Jul 2024"); // fallback if referenced as plain variable
+        env.Set("date_string", (object)DateTime.Now.ToString("dd MMM yyyy"));
+        env.Set("strftime_now", (object)DateTime.Now.ToString("dd MMM yyyy"));
 
         var errors = new List<string>();
         var tokens = Tokenise(_template);
@@ -609,6 +612,21 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
             });
         }
 
+        // Filter: expr | tojson
+        var tojsonM = RegexGenerated.JinjaExprToJson.Match(expr);
+        if (tojsonM.Success)
+        {
+            var v = Eval(tojsonM.Groups[1].Value, env, errors);
+            if (v is null) return (object)"null";
+            if (v is string sv) return (object)System.Text.Json.JsonSerializer.Serialize(sv);
+            if (v is bool bv) return (object)(bv ? "true" : "false");
+            if (v is long lv) return (object)lv.ToString();
+            if (v is int iv) return (object)iv.ToString();
+            if (v is JinjaDict dict) return (object)DictToJson(dict);
+            if (v is List<JinjaDict> list) return (object)ListToJson(list);
+            return (object)Stringify(v);
+        }
+
         // content.split('delim')[-1]  — last segment
         var splitM = RegexGenerated.JinjaSplitDelim.Match(expr);// Regex.Match(expr,@"^(\w+)\.split\('([^']*)'\)\[(-?\d+)\]$");
         if (splitM.Success)
@@ -743,9 +761,10 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
             string argExpr = funcM.Groups[2].Value;
             if (funcName == "strftime_now")
             {
-                // Return a fixed date string (no real date builtin needed for inference)
-                // argExpr is the format string like "%d %b %Y" — ignored for fixed output
-                return (object)"26 Jul 2024";
+                // Format string like "%d %b %Y" or empty for default
+                string fmt = argExpr.Trim('"', '\'', ' ');
+                try { return (object)(fmt.Length > 0 ? DateTime.Now.ToString(fmt) : DateTime.Now.ToString("dd MMM yyyy")); }
+                catch { return (object)DateTime.Now.ToString("dd MMM yyyy"); }
             }
             _ = argExpr; // suppress unused-variable warning
             errors?.Add($"JINJA ERROR: unknown function '{funcName}'");
@@ -1149,4 +1168,104 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
         ChatRole.User => "user",
         _ => "user"
     };
+
+    private static List<JinjaDict> JsonToJinjaDictList(string? json)
+    {
+        var result = new List<JinjaDict>();
+        if (string.IsNullOrWhiteSpace(json)) return result;
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Array) return result;
+            foreach (var el in doc.RootElement.EnumerateArray())
+            {
+                var dict = JsonElementToDict(el);
+                if (dict is not null) result.Add(dict);
+            }
+        }
+        catch { /* malformed tool JSON */ }
+        return result;
+    }
+
+    private static JinjaDict? JsonElementToDict(System.Text.Json.JsonElement el)
+    {
+        if (el.ValueKind != System.Text.Json.JsonValueKind.Object) return null;
+        var dict = new JinjaDict();
+        foreach (var prop in el.EnumerateObject())
+        {
+            dict[prop.Name] = JsonElementToObject(prop.Value);
+        }
+        return dict;
+    }
+
+    private static object? JsonElementToObject(System.Text.Json.JsonElement el) => el.ValueKind switch
+    {
+        System.Text.Json.JsonValueKind.String => el.GetString(),
+        System.Text.Json.JsonValueKind.Number => el.TryGetInt64(out var l) ? (object)l : (object)el.GetDouble(),
+        System.Text.Json.JsonValueKind.True => (object)true,
+        System.Text.Json.JsonValueKind.False => (object)false,
+        System.Text.Json.JsonValueKind.Null => null,
+        System.Text.Json.JsonValueKind.Object => JsonElementToDict(el),
+        System.Text.Json.JsonValueKind.Array => JsonArrayToList(el),
+        _ => el.GetRawText()
+    };
+
+    private static List<object?> JsonArrayToList(System.Text.Json.JsonElement el)
+    {
+        var list = new List<object?>();
+        foreach (var item in el.EnumerateArray()) list.Add(JsonElementToObject(item));
+        return list;
+    }
+
+    private static string DictToJson(JinjaDict dict)
+    {
+        var sb = new StringBuilder("{");
+        bool first = true;
+        foreach (var kv in dict)
+        {
+            if (!first) sb.Append(", ");
+            first = false;
+            sb.Append('"').Append(kv.Key).Append("\": ");
+            sb.Append(ObjectToJsonValue(kv.Value));
+        }
+        sb.Append('}');
+        return sb.ToString();
+    }
+
+    private static string ListToJson(List<JinjaDict> list)
+    {
+        var sb = new StringBuilder("[");
+        for (int i = 0; i < list.Count; i++)
+        {
+            if (i > 0) sb.Append(", ");
+            sb.Append(DictToJson(list[i]));
+        }
+        sb.Append(']');
+        return sb.ToString();
+    }
+
+    private static string ObjectToJsonValue(object? v) => v switch
+    {
+        null => "null",
+        string s => "\"" + s.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"",
+        bool b => b ? "true" : "false",
+        long l => l.ToString(),
+        int i => i.ToString(),
+        double d => d.ToString("G"),
+        JinjaDict d => DictToJson(d),
+        List<object?> l => ListToJsonValue(l),
+        _ => "\"" + (v.ToString() ?? "")?.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\""
+    };
+
+    private static string ListToJsonValue(List<object?> list)
+    {
+        var sb = new StringBuilder("[");
+        for (int i = 0; i < list.Count; i++)
+        {
+            if (i > 0) sb.Append(", ");
+            sb.Append(ObjectToJsonValue(list[i]));
+        }
+        sb.Append(']');
+        return sb.ToString();
+    }
 }
