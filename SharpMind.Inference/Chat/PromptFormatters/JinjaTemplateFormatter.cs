@@ -60,6 +60,8 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
         env.Set("tools", null);  // Qwen3/Qwen2.5 templates check {% if tools %}
         env.Set("custom_tools", new List<JinjaDict>());  // Llama-3 tool definitions (empty = no custom tools)
         env.Set("tools_in_user_message", (object)false); // Llama-3: tool calls not in user message
+        env.Set("date_string", (object)"26 Jul 2024"); // fallback for templates that reference it
+        env.Set("strftime_now", (object)"26 Jul 2024"); // fallback if referenced as plain variable
 
         var errors = new List<string>();
         var tokens = Tokenise(_template);
@@ -745,6 +747,7 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
                 // argExpr is the format string like "%d %b %Y" — ignored for fixed output
                 return (object)"26 Jul 2024";
             }
+            _ = argExpr; // suppress unused-variable warning
             errors?.Add($"JINJA ERROR: unknown function '{funcName}'");
             return null;
         }
