@@ -20,6 +20,9 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
     private readonly int[]       _decodeTokenScratch = new int[1];
     /// <summary>Cached scratch buffer for repetition-penalty copy to avoid <see cref="ArrayPool{T}.Rent"/> per token.</summary>
     private float[]?              _penaltyScratch;
+    /// <summary>Diagnostic: fired for each generated token ID during the generation loop.</summary>
+    public Action<int>? OnTokenGenerated;
+
     /// <summary>Cached scratch buffer for stop-string tail matching to avoid per-token allocation.</summary>
     private char[]?               _stopCheckBuf;
     private bool                  _disposed;
@@ -159,6 +162,7 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
                     nextId = Sampler.Sample(logitsSlice, sampleCfg, rng);
 
                 _generatedIds.Add(nextId);
+                OnTokenGenerated?.Invoke(nextId);
 
                 rateTracker.RecordToken();
                 TimeToFirstToken = rateTracker.TimeToFirstToken;

@@ -43,7 +43,7 @@ namespace SharpMind.Inference
         public static partial Regex JinjaExprTrim { get; }
         [GeneratedRegex(@"^(.+?)\s*\|\s*length\s*$")]
         public static partial Regex JinjaExprLength { get; }
-        [GeneratedRegex(@"^(.+?)\s*\|\s*tojson\s*$")]
+        [GeneratedRegex(@"^(.+?)\s*\|\s*tojson(?:\s*\(\s*indent\s*=\s*\d+\s*\))?\s*$")]
         public static partial Regex JinjaExprToJson { get; }
         [GeneratedRegex(@"^(.+?)\s+is\s+(not\s+)?defined$")]
         public static partial Regex JinjaIsDefined { get; }

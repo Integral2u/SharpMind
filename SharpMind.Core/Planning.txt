@@ -70,26 +70,6 @@ Discoveries: items for cleanup and checking
 
 MedusaHeads.Calibrate assignes targetLogit but is never used in anything useful 
 
-I think 1 and 2 may be related and we have issues in our prompt formatting and handling ouf output.
-These are some additional notes i've been making along the way.
-JinjaTemplateFormatter check and correct, can AccessSlice return string? and argExpr in Eval is assigned but never used
-We are still getting should these and variable be loaded, possibly otheres returning string.Empty ""
-[formatter ERROR] JINJA ERROR: variable 'date_string' not found in template env
-[formatter ERROR] JINJA ERROR: variable 'strftime_now' not found in template env
-
-I noticed this in another class just in case we are missing anything
-string[] knownTurnEndTokens =
-[
-    "<|eot_id|>",
-    "<|im_end|>",
-    "<|end_of_text|>",
-    "<|end▁of▁sentence|>",
-    "\uFFFD\uFFFDend\uFFFDof\uFFFDsentence\uFFFD\uFFFD",  // fallback encoding
-    "<end_of_turn>",
-    "</s>",
-]; 
-could be usefull for termining chat where models are not exiting correctly qwen2 "</s> or "\uFFFD\uFFFDend\uFFFDof\uFFFDsentence\uFFFD\uFFFD",  // fallback encoding 
-
 
         1: Excessive validation, see SharpMind.Core.InternalLog and SharpMind.Core.Diagnostics.SanityChecks and use of [Conditional("DEBUG")]
         SharpMind.Core.InternalLog could be rolled up into SharpMind.Core.Diagnostics.SanityChecks

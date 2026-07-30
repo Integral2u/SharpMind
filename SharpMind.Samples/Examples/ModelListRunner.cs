@@ -90,7 +90,7 @@ namespace SharpMind.Samples.Examples
                     Console.ForegroundColor = text.Status == ChatStatus.Thinking ? ConsoleColor.Gray : ConsoleColor.Blue;
                     await Console.Out.WriteAsync(text.Token);
                     tok++;
-                    if (tok > maxTokens) cancellationTokenSource.Cancel();
+                    //if (tok > maxTokens) cancellationTokenSource.Cancel();
                 }
                 async Task<ChatMessage> Prompt()
                 {

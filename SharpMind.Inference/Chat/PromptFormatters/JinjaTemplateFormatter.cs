@@ -53,6 +53,7 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
 
         // Convert tool definitions JSON to JinjaDict list for template access.
         var toolsList = JsonToJinjaDictList(toolsJson);
+        bool hasTools = toolsList.Count > 0;
 
         var env = new JinjaEnv();
         env.Set("messages", messages);
@@ -60,8 +61,15 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
         env.Set("eos_token", eosToken);
         env.Set("add_generation_prompt", (object)true);  // always true for inference
         env.Set("enable_thinking", (object)enableThinking);
-        env.Set("tools", toolsList.Count > 0 ? (object)toolsList : (object)null!);  // Qwen3/Qwen2.5 templates check {% if tools %}
-        env.Set("custom_tools", (object)toolsList);  // Llama-3 tool definitions
+        // Only set tools/custom_tools when there are actual tool definitions.
+        // An empty list makes templates think tools ARE present (is not none → true),
+        // which causes Llama-3 to render tool-related system message content
+        // even when no tools were configured.
+        if (hasTools)
+        {
+            env.Set("tools", (object)toolsList);
+            env.Set("custom_tools", (object)toolsList);
+        }
         env.Set("tools_in_user_message", (object)false); // Llama-3: tool calls not in user message
         env.Set("date_string", (object)DateTime.Now.ToString("dd MMM yyyy"));
         env.Set("strftime_now", (object)DateTime.Now.ToString("dd MMM yyyy"));
@@ -106,26 +114,13 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
 
             if (next == comment)
             {
-                // {# comment #} — discard entirely after processing strip modifiers
+                // {# comment #}
                 int end = src.IndexOf("#}", next + 2, StringComparison.Ordinal);
                 if (end < 0) { result.Add(new Token(TKind.Text, src[next..], false, false)); break; }
                 string raw = src[(next + 2)..end];
                 bool sr = raw.EndsWith('-');
-                bool sl = raw.StartsWith('-');
+                ApplyStripLeftPrevText(result, raw.StartsWith('-'));
                 pos = end + 2;
-                // strip-left: trim trailing whitespace from output so far
-                if (sl)
-                    while (result.Count > 0 && result[^1] is Token { Kind: TKind.Text } t && t.Body.Length > 0
-                           && char.IsWhiteSpace(t.Body[^1]))
-                    {
-                        string trimmed = t.Body.TrimEnd();
-                        if (trimmed.Length == 0)
-                            result.RemoveAt(result.Count - 1);
-                        else
-                            result[^1] = t with { Body = trimmed };
-                        if (trimmed.Length > 0) break; // keep trimming prior tokens if last was all ws
-                    }
-                // strip-right: eat the immediately following newline
                 if (sr && pos < src.Length && src[pos] == '\n') pos++;
             }
             else if (next == expr && (tag < 0 || expr < tag))
@@ -133,12 +128,11 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
                 int end = src.IndexOf("}}", next + 2, StringComparison.Ordinal);
                 if (end < 0) { result.Add(new Token(TKind.Text, src[next..], false, false)); break; }
                 string raw = src[(next + 2)..(end)];
-                bool sl = raw.StartsWith('-');
                 bool sr = raw.EndsWith('-');
+                ApplyStripLeftPrevText(result, raw.StartsWith('-'));
                 string body = raw.TrimStart('-').TrimEnd('-').Trim();
-                result.Add(new Token(TKind.Output, body, sl, sr));
+                result.Add(new Token(TKind.Output, body, false, sr));
                 pos = end + 2;
-                // strip-right: eat the immediately following newline
                 if (sr && pos < src.Length && src[pos] == '\n') pos++;
             }
             else
@@ -146,16 +140,30 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
                 int end = src.IndexOf("%}", next + 2, StringComparison.Ordinal);
                 if (end < 0) { result.Add(new Token(TKind.Text, src[next..], false, false)); break; }
                 string raw = src[(next + 2)..end];
-                bool sl = raw.StartsWith('-');
                 bool sr = raw.EndsWith('-');
+                ApplyStripLeftPrevText(result, raw.StartsWith('-'));
                 string body = raw.Trim().TrimStart('-').TrimEnd('-').Trim();
-                result.Add(new Token(TKind.Tag, body, sl, sr));
+                result.Add(new Token(TKind.Tag, body, false, sr));
                 pos = end + 2;
-                // strip-right: eat the immediately following newline
                 if (sr && pos < src.Length && src[pos] == '\n') pos++;
             }
         }
         return result;
+    }
+
+    private static void ApplyStripLeftPrevText(List<Token> result, bool stripLeft)
+    {
+        if (!stripLeft) return;
+        while (result.Count > 0 && result[^1] is Token { Kind: TKind.Text } t)
+        {
+            string trimmed = t.Body.TrimEnd();
+            if (trimmed.Length == t.Body.Length) break; // no trailing whitespace
+            if (trimmed.Length == 0)
+                result.RemoveAt(result.Count - 1);
+            else
+                result[^1] = t with { Body = trimmed };
+            if (trimmed.Length > 0) break;
+        }
     }
 
     private static int EarliestNonNegative(int a, int b, int c)
@@ -612,7 +620,7 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
             });
         }
 
-        // Filter: expr | tojson
+        // Filter: expr | tojson  or  expr | tojson(indent=N)
         var tojsonM = RegexGenerated.JinjaExprToJson.Match(expr);
         if (tojsonM.Success)
         {
@@ -766,6 +774,12 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
                 try { return (object)(fmt.Length > 0 ? DateTime.Now.ToString(fmt) : DateTime.Now.ToString("dd MMM yyyy")); }
                 catch { return (object)DateTime.Now.ToString("dd MMM yyyy"); }
             }
+            if (funcName == "raise_exception")
+            {
+                // Jinja2 built-in: aborts rendering with the given message.
+                // We silently return empty string so the template continues.
+                return (object)"";
+            }
             _ = argExpr; // suppress unused-variable warning
             errors?.Add($"JINJA ERROR: unknown function '{funcName}'");
             return null;
@@ -905,22 +919,27 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
     private static int FindOperatorOutsideQuotes(string s, char op, bool requireDouble = false)
     {
         bool inSingle = false, inDouble = false;
+        int depth = 0;
         for (int i = 0; i < s.Length; i++)
         {
             char c = s[i];
             if (c == '\'' && !inDouble) inSingle = !inSingle;
             else if (c == '"' && !inSingle) inDouble = !inDouble;
-            else if (!inSingle && !inDouble && c == op)
+            else if (!inSingle && !inDouble)
             {
-                if (requireDouble)
+                if (c is '(' or '[') depth++;
+                else if (c is ')' or ']') depth--;
+                else if (depth == 0 && c == op)
                 {
-                    // Match == but not != (preceded by !) or = alone
-                    if (i + 1 < s.Length && s[i + 1] == '=' && (i == 0 || s[i - 1] != '!'))
+                    if (requireDouble)
+                    {
+                        if (i + 1 < s.Length && s[i + 1] == '=' && (i == 0 || s[i - 1] != '!'))
+                            return i;
+                    }
+                    else
+                    {
                         return i;
-                }
-                else
-                {
-                    return i;
+                    }
                 }
             }
         }
