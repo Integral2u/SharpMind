@@ -4,8 +4,7 @@ you must make sure you understand the JigSawDotNet pattern and use. Intention is
 Review Sharmind.Core.Activations.* for example
 
 Tasks to implement.
-Task 0: Add IChatPromptFormatter options to CUI and ChatSession, Default would be current provided by ChatPromptFormatterFactory but we should have option for JinjaTemplateFormatter, ChatMLFormatter, QuestionAnswerFormatter or a RawInputFormatter.
-The dafault means we could be strategic later Perplexity Testing but have option to override would be good for other models.  It may be worth adding default terminator strings especiialy for Raw and Q&A formats 
+Task 0: It may be worth adding default terminator strings to IChatPromptFormatter especiialy for Raw and Q&A formats 
 
 Task 1: SharpMind Native Model Format. *.SMM
 Design ModelFormat exclusivly for SharpMind.  This format should include all relevent metadata and layers with QuantDType layer positions and lenght for loading.

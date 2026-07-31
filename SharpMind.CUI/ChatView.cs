@@ -330,7 +330,7 @@ public sealed class ChatView : View
         {
             listView.SetSource(artifacts.Select(a =>
             {
-                string name = a.FileName;
+                string name = a.FileName??string.Empty;
                 if (string.IsNullOrEmpty(name))
                     name = string.IsNullOrEmpty(a.Type) ? "artifact" : $"artifact.{a.Type}";
                 string size = a.Content is null || a.Content.Length == 0 ? " [empty]" : $" ({a.Content.Length}B)";

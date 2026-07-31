@@ -32,7 +32,7 @@ public sealed record GenerationConfig
     /// Applied multiplicatively to the logit before sampling.
     /// Typical: 1.1–1.3.
     /// </summary>
-    public float RepetitionPenalty { get; init; } = 1.0f;
+    public float RepetitionPenalty { get; init; } = 1.1f;
 
     /// <summary>
     /// Number of most recent tokens to consider for repetition penalty.

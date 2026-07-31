@@ -15,7 +15,7 @@ public sealed record SamplingConfig
     ///  >1   → flatter distribution (more random)
     ///  &lt;1  → sharper distribution (more peaked)
     /// </summary>
-    public float Temperature { get; init; } = 1.0f;
+    public float Temperature { get; init; } = 0.0f;
 
     /// <summary>
     /// Top-k filtering: keep only the k highest-probability tokens before sampling.

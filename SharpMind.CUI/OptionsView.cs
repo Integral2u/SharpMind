@@ -11,12 +11,43 @@ namespace SharpMind.CUI;
 public sealed class OptionsView : View
 {
     private readonly SessionOptions _options;
+    private readonly AppSettings _settings;
     private readonly View _formContent;
+    private readonly TextField projectPathField;
+    private readonly RadioGroup cacheRadio;
+    private readonly RadioGroup loadModeRadio;
+    private readonly RadioGroup formatterRadio;
+    private readonly RadioGroup hwRadio;
+    private readonly CheckBox gpuCheck;
+    private readonly CheckBox gpuVecDotCheck;
+    private readonly CheckBox gpuMatMulCheck;
+    private readonly CheckBox parallelCheck;
+    private readonly TextField topKField;
+    private readonly TextField topPField;
+    private readonly TextField repetitionPenaltyField;
+    private readonly TextField maxTokensField;
+    private readonly TextField userNameField;
+    private readonly RadioGroup generatorRadio;
+    private readonly CheckBox gpuNonQuantCheck;
+    private readonly TextField tempField;
+    private readonly TextField repetitionWindowField;
+    private readonly TextField agentNameField;
+    private readonly CheckBox agentsCheck;
+    private readonly CheckBox enableThinkingCheck;
+    private readonly RadioGroup compactorRadio;
+    private readonly RadioGroup fileAccessRadio;
+    private readonly RadioGroup networkAccessRadio;
+    private readonly TextField skillField;
+    private readonly TextField toolsFolderField;
+    private readonly RadioGroup? pluginCompactorRadio;
+    private readonly TextField toolField;
+    private PluginLoadResult pluginResult = new();
+    private ustring[] pluginCompactorNames = [];
 
-    public OptionsView(SessionOptions options, Action onLaunch, Action onCancel)
+    public OptionsView(SessionOptions options, AppSettings settings, Action onLaunch, Action onCancel)
     {
         _options = options;
-
+        _settings = settings;
         // ScrollView's own Width/Height become the visible viewport; formContent
         // is sized to its full (taller-than-the-window) extent and set as
         // ScrollView.ContentSize. Several Terminal.Gui v1 GitHub issues report
@@ -53,7 +84,7 @@ public sealed class OptionsView : View
         row += 2;
 
         AddLabel("Project path:");
-        var projectPathField = new TextField((ustring)(options.ProjectPath ?? "")) { X = 30, Y = row, Width = 45 };
+        projectPathField = new TextField((ustring)(options.ProjectPath ?? "")) { X = 30, Y = row, Width = 45 };
         projectPathField.TextChanged += (_) => _options.ProjectPath = string.IsNullOrWhiteSpace(projectPathField.Text.ToString()) ? null : projectPathField.Text.ToString();
         var projectPathOpen = new Button("Open...") { X = Pos.Right(projectPathField) + 1, Y = row };
         projectPathOpen.Clicked += () =>
@@ -65,61 +96,61 @@ public sealed class OptionsView : View
         row += 2;
 
         AddLabel("Generator strategy:");
-        var generatorRadio = new RadioGroup(Enum.GetNames<GeneratorStrategy>().Select(p => (ustring)p).ToArray()) { X = 30, Y = row, SelectedItem = (int)options.Generator };
+        generatorRadio = new RadioGroup([.. Enum.GetNames<GeneratorStrategy>().Select(p => (ustring)p)]) { X = 30, Y = row, SelectedItem = (int)options.Generator };
         generatorRadio.SelectedItemChanged += (args) => _options.Generator = (GeneratorStrategy)args.SelectedItem;
         _formContent.Add(generatorRadio);
         row += Enum.GetValues<GeneratorStrategy>().Length + 1;
 
         AddLabel("KV cache strategy:");
-        var cacheRadio = new RadioGroup(Enum.GetNames<CacheStrategy>().Select(p => (ustring)p).ToArray()) { X = 30, Y = row, SelectedItem = (int)options.Cache };
+        cacheRadio = new RadioGroup([.. Enum.GetNames<CacheStrategy>().Select(p => (ustring)p)]) { X = 30, Y = row, SelectedItem = (int)options.Cache };
         cacheRadio.SelectedItemChanged += (args) => _options.Cache = (CacheStrategy)args.SelectedItem;
         _formContent.Add(cacheRadio);
         row += Enum.GetValues<CacheStrategy>().Length + 1;
 
         AddLabel("Weight load mode:");
-        var loadModeRadio = new RadioGroup(Enum.GetNames<LoadMode>().Select(p => (ustring)p).ToArray()) { X = 30, Y = row, SelectedItem = (int)options.LoadMode };
+        loadModeRadio = new RadioGroup([.. Enum.GetNames<LoadMode>().Select(p => (ustring)p)]) { X = 30, Y = row, SelectedItem = (int)options.LoadMode };
         loadModeRadio.SelectedItemChanged += (args) => _options.LoadMode = (LoadMode)args.SelectedItem;
         _formContent.Add(loadModeRadio);
         row += Enum.GetValues<LoadMode>().Length + 1;
 
         AddLabel("Formatter strategy:");
-        var formatterRadio = new RadioGroup(Enum.GetNames<FormatterStrategy>().Select(p => (ustring)p).ToArray()) { X = 30, Y = row, SelectedItem = (int)options.Formatter };
+        formatterRadio = new RadioGroup([.. Enum.GetNames<FormatterStrategy>().Select(p => (ustring)p)]) { X = 30, Y = row, SelectedItem = (int)options.Formatter };
         formatterRadio.SelectedItemChanged += (args) => _options.Formatter = (FormatterStrategy)args.SelectedItem;
         _formContent.Add(formatterRadio);
         row += Enum.GetValues<FormatterStrategy>().Length + 1;
 
         AddLabel("Hardware tier:");
-        var hwRadio = new RadioGroup(Enum.GetNames<HardwareTier>().Select(p => (ustring)p).ToArray()) { X = 30, Y = row, SelectedItem = (int)options.HardwareTier };
+        hwRadio = new RadioGroup([.. Enum.GetNames<HardwareTier>().Select(p => (ustring)p)]) { X = 30, Y = row, SelectedItem = (int)options.HardwareTier };
         hwRadio.SelectedItemChanged += (args) => _options.HardwareTier = (HardwareTier)args.SelectedItem;
         _formContent.Add(hwRadio);
         row += Enum.GetValues<HardwareTier>().Length + 1;
-
-        var gpuCheck = new CheckBox("Use GPU (requires SharpMind.GPU reference)", options.UseGpu) { X = 1, Y = row };
+        
+        gpuCheck = new CheckBox("Use GPU (requires SharpMind.GPU reference)", options.UseGpu) { X = 1, Y = row };
         gpuCheck.Toggled += (_) => _options.UseGpu = gpuCheck.Checked;
         _formContent.Add(gpuCheck);
         row++;
 
-        var gpuNonQuantCheck = new CheckBox("  GPU: non-quantized ops (pointwise, gate, softmax, rmsnorm)", options.GpuNonQuant) { X = 1, Y = row };
+        gpuNonQuantCheck = new CheckBox("  GPU: non-quantized ops (pointwise, gate, softmax, rmsnorm)", options.GpuNonQuant) { X = 1, Y = row };
         gpuNonQuantCheck.Toggled += (_) => _options.GpuNonQuant = gpuNonQuantCheck.Checked;
         _formContent.Add(gpuNonQuantCheck);
         row++;
 
-        var gpuVecDotCheck = new CheckBox("  GPU: quantized vector dot", options.GpuVecDot) { X = 1, Y = row };
+        gpuVecDotCheck = new CheckBox("  GPU: quantized vector dot", options.GpuVecDot) { X = 1, Y = row };
         gpuVecDotCheck.Toggled += (_) => _options.GpuVecDot = gpuVecDotCheck.Checked;
         _formContent.Add(gpuVecDotCheck);
         row++;
 
-        var gpuMatMulCheck = new CheckBox("  GPU: quantized matrix multiply", options.GpuMatMul) { X = 1, Y = row };
+        gpuMatMulCheck = new CheckBox("  GPU: quantized matrix multiply", options.GpuMatMul) { X = 1, Y = row };
         gpuMatMulCheck.Toggled += (_) => _options.GpuMatMul = gpuMatMulCheck.Checked;
         _formContent.Add(gpuMatMulCheck);
         row++;
 
-        var parallelCheck = new CheckBox("Use parallel kernels (faster on multi-core CPU)", options.UseParallelKernels) { X = 1, Y = row };
+        parallelCheck = new CheckBox("Use parallel kernels (faster on multi-core CPU)", options.UseParallelKernels) { X = 1, Y = row };
         parallelCheck.Toggled += (_) => _options.UseParallelKernels = parallelCheck.Checked;
         row += 2;
 
         AddLabel("Temperature:");
-        var tempField = new TextField((ustring)options.Sampling.Temperature.ToString("F2")) { X = 30, Y = row, Width = 10 };
+        tempField = new TextField((ustring)options.Sampling.Temperature.ToString("F2")) { X = 30, Y = row, Width = 10 };
         tempField.TextChanged += (_) =>
         {
             if (float.TryParse(tempField.Text.ToString(), out var v))
@@ -129,7 +160,7 @@ public sealed class OptionsView : View
         row++;
 
         AddLabel("Top-K:");
-        var topKField = new TextField((ustring)options.Sampling.TopK.ToString()) { X = 30, Y = row, Width = 10 };
+        topKField = new TextField((ustring)options.Sampling.TopK.ToString()) { X = 30, Y = row, Width = 10 };
         topKField.TextChanged += (_) =>
         {
             if (int.TryParse(topKField.Text.ToString(), out var v))
@@ -139,7 +170,7 @@ public sealed class OptionsView : View
         row++;
 
         AddLabel("Top-P:");
-        var topPField = new TextField((ustring)options.Sampling.TopP.ToString("F2")) { X = 30, Y = row, Width = 10 };
+        topPField = new TextField((ustring)options.Sampling.TopP.ToString("F2")) { X = 30, Y = row, Width = 10 };
         topPField.TextChanged += (_) =>
         {
             if (float.TryParse(topPField.Text.ToString(), out var v))
@@ -147,9 +178,27 @@ public sealed class OptionsView : View
         };
         _formContent.Add(topPField);
         row++;
+        AddLabel("Repitition Penalty:");
+        repetitionPenaltyField = new TextField((ustring)options.Generation.RepetitionPenalty.ToString("F2")) { X = 30, Y = row, Width = 10 };
+        repetitionPenaltyField.TextChanged += (_) =>
+        {
+            if (float.TryParse(repetitionPenaltyField.Text.ToString(), out var v))
+                _options.Generation = _options.Generation with { RepetitionPenalty = v };
+        };
+        _formContent.Add(repetitionPenaltyField);
+        row++;
+        AddLabel("Repitition Window:");
+        repetitionWindowField = new TextField((ustring)options.Generation.RepetitionWindow.ToString()) { X = 30, Y = row, Width = 10 };
+        repetitionWindowField.TextChanged += (_) =>
+        {
+            if (int.TryParse(repetitionWindowField.Text.ToString(), out var v))
+                _options.Generation = _options.Generation with { RepetitionWindow = v };
+        };
+        _formContent.Add(repetitionWindowField);
+        row++;
 
         AddLabel("Max new tokens:");
-        var maxTokensField = new TextField((ustring)options.Generation.MaxNewTokens.ToString()) { X = 30, Y = row, Width = 10 };
+        maxTokensField = new TextField((ustring)options.Generation.MaxNewTokens.ToString()) { X = 30, Y = row, Width = 10 };
         maxTokensField.TextChanged += (_) =>
         {
             if (int.TryParse(maxTokensField.Text.ToString(), out var v))
@@ -159,49 +208,48 @@ public sealed class OptionsView : View
         row += 2;
 
         AddLabel("Agent name:");
-        var agentNameField = new TextField((ustring)options.AgentName) { X = 30, Y = row, Width = 30 };
+        agentNameField = new TextField((ustring)options.AgentName) { X = 30, Y = row, Width = 30 };
         agentNameField.TextChanged += (_) => _options.AgentName = agentNameField.Text.ToString();
         _formContent.Add(agentNameField);
         row++;
 
         AddLabel("User name:");
-        var userNameField = new TextField((ustring)options.UserName) { X = 30, Y = row, Width = 30 };
+        userNameField = new TextField((ustring)options.UserName) { X = 30, Y = row, Width = 30 };
         userNameField.TextChanged += (_) => _options.UserName = userNameField.Text.ToString();
         _formContent.Add(userNameField);
         row++;
 
-        var agentsCheck = new CheckBox("Enable sub-agents", options.AgentsEnabled) { X = 1, Y = row };
+        agentsCheck = new CheckBox("Enable sub-agents", options.AgentsEnabled) { X = 1, Y = row };
         agentsCheck.Toggled += (_) => _options.AgentsEnabled = agentsCheck.Checked;
         _formContent.Add(agentsCheck);
         row++;
 
-        var enableThinkingCheck = new CheckBox("Enable model thinking (Qwen3 reasoning)", options.EnableThinking) { X = 1, Y = row };
+        enableThinkingCheck = new CheckBox("Enable model thinking (Qwen3 reasoning)", options.EnableThinking) { X = 1, Y = row };
         enableThinkingCheck.Toggled += (_) => _options.EnableThinking = enableThinkingCheck.Checked;
         _formContent.Add(enableThinkingCheck);
         row++;
 
         AddLabel("Context compaction:");
-        var compactorRadio = new RadioGroup(Enum.GetNames<CompactorStrategy>().Select(p => (ustring)p).ToArray()) { X = 30, Y = row, SelectedItem = (int)options.Compactor };
+        compactorRadio = new RadioGroup([.. Enum.GetNames<CompactorStrategy>().Select(p => (ustring)p)]) { X = 30, Y = row, SelectedItem = (int)options.Compactor };
         compactorRadio.SelectedItemChanged += (args) => _options.Compactor = (CompactorStrategy)args.SelectedItem;
         _formContent.Add(compactorRadio);
         row += Enum.GetValues<CompactorStrategy>().Length + 2;
 
         AddLabel("File access:");
-        var fileAccessRadio = new RadioGroup(Enum.GetNames<ToolPermission>().Select(p => (ustring)p).ToArray()) { X = 30, Y = row, SelectedItem = (int)options.FileAccess };
+        fileAccessRadio = new RadioGroup([.. Enum.GetNames<ToolPermission>().Select(p => (ustring)p)]) { X = 30, Y = row, SelectedItem = (int)options.FileAccess };
         fileAccessRadio.SelectedItemChanged += (args) => _options.FileAccess = (ToolPermission)args.SelectedItem;
         _formContent.Add(fileAccessRadio);
         row += Enum.GetValues<ToolPermission>().Length + 1;
 
         AddLabel("Network access:");
-        var networkAccessRadio = new RadioGroup(Enum.GetNames<ToolPermission>().Select(p => (ustring)p).ToArray()) { X = 30, Y = row, SelectedItem = (int)options.NetworkAccess };
+        networkAccessRadio = new RadioGroup([.. Enum.GetNames<ToolPermission>().Select(p => (ustring)p)]) { X = 30, Y = row, SelectedItem = (int)options.NetworkAccess };
         networkAccessRadio.SelectedItemChanged += (args) => _options.NetworkAccess = (ToolPermission)args.SelectedItem;
         _formContent.Add(networkAccessRadio);
         row += Enum.GetValues<ToolPermission>().Length + 1;
 
         AddLabel("Skill folders (;-sep):");
-        var skillField = new TextField((ustring)string.Join(";", options.SkillFolders)) { X = 30, Y = row, Width = 40 };
-        skillField.TextChanged += (_) => _options.SkillFolders = skillField.Text.ToString()
-            .Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries).ToList();
+        skillField = new TextField((ustring)string.Join(";", options.SkillFolders)) { X = 30, Y = row, Width = 40 };
+        skillField.TextChanged += (_) => _options.SkillFolders = [.. skillField.Text.ToString().Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)];
         var skillOpen = new Button("Add...") { X = Pos.Right(skillField) + 1, Y = row };
         skillOpen.Clicked += () =>
         {
@@ -216,9 +264,8 @@ public sealed class OptionsView : View
         row++;
 
         AddLabel("Tool DLLs (;-sep):");
-        var toolField = new TextField((ustring)string.Join(";", options.ToolAssemblyPaths)) { X = 30, Y = row, Width = 40 };
-        toolField.TextChanged += (_) => _options.ToolAssemblyPaths = toolField.Text.ToString()
-            .Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries).ToList();
+        toolField = new TextField((ustring)string.Join(";", options.ToolAssemblyPaths)) { X = 30, Y = row, Width = 40 };
+        toolField.TextChanged += (_) => _options.ToolAssemblyPaths = [.. toolField.Text.ToString().Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)];
         var toolOpen = new Button("Add...") { X = Pos.Right(toolField) + 1, Y = row };
         toolOpen.Clicked += () =>
         {
@@ -233,7 +280,7 @@ public sealed class OptionsView : View
         row++;
 
         AddLabel("Tools folder (scanned live):");
-        var toolsFolderField = new TextField((ustring)(options.ToolsFolder ?? "")) { X = 30, Y = row, Width = 40 };
+        toolsFolderField = new TextField((ustring)(options.ToolsFolder ?? "")) { X = 30, Y = row, Width = 40 };
         toolsFolderField.TextChanged += (_) => _options.ToolsFolder = string.IsNullOrWhiteSpace(toolsFolderField.Text.ToString()) ? null : toolsFolderField.Text.ToString();
         var toolsFolderOpen = new Button("Open...") { X = Pos.Right(toolsFolderField) + 1, Y = row };
         toolsFolderOpen.Clicked += () =>
@@ -252,7 +299,7 @@ public sealed class OptionsView : View
         row += 2;
 
         // --- Plugin status -------------------------------------------------
-        var pluginResult = PluginLoader.LoadFrom(Path.Combine(AppContext.BaseDirectory, "plugins"));
+        pluginResult = PluginLoader.LoadFrom(Path.Combine(AppContext.BaseDirectory, "plugins"));
         var pluginLabel = new Label((ustring)$"Plugins: {pluginResult.Compactors.Count} compactors, {pluginResult.PreProcessors.Count} pre, {pluginResult.PostProcessors.Count} post, {pluginResult.Generators.Count} generators")
         { X = 1, Y = row };
         _formContent.Add(pluginLabel);
@@ -269,12 +316,12 @@ public sealed class OptionsView : View
         if (pluginResult.Compactors.Count > 0)
         {
             AddLabel("Plugin compactor:");
-            var pluginCompactorNames = pluginResult.Compactors.Select(c => (ustring)c.Name).ToArray();
+            pluginCompactorNames = pluginResult.Compactors.Select(c => (ustring)c.Name).ToArray();
             var selectedIdx = _options.PluginCompactorName is not null
                 ? pluginResult.Compactors.FindIndex(c =>
                     string.Equals(c.Name, _options.PluginCompactorName, StringComparison.OrdinalIgnoreCase))
                 : -1;
-            var pluginCompactorRadio = new RadioGroup(pluginCompactorNames) { X = 30, Y = row, SelectedItem = Math.Max(0, selectedIdx) };
+            pluginCompactorRadio = new RadioGroup(pluginCompactorNames) { X = 30, Y = row, SelectedItem = Math.Max(0, selectedIdx) };
             pluginCompactorRadio.SelectedItemChanged += (args) =>
                 _options.PluginCompactorName = pluginResult.Compactors[args.SelectedItem].Name;
             _formContent.Add(pluginCompactorRadio);
@@ -297,13 +344,51 @@ public sealed class OptionsView : View
         saveAsButton.Clicked += SaveOptionsAs;
         var openPresetButton = new Button("Open Preset...") { X = Pos.Right(saveAsButton) + 2, Y = 0 };
         openPresetButton.Clicked += OpenPreset;
-        buttonBar.Add(launchButton, cancelButton, saveAsButton, openPresetButton);
+        var ResetPresetButton = new Button("Reset Defaults") { X = Pos.Right(openPresetButton) + 2, Y = 0 };
+        ResetPresetButton.Clicked += ResetPreset;
+        buttonBar.Add(launchButton, cancelButton, saveAsButton, openPresetButton, ResetPresetButton);
         Add(buttonBar);
 
         KeyPress += (args) =>
         {
             if (args.KeyEvent.Key == Key.Esc) { onCancel(); args.Handled = true; }
         };
+    }
+
+    private void SetOptionsFrom(SessionOptions options)
+    {
+        projectPathField.Text = (ustring)options.ProjectPath ?? "";
+        generatorRadio.SelectedItem = (int)options.Generator;
+        cacheRadio.SelectedItem = (int)options.Cache;
+        loadModeRadio.SelectedItem = (int)options.LoadMode;
+        formatterRadio.SelectedItem = (int)options.Formatter;
+        hwRadio.SelectedItem = (int)options.HardwareTier;
+        gpuCheck.Checked = options.UseGpu;
+        gpuNonQuantCheck.Checked = options.GpuNonQuant;
+        gpuVecDotCheck.Checked = options.GpuVecDot;
+        gpuMatMulCheck.Checked = options.GpuMatMul;
+        parallelCheck.Checked = options.UseParallelKernels;
+        tempField.Text = (ustring)_options.Sampling.Temperature.ToString("F2");
+        topKField.Text = (ustring)_options.Sampling.TopK.ToString("F2");
+        topPField.Text = (ustring)_options.Sampling.TopP.ToString("F2");
+        repetitionPenaltyField.Text = (ustring)_options.Generation.RepetitionPenalty.ToString("F2");
+        repetitionWindowField.Text = (ustring)_options.Generation.RepetitionWindow.ToString("F2");
+        maxTokensField.Text = (ustring)_options.Generation.MaxNewTokens.ToString();
+        agentNameField.Text = (ustring)_options.AgentName;
+        userNameField.Text = (ustring)_options.UserName;
+        agentsCheck.Checked = options.AgentsEnabled;
+        enableThinkingCheck.Checked = options.EnableThinking;
+        compactorRadio.SelectedItem = (int)options.Compactor;
+        fileAccessRadio.SelectedItem = (int)options.FileAccess;
+        networkAccessRadio.SelectedItem = (int)options.NetworkAccess;
+        skillField.Text = (ustring)string.Join(";", options.SkillFolders);
+        toolField.Text = (ustring)string.Join(";", options.ToolAssemblyPaths);
+        toolsFolderField.Text = (ustring)options.ToolsFolder??string.Empty;
+        var selectedIdx = _options.PluginCompactorName is not null ? 
+            pluginResult.Compactors.FindIndex(c =>
+            string.Equals(c.Name, _options.PluginCompactorName, StringComparison.OrdinalIgnoreCase))
+            : -1;
+        pluginCompactorRadio?.SelectedItem = Math.Max(0, selectedIdx);
     }
 
     /// <summary>Saves the current SessionOptions as a named preset — no model needs to be loaded, no session needs to be running. Usable purely for code/scripted launches too, since it's just the plain JSON SessionLauncher.BuildSession already consumes.</summary>
@@ -360,8 +445,23 @@ public sealed class OptionsView : View
         // instance, so swapping the object out from under them would leave
         // every control showing stale values until the whole view is rebuilt.
         CopyOptionsInto(_options, loaded.Options);
-        MessageBox.Query("Preset loaded", $"Loaded \"{loaded.Name}\".\nReopen Options to see the loaded values reflected in every field.", "OK");
+        SetOptionsFrom(_options);
+        MessageBox.Query("Preset loaded", $"Loaded \"{loaded.Name}\".", "OK");
     }
+
+    private void ResetPreset()
+    {
+        var mPath = _options.ModelPath;
+        var options = SessionOptions.Default;
+        options.ModelPath = mPath;
+        options.ProjectPath = _settings.DefaultModelFolder;
+        options.ToolsFolder = _settings.ToolsFolder;
+        CopyOptionsInto(_options, options);
+        SetOptionsFrom(_options);
+        MessageBox.Query("Defaults Reset", $"Defaults have be reset.", "OK");
+    }
+
+
 
     private void ManageTools()
     {
@@ -492,8 +592,8 @@ public sealed class OptionsView : View
         target.EnableThinking = source.EnableThinking;
         target.MaxAgentDepth = source.MaxAgentDepth;
         target.MaxToolCallsPerTurn = source.MaxToolCallsPerTurn;
-        target.DisabledTools = new HashSet<string>(source.DisabledTools);
-        target.DisabledPreProcessors = new HashSet<string>(source.DisabledPreProcessors);
-        target.DisabledPostProcessors = new HashSet<string>(source.DisabledPostProcessors);
+        target.DisabledTools = [.. source.DisabledTools];
+        target.DisabledPreProcessors = [.. source.DisabledPreProcessors];
+        target.DisabledPostProcessors = [.. source.DisabledPostProcessors];
     }
 }

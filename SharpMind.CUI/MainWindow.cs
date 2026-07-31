@@ -24,7 +24,7 @@ public sealed class MainWindow : Window
 
     private SessionOptions _options;
     private ChatSessionState? _currentSession;
-    private object? _permissionPollToken;
+    private readonly object? _permissionPollToken;
 
     private static string LastUsedOptionsPath =>
         Path.Combine(SavedSession.DefaultFolder, "__last_used__.json");
@@ -197,7 +197,7 @@ public sealed class MainWindow : Window
     private void ShowOptions()
     {
         Action onCancel = _currentSession is not null ? ShowChat : ShowModelBrowser;
-        SwapContent(new OptionsView(_options, onLaunch: LaunchSession, onCancel: onCancel));
+        SwapContent(new OptionsView(_options, _settings, onLaunch: LaunchSession, onCancel: onCancel));
     }
 
     /// <summary>Menu path into Options — declines quietly if there's nothing to configure yet.</summary>
@@ -268,7 +268,7 @@ public sealed class MainWindow : Window
     private void StartNewSession()
     {
         _currentSession = null; // switch context; doesn't close whatever else is open
-        _options = NewSessionOptionsFromSettings();
+        _options = LoadLastUsedOptions() ?? NewSessionOptionsFromSettings();
         ShowModelBrowser();
     }
 
