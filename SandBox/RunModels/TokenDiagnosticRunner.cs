@@ -113,6 +113,8 @@ namespace SandBox.RunModels
                 };
                 var sampleCfg = SamplingConfig.Greedy;
 
+                GeneratorDiagnostics.DumpTopLogits = true;
+
                 using var generator = new StandardGenerator<KVCacherBuilder>(model, tokenizer, addBos, addEos);
                 await Console.Out.WriteLineAsync($"Model+Generator: {sw.Elapsed.TotalSeconds:F2}s");
 

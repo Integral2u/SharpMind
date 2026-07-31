@@ -1,3 +1,4 @@
+
 #HIGH Priority
 you must make sure you understand the JigSawDotNet pattern and use. Intention is to reduce and branching code by genertaing code which may require implmenting or re-using Ops, Kernel and Factory patterns,
 Review Sharmind.Core.Activations.* for example

@@ -327,14 +327,18 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
         int added = 0;
         foreach (string token in candidates)
         {
-            if (tokenizer.Vocab.Contains(token)) continue;
-            if (tokenizer.VocabSize >= config.VocabSize) continue; // no room — beyond GGUF tensor capacity
+            // Register template tokens as specials so SplitOnSpecials matches
+            // them (e.g. TinyLlama's <|user|>). Tokens already in the vocab get
+            // their existing ID; genuinely missing tokens are appended and the
+            // tensor is zero-padded to accommodate them during weight loading.
+            if (!tokenizer.Vocab.Contains(token))
+                config = config with { VocabSize = config.VocabSize + 1 };
             tokenizer.AddAdditionalToken(token);
             added++;
         }
 
         if (added > 0)
-            InternalLog.WriteLine($"GgufLoader: added {added} template tokens to tokenizer");
+            InternalLog.WriteLine($"GgufLoader: ensured {added} template tokens are registered as specials");
     }
 
     public static void Load(
@@ -352,6 +356,14 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
         // based computation produces correct frequencies and is used instead.
         // float[]? ropeFreqs = LoadPrecomputedRopeFreqs(ggufPath, meta);
         // if (ropeFreqs != null) config = config with { PrecomputedRopeFreqs = ropeFreqs };
+
+        // Extend VocabSize to cover the full GGUF token list.
+        // Some GGUFs store control/special tokens beyond the embedding tensor
+        // dimension (e.g. TinyLlama Chat's <|user|> tokens at index 32000+).
+        // The tensor padding code in LoadSingleTensor zero-pads the extra rows.
+        var allTokens = GetStringArray(meta, "tokenizer.ggml.tokens");
+        if (allTokens != null && allTokens.Length > config.VocabSize)
+            config = config with { VocabSize = allTokens.Length };
 
         tokenizer = LoadTokenizerFromMeta(meta, config.VocabSize);
 

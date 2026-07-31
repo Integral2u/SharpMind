@@ -6,6 +6,22 @@ using SharpMind.Model.Format;
 
 namespace SharpMind.CUI.App;
 
+/// <summary>Which IChatPromptFormatter strategy to build the session with.</summary>
+public enum FormatterStrategy
+{
+    /// <summary>null, will default to <see cref="SharpMind.Inference.Chat.PromptFormatters.ChatPromptFormatterFactory"/>.</summary>
+    Auto,
+    /// <summary><see cref="SharpMind.Inference.Chat.PromptFormatters.JinjaTemplateFormatter"/>.</summary>
+    Jinja,
+    /// <summary><see cref="SharpMind.Inference.Chat.PromptFormatters.ChatMLFormatter"/>.</summary>
+    ChatML,
+    /// <summary><see cref="SharpMind.Inference.Chat.PromptFormatters.SimpleFormatter"/>.</summary>
+    Simple,
+    /// <summary>"Q:{prompt} A:" format <see cref="SharpMind.Inference.Chat.PromptFormatters.QuestionAnswerFormatter"/>.</summary>
+    QuestionAnswer,
+    /// <summary>Direct Prompt <see cref="SharpMind.Inference.Chat.PromptFormatters.RawTemplateFormatter"/>.</summary>
+    Raw
+}
 /// <summary>Which IGenerator strategy to build the session with.</summary>
 public enum GeneratorStrategy
 {
@@ -89,6 +105,7 @@ public sealed class SessionOptions
     public GeneratorStrategy Generator { get; set; } = GeneratorStrategy.Standard;
     public CacheStrategy Cache { get; set; } = CacheStrategy.Standard;
 
+    public FormatterStrategy Formatter { get; set; } = FormatterStrategy.Auto;
     /// <summary>How model weights are loaded — Full (all at once, shared) or Streaming (per-layer, isolated).</summary>
     public LoadMode LoadMode { get; set; } = LoadMode.Full;
 

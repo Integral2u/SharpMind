@@ -120,11 +120,8 @@ public class Tokenizer
     {
         bool isNew = !Vocab.Contains(token);
         int id = Vocab.AddToken(token);
-        if (isNew)
-        {
-            Vocab.Specials.AddAdditional(token);
-            _model.Encoder.RefreshSpecials();
-        }
+        Vocab.Specials.AddAdditional(token);
+        _model.Encoder.RefreshSpecials();
         return id;
     }
 

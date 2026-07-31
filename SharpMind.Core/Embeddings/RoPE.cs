@@ -174,35 +174,46 @@ public sealed class RoPE : PositionalEncoder
             {
                 int offset = (s * numHead + h) * _headDim;
 
-                // Half-based RoPE pairing (matches HF's rotate_half convention):
-                // pairs are (data[i], data[ropePairs + i]) for i = 0..ropePairs-1
+                // Adjacent-pairing (matches llama.cpp / ggml):
+                // pairs are (data[2i], data[2i + 1]) for i = 0..ropePairs-1,
+                // rotated by angle pos * theta^{-2i/_ropeDim}.
+                // (Empirically verified against llama.cpp for Llama-3.2: the
+                //  half-pairing convention diverges for positions >= 1.)
                 int i = 0;
-                if (Avx.IsSupported)
+                if (Avx.IsSupported && Sse41.IsSupported)
                 {
-                    for (; i <= ropePairs - 8; i += 8)
+                    // 4 adjacent pairs (8 floats) per outer iteration, processed
+                    // as two 128-bit lanes of 2 pairs each.
+                    for (; i + 4 <= ropePairs; i += 4)
                     {
-                        var cos = Vector256.LoadUnsafe(ref _cosCache[cacheBase + i]);
-                        var sin = Vector256.LoadUnsafe(ref _sinCache[cacheBase + i]);
-                        var vx0 = Vector256.LoadUnsafe(ref data[offset + i]);
-                        var vx1 = Vector256.LoadUnsafe(ref data[offset + ropePairs + i]);
+                        for (int lane = 0; lane < 2; lane++)
+                        {
+                            int pairBase = i + 2 * lane;
+                            var vec = Vector128.LoadUnsafe(ref data[offset + 2 * pairBase]);
+                            var even = Sse2.Shuffle(vec, vec, 0x88);  // [x0, x2, x0, x2]
+                            var odd  = Sse2.Shuffle(vec, vec, 0xDD);  // [x1, x3, x1, x3]
+                            var cos  = Vector128.Create(
+                                _cosCache[cacheBase + pairBase], _cosCache[cacheBase + pairBase],
+                                _cosCache[cacheBase + pairBase + 1], _cosCache[cacheBase + pairBase + 1]);
+                            var sin  = Vector128.Create(
+                                _sinCache[cacheBase + pairBase], _sinCache[cacheBase + pairBase],
+                                _sinCache[cacheBase + pairBase + 1], _sinCache[cacheBase + pairBase + 1]);
 
-                        Vector256.StoreUnsafe(
-                            Avx.Subtract(Avx.Multiply(vx0, cos), Avx.Multiply(vx1, sin)),
-                            ref data[offset + i]);
-                        Vector256.StoreUnsafe(
-                            Avx.Add(Avx.Multiply(vx1, cos), Avx.Multiply(vx0, sin)),
-                            ref data[offset + ropePairs + i]);
+                            var outEven = Sse.Subtract(Sse.Multiply(even, cos), Sse.Multiply(odd, sin));
+                            var outOdd  = Sse.Add(Sse.Multiply(odd, cos), Sse.Multiply(even, sin));
+                            Sse41.Blend(outEven, outOdd, 0b1010).StoreUnsafe(ref data[offset + 2 * pairBase]);
+                        }
                     }
                 }
                 for (; i < ropePairs; i++)
                 {
                     float cos = _cosCache[cacheBase + i];
                     float sin = _sinCache[cacheBase + i];
-                    float x0  = data[offset + i];
-                    float x1  = data[offset + ropePairs + i];
+                    float x0  = data[offset + 2 * i];
+                    float x1  = data[offset + 2 * i + 1];
 
-                    data[offset + i]               = x0 * cos - x1 * sin;
-                    data[offset + ropePairs + i]   = x1 * cos + x0 * sin;
+                    data[offset + 2 * i]         = x0 * cos - x1 * sin;
+                    data[offset + 2 * i + 1]     = x1 * cos + x0 * sin;
                 }
             }
         }

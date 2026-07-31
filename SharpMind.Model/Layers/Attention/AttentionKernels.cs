@@ -5,11 +5,11 @@ using static SharpMind.Core.Quantization.QuantizationKernels;
 
 namespace SharpMind.Model.Layers.Attention;
 
-// Attention kernels � pure static, one unconditional path each
+// Attention kernels, pure static, one unconditional path each
 
 internal static class AttentionKernels
 {
-    /// <summary>Reusable score buffer per thread � avoids per-call ArrayPool.Rent.</summary>
+    /// <summary>Reusable score buffer per thread, avoids per-call ArrayPool.Rent.</summary>
     [ThreadStatic]
     private static float[]? t_ScoreScratch;
 
@@ -18,7 +18,7 @@ internal static class AttentionKernels
     /// Q: [SeqLen, HeadDim]  K: [KvLen, HeadDim]  V: [KvLen, HeadDim]
     /// Out: [SeqLen, HeadDim]
     /// Uses online softmax (Milakov & Gimelshein, 2018) integrated with the
-    /// score-computation and V-weighted accumulation loops � 2 passes over KV
+    /// score-computation and V-weighted accumulation loops, 2 passes over KV
     /// instead of 3 softmax passes + 1 V-accumulation pass.
     /// </summary>
     internal static unsafe void ScaledDotProductAVX2(
@@ -211,7 +211,7 @@ internal static class AttentionKernels
     }
 
     // Flash attention
-    // Online softmax (Milakov & Gimelshein, 2018) � tiles KV positions to
+    // Online softmax (Milakov & Gimelshein, 2018) tiles KV positions to
     // avoid O(kvLen) score buffer. Essential for long-context inference.
 
     private const int FlashTileSize = 64;
@@ -483,7 +483,7 @@ internal static class AttentionKernels
     private const int Q4BLOCK = 18; // 2 bytes fp16 scale + 16 bytes nibbles
 
     // Flash Q8_0 quantized KV cache attention kernels.
-    // Tiled online softmax � O(1) score buffer (stackalloc), no heap alloc.
+    // Tiled online softmax O(1) score buffer (stackalloc), no heap alloc.
     
 
     internal static unsafe void ScaledDotProductFlashQ8_0AVX2(

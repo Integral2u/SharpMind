@@ -60,13 +60,31 @@ public sealed class BpeEncoder
             _mergeIndex[(rule.Left, rule.Right)] = (rule.Merged, rule.Rank);
 
         _scores = tokenScores;
-        UseSentencePieceMerge = merges.Count == 0 && _scores is { Count: > 0 };
+        // SentencePiece-style vocabularies ship no usable byte-level merges
+        // (or none at all) and mark word boundaries with ▁ (U+2581). Byte-level
+        // BPE vocabularies (GPT-2, tiktoken) use the GPT-2 byte map instead.
+        // TinyLlama's GGUF carries a merge list in SentencePiece format, so we
+        // must detect the ▁ marker rather than relying on merges being absent.
+        UseSentencePieceMerge = merges.Count == 0 || VocabContainsMetaspace(vocab);
         //Duplicate setting but removes warning
         RebuildSpecialsCache(out _specialsSortedByLength, out _specialsSet, out _specialsFirstChars);
     }
 
     /// <summary>Refreshes the sorted specials cache after adding new special tokens.</summary>
     internal void RefreshSpecials() => RebuildSpecialsCache(out _, out _, out _);
+
+    /// <summary>
+    /// True if the vocab uses the SentencePiece metaspace marker ▁ (U+2581)
+    /// to represent word boundaries — i.e. it is SentencePiece-style rather
+    /// than GPT-2/tiktoken byte-level BPE.
+    /// </summary>
+    private static bool VocabContainsMetaspace(Vocabulary vocab)
+    {
+        if (vocab.Contains("\u2581")) return true;
+        foreach (string token in vocab.AllTokens)
+            if (token.Contains('\u2581')) return true;
+        return false;
+    }
 
     private void RebuildSpecialsCache(out string[] specials, out HashSet<string> specialSet, out HashSet<char> specialsFirstChars)
     {

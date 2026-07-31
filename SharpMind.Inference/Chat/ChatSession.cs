@@ -18,6 +18,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     private readonly Transformer _model;
     private readonly List<ChatMessage> _history = [];
     private IChatPromptFormatter? _formatter;
+    private readonly IChatPromptFormatter? _formatterOverride;
     private readonly IAgentBuilder? _agentBuilder;
     private readonly bool _addBos;
     private readonly bool _addEos;
@@ -104,6 +105,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         IProgress<float>? progress = null,
         Func<ToolPermissionContext, Task<ToolPermission>>? permissions = null,
         IKVCache[]? caches = null,
+        IChatPromptFormatter? formatter = null,
         int? seed = null)
     {
         ArgumentNullException.ThrowIfNull(tokenizer);
@@ -120,7 +122,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         MaxAgentDepth = _agentBuilder?.MaxAgentDepth ?? 2;
         _addBos = ModelMetaData.ResolveAddBos(meta, tokenizer.UseSentencePieceMerge);
         _addEos = ModelMetaData.ResolveAddEos(meta);
-
+        _formatterOverride = formatter;
         PermissionCallback = permissions ?? new Func<ToolPermissionContext, Task<ToolPermission>>(async (ctx) => { await Task.CompletedTask; return ToolPermission.Never; });
         _fileSystem = new InterceptingFileSystem();
         _networkHandler = new InterceptingNetworkHandler();
@@ -132,7 +134,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         if (_initialized) return;
 
         progress?.Report(0f);
-        _formatter = ChatPromptFormatterFactory.Create(_meta);
+        _formatter = _formatterOverride ?? ChatPromptFormatterFactory.Create(_meta);
         progress?.Report(0.15f);
 
         _generator = new T().CreateGenerator(_model, _tokenizer, _addBos, _addEos, _caches, _seed);
@@ -169,10 +171,36 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     public int MaxTokens { get; set; } = 2048;
     /// <summary>Max generation tokens. Defaults to 256 so context trimming leaves room.</summary>
     public int MaxNewTokens { get; set; } = 256;
+    /// <summary>
+    /// Low values (0.1–0.3): Makes the AI predictable, focused, and accurate, which is best for facts or code.
+    /// High values (0.8–1.5): Increases randomness and creativity, which is ideal for storytelling or brainstorming.
+    /// </summary>
     public float Temperature { get; set; } = 0.0f;
+    /// <summary>
+    /// Top-K restricts the model's word choice to a fixed number (K) of the most likely next words.
+    /// How it works: 
+    /// If K = 40, the model picks only from the 40 highest-scoring words, throwing away all other words in its dictionary.
+    /// Effect: A low K makes text predictable and safe. A high K allows for more variety, but can occasionally let in weird or off-topic words.
+    /// </summary>
     public int TopK { get; set; } = 20;
+    /// <summary>
+    /// Top-P restricts word choice based on a cumulative probability threshold (P).
+    /// How it works: If P = 0.90, the model adds up the probabilities of the best words from highest to lowest until the total reaches 90%, and only picks from that group.
+    /// Effect: It is dynamic. When the AI is very sure of what to say next, the pool shrinks to just 1 or 2 words. 
+    /// When the AI is unsure, the pool automatically grows to include more creative options.
+    /// </summary>
     public float TopP { set; get; } = 0.85f;
+    /// <summary>
+    /// Reduces probability: Lowers the score of any word or token that already appeared.
+    /// Values: Usually ranges from 1.0 (no penalty) up to 1.5 or higher. Higher numbers force more word variety.
+    /// Downside: Setting it too high can break normal grammar and ruin punctuation
+    /// </summary>
     public float RepetitionPenalty { get; set; } = 1.1f;
+    /// <summary>
+    /// Lookback limit: Counts the exact number of recent tokens the AI checks.
+    /// Scope control: A window of 512 means the model checks the last 512 tokens generated for repeats.
+    /// Setting it to 0 turns the window off, while setting it too high can slow down generation or penalize words needed for structural coherence.
+    /// </summary>
     public int RepetitionWindow { get; set; } = 32;
     /// <summary>Token IDs that stop generation. Defaults to EOS if not set.</summary>
     public IReadOnlyList<int>? StopTokenIds { get; set; }

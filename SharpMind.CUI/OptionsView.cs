@@ -1,10 +1,8 @@
-using System.Drawing;
 using NStack;
 using SharpMind.Core;
 using SharpMind.CUI.App;
 using SharpMind.Inference.Agent;
 using SharpMind.Model.Config;
-using SharpMind.Model.Format;
 using Terminal.Gui;
 
 namespace SharpMind.CUI;
@@ -83,6 +81,12 @@ public sealed class OptionsView : View
         loadModeRadio.SelectedItemChanged += (args) => _options.LoadMode = (LoadMode)args.SelectedItem;
         _formContent.Add(loadModeRadio);
         row += Enum.GetValues<LoadMode>().Length + 1;
+
+        AddLabel("Formatter strategy:");
+        var formatterRadio = new RadioGroup(Enum.GetNames<FormatterStrategy>().Select(p => (ustring)p).ToArray()) { X = 30, Y = row, SelectedItem = (int)options.Formatter };
+        formatterRadio.SelectedItemChanged += (args) => _options.Formatter = (FormatterStrategy)args.SelectedItem;
+        _formContent.Add(formatterRadio);
+        row += Enum.GetValues<FormatterStrategy>().Length + 1;
 
         AddLabel("Hardware tier:");
         var hwRadio = new RadioGroup(Enum.GetNames<HardwareTier>().Select(p => (ustring)p).ToArray()) { X = 30, Y = row, SelectedItem = (int)options.HardwareTier };
@@ -254,7 +258,7 @@ public sealed class OptionsView : View
         _formContent.Add(pluginLabel);
         if (pluginResult.Warnings.Count > 0)
         {
-            var warnLabel = new Label((ustring)$"  ⚠ {pluginResult.Warnings.Count} plugin warning(s)")
+            var warnLabel = new Label((ustring)$"  ! {pluginResult.Warnings.Count} plugin warning(s)")
             { X = 1, Y = row + 1 };
             _formContent.Add(warnLabel);
             row++;
@@ -473,6 +477,7 @@ public sealed class OptionsView : View
         target.Generator = source.Generator;
         target.Cache = source.Cache;
         target.LoadMode = source.LoadMode;
+        target.Formatter = source.Formatter;
         target.HardwareTier = source.HardwareTier;
         target.UseGpu = source.UseGpu;
         target.GpuNonQuant = source.GpuNonQuant;

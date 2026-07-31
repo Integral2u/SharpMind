@@ -121,7 +121,7 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
                 bool sr = raw.EndsWith('-');
                 ApplyStripLeftPrevText(result, raw.StartsWith('-'));
                 pos = end + 2;
-                if (sr && pos < src.Length && src[pos] == '\n') pos++;
+                if (sr) ConsumeWs(ref pos, src);
             }
             else if (next == expr && (tag < 0 || expr < tag))
             {
@@ -133,7 +133,7 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
                 string body = raw.TrimStart('-').TrimEnd('-').Trim();
                 result.Add(new Token(TKind.Output, body, false, sr));
                 pos = end + 2;
-                if (sr && pos < src.Length && src[pos] == '\n') pos++;
+                if (sr) ConsumeWs(ref pos, src);
             }
             else
             {
@@ -145,10 +145,16 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
                 string body = raw.Trim().TrimStart('-').TrimEnd('-').Trim();
                 result.Add(new Token(TKind.Tag, body, false, sr));
                 pos = end + 2;
-                if (sr && pos < src.Length && src[pos] == '\n') pos++;
+                if (sr) ConsumeWs(ref pos, src);
             }
         }
         return result;
+    }
+
+    private static void ConsumeWs(ref int pos, string src)
+    {
+        while (pos < src.Length && (src[pos] == ' ' || src[pos] == '\t' || src[pos] == '\n' || src[pos] == '\r'))
+            pos++;
     }
 
     private static void ApplyStripLeftPrevText(List<Token> result, bool stripLeft)
@@ -427,8 +433,8 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
             var restM = RegexGenerated.JinjaIsDefined.Match(rest);
             if (restM.Success)
             {
-                var v = Eval(restM.Groups[1].Value, env, errors);
-                return (object)(v == null);
+                bool isDef = env.ContainsKey(restM.Groups[1].Value);
+                return (object)!isDef;
             }
         }
 
@@ -436,8 +442,9 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
         var isDefinedM = RegexGenerated.JinjaIsDefined.Match(expr);
         if (isDefinedM.Success)
         {
-            var v = Eval(isDefinedM.Groups[1].Value, env, errors);
-            bool isDef = v != null;
+            string target = isDefinedM.Groups[1].Value;
+            // Use env.ContainsKey directly to avoid logging errors for undefined variables.
+            bool isDef = env.ContainsKey(target);
             return (object)(isDefinedM.Groups[2].Success ? !isDef : isDef);
         }
 

@@ -1,6 +1,7 @@
 ﻿using SharpMind.Core.Quantization;
 using SharpMind.Inference;
 using SharpMind.Inference.Chat;
+using SharpMind.Inference.Chat.PromptFormatters;
 using SharpMind.Model;
 using SharpMind.Model.Config;
 using SharpMind.Model.Format;
@@ -11,7 +12,7 @@ namespace SharpMind.Samples.Examples
 {
     public static class InteractiveChatGuff
     {
-        public static async Task RunAsync(string ModelPath, string ModelName, LoadMode loadMode = LoadMode.Full)
+        public static async Task RunAsync(string ModelPath, string ModelName, LoadMode loadMode = LoadMode.Full, IChatPromptFormatter? formatter = null)
         {
             CancellationTokenSource cancellationTokenSource = new();
             string modelPath = string.Empty;
@@ -55,7 +56,7 @@ namespace SharpMind.Samples.Examples
 
             sw.Reset();
 
-            await using var session = new ChatSession<StandardGeneratorBuilder<KVCacherBuilder>, KVCacherBuilder>(model, tokenizer, meta)
+            await using var session = new ChatSession<StandardGeneratorBuilder<KVCacherBuilder>, KVCacherBuilder>(model, tokenizer, meta,null,null,null,null,null,null,formatter)
             {
                 MaxTokens = 512,
                 Temperature = 0.7f,

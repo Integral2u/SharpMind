@@ -9,12 +9,13 @@ using SharpMind.Model.Config;
 using SharpMind.Model.Format;
 using SharpMind.Tokenization;
 using System.Diagnostics;
+using System.Runtime.Serialization;
 
 namespace SharpMind.Samples.Examples
 {
     public class ModelListRunner
     {
-        public static async Task RunAsync(string prompt, string ModelPath, string[] Models, bool withGPU = false, int maxTokens = 25, LoadMode loadMode = LoadMode.Full)
+        public static async Task RunAsync(string prompt, string ModelPath, string[] Models, bool withGPU = false, int maxTokens = 100, LoadMode loadMode = LoadMode.Full, IChatPromptFormatter? formatter = null)
         {
             var totalTime = Stopwatch.StartNew();
             foreach (var m in Models)
@@ -73,11 +74,11 @@ namespace SharpMind.Samples.Examples
 
                 sw.Restart();
 
-                await using var session = new ChatSession<StandardGeneratorBuilder<KVCacherBuilder>, KVCacherBuilder>(model, tokenizer, meta)
+                await using var session = new ChatSession<StandardGeneratorBuilder<KVCacherBuilder>, KVCacherBuilder>(model, tokenizer, meta, null, null, null, null, null, null, formatter)
                 {
                     MaxTokens = 256,
-                    Temperature = 0.0f,
-                    TopK = 1,
+                    Temperature = 0.6f,
+                    TopK = 40,
                 };
                 session.InitializeChat();
                 await Console.Out.WriteLineAsync($"ChatSession executed in: {sw.Elapsed.TotalSeconds:F2}s");                
@@ -90,7 +91,7 @@ namespace SharpMind.Samples.Examples
                     Console.ForegroundColor = text.Status == ChatStatus.Thinking ? ConsoleColor.Gray : ConsoleColor.Blue;
                     await Console.Out.WriteAsync(text.Token);
                     tok++;
-                    //if (tok > maxTokens) cancellationTokenSource.Cancel();
+                    if (tok > maxTokens) cancellationTokenSource.Cancel();
                 }
                 async Task<ChatMessage> Prompt()
                 {

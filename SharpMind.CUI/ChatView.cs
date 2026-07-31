@@ -72,7 +72,7 @@ public sealed class ChatView : View
         _onExit = onExit;
         _onGeneratingChanged = onGeneratingChanged;
 
-        int sidebarWidth = 26;
+        int sidebarWidth = 28;
 
         _transcriptView = new TextView
         {
@@ -119,9 +119,9 @@ public sealed class ChatView : View
         };
         string hwDisplay = options.UseGpu ? $"GPU ({resolvedHw})" : resolvedHw;
 
-        _strategyLabel = new Label($"Generator: {options.Generator}\nKV Cache: {options.Cache}\nHW Tier: {hwDisplay}")
+        _strategyLabel = new Label($"Generator: {options.Generator}\nKV Cache: {options.Cache}\nFormatting:{options.Formatter}\nHW Tier: {hwDisplay}")
         { X = 0, Y = 4, Width = Dim.Fill(), Height = 4 };
-        _toolLabel = new Label("") { X = 0, Y = 8, Width = Dim.Fill() };
+        _toolLabel = new Label("Tool: none") { X = 0, Y = 8, Width = Dim.Fill() };
 
         _showThinkingLabel = new Label("Show: on") { X = 2, Y = 10, Width = Dim.Fill() };
         _enableThinkingLabel = new Label("Enable: off") { X = 2, Y = 11, Width = Dim.Fill() };
@@ -449,7 +449,7 @@ public sealed class ChatView : View
 
         if (entry.Status == ChatStatus.Executing)
         {
-            _toolLabel.Text = entry.Token ?? "";
+            _toolLabel.Text = $"Tool: {entry.Token ?? " none"}";
             _pendingSpeakerName = entry.Token;
         }
 
@@ -479,7 +479,7 @@ public sealed class ChatView : View
             if (_liveResponse.Length > 0)
                 CommitLiveResponse();
             SetGenerating(false);
-            _toolLabel.Text = "";
+            _toolLabel.Text = "Tool: none";
             _pendingSpeakerName = null;
             _statusLabel.Text = "Ready";
         }

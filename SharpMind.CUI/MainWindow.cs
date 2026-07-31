@@ -491,6 +491,7 @@ public sealed class MainWindow : Window
         ToolsFolder = source.ToolsFolder,
         Generator = source.Generator,
         Cache = source.Cache,
+        Formatter = source.Formatter,
         LoadMode = source.LoadMode,
         HardwareTier = source.HardwareTier,
         UseGpu = source.UseGpu,

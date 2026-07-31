@@ -5,6 +5,7 @@ using SharpMind.GPU;
 using SharpMind.Inference;
 using SharpMind.Inference.Agent;
 using SharpMind.Inference.Chat;
+using SharpMind.Inference.Chat.PromptFormatters;
 using SharpMind.Model;
 using SharpMind.Model.Config;
 using SharpMind.Model.Format;
@@ -99,7 +100,11 @@ public static class SessionLauncher
             {
                 metaHelper.Load(options.ModelPath, null, out var m, out var c, out var t);
                 return (m, c, t);
-            });
+            },ct);
+        }
+        catch (OperationCanceledException)
+        {
+            return new ModelLoadResult { Error = $"Operation cancelled" };
         }
         catch (Exception ex)
         {
@@ -139,7 +144,11 @@ public static class SessionLauncher
                 var w = ModelFactory.CreateWeights(modelConfig, sharpConfig, qOps, options.ModelPath, options.LoadMode);
                 w.InitializeWeights(progress);
                 return w;
-            });
+            },ct);
+        }
+        catch (OperationCanceledException)
+        {
+            return new ModelLoadResult { Error = $"Operation cancelled" };
         }
         catch (Exception ex)
         {
@@ -186,8 +195,10 @@ public static class SessionLauncher
         var resolvedToolPaths = ResolveToolAssemblyPaths(options);
         var cuiContext = new CuiToolContext();
 
-        var builder = new AgentBuilder(options.AgentName, options.Sampling);
-        builder.DisabledTools = options.DisabledTools;
+        var builder = new AgentBuilder(options.AgentName, options.Sampling)
+        {
+            DisabledTools = options.DisabledTools
+        };
         builder.WithTools(new CuiTools(cuiContext));
         builder.WithTools(new WeatherTool());
         builder.WithTools(new FileSystemTool(options.ProjectPath ?? Directory.GetCurrentDirectory()));
@@ -200,7 +211,7 @@ public static class SessionLauncher
             var (toolInstances, toolWarnings) = ToolAssemblyLoader.Load(resolvedToolPaths);
             warnings.AddRange(toolWarnings);
             if (toolInstances.Count > 0)
-                builder.WithTools(toolInstances.ToArray());
+                builder.WithTools([.. toolInstances]);
         }
 
         if (options.AgentsEnabled)
@@ -213,7 +224,7 @@ public static class SessionLauncher
         builder.PluginPreProcessors = pluginResult.PreProcessors;
         builder.PluginPostProcessors = pluginResult.PostProcessors;
         if (pluginResult.Tools.Count > 0)
-            builder.WithTools(pluginResult.Tools.ToArray());
+            builder.WithTools([.. pluginResult.Tools]);
 
         // Resolve compactor: plugin compactor takes priority, then built-in strategy
         builder.Compactor = options.PluginCompactorName is not null
@@ -254,22 +265,35 @@ public static class SessionLauncher
                 _ => throw new ArgumentOutOfRangeException(nameof(options))
             };
         }
-
+        string? tmpl = loaded.Meta?.GetChatTemplate();
+        IChatPromptFormatter? formatter = options.Formatter switch
+        {
+            FormatterStrategy.Auto => null,
+            FormatterStrategy.Jinja => string.IsNullOrWhiteSpace(tmpl) ? new SimpleFormatter() :  new JinjaTemplateFormatter(tmpl),
+            FormatterStrategy.ChatML =>  string.IsNullOrWhiteSpace(tmpl) ? new SimpleFormatter() : new ChatMLFormatter(tmpl),
+            FormatterStrategy.Simple => new SimpleFormatter(),
+            FormatterStrategy.QuestionAnswer => new QuestionAnswerFormatter(),
+            FormatterStrategy.Raw => new RawTemplateFormatter(),
+            _ => throw new ArgumentOutOfRangeException(nameof(options))
+        };
         // Build available pre/post processors (built-in + plugin), filtered by disabled set
-        var allPreProcessors = new List<IPromptPreProcessor>();
-        allPreProcessors.Add(new SimpleArtifactPromptPreProcessor());
+        var allPreProcessors = new List<IPromptPreProcessor>
+        {
+            new SimpleArtifactPromptPreProcessor()
+        };
         allPreProcessors.AddRange(pluginResult.PreProcessors);
         IPromptPreProcessor? preProcessor = allPreProcessors.FirstOrDefault(p => !options.DisabledPreProcessors.Contains(p.Name));
 
         var allPostProcessors = new List<IPromptPostProcessor>(pluginResult.PostProcessors);
         IPromptPostProcessor? postProcessor = allPostProcessors.FirstOrDefault(p => !options.DisabledPostProcessors.Contains(p.Name));
 
+
         IChatSession session;
         try
         {
             session = ChatSessionFactory.CreateChatSession(
                 generatorBuilderDef, cacheBuilder, loaded.Model, loaded.Tokenizer, loaded.Meta, agentBuilder,
-                preProcessor: preProcessor, postProcessor: postProcessor, progress: null, permissions: permissions,
+                preProcessor: preProcessor, postProcessor: postProcessor, progress: null, permissions: permissions, formatter: formatter,
                 seed: options.Sampling.Seed);
         }
         catch (Exception ex)
@@ -297,11 +321,12 @@ public static class SessionLauncher
     {
         var resolvedToolPaths = ResolveToolAssemblyPaths(options);
         var cuiContext = new CuiToolContext();
-        var builder = new AgentBuilder();
-        
-        // We pass an empty DisabledTools set because we want ALL possible tools
-        builder.DisabledTools = [];
-        
+        var builder = new AgentBuilder
+        {
+            // We pass an empty DisabledTools set because we want ALL possible tools
+            DisabledTools = []
+        };
+
         builder.WithTools(new CuiTools(cuiContext));
         builder.WithTools(new WeatherTool());
         builder.WithTools(new FileSystemTool(options.ProjectPath ?? Directory.GetCurrentDirectory()));
@@ -310,10 +335,10 @@ public static class SessionLauncher
         {
             var (toolInstances, _) = ToolAssemblyLoader.Load(resolvedToolPaths);
             if (toolInstances.Count > 0)
-                builder.WithTools(toolInstances.ToArray());
+                builder.WithTools([.. toolInstances]);
         }
 
-        return builder.RegisteredToolNames.ToList();
+        return [.. builder.RegisteredToolNames];
     }
 
     public static List<IPromptPreProcessor> GetAvailablePreProcessors()

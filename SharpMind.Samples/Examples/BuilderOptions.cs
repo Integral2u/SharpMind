@@ -1,6 +1,7 @@
 ﻿using SharpMind.Core.Quantization;
 using SharpMind.Inference;
 using SharpMind.Inference.Chat;
+using SharpMind.Inference.Chat.PromptFormatters;
 using SharpMind.Model;
 using SharpMind.Model.Config;
 using SharpMind.Model.Format;
@@ -11,7 +12,7 @@ namespace SharpMind.Samples.Examples
 {
     public class BuilderOptions
     {
-        public static async Task RunAsync(string prompt, string ModelPath, string ModelName, int maxTokens = 25, LoadMode loadMode = LoadMode.Full)
+        public static async Task RunAsync(string prompt, string ModelPath, string ModelName, int maxTokens = 25, LoadMode loadMode = LoadMode.Full, IChatPromptFormatter? formatter = null)
         {
             Type[] cacheBuilders = [typeof(QuantizedKVCacherBuilder), typeof(PagedKVCacherBuilder),typeof(KVCacherBuilder)];
             Type[] generatorBuilders = [typeof(StandardGeneratorBuilder<>),typeof(MedusaGeneratorBuilder<>),typeof(SpeculativeGeneratorBuilder<>)];
@@ -69,7 +70,7 @@ namespace SharpMind.Samples.Examples
 
                     sw.Reset();
 
-                    await using var session = ChatSessionFactory.CreateChatSession(generatorDef, cacheBuilder, model, tokenizer, meta);                   
+                    await using var session = ChatSessionFactory.CreateChatSession(generatorDef, cacheBuilder, model, tokenizer, meta, null, null, null, null, null, formatter);                   
                     session.MaxTokens = 256;
                     session.Temperature = 0.0f;
                     session.TopK = 1;
