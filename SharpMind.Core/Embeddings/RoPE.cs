@@ -193,15 +193,16 @@ public sealed class RoPE : PositionalEncoder
                             var even = Sse2.Shuffle(vec, vec, 0x88);  // [x0, x2, x0, x2]
                             var odd  = Sse2.Shuffle(vec, vec, 0xDD);  // [x1, x3, x1, x3]
                             var cos  = Vector128.Create(
-                                _cosCache[cacheBase + pairBase], _cosCache[cacheBase + pairBase],
-                                _cosCache[cacheBase + pairBase + 1], _cosCache[cacheBase + pairBase + 1]);
+                                _cosCache[cacheBase + pairBase], _cosCache[cacheBase + pairBase + 1],
+                                _cosCache[cacheBase + pairBase], _cosCache[cacheBase + pairBase + 1]);
                             var sin  = Vector128.Create(
-                                _sinCache[cacheBase + pairBase], _sinCache[cacheBase + pairBase],
-                                _sinCache[cacheBase + pairBase + 1], _sinCache[cacheBase + pairBase + 1]);
+                                _sinCache[cacheBase + pairBase], _sinCache[cacheBase + pairBase + 1],
+                                _sinCache[cacheBase + pairBase], _sinCache[cacheBase + pairBase + 1]);
 
                             var outEven = Sse.Subtract(Sse.Multiply(even, cos), Sse.Multiply(odd, sin));
                             var outOdd  = Sse.Add(Sse.Multiply(odd, cos), Sse.Multiply(even, sin));
-                            Sse41.Blend(outEven, outOdd, 0b1010).StoreUnsafe(ref data[offset + 2 * pairBase]);
+                            // Interleave [p0_even, p0_odd, p1_even, p1_odd] back into dim order
+                            Sse2.UnpackLow(outEven, outOdd).StoreUnsafe(ref data[offset + 2 * pairBase]);
                         }
                     }
                 }

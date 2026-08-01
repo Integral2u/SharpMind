@@ -273,6 +273,8 @@ public static class SessionLauncher
             FormatterStrategy.ChatML =>  string.IsNullOrWhiteSpace(tmpl) ? new SimpleFormatter() : new ChatMLFormatter(tmpl),
             FormatterStrategy.Simple => new SimpleFormatter(),
             FormatterStrategy.QuestionAnswer => new QuestionAnswerFormatter(),
+            FormatterStrategy.Alpaca => new AlpacaFormatter(),
+            FormatterStrategy.Llama3 => new Llama3Formatter(),
             FormatterStrategy.Raw => new RawTemplateFormatter(),
             _ => throw new ArgumentOutOfRangeException(nameof(options))
         };

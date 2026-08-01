@@ -4,6 +4,9 @@ you must make sure you understand the JigSawDotNet pattern and use. Intention is
 Review Sharmind.Core.Activations.* for example
 
 Tasks to implement.
+
+Task -1: Rope using Avx.IsSupported && Sse41.IsSupported only needs check for AVX2
+other IsSupported classes RmsNormLayer, Tensor
 Task 0: It may be worth adding default terminator strings to IChatPromptFormatter especiialy for Raw and Q&A formats 
 
 Task 1: SharpMind Native Model Format. *.SMM

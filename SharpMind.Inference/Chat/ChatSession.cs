@@ -134,7 +134,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         if (_initialized) return;
 
         progress?.Report(0f);
-        _formatter = _formatterOverride ?? ChatPromptFormatterFactory.Create(_meta);
+        _formatter = _formatterOverride ?? ChatPromptFormatterFactory.Create(_meta, _tokenizer);
         progress?.Report(0.15f);
 
         _generator = new T().CreateGenerator(_model, _tokenizer, _addBos, _addEos, _caches, _seed);

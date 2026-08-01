@@ -19,6 +19,10 @@ public enum FormatterStrategy
     Simple,
     /// <summary>"Q:{prompt} A:" format <see cref="SharpMind.Inference.Chat.PromptFormatters.QuestionAnswerFormatter"/>.</summary>
     QuestionAnswer,
+    /// <summary>"Q:{prompt} A:" format <see cref="SharpMind.Inference.Chat.PromptFormatters.AlpacaFormatter"/>.</summary>
+    Alpaca,
+    /// <summary>"Q:{prompt} A:" format <see cref="SharpMind.Inference.Chat.PromptFormatters.Llama3Formatter"/>.</summary>
+    Llama3,
     /// <summary>Direct Prompt <see cref="SharpMind.Inference.Chat.PromptFormatters.RawTemplateFormatter"/>.</summary>
     Raw
 }
