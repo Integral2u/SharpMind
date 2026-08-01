@@ -32,6 +32,8 @@ public sealed class QuestionAnswerFormatter : IChatPromptFormatter
     private const string QPrefix = "Q: ";
     private const string APrefix = "A:";
 
+    public IReadOnlyList<string> DefaultStopStrings => ["\nQ:", "\n\n"];
+
     public string Format(IReadOnlyList<ChatMessage> history, Tokenizer tokenizer, bool addBos, bool enableThinking = false, string? toolsJson = null)
     {
         var sb = new System.Text.StringBuilder();

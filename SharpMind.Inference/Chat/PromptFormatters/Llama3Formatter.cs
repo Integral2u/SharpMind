@@ -31,6 +31,8 @@ public sealed class Llama3Formatter : IChatPromptFormatter
     private const string HeaderEnd = "<|end_header_id|>\n\n";
     private const string Eot = "<|eot_id|>";
 
+    public IReadOnlyList<string> DefaultStopStrings => [Eot];
+
     public string Format(IReadOnlyList<ChatMessage> history, Tokenizer tokenizer, bool addBos, bool enableThinking = false, string? toolsJson = null)
     {
         var sb = new System.Text.StringBuilder();

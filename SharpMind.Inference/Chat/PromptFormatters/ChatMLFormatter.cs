@@ -8,6 +8,7 @@ public sealed class ChatMLFormatter : IChatPromptFormatter
     private readonly string _assistantStart;
     private readonly string _systemStart;
     private readonly string _end;
+    private readonly string[] _stopStrings;
 
     public ChatMLFormatter(string template)
     {
@@ -38,7 +39,10 @@ public sealed class ChatMLFormatter : IChatPromptFormatter
             _systemStart = "<|im_start|>system\n";
             _end = "<|im_end|>";
         }
+        _stopStrings = [_end];
     }
+
+    public IReadOnlyList<string> DefaultStopStrings => _stopStrings;
 
     public string Format(IReadOnlyList<ChatMessage> history, Tokenizer tokenizer, bool addBos, bool enableThinking = false, string? toolsJson = null)
     {

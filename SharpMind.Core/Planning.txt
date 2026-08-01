@@ -5,9 +5,9 @@ Review Sharmind.Core.Activations.* for example
 
 Tasks to implement.
 
-How many times are activation factories being called, possibly have the ConcurrentDictionary cache but also a fast last has and type
-Task -2; MedusaHeads.Calibrate assignes targetLogit but is never used in anything useful 
-Task 0: It may be worth adding default terminator strings to IChatPromptFormatter especiialy for Raw and Q&A formats 
+Item 1: How many times are activation factories being called, possibly have the ConcurrentDictionary cache but also a fast last has and type
+Item 2: MedusaHeads.Calibrate assignes targetLogit but is never used in anything useful 
+Item 3: It may be worth adding default terminator strings to IChatPromptFormatter especiialy for Raw and Q&A formats 
 
 Task -1: Rope using Avx.IsSupported
 other IsSupported classes RmsNormLayer

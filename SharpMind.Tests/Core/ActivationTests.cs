@@ -229,5 +229,39 @@ namespace SharpMind.Tests.Core
             for (int i = 0; i < rS.ElementCount; i++)
                 Assert.Equal(rS[i], rA[i], precision: 5);
         }
+
+        // Factory caching
+
+        [Fact]
+        public void Factory_SameConfig_ReturnsSameInstance()
+        {
+            var cfg = SharpMindConfig.Llama with { Hardware = HardwareTier.Scalar };
+            Assert.Same(ActivationFactory.Create(cfg), ActivationFactory.Create(cfg));
+        }
+
+        [Fact]
+        public void Factory_EqualConfigValue_ReturnsSameInstance()
+        {
+            var a = ActivationFactory.Create(SharpMindConfig.Llama with { Hardware = HardwareTier.Scalar });
+            var b = ActivationFactory.Create(SharpMindConfig.Llama with { Hardware = HardwareTier.Scalar });
+            Assert.Same(a, b);
+        }
+
+        [Fact]
+        public void Factory_DifferentConfigValues_ReturnDifferentInstances()
+        {
+            var scalar = ActivationFactory.Create(SharpMindConfig.Llama with { Hardware = HardwareTier.Scalar });
+            var avx2 = ActivationFactory.Create(SharpMindConfig.Llama with { Hardware = HardwareTier.AVX2 });
+            Assert.NotSame(scalar, avx2);
+        }
+
+        [Fact]
+        public void Factory_EqualMapping_ReturnsSameInstance()
+        {
+            var cfg = SharpMindConfig.Gpt with { Hardware = HardwareTier.Scalar };
+            var m1 = cfg.ToJigSawMapping();
+            var m2 = cfg.ToJigSawMapping();
+            Assert.Same(ActivationFactory.Create(m1), ActivationFactory.Create(m2));
+        }
     }
 }

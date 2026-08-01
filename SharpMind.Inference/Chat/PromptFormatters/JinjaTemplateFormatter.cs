@@ -34,6 +34,13 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
     /// <summary>Errors accumulated during the last <see cref="Format"/> call.</summary>
     public IReadOnlyList<string>? LastErrors { get; private set; }
 
+    /// <summary>
+    /// Jinja templates embed the model's own end-of-turn token, so the only
+    /// reliable terminator is EOS (handled via StopTokenIds) — no extra plain-text
+    /// stop strings are defined.
+    /// </summary>
+    public IReadOnlyList<string> DefaultStopStrings => [];
+
     // Public entry point
 
     public string Format(IReadOnlyList<ChatMessage> history, Tokenizer tokenizer, bool addBos, bool enableThinking = false, string? toolsJson = null)

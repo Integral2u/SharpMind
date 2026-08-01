@@ -35,6 +35,8 @@ public sealed class AlpacaFormatter : IChatPromptFormatter
     private const string PreambleWithInput =
         "Below is an instruction that describes a task, paired with an input that provides further context. Write a response that appropriately completes the request.\n\n";
 
+    public IReadOnlyList<string> DefaultStopStrings => ["\n### Instruction:", "\n###"];
+
     public string Format(IReadOnlyList<ChatMessage> history, Tokenizer tokenizer, bool addBos, bool enableThinking = false, string? toolsJson = null)
     {
         var sb = new System.Text.StringBuilder();

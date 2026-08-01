@@ -569,6 +569,7 @@ private void ThrowIfDisposed()
             RepetitionPenalty = RepetitionPenalty,
             RepetitionWindow = RepetitionWindow,
             StopTokenIds = StopTokenIds ?? _tokenizer.GetEndOfGenerationIds(),
+            StopStrings = _formatter?.DefaultStopStrings ?? [],
             Stream = true,
         };
 
@@ -766,6 +767,7 @@ private void ThrowIfDisposed()
                 RepetitionPenalty = RepetitionPenalty,
                 RepetitionWindow = RepetitionWindow,
                 StopTokenIds = StopTokenIds ?? _tokenizer.GetEndOfGenerationIds(),
+                StopStrings = _formatter?.DefaultStopStrings ?? [],
                 SlidingWindowSize = 0,
                 Stream = true,
             };

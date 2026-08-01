@@ -240,15 +240,10 @@ public sealed class MedusaHeads : IDisposable
                         }
                     }
 
-                    // Find maxLogit and targetLogit from buffer
+                    // Find maxLogit from buffer for softmax stability
                     double maxLogit = _logitBuffer[0];
-                    double targetLogit = 0;
-                    for (int v = 0; v < _vocabSize; v++)
-                    {
-                        double l = _logitBuffer[v];
-                        if (l > maxLogit) maxLogit = l;
-                        if (v == targetId) targetLogit = l;
-                    }
+                    for (int v = 1; v < _vocabSize; v++)
+                        if (_logitBuffer[v] > maxLogit) maxLogit = _logitBuffer[v];
 
                     // Softmax denominator
                     double sumExp = 0, targetExp = 0;
