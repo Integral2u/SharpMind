@@ -1,8 +1,8 @@
-using System.Diagnostics;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
+using SharpMind.Core.Diagnostics;
 using SharpMind.Core.Memory;
 
 namespace SharpMind.Core.Tensors;
@@ -113,8 +113,7 @@ public sealed unsafe class Tensor<T> : IDisposable
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         get
         {
-            [Conditional("DEBUG")] static void Check(int idx, int len) { if ((uint)idx >= (uint)len) throw new ArgumentOutOfRangeException(nameof(flatIndex), $"Index {idx} out of range [0..{len - 1}]."); }
-            Check(flatIndex, ElementCount);
+            SanityChecks.IndexInRange(flatIndex, ElementCount, nameof(flatIndex));
             return ref DataPtr[flatIndex];
         }
     }
@@ -234,28 +233,9 @@ public sealed unsafe class Tensor<T> : IDisposable
         
         return CreateView(new TensorShape(newDimsArray), _offset + offset, _ownsMemory);
     }
-    // diagnostics
 
     public override string ToString() =>
         $"Tensor<{typeof(T).Name}> {Shape} [{ElementCount} elements]";
-
-    /// <summary>
-    /// Formats the tensor contents for debugging (small tensors only).
-    /// </summary>
-    public string ToDebugString(int maxElements = 32)
-    {
-        var sb = new System.Text.StringBuilder();
-        sb.Append($"Tensor<{typeof(T).Name}> {Shape}: [");
-        int n = Math.Min(ElementCount, maxElements);
-        for (int i = 0; i < n; i++)
-        {
-            sb.Append(this[i]);
-            if (i < n - 1) sb.Append(", ");
-        }
-        if (ElementCount > maxElements) sb.Append(", ...");
-        sb.Append(']');
-        return sb.ToString();
-    }
 
     // ── Elementwise operator helpers ──────────────────────────────────────
 
@@ -331,21 +311,6 @@ public sealed unsafe class Tensor<T> : IDisposable
                 for (int c = 0; c < C; c++)
                     pD[(long)c * R + r] = pS[(long)r * C + c];
             });
-        }
-        return dst;
-    }
-
-    private static Tensor<float> TransposeLast2D(Tensor<float> src, int M, int N, int batch)
-    {
-        var dst = new Tensor<float>(src.Shape.Reshape(batch, N, M));
-        float* pS = src.DataPtr, pD = dst.DataPtr;
-        for (int b = 0; b < batch; b++)
-        {
-            float* sSlice = pS + (long)b * M * N;
-            float* dSlice = pD + (long)b * N * M;
-            for (int r = 0; r < M; r++)
-                for (int c = 0; c < N; c++)
-                    dSlice[(long)c * M + r] = sSlice[(long)r * N + c];
         }
         return dst;
     }
@@ -505,27 +470,6 @@ public sealed unsafe class Tensor<T> : IDisposable
         if (Rank != 2)
             throw new ArgumentException($"Transpose requires rank-2 tensor, got rank {Rank}.");
         return TransposeInternal(Unsafe.As<Tensor<float>>(this));
-    }
-
-    public void TransposeInPlace()
-    {
-        if (typeof(T) != typeof(float))
-            throw new InvalidOperationException("Transpose is only supported for Tensor<float>.");
-        if (Rank != 2)
-            throw new ArgumentException($"Transpose requires rank-2 tensor, got rank {Rank}.");
-        var tf = Unsafe.As<Tensor<float>>(this);
-        int R = tf.Shape.Rows, C = tf.Shape.Cols;
-        if (R != C) throw new ArgumentException($"In-place transpose requires square matrix [{R},{C}].");
-        var data = tf.Data;
-        for (int r = 0; r < R; r++)
-        {
-            for (int c = r + 1; c < C; c++)
-            {
-                long i = (long)r * C + c;
-                long j = (long)c * R + r;
-                (data[(int)i], data[(int)j]) = (data[(int)j], data[(int)i]);
-            }
-        }
     }
 
     // disposal

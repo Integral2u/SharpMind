@@ -180,7 +180,7 @@ public sealed class RoPE : PositionalEncoder
                 // (Empirically verified against llama.cpp for Llama-3.2: the
                 //  half-pairing convention diverges for positions >= 1.)
                 int i = 0;
-                if (Avx.IsSupported && Sse41.IsSupported)
+                if (Avx.IsSupported)
                 {
                     // 4 adjacent pairs (8 floats) per outer iteration, processed
                     // as two 128-bit lanes of 2 pairs each.

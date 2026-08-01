@@ -5,7 +5,7 @@ Review Sharmind.Core.Activations.* for example
 
 Tasks to implement.
 
-Task -1: Rope using Avx.IsSupported && Sse41.IsSupported only needs check for AVX2
+Task -1: Rope using Avx.IsSupported
 other IsSupported classes RmsNormLayer, Tensor
 Task 0: It may be worth adding default terminator strings to IChatPromptFormatter especiialy for Raw and Q&A formats 
 

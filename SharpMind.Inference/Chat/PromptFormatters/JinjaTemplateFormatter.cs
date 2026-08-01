@@ -1,6 +1,7 @@
 ﻿using System.Text;
 using System.Text.RegularExpressions;
 using SharpMind.Core;
+using SharpMind.Core.Diagnostics;
 using SharpMind.Tokenization;
 
 namespace SharpMind.Inference.Chat.PromptFormatters;
@@ -798,7 +799,7 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
         {
             string msg = $"JINJA ERROR: variable '{expr}' not found in template env";
             errors?.Add(msg);
-            InternalLog.WriteLine($"JinjaTemplateFormatter: variable '{expr}' not found in template env");
+            SanityChecks.WriteLine($"JinjaTemplateFormatter: variable '{expr}' not found in template env");
         }
         return result;
     }

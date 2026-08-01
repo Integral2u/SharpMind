@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using System.Text;
+using SharpMind.Core.Diagnostics;
 
 namespace SharpMind.Core.Tensors;
 
@@ -171,8 +172,7 @@ public readonly struct TensorShape : IEquatable<TensorShape>
             for (int i = 0; i < _rank; i++)
             {
                 int dim = _dimsOverflow![i];
-                if ((uint)indices[i] >= (uint)dim)
-                    throw new ArgumentOutOfRangeException(nameof(indices), $"Index {indices[i]} out of range for dim {i} (size {dim}).");
+                SanityChecks.IndexInRange(indices[i], dim, $"indices[{i}]");
                 offset += indices[i] * _stridesOverflow[i];
             }
         }
@@ -181,8 +181,7 @@ public readonly struct TensorShape : IEquatable<TensorShape>
             for (int i = 0; i < _rank; i++)
             {
                 int dim = this[i];
-                if ((uint)indices[i] >= (uint)dim)
-                    throw new ArgumentOutOfRangeException(nameof(indices), $"Index {indices[i]} out of range for dim {i} (size {dim}).");
+                SanityChecks.IndexInRange(indices[i], dim, $"indices[{i}]");
                 offset += indices[i] * GetStrideInline(i);
             }
         }
@@ -196,14 +195,14 @@ public readonly struct TensorShape : IEquatable<TensorShape>
         {
             int dimR = _dimsOverflow![^2];
             int dimC = _dimsOverflow[^1];
-            if ((uint)row >= (uint)dimR || (uint)col >= (uint)dimC)
-                throw new ArgumentOutOfRangeException(nameof(row), $"Index [{row},{col}] out of range for shape [{dimR},{dimC}].");
+            SanityChecks.IndexInRange(row, dimR, nameof(row));
+            SanityChecks.IndexInRange(col, dimC, nameof(col));
             return row * _stridesOverflow[^2] + col;
         }
         int dR = this[_rank - 2];
         int dC = this[_rank - 1];
-        if ((uint)row >= (uint)dR || (uint)col >= (uint)dC)
-            throw new ArgumentOutOfRangeException(nameof(row), $"Index [{row},{col}] out of range for shape [{dR},{dC}].");
+        SanityChecks.IndexInRange(row, dR, nameof(row));
+        SanityChecks.IndexInRange(col, dC, nameof(col));
         return row * GetStrideInline(_rank - 2) + col;
     }
 

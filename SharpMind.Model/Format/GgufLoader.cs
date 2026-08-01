@@ -1,4 +1,5 @@
 using SharpMind.Core;
+using SharpMind.Core.Diagnostics;
 using SharpMind.Core.Quantization;
 using SharpMind.Core.Tensors;
 using SharpMind.Model.Config;
@@ -166,7 +167,7 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
 
                 meta.Tensors.Add(new TensorInfo { Name = name, Dtype = dtype, Shape = shape, Offset = (long)offset });
             }
-            catch (Exception ex) { InternalLog.WriteLine($"GgufLoader: tensor metadata read failed: {ex.Message}"); break; }
+            catch (Exception ex) { SanityChecks.WriteLine($"GgufLoader: tensor metadata read failed: {ex.Message}"); break; }
         }
 
         uint alignment = (uint)meta.GetLong("general.alignment", 32);
@@ -307,7 +308,7 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
         }
         catch (Exception ex)
         {
-            InternalLog.WriteLine($"GgufLoader: GGUF tokenizer construction failed: {ex.Message}");
+            SanityChecks.WriteLine($"GgufLoader: GGUF tokenizer construction failed: {ex.Message}");
             return null;
         }
     }
@@ -338,7 +339,7 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
         }
 
         if (added > 0)
-            InternalLog.WriteLine($"GgufLoader: ensured {added} template tokens are registered as specials");
+            SanityChecks.WriteLine($"GgufLoader: ensured {added} template tokens are registered as specials");
     }
 
     public static void Load(
@@ -393,7 +394,7 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
             }
             catch (Exception ex)
             {
-                InternalLog.WriteLine($"GgufLoader: external tokenizer file failed: {ex.Message}");
+                SanityChecks.WriteLine($"GgufLoader: external tokenizer file failed: {ex.Message}");
                 tokenizer = null;
             }
         }
