@@ -5,10 +5,6 @@ Review Sharmind.Core.Activations.* for example
 
 Tasks to implement.
 
-Item 1: How many times are activation factories being called, possibly have the ConcurrentDictionary cache but also a fast last has and type
-Item 2: MedusaHeads.Calibrate assignes targetLogit but is never used in anything useful 
-Item 3: It may be worth adding default terminator strings to IChatPromptFormatter especiialy for Raw and Q&A formats 
-
 Task -1: Rope using Avx.IsSupported
 other IsSupported classes RmsNormLayer
 
@@ -25,12 +21,6 @@ Task 2: Future Incorperate Training into CUI.
 Task 3: Profiler
 Profiler for all VecDot quants and its variants to ensure correct implementation.  SSE faster than Scalar, AVX2 faster than SSE, FMA faster than AXV.
 And a profiler to compare Serial Vs Parallel MatMul on syntestic data approximatly size of 1b model layer
-
-3: Training
-SharpMind.Core.Training.GradientMapping indicates states "Manages the mapping of gradient operations to their specific PuzzlePiece implementations".
-however the JigSawDotNet pattern is never used, the class would need to be abstract and it provides Override mthods that are never use.
-This issue seem to be in SharpMind.Training to where there are classes that do tests for Avx2.IsSupported and Fma.IsSupported rather than specific kernals, see SharpMind.Training.Autograd.Gradients, SharpMind.Training.TrainingKernels
-This may have been in preparation for migrating to JigSawDotNet but just not implemented yet.
 
 4: I1 Quantization Ops.  No AVX/FFA/SSE implementations though not ever used so far by any models so far, would need to add a supporting archetecture.
 
