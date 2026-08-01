@@ -40,6 +40,11 @@ public static class NativeBufferPool<T> where T : unmanaged
                 NativeMemory.Clear(buffer.Ptr, (nuint)byteLen);
                 // Bytes were already counted in TotalMemoryUsed when originally allocated;
                 // they stayed in the pool (not freed), so do NOT call OnAllocate again.
+                // Dispose() suppressed this buffer's finalizer when it was last
+                // returned to the pool; re-arm it now that it's leased out again,
+                // so a leak on *this* lease is still caught even though the
+                // buffer itself has already outlived its original allocation.
+                GC.ReRegisterForFinalize(buffer);
                 return buffer;
             }
         }

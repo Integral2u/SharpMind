@@ -64,6 +64,11 @@ public sealed unsafe class NativeBuffer<T> : IDisposable where T : unmanaged
     {
         if (Interlocked.Decrement(ref _refCount) == 0)
         {
+            // pool actually frees the memory now or keeps it for reuse,
+            // nothing further needs finalizing for *this* lease — if the
+            // buffer gets rented out again later, Rent() re-arms the
+            // finalizer for that next lease (see NativeBufferPool<T>.Rent).
+            GC.SuppressFinalize(this);
             NativeBufferPool<T>.Return(this);
         }
     }
@@ -75,6 +80,27 @@ public sealed unsafe class NativeBuffer<T> : IDisposable where T : unmanaged
             NativeMemory.AlignedFree(_ptr);
             _ptr = null;
         }
+    }
+
+    /// <summary>
+    /// Safety net only — Dispose()/the pool are the intended cleanup path.
+    /// This exists purely to reclaim native memory if a buffer is ever
+    /// dropped without going through Dispose() (e.g. an exception between
+    /// allocation and a `using`, or a missed disposal on an error path).
+    /// Reachability guarantees this never fires while a buffer is legitimately
+    /// sitting in NativeBufferPool's stack awaiting reuse — anything the pool
+    /// still references can't be unreachable, and Free() being idempotent
+    /// makes this safe even if cleanup already happened through the normal path.
+    /// 
+    /// Suppressed from Dispose() (see above), not from here — CA1816 expects
+    /// GC.SuppressFinalize to be called by Dispose() specifically. Each time
+    /// a pooled buffer is handed out again by Rent(), the finalizer is
+    /// re-armed via GC.ReRegisterForFinalize so this safety net covers every
+    /// lease of a reused buffer, not just its first one.
+    /// </summary>
+    ~NativeBuffer()
+    {
+        Free();
     }
 
     /// <summary>
