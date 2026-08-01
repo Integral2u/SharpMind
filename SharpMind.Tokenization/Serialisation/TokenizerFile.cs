@@ -40,6 +40,15 @@ public static class TokenizerFile
         ArgumentNullException.ThrowIfNull(model);
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
 
+        Directory.CreateDirectory(Path.GetDirectoryName(path) ?? ".");
+        File.WriteAllText(path, ToJson(model));
+    }
+
+    /// <summary>Serialises a trained <see cref="BpeModel"/> to its SharpMind JSON string.</summary>
+    public static string ToJson(BpeModel model)
+    {
+        ArgumentNullException.ThrowIfNull(model);
+
         var obj = new JsonObject
         {
             ["version"] = "1.0",
@@ -60,8 +69,7 @@ public static class TokenizerFile
                      .Select(m => JsonValue.Create($"{m.Left} {m.Right}")!)]),
         };
 
-        Directory.CreateDirectory(Path.GetDirectoryName(path) ?? ".");
-        File.WriteAllText(path, obj.ToJsonString(JsonOpts));
+        return obj.ToJsonString(JsonOpts);
     }
 
     /// <summary>Loads a SharpMind native tokenizer JSON file.</summary>
@@ -71,7 +79,15 @@ public static class TokenizerFile
         if (!File.Exists(path))
             throw new FileNotFoundException($"Tokenizer file not found: {path}");
 
-        using var doc = JsonDocument.Parse(File.ReadAllText(path));
+        return FromJson(File.ReadAllText(path));
+    }
+
+    /// <summary>Parses a SharpMind native tokenizer JSON string.</summary>
+    public static BpeModel FromJson(string json)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(json);
+
+        using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;
 
         // Special tokens

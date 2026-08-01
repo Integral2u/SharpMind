@@ -1,0 +1,461 @@
+using SharpMind.Core;
+using SharpMind.Core.Diagnostics;
+using SharpMind.Core.Quantization;
+using SharpMind.Core.Tensors;
+using SharpMind.Model.Config;
+using SharpMind.Tokenization;
+using System.Buffers;
+using System.IO.Compression;
+using System.IO.MemoryMappedFiles;
+using System.Text;
+using System.Text.Json;
+using static SharpMind.Model.TransformerWeights;
+
+namespace SharpMind.Model.Format;
+
+/// <summary>
+/// Loads SharpMind Model (.SMM) containers. Mirrors <see cref="GgufLoader"/>'s
+/// target resolution, raw-quantized-data handling and GGUF transpose semantics
+/// so a single loader serves both GGUF-converted and training-exported files.
+/// The only differences are the container header/index and the optional
+/// per-tensor GZip decompression.
+/// </summary>
+public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig config) : IModelLoader
+{
+    private static readonly JsonSerializerOptions JsonOpts = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+    };
+
+    private readonly QuantizationOps _qOps = qOps ?? throw new ArgumentNullException(nameof(qOps));
+    private readonly string _path = File.Exists(path) ? path : throw new FileNotFoundException(path);
+    private readonly ModelConfig _config = config ?? throw new ArgumentNullException(nameof(config));
+
+    // ── Static helpers (metadata / config / tokenizer / plugins) ──────────
+
+    public static ModelMetaData LoadMeta(string path)
+    {
+        using var stream = File.OpenRead(path);
+        using var reader = new BinaryReader(stream);
+        return ReadIndex(reader, stream).Meta;
+    }
+
+    public static ModelConfig? LoadConfig(ModelMetaData meta)
+    {
+        string json = meta.GetString(SmmConstants.ConfigKey);
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try
+        {
+            return JsonSerializer.Deserialize<ModelConfig>(json, JsonOpts);
+        }
+        catch (Exception ex)
+        {
+            SanityChecks.WriteLine($"SmmLoader: config JSON parse failed: {ex.Message}");
+            return null;
+        }
+    }
+
+    public static Tokenizer? LoadTokenizerFromMeta(ModelMetaData meta)
+    {
+        string json = meta.GetString(SmmConstants.TokenizerKey);
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try
+        {
+            return Tokenizer.FromJson(json);
+        }
+        catch (Exception ex)
+        {
+            SanityChecks.WriteLine($"SmmLoader: tokenizer JSON parse failed: {ex.Message}");
+            return null;
+        }
+    }
+
+    public static List<SmmPluginEntry> LoadPlugins(string path)
+    {
+        using var stream = File.OpenRead(path);
+        using var reader = new BinaryReader(stream);
+        if (reader.ReadUInt32() != SmmConstants.Magic)
+            throw new InvalidDataException("Not SMM: " + path);
+
+        reader.ReadUInt32(); // version
+        long metaLen = reader.ReadInt64();
+        long tokenizerLen = reader.ReadInt64();
+        long pluginAsmCount = reader.ReadInt64();
+        reader.ReadInt64(); // tensorCount
+        reader.ReadInt64(); // indexLen
+        reader.ReadInt64(); // dataOffset
+        reader.ReadInt64(); // reserved
+
+        reader.BaseStream.Position += metaLen + tokenizerLen;
+
+        var plugins = new List<SmmPluginEntry>((int)pluginAsmCount);
+        for (long i = 0; i < pluginAsmCount; i++)
+        {
+            var (_, name) = ReadString(reader);
+            bool recommended = reader.ReadBoolean();
+            long asmLen = reader.ReadInt64();
+            byte[] asm = reader.ReadBytes((int)asmLen);
+            plugins.Add(new SmmPluginEntry { Name = name, AssemblyBytes = asm, Recommended = recommended });
+        }
+        return plugins;
+    }
+
+    public static void Load(
+        string path,
+        string? tokenizerPath,
+        out ModelMetaData meta,
+        out ModelConfig config,
+        out Tokenizer? tokenizer)
+    {
+        meta = LoadMeta(path);
+        config = LoadConfig(meta)
+            ?? throw new InvalidDataException("SMM file is missing its model config (smm.config_json).");
+        tokenizer = LoadTokenizerFromMeta(meta);
+        if (tokenizer == null && !string.IsNullOrEmpty(tokenizerPath) && File.Exists(tokenizerPath))
+        {
+            try
+            {
+                tokenizer = Tokenizer.FromFile(tokenizerPath);
+            }
+            catch (Exception ex)
+            {
+                SanityChecks.WriteLine($"SmmLoader: external tokenizer file failed: {ex.Message}");
+                tokenizer = null;
+            }
+        }
+    }
+
+    // ── IModelLoader implementation ────────────────────────────────────────
+
+    public void LoadAllWeights(TransformerWeights weights, IProgress<float>? progress = null)
+    {
+        Core.Memory.NativeBufferPool<float>.Clear();
+
+        var index = ReadIndex(_path);
+        weights.GgufMeta = index.Meta;
+        weights.GgufPath = _path;
+        weights.IsMoE = index.Meta.Tensors.Any(t => t.Name.Contains(".exps."));
+
+        using var mmf = MemoryMappedFile.CreateFromFile(_path, FileMode.Open, null, 0, MemoryMappedFileAccess.Read);
+        using var stream = mmf.CreateViewStream(0, 0, MemoryMappedFileAccess.Read);
+
+        int total = index.Entries.Count;
+        int loaded = 0;
+        foreach (var entry in index.Entries)
+        {
+            progress?.Report((float)loaded / total);
+            LoadSingleTensor(weights, index, stream, entry);
+            loaded++;
+        }
+        progress?.Report(1f);
+    }
+
+    public void LoadLayerWeights(int layerIndex, TransformerWeights weights)
+    {
+        var index = weights.GgufMeta == null ? ReadIndex(_path) : ReadIndex(_path);
+        if (weights.GgufMeta == null)
+        {
+            weights.GgufMeta = index.Meta;
+            weights.GgufPath = _path;
+            weights.IsMoE = index.Meta.Tensors.Any(t => t.Name.Contains(".exps."));
+        }
+
+        var targetBlock = layerIndex < weights.Blocks.Length ? weights.Blocks[layerIndex] : null;
+        if (targetBlock == null) return;
+
+        using var mmf = MemoryMappedFile.CreateFromFile(_path, FileMode.Open, null, 0, MemoryMappedFileAccess.Read);
+        using var stream = mmf.CreateViewStream(0, 0, MemoryMappedFileAccess.Read);
+
+        foreach (var entry in index.Entries)
+        {
+            var (_, block, _) = weights.ResolveTarget(entry.Name);
+            if (block == targetBlock)
+                LoadSingleTensor(weights, index, stream, entry);
+        }
+    }
+
+    public void LoadGlobalTensors(TransformerWeights weights)
+    {
+        var index = ReadIndex(_path);
+        if (weights.GgufMeta == null)
+        {
+            weights.GgufMeta = index.Meta;
+            weights.GgufPath = _path;
+            weights.IsMoE = index.Meta.Tensors.Any(t => t.Name.Contains(".exps."));
+        }
+
+        using var mmf = MemoryMappedFile.CreateFromFile(_path, FileMode.Open, null, 0, MemoryMappedFileAccess.Read);
+        using var stream = mmf.CreateViewStream(0, 0, MemoryMappedFileAccess.Read);
+
+        foreach (var entry in index.Entries)
+        {
+            var (target, block, _) = weights.ResolveTarget(entry.Name);
+            if (target != null && block == null)
+                LoadSingleTensor(weights, index, stream, entry);
+        }
+    }
+
+    private void LoadSingleTensor(
+        TransformerWeights weights, SmmFileIndex index,
+        MemoryMappedViewStream stream, SmmTensorIndexEntry entry)
+    {
+        var (target, block, rawField) = weights.ResolveTarget(entry.Name);
+
+        // Must create LmHeadWeight BEFORE the early-return check below (see
+        // GgufLoader for the rationale).
+        if (!entry.Name.Contains("blk.") && entry.Name.Contains("output.weight") && weights.LmHeadWeight == null)
+        {
+            long ggufIn = entry.Shape[0];
+            weights.SetLmHead(new Tensor<float>((int)_config.VocabSize, (int)ggufIn));
+            (target, block, rawField) = weights.ResolveTarget(entry.Name);
+        }
+
+        if (target == null && block == null) return;
+
+        long rawSize = QuantizationOps.GetRawTensorByteCount(entry.Shape, entry.Dtype);
+        if (rawSize <= 0) return;
+
+        byte[] rawBytes = ReadTensorBytes(stream, index, entry, rawSize);
+
+        // Record tensor metadata and top-level dtypes (consumed by SetWeights later)
+        if (target != null && block == null)
+        {
+            if (target == weights.LmHeadWeight) weights.RawLmHeadDtype = entry.Dtype;
+            else if (target == weights.EmbeddingWeight) weights.RawEmbeddingDtype = entry.Dtype;
+        }
+        if (block != null && rawField != null)
+            SetTensorMeta(block, rawField, index.Meta.DataOffset + entry.Offset, (int)rawSize, entry.Dtype);
+
+        // Load raw quantized data
+        if (block != null && rawField != null)
+            SetRawField(block, rawField, rawBytes, entry.Dtype);
+
+        if (target != null && block == null)
+        {
+            byte[] data = rawBytes;
+            if (entry.Shape.Length >= 2)
+            {
+                long tensorVocab = Math.Max(entry.Shape[0], entry.Shape[1]);
+                long paddedVocab = _config.VocabSize;
+                if (paddedVocab > tensorVocab)
+                {
+                    long colBytes = rawSize / tensorVocab;
+                    var padded = new byte[paddedVocab * colBytes];
+                    for (long r = 0; r < tensorVocab; r++)
+                        Buffer.BlockCopy(rawBytes, (int)(r * colBytes), padded, (int)(r * colBytes), (int)colBytes);
+                    data = padded;
+                }
+            }
+
+            if (target == weights.LmHeadWeight) { weights.RawLmHead = data; weights.RawLmHeadDtype = entry.Dtype; }
+            else if (target == weights.EmbeddingWeight) { weights.RawEmbedding = data; weights.RawEmbeddingDtype = entry.Dtype; }
+        }
+
+        // Dequantize to float (same GGUF transpose semantics as GgufLoader)
+        int count = 1;
+        foreach (int d in entry.Shape) count *= d;
+
+        float[] buffer = ArrayPool<float>.Shared.Rent(count);
+        try
+        {
+            using var ms = new MemoryStream(rawBytes);
+            using var reader = new BinaryReader(ms);
+            ReadTensorInto(reader, entry.Dtype, entry.Shape, buffer.AsSpan(0, count));
+
+            if (target != null)
+            {
+                target.Data.Clear();
+                if (target == weights.LmHeadWeight && entry.Shape.Length == 2)
+                {
+                    int ggufIn = entry.Shape[0], ggufOut = entry.Shape[1];
+                    for (int i = 0; i < ggufIn; i++)
+                        for (int j = 0; j < ggufOut; j++)
+                            target.Data[j * ggufIn + i] = buffer[i * ggufOut + j];
+                }
+                else
+                {
+                    buffer.AsSpan(0, count).CopyTo(target.Data);
+                }
+            }
+            else if (block != null)
+            {
+                var floatTarget = weights.ResolveFloatTarget(entry.Name);
+                if (floatTarget != null)
+                {
+                    if (entry.Shape.Length == 2)
+                    {
+                        int ggufIn = entry.Shape[0];
+                        int ggufOut = entry.Shape[1];
+                        bool isFfnUp = entry.Name.Contains("ffn_up", StringComparison.OrdinalIgnoreCase) &&
+                                       floatTarget.Shape[1] == 2 * ggufOut;
+                        int colOff = isFfnUp ? ggufOut : 0;
+                        if (colOff == 0) floatTarget.Data.Clear();
+                        int targetOut = floatTarget.Shape[1];
+                        for (int i = 0; i < ggufIn; i++)
+                            for (int o = 0; o < ggufOut; o++)
+                                floatTarget.Data[i * targetOut + colOff + o] = buffer[o * ggufIn + i];
+                    }
+                    else
+                    {
+                        floatTarget.Data.Clear();
+                        buffer.AsSpan(0, count).CopyTo(floatTarget.Data);
+                    }
+                }
+            }
+        }
+        finally
+        {
+            ArrayPool<float>.Shared.Return(buffer);
+        }
+    }
+
+    private void ReadTensorInto(BinaryReader stream, QuantDType dtype, int[] shape, Span<float> destination)
+    {
+        int count = 1;
+        foreach (int d in shape) count *= d;
+        if (destination.Length < count)
+            throw new ArgumentException($"Destination buffer too small: {destination.Length} < {count}");
+        _qOps.ReadFor(dtype, stream, destination, count);
+    }
+
+    // ── Index parsing ──────────────────────────────────────────────────────
+
+    private sealed record SmmFileIndex(ModelMetaData Meta, List<SmmTensorIndexEntry> Entries);
+
+    private static SmmFileIndex ReadIndex(string path)
+    {
+        using var stream = File.OpenRead(path);
+        using var reader = new BinaryReader(stream);
+        return ReadIndex(reader, stream);
+    }
+
+    private static SmmFileIndex ReadIndex(BinaryReader reader, FileStream stream)
+    {
+        var meta = new ModelMetaData();
+
+        uint magic = reader.ReadUInt32();
+        if (magic != SmmConstants.Magic)
+            throw new InvalidDataException("Not SMM: " + magic.ToString("X8"));
+        uint version = reader.ReadUInt32();
+        if (version != SmmConstants.Version)
+            throw new InvalidDataException("Unsupported SMM version: " + version);
+
+        long metaLen = reader.ReadInt64();
+        long tokenizerLen = reader.ReadInt64();
+        long pluginAsmCount = reader.ReadInt64();
+        long tensorCount = reader.ReadInt64();
+        long indexLen = reader.ReadInt64();
+        long dataOffset = reader.ReadInt64();
+        reader.ReadInt64(); // reserved
+
+        meta.Version = version;
+        meta.TensorCount = tensorCount;
+        meta.DataOffset = dataOffset;
+
+        // Meta JSON
+        if (metaLen > 0)
+        {
+            byte[] metaBytes = reader.ReadBytes((int)metaLen);
+            ParseMetaJson(Encoding.UTF8.GetString(metaBytes), meta);
+        }
+
+        // Tokenizer JSON
+        if (tokenizerLen > 0)
+        {
+            byte[] tokBytes = reader.ReadBytes((int)tokenizerLen);
+            meta.KvPairs.Add(new KvPair { Key = SmmConstants.TokenizerKey, Value = Encoding.UTF8.GetString(tokBytes) });
+        }
+
+        // Plugin manifest — skipped here (exposed via LoadPlugins)
+        for (long i = 0; i < pluginAsmCount; i++)
+        {
+            var (_, _) = ReadString(reader);
+            reader.ReadBoolean();
+            long asmLen = reader.ReadInt64();
+            reader.BaseStream.Position += asmLen;
+        }
+
+        // Tensor index is the last region of the file
+        stream.Position = stream.Length - indexLen;
+        var entries = new List<SmmTensorIndexEntry>();
+        for (long i = 0; i < tensorCount; i++)
+        {
+            try
+            {
+                var (nameLen, name) = ReadString(reader);
+                if (nameLen == 0 || nameLen > 500) break;
+
+                var dtype = (QuantDType)reader.ReadInt32();
+                int rank = reader.ReadInt32();
+                if (rank < 0 || rank > 10) throw new InvalidDataException("Invalid tensor rank: " + rank);
+
+                var shape = new int[rank];
+                for (int j = 0; j < rank; j++) shape[j] = reader.ReadInt32();
+
+                long offset = reader.ReadInt64();
+                long storedLen = reader.ReadInt64();
+                bool compressed = reader.ReadBoolean();
+
+                entries.Add(new SmmTensorIndexEntry(name, dtype, shape, offset, storedLen, compressed));
+                meta.Tensors.Add(new TensorInfo { Name = name, Dtype = dtype, Shape = shape, Offset = offset });
+            }
+            catch (Exception ex)
+            {
+                SanityChecks.WriteLine($"SmmLoader: tensor metadata read failed: {ex.Message}");
+                break;
+            }
+        }
+
+        return new SmmFileIndex(meta, entries);
+    }
+
+    private static void ParseMetaJson(string json, ModelMetaData meta)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+
+            string arch = root.TryGetProperty("architecture", out var a) ? a.GetString() ?? "" : "";
+            meta.KvPairs.Add(new KvPair { Key = "general.architecture", Value = arch });
+
+            if (root.TryGetProperty("chat_template", out var ct) && ct.GetString() is { Length: > 0 } template)
+                meta.KvPairs.Add(new KvPair { Key = "tokenizer.chat_template", Value = template });
+
+            if (root.TryGetProperty("config_json", out var cj) && cj.GetString() is { Length: > 0 } cfgJson)
+                meta.KvPairs.Add(new KvPair { Key = SmmConstants.ConfigKey, Value = cfgJson });
+        }
+        catch (Exception ex)
+        {
+            SanityChecks.WriteLine($"SmmLoader: meta JSON parse failed: {ex.Message}");
+        }
+    }
+
+    private static byte[] ReadTensorBytes(MemoryMappedViewStream stream, SmmFileIndex index, SmmTensorIndexEntry entry, long rawSize)
+    {
+        long absolute = index.Meta.DataOffset + entry.Offset;
+        if (absolute >= stream.Length)
+            throw new InvalidDataException($"Tensor '{entry.Name}' offset is beyond end of file.");
+        stream.Position = absolute;
+
+        byte[] stored = new byte[entry.StoredLen];
+        stream.ReadExactly(stored);
+        if (!entry.Compressed) return stored;
+
+        using var input = new MemoryStream(stored);
+        using var gz = new GZipStream(input, System.IO.Compression.CompressionMode.Decompress);
+        using var output = new MemoryStream((int)rawSize);
+        gz.CopyTo(output);
+        if (output.Length != rawSize)
+            throw new InvalidDataException(
+                $"Tensor '{entry.Name}' decompressed to {output.Length} bytes, expected {rawSize}.");
+        return output.ToArray();
+    }
+
+    private static (int len, string value) ReadString(BinaryReader reader)
+    {
+        int len = reader.ReadInt32();
+        if (len < 0 || len > 100_000_000) throw new InvalidDataException("Invalid string length: " + len);
+        return (len, Encoding.UTF8.GetString(reader.ReadBytes(len)));
+    }
+}

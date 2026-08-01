@@ -425,7 +425,7 @@ public sealed class TransformerWeightsStreaming : TransformerWeights
     /// </summary>
     public override void InitializeWeights(IProgress<float>? progress = null)
     {
-        var meta = Format.GgufLoader.LoadMeta(GgufPath!);
+        var meta = Format.ModelFormatHelpers.LoadMetaForFile(GgufPath!);
         GgufMeta = meta;
         IsMoE = meta.Tensors.Any(t => t.Name.Contains(".exps."));
 

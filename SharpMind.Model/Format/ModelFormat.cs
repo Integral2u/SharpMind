@@ -6,6 +6,7 @@ namespace SharpMind.Model.Format
 {
     public enum ModelFormat
     {
-        Gguf
+        Gguf,
+        Smm
     }
 }

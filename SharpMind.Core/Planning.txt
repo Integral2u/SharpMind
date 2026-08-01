@@ -15,6 +15,9 @@ Additional it should include Plugins such as classes implementing IPromptPreProc
 We could then convert GGUF files over to the new format with packaged plugins.
 I'm thinking we could trial exporting layers as compressed streams or un-compressed just to see if there is any potential size savings to be had. may end up being not worth it, this would mean layerdate would also need a flag indicating compressed but may need to be stripped out if compression algorithm yeilds a benifit(GZip). 
 Then we need the final End to End Test, Super Dumb Model Training save and Load, suggest training on small data set.
+we have C:\Integral2u\source\repos\SharpMind\ExternalAssets\tinyshakespeare\input.txt as a corpus or we can use PseudoLanguage see prior examples in SharpMind.Samples.Tests 
+
+followup Promptfomatter/training for it
 
 Task 2: Future Incorperate Training into CUI.
 

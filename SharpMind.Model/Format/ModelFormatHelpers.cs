@@ -14,6 +14,7 @@ namespace SharpMind.Model.Format
         public static string GetExtension(this ModelFormat format) => format switch
         {
             ModelFormat.Gguf => ".gguf",
+            ModelFormat.Smm => ".smm",
             _ => throw new ArgumentOutOfRangeException(nameof(format), format, null)
         };
 
@@ -42,21 +43,45 @@ namespace SharpMind.Model.Format
         public static IModelLoader GetModelLoaderFor(this ModelFormat format, QuantizationOps qOps, string path, ModelConfig config) => format switch
         {
             ModelFormat.Gguf => new GgufLoader(qOps, path, config),
+            ModelFormat.Smm => new SmmLoader(qOps, path, config),
             _ => throw new ArgumentOutOfRangeException(nameof(format), format, null)
         };
         private readonly static GgufModelFormatMetaHelper ggufModelFormatMetaHelper = new();
         public static IModelFormatMetaHelper GgufMetaHelper { get { return ggufModelFormatMetaHelper; } }
+        private readonly static SmmModelFormatMetaHelper smmModelFormatMetaHelper = new();
+        public static IModelFormatMetaHelper SmmMetaHelper { get { return smmModelFormatMetaHelper; } }
         public static IModelFormatMetaHelper GetModelMetaHelperFor(this ModelFormat format) => format switch 
         {
             ModelFormat.Gguf => GgufMetaHelper,
+            ModelFormat.Smm => SmmMetaHelper,
             _ => throw new ArgumentOutOfRangeException(nameof(format), format, null)
         };
+
+        /// <summary>
+        /// Loads metadata for a model file by dispatching on its extension.
+        /// Used by streaming weight init so both GGUF and SMM files share one path.
+        /// </summary>
+        public static ModelMetaData LoadMetaForFile(string path)
+        {
+            var fmt = GetFormatForExtension(path);
+            if (fmt == null) throw new InvalidDataException($"File type not supported: {path}");
+            return GetModelMetaHelperFor((ModelFormat)fmt).LoadMeta(path);
+        }
+
         private class GgufModelFormatMetaHelper: IModelFormatMetaHelper
         {
             public void Load(string ggufPath, string? tokenizerPath, out ModelMetaData meta, out ModelConfig config, out Tokenizer? tokenizer) => GgufLoader.Load(ggufPath, tokenizerPath, out meta, out config, out tokenizer);
             public ModelMetaData LoadMeta(string path) => GgufLoader.LoadMeta(path);
             public ModelConfig? LoadConfig(ModelMetaData meta) => GgufLoader.LoadConfig(meta);
             public Tokenizer? LoadTokenizerFromMeta(ModelMetaData meta) => GgufLoader.LoadTokenizerFromMeta(meta);
+        }
+
+        private class SmmModelFormatMetaHelper : IModelFormatMetaHelper
+        {
+            public void Load(string path, string? tokenizerPath, out ModelMetaData meta, out ModelConfig config, out Tokenizer? tokenizer) => SmmLoader.Load(path, tokenizerPath, out meta, out config, out tokenizer);
+            public ModelMetaData LoadMeta(string path) => SmmLoader.LoadMeta(path);
+            public ModelConfig? LoadConfig(ModelMetaData meta) => SmmLoader.LoadConfig(meta);
+            public Tokenizer? LoadTokenizerFromMeta(ModelMetaData meta) => SmmLoader.LoadTokenizerFromMeta(meta);
         }
     }
 }

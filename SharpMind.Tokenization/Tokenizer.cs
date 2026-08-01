@@ -128,6 +128,15 @@ public class Tokenizer
     /// <summary>Loads a SharpMind native tokenizer JSON file.</summary>
     public static Tokenizer FromFile(string path) => new(TokenizerFile.Load(path));
 
+    /// <summary>Parses a SharpMind native tokenizer JSON string.</summary>
+    public static Tokenizer FromJson(string json) => new(TokenizerFile.FromJson(json));
+
+    /// <summary>Serialises this tokenizer to its SharpMind JSON string.</summary>
+    public string ToJson() => TokenizerFile.ToJson(_model);
+
+    /// <summary>Saves this tokenizer to a SharpMind native tokenizer JSON file.</summary>
+    public void SaveJson(string path) => TokenizerFile.Save(_model, path);
+
     /// <summary>
     /// Builds a tokenizer directly from GGUF-embedded vocab data.
     ///
