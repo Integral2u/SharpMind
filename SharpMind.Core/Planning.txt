@@ -5,9 +5,13 @@ Review Sharmind.Core.Activations.* for example
 
 Tasks to implement.
 
-Task -1: Rope using Avx.IsSupported
-other IsSupported classes RmsNormLayer, Tensor
+How many times are activation factories being called, possibly have the ConcurrentDictionary cache but also a fast last has and type
+Task -2; MedusaHeads.Calibrate assignes targetLogit but is never used in anything useful 
 Task 0: It may be worth adding default terminator strings to IChatPromptFormatter especiialy for Raw and Q&A formats 
+
+Task -1: Rope using Avx.IsSupported
+other IsSupported classes RmsNormLayer
+
 
 Task 1: SharpMind Native Model Format. *.SMM
 Design ModelFormat exclusivly for SharpMind.  This format should include all relevent metadata and layers with QuantDType layer positions and lenght for loading.
@@ -21,6 +25,14 @@ Task 2: Future Incorperate Training into CUI.
 Task 3: Profiler
 Profiler for all VecDot quants and its variants to ensure correct implementation.  SSE faster than Scalar, AVX2 faster than SSE, FMA faster than AXV.
 And a profiler to compare Serial Vs Parallel MatMul on syntestic data approximatly size of 1b model layer
+
+3: Training
+SharpMind.Core.Training.GradientMapping indicates states "Manages the mapping of gradient operations to their specific PuzzlePiece implementations".
+however the JigSawDotNet pattern is never used, the class would need to be abstract and it provides Override mthods that are never use.
+This issue seem to be in SharpMind.Training to where there are classes that do tests for Avx2.IsSupported and Fma.IsSupported rather than specific kernals, see SharpMind.Training.Autograd.Gradients, SharpMind.Training.TrainingKernels
+This may have been in preparation for migrating to JigSawDotNet but just not implemented yet.
+
+4: I1 Quantization Ops.  No AVX/FFA/SSE implementations though not ever used so far by any models so far, would need to add a supporting archetecture.
 
 
 Task 5: new model support
@@ -41,21 +53,3 @@ QKV is a single blk.N.attn_qkv.weight tensor instead of attn_q/attn_k/attn_v.
 Gate+Up is a single blk.N.ffn_up.weight with shape [2 × intermediate, hidden] (first half = gate, second half = up) instead of separate ffn_gate/ffn_up.
 
 Your ResolveTarget/ResolveFloatTarget logic only knows the split names, so a Phi3-family GGUF would either silently fail to populate those tensors or (worse) partially match on the wrong dimensions. Loading it today would likely produce the same kind of "fluent-looking but wrong" output you just spent this whole thread debugging — except this time it actually would be a code bug, and a subtle one to isolate from a "bad model" case. If you want Phi eventually, budget time for a SplitMergedQKV/SplitMergedGateUp-style preprocessing step in the loader before you point DiagnosticModelRunner at it — don't waste a debugging session on it as-is.
-
-Discoveries: items for cleanup and checking
-
-MedusaHeads.Calibrate assignes targetLogit but is never used in anything useful 
-
-
-
-
-        3: Training
-        SharpMind.Core.Training.GradientMapping indicates states "Manages the mapping of gradient operations to their specific PuzzlePiece implementations".
-        however the JigSawDotNet pattern is never used, the class would need to be abstract and it provides Override mthods that are never use.
-        This issue seem to be in SharpMind.Training to where there are classes that do tests for Avx2.IsSupported and Fma.IsSupported rather than specific kernals, see SharpMind.Training.Autograd.Gradients, SharpMind.Training.TrainingKernels
-        This may have been in preparation for migrating to JigSawDotNet but just not implemented yet.
-
-        4: I1 Quantization Ops.  No AVX/FFA/SSE implementations though not ever used so far by any models so far, would need to add a supporting archetecture.
-
-        5: Missing Diagnostics
-        Call to GeneratorDiagnostics.PrintTopLogits(_tokenizer, step, logitsSlice); is in StandardGenerator but missing in SpeculativeGenerator and MedusaGenerator 

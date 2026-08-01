@@ -31,6 +31,14 @@ public sealed record SharpMindConfig
     // Training Keys
     public const string KeyAdamW = "adamw";
     public const string KeyGradNorm = "gradnorm";
+    // Gradient Backward Keys
+    public const string KeyGradLinear = "gradlinear";
+    public const string KeyGradRMSNorm = "gradrmsnorm";
+    public const string KeyGradLayerNorm = "gradlayernorm";
+    public const string KeyGradAttention = "gradattention";
+    public const string KeyGradEmbedding = "gradembedding";
+    public const string KeyGradActivationSiLU = "gradactivationsilu";
+    public const string KeyGradActivationGELU = "gradactivationgelu";
     // Norm Row Keys
     public const string KeyLayerNormRow = "layernormrow";
 

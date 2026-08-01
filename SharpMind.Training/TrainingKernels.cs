@@ -88,6 +88,26 @@ public static class TrainingKernels
         }
     }
 
+    // L2 norm accumulation — FMA
+    // One pure unconditional path; the tier is chosen by the JigSaw assembler.
+
+    public static unsafe float L2NormSq_FMA(ReadOnlySpan<float> data)
+    {
+        fixed (float* p = data)
+        {
+            var acc = Vector256<float>.Zero;
+            int i   = 0, n = data.Length;
+            for (; i <= n - 8; i += 8)
+            {
+                var v = Vector256.LoadUnsafe(ref p[i]);
+                acc = Fma.MultiplyAdd(v, v, acc);
+            }
+            float sum = MathHelpers.HSum256_Avx(acc);
+            for (; i < n; i++) sum += p[i] * p[i];
+            return sum;
+        }
+    }
+
     // L2 norm accumulation — AVX2
 
     public static unsafe float L2NormSq_AVX2(ReadOnlySpan<float> data)
@@ -99,9 +119,7 @@ public static class TrainingKernels
             for (; i <= n - 8; i += 8)
             {
                 var v = Vector256.LoadUnsafe(ref p[i]);
-                acc = Fma.IsSupported
-                    ? Fma.MultiplyAdd(v, v, acc)
-                    : Avx.Add(acc, Avx.Multiply(v, v));
+                acc = Avx.Add(acc, Avx.Multiply(v, v));
             }
             float sum = MathHelpers.HSum256_Avx(acc);
             for (; i < n; i++) sum += p[i] * p[i];

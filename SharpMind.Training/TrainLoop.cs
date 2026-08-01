@@ -1,3 +1,4 @@
+using SharpMind.Core;
 using SharpMind.Core.Tensors;
 using SharpMind.Data;
 using SharpMind.Data.Batching;
@@ -62,7 +63,7 @@ public sealed class TrainLoop
         _scheduler  = scheduler;
         _config     = config ?? new TrainConfig();
         _loss       = loss ?? new CrossEntropyLoss();
-        _mapping    = mapping ?? new GradientMapping();
+        _mapping    = mapping ?? GradientMappingFactory.Create(new SharpMindConfig());
         _ops        = ops;
     }
 
@@ -176,6 +177,6 @@ public sealed class TrainLoop
             p => p.Name.Contains("embedding", StringComparison.OrdinalIgnoreCase));
 
         if (embeddingParam is not null)
-            _mapping.Embedding.Compute(dLogits, tokenIds, embeddingParam);
+            _mapping.Embedding(dLogits, tokenIds, embeddingParam);
     }
 }

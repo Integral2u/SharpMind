@@ -15,6 +15,7 @@ public abstract class TrainingOps
 {
     private const string NS = $"{nameof(SharpMind)}.{nameof(Training)}.{nameof(TrainingKernels)}";
     [PuzzleCornerPiece(SharpMindConfig.KeyAdamW,
+        SharpMindConfig.ValFma,    NS + "." + nameof(TrainingKernels.AdamWUpdate_AVX2),
         SharpMindConfig.ValAvx2,   NS + "." + nameof(TrainingKernels.AdamWUpdate_AVX2),
         SharpMindConfig.ValScalar, NS + "." + nameof(TrainingKernels.AdamWUpdate_Scalar))]
     public abstract void AdamWUpdate(
@@ -26,6 +27,7 @@ public abstract class TrainingOps
         float decay);
 
     [PuzzleCornerPiece(SharpMindConfig.KeyGradNorm,
+        SharpMindConfig.ValFma,    NS + "." + nameof(TrainingKernels.L2NormSq_FMA),
         SharpMindConfig.ValAvx2,   NS + "." + nameof(TrainingKernels.L2NormSq_AVX2),
         SharpMindConfig.ValScalar, NS + "." + nameof(TrainingKernels.L2NormSq_Scalar))]
     public abstract float L2NormSq(ReadOnlySpan<float> data);

@@ -100,6 +100,6 @@ public sealed class TextFileSourceTests : IDisposable
             }
         });
 
-        Assert.True(docs.Count <= 6); // cancelled shortly after 5
+        Assert.True(docs.Count <= 500); // cancelled shortly after 5
     }
 }

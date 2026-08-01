@@ -28,9 +28,36 @@ public class MappingBuilder(HardwareTier hardware = HardwareTier.Auto)
         _mapping[SharpMindConfig.KeyFfn] = config.Ffn.ToString().ToLowerInvariant();
         _mapping[SharpMindConfig.KeyLinear] = SharpMindConfig.ValLinearAuto;
         _mapping[SharpMindConfig.KeyLogit] = SharpMindConfig.ValLinearAuto;
-        _mapping[SharpMindConfig.KeyAdamW] = _hardware == HardwareTier.Scalar ? SharpMindConfig.ValScalar : SharpMindConfig.ValAvx2;
-        _mapping[SharpMindConfig.KeyGradNorm] = _hardware == HardwareTier.Scalar ? SharpMindConfig.ValScalar : SharpMindConfig.ValAvx2;
-        _mapping[SharpMindConfig.KeyLayerNormRow] = _hardware == HardwareTier.Scalar ? SharpMindConfig.ValScalar : SharpMindConfig.ValAvx2;
+
+        string trainTier = _hardware switch
+        {
+            HardwareTier.Scalar => SharpMindConfig.ValScalar,
+            HardwareTier.FMA    => SharpMindConfig.ValFma,
+            _                   => SharpMindConfig.ValAvx2
+        };
+        string gradLinearTier = _hardware switch
+        {
+            HardwareTier.Scalar => SharpMindConfig.ValScalar,
+            HardwareTier.FMA    => SharpMindConfig.ValFma,
+            _                   => SharpMindConfig.ValAvx2
+        };
+        string gradActTier = _hardware == HardwareTier.Scalar
+            ? SharpMindConfig.ValScalar
+            : SharpMindConfig.ValAvx2;
+
+        _mapping[SharpMindConfig.KeyAdamW] = trainTier;
+        _mapping[SharpMindConfig.KeyGradNorm] = trainTier;
+        _mapping[SharpMindConfig.KeyLayerNormRow] = gradActTier;
+
+        // Gradient backward kernels. Only linear currently has dedicated AVX2/FMA
+        // tiers; the rest resolve to the scalar kernel for every tier.
+        _mapping[SharpMindConfig.KeyGradLinear] = gradLinearTier;
+        _mapping[SharpMindConfig.KeyGradRMSNorm] = SharpMindConfig.ValScalar;
+        _mapping[SharpMindConfig.KeyGradLayerNorm] = SharpMindConfig.ValScalar;
+        _mapping[SharpMindConfig.KeyGradAttention] = SharpMindConfig.ValScalar;
+        _mapping[SharpMindConfig.KeyGradEmbedding] = SharpMindConfig.ValScalar;
+        _mapping[SharpMindConfig.KeyGradActivationSiLU] = gradActTier;
+        _mapping[SharpMindConfig.KeyGradActivationGELU] = gradActTier;
 
         return this;
     }
