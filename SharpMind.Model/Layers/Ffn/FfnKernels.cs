@@ -7,7 +7,7 @@ namespace SharpMind.Model.Layers.Ffn;
 
 // FFN kernels — pure static, one unconditional path each
 
-internal static class FfnKernels
+public static class FfnKernels
 {
     /// <summary>Thread-local bump allocator for MoE per-token intermediates.</summary>
     private static readonly ThreadLocal<Workspace> t_MoEWorkspace = new(() => new Workspace(1 << 20));
@@ -15,7 +15,7 @@ internal static class FfnKernels
     /// Dense FFN forward: out = activation(x @ W1^T + b1) @ W2^T + b2
     /// Applied row-wise — each row is one token's hidden state.
     /// </summary>
-    internal static Tensor<float> Dense(
+    public static Tensor<float> Dense(
         Tensor<float> x,
         LinearLayer w1,
         LinearLayer w2,
@@ -32,7 +32,7 @@ internal static class FfnKernels
     /// WGated is a fused [HiddenDim, 2*FfnDim] layer; gate is first fD columns, up is last fD.
     /// Preserves the batch dimension so WDown.Forward returns [B,S,HiddenDim].
     /// </summary>
-    internal static Tensor<float> Gated(
+    public static Tensor<float> Gated(
         Tensor<float> x,
         LinearLayer wGated,
         LinearLayer wDown,
@@ -63,7 +63,7 @@ internal static class FfnKernels
     /// <summary>
     /// Gated FFN forward with separate gate/up layers (for MoE experts).
     /// </summary>
-    internal static Tensor<float> Gated(
+    public static Tensor<float> Gated(
         Tensor<float> x,
         LinearLayer wGate,
         LinearLayer wUp,
@@ -81,7 +81,7 @@ internal static class FfnKernels
     /// MoE FFN forward: routes each token to top-k experts, computes their
     /// gated FFN outputs, and combines with softmax-normalised router weights.
     /// </summary>
-    internal static Tensor<float> MoE(
+    public static Tensor<float> MoE(
         Tensor<float> x,
         LinearLayer router,
         LinearLayer[] wGate,
@@ -153,7 +153,7 @@ internal static class FfnKernels
         return result;
     }
 
-    private static Tensor<float> SoftmaxOverExperts(Tensor<float> logits, SharpMind.Core.Memory.Workspace? workspace = null)
+    public static Tensor<float> SoftmaxOverExperts(Tensor<float> logits, SharpMind.Core.Memory.Workspace? workspace = null)
     {
         Tensor<float> result = workspace != null 
             ? workspace.Rent<float>(logits.Shape.Dims) 
@@ -173,7 +173,7 @@ internal static class FfnKernels
     }
 
     /// <summary>Returns the flat indices of the top <paramref name="k"/> elements (sorted descending).</summary>
-    private static int[] ArgTopK(Tensor<float> a, int k)
+    public static int[] ArgTopK(Tensor<float> a, int k)
     {
         if (k <= 0 || k > a.ElementCount)
             throw new ArgumentOutOfRangeException(nameof(k), $"k={k} must be in [1, {a.ElementCount}].");
@@ -216,7 +216,7 @@ internal static class FfnKernels
         return ArgTopKIntroselectArray(data, k);
     }
 
-    private static int[] ArgTopKIntroselectArray(ReadOnlySpan<float> data, int k)
+    public static int[] ArgTopKIntroselectArray(ReadOnlySpan<float> data, int k)
     {
         int n = data.Length;
         var indices = new int[n];

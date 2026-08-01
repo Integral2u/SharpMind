@@ -7,7 +7,7 @@ namespace SharpMind.Model.Layers.Attention;
 
 // Attention kernels, pure static, one unconditional path each
 
-internal static class AttentionKernels
+public static class AttentionKernels
 {
     /// <summary>Reusable score buffer per thread, avoids per-call ArrayPool.Rent.</summary>
     [ThreadStatic]
@@ -21,7 +21,7 @@ internal static class AttentionKernels
     /// score-computation and V-weighted accumulation loops, 2 passes over KV
     /// instead of 3 softmax passes + 1 V-accumulation pass.
     /// </summary>
-    internal static unsafe void ScaledDotProductAVX2(
+    public static unsafe void ScaledDotProductAVX2(
         float* q, float* k, float* v, float* output,
         int seqLen, int kvLen, int headDim, float scale, bool causal,
         int qStride, int oStride, float alibiSlope)
@@ -88,7 +88,7 @@ internal static class AttentionKernels
         }
     }
 
-    internal static unsafe void ScaledDotProductFMA(
+    public static unsafe void ScaledDotProductFMA(
         float* q, float* k, float* v, float* output,
         int seqLen, int kvLen, int headDim, float scale, bool causal,
         int qStride, int oStride, float alibiSlope)
@@ -152,7 +152,7 @@ internal static class AttentionKernels
         }
     }
 
-    internal static unsafe void ScaledDotProductScalar(
+    public static unsafe void ScaledDotProductScalar(
         float* q, float* k, float* v, float* output,
         int seqLen, int kvLen, int headDim, float scale, bool causal,
         int qStride, int oStride, float alibiSlope)
@@ -217,7 +217,7 @@ internal static class AttentionKernels
     private const int FlashTileSize = 64;
     private const int FlashMaxHeadDim = 256;
 
-    internal static unsafe void ScaledDotProductFlashAVX2(
+    public static unsafe void ScaledDotProductFlashAVX2(
         float* q, float* k, float* v, float* output,
         int seqLen, int kvLen, int headDim, float scale, bool causal,
         int qStride, int oStride, float alibiSlope)
@@ -312,7 +312,7 @@ internal static class AttentionKernels
         }
     }
 
-    internal static unsafe void ScaledDotProductFlashFMA(
+    public static unsafe void ScaledDotProductFlashFMA(
         float* q, float* k, float* v, float* output,
         int seqLen, int kvLen, int headDim, float scale, bool causal,
         int qStride, int oStride, float alibiSlope)
@@ -406,7 +406,7 @@ internal static class AttentionKernels
         }
     }
 
-    internal static unsafe void ScaledDotProductFlashScalar(
+    public static unsafe void ScaledDotProductFlashScalar(
         float* q, float* k, float* v, float* output,
         int seqLen, int kvLen, int headDim, float scale, bool causal,
         int qStride, int oStride, float alibiSlope)
@@ -486,7 +486,7 @@ internal static class AttentionKernels
     // Tiled online softmax O(1) score buffer (stackalloc), no heap alloc.
     
 
-    internal static unsafe void ScaledDotProductFlashQ8_0AVX2(
+    public static unsafe void ScaledDotProductFlashQ8_0AVX2(
         float* q, byte* kQuant, byte* vQuant, float* output,
         int seqLen, int kvLen, int headDim, float scale, bool causal,
         int qStride, int oStride, float alibiSlope)
@@ -604,7 +604,7 @@ internal static class AttentionKernels
         }
     }
 
-    internal static unsafe void ScaledDotProductFlashQ8_0FMA(
+    public static unsafe void ScaledDotProductFlashQ8_0FMA(
         float* q, byte* kQuant, byte* vQuant, float* output,
         int seqLen, int kvLen, int headDim, float scale, bool causal,
         int qStride, int oStride, float alibiSlope)
@@ -722,7 +722,7 @@ internal static class AttentionKernels
         }
     }
 
-    internal static unsafe void ScaledDotProductFlashQ8_0Scalar(
+    public static unsafe void ScaledDotProductFlashQ8_0Scalar(
         float* q, byte* kQuant, byte* vQuant, float* output,
         int seqLen, int kvLen, int headDim, float scale, bool causal,
         int qStride, int oStride, float alibiSlope)
@@ -814,7 +814,7 @@ internal static class AttentionKernels
 
     // ── Q4_0 quantized KV cache (flash) ──
 
-    internal static unsafe void ScaledDotProductFlashQ4_0AVX2(
+    public static unsafe void ScaledDotProductFlashQ4_0AVX2(
         float* q, byte* kQuant, byte* vQuant, float* output,
         int seqLen, int kvLen, int headDim, float scale, bool causal,
         int qStride, int oStride, float alibiSlope)
@@ -986,7 +986,7 @@ internal static class AttentionKernels
         }
     }
 
-    internal static unsafe void ScaledDotProductFlashQ4_0FMA(
+    public static unsafe void ScaledDotProductFlashQ4_0FMA(
         float* q, byte* kQuant, byte* vQuant, float* output,
         int seqLen, int kvLen, int headDim, float scale, bool causal,
         int qStride, int oStride, float alibiSlope)
@@ -1156,7 +1156,7 @@ internal static class AttentionKernels
         }
     }
 
-    internal static unsafe void ScaledDotProductFlashQ4_0Scalar(
+    public static unsafe void ScaledDotProductFlashQ4_0Scalar(
         float* q, byte* kQuant, byte* vQuant, float* output,
         int seqLen, int kvLen, int headDim, float scale, bool causal,
         int qStride, int oStride, float alibiSlope)

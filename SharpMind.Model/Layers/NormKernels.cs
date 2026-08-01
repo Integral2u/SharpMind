@@ -6,11 +6,11 @@ namespace SharpMind.Model.Layers;
 
 // Static kernels — one pure unconditional path each
 
-internal static class NormKernels
+public static class NormKernels
 {
     // RMSNorm row — out[i] = src[i] * rmsInv * weight[i]
 
-    internal static unsafe void RMSNormRowAVX2(
+    public static unsafe void RMSNormRowAVX2(
         ReadOnlySpan<float> src, ReadOnlySpan<float> weight, Span<float> dst, float rmsInv)
     {
         fixed (float* pS = src, pW = weight, pD = dst)
@@ -25,7 +25,7 @@ internal static class NormKernels
         }
     }
 
-    internal static void RMSNormRowScalar(
+    public static void RMSNormRowScalar(
         ReadOnlySpan<float> src, ReadOnlySpan<float> weight, Span<float> dst, float rmsInv)
     {
         for (int i = 0; i < dst.Length; i++)
@@ -37,7 +37,7 @@ internal static class NormKernels
     // The AVX2 path uses direct sum-of-squares; overflow is not possible
     // for inference-range values (|v| < 10⁶).
 
-    internal static unsafe float RMSNormParamAVX2(ReadOnlySpan<float> row, float eps)
+    public static unsafe float RMSNormParamAVX2(ReadOnlySpan<float> row, float eps)
     {
         fixed (float* pRow = row)
         {
@@ -59,7 +59,7 @@ internal static class NormKernels
         }
     }
 
-    internal static float RMSNormParamScalar(ReadOnlySpan<float> row, float eps)
+    public static float RMSNormParamScalar(ReadOnlySpan<float> row, float eps)
     {
         float maxAbs = 0f;
         float ss = 0f;
@@ -91,7 +91,7 @@ internal static class NormKernels
     // LayerNorm row — standard mean/variance normalisation
     // out[i] = (src[i] - mean) / sqrt(var + eps) * weight[i] + bias[i]
 
-    internal static unsafe void LayerNormRowAVX2(
+    public static unsafe void LayerNormRowAVX2(
         ReadOnlySpan<float> src, ReadOnlySpan<float> weight,
         ReadOnlySpan<float> bias, Span<float> dst, float eps)
     {
@@ -145,7 +145,7 @@ internal static class NormKernels
         }
     }
 
-    internal static void LayerNormRowScalar(
+    public static void LayerNormRowScalar(
         ReadOnlySpan<float> src, ReadOnlySpan<float> weight,
         ReadOnlySpan<float> bias, Span<float> dst, float eps)
     {

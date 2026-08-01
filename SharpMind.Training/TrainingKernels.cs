@@ -7,7 +7,7 @@ namespace SharpMind.Training;
 
 // Static kernels — one pure unconditional path each
 
-internal static class TrainingKernels
+public static class TrainingKernels
 {
     private const string NS = $"{nameof(SharpMind)}.{nameof(Training)}.{nameof(TrainingKernels)}";
 

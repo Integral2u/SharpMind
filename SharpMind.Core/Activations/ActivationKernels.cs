@@ -10,14 +10,14 @@ namespace SharpMind.Core.Activations;
 /// selects which method to forward to at assembly time via JigSawDotNet;
 /// after that the assembled type calls the chosen kernel directly.
 /// </summary>
-internal static class ActivationKernels
+public static class ActivationKernels
 {
     private const float SqrtTwoPiInv = 0.7978845608f;
     private const float GeluCoeff    = 0.044715f;
     
     // ReLU  
 
-    internal static unsafe void ReLUAVX2(ReadOnlySpan<float> src, Span<float> dst)
+    public static unsafe void ReLUAVX2(ReadOnlySpan<float> src, Span<float> dst)
     {
         fixed (float* pS = src, pD = dst)
         {
@@ -30,7 +30,7 @@ internal static class ActivationKernels
         }
     }
 
-    internal static void ReLUScalar(ReadOnlySpan<float> src, Span<float> dst)
+    public static void ReLUScalar(ReadOnlySpan<float> src, Span<float> dst)
     {
         for (int i = 0; i < src.Length; i++)
             dst[i] = src[i] < 0f ? 0f : src[i];
@@ -42,7 +42,7 @@ internal static class ActivationKernels
 
     /// <summary>exp(x) via range-reduced degree-6 polynomial, ≈5 ULP over [-88, 88].</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static Vector256<float> FastExp(Vector256<float> x)
+    public static Vector256<float> FastExp(Vector256<float> x)
     {
         x = Avx.Min(Avx.Max(x, Vector256.Create(-88.0f)), Vector256.Create(88.0f));
 
@@ -84,7 +84,7 @@ internal static class ActivationKernels
 
     /// <summary>tanh(z) = (exp(2z) - 1) / (exp(2z) + 1).</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static Vector256<float> FastTanh(Vector256<float> z)
+    public static Vector256<float> FastTanh(Vector256<float> z)
     {
         z = Avx.Min(Avx.Max(z, Vector256.Create(-9.0f)), Vector256.Create(9.0f));
         var twoZ = Avx.Multiply(z, Vector256.Create(2.0f));
@@ -97,7 +97,7 @@ internal static class ActivationKernels
     // GELU  0.5 * x * (1 + tanh(√(2/π) * (x + 0.044715 * x³)))
     
 
-    internal static unsafe void GELUAVX2(ReadOnlySpan<float> src, Span<float> dst)
+    public static unsafe void GELUAVX2(ReadOnlySpan<float> src, Span<float> dst)
     {
         fixed (float* pS = src, pD = dst)
         {
@@ -126,7 +126,7 @@ internal static class ActivationKernels
         }
     }
 
-    internal static void GELUScalar(ReadOnlySpan<float> src, Span<float> dst)
+    public static void GELUScalar(ReadOnlySpan<float> src, Span<float> dst)
     {
         for (int i = 0; i < src.Length; i++)
         {
@@ -140,7 +140,7 @@ internal static class ActivationKernels
     // SiLU  x * sigmoid(x) = x / (1 + exp(-x))
     
 
-    internal static unsafe void SiLUAVX2(ReadOnlySpan<float> src, Span<float> dst)
+    public static unsafe void SiLUAVX2(ReadOnlySpan<float> src, Span<float> dst)
     {
         fixed (float* pS = src, pD = dst)
         {
@@ -158,7 +158,7 @@ internal static class ActivationKernels
         }
     }
 
-    internal static void SiLUScalar(ReadOnlySpan<float> src, Span<float> dst)
+    public static void SiLUScalar(ReadOnlySpan<float> src, Span<float> dst)
     {
         for (int i = 0; i < src.Length; i++)
         {
@@ -171,7 +171,7 @@ internal static class ActivationKernels
     // SwiGLU  silu(gate) * up
     
 
-    internal static unsafe void SwiGLUAVX2(ReadOnlySpan<float> gate, ReadOnlySpan<float> up, Span<float> dst)
+    public static unsafe void SwiGLUAVX2(ReadOnlySpan<float> gate, ReadOnlySpan<float> up, Span<float> dst)
     {
         fixed (float* pG = gate, pU = up, pD = dst)
         {
@@ -191,7 +191,7 @@ internal static class ActivationKernels
         }
     }
 
-    internal static void SwiGLUScalar(ReadOnlySpan<float> gate, ReadOnlySpan<float> up, Span<float> dst)
+    public static void SwiGLUScalar(ReadOnlySpan<float> gate, ReadOnlySpan<float> up, Span<float> dst)
     {
         for (int i = 0; i < dst.Length; i++)
         {
@@ -204,7 +204,7 @@ internal static class ActivationKernels
     // GeGLU  gelu(gate) * up
     
 
-    internal static unsafe void GeGLUAVX2(ReadOnlySpan<float> gate, ReadOnlySpan<float> up, Span<float> dst)
+    public static unsafe void GeGLUAVX2(ReadOnlySpan<float> gate, ReadOnlySpan<float> up, Span<float> dst)
     {
         fixed (float* pG = gate, pU = up, pD = dst)
         {
@@ -235,7 +235,7 @@ internal static class ActivationKernels
         }
     }
 
-    internal static void GeGLUScalar(ReadOnlySpan<float> gate, ReadOnlySpan<float> up, Span<float> dst)
+    public static void GeGLUScalar(ReadOnlySpan<float> gate, ReadOnlySpan<float> up, Span<float> dst)
     {
         for (int i = 0; i < dst.Length; i++)
         {
@@ -247,14 +247,14 @@ internal static class ActivationKernels
     }
 
     // Pass-through for gate=none
-    internal static void CopyGate(ReadOnlySpan<float> gate, ReadOnlySpan<float> _, Span<float> dst)
+    public static void CopyGate(ReadOnlySpan<float> gate, ReadOnlySpan<float> _, Span<float> dst)
         => gate.CopyTo(dst);
 
     
     // Softmax  (numerically stable)
     
 
-    internal static unsafe void SoftmaxRowAVX2(ReadOnlySpan<float> src, Span<float> dst)
+    public static unsafe void SoftmaxRowAVX2(ReadOnlySpan<float> src, Span<float> dst)
     {
         int n = src.Length;
         if (n < 8)
@@ -313,7 +313,7 @@ internal static class ActivationKernels
         }
     }
 
-    internal static void SoftmaxRowScalar(ReadOnlySpan<float> src, Span<float> dst)
+    public static void SoftmaxRowScalar(ReadOnlySpan<float> src, Span<float> dst)
     {
         if (src.Length < 256)
         {
@@ -335,7 +335,7 @@ internal static class ActivationKernels
         for (int i = 0; i < n; i++) dst[i] *= inv;
     }
 
-    private static void SoftmaxRowScalarSmall(ReadOnlySpan<float> src, Span<float> dst)
+    public static void SoftmaxRowScalarSmall(ReadOnlySpan<float> src, Span<float> dst)
     {
         float max = src[0];
         for (int i = 1; i < src.Length; i++) if (src[i] > max) max = src[i];
@@ -352,7 +352,7 @@ internal static class ActivationKernels
     // rmsInv is pre-computed by the Tensor-level wrapper — not computed here
     
 
-    internal static unsafe void RMSNormRowAVX2(
+    public static unsafe void RMSNormRowAVX2(
         ReadOnlySpan<float> src, ReadOnlySpan<float> weight, Span<float> dst, float rmsInv)
     {
         fixed (float* pS = src, pW = weight, pD = dst)
@@ -368,7 +368,7 @@ internal static class ActivationKernels
         }
     }
 
-    internal static void RMSNormRowScalar(
+    public static void RMSNormRowScalar(
         ReadOnlySpan<float> src, ReadOnlySpan<float> weight, Span<float> dst, float rmsInv)
     {
         for (int i = 0; i < dst.Length; i++)

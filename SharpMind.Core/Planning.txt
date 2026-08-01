@@ -81,9 +81,6 @@ MedusaHeads.Calibrate assignes targetLogit but is never used in anything useful
         SharpMind.Core.Tensors.Tensor is the same.  also note there seem to be redundant unused code ToDebugString, TransposeLast2D, TransposeInPlace others seem fine. check if worth keeping before removal
         it also has 1 [Conditional("DEBUG")] check in public ref T this[int flatIndex] that could be moved to InternalLog
 
-        2: Static Kernals
-        There are classes that are static that contain kernels generally used by JigSawDotNet but they are marked internal or private, i dont see why they can me public and exposed.
-        They should be called through the correct process internally but third party delvelopers may want direct access.
 
         3: Training
         SharpMind.Core.Training.GradientMapping indicates states "Manages the mapping of gradient operations to their specific PuzzlePiece implementations".
