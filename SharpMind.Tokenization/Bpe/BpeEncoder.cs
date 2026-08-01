@@ -258,56 +258,66 @@ public sealed class BpeEncoder
     }
 
     /// <summary>
-    /// O(n log n) BPE merge using a priority queue with lazy deletion.
-    ///
-    /// Instead of scanning all pairs each pass (O(n²)), we maintain a min-heap
-    /// of pairs keyed by rank. When a merge occurs, only the two neighbouring
-    /// pairs that may have changed are re-evaluated and re-inserted.
-    /// Stale entries are silently skipped when dequeued.
+    /// O(n) BPE merge using a linked-list-like structure with a priority queue to avoid O(N) removals.
     /// </summary>
     private void ApplyMerges(List<string> tokens)
     {
         if (tokens.Count <= 1) return;
 
-        // Seed: evaluate all initial adjacent pairs.
-        var queue = new PriorityQueue<int, int>(); // (pairIndex, rank)
-        for (int i = 0; i < tokens.Count - 1; i++)
+        int n = tokens.Count;
+        var next = new int[n];
+        var prev = new int[n];
+        for (int i = 0; i < n; i++)
         {
-            if (_mergeIndex.TryGetValue((tokens[i], tokens[i + 1]), out var entry))
+            next[i] = i + 1;
+            prev[i] = i - 1;
+        }
+        next[n - 1] = -1;
+
+        var queue = new PriorityQueue<int, int>(); // (pairIndex, rank)
+        for (int i = 0; i < n - 1; i++)
+        {
+            if (_mergeIndex.TryGetValue((tokens[i], tokens[next[i]]), out var entry))
                 queue.Enqueue(i, entry.Rank);
         }
 
         while (queue.TryDequeue(out int idx, out int rank))
         {
-            // --- Lazy-deletion guard ---
-            // The pair at `idx` may have been invalidated by a prior merge.
-            // Re-validate by checking that both halves still match.
-            if (idx >= tokens.Count - 1) continue;
-            if (!_mergeIndex.TryGetValue((tokens[idx], tokens[idx + 1]), out var entry)) continue;
-            if (entry.Rank != rank) continue; // stale — a higher-priority merge replaced one of these tokens
+            if (idx == -1 || next[idx] == -1) continue;
+            
+            // Re-validate
+            if (!_mergeIndex.TryGetValue((tokens[idx], tokens[next[idx]]), out var entry)) continue;
+            if (entry.Rank != rank) continue;
 
-            // --- Merge the pair at idx and idx+1 ---
+            // Merge
             tokens[idx] = entry.Merged;
-            tokens.RemoveAt(idx + 1);
-
-            // Re-evaluate the pair to the LEFT of the merged token (idx-1, idx).
-            if (idx > 0)
-                EnqueueSinglePair(queue, tokens, idx - 1);
-
-            // Re-evaluate the pair to the RIGHT of the merged token (idx, idx+1).
-            if (idx < tokens.Count - 1)
-                EnqueueSinglePair(queue, tokens, idx);
-
-            // Re-evaluate the pair that SHIFTED into position idx+1 (was at idx+2 before RemoveAt).
-            if (idx + 1 < tokens.Count - 1)
-                EnqueueSinglePair(queue, tokens, idx + 1);
+            int rightIdx = next[idx];
+            next[idx] = next[rightIdx];
+            if (next[idx] != -1) prev[next[idx]] = idx;
+            
+            // Re-enqueue
+            if (prev[idx] != -1)
+                EnqueueSinglePair(queue, tokens, prev[idx], next);
+            EnqueueSinglePair(queue, tokens, idx, next);
         }
+
+        // Rebuild tokens list
+        var result = new List<string>(n);
+        int curr = 0;
+        while (curr != -1)
+        {
+            result.Add(tokens[curr]);
+            curr = next[curr];
+        }
+        tokens.Clear();
+        tokens.AddRange(result);
     }
 
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
-    private void EnqueueSinglePair(PriorityQueue<int, int> queue, List<string> tokens, int idx)
+    private void EnqueueSinglePair(PriorityQueue<int, int> queue, List<string> tokens, int idx, int[] next)
     {
-        if (_mergeIndex.TryGetValue((tokens[idx], tokens[idx + 1]), out var entry))
+        int right = next[idx];
+        if (right != -1 && _mergeIndex.TryGetValue((tokens[idx], tokens[right]), out var entry))
             queue.Enqueue(idx, entry.Rank);
     }
 
@@ -321,8 +331,9 @@ public sealed class BpeEncoder
         var symbols = SplitIntoCodepoints(normalized);
         ApplySentencePieceMerges(symbols);
 
-        foreach (string sym in symbols)
+        foreach (var symMemory in symbols)
         {
+            string sym = symMemory.ToString();
             if (_vocab.TryGetId(sym, out int id))
             {
                 ids.Add(id);
@@ -337,27 +348,27 @@ public sealed class BpeEncoder
         }
     }
 
-    private static List<string> SplitIntoCodepoints(string text)
+    private static List<ReadOnlyMemory<char>> SplitIntoCodepoints(string text)
     {
-        var result = new List<string>(text.Length);
+        var result = new List<ReadOnlyMemory<char>>(text.Length);
         int i = 0;
         while (i < text.Length)
         {
             if (char.IsHighSurrogate(text[i]) && i + 1 < text.Length && char.IsLowSurrogate(text[i + 1]))
             {
-                result.Add(text.Substring(i, 2));
+                result.Add(text.AsMemory(i, 2));
                 i += 2;
             }
             else
             {
-                result.Add(text[i].ToString());
+                result.Add(text.AsMemory(i, 1));
                 i++;
             }
         }
         return result;
     }
 
-    private void ApplySentencePieceMerges(List<string> tokens)
+    private void ApplySentencePieceMerges(List<ReadOnlyMemory<char>> tokens)
     {
         if (tokens.Count <= 1) return;
 
@@ -366,7 +377,7 @@ public sealed class BpeEncoder
         void TryEnqueue(int idx)
         {
             if (idx < 0 || idx >= tokens.Count - 1) return;
-            string merged = tokens[idx] + tokens[idx + 1];
+            string merged = tokens[idx].ToString() + tokens[idx + 1].ToString();
             if (_vocab.TryGetId(merged, out int id))
                 queue.Enqueue(idx, -ScoreOf(id));
         }
@@ -376,10 +387,10 @@ public sealed class BpeEncoder
         while (queue.TryDequeue(out int idx, out _))
         {
             if (idx >= tokens.Count - 1) continue;
-            string merged = tokens[idx] + tokens[idx + 1];
+            string merged = tokens[idx].ToString() + tokens[idx + 1].ToString();
             if (!_vocab.TryGetId(merged, out _)) continue;
 
-            tokens[idx] = merged;
+            tokens[idx] = merged.AsMemory();
             tokens.RemoveAt(idx + 1);
 
             if (idx > 0) TryEnqueue(idx - 1);

@@ -43,11 +43,13 @@ namespace SharpMind.Tokenization;
 public class Tokenizer
 {
     private readonly BpeModel _model;
+    private readonly IReadOnlyList<int> _endOfGenerationIds;
 
     public Tokenizer(BpeModel model)
     {
         ArgumentNullException.ThrowIfNull(model);
         _model = model;
+        _endOfGenerationIds = ComputeEndOfGenerationIds();
     }
 
     // Vocabulary
@@ -66,7 +68,9 @@ public class Tokenizer
     /// found in the vocabulary (e.g. &lt;|eot_id|&gt;, &lt;|im_end|&gt;,
     /// &lt;|end_of_text|&gt;, &lt;|end▁of▁sentence|&gt;, &lt;end_of_turn&gt;).
     /// </summary>
-    public IReadOnlyList<int> GetEndOfGenerationIds()
+    public IReadOnlyList<int> GetEndOfGenerationIds() => _endOfGenerationIds;
+
+    private IReadOnlyList<int> ComputeEndOfGenerationIds()
     {
         var stopIds = new List<int> { EosId };
         string[] knownTurnEndTokens =
@@ -85,7 +89,7 @@ public class Tokenizer
                 stopIds.Add(Vocab.GetId(token));
         }
         // Deduplicate in case EosId matches one of the above
-        return [.. stopIds.Distinct()];
+        return stopIds.Distinct().ToList();
     }
 
     // True for SentencePiece-style vocabularies (original LLaMA/LLaMA-2,
