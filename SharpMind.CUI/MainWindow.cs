@@ -1,4 +1,3 @@
-using SharpMind.Core;
 using SharpMind.CUI.App;
 using SharpMind.Inference.Agent;
 using Terminal.Gui;
@@ -287,97 +286,113 @@ public sealed class MainWindow : Window
         SwapContent(progressView);
 
         var progress = new Progress<string>(s => Application.MainLoop.Invoke(() => progressView.SetMessage(s)));
-
-        // Capture this launch's own options snapshot — _options is a shared,
-        // mutable field that the next StartNewSession/StartDebugSession call
-        // will reassign, so the session being built here needs its own copy
-        // rather than chasing whatever _options points to by the time the
-        // async load finishes.
-        var launchOptions = CloneOptions(_options);
-
-        if (launchOptions.Generator != GeneratorStrategy.UIDebug)
+        try
         {
-            var cached = _modelCache.TryAcquire(launchOptions);
-            LoadedModel loaded;
-            if (cached is not null)
+            // Capture this launch's own options snapshot — _options is a shared,
+            // mutable field that the next StartNewSession/StartDebugSession call
+            // will reassign, so the session being built here needs its own copy
+            // rather than chasing whatever _options points to by the time the
+            // async load finishes.
+            var launchOptions = CloneOptions(_options);
+
+            if (launchOptions.Generator != GeneratorStrategy.UIDebug)
             {
-                loaded = cached;
+                var cached = _modelCache.TryAcquire(launchOptions);
+                LoadedModel loaded;
+                if (cached is not null)
+                {
+                    loaded = cached;
+                }
+                else
+                {
+                    var loadResult = await SessionLauncher.LoadModelAsync(launchOptions, progress);
+                    if (!loadResult.Success)
+                    {
+                        MessageBox.ErrorQuery("Load failed", loadResult.Error ?? "Unknown error", "OK");
+                        ShowOptions();
+                        return;
+                    }
+                    loaded = loadResult.Loaded!;
+                    _modelCache.Register(launchOptions, loaded);
+                }
+                CreateAndShowSession(launchOptions, loaded, progressView);
             }
             else
             {
-                var loadResult = await SessionLauncher.LoadModelAsync(launchOptions, progress);
-                if (!loadResult.Success)
-                {
-                    MessageBox.ErrorQuery("Load failed", loadResult.Error ?? "Unknown error", "OK");
-                    ShowOptions();
-                    return;
-                }
-                loaded = loadResult.Loaded!;
-                _modelCache.Register(launchOptions, loaded);
+                CreateAndShowSession(launchOptions, null, progressView);
             }
-            CreateAndShowSession(launchOptions, loaded, progressView);
+
         }
-        else
+        catch (Exception ex)
         {
-            CreateAndShowSession(launchOptions, null, progressView);
+            MessageBox.ErrorQuery("Load failed", $"Unexpected error while loading the model:\n{ex.Message}", "OK");
+            ShowOptions();
         }
     }
 
     private async void CreateAndShowSession(SessionOptions launchOptions, LoadedModel? loaded, LoadingView progressView)
     {
-        var gate = new PermissionGate();
-        var result = SessionLauncher.BuildSession(launchOptions, loaded, gate.BuildCallback(launchOptions));
-
-        if (!result.Success)
+        try
         {
-            MessageBox.ErrorQuery("Launch failed", result.Error ?? "Unknown error", "OK");
+            var gate = new PermissionGate();
+            var result = SessionLauncher.BuildSession(launchOptions, loaded, gate.BuildCallback(launchOptions));
+
+            if (!result.Success)
+            {
+                MessageBox.ErrorQuery("Launch failed", result.Error ?? "Unknown error", "OK");
+                ShowOptions();
+                return;
+            }
+
+            var session = result.Session;
+            if (session is not null)
+            {
+                var chatProgress = new Progress<float>(p => Application.MainLoop.Invoke(() =>
+                    progressView.SetMessage($"Starting session... {p * 100:F0}%")));
+                await Task.Run(() => session.InitializeChat(chatProgress));
+            }
+
+            // disposeUnderlyingSession defaults to false here regardless of
+            // generator/debug mode — the actual decision is made later, in
+            // CloseSession, once ModelCache.Release knows whether this was the
+            // last session sharing its model. Debug sessions have no
+            // ChatSessionBridge at all (DebugChatBridge doesn't share this
+            // concern, since there's no real Transformer underneath it).
+            IChatBridge bridge = result.IsDebugMode
+                ? new DebugChatBridge(result.CuiContext!, gate.BuildCallback(launchOptions)) { UserName = launchOptions.UserName }
+                : new ChatSessionBridge(result.Session!, disposeUnderlyingSession: false) { UserName = launchOptions.UserName };
+
+            if (bridge is ChatSessionBridge realBridge) realBridge.Start();
+
+            SaveLastUsedOptions(launchOptions);
+
+            string displayName = result.IsDebugMode ? $"{launchOptions.AgentName} [DEBUG]" : launchOptions.AgentName;
+            var chatView = new ChatView(displayName, launchOptions, bridge, result.CuiContext, onExit: ShowSessionManager);
+
+            var state = new ChatSessionState
+            {
+                Id = Guid.NewGuid(),
+                DisplayName = MakeUniqueDisplayName(displayName),
+                Options = launchOptions,
+                Bridge = bridge,
+                View = chatView
+            };
+            chatView.SessionDisplayName = state.DisplayName;
+
+            _sessions.Add(state);
+            _currentSession = state;
+            _activePermissionGates[state.Id] = gate;
+
+            if (result.Warnings.Count > 0)
+                MessageBox.Query("Session started with warnings", string.Join("\n", result.Warnings), "OK");
+
+            ShowChat();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.ErrorQuery("Launch failed", $"Unexpected error while starting the session:\n{ex.Message}", "OK");
             ShowOptions();
-            return;
         }
-
-        var session = result.Session;
-        if (session is not null)
-        {
-            var chatProgress = new Progress<float>(p => Application.MainLoop.Invoke(() =>
-                progressView.SetMessage($"Starting session... {p * 100:F0}%")));
-            await Task.Run(() => session.InitializeChat(chatProgress));
-        }
-
-        // disposeUnderlyingSession defaults to false here regardless of
-        // generator/debug mode — the actual decision is made later, in
-        // CloseSession, once ModelCache.Release knows whether this was the
-        // last session sharing its model. Debug sessions have no
-        // ChatSessionBridge at all (DebugChatBridge doesn't share this
-        // concern, since there's no real Transformer underneath it).
-        IChatBridge bridge = result.IsDebugMode
-            ? new DebugChatBridge(result.CuiContext!, gate.BuildCallback(launchOptions)) { UserName = launchOptions.UserName }
-            : new ChatSessionBridge(result.Session!, disposeUnderlyingSession: false) { UserName = launchOptions.UserName };
-
-        if (bridge is ChatSessionBridge realBridge) realBridge.Start();
-
-        SaveLastUsedOptions(launchOptions);
-
-        string displayName = result.IsDebugMode ? $"{launchOptions.AgentName} [DEBUG]" : launchOptions.AgentName;
-        var chatView = new ChatView(displayName, launchOptions, bridge, result.CuiContext, onExit: ShowSessionManager);
-
-        var state = new ChatSessionState
-        {
-            Id = Guid.NewGuid(),
-            DisplayName = MakeUniqueDisplayName(displayName),
-            Options = launchOptions,
-            Bridge = bridge,
-            View = chatView
-        };
-        chatView.SessionDisplayName = state.DisplayName;
-
-        _sessions.Add(state);
-        _currentSession = state;
-        _activePermissionGates[state.Id] = gate;
-
-        if (result.Warnings.Count > 0)
-            MessageBox.Query("Session started with warnings", string.Join("\n", result.Warnings), "OK");
-
-        ShowChat();
     }
 
     private string MakeUniqueDisplayName(string baseName)
@@ -402,21 +417,29 @@ public sealed class MainWindow : Window
         bool wasCurrent = _currentSession == state;
         _sessions.Remove(state);
         _activePermissionGates.Remove(state.Id);
-
-        bool isRealModelSession = state.Options.Generator != GeneratorStrategy.UIDebug;
-        bool wasLastUser = isRealModelSession && _modelCache.Release(state.Options);
-
-        if (state.Bridge is ChatSessionBridge realBridge)
-            realBridge.DisposeUnderlyingSession = wasLastUser;
-
-        await state.Bridge.DisposeAsync();
-        state.View.Dispose();
-
-        if (wasCurrent)
+        try
         {
-            _currentSession = _sessions.Count > 0 ? _sessions[0] : null;
-            if (_currentSession is not null) ShowChat();
-            else ShowWelcome();
+            bool isRealModelSession = state.Options.Generator != GeneratorStrategy.UIDebug;
+            bool wasLastUser = isRealModelSession && _modelCache.Release(state.Options);
+
+            if (state.Bridge is ChatSessionBridge realBridge)
+                realBridge.DisposeUnderlyingSession = wasLastUser;
+
+            await state.Bridge.DisposeAsync();
+            state.View.Dispose();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.ErrorQuery("Close failed", $"Unexpected error while closing the session:\n{ex.Message}", "OK");
+        }
+        finally
+        {
+            if (wasCurrent)
+            {
+                _currentSession = _sessions.Count > 0 ? _sessions[0] : null;
+                if (_currentSession is not null) ShowChat();
+                else ShowWelcome();
+            }
         }
     }
 
