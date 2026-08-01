@@ -216,6 +216,7 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
                 cancellationToken.ThrowIfCancellationRequested();
 
                 ReadOnlySpan<float> curLogits = logitsTensor.Data[..vocabSize];
+                GeneratorDiagnostics.PrintTopLogits(_tokenizer, generatedIds.Count, curLogits);
 
                 // 1. Greedy sample: the LM head's best guess for the next token.
                 //    This is always the first draft token.

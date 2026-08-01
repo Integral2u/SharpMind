@@ -119,6 +119,9 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
+                ReadOnlySpan<float> logitsSlice = logitsTensor.Data[..vocabSize];
+                GeneratorDiagnostics.PrintTopLogits(_tokenizer, generatedIds.Count, logitsSlice);
+
                 if (maxDraftTokens < 1) break;
 
                 object?[]? snapshots = null;
