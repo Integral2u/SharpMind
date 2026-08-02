@@ -198,6 +198,39 @@ public static class ModelFactory
         return transformer;         
     }
 
+    /// <summary>
+    /// Creates a transformer whose linear layers are float <see cref="TrainingLinearLayer"/>s,
+    /// suitable for training forward/backward. Unlike <see cref="CreateTransformer"/>, this
+    /// never wires quantized inference layers (which require raw quantized data), never frees
+    /// float weight memory, and does not support streaming weight loading.
+    /// </summary>
+    public static Transformer CreateTrainingTransformer(TransformerWeights weights, SharpMindConfig sharpConfig)
+    {
+        ArgumentNullException.ThrowIfNull(weights);
+        ArgumentNullException.ThrowIfNull(sharpConfig);
+
+        var fullMapping = sharpConfig.ToJigSawMapping();
+        var acts = ActivationFactory.Create(sharpConfig, fullMapping);
+        var qOps = QuantizationFactory.Create(fullMapping);
+        NormOpsFactory.SetDefault(sharpConfig);
+
+        var embedding = new EmbeddingTable(weights.Config.VocabSize, weights.Config.HiddenDim, weights.EmbeddingWeight, false);
+        var blocks = Enumerable.Range(0, weights.Config.NumLayers)
+            .Select(i => BuildBlock(i, weights, sharpConfig, null, acts, qOps, useHooks: false, floatLayers: true)).ToArray();
+
+        IArchitecture arch = sharpConfig.Arch switch
+        {
+            ArchKind.Decoder => new DecoderArch(blocks),
+            ArchKind.Encoder => new EncoderArch(blocks),
+            _ => throw new NotSupportedException($"Unknown ArchKind: {sharpConfig.Arch}")
+        };
+
+        var finalNorm = BuildNorm(weights.Config.HiddenDim, sharpConfig, weights.Config.NormEps, weights.FinalNormWeight, weights.FinalNormBias);
+
+        bool gemmaScale = sharpConfig.Activation == ActivationKind.GELU && sharpConfig.Gate == GateKind.GeGLU;
+        return new Transformer(weights, embedding, arch, finalNorm, weights.LmHeadWeight, qOps, fullMapping, gemmaEmbeddingScale: gemmaScale);
+    }
+
     private static TransformerBlock BuildBlock(
         int layerIdx,
         TransformerWeights weights,
@@ -205,7 +238,8 @@ public static class ModelFactory
         Dictionary<string, string>? overrides,
         ActivationOps acts,
         QuantizationOps qOps,
-        bool useHooks = false)
+        bool useHooks = false,
+        bool floatLayers = false)
     {
         var cfg = sharpConfig.ToJigSawMapping();
         if (overrides != null)
@@ -216,16 +250,22 @@ public static class ModelFactory
                 else cfg.Add(m.Key, m.Value);
             }
         }
+        // The assembled type still resolves attention/FFN kernels from cfg. When
+        // floatLayers is set (training), the layer constructors receive a null
+        // mapping so they build float TrainingLinearLayers (forward/backward);
+        // otherwise they receive the resolved cfg and build quantized inference
+        // layers exactly as before.
+        var layerMapping = floatLayers ? null : cfg;
         var blockWeights = weights.Blocks[layerIdx];
         var t = _attnCache.GetOrAdd(MappingHash.Compute(cfg), (h) =>
         {
             return Assembler.Assemble<AttentionLayer>(cfg);
         });
-        var attn = Activator.CreateInstance(t, weights.Config, blockWeights, cfg) as AttentionLayer;
+        var attn = Activator.CreateInstance(t, weights.Config, blockWeights, layerMapping) as AttentionLayer;
         ArgumentNullException.ThrowIfNull(attn);
         attn.SetWeights(blockWeights);
         
-        var ffn = BuildFfn(layerIdx, weights, sharpConfig, acts, qOps, cfg);
+        var ffn = BuildFfn(layerIdx, weights, sharpConfig, acts, qOps, layerMapping);
         ffn.SetWeights(blockWeights);
         
         float eps = weights.Config.NormEps;

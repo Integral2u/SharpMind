@@ -43,7 +43,7 @@ namespace SharpMind.Tokenization;
 public class Tokenizer
 {
     private readonly BpeModel _model;
-    private readonly IReadOnlyList<int> _endOfGenerationIds;
+    private IReadOnlyList<int> _endOfGenerationIds;
 
     public Tokenizer(BpeModel model)
     {
@@ -126,6 +126,10 @@ public class Tokenizer
         int id = Vocab.AddToken(token);
         Vocab.Specials.AddAdditional(token);
         _model.Encoder.RefreshSpecials();
+        // Tokens added after construction (e.g. <|im_end|> injected from the
+        // chat template by GgufLoader) may be end-of-generation markers, so the
+        // cached stop-token list must be recomputed.
+        _endOfGenerationIds = ComputeEndOfGenerationIds();
         return id;
     }
 

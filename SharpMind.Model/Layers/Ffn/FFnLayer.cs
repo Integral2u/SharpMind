@@ -130,7 +130,7 @@ public abstract class FfnLayer : IDisposable
         {
             case FfnKind.Dense:
                 W1 = LinearLayerFactory.Create("gate_proj", config.HiddenDim, config.FfnDim, true,
-                    weights?.Wf1, weights?.Wf1Bias, tm?.GetValueOrDefault("RawWf1").Dtype ?? QuantDType.F32, mapping);
+                    weights?.Wf1, weights?.Wf1Bias, tm?.GetValueOrDefault("RawWup").Dtype ?? QuantDType.F32, mapping);
                 W2 = LinearLayerFactory.Create("down_proj", config.FfnDim, config.HiddenDim, true,
                     weights?.Wf2, weights?.Wf2Bias, tm?.GetValueOrDefault("RawWf2").Dtype ?? QuantDType.F32, mapping);
                 break;
@@ -164,7 +164,7 @@ public abstract class FfnLayer : IDisposable
         {
             if (weights.Wf1 != null) W1.ReplaceWeights(weights.Wf1, weights.Wf1Bias);
             if (weights.Wf2 != null) W2.ReplaceWeights(weights.Wf2, weights.Wf2Bias);
-            W1.SetRawWeight(weights.RawWf1);
+            W1.SetRawWeight(weights.RawWup);
             W2.SetRawWeight(weights.RawWf2);
         }
         else if (WGated is not null && WDown is not null)

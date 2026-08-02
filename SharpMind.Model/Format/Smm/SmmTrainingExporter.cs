@@ -145,7 +145,7 @@ public static class SmmTrainingExporter
     private static SmmTensorData Tensor1D(string name, Tensor<float> source, int? start = null, int? count = null)
     {
         int offset = start ?? 0;
-        int n = count ?? source.Shape.Length;
+        int n = count ?? source.ElementCount;
         if (offset + n > source.ElementCount)
             throw new ArgumentException($"Slice {offset}+{n} exceeds tensor element count {source.ElementCount}.");
 

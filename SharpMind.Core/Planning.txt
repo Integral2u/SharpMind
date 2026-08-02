@@ -5,6 +5,9 @@ Review Sharmind.Core.Activations.* for example
 
 Tasks to implement.
 
+File Permissions, need to check against initial paths, of approved sub directories are fine to be assumed accessable but access to parent directoy should trigger request for permissions.
+SMM models that have embedded plugins should also be flagged for needing permissions for network and file access for safety, normal non embedded plugins are fine.
+
 Task -1: Rope using Avx.IsSupported
 other IsSupported classes RmsNormLayer
 
