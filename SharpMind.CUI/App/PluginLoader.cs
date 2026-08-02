@@ -24,13 +24,15 @@ public sealed class PluginGeneratorInfo
 
 public static class PluginLoader
 {
+    /// <summary>
+    /// Scans every *.dll in <paramref name="directory"/> for plugin components.
+    /// Failures in one assembly (bad path, load error, no qualifying types) are
+    /// collected as warnings rather than aborting the whole load.
+    /// </summary>
     public static PluginLoadResult LoadFrom(string directory)
     {
         var result = new PluginLoadResult();
-        var compactorNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var preProcessorNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var postProcessorNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var generatorNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var state = new LoadState(result);
 
         if (!Directory.Exists(directory))
             return result;
@@ -47,7 +49,55 @@ public static class PluginLoader
                 result.Warnings.Add($"Failed to load '{Path.GetFileName(dllPath)}': {ex.Message}");
                 continue;
             }
+            state.Scan(asm, Path.GetFileName(dllPath));
+        }
 
+        return result;
+    }
+
+    /// <summary>
+    /// Materializes plugin components out of raw assembly bytes — used for the plugin
+    /// section embedded inside an SMM model container. Same discovery contract as
+    /// <see cref="LoadFrom"/>.
+    /// </summary>
+    public static PluginLoadResult LoadFromBytes(IEnumerable<(string Name, byte[] Bytes)> assemblies)
+    {
+        var result = new PluginLoadResult();
+        var state = new LoadState(result);
+
+        foreach (var (name, bytes) in assemblies)
+        {
+            if (bytes is null || bytes.Length == 0) continue;
+
+            Assembly asm;
+            try
+            {
+                asm = Assembly.Load(bytes);
+            }
+            catch (Exception ex)
+            {
+                result.Warnings.Add($"Failed to load embedded plugin '{name}': {ex.Message}");
+                continue;
+            }
+            state.Scan(asm, name);
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Per-call scanning state: shared name-deduplication across every assembly
+    /// scanned by one LoadFrom/LoadFromBytes call, plus the result being filled.
+    /// </summary>
+    private sealed class LoadState(PluginLoadResult result)
+    {
+        private readonly HashSet<string> _compactorNames = new(StringComparer.OrdinalIgnoreCase);
+        private readonly HashSet<string> _preProcessorNames = new(StringComparer.OrdinalIgnoreCase);
+        private readonly HashSet<string> _postProcessorNames = new(StringComparer.OrdinalIgnoreCase);
+        private readonly HashSet<string> _generatorNames = new(StringComparer.OrdinalIgnoreCase);
+
+        public void Scan(Assembly asm, string sourceName)
+        {
             Type[] types;
             try
             {
@@ -55,8 +105,10 @@ public static class PluginLoader
             }
             catch (ReflectionTypeLoadException ex)
             {
+                // Some types in the assembly failed to load (missing deps etc).
+                // Still use whichever types DID load rather than discarding the whole DLL.
                 types = ex.Types.Where(t => t is not null).Select(t => t!).ToArray();
-                result.Warnings.Add($"'{Path.GetFileName(dllPath)}' loaded with {ex.LoaderExceptions.Length} type-load warning(s).");
+                result.Warnings.Add($"'{sourceName}' loaded with {ex.LoaderExceptions.Length} type-load warning(s).");
             }
 
             foreach (var type in types)
@@ -65,120 +117,118 @@ public static class PluginLoader
                 if (type.GetConstructor(Type.EmptyTypes) is null) continue;
 
                 if (typeof(IContextCompactor).IsAssignableFrom(type))
-                    TryAddCompactor(type, result, compactorNames);
+                    TryAddCompactor(type, _compactorNames);
 
                 if (typeof(IPromptPreProcessor).IsAssignableFrom(type))
-                    TryAddPreProcessor(type, result, preProcessorNames);
+                    TryAddPreProcessor(type, _preProcessorNames);
 
                 if (typeof(IPromptPostProcessor).IsAssignableFrom(type))
-                    TryAddPostProcessor(type, result, postProcessorNames);
+                    TryAddPostProcessor(type, _postProcessorNames);
 
-                TryAddGenerator(type, result, generatorNames);
+                TryAddGenerator(type, _generatorNames);
 
                 // [ToolDesc]-tagged methods → tool provider
-                TryAddTool(type, result);
+                TryAddTool(type);
             }
         }
 
-        return result;
-    }
-
-    private static void TryAddCompactor(Type type, PluginLoadResult result, HashSet<string> names)
-    {
-        try
+        private void TryAddCompactor(Type type, HashSet<string> names)
         {
-            var instance = (IContextCompactor)Activator.CreateInstance(type)!;
-            if (!names.Add(instance.Name))
+            try
             {
-                result.Warnings.Add($"Compactor '{instance.Name}' from '{type.Assembly.GetName().Name}' skipped (name already registered).");
+                var instance = (IContextCompactor)Activator.CreateInstance(type)!;
+                if (!names.Add(instance.Name))
+                {
+                    result.Warnings.Add($"Compactor '{instance.Name}' from '{type.Assembly.GetName().Name}' skipped (name already registered).");
+                    return;
+                }
+                result.Compactors.Add(instance);
+            }
+            catch (Exception ex)
+            {
+                result.Warnings.Add($"Could not instantiate compactor '{type.FullName}': {ex.Message}");
+            }
+        }
+
+        private void TryAddPreProcessor(Type type, HashSet<string> names)
+        {
+            try
+            {
+                var instance = (IPromptPreProcessor)Activator.CreateInstance(type)!;
+                if (!names.Add(instance.Name))
+                {
+                    result.Warnings.Add($"Pre-processor '{instance.Name}' from '{type.Assembly.GetName().Name}' skipped (name already registered).");
+                    return;
+                }
+                result.PreProcessors.Add(instance);
+            }
+            catch (Exception ex)
+            {
+                result.Warnings.Add($"Could not instantiate pre-processor '{type.FullName}': {ex.Message}");
+            }
+        }
+
+        private void TryAddPostProcessor(Type type, HashSet<string> names)
+        {
+            try
+            {
+                var instance = (IPromptPostProcessor)Activator.CreateInstance(type)!;
+                if (!names.Add(instance.Name))
+                {
+                    result.Warnings.Add($"Post-processor '{instance.Name}' from '{type.Assembly.GetName().Name}' skipped (name already registered).");
+                    return;
+                }
+                result.PostProcessors.Add(instance);
+            }
+            catch (Exception ex)
+            {
+                result.Warnings.Add($"Could not instantiate post-processor '{type.FullName}': {ex.Message}");
+            }
+        }
+
+        private void TryAddTool(Type type)
+        {
+            bool hasToolMethod = type.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static)
+                .Any(m => m.GetCustomAttributes(typeof(ToolDescAttribute), inherit: false).Length != 0);
+            if (!hasToolMethod) return;
+
+            try
+            {
+                var instance = Activator.CreateInstance(type);
+                if (instance is not null)
+                    result.Tools.Add(instance);
+            }
+            catch (Exception ex)
+            {
+                result.Warnings.Add($"Could not instantiate tool '{type.FullName}': {ex.Message}");
+            }
+        }
+
+        private void TryAddGenerator(Type type, HashSet<string> names)
+        {
+            foreach (var iface in type.GetInterfaces())
+            {
+                if (!iface.IsGenericType) continue;
+                if (iface.GetGenericTypeDefinition() != typeof(IGeneratorBuilder<>)) continue;
+
+                var genericArgs = iface.GetGenericArguments();
+                if (genericArgs.Length != 1) continue;
+
+                string name = type.Name;
+                if (!names.Add(name))
+                {
+                    result.Warnings.Add($"Generator '{name}' from '{type.Assembly.GetName().Name}' skipped (name already registered).");
+                    return;
+                }
+
+                result.Generators.Add(new PluginGeneratorInfo
+                {
+                    Name = name,
+                    BuilderType = type,
+                    CacheBuilderType = genericArgs[0]
+                });
                 return;
             }
-            result.Compactors.Add(instance);
-        }
-        catch (Exception ex)
-        {
-            result.Warnings.Add($"Could not instantiate compactor '{type.FullName}': {ex.Message}");
-        }
-    }
-
-    private static void TryAddPreProcessor(Type type, PluginLoadResult result, HashSet<string> names)
-    {
-        try
-        {
-            var instance = (IPromptPreProcessor)Activator.CreateInstance(type)!;
-            if (!names.Add(instance.Name))
-            {
-                result.Warnings.Add($"Pre-processor '{instance.Name}' from '{type.Assembly.GetName().Name}' skipped (name already registered).");
-                return;
-            }
-            result.PreProcessors.Add(instance);
-        }
-        catch (Exception ex)
-        {
-            result.Warnings.Add($"Could not instantiate pre-processor '{type.FullName}': {ex.Message}");
-        }
-    }
-
-    private static void TryAddPostProcessor(Type type, PluginLoadResult result, HashSet<string> names)
-    {
-        try
-        {
-            var instance = (IPromptPostProcessor)Activator.CreateInstance(type)!;
-            if (!names.Add(instance.Name))
-            {
-                result.Warnings.Add($"Post-processor '{instance.Name}' from '{type.Assembly.GetName().Name}' skipped (name already registered).");
-                return;
-            }
-            result.PostProcessors.Add(instance);
-        }
-        catch (Exception ex)
-        {
-            result.Warnings.Add($"Could not instantiate post-processor '{type.FullName}': {ex.Message}");
-        }
-    }
-
-    private static void TryAddTool(Type type, PluginLoadResult result)
-    {
-        bool hasToolMethod = type.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static)
-            .Any(m => m.GetCustomAttributes(typeof(ToolDescAttribute), inherit: false).Length != 0);
-        if (!hasToolMethod) return;
-
-        try
-        {
-            var instance = Activator.CreateInstance(type);
-            if (instance is not null)
-                result.Tools.Add(instance);
-        }
-        catch (Exception ex)
-        {
-            result.Warnings.Add($"Could not instantiate tool '{type.FullName}': {ex.Message}");
-        }
-    }
-
-    private static void TryAddGenerator(Type type, PluginLoadResult result, HashSet<string> names)
-    {
-        foreach (var iface in type.GetInterfaces())
-        {
-            if (!iface.IsGenericType) continue;
-            if (iface.GetGenericTypeDefinition() != typeof(IGeneratorBuilder<>)) continue;
-
-            var genericArgs = iface.GetGenericArguments();
-            if (genericArgs.Length != 1) continue;
-
-            string name = type.Name;
-            if (!names.Add(name))
-            {
-                result.Warnings.Add($"Generator '{name}' from '{type.Assembly.GetName().Name}' skipped (name already registered).");
-                return;
-            }
-
-            result.Generators.Add(new PluginGeneratorInfo
-            {
-                Name = name,
-                BuilderType = type,
-                CacheBuilderType = genericArgs[0]
-            });
-            return;
         }
     }
 }

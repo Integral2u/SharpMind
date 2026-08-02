@@ -34,22 +34,64 @@ public sealed class PermissionGate
     private readonly object _gate = new();
     private PermissionRequest? _pending;
 
-    public Func<ToolPermissionContext, Task<ToolPermission>> BuildCallback(SessionOptions options) => context =>
+    /// <summary>
+    /// Builds the session's permission callback.
+    /// </summary>
+    /// <param name="options">Session options carrying the FileAccess/NetworkAccess defaults and approved roots.</param>
+    /// <param name="restrictedToolNames">
+    /// Tool names that are forced through the Ask flow even when the configured default is
+    /// <see cref="ToolPermission.Always"/> — used for tools originating from plugins embedded
+    /// in an SMM model. <see cref="ToolPermission.Never"/> still blocks outright.
+    /// </param>
+    public Func<ToolPermissionContext, Task<ToolPermission>> BuildCallback(
+        SessionOptions options,
+        IReadOnlySet<string>? restrictedToolNames = null)
     {
-        var configured = context.Category == ToolCategory.Network ? options.NetworkAccess : options.FileAccess;
-
-        if (configured != ToolPermission.Ask)
-            return Task.FromResult(configured);
-
-        var request = new PermissionRequest { Context = context };
-        lock (_gate)
+        var approvedRoots = BuildApprovedRoots(options);
+        return context =>
         {
-            if (_pending is not null)
-                throw new InvalidOperationException("A permission request is already awaiting a response.");
-            _pending = request;
+            var decision = PermissionPolicy.Resolve(
+                context.ToolName,
+                context.Category,
+                context.Resource,
+                options.FileAccess,
+                options.NetworkAccess,
+                approvedRoots,
+                restrictedToolNames);
+
+            if (decision != ToolPermission.Ask)
+                return Task.FromResult(decision);
+
+            var request = new PermissionRequest { Context = context };
+            lock (_gate)
+            {
+                if (_pending is not null)
+                    throw new InvalidOperationException("A permission request is already awaiting a response.");
+                _pending = request;
+            }
+            return request.Result;
+        };
+    }
+
+    /// <summary>
+    /// Directories treated as implicitly trusted for file access: the project path,
+    /// the model file's own directory, the tools folder, and the plugins folder.
+    /// Resources inside these are allowed without prompting in Ask mode; anything
+    /// that escapes to a parent directory triggers a request.
+    /// </summary>
+    private static List<string> BuildApprovedRoots(SessionOptions options)
+    {
+        var roots = new List<string>();
+        if (!string.IsNullOrWhiteSpace(options.ProjectPath)) roots.Add(options.ProjectPath);
+        if (!string.IsNullOrWhiteSpace(options.ModelPath))
+        {
+            string? dir = Path.GetDirectoryName(options.ModelPath);
+            if (!string.IsNullOrWhiteSpace(dir)) roots.Add(dir);
         }
-        return request.Result;
-    };
+        if (!string.IsNullOrWhiteSpace(options.ToolsFolder)) roots.Add(options.ToolsFolder);
+        roots.Add(Path.Combine(AppContext.BaseDirectory, "plugins"));
+        return roots;
+    }
 
     /// <summary>Polled once per frame by the UI thread. Returns and clears the pending request, if any.</summary>
     public PermissionRequest? TakePending()

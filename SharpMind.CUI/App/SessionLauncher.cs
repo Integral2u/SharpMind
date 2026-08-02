@@ -43,6 +43,24 @@ public sealed class ModelLoadResult
     public bool Success => Error is null && Loaded is not null;
 }
 
+/// <summary>
+/// Plugins embedded inside an SMM model container, materialized once so the
+/// permission gate and the session builder agree on the exact same set.
+/// </summary>
+public sealed class EmbeddedPluginInfo
+{
+    /// <summary>Assembly file names as recorded in the container (e.g. "SharpMind.Plugins.Weather.dll").</summary>
+    public required IReadOnlyList<string> AssemblyNames { get; init; }
+
+    /// <summary>Tool method names contributed by the embedded plugin tools.</summary>
+    public required IReadOnlySet<string> ToolNames { get; init; }
+
+    /// <summary>Materialized components (tools, compactors, pre/post processors, generators).</summary>
+    public required PluginLoadResult Plugins { get; init; }
+
+    public bool HasPlugins => AssemblyNames.Count > 0;
+}
+
 /// <summary>Result of attempting to build a session on top of an already-loaded model (the cheap phase).</summary>
 public sealed class LaunchResult
 {
@@ -174,8 +192,47 @@ public static class SessionLauncher
         };
     }
 
+    /// <summary>
+    /// Reads and materializes any plugins embedded inside an SMM model file.
+    /// Returns null when the path is not an SMM container or carries no plugin
+    /// section, so callers can treat "no embedded plugins" exactly like "no
+    /// plugins". The returned info drives both the Options screen's "(Plugin
+    /// Embedded)" tags and the permission gate's restricted-tool set.
+    /// </summary>
+    public static EmbeddedPluginInfo? LoadEmbeddedPlugins(string? modelPath)
+    {
+        if (string.IsNullOrWhiteSpace(modelPath) || !File.Exists(modelPath)) return null;
+        if (ModelFormatHelpers.GetFormatForExtension(modelPath) != ModelFormat.Smm) return null;
+
+        List<SmmPluginEntry> entries;
+        try
+        {
+            entries = SmmLoader.LoadPlugins(modelPath);
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+        if (entries.Count == 0) return null;
+
+        var result = PluginLoader.LoadFromBytes(entries.Select(e => (e.Name, e.AssemblyBytes)));
+
+        // Tool names are the method names the model will actually call — reuse
+        // AgentBuilder's registration so the set exactly matches live tools.
+        var toolNames = new AgentBuilder()
+            .WithTools([.. result.Tools])
+            .RegisteredToolNames;
+
+        return new EmbeddedPluginInfo
+        {
+            AssemblyNames = entries.Select(e => e.Name).ToList(),
+            ToolNames = toolNames.ToHashSet(StringComparer.Ordinal),
+            Plugins = result
+        };
+    }
+
     /// <summary>The cheap phase: build a ChatSession (or a debug bridge context) on top of an already-loaded model.</summary>
-    public static LaunchResult BuildSession(SessionOptions options, LoadedModel? loaded, Func<ToolPermissionContext, Task<ToolPermission>>? permissions)
+    public static LaunchResult BuildSession(SessionOptions options, LoadedModel? loaded, Func<ToolPermissionContext, Task<ToolPermission>>? permissions, EmbeddedPluginInfo? embedded = null)
     {
         var warnings = new List<string>();
 
@@ -220,15 +277,35 @@ public static class SessionLauncher
         // --- Load plugins from ./plugins/ ----------------------------------
         var pluginResult = PluginLoader.LoadFrom(Path.Combine(AppContext.BaseDirectory, "plugins"));
         warnings.AddRange(pluginResult.Warnings);
-        builder.PluginCompactors = pluginResult.Compactors;
-        builder.PluginPreProcessors = pluginResult.PreProcessors;
-        builder.PluginPostProcessors = pluginResult.PostProcessors;
+
+        var pluginCompactors = new List<IContextCompactor>(pluginResult.Compactors);
+        var pluginPreProcessors = new List<IPromptPreProcessor>(pluginResult.PreProcessors);
+        var pluginPostProcessors = new List<IPromptPostProcessor>(pluginResult.PostProcessors);
+        var pluginGenerators = new List<PluginGeneratorInfo>(pluginResult.Generators);
+
+        // --- Merge plugins embedded inside the model file (SMM) -------------
+        // Registered through the exact same pathways as on-disk plugins, so they
+        // are gated identically. Their tools are additionally forced through the
+        // Ask permission flow (see PermissionGate / PermissionPolicy).
+        if (embedded is not null && embedded.HasPlugins)
+        {
+            pluginCompactors.AddRange(embedded.Plugins.Compactors);
+            pluginPreProcessors.AddRange(embedded.Plugins.PreProcessors);
+            pluginPostProcessors.AddRange(embedded.Plugins.PostProcessors);
+            pluginGenerators.AddRange(embedded.Plugins.Generators);
+            if (embedded.Plugins.Tools.Count > 0)
+                builder.WithTools([.. embedded.Plugins.Tools]);
+        }
+
+        builder.PluginCompactors = pluginCompactors;
+        builder.PluginPreProcessors = pluginPreProcessors;
+        builder.PluginPostProcessors = pluginPostProcessors;
         if (pluginResult.Tools.Count > 0)
             builder.WithTools([.. pluginResult.Tools]);
 
         // Resolve compactor: plugin compactor takes priority, then built-in strategy
         builder.Compactor = options.PluginCompactorName is not null
-            ? pluginResult.Compactors.FirstOrDefault(c =>
+            ? pluginCompactors.FirstOrDefault(c =>
                 string.Equals(c.Name, options.PluginCompactorName, StringComparison.OrdinalIgnoreCase))
             : options.Compactor switch
             {
@@ -250,7 +327,7 @@ public static class SessionLauncher
 
         // Check plugin generators first; fall back to built-in strategies
         Type generatorBuilderDef;
-        var matchedPluginGen = pluginResult.Generators.FirstOrDefault(g => g.CacheBuilderType == cacheBuilder);
+        var matchedPluginGen = pluginGenerators.FirstOrDefault(g => g.CacheBuilderType == cacheBuilder);
         if (matchedPluginGen is not null)
         {
             generatorBuilderDef = matchedPluginGen.BuilderType;
@@ -283,10 +360,10 @@ public static class SessionLauncher
         {
             new SimpleArtifactPromptPreProcessor()
         };
-        allPreProcessors.AddRange(pluginResult.PreProcessors);
+        allPreProcessors.AddRange(pluginPreProcessors);
         IPromptPreProcessor? preProcessor = allPreProcessors.FirstOrDefault(p => !options.DisabledPreProcessors.Contains(p.Name));
 
-        var allPostProcessors = new List<IPromptPostProcessor>(pluginResult.PostProcessors);
+        var allPostProcessors = new List<IPromptPostProcessor>(pluginPostProcessors);
         IPromptPostProcessor? postProcessor = allPostProcessors.FirstOrDefault(p => !options.DisabledPostProcessors.Contains(p.Name));
 
 

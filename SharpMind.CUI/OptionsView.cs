@@ -2,6 +2,7 @@ using NStack;
 using SharpMind.Core;
 using SharpMind.CUI.App;
 using SharpMind.Inference.Agent;
+using SharpMind.Inference.Chat;
 using SharpMind.Model.Config;
 using Terminal.Gui;
 
@@ -42,12 +43,15 @@ public sealed class OptionsView : View
     private readonly RadioGroup? pluginCompactorRadio;
     private readonly TextField toolField;
     private PluginLoadResult pluginResult = new();
+    private readonly EmbeddedPluginInfo? _embedded;
+    private readonly List<IContextCompactor> _pluginCompactors = [];
     private ustring[] pluginCompactorNames = [];
 
     public OptionsView(SessionOptions options, AppSettings settings, Action onLaunch, Action onCancel)
     {
         _options = options;
         _settings = settings;
+        _embedded = SessionLauncher.LoadEmbeddedPlugins(options.ModelPath);
         // ScrollView's own Width/Height become the visible viewport; formContent
         // is sized to its full (taller-than-the-window) extent and set as
         // ScrollView.ContentSize. Several Terminal.Gui v1 GitHub issues report
@@ -300,7 +304,15 @@ public sealed class OptionsView : View
 
         // --- Plugin status -------------------------------------------------
         pluginResult = PluginLoader.LoadFrom(Path.Combine(AppContext.BaseDirectory, "plugins"));
-        var pluginLabel = new Label((ustring)$"Plugins: {pluginResult.Compactors.Count} compactors, {pluginResult.PreProcessors.Count} pre, {pluginResult.PostProcessors.Count} post, {pluginResult.Generators.Count} generators")
+        _pluginCompactors.Clear();
+        _pluginCompactors.AddRange(pluginResult.Compactors);
+        if (_embedded is not null && _embedded.HasPlugins)
+            _pluginCompactors.AddRange(_embedded.Plugins.Compactors);
+
+        string embeddedNote = _embedded is not null && _embedded.HasPlugins
+            ? $", {_embedded.AssemblyNames.Count} embedded ({string.Join(", ", _embedded.AssemblyNames)})"
+            : "";
+        var pluginLabel = new Label((ustring)$"Plugins: {pluginResult.Compactors.Count} compactors, {pluginResult.PreProcessors.Count} pre, {pluginResult.PostProcessors.Count} post, {pluginResult.Generators.Count} generators{embeddedNote}")
         { X = 1, Y = row };
         _formContent.Add(pluginLabel);
         if (pluginResult.Warnings.Count > 0)
@@ -313,17 +325,19 @@ public sealed class OptionsView : View
         row++;
 
         // --- Plugin compactor selection ------------------------------------
-        if (pluginResult.Compactors.Count > 0)
+        if (_pluginCompactors.Count > 0)
         {
             AddLabel("Plugin compactor:");
-            pluginCompactorNames = pluginResult.Compactors.Select(c => (ustring)c.Name).ToArray();
+            pluginCompactorNames = _pluginCompactors
+                .Select(c => (ustring)(c.Name + (_embedded?.Plugins.Compactors.Contains(c) == true ? "  (Plugin Embedded)" : "")))
+                .ToArray();
             var selectedIdx = _options.PluginCompactorName is not null
-                ? pluginResult.Compactors.FindIndex(c =>
+                ? _pluginCompactors.FindIndex(c =>
                     string.Equals(c.Name, _options.PluginCompactorName, StringComparison.OrdinalIgnoreCase))
                 : -1;
             pluginCompactorRadio = new RadioGroup(pluginCompactorNames) { X = 30, Y = row, SelectedItem = Math.Max(0, selectedIdx) };
             pluginCompactorRadio.SelectedItemChanged += (args) =>
-                _options.PluginCompactorName = pluginResult.Compactors[args.SelectedItem].Name;
+                _options.PluginCompactorName = _pluginCompactors[args.SelectedItem].Name;
             _formContent.Add(pluginCompactorRadio);
             row += pluginCompactorNames.Length + 2;
         }
@@ -385,7 +399,7 @@ public sealed class OptionsView : View
         toolField.Text = (ustring)string.Join(";", options.ToolAssemblyPaths);
         toolsFolderField.Text = (ustring)options.ToolsFolder??string.Empty;
         var selectedIdx = _options.PluginCompactorName is not null ? 
-            pluginResult.Compactors.FindIndex(c =>
+            _pluginCompactors.FindIndex(c =>
             string.Equals(c.Name, _options.PluginCompactorName, StringComparison.OrdinalIgnoreCase))
             : -1;
         pluginCompactorRadio?.SelectedItem = Math.Max(0, selectedIdx);
@@ -506,9 +520,13 @@ public sealed class OptionsView : View
         pre.Add(("Simple Artifact Injection", "Inlines text artifacts; adds path hints for binary files"));
         pre.AddRange(SessionLauncher.GetAvailablePreProcessors()
             .Select(p => (p.Name, p.Description)));
+        if (_embedded is not null && _embedded.HasPlugins)
+            pre.AddRange(_embedded.Plugins.PreProcessors.Select(p => (p.Name, p.Description + "  (Plugin Embedded)")));
 
         var post = SessionLauncher.GetAvailablePostProcessors()
             .Select(p => (p.Name, p.Description)).ToList();
+        if (_embedded is not null && _embedded.HasPlugins)
+            post.AddRange(_embedded.Plugins.PostProcessors.Select(p => (p.Name, p.Description + "  (Plugin Embedded)")));
 
         int totalItems = pre.Count + post.Count + (pre.Count > 0 && post.Count > 0 ? 1 : 0);
         if (totalItems == 0)

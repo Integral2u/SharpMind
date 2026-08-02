@@ -334,8 +334,9 @@ public sealed class MainWindow : Window
     {
         try
         {
+            var embedded = SessionLauncher.LoadEmbeddedPlugins(launchOptions.ModelPath);
             var gate = new PermissionGate();
-            var result = SessionLauncher.BuildSession(launchOptions, loaded, gate.BuildCallback(launchOptions));
+            var result = SessionLauncher.BuildSession(launchOptions, loaded, gate.BuildCallback(launchOptions, embedded?.ToolNames), embedded);
 
             if (!result.Success)
             {
@@ -359,7 +360,7 @@ public sealed class MainWindow : Window
             // ChatSessionBridge at all (DebugChatBridge doesn't share this
             // concern, since there's no real Transformer underneath it).
             IChatBridge bridge = result.IsDebugMode
-                ? new DebugChatBridge(result.CuiContext!, gate.BuildCallback(launchOptions)) { UserName = launchOptions.UserName }
+                ? new DebugChatBridge(result.CuiContext!, gate.BuildCallback(launchOptions, embedded?.ToolNames)) { UserName = launchOptions.UserName }
                 : new ChatSessionBridge(result.Session!, disposeUnderlyingSession: false) { UserName = launchOptions.UserName };
 
             if (bridge is ChatSessionBridge realBridge) realBridge.Start();

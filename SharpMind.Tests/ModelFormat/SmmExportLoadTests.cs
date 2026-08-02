@@ -1,6 +1,7 @@
 using SharpMind.Core;
 using SharpMind.Core.Quantization;
 using SharpMind.Core.Tensors;
+using SharpMind.CUI.App;
 using SharpMind.Data.Sources.PseudoLanguage;
 using SharpMind.Model;
 using SharpMind.Model.Config;
@@ -161,6 +162,51 @@ public class SmmExportLoadTests : IDisposable
         Assert.True(plugins[0].Recommended);
         Assert.False(plugins[1].Recommended);
         Assert.Equal(asm, plugins[0].AssemblyBytes);
+    }
+
+    [Fact]
+    public void EmbeddedPlugins_DiscoveredBySessionLauncher()
+    {
+        // An SMM container carrying a plugin whose assembly happens to be this test
+        // assembly — SessionLauncher must materialize the embedded components and
+        // derive the exact tool-name set the permission gate will restrict.
+        using var fixture = TrainFixture();
+        byte[] asm = File.ReadAllBytes(typeof(SmmExportLoadTests).Assembly.Location);
+        string smmPath = Path.Combine(_temp.Path, "model.smm");
+        SmmTrainingExporter.Export(fixture.Weights, null, smmPath, new SmmWriteOptions
+        {
+            Outputs = SmmOutputs.Plugins,
+            Plugins =
+            [
+                new SmmPluginEntry { Name = "SharpMind.Plugins.Probe.dll", AssemblyBytes = asm, Recommended = true },
+            ],
+        });
+
+        var embedded = SessionLauncher.LoadEmbeddedPlugins(smmPath);
+
+        Assert.NotNull(embedded);
+        Assert.Equal(["SharpMind.Plugins.Probe.dll"], embedded!.AssemblyNames);
+        Assert.NotEmpty(embedded.Plugins.Tools);
+        Assert.True(embedded.Plugins.Tools.Any(t => t.GetType().GetMethod("Probe") is not null),
+            "The embedded assembly's [ToolDesc] class should be materialized as a tool.");
+        Assert.Contains("Probe", embedded.ToolNames);
+    }
+
+    [Fact]
+    public void EmbeddedPlugins_NoPluginSection_ReturnsNull()
+    {
+        using var fixture = TrainFixture();
+        string smmPath = Path.Combine(_temp.Path, "model.smm");
+        SmmTrainingExporter.Export(fixture.Weights, null, smmPath, new SmmWriteOptions());
+
+        Assert.Null(SessionLauncher.LoadEmbeddedPlugins(smmPath));
+    }
+
+    /// <summary>Lives in the test assembly so plugin discovery can find it via raw assembly bytes.</summary>
+    public class ProbeEmbeddedTool
+    {
+        [ToolDesc("Probe tool used to verify embedded plugin discovery.")]
+        public string Probe() => "ok";
     }
 
     // ── Fixture ────────────────────────────────────────────────────────────
