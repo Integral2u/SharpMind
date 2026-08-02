@@ -66,8 +66,20 @@ public static class NativeBufferPool<T> where T : unmanaged
         if (bucketSize <= 1024 * 1024)
         {
             var bucket = _buckets.GetOrAdd(bucketSize, _ => new Bucket());
-            int count = Volatile.Read(ref bucket.Count);
-            if (count < NativeBufferPoolConfig.MaxBuffersPerBucket
+            // Reserve the bucket slot first, then check whether the
+            // reservation landed under the cap — Count is a shared claimable
+            // resource, so this needs to be atomic (see comment below).
+            //
+            // TotalMemoryUsed, by contrast, does NOT need the same treatment:
+            // this buffer's bytes were already added to it back when the
+            // buffer was first constructed (see Rent()'s cache-miss path)
+            // and stay counted the whole time it exists, in use or pooled —
+            // pooling it here doesn't newly allocate anything, so there's no
+            // shared resource being claimed for two threads to race over.
+            // A plain read is enough; it's a pressure-valve heuristic
+            // ("free more aggressively as we approach the cap"), not a lock.
+            int reservedCount = Interlocked.Increment(ref bucket.Count);
+            if (reservedCount <= NativeBufferPoolConfig.MaxBuffersPerBucket
                 && NativeBufferPoolConfig.TotalMemoryUsed + byteSize <= maxBytes)
             {
                 buffer.Detach();       // mark as pooled, do NOT free memory
@@ -75,6 +87,12 @@ public static class NativeBufferPool<T> where T : unmanaged
                 Interlocked.Increment(ref bucket.Count);
                 Interlocked.Add(ref bucket.Memory, byteSize);
                 pooled = true;
+            }
+            else
+            {
+                // Reservation didn't pan out — release the slot we
+                // provisionally claimed so it doesn't stay permanently lost.
+                Interlocked.Decrement(ref bucket.Count);
             }
         }
 
