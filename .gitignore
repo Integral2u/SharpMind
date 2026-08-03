@@ -653,3 +653,9 @@ FodyWeavers.xsd
 /SandBox/Runs/layer0probe_20260801_133649.txt
 /ExternalAssets/functiongemma-270m-it-Q8_0.gguf
 /SandBox/Runs/run017.txt
+/SandBox/Tests/AutoSizingTest.cs
+/SandBox/Tests/FullTraining.cs
+/SandBox/Tests/ProductionTraining.cs
+/SandBox/Tests/PseudoLanguage.cs
+/SandBox/Tests/RealDataTraining.cs
+/SandBox/Tests/TrainingForwardPass.cs
