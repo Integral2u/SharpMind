@@ -48,8 +48,4 @@
     <Folder Include="GPU\" />
   </ItemGroup>
 
-  <ItemGroup>
-    <Folder Include="ModelFormat\" />
-  </ItemGroup>
-
 </Project>

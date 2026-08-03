@@ -1,14 +1,12 @@
-
-One thing, the solution's `nuget.config` unconditionally references a `local-packages` dir so I have to either delete that line or create the dir for it to build but other than that it works fine.
+IProgress for training
+training helper methods
+train at quant and or quant aware?
 
 #HIGH Priority
 you must make sure you understand the JigSawDotNet pattern and use. Intention is to reduce and branching code by genertaing code which may require implmenting or re-using Ops, Kernel and Factory patterns,
 Review Sharmind.Core.Activations.* for example
 
 Tasks to implement.
-
-File Permissions, need to check against initial paths, of approved sub directories are fine to be assumed accessable but access to parent directoy should trigger request for permissions.
-SMM models that have embedded plugins should also be flagged for needing permissions for network and file access for safety, normal non embedded plugins are fine.
 
 Task -1: Rope using Avx.IsSupported
 other IsSupported classes RmsNormLayer

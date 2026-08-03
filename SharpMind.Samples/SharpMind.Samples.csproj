@@ -23,4 +23,9 @@
     <ProjectReference Include="..\SharpMind.Training\SharpMind.Training.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Folder Include="Conversion\" />
+    <Folder Include="Training\" />
+  </ItemGroup>
+
 </Project>
