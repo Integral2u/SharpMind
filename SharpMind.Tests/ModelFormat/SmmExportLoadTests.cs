@@ -6,8 +6,10 @@ using SharpMind.Data.Sources.PseudoLanguage;
 using SharpMind.Model;
 using SharpMind.Model.Config;
 using SharpMind.Model.Format;
+using SharpMind.Model.Format.Conversion;
 using SharpMind.Samples.Examples;
 using SharpMind.Tokenization;
+using SharpMind.Training;
 using System.Text;
 using System.Text.Json.Nodes;
 
@@ -79,6 +81,27 @@ public class SmmExportLoadTests : IDisposable
         AssertGenerationWorks(model, reloadedTokenizer, fixture.Config.VocabSize);
     }
 
+    [Fact]
+    public void TrainingExport_StoresAndReloadsChatTemplate()
+    {
+        using var fixture = TrainFixture();
+        string chatTemplate =
+            "{% for message in messages %}{{ '<|im_start|>' + message['role'] + '\\n' + message['content'] + '<|im_end|>' + '\\n' }}{% endfor %}{{ '<|im_start|>assistant\\n' }}";
+
+        string smmPath = Path.Combine(_temp.Path, "model.smm");
+        SmmTrainingExporter.Export(fixture.Weights, fixture.Tokenizer, smmPath, new SmmWriteOptions
+        {
+            Compression = CompressionMode.Auto,
+            Source = "training",
+        }, chatTemplate: chatTemplate);
+
+        // Round-trips through the raw metadata ...
+        Assert.Equal(chatTemplate, SmmLoader.LoadMeta(smmPath).GetChatTemplate());
+
+        // ... and through the training pipeline helper.
+        Assert.Equal(chatTemplate, SmmTrainingPipeline.LoadChatTemplate(smmPath));
+    }
+
     [Theory]
     [MemberData(nameof(QuantLevels))]
     public void TrainingExport_Quantized_ReloadsWithinTolerance(QuantDType dtype)
@@ -121,7 +144,7 @@ public class SmmExportLoadTests : IDisposable
         WriteTinyGguf(ggufPath, vocab, tokens, chatTemplate);
 
         string smmPath = Path.Combine(_temp.Path, "tiny.smm");
-        GgufToSmmConverter.Convert(ggufPath, smmPath);
+        SharpMind.Model.Format.Conversion.GgufToSmmConverter.Convert(ggufPath, smmPath);
 
         // Embedded metadata round-trips
         SmmLoader.Load(smmPath, null, out _, out var config, out var tokenizer);

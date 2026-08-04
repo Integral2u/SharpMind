@@ -71,9 +71,11 @@ public sealed class TrainLoop
     /// Runs the training loop for <see cref="TrainConfig.TotalSteps"/> steps.
     /// <paramref name="onStep"/> is called after each optimizer step with loss
     /// and diagnostic info — use for logging, early stopping, or eval triggers.
+    /// <paramref name="progress"/> reports 0..1 after each optimizer step.
     /// </summary>
     public async Task RunAsync(
         Action<TrainStepResult>? onStep            = null,
+        IProgress<float>?        progress           = null,
         CancellationToken        cancellationToken  = default)
     {
         int startStep = 0;
@@ -120,6 +122,8 @@ public sealed class TrainLoop
             accumLoss  = 0f;
             accumCount = 0;
             sw.Stop();
+
+            progress?.Report((float)step / _config.TotalSteps);
 
             // Callbacks
             if (onStep is not null && step % _config.LogInterval == 0)

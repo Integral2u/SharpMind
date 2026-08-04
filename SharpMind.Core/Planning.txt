@@ -1,6 +1,8 @@
 IProgress for training
 training helper methods
 train at quant and or quant aware?
+DataSources probably need attributes for constructor arges so wizards can be build to choose file(s) or add parameters is seperate sub wizards.
+
 
 #HIGH Priority
 you must make sure you understand the JigSawDotNet pattern and use. Intention is to reduce and branching code by genertaing code which may require implmenting or re-using Ops, Kernel and Factory patterns,

@@ -3,7 +3,7 @@ using SharpMind.Model.Format;
 using SharpMind.Tokenization;
 using System.IO.MemoryMappedFiles;
 
-namespace SharpMind.Samples.Examples;
+namespace SharpMind.Model.Format.Conversion;
 
 /// <summary>
 /// Converts a GGUF model into a SharpMind Model (.SMM) container.

@@ -16,6 +16,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     private readonly Tokenizer _tokenizer;
     private IGenerator<K> _generator = null!;
     private readonly Transformer _model;
+    private readonly bool _disposeModel;
     private readonly List<ChatMessage> _history = [];
     private IChatPromptFormatter? _formatter;
     private readonly IChatPromptFormatter? _formatterOverride;
@@ -92,6 +93,11 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     /// <see cref="PermissionCallback"/> is set, every outbound HTTP request made by a
     /// tool call is gated through the callback.
     /// </param>
+    /// <param name="disposeModel">
+    /// When <see langword="false"/> the session disposes its generator but
+    /// leaves the underlying <see cref="Transformer"/> alive, so multiple
+    /// fresh sessions can share one loaded model.
+    /// </param>
     public int MaxToolCallsPerTurn { get; set; } = 10;
     /// <summary>Maximum sub-agent nesting depth. Default 2. Reached when both parent and one sub-agent are active.</summary>
     public int MaxAgentDepth { get; set; }
@@ -106,7 +112,8 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         Func<ToolPermissionContext, Task<ToolPermission>>? permissions = null,
         IKVCache[]? caches = null,
         IChatPromptFormatter? formatter = null,
-        int? seed = null)
+        int? seed = null,
+        bool disposeModel = true)
     {
         ArgumentNullException.ThrowIfNull(tokenizer);
         ArgumentNullException.ThrowIfNull(model);
@@ -119,6 +126,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         _progress = progress;
         _caches = caches;
         _seed = seed;
+        _disposeModel = disposeModel;
         MaxAgentDepth = _agentBuilder?.MaxAgentDepth ?? 2;
         _addBos = ModelMetaData.ResolveAddBos(meta, tokenizer.UseSentencePieceMerge);
         _addEos = ModelMetaData.ResolveAddEos(meta);
@@ -403,7 +411,8 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         _disposed = true;
         await Task.CompletedTask;
         _generator.Dispose();
-        _model.Dispose();
+        if (_disposeModel)
+            _model.Dispose();
     }
 
 private void ThrowIfDisposed()

@@ -6,8 +6,6 @@ using SharpMind.Data.Sources;
 using SharpMind.Tokenization;
 using SharpMind.Tokenization.Bpe;
 using SharpMind.Training.Loss;
-using SharpMind.Training.Schedulers;
-using SharpMind.Training.Optimizers;
 
 namespace SharpMind.Training;
 
@@ -16,14 +14,16 @@ public static class ModelSizer
     public static async Task<ModelConfig> DetermineOptimalConfigAsync(
         IDataSource source, 
         SizingConstraints? constraints = null, 
-        SizingBudget? budget = null)
+        SizingBudget? budget = null,
+        IProgress<float>? progress = null,
+        CancellationToken ct = default)
     {
         constraints ??= new SizingConstraints();
         budget ??= new SizingBudget();     
 
         // 1. Sample data and train a temporary tokenizer
         var sampleTexts = new List<string>();
-        await foreach (var text in source.ReadAsync())
+        await foreach (var text in source.ReadAsync().WithCancellation(ct))
         {
             sampleTexts.Add(text);
             if (sampleTexts.Count >= budget.SampleSize) break;
@@ -39,32 +39,40 @@ public static class ModelSizer
 
         // 2. Grid search over hyperparameters
         var configsAndLosses = new List<(ModelConfig Config, float Loss, long Params)>();
-
+        var candidateSizes = new List<(int H, int L)>();
         for (int h = constraints.MinHiddenDim; h <= constraints.MaxHiddenDim; h += constraints.HiddenStep)
-        {
             for (int l = constraints.MinLayers; l <= constraints.MaxLayers; l += constraints.LayerStep)
+                if (h % 4 == 0)
+                    candidateSizes.Add((h, l));
+
+        int totalCandidates = candidateSizes.Count;
+        int evaluated = 0;
+        progress?.Report(0f);
+
+        foreach (var (h, l) in candidateSizes)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            var config = new ModelConfig
             {
-                var config = new ModelConfig
-                {
-                    VocabSize = vocabSize,
-                    HiddenDim = h,
-                    NumLayers = l,
-                    NumHeads = 4,
-                    NumKvHeads = 4,
-                    FfnDim = h * 4,
-                    MaxSeqLen = 128,
-                };
+                VocabSize = vocabSize,
+                HiddenDim = h,
+                NumLayers = l,
+                NumHeads = 4,
+                NumKvHeads = 4,
+                FfnDim = h * 4,
+                MaxSeqLen = 128,
+            };
 
-                if (h % 4 != 0) continue;
+            long paramCount = CalculateParamCount(config);
+            if (paramCount > budget.MaxTotalParameters) continue;
 
-                long paramCount = CalculateParamCount(config);
-                if (paramCount > budget.MaxTotalParameters) continue;
-
-                // Use Task.Run to avoid async warnings and run on background thread
-                float loss = await Task.Run(() => EvaluateConfig(config, tokenizer, sampleTexts, budget.StepsPerConfig));
-                
-                configsAndLosses.Add((config, loss, paramCount));
-            }
+            // Use Task.Run to avoid async warnings and run on background thread
+            float loss = await Task.Run(() => EvaluateConfig(config, tokenizer, sampleTexts, budget.StepsPerConfig), ct);
+            
+            configsAndLosses.Add((config, loss, paramCount));
+            evaluated++;
+            progress?.Report((float)evaluated / totalCandidates);
         }
 
         // 3. Elbow Point Analysis
@@ -94,14 +102,16 @@ public static class ModelSizer
 
     private static float EvaluateConfig(ModelConfig config, Tokenizer tokenizer, List<string> samples, int steps)
     {
+        // The training forward path is what the eventual trainer will use, and
+        // it avoids the inference/JIT linear path entirely (which needs a
+        // hardware mapping). Gradients are full-transformer backprop, which is
+        // not yet wired in the training loops, so this measures each config's
+        // initial forward loss — enough to rank small vs large configs.
         var sharpConfig = SharpMindConfig.Gpt with { Hardware = HardwareTier.Scalar };
         var weights = ModelFactory.CreateForTraining(config, sharpConfig);
-        using var model = ModelFactory.CreateTransformer(weights, sharpConfig, null, false);
-        
-        var parameters = model.Parameters().ToList();
+        using var model = ModelFactory.CreateTrainingTransformer(weights, sharpConfig);
+
         var lossFn = new CrossEntropyLoss();
-        var scheduler = new ConstantScheduler(0.01f);
-        var optimizer = new AdamW(parameters, lr: 0.01f);
 
         float totalLoss = 0;
         int batchSize = 4;
@@ -133,14 +143,6 @@ public static class ModelSizer
 
             float batchLoss = lossFn.Compute(flatLogits, flatTargets);
             totalLoss = totalLoss * 0.9f + batchLoss * 0.1f;
-
-            // Proper Backward pass
-            using var dLogits = lossFn.Backward(flatLogits, flatTargets);
-            
-            // The gradients are now in param.Grad. We apply the optimizer.
-            // Zero grads for next step
-            optimizer.Update();
-            optimizer.ZeroGrad();
         }
 
         return totalLoss;

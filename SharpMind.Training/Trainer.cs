@@ -25,8 +25,9 @@ public sealed class Trainer(
 
     /// <summary>
     /// Runs the training loop for a specified number of steps.
+    /// <paramref name="progress"/> reports 0..1 after every batch step.
     /// </summary>
-    public async Task TrainAsync(int totalSteps, CancellationToken ct = default)
+    public async Task TrainAsync(int totalSteps, IProgress<float>? progress = null, CancellationToken ct = default)
     {
         int currentStep = 0;
         float runningLoss = 0;        
@@ -59,6 +60,7 @@ public sealed class Trainer(
             foreach (var p in _parameters) p.ZeroGrad();
 
             currentStep++;
+            progress?.Report((float)currentStep / totalSteps);
         }
     }
 

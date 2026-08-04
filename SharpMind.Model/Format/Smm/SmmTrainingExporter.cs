@@ -22,12 +22,15 @@ public static class SmmTrainingExporter
     /// weights are kept at F32 by default; pass
     /// <see cref="SmmWriteOptions.QuantizationLevel"/> to downcast (F16 is
     /// always safe; Q8_0/Q4_0 require dims divisible by 32).
+    /// <paramref name="progress"/> reports 0..1 per tensor written.
     /// </summary>
     public static void Export(
         TransformerWeights weights,
         Tokenizer? tokenizer,
         string path,
-        SmmWriteOptions? options = null)
+        SmmWriteOptions? options = null,
+        IProgress<float>? progress = null,
+        string? chatTemplate = null)
     {
         ArgumentNullException.ThrowIfNull(weights);
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
@@ -35,7 +38,17 @@ public static class SmmTrainingExporter
         // Training presets (e.g. SharpMindConfig.Gpt) carry no architecture
         // name; tag the export so ForModel reproduces the same preset on load.
         var config = weights.Config with { Architecture = weights.Config.Architecture ?? "gpt2" };
-        SmmWriter.Write(path, config, tokenizer, chatTemplate: null, EnumerateTensors(weights), options);
+        var tensorList = EnumerateTensors(weights).ToList();
+        int total = tensorList.Count;
+        int written = 0;
+        IEnumerable<SmmTensorData> reporting = tensorList.Select(t =>
+        {
+            written++;
+            progress?.Report((float)written / total);
+            return t;
+        });
+        SmmWriter.Write(path, config, tokenizer, chatTemplate, reporting, options);
+        progress?.Report(1f);
     }
 
     /// <summary>Enumerates the GGUF-layout tensors of a trained weight set.</summary>
