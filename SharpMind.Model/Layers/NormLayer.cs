@@ -31,6 +31,11 @@ public abstract class NormLayer : IDisposable
 
     public int Dim { get; }
 
+    /// <summary>Weight tensor, exposed for backprop parameter lookup.</summary>
+    public Tensor<float> NormWeight => Weight;
+    /// <summary>Bias tensor (null for RMSNorm), exposed for backprop parameter lookup.</summary>
+    public Tensor<float>? NormBias => Bias;
+
     public abstract void ApplyRow(ReadOnlySpan<float> src, ReadOnlySpan<float> weight, Span<float> dst, float scalarParam);
 
     public Tensor<float> Forward(Tensor<float> x, SharpMind.Core.Memory.Workspace? workspace = null)

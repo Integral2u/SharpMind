@@ -22,6 +22,8 @@ public abstract class TransformerBlock : IDisposable
     public NormLayer Norm2 => _norm2;
     public AttentionLayer Attention => _attention;
     public FfnLayer Ffn => _ffn;
+    public NormLayer? PostAttnNorm => _postAttnNorm;
+    public NormLayer? PostFfnNorm => _postFfnNorm;
 
     protected TransformerBlock(int layerIdx, AttentionLayer attention, FfnLayer ffn, NormLayer norm1, NormLayer norm2,
         NormLayer? postAttnNorm = null, NormLayer? postFfnNorm = null)

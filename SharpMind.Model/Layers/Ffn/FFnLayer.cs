@@ -32,6 +32,15 @@ public abstract class FfnLayer : IDisposable
     public readonly LinearLayer? WGated; // [HiddenDim, 2*FfnDim] — fused gate+up
     public readonly LinearLayer? WDown;  // [HiddenDim, FfnDim]
 
+    /// <summary>Activation ops the FFN was assembled with — for recording forward passes.</summary>
+    public ActivationOps Activation => Acts;
+
+    /// <summary>Dense FFN up-projection (W1). Null for gated/MoE FFNs.</summary>
+    public LinearLayer? W1Layer => W1;
+
+    /// <summary>Dense FFN down-projection (W2). Null for gated/MoE FFNs.</summary>
+    public LinearLayer? W2Layer => W2;
+
     public void LoadWeights(string name, ReadOnlySpan<float> data)
     {
         bool isBias = name.Contains("bias", StringComparison.OrdinalIgnoreCase);

@@ -49,7 +49,7 @@ public static class SmmRealTextExample
     private const int SeqLen = 16;
     private const int MaxContextLen = 256;
     private const int GenTokens = 48;
-    private const int Steps = 120;
+    private const int Steps = 140;
     private const int LogInterval = 20;
     private const int Seed = 1234;
 

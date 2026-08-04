@@ -37,7 +37,7 @@ public sealed class TrainLoop
     private readonly ILoss<int>            _loss;
     private readonly TrainingOps           _ops;
     private readonly GradientMapping       _mapping;
-    
+    private readonly BackpropEngine        _engine;
 
     public TrainLoop(
         Transformer           model,
@@ -46,9 +46,10 @@ public sealed class TrainLoop
         IOptimizer             optimizer,
         IScheduler             scheduler,
         TrainingOps            ops,
-        ILoss<int>?            loss     = null,
-        GradientMapping?       mapping  = null,        
-        TrainConfig?           config   = null)
+        ILoss<int>?            loss      = null,
+        GradientMapping?       mapping   = null,
+        SharpMindConfig?       smmConfig = null,
+        TrainConfig?           config    = null)
     {
         ArgumentNullException.ThrowIfNull(model);
         ArgumentNullException.ThrowIfNull(parameters);
@@ -63,8 +64,9 @@ public sealed class TrainLoop
         _scheduler  = scheduler;
         _config     = config ?? new TrainConfig();
         _loss       = loss ?? new CrossEntropyLoss();
-        _mapping    = mapping ?? GradientMappingFactory.Create(new SharpMindConfig());
+        _mapping    = mapping ?? GradientMappingFactory.Create(smmConfig ?? new SharpMindConfig());
         _ops        = ops;
+        _engine     = new BackpropEngine(model, _mapping, _parameters, smmConfig ?? new SharpMindConfig());
     }
 
     /// <summary>
@@ -159,28 +161,22 @@ public sealed class TrainLoop
     {
         int batch2  = batch.TokenIds.Shape.Rows;
         int seqLen  = batch.TokenIds.Shape.Cols;
+        int vocab   = _model.Config.VocabSize;
 
-        using var flatIds    = batch.TokenIds.Reshape(batch2 * seqLen);
+        using var ctx       = new ForwardContext();
         using var flatLabels = batch.Labels.Reshape(batch2 * seqLen);
 
-        using var logits2d = _model.Forward(batch.TokenIds);
-        using var logitsFlat = logits2d.Reshape(batch2 * seqLen, _model.Config.VocabSize);
+        // Recording forward — ctx owns the returned logits (disposed on scope exit).
+        var logits = _engine.ForwardAndRecord(ctx, batch.TokenIds);
+        using var logitsFlat = logits.Reshape(batch2 * seqLen, vocab);
 
         float loss = _loss.Compute(logitsFlat, flatLabels);
 
         using var dLogits = _loss.Backward(logitsFlat, flatLabels);
+        using var flatIds = batch.TokenIds.Reshape(batch2 * seqLen);
 
-        BackwardEmbedding(dLogits, flatIds);
+        _engine.Backward(ctx, dLogits, flatIds);
 
         return loss;
-    }
-
-    private void BackwardEmbedding(Tensor<float> dLogits, Tensor<int> tokenIds)
-    {
-        var embeddingParam = _parameters.FirstOrDefault(
-            p => p.Name.Contains("embedding", StringComparison.OrdinalIgnoreCase));
-
-        if (embeddingParam is not null)
-            _mapping.Embedding(dLogits, tokenIds, embeddingParam);
     }
 }

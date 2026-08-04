@@ -237,4 +237,59 @@ public sealed class RoPE : PositionalEncoder
             Apply(slice, positionOffset);
         }
     }
+
+    /// <summary>
+    /// Backward of <see cref="Apply"/> for batched tensors. Mutates
+    /// <paramref name="dx"/> in place, rotating each pair's gradient back by the
+    /// inverse of the forward rotation:
+    ///   dIn0 = cos·dOut0 + sin·dOut1
+    ///   dIn1 = −sin·dOut0 + cos·dOut1
+    /// </summary>
+    public override void ApplyBatchedBackward(Tensor<float> dx, int positionOffset = 0)
+    {
+        if (dx.Rank != 4)
+            throw new ArgumentException(
+                $"ApplyBatchedBackward expects rank-4 [Batch, SeqLen, NumHeads, HeadDim], got rank {dx.Rank}.");
+
+        int batch = dx.Shape[0];
+
+        for (int b = 0; b < batch; b++)
+        {
+            using var slice = dx.Slice(b);
+            ApplyBackward(slice, positionOffset);
+        }
+    }
+
+    /// <summary>Backward of <see cref="Apply"/> for a rank-3 [SeqLen, NumHeads, HeadDim] tensor.</summary>
+    private void ApplyBackward(Tensor<float> dx, int positionOffset)
+    {
+        int seqLen  = dx.Shape[0];
+        int numHead = dx.Shape[1];
+        int dim     = dx.Shape[2];
+
+        int ropePairs = _ropeDim / 2;
+        var data      = dx.Data;
+
+        for (int s = 0; s < seqLen; s++)
+        {
+            int pos       = positionOffset + s;
+            int cacheBase = pos * ropePairs;
+
+            for (int h = 0; h < numHead; h++)
+            {
+                int offset = (s * numHead + h) * _headDim;
+
+                for (int i = 0; i < ropePairs; i++)
+                {
+                    float cos = _cosCache[cacheBase + i];
+                    float sin = _sinCache[cacheBase + i];
+                    float d0  = data[offset + 2 * i];
+                    float d1  = data[offset + 2 * i + 1];
+
+                    data[offset + 2 * i]     =  cos * d0 + sin * d1;
+                    data[offset + 2 * i + 1] = -sin * d0 + cos * d1;
+                }
+            }
+        }
+    }
 }

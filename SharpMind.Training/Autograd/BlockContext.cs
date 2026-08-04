@@ -1,4 +1,5 @@
 using SharpMind.Core.Tensors;
+using SharpMind.Model.Layers;
 
 namespace SharpMind.Training.Autograd;
 
@@ -21,6 +22,9 @@ public sealed class BlockContext : IDisposable
     /// <summary>Per-row rmsInv values used in RMSNorm backward.</summary>
     public float[]? Norm1RmsInv { get; set; }
 
+    /// <summary>Per-row saved state of norm1 (input/output/scalar param snapshots).</summary>
+    public NormLayerState? Norm1State { get; set; }
+
     // Attention
 
     public Tensor<float>? Q          { get; set; }
@@ -35,6 +39,9 @@ public sealed class BlockContext : IDisposable
     public Tensor<float>? Norm2Input { get; set; }
     public Tensor<float>? Norm2Out   { get; set; }
     public float[]? Norm2RmsInv { get; set; }
+
+    /// <summary>Per-row saved state of norm2 (input/output/scalar param snapshots).</summary>
+    public NormLayerState? Norm2State { get; set; }
 
     // FFN
 

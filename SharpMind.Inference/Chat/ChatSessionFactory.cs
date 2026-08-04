@@ -18,7 +18,7 @@ namespace SharpMind.Inference.Chat
                 ? generatorBuilderDef.MakeGenericType(cacheBuilder)
                 : generatorBuilderDef;
             var sessionType = typeof(ChatSession<,>).MakeGenericType(closedGen, cacheBuilder);
-            return (IChatSession)Activator.CreateInstance(sessionType, [model, tokenizer, meta, agentBuilder, preProcessor, postProcessor, progress, permissions, null,formatter, seed])!;
+            return (IChatSession)Activator.CreateInstance(sessionType, [model, tokenizer, meta, agentBuilder, preProcessor, postProcessor, progress, permissions, null,formatter, seed,true])!;
         }
         // Compile-time — for known type combos
         public static ChatSession<T, K> CreateChatSession<T, K>(

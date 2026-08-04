@@ -32,4 +32,8 @@ public sealed class AlibiEncoder(int numHeads) : PositionalEncoder
     public override void ApplyBatched(Tensor<float> x, int positionOffset = 0)
     {
     }
+
+    public override void ApplyBatchedBackward(Tensor<float> dx, int positionOffset = 0)
+    {
+    }
 }

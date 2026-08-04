@@ -30,7 +30,7 @@ public static class SmmPseudoLanguageExample
     public const string Name = "pseudo";
     private const string SaveDir = @"c:\temp";
     private const string SavePath = @$"c:\temp\{Name}.smm";
-    private const int Steps = 150;
+    private const int Steps = 140;
     private const int GenTokens = 24;
 
     // ChatML-style Jinja template, embedded in the .SMM on export and read back

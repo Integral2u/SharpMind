@@ -1,4 +1,5 @@
 using SharpMind.Core.Tensors;
+using SharpMind.Model.Layers;
 
 namespace SharpMind.Training.Autograd;
 
@@ -23,6 +24,12 @@ public sealed class ForwardContext : IDisposable
 
     /// <summary>Final norm output [Batch, SeqLen, HiddenDim].</summary>
     public Tensor<float>? FinalNormOut { get; set; }
+
+    /// <summary>Final norm input (last block output) [Batch, SeqLen, HiddenDim].</summary>
+    public Tensor<float>? FinalNormInput { get; set; }
+
+    /// <summary>Per-row saved state of the final norm (input/output/scalar param snapshots).</summary>
+    public NormLayerState? FinalNormState { get; set; }
 
     /// <summary>Logits [Batch, SeqLen, VocabSize].</summary>
     public Tensor<float>? Logits { get; set; }
