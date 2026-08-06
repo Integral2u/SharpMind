@@ -69,7 +69,7 @@ public static class SmmBackpropTextExample
     private const int SeqLen = 128;
     private const int MaxContextLen = 512;
     private const int GenTokens = 48;
-    private const int Steps = 3_000;
+    private const int Steps = 1_400;
     private const int LogInterval = 100;
     private const int Seed = 1234;
 

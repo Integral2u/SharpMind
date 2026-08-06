@@ -87,6 +87,11 @@ public static class Checkpoint
     /// Loads parameter values from a checkpoint directory into the supplied
     /// parameter list. Parameters are matched by name — any name present in
     /// the checkpoint but not in <paramref name="parameters"/> is skipped.
+    ///
+    /// Names are not required to be unique (e.g. NormLayer yields
+    /// <c>LayerNormLayer.weight</c> without a layer index). When several
+    /// parameters share a name they are matched positionally, in parameter-list
+    /// order, which mirrors the order <see cref="Save"/> wrote them in.
     /// </summary>
     public static CheckpointMeta Load(
         string                directory,
@@ -97,7 +102,18 @@ public static class Checkpoint
         if (!Directory.Exists(directory))
             throw new DirectoryNotFoundException($"Checkpoint directory not found: {directory}");
 
-        var paramDict = parameters.ToDictionary(p => p.Name, StringComparer.Ordinal);
+        var parametersList = parameters.ToList();
+        // name -> FIFO of parameter indices, so duplicate names preserve order.
+        var paramIndices = new Dictionary<string, Queue<int>>(StringComparer.Ordinal);
+        for (int i = 0; i < parametersList.Count; i++)
+        {
+            if (!paramIndices.TryGetValue(parametersList[i].Name, out var q))
+            {
+                q = new Queue<int>();
+                paramIndices.Add(parametersList[i].Name, q);
+            }
+            q.Enqueue(i);
+        }
 
         string modelPath = Path.Combine(directory, "model.bin");
         if (!File.Exists(modelPath))
@@ -117,7 +133,11 @@ public static class Checkpoint
                 int elemCount = 1;
                 for (int d = 0; d < rank; d++) { int dim = reader.ReadInt32(); elemCount *= dim; }
 
-                if (paramDict.TryGetValue(name, out var param))
+                Parameter? param = null;
+                if (paramIndices.TryGetValue(name, out var q) && q.TryDequeue(out int idx))
+                    param = parametersList[idx];
+
+                if (param is not null)
                 {
                     var data = param.Data.Data;
                     for (int j = 0; j < elemCount; j++)
