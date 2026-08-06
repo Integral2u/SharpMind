@@ -63,7 +63,7 @@ public sealed class TrainLoop
         _optimizer  = optimizer;
         _scheduler  = scheduler;
         _config     = config ?? new TrainConfig();
-        _loss       = loss ?? new CrossEntropyLoss();
+        _loss       = loss ?? new CrossEntropyLoss(labelSmoothing: _config.LabelSmoothing);
         _mapping    = mapping ?? GradientMappingFactory.Create(smmConfig ?? new SharpMindConfig());
         _ops        = ops;
         _engine     = new BackpropEngine(model, _mapping, _parameters, smmConfig ?? new SharpMindConfig());

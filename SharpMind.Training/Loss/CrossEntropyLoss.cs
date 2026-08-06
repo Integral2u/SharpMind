@@ -6,10 +6,16 @@ using SharpMind.Training.Autograd;
 namespace SharpMind.Training.Loss;
 
 /// <summary>
-/// Causal language model cross-entropy loss.
+/// Causal language model cross-entropy loss with optional label smoothing.
 ///
 /// Computes mean negative log-likelihood over non-ignored positions:
 ///   L = -1/N * sum_t log(softmax(logits[t])[label[t]])
+///
+/// With label smoothing epsilon ε > 0 the one-hot target is replaced by
+///   u[label] = 1 - ε + ε/V,   u[v≠label] = ε/V
+/// giving   L = -1/N * sum_t [ (1-ε)·log p[label] + (ε/V)·Σ_v log p[v] ].
+/// The Σ_v log p[v] term is computed without a per-token log() via the identity
+///   Σ_v log p[v] = (Σ_v logits[v]) - V·max - V·log(sumExp).
 ///
 /// Positions where label == <see cref="IgnoreId"/> (-100 by default) are
 /// excluded from both the sum and the count N. This matches the convention
@@ -20,12 +26,20 @@ namespace SharpMind.Training.Loss;
 /// gradient — never as separate softmax backward then cross-entropy backward.
 /// The softmax Jacobian is [VocabSize, VocabSize] per token — intractable at
 /// vocab sizes of 32k–128k. The combined gradient collapses to:
-///   dL/dLogits[t, v] = (softmax(logits[t])[v] - 1{v == label[t]}) / N
+///   dL/dLogits[t, v] = (softmax(logits[t])[v] - u[v]) / N
 /// which is what <see cref="Backward"/> returns.
 /// </summary>
-public sealed class CrossEntropyLoss(int ignoreId = -100) : ILoss<int>
+public sealed class CrossEntropyLoss(int ignoreId = -100, float labelSmoothing = 0f) : ILoss<int>
 {
     public int IgnoreId { get; } = ignoreId;
+
+    /// <summary>Label smoothing epsilon. 0 = plain one-hot cross-entropy.</summary>
+    public float LabelSmoothing { get; } = labelSmoothing;
+
+    public CrossEntropyLoss()
+        : this(ignoreId: -100, labelSmoothing: 0f)
+    {
+    }
 
     /// <summary>
     /// Computes the scalar loss.
@@ -40,23 +54,56 @@ public sealed class CrossEntropyLoss(int ignoreId = -100) : ILoss<int>
             throw new ArgumentException(
                 $"Label count {labels.ElementCount} must match logit rows {T}.");
 
+        if (labelSmoothing < 0f || labelSmoothing >= 1f)
+            throw new ArgumentOutOfRangeException(nameof(labelSmoothing),
+                "Label smoothing must be in [0, 1).");
+
         double totalLoss = 0.0;
         int realCount = 0;
 
-        for (int t = 0; t < T; t++)
+        if (labelSmoothing <= 0f)
         {
-            if (labels[t] == IgnoreId) continue;
-            realCount++;
+            for (int t = 0; t < T; t++)
+            {
+                if (labels[t] == IgnoreId) continue;
+                realCount++;
 
-            ReadOnlySpan<float> row = logits.RowSpan(t);
-            float max = row[0];
-            for (int v = 1; v < V; v++) if (row[v] > max) max = row[v];
+                ReadOnlySpan<float> row = logits.RowSpan(t);
+                float max = row[0];
+                for (int v = 1; v < V; v++) if (row[v] > max) max = row[v];
 
-            float sumExp = 0f;
-            for (int v = 0; v < V; v++) sumExp += MathF.Exp(row[v] - max);
+                float sumExp = 0f;
+                for (int v = 0; v < V; v++) sumExp += MathF.Exp(row[v] - max);
 
-            float logProb = (row[labels[t]] - max) - MathF.Log(sumExp);
-            totalLoss -= logProb;
+                float logProb = (row[labels[t]] - max) - MathF.Log(sumExp);
+                totalLoss -= logProb;
+            }
+        }
+        else
+        {
+            float smooth = labelSmoothing;
+            float epsOverV = smooth / V;
+            float oneMinusEps = 1f - smooth;
+
+            for (int t = 0; t < T; t++)
+            {
+                if (labels[t] == IgnoreId) continue;
+                realCount++;
+
+                ReadOnlySpan<float> row = logits.RowSpan(t);
+                float max = row[0];
+                float sumRow = row[0];
+                for (int v = 1; v < V; v++) { if (row[v] > max) max = row[v]; sumRow += row[v]; }
+
+                float sumExp = 0f;
+                for (int v = 0; v < V; v++) sumExp += MathF.Exp(row[v] - max);
+
+                float logProbLabel = (row[labels[t]] - max) - MathF.Log(sumExp);
+                // Σ_v log p[v] = (Σ_v row[v]) - V·max - V·log(sumExp)
+                float sumLogProb = sumRow - V * max - V * MathF.Log(sumExp);
+
+                totalLoss -= oneMinusEps * logProbLabel + epsOverV * sumLogProb;
+            }
         }
 
         return realCount > 0 ? (float)(totalLoss / realCount) : 0f;
@@ -71,5 +118,5 @@ public sealed class CrossEntropyLoss(int ignoreId = -100) : ILoss<int>
     /// form collapses to a simple elementwise operation and is always used.
     /// </summary>
     public Tensor<float> Backward(Tensor<float> logits, Tensor<int> labels)
-        => Gradients.CrossEntropySoftmax(logits, labels, IgnoreId);
+        => Gradients.CrossEntropySoftmax(logits, labels, IgnoreId, labelSmoothing);
 }

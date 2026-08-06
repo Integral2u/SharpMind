@@ -26,12 +26,15 @@ public static class Gradients
 
     /// <summary>
     /// Computes dL/dLogits for the combined softmax + cross-entropy loss.
+    /// With label smoothing ε > 0 the target u[v] is (1−ε)+ε/V at the label
+    /// and ε/V elsewhere; the gradient is (softmax − u) / N.
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static Tensor<float> CrossEntropySoftmax(
         Tensor<float> logits,  // [T, VocabSize] flat
         Tensor<int>   labels,  // [T] flat
-        int           ignoreId = -100)
+        int           ignoreId = -100,
+        float         labelSmoothing = 0f)
     {
         int T       = logits.Shape.Rows;
         int V       = logits.Shape.Cols;
@@ -42,6 +45,11 @@ public static class Gradients
             if (labels[t] != ignoreId) realCount++;
 
         float scale = realCount > 0 ? 1f / realCount : 0f;
+
+        float smooth     = labelSmoothing;
+        float epsOverV   = smooth / V;
+        float oneMinusE  = 1f - smooth;
+        bool  smoothed   = smooth > 0f;
 
         for (int t = 0; t < T; t++)
         {
@@ -59,8 +67,16 @@ public static class Gradients
             float inv = 1f / sum;
             for (int v = 0; v < V; v++) dRow[v] *= inv;  // now contains softmax probs
 
-            // Subtract 1 at the target class, scale by 1/N
-            dRow[labels[t]] -= 1f;
+            if (smoothed)
+            {
+                for (int v = 0; v < V; v++) dRow[v] -= epsOverV;
+                dRow[labels[t]] -= oneMinusE;  // net: softmax − u
+            }
+            else
+            {
+                dRow[labels[t]] -= 1f;
+            }
+
             for (int v = 0; v < V; v++) dRow[v] *= scale;
         }
 

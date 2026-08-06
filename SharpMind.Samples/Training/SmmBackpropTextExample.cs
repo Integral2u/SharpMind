@@ -45,13 +45,16 @@ namespace SharpMind.Samples.Training;
 /// with backprop verified numerically correct, this model/corpus combination
 /// hits a robust training barrier at loss ≈ 5.3 (ppl ≈ 195) that is independent
 /// of LR, NormEps, and batch size — every run that descends below ~5.27 then
-/// diverges within ~300 steps. The settings below are the validated "harvest"
-/// configuration: B16 (batch 16, less gradient noise) + a short LR envelope
-/// (warmup 80, decay 400 → tail 3e-5) + stop at 1,700 steps, i.e. the last
-/// healthy state before the sharp-minimum divergence re-triggers. You can push
-/// further by raising <see cref="Steps"/> and lowering
-/// <see cref="TrainConfig.CheckpointInterval"/>, then pick the best checkpoint,
-/// but expect divergence once you cross ppl ≈ 164.
+/// diverges within ~300 steps. The "harvest" run stopped at 1,700 steps right
+/// before the sharp-minimum divergence re-triggered (final eval ppl ≈ 216).
+///
+/// This version adds <see cref="TrainConfig.LabelSmoothing"/> (ε = 0.1) to soften
+/// the hard one-hot targets — a trained-for exit from the sharp basin — and
+/// raises <see cref="Steps"/> to 3,000. Success is judged by the held-out eval
+/// (plain cross-entropy): expect eval ppl to fall below 216. The printed training
+/// loss reads HIGHER than the hard-CE value because smoothing adds an entropy
+/// penalty, so watch eval ppl, not the training loss. If gradNorm takes off
+/// before step 3,000, roll back to the best checkpoint or the committed version.
 /// </summary>
 public static class SmmBackpropTextExample
 {
@@ -66,9 +69,12 @@ public static class SmmBackpropTextExample
     private const int SeqLen = 128;
     private const int MaxContextLen = 512;
     private const int GenTokens = 48;
-    private const int Steps = 1_700;
+    private const int Steps = 3_000;
     private const int LogInterval = 100;
     private const int Seed = 1234;
+
+    /// <summary>Label smoothing epsilon for training. 0 = plain hard cross-entropy.</summary>
+    private const float LabelSmoothing = 0.1f;
 
     // ChatML-style Jinja template, embedded in the .SMM on export and read back
     // to build the chat formatter on reload (see step 8 / 9c).
@@ -152,6 +158,7 @@ public static class SmmBackpropTextExample
                 TotalSteps = Steps,
                 LogInterval = LogInterval,
                 GradClipNorm = 1.0f,
+                LabelSmoothing = LabelSmoothing,
                 CheckpointInterval = 200,
                 CheckpointDir = CheckpointDir,
             });
