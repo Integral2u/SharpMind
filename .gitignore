@@ -660,3 +660,6 @@ FodyWeavers.xsd
 /SandBox/Tests/RealDataTraining.cs
 /SandBox/Tests/TrainingForwardPass.cs
 /SandBox/Runs/run018.txt
+/SandBox/Runs/training001.txt
+/SharpMind.Core/Planning.txt
+/SharpMind.Core/potentialexperiments.txt
