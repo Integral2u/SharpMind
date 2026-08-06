@@ -28,6 +28,8 @@ public sealed class BackpropEngineTests
         MaxSeqLen = 512,
     };
 
+    private static readonly ModelConfig MultiLayerConfig = SmallConfig with { NumLayers = 2 };
+
     private const int Batch = 2;
     private const int Seq = 4;
 
@@ -39,10 +41,10 @@ public sealed class BackpropEngineTests
             [3, 9, 12, 5, 17, 2, 8, 31], Batch, Seq);
     }
 
-    private static (Transformer Model, IReadOnlyList<Parameter> Params, SharpMindConfig Config) Fixture(SharpMindConfig config, int seed = 9001)
+    private static (Transformer Model, IReadOnlyList<Parameter> Params, SharpMindConfig Config) Fixture(ModelConfig modelConfig, SharpMindConfig sharpConfig, int seed = 9001)
     {
-        var sc = config with { Hardware = HardwareTier.Scalar };
-        var weights = ModelFactory.CreateForTraining(SmallConfig, sc);
+        var sc = sharpConfig with { Hardware = HardwareTier.Scalar };
+        var weights = ModelFactory.CreateForTraining(modelConfig, sc);
         WeightInitializer.InitializeRandomly(weights, seed);
         var model = ModelFactory.CreateTrainingTransformer(weights, sc);
         var parameters = model.Parameters().ToList();
@@ -50,12 +52,15 @@ public sealed class BackpropEngineTests
     }
 
     [Theory]
-    [InlineData(nameof(SharpMindConfig.Gpt), ActivationKind.GELU)]
-    [InlineData(nameof(SharpMindConfig.Llama), ActivationKind.SiLU)]
-    public void Backward_GradientsMatchFiniteDifference(string configName, ActivationKind _)
+    [InlineData(0, nameof(SharpMindConfig.Gpt))]
+    [InlineData(0, nameof(SharpMindConfig.Llama))]
+    [InlineData(1, nameof(SharpMindConfig.Gpt))]
+    [InlineData(1, nameof(SharpMindConfig.Llama))]
+    public void Backward_GradientsMatchFiniteDifference(int configIdx, string configName)
     {
+        var modelConfig = configIdx == 0 ? SmallConfig : MultiLayerConfig;
         var sharpConfig = configName == "Gpt" ? SharpMindConfig.Gpt : SharpMindConfig.Llama;
-        var (model, parameters, config) = Fixture(sharpConfig);
+        var (model, parameters, config) = Fixture(modelConfig, sharpConfig);
         using var _m = model;
 
         var mapping = GradientMappingFactory.Create(config);
@@ -67,7 +72,7 @@ public sealed class BackpropEngineTests
 
         using var ctx = new ForwardContext();
         var logits = engine.ForwardAndRecord(ctx, tokenIds);
-        using var logitsFlat = logits.Reshape(Batch * Seq, SmallConfig.VocabSize);
+        using var logitsFlat = logits.Reshape(Batch * Seq, modelConfig.VocabSize);
 
         var loss = new CrossEntropyLoss();
         loss.Compute(logitsFlat, flatLabels);
@@ -87,7 +92,7 @@ public sealed class BackpropEngineTests
     [Fact]
     public void Backprop_LossDescends()
     {
-        var (model, parameters, config) = Fixture(SharpMindConfig.Gpt);
+        var (model, parameters, config) = Fixture(SmallConfig, SharpMindConfig.Gpt);
         using var _m = model;
 
         var mapping = GradientMappingFactory.Create(config);
@@ -123,15 +128,31 @@ public sealed class BackpropEngineTests
     {
         var all = model.Parameters().ToList();
         var targets = new List<Parameter>();
-        // embedding (weight-tied head), first linear, first norm, final norm
+        // embedding (weight-tied head)
         targets.Add(all[0]);
-        var block = model.GetBlock(0)!;
-        targets.Add(model.FinalNorm.Parameters().First());
-        targets.Add(block.Norm1.Parameters().First());
-        targets.Add(block.Attention.Wq.Parameters().First(p => p.Name.Contains("weight", StringComparison.OrdinalIgnoreCase)));
-        targets.Add(block.Ffn is { } ffn && ffn.W1Layer is not null
-            ? ffn.W1Layer.Parameters().First(p => p.Name.Contains("weight", StringComparison.OrdinalIgnoreCase))
-            : block.Ffn.WGated!.Parameters().First(p => p.Name.Contains("weight", StringComparison.OrdinalIgnoreCase)));
+        // final norm
+        targets.AddRange(model.FinalNorm.Parameters());
+        // every block: both norms, all attention projections, and both ffn paths
+        for (int i = 0; i < model.Config.NumLayers; i++)
+        {
+            var block = model.GetBlock(i)!;
+            targets.AddRange(block.Norm1.Parameters());
+            targets.AddRange(block.Norm2.Parameters());
+            targets.AddRange(block.Attention.Wq.Parameters());
+            targets.AddRange(block.Attention.Wk.Parameters());
+            targets.AddRange(block.Attention.Wv.Parameters());
+            targets.AddRange(block.Attention.Wo.Parameters());
+            if (block.Ffn.W1Layer is not null)
+            {
+                targets.AddRange(block.Ffn.W1Layer.Parameters());
+                targets.AddRange(block.Ffn.W2Layer!.Parameters());
+            }
+            else
+            {
+                targets.AddRange(block.Ffn.WGated!.Parameters());
+                targets.AddRange(block.Ffn.WDown!.Parameters());
+            }
+        }
         return targets.Distinct().ToList();
     }
 

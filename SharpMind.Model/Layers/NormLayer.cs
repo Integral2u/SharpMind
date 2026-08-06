@@ -7,7 +7,8 @@ public abstract class NormLayer : IDisposable
 {
     protected readonly Tensor<float> Weight;
     protected readonly Tensor<float>? Bias;
-    protected readonly float Eps;
+    /// <summary>Normalisation epsilon used by both the forward and backward passes.</summary>
+    public readonly float Eps;
     private bool _disposed;
 
     protected NormLayer(int dim, bool hasBias = false, float eps = 1e-5f)

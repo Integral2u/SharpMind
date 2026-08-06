@@ -478,7 +478,7 @@ public sealed class BackpropEngine : IDisposable
         var inputTensor = Tensor<float>.Zeros(T, D);
         for (int i = 0; i < T; i++)
             state.GetInput(i).CopyTo(inputTensor.RowSpan(i));
-        var result = _mapping.LayerNorm(dOut, inputTensor, Param(norm.NormWeight), bias);
+        var result = _mapping.LayerNorm(dOut, inputTensor, Param(norm.NormWeight), bias, norm.Eps);
         inputTensor.Dispose();
         return result;
     }

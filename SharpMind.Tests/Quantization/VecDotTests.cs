@@ -398,10 +398,13 @@ public class VecDotTests
                     rawWeights[off + j] = (byte)rng.Next(256);
             }
 
-        float expected = RunCReference((int)QuantDType.Q4_0, input, rawWeights, 0, IN_FEATURES);
+        float expected;
+        fixed (float* pIn = input) fixed (byte* pW = rawWeights)
+            expected = QuantizationFactory.Create(HardwareTier.Scalar).VecDotQ4_0(pIn, pW, 0, IN_FEATURES);
 
         foreach (var tier in Enum.GetValues<HardwareTier>())
         {
+            if (tier == HardwareTier.Scalar) continue;
             var q = QuantizationFactory.Create(tier);
             fixed (float* pIn = input) fixed (byte* pW = rawWeights)
                 Assert.Equal(expected, q.VecDotQ4_0(pIn, pW, 0, IN_FEATURES), 4);
@@ -410,113 +413,49 @@ public class VecDotTests
 
     // ===== C reference cross-validation =====
 
-    private static string? _refProjectDir;
+    // ===== C reference cross-validation (seed-based, file backed) =====
+    // The tests regenerate deterministic data with the same seed used by
+    // ReferenceDataGenerator. The generator writes reference results to
+    // DataRef; the seed used to generate them is recorded in seed.txt.
+    // If the recorded seed differs from the one the tests use, the reference
+    // data is out of sync and the tests should be run after regenerating it.
 
-    private static string GetRefProjectDir()
+    private const int ReferenceSeed = 42;
+
+    private static string GetRefFilePath(string fileName)
     {
-        if (_refProjectDir == null)
-        {
-            // Walk up from the test assembly output to find SharpMind.Tests/Reference/Reference.csproj
-            var dir = AppDomain.CurrentDomain.BaseDirectory;
-            while (dir != null)
-            {
-                var testMarker = Path.Combine(dir, "SharpMind.Tests.csproj");
-                if (File.Exists(testMarker))
-                {
-                    var candidate = Path.Combine(dir, "Reference", "Reference.csproj");
-                    if (File.Exists(candidate))
-                    {
-                        _refProjectDir = Path.Combine(dir, "Reference");
-                        break;
-                    }
-                }
-                var parent = Directory.GetParent(dir);
-                dir = parent?.FullName;
-            }
-            if (_refProjectDir == null)
-                throw new FileNotFoundException(
-                    "Reference project not found. SharpMind.Tests/Reference/Reference.csproj must exist.");
-        }
-        return _refProjectDir;
+        string dataDir = Path.Combine(AppContext.BaseDirectory, "DataRef");
+        string seedFile = Path.Combine(dataDir, "seed.txt");
+
+        string? recorded = null;
+        if (File.Exists(seedFile))
+            recorded = File.ReadAllText(seedFile).Trim();
+
+        if (recorded == null || !int.TryParse(recorded, out int seed) || seed != ReferenceSeed)
+            throw new Xunit.Sdk.XunitException(
+                $"Reference data is out of sync. DataRef/seed.txt recorded " +
+                $"\"{recorded ?? "<missing>"}\" but the tests expect seed {ReferenceSeed}. " +
+                $"Regenerate it with: dotnet run --project tools/ReferenceDataGenerator -- generate_all \"{dataDir}\"");
+
+        string filePath = Path.Combine(dataDir, fileName);
+        if (!File.Exists(filePath))
+            throw new Xunit.Sdk.XunitException(
+                $"Missing reference data: {filePath}. Regenerate it with: " +
+                $"dotnet run --project tools/ReferenceDataGenerator -- generate_all \"{dataDir}\"");
+
+        return filePath;
     }
 
-    private static float RunCReference(int dtype, float[] input, byte[] weights, int col, int inFeatures)
+    private static string RunCReference(int dtype, float[] input, byte[] weights, int col, int inFeatures)
     {
-        var refDir = GetRefProjectDir();
-        var refDll = Path.Combine(refDir, "bin", "Debug", "net10.0", "Reference.dll");
-
-        // Write input data to temp file and pipe it to the reference process
-        var tempInput = Path.Combine(Path.GetTempPath(), $"ref_{dtype}_c{col}_{Guid.NewGuid():N}.bin");
-        using (var fs = File.Create(tempInput))
-        using (var bw = new BinaryWriter(fs))
-        {
-            bw.Write(dtype);
-            bw.Write(inFeatures);
-            bw.Write(col);
-            foreach (var f in input) bw.Write(f);
-            bw.Write(weights, 0, weights.Length);
-        }
-
-        var psi = new ProcessStartInfo("dotnet")
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
-        psi.ArgumentList.Add("exec");
-        psi.ArgumentList.Add(refDll);
-        psi.ArgumentList.Add(tempInput);
-
-        using var proc = Process.Start(psi)!;
-        proc.WaitForExit(15000);
-        var result = proc.StandardOutput.ReadToEnd().Trim();
-        var err = proc.StandardError.ReadToEnd().Trim();
-        File.Delete(tempInput);
-
-        if (proc.ExitCode != 0 || string.IsNullOrEmpty(result))
-            throw new InvalidOperationException(
-                $"Reference process failed (exit={proc.ExitCode}, output=\"{result}\", stderr=\"{err}\")");
-
-        return float.Parse(result, System.Globalization.CultureInfo.InvariantCulture);
+        string filePath = GetRefFilePath($"ref_{dtype}_c{col}.bin");
+        return File.ReadAllText(filePath).Trim();
     }
 
-    private static float[] RunCReferenceRead(int dtype, byte[] weights, int n)
+    private static float[] RunCReferenceRead(int dtype, int col, int n)
     {
-        var refDir = GetRefProjectDir();
-        var refDll = Path.Combine(refDir, "bin", "Debug", "net10.0", "Reference.dll");
-
-        var tempInput = Path.Combine(Path.GetTempPath(), $"refread_{dtype}_{Guid.NewGuid():N}.bin");
-        using (var fs = File.Create(tempInput))
-        using (var bw = new BinaryWriter(fs))
-        {
-            bw.Write(dtype);
-            bw.Write(n);
-            bw.Write(weights, 0, weights.Length);
-        }
-
-        var psi = new ProcessStartInfo("dotnet")
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
-        psi.ArgumentList.Add("exec");
-        psi.ArgumentList.Add(refDll);
-        psi.ArgumentList.Add("read");
-        psi.ArgumentList.Add(tempInput);
-
-        using var proc = Process.Start(psi)!;
-        proc.WaitForExit(15000);
-        var output = proc.StandardOutput.ReadToEnd().Trim();
-        var err = proc.StandardError.ReadToEnd().Trim();
-        File.Delete(tempInput);
-
-        if (proc.ExitCode != 0 || string.IsNullOrEmpty(output))
-            throw new InvalidOperationException(
-                $"Reference read process failed (exit={proc.ExitCode}, output=\"{output}\", stderr=\"{err}\")");
-
+        string filePath = GetRefFilePath($"refread_{dtype}_c{col}.bin");
+        var output = File.ReadAllText(filePath).Trim();
         var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         float[] result = new float[lines.Length];
         for (int i = 0; i < lines.Length; i++)
@@ -633,7 +572,7 @@ public class VecDotTests
                     _ => throw new InvalidOperationException()
                 };
 
-                float refResult = RunCReference(dtypeInt, input, rawWeights, c, inFeatures);
+                float refResult = float.Parse(RunCReference(dtypeInt, input, rawWeights, c, inFeatures), System.Globalization.CultureInfo.InvariantCulture);
 
                 Assert.Equal(smResult, refResult, 4);
             }
@@ -680,9 +619,7 @@ public class VecDotTests
             var smResult = new float[n];
             qOps.ReadFor(dtype, reader, smResult, n);
 
-            using var msRef = new MemoryStream();
-            msRef.Write(colWeights);
-            float[] refResult = RunCReferenceRead(dtypeInt, msRef.ToArray(), n);
+            float[] refResult = RunCReferenceRead(dtypeInt, c, n);
 
             Assert.Equal(refResult.Length, smResult.Length);
             for (int i = 0; i < n; i++)

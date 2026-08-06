@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "ReferenceDataGenerator": {
+      "commandName": "Project",
+      "commandLineArgs": "generate_all C:\\Integral2u\\source\\repos\\SharpMind\\SharpMind.Tests\\DataRef"
+    }
+  }
+}

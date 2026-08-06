@@ -1480,6 +1480,52 @@ class Program
         return result;
     }
 
+static int RunVecDotMode(string inputPath)
+    {
+        // Binary input file format (matches the test harness):
+        //  int dtype, int inFeatures, int col, float[inFeatures] input, byte[] weights
+        using var reader = new BinaryReader(File.OpenRead(inputPath));
+        int dtype = reader.ReadInt32();
+        int inFeatures = reader.ReadInt32();
+        int col = reader.ReadInt32();
+        float[] input = new float[inFeatures];
+        for (int i = 0; i < inFeatures; i++) input[i] = reader.ReadSingle();
+        using (var remaining = new MemoryStream())
+        {
+            reader.BaseStream.CopyTo(remaining);
+            byte[] weights = remaining.ToArray();
+
+            float result = (QuantDType)dtype switch
+            {
+                QuantDType.F32 => VecDotF32(input, weights, col, inFeatures),
+                QuantDType.F16 => VecDotF16(input, weights, col, inFeatures),
+                QuantDType.Q4_0 => VecDotQ4_0(input, weights, col, inFeatures),
+                QuantDType.Q4_1 => VecDotQ4_1(input, weights, col, inFeatures),
+                QuantDType.Q5_0 => VecDotQ5_0(input, weights, col, inFeatures),
+                QuantDType.Q5_1 => VecDotQ5_1(input, weights, col, inFeatures),
+                QuantDType.Q8_0 => VecDotQ8_0(input, weights, col, inFeatures),
+                QuantDType.Q8_1 => VecDotQ8_1(input, weights, col, inFeatures),
+                QuantDType.Q2_K => VecDotQ2_K(input, weights, col, inFeatures),
+                QuantDType.Q3_K => VecDotQ3_K(input, weights, col, inFeatures),
+                QuantDType.Q4_K => VecDotQ4_K(input, weights, col, inFeatures),
+                QuantDType.Q5_K => VecDotQ5_K(input, weights, col, inFeatures),
+                QuantDType.Q6_K => VecDotQ6_K(input, weights, col, inFeatures),
+                QuantDType.Q8_K => VecDotQ8_K(input, weights, col, inFeatures),
+                QuantDType.I8 => VecDotI8(input, weights, col, inFeatures),
+                QuantDType.I16 => VecDotI16(input, weights, col, inFeatures),
+                QuantDType.I32 => VecDotI32(input, weights, col, inFeatures),
+                QuantDType.IQ4_NL => VecDotIQ4_NL(input, weights, col, inFeatures),
+                QuantDType.IQ1_S => VecDotIQ1_S(input, weights, col, inFeatures),
+                QuantDType.IQ1_M => VecDotIQ1_M(input, weights, col, inFeatures),
+                QuantDType.TQ2_0 => VecDotTQ2_0(input, weights, col, inFeatures),
+                QuantDType.TQ1_0 => VecDotTQ1_0(input, weights, col, inFeatures),
+                _ => throw new InvalidOperationException()
+            };
+            Console.WriteLine("{0:F9}", result);
+        }
+        return 0;
+    }
+
     static int RunReadMode(string inputPath)
     {
         using var reader = new BinaryReader(File.OpenRead(inputPath));
@@ -1521,103 +1567,188 @@ class Program
         return 0;
     }
 
+    static int RefQkForType(QuantDType dtype) => dtype switch
+    {
+        QuantDType.F32 => 1,
+        QuantDType.F16 => 1,
+        QuantDType.I8 => 1,
+        QuantDType.I16 => 1,
+        QuantDType.I32 => 1,
+        QuantDType.IQ4_NL => 32,
+        QuantDType.IQ1_S or QuantDType.IQ1_M or QuantDType.TQ1_0 or QuantDType.TQ2_0 => 256,
+        _ => dtype >= QuantDType.Q2_K ? 256 : 32
+    };
+
+    static int BlockBytesForType(QuantDType dtype) => dtype switch
+    {
+        QuantDType.F32 => 4,
+        QuantDType.F16 => 2,
+        QuantDType.Q4_0 => 18,
+        QuantDType.Q4_1 => 20,
+        QuantDType.Q5_0 => 22,
+        QuantDType.Q5_1 => 24,
+        QuantDType.Q8_0 => 34,
+        QuantDType.Q8_1 => 36,
+        QuantDType.Q2_K => 84,
+        QuantDType.Q3_K => 110,
+        QuantDType.Q4_K => 144,
+        QuantDType.Q5_K => 176,
+        QuantDType.Q6_K => 210,
+        QuantDType.Q8_K => 292,
+        QuantDType.I8 => 1,
+        QuantDType.I16 => 2,
+        QuantDType.I32 => 4,
+        QuantDType.IQ4_NL => 18,
+        QuantDType.IQ1_S => 50,
+        QuantDType.IQ1_M => 56,
+        QuantDType.TQ2_0 => 66,
+        QuantDType.TQ1_0 => 54,
+        _ => throw new ArgumentOutOfRangeException(nameof(dtype), dtype, null)
+    };
+
+static int RunGenerateMode(string[] args)
+    {
+        // generate <dtype> <inFeatures> <nCols> <outputDir> [seed]
+        int dtype = int.Parse(args[1]);
+        int inFeatures = int.Parse(args[2]);
+        int nCols = int.Parse(args[3]);
+        string outputDir = args[4];
+        int seed = args.Length > 5 ? int.Parse(args[5]) : 42;
+        
+        Directory.CreateDirectory(outputDir);
+
+        var rng = new Random(seed);
+        var input = new float[inFeatures];
+        for (int i = 0; i < inFeatures; i++) input[i] = (float)(rng.NextDouble() * 2 - 1);
+        
+        int blockBytes = BlockBytesForType((QuantDType)dtype);
+        int qk = RefQkForType((QuantDType)dtype);
+        int nBlocks = (inFeatures + qk - 1) / qk;
+        int totalBlockBytes = nBlocks * blockBytes;
+        var rawWeights = new byte[nCols * totalBlockBytes];
+        rng.NextBytes(rawWeights);
+
+        for (int c = 0; c < nCols; c++)
+        {
+            float result = (QuantDType)dtype switch
+            {
+                QuantDType.F32 => VecDotF32(input, rawWeights, c, inFeatures),
+                QuantDType.F16 => VecDotF16(input, rawWeights, c, inFeatures),
+                QuantDType.Q4_0 => VecDotQ4_0(input, rawWeights, c, inFeatures),
+                QuantDType.Q4_1 => VecDotQ4_1(input, rawWeights, c, inFeatures),
+                QuantDType.Q5_0 => VecDotQ5_0(input, rawWeights, c, inFeatures),
+                QuantDType.Q5_1 => VecDotQ5_1(input, rawWeights, c, inFeatures),
+                QuantDType.Q8_0 => VecDotQ8_0(input, rawWeights, c, inFeatures),
+                QuantDType.Q8_1 => VecDotQ8_1(input, rawWeights, c, inFeatures),
+                QuantDType.Q2_K => VecDotQ2_K(input, rawWeights, c, inFeatures),
+                QuantDType.Q3_K => VecDotQ3_K(input, rawWeights, c, inFeatures),
+                QuantDType.Q4_K => VecDotQ4_K(input, rawWeights, c, inFeatures),
+                QuantDType.Q5_K => VecDotQ5_K(input, rawWeights, c, inFeatures),
+                QuantDType.Q6_K => VecDotQ6_K(input, rawWeights, c, inFeatures),
+                QuantDType.Q8_K => VecDotQ8_K(input, rawWeights, c, inFeatures),
+                QuantDType.I8 => VecDotI8(input, rawWeights, c, inFeatures),
+                QuantDType.I16 => VecDotI16(input, rawWeights, c, inFeatures),
+                QuantDType.I32 => VecDotI32(input, rawWeights, c, inFeatures),
+                QuantDType.IQ4_NL => VecDotIQ4_NL(input, rawWeights, c, inFeatures),
+                QuantDType.IQ1_S => VecDotIQ1_S(input, rawWeights, c, inFeatures),
+                QuantDType.IQ1_M => VecDotIQ1_M(input, rawWeights, c, inFeatures),
+                QuantDType.TQ2_0 => VecDotTQ2_0(input, rawWeights, c, inFeatures),
+                QuantDType.TQ1_0 => VecDotTQ1_0(input, rawWeights, c, inFeatures),
+                _ => throw new InvalidOperationException()
+            };
+            File.WriteAllText(Path.Combine(outputDir, $"ref_{dtype}_c{c}.bin"), result.ToString("F9"));
+        }
+        return 0;
+    }
+
+    static void GenerateReadData(int dtype, int n, int nCols, string outputDir, int seed)
+    {
+        var rng = new Random(seed);
+        int blockBytes = BlockBytesForType((QuantDType)dtype);
+        int qk = RefQkForType((QuantDType)dtype);
+        int nBlocks = (n + qk - 1) / qk;
+        int totalBlockBytes = nBlocks * blockBytes;
+        // Must fill nCols * totalBlockBytes in one NextBytes call to match the
+        // RNG sequence the tests use to regenerate the same data.
+        var weights = new byte[nCols * totalBlockBytes];
+        rng.NextBytes(weights);
+
+        for (int c = 0; c < nCols; c++)
+        {
+            var colWeights = weights.AsSpan(c * totalBlockBytes, totalBlockBytes);
+            float[] result = (QuantDType)dtype switch
+            {
+                QuantDType.F32 => ReadF32(colWeights, n),
+                QuantDType.F16 => ReadF16(colWeights, n),
+                QuantDType.Q4_0 => ReadQ4_0(colWeights, n),
+                QuantDType.Q4_1 => ReadQ4_1(colWeights, n),
+                QuantDType.Q5_0 => ReadQ5_0(colWeights, n),
+                QuantDType.Q5_1 => ReadQ5_1(colWeights, n),
+                QuantDType.Q8_0 => ReadQ8_0(colWeights, n),
+                QuantDType.Q8_1 => ReadQ8_1(colWeights, n),
+                QuantDType.Q2_K => ReadQ2_K(colWeights, n),
+                QuantDType.Q3_K => ReadQ3_K(colWeights, n),
+                QuantDType.Q4_K => ReadQ4_K(colWeights, n),
+                QuantDType.Q5_K => ReadQ5_K(colWeights, n),
+                QuantDType.Q6_K => ReadQ6_K(colWeights, n),
+                QuantDType.Q8_K => ReadQ8_K(colWeights, n),
+                QuantDType.I8 => ReadI8(colWeights, n),
+                QuantDType.I16 => ReadI16(colWeights, n),
+                QuantDType.I32 => ReadI32(colWeights, n),
+                QuantDType.IQ4_NL => ReadIQ4_NL(colWeights, n),
+                QuantDType.IQ1_S => ReadIQ1_S(colWeights, n),
+                QuantDType.IQ1_M => ReadIQ1_M(colWeights, n),
+                QuantDType.TQ2_0 => ReadTQ2_0(colWeights, n),
+                QuantDType.TQ1_0 => ReadTQ1_0(colWeights, n),
+                _ => throw new InvalidOperationException()
+            };
+            File.WriteAllLines(Path.Combine(outputDir, $"refread_{dtype}_c{c}.bin"), result.Select(v => v.ToString("G9")));
+        }
+    }
+
+    static int RunGenerateAllMode(string[] args)
+    {
+        // generate_all <outputDir> [inFeatures] [nCols] [seed]
+        // Default inFeatures = 4 * qk to match the tests (nBlocks = 4).
+        // Records the seed in <outputDir>/seed.txt so the tests can verify the
+        // reference data is in sync with the seed they use to regenerate it.
+        string outputDir = args[1];
+        int nCols = args.Length > 3 ? int.Parse(args[3]) : 2;
+        int seed = args.Length > 4 ? int.Parse(args[4]) : 42;
+
+        int[] dtypes = [0, 1, 2, 3, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 21, 20, 23, 22];
+        foreach (var dtype in dtypes)
+        {
+            int inFeatures = args.Length > 2 ? int.Parse(args[2]) : 4 * RefQkForType((QuantDType)dtype);
+            Console.WriteLine($"Generating ref for dtype {dtype} (inFeatures={inFeatures}, seed={seed})...");
+            RunGenerateMode(new string[] { "generate", dtype.ToString(), inFeatures.ToString(), nCols.ToString(), outputDir, seed.ToString() });
+            Console.WriteLine($"Generating refread for dtype {dtype}...");
+            GenerateReadData(dtype, inFeatures, nCols, outputDir, seed);
+        }
+        Directory.CreateDirectory(outputDir);
+        File.WriteAllText(Path.Combine(outputDir, "seed.txt"), seed.ToString());
+        Console.WriteLine($"Wrote seed.txt ({seed})");
+        return 0;
+    }
+
+
+    //# Usage: dotnet run -- generate_all <outputDirectory> [inFeatures] [nCols]
+    //dotnet run --generate_all ..\..\..\..\SharpMind.Tests\bin\Debug\net10.0\data
     static int Main(string[] args)
     {
-        if (args.Length > 0 && args[0] == "read")
-            return RunReadMode(args[1]);
-
-        Stream inStream;
-        if (args.Length > 0)
-            inStream = File.OpenRead(args[0]);
-        else
-            inStream = Console.OpenStandardInput();
-        using var reader = new BinaryReader(inStream);
-
-        // Read header
-        int dtype = reader.ReadInt32();
-        int inFeatures = reader.ReadInt32();
-        int col = reader.ReadInt32();
-
-        // Read input floats
-        float[] input = new float[inFeatures];
-        for (int i = 0; i < inFeatures; i++)
-            input[i] = reader.ReadSingle();
-
-        // Determine block layout and read weights
-        int blockBytes = dtype switch
+        if (args.Length == 0)
         {
-            (int)QuantDType.F32 => 4,
-            (int)QuantDType.F16 => 2,
-            (int)QuantDType.Q4_0 => 18,
-            (int)QuantDType.Q4_1 => 20,
-            (int)QuantDType.Q5_0 => 22,
-            (int)QuantDType.Q5_1 => 24,
-            (int)QuantDType.Q8_0 => 34,
-            (int)QuantDType.Q8_1 => 36,
-            (int)QuantDType.Q2_K => 84,
-            (int)QuantDType.Q3_K => 110,
-            (int)QuantDType.Q4_K => 144,
-            (int)QuantDType.Q5_K => 176,
-            (int)QuantDType.Q6_K => 210,
-            (int)QuantDType.Q8_K => 292,
-            (int)QuantDType.I8 => 1,
-            (int)QuantDType.I16 => 2,
-            (int)QuantDType.I32 => 4,
-            (int)QuantDType.IQ4_NL => 18,
-            (int)QuantDType.IQ1_S => 50,
-            (int)QuantDType.IQ1_M => 56,
-            (int)QuantDType.TQ1_0 => 54,
-            (int)QuantDType.TQ2_0 => 66,
-            _ => throw new InvalidOperationException($"Unknown dtype: {dtype}")
-        };
-        int qk = dtype switch
-        {
-            (int)QuantDType.F32 => 1,
-            (int)QuantDType.F16 => 1,
-            (int)QuantDType.I8 => 1,
-            (int)QuantDType.I16 => 1,
-            (int)QuantDType.I32 => 1,
-            (int)QuantDType.IQ4_NL => QK,
-            (int)QuantDType.IQ1_S => QK_K,
-            (int)QuantDType.IQ1_M => QK_K,
-            (int)QuantDType.TQ1_0 => QK_K,
-            (int)QuantDType.TQ2_0 => QK_K,
-            _ => dtype >= (int)QuantDType.Q2_K ? QK_K : QK
-        };
-        int nBlocks = (inFeatures + qk - 1) / qk;
-        var remaining = new MemoryStream();
-        reader.BaseStream.CopyTo(remaining);
-        byte[] weights = remaining.ToArray();
+            Console.WriteLine("Usage: ReferenceDataGenerator <read|generate|generate_all> ...");
+            return 1;
+        }
 
-        // Compute
-        float result = (QuantDType)dtype switch
+return args[0] switch
         {
-            QuantDType.F32 => VecDotF32(input, weights, col, inFeatures),
-            QuantDType.F16 => VecDotF16(input, weights, col, inFeatures),
-            QuantDType.Q4_0 => VecDotQ4_0(input, weights, col, inFeatures),
-            QuantDType.Q4_1 => VecDotQ4_1(input, weights, col, inFeatures),
-            QuantDType.Q5_0 => VecDotQ5_0(input, weights, col, inFeatures),
-            QuantDType.Q5_1 => VecDotQ5_1(input, weights, col, inFeatures),
-            QuantDType.Q8_0 => VecDotQ8_0(input, weights, col, inFeatures),
-            QuantDType.Q8_1 => VecDotQ8_1(input, weights, col, inFeatures),
-            QuantDType.Q2_K => VecDotQ2_K(input, weights, col, inFeatures),
-            QuantDType.Q3_K => VecDotQ3_K(input, weights, col, inFeatures),
-            QuantDType.Q4_K => VecDotQ4_K(input, weights, col, inFeatures),
-            QuantDType.Q5_K => VecDotQ5_K(input, weights, col, inFeatures),
-            QuantDType.Q6_K => VecDotQ6_K(input, weights, col, inFeatures),
-            QuantDType.Q8_K => VecDotQ8_K(input, weights, col, inFeatures),
-            QuantDType.I8 => VecDotI8(input, weights, col, inFeatures),
-            QuantDType.I16 => VecDotI16(input, weights, col, inFeatures),
-            QuantDType.I32 => VecDotI32(input, weights, col, inFeatures),
-            QuantDType.IQ4_NL => VecDotIQ4_NL(input, weights, col, inFeatures),
-            QuantDType.IQ1_S => VecDotIQ1_S(input, weights, col, inFeatures),
-            QuantDType.IQ1_M => VecDotIQ1_M(input, weights, col, inFeatures),
-            QuantDType.TQ2_0 => VecDotTQ2_0(input, weights, col, inFeatures),
-            QuantDType.TQ1_0 => VecDotTQ1_0(input, weights, col, inFeatures),
-            _ => throw new InvalidOperationException()
+            "read" => RunReadMode(args[1]),
+            "vecdot" => RunVecDotMode(args[1]),
+            "generate" => RunGenerateMode(args),
+            "generate_all" => RunGenerateAllMode(args),
+            _ => throw new ArgumentException($"Unknown command: {args[0]}")
         };
-
-        Console.WriteLine("{0:F9}", result);
-        return 0;
     }
 }

@@ -15,6 +15,7 @@
 
   <ItemGroup>
     <Content Include="SharpMind.ico" />
+    <Content Include="DataRef\**" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

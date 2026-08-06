@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using SharpMind.Core;
 using SharpMind.Core.Quantization;
@@ -34,11 +35,23 @@ namespace SharpMind.Samples.Training;
 /// The corpus is streamed repeatedly (multi-epoch) so the loop can run the
 /// requested number of steps even though <c>tinyshakespeare.txt</c> is small.
 ///
-/// Overnight settings (Option B): H128/L4, Batch 8 x Seq 128, 12,000 steps
-/// (~2 s/step ≈ 6-7 h on CPU). Checkpoints are written every 1,000 steps to
-/// <c>c:\temp\tinyshakespeare-bp-checkpoints</c>; to resume after an
-/// interruption, set <see cref="TrainConfig.ResumeFrom"/> to the latest
-/// <c>step-XXXXXXX</c> directory.
+/// Current settings: H128/L4, Batch 16 x Seq 128, 1,700 steps (~3 s/step
+/// ≈ 85 min on CPU), LR envelope max 8e-5 (warmup 80, decay 400 → tail 3e-5).
+/// Checkpoints are written to <c>c:\temp\tinyshakespeare-bp-checkpoints</c>;
+/// to resume after an interruption, set <see cref="TrainConfig.ResumeFrom"/> to
+/// the latest <c>step-XXXXXXX</c> directory.
+///
+/// Stability note (kept so these hard-won settings are not revisited casually):
+/// with backprop verified numerically correct, this model/corpus combination
+/// hits a robust training barrier at loss ≈ 5.3 (ppl ≈ 195) that is independent
+/// of LR, NormEps, and batch size — every run that descends below ~5.27 then
+/// diverges within ~300 steps. The settings below are the validated "harvest"
+/// configuration: B16 (batch 16, less gradient noise) + a short LR envelope
+/// (warmup 80, decay 400 → tail 3e-5) + stop at 1,700 steps, i.e. the last
+/// healthy state before the sharp-minimum divergence re-triggers. You can push
+/// further by raising <see cref="Steps"/> and lowering
+/// <see cref="TrainConfig.CheckpointInterval"/>, then pick the best checkpoint,
+/// but expect divergence once you cross ppl ≈ 164.
 /// </summary>
 public static class SmmBackpropTextExample
 {
@@ -49,12 +62,12 @@ public static class SmmBackpropTextExample
     private const string CheckpointDir = @"c:\temp\tinyshakespeare-bp-checkpoints";
 
     private const int TargetVocabSize = 1024;
-    private const int BatchSize = 8;
+    private const int BatchSize = 16;
     private const int SeqLen = 128;
     private const int MaxContextLen = 512;
     private const int GenTokens = 48;
-    private const int Steps = 12_000;
-    private const int LogInterval = 200;
+    private const int Steps = 1_700;
+    private const int LogInterval = 100;
     private const int Seed = 1234;
 
     // ChatML-style Jinja template, embedded in the .SMM on export and read back
@@ -64,6 +77,8 @@ public static class SmmBackpropTextExample
 
     public static async Task RunAsync()
     {
+        var timer = new Stopwatch();
+        timer.Start();
         await Console.Out.WriteLineAsync("== SharpMind real-text backprop SMM training example ==");
         await Console.Out.WriteLineAsync();
 
@@ -87,6 +102,11 @@ public static class SmmBackpropTextExample
             NumKvHeads = 8,
             FfnDim = 512,
             MaxSeqLen = MaxContextLen,
+            // Raised from the 1e-5 default to cap LayerNorm invStd=1/√(var+eps)
+            // gradient amplification, which otherwise destabilises training at
+            // this batch size once the model becomes confident (see diagnostic
+            // runs: norm grads were the first to explode at lr≈1e-4).
+            NormEps = 1e-3f,
         };
         await Console.Out.WriteLineAsync($"Training config: {modelConfig}");
         await Console.Out.WriteLineAsync();
@@ -117,8 +137,8 @@ public static class SmmBackpropTextExample
         // 5. Train with AdamW over backprop gradients.
         var parameters = model.Parameters().ToList();
         var ops = TrainingOpsFactory.Create(sharpConfig);
-        using var optimizer = new AdamW(parameters, ops, lr: 6e-4f, weightDecay: 0.1f);
-        var scheduler = new CosineWithWarmup(maxLr: 6e-4f, minLr: 6e-5f, warmupSteps: 800, decaySteps: Steps);
+        using var optimizer = new AdamW(parameters, ops, lr: 8e-5f, weightDecay: 0.1f);
+        var scheduler = new CosineWithWarmup(maxLr: 8e-5f, minLr: 3e-5f, warmupSteps: 80, decaySteps: 400);
         var loop = new TrainLoop(
             model: model,
             parameters: parameters,
@@ -132,7 +152,7 @@ public static class SmmBackpropTextExample
                 TotalSteps = Steps,
                 LogInterval = LogInterval,
                 GradClipNorm = 1.0f,
-                CheckpointInterval = 1000,
+                CheckpointInterval = 200,
                 CheckpointDir = CheckpointDir,
             });
 
@@ -224,6 +244,8 @@ public static class SmmBackpropTextExample
                 await Console.Out.WriteAsync(entry.Token);
         }
         await Console.Out.WriteLineAsync();
+        await Console.Out.WriteLineAsync($"Training executed in: {timer.Elapsed.TotalSeconds:F2}s");
+        timer.Stop();
     }
 
     /// <summary>
