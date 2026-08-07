@@ -314,19 +314,13 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
         int window)
     {
         if (penalty == 1.0f) return;
-        int start = Math.Max(0, generatedIds.Count - (window > 0 ? window : generatedIds.Count));
-        for (int i = 0; i < promptIds.Length; i++)
-        {
-            int id = promptIds[i];
-            if (id >= 0 && id < logits.Length && logits[id] < 0)
-                logits[id] *= penalty;
-        }
-        for (int i = start; i < generatedIds.Count; i++)
-        {
-            int id = generatedIds[i];
-            if (id >= 0 && id < logits.Length && logits[id] < 0)
-                logits[id] *= penalty;
-        }
+        // Once per DISTINCT id across prompt + generated (windowed), matching the
+        // StandardGenerator / HF reference. The previous code only scaled negative
+        // logits per occurrence, so repeated likely tokens were never suppressed.
+        var seen = new HashSet<int>(Math.Min(promptIds.Length + generatedIds.Count, 512));
+        int genStart = Math.Max(0, generatedIds.Count - (window > 0 ? window : generatedIds.Count));
+        RepetitionPenalty.Apply(logits, promptIds, penalty, seen);
+        RepetitionPenalty.Apply(logits, CollectionsMarshal.AsSpan(generatedIds)[genStart..], penalty, seen);
     }
 
     public void ResetCache()

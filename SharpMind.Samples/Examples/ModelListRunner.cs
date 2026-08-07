@@ -22,15 +22,30 @@ namespace SharpMind.Samples.Examples
             => RunAsync(new[] { prompt }, ModelPath, Models, withGPU, maxTokens, loadMode, formatter);
 
         /// <summary>
+        /// Convenience overload testing a single prompt with tuning overrides.
+        /// </summary>
+        public static Task RunAsync(string prompt, string ModelPath, string[] Models, InferenceKnobs knobs, bool withGPU = false, LoadMode loadMode = LoadMode.Full, IChatPromptFormatter? formatter = null)
+            => RunAsync(new[] { prompt }, ModelPath, Models, knobs, withGPU, loadMode, formatter);
+
+        /// <summary>
         /// Loads each model once, then runs every <paramref name="prompts"/> against
-        /// it in a <em>fresh</em> session (new KV cache + history) before loading the
+        /// it in a <em>fresh</em> session (new KV / history) before loading the
         /// next model. When <paramref name="formatter"/> is null the formatter is
         /// resolved per model from the chat template stored in its file (via
         /// <see cref="ChatPromptFormatterFactory.Create(ModelMetaData?, Tokenizer)"/>),
         /// so each freshly loaded model formats its own prompts correctly.
         /// </summary>
-        public static async Task RunAsync(string[] prompts, string ModelPath, string[] Models, bool withGPU = false, int maxTokens = 100, LoadMode loadMode = LoadMode.Full, IChatPromptFormatter? formatter = null)
+        public static Task RunAsync(string[] prompts, string ModelPath, string[] Models, bool withGPU = false, int maxTokens = 100, LoadMode loadMode = LoadMode.Full, IChatPromptFormatter? formatter = null)
+            => RunAsync(prompts, ModelPath, Models, new InferenceKnobs(maxTokens), withGPU, loadMode, formatter);
+
+        /// <summary>
+        /// Loads each model once, then runs every <paramref name="prompts"/> against
+        /// it in a <em>fresh</em> session with the given <paramref name="knobs"/>
+        /// before loading the next model.
+        /// </summary>
+        public static async Task RunAsync(string[] prompts, string ModelPath, string[] Models, InferenceKnobs knobs, bool withGPU = false, LoadMode loadMode = LoadMode.Full, IChatPromptFormatter? formatter = null)
         {
+            int maxTokens = knobs.MaxTokens;
             if (prompts is not { Length: > 0 }) return;
             var totalTime = Stopwatch.StartNew();
             foreach (var m in Models)
@@ -97,8 +112,10 @@ namespace SharpMind.Samples.Examples
                     await using var session = new ChatSession<StandardGeneratorBuilder<KVCacherBuilder>, KVCacherBuilder>(model, tokenizer, meta, null, null, null, null, null, null, resolvedFormatter, disposeModel: false)
                     {
                         MaxTokens = 256,
-                        Temperature = 0.6f,
-                        TopK = 40,
+                        Temperature = knobs.Temperature,
+                        TopK = knobs.TopK,
+                        TopP = knobs.TopP,
+                        RepetitionPenalty = knobs.RepetitionPenalty,
                     };
                     session.InitializeChat();
 
@@ -146,5 +163,16 @@ namespace SharpMind.Samples.Examples
 
             return await session.StartChatAsync(Prompt, Response, cts.Token);
         }
+
+        /// <summary>
+        /// Inference tuning knobs for a comparison sweep. Defaults mirror the
+        /// historical fixed settings so existing callers behave identically.
+        /// </summary>
+        public sealed record InferenceKnobs(
+            int MaxTokens = 100,
+            float Temperature = 0.6f,
+            int TopK = 40,
+            float TopP = 0.85f,
+            float RepetitionPenalty = 1.1f);
     }
 }

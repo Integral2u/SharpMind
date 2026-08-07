@@ -282,28 +282,22 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
         float penalty,
         int window)
     {
-        static void ScaleId(Span<float> lg, int id, float pen)
-        {
-            if ((uint)id >= (uint)lg.Length) return;
-            lg[id] = lg[id] >= 0f ? lg[id] / pen : lg[id] * pen;
-        }
-
+                // Penalize once per DISTINCT token id across the window/context (matching
+        // HF/llama.cpp), NOT once per occurrence. Scaling per occurrence would raise
+        // the penalty to penalty^count for common words, wiping them from the
+        // distribution as generation (and context) grows.
+        var seen = new HashSet<int>(Math.Min(promptIds.Length + _generatedIds.Count, 512));
         if (window > 0)
         {
-            // Penalize recent prompt tokens within the window
             int promptStart = Math.Max(0, promptIds.Length - window);
-            for (int i = promptStart; i < promptIds.Length; i++)
-                ScaleId(logits, promptIds[i], penalty);
+            RepetitionPenalty.Apply(logits, promptIds[promptStart..], penalty, seen);
             int genStart = Math.Max(0, _generatedIds.Count - window);
-            for (int i = genStart; i < _generatedIds.Count; i++)
-                ScaleId(logits, _generatedIds[i], penalty);
+            RepetitionPenalty.Apply(logits, CollectionsMarshal.AsSpan(_generatedIds)[genStart..], penalty, seen);
             return;
         }
 
-        foreach (int id in promptIds)
-            ScaleId(logits, id, penalty);
-        for (int i = 0; i < _generatedIds.Count; i++)
-            ScaleId(logits, _generatedIds[i], penalty);
+        RepetitionPenalty.Apply(logits, promptIds, penalty, seen);
+        RepetitionPenalty.Apply(logits, CollectionsMarshal.AsSpan(_generatedIds), penalty, seen);
     }
 
     // Disposal

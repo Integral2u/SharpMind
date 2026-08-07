@@ -25,4 +25,8 @@
     <ProjectReference Include="..\SharpMind.Core\SharpMind.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="SharpMind.Tests" />
+  </ItemGroup>
+
 </Project>
