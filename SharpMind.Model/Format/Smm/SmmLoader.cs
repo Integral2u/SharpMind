@@ -100,6 +100,64 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
         return plugins;
     }
 
+    /// <summary>
+    /// Reads the tensor index of an .SMM container. Exposed so converters can
+    /// stream raw tensor bytes out of the container (see <see cref="ReadTensorBytes"/>).
+    /// </summary>
+    public static List<SmmTensorIndexEntry> ReadTensorIndex(string path)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        if (!File.Exists(path)) throw new FileNotFoundException(path);
+        using var stream = File.OpenRead(path);
+        using var reader = new BinaryReader(stream);
+        return ReadIndex(reader, stream).Entries;
+    }
+
+    /// <summary>
+    /// Reads (and, if necessary, decompresses) the raw bytes of a single tensor
+    /// from an .SMM container — exactly the bytes GGUF would store on disk.
+    /// </summary>
+    public static byte[] ReadTensorBytes(string path, SmmTensorIndexEntry entry, long rawSize)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        if (!File.Exists(path)) throw new FileNotFoundException(path);
+
+        using var mmf = MemoryMappedFile.CreateFromFile(path, FileMode.Open, null, 0, MemoryMappedFileAccess.Read);
+        using var stream = mmf.CreateViewStream(0, 0, MemoryMappedFileAccess.Read);
+
+        // Re-derive the data offset from the header so converters don't need to
+        // load the full index twice.
+        using var fs = File.OpenRead(path);
+        using var reader = new BinaryReader(fs);
+        if (reader.ReadUInt32() != SmmConstants.Magic)
+            throw new InvalidDataException("Not SMM: " + path);
+        reader.ReadUInt32(); // version
+        reader.ReadInt64();  // metaLen
+        reader.ReadInt64();  // tokenizerLen
+        reader.ReadInt64();  // pluginAsmCount
+        reader.ReadInt64();  // tensorCount
+        reader.ReadInt64();  // indexLen
+        long dataOffset = reader.ReadInt64();
+
+        long absolute = dataOffset + entry.Offset;
+        if (absolute < 0 || absolute >= stream.Length)
+            throw new InvalidDataException($"Tensor '{entry.Name}' offset is beyond end of file.");
+        stream.Position = absolute;
+
+        byte[] stored = new byte[entry.StoredLen];
+        stream.ReadExactly(stored);
+        if (!entry.Compressed) return stored;
+
+        using var input = new MemoryStream(stored);
+        using var gz = new GZipStream(input, System.IO.Compression.CompressionMode.Decompress);
+        using var output = new MemoryStream((int)rawSize);
+        gz.CopyTo(output);
+        if (output.Length != rawSize)
+            throw new InvalidDataException(
+                $"Tensor '{entry.Name}' decompressed to {output.Length} bytes, expected {rawSize}.");
+        return output.ToArray();
+    }
+
     public static void Load(
         string path,
         string? tokenizerPath,
