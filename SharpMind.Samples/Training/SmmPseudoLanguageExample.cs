@@ -1,4 +1,4 @@
-using SharpMind.Core;
+﻿using SharpMind.Core;
 using SharpMind.Core.Quantization;
 using SharpMind.Data.Sources.PseudoLanguage;
 using SharpMind.Inference;
@@ -97,7 +97,6 @@ public static class SmmPseudoLanguageExample
         Directory.CreateDirectory(SaveDir);
         SmmTrainingExporter.Export(weights, tokenizer, SavePath, new SmmWriteOptions
         {
-            Compression = CompressionMode.Auto,
             Source = "training",
         }, chatTemplate: ChatTemplate);
         await Console.Out.WriteLineAsync($"Saved: {SavePath} ({new FileInfo(SavePath).Length:N0} bytes)");
@@ -125,7 +124,7 @@ public static class SmmPseudoLanguageExample
         await Console.Out.WriteLineAsync($"Decoded    : {decoded}");
         await Console.Out.WriteLineAsync();
 
-        // 5b. Chat formatter — built from the chat template stored in the .SMM,
+        // 5b. Chat formatter â€” built from the chat template stored in the .SMM,
         //     so a real English prompt exercises the stored-template path too.
         var chatFormatter = ChatPromptFormatterFactory.Create(reloadedChatTemplate);
         await Console.Out.WriteLineAsync($"[chat] formatter: {chatFormatter.GetType().Name}");

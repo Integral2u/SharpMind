@@ -17,8 +17,7 @@ public static class GgufToSmmConverter
 {
     /// <summary>
     /// Converts <paramref name="ggufPath"/> to <paramref name="smmPath"/>.
-    /// Pass <see cref="SmmWriteOptions"/> to control per-tensor compression
-    /// (default <see cref="CompressionMode.Auto"/>).
+    /// Tensors are transferred verbatim (no compression, no re-quantization).
     /// </summary>
     public static void Convert(string ggufPath, string smmPath, SmmWriteOptions? options = null)
     {

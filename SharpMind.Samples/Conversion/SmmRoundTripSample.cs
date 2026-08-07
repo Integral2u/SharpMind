@@ -6,19 +6,16 @@ namespace SharpMind.Samples.Conversion;
 
 /// <summary>
 /// Proves the .SMM round-trip: GGUF -> SMM -> GGUF is lossless at the tensor
-/// byte level, and reports how much (if at all) per-tensor GZip compression in
-/// the .SMM container actually saved.
+/// byte level, and reports the size overhead of the .SMM container.
 ///
 /// For a real downloaded model it:
-///   1. converts the .gguf to .smm in every <see cref="CompressionMode"/>
-///      (None / Gzip / Auto),
+///   1. converts the .gguf to .smm via <see cref="GgufToSmmConverter"/>,
 ///   2. converts the .smm back to a fresh .gguf via <see cref="SmmToGufConverter"/>,
 ///   3. verifies that every tensor's raw bytes are bit-identical between the
 ///      original .gguf and the round-tripped .gguf,
 ///   4. verifies the re-emitted GGUF metadata / tokenizer stay equivalent
 ///      (same architecture, vocab, bos/eos, chat template),
-///   5. prints a size table so the "was compression of any use?" question can be
-///      answered per mode.
+///   5. prints a size table so the .SMM container's byte overhead is visible.
 /// </summary>
 public static class SmmRoundTripSample
 {
@@ -35,25 +32,21 @@ public static class SmmRoundTripSample
         string outputRoot = outDir ?? Path.Combine(Path.GetTempPath(), "smm-roundtrip");
         Directory.CreateDirectory(outputRoot);
 
-        string smmNone = Path.Combine(outputRoot, $"{modelName}.none.smm");
-        string smmGzip = Path.Combine(outputRoot, $"{modelName}.gzip.smm");
-        string smmAuto = Path.Combine(outputRoot, $"{modelName}.auto.smm");
+        string smmPath = Path.Combine(outputRoot, $"{modelName}.smm");
         string roundTrip = Path.Combine(outputRoot, $"{modelName}.roundtrip.gguf");
 
         await Console.Out.WriteLineAsync($"Source GGUF : {ggufPath}");
         await Console.Out.WriteLineAsync($"Round-trip  : {roundTrip}");
         await Console.Out.WriteLineAsync();
 
-        // ── GGUF → SMM in every compression mode ──
-        GgufToSmmConverter.Convert(ggufPath, smmNone, new SmmWriteOptions { Compression = CompressionMode.None, Source = "gguf" });
-        GgufToSmmConverter.Convert(ggufPath, smmGzip, new SmmWriteOptions { Compression = CompressionMode.Gzip, Source = "gguf" });
-        GgufToSmmConverter.Convert(ggufPath, smmAuto, new SmmWriteOptions { Compression = CompressionMode.Auto, Source = "gguf" });
-        await Console.Out.WriteLineAsync("GGUF → SMM (None, Gzip, Auto) complete.");
+        // ── GGUF → SMM ──
+        GgufToSmmConverter.Convert(ggufPath, smmPath, new SmmWriteOptions { Source = "gguf" });
+        await Console.Out.WriteLineAsync("GGUF → SMM complete.");
         await Console.Out.WriteLineAsync();
 
-        // ── SMM → GGUF (from the Auto container) ──
-        SmmToGufConverter.Convert(smmAuto, roundTrip);
-        await Console.Out.WriteLineAsync("SMM → GGUF (from Auto) complete.");
+        // ── SMM → GGUF ──
+        SmmToGufConverter.Convert(smmPath, roundTrip);
+        await Console.Out.WriteLineAsync("SMM → GGUF complete.");
         await Console.Out.WriteLineAsync();
 
         // ── Verify byte parity + metadata equivalence ──
@@ -93,23 +86,13 @@ public static class SmmRoundTripSample
 
         // ── Size table ──
         long ggufSize = new FileInfo(ggufPath).Length;
-        long noneSize = new FileInfo(smmNone).Length;
-        long gzSize = new FileInfo(smmGzip).Length;
-        long autoSize = new FileInfo(smmAuto).Length;
+        long smmSize = new FileInfo(smmPath).Length;
         long rtSize = new FileInfo(roundTrip).Length;
 
         await Console.Out.WriteLineAsync("Size comparison (bytes):");
         await Console.Out.WriteLineAsync($"  GGUF (original)   : {ggufSize,12:N0}");
-        await Console.Out.WriteLineAsync($"  SMM: None         : {noneSize,12:N0}  {Pct(noneSize, ggufSize)} vs GGUF");
-        await Console.Out.WriteLineAsync($"  SMM: Gzip         : {gzSize,12:N0}  {Pct(gzSize, ggufSize)} vs GGUF");
-        await Console.Out.WriteLineAsync($"  SMM: Auto         : {autoSize,12:N0}  {Pct(autoSize, ggufSize)} vs GGUF");
+        await Console.Out.WriteLineAsync($"  SMM               : {smmSize,12:N0}  {Pct(smmSize, ggufSize)} vs GGUF");
         await Console.Out.WriteLineAsync($"  GGUF (round-trip) : {rtSize,12:N0}  {Pct(rtSize, ggufSize)} vs GGUF");
-
-        bool compressionHelped = Math.Min(autoSize, gzSize) < noneSize;
-        await Console.Out.WriteLineAsync();
-        await Console.Out.WriteLineAsync(compressionHelped
-            ? "Verdict: per-tensor compression saved space for this model."
-            : "Verdict: per-tensor compression did NOT help size (quantized weights are already incompressible).");
         await Console.Out.WriteLineAsync();
         await Console.Out.WriteLineAsync($"Files: {outputRoot}");
         await Console.Out.WriteLineAsync(mismatches == 0 && metaOk ? "PASS" : "ROUND-TRIP FAILED");

@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using SharpMind.Core;
 using SharpMind.Core.Quantization;
 using SharpMind.Data;
@@ -22,13 +22,13 @@ namespace SharpMind.Samples.Training;
 /// Restores a training checkpoint and re-exports it to a .SMM without retraining.
 ///
 /// After a long run diverges late in the schedule (e.g. tinyshakespeare-backprop
-/// at 3,000 steps: gradient norm exploded 5 → 235k from step 1,600 onward and
+/// at 3,000 steps: gradient norm exploded 5 â†’ 235k from step 1,600 onward and
 /// the exported final state scored eval ppl 1435.8), the last <em>healthy</em>
 /// state is preserved in a periodic checkpoint. This example loads such a
 /// checkpoint back into a freshly built model and writes a clean .SMM, so a
 /// diverged run still yields its best-observed weights.
 ///
-/// It is intentionally train-free: no optimizer, no loader loop — just
+/// It is intentionally train-free: no optimizer, no loader loop â€” just
 /// <see cref="Checkpoint.Load"/> (weights + a fresh-pass eval) then
 /// <see cref="SmmTrainingExporter.Export"/>. Running it is fast (seconds to
 /// minutes), unlike the multi-hour training sample.
@@ -66,7 +66,7 @@ public static class SmmCheckpointRestoreExample
         await Console.Out.WriteLineAsync("== .SMM checkpoint restore example ==");
         await Console.Out.WriteLineAsync();
 
-        // 1. Tokenizer — must be the same cached tokenizer used by the training run.
+        // 1. Tokenizer â€” must be the same cached tokenizer used by the training run.
         Tokenizer tokenizer = File.Exists(TokenizerPath)
             ? TokenizationPipeline.Load(TokenizerPath)
             : await TokenizationPipeline.TrainAndSaveAsync(new TextFileSource(CorpusPath, TextFileSource.DocumentMode.LinePerDoc), TokenizerPath, TargetVocabSize);
@@ -74,7 +74,7 @@ public static class SmmCheckpointRestoreExample
                                          $"unk={tokenizer.UnkId} bos={tokenizer.BosId} eos={tokenizer.EosId} pad={tokenizer.PadId}");
         await Console.Out.WriteLineAsync();
 
-        // 2. Model size — must reproduce the training run's fixture exactly so the
+        // 2. Model size â€” must reproduce the training run's fixture exactly so the
         //    checkpoint's parameter names map 1:1 onto the rebuilt parameters.
         var modelConfig = new ModelConfig
         {
@@ -90,21 +90,21 @@ public static class SmmCheckpointRestoreExample
         await Console.Out.WriteLineAsync($"Restored model config: {modelConfig}");
         await Console.Out.WriteLineAsync();
 
-        // 3. Model — empty host weights; Checkpoint.Load overwrites their values
+        // 3. Model â€” empty host weights; Checkpoint.Load overwrites their values
         //    in place. The parameter name set comes from model.Parameters().
         var sharpConfig = SharpMindConfig.Gpt with { Hardware = HardwareTier.Auto };
         var weights = ModelFactory.CreateForTraining(modelConfig, sharpConfig);
         using var model = ModelFactory.CreateTrainingTransformer(weights, sharpConfig);
         var parameters = model.Parameters().ToList();
 
-        // 4. Load the healthy checkpoint into the parameters (in-place → into weights).
+        // 4. Load the healthy checkpoint into the parameters (in-place â†’ into weights).
         string checkpointPath = Path.Combine(CheckpointDir, RestoreStep);
         var meta = Checkpoint.Load(checkpointPath, parameters);
         await Console.Out.WriteLineAsync($"Loaded checkpoint: {checkpointPath}");
         await Console.Out.WriteLineAsync($"  saved step={meta.Step}  loss={(float.IsNaN(meta.Loss) ? "n/a" : meta.Loss.ToString("F4"))}  note={(string.IsNullOrEmpty(meta.Note) ? "n/a" : meta.Note)}");
         await Console.Out.WriteLineAsync();
 
-        // 5. Fresh-vision eval with a plain cross-entropy loss (no smoothing) —
+        // 5. Fresh-vision eval with a plain cross-entropy loss (no smoothing) â€”
         //    the true held-out metric; this is the number the diverged final .SMM
         //    never exposed.
         var pipeline = PipelineNode.From(new TextFileSource(CorpusPath, TextFileSource.DocumentMode.LinePerDoc))
@@ -139,7 +139,6 @@ public static class SmmCheckpointRestoreExample
         Directory.CreateDirectory(Path.GetDirectoryName(SavePath)!);
         SmmTrainingExporter.Export(weights, tokenizer, SavePath, new SmmWriteOptions
         {
-            Compression = CompressionMode.Auto,
             Source = "training-restore",
         }, chatTemplate: ChatTemplate);
         await Console.Out.WriteLineAsync($"Saved (restored): {SavePath} ({new FileInfo(SavePath).Length:N0} bytes)");
@@ -151,14 +150,14 @@ public static class SmmCheckpointRestoreExample
         await Console.Out.WriteLineAsync($"Reloaded tokenizer vocab size: {reloadedTokenizer.VocabSize}");
         await Console.Out.WriteLineAsync();
 
-        await Console.Out.WriteLineAsync("[greedy] 'To be, or not to be' →");
+        await Console.Out.WriteLineAsync("[greedy] 'To be, or not to be' â†’");
         var prompt = tokenizer.Encode("To be, or not to be");
         int greedySteps = Math.Max(1, Math.Min(GenTokens, reloadedConfig.MaxSeqLen - 1 - prompt.Length));
         var greedyIds = SmmTrainingPipeline.GenerateGreedy(reloaded, prompt, reloadedConfig.VocabSize, steps: greedySteps);
         await Console.Out.WriteLineAsync("  " + reloadedTokenizer.Decode([.. greedyIds]));
         await Console.Out.WriteLineAsync();
 
-        await Console.Out.WriteLineAsync("[sampled] 'Wherefore art thou Romeo' →");
+        await Console.Out.WriteLineAsync("[sampled] 'Wherefore art thou Romeo' â†’");
         using var generator = new StandardGenerator<KVCacherBuilder>(
             reloaded, reloadedTokenizer, addBos: false, addEos: false, seed: Seed);
         var sampling = new SamplingConfig { Temperature = 0.7f, TopK = 40, TopP = 0.9f };

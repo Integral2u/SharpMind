@@ -10,12 +10,15 @@ namespace SharpMind.Model.Format.Conversion;
 /// Converts a SharpMind Model (.SMM) container back into a GGUF file — the
 /// inverse of <see cref="GgufToSmmConverter"/>.
 ///
+/// <summary>
+/// Converts a SharpMind Model (.SMM) container back into a GGUF file — the
+/// inverse of <see cref="GgufToSmmConverter"/>.
+///
 /// Everything the source .SMM embedded is restored: the <see cref="ModelConfig"/>
 /// (rebuilt as GGUF <c>{arch}.*</c> metadata keys), the tokenizer (as
 /// <c>tokenizer.ggml.*</c> arrays), the chat template, and every tensor's raw
 /// (already-quantized) bytes, streamed verbatim — no re-quantization, no
-/// full-model buffer. GZip-compressed tensors are decompressed back to their
-/// original bytes, so GGUF→SMM→GGUF is lossless at the byte level.
+/// full-model buffer — so GGUF→SMM→GGUF is lossless at the byte level.
 /// </summary>
 public static class SmmToGufConverter
 {

@@ -41,7 +41,6 @@ public class SmmTrainingPipelineTests : IDisposable
         string path = Path.Combine(_temp.Path, "model.smm");
         SmmTrainingExporter.Export(weights, tokenizer, path, new SmmWriteOptions
         {
-            Compression = CompressionMode.Auto,
             Source = "training",
         });
 

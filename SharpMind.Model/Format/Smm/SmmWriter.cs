@@ -1,7 +1,6 @@
 using SharpMind.Core.Quantization;
 using SharpMind.Model.Config;
 using SharpMind.Tokenization;
-using System.IO.Compression;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -26,11 +25,11 @@ namespace SharpMind.Model.Format;
 /// [Meta JSON]          { architecture, chat_template?, source, config_json }
 /// [Tokenizer JSON]     SharpMind tokenizer JSON (SmmOutputs.Tokenizer)
 /// [Plugin manifest]    pluginAsmCount × (name, recommended, len + assembly bytes)
-/// [Data region]        each tensor's raw bytes, optionally GZip-compressed
-/// [Tensor index]       tensorCount × (name, dtype, rank+shape, offset, storedLen, compressed)
+/// [Data region]        each tensor's raw bytes, verbatim
+/// [Tensor index]       tensorCount × (name, dtype, rank+shape, offset)
 /// </code>
 /// The data region is written before the index so each tensor's bytes are
-/// fetched, quantized, compressed and flushed one at a time — a GGUF→SMM
+/// fetched, quantized and flushed one at a time — a GGUF→SMM
 /// converter never needs to hold the whole model in memory.
 /// </summary>
 public static class SmmWriter
@@ -107,28 +106,9 @@ public static class SmmWriter
         foreach (var tensor in tensors)
         {
             var (dtype, bytes) = PrepareTensor(tensor, options);
-            byte[] stored;
-            bool compressed;
-            switch (options.Compression)
-            {
-                case CompressionMode.Gzip:
-                    stored = Gzip(bytes);
-                    compressed = true;
-                    break;
-                case CompressionMode.Auto:
-                    byte[] gz = Gzip(bytes);
-                    if (gz.Length < bytes.Length) { stored = gz; compressed = true; }
-                    else { stored = bytes; compressed = false; }
-                    break;
-                default:
-                    stored = bytes;
-                    compressed = false;
-                    break;
-            }
-
-            writer.Write(stored);
-            index.Add(new SmmTensorIndexEntry(tensor.Name, dtype, tensor.Shape, dataCursor, stored.Length, compressed));
-            dataCursor += stored.Length;
+            writer.Write(bytes);
+            index.Add(new SmmTensorIndexEntry(tensor.Name, dtype, tensor.Shape, dataCursor));
+            dataCursor += bytes.Length;
         }
 
         // ── Tensor index (end of file) ──
@@ -140,8 +120,6 @@ public static class SmmWriter
             writer.Write(entry.Shape.Length);
             foreach (int dim in entry.Shape) writer.Write(dim);
             writer.Write(entry.Offset);
-            writer.Write(entry.StoredLen);
-            writer.Write(entry.Compressed);
         }
         long indexLen = fs.Position - indexStart;
 
@@ -203,14 +181,6 @@ public static class SmmWriter
         writer.Write(bytes);
     }
 
-    private static byte[] Gzip(byte[] data)
-    {
-        using var ms = new MemoryStream();
-        using (var gz = new GZipStream(ms, CompressionLevel.Fastest, leaveOpen: true))
-            gz.Write(data, 0, data.Length);
-        return ms.ToArray();
-    }
-
     private static long Align(long position, int alignment)
         => (position + alignment - 1) & ~(alignment - 1L);
 }
@@ -220,6 +190,4 @@ public readonly record struct SmmTensorIndexEntry(
     string Name,
     QuantDType Dtype,
     int[] Shape,
-    long Offset,
-    long StoredLen,
-    bool Compressed);
+    long Offset);

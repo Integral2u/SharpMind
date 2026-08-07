@@ -1,4 +1,4 @@
-using SharpMind.Core;
+﻿using SharpMind.Core;
 using SharpMind.Core.Quantization;
 using SharpMind.Data;
 using SharpMind.Data.Batching;
@@ -25,7 +25,7 @@ namespace SharpMind.Samples.Training;
 /// <see cref="DataLoader"/>), exports it to
 /// <c>c:\temp\tinyshakespeare.smm</c>, reloads it via
 /// <see cref="SmmTrainingPipeline.LoadForInference"/>, then demonstrates the
-/// full "user prompt → response" story: greedy continuation, temperature
+/// full "user prompt â†’ response" story: greedy continuation, temperature
 /// sampling, and a <see cref="ChatSession"/> whose formatter is built from
 /// the chat template that lives in the .SMM file itself.
 ///
@@ -33,7 +33,7 @@ namespace SharpMind.Samples.Training;
 /// computed by <see cref="FiniteDifferenceTrainer"/> (O(parameters) forwards
 /// per step); <see cref="ModelSizer.DetermineOptimalConfigAsync"/> can size it
 /// automatically once backprop replaces the finite-difference loop.
-/// Output is therefore crude but recognisably language-like — a pipeline demo,
+/// Output is therefore crude but recognisably language-like â€” a pipeline demo,
 /// not a capable model. Full backprop through the transformer is not yet wired
 /// in the training loops, which is the next step toward real-scale training.
 /// </summary>
@@ -65,7 +65,7 @@ public static class SmmRealTextExample
 
         var source = new TextFileSource(CorpusPath, TextFileSource.DocumentMode.LinePerDoc);
 
-        // 1. Tokenizer — BPE trained on the corpus, cached on disk.
+        // 1. Tokenizer â€” BPE trained on the corpus, cached on disk.
         Tokenizer tokenizer = File.Exists(TokenizerPath)
             ? TokenizationPipeline.Load(TokenizerPath)
             : await TokenizationPipeline.TrainAndSaveAsync(source, TokenizerPath, TargetVocabSize);
@@ -73,8 +73,8 @@ public static class SmmRealTextExample
                                          $"unk={tokenizer.UnkId} bos={tokenizer.BosId} eos={tokenizer.EosId} pad={tokenizer.PadId}");
         await Console.Out.WriteLineAsync();
 
-        // 2. Model size — pinned to a tiny config so the finite-difference run
-        //    is a bounded baseline. FD costs O(elements × forward) per step, so
+        // 2. Model size â€” pinned to a tiny config so the finite-difference run
+        //    is a bounded baseline. FD costs O(elements Ã— forward) per step, so
         //    each parameter element re-runs the full (vocab-1024) forward; at
         //    H8/L1 this measures ~8.5s/step on this machine. The next step after
         //    backprop is wired is to let ModelSizer.DetermineOptimalConfigAsync
@@ -92,7 +92,7 @@ public static class SmmRealTextExample
         await Console.Out.WriteLineAsync($"Training config: {modelConfig}");
         await Console.Out.WriteLineAsync();
 
-        // 3. Data pipeline — lines → clean → tokenise → packed TrainingBatches.
+        // 3. Data pipeline â€” lines â†’ clean â†’ tokenise â†’ packed TrainingBatches.
         var pipeline = PipelineNode.From(source)
             .Pipe(new NormaliseWhitespace())
             .Pipe(new MinLengthFilter(8));
@@ -106,7 +106,7 @@ public static class SmmRealTextExample
         await Console.Out.WriteLineAsync($"Data pipeline: {loader.Describe()}");
         await Console.Out.WriteLineAsync();
 
-        // 4. Model — empty float weights, randomised so gradients are meaningful.
+        // 4. Model â€” empty float weights, randomised so gradients are meaningful.
         var sharpConfig = SharpMindConfig.Gpt with { Hardware = HardwareTier.Auto };
         var weights = ModelFactory.CreateForTraining(modelConfig, sharpConfig);
         WeightInitializer.InitializeRandomly(weights, Seed);
@@ -121,7 +121,7 @@ public static class SmmRealTextExample
             LogInterval = LogInterval,
         });
 
-        await Console.Out.WriteLineAsync($"Training {Steps} steps (random-init loss ≈ ln({modelConfig.VocabSize}) = {MathF.Log(modelConfig.VocabSize):F2})...");
+        await Console.Out.WriteLineAsync($"Training {Steps} steps (random-init loss â‰ˆ ln({modelConfig.VocabSize}) = {MathF.Log(modelConfig.VocabSize):F2})...");
         await trainer.TrainAsync(
             progress: new Progress<float>(p => Console.Write($"\rTraining: {p,6:P0}")),
             onStep: r => Console.WriteLine($"step {r.Step,3}/{Steps}: loss = {r.Loss:F4}"));
@@ -150,7 +150,6 @@ public static class SmmRealTextExample
         Directory.CreateDirectory(Path.GetDirectoryName(SavePath)!);
         SmmTrainingExporter.Export(weights, tokenizer, SavePath, new SmmWriteOptions
         {
-            Compression = CompressionMode.Auto,
             Source = "training",
         }, chatTemplate: ChatTemplate);
         await Console.Out.WriteLineAsync($"Saved: {SavePath} ({new FileInfo(SavePath).Length:N0} bytes)");
@@ -166,7 +165,7 @@ public static class SmmRealTextExample
 
         // 9a. Greedy continuation (windowed to the model's MaxSeqLen, so the
         //     prompt + generated tokens stay in the RoPE window).
-        await Console.Out.WriteLineAsync("[greedy] 'To be, or not to be' →");
+        await Console.Out.WriteLineAsync("[greedy] 'To be, or not to be' â†’");
         var prompt = tokenizer.Encode("To be, or not to be");
         int greedySteps = Math.Max(1, Math.Min(GenTokens, reloadedConfig.MaxSeqLen - 1 - prompt.Length));
         var greedyIds = SmmTrainingPipeline.GenerateGreedy(reloaded, prompt, reloadedConfig.VocabSize, steps: greedySteps);
@@ -174,7 +173,7 @@ public static class SmmRealTextExample
         await Console.Out.WriteLineAsync();
 
         // 9b. Temperature-sampled continuation.
-        await Console.Out.WriteLineAsync("[sampled] 'Wherefore art thou Romeo' →");
+        await Console.Out.WriteLineAsync("[sampled] 'Wherefore art thou Romeo' â†’");
         using var generator = new StandardGenerator<KVCacherBuilder>(
             reloaded, reloadedTokenizer, addBos: false, addEos: false, seed: Seed);
         var sampling = new SamplingConfig { Temperature = 0.7f, TopK = 40, TopP = 0.9f };
@@ -185,7 +184,7 @@ public static class SmmRealTextExample
         await Console.Out.WriteLineAsync();
         await Console.Out.WriteLineAsync();
 
-        // 9c. Chat formatter — built from the chat template stored in the .SMM,
+        // 9c. Chat formatter â€” built from the chat template stored in the .SMM,
         //     exactly as a real consumer would resolve it, so a user prompt
         //     produces an (crude) response.
         var chatFormatter = ChatPromptFormatterFactory.Create(reloadedChatTemplate);

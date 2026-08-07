@@ -19,8 +19,8 @@ namespace SharpMind.Tests.ModelFormat;
 /// End-to-end coverage of the .SMM container: train a tiny Learnable model,
 /// export it via <see cref="SmmTrainingExporter"/>, reload via
 /// <see cref="SmmLoader"/>, and assert tensor / logits parity plus generation.
-/// Also covers per-tensor compression modes, F16/Q8_0 quantized exports,
-/// GGUF→SMM conversion of already-quantized data, and plugin embedding.
+/// Also covers F16/Q8_0 quantized exports, GGUF→SMM conversion of
+/// already-quantized data, and plugin embedding.
 /// </summary>
 public class SmmExportLoadTests : IDisposable
 {
@@ -28,29 +28,20 @@ public class SmmExportLoadTests : IDisposable
 
     public void Dispose() => _temp.Dispose();
 
-    public static IEnumerable<object[]> CompressionModes()
-    {
-        yield return [CompressionMode.None];
-        yield return [CompressionMode.Gzip];
-        yield return [CompressionMode.Auto];
-    }
-
     public static IEnumerable<object[]> QuantLevels()
     {
         yield return [QuantDType.F16];
         yield return [QuantDType.Q8_0];
     }
 
-    [Theory]
-    [MemberData(nameof(CompressionModes))]
-    public void TrainingExport_F32_ReloadsWithParity(CompressionMode compression)
+    [Fact]
+    public void TrainingExport_F32_ReloadsWithParity()
     {
         using var fixture = TrainFixture();
 
         string smmPath = Path.Combine(_temp.Path, "model.smm");
         SmmTrainingExporter.Export(fixture.Weights, fixture.Tokenizer, smmPath, new SmmWriteOptions
         {
-            Compression = compression,
             Source = "training",
         });
 
@@ -91,7 +82,6 @@ public class SmmExportLoadTests : IDisposable
         string smmPath = Path.Combine(_temp.Path, "model.smm");
         SmmTrainingExporter.Export(fixture.Weights, fixture.Tokenizer, smmPath, new SmmWriteOptions
         {
-            Compression = CompressionMode.Auto,
             Source = "training",
         }, chatTemplate: chatTemplate);
 
@@ -111,7 +101,6 @@ public class SmmExportLoadTests : IDisposable
         string smmPath = Path.Combine(_temp.Path, "model.smm");
         SmmTrainingExporter.Export(fixture.Weights, fixture.Tokenizer, smmPath, new SmmWriteOptions
         {
-            Compression = CompressionMode.Auto,
             QuantizationLevel = dtype,
             Source = "training",
         });

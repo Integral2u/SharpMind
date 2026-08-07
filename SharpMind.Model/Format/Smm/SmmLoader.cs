@@ -5,7 +5,6 @@ using SharpMind.Core.Tensors;
 using SharpMind.Model.Config;
 using SharpMind.Tokenization;
 using System.Buffers;
-using System.IO.Compression;
 using System.IO.MemoryMappedFiles;
 using System.Text;
 using System.Text.Json;
@@ -17,8 +16,7 @@ namespace SharpMind.Model.Format;
 /// Loads SharpMind Model (.SMM) containers. Mirrors <see cref="GgufLoader"/>'s
 /// target resolution, raw-quantized-data handling and GGUF transpose semantics
 /// so a single loader serves both GGUF-converted and training-exported files.
-/// The only differences are the container header/index and the optional
-/// per-tensor GZip decompression.
+/// The only differences are the container header/index.
 /// </summary>
 public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig config) : IModelLoader
 {
@@ -114,21 +112,19 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
     }
 
     /// <summary>
-    /// Reads (and, if necessary, decompresses) the raw bytes of a single tensor
-    /// from an .SMM container — exactly the bytes GGUF would store on disk.
+    /// Reads the raw bytes of a single tensor from an .SMM container — exactly
+    /// the bytes GGUF would store on disk.
     /// </summary>
     public static byte[] ReadTensorBytes(string path, SmmTensorIndexEntry entry, long rawSize)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         if (!File.Exists(path)) throw new FileNotFoundException(path);
 
-        using var mmf = MemoryMappedFile.CreateFromFile(path, FileMode.Open, null, 0, MemoryMappedFileAccess.Read);
-        using var stream = mmf.CreateViewStream(0, 0, MemoryMappedFileAccess.Read);
+        using var stream = File.OpenRead(path);
 
         // Re-derive the data offset from the header so converters don't need to
         // load the full index twice.
-        using var fs = File.OpenRead(path);
-        using var reader = new BinaryReader(fs);
+        using var reader = new BinaryReader(stream, System.Text.Encoding.UTF8, leaveOpen: false);
         if (reader.ReadUInt32() != SmmConstants.Magic)
             throw new InvalidDataException("Not SMM: " + path);
         reader.ReadUInt32(); // version
@@ -140,22 +136,13 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
         long dataOffset = reader.ReadInt64();
 
         long absolute = dataOffset + entry.Offset;
-        if (absolute < 0 || absolute >= stream.Length)
-            throw new InvalidDataException($"Tensor '{entry.Name}' offset is beyond end of file.");
+        if (absolute < 0 || absolute + rawSize > stream.Length)
+            throw new InvalidDataException($"Tensor '{entry.Name}' range is beyond end of file.");
         stream.Position = absolute;
 
-        byte[] stored = new byte[entry.StoredLen];
-        stream.ReadExactly(stored);
-        if (!entry.Compressed) return stored;
-
-        using var input = new MemoryStream(stored);
-        using var gz = new GZipStream(input, System.IO.Compression.CompressionMode.Decompress);
-        using var output = new MemoryStream((int)rawSize);
-        gz.CopyTo(output);
-        if (output.Length != rawSize)
-            throw new InvalidDataException(
-                $"Tensor '{entry.Name}' decompressed to {output.Length} bytes, expected {rawSize}.");
-        return output.ToArray();
+        var bytes = new byte[rawSize];
+        stream.ReadExactly(bytes);
+        return bytes;
     }
 
     public static void Load(
@@ -451,10 +438,8 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
                 for (int j = 0; j < rank; j++) shape[j] = reader.ReadInt32();
 
                 long offset = reader.ReadInt64();
-                long storedLen = reader.ReadInt64();
-                bool compressed = reader.ReadBoolean();
 
-                entries.Add(new SmmTensorIndexEntry(name, dtype, shape, offset, storedLen, compressed));
+                entries.Add(new SmmTensorIndexEntry(name, dtype, shape, offset));
                 meta.Tensors.Add(new TensorInfo { Name = name, Dtype = dtype, Shape = shape, Offset = offset });
             }
             catch (Exception ex)
@@ -492,22 +477,13 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
     private static byte[] ReadTensorBytes(MemoryMappedViewStream stream, SmmFileIndex index, SmmTensorIndexEntry entry, long rawSize)
     {
         long absolute = index.Meta.DataOffset + entry.Offset;
-        if (absolute >= stream.Length)
-            throw new InvalidDataException($"Tensor '{entry.Name}' offset is beyond end of file.");
+        if (absolute < 0 || absolute + rawSize > stream.Length)
+            throw new InvalidDataException($"Tensor '{entry.Name}' range is beyond end of file.");
         stream.Position = absolute;
 
-        byte[] stored = new byte[entry.StoredLen];
-        stream.ReadExactly(stored);
-        if (!entry.Compressed) return stored;
-
-        using var input = new MemoryStream(stored);
-        using var gz = new GZipStream(input, System.IO.Compression.CompressionMode.Decompress);
-        using var output = new MemoryStream((int)rawSize);
-        gz.CopyTo(output);
-        if (output.Length != rawSize)
-            throw new InvalidDataException(
-                $"Tensor '{entry.Name}' decompressed to {output.Length} bytes, expected {rawSize}.");
-        return output.ToArray();
+        var bytes = new byte[rawSize];
+        stream.ReadExactly(bytes);
+        return bytes;
     }
 
     private static (int len, string value) ReadString(BinaryReader reader)

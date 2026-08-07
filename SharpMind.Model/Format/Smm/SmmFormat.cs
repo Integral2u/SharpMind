@@ -25,23 +25,6 @@ public static class SmmConstants
 }
 
 /// <summary>
-/// Per-tensor compression strategy for an .SMM file. Compression stays an
-/// explicit, user-visible size/speed tradeoff — nothing is compressed unless
-/// the caller opts in (or <see cref="Auto"/> proves it wins on size).
-/// </summary>
-public enum CompressionMode
-{
-    /// <summary>Write every tensor uncompressed.</summary>
-    None,
-
-    /// <summary>GZip-compress every tensor.</summary>
-    Gzip,
-
-    /// <summary>Compress each tensor and keep the GZip variant only when it is strictly smaller.</summary>
-    Auto,
-}
-
-/// <summary>
 /// Which optional sections to emit in an .SMM container. The model metadata /
 /// config JSON is always written — the loader needs it to reconstruct the
 /// <see cref="SharpMind.Model.Config.ModelConfig"/>.
@@ -80,9 +63,6 @@ public sealed class SmmPluginEntry
 /// <summary>Write-time options for <see cref="SmmWriter"/>.</summary>
 public sealed class SmmWriteOptions
 {
-    /// <summary>Per-tensor compression mode. Defaults to <see cref="CompressionMode.Auto"/>.</summary>
-    public CompressionMode Compression { get; init; } = CompressionMode.Auto;
-
     /// <summary>Byte alignment for the tensor data region.</summary>
     public int Alignment { get; init; } = SmmConstants.DefaultAlignment;
 
@@ -126,6 +106,6 @@ public sealed class SmmTensorData
 
     public required QuantDType Dtype { get; init; }
 
-    /// <summary>Returns the raw (uncompressed) tensor bytes — exactly what GGUF stores on disk.</summary>
+    /// <summary>Returns the raw tensor bytes — exactly what GGUF stores on disk.</summary>
     public required Func<byte[]> GetBytes { get; init; }
 }
