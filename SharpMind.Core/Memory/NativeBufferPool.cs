@@ -81,10 +81,9 @@ public static class NativeBufferPool<T> where T : unmanaged
             int reservedCount = Interlocked.Increment(ref bucket.Count);
             if (reservedCount <= NativeBufferPoolConfig.MaxBuffersPerBucket
                 && NativeBufferPoolConfig.TotalMemoryUsed + byteSize <= maxBytes)
-            {
+{
                 buffer.Detach();       // mark as pooled, do NOT free memory
                 bucket.Stack.Push(buffer);
-                Interlocked.Increment(ref bucket.Count);
                 Interlocked.Add(ref bucket.Memory, byteSize);
                 pooled = true;
             }
