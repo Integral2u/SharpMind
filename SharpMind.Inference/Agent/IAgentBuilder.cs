@@ -19,7 +19,11 @@ namespace SharpMind.Inference.Agent
         public IAgentBuilder WithCustomBehavior(string behavior);
         public IAgentBuilder WithCustomRule(string rule);
         public IAgentBuilder WithSkill(string file);
+        public IAgentBuilder WithSkillContent(string content);
+        public IAgentBuilder WithAdditionalSystemPrompt(string prompt);
         public IAgentBuilder WithSkills(string folder, bool recursive = true);
+        /// <summary>Standalone system prompts inserted at the top of the history, before the synthesized agent prompt.</summary>
+        public IReadOnlyList<string> AdditionalSystemPrompts { get; }
         public IAgentBuilder WithTools(params object[] toolClasses);
         /// <summary>Builds the system prompt text for the current agent configuration.</summary>
         public string BuildAgentPrompt();

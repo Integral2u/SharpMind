@@ -37,6 +37,8 @@ namespace SharpMind.Inference.Agent
         public readonly List<string> Behaviors = [];
         public readonly List<string> Skills = [];
         public readonly List<string> Rules = [];
+        private readonly List<string> _additionalSystemPrompts = [];
+        public IReadOnlyList<string> AdditionalSystemPrompts => _additionalSystemPrompts;
 
         // Sub-agent registry
         private readonly Dictionary<string, IAgent> _agents = [];
@@ -84,6 +86,46 @@ namespace SharpMind.Inference.Agent
             // Avoid loading the same physical file twice
             if (!Skills.Contains(content))
                 Skills.Add(content);
+
+            return this;
+        }
+
+        /// <summary>
+        /// Appends ready-made skill content (markdown) directly to the Skills
+        /// section, without requiring a physical file. Used for skills embedded
+        /// inside an .SMM container.
+        /// </summary>
+        public IAgentBuilder WithSkillContent(string content)
+        {
+            if (string.IsNullOrWhiteSpace(content))
+                return this;
+
+            content = content.Trim();
+            if (content.Length == 0)
+                return this;
+
+            if (!Skills.Contains(content))
+                Skills.Add(content);
+
+            return this;
+        }
+
+        /// <summary>
+        /// Adds a standalone system message that is inserted at the top of the
+        /// history, before the synthesized agent prompt. Used for the default
+        /// system prompt embedded inside an .SMM container.
+        /// </summary>
+        public IAgentBuilder WithAdditionalSystemPrompt(string prompt)
+        {
+            if (string.IsNullOrWhiteSpace(prompt))
+                return this;
+
+            prompt = prompt.Trim();
+            if (prompt.Length == 0)
+                return this;
+
+            if (!_additionalSystemPrompts.Contains(prompt))
+                _additionalSystemPrompts.Add(prompt);
 
             return this;
         }

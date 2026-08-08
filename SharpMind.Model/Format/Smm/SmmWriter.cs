@@ -22,7 +22,7 @@ namespace SharpMind.Model.Format;
 ///   u64 indexLen       (bytes of the tensor index region at end of file)
 ///   u64 dataOffset     (absolute offset of the tensor data region)
 ///   u64 reserved
-/// [Meta JSON]          { architecture, chat_template?, source, config_json }
+/// [Meta JSON]          { architecture, chat_template?, system_prompt?, skills?, source, config_json }
 /// [Tokenizer JSON]     SharpMind tokenizer JSON (SmmOutputs.Tokenizer)
 /// [Plugin manifest]    pluginAsmCount × (name, recommended, len + assembly bytes)
 /// [Data region]        each tensor's raw bytes, verbatim
@@ -171,6 +171,10 @@ public static class SmmWriter
         };
         if (includeTemplate && !string.IsNullOrWhiteSpace(chatTemplate))
             obj["chat_template"] = chatTemplate;
+        if (options.Skills is { Count: > 0 })
+            obj["skills"] = new JsonArray([.. options.Skills.Select(s => (JsonNode?)JsonValue.Create(s))]);
+        if (!string.IsNullOrWhiteSpace(options.SystemPrompt))
+            obj["system_prompt"] = options.SystemPrompt;
         return obj.ToJsonString(JsonOpts);
     }
 

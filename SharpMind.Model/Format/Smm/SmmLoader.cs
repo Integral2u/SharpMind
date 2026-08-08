@@ -68,6 +68,34 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
         }
     }
 
+    /// <summary>Returns the embedded default system prompt, or <see langword="null"/> when absent.</summary>
+    public static string? LoadSystemPromptFromMeta(ModelMetaData meta)
+    {
+        string value = meta.GetString(SmmConstants.SystemPromptKey);
+        return string.IsNullOrWhiteSpace(value) ? null : value;
+    }
+
+    /// <summary>Returns the embedded skills (markdown documents), or an empty list when absent.</summary>
+    public static List<string> LoadSkillsFromMeta(ModelMetaData meta)
+    {
+        string json = meta.GetString(SmmConstants.SkillsKey);
+        if (string.IsNullOrWhiteSpace(json)) return [];
+        try
+        {
+            var list = JsonSerializer.Deserialize<List<string>>(json);
+            return list ?? [];
+        }
+        catch (Exception ex)
+        {
+            SanityChecks.WriteLine($"SmmLoader: skills JSON parse failed: {ex.Message}");
+            return [];
+        }
+    }
+
+    public static string? LoadSystemPrompt(string path) => LoadSystemPromptFromMeta(LoadMeta(path));
+
+    public static List<string> LoadSkills(string path) => LoadSkillsFromMeta(LoadMeta(path));
+
     public static List<SmmPluginEntry> LoadPlugins(string path)
     {
         using var stream = File.OpenRead(path);
@@ -464,6 +492,19 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
 
             if (root.TryGetProperty("chat_template", out var ct) && ct.GetString() is { Length: > 0 } template)
                 meta.KvPairs.Add(new KvPair { Key = "tokenizer.chat_template", Value = template });
+
+            if (root.TryGetProperty("system_prompt", out var sp) && sp.GetString() is { Length: > 0 } systemPrompt)
+                meta.KvPairs.Add(new KvPair { Key = SmmConstants.SystemPromptKey, Value = systemPrompt });
+
+            if (root.TryGetProperty("skills", out var sk) && sk.ValueKind == JsonValueKind.Array)
+            {
+                var texts = sk.EnumerateArray()
+                    .Select(e => e.GetString() ?? "")
+                    .Where(s => s.Length > 0)
+                    .ToList();
+                if (texts.Count > 0)
+                    meta.KvPairs.Add(new KvPair { Key = SmmConstants.SkillsKey, Value = JsonSerializer.Serialize(texts) });
+            }
 
             if (root.TryGetProperty("config_json", out var cj) && cj.GetString() is { Length: > 0 } cfgJson)
                 meta.KvPairs.Add(new KvPair { Key = SmmConstants.ConfigKey, Value = cfgJson });

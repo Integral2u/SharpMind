@@ -92,6 +92,44 @@ public class SmmExportLoadTests : IDisposable
         Assert.Equal(chatTemplate, SmmTrainingPipeline.LoadChatTemplate(smmPath));
     }
 
+    [Fact]
+    public void TrainingExport_StoresAndReloadsSkillsAndSystemPrompt()
+    {
+        using var fixture = TrainFixture();
+        string[] skills = ["## Skill one\nDo this thing.", "# Skill two\nDo that thing."];
+        string systemPrompt = "You are a helpful research assistant embedded in a model file.";
+
+        string smmPath = Path.Combine(_temp.Path, "model.smm");
+        SmmTrainingExporter.Export(fixture.Weights, fixture.Tokenizer, smmPath, new SmmWriteOptions
+        {
+            Source = "training",
+            Skills = skills,
+            SystemPrompt = systemPrompt,
+        });
+
+        // Absent keys stay null/empty for a container written without them.
+        var meta = SmmLoader.LoadMeta(smmPath);
+        Assert.Equal(systemPrompt, SmmLoader.LoadSystemPromptFromMeta(meta));
+        Assert.Equal(skills, SmmLoader.LoadSkillsFromMeta(meta));
+
+        // Convenience path-based accessors agree.
+        Assert.Equal(systemPrompt, SmmLoader.LoadSystemPrompt(smmPath));
+        Assert.Equal(skills, SmmLoader.LoadSkills(smmPath));
+    }
+
+    [Fact]
+    public void TrainingExport_WithoutSkills_PromptStaysEmpty()
+    {
+        using var fixture = TrainFixture();
+
+        string smmPath = Path.Combine(_temp.Path, "model.smm");
+        SmmTrainingExporter.Export(fixture.Weights, fixture.Tokenizer, smmPath, new SmmWriteOptions());
+
+        var meta = SmmLoader.LoadMeta(smmPath);
+        Assert.Null(SmmLoader.LoadSystemPromptFromMeta(meta));
+        Assert.Empty(SmmLoader.LoadSkillsFromMeta(meta));
+    }
+
     [Theory]
     [MemberData(nameof(QuantLevels))]
     public void TrainingExport_Quantized_ReloadsWithinTolerance(QuantDType dtype)
@@ -150,6 +188,53 @@ public class SmmExportLoadTests : IDisposable
         using var ggufWeights = LoadWeightsFrom(ggufPath, config, out _);
         using var smmWeights = LoadWeightsFrom(smmPath, config, out _);
         AssertWeightsClose(ggufWeights, smmWeights, 1e-6f, "gguf");
+    }
+
+    [Fact]
+    public void GgufConversion_EmbedsSkillsAndPrompt_ButKeepsGgufClean()
+    {
+        string ggufPath = Path.Combine(_temp.Path, "tiny.gguf");
+        int vocab = 64;
+        var tokens = BuildGgufTokens(vocab);
+        string chatTemplate = "{{- messages }}";
+        WriteTinyGguf(ggufPath, vocab, tokens, chatTemplate);
+
+        string smmPath = Path.Combine(_temp.Path, "tiny.smm");
+        SharpMind.Model.Format.Conversion.GgufToSmmConverter.Convert(ggufPath, smmPath, new SmmWriteOptions
+        {
+            Skills = ["# Skill\nDo the thing."],
+            SystemPrompt = "Default system prompt.",
+        });
+
+        var meta = SmmLoader.LoadMeta(smmPath);
+        Assert.Equal("Default system prompt.", SmmLoader.LoadSystemPromptFromMeta(meta));
+        Assert.Equal(["# Skill\nDo the thing."], SmmLoader.LoadSkillsFromMeta(meta));
+
+        // SMM-only: converting back to GGUF must NOT leak skills/system prompt
+        // into the GGUF metadata (GGUF stays a clean, portable container).
+        string roundTrip = Path.Combine(_temp.Path, "tiny.roundtrip.gguf");
+        SmmToGufConverter.Convert(smmPath, roundTrip);
+        var ggufMeta = GgufLoader.LoadMeta(roundTrip);
+        Assert.Empty(ggufMeta.KvPairs.Where(k =>
+            k.Key == SmmConstants.SystemPromptKey || k.Key == SmmConstants.SkillsKey));
+    }
+
+    [Fact]
+    public void AgentBuilder_SkillContentAndAdditionalPrompt()
+    {
+        var builder = new SharpMind.Inference.Agent.AgentBuilder()
+            .WithSkillContent("# Skill A")
+            .WithSkillContent("# Skill A") // idempotent
+            .WithSkillContent("# Skill B")
+            .WithAdditionalSystemPrompt("Embedded default.")
+            .WithAdditionalSystemPrompt("Embedded default."); // idempotent
+
+        string prompt = builder.BuildAgentPrompt();
+        Assert.Contains("## Skills", prompt);
+        Assert.Contains("# Skill A", prompt);
+        Assert.Contains("# Skill B", prompt);
+        Assert.Single(builder.AdditionalSystemPrompts);
+        Assert.Equal("Embedded default.", builder.AdditionalSystemPrompts[0]);
     }
 
     [Fact]

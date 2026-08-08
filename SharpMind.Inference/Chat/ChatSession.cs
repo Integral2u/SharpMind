@@ -149,7 +149,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         ArgumentNullException.ThrowIfNull(_generator);
         progress?.Report(0.6f);
 
-        if (_agentBuilder != null) AddMessage(ChatRole.System, _agentBuilder.BuildAgentPrompt());
+        if (_agentBuilder != null) AddAgentMessages();
         progress?.Report(0.8f);
 
         // Warm up: encode the system prompt to ensure tokenizer is ready
@@ -240,6 +240,22 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         InvalidateHistoryCache();
     }
 
+    /// <summary>
+    /// Inserts the agent's standalone system prompts (embedded defaults) at the
+    /// top of the history, then the synthesized agent prompt.
+    /// </summary>
+    private void AddAgentMessages()
+    {
+        ThrowIfDisposed();
+        if (_agentBuilder == null) return;
+        foreach (string prompt in _agentBuilder.AdditionalSystemPrompts)
+        {
+            _history.Add(new ChatMessage { Role = ChatRole.System, Content = prompt });
+        }
+        _history.Add(new ChatMessage { Role = ChatRole.System, Content = _agentBuilder.BuildAgentPrompt() });
+        InvalidateHistoryCache();
+    }
+
     public string GetFormattedPrompt()
     {
         ThrowIfDisposed();
@@ -250,8 +266,8 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     {
         _history.Clear();
         InvalidateHistoryCache();
-        _pendingDraft = null;
-        if (_agentBuilder != null) AddMessage(ChatRole.System, _agentBuilder.BuildAgentPrompt());
+_pendingDraft = null;
+        if (_agentBuilder != null) AddAgentMessages();
         _cachedPromptTokens = null;
         _cacheValid = false;
         _generator.ResetCache();
@@ -1120,11 +1136,15 @@ private void ThrowIfDisposed()
         ThrowIfDisposed();
         ArgumentNullException.ThrowIfNull(snapshot);
 
-        _history.Clear();
+_history.Clear();
         _pendingDraft = snapshot.PendingDraft;
 
         if (_agentBuilder != null)
+        {
+            foreach (string prompt in _agentBuilder.AdditionalSystemPrompts)
+                _history.Add(new ChatMessage { Role = ChatRole.System, Content = prompt });
             _history.Add(new ChatMessage { Role = ChatRole.System, Content = _agentBuilder.BuildAgentPrompt() });
+        }
 
         foreach (var msg in snapshot.History)
             if (msg.Role != ChatRole.System)

@@ -22,6 +22,12 @@ public static class SmmConstants
 
     /// <summary>KvPair key holding the embedded SharpMind tokenizer JSON.</summary>
     public const string TokenizerKey = "smm.tokenizer_json";
+
+    /// <summary>KvPair key holding the embedded default system prompt.</summary>
+    public const string SystemPromptKey = "smm.system_prompt";
+
+    /// <summary>KvPair key holding the embedded skills (JSON array of markdown strings).</summary>
+    public const string SkillsKey = "smm.skills";
 }
 
 /// <summary>
@@ -88,6 +94,20 @@ public sealed class SmmWriteOptions
 
     /// <summary>Diagnostic source label written into the metadata ("training", "gguf", ...).</summary>
     public string? Source { get; init; }
+
+    /// <summary>
+    /// Embedded skills. Each entry is one full skill document (markdown), emitted
+    /// as the <c>skills</c> array in the meta JSON and silently auto-applied to
+    /// the agent when this .SMM is opened. Optional.
+    /// </summary>
+    public IReadOnlyList<string>? Skills { get; init; }
+
+    /// <summary>
+    /// Embedded default system prompt. Emitted as <c>system_prompt</c> in the
+    /// meta JSON and injected as an additional system message at the top of the
+    /// chat when this .SMM is opened. Optional.
+    /// </summary>
+    public string? SystemPrompt { get; init; }
 }
 
 /// <summary>

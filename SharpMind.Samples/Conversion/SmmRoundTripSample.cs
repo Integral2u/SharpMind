@@ -1,6 +1,14 @@
+using SharpMind.Core;
 using SharpMind.Core.Quantization;
+using SharpMind.Inference;
+using SharpMind.Inference.Chat;
+using SharpMind.Inference.Chat.PromptFormatters;
+using SharpMind.Model;
+using SharpMind.Model.Config;
 using SharpMind.Model.Format;
 using SharpMind.Model.Format.Conversion;
+using SharpMind.Tokenization;
+using System.Text;
 
 namespace SharpMind.Samples.Conversion;
 
@@ -11,11 +19,13 @@ namespace SharpMind.Samples.Conversion;
 /// For a real downloaded model it:
 ///   1. converts the .gguf to .smm via <see cref="GgufToSmmConverter"/>,
 ///   2. converts the .smm back to a fresh .gguf via <see cref="SmmToGufConverter"/>,
-///   3. verifies that every tensor's raw bytes are bit-identical between the
+///   3. runs the same prompt on the original .gguf, the .smm, and the
+///      round-tripped .gguf and compares the responses,
+///   4. verifies that every tensor's raw bytes are bit-identical between the
 ///      original .gguf and the round-tripped .gguf,
-///   4. verifies the re-emitted GGUF metadata / tokenizer stay equivalent
+///   5. verifies the re-emitted GGUF metadata / tokenizer stay equivalent
 ///      (same architecture, vocab, bos/eos, chat template),
-///   5. prints a size table so the .SMM container's byte overhead is visible.
+///   6. prints a size table so the .SMM container's byte overhead is visible.
 /// </summary>
 public static class SmmRoundTripSample
 {
@@ -47,6 +57,20 @@ public static class SmmRoundTripSample
         // ── SMM → GGUF ──
         SmmToGufConverter.Convert(smmPath, roundTrip);
         await Console.Out.WriteLineAsync("SMM → GGUF complete.");
+        await Console.Out.WriteLineAsync();
+
+        // ── Run the same prompt on all three containers ──
+        const string prompt = "hello";
+        var original = await RunPromptAsync(ggufPath, prompt, maxTokens: 12);
+        var smm = await RunPromptAsync(smmPath, prompt, maxTokens: 12);
+        var roundTripped = await RunPromptAsync(roundTrip, prompt, maxTokens: 12);
+
+        await Console.Out.WriteLineAsync($"Prompt: \"{prompt}\"");
+        await Console.Out.WriteLineAsync($"  GGUF (original)     : {FormatReply(original)}");
+        await Console.Out.WriteLineAsync($"  SMM                 : {FormatReply(smm)}");
+        await Console.Out.WriteLineAsync($"  GGUF (round-trip)   : {FormatReply(roundTripped)}");
+        bool repliesMatch = original == smm && smm == roundTripped;
+        await Console.Out.WriteLineAsync($"Responses match      : {(repliesMatch ? "yes" : "NO — DIFFERENT")}");
         await Console.Out.WriteLineAsync();
 
         // ── Verify byte parity + metadata equivalence ──
@@ -95,10 +119,69 @@ public static class SmmRoundTripSample
         await Console.Out.WriteLineAsync($"  GGUF (round-trip) : {rtSize,12:N0}  {Pct(rtSize, ggufSize)} vs GGUF");
         await Console.Out.WriteLineAsync();
         await Console.Out.WriteLineAsync($"Files: {outputRoot}");
-        await Console.Out.WriteLineAsync(mismatches == 0 && metaOk ? "PASS" : "ROUND-TRIP FAILED");
+        await Console.Out.WriteLineAsync(mismatches == 0 && metaOk && repliesMatch ? "PASS" : "ROUND-TRIP FAILED");
     }
 
     // ── Helper functions ──────────────────────────────────────────────────
+
+    private static async Task<string> RunPromptAsync(string modelPath, string prompt, int maxTokens)
+    {
+        ModelFormat? fmt = ModelFormatHelpers.GetFormatForExtension(modelPath);
+        if (fmt == null) throw new InvalidDataException($"File type not supported: {modelPath}");
+        var metaHelper = ModelFormatHelpers.GetModelMetaHelperFor((ModelFormat)fmt);
+        metaHelper.Load(modelPath, null, out ModelMetaData meta, out ModelConfig modelConfig, out Tokenizer? tokenizer);
+        if (tokenizer == null) return "(no tokenizer)";
+
+        var sharpConfig = modelConfig.ForModel();
+        var qOps = QuantizationFactory.Create(sharpConfig.ResolvedHardware);
+
+        using var weights = ModelFactory.CreateWeights(modelConfig, sharpConfig, qOps, modelPath, LoadMode.Full);
+        weights.InitializeWeights();
+        using var model = ModelFactory.CreateTransformer(weights, sharpConfig);
+        var formatter = ChatPromptFormatterFactory.Create(meta, tokenizer);
+
+        await using var session = new ChatSession<StandardGeneratorBuilder<KVCacherBuilder>, KVCacherBuilder>(model, tokenizer, meta, formatter: formatter, disposeModel: false)
+        {
+            MaxTokens = 256,
+            MaxNewTokens = maxTokens,
+            Temperature = 0.0f,
+            TopK = 1,
+            RepetitionPenalty = 1.0f,
+        };
+        session.InitializeChat();
+
+        var reply = new StringBuilder();
+        var cts = new CancellationTokenSource();
+        bool sent = false;
+        var tokens = 0;
+
+        void Response(ChatStreamEntry text)
+        {
+            if (text.Status == ChatStatus.Responding && !string.IsNullOrEmpty(text.Token))
+            {
+                reply.Append(text.Token);
+                tokens++;
+                if (tokens >= maxTokens) cts.Cancel();
+            }
+        }
+
+        Task<ChatMessage> Prompt()
+        {
+            if (!sent)
+            {
+                sent = true;
+                return Task.FromResult(new ChatMessage { Content = prompt, Role = ChatRole.User });
+            }
+            cts.Cancel();
+            return Task.FromResult(new ChatMessage { Content = "exit", Role = ChatRole.User });
+        }
+
+        await session.StartChatAsync(Prompt, Response, cts.Token);
+        return reply.ToString();
+    }
+
+    private static string FormatReply(string reply)
+        => string.IsNullOrEmpty(reply) ? "(empty)" : $"\"{reply.Trim()}\"";
 
     private static string FindModel(string? assetsDir, string modelName)
     {
