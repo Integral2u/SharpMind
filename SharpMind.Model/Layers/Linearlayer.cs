@@ -50,6 +50,14 @@ public abstract class LinearLayer : IDisposable
     public virtual void FreeFloatWeight() { }
     public virtual void SetRawWeight(byte[]? rawData) { }
 
+    /// <summary>
+    /// Enables/disables quantization-aware training for this layer. Base
+    /// implementation is a no-op: only <see cref="TrainingLinearLayer"/>
+    /// (and equips) fake-quantize their forward pass. A null or
+    /// <see cref="QuantDType.F32"/> target restores pure-float forward.
+    /// </summary>
+    public virtual void EnableQuantAwareTraining(QuantDType? target) { }
+
     public void ReplaceWeights(Tensor<float> weight, Tensor<float>? biasTensor)
     {
         ThrowIfDisposed();

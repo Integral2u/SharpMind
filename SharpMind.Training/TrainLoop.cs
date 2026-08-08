@@ -66,6 +66,10 @@ public sealed class TrainLoop
         _loss       = loss ?? new CrossEntropyLoss(labelSmoothing: _config.LabelSmoothing);
         _mapping    = mapping ?? GradientMappingFactory.Create(smmConfig ?? new SharpMindConfig());
         _ops        = ops;
+
+        if (_config.QuantAwareTraining is { } qat)
+            model.EnableQuantAwareTraining(qat);
+
         _engine     = new BackpropEngine(model, _mapping, _parameters, smmConfig ?? new SharpMindConfig());
     }
 

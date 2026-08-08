@@ -115,9 +115,9 @@ public static class ModelFactory
                 new Tensor<float>(ffnDim, config.HiddenDim),         // Wf2
                 new Tensor<float>(wf1Dim),                            // Wf1B
                 new Tensor<float>(config.HiddenDim),                  // Wf2B
-                new Tensor<float>(config.HiddenDim),                  // Norm1W
+                Tensor<float>.Ones(config.HiddenDim),                 // Norm1W
                 null,                                                 // Norm1B
-                new Tensor<float>(config.HiddenDim),                  // Norm2W
+                Tensor<float>.Ones(config.HiddenDim),                 // Norm2W
                 null,                                                 // Norm2B
                 null,                                                 // QNormW
                 null,                                                 // KNormW

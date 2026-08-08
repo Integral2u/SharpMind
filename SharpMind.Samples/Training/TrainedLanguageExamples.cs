@@ -17,6 +17,7 @@ public static class TrainedLanguageExamples
     private const string ModelPseudo = SmmPseudoLanguageExample.Name;
     private const string ModelTinyShakespeare = SmmRealTextExample.Name;
     private const string ModelTinyShakespeareBackprop = SmmBackpropTextExample.Name;
+    private const string ModelQuantAware = SmmQuantAwareTrainingExample.Name;
     private static readonly string[] PromptsPseudo =
     [
         "cat"
@@ -84,6 +85,21 @@ public static class TrainedLanguageExamples
         else
         {
             models.Add((ModelTinyShakespeareBackprop, PromptsTinyShakespeareBackprop));
+        }
+
+        if (!File.Exists(Path.Combine(ModelDir, $"{ModelQuantAware}.smm")))
+        {
+            await Console.Out.WriteLineAsync($"{ModelQuantAware}.smm not found.\nDo you want to generate it now (QAT, medium) Y or N?");
+            var run = await Console.In.ReadLineAsync() ?? string.Empty;
+            if (run.Equals("Y", StringComparison.InvariantCultureIgnoreCase))
+            {
+                await SmmQuantAwareTrainingExample.RunAsync();
+                models.Add((ModelQuantAware, PromptsTinyShakespeare));
+            }
+        }
+        else
+        {
+            models.Add((ModelQuantAware, PromptsTinyShakespeare));
         }
 
         foreach (var model in models)

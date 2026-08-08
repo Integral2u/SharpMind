@@ -29,6 +29,9 @@ public sealed class Transformer : IDisposable
     private Tensor<float>? _cachedHidden;
     private Tensor<float>? _cachedNormed;
 
+    /// <summary>Active quantization-aware training target, or null when disabled.</summary>
+    public QuantDType? QuantAwareTrainingTarget { get; private set; }
+
     public Transformer(
         TransformerWeights weights,
         EmbeddingTable embedding,
@@ -90,6 +93,35 @@ public sealed class Transformer : IDisposable
         if (_blocks is null) return;
         foreach (var block in _blocks)
             block.SetActivationHook(hook);
+    }
+
+    /// <summary>
+    /// Enables quantization-aware training across every linear layer in the
+    /// transformer (attention + FFN projections). The tied LM head is covered by
+    /// <see cref="BackpropEngine"/> using this property. F32/null = disabled.
+    /// Block formats (Q8_0/Q4_0) throw via <see cref="TrainingLinearLayer"/> when
+    /// a layer's weight dimensions are not multiples of 32.
+    /// </summary>
+    public void EnableQuantAwareTraining(QuantDType? target)
+    {
+        if (target is QuantDType.Q8_0 or QuantDType.Q4_0)
+        {
+            int V = _weights.Config.VocabSize, H = _weights.Config.HiddenDim;
+            if (V % 32 != 0 || H % 32 != 0)
+                throw new InvalidOperationException(
+                    $"QAT with {target} requires the tied-head weight [{V}, {H}] to be a " +
+                    "multiple of 32 in both dimensions. Use F16 or disable QAT.");
+        }
+        QuantAwareTrainingTarget = target;
+        if (_blocks is null) return;
+        foreach (var block in _blocks)
+        {
+            var attn = block.Attention;
+            foreach (var layer in new[] { attn.Wq, attn.Wk, attn.Wv, attn.Wo })
+                layer.EnableQuantAwareTraining(target);
+            foreach (var layer in new[] { block.Ffn.W1Layer, block.Ffn.W2Layer, block.Ffn.WGated, block.Ffn.WDown })
+                layer?.EnableQuantAwareTraining(target);
+        }
     }
 
     public byte[]? RawEmbedding => _weights.RawEmbedding;

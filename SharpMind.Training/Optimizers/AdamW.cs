@@ -44,6 +44,7 @@ public sealed class AdamW : IOptimizer
 
     public float LearningRate { get => _lr; set => _lr = value; }
     public int Step => _step;
+    public IReadOnlyList<Parameter> Parameters => _parameters;
 
     public void Update()
     {
@@ -102,6 +103,7 @@ public sealed class AdamW : IOptimizer
 
     public void LoadState(BinaryReader reader, int step)
     {
+        reader.ReadInt32(); // skip stored _step; caller supplies the authoritative value
         _step = step;
         _lr = reader.ReadSingle();
         for (int i = 0; i < _m.Length; i++)

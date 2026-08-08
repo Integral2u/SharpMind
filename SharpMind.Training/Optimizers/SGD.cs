@@ -30,6 +30,7 @@ public sealed class SGD : IOptimizer
 
     public float LearningRate { get => _lr; set => _lr = value; }
     public int Step => _step;
+    public IReadOnlyList<Parameter> Parameters => _parameters;
 
     /// <summary>Applies one SGD update step.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -79,6 +80,7 @@ public sealed class SGD : IOptimizer
 
     public void LoadState(BinaryReader reader, int step)
     {
+        reader.ReadInt32(); // skip stored _step; caller supplies the authoritative value
         _step = step;
         _lr = reader.ReadSingle();
         bool hasVelocity = reader.ReadBoolean();

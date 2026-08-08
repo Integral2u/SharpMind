@@ -1,3 +1,5 @@
+using SharpMind.Core.Quantization;
+
 namespace SharpMind.Training;
 
 /// <summary>
@@ -35,4 +37,15 @@ public sealed record TrainConfig
 
     /// <summary>Resume from this checkpoint directory. Null = train from scratch.</summary>
     public string? ResumeFrom { get; init; }
+
+    /// <summary>
+    /// Quantization-aware training target. Null or <see cref="QuantDType.F32"/>
+    /// disables QAT (pure float training). <see cref="QuantDType.F16"/> is always
+    /// safe. <see cref="QuantDType.Q8_0"/> and <see cref="QuantDType.Q4_0"/>
+    /// require every linear-layer weight dimension to be a multiple of 32 — the
+    /// linear layers throw at training time if a block-quantized shape is invalid.
+    /// Master weights stay F32; quantization error is injected in each forward pass
+    /// and gradients flow straight through to the master weight.
+    /// </summary>
+    public QuantDType? QuantAwareTraining { get; init; }
 }

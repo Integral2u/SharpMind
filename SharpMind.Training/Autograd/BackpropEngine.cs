@@ -1,4 +1,5 @@
 using SharpMind.Core;
+using SharpMind.Core.Quantization;
 using SharpMind.Core.Tensors;
 using SharpMind.Core.Training;
 using SharpMind.Model;
@@ -97,7 +98,9 @@ public sealed class BackpropEngine : IDisposable
         ctx.FinalNormOut = normed;
         ctx.FinalNormState = finalState;
 
-        var logits = ProjectHead(normed, _model.EmbeddingWeight, M, cfg.VocabSize);
+        var logits = _model.QuantAwareTrainingTarget is not null and not QuantDType.F32
+            ? ProjectHeadQuantAware(normed, _model.EmbeddingWeight, M, cfg.VocabSize)
+            : ProjectHead(normed, _model.EmbeddingWeight, M, cfg.VocabSize);
         ctx.Logits = logits;
         return logits;
     }
@@ -555,6 +558,25 @@ public sealed class BackpropEngine : IDisposable
         return logits;
     }
 
+    /// <summary>
+    /// Fake-quantized head projection used during quantization-aware training:
+    /// quantizes the tied head weight to the active target and runs the matching
+    /// matmul, so the head can convert to the quantized dtype losslessly at export.
+    /// Block formats require both dimensions to be multiples of 32 (validated at
+    /// enable time by the encoder path).
+    /// </summary>
+    private unsafe Tensor<float> ProjectHeadQuantAware(Tensor<float> normed, Tensor<float> head, int M, int V)
+    {
+        var target = _model.QuantAwareTrainingTarget ?? throw new InvalidOperationException("QAT not active.");
+        int H = normed.Shape[^1];
+        var logits = new Tensor<float>(M, V);
+        var raw = TensorQuantizer.Quantize(head.Data, [V, H], target);
+        var fn = QuantizationFactory.Create().QuantizedMatMulOpFor(target);
+        fixed (byte* rawPtr = raw)
+            fn(normed.DataPtr, rawPtr, logits.DataPtr, M, H, V);
+        return logits;
+    }
+
     private static Tensor<float> SliceHead(Tensor<float> t, int b, int h, int B, int S, int cols, int D)
     {
         var res = Tensor<float>.Zeros(S, D);
@@ -617,7 +639,7 @@ public sealed class BackpropEngine : IDisposable
     /// The embedding/LM-head weight is already [Vocab, Hidden] = [Out, In], so the
     /// head path calls _mapping.Linear directly with the real parameter.
     /// </summary>
-    private Tensor<float> LinearBackward(Tensor<float> dOutput, Tensor<float> input, Tensor<float> weight, Parameter? bias)
+private Tensor<float> LinearBackward(Tensor<float> dOutput, Tensor<float> input, Tensor<float> weight, Parameter? bias)
     {
         using var wT = weight.Transpose(); // [Out, In]
         using var tmpW = new Parameter("__transposed__", wT);

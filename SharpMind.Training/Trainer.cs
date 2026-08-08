@@ -1,6 +1,8 @@
 using SharpMind.Model;
+using SharpMind.Core;
 using SharpMind.Core.Training;
 using SharpMind.Data;
+using SharpMind.Training.Autograd;
 using SharpMind.Training.Schedulers;
 using SharpMind.Training.Optimizers;
 
@@ -9,19 +11,41 @@ namespace SharpMind.Training;
 /// <summary>
 /// High-level trainer that orchestrates the end-to-end training process.
 /// </summary>
-public sealed class Trainer(
-    Transformer model,
-    DataLoader loader,
-    IOptimizer optimizer,
-    IScheduler scheduler,
-    ILoss<int> lossFn)
+public sealed class Trainer
 {
-    private readonly Transformer _model = model;
-    private readonly DataLoader _loader = loader;
-    private readonly IOptimizer _optimizer = optimizer;
-    private readonly IScheduler _scheduler = scheduler;
-    private readonly ILoss<int> _lossFn = lossFn;
-    private readonly List<Parameter> _parameters = [.. model.Parameters()];
+    private readonly Transformer _model;
+    private readonly DataLoader _loader;
+    private readonly IOptimizer _optimizer;
+    private readonly IScheduler _scheduler;
+    private readonly ILoss<int> _lossFn;
+    private readonly List<Parameter> _parameters;
+    private readonly BackpropEngine _engine;
+
+    public Trainer(
+        Transformer model,
+        DataLoader loader,
+        IOptimizer optimizer,
+        IScheduler scheduler,
+        ILoss<int> lossFn,
+        SharpMindConfig? smmConfig = null)
+    {
+        ArgumentNullException.ThrowIfNull(model);
+        ArgumentNullException.ThrowIfNull(loader);
+        ArgumentNullException.ThrowIfNull(optimizer);
+        ArgumentNullException.ThrowIfNull(scheduler);
+        ArgumentNullException.ThrowIfNull(lossFn);
+
+        _model = model;
+        _loader = loader;
+        _optimizer = optimizer;
+        _scheduler = scheduler;
+        _lossFn = lossFn;
+        _parameters = [.. optimizer.Parameters];
+
+        var config = smmConfig ?? new SharpMindConfig();
+        var mapping = GradientMappingFactory.Create(config);
+        _engine = new BackpropEngine(model, mapping, _parameters, config);
+    }
 
     /// <summary>
     /// Runs the training loop for a specified number of steps.
@@ -30,27 +54,29 @@ public sealed class Trainer(
     public async Task TrainAsync(int totalSteps, IProgress<float>? progress = null, CancellationToken ct = default)
     {
         int currentStep = 0;
-        float runningLoss = 0;        
+        float runningLoss = 0;
 
         await foreach (var batch in _loader.LoadAsync(ct))
         {
             if (currentStep >= totalSteps) break;
 
-            // 1. Forward Pass
-            using var logits = _model.Forward(batch.TokenIds);
-            
-            // Reshape for cross-entropy: [Batch * Seq, Vocab]
+            // 1. Forward Pass (recording, so backprop can run)
+            using var ctx = new ForwardContext();
             int batchSize = batch.TokenIds.Shape[0];
             int seqLen = batch.TokenIds.Shape[1];
-            using var flatLogits = logits.Reshape(batchSize * seqLen, _model.Config.VocabSize);
             using var flatLabels = batch.Labels.Reshape(batchSize * seqLen);
+            using var flatIds = batch.TokenIds.Reshape(batchSize * seqLen);
+
+            // BackpropEngine.ForwardAndRecord returns flat [Batch*Seq, Vocab] logits.
+            using var logits = _engine.ForwardAndRecord(ctx, batch.TokenIds);
 
             // 2. Compute Loss
-            float loss = _lossFn.Compute(flatLogits, flatLabels);
+            float loss = _lossFn.Compute(logits, flatLabels);
             runningLoss = runningLoss * 0.99f + loss * 0.01f;
 
             // 3. Backward Pass
-            using var dLogits = _lossFn.Backward(flatLogits, flatLabels);
+            using var dLogits = _lossFn.Backward(logits, flatLabels);
+            _engine.Backward(ctx, dLogits, flatIds);
 
             // 4. Update Weights
             _optimizer.LearningRate = _scheduler.GetLr(currentStep + 1);
