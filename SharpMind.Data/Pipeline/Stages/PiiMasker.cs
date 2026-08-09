@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using SharpMind.Data.Metadata;
 
 namespace SharpMind.Data.Pipeline.Stages;
 
@@ -15,6 +16,7 @@ public enum PiiType
     All = Email | Phone | Ssn | CreditCard | IpAddress | Url
 }
 
+[ComponentKind("PII Masker", "Masks emails, phones, SSNs, cards, IPs and URLs.")]
 public sealed class PiiMasker : ICleaningStage
 {
     private readonly (Regex Regex, string Replacement)[] _rules;

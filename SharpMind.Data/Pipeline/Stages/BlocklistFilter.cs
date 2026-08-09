@@ -1,5 +1,8 @@
+using SharpMind.Data.Metadata;
+
 namespace SharpMind.Data.Pipeline.Stages;
 
+[ComponentKind("Blocklist Filter", "Drops documents containing any pattern from a word-list file.")]
 public sealed class BlocklistFilter : ICleaningStage
 {
     private readonly HashSet<string> _patterns;
@@ -17,7 +20,9 @@ public sealed class BlocklistFilter : ICleaningStage
             : StringComparison.OrdinalIgnoreCase;
     }
 
-    public BlocklistFilter(string filePath, bool caseSensitive = false)
+    public BlocklistFilter(
+        [FileChooser("*.txt", "Word-list file; one pattern per line, # comments allowed")] string filePath,
+        [DefaultValue("false")] bool caseSensitive = false)
         : this(File.ReadLines(filePath)
                    .Select(l => l.Trim())
                    .Where(l => l.Length > 0 && !l.StartsWith('#')),

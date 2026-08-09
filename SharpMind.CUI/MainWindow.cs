@@ -120,7 +120,8 @@ public sealed class MainWindow : Window
             new("_Model", new MenuItem[]
             {
                 new("_Browse for model...", "", ShowModelBrowser),
-                new("_Debug session (no model)...", "", StartDebugSession)
+                new("_Debug session (no model)...", "", StartDebugSession),
+                new("T_rain a model...", "", ShowTrainingWizard)
             }),
             new("_Options", new MenuItem[]
             {
@@ -168,7 +169,8 @@ public sealed class MainWindow : Window
             {
                 _options = CloneOptions(lastSession.Options);
                 ShowOptions();
-            }) : null));
+            }) : null,
+            onTrainModel: ShowTrainingWizard));
     }
 
     private void ShowModelBrowser()
@@ -191,6 +193,30 @@ public sealed class MainWindow : Window
             },
             onCancel: onCancel,
             lastModelPath: _options.ModelPath));
+    }
+
+    private void ShowTrainingWizard()
+    {
+        Action onBack = _currentSession is not null ? ShowChat : ShowWelcome;
+        SwapContent(new TrainingWizardView(
+            _settings,
+            job: null,
+            onStart: ShowTrainingProgress,
+            onCancel: onBack));
+    }
+
+    private void ShowTrainingProgress(TrainJobSettings job)
+    {
+        SwapContent(new TrainingProgressView(
+            _settings,
+            job,
+            browseModel: path =>
+            {
+                _options.ModelPath = path;
+                _options.ProjectPath ??= Path.GetDirectoryName(path);
+                ShowOptions();
+            },
+            onBack: ShowTrainingWizard));
     }
 
     private void ShowOptions()

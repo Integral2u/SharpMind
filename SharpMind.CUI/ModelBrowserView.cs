@@ -154,7 +154,7 @@ public sealed class ModelBrowserView : View
             _currentPath = Path.Combine(_currentPath, sel[6..]);
             Refresh();
         }
-        else if (sel.EndsWith(".gguf"))
+        else if (sel.EndsWith(".gguf") || sel.EndsWith(".smm"))
         {
             _onChosen(Path.Combine(_currentPath, sel));
         }

@@ -39,6 +39,15 @@ public sealed record TrainConfig
     public string? ResumeFrom { get; init; }
 
     /// <summary>
+    /// How many rolling (step-marked) checkpoints to retain. 0 = prune none
+    /// (keep every interval checkpoint). N &gt; 0 = keep only the newest N
+    /// step checkpoints, deleting the older ones as the run progresses. A
+    /// negative value disables rolling checkpoints entirely — only the final
+    /// checkpoint ("-final") is saved. The final checkpoint is never pruned.
+    /// </summary>
+    public int KeepRecent { get; init; }
+
+    /// <summary>
     /// Quantization-aware training target. Null or <see cref="QuantDType.F32"/>
     /// disables QAT (pure float training). <see cref="QuantDType.F16"/> is always
     /// safe. <see cref="QuantDType.Q8_0"/> and <see cref="QuantDType.Q4_0"/>

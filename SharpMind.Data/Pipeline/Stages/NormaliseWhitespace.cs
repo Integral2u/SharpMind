@@ -1,8 +1,10 @@
 ﻿using System.Text.RegularExpressions;
+using SharpMind.Data.Metadata;
 
 namespace SharpMind.Data.Pipeline.Stages;
 
 /// <summary>Collapses runs of whitespace to single spaces and trims ends.</summary>
+[ComponentKind("Normalise Whitespace", "Collapses whitespace runs to single spaces.")]
 public sealed class NormaliseWhitespace : ICleaningStage
 {
     public string Name => "NormaliseWhitespace";

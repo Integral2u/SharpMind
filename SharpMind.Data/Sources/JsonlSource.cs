@@ -1,5 +1,6 @@
 ﻿using System.Runtime.CompilerServices;
 using System.Text.Json;
+using SharpMind.Data.Metadata;
 
 namespace SharpMind.Data.Sources;
 
@@ -11,13 +12,16 @@ namespace SharpMind.Data.Sources;
 /// Supports dot notation for nested fields: <c>"meta.content"</c>.
 /// Malformed lines are skipped; count tracked in <see cref="SkippedLines"/>.
 /// </summary>
+[ComponentKind("JSONL", "Newline-delimited JSON; the text field of each record is one document.")]
 public sealed class JsonlSource : IDataSource
 {
     private readonly string[] _paths;
     private readonly string[] _fieldPath;
     private long _skippedLines;
 
-    public JsonlSource(string path, string textField = "text")
+    public JsonlSource(
+        [FileChooser("*.jsonl;*.json", "JSONL file or glob pattern")] string path,
+        [DefaultValue("text")] string textField = "text")
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         ArgumentException.ThrowIfNullOrWhiteSpace(textField);

@@ -10,7 +10,8 @@ public sealed class WelcomeView : View
         string? lastModelName = null,
         Action? onContinueWithModel = null,
         string? lastSessionName = null,
-        Action? onResumeLastSession = null)
+        Action? onResumeLastSession = null,
+        Action? onTrainModel = null)
     {
         var bannerText = "  ___ _                  __  __ _         _ \n / __| |_  __ _ _ _ _ __|  \\/  (_)_ _  __| |\n \\__ \\ ' \\/ _` | '_| '_ \\ |\\/| | | ' \\/ _` |\n |___/_||_\\__,_|_| | .__/_|  |_|_|_||_\\__,_|\n                   |_|                      ";
         var banner = new Label(bannerText)
@@ -64,6 +65,17 @@ public sealed class WelcomeView : View
             };
             sessionBtn.Clicked += () => onResumeLastSession();
             items.Insert(items.Count - 1, sessionBtn);
+        }
+
+        if (onTrainModel is not null)
+        {
+            var trainBtn = new Button("Train a model…")
+            {
+                X = Pos.Center(),
+                Y = Pos.Bottom((View)items[^2]) + 1
+            };
+            trainBtn.Clicked += () => onTrainModel();
+            items.Insert(items.Count - 1, trainBtn);
         }
 
         Add(items.ToArray());

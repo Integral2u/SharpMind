@@ -78,11 +78,14 @@ public sealed class TrainLoop
     /// <paramref name="onStep"/> is called after each optimizer step with loss
     /// and diagnostic info — use for logging, early stopping, or eval triggers.
     /// <paramref name="progress"/> reports 0..1 after each optimizer step.
+    /// <paramref name="onCheckpoint"/> is called with the full path of each
+    /// saved checkpoint directory (rolling and final), after retention pruning.
     /// </summary>
     public async Task RunAsync(
         Action<TrainStepResult>? onStep            = null,
         IProgress<float>?        progress           = null,
-        CancellationToken        cancellationToken  = default)
+        CancellationToken        cancellationToken  = default,
+        Action<string>?          onCheckpoint       = null)
     {
         int startStep = 0;
 
@@ -142,10 +145,12 @@ public sealed class TrainLoop
                     StepTime     = sw.Elapsed,
                 });
 
-            if (_config.CheckpointInterval > 0 && step % _config.CheckpointInterval == 0)
+            if (_config.CheckpointInterval > 0 && step % _config.CheckpointInterval == 0 && _config.KeepRecent >= 0)
             {
                 string dir = Path.Combine(_config.CheckpointDir, $"step-{step:D07}");
                 Checkpoint.Save(dir, _parameters, _optimizer, step, stepLoss);
+                PruneRetained(dir);
+                onCheckpoint?.Invoke(dir);
             }
 
             if (step >= _config.TotalSteps) break;
@@ -156,7 +161,45 @@ public sealed class TrainLoop
         {
             string dir = Path.Combine(_config.CheckpointDir, $"step-{step:D07}-final");
             Checkpoint.Save(dir, _parameters, _optimizer, step, note: "final");
+            onCheckpoint?.Invoke(dir);
         }
+    }
+
+    /// <summary>
+    /// Deletes the oldest rolling step-* checkpoints when
+    /// <see cref="TrainConfig.KeepRecent"/> is non-zero, newest N retained.
+    /// The emitted <paramref name="justSaved"/> directory is always kept.
+    /// </summary>
+    private void PruneRetained(string justSaved)
+    {
+        int keep = _config.KeepRecent;
+        if (keep <= 0 || string.IsNullOrWhiteSpace(_config.CheckpointDir)) return;
+        if (!Directory.Exists(_config.CheckpointDir)) return;
+
+        var candidates = Directory.GetDirectories(_config.CheckpointDir, "step-*")
+            .Where(d => !d.EndsWith("-final", StringComparison.Ordinal))
+            .Where(d => !string.Equals(d, justSaved, StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(d => ParseStep(d));
+
+        int deleteCount = candidates.Count() - (keep - 1);
+        if (deleteCount <= 0) return;
+
+        foreach (var stale in candidates.Take(deleteCount))
+        {
+            try { Directory.Delete(stale, recursive: true); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+    }
+
+    private static long ParseStep(string dir)
+    {
+        // "…/step-0000123" or "…/step-0000123-final"
+        var name = Path.GetFileName(dir);
+        if (!name.StartsWith("step-", StringComparison.Ordinal)) return 0;
+        int end = name.IndexOf('-', 5);
+        var number = end < 0 ? name[5..] : name[5..end];
+        return long.TryParse(number, out var v) ? v : 0;
     }
 
     // Forward + backward

@@ -1,7 +1,9 @@
 using System.Runtime.CompilerServices;
+using SharpMind.Data.Metadata;
 
 namespace SharpMind.Data.Sources.Csv;
 
+[ComponentKind("CSV", "CSV/TSV file; one row (text column) per document.")]
 public sealed class CsvDataSource : IDataSource
 {
     private readonly string _path;
@@ -10,10 +12,10 @@ public sealed class CsvDataSource : IDataSource
     private readonly char _delimiter;
 
     public CsvDataSource(
-        string path,
-        string textColumn = "text",
-        bool hasHeader = true,
-        char delimiter = ',')
+        [FileChooser("*.csv", "CSV file path")] string path,
+        [DefaultValue("text")] string textColumn = "text",
+        [DefaultValue("true")] bool hasHeader = true,
+        [DefaultValue(",")] char delimiter = ',')
     {
         ArgumentException.ThrowIfNullOrEmpty(path);
         

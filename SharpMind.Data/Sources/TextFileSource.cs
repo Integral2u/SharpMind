@@ -1,4 +1,5 @@
 ﻿using System.Runtime.CompilerServices;
+using SharpMind.Data.Metadata;
 
 namespace SharpMind.Data.Sources;
 
@@ -12,6 +13,7 @@ namespace SharpMind.Data.Sources;
 /// Accepts a single path, explicit list of paths, or a glob pattern
 /// (e.g. <c>data/**/*.txt</c>). Files are read in lexicographic order.
 /// </summary>
+[ComponentKind("Text File", "Plain text file(s); one line or one whole file per document.")]
 public sealed class TextFileSource : IDataSource
 {
     private readonly string[] _paths;
@@ -20,8 +22,8 @@ public sealed class TextFileSource : IDataSource
     public enum DocumentMode { LinePerDoc, FilePerDoc }
 
     public TextFileSource(
-        string path,
-        DocumentMode mode = DocumentMode.LinePerDoc)
+        [FileChooser("*.txt;*.md", "Text file or glob pattern, e.g. data/**/*.txt")] string path,
+        [DefaultValue("LinePerDoc")] DocumentMode mode = DocumentMode.LinePerDoc)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         _mode = mode;

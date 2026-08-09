@@ -18,6 +18,9 @@ public sealed class AppSettings
     /// <summary>Where Options' "Tool DLLs folder" picker starts, and where ToolAssemblyLoader looks for ambient tool DLLs (see Options screen for the per-session explicit-path list, which is separate from this).</summary>
     public string? ToolsFolder { get; set; }
 
+    /// <summary>Where the training wizard looks for user-designed data components (sources and stages) as *.dll plugin assemblies, in addition to the built-in ones.</summary>
+    public string? PluginsFolder { get; set; }
+
     /// <summary>Which built-in theme to render with. See <see cref="Theme"/>.</summary>
     public ThemeKind Theme { get; set; } = ThemeKind.HighContrastDark;
 

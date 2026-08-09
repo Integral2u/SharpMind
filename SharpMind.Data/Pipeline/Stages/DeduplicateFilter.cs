@@ -1,16 +1,20 @@
-﻿namespace SharpMind.Data.Pipeline.Stages;
+﻿using SharpMind.Data.Metadata;
+
+namespace SharpMind.Data.Pipeline.Stages;
 /// <summary>
 /// Deduplicates documents within a rolling window of <see cref="WindowSize"/> items.
 /// Uses a hash set — memory grows with window size.
 /// Exact global deduplication across large corpora should be done offline.
 /// </summary>
+[ComponentKind("Deduplicate", "Drops repeats within a rolling window.")]
 public sealed class DeduplicateFilter : ICleaningStage
 {
     private readonly HashSet<int> _seen;
     private readonly Queue<int> _window;
     private readonly int _windowSize;
 
-    public DeduplicateFilter(int windowSize = 100_000)
+    public DeduplicateFilter(
+        [MinMaxDefault(1, 10_000_000, 100_000, 10_000), Tooltip("Rolling dedupe window size.")] int windowSize = 100_000)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(windowSize);
         _windowSize = windowSize;
