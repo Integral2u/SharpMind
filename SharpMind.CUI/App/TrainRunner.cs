@@ -164,8 +164,8 @@ public static class TrainRunner
                 });
 
             Log(qat is { } q
-                ? $"Training {job.TotalSteps} steps with QAT [{q}]…"
-                : $"Training {job.TotalSteps} steps (float32)…");
+                ? $"Training {job.TotalSteps} steps with QAT [{q}] — full backprop (loss → gradients → AdamW)…"
+                : $"Training {job.TotalSteps} steps (float32) — full backprop (loss → gradients → AdamW)…");
             progress.Report(0.12f);
 
             int lastStep = 0;

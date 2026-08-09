@@ -207,6 +207,15 @@ public sealed class MainWindow : Window
 
     private void ShowTrainingProgress(TrainJobSettings job)
     {
+        if (!string.IsNullOrWhiteSpace(job.ExportPath) || !string.IsNullOrWhiteSpace(job.ExportFolder))
+        {
+            string folder = job.ExportFolder;
+            if (!string.Equals(_settings.LastExportPath, folder, StringComparison.OrdinalIgnoreCase))
+            {
+                _settings.LastExportPath = folder;
+                _settings.Save(out _);
+            }
+        }
         SwapContent(new TrainingProgressView(
             _settings,
             job,

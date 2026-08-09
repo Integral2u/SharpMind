@@ -163,9 +163,14 @@ public sealed class TrainJobSettings
     }
 
     public static List<string> ListSaved()
+        => ListSavedIn(DefaultFolder);
+
+    /// <summary>Lists saved job JSONs in <paramref name="folder"/> excluding tokenizer cache files (<c>*.tokenizer.json</c>).</summary>
+    public static List<string> ListSavedIn(string folder)
     {
-        if (!Directory.Exists(DefaultFolder)) return [];
-        return Directory.GetFiles(DefaultFolder, "*.json")
+        if (!Directory.Exists(folder)) return [];
+        return Directory.GetFiles(folder, "*.json")
+            .Where(f => !f.EndsWith(".tokenizer.json", StringComparison.OrdinalIgnoreCase))
             .OrderByDescending(File.GetLastWriteTimeUtc)
             .ToList();
     }

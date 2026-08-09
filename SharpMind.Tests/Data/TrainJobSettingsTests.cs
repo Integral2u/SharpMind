@@ -152,6 +152,21 @@ public sealed class TrainJobSettingsTests
     }
 
     [Fact]
+    public void ListSaved_ExcludesTokenizerCacheFiles()
+    {
+        using var dir = new TempDirectory();
+        File.WriteAllText(Path.Combine(dir.Path, "job-a.json"), "{}");
+        File.WriteAllText(Path.Combine(dir.Path, "job-a.tokenizer.json"), "{}");
+        File.WriteAllText(Path.Combine(dir.Path, "job-b.json"), "{}");
+
+        var saved = TrainJobSettings.ListSavedIn(dir.Path);
+
+        Assert.Contains(saved, p => Path.GetFileName(p) == "job-a.json");
+        Assert.Contains(saved, p => Path.GetFileName(p) == "job-b.json");
+        Assert.DoesNotContain(saved, p => Path.GetFileName(p).EndsWith(".tokenizer.json"));
+    }
+
+    [Fact]
     public void ExportFilePath_BlankDefaultsUnderDefaultFolder()
     {
         var job = new TrainJobSettings { Name = "blank-export" };

@@ -58,7 +58,7 @@ public sealed class TrainingWizardView : View
     public TrainingWizardView(AppSettings settings, TrainJobSettings? job, Action<TrainJobSettings> onStart, Action? onCancel = null)
     {
         _settings = settings;
-        _job = job ?? NewJob();
+        _job = job ?? NewJob(settings);
         _onStart = onStart;
         _onCancel = onCancel;
 
@@ -586,9 +586,10 @@ public sealed class TrainingWizardView : View
         if (picked is not null) { field.Text = picked; set(picked); }
     }
 
-    private static TrainJobSettings NewJob() => new()
+    private static TrainJobSettings NewJob(AppSettings settings) => new()
     {
         Name = $"job-{DateTime.Now:yyyyMMdd-HHmmss}",
+        ExportPath = string.IsNullOrWhiteSpace(settings.LastExportPath) ? null : settings.LastExportPath,
     };
 
     private static string Sanitize(string name)

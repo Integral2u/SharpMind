@@ -93,7 +93,7 @@ public sealed class TrainingProgressView : View
     {
         _result = result;
         _statusLabel.Text = result.Success
-            ? $"Training finished at step {result.FinalStep}. Exported: {result.ExportPath}"
+            ? $"Training done — full backprop completed {result.FinalStep} steps. Exported: {result.ExportPath}"
             : result.Error == "cancelled"
                 ? "Training interrupted."
                 : $"Training failed: {result.Error}";

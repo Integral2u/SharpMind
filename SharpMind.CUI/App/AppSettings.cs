@@ -21,6 +21,9 @@ public sealed class AppSettings
     /// <summary>Where the training wizard looks for user-designed data components (sources and stages) as *.dll plugin assemblies, in addition to the built-in ones.</summary>
     public string? PluginsFolder { get; set; }
 
+    /// <summary>Output path last used for a training export; prefilled into new (non-loaded) jobs.</summary>
+    public string? LastExportPath { get; set; }
+
     /// <summary>Which built-in theme to render with. See <see cref="Theme"/>.</summary>
     public ThemeKind Theme { get; set; } = ThemeKind.HighContrastDark;
 
