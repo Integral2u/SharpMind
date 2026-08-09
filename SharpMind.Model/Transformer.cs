@@ -129,6 +129,13 @@ public sealed class Transformer : IDisposable
     public QuantizationOps? QOps => _qOps;
 
     /// <summary>
+    /// Returns the distinct quantization dtypes used across the model's weight
+    /// tensors (file storage dtypes, or F32 when tensors are resident as floats).
+    /// Sorted by enum value; see <see cref="TransformerWeights.GetUsedQuantizations"/>.
+    /// </summary>
+    public QuantDType[] GetUsedQuantizations() => _weights.GetUsedQuantizations();
+
+    /// <summary>
     /// Exposes the cached hidden state from the last Forward/ForwardLastLogits call.
     /// Contains the arch output (pre-final-norm) for all processed positions.
     /// Shape: [Batch, SeqLen, HiddenDim]. May be modified by ForwardInPlace when

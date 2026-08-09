@@ -1,3 +1,5 @@
+using SharpMind.Core.Quantization;
+
 namespace SharpMind.Model.Format;
 
 public sealed class ModelMetaData
@@ -47,6 +49,14 @@ public sealed class ModelMetaData
     }
 
     public string? GetChatTemplate() => GetString("tokenizer.chat_template");
+
+    /// <summary>
+    /// Returns the distinct quantization dtypes used across the file's tensors,
+    /// sorted by enum value. Mirrors <see cref="TransformerWeights.GetUsedQuantizations"/>
+    /// but works purely from the on-disk metadata, before any weights are loaded.
+    /// </summary>
+    public QuantDType[] GetUsedQuantizations()
+        => Tensors.Select(t => t.Dtype).Distinct().OrderBy(d => d).ToArray();
 
     /// <summary>
     /// Resolves the <c>tokenizer.ggml.add_bos_token</c> flag, defaulting to

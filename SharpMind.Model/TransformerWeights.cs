@@ -254,6 +254,54 @@ public abstract class TransformerWeights : IDisposable
         block.TensorMeta[field] = new TensorMeta(offset, size, dtype);
     }
 
+    /// <summary>
+    /// Returns the distinct quantization dtypes used across all weight tensors.
+    /// A tensor stored as plain floats contributes <see cref="QuantDType.F32"/>;
+    /// quantized tensors contribute their storage dtype. The result is sorted by
+    /// enum value and omits nothing (an all-float model returns <c>[F32]</c>).
+    /// Works for full, cached, and streaming weights alike: block dtype fields,
+    /// expert dtype dictionaries, and the metadata-driven <see cref="BlockWeights.TensorMeta"/>
+    /// are all consulted, so it remains correct even while layers are unloaded.
+    /// </summary>
+    public QuantDType[] GetUsedQuantizations()
+    {
+        var seen = new HashSet<QuantDType>();
+        Add(seen, RawEmbeddingDtype, EmbeddingWeight is not null);
+        Add(seen, RawLmHeadDtype, LmHeadWeight is not null);
+
+        foreach (var block in Blocks)
+        {
+            // Per-tensor: prefer the recorded quant dtype; fall back to F32 when only floats are resident.
+            Add(seen, block.QuantDtypeWq,   block.Wq   is not null);
+            Add(seen, block.QuantDtypeWk,   block.Wk   is not null);
+            Add(seen, block.QuantDtypeWv,   block.Wv   is not null);
+            Add(seen, block.QuantDtypeWo,   block.Wo   is not null);
+            Add(seen, block.QuantDtypeWgate, block.RawWgate is not null);
+            Add(seen, block.QuantDtypeWup,  block.RawWup  is not null);
+            Add(seen, block.QuantDtypeWf1,  block.Wf1  is not null);
+            Add(seen, block.QuantDtypeWf2,  block.Wf2  is not null);
+            Add(seen, block.QuantDtypeRouter, block.RawRouter is not null);
+
+            if (block.QuantDtypeWgateExp is { } gateExp)
+                foreach (var (_, d) in gateExp) seen.Add(d);
+            if (block.QuantDtypeWupExp is { } upExp)
+                foreach (var (_, d) in upExp) seen.Add(d);
+            if (block.QuantDtypeWdownExp is { } downExp)
+                foreach (var (_, d) in downExp) seen.Add(d);
+
+            foreach (var meta in block.TensorMeta.Values)
+                seen.Add(meta.Dtype);
+        }
+
+        return seen.OrderBy(d => d).ToArray();
+    }
+
+    private static void Add(HashSet<QuantDType> seen, QuantDType? quant, bool hasFloat)
+    {
+        if (quant is { } q) seen.Add(q);
+        else if (hasFloat) seen.Add(QuantDType.F32);
+    }
+
     public sealed class BlockWeights : IDisposable
     {
         // Attention float tensors (nullable — Full mode populates all; Cached mode populates on demand)
