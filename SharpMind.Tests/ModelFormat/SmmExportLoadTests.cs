@@ -118,6 +118,36 @@ public class SmmExportLoadTests : IDisposable
     }
 
     [Fact]
+    public void TrainingExport_StoresSystemPromptSkillsAndPluginsTogether()
+    {
+        using var fixture = TrainFixture();
+        byte[] asm = File.ReadAllBytes(typeof(SmmExportLoadTests).Assembly.Location);
+        string[] skills = ["# Skill\nDo the thing."];
+        string systemPrompt = "Default system prompt.";
+
+        string smmPath = Path.Combine(_temp.Path, "model.smm");
+        // Same option shape TrainRunner.BuildEmbedOptions emits: plugins flip on
+        // SmmOutputs.Plugins while skills/system prompt ride on the default set.
+        SmmTrainingExporter.Export(fixture.Weights, fixture.Tokenizer, smmPath, new SmmWriteOptions
+        {
+            Source = "training",
+            Outputs = SmmOutputs.Default | SmmOutputs.Plugins,
+            Skills = skills,
+            SystemPrompt = systemPrompt,
+            Plugins = [new SmmPluginEntry { Name = "SharpMind.Plugins.Embed.dll", AssemblyBytes = asm }],
+        });
+
+        var meta = SmmLoader.LoadMeta(smmPath);
+        Assert.Equal(systemPrompt, SmmLoader.LoadSystemPromptFromMeta(meta));
+        Assert.Equal(skills, SmmLoader.LoadSkillsFromMeta(meta));
+
+        var plugins = SmmLoader.LoadPlugins(smmPath);
+        Assert.Single(plugins);
+        Assert.Equal("SharpMind.Plugins.Embed.dll", plugins[0].Name);
+        Assert.Equal(asm, plugins[0].AssemblyBytes);
+    }
+
+    [Fact]
     public void TrainingExport_WithoutSkills_PromptStaysEmpty()
     {
         using var fixture = TrainFixture();
@@ -220,6 +250,60 @@ public class SmmExportLoadTests : IDisposable
     }
 
     [Fact]
+    public void GgufConversion_CancelledBeforeStart_WritesNothing()
+    {
+        string ggufPath = Path.Combine(_temp.Path, "tiny.gguf");
+        WriteTinyGguf(ggufPath, 64, BuildGgufTokens(64), "{{- messages }}");
+
+        string smmPath = Path.Combine(_temp.Path, "tiny.smm");
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        Assert.Throws<OperationCanceledException>(() =>
+            GgufToSmmConverter.Convert(ggufPath, smmPath, new SmmWriteOptions(), cts.Token));
+
+        // No partial output and no leftover temp file.
+        Assert.False(File.Exists(smmPath));
+        Assert.False(File.Exists(smmPath + ".tmp"));
+    }
+
+    [Fact]
+    public void SmmConversion_CancelledBeforeStart_WritesNothing()
+    {
+        using var fixture = TrainFixture();
+        string smmPath = Path.Combine(_temp.Path, "model.smm");
+        SmmTrainingExporter.Export(fixture.Weights, fixture.Tokenizer, smmPath, new SmmWriteOptions());
+
+        string ggufPath = Path.Combine(_temp.Path, "model.gguf");
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        Assert.Throws<OperationCanceledException>(() => SmmToGufConverter.Convert(smmPath, ggufPath, cts.Token));
+
+        Assert.False(File.Exists(ggufPath));
+        Assert.False(File.Exists(ggufPath + ".tmp"));
+    }
+
+    [Fact]
+    public void GgufConversion_ReportsProgress_UpToComplete()
+    {
+        string ggufPath = Path.Combine(_temp.Path, "tiny.gguf");
+        WriteTinyGguf(ggufPath, 64, BuildGgufTokens(64), "{{- messages }}");
+
+        string smmPath = Path.Combine(_temp.Path, "tiny.smm");
+        var reported = new List<float>();
+        GgufToSmmConverter.Convert(ggufPath, smmPath, new SmmWriteOptions(), CancellationToken.None,
+            new InlineProgress(reported.Add));
+
+        Assert.True(File.Exists(smmPath));
+        Assert.NotEmpty(reported);
+        Assert.InRange(reported[^1], 0.99f, 1.0f);
+        // Progress must be monotonic non-decreasing.
+        for (int i = 1; i < reported.Count; i++)
+            Assert.True(reported[i] >= reported[i - 1], "progress went backwards");
+    }
+
+    [Fact]
     public void AgentBuilder_SkillContentAndAdditionalPrompt()
     {
         var builder = new SharpMind.Inference.Agent.AgentBuilder()
@@ -304,6 +388,15 @@ public class SmmExportLoadTests : IDisposable
     {
         [ToolDesc("Probe tool used to verify embedded plugin discovery.")]
         public string Probe() => "ok";
+    }
+
+    /// <summary>Calls back synchronously on the calling thread (no async marshalling).</summary>
+    private sealed class InlineProgress : IProgress<float>
+    {
+        private readonly Action<float> _onReport;
+        public InlineProgress(Action<float> onReport) => _onReport = onReport;
+
+        public void Report(float value) => _onReport(value);
     }
 
     // ── Fixture ────────────────────────────────────────────────────────────

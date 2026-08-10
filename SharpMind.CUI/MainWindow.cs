@@ -1,5 +1,8 @@
+using NStack;
 using SharpMind.CUI.App;
 using SharpMind.Inference.Agent;
+using SharpMind.Model.Format;
+using SharpMind.Model.Format.Conversion;
 using Terminal.Gui;
 
 namespace SharpMind.CUI;
@@ -121,7 +124,9 @@ public sealed class MainWindow : Window
             {
                 new("_Browse for model...", "", ShowModelBrowser),
                 new("_Debug session (no model)...", "", StartDebugSession),
-                new("T_rain a model...", "", ShowTrainingWizard)
+                new("Modify _model metadata...", "", ShowModelMetaModifier),
+                new("T_rain a model...", "", ShowTrainingWizard),
+                new("_Convert model...", "", ShowModelConverter)
             }),
             new("_Options", new MenuItem[]
             {
@@ -193,6 +198,296 @@ public sealed class MainWindow : Window
             },
             onCancel: onCancel,
             lastModelPath: _options.ModelPath));
+    }
+
+    /// <summary>
+    /// Model → Convert model...: pick a source (.gguf or .smm), a destination,
+    /// then run a cancellable conversion with a live progress dialog. The
+    /// converters write to a temp file and only move it into place on success,
+    /// so cancelling never leaves a partial output behind.
+    /// </summary>
+    private void ShowModelConverter()
+    {
+        string start = _options.ProjectPath ?? _settings.DefaultModelFolder ?? Directory.GetCurrentDirectory();
+        string? source = FilePickerDialog.Show("Convert model", start, PickerMode.File,
+            patterns: ["*.gguf", "*.smm"]);
+        if (source is null) return;
+
+        bool toSmm = source.EndsWith(".gguf", StringComparison.OrdinalIgnoreCase);
+        bool toGguf = source.EndsWith(".smm", StringComparison.OrdinalIgnoreCase);
+        if (!toSmm && !toGguf)
+        {
+            MessageBox.ErrorQuery("Convert model", "Pick a .gguf or .smm model file.", "OK");
+            return;
+        }
+
+        string baseName = Path.GetFileNameWithoutExtension(source);
+        string defaultName = toSmm ? baseName + ".smm" : baseName + ".gguf";
+        string? target = FilePickerDialog.Show(
+            toSmm ? "Save as .smm" : "Save as .gguf",
+            Path.GetDirectoryName(source) ?? Directory.GetCurrentDirectory(),
+            PickerMode.SaveFile, defaultName: defaultName);
+        if (target is null) return;
+
+        // Force the correct extension so the target is unambiguous.
+        if (!target.EndsWith(toSmm ? ".smm" : ".gguf", StringComparison.OrdinalIgnoreCase))
+            target += toSmm ? ".smm" : ".gguf";
+
+        if (File.Exists(target))
+        {
+            int overwrite = MessageBox.Query("Convert model", $"Overwrite existing file?\n{target}", "Yes", "No");
+            if (overwrite != 0) return;
+        }
+
+        var cancelSource = new CancellationTokenSource();
+
+        string? error = null;
+        bool done = false;
+        int progressPercent = -1;
+
+        var dialog = new Dialog("Convert model", 60, 8);
+        var statusLabel = new Label("Converting…") { X = 1, Y = 1, Width = Dim.Fill(2) };
+        var cancelButton = new Button("Cancel") { X = Pos.AnchorEnd(12), Y = Pos.AnchorEnd(1) };
+        cancelButton.Clicked += () => cancelSource.Cancel();
+        dialog.Add(statusLabel, cancelButton);
+
+        var taskProgress = new Progress<float>(p => Application.MainLoop.Invoke(() =>
+        {
+            int percent = Math.Clamp((int)(p * 100), 0, 100);
+            if (percent != progressPercent)
+            {
+                progressPercent = percent;
+                statusLabel.Text = $"Converting… {percent}%";
+            }
+        }));
+
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                if (toSmm)
+                    GgufToSmmConverter.Convert(source, target, new SmmWriteOptions { Source = "gguf" },
+                        cancelSource.Token, taskProgress);
+                else
+                    SmmToGufConverter.Convert(source, target, cancelSource.Token, taskProgress);
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception ex) { error = ex.Message; }
+            finally { done = true; }
+        });
+
+        object pollToken = null!;
+        bool poll(MainLoop _)
+        {
+            if (done)
+            {
+                Application.MainLoop.RemoveTimeout(pollToken);
+                Application.RequestStop();
+                return false;
+            }
+            return true;
+        }
+        pollToken = Application.MainLoop.AddTimeout(TimeSpan.FromMilliseconds(100), poll);
+        Application.Run(dialog);
+
+        if (cancelSource.IsCancellationRequested)
+        {
+            MessageBox.Query("Convert model", "Conversion cancelled — no output was written.", "OK");
+        }
+        else if (error is not null)
+        {
+            MessageBox.ErrorQuery("Convert model", $"Conversion failed:\n{error}", "OK");
+        }
+        else if (File.Exists(target))
+        {
+            MessageBox.Query("Convert model",
+                $"Converted {Path.GetFileName(source)} → {target}\n({new FileInfo(target).Length:N0} bytes)", "OK");
+        }
+    }
+
+    /// <summary>
+    /// Model → Modify model metadata…: edits the system prompt, skills and
+    /// embedded plugins of an existing .SMM file in place (see
+    /// <see cref="SmmModifier"/>), preserving the trained weights untouched.
+    /// </summary>
+    private void ShowModelMetaModifier()
+    {
+        string start = _options.ProjectPath ?? _settings.DefaultModelFolder ?? Directory.GetCurrentDirectory();
+        string? path = FilePickerDialog.Show("Modify .SMM metadata", start, PickerMode.File, patterns: ["*.smm"]);
+        if (path is null) return;
+
+        SmmModelDocument doc;
+        try
+        {
+            doc = SmmModifier.Read(path);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.ErrorQuery("Modify metadata", $"Could not read {Path.GetFileName(path)}:\n{ex.Message}", "OK");
+            return;
+        }
+
+        var dialog = new Dialog($"Modify .SMM metadata — {Path.GetFileName(path)}", 78, 26);
+
+        var promptLabel = new Label("System prompt:") { X = 1, Y = 1 };
+        var promptValue = new Label("") { X = 1, Y = 2, Width = Dim.Fill(2) };
+        var editPrompt = new Button("Edit prompt…") { X = 1, Y = 3 };
+        editPrompt.Clicked += () =>
+        {
+            var edited = EditTextModal("System prompt", doc.SystemPrompt);
+            if (edited is not null) { doc.SystemPrompt = edited.Trim(); RefreshMetaDialog(promptValue, doc); }
+        };
+        var clearPrompt = new Button("Clear prompt") { X = Pos.Right(editPrompt) + 2, Y = 3 };
+        clearPrompt.Clicked += () =>
+        {
+            doc.SystemPrompt = "";
+            RefreshMetaDialog(promptValue, doc);
+        };
+
+        var skillsCaption = new Label("Skills: 0") { X = 1, Y = 5 };
+        var skillList = new ListView { X = 1, Y = 6, Width = 42, Height = 5 };
+        RefreshSkills(skillsCaption, skillList, doc);
+
+        var addSkillFile = new Button("Add file…") { X = 46, Y = 6 };
+        addSkillFile.Clicked += () =>
+        {
+            var picked = FilePickerDialog.Show("Add skill file (.md/.txt)", Directory.GetCurrentDirectory(), PickerMode.File,
+                patterns: ["*.md", "*.txt"]);
+            if (picked is null) return;
+            doc.Skills.Add(File.ReadAllText(picked));
+            RefreshSkills(skillsCaption, skillList, doc);
+        };
+        var addSkillManual = new Button("Add manual…") { X = 46, Y = 7 };
+        addSkillManual.Clicked += () =>
+        {
+            var text = EditTextModal("Add skill", "");
+            if (text is null) return;
+            doc.Skills.Add(text);
+            RefreshSkills(skillsCaption, skillList, doc);
+        };
+        var editSkill = new Button("Edit…") { X = 46, Y = 8 };
+        editSkill.Clicked += () =>
+        {
+            int i = skillList.SelectedItem;
+            if (i < 0 || i >= doc.Skills.Count) { MessageBox.ErrorQuery("Edit skill", "Select a skill first.", "OK"); return; }
+            var edited = EditTextModal("Edit skill", doc.Skills[i]);
+            if (edited is not null) { doc.Skills[i] = edited; RefreshSkills(skillsCaption, skillList, doc); }
+        };
+        var removeSkill = new Button("Remove") { X = 46, Y = 9 };
+        removeSkill.Clicked += () =>
+        {
+            int i = skillList.SelectedItem;
+            if (i < 0 || i >= doc.Skills.Count) return;
+            doc.Skills.RemoveAt(i);
+            RefreshSkills(skillsCaption, skillList, doc);
+        };
+        var clearSkills = new Button("Clear") { X = 46, Y = 10 };
+        clearSkills.Clicked += () =>
+        {
+            doc.Skills.Clear();
+            RefreshSkills(skillsCaption, skillList, doc);
+        };
+
+        var pluginsCaption = new Label("Plugins: 0") { X = 1, Y = 13 };
+        var pluginList = new ListView { X = 1, Y = 14, Width = 42, Height = 4 };
+        RefreshPluginsList(pluginsCaption, pluginList, doc);
+
+        var addPlugin = new Button("Add DLL…") { X = 46, Y = 14 };
+        addPlugin.Clicked += () =>
+        {
+            string dllStart = Directory.GetCurrentDirectory();
+            var picked = FilePickerDialog.Show("Add tool DLL", dllStart, PickerMode.File, "*.dll");
+            if (picked is null) return;
+            doc.Plugins.Add(new SmmPluginEntry { Name = Path.GetFileName(picked), AssemblyBytes = File.ReadAllBytes(picked) });
+            RefreshPluginsList(pluginsCaption, pluginList, doc);
+        };
+        var removePlugin = new Button("Remove") { X = 46, Y = 15 };
+        removePlugin.Clicked += () =>
+        {
+            int i = pluginList.SelectedItem;
+            if (i < 0 || i >= doc.Plugins.Count) return;
+            doc.Plugins.RemoveAt(i);
+            RefreshPluginsList(pluginsCaption, pluginList, doc);
+        };
+        var clearPlugins = new Button("Clear") { X = 46, Y = 16 };
+        clearPlugins.Clicked += () =>
+        {
+            doc.Plugins.Clear();
+            RefreshPluginsList(pluginsCaption, pluginList, doc);
+        };
+
+        var apply = new Button("Apply changes") { X = 1, Y = Pos.AnchorEnd(2), IsDefault = true };
+        var cancel = new Button("Cancel") { X = Pos.Right(apply) + 2, Y = Pos.AnchorEnd(2) };
+        bool applied = false;
+        apply.Clicked += () =>
+        {
+            try
+            {
+                SmmModifier.Write(path, doc);
+                applied = true;
+                Application.RequestStop();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.ErrorQuery("Modify metadata", $"Could not write {Path.GetFileName(path)}:\n{ex.Message}", "OK");
+            }
+        };
+        cancel.Clicked += () => Application.RequestStop();
+
+        dialog.Add(promptLabel, promptValue, editPrompt, clearPrompt,
+            skillsCaption, skillList, addSkillFile, addSkillManual, editSkill, removeSkill, clearSkills,
+            pluginsCaption, pluginList, addPlugin, removePlugin, clearPlugins,
+            apply, cancel);
+        RefreshMetaDialog(promptValue, doc);
+        Application.Run(dialog);
+
+        if (applied)
+            MessageBox.Query("Modify metadata", $"Updated {Path.GetFileName(path)}.\nSystem prompt, skills and plugins are saved.", "OK");
+
+        static void RefreshMetaDialog(Label label, SmmModelDocument d)
+        {
+            label.Text = string.IsNullOrEmpty(d.SystemPrompt)
+                ? (ustring)"— none —"
+                : (ustring)(d.SystemPrompt.Length <= 68 ? d.SystemPrompt : d.SystemPrompt[..68] + "…");
+        }
+
+        static void RefreshSkills(Label caption, ListView view, SmmModelDocument d)
+        {
+            caption.Text = $"Skills: {d.Skills.Count}";
+            view.SetSource(d.Skills.Count == 0
+                ? [(ustring)"(no skills embedded)"]
+                : d.Skills.Select((s, i) => (ustring)$"{i + 1}. {FirstLine(s)}").ToArray());
+        }
+
+        static void RefreshPluginsList(Label caption, ListView view, SmmModelDocument d)
+        {
+            caption.Text = $"Plugins: {d.Plugins.Count}";
+            view.SetSource(d.Plugins.Count == 0
+                ? [(ustring)"(no plugins embedded)"]
+                : d.Plugins.Select(p => (ustring)p.Name).ToArray());
+        }
+
+        static string FirstLine(string text)
+        {
+            int nl = text.IndexOf('\n');
+            string line = nl >= 0 ? text[..nl] : text;
+            return line.Length <= 50 ? line : line[..50] + "…";
+        }
+    }
+
+    /// <summary>Modal multi-line text editor returning the text, or null when cancelled.</summary>
+    private static string? EditTextModal(string title, string initial)
+    {
+        string? result = null;
+        var editor = new Dialog(title, 74, 18);
+        var textView = new TextView { X = 1, Y = 1, Width = Dim.Fill(2), Height = Dim.Fill(4), Text = (ustring)initial };
+        var ok = new Button("OK") { X = 1, Y = Pos.AnchorEnd(1), IsDefault = true };
+        ok.Clicked += () => { result = textView.Text.ToString(); Application.RequestStop(); };
+        var cancel = new Button("Cancel") { X = Pos.Right(ok) + 2, Y = Pos.AnchorEnd(1) };
+        cancel.Clicked += () => Application.RequestStop();
+        editor.Add(textView, ok, cancel);
+        Application.Run(editor);
+        return result;
     }
 
     private void ShowTrainingWizard()

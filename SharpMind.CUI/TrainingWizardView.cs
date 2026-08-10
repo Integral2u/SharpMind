@@ -29,9 +29,12 @@ public sealed class TrainingWizardView : View
     private readonly Label _checkpointDirLabel;
     private readonly ListView _sourceList;
     private readonly ListView _stageList;
+    private readonly ListView _pluginList;
     private readonly TextField _nameField;
     private readonly TextField _keepCountField;
     private readonly TextField _exportField;
+    private readonly TextField _systemPromptField;
+    private readonly TextField _skillsFolderField;
     private readonly RadioGroup _qatRadio;
     private readonly RadioGroup _keepModeRadio;
     private readonly Dictionary<string, TextField> _modelRows = new(StringComparer.Ordinal);
@@ -197,6 +200,41 @@ public sealed class TrainingWizardView : View
         form.Add(AddLabel("Export .smm:"), _exportField, expBrowse);
         row += 2;
 
+        // --- Embed in the exported .smm --------------------------
+        row += 1;
+        _systemPromptField = new TextField((ustring)(_job.SystemPromptPath ?? "")) { X = 30, Y = row, Width = 34 };
+        _systemPromptField.TextChanged += (_) =>
+            _job.SystemPromptPath = string.IsNullOrWhiteSpace(_systemPromptField.Text.ToString()) ? null : _systemPromptField.Text.ToString();
+        var promptBrowse = new Button("Browse…") { X = Pos.Right(_systemPromptField) + 1, Y = row };
+        promptBrowse.Clicked += () =>
+        {
+            string start = Directory.Exists(_systemPromptField.Text.ToString())
+                ? Path.GetDirectoryName(_systemPromptField.Text.ToString())!
+                : Directory.GetCurrentDirectory();
+            var picked = FilePickerDialog.Show("System prompt file (.txt/.md)", start, PickerMode.File,
+                patterns: ["*.txt", "*.md"]);
+            if (picked is not null) { _systemPromptField.Text = picked; _job.SystemPromptPath = picked; }
+        };
+        form.Add(AddLabel("System prompt:"), _systemPromptField, promptBrowse);
+        row += 2;
+
+        _skillsFolderField = new TextField((ustring)(_job.SkillsFolder ?? "")) { X = 30, Y = row, Width = 34 };
+        _skillsFolderField.TextChanged += (_) =>
+            _job.SkillsFolder = string.IsNullOrWhiteSpace(_skillsFolderField.Text.ToString()) ? null : _skillsFolderField.Text.ToString();
+        var skillsBrowse = new Button("Browse…") { X = Pos.Right(_skillsFolderField) + 1, Y = row };
+        skillsBrowse.Clicked += () => BrowseFolder("Skills folder (.md)", _skillsFolderField, s => _job.SkillsFolder = s);
+        form.Add(AddLabel("Skills folder:"), _skillsFolderField, skillsBrowse);
+        row += 2;
+
+        var addPlugin = new Button("Add DLL…") { X = 30, Y = row };
+        addPlugin.Clicked += AddPluginDll;
+        var removePlugin = new Button("Remove") { X = Pos.Right(addPlugin) + 1, Y = row };
+        removePlugin.Clicked += RemovePluginDll;
+        _pluginList = new ListView { X = 30, Y = row + 1, Width = 46, Height = 3 };
+        _pluginList.OpenSelectedItem += (_) => RemovePluginDll();
+        form.Add(AddLabel("Plugin DLLs:"), addPlugin, removePlugin, _pluginList);
+        row += 5;
+
         // --- Start ------------------------------------------
         var start = new Button("Start training…") { X = 1, Y = row, IsDefault = true };
         start.Clicked += StartTraining;
@@ -255,6 +293,38 @@ public sealed class TrainingWizardView : View
         _keepCountField.Visible = keepIndex == 1;
         if (keepIndex == 1) _keepCountField.Text = (ustring)(_job.KeepRecent > 0 ? _job.KeepRecent : 3).ToString();
         _qatRadio.SelectedItem = QatIndexFor(_job.QuantAwareTraining);
+        _systemPromptField.Text = (ustring)(_job.SystemPromptPath ?? "");
+        _skillsFolderField.Text = (ustring)(_job.SkillsFolder ?? "");
+        RefreshPlugins();
+    }
+
+    private void RefreshPlugins()
+    {
+        _pluginList.SetSource(_job.PluginDllPaths.Count == 0
+            ? [(ustring)"(none — use Add DLL…)"]
+            : _job.PluginDllPaths.Select(p => (ustring)Path.GetFileName(p)).ToArray());
+    }
+
+    private void AddPluginDll()
+    {
+        string start = _job.PluginDllPaths.FirstOrDefault(p => File.Exists(p)) is { } existing
+            ? Path.GetDirectoryName(existing) ?? Directory.GetCurrentDirectory()
+            : Directory.GetCurrentDirectory();
+        var picked = FilePickerDialog.Show("Add tool DLL", start, PickerMode.File, "*.dll");
+        if (picked is null) return;
+        if (!_job.PluginDllPaths.Contains(picked, StringComparer.OrdinalIgnoreCase))
+        {
+            _job.PluginDllPaths.Add(picked);
+            RefreshPlugins();
+        }
+    }
+
+    private void RemovePluginDll()
+    {
+        int i = _pluginList.SelectedItem;
+        if (i < 0 || i >= _job.PluginDllPaths.Count) return;
+        _job.PluginDllPaths.RemoveAt(i);
+        RefreshPlugins();
     }
 
     private void RefreshMap()
@@ -575,6 +645,32 @@ public sealed class TrainingWizardView : View
         {
             MessageBox.ErrorQuery("Start training", "Add at least one data source first.", "OK");
             return;
+        }
+        if (!string.IsNullOrWhiteSpace(_job.SystemPromptPath) && !File.Exists(_job.SystemPromptPath))
+        {
+            MessageBox.ErrorQuery("Start training", $"System prompt file not found:\n{_job.SystemPromptPath}", "OK");
+            return;
+        }
+        if (!string.IsNullOrWhiteSpace(_job.SkillsFolder))
+        {
+            if (!Directory.Exists(_job.SkillsFolder))
+            {
+                MessageBox.ErrorQuery("Start training", $"Skills folder not found:\n{_job.SkillsFolder}", "OK");
+                return;
+            }
+            if (Directory.GetFiles(_job.SkillsFolder, "*.md", SearchOption.TopDirectoryOnly).Length == 0)
+            {
+                MessageBox.ErrorQuery("Start training", $"No *.md files found in:\n{_job.SkillsFolder}", "OK");
+                return;
+            }
+        }
+        foreach (var dll in _job.PluginDllPaths)
+        {
+            if (!File.Exists(dll))
+            {
+                MessageBox.ErrorQuery("Start training", $"Plugin DLL not found:\n{dll}", "OK");
+                return;
+            }
         }
         _onStart(_job);
     }

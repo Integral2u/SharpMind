@@ -16,23 +16,41 @@ public enum PickerMode { File, Folder, SaveFile }
 public static class FilePickerDialog
 {
     /// <summary>Shows the picker modally and returns the chosen path, or null if cancelled.</summary>
-    public static string? Show(string title, string startPath, PickerMode mode, string filePattern = "*.*")
+    public static string? Show(string title, string startPath, PickerMode mode, string filePattern = "*.*",
+        string defaultName = "", params string[] patterns)
     {
         string? result = null;
         string currentPath = Directory.Exists(startPath) ? startPath : Directory.GetCurrentDirectory();
 
         var dialog = new Dialog((ustring)title, 70, 22);
         var pathLabel = new Label((ustring)currentPath) { X = 1, Y = 0, Width = Dim.Fill(2) };
-        var listView = new ListView { X = 1, Y = 2, Width = Dim.Fill(2), Height = Dim.Fill(6) };
+        // In SaveFile mode the name field lives near the bottom (AnchorEnd 7) and
+        // the buttons at AnchorEnd 2, so the list must end well above them.
+        var listView = new ListView
+        {
+            X = 1,
+            Y = 2,
+            Width = Dim.Fill(2),
+            Height = mode == PickerMode.SaveFile ? Dim.Fill(10) : Dim.Fill(6),
+        };
         List<string> entries = [];
 
         TextField? saveNameField = null;
         if (mode == PickerMode.SaveFile)
         {
             dialog.Add(new Label("File name:") { X = 1, Y = Pos.AnchorEnd(7), Width = 10 });
-            saveNameField = new TextField("") { X = 12, Y = Pos.AnchorEnd(7), Width = Dim.Fill(2) };
+            saveNameField = new TextField((ustring)defaultName) { X = 12, Y = Pos.AnchorEnd(7), Width = Dim.Fill(2) };
             dialog.Add(saveNameField);
         }
+
+        // In SaveFile mode the file list defaults to the format implied by the
+        // pre-filled name (standard save behavior: filter to the save format).
+        // Explicit patterns (e.g. the source picker's *.gguf + *.smm) win.
+        string[] activePatterns = patterns is { Length: > 0 }
+            ? patterns
+            : mode == PickerMode.SaveFile && Path.GetExtension(defaultName) is { Length: > 1 } ext
+                ? [$"*{ext}"]
+                : [filePattern];
 
         void Refresh()
         {
@@ -41,7 +59,11 @@ public static class FilePickerDialog
             entries = new List<string> { ".. (up one level)" };
             entries.AddRange(dirs);
             if (mode == PickerMode.File || mode == PickerMode.SaveFile)
-                entries.AddRange(Directory.GetFiles(currentPath, filePattern).Select(f => Path.GetFileName(f)!).OrderBy(s => s));
+                entries.AddRange(activePatterns
+                    .SelectMany(p => Directory.GetFiles(currentPath, p))
+                    .Select(f => Path.GetFileName(f)!)
+                    .Distinct()
+                    .OrderBy(s => s));
             listView.SetSource(entries);
             dialog.SetNeedsDisplay();
         }

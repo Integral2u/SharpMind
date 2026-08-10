@@ -18,12 +18,22 @@ public static class GgufToSmmConverter
     /// <summary>
     /// Converts <paramref name="ggufPath"/> to <paramref name="smmPath"/>.
     /// Tensors are transferred verbatim (no compression, no re-quantization).
+    /// <paramref name="progress"/> reports 0..1 as tensors are written;
+    /// <paramref name="ct"/> cancels the copy — the partial temp file is then
+    /// deleted and <paramref name="smmPath"/> stays untouched.
     /// </summary>
-    public static void Convert(string ggufPath, string smmPath, SmmWriteOptions? options = null)
+    public static void Convert(
+        string ggufPath,
+        string smmPath,
+        SmmWriteOptions? options = null,
+        CancellationToken ct = default,
+        IProgress<float>? progress = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(ggufPath);
         ArgumentException.ThrowIfNullOrWhiteSpace(smmPath);
         if (!File.Exists(ggufPath)) throw new FileNotFoundException(ggufPath);
+
+        ct.ThrowIfCancellationRequested();
 
         var meta = GgufLoader.LoadMeta(ggufPath);
         var config = GgufLoader.LoadConfig(meta)
@@ -36,21 +46,54 @@ public static class GgufToSmmConverter
             ggufPath, FileMode.Open, null, 0, MemoryMappedFileAccess.Read);
         using var stream = mmf.CreateViewStream(0, 0, MemoryMappedFileAccess.Read);
 
+        int totalTensors = 0;
         var tensors = new List<SmmTensorData>(meta.Tensors.Count);
         foreach (var info in meta.Tensors)
         {
             long rawSize = QuantizationOps.GetRawTensorByteCount(info.Shape, info.Dtype);
             if (rawSize <= 0) continue;
+            int ordinal = totalTensors++;
             tensors.Add(new SmmTensorData
             {
                 Name = info.Name,
                 Shape = info.Shape,
                 Dtype = info.Dtype,
-                GetBytes = () => ReadTensorBytes(stream, meta, info, rawSize),
+                GetBytes = () =>
+                {
+                    ct.ThrowIfCancellationRequested();
+                    var bytes = ReadTensorBytes(stream, meta, info, rawSize);
+                    if (progress is not null && totalTensors > 0)
+                        progress.Report((ordinal + 1f) / totalTensors);
+                    return bytes;
+                },
             });
         }
 
-        SmmWriter.Write(smmPath, config, tokenizer, chatTemplate, tensors, options);
+        string tmpPath = smmPath + ".tmp";
+        try
+        {
+            SmmWriter.Write(tmpPath, config, tokenizer, chatTemplate, tensors, options);
+            File.Move(tmpPath, smmPath, overwrite: true);
+        }
+        catch (OperationCanceledException)
+        {
+            TryDelete(tmpPath);
+            throw;
+        }
+        catch
+        {
+            TryDelete(tmpPath);
+            throw;
+        }
+        finally
+        {
+            progress?.Report(1f);
+        }
+    }
+
+    private static void TryDelete(string path)
+    {
+        try { if (File.Exists(path)) File.Delete(path); } catch { /* best effort */ }
     }
 
     private static byte[] ReadTensorBytes(MemoryMappedViewStream stream, ModelMetaData meta, TensorInfo info, long rawSize)

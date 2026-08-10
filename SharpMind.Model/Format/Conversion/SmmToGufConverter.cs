@@ -24,13 +24,21 @@ public static class SmmToGufConverter
 {
     /// <summary>
     /// Converts <paramref name="smmPath"/> to <paramref name="ggufPath"/> using
-    /// GGUF v3 and 32-byte alignment.
+    /// GGUF v3 and 32-byte alignment. <paramref name="progress"/> reports 0..1
+    /// as tensors are written; <paramref name="ct"/> cancels the copy — the
+    /// partial temp file is then deleted and <paramref name="ggufPath"/> stays untouched.
     /// </summary>
-    public static void Convert(string smmPath, string ggufPath)
+    public static void Convert(
+        string smmPath,
+        string ggufPath,
+        CancellationToken ct = default,
+        IProgress<float>? progress = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(smmPath);
         ArgumentException.ThrowIfNullOrWhiteSpace(ggufPath);
         if (!File.Exists(smmPath)) throw new FileNotFoundException(smmPath);
+
+        ct.ThrowIfCancellationRequested();
 
         var meta = SmmLoader.LoadMeta(smmPath);
         var config = SmmLoader.LoadConfig(meta)
@@ -38,9 +46,33 @@ public static class SmmToGufConverter
         var tokenizer = SmmLoader.LoadTokenizerFromMeta(meta);
 
         var kv = BuildKvPairs(meta, config, tokenizer);
-        var tensors = BuildTensors(smmPath, meta);
+        var tensors = BuildTensors(smmPath, meta, ct, progress);
 
-        GgufWriter.Write(ggufPath, kv, tensors);
+        string tmpPath = ggufPath + ".tmp";
+        try
+        {
+            GgufWriter.Write(tmpPath, kv, tensors);
+            File.Move(tmpPath, ggufPath, overwrite: true);
+        }
+        catch (OperationCanceledException)
+        {
+            TryDelete(tmpPath);
+            throw;
+        }
+        catch
+        {
+            TryDelete(tmpPath);
+            throw;
+        }
+        finally
+        {
+            progress?.Report(1f);
+        }
+    }
+
+    private static void TryDelete(string path)
+    {
+        try { if (File.Exists(path)) File.Delete(path); } catch { /* best effort */ }
     }
 
     private static List<GgufKvPair> BuildKvPairs(ModelMetaData meta, ModelConfig config, Tokenizer? tokenizer)
@@ -186,20 +218,29 @@ public static class SmmToGufConverter
         }
     }
 
-    private static List<GgufTensor> BuildTensors(string smmPath, ModelMetaData meta)
+    private static List<GgufTensor> BuildTensors(string smmPath, ModelMetaData meta, CancellationToken ct, IProgress<float>? progress)
     {
         var entries = SmmLoader.ReadTensorIndex(smmPath);
+        int totalTensors = 0;
         var tensors = new List<GgufTensor>(entries.Count);
         foreach (var entry in entries)
         {
             long rawSize = QuantizationOps.GetRawTensorByteCount(entry.Shape, entry.Dtype);
             if (rawSize <= 0) continue;
+            int ordinal = totalTensors++;
             tensors.Add(new GgufTensor
             {
                 Name = entry.Name,
                 Shape = entry.Shape,
                 Dtype = entry.Dtype,
-                GetBytes = () => SmmLoader.ReadTensorBytes(smmPath, entry, rawSize),
+                GetBytes = () =>
+                {
+                    ct.ThrowIfCancellationRequested();
+                    var bytes = SmmLoader.ReadTensorBytes(smmPath, entry, rawSize);
+                    if (progress is not null && totalTensors > 0)
+                        progress.Report((ordinal + 1f) / totalTensors);
+                    return bytes;
+                },
             });
         }
         return tensors;

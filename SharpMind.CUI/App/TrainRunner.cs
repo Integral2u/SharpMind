@@ -177,12 +177,12 @@ public static class TrainRunner
                 },
                 progress: new Progress<float>(p => progress.Report(0.12f + 0.78f * p)),
                 cancellationToken: cancellationToken,
-                onCheckpoint: dir => ExportCheckpoint(dir, modelConfig, sharpConfig, tokenizer, Log));
+                onCheckpoint: dir => ExportCheckpoint(dir, job, modelConfig, sharpConfig, tokenizer, Log));
 
             // 6. Export the trained weights + tokenizer to .SMM.
             string exportPath = job.ExportFilePath;
             Directory.CreateDirectory(Path.GetDirectoryName(exportPath)!);
-            SmmTrainingExporter.Export(weights, tokenizer, exportPath, new SmmWriteOptions { Source = "training" });
+            SmmTrainingExporter.Export(weights, tokenizer, exportPath, BuildEmbedOptions(job, "training"));
             progress.Report(1f);
             Log($"Saved: {exportPath} ({new FileInfo(exportPath).Length:N0} bytes)");
 
@@ -211,7 +211,7 @@ public static class TrainRunner
 
     /// <summary>Exports a saved checkpoint directory as a testable .smm inside it.</summary>
     private static void ExportCheckpoint(
-        string dir, ModelConfig config, SharpMindConfig sharpConfig, Tokenizer tokenizer, Action<string> log)
+        string dir, TrainJobSettings job, ModelConfig config, SharpMindConfig sharpConfig, Tokenizer tokenizer, Action<string> log)
     {
         try
         {
@@ -221,13 +221,64 @@ public static class TrainRunner
             var meta = Checkpoint.Load(dir, parameters, optimizer: null);
 
             string smmPath = Path.Combine(dir, "model.smm");
-            SmmTrainingExporter.Export(weights, tokenizer, smmPath, new SmmWriteOptions { Source = "checkpoint" });
+            SmmTrainingExporter.Export(weights, tokenizer, smmPath, BuildEmbedOptions(job, "checkpoint"));
             log($"Checkpoint {Path.GetFileName(dir)} → {Path.GetFileName(smmPath)} (step {meta.Step})");
         }
         catch (Exception ex)
         {
             log($"Checkpoint export failed for {dir}: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// Builds the <see cref="SmmWriteOptions"/> that embed the job's configured
+    /// system prompt file, skills folder, and plugin DLLs into the .smm. Files
+    /// are read eagerly, so missing input at export time fails the run loudly
+    /// instead of silently producing an unannotated model.
+    /// </summary>
+    private static SmmWriteOptions BuildEmbedOptions(TrainJobSettings job, string source)
+    {
+        string? systemPrompt = null;
+        if (!string.IsNullOrWhiteSpace(job.SystemPromptPath))
+        {
+            if (!File.Exists(job.SystemPromptPath))
+                throw new InvalidOperationException($"System prompt file not found: {job.SystemPromptPath}");
+            systemPrompt = File.ReadAllText(job.SystemPromptPath).Trim();
+        }
+
+        List<string>? skills = null;
+        if (!string.IsNullOrWhiteSpace(job.SkillsFolder))
+        {
+            if (!Directory.Exists(job.SkillsFolder))
+                throw new InvalidOperationException($"Skills folder not found: {job.SkillsFolder}");
+            skills = Directory.GetFiles(job.SkillsFolder, "*.md", SearchOption.TopDirectoryOnly)
+                .OrderBy(f => Path.GetFileName(f))
+                .Select(File.ReadAllText)
+                .ToList();
+            if (skills.Count == 0)
+                throw new InvalidOperationException($"No *.md skill files found in: {job.SkillsFolder}");
+        }
+
+        List<SmmPluginEntry>? plugins = null;
+        if (job.PluginDllPaths is { Count: > 0 })
+        {
+            plugins = [];
+            foreach (var dll in job.PluginDllPaths)
+            {
+                if (!File.Exists(dll))
+                    throw new InvalidOperationException($"Plugin DLL not found: {dll}");
+                plugins.Add(new SmmPluginEntry { Name = Path.GetFileName(dll), AssemblyBytes = File.ReadAllBytes(dll) });
+            }
+        }
+
+        return new SmmWriteOptions
+        {
+            Source = source,
+            Outputs = plugins is { Count: > 0 } ? SmmOutputs.Default | SmmOutputs.Plugins : SmmOutputs.Default,
+            SystemPrompt = systemPrompt,
+            Skills = skills,
+            Plugins = plugins,
+        };
     }
 
     private static QuantDType? ParseQat(string? raw)

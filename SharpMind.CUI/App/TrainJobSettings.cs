@@ -118,6 +118,24 @@ public sealed class TrainJobSettings
     /// <summary>Resume from this checkpoint directory; null = fresh start.</summary>
     public string? ResumeFrom { get; set; }
 
+    // --- Embed in the exported .smm ----------------------------
+
+    /// <summary>
+    /// Path to a <c>.txt</c>/<c>.md</c> file whose contents become the embedded
+    /// system prompt. The file is read at export time so edits don't force a
+    /// wizard round-trip. Optional.
+    /// </summary>
+    public string? SystemPromptPath { get; set; }
+
+    /// <summary>
+    /// Folder containing <c>*.md</c> skill documents; each file is embedded as
+    /// one skill. Read at export time. Optional.
+    /// </summary>
+    public string? SkillsFolder { get; set; }
+
+    /// <summary>Tool DLL paths to embed in the exported .smm file. Optional.</summary>
+    public List<string> PluginDllPaths { get; set; } = [];
+
     // --- Persistence -------------------------------------------------------
 
     public static string DefaultFolder

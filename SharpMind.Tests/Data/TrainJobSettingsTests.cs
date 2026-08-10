@@ -193,4 +193,26 @@ public sealed class TrainJobSettingsTests
         Assert.NotNull(loaded);
         Assert.Equal(Path.Combine(dir.Path, "checkpoints-resume-job", "step-0000123"), loaded.ResumeFrom);
     }
+
+    [Fact]
+    public void SaveLoad_EmbedOptionsRoundTrip()
+    {
+        using var dir = new TempDirectory();
+        string path = Path.Combine(dir.Path, "embed.json");
+
+        var job = new TrainJobSettings
+        {
+            Name = "embed-job",
+            SystemPromptPath = @"C:\prompts\assistant.md",
+            SkillsFolder = @"C:\skills",
+            PluginDllPaths = ["C:\\tools\\Weather.dll", "C:\\tools\\Calculator.dll"],
+        };
+        Assert.True(job.Save(path, out var saveErr), saveErr);
+
+        var loaded = TrainJobSettings.Load(path, out var loadErr);
+        Assert.NotNull(loaded);
+        Assert.Equal(@"C:\prompts\assistant.md", loaded.SystemPromptPath);
+        Assert.Equal(@"C:\skills", loaded.SkillsFolder);
+        Assert.Equal(["C:\\tools\\Weather.dll", "C:\\tools\\Calculator.dll"], loaded.PluginDllPaths);
+    }
 }
