@@ -24,7 +24,10 @@ public sealed class TrainingLinearLayer : LinearLayer
     /// forward sees quantized weights while backward gradients flow straight
     /// through to the master weight. Null or <see cref="QuantDType.F32"/>
     /// restores the pure-float forward. Block formats (Q8_0/Q4_0) require both
-    /// InFeatures and OutFeatures to be multiples of 32.
+    /// InFeatures and OutFeatures to be multiples of 32; K-quant formats
+    /// (Q2_K..Q8_K) require the flattened weight length to be a multiple of 256
+    /// and InFeatures (the column width seen by the K-quant VecDot kernels,
+    /// which address sub-scales per 128-element half-block) to be a multiple of 128.
     /// </summary>
     public override void EnableQuantAwareTraining(QuantDType? target)
     {
@@ -33,8 +36,23 @@ public sealed class TrainingLinearLayer : LinearLayer
             throw new InvalidOperationException(
                 $"{Name}: QAT with {target} requires every dimension to be a multiple of 32 " +
                 $"(got {InFeatures}x{OutFeatures}). Use F16 or disable QAT for this layer.");
+        if (IsKQuant(target) &&
+            (InFeatures % 128 != 0 || ((long)InFeatures * OutFeatures) % 256 != 0))
+            throw new InvalidOperationException(
+                $"{Name}: QAT with {target} requires InFeatures to be a multiple of 128 and the " +
+                $"flattened weight length ({InFeatures}x{OutFeatures} = {InFeatures * OutFeatures}) " +
+                "to be a multiple of 256. Use F16 or disable QAT for this layer.");
         _qatTarget = target;
     }
+
+    /// <summary>True when <paramref name="target"/> is a K-quant block format (Q2_K..Q8_K).</summary>
+    private static bool IsKQuant(QuantDType? target) => target is
+        QuantDType.Q2_K or QuantDType.Q2_K_S
+        or QuantDType.Q3_K or QuantDType.Q3_K_S or QuantDType.Q3_K_M or QuantDType.Q3_K_L
+        or QuantDType.Q4_K or QuantDType.Q4_K_S or QuantDType.Q4_K_M
+        or QuantDType.Q5_K or QuantDType.Q5_K_S or QuantDType.Q5_K_M
+        or QuantDType.Q6_K or QuantDType.Q6_K_S
+        or QuantDType.Q8_K;
 
     public bool QuantAwareEnabled => _qatTarget is not null and not QuantDType.F32;
     public QuantDType? QuantAwareTarget => _qatTarget;

@@ -40,7 +40,7 @@ public sealed class TrainingWizardView : View
     private readonly Dictionary<string, TextField> _modelRows = new(StringComparer.Ordinal);
     private readonly Dictionary<string, TextField> _hyperRows = new(StringComparer.Ordinal);
 
-    private readonly string[] QatLabelsArr = ["F32 (off)", "F16", "Q8", "Q4"];
+    private readonly string[] QatLabelsArr = ["F32 (off)", "F16", "Q8", "Q6", "Q5", "Q4", "Q3", "Q2"];
     private readonly string[] KeepLabelsArr = ["All", "Fixed", "None"];
 
     private IList<JobComponent>? SelectedStages
@@ -491,8 +491,12 @@ public sealed class TrainingWizardView : View
     {
         null or "" or "F32" => 0,
         "F16" => 1,
-        "Q8_0" => 2,
-        "Q4_0" => 3,
+        "Q8_K" or "Q8_0" => 2,   // legacy Q8_0 jobs display as Q8_K
+        "Q6_K" => 3,
+        "Q5_K" => 4,
+        "Q4_K" or "Q4_0" => 5,   // legacy Q4_0 jobs display as Q4_K
+        "Q3_K" => 6,
+        "Q2_K" => 7,
         _ => 0,
     };
 
@@ -500,8 +504,12 @@ public sealed class TrainingWizardView : View
     {
         0 => null,
         1 => "F16",
-        2 => "Q8_0",
-        3 => "Q4_0",
+        2 => "Q8_K",
+        3 => "Q6_K",
+        4 => "Q5_K",
+        5 => "Q4_K",
+        6 => "Q3_K",
+        7 => "Q2_K",
         _ => null,
     };
 

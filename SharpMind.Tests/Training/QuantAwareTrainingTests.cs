@@ -26,8 +26,8 @@ namespace SharpMind.Tests.Training;
 ///   (<see cref="TrainingLinearLayer.Backward"/> never reads quantized weights);</item>
 ///   <item>block-format targets validate multiples of 32 while F16/F32/null stay
 ///   safe on any shape;</item>
-///   <item>a full <see cref="TrainLoop"/> run with Q8_0/Q4_0/F16 QAT on multiples-of-32
-///   dims descends loss.</item>
+///   <item>a full <see cref="TrainLoop"/> run with Q8_0/Q4_0/F16/K-quant QAT on
+///   aligned dims descends loss.</item>
 /// </list>
 /// </summary>
 public sealed class QuantAwareTrainingTests : IDisposable
@@ -35,7 +35,9 @@ public sealed class QuantAwareTrainingTests : IDisposable
     private readonly TempDirectory _dir = new();
     public void Dispose() => _dir.Dispose();
 
-    private const int In = 64;
+    // In is a multiple of both 32 (block formats) and 128 (K-quant column
+    // alignment), so every target in the theory below is exercisable on this shape.
+    private const int In = 128;
     private const int Out = 32;
     private const int Batch = 3;
 
@@ -106,6 +108,9 @@ public sealed class QuantAwareTrainingTests : IDisposable
     [InlineData(QuantDType.Q8_0)]
     [InlineData(QuantDType.Q4_0)]
     [InlineData(QuantDType.F16)]
+    [InlineData(QuantDType.Q8_K)]
+    [InlineData(QuantDType.Q6_K)]
+    [InlineData(QuantDType.Q4_K)]
     public void Forward_MatchesQuantizedDequantizedReference(QuantDType target)
     {
         using var layer = MakeLayer("forward", In, Out);
@@ -136,6 +141,7 @@ public sealed class QuantAwareTrainingTests : IDisposable
     [Theory]
     [InlineData(QuantDType.Q8_0)]
     [InlineData(QuantDType.F16)]
+    [InlineData(QuantDType.Q4_K)]
     public void Backward_GradientIgnoresQuantization(QuantDType target)
     {
         var rng = new Random(91);
@@ -178,6 +184,32 @@ public sealed class QuantAwareTrainingTests : IDisposable
     }
 
     [Theory]
+    [InlineData(QuantDType.Q2_K)]
+    [InlineData(QuantDType.Q3_K)]
+    [InlineData(QuantDType.Q4_K)]
+    [InlineData(QuantDType.Q5_K)]
+    [InlineData(QuantDType.Q6_K)]
+    [InlineData(QuantDType.Q8_K)]
+    public void EnableQuantAwareTraining_KQuantOnNon256FlattenedLength_Throws(QuantDType target)
+    {
+        // 13 x 7 = 91 elements — not a multiple of 256.
+        using var layer = MakeLayer("odd", 13, 7);
+        Assert.Throws<InvalidOperationException>(() => layer.EnableQuantAwareTraining(target));
+    }
+
+    [Theory]
+    [InlineData(QuantDType.Q2_K)]
+    [InlineData(QuantDType.Q8_K)]
+    public void EnableQuantAwareTraining_KQuantOnAlignedDims_Ok(QuantDType target)
+    {
+        // In x Out = 128 x 32 = 4096 elements (multiple of 256) and In is a
+        // multiple of 128, so the K-quant column alignment holds.
+        using var layer = MakeLayer("aligned", In, Out);
+        layer.EnableQuantAwareTraining(target);
+        Assert.Equal(target, layer.QuantAwareTarget);
+    }
+
+    [Theory]
     [InlineData(QuantDType.F16)]
     [InlineData(QuantDType.F32)]
     [InlineData(null)]
@@ -190,12 +222,12 @@ public sealed class QuantAwareTrainingTests : IDisposable
 
     private static ModelConfig QatModelConfig => new()
     {
-        VocabSize = 64,   // % 32 == 0
-        HiddenDim = 32,   // % 32 == 0
+        VocabSize = 128,  // % 32 == 0; tied head [128, 128] = 16384 % 256 == 0
+        HiddenDim = 128,  // % 32 == 0 and % 128 == 0 (K-quant column alignment)
         NumLayers = 1,
         NumHeads = 4,
         NumKvHeads = 4,
-        FfnDim = 64,      // % 32 == 0
+        FfnDim = 128,     // % 32 == 0 and % 128 == 0
         MaxSeqLen = 16,
     };
 
@@ -203,6 +235,8 @@ public sealed class QuantAwareTrainingTests : IDisposable
     [InlineData(QuantDType.Q8_0)]
     [InlineData(QuantDType.Q4_0)]
     [InlineData(QuantDType.F16)]
+    [InlineData(QuantDType.Q4_K)]
+    [InlineData(QuantDType.Q6_K)]
     public void TrainLoop_WithQat_LossDescends(QuantDType target)
     {
         var sharpConfig = Scalar();

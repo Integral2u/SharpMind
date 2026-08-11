@@ -18,13 +18,21 @@ namespace SharpMind.Core.Quantization;
 /// <see cref="Quantize"/> enforces this and throws otherwise — the safe
 /// fallback for odd-sized tensors is F32 or F16.
 /// </summary>
-public static class TensorQuantizer
+public static partial class TensorQuantizer
 {
     private const int Qk = 32;
 
     /// <summary>True when <paramref name="dtype"/> can be produced by <see cref="Quantize"/>.</summary>
-    public static bool IsSupportedTarget(QuantDType dtype) => dtype is
-        QuantDType.F32 or QuantDType.F16 or QuantDType.Q8_0 or QuantDType.Q4_0;
+    public static bool IsSupportedTarget(QuantDType dtype) => dtype switch
+    {
+        QuantDType.F32 or QuantDType.F16 or QuantDType.Q8_0 or QuantDType.Q4_0
+            or QuantDType.Q2_K or QuantDType.Q2_K_S
+            or QuantDType.Q3_K or QuantDType.Q3_K_S or QuantDType.Q3_K_M or QuantDType.Q3_K_L
+            or QuantDType.Q4_K or QuantDType.Q4_K_S or QuantDType.Q4_K_M
+            or QuantDType.Q5_K or QuantDType.Q5_K_S or QuantDType.Q5_K_M
+            or QuantDType.Q6_K or QuantDType.Q6_K_S or QuantDType.Q8_K => true,
+        _ => false,
+    };
 
     /// <summary>
     /// Quantizes a flat float buffer (the GGUF-layout data for the tensor,
@@ -39,8 +47,14 @@ public static class TensorQuantizer
             QuantDType.F16 => WriteF16(values),
             QuantDType.Q8_0 => WriteBlock(values, shape, blockBytes: 34, isQ4: false),
             QuantDType.Q4_0 => WriteBlock(values, shape, blockBytes: 18, isQ4: true),
+            QuantDType.Q2_K or QuantDType.Q2_K_S => WriteKQ2(values),
+            QuantDType.Q3_K or QuantDType.Q3_K_S or QuantDType.Q3_K_M or QuantDType.Q3_K_L => WriteKQ3(values),
+            QuantDType.Q4_K or QuantDType.Q4_K_S or QuantDType.Q4_K_M => WriteKQ4(values),
+            QuantDType.Q5_K or QuantDType.Q5_K_S or QuantDType.Q5_K_M => WriteKQ5(values),
+            QuantDType.Q6_K or QuantDType.Q6_K_S => WriteKQ6(values),
+            QuantDType.Q8_K => WriteKQ8(values),
             _ => throw new NotSupportedException(
-                $"Quantization to {dtype} is not supported. Use F32, F16, Q8_0 or Q4_0.")
+                $"Quantization to {dtype} is not supported. Use F32, F16, Q8_0, Q4_0 or a K-quant (Q2_K..Q8_K).")
         };
     }
 

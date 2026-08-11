@@ -100,18 +100,23 @@ public sealed class Transformer : IDisposable
     /// transformer (attention + FFN projections). The tied LM head is covered by
     /// <see cref="BackpropEngine"/> using this property. F32/null = disabled.
     /// Block formats (Q8_0/Q4_0) throw via <see cref="TrainingLinearLayer"/> when
-    /// a layer's weight dimensions are not multiples of 32.
+    /// a layer's weight dimensions are not multiples of 32; K-quant targets
+    /// require a HiddenDim multiple of 128 and a flattened tied-head length that
+    /// is a multiple of 256.
     /// </summary>
     public void EnableQuantAwareTraining(QuantDType? target)
     {
-        if (target is QuantDType.Q8_0 or QuantDType.Q4_0)
-        {
-            int V = _weights.Config.VocabSize, H = _weights.Config.HiddenDim;
-            if (V % 32 != 0 || H % 32 != 0)
-                throw new InvalidOperationException(
-                    $"QAT with {target} requires the tied-head weight [{V}, {H}] to be a " +
-                    "multiple of 32 in both dimensions. Use F16 or disable QAT.");
-        }
+        int V = _weights.Config.VocabSize, H = _weights.Config.HiddenDim;
+        if (target is QuantDType.Q8_0 or QuantDType.Q4_0 && (V % 32 != 0 || H % 32 != 0))
+            throw new InvalidOperationException(
+                $"QAT with {target} requires the tied-head weight [{V}, {H}] to be a " +
+                "multiple of 32 in both dimensions. Use F16 or disable QAT.");
+        if (IsKQuant(target) &&
+            (H % 128 != 0 || ((long)V * H) % 256 != 0))
+            throw new InvalidOperationException(
+                $"QAT with {target} requires the tied-head weight [{V}, {H}] to have a " +
+                $"HiddenDim multiple of 128 and a flattened length ({V * H}) that is a " +
+                "multiple of 256. Use F16 or disable QAT.");
         QuantAwareTrainingTarget = target;
         if (_blocks is null) return;
         foreach (var block in _blocks)
@@ -123,6 +128,15 @@ public sealed class Transformer : IDisposable
                 layer?.EnableQuantAwareTraining(target);
         }
     }
+
+    /// <summary>True when <paramref name="target"/> is a K-quant block format (Q2_K..Q8_K).</summary>
+    private static bool IsKQuant(QuantDType? target) => target is
+        QuantDType.Q2_K or QuantDType.Q2_K_S
+        or QuantDType.Q3_K or QuantDType.Q3_K_S or QuantDType.Q3_K_M or QuantDType.Q3_K_L
+        or QuantDType.Q4_K or QuantDType.Q4_K_S or QuantDType.Q4_K_M
+        or QuantDType.Q5_K or QuantDType.Q5_K_S or QuantDType.Q5_K_M
+        or QuantDType.Q6_K or QuantDType.Q6_K_S
+        or QuantDType.Q8_K;
 
     public byte[]? RawEmbedding => _weights.RawEmbedding;
     public QuantDType? RawEmbeddingDtype => _weights.RawEmbeddingDtype;

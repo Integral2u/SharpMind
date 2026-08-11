@@ -25,9 +25,13 @@ namespace SharpMind.Samples.Training;
 ///
 /// Choose the target via <see cref="QuantTarget"/>:
 /// <list type="bullet">
+///   <item>K-quants (<see cref="QuantDType.Q6_K"/>/<see cref="QuantDType.Q4_K"/>/
+///   <see cref="QuantDType.Q2_K"/>, etc.) — best quality-per-byte for fake-quant
+///   training; require each layer's InFeatures to be a multiple of 128 and the
+///   flattened weight length a multiple of 256 (this example's dims qualify:
+///   1024×128 tied head, 128/512-wide attention and FFN projections).</item>
 ///   <item><see cref="QuantDType.Q8_0"/> / <see cref="QuantDType.Q4_0"/> —
-///   block formats; require every weight dimension to be a multiple of 32
-///   (this example's 1024/128/512 config qualifies).</item>
+///   legacy block formats; require every weight dimension to be a multiple of 32.</item>
 ///   <item><see cref="QuantDType.F16"/> — always safe on any shape.</item>
 ///   <item><see cref="QuantDType.F32"/> or null — disables QAT, identical to
 ///   the plain backprop example.</item>
@@ -49,7 +53,7 @@ public static class SmmQuantAwareTrainingExample
     private const int Seed = 1234;
 
     /// <summary>The quantized dtype to fake-quantize forwards to while training.</summary>
-    private const QuantDType QuantTarget = QuantDType.Q8_0;
+    private const QuantDType QuantTarget = QuantDType.Q6_K;
 
     public static async Task RunAsync()
     {
@@ -64,15 +68,17 @@ public static class SmmQuantAwareTrainingExample
         await Console.Out.WriteLineAsync($"Tokenizer: vocab={tokenizer.VocabSize}");
 
         // 2. Model — every weight dim is a multiple of 32 so block targets
-        //    (Q8_0/Q4_0) are layout-correct.
+        //    (Q8_0/Q4_0) are layout-correct; InFeatures are multiples of 128 and
+        //    flattened lengths multiples of 256 so K-quant targets are correct
+        //    for the per-column VecDot sub-scale addressing.
         var modelConfig = new ModelConfig
         {
-            VocabSize = tokenizer.VocabSize, // 1024 % 32 == 0
-            HiddenDim = 128,                 // 128  % 32 == 0
+            VocabSize = tokenizer.VocabSize, // 1024 % 32 == 0, 1024*128 % 256 == 0
+            HiddenDim = 128,                 // 128  % 32 == 0 and % 128 == 0
             NumLayers = 4,
             NumHeads = 8,
             NumKvHeads = 8,
-            FfnDim = 512,                    // 512  % 32 == 0
+            FfnDim = 512,                    // 512  % 32 == 0, % 128 == 0, 512*128 % 256 == 0
             MaxSeqLen = MaxContextLen,
             NormEps = 1e-3f,
         };

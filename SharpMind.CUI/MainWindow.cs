@@ -1,5 +1,6 @@
 using NStack;
 using SharpMind.CUI.App;
+using SharpMind.Core.Quantization;
 using SharpMind.Inference.Agent;
 using SharpMind.Model.Format;
 using SharpMind.Model.Format.Conversion;
@@ -126,6 +127,7 @@ public sealed class MainWindow : Window
                 new("_Debug session (no model)...", "", StartDebugSession),
                 new("Modify _model metadata...", "", ShowModelMetaModifier),
                 new("T_rain a model...", "", ShowTrainingWizard),
+                new("_Quantize model...", "", ShowModelQuantizer),
                 new("_Convert model...", "", ShowModelConverter)
             }),
             new("_Options", new MenuItem[]
@@ -302,6 +304,167 @@ public sealed class MainWindow : Window
         {
             MessageBox.Query("Convert model",
                 $"Converted {Path.GetFileName(source)} → {target}\n({new FileInfo(target).Length:N0} bytes)", "OK");
+        }
+    }
+
+    /// <summary>
+    /// Model → Quantize model...: re-quantize an existing .SMM file's weights to
+    /// a K-quant level (or a byte budget), saving to a chosen destination using
+    /// the same tmp-file + atomic-replace safety as the converter. A small level
+    /// dialog picks between a fixed K-quant and the automatic budget-floor mode.
+    /// </summary>
+    private void ShowModelQuantizer()
+    {
+        string start = _options.ProjectPath ?? _settings.DefaultModelFolder ?? Directory.GetCurrentDirectory();
+        string? sourcePath = FilePickerDialog.Show("Quantize model", start, PickerMode.File, patterns: ["*.smm"]);
+        if (sourcePath is null) return;
+
+        var levels = new[] { QuantDType.Q8_K, QuantDType.Q6_K, QuantDType.Q5_K, QuantDType.Q4_K, QuantDType.Q3_K, QuantDType.Q2_K };
+        string[] options = ["Q8_K (best quality)", "Q6_K", "Q5_K", "Q4_K (balanced)", "Q3_K", "Q2_K (smallest)", "Fit byte budget…"];
+
+        var picker = new Dialog("Quantize model", 46, 12);
+        var prompt = new Label("Quantize weights to:") { X = 1, Y = 1 };
+        var list = new ListView(options) { X = 1, Y = 2, Width = 44, Height = options.Length };
+        var trigger = new Action(() =>
+        {
+            int i = list.SelectedItem;
+            if (i < 0 || i >= options.Length) return;
+            if (i < 6)
+            {
+                Application.RequestStop();
+                RunQuantize(sourcePath, levels[i], $"Quantize model — {levels[i]}");
+            }
+            else
+            {
+                Application.RequestStop();
+                AskBudgetFloorAndRun(sourcePath);
+            }
+        });
+        var okButton = new Button("OK") { X = 1, Y = options.Length + 3 };
+        okButton.Clicked += trigger;
+        var cancelButton = new Button("Cancel") { X = Pos.Right(okButton) + 2, Y = options.Length + 3 };
+        cancelButton.Clicked += () => Application.RequestStop();
+        list.OpenSelectedItem += (_) => trigger();
+        picker.Add(prompt, list, okButton, cancelButton);
+        Application.Run(picker);
+    }
+
+    private void AskBudgetFloorAndRun(string sourcePath)
+    {
+        string[] floors = ["Q8_K", "Q6_K", "Q5_K", "Q4_K (default)", "Q3_K", "Q2_K"];
+        var picker = new Dialog("Quantize by budget", 54, 16);
+        var prompt = new Label("Quality floor (never go coarser than):") { X = 1, Y = 1 };
+        var floorList = new ListView(floors) { X = 1, Y = 2, Width = 52, Height = floors.Length };
+        var budgetPrompt = new Label("Target size (MB):") { X = 1, Y = floors.Length + 4 };
+        var budgetInput = new TextView { X = 16, Y = floors.Length + 4, Width = 12, Height = 1, Text = "512" };
+        var run = new Action(() =>
+        {
+            int fi = floorList.SelectedItem;
+            if (fi < 0) fi = 2; // default Q4_K when nothing was highlighted
+            var floor = new[] { QuantDType.Q8_K, QuantDType.Q6_K, QuantDType.Q5_K, QuantDType.Q4_K, QuantDType.Q3_K, QuantDType.Q2_K }[fi];
+            if (!double.TryParse(budgetInput.Text.ToString().Trim(), out double mb) || mb <= 0)
+            {
+                MessageBox.ErrorQuery("Quantize model", "Enter a positive target size in MB.", "OK");
+                return;
+            }
+            Application.RequestStop();
+            RunQuantizeBudget(sourcePath, (long)(mb * 1024 * 1024), floor);
+        });
+        var okButton = new Button("OK") { X = 1, Y = floors.Length + 6 };
+        okButton.Clicked += run;
+        var cancelButton = new Button("Cancel") { X = Pos.Right(okButton) + 2, Y = floors.Length + 6 };
+        cancelButton.Clicked += () => Application.RequestStop();
+        picker.Add(prompt, floorList, budgetPrompt, budgetInput, okButton, cancelButton);
+        Application.Run(picker);
+    }
+
+    private void RunQuantize(string sourcePath, QuantDType target, string title)
+    {
+        var destPath = AskQuantizeDestination(sourcePath, $"-{target}", title);
+        if (destPath is null) return;
+        RunQuantizeCore(sourcePath, destPath, new SmmQuantOptions { DefaultLevel = target }, title);
+    }
+
+    private void RunQuantizeBudget(string sourcePath, long targetBytes, QuantDType floor)
+    {
+        var destPath = AskQuantizeDestination(sourcePath, "-quantized", "Quantize by budget");
+        if (destPath is null) return;
+        RunQuantizeCore(sourcePath, destPath, new SmmQuantOptions { TargetBytes = targetBytes, Floor = floor }, "Quantize by budget");
+    }
+
+    /// <summary>Save-as: lets the user choose where the quantized model goes. Defaults to the source folder.</summary>
+    private static string? AskQuantizeDestination(string sourcePath, string suffix, string title)
+    {
+        string start = Path.GetDirectoryName(sourcePath) ?? Directory.GetCurrentDirectory();
+        string defaultName = Path.GetFileNameWithoutExtension(sourcePath) + suffix + ".smm";
+        return FilePickerDialog.Show(title + " — where to save?", start, PickerMode.SaveFile, defaultName: defaultName);
+    }
+
+    private void RunQuantizeCore(string sourcePath, string destPath, SmmQuantOptions options, string title)
+    {
+        long before = new FileInfo(sourcePath).Length;
+        var cancelSource = new CancellationTokenSource();
+
+        string? error = null;
+        bool done = false;
+        int progressPercent = -1;
+
+        var dialog = new Dialog($"{title} — {Path.GetFileName(destPath)}", 60, 8);
+        var statusLabel = new Label("Quantizing…") { X = 1, Y = 1, Width = Dim.Fill(2) };
+        var cancelButton = new Button("Cancel") { X = Pos.AnchorEnd(12), Y = Pos.AnchorEnd(1) };
+        cancelButton.Clicked += () => cancelSource.Cancel();
+        dialog.Add(statusLabel, cancelButton);
+
+        var taskProgress = new Progress<float>(p => Application.MainLoop.Invoke(() =>
+        {
+            int percent = Math.Clamp((int)(p * 100), 0, 100);
+            if (percent != progressPercent)
+            {
+                progressPercent = percent;
+                statusLabel.Text = $"Quantizing… {percent}%";
+            }
+        }));
+
+        string src = sourcePath, dst = destPath;
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                SmmQuantizer.Quantize(src, dst, options, cancelSource.Token, taskProgress);
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception ex) { error = ex.Message; }
+            finally { done = true; }
+        });
+
+        object pollToken = null!;
+        bool poll(MainLoop _)
+        {
+            if (done)
+            {
+                Application.MainLoop.RemoveTimeout(pollToken);
+                Application.RequestStop();
+                return false;
+            }
+            return true;
+        }
+        pollToken = Application.MainLoop.AddTimeout(TimeSpan.FromMilliseconds(100), poll);
+        Application.Run(dialog);
+
+        if (cancelSource.IsCancellationRequested)
+        {
+            MessageBox.Query(title, "Quantization cancelled — nothing was saved.", "OK");
+        }
+        else if (error is not null)
+        {
+            MessageBox.ErrorQuery(title, $"Quantization failed:\n{error}", "OK");
+        }
+        else if (File.Exists(destPath))
+        {
+            long after = new FileInfo(destPath).Length;
+            MessageBox.Query(title,
+                $"Quantized {Path.GetFileName(sourcePath)} → {Path.GetFileName(destPath)}\n" +
+                $"({before:N0} → {after:N0} bytes, {(before > 0 ? 100 * (1 - (double)after / before) : 0):F1}% smaller)", "OK");
         }
     }
 
