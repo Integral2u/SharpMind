@@ -27,4 +27,9 @@
     <ProjectReference Include="..\SharpMind.Training\SharpMind.Training.csproj" />
     <ProjectReference Include="..\SharpMind.Inference\SharpMind.Inference.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <None Update="Plugins\Readme.txt">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
 </Project>

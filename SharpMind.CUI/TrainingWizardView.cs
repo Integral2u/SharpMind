@@ -91,7 +91,7 @@ public sealed class TrainingWizardView : View
         saveBtn.Clicked += SaveJob;
         var loadBtn = new Button("Load job…") { X = Pos.Right(saveBtn) + 1, Y = row };
         loadBtn.Clicked += LoadJob;
-        form.Add(AddLabel("Job name:"), _nameField, saveBtn, loadBtn);
+        form.Add(AddLabel("Model name:"), _nameField, saveBtn, loadBtn);
         row += 2;
 
         // --- Sources --------------------------------
@@ -284,6 +284,7 @@ public sealed class TrainingWizardView : View
     private void RefreshAll()
     {
         _jobPathLabel.Text = string.IsNullOrEmpty(_savedPath) ? "New job (not yet saved)" : $"Saved: {Path.GetFileName(_savedPath)}";
+        _nameField.Text = (ustring)(_job.Name ?? "");
         RefreshMap();
         RefreshSources();
         RefreshStages();
@@ -692,7 +693,7 @@ public sealed class TrainingWizardView : View
 
     private static TrainJobSettings NewJob(AppSettings settings) => new()
     {
-        Name = $"job-{DateTime.Now:yyyyMMdd-HHmmss}",
+        Name = $"{SharpMind.Inference.Agent.GreekTier.RandomDeity()}-{DateTime.Now:yyyyMMdd-HHmmss}",
         ExportPath = string.IsNullOrWhiteSpace(settings.LastExportPath) ? null : settings.LastExportPath,
     };
 

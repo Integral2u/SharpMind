@@ -81,4 +81,15 @@ public static class GreekTier
     /// <summary>Returns the default temperature for a null-temperature config based on tier cycling.</summary>
     public static float DefaultTemperatureForUnnamed(int unnamedCounter) =>
         DefaultTemperature(Tiers[unnamedCounter % Tiers.Length]);
+
+    /// <summary>
+    /// Picks a random deity from any tier pool (e.g. used for auto-naming
+    /// checkpoints/models in the <c>{Deity}-{timestamp}</c> format).
+    /// </summary>
+    public static string RandomDeity(Random? rng = null)
+    {
+        var r = rng ?? Random.Shared;
+        var pool = Deities.Values.SelectMany(p => p).ToArray();
+        return pool[r.Next(pool.Length)];
+    }
 }
