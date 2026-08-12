@@ -145,4 +145,59 @@ public sealed class ComponentRegistryTests
         Assert.NotNull(pii);
         Assert.Equal(ComponentKind.Stage, pii.Kind);
     }
+
+    [Fact]
+    public void Scan_InterfaceFallback_RegistersUnattributedSourceAndStage()
+    {
+        // Fixture types live in the test assembly and carry no [ComponentKind].
+        var warnings = new List<string>();
+        var registry = ComponentRegistry.Scan(typeof(UnattributedFallbackSource).Assembly, warnings);
+
+        Assert.Contains(registry, d => d.Type == typeof(UnattributedFallbackSource) && d.Kind == ComponentKind.Source);
+        Assert.Contains(registry, d => d.Type == typeof(UnattributedFallbackStage) && d.Kind == ComponentKind.Stage);
+
+        var src = registry.Single(d => d.Type == typeof(UnattributedFallbackSource));
+        Assert.Equal(nameof(UnattributedFallbackSource), src.Name);
+        Assert.Contains("data source", src.Description, StringComparison.OrdinalIgnoreCase);
+
+        var stage = registry.Single(d => d.Type == typeof(UnattributedFallbackStage));
+        Assert.Equal(nameof(UnattributedFallbackStage), stage.Name);
+        Assert.Contains("pipeline stage", stage.Description, StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(warnings);
+    }
+
+    [Fact]
+    public void Scan_AttributeStillWins_OverInterfaceFallbackName()
+    {
+        var registry = ComponentRegistry.Scan(typeof(UnattributedFallbackSource).Assembly);
+        var attr = registry.Single(d => d.Type == typeof(AttributedFallbackSource));
+        Assert.Equal("Custom Attributed Source", attr.Name);
+        Assert.Equal("Declared description.", attr.Description);
+    }
+}
+
+/// <summary>Test fixture: an IDataSource without [ComponentKind], discovered by interface fallback.</summary>
+public sealed class UnattributedFallbackSource : IDataSource
+{
+    public long? EstimatedCount => 0;
+    public string Description => "Unattributed fallback source.";
+    public IAsyncEnumerable<string> ReadAsync(CancellationToken cancellationToken = default) => AsyncEnumerable.Empty<string>();
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+}
+
+/// <summary>Test fixture: an ICleaningStage without [ComponentKind], discovered by interface fallback.</summary>
+public sealed class UnattributedFallbackStage : ICleaningStage
+{
+    public string Name => "Unattributed Fallback Stage";
+    public string? Process(string document) => document;
+}
+
+/// <summary>Test fixture: carries [ComponentKind] so the attribute supplies the display name.</summary>
+[ComponentKind("Custom Attributed Source", "Declared description.")]
+public sealed class AttributedFallbackSource : IDataSource
+{
+    public long? EstimatedCount => 0;
+    public string Description => "Attributed source.";
+    public IAsyncEnumerable<string> ReadAsync(CancellationToken cancellationToken = default) => AsyncEnumerable.Empty<string>();
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 }

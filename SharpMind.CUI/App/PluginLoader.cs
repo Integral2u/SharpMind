@@ -37,6 +37,10 @@ public static class PluginLoader
         if (!Directory.Exists(directory))
             return result;
 
+        // Let plugins resolve sibling dependency DLLs from this folder and serve
+        // dependencies from their own embedded resources (self-contained DLLs).
+        PluginAssemblyResolver.RegisterDirectory(directory);
+
         foreach (var dllPath in Directory.GetFiles(directory, "*.dll"))
         {
             Assembly asm;
@@ -49,6 +53,7 @@ public static class PluginLoader
                 result.Warnings.Add($"Failed to load '{Path.GetFileName(dllPath)}': {ex.Message}");
                 continue;
             }
+            PluginAssemblyResolver.RegisterEmbeddedResources(asm);
             state.Scan(asm, Path.GetFileName(dllPath));
         }
 
@@ -79,6 +84,13 @@ public static class PluginLoader
                 result.Warnings.Add($"Failed to load embedded plugin '{name}': {ex.Message}");
                 continue;
             }
+            // SMM-embedded plugins carry their dependencies as embedded *.dll
+            // resources inside the same bytes; serve those on demand. Note this
+            // path never probes the file system or network — an embedded plugin
+            // must be self-contained, and any file/network access its code makes
+            // at run time goes through the session permission gate like any
+            // other plugin tool.
+            PluginAssemblyResolver.RegisterEmbeddedResources(asm);
             state.Scan(asm, name);
         }
 

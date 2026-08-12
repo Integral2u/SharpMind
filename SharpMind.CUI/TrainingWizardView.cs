@@ -384,8 +384,8 @@ public sealed class TrainingWizardView : View
         var picked = Pick(ComponentKind.Source);
         if (picked is null) return;
         _job.Sources.Add(new JobSource { Component = ToJobComponent(picked) });
-        _sourceList.SelectedItem = _job.Sources.Count - 1;
         RefreshSources();
+        _sourceList.SelectedItem = _job.Sources.Count - 1;
     }
 
     private void EditSource()
@@ -425,8 +425,8 @@ public sealed class TrainingWizardView : View
         var picked = Pick(ComponentKind.Stage);
         if (picked is null) return;
         stages.Add(ToJobComponent(picked));
-        _stageList.SelectedItem = stages.Count - 1;
         RefreshStages();
+        _stageList.SelectedItem = stages.Count - 1;
     }
 
     private void EditStage()
@@ -611,7 +611,7 @@ public sealed class TrainingWizardView : View
 
     private void SaveJob()
     {
-        string path = Path.Combine(TrainJobSettings.DefaultFolder, Sanitize(_job.Name) + ".json");
+        string path = Path.Combine(TrainJobSettings.DefaultFolder, Sanitize(_job.Name) + TrainJobSettings.JobExtension);
         if (_job.Save(path, out var error))
         {
             _savedPath = path;
@@ -622,28 +622,17 @@ public sealed class TrainingWizardView : View
 
     private void LoadJob()
     {
-        var files = TrainJobSettings.ListSaved();
-        if (files.Count == 0)
-        {
-            MessageBox.ErrorQuery("Load job", "No saved training jobs found.", "OK");
-            return;
-        }
-        var names = files.Select(f => (ustring)Path.GetFileNameWithoutExtension(f)).ToArray();
-        int idx = 0;
-        var dialog = new Dialog("Load training job", 50, Math.Min(12, files.Count + 5));
-        var list = new ListView(names) { X = 1, Y = 0, Width = Dim.Fill(2), Height = Dim.Fill(3) };
-        var ok = new Button("Load") { X = 1, Y = Pos.AnchorEnd(1), IsDefault = true };
-        var cancel = new Button("Cancel") { X = Pos.Right(ok) + 2, Y = Pos.AnchorEnd(1) };
-        ok.Clicked += () => { idx = list.SelectedItem; Application.RequestStop(); };
-        cancel.Clicked += () => { idx = -1; Application.RequestStop(); };
-        dialog.Add(list, ok, cancel);
-        Application.Run(dialog);
-        if (idx < 0 || idx >= files.Count) return;
+        var picked = FilePickerDialog.Show(
+            "Load training job",
+            TrainJobSettings.DefaultFolder,
+            PickerMode.File,
+            "*" + TrainJobSettings.JobExtension);
+        if (picked is null) return;
 
-        var loaded = TrainJobSettings.Load(files[idx], out var err);
+        var loaded = TrainJobSettings.Load(picked, out var err);
         if (loaded is null) { MessageBox.ErrorQuery("Load job", err ?? "Not a valid job file.", "OK"); return; }
         _job = loaded;
-        _savedPath = files[idx];
+        _savedPath = picked;
         RefreshAll();
         _nameField.SetFocus();
     }

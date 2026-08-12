@@ -16,31 +16,46 @@ public sealed class DataLoader
     private readonly Func<string, int[]> _tokenise;
     private readonly IBatchStrategy _batcher;
     private readonly int _prefetchBuffer;
+    private readonly int? _maxBatches;
 
     public DataLoader(
         PipelineNode pipeline,
         Func<string, int[]> tokenise,
         IBatchStrategy batcher,
-        int prefetchBuffer = 10)
+        int prefetchBuffer = 10,
+        int? maxBatches = null)
     {
         ArgumentNullException.ThrowIfNull(pipeline);
         ArgumentNullException.ThrowIfNull(tokenise);
         ArgumentNullException.ThrowIfNull(batcher);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(prefetchBuffer);
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(maxBatches ?? 1, 0);
 
         _pipeline = pipeline;
         _tokenise = tokenise;
         _batcher = batcher;
         _prefetchBuffer = prefetchBuffer;
+        _maxBatches = maxBatches;
     }
 
     /// <summary>
     /// Streams training batches from the configured pipeline with prefetching.
     /// The prefetcher runs in the background to ensure the GPU doesn't starve.
     /// </summary>
+    /// <param name="maxBatches">
+    /// Optional upper bound on the number of batches to emit. When set, the
+    /// pipeline is re-enumerated (epoch-style) until the budget is reached so
+    /// a small corpus can feed arbitrarily long training runs. When null, the
+    /// constructor budget is used; if that is also null, the pipeline is
+    /// consumed exactly once and the stream completes when it ends.
+    /// </param>
     public async IAsyncEnumerable<TrainingBatch> LoadAsync(
+        int? maxBatches = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        int? budget = maxBatches ?? _maxBatches;
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(budget ?? 1, 0);
+
         // Bounded channel provides backpressure: if the GPU is slow, the CPU stops prefetching.
         var channel = Channel.CreateBounded<TrainingBatch>(new BoundedChannelOptions(_prefetchBuffer)
         {
@@ -49,14 +64,30 @@ public sealed class DataLoader
             SingleWriter = true
         });
 
-        // Background producer: feeds the channel from the batcher
+        // Background producer: feeds the channel from the batcher, re-enumerating
+        // the pipeline (epoch style) until the batch budget is satisfied.
         var producer = Task.Run(async () =>
         {
             try
             {
-                await foreach (var batch in _batcher.BatchAsync(_pipeline.ReadAsync(cancellationToken), _tokenise, cancellationToken))
+                int produced = 0;
+                bool firstPass = true;
+                while (firstPass || budget is { } b && produced < b)
                 {
-                    await channel.Writer.WriteAsync(batch, cancellationToken);
+                    firstPass = false;
+                    int passBatches = 0;
+                    await foreach (var batch in _batcher.BatchAsync(_pipeline.ReadAsync(cancellationToken), _tokenise, cancellationToken))
+                    {
+                        if (budget is { } remaining && produced >= remaining)
+                            break;
+                        await channel.Writer.WriteAsync(batch, cancellationToken);
+                        produced++;
+                        passBatches++;
+                    }
+                    // A pass that yields nothing (empty/filtered corpus) would loop
+                    // forever against a budget — terminate instead.
+                    if (passBatches == 0)
+                        break;
                 }
             }
             catch (OperationCanceledException) { }

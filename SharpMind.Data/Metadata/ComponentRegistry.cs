@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Reflection;
+using SharpMind.Core;
 using SharpMind.Data.Pipeline;
 using SharpMind.Data.Sources;
 
@@ -91,6 +92,18 @@ public static class ComponentRegistry
     /// constructor.
     /// </summary>
     public static List<ComponentDescriptor> Scan(Assembly assembly)
+        => Scan(assembly, null);
+
+    /// <summary>
+    /// Scans <paramref name="assembly"/> for discoverable components: classes
+    /// carrying <see cref="ComponentKindAttribute"/> are registered with their
+    /// declared name/description; any other class implementing
+    /// <see cref="IDataSource"/> or <see cref="ICleaningStage"/> is registered
+    /// too, using its type name and a generated description (attribute is
+    /// optional for external plugin assemblies). Types that could not be loaded
+    /// (missing dependency assemblies) are reported through <paramref name="warnings"/>.
+    /// </summary>
+    public static List<ComponentDescriptor> Scan(Assembly assembly, List<string>? warnings)
     {
         var result = new List<ComponentDescriptor>();
         if (assembly is null) return result;
@@ -100,20 +113,30 @@ public static class ComponentRegistry
         catch (ReflectionTypeLoadException ex)
         {
             types = ex.Types.Where(t => t is not null).Select(t => t!).ToArray();
+            if (warnings is not null)
+            {
+                foreach (var le in ex.LoaderExceptions)
+                {
+                    var msg = le?.Message
+                        ?? (le is FileNotFoundException fnf ? $"Missing assembly '{fnf.FileName}'." : "Unknown load failure.");
+                    warnings.Add($"'{assembly.GetName().Name}': {msg}");
+                }
+            }
         }
 
         foreach (var type in types)
         {
             if (!type.IsClass || type.IsAbstract) continue;
             var attr = type.GetCustomAttribute<ComponentKindAttribute>(inherit: false);
-            if (attr is null) continue;
 
             bool isSource = typeof(IDataSource).IsAssignableFrom(type);
             bool isStage  = typeof(ICleaningStage).IsAssignableFrom(type);
+            if (attr is null && !isSource && !isStage) continue;
+
             ComponentKind kind;
             if (isSource && !isStage) kind = ComponentKind.Source;
             else if (isStage && !isSource) kind = ComponentKind.Stage;
-            else continue;
+            else continue; // ambiguity or implements neither despite the attribute
 
             var ctor = SelectConstructor(type);
             if (ctor is null) continue;
@@ -123,8 +146,8 @@ public static class ComponentRegistry
             {
                 Type = type,
                 Kind = kind,
-                Name = attr.Name,
-                Description = attr.Description,
+                Name = attr?.Name ?? type.Name,
+                Description = attr?.Description ?? DescribeFallback(type, kind),
                 Parameters = parameters,
             });
         }
@@ -145,12 +168,19 @@ public static class ComponentRegistry
         if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
             return result;
 
+        // Resolve sibling dependency DLLs from the plugin folder and let each
+        // plugin serve dependency assemblies from its own embedded resources, so
+        // a single self-contained DLL (e.g. one carrying Parquet.Net as resources)
+        // is usable here exactly as it would be embedded in an SMM.
+        PluginAssemblyResolver.RegisterDirectory(directory);
+
         foreach (var dllPath in Directory.GetFiles(directory, "*.dll"))
         {
             try
             {
                 var asm = Assembly.LoadFrom(dllPath);
-                result.AddRange(Scan(asm));
+                PluginAssemblyResolver.RegisterEmbeddedResources(asm);
+                result.AddRange(Scan(asm, warnings));
             }
             catch (Exception ex)
             {
@@ -230,6 +260,11 @@ public static class ComponentRegistry
             || t == typeof(decimal)
             || t.IsEnum;
     }
+
+    private static string DescribeFallback(Type type, ComponentKind kind)
+        => kind == ComponentKind.Source
+            ? $"External data source ({type.FullName ?? type.Name})."
+            : $"External pipeline stage ({type.FullName ?? type.Name}).";
 
     private static ComponentParameter DescribeParameter(ParameterInfo p) => new()
     {

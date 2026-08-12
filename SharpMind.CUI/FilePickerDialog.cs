@@ -46,11 +46,12 @@ public static class FilePickerDialog
         // In SaveFile mode the file list defaults to the format implied by the
         // pre-filled name (standard save behavior: filter to the save format).
         // Explicit patterns (e.g. the source picker's *.gguf + *.smm) win.
+        // A single pattern may list several via ';' (e.g. "*.txt;*.md").
         string[] activePatterns = patterns is { Length: > 0 }
             ? patterns
             : mode == PickerMode.SaveFile && Path.GetExtension(defaultName) is { Length: > 1 } ext
                 ? [$"*{ext}"]
-                : [filePattern];
+                : filePattern.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
         void Refresh()
         {

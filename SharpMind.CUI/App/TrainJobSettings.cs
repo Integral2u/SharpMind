@@ -6,7 +6,10 @@ namespace SharpMind.CUI.App;
 /// <summary>A configured training job — the persisted "what &amp; how to train" document.</summary>
 public sealed class TrainJobSettings
 {
-    /// <summary>Display name; also the file name (<c>&lt;name&gt;.json</c>) under <see cref="DefaultFolder"/>.</summary>
+    /// <summary>File extension for saved training jobs (<c>*.smmt</c>).</summary>
+    public const string JobExtension = ".smmt";
+
+    /// <summary>Display name; also the file name (<c>&lt;name&gt;.smmt</c>) under <see cref="DefaultFolder"/>.</summary>
     public string Name { get; set; } = "Untitled";
 
     public DateTime SavedAtUtc { get; set; } = DateTime.UtcNow;
@@ -183,12 +186,11 @@ public sealed class TrainJobSettings
     public static List<string> ListSaved()
         => ListSavedIn(DefaultFolder);
 
-    /// <summary>Lists saved job JSONs in <paramref name="folder"/> excluding tokenizer cache files (<c>*.tokenizer.json</c>).</summary>
+    /// <summary>Lists saved job files in <paramref name="folder"/> matching <see cref="JobExtension"/>.</summary>
     public static List<string> ListSavedIn(string folder)
     {
         if (!Directory.Exists(folder)) return [];
-        return Directory.GetFiles(folder, "*.json")
-            .Where(f => !f.EndsWith(".tokenizer.json", StringComparison.OrdinalIgnoreCase))
+        return Directory.GetFiles(folder, "*" + JobExtension)
             .OrderByDescending(File.GetLastWriteTimeUtc)
             .ToList();
     }

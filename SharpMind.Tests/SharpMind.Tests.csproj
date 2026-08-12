@@ -7,10 +7,23 @@
     <IsPackable>false</IsPackable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <ApplicationIcon>SharpMind.ico</ApplicationIcon>
+    <EnableDefaultEmbeddedResourceItems>false</EnableDefaultEmbeddedResourceItems>
   </PropertyGroup>
 
   <ItemGroup>
     <Compile Remove="Reference\**" />
+  </ItemGroup>
+
+  <!--
+    Embeds a copy of SharpMind.Core.dll into the test assembly as two
+    embedded-resource dependencies (libs.ProbeDep.dll and a dotted-stem name).
+    This lets PluginAssemblyResolver tests exercise the embedded-resource
+    resolution path against a real loadable assembly. SharpMind.Core builds
+    first via the ProjectReference below, so its DLL exists by evaluation time.
+  -->
+  <ItemGroup Condition="Exists('$(MSBuildThisFileDirectory)..\SharpMind.Core\bin\$(Configuration)\net10.0\SharpMind.Core.dll')">
+    <EmbeddedResource Include="$(MSBuildThisFileDirectory)..\SharpMind.Core\bin\$(Configuration)\net10.0\SharpMind.Core.dll" LogicalName="libs.ProbeDep.dll" />
+    <EmbeddedResource Include="$(MSBuildThisFileDirectory)..\SharpMind.Core\bin\$(Configuration)\net10.0\SharpMind.Core.dll" LogicalName="libs.Newtonsoft.Json.dll" />
   </ItemGroup>
 
   <ItemGroup>

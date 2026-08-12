@@ -44,6 +44,71 @@ public sealed class DataLoaderIntegrationTests : IDisposable
     }
 
     [Fact]
+    public async Task LoadAsync_MaxBatches_LoopsPastSinglePass()
+    {
+        string path = _dir.Write("tiny.txt",
+            string.Join('\n', Enumerable.Range(0, 20).Select(i => $"word{i} foo bar")));
+
+        var pipeline = CleaningPipeline.From(new TextFileSource(path));
+        var loader   = new DataLoader(pipeline, Tokenise,
+                          new PackingBatcher(batchSize: 2, maxSeqLen: 16));
+
+        // The single-pass batch count is well under 10 — with a budget the
+        // loader must re-enumerate the pipeline until 10 batches are emitted.
+        const int budget = 10;
+        var batches = new List<TrainingBatch>();
+        await foreach (var batch in loader.LoadAsync(maxBatches: budget))
+            batches.Add(batch);
+
+        Assert.Equal(budget, batches.Count);
+        Assert.All(batches, b =>
+        {
+            Assert.Equal(2,  b.TokenIds.Shape.Rows);
+            Assert.Equal(16, b.TokenIds.Shape.Cols);
+            Assert.True(b.RealTokenCount > 0);
+        });
+
+        foreach (var b in batches) b.Dispose();
+    }
+
+    [Fact]
+    public async Task LoadAsync_ConstructorBudget_AppliesWhenNoArgGiven()
+    {
+        string path = _dir.Write("tiny2.txt",
+            string.Join('\n', Enumerable.Range(0, 20).Select(i => $"word{i} foo bar")));
+
+        var pipeline = CleaningPipeline.From(new TextFileSource(path));
+        var loader   = new DataLoader(pipeline, Tokenise,
+                          new PackingBatcher(batchSize: 2, maxSeqLen: 16),
+                          maxBatches: 7);
+
+        var batches = new List<TrainingBatch>();
+        await foreach (var batch in loader.LoadAsync())
+            batches.Add(batch);
+
+        Assert.Equal(7, batches.Count);
+        foreach (var b in batches) b.Dispose();
+    }
+
+    [Fact]
+    public async Task LoadAsync_MaxBatches_LessThanOnePass_StopsEarly()
+    {
+        string path = _dir.Write("tiny3.txt",
+            string.Join('\n', Enumerable.Range(0, 20).Select(i => $"word{i} foo bar")));
+
+        var pipeline = CleaningPipeline.From(new TextFileSource(path));
+        var loader   = new DataLoader(pipeline, Tokenise,
+                          new PackingBatcher(batchSize: 2, maxSeqLen: 16));
+
+        var batches = new List<TrainingBatch>();
+        await foreach (var batch in loader.LoadAsync(maxBatches: 2))
+            batches.Add(batch);
+
+        Assert.Equal(2, batches.Count);
+        foreach (var b in batches) b.Dispose();
+    }
+
+    [Fact]
     public async Task EndToEnd_Jsonl_SafetyStages()
     {
         string path = _dir.Write("data.jsonl",

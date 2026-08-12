@@ -116,7 +116,8 @@ public static class TrainRunner
                 maxSeqLen: job.SeqLen,
                 eosTokenId: tokenizer.EosId,
                 padTokenId: tokenizer.PadId);
-            var loader = new DataLoader(pipeline, s => tokenizer.Encode(s), batcher, prefetchBuffer: 4);
+            var loader = new DataLoader(pipeline, s => tokenizer.Encode(s), batcher, prefetchBuffer: 4,
+                maxBatches: job.TotalSteps * job.GradAccumSteps);
             Log($"Data pipeline: {loader.Describe()}");
 
             // 4. Model — empty float weights, randomised unless resuming.

@@ -56,7 +56,7 @@ public sealed class Trainer
         int currentStep = 0;
         float runningLoss = 0;
 
-        await foreach (var batch in _loader.LoadAsync(ct))
+        await foreach (var batch in _loader.LoadAsync(maxBatches: totalSteps, cancellationToken: ct))
         {
             if (currentStep >= totalSteps) break;
 

@@ -99,7 +99,7 @@ public sealed class TrainLoop
         int   accumCount  = 0;
         float accumLoss   = 0f;
 
-        await foreach (var batch in _loader.LoadAsync(cancellationToken))
+        await foreach (var batch in _loader.LoadAsync(cancellationToken: cancellationToken))
         {
             cancellationToken.ThrowIfCancellationRequested();
 

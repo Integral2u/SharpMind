@@ -14,7 +14,7 @@ public sealed class TrainJobSettingsTests
     public void SaveLoad_RoundTripsFullJob()
     {
         using var dir = new TempDirectory();
-        string path = dir.Write("job.json", "");
+        string path = dir.Write("job.smmt", "");
         File.Delete(path);
 
         var job = new TrainJobSettings
@@ -108,7 +108,7 @@ public sealed class TrainJobSettingsTests
     public void SaveLoad_NullListsAndDefaults()
     {
         using var dir = new TempDirectory();
-        string path = Path.Combine(dir.Path, Guid.NewGuid().ToString("N") + ".json");
+        string path = Path.Combine(dir.Path, Guid.NewGuid().ToString("N") + TrainJobSettings.JobExtension);
 
         var job = new TrainJobSettings { Name = "empty-job" };
         Assert.True(job.Save(path, out var saveErr));
@@ -152,18 +152,19 @@ public sealed class TrainJobSettingsTests
     }
 
     [Fact]
-    public void ListSaved_ExcludesTokenizerCacheFiles()
+    public void ListSaved_OnlyMatchesJobExtension()
     {
         using var dir = new TempDirectory();
-        File.WriteAllText(Path.Combine(dir.Path, "job-a.json"), "{}");
+        File.WriteAllText(Path.Combine(dir.Path, "job-a.smmt"), "{}");
         File.WriteAllText(Path.Combine(dir.Path, "job-a.tokenizer.json"), "{}");
-        File.WriteAllText(Path.Combine(dir.Path, "job-b.json"), "{}");
+        File.WriteAllText(Path.Combine(dir.Path, "job-b.smmt"), "{}");
 
         var saved = TrainJobSettings.ListSavedIn(dir.Path);
 
-        Assert.Contains(saved, p => Path.GetFileName(p) == "job-a.json");
-        Assert.Contains(saved, p => Path.GetFileName(p) == "job-b.json");
+        Assert.Contains(saved, p => Path.GetFileName(p) == "job-a.smmt");
+        Assert.Contains(saved, p => Path.GetFileName(p) == "job-b.smmt");
         Assert.DoesNotContain(saved, p => Path.GetFileName(p).EndsWith(".tokenizer.json"));
+        Assert.DoesNotContain(saved, p => Path.GetFileName(p).EndsWith(".json"));
     }
 
     [Fact]
@@ -179,7 +180,7 @@ public sealed class TrainJobSettingsTests
     public void SaveLoad_ResumeFromCheckpointPreserved()
     {
         using var dir = new TempDirectory();
-        string path = Path.Combine(dir.Path, "resume.json");
+        string path = Path.Combine(dir.Path, "resume" + TrainJobSettings.JobExtension);
 
         var job = new TrainJobSettings
         {
@@ -198,7 +199,7 @@ public sealed class TrainJobSettingsTests
     public void SaveLoad_EmbedOptionsRoundTrip()
     {
         using var dir = new TempDirectory();
-        string path = Path.Combine(dir.Path, "embed.json");
+        string path = Path.Combine(dir.Path, "embed" + TrainJobSettings.JobExtension);
 
         var job = new TrainJobSettings
         {
