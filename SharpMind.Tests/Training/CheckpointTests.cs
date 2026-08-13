@@ -47,6 +47,45 @@ public sealed class CheckpointTests
         }
     }
 
+    [Fact]
+    public void FindLatest_PicksHighestStepDirectory()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), "sm-latest-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(dir, "step-0000002"));
+            Directory.CreateDirectory(Path.Combine(dir, "step-0000001"));
+            Directory.CreateDirectory(Path.Combine(dir, "step-0000009"));
+            Directory.CreateDirectory(Path.Combine(dir, "step-0000009-final"));
+            Directory.CreateDirectory(Path.Combine(dir, "step-0000123"));
+            Directory.CreateDirectory(Path.Combine(dir, "unrelated"));
+
+            // Highest parsed step wins (123 > 9 > 2 > 1); non-step dirs ignored.
+            Assert.Equal(Path.Combine(dir, "step-0000123"), Checkpoint.FindLatest(dir));
+        }
+        finally
+        {
+            if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void FindLatest_ReturnsNull_WhenMissingOrEmpty()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), "sm-latest-" + Guid.NewGuid().ToString("N"));
+        Assert.Null(Checkpoint.FindLatest(dir));
+        try
+        {
+            Directory.CreateDirectory(dir);
+            Directory.CreateDirectory(Path.Combine(dir, "not-a-step"));
+            Assert.Null(Checkpoint.FindLatest(dir));
+        }
+        finally
+        {
+            if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
+        }
+    }
+
     private static float[] Copy(Parameter p)
     {
         var span = p.Data.Data;

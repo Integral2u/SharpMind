@@ -33,6 +33,16 @@ public static unsafe class GradientKernels
     // dL/db = sum(dL/dy, axis=0)     [OutFeatures]
 
     /// <summary>
+    /// Shared parallelism bound for training kernels: one worker per logical
+    /// processor. Kept modest to avoid oversubscription when a single step
+    /// launches many sequential Parallel.For regions.
+    /// </summary>
+    private static readonly ParallelOptions _parallel = new()
+    {
+        MaxDegreeOfParallelism = Environment.ProcessorCount
+    };
+
+    /// <summary>
     /// Scalar tier: returns dInput [B, InFeatures] and accumulates gradients
     /// into weight/bias parameters.
     /// </summary>
@@ -49,43 +59,53 @@ public static unsafe class GradientKernels
 
         var dInput = new Tensor<float>(B, In);
 
+        var dOutArr = dOutput;
+        var inArr   = input;
+        var wArr    = weight.Data;
+        var dWArr   = weight.Grad;
+        var dInArr  = dInput;
+
         // dInput = dOutput @ W   (W is [Out, In])
-        // Reordered: for (b) { for (o) { dInRow += dOutVal * WRow } } — sequential W access
-        for (int b = 0; b < B; b++)
+        // Threads are partitioned over batch rows — each worker writes only its
+        // own dInput rows, so no shared-write racing occurs.
+        Parallel.For(0, B, _parallel, b =>
         {
-            ReadOnlySpan<float> dOutRow = dOutput.RowSpan(b);
-            Span<float>         dInRow  = dInput.RowSpan(b);
+            int inBase = b * In, outBase = b * Out;
             for (int o = 0; o < Out; o++)
             {
-                float dOutVal = dOutRow[o];
-                ReadOnlySpan<float> wRow = weight.Data.RowSpan(o);
+                float dOutVal = dOutArr[outBase + o];
+                int wBase = o * In;
                 for (int i = 0; i < In; i++)
-                    dInRow[i] += dOutVal * wRow[i];
+                    dInArr[inBase + i] += dOutVal * wArr[wBase + i];
             }
-        }
+        });
 
         // dW += dOutput^T @ input   accumulated into weight.Grad
-        for (int b = 0; b < B; b++)
+        // Reordered to partition over output rows so each thread accumulates
+        // into disjoint dW rows (no cross-thread accumulation into the same weight).
+        Parallel.For(0, Out, _parallel, o =>
         {
-            ReadOnlySpan<float> inRow = input.RowSpan(b);
-            for (int o = 0; o < Out; o++)
+            int wBase = o * In;
+            for (int b = 0; b < B; b++)
             {
-                float dOutOB = dOutput[b, o];
-                Span<float> dWRow = weight.Grad.RowSpan(o);
+                float dOutOB = dOutArr[b * Out + o];
+                int inBase = b * In;
                 for (int i = 0; i < In; i++)
-                    dWRow[i] += dOutOB * inRow[i];
+                    dWArr[wBase + i] += dOutOB * inArr[inBase + i];
             }
-        }
+        });
 
         // db += sum(dOutput, axis=0)
         if (bias is not null)
         {
-            Span<float> dBias = bias.Grad.Data;
-            for (int b = 0; b < B; b++)
+            var dBias = bias.Grad;
+            Parallel.For(0, Out, _parallel, o =>
             {
-                ReadOnlySpan<float> dRow = dOutput.RowSpan(b);
-                for (int o = 0; o < Out; o++) dBias[o] += dRow[o];
-            }
+                float acc = 0f;
+                for (int b = 0; b < B; b++)
+                    acc += dOutArr[b * Out + o];
+                dBias[o] += acc;
+            });
         }
 
         return dInput;
@@ -108,17 +128,22 @@ public static unsafe class GradientKernels
 
         var dInput = new Tensor<float>(B, In);
 
-        // dInput = dOutput @ W   (W is [Out, In])
         fixed (float* pDOut = dOutput.Data, pW = weight.Data.Data, pDIn = dInput.Data)
         {
-            for (int b = 0; b < B; b++)
+            long dOutAddr = (long)pDOut;
+            long dInAddr  = (long)pDIn;
+            long wAddr    = (long)pW;
+
+            // dInput = dOutput @ W   (W is [Out, In])
+            // Threads partition over batch rows — each worker writes its own dInput rows.
+            Parallel.For(0, B, _parallel, b =>
             {
-                float* dOutRow = pDOut + (long)b * Out;
-                float* dInRow  = pDIn  + (long)b * In;
+                float* dOutRow = (float*)(dOutAddr + (long)b * Out * 4);
+                float* dInRow  = (float*)(dInAddr + (long)b * In * 4);
                 for (int o = 0; o < Out; o++)
                 {
                     float dOutVal = dOutRow[o];
-                    float* wRow = pW + (long)o * In;
+                    float* wRow = (float*)(wAddr + (long)o * In * 4);
                     int i = 0;
                     var vScale = Vector256.Create(dOutVal);
                     for (; i <= In - 8; i += 8)
@@ -128,21 +153,29 @@ public static unsafe class GradientKernels
                     for (; i < In; i++)
                         dInRow[i] += dOutVal * wRow[i];
                 }
-            }
+            });
         }
 
         // dW += dOutput^T @ input   accumulated into weight.Grad
+        // Partitioned over output rows → each worker accumulates into disjoint
+        // dW rows, avoiding cross-thread writes to the shared gradient buffer.
+        // The pre-existing weight.Grad (from earlier grad-accumulation steps) is
+        // preserved: the first batch contribution is added on top of it.
         fixed (float* pDOut = dOutput.Data, pIn = input.Data, pDW = weight.Grad.Data)
         {
-            for (int b = 0; b < B; b++)
+            long dOutAddr = (long)pDOut;
+            long inAddr   = (long)pIn;
+            long dwAddr   = (long)pDW;
+
+            Parallel.For(0, Out, _parallel, o =>
             {
-                float* inRow = pIn + (long)b * In;
-                for (int o = 0; o < Out; o++)
+                float* dWRow = (float*)(dwAddr + (long)o * In * 4);
+                for (int b = 0; b < B; b++)
                 {
-                    float dOutOB = pDOut[(long)b * Out + o];
-                    float* dWRow = pDW + (long)o * In;
-                    int i = 0;
+                    float dOutOB = *(float*)(dOutAddr + ((long)b * Out + o) * 4);
+                    float* inRow = (float*)(inAddr + (long)b * In * 4);
                     var vScale = Vector256.Create(dOutOB);
+                    int i = 0;
                     for (; i <= In - 8; i += 8)
                         Vector256.StoreUnsafe(
                             Avx.Add(Avx.Multiply(vScale, Vector256.LoadUnsafe(ref inRow[i])), Vector256.LoadUnsafe(ref dWRow[i])),
@@ -150,18 +183,20 @@ public static unsafe class GradientKernels
                     for (; i < In; i++)
                         dWRow[i] += dOutOB * inRow[i];
                 }
-            }
+});
         }
 
         // db += sum(dOutput, axis=0)
         if (bias is not null)
         {
-            Span<float> dBias = bias.Grad.Data;
-            for (int b = 0; b < B; b++)
+            var dBias = bias.Grad;
+            Parallel.For(0, Out, _parallel, o =>
             {
-                ReadOnlySpan<float> dRow = dOutput.RowSpan(b);
-                for (int o = 0; o < Out; o++) dBias[o] += dRow[o];
-            }
+                float acc = 0f;
+                for (int b = 0; b < B; b++)
+                    acc += dOutput[b, o];
+                dBias[o] += acc;
+            });
         }
 
         return dInput;
@@ -184,17 +219,22 @@ public static unsafe class GradientKernels
 
         var dInput = new Tensor<float>(B, In);
 
-        // dInput = dOutput @ W   (W is [Out, In])
         fixed (float* pDOut = dOutput.Data, pW = weight.Data.Data, pDIn = dInput.Data)
         {
-            for (int b = 0; b < B; b++)
+            long dOutAddr = (long)pDOut;
+            long dInAddr  = (long)pDIn;
+            long wAddr    = (long)pW;
+
+            // dInput = dOutput @ W   (W is [Out, In])
+            // Threads partition over batch rows — each worker writes its own dInput rows.
+            Parallel.For(0, B, _parallel, b =>
             {
-                float* dOutRow = pDOut + (long)b * Out;
-                float* dInRow  = pDIn  + (long)b * In;
+                float* dOutRow = (float*)(dOutAddr + (long)b * Out * 4);
+                float* dInRow  = (float*)(dInAddr + (long)b * In * 4);
                 for (int o = 0; o < Out; o++)
                 {
                     float dOutVal = dOutRow[o];
-                    float* wRow = pW + (long)o * In;
+                    float* wRow = (float*)(wAddr + (long)o * In * 4);
                     int i = 0;
                     var vScale = Vector256.Create(dOutVal);
                     for (; i <= In - 8; i += 8)
@@ -204,21 +244,26 @@ public static unsafe class GradientKernels
                     for (; i < In; i++)
                         dInRow[i] += dOutVal * wRow[i];
                 }
-            }
+            });
         }
 
         // dW += dOutput^T @ input   accumulated into weight.Grad
+        // Partitioned over output rows → each worker accumulates into disjoint dW rows.
         fixed (float* pDOut = dOutput.Data, pIn = input.Data, pDW = weight.Grad.Data)
         {
-            for (int b = 0; b < B; b++)
+            long dOutAddr = (long)pDOut;
+            long inAddr   = (long)pIn;
+            long dwAddr   = (long)pDW;
+
+            Parallel.For(0, Out, _parallel, o =>
             {
-                float* inRow = pIn + (long)b * In;
-                for (int o = 0; o < Out; o++)
+                float* dWRow = (float*)(dwAddr + (long)o * In * 4);
+                for (int b = 0; b < B; b++)
                 {
-                    float dOutOB = pDOut[(long)b * Out + o];
-                    float* dWRow = pDW + (long)o * In;
-                    int i = 0;
+                    float dOutOB = *(float*)(dOutAddr + ((long)b * Out + o) * 4);
+                    float* inRow = (float*)(inAddr + (long)b * In * 4);
                     var vScale = Vector256.Create(dOutOB);
+                    int i = 0;
                     for (; i <= In - 8; i += 8)
                         Vector256.StoreUnsafe(
                             Fma.MultiplyAdd(vScale, Vector256.LoadUnsafe(ref inRow[i]), Vector256.LoadUnsafe(ref dWRow[i])),
@@ -226,18 +271,20 @@ public static unsafe class GradientKernels
                     for (; i < In; i++)
                         dWRow[i] += dOutOB * inRow[i];
                 }
-            }
+            });
         }
 
         // db += sum(dOutput, axis=0)
         if (bias is not null)
         {
-            Span<float> dBias = bias.Grad.Data;
-            for (int b = 0; b < B; b++)
+            var dBias = bias.Grad;
+            Parallel.For(0, Out, _parallel, o =>
             {
-                ReadOnlySpan<float> dRow = dOutput.RowSpan(b);
-                for (int o = 0; o < Out; o++) dBias[o] += dRow[o];
-            }
+                float acc = 0f;
+                for (int b = 0; b < B; b++)
+                    acc += dOutput[b, o];
+                dBias[o] += acc;
+            });
         }
 
         return dInput;

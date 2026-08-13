@@ -27,6 +27,10 @@ public sealed class TrainingWizardView : View
     private readonly Label _jobPathLabel;
     private readonly Label _sourceLabel;
     private readonly Label _checkpointDirLabel;
+    private readonly RadioGroup _resumeRadio;
+    private readonly Label _resumeDetailLabel;
+    private bool _updatingResume;
+    private int _resumeMode;
     private readonly ListView _sourceList;
     private readonly ListView _stageList;
     private readonly ListView _pluginList;
@@ -189,6 +193,16 @@ public sealed class TrainingWizardView : View
         form.Add(_checkpointDirLabel);
         row += 1;
 
+        // Resume-from-checkpoint control: fresh start / latest / explicit directory.
+        // Picking a specific checkpoint opens a chooser at Start time so the
+        // wizard itself never turns into a long list of checkpoints.
+        _resumeRadio = new RadioGroup(new[] { "Start fresh", "Continue from latest", "Continue from…" }
+            .Select(s => (ustring)s).ToArray()) { X = 30, Y = row };
+        _resumeRadio.SelectedItemChanged += (a) => OnResumeModeChanged(a.SelectedItem);
+        _resumeDetailLabel = new Label("") { X = 1, Y = row + 3, Width = Dim.Fill(3) };
+        form.Add(AddLabel("Resume from:"), _resumeRadio, _resumeDetailLabel);
+        row += 5;
+
         _exportField = new TextField((ustring)(_job.ExportPath ?? "")) { X = 30, Y = row, Width = 34 };
         _exportField.TextChanged += (_) =>
         {
@@ -345,6 +359,157 @@ public sealed class TrainingWizardView : View
             };
         }
         _checkpointDirLabel.Text = $"Checkpoints (derived): {_job.CheckpointDir}";
+        RefreshResume();
+    }
+
+    /// <summary>Re-syncs the resume radio group from the job's current settings.</summary>
+    private void RefreshResume()
+    {
+        _updatingResume = true;
+        try
+        {
+            _resumeMode = ResumeModeIndex();
+            _resumeRadio.SelectedItem = _resumeMode;
+        }
+        finally
+        {
+            _updatingResume = false;
+        }
+        RefreshResumeDetail();
+    }
+
+    /// <summary>0 = fresh, 1 = latest (auto), 2 = specific directory.</summary>
+    private int ResumeModeIndex()
+    {
+        if (_job.StartFresh) return 0;
+        if (!string.IsNullOrWhiteSpace(_job.ResumeFrom)) return 2;
+        return Checkpoint.FindLatest(_job.CheckpointDir) is not null ? 1 : 0;
+    }
+
+    private void OnResumeModeChanged(int index)
+    {
+        if (_updatingResume) return; // programmatic sync during RefreshResume
+
+        _resumeMode = index;
+        _job.StartFresh = index == 0;
+        switch (index)
+        {
+            case 0:
+            case 1:
+                _job.ResumeFrom = null;
+                break;
+        }
+        RefreshResumeDetail();
+    }
+
+    /// <summary>
+    /// Lists the step-marked checkpoint directories for this job, newest first.
+    /// </summary>
+    private List<(long Step, string Dir, string Label)> CheckpointCandidates()
+    {
+        var list = new List<(long Step, string Dir, string Label)>();
+        if (!Directory.Exists(_job.CheckpointDir)) return list;
+        foreach (var dir in Directory.GetDirectories(_job.CheckpointDir, "step-*"))
+        {
+            var meta = Checkpoint.ReadMeta(dir);
+            string note = meta.Note switch
+            {
+                null => "",
+                "final" => " (final)",
+                "interrupted" => " (interrupted)",
+                var n => $" ({n})",
+            };
+            list.Add((meta.Step, dir, $"step {meta.Step,5} — {Path.GetFileName(dir)}{note}"));
+        }
+        return list.OrderByDescending(c => c.Step).ThenBy(c => c.Dir, StringComparer.Ordinal).ToList();
+    }
+
+    /// <summary>
+    /// Modal chooser shown when "Continue from…" is selected: the user picks
+    /// which checkpoint to resume from (a plain directory chooser is offered as
+    /// a fallback). Returns true when a directory was chosen and applied to
+    /// <see cref="TrainJobSettings.ResumeFrom"/>, false when cancelled.
+    /// </summary>
+    private bool PickCheckpoint()
+    {
+        var candidates = CheckpointCandidates();
+        if (candidates.Count == 0)
+        {
+            MessageBox.ErrorQuery("Continue from checkpoint",
+                $"No checkpoints found under:\n{_job.CheckpointDir}\n\n" +
+                "Run training once to create one, or pick the folder where they live.",
+                "OK");
+            return false;
+        }
+
+        int height = Math.Min(candidates.Count, 10);
+        var list = new ListView(candidates.Select(c => (ustring)c.Label).ToArray())
+        {
+            X = 1, Y = 1, Width = Dim.Fill(2), Height = height,
+        };
+        // Preselect the currently configured ResumeFrom when it's still present.
+        int currentIndex = candidates.FindIndex(c =>
+            string.Equals(c.Dir, _job.ResumeFrom, StringComparison.OrdinalIgnoreCase));
+        if (currentIndex >= 0) list.SelectedItem = currentIndex;
+
+        string? pickedDir = null;
+        var dialog = new Dialog("Continue from checkpoint", 64, height + 6);
+        dialog.Add(list);
+
+        var continueButton = new Button("Continue") { X = 1, Y = Pos.AnchorEnd(1), IsDefault = true };
+        continueButton.Clicked += () =>
+        {
+            if (list.SelectedItem >= 0 && list.SelectedItem < candidates.Count)
+                pickedDir = candidates[list.SelectedItem].Dir;
+            Application.RequestStop();
+        };
+        var browseButton = new Button("Browse…") { X = Pos.Right(continueButton) + 2, Y = Pos.AnchorEnd(1) };
+        browseButton.Clicked += () =>
+        {
+            string start = Directory.Exists(_job.CheckpointDir) ? _job.CheckpointDir : TrainJobSettings.DefaultFolder;
+            var picked = FilePickerDialog.Show("Choose checkpoint directory", start, PickerMode.Folder);
+            if (picked is not null) pickedDir = picked;
+            Application.RequestStop();
+        };
+        var cancelButton = new Button("Cancel") { X = Pos.Right(browseButton) + 2, Y = Pos.AnchorEnd(1) };
+        cancelButton.Clicked += () => Application.RequestStop();
+        dialog.Add(continueButton, browseButton, cancelButton);
+
+        Application.Run(dialog);
+        if (pickedDir is null) return false;
+
+        _job.StartFresh = false;
+        _job.ResumeFrom = pickedDir;
+        RefreshResume();
+        return true;
+    }
+
+    private void RefreshResumeDetail()
+    {
+        // "Continue from…" defers the actual choice to Start time, so don't
+        // claim a particular directory here — none has been picked yet.
+        if (_resumeMode == 2)
+        {
+            _resumeDetailLabel.Text = "You'll choose which checkpoint when training starts.";
+            return;
+        }
+
+        var latest = Checkpoint.FindLatest(_job.CheckpointDir);
+        if (_job.StartFresh)
+        {
+            _resumeDetailLabel.Text = latest is not null
+                ? "Will start from random weights — existing checkpoints will be ignored."
+                : "Will start from random weights.";
+        }
+        else if (latest is not null)
+        {
+            _resumeDetailLabel.Text =
+                $"Will continue from the latest checkpoint — step {Checkpoint.ReadMeta(latest).Step} ({Path.GetFileName(latest)}).";
+        }
+        else
+        {
+            _resumeDetailLabel.Text = "No checkpoints found yet — will start from random weights.";
+        }
     }
 
     private void RefreshSources()
@@ -670,6 +835,11 @@ public sealed class TrainingWizardView : View
                 return;
             }
         }
+
+        // "Continue from…" defers the choice to a checkpoint list shown right
+        // here, keeping the wizard itself free of however many checkpoints exist.
+        if (_resumeMode == 2 && !PickCheckpoint()) return;
+
         _onStart(_job);
     }
 

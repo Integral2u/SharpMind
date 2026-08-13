@@ -117,4 +117,55 @@ public sealed class CheckpointRetentionTests : IDisposable
         Assert.Single(all);            // only the final checkpoint
         Assert.EndsWith("-final", Path.GetFileName(all[0]));
     }
+
+    /// <summary>
+    /// Cancelling a run must snapshot the current state so the job can continue
+    /// from a checkpoint: an "interrupted" checkpoint lands at the step the run
+    /// was resumed from (or reached) and <see cref="Checkpoint.FindLatest"/> then
+    /// points the next run back at it.
+    /// </summary>
+    [Fact]
+    public async Task Cancel_SavesInterruptedCheckpointAtCurrentStep()
+    {
+        var sharpConfig = SharpMindConfig.Gpt with { Hardware = HardwareTier.Scalar };
+
+        // Pre-existing checkpoint at step 4 (the "where we already got to").
+        string resumeDir = Path.Combine(_dir.Path, "step-0000004");
+        var weights = ModelFactory.CreateForTraining(Cfg, sharpConfig);
+        WeightInitializer.InitializeRandomly(weights, 1234);
+        {
+            using var model = ModelFactory.CreateTrainingTransformer(weights, sharpConfig);
+            Checkpoint.Save(resumeDir, model.Parameters(), step: 4, note: "rolling");
+        }
+
+        // Resume from step 4, then cancel before any work runs.
+        var cts = new CancellationTokenSource();
+        cts.Cancel();
+        using var model2 = ModelFactory.CreateTrainingTransformer(weights, sharpConfig);
+        var loop = new TrainLoop(
+            model2,
+            model2.Parameters(),
+            Loader(docs: 40),
+            new AdamW(model2.Parameters(), lr: 0.01f, weightDecay: 0f),
+            new ConstantScheduler(0.01f),
+            TrainingOpsFactory.Create(sharpConfig),
+            smmConfig: sharpConfig,
+            config: new TrainConfig
+            {
+                TotalSteps = 10,
+                GradAccumSteps = 1,
+                CheckpointInterval = 5,
+                CheckpointDir = _dir.Path,
+                ResumeFrom = resumeDir,
+            });
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => loop.RunAsync(cancellationToken: cts.Token));
+
+        // The interrupt checpoint carries the resumed step and an interrupted note.
+        var meta = Checkpoint.ReadMeta(Path.Combine(_dir.Path, "step-0000004"));
+        Assert.Equal(4, meta.Step);
+        Assert.Equal("interrupted", meta.Note);
+        Assert.Equal(Path.Combine(_dir.Path, "step-0000004"), Checkpoint.FindLatest(_dir.Path));
+    }
 }

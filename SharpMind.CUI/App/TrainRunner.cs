@@ -122,8 +122,25 @@ public static class TrainRunner
 
             // 4. Model — empty float weights, randomised unless resuming.
             var sharpConfig = SharpMindConfig.Gpt with { Hardware = HardwareTier.Auto };
+
+            // Resume resolution: an explicit ResumeFrom wins; otherwise if any
+            // checkpoint exists under the job's derived checkpoint folder we
+            // auto-resume the latest one, so an interrupted run can always be
+            // picked back up without re-entering the path manually. StartFresh
+            // forces a from-scratch run regardless of what exists on disk.
+            string checkpointDir = job.CheckpointDir;
+            string? resumeDir = job.StartFresh ? null
+                : !string.IsNullOrWhiteSpace(job.ResumeFrom) ? job.ResumeFrom
+                : Checkpoint.FindLatest(checkpointDir);
+            if (resumeDir is not null)
+            {
+                job.ResumeFrom = resumeDir;
+                var resumeMeta = Checkpoint.ReadMeta(resumeDir);
+                Log($"Resuming from checkpoint {Path.GetFileName(resumeDir)} (step {resumeMeta.Step})");
+            }
+
             var weights = ModelFactory.CreateForTraining(modelConfig, sharpConfig);
-            if (string.IsNullOrWhiteSpace(job.ResumeFrom))
+            if (resumeDir is null)
             {
                 WeightInitializer.InitializeRandomly(weights, Seed);
                 Log("Weights initialised.");
@@ -138,7 +155,6 @@ public static class TrainRunner
                 maxLr: job.LearningRate, minLr: job.MinLr,
                 warmupSteps: job.WarmupSteps, decaySteps: job.TotalSteps);
 
-            var checkpointDir = job.CheckpointDir;
             Directory.CreateDirectory(checkpointDir);
 
             var qat = ParseQat(job.QuantAwareTraining);
@@ -159,7 +175,7 @@ public static class TrainRunner
                     LogInterval = Math.Max(1, job.LogInterval),
                     CheckpointInterval = job.CheckpointInterval,
                     CheckpointDir = checkpointDir,
-                    ResumeFrom = job.ResumeFrom,
+                    ResumeFrom = resumeDir,
                     KeepRecent = job.KeepRecent,
                     QuantAwareTraining = qat,
                 });

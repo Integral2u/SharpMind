@@ -654,11 +654,20 @@ public sealed class MainWindow : Window
     }
 
     private void ShowTrainingWizard()
+        => ShowTrainingWizard(job: null);
+
+    /// <summary>
+    /// Opens the training wizard for <paramref name="job"/>, or a fresh job when
+    /// null. Passing the job back in lets the user return from a finished or
+    /// interrupted training screen to the same editable settings — the wizard
+    /// then shows whether a checkpoint exists to continue from.
+    /// </summary>
+    private void ShowTrainingWizard(TrainJobSettings? job)
     {
         Action onBack = _currentSession is not null ? ShowChat : ShowWelcome;
         SwapContent(new TrainingWizardView(
             _settings,
-            job: null,
+            job,
             onStart: ShowTrainingProgress,
             onCancel: onBack));
     }
@@ -683,7 +692,7 @@ public sealed class MainWindow : Window
                 _options.ProjectPath ??= Path.GetDirectoryName(path);
                 ShowOptions();
             },
-            onBack: ShowTrainingWizard));
+            onBack: () => ShowTrainingWizard(job)));
     }
 
     private void ShowOptions()

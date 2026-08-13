@@ -101,7 +101,9 @@ private unsafe Tensor<float> MatMulForward(Tensor<float> input, int batchSize, W
             }
             else
             {
-                output.AddInPlace(BroadcastBias(batchSize));
+                var biasBroadcast = BroadcastBias(batchSize);
+                output.AddInPlace(biasBroadcast);
+                biasBroadcast.Dispose();
             }
         }
         if (needReshape)

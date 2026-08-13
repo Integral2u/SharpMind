@@ -53,7 +53,13 @@ public sealed class TrainingProgressView : View
         _memoryLabel = new Label("") { X = 1, Y = 2, Width = Dim.Fill(2) };
         _logView = new TextView { X = 1, Y = 4, Width = Dim.Fill(2), Height = Dim.Fill(5), ReadOnly = true };
         _cancelButton = new Button("Cancel") { X = 1, Y = Pos.AnchorEnd(1) };
-        _cancelButton.Clicked += () => _cts.Cancel();
+        _cancelButton.Clicked += () =>
+        {
+            _cancelButton.Enabled = false;
+            _cancelButton.Text = "Cancelling…";
+            Log("Cancelling — finishing current work, saving a checkpoint, then returning to training options…");
+            _cts.Cancel();
+        };
         _browseButton = new Button("Browse to test…") { X = 1, Y = Pos.AnchorEnd(1), Visible = false };
         _browseButton.Clicked += () => { if (_result?.ExportPath is { } p) _onBrowse(p); };
         _cleanButton = new Button("Clean checkpoints") { X = Pos.Right(_browseButton) + 2, Y = Pos.AnchorEnd(1), Visible = false };
@@ -156,11 +162,20 @@ public sealed class TrainingProgressView : View
         _stopwatch.Stop();
         TimeSpan total = _stopwatch.Elapsed;
         _result = result;
+
+        // Cancelled runs return straight to the training options (the wizard is
+        // re-opened with this job), which shows the checkpoint to continue from.
+        if (result.Error == "cancelled")
+        {
+            _statusLabel.Text = $"Training interrupted after {FormatDuration(total)} — checkpoint saved. Returning to training options…";
+            SetNeedsDisplay();
+            _onBack();
+            return;
+        }
+
         _statusLabel.Text = result.Success
             ? $"Training done — completed {result.FinalStep} steps in {FormatDuration(total)}. Exported: {result.ExportPath}"
-            : result.Error == "cancelled"
-                ? $"Training interrupted after {FormatDuration(total)}."
-                : $"Training failed after {FormatDuration(total)}: {result.Error}";
+            : $"Training failed after {FormatDuration(total)}: {result.Error}";
         _cancelButton.Visible = false;
         _browseButton.Visible = result.Success;
         _cleanButton.Visible = _job.CheckpointDir is not null && Directory.Exists(_job.CheckpointDir);

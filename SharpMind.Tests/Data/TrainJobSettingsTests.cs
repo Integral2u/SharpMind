@@ -196,6 +196,28 @@ public sealed class TrainJobSettingsTests
     }
 
     [Fact]
+    public void SaveLoad_StartFreshRoundTrips()
+    {
+        using var dir = new TempDirectory();
+        string path = Path.Combine(dir.Path, "fresh" + TrainJobSettings.JobExtension);
+
+        var job = new TrainJobSettings
+        {
+            Name = "fresh-job",
+            ExportPath = Path.Combine(dir.Path, "fresh-job.smm"),
+            StartFresh = true,
+        };
+        Assert.True(job.Save(path, out var err));
+
+        var loaded = TrainJobSettings.Load(path, out var loadErr);
+        Assert.NotNull(loaded);
+        Assert.True(loaded.StartFresh);
+
+        // Default stays false so existing jobs auto-resume as before.
+        Assert.False(new TrainJobSettings().StartFresh);
+    }
+
+    [Fact]
     public void SaveLoad_EmbedOptionsRoundTrip()
     {
         using var dir = new TempDirectory();

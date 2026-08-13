@@ -118,8 +118,15 @@ public sealed class TrainJobSettings
         }
     }
 
-    /// <summary>Resume from this checkpoint directory; null = fresh start.</summary>
+    /// <summary>Resume from this checkpoint directory; null = auto (see <see cref="StartFresh"/>).</summary>
     public string? ResumeFrom { get; set; }
+
+    /// <summary>
+    /// True to train from random weights even when checkpoints exist, ignoring
+    /// <see cref="ResumeFrom"/>. False (default) resumes the latest checkpoint
+    /// under <see cref="CheckpointDir"/>, or starts fresh when none exist.
+    /// </summary>
+    public bool StartFresh { get; set; }
 
     // --- Embed in the exported .smm ----------------------------
 

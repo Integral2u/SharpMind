@@ -1,4 +1,5 @@
 using SharpMind.Core;
+using SharpMind.Core.Activations;
 using SharpMind.Core.Quantization;
 using SharpMind.Core.Tensors;
 using SharpMind.Core.Training;
@@ -6,6 +7,8 @@ using SharpMind.Model;
 using SharpMind.Model.Layers;
 using SharpMind.Model.Layers.Attention;
 using SharpMind.Model.Layers.Ffn;
+using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.X86;
 
 namespace SharpMind.Training.Autograd;
 
@@ -66,11 +69,12 @@ public sealed class BackpropEngine : IDisposable
     /// Returns logits as a flat [Batch*SeqLen, VocabSize] tensor. The returned
     /// tensor and the ctx's tensors must be disposed by the caller.
     /// </summary>
-    public Tensor<float> ForwardAndRecord(ForwardContext ctx, Tensor<int> tokenIds)
+    public Tensor<float> ForwardAndRecord(ForwardContext ctx, Tensor<int> tokenIds, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
         ArgumentNullException.ThrowIfNull(ctx);
         ArgumentNullException.ThrowIfNull(tokenIds);
+        cancellationToken.ThrowIfCancellationRequested();
 
         var cfg = _model.Config;
         int H = cfg.HiddenDim;
@@ -86,12 +90,14 @@ public sealed class BackpropEngine : IDisposable
         var x = emb;
         for (int l = 0; l < cfg.NumLayers; l++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var block = _model.GetBlock(l) ?? throw new InvalidOperationException($"Missing block {l}.");
             var bc = new BlockContext();
             ctx.Blocks.Add(bc);
             x = ForwardBlock(x, block, bc);
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
         var finalNorm = _model.FinalNorm;
         ctx.FinalNormInput = x;
         var (normed, finalState) = finalNorm.ForwardWithState(x);
@@ -110,12 +116,13 @@ public sealed class BackpropEngine : IDisposable
     /// w.r.t. logits, shape [Batch*SeqLen, VocabSize] (flat). Accumulates
     /// gradients into the parameters supplied at construction.
     /// </summary>
-    public void Backward(ForwardContext ctx, Tensor<float> dLogits, Tensor<int> tokenIds)
+    public void Backward(ForwardContext ctx, Tensor<float> dLogits, Tensor<int> tokenIds, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
         ArgumentNullException.ThrowIfNull(ctx);
         ArgumentNullException.ThrowIfNull(dLogits);
         ArgumentNullException.ThrowIfNull(tokenIds);
+        cancellationToken.ThrowIfCancellationRequested();
 
         var cfg = _model.Config;
         int M = tokenIds.ElementCount;
@@ -137,6 +144,7 @@ public sealed class BackpropEngine : IDisposable
         // 3. Blocks, reversed.
         for (int l = cfg.NumLayers - 1; l >= 0; l--)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var block = _model.GetBlock(l) ?? throw new InvalidOperationException($"Missing block {l}.");
             dX = BackwardBlock(block, ctx.Blocks[l], dX);
         }
@@ -178,7 +186,7 @@ public sealed class BackpropEngine : IDisposable
         return x;
     }
 
-    private Tensor<float> ForwardAttention(Tensor<float> norm1Out, AttentionLayer attn, BlockContext bc)
+    private unsafe Tensor<float> ForwardAttention(Tensor<float> norm1Out, AttentionLayer attn, BlockContext bc)
     {
         var cfg = _model.Config;
         int B = norm1Out.Shape[0], S = norm1Out.Shape[1];
@@ -198,56 +206,127 @@ public sealed class BackpropEngine : IDisposable
         var probs = Tensor<float>.Zeros(B, numH, S, S);
         var attnOut = new Tensor<float>(B, S, qDim);
 
-        var qData = q.Data;
-        var kData = k.Data;
-        var vData = v.Data;
-        var pData = probs.Data;
-        var oData = attnOut.Data;
+        // DataPtr addresses (all five tensors are freshly allocated, offset 0);
+        // captured as long so the Parallel.For body can rebuild pointers.
+        long qAddr = (long)q.DataPtr;
+        long kAddr = (long)k.DataPtr;
+        long vAddr = (long)v.DataPtr;
+        long pAddr = (long)probs.DataPtr;
+        long oAddr = (long)attnOut.DataPtr;
 
-        for (int b = 0; b < B; b++)
+        // Heads are independent: partition the flattened (batch × head) domain
+        // across threads. Each worker writes disjoint probs rows and attnOut
+        // columns, so no shared-write racing occurs. The D-dot products are FMA
+        // vectorised and the causal softmax uses the SIMD FastExp when AVX2 is
+        // available; otherwise the exact scalar path is used.
+        bool useSimd = Avx2.IsSupported;
+        int totalHeads = B * numH;
+        Parallel.For(0, totalHeads, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount }, headIdx =>
         {
-            for (int h = 0; h < numH; h++)
+            float* qData = (float*)qAddr;
+            float* kData = (float*)kAddr;
+            float* vData = (float*)vAddr;
+            float* pData = (float*)pAddr;
+            float* oData = (float*)oAddr;
+
+            int b = headIdx / numH;
+            int h = headIdx % numH;
+            int kvHead = h / cfg.KvGroupSize;
+
+            for (int i = 0; i < S; i++)
             {
-                int kvHead = h / cfg.KvGroupSize;
-                for (int i = 0; i < S; i++)
+                // scores = q_i · k_j * scale, causal over j <= i
+                float maxScore = float.NegativeInfinity;
+                int qBaseRow = ((b * S + i) * numH + h) * D;
+                for (int j = 0; j <= i; j++)
                 {
-                    // scores = q_i · k_j * scale, causal over j <= i
-                    float maxScore = float.NegativeInfinity;
-                    for (int j = 0; j <= i; j++)
+                    int qBase = qBaseRow;
+                    int kBase = ((b * S + j) * numKv + kvHead) * D;
+                    float s = 0f;
+                    if (useSimd)
                     {
-                        int qBase = ((b * S + i) * numH + h) * D;
-                        int kBase = ((b * S + j) * numKv + kvHead) * D;
-                        float s = 0f;
+                        int d = 0;
+                        var vSum = Vector256<float>.Zero;
+                        for (; d <= D - 8; d += 8)
+                        {
+                            var qv = Vector256.LoadUnsafe(ref qData[qBase + d]);
+                            var kv = Vector256.LoadUnsafe(ref kData[kBase + d]);
+                            vSum = Avx.Add(vSum, Avx.Multiply(qv, kv));
+                        }
+                        s = MathHelpers.HSum256_Avx(vSum);
+                        for (; d < D; d++)
+                            s += qData[qBase + d] * kData[kBase + d];
+                    }
+                    else
+                    {
                         for (int d = 0; d < D; d++)
                             s += qData[qBase + d] * kData[kBase + d];
-                        s *= scale;
-                        pData[((b * numH + h) * S + i) * S + j] = s;
-                        if (s > maxScore) maxScore = s;
                     }
+                    s *= scale;
+                    pData[((b * numH + h) * S + i) * S + j] = s;
+                    if (s > maxScore) maxScore = s;
+                }
 
-                    // softmax over j <= i
-                    float sum = 0f;
-                    for (int j = 0; j <= i; j++)
+                // softmax over j <= i
+                float sum = 0f;
+                int pBase = ((b * numH + h) * S + i) * S;
+                if (useSimd)
+                {
+                    int j = 0;
+                    var vMax = Vector256.Create(maxScore);
+                    for (; j <= i - 7; j += 8)
                     {
-                        float p = MathF.Exp(pData[((b * numH + h) * S + i) * S + j] - maxScore);
-                        pData[((b * numH + h) * S + i) * S + j] = p;
+                        var shifted = Avx.Subtract(Vector256.LoadUnsafe(ref pData[pBase + j]), vMax);
+                        var p = ActivationKernels.FastExp(shifted);
+                        Vector256.StoreUnsafe(p, ref pData[pBase + j]);
+                        sum += MathHelpers.HSum256_Avx(p);
+                    }
+                    for (; j <= i; j++)
+                    {
+                        float p = FastExpScalar(pData[pBase + j] - maxScore);
+                        pData[pBase + j] = p;
                         sum += p;
                     }
-                    float inv = 1f / sum;
+                }
+                else
+                {
                     for (int j = 0; j <= i; j++)
-                        pData[((b * numH + h) * S + i) * S + j] *= inv;
-
-                    // attnOut = probs · v
-                    for (int d = 0; d < D; d++)
                     {
-                        float acc = 0f;
-                        for (int j = 0; j <= i; j++)
-                            acc += pData[((b * numH + h) * S + i) * S + j] * vData[((b * S + j) * numKv + kvHead) * D + d];
-                        oData[(b * S + i) * qDim + h * D + d] = acc;
+                        float p = MathF.Exp(pData[pBase + j] - maxScore);
+                        pData[pBase + j] = p;
+                        sum += p;
                     }
                 }
+                float inv = 1f / sum;
+                if (useSimd)
+                {
+                    int j0 = 0;
+                    var vInv = Vector256.Create(inv);
+                    for (; j0 <= i - 7; j0 += 8)
+                    {
+                        var pow = Avx.Multiply(Vector256.LoadUnsafe(ref pData[pBase + j0]), vInv);
+                        Vector256.StoreUnsafe(pow, ref pData[pBase + j0]);
+                    }
+                    for (; j0 <= i; j0++)
+                        pData[pBase + j0] *= inv;
+                }
+                else
+                {
+                    for (int j0 = 0; j0 <= i; j0++)
+                        pData[pBase + j0] *= inv;
+                }
+
+                // attnOut = probs · v
+                int oBase = (b * S + i) * qDim + h * D;
+                for (int d = 0; d < D; d++)
+                {
+                    float acc = 0f;
+                    for (int j = 0; j <= i; j++)
+                        acc += pData[((b * numH + h) * S + i) * S + j] * vData[((b * S + j) * numKv + kvHead) * D + d];
+                    oData[oBase + d] = acc;
+                }
             }
-        }
+        });
 
         var attnProj = attn.Wo.Forward(attnOut);
 
@@ -347,11 +426,15 @@ public sealed class BackpropEngine : IDisposable
         var dAttnOut = LinearBackward(dAttnProjFlat, attnOutFlat, attn.Wo.Weight, BiasParam(attn.Wo));
 
         // Per-head attention backward → dQ/dK/dV
+        // Parallelised over batch rows: each row writes a disjoint block of the
+        // dQ/dK/dV row-space, so no shared-write racing occurs even when multiple
+        // heads share a KV head (the per-row head loop stays sequential, which is
+        // exactly how the sequential version accumulated the shared KV region).
         var dQ = new Tensor<float>(M, qDim);
         var dK = new Tensor<float>(M, kvDim);
         var dV = new Tensor<float>(M, kvDim);
 
-        for (int b = 0; b < B; b++)
+        Parallel.For(0, B, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount }, b =>
         {
             for (int h = 0; h < numH; h++)
             {
@@ -370,7 +453,7 @@ public sealed class BackpropEngine : IDisposable
                     AddHead(dV, grads.DV, b, kvHead, B, S, kvDim, D);
                 }
             }
-        }
+        });
         dAttnOut.Dispose();
 
         // RoPE backward (inverse rotation), in place on dQ/dK
@@ -622,6 +705,21 @@ public sealed class BackpropEngine : IDisposable
         var data = t.Data;
         for (int i = 0; i < data.Length; i++)
             data[i] *= scalar;
+    }
+
+    /// <summary>
+    /// Scalar fast-exp (same degree-6 polynomial as <see cref="ActivationKernels.FastExp"/>),
+    /// used for the softmax tail lanes when AVX2 is unavailable.
+    /// </summary>
+    private static float FastExpScalar(float x)
+    {
+        x = Math.Clamp(x, -88f, 88f);
+        var z = x * 1.4426950408889634f;
+        var n = MathF.Round(z);
+        var r = z - n;
+        var u = r * 0.6931471805599453f;
+        var p = 1f + u * (1f + u * (0.5f + u * ((1f / 6f) + u * ((1f / 24f) + u * ((1f / 120f) + u * (1f / 720f))))));
+        return p * MathF.Pow(2f, n);
     }
 
     private Parameter Param(Tensor<float> tensor)

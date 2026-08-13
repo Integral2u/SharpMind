@@ -99,61 +99,76 @@ public sealed class TrainLoop
         int   accumCount  = 0;
         float accumLoss   = 0f;
 
-        await foreach (var batch in _loader.LoadAsync(cancellationToken: cancellationToken))
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
+            await foreach (var batch in _loader.LoadAsync(cancellationToken: cancellationToken))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
 
-            // Zero gradients at the start of each accumulation window
-            if (accumCount == 0) _optimizer.ZeroGrad();
+                // Zero gradients at the start of each accumulation window
+                if (accumCount == 0) _optimizer.ZeroGrad();
 
-            var sw = System.Diagnostics.Stopwatch.StartNew();
+                var sw = System.Diagnostics.Stopwatch.StartNew();
 
-            // Forward pass
-            float batchLoss = ForwardBackward(batch);
-            accumLoss += batchLoss;
-            accumCount++;
-            batch.Dispose();
+                // Forward pass
+                float batchLoss = ForwardBackward(batch, cancellationToken);
+                accumLoss += batchLoss;
+                accumCount++;
+                batch.Dispose();
 
-            // Optimizer step (after accumulation)
-            if (accumCount < _config.GradAccumSteps) continue;
+                // Optimizer step (after accumulation)
+                if (accumCount < _config.GradAccumSteps) continue;
 
-            float lr = _scheduler.GetLr(step + 1);
-            _optimizer.LearningRate = lr;
+                float lr = _scheduler.GetLr(step + 1);
+                _optimizer.LearningRate = lr;
 
-            float gradNorm = _config.GradClipNorm > 0f
-                ? Gradients.ClipGlobalNorm(_parameters, _config.GradClipNorm)
-                : 0f;
+                float gradNorm = _config.GradClipNorm > 0f
+                    ? Gradients.ClipGlobalNorm(_parameters, _config.GradClipNorm)
+                    : 0f;
 
-            _optimizer.Update();
+                _optimizer.Update();
 
-            step++;
-            float stepLoss = accumLoss / accumCount;
-            accumLoss  = 0f;
-            accumCount = 0;
-            sw.Stop();
+                step++;
+                float stepLoss = accumLoss / accumCount;
+                accumLoss  = 0f;
+                accumCount = 0;
+                sw.Stop();
 
-            progress?.Report((float)step / _config.TotalSteps);
+                progress?.Report((float)step / _config.TotalSteps);
 
-            // Callbacks
-            if (onStep is not null && step % _config.LogInterval == 0)
-                onStep(new TrainStepResult
+                // Callbacks
+                if (onStep is not null && step % _config.LogInterval == 0)
+                    onStep(new TrainStepResult
+                    {
+                        Step         = step,
+                        Loss         = stepLoss,
+                        LearningRate = lr,
+                        GradNorm     = gradNorm,
+                        StepTime     = sw.Elapsed,
+                    });
+
+                if (_config.CheckpointInterval > 0 && step % _config.CheckpointInterval == 0 && _config.KeepRecent >= 0)
                 {
-                    Step         = step,
-                    Loss         = stepLoss,
-                    LearningRate = lr,
-                    GradNorm     = gradNorm,
-                    StepTime     = sw.Elapsed,
-                });
+                    string dir = Path.Combine(_config.CheckpointDir, $"step-{step:D07}");
+                    Checkpoint.Save(dir, _parameters, _optimizer, step, stepLoss);
+                    PruneRetained(dir);
+                    onCheckpoint?.Invoke(dir);
+                }
 
-            if (_config.CheckpointInterval > 0 && step % _config.CheckpointInterval == 0 && _config.KeepRecent >= 0)
+                if (step >= _config.TotalSteps) break;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Persist the latest consistent state so an interrupted run resumes
+            // exactly where it stopped, then rethrow for the caller to report.
+            if (_config.CheckpointInterval > 0)
             {
                 string dir = Path.Combine(_config.CheckpointDir, $"step-{step:D07}");
-                Checkpoint.Save(dir, _parameters, _optimizer, step, stepLoss);
-                PruneRetained(dir);
+                Checkpoint.Save(dir, _parameters, _optimizer, step, note: "interrupted");
                 onCheckpoint?.Invoke(dir);
             }
-
-            if (step >= _config.TotalSteps) break;
+            throw;
         }
 
         // Final checkpoint
@@ -204,7 +219,7 @@ public sealed class TrainLoop
 
     // Forward + backward
 
-    private float ForwardBackward(TrainingBatch batch)
+    private float ForwardBackward(TrainingBatch batch, CancellationToken cancellationToken)
     {
         int batch2  = batch.TokenIds.Shape.Rows;
         int seqLen  = batch.TokenIds.Shape.Cols;
@@ -214,7 +229,7 @@ public sealed class TrainLoop
         using var flatLabels = batch.Labels.Reshape(batch2 * seqLen);
 
         // Recording forward — ctx owns the returned logits (disposed on scope exit).
-        var logits = _engine.ForwardAndRecord(ctx, batch.TokenIds);
+        var logits = _engine.ForwardAndRecord(ctx, batch.TokenIds, cancellationToken);
         using var logitsFlat = logits.Reshape(batch2 * seqLen, vocab);
 
         float loss = _loss.Compute(logitsFlat, flatLabels);
@@ -222,7 +237,7 @@ public sealed class TrainLoop
         using var dLogits = _loss.Backward(logitsFlat, flatLabels);
         using var flatIds = batch.TokenIds.Reshape(batch2 * seqLen);
 
-        _engine.Backward(ctx, dLogits, flatIds);
+        _engine.Backward(ctx, dLogits, flatIds, cancellationToken);
 
         return loss;
     }

@@ -478,8 +478,11 @@ public sealed unsafe class Tensor<T> : IDisposable
     /// Releases this tensor's reference to the backing buffer.
     /// The native memory is freed only when all views are disposed.
     /// </summary>
+    private int _disposeCount;
     public void Dispose()
     {
+        if (Interlocked.Increment(ref _disposeCount) > 1)
+            return;
         _buffer?.Dispose();
     }
 }

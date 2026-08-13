@@ -84,6 +84,66 @@ public static class Checkpoint
     // Load
 
     /// <summary>
+    /// Reads just <c>meta.json</c> from a checkpoint directory without touching
+    /// the weights — used to identify how far a checkpoint got before resuming.
+    /// </summary>
+    public static CheckpointMeta ReadMeta(string directory)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(directory);
+
+        string metaPath = Path.Combine(directory, "meta.json");
+        if (!File.Exists(metaPath)) return new CheckpointMeta();
+
+        using var metaDoc = JsonDocument.Parse(File.ReadAllText(metaPath));
+        var root = metaDoc.RootElement;
+        return new CheckpointMeta
+        {
+            Step = root.TryGetProperty("step", out var s) ? s.GetInt32() : 0,
+            Loss = root.TryGetProperty("loss", out var l) && l.ValueKind != JsonValueKind.Null
+                       ? l.GetSingle() : float.NaN,
+            Note = root.TryGetProperty("note", out var n) ? n.GetString() : null,
+            SavedUtc = root.TryGetProperty("savedUtc", out var t)
+                           ? DateTime.Parse(t.GetString()!) : DateTime.MinValue,
+        };
+    }
+
+    /// <summary>
+    /// Returns the path of the most advanced checkpoint under
+    /// <paramref name="checkpointDir"/>, or null when the directory has no
+    /// step-marked checkpoints. "Most advanced" = highest parsed step, with a
+    /// tie broken by directory name (name order matches step order for
+    /// zero-padded names). Used to auto-resume the latest interrupted run.
+    /// </summary>
+    public static string? FindLatest(string? checkpointDir)
+    {
+        if (string.IsNullOrWhiteSpace(checkpointDir) || !Directory.Exists(checkpointDir))
+            return null;
+
+        string? best = null;
+        long bestStep = long.MinValue;
+        foreach (var dir in Directory.GetDirectories(checkpointDir, "step-*"))
+        {
+            long step = ParseStep(Path.GetFileName(dir));
+            if (step > bestStep || (step == bestStep && best is not null &&
+                string.CompareOrdinal(Path.GetFileName(dir), Path.GetFileName(best)) > 0))
+            {
+                bestStep = step;
+                best = dir;
+            }
+        }
+        return best;
+    }
+
+    /// <summary>Parses the step number from "step-0000123" / "step-0000123-final" names.</summary>
+    private static long ParseStep(string name)
+    {
+        if (!name?.StartsWith("step-", StringComparison.Ordinal) == true) return 0;
+        int end = name.IndexOf('-', 5);
+        var number = end < 0 ? name[5..] : name[5..end];
+        return long.TryParse(number, out var v) ? v : 0;
+    }
+
+    /// <summary>
     /// Loads parameter values from a checkpoint directory into the supplied
     /// parameter list. Parameters are matched by name — any name present in
     /// the checkpoint but not in <paramref name="parameters"/> is skipped.
@@ -151,24 +211,7 @@ public static class Checkpoint
         }
 
         // Read metadata first (needed for optimizer step)
-        string metaPath = Path.Combine(directory, "meta.json");
-        CheckpointMeta meta;
-        if (!File.Exists(metaPath))
-            meta = new CheckpointMeta();
-        else
-        {
-            using var metaDoc = JsonDocument.Parse(File.ReadAllText(metaPath));
-            var root = metaDoc.RootElement;
-            meta = new CheckpointMeta
-            {
-                Step = root.TryGetProperty("step", out var s) ? s.GetInt32() : 0,
-                Loss = root.TryGetProperty("loss", out var l) && l.ValueKind != JsonValueKind.Null
-                           ? l.GetSingle() : float.NaN,
-                Note = root.TryGetProperty("note", out var n) ? n.GetString() : null,
-                SavedUtc = root.TryGetProperty("savedUtc", out var t)
-                               ? DateTime.Parse(t.GetString()!) : DateTime.MinValue,
-            };
-        }
+        CheckpointMeta meta = ReadMeta(directory);
 
         // Load optimizer state (using step from meta)
         if (optimizer is not null)
