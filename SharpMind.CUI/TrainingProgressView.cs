@@ -7,8 +7,8 @@ using Terminal.Gui;
 namespace SharpMind.CUI;
 
 /// <summary>
-/// The training progress screen: a progress bar, a scrolling status log, and a
-/// Cancel button that interrupts the background running task. On completion
+/// The training progress screen: a progress bar, a scrolling status log, and an
+/// Interrupt button that interrupts the background running task. On completion
 /// (interrupted or finished) it flips to a results panel offering actions:
 /// "Browse to test" the exported model, "Clean checkpoints" to delete the
 /// retained checkpoint directories, or "Back". All progress is marshalled onto
@@ -20,6 +20,7 @@ public sealed class TrainingProgressView : View
     private readonly TrainJobSettings _job;
     private readonly Action<string> _onBrowse;
     private readonly Action _onBack;
+    private readonly Action _onDetach;
 
     private readonly CancellationTokenSource _cts = new();
     private readonly Stopwatch _stopwatch = Stopwatch.StartNew();
@@ -28,7 +29,7 @@ public sealed class TrainingProgressView : View
     private readonly Label _progressLabel;
     private readonly Label _memoryLabel;
     private readonly TextView _logView;
-    private readonly Button _cancelButton;
+    private readonly Button _interruptButton;
     private readonly Button _browseButton;
     private readonly Button _cleanButton;
     private readonly Button _backButton;
@@ -39,25 +40,37 @@ public sealed class TrainingProgressView : View
         AppSettings settings,
         TrainJobSettings job,
         Action<string> browseModel,
-        Action onBack)
+        Action onBack,
+        Action onDetach)
     {
         _settings = settings;
         _job = job;
         _onBrowse = browseModel;
         _onBack = onBack;
+        _onDetach = onDetach;
 
         var frame = new FrameView("Training") { X = 0, Y = 0, Width = Dim.Fill(), Height = Dim.Fill(1) };
 
         _statusLabel = new Label("Preparing…") { X = 1, Y = 0, Width = Dim.Fill(2) };
         _progressLabel = new Label("[          ]  0.00%  step 0/0") { X = 1, Y = 1, Width = Dim.Fill(2) };
         _memoryLabel = new Label("") { X = 1, Y = 2, Width = Dim.Fill(2) };
-        _logView = new TextView { X = 1, Y = 4, Width = Dim.Fill(2), Height = Dim.Fill(5), ReadOnly = true };
-        _cancelButton = new Button("Cancel") { X = 1, Y = Pos.AnchorEnd(1) };
-        _cancelButton.Clicked += () =>
+        _logView = new TextView { X = 1, Y = 4, Width = Dim.Fill(2), Height = Dim.Fill(5), ReadOnly = true, TabStop = false };
+        // Match the chat transcript's context menu: Copy + Select All only.
+        _logView.ContextMenu.MenuItems.Children = [.. _logView.ContextMenu.MenuItems.Children.Where(p =>
         {
-            _cancelButton.Enabled = false;
-            _cancelButton.Text = "Cancelling…";
-            Log("Cancelling — finishing current work, saving a checkpoint, then returning to training options…");
+            var s = p.Title.ToString();
+            return (s == "Cu_t" ||
+            s == "_Delete All" ||
+            s == "_Paste" ||
+            s == "_Undo" ||
+            s == "_Redo") == false;
+        })];
+        _interruptButton = new Button("Interrupt") { X = 1, Y = Pos.AnchorEnd(1) };
+        _interruptButton.Clicked += () =>
+        {
+            _interruptButton.Enabled = false;
+            _interruptButton.Text = "Interrupting…";
+            Log("Interrupting — finishing current work, saving a checkpoint, then returning to training options…");
             _cts.Cancel();
         };
         _browseButton = new Button("Browse to test…") { X = 1, Y = Pos.AnchorEnd(1), Visible = false };
@@ -67,8 +80,9 @@ public sealed class TrainingProgressView : View
         _backButton = new Button("Back") { X = Pos.Right(_cleanButton) + 2, Y = Pos.AnchorEnd(1), Visible = false };
         _backButton.Clicked += () => _onBack();
 
-        frame.Add(_statusLabel, _progressLabel, _memoryLabel, _logView, _cancelButton, _browseButton, _cleanButton, _backButton);
+        frame.Add(_statusLabel, _progressLabel, _memoryLabel, _logView, _interruptButton, _browseButton, _cleanButton, _backButton);
         Add(frame);
+        _interruptButton.SetFocus();
 
         // Kick off training on a background task; callbacks marshal to UI.
         var status = new Progress<string>(s => Application.MainLoop.Invoke(() => Log(s)));
@@ -163,6 +177,10 @@ public sealed class TrainingProgressView : View
         TimeSpan total = _stopwatch.Elapsed;
         _result = result;
 
+        // The run is over (success, failure, or interrupt) — tell the owner so
+        // a brand-new run may be started again instead of being switched back.
+        _onDetach();
+
         // Cancelled runs return straight to the training options (the wizard is
         // re-opened with this job), which shows the checkpoint to continue from.
         if (result.Error == "cancelled")
@@ -176,7 +194,7 @@ public sealed class TrainingProgressView : View
         _statusLabel.Text = result.Success
             ? $"Training done — completed {result.FinalStep} steps in {FormatDuration(total)}. Exported: {result.ExportPath}"
             : $"Training failed after {FormatDuration(total)}: {result.Error}";
-        _cancelButton.Visible = false;
+        _interruptButton.Visible = false;
         _browseButton.Visible = result.Success;
         _cleanButton.Visible = _job.CheckpointDir is not null && Directory.Exists(_job.CheckpointDir);
         _backButton.Visible = true;

@@ -85,6 +85,22 @@ public static class TrainRunner
 
             var compositeSource = job.Sources.Count == 1 ? sources[0] : new CompositeSource(sources);
             Log($"Sources: {string.Join(", ", sources.Select(s => s.Description))}");
+
+            // Source fingerprints: record what this job trains on, warn when it
+            // has changed since the last run (the tokenizer cache is reused on
+            // path alone, so a stale corpus would silently poison the mapping),
+            // and remember them for stamping the exported model's metadata.
+            var sourceHashes = SourceHasher.Compute(job.Sources);
+            var changed = job.SourceHashes.Count > 0
+                && sourceHashes.Count > 0
+                && !job.SourceHashes.OrderBy(kv => kv.Key).SequenceEqual(sourceHashes.OrderBy(kv => kv.Key));
+            foreach (var kv in sourceHashes.Where(kv => kv.Value is not null))
+                Log($"Source hash {kv.Key}: {kv.Value![..Math.Min(12, kv.Value.Length)]}…");
+            if (changed)
+                Log("WARNING: training sources changed since the last run — the cached tokenizer may be stale for this corpus.");
+            if (sourceHashes.Count > 0)
+                job.SourceHashes = sourceHashes;
+
             progress.Report(0.05f);
 
             // 1. Tokenizer — BPE trained on the corpus, cached on disk.
@@ -199,7 +215,7 @@ public static class TrainRunner
             // 6. Export the trained weights + tokenizer to .SMM.
             string exportPath = job.ExportFilePath;
             Directory.CreateDirectory(Path.GetDirectoryName(exportPath)!);
-            SmmTrainingExporter.Export(weights, tokenizer, exportPath, BuildEmbedOptions(job, "training"));
+            SmmTrainingExporter.Export(weights, tokenizer, exportPath, BuildEmbedOptions(job, "training", SourceHasher.Combined(job.Sources)));
             progress.Report(1f);
             Log($"Saved: {exportPath} ({new FileInfo(exportPath).Length:N0} bytes)");
 
@@ -238,7 +254,7 @@ public static class TrainRunner
             var meta = Checkpoint.Load(dir, parameters, optimizer: null);
 
             string smmPath = Path.Combine(dir, "model.smm");
-            SmmTrainingExporter.Export(weights, tokenizer, smmPath, BuildEmbedOptions(job, "checkpoint"));
+            SmmTrainingExporter.Export(weights, tokenizer, smmPath, BuildEmbedOptions(job, "checkpoint", SourceHasher.Combined(job.Sources)));
             log($"Checkpoint {Path.GetFileName(dir)} → {Path.GetFileName(smmPath)} (step {meta.Step})");
         }
         catch (Exception ex)
@@ -253,7 +269,7 @@ public static class TrainRunner
     /// are read eagerly, so missing input at export time fails the run loudly
     /// instead of silently producing an unannotated model.
     /// </summary>
-    private static SmmWriteOptions BuildEmbedOptions(TrainJobSettings job, string source)
+    private static SmmWriteOptions BuildEmbedOptions(TrainJobSettings job, string source, string? checksum = null)
     {
         string? systemPrompt = null;
         if (!string.IsNullOrWhiteSpace(job.SystemPromptPath))
@@ -291,6 +307,7 @@ public static class TrainRunner
         return new SmmWriteOptions
         {
             Source = source,
+            Checksum = checksum,
             Outputs = plugins is { Count: > 0 } ? SmmOutputs.Default | SmmOutputs.Plugins : SmmOutputs.Default,
             SystemPrompt = systemPrompt,
             Skills = skills,

@@ -112,10 +112,7 @@ public sealed class Trainer
         }
 
         // Save Optimizer State
-        if (_optimizer is AdamW adam)
-        {
-            adam.SaveState(writer);
-        }
+        _optimizer.SaveState(writer);
     }
 
     public void LoadCheckpoint(string path)
@@ -134,9 +131,6 @@ public sealed class Trainer
             for (int i = 0; i < len; i++) p.Data.Data[i] = reader.ReadSingle();
         }
 
-        if (_optimizer is AdamW adam)
-        {
-            adam.LoadState(reader, 0); // Step is handled by optimizer internally or passed here
-        }
+        _optimizer.LoadState(reader, 0); // Step is handled by optimizer internally or passed here
     }
 }

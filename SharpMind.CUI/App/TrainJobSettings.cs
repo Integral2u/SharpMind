@@ -22,6 +22,15 @@ public sealed class TrainJobSettings
     /// <summary>Global cleaning stages applied to the merged stream of all sources.</summary>
     public List<JobComponent> GlobalStages { get; set; } = [];
 
+    /// <summary>
+    /// Content fingerprints for each configured source (display name → SHA-256),
+    /// recorded at the start of a run. Lets a later run detect that the corpus
+    /// changed — invalidating the path-only tokenizer cache — and stamps an
+    /// audit fingerprint onto exported models. Unhashable sources (remote) are
+    /// absent. Empty for jobs that have never run.
+    /// </summary>
+    public Dictionary<string, string?> SourceHashes { get; set; } = [];
+
     // --- Tokenizer ---------------------------------------------------------
 
     /// <summary>Target BPE vocabulary size (not yet trained).</summary>

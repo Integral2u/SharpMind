@@ -27,6 +27,7 @@ public sealed class MainWindow : Window
 
     private SessionOptions _options;
     private ChatSessionState? _currentSession;
+    private TrainingProgressView? _activeTraining;
     private readonly object? _permissionPollToken;
 
     private static string LastUsedOptionsPath =>
@@ -139,6 +140,7 @@ public sealed class MainWindow : Window
                 new("_Manage sessions...", "", ShowSessionManager),
                 new("_Load session...", "", LoadSessionFromDisk),
                 new("_Save current session...", "", SaveCurrentSession),
+                new("Close _current session...", "", CloseCurrentSession),
                 new("Toggle _show thinking", "", ToggleShowThinking),
                 new("Toggle _enable_thinking (Qwen3)", "", ToggleTemplateThinking)
             })
@@ -664,6 +666,14 @@ public sealed class MainWindow : Window
     /// </summary>
     private void ShowTrainingWizard(TrainJobSettings? job)
     {
+        // Only one Train run at a time: re-selecting training while a run is
+        // active switches back to the running screen instead of starting anew.
+        if (_activeTraining is not null)
+        {
+            SwapContent(_activeTraining);
+            return;
+        }
+
         Action onBack = _currentSession is not null ? ShowChat : ShowWelcome;
         SwapContent(new TrainingWizardView(
             _settings,
@@ -674,6 +684,13 @@ public sealed class MainWindow : Window
 
     private void ShowTrainingProgress(TrainJobSettings job)
     {
+        // Guard: never let a second Train run start while one is live.
+        if (_activeTraining is not null)
+        {
+            SwapContent(_activeTraining);
+            return;
+        }
+
         if (!string.IsNullOrWhiteSpace(job.ExportPath) || !string.IsNullOrWhiteSpace(job.ExportFolder))
         {
             string folder = job.ExportFolder;
@@ -683,7 +700,7 @@ public sealed class MainWindow : Window
                 _settings.Save(out _);
             }
         }
-        SwapContent(new TrainingProgressView(
+        var view = new TrainingProgressView(
             _settings,
             job,
             browseModel: path =>
@@ -692,7 +709,10 @@ public sealed class MainWindow : Window
                 _options.ProjectPath ??= Path.GetDirectoryName(path);
                 ShowOptions();
             },
-            onBack: () => ShowTrainingWizard(job)));
+            onBack: () => ShowTrainingWizard(job),
+            onDetach: () => _activeTraining = null);
+        _activeTraining = view;
+        SwapContent(view);
     }
 
     private void ShowOptions()
@@ -731,6 +751,17 @@ public sealed class MainWindow : Window
             onClose: CloseSession,
             onBack: onBack);
         SwapContent(view);
+    }
+
+    /// <summary>Chat → Close current session: closes the active session if any.</summary>
+    private void CloseCurrentSession()
+    {
+        if (_currentSession is null)
+        {
+            MessageBox.ErrorQuery("Close current session", "No session is currently open.", "OK");
+            return;
+        }
+        CloseSession(_currentSession);
     }
 
     private void ToggleShowThinking()

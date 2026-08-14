@@ -96,6 +96,13 @@ public sealed class SmmWriteOptions
     public string? Source { get; init; }
 
     /// <summary>
+    /// Training-data fingerprint (e.g. a combined source hash) written into the
+    /// metadata as <c>checksum</c>. Lets a user later identify exactly what the
+    /// model was trained on. Optional.
+    /// </summary>
+    public string? Checksum { get; init; }
+
+    /// <summary>
     /// Embedded skills. Each entry is one full skill document (markdown), emitted
     /// as the <c>skills</c> array in the meta JSON and silently auto-applied to
     /// the agent when this .SMM is opened. Optional.

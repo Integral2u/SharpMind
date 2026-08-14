@@ -169,6 +169,8 @@ public static class SmmWriter
             ["source"] = options.Source ?? "smm",
             ["config_json"] = JsonSerializer.Serialize(config, JsonOpts),
         };
+        if (!string.IsNullOrWhiteSpace(options.Checksum))
+            obj["checksum"] = options.Checksum;
         if (includeTemplate && !string.IsNullOrWhiteSpace(chatTemplate))
             obj["chat_template"] = chatTemplate;
         if (options.Skills is { Count: > 0 })

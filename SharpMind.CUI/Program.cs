@@ -8,7 +8,7 @@ Application.Init();
 try
 {
     var top = Application.Top;
-    top.Add(new MainWindow());
+    top.Add(new MainWindow());    
     Application.Run();
 }
 finally
