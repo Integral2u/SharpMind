@@ -30,6 +30,8 @@ public sealed class BackpropEngineTests
 
     private static readonly ModelConfig MultiLayerConfig = SmallConfig with { NumLayers = 2 };
 
+    private static readonly ModelConfig SmallMoEConfig = SmallConfig with { NumExperts = 4, TopKExperts = 2 };
+
     private const int Batch = 2;
     private const int Seq = 4;
 
@@ -47,6 +49,7 @@ public sealed class BackpropEngineTests
         var weights = ModelFactory.CreateForTraining(modelConfig, sc);
         WeightInitializer.InitializeRandomly(weights, seed);
         var model = ModelFactory.CreateTrainingTransformer(weights, sc);
+        WeightInitializer.InitializeModelMoE(model, seed + 1013);
         var parameters = model.Parameters().ToList();
         return (model, parameters, sc);
     }
@@ -122,6 +125,77 @@ public sealed class BackpropEngineTests
         Assert.True(losses[^1] < losses[0], $"backprop loss did not descend: {losses[0]:F4} → {losses[^1]:F4}");
     }
 
+    [Fact]
+    public void Backward_MoEGradientsMatchFiniteDifference()
+    {
+        var modelConfig = SmallMoEConfig;
+        var sharpConfig = SharpMindConfig.ForModel(modelConfig.NumHeads, modelConfig.NumKvHeads, "mixtral");
+        var (model, parameters, config) = Fixture(modelConfig, sharpConfig);
+        using var _m = model;
+
+        var mapping = GradientMappingFactory.Create(config);
+        using var engine = new BackpropEngine(model, mapping, parameters, config);
+
+        using var tokenIds = DeterministicBatch(out var labels);
+        using var flatLabels = labels.Reshape(Batch * Seq);
+        using var flatIds = tokenIds.Reshape(Batch * Seq);
+
+        using var ctx = new ForwardContext();
+        var logits = engine.ForwardAndRecord(ctx, tokenIds);
+        using var logitsFlat = logits.Reshape(Batch * Seq, modelConfig.VocabSize);
+
+        var loss = new CrossEntropyLoss();
+        loss.Compute(logitsFlat, flatLabels);
+        using var dLogits = loss.Backward(logitsFlat, flatLabels);
+
+        engine.Backward(ctx, dLogits, flatIds);
+
+        var baselineRouting = RoutingKey(ctx);
+
+        var targets = SelectTargets(model);
+        Assert.NotEmpty(targets);
+        foreach (var target in targets)
+        {
+            var param = parameters.First(p => ReferenceEquals(p.Data, target.Data));
+            AssertMoEGradientsMatch(engine, modelConfig, param, tokenIds, labels, loss, baselineRouting);
+        }
+    }
+
+    [Fact]
+    public void Backprop_MoELossDescends()
+    {
+        var modelConfig = SmallMoEConfig;
+        var sharpConfig = SharpMindConfig.ForModel(modelConfig.NumHeads, modelConfig.NumKvHeads, "mixtral");
+        var (model, parameters, config) = Fixture(modelConfig, sharpConfig);
+        using var _m = model;
+
+        var mapping = GradientMappingFactory.Create(config);
+        using var engine = new BackpropEngine(model, mapping, parameters, config);
+        using var optimizer = new AdamW(parameters, lr: 0.05f, weightDecay: 0f);
+
+        using var tokenIds = DeterministicBatch(out var labels);
+        using var flatLabels = labels.Reshape(Batch * Seq);
+        using var flatIds = tokenIds.Reshape(Batch * Seq);
+        var loss = new CrossEntropyLoss();
+
+        var losses = new List<float>();
+        for (int step = 0; step < 15; step++)
+        {
+            optimizer.ZeroGrad();
+            using var ctx = new ForwardContext();
+            var logits = engine.ForwardAndRecord(ctx, tokenIds);
+            using var logitsFlat = logits.Reshape(Batch * Seq, modelConfig.VocabSize);
+            float l = loss.Compute(logitsFlat, flatLabels);
+            using var dLogits = loss.Backward(logitsFlat, flatLabels);
+            engine.Backward(ctx, dLogits, flatIds);
+            optimizer.Update();
+            losses.Add(l);
+        }
+
+        Assert.True(float.IsFinite(losses[^1]));
+        Assert.True(losses[^1] < losses[0], $"backprop MoE loss did not descend: {losses[0]:F4} → {losses[^1]:F4}");
+    }
+
     // ── helpers ─────────────────────────────────────────────────────────────
 
     private static List<Parameter> SelectTargets(Transformer model)
@@ -147,10 +221,17 @@ public sealed class BackpropEngineTests
                 targets.AddRange(block.Ffn.W1Layer.Parameters());
                 targets.AddRange(block.Ffn.W2Layer!.Parameters());
             }
+            else if (block.Ffn.WGated is not null)
+            {
+                targets.AddRange(block.Ffn.WGated.Parameters());
+                targets.AddRange(block.Ffn.WDown!.Parameters());
+            }
             else
             {
-                targets.AddRange(block.Ffn.WGated!.Parameters());
-                targets.AddRange(block.Ffn.WDown!.Parameters());
+                targets.AddRange(block.Ffn.RouterLayer!.Parameters());
+                targets.AddRange(block.Ffn.ExpertGateLayers!.SelectMany(l => l.Parameters()));
+                targets.AddRange(block.Ffn.ExpertUpLayers!.SelectMany(l => l.Parameters()));
+                targets.AddRange(block.Ffn.ExpertDownLayers!.SelectMany(l => l.Parameters()));
             }
         }
         return targets.Distinct().ToList();
@@ -178,6 +259,56 @@ public sealed class BackpropEngineTests
                 $"{param.Name}[{i}] backprop={engineGrad[i]:E3} fd={fd:E3} diff={diff:E3}");
         }
     }
+
+    private static void AssertMoEGradientsMatch(
+        BackpropEngine engine, ModelConfig cfg, Parameter param,
+        Tensor<int> tokenIds, Tensor<int> labels, ILoss<int> loss, string baselineRouting)
+    {
+        // MoE routing (ArgTopK) is discrete, so a large h can push the FD secant
+        // across an expert boundary where backprop's derivative (which differentiates
+        // the recorded routing) is undefined. A small h keeps most samples inside a
+        // stable-routing region; the routing filter below skips any that still flip.
+        const float h = 1e-4f;
+        const float tolerance = 2e-2f;
+        var data = param.Data.Data;
+        var engineGrad = param.Grad.Data;
+
+        int max = Math.Min(data.Length, 24); // spot-check a subset to keep the test fast
+        int checkedCount = 0;
+        for (int i = 0; i < max; i++)
+        {
+            float original = data[i];
+            data[i] = original + h;
+            float plus = MoELossFor(engine, cfg, tokenIds, labels, loss, out var routingPlus);
+            data[i] = original - h;
+            float minus = MoELossFor(engine, cfg, tokenIds, labels, loss, out var routingMinus);
+            data[i] = original;
+
+            if (routingPlus != baselineRouting || routingMinus != baselineRouting)
+                continue;
+
+            float fd = (plus - minus) / (2 * h);
+            float diff = Math.Abs(engineGrad[i] - fd);
+            Assert.True(diff <= tolerance * (1f + Math.Abs(fd)),
+                $"{param.Name}[{i}] backprop={engineGrad[i]:E3} fd={fd:E3} diff={diff:E3}");
+            checkedCount++;
+        }
+        Assert.True(checkedCount > 0, $"{param.Name}: no stable-routing FD sample available (routing flips everywhere).");
+    }
+
+    private static float MoELossFor(
+        BackpropEngine engine, ModelConfig cfg, Tensor<int> tokenIds, Tensor<int> labels, ILoss<int> loss, out string routing)
+    {
+        using var ctx = new ForwardContext();
+        using var logits = engine.ForwardAndRecord(ctx, tokenIds);
+        using var flat = logits.Reshape(tokenIds.ElementCount, cfg.VocabSize);
+        using var flatLabels = labels.Reshape(tokenIds.ElementCount);
+        routing = RoutingKey(ctx);
+        return loss.Compute(flat, flatLabels);
+    }
+
+    private static string RoutingKey(ForwardContext ctx)
+        => string.Join(",", ctx.Blocks.SelectMany(b => b.FfnTopKIdx ?? Array.Empty<int>()));
 
     private static float LossFor(Transformer model, Tensor<int> tokenIds, Tensor<int> labels, ILoss<int> loss)
     {

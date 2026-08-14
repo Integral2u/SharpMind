@@ -41,6 +41,18 @@ public abstract class FfnLayer : IDisposable
     /// <summary>Dense FFN down-projection (W2). Null for gated/MoE FFNs.</summary>
     public LinearLayer? W2Layer => W2;
 
+    /// <summary>MoE router projection [HiddenDim → NumExperts]. Null for non-MoE FFNs.</summary>
+    public LinearLayer? RouterLayer => Router;
+
+    /// <summary>Per-expert gate projections. Null for non-MoE FFNs.</summary>
+    public IReadOnlyList<LinearLayer>? ExpertGateLayers => ExpertGate;
+
+    /// <summary>Per-expert up projections. Null for non-MoE FFNs.</summary>
+    public IReadOnlyList<LinearLayer>? ExpertUpLayers => ExpertUp;
+
+    /// <summary>Per-expert down projections. Null for non-MoE FFNs.</summary>
+    public IReadOnlyList<LinearLayer>? ExpertDownLayers => ExpertDown;
+
     public void LoadWeights(string name, ReadOnlySpan<float> data)
     {
         bool isBias = name.Contains("bias", StringComparison.OrdinalIgnoreCase);
@@ -195,20 +207,39 @@ public abstract class FfnLayer : IDisposable
         }
         else if (Router is not null && ExpertGate is not null)
         {
-            // MoE: push per-expert raw data and router raw data
-            if (weights.RawWgateExp is not null)
-                foreach (var (expIdx, rawData) in weights.RawWgateExp)
-                    if (expIdx < ExpertGate.Length)
-                        ExpertGate[expIdx].SetRawWeight(rawData);
-            if (weights.RawWupExp is not null)
-                foreach (var (expIdx, rawData) in weights.RawWupExp)
-                    if (expIdx < ExpertUp!.Length)
-                        ExpertUp[expIdx].SetRawWeight(rawData);
-            if (weights.RawWdownExp is not null)
-                foreach (var (expIdx, rawData) in weights.RawWdownExp)
-                    if (expIdx < ExpertDown!.Length)
-                        ExpertDown[expIdx].SetRawWeight(rawData);
+            // MoE: share float tensors when present (F32/F16 training exports)
+            // AND push raw quantized data when present (quantized GGUF) so both
+            // the float (training) and raw (inference) forward paths stay live.
+            if (weights.WRouter is not null)
+                Router.ReplaceWeights(weights.WRouter, weights.WRouterBias);
             Router.SetRawWeight(weights.RawRouter);
+
+            for (int expIdx = 0; expIdx < ExpertGate.Length; expIdx++)
+            {
+                if (weights.WgateExp is not null && weights.WgateExp.TryGetValue(expIdx, out var gateW))
+                {
+                    Tensor<float>? gateB = weights.WgateExpBias is not null && weights.WgateExpBias.TryGetValue(expIdx, out var gb) ? gb : null;
+                    ExpertGate[expIdx].ReplaceWeights(gateW, gateB);
+                }
+                if (weights.RawWgateExp is not null && weights.RawWgateExp.TryGetValue(expIdx, out var gateRaw))
+                    ExpertGate[expIdx].SetRawWeight(gateRaw);
+
+                if (weights.WupExp is not null && weights.WupExp.TryGetValue(expIdx, out var upW))
+                {
+                    Tensor<float>? upB = weights.WupExpBias is not null && weights.WupExpBias.TryGetValue(expIdx, out var ub) ? ub : null;
+                    ExpertUp![expIdx].ReplaceWeights(upW, upB);
+                }
+                if (weights.RawWupExp is not null && weights.RawWupExp.TryGetValue(expIdx, out var upRaw))
+                    ExpertUp![expIdx].SetRawWeight(upRaw);
+
+                if (weights.WdownExp is not null && weights.WdownExp.TryGetValue(expIdx, out var downW))
+                {
+                    Tensor<float>? downB = weights.WdownExpBias is not null && weights.WdownExpBias.TryGetValue(expIdx, out var db) ? db : null;
+                    ExpertDown![expIdx].ReplaceWeights(downW, downB);
+                }
+                if (weights.RawWdownExp is not null && weights.RawWdownExp.TryGetValue(expIdx, out var downRaw))
+                    ExpertDown![expIdx].SetRawWeight(downRaw);
+            }
         }
     }
 

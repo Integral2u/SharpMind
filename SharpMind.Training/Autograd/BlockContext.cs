@@ -51,6 +51,32 @@ public sealed class BlockContext : IDisposable
     public Tensor<float>? FfnActOut  { get; set; }   // after activation
     public Tensor<float>? FfnOut     { get; set; }   // after W2/Wdown
 
+    // MoE FFN (per-pair pre-activations, pair index = token*TopK + slot)
+
+    /// <summary>Router logits [M, NumExperts].</summary>
+    public Tensor<float>? FfnRouterLogits { get; set; }
+
+    /// <summary>Softmax-over-experts probabilities [M, NumExperts].</summary>
+    public Tensor<float>? FfnRouterProbs { get; set; }
+
+    /// <summary>Top-k expert index per token, flattened [M * TopK].</summary>
+    public int[]? FfnTopKIdx { get; set; }
+
+    /// <summary>Renormalised expert weights per pair, flattened [M * TopK] (w = p / Σ_topk p).</summary>
+    public float[]? FfnMoEWeights { get; set; }
+
+    /// <summary>Per-pair gate projection [M*TopK, FfnDim].</summary>
+    public Tensor<float>? FfnMoEGate { get; set; }
+
+    /// <summary>Per-pair up projection [M*TopK, FfnDim].</summary>
+    public Tensor<float>? FfnMoEUp { get; set; }
+
+    /// <summary>Per-pair gated activation [M*TopK, FfnDim] (out = gate(g) ⊙ u).</summary>
+    public Tensor<float>? FfnMoEActOut { get; set; }
+
+    /// <summary>Per-pair expert output [M*TopK, HiddenDim] (before router reweighting).</summary>
+    public Tensor<float>? FfnMoEExpertOut { get; set; }
+
     // Disposal
 
     public void Dispose()
@@ -63,5 +89,8 @@ public sealed class BlockContext : IDisposable
         Norm2Input?.Dispose();  Norm2Out?.Dispose();
         FfnHidden?.Dispose();  FfnGate?.Dispose();  FfnUp?.Dispose();
         FfnActOut?.Dispose();  FfnOut?.Dispose();
+        FfnRouterLogits?.Dispose();  FfnRouterProbs?.Dispose();
+        FfnMoEGate?.Dispose();  FfnMoEUp?.Dispose();  FfnMoEActOut?.Dispose();
+        FfnMoEExpertOut?.Dispose();
     }
 }

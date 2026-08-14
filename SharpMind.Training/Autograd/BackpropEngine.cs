@@ -26,10 +26,11 @@ namespace SharpMind.Training.Autograd;
 /// FFN pre-activations — that the inference path never exposes.
 ///
 /// Supported architectures: decoder transformer with RoPE/ALiBi/NoPE, RMSNorm
-/// or LayerNorm, dense or gated (SwiGLU/GeGLU) FFN, MHA/GQA/MQA attention.
+/// or LayerNorm, dense, gated (SwiGLU/GeGLU) or MoE (top-k router + per-expert
+/// gated FFN) blocks, MHA/GQA/MQA attention.
 /// Weight-tied LM head (the training models built by
-/// <see cref="ModelFactory.CreateForTraining"/> are always tied). MoE FFN and
-/// Gemma-3 post norms are not supported yet.
+/// <see cref="ModelFactory.CreateForTraining"/> are always tied). Gemma-3 post
+/// norms are not supported yet.
 /// </summary>
 public sealed class BackpropEngine : IDisposable
 {
@@ -381,6 +382,84 @@ public sealed class BackpropEngine : IDisposable
                 bc.FfnOut = out3;
                 return out3;
             }
+            case MoEFfnLayer:
+            {
+                int H = cfg.HiddenDim;
+                int E = cfg.NumExperts;
+                int topK = cfg.TopKExperts;
+                int pairs = total * topK;
+                var router = ffn.RouterLayer!;
+                var wGate = ffn.ExpertGateLayers!;
+                var wUp = ffn.ExpertUpLayers!;
+                var wDown = ffn.ExpertDownLayers!;
+
+                using var xFlat = norm2Out.Reshape(total, H);        // [M, H] view
+
+                // Router logits + softmax-over-experts.
+                var logits = router.Forward(xFlat);                  // [M, E]
+                var probs = acts.Softmax(logits);                    // [M, E]
+
+                // Top-k routing + per-pair gated expert activations.
+                var topKIdx = new int[pairs];
+                var moeWeights = new float[pairs];
+                var gateArr = new Tensor<float>(pairs, ffnDim);
+                var upArr = new Tensor<float>(pairs, ffnDim);
+                var actArr = new Tensor<float>(pairs, ffnDim);
+                var expArr = new Tensor<float>(pairs, H);
+                var outFlat = new Tensor<float>(total, H);
+
+                for (int t = 0; t < total; t++)
+                {
+                    var pRow = probs.RowSpan(t);
+                    using var rowProbs = Tensor<float>.From(pRow, E);
+                    var topKIndices = FfnKernels.ArgTopK(rowProbs, topK);
+
+                    float weightSum = 0f;
+                    foreach (int e in topKIndices) weightSum += pRow[e];
+
+                    // Copy row t into an owned buffer: Slice()/Reshape() views leave a
+                    // nonzero DataPtr offset, but TrainingLinearLayer.Forward reads via
+                    // DataPtr (start of buffer) without adding the view offset, so a
+                    // bare view would route the wrong token's hidden state into the
+                    // experts. A fresh [H] tensor keeps DataPtr aligned at zero.
+                    using var tokenInput = Tensor<float>.From(xFlat.RowSpan(t), H);
+                    for (int s = 0; s < topK; s++)
+                    {
+                        int e = topKIndices[s];
+                        float w = pRow[e] / weightSum;
+                        int p = t * topK + s;
+                        topKIdx[p] = e;
+                        moeWeights[p] = w;
+
+                        using var gate = wGate[e].Forward(tokenInput);   // [1, fDim]
+                        using var up = wUp[e].Forward(tokenInput);       // [1, fDim]
+                        using var acted = acts.GatedActivate(gate, up);  // [1, fDim]
+                        gate.Data.CopyTo(gateArr.RowSpan(p));
+                        up.Data.CopyTo(upArr.RowSpan(p));
+                        acted.Data.CopyTo(actArr.RowSpan(p));
+
+                        using var expertOut = wDown[e].Forward(acted);   // [1, H]
+                        expertOut.RowSpan(0).CopyTo(expArr.RowSpan(p));
+
+                        var dst = outFlat.RowSpan(t);
+                        var src = expertOut.RowSpan(0);
+                        for (int i = 0; i < H; i++)
+                            dst[i] += src[i] * w;
+                    }
+                }
+                var out3 = outFlat.Reshape(norm2Out.Shape.Dims[0], norm2Out.Shape.Dims[1], H);
+                outFlat.Dispose();
+                bc.FfnRouterLogits = logits;
+                bc.FfnRouterProbs = probs;
+                bc.FfnTopKIdx = topKIdx;
+                bc.FfnMoEWeights = moeWeights;
+                bc.FfnMoEGate = gateArr;
+                bc.FfnMoEUp = upArr;
+                bc.FfnMoEActOut = actArr;
+                bc.FfnMoEExpertOut = expArr;
+                bc.FfnOut = out3;
+                return out3;
+            }
             default:
                 throw new NotSupportedException($"Backprop does not support FFN kind {ffn.GetType().Name} yet.");
         }
@@ -527,6 +606,145 @@ public sealed class BackpropEngine : IDisposable
                 using var norm2Flat = bc.Norm2Out!.Reshape(rows, H);
                 var dNorm2 = LinearBackward(dFused, norm2Flat, ffn.WGated!.Weight, BiasParam(ffn.WGated));
                 dFused.Dispose();
+                return dNorm2;
+            }
+            case MoEFfnLayer:
+            {
+                int E = cfg.NumExperts;
+                int topK = cfg.TopKExperts;
+                int pairs = rows * topK;
+                var topKIdx = bc.FfnTopKIdx!;
+                var moeWeights = bc.FfnMoEWeights!;
+                var gateArr = bc.FfnMoEGate!;
+                var upArr = bc.FfnMoEUp!;
+                var actArr = bc.FfnMoEActOut!;
+                var expArr = bc.FfnMoEExpertOut!;
+                var probs = bc.FfnRouterProbs!;
+                var router = ffn.RouterLayer!;
+                var wGate = ffn.ExpertGateLayers!;
+                var wUp = ffn.ExpertUpLayers!;
+                var wDown = ffn.ExpertDownLayers!;
+
+                using var xFlat = bc.Norm2Out!.Reshape(rows, H);        // shared expert/route input
+                using var outFlat = bc.FfnOut!.Reshape(rows, H);        // MoE output, for Σ w·dW = dOut·out
+                var dNorm2 = Tensor<float>.Zeros(rows, H);
+
+                // Group pairs by expert (expert-major ordering).
+                var counts = new int[E];
+                for (int p = 0; p < pairs; p++) counts[topKIdx[p]]++;
+                var offsets = new int[E];
+                for (int e = 1; e < E; e++) offsets[e] = offsets[e - 1] + counts[e - 1];
+                var pairByExpert = new int[pairs];
+                var cursor = (int[])offsets.Clone();
+                for (int p = 0; p < pairs; p++)
+                    pairByExpert[cursor[topKIdx[p]]++] = p;
+
+                // Per-expert compact backward: Down → gated gate/up grads → Gate/Up linear into x.
+                for (int e = 0; e < E; e++)
+                {
+                    int n = counts[e];
+                    if (n == 0) continue;
+
+                    using var dOutE = Tensor<float>.Zeros(n, H);
+                    using var actE = Tensor<float>.Zeros(n, ffnDim);
+                    using var xE = Tensor<float>.Zeros(n, H);
+                    for (int j = 0; j < n; j++)
+                    {
+                        int p = pairByExpert[offsets[e] + j];
+                        int t = p / topK;
+                        var dRow = dFfn.RowSpan(t);
+                        var dRowDst = dOutE.RowSpan(j);
+                        var actSrc = actArr.RowSpan(p);
+                        actSrc.CopyTo(actE.RowSpan(j));
+                        var xSrc = xFlat.RowSpan(t);
+                        xSrc.CopyTo(xE.RowSpan(j));
+                        float w = moeWeights[p];
+                        for (int i = 0; i < H; i++)
+                            dRowDst[i] = dRow[i] * w;
+                    }
+
+                    // Down backward: dActE [n, ffnDim] + accumulated wDown/bias grads.
+                    using var dActE = LinearBackward(dOutE, actE, wDown[e].Weight, BiasParam(wDown[e]));
+
+                    // Gated backward per pair: out = gateValue(g) ⊙ u.
+                    var dGateE = Tensor<float>.Zeros(n, ffnDim);
+                    var dUpE = Tensor<float>.Zeros(n, ffnDim);
+                    for (int j = 0; j < n; j++)
+                    {
+                        int p = pairByExpert[offsets[e] + j];
+                        var gate = gateArr.RowSpan(p);
+                        var up = upArr.RowSpan(p);
+                        var da = dActE.RowSpan(j);
+                        var dg = dGateE.RowSpan(j);
+                        var du = dUpE.RowSpan(j);
+                        for (int d = 0; d < ffnDim; d++)
+                        {
+                            du[d] = da[d] * GateValue(gate[d]);
+                            dg[d] = da[d] * GateDerivative(gate[d]) * up[d];
+                        }
+                    }
+                    dActE.Dispose();
+
+                    // Gate/Up linear backward into norm2 input rows.
+                    using var dxGate = LinearBackward(dGateE, xE, wGate[e].Weight, BiasParam(wGate[e]));
+                    using var dxUp = LinearBackward(dUpE, xE, wUp[e].Weight, BiasParam(wUp[e]));
+                    dGateE.Dispose();
+                    dUpE.Dispose();
+                    for (int j = 0; j < n; j++)
+                    {
+                        int p = pairByExpert[offsets[e] + j];
+                        int t = p / topK;
+                        var dst = dNorm2.RowSpan(t);
+                        var g = dxGate.RowSpan(j);
+                        var u = dxUp.RowSpan(j);
+                        for (int i = 0; i < H; i++)
+                            dst[i] += g[i] + u[i];
+                    }
+                }
+
+                // Router backward.
+                // w_p = probs[t,e]/S_t; dW_p = dFfn[t]·expertOut_p; sumW_t = dFfn[t]·out_t (= Σ dW_p·w_p).
+                // dProbs_te = (dW_te − sumW_t)/S_t for top-k rows, 0 otherwise.
+                // dLogits = p ⊙ (dProbs − Σ_j p_j·dProbs_j)  (softmax Jacobian).
+                var dLogits = Tensor<float>.Zeros(rows, E);
+                for (int t = 0; t < rows; t++)
+                {
+                    // weightSum S_t over the selected experts.
+                    float S = 0f;
+                    for (int s = 0; s < topK; s++)
+                        S += probs[t, topKIdx[t * topK + s]];
+
+                    // sumW_t = dFfn[t] · out_t.
+                    var dOut = dFfn.RowSpan(t);
+                    var outf = outFlat.RowSpan(t);
+                    float sumW = 0f;
+                    for (int i = 0; i < H; i++)
+                        sumW += dOut[i] * outf[i];
+
+                    // dProbs per selected expert.
+                    for (int s = 0; s < topK; s++)
+                    {
+                        int p = t * topK + s;
+                        int e = topKIdx[p];
+                        var expRow = expArr.RowSpan(p);
+                        float dW = 0f;
+                        for (int i = 0; i < H; i++)
+                            dW += dOut[i] * expRow[i];
+                        dLogits[t, e] = (dW - sumW) / S;
+                    }
+
+                    // softmax Jacobian: p ⊙ (dProbs − Σ_j p_j·dProbs_j).
+                    var pRow = probs.RowSpan(t);
+                    var dlRow = dLogits.RowSpan(t);
+                    float pDot = 0f;
+                    for (int e = 0; e < E; e++)
+                        pDot += pRow[e] * dlRow[e];
+                    for (int e = 0; e < E; e++)
+                        dlRow[e] = pRow[e] * (dlRow[e] - pDot);
+                }
+                using var dRouter = LinearBackward(dLogits, xFlat, router.Weight, BiasParam(router));
+                dLogits.Dispose();
+                dNorm2.AddInPlace(dRouter);
                 return dNorm2;
             }
             default:

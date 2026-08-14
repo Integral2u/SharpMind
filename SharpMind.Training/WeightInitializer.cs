@@ -48,6 +48,45 @@ public static class WeightInitializer
         }
     }
 
+    /// <summary>
+    /// Randomises MoE router and per-expert weights (GPT-2 style, std 0.02) in
+    /// place. Unlike <see cref="InitializeRandomly"/> this runs on the assembled
+    /// <see cref="Transformer"/>, because router/expert tensors live on the
+    /// built <see cref="Model.Layers.Ffn.FfnLayer"/> rather than in
+    /// <see cref="TransformerWeights.BlockWeights"/>.
+    /// </summary>
+    /// <param name="model">The assembled training transformer to populate.</param>
+    /// <param name="seed">Random seed for reproducible initialisation.</param>
+    /// <param name="std">Standard deviation of the Gaussian draws.</param>
+    public static void InitializeModelMoE(Transformer model, int seed, float std = 0.02f)
+    {
+        ArgumentNullException.ThrowIfNull(model);
+
+        var rng = new Random(seed);
+        for (int i = 0; i < model.Config.NumLayers; i++)
+        {
+            var ffn = model.GetBlock(i)?.Ffn;
+            var router = ffn?.RouterLayer;
+            if (router is null) continue;
+
+            FillNormal(router.Weight.Data, rng, std);
+            if (router.Bias is { } rb) FillNormal(rb.Data, rng, std);
+
+            if (ffn!.ExpertGateLayers is { } gateLayers)
+                foreach (var l in gateLayers) FillLayer(l, rng, std);
+            if (ffn.ExpertUpLayers is { } upLayers)
+                foreach (var l in upLayers) FillLayer(l, rng, std);
+            if (ffn.ExpertDownLayers is { } downLayers)
+                foreach (var l in downLayers) FillLayer(l, rng, std);
+        }
+    }
+
+    private static void FillLayer(Model.Layers.LinearLayer layer, Random rng, float std)
+    {
+        FillNormal(layer.Weight.Data, rng, std);
+        if (layer.Bias is { } b) FillNormal(b.Data, rng, std);
+    }
+
     /// <summary>Fills <paramref name="data"/> with independent standard-normal draws scaled by <paramref name="std"/>.</summary>
     public static void FillNormal(Span<float> data, Random rng, float std)
     {

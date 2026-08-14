@@ -144,7 +144,7 @@ public static class SmmQuantAwareTrainingExample
         SmmTrainingExporter.Export(weights, tokenizer, SavePath, new SmmWriteOptions
         {
             Source = "training",
-        });
+        }, model: model);
         await Console.Out.WriteLineAsync($"Saved: {SavePath} ({new FileInfo(SavePath).Length:N0} bytes)");
 
         // 7. Reload the .SMM and rebuild the inference transformer.

@@ -73,6 +73,31 @@ public class SmmExportLoadTests : IDisposable
     }
 
     [Fact]
+    public void TrainingExport_MoE_ReloadsWithParity()
+    {
+        using var fixture = TrainMoEFixture();
+
+        string smmPath = Path.Combine(_temp.Path, "model-moe.smm");
+        SmmTrainingExporter.Export(fixture.Weights, fixture.Tokenizer, smmPath, new SmmWriteOptions
+        {
+            Source = "training",
+        }, model: fixture.Model);
+
+        using var reloaded = Reload(smmPath, fixture.SharpConfig, out var reloadedConfig, out var reloadedTokenizer);
+
+        // Config round-trip — MoE dimensions survive serialization
+        Assert.Equal(fixture.Config.NumExperts, reloadedConfig.NumExperts);
+        Assert.Equal(fixture.Config.TopKExperts, reloadedConfig.TopKExperts);
+
+        // Tensor parity — router + per-expert weights must round-trip exactly
+        AssertMoEWeightsClose(fixture.Model, reloaded, fixture.Config);
+
+        // Logits parity — reloaded weights drive the exact same MoE forward pass
+        using var reloadedModel = ModelFactory.CreateTrainingTransformer(reloaded, fixture.SharpConfig);
+        AssertLogitsParity(fixture.Model, reloadedModel, fixture.Generator, fixture.Config.VocabSize);
+    }
+
+    [Fact]
     public void TrainingExport_StoresAndReloadsChatTemplate()
     {
         using var fixture = TrainFixture();
@@ -445,6 +470,70 @@ public class SmmExportLoadTests : IDisposable
             Tokenizer = tokenizer,
             Generator = generator,
         };
+    }
+
+    /// <summary>
+    /// Builds a small MoE model with randomised router + expert weights (no
+    /// full training) so the .SMM round trip can be verified tensor-for-tensor.
+    /// </summary>
+    private static TrainedFixture TrainMoEFixture()
+    {
+        var modelConfig = ModelConfig.Learnable with { NumExperts = 4, TopKExperts = 2 };
+        var sharpConfig = SharpMindConfig.ForModel(modelConfig.NumHeads, modelConfig.NumKvHeads, "mixtral")
+            with { Hardware = HardwareTier.Scalar };
+        var weights = ModelFactory.CreateForTraining(modelConfig, sharpConfig);
+        WeightInitializer.InitializeRandomly(weights, 4242);
+        var model = ModelFactory.CreateTrainingTransformer(weights, sharpConfig);
+        WeightInitializer.InitializeModelMoE(model, 4242 + 1013);
+
+        var generator = new LearnableGenerator(
+            new LearnableConfig { IncludeNouns = true, IncludeVerbs = true, IncludeObjects = true },
+            new Random(1234));
+        var tokenizer = BuildTokenizer(generator);
+
+        return new TrainedFixture
+        {
+            Weights = weights,
+            Model = model,
+            Config = modelConfig,
+            SharpConfig = sharpConfig,
+            Tokenizer = tokenizer,
+            Generator = generator,
+        };
+    }
+
+    /// <summary>
+    /// Compares every MoE tensor (router + per-expert gate/up/down weights and
+    /// biases) between the original training model and the reloaded weights.
+    /// </summary>
+    private static void AssertMoEWeightsClose(Transformer original, TransformerWeights reloaded, ModelConfig config)
+    {
+        int numExperts = config.NumExperts;
+        for (int i = 0; i < config.NumLayers; i++)
+        {
+            var ffn = original.GetBlock(i)!.Ffn;
+            Assert.NotNull(ffn.RouterLayer);
+            string blk = $"moe.blk{i}";
+
+            var router = ffn.RouterLayer!;
+            var expGate = ffn.ExpertGateLayers!;
+            var expUp = ffn.ExpertUpLayers!;
+            var expDown = ffn.ExpertDownLayers!;
+
+            var block = reloaded.Blocks[i];
+            AssertTensorClose(router.Weight, block.WRouter!, 1e-6f, blk + ".ffn_gate");
+            AssertTensorClose(router.Bias!, block.WRouterBias!, 1e-6f, blk + ".ffn_gate.bias");
+
+            for (int e = 0; e < numExperts; e++)
+            {
+                AssertTensorClose(expGate[e].Weight, block.WgateExp![e], 1e-6f, blk + $".exps.{e}.ffn_gate");
+                AssertTensorClose(expGate[e].Bias!, block.WgateExpBias![e], 1e-6f, blk + $".exps.{e}.ffn_gate.bias");
+                AssertTensorClose(expUp[e].Weight, block.WupExp![e], 1e-6f, blk + $".exps.{e}.ffn_up");
+                AssertTensorClose(expUp[e].Bias!, block.WupExpBias![e], 1e-6f, blk + $".exps.{e}.ffn_up.bias");
+                AssertTensorClose(expDown[e].Weight, block.WdownExp![e], 1e-6f, blk + $".exps.{e}.ffn_down");
+                AssertTensorClose(expDown[e].Bias!, block.WdownExpBias![e], 1e-6f, blk + $".exps.{e}.ffn_down.bias");
+            }
+        }
     }
 
     /// <summary>

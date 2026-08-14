@@ -162,6 +162,11 @@ public static class TrainRunner
                 Log("Weights initialised.");
             }
             using var model = ModelFactory.CreateTrainingTransformer(weights, sharpConfig);
+            if (resumeDir is null && model.Config.NumExperts > 0)
+            {
+                WeightInitializer.InitializeModelMoE(model, Seed + 1013);
+                Log("MoE router/expert weights initialised.");
+            }
             var parameters = model.Parameters().ToList();
             var ops = TrainingOpsFactory.Create(sharpConfig);
 
@@ -215,7 +220,7 @@ public static class TrainRunner
             // 6. Export the trained weights + tokenizer to .SMM.
             string exportPath = job.ExportFilePath;
             Directory.CreateDirectory(Path.GetDirectoryName(exportPath)!);
-            SmmTrainingExporter.Export(weights, tokenizer, exportPath, BuildEmbedOptions(job, "training", SourceHasher.Combined(job.Sources)));
+            SmmTrainingExporter.Export(weights, tokenizer, exportPath, BuildEmbedOptions(job, "training", SourceHasher.Combined(job.Sources)), model: model);
             progress.Report(1f);
             Log($"Saved: {exportPath} ({new FileInfo(exportPath).Length:N0} bytes)");
 
@@ -254,7 +259,7 @@ public static class TrainRunner
             var meta = Checkpoint.Load(dir, parameters, optimizer: null);
 
             string smmPath = Path.Combine(dir, "model.smm");
-            SmmTrainingExporter.Export(weights, tokenizer, smmPath, BuildEmbedOptions(job, "checkpoint", SourceHasher.Combined(job.Sources)));
+            SmmTrainingExporter.Export(weights, tokenizer, smmPath, BuildEmbedOptions(job, "checkpoint", SourceHasher.Combined(job.Sources)), model: model);
             log($"Checkpoint {Path.GetFileName(dir)} → {Path.GetFileName(smmPath)} (step {meta.Step})");
         }
         catch (Exception ex)

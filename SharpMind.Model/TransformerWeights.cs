@@ -155,6 +155,22 @@ public abstract class TransformerWeights : IDisposable
             var b = Blocks[bIdx];
             if (name.Contains("bias", StringComparison.OrdinalIgnoreCase))
             {
+                if (IsMoE && name.Contains(".exps.", StringComparison.OrdinalIgnoreCase))
+                {
+                    var expMatch = RegexGenerated.ExpertIndex.Match(name);
+                    if (expMatch.Success && int.TryParse(expMatch.Groups[1].Value, out int expIdx))
+                    {
+                        if (name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase))
+                            return GetOrAdd(b.WgateExpBias, expIdx, () => new Tensor<float>(Config.FfnDim), v => b.WgateExpBias = v);
+                        if (name.Contains("ffn_up", StringComparison.OrdinalIgnoreCase))
+                            return GetOrAdd(b.WupExpBias, expIdx, () => new Tensor<float>(Config.FfnDim), v => b.WupExpBias = v);
+                        if (name.Contains("ffn_down", StringComparison.OrdinalIgnoreCase))
+                            return GetOrAdd(b.WdownExpBias, expIdx, () => new Tensor<float>(Config.HiddenDim), v => b.WdownExpBias = v);
+                    }
+                    return null;
+                }
+                if (IsMoE && name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase))
+                    return b.WRouterBias ??= new Tensor<float>(Config.NumExperts);
                 if (name.Contains("attn_q", StringComparison.OrdinalIgnoreCase) || name.Contains("q_proj", StringComparison.OrdinalIgnoreCase)) return b.WqBias;
                 if (name.Contains("attn_k", StringComparison.OrdinalIgnoreCase) || name.Contains("k_proj", StringComparison.OrdinalIgnoreCase)) return b.WkBias;
                 if (name.Contains("attn_v", StringComparison.OrdinalIgnoreCase) || name.Contains("v_proj", StringComparison.OrdinalIgnoreCase)) return b.WvBias;
@@ -193,14 +209,44 @@ public abstract class TransformerWeights : IDisposable
                 if (name.Contains("attn_norm", StringComparison.OrdinalIgnoreCase) || name.Contains("input_layernorm", StringComparison.OrdinalIgnoreCase)) return b.Norm1W;
                 if (name.Contains("ffn_norm", StringComparison.OrdinalIgnoreCase) || name.Contains("post_attention_layernorm", StringComparison.OrdinalIgnoreCase)) return b.Norm2W;
 
-                if (IsMoE && (name.Contains(".exps.", StringComparison.OrdinalIgnoreCase) || name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase) || name.Contains("ffn_up", StringComparison.OrdinalIgnoreCase)))
+                if (IsMoE && name.Contains(".exps.", StringComparison.OrdinalIgnoreCase))
+                {
+                    var expMatch = RegexGenerated.ExpertIndex.Match(name);
+                    if (expMatch.Success && int.TryParse(expMatch.Groups[1].Value, out int expIdx))
+                    {
+                        if (name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase))
+                            return GetOrAdd(b.WgateExp, expIdx, () => new Tensor<float>(Config.HiddenDim, Config.FfnDim), v => b.WgateExp = v);
+                        if (name.Contains("ffn_up", StringComparison.OrdinalIgnoreCase))
+                            return GetOrAdd(b.WupExp, expIdx, () => new Tensor<float>(Config.HiddenDim, Config.FfnDim), v => b.WupExp = v);
+                        if (name.Contains("ffn_down", StringComparison.OrdinalIgnoreCase))
+                            return GetOrAdd(b.WdownExp, expIdx, () => new Tensor<float>(Config.FfnDim, Config.HiddenDim), v => b.WdownExp = v);
+                    }
                     return null;
+                }
+
+                if (IsMoE && name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase))
+                    return b.WRouter ??= new Tensor<float>(Config.HiddenDim, Config.NumExperts);
 
                 if (name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase) || name.Contains("ffn_up", StringComparison.OrdinalIgnoreCase)) return b.Wf1;
                 if (name.Contains("ffn_down", StringComparison.OrdinalIgnoreCase)) return b.Wf2;
             }
         }
         return null;
+    }
+
+    /// <summary>Gets or creates a per-expert float tensor in the shared dictionary.</summary>
+    private static Tensor<float> GetOrAdd(
+        Dictionary<int, Tensor<float>>? dict, int key,
+        Func<Tensor<float>> factory,
+        Action<Dictionary<int, Tensor<float>>> store)
+    {
+        if (dict is not null && dict.TryGetValue(key, out var existing))
+            return existing;
+        var value = factory();
+        dict ??= new Dictionary<int, Tensor<float>>();
+        dict[key] = value;
+        store(dict);
+        return value;
     }
 
     public static void SetRawField(BlockWeights block, string field, byte[] data, QuantDType dtype)
@@ -350,6 +396,17 @@ public abstract class TransformerWeights : IDisposable
         public Dictionary<int, byte[]>? RawWdownExp { get; set; }
         public byte[]? RawRouter { get; set; }
 
+        // MoE float tensors (populated for F32/F16 training exports, mirroring
+        // the shared-tensor round trip used by dense/gated FFNs)
+        public Tensor<float>? WRouter { get; set; }
+        public Tensor<float>? WRouterBias { get; set; }
+        public Dictionary<int, Tensor<float>>? WgateExp { get; set; }
+        public Dictionary<int, Tensor<float>>? WgateExpBias { get; set; }
+        public Dictionary<int, Tensor<float>>? WupExp { get; set; }
+        public Dictionary<int, Tensor<float>>? WupExpBias { get; set; }
+        public Dictionary<int, Tensor<float>>? WdownExp { get; set; }
+        public Dictionary<int, Tensor<float>>? WdownExpBias { get; set; }
+
         // Per-tensor quantization dtype
         public QuantDType? QuantDtypeWq { get; set; }
         public QuantDType? QuantDtypeWk { get; set; }
@@ -393,6 +450,16 @@ public abstract class TransformerWeights : IDisposable
             Norm1W?.Dispose(); Norm1B?.Dispose(); Norm2W?.Dispose(); Norm2B?.Dispose();
             QNormW?.Dispose(); KNormW?.Dispose();
             PostNorm1W?.Dispose(); PostNorm2W?.Dispose();
+            WRouter?.Dispose(); WRouterBias?.Dispose();
+            DisposeDict(WgateExp); DisposeDict(WgateExpBias);
+            DisposeDict(WupExp); DisposeDict(WupExpBias);
+            DisposeDict(WdownExp); DisposeDict(WdownExpBias);
+        }
+
+        private static void DisposeDict(Dictionary<int, Tensor<float>>? dict)
+        {
+            if (dict is null) return;
+            foreach (var t in dict.Values) t.Dispose();
         }
 
         /// <summary>
@@ -415,6 +482,10 @@ public abstract class TransformerWeights : IDisposable
             RawWgateExp = null; RawWupExp = null; RawWdownExp = null;
             QuantDtypeWgateExp = null; QuantDtypeWupExp = null; QuantDtypeWdownExp = null;
             RawRouter = null; QuantDtypeRouter = null;
+            WRouter = null; WRouterBias = null;
+            WgateExp = null; WgateExpBias = null;
+            WupExp = null; WupExpBias = null;
+            WdownExp = null; WdownExpBias = null;
         }
     }
 }
