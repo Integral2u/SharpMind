@@ -90,7 +90,7 @@ public static class Gradients
     /// Returns the pre-clip norm for logging.
     /// </summary>
     public static float ClipGlobalNorm(
-        IEnumerable<Parameter> parameters,
+        IReadOnlyList<Parameter> parameters,
         float maxNorm)
     {
         float totalNormSq = 0f;
@@ -122,7 +122,7 @@ public static class Gradients
     /// Returns the pre-clip norm for logging.
     /// </summary>
     public static float ClipGlobalNorm(
-        IEnumerable<Parameter> parameters,
+        IReadOnlyList<Parameter> parameters,
         float maxNorm,
         TrainingOps ops)
     {

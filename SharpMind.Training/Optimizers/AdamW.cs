@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using SharpMind.Core.Training;
 
 namespace SharpMind.Training.Optimizers;
@@ -7,6 +8,7 @@ public sealed class AdamW : IOptimizer
     private readonly Parameter[] _parameters;
     private readonly float[][] _m;
     private readonly float[][] _v;
+    private readonly bool[] _decay;
     private readonly float _beta1;
     private readonly float _beta2;
     private readonly float _epsilon;
@@ -40,6 +42,7 @@ public sealed class AdamW : IOptimizer
 
         _m = [.. _parameters.Select(p => new float[p.Data.ElementCount])];
         _v = [.. _parameters.Select(p => new float[p.Data.ElementCount])];
+        _decay = [.. _parameters.Select(p => ShouldDecay(p.Name))];
     }
 
     public float LearningRate { get => _lr; set => _lr = value; }
@@ -58,7 +61,7 @@ public sealed class AdamW : IOptimizer
             var grad = _parameters[i].Grad.Data;
             var m = _m[i];
             var v = _v[i];
-            float decay = ShouldDecay(_parameters[i].Name) ? _weightDecay : 0f;
+            float decay = _decay[i] ? _weightDecay : 0f;
 
             if (_ops is not null)
             {
@@ -96,8 +99,8 @@ public sealed class AdamW : IOptimizer
         writer.Write(_lr);
         for (int i = 0; i < _m.Length; i++)
         {
-            foreach (float f in _m[i]) writer.Write(f);
-            foreach (float f in _v[i]) writer.Write(f);
+            writer.Write(MemoryMarshal.AsBytes(_m[i].AsSpan()));
+            writer.Write(MemoryMarshal.AsBytes(_v[i].AsSpan()));
         }
     }
 
@@ -108,8 +111,8 @@ public sealed class AdamW : IOptimizer
         _lr = reader.ReadSingle();
         for (int i = 0; i < _m.Length; i++)
         {
-            for (int j = 0; j < _m[i].Length; j++) _m[i][j] = reader.ReadSingle();
-            for (int j = 0; j < _v[i].Length; j++) _v[i][j] = reader.ReadSingle();
+            reader.Read(MemoryMarshal.AsBytes(_m[i].AsSpan()));
+            reader.Read(MemoryMarshal.AsBytes(_v[i].AsSpan()));
         }
     }
 

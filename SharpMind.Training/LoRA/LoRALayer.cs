@@ -8,15 +8,15 @@ namespace SharpMind.Training.LoRA;
 /// <summary>
 /// LoRA (Low-Rank Adaptation) — parameter-efficient fine-tuning.
 /// Adds small rank decomposition matrices to frozen pretrained weights.
-/// W_fast = W_frozen + (A @ B.T) * scale
+/// W_fast = W_frozen + (A @ B) * scale
 /// 
 /// This allows fine-tuning with ~1% of original parameters while
 /// retaining most of model quality.
 /// </summary>
 public sealed class LoRALayer : IDisposable
 {
-    private readonly LinearLayer _a;  // [rank, in]
-    private readonly LinearLayer _b;  // [out, rank]
+    private readonly LinearLayer _a;  // [in, rank]
+    private readonly LinearLayer _b;  // [rank, out]
     private readonly float _scale;
     private readonly QuantizationOps _qOps;
     private bool _disposed;
@@ -30,8 +30,8 @@ public sealed class LoRALayer : IDisposable
         _scale = scale;
 
         _qOps = QuantizationFactory.Create();
-        _a = LinearLayerFactory.Create($"Linear.{Guid.NewGuid():N}", rank, inFeatures, false, null, null, QuantDType.F32);
-        _b = LinearLayerFactory.Create($"Linear.{Guid.NewGuid():N}", outFeatures, rank, false, null, null, QuantDType.F32);
+        _a = LinearLayerFactory.Create($"Linear.{Guid.NewGuid():N}", inFeatures, rank, false, null, null, QuantDType.F32);
+        _b = LinearLayerFactory.Create($"Linear.{Guid.NewGuid():N}", rank, outFeatures, false, null, null, QuantDType.F32);
 
         // Initialize with small random values (Gauss-Ortho init style)
         var rng = Random.Shared;
@@ -60,15 +60,15 @@ public sealed class LoRALayer : IDisposable
         var frozen = new Tensor<float>(input.Shape.Rows, frozenWeights.Shape.Cols);
         fn(input.DataPtr, (byte*)frozenBT.DataPtr, frozen.DataPtr, input.Shape.Rows, input.Shape.Cols, frozenWeights.Shape.Cols);
 
-        // lora_adjustment = input @ A^T @ B^T
-        // A: [rank, in], B: [out, rank]
+        // lora_adjustment = input @ A @ B
+        // A: [in, rank], B: [rank, out]
         using var aBT = _a.Weight.Transpose();
-        using var afterA = new Tensor<float>(input.Shape.Rows, _a.InFeatures);
-        fn(input.DataPtr, (byte*)aBT.DataPtr, afterA.DataPtr, input.Shape.Rows, input.Shape.Cols, _a.InFeatures);
+        using var afterA = new Tensor<float>(input.Shape.Rows, _a.OutFeatures);
+        fn(input.DataPtr, (byte*)aBT.DataPtr, afterA.DataPtr, input.Shape.Rows, input.Shape.Cols, _a.OutFeatures);
 
         using var bBT = _b.Weight.Transpose();
-        var loraAdjust = new Tensor<float>(afterA.Shape.Rows, _b.InFeatures);
-        fn(afterA.DataPtr, (byte*)bBT.DataPtr, loraAdjust.DataPtr, afterA.Shape.Rows, afterA.Shape.Cols, _b.InFeatures);
+        var loraAdjust = new Tensor<float>(afterA.Shape.Rows, _b.OutFeatures);
+        fn(afterA.DataPtr, (byte*)bBT.DataPtr, loraAdjust.DataPtr, afterA.Shape.Rows, afterA.Shape.Cols, _b.OutFeatures);
 
         // Combine: frozen + scale * lora
         var result = frozen.Add(loraAdjust.Scale(_scale));
@@ -86,8 +86,8 @@ public sealed class LoRALayer : IDisposable
     {
         var fn = _qOps.QuantizedMatMulOpFor(QuantDType.F32);
         using var bBT = _b.Weight.Transpose();
-        var lora = new Tensor<float>(_a.InFeatures, _b.InFeatures);
-        fn(_a.Weight.DataPtr, (byte*)bBT.DataPtr, lora.DataPtr, _a.InFeatures, _a.OutFeatures, _b.InFeatures);
+        var lora = new Tensor<float>(_a.InFeatures, _b.OutFeatures);
+        fn(_a.Weight.DataPtr, (byte*)bBT.DataPtr, lora.DataPtr, _a.InFeatures, _a.OutFeatures, _b.OutFeatures);
         return lora.Scale(_scale);
     }
 

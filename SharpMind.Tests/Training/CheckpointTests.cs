@@ -86,6 +86,31 @@ public sealed class CheckpointTests
         }
     }
 
+    [Fact]
+    public void Load_Throws_OnTensorShapeMismatch()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), "sm-shape-mismatch-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            using var source = Tensor<float>.From([1f, 2f, 3f], 3);
+            using var pSource = new Parameter("layer.weight", source);
+            Checkpoint.Save(dir, [pSource]);
+
+            // Loading into a parameter of a different size must fail loudly.
+            using var wrong = Tensor<float>.From([0f, 0f, 0f, 0f], 4);
+            using var pWrong = new Parameter("layer.weight", wrong);
+
+            var ex = Assert.Throws<InvalidDataException>(() => Checkpoint.Load(dir, [pWrong]));
+            Assert.Contains("layer.weight", ex.Message);
+            Assert.Contains("4", ex.Message);
+            Assert.Contains("3", ex.Message);
+        }
+        finally
+        {
+            if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
+        }
+    }
+
     private static float[] Copy(Parameter p)
     {
         var span = p.Data.Data;

@@ -49,7 +49,7 @@ public class LoRAModel : IDisposable
     public double TrainableRatio()
     {
         long baseParams = _baseModel.ParameterCount;
-        long loraParams = LoRAParameters().Count() * _config.Rank;  // rough estimate
+        long loraParams = LoRAParameters().Sum(p => p.Data.ElementCount);
         return (double)loraParams / baseParams;
     }
 

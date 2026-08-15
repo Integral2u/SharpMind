@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using SharpMind.Core.Training;
@@ -53,8 +54,7 @@ public static class Checkpoint
                 writer.Write(p.Data.Shape.Rank);
                 foreach (int d in p.Data.Shape.Dims) writer.Write(d);
                 var data = p.Data.Data;
-                for (int i = 0; i < data.Length; i++)
-                    writer.Write(data[i]);
+                writer.Write(MemoryMarshal.AsBytes(data));
             }
         }
 
@@ -152,6 +152,10 @@ public static class Checkpoint
     /// <c>LayerNormLayer.weight</c> without a layer index). When several
     /// parameters share a name they are matched positionally, in parameter-list
     /// order, which mirrors the order <see cref="Save"/> wrote them in.
+    ///
+    /// A shape mismatch between a checkpoint tensor and the matching parameter
+    /// throws <see cref="InvalidDataException"/> naming the tensor — the safety
+    /// check keeps a stale checkpoint from silently corrupting the model.
     /// </summary>
     public static CheckpointMeta Load(
         string                directory,
@@ -200,8 +204,11 @@ public static class Checkpoint
                 if (param is not null)
                 {
                     var data = param.Data.Data;
-                    for (int j = 0; j < elemCount; j++)
-                        data[j] = reader.ReadSingle();
+                    if (elemCount != data.Length)
+                        throw new InvalidDataException(
+                            $"Checkpoint tensor '{name}' has {elemCount} elements but the " +
+                            $"model parameter '{param.Name}' has {data.Length}.");
+                    reader.Read(MemoryMarshal.AsBytes(data));
                 }
                 else
                 {
