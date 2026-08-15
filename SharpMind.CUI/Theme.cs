@@ -2,7 +2,7 @@ using Terminal.Gui;
 
 namespace SharpMind.CUI;
 
-public enum ThemeKind { ClassicBlue,Green, HighContrastDark, HighContrastLight, Monochrome }
+public enum ThemeKind { ClassicBlue, Green, HighContrastDark, HighContrastDarkRed, HighContrastLight, Monochrome }
 
 /// <summary>
 /// Builds a Terminal.Gui ColorScheme for each named theme. Assigned directly
@@ -16,6 +16,14 @@ public static class ThemeBuilder
 {
     public static ColorScheme Build(ThemeKind kind) => kind switch
     {
+        ThemeKind.HighContrastDarkRed => new ColorScheme
+        {
+            Normal = new Terminal.Gui.Attribute(Color.Black, Color.White),
+            Focus = new Terminal.Gui.Attribute(Color.White, Color.Black),
+            HotNormal = new Terminal.Gui.Attribute(Color.Red, Color.White),
+            HotFocus = new Terminal.Gui.Attribute(Color.Red, Color.Black),
+            Disabled = new Terminal.Gui.Attribute(Color.DarkGray, Color.White)
+        },
         ThemeKind.ClassicBlue => new ColorScheme
         {
             Normal = new Terminal.Gui.Attribute(Color.Gray, Color.Blue),
@@ -56,8 +64,8 @@ public static class ThemeBuilder
         {
             Normal = new Terminal.Gui.Attribute(Color.White, Color.Black),
             Focus = new Terminal.Gui.Attribute(Color.Black, Color.White),
-            HotNormal = new Terminal.Gui.Attribute(Color.Red, Color.Black),
-            HotFocus = new Terminal.Gui.Attribute(Color.Red, Color.White),
+            HotNormal = new Terminal.Gui.Attribute(Color.Blue, Color.Black),
+            HotFocus = new Terminal.Gui.Attribute(Color.Blue, Color.White),
             Disabled = new Terminal.Gui.Attribute(Color.DarkGray, Color.Black)
         }
     };
