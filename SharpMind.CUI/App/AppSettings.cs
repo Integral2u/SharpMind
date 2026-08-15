@@ -21,6 +21,23 @@ public sealed class AppSettings
     /// <summary>Where the training wizard looks for user-designed data components (sources and stages) as *.dll plugin assemblies, in addition to the built-in ones.</summary>
     public string? PluginsFolder { get; set; }
 
+    /// <summary>
+    /// The model folder to use when <see cref="DefaultModelFolder"/> hasn't been
+    /// recorded yet — the default <c>Documents\SharpMind\Models</c> tree.
+    /// </summary>
+    public string ResolvedModelFolder => string.IsNullOrWhiteSpace(DefaultModelFolder)
+        ? SharpMindPaths.Models
+        : DefaultModelFolder;
+
+    /// <summary>
+    /// The export folder to prefill into new (non-loaded) training jobs.
+    /// <see cref="LastExportPath"/> wins when recorded, then the default model
+    /// folder, then <c>Documents\SharpMind\Models</c>.
+    /// </summary>
+    public string ResolvedExportFolder => string.IsNullOrWhiteSpace(LastExportPath)
+        ? ResolvedModelFolder
+        : LastExportPath;
+
     /// <summary>Output path last used for a training export; prefilled into new (non-loaded) jobs.</summary>
     public string? LastExportPath { get; set; }
 

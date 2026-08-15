@@ -29,6 +29,7 @@ public sealed class TrainingWizardView : View
     private readonly Label _checkpointDirLabel;
     private readonly RadioGroup _resumeRadio;
     private readonly Label _resumeDetailLabel;
+    private readonly CheckBox _incrementalCheck;
     private bool _updatingResume;
     private int _resumeMode;
     private readonly ListView _sourceList;
@@ -43,6 +44,31 @@ public sealed class TrainingWizardView : View
     private readonly RadioGroup _keepModeRadio;
     private readonly Dictionary<string, TextField> _modelRows = new(StringComparer.Ordinal);
     private readonly Dictionary<string, TextField> _hyperRows = new(StringComparer.Ordinal);
+
+    private readonly RadioGroup _presetRadio;
+    private bool _updatingPreset;
+    private readonly RadioGroup _activationRadio;
+    private readonly RadioGroup _gateRadio;
+    private readonly RadioGroup _ffnRadio;
+    private readonly RadioGroup _attentionRadio;
+    private readonly RadioGroup _normRadio;
+    private readonly RadioGroup _archRadio;
+    private readonly RadioGroup _peRadio;
+    private readonly RadioGroup _optimizerRadio;
+    private readonly TextField _numExpertsField;
+    private readonly TextField _topKField;
+
+    private static readonly string[] PresetLabelsArr =
+        ["Custom…", .. TrainingModelOptions.Presets.Select(p => p.DisplayName)];
+
+    private readonly string[] ActivationLabelsArr = ["GELU", "SiLU", "ReLU"];
+    private readonly string[] GateLabelsArr = ["None", "SwiGLU", "GeGLU"];
+    private readonly string[] FfnLabelsArr = ["Dense", "Gated", "MoE"];
+    private readonly string[] AttentionLabelsArr = ["Auto (from heads)", "MHA", "GQA", "MQA"];
+    private readonly string[] NormLabelsArr = ["RMSNorm", "LayerNorm"];
+    private readonly string[] ArchLabelsArr = ["Decoder", "Encoder"];
+    private readonly string[] PeLabelsArr = ["RoPE", "NoPE", "ALiBi"];
+    private readonly string[] OptimizerLabelsArr = ["AdamW", "SGD"];
 
     private readonly string[] QatLabelsArr = ["F32 (off)", "F16", "Q8", "Q6", "Q5", "Q4", "Q3", "Q2"];
     private readonly string[] KeepLabelsArr = ["All", "Fixed", "None"];
@@ -135,6 +161,24 @@ public sealed class TrainingWizardView : View
         form.Add(AddLabel("Model size:"), autoBtn);
         row += 2;
 
+        // --- Architecture preset picker ------------------
+        _presetRadio = new RadioGroup(PresetLabelsArr.Select(p => (ustring)p).ToArray())
+        {
+            X = 30, Y = row, SelectedItem = PresetIndexFor(_job),
+        };
+        _presetRadio.SelectedItemChanged += (a) =>
+        {
+            if (_updatingPreset) return; // programmatic sync from RefreshAll
+            if (a.SelectedItem <= 0) { _job.ArchitecturePreset = null; RefreshMap(); return; }
+            var preset = TrainingModelOptions.Presets[a.SelectedItem - 1];
+            TrainingModelOptions.Apply(_job, preset);
+            RefreshMap();
+            RefreshAdvancedOptions();
+            MessageBox.Query("Architecture preset", $"{preset.DisplayName} applied.", "OK");
+        };
+        form.Add(AddLabel("Architecture preset:"), _presetRadio);
+        row += PresetLabelsArr.Length + 1;
+
         row = NumRow(form, row, "Hidden dim:", _job.HiddenDim, v => _job.HiddenDim = v, _modelRows);
         row = NumRow(form, row, "Layers:", _job.NumLayers, v => _job.NumLayers = v, _modelRows);
         row = NumRow(form, row, "Heads:", _job.NumHeads, v => _job.NumHeads = v, _modelRows);
@@ -142,6 +186,86 @@ public sealed class TrainingWizardView : View
         row = NumRow(form, row, "FFN dim:", _job.FfnDim, v => _job.FfnDim = v, _modelRows);
         row = NumRow(form, row, "Context (max seq):", _job.MaxSeqLen, v => _job.MaxSeqLen = v, _modelRows);
         row = NumRow(form, row, "Vocab target:", _job.TokenizerVocabSize, v => _job.TokenizerVocabSize = v, _modelRows);
+        row += 1;
+
+        // --- Advanced architecture options (override the preset) -------
+        _activationRadio = new RadioGroup(ActivationLabelsArr.Select(a => (ustring)a).ToArray())
+        {
+            X = 30, Y = row, SelectedItem = IndexOf(ActivationLabelsArr, _job.Activation),
+        };
+        _activationRadio.SelectedItemChanged += (a) => _job.Activation = ActivationLabelsArr[a.SelectedItem];
+        form.Add(AddLabel("Activation:"), _activationRadio);
+        row += ActivationLabelsArr.Length + 1;
+
+        _gateRadio = new RadioGroup(GateLabelsArr.Select(g => (ustring)g).ToArray())
+        {
+            X = 30, Y = row, SelectedItem = IndexOf(GateLabelsArr, _job.Gate),
+        };
+        _gateRadio.SelectedItemChanged += (a) => _job.Gate = GateLabelsArr[a.SelectedItem];
+        form.Add(AddLabel("Gate:"), _gateRadio);
+        row += GateLabelsArr.Length + 1;
+
+        _ffnRadio = new RadioGroup(FfnLabelsArr.Select(f => (ustring)f).ToArray())
+        {
+            X = 30, Y = row, SelectedItem = IndexOf(FfnLabelsArr, _job.Ffn),
+        };
+        _ffnRadio.SelectedItemChanged += (a) =>
+        {
+            _job.Ffn = FfnLabelsArr[a.SelectedItem];
+            RefreshMoEFields();
+        };
+        form.Add(AddLabel("FFN:"), _ffnRadio);
+        row += FfnLabelsArr.Length + 1;
+
+        row = NumRow(form, row, "MoE experts:", _job.NumExperts, v => _job.NumExperts = v, _hyperRows);
+        _numExpertsField = _hyperRows["MoE experts:"];
+        row = NumRow(form, row, "MoE top-k:", _job.TopKExperts, v => _job.TopKExperts = v, _hyperRows);
+        _topKField = _hyperRows["MoE top-k:"];
+
+        _attentionRadio = new RadioGroup(AttentionLabelsArr.Select(a => (ustring)a).ToArray())
+        {
+            X = 30, Y = row, SelectedItem = AttentionIndexOf(_job),
+        };
+        _attentionRadio.SelectedItemChanged += (a) =>
+            _job.Attention = a.SelectedItem switch
+            {
+                0 => null,
+                _ => AttentionLabelsArr[a.SelectedItem],
+            };
+        form.Add(AddLabel("Attention:"), _attentionRadio);
+        row += AttentionLabelsArr.Length + 1;
+
+        _normRadio = new RadioGroup(NormLabelsArr.Select(n => (ustring)n).ToArray())
+        {
+            X = 30, Y = row, SelectedItem = IndexOf(NormLabelsArr, _job.Norm),
+        };
+        _normRadio.SelectedItemChanged += (a) => _job.Norm = NormLabelsArr[a.SelectedItem];
+        form.Add(AddLabel("Normalisation:"), _normRadio);
+        row += NormLabelsArr.Length + 1;
+
+        _archRadio = new RadioGroup(ArchLabelsArr.Select(a => (ustring)a).ToArray())
+        {
+            X = 30, Y = row, SelectedItem = IndexOf(ArchLabelsArr, _job.Arch),
+        };
+        _archRadio.SelectedItemChanged += (a) => _job.Arch = ArchLabelsArr[a.SelectedItem];
+        form.Add(AddLabel("Architecture:"), _archRadio);
+        row += ArchLabelsArr.Length + 1;
+
+        _peRadio = new RadioGroup(PeLabelsArr.Select(p => (ustring)p).ToArray())
+        {
+            X = 30, Y = row, SelectedItem = IndexOf(PeLabelsArr, _job.PositionalEncoding),
+        };
+        _peRadio.SelectedItemChanged += (a) => _job.PositionalEncoding = PeLabelsArr[a.SelectedItem];
+        form.Add(AddLabel("Positional enc:"), _peRadio);
+        row += PeLabelsArr.Length + 1;
+
+        _optimizerRadio = new RadioGroup(OptimizerLabelsArr.Select(o => (ustring)o).ToArray())
+        {
+            X = 30, Y = row, SelectedItem = IndexOf(OptimizerLabelsArr, _job.Optimizer),
+        };
+        _optimizerRadio.SelectedItemChanged += (a) => _job.Optimizer = OptimizerLabelsArr[a.SelectedItem];
+        form.Add(AddLabel("Optimizer:"), _optimizerRadio);
+        row += OptimizerLabelsArr.Length + 1;
         row += 1;
 
         // --- Training hyperparameters -----------------
@@ -200,7 +324,12 @@ public sealed class TrainingWizardView : View
             .Select(s => (ustring)s).ToArray()) { X = 30, Y = row };
         _resumeRadio.SelectedItemChanged += (a) => OnResumeModeChanged(a.SelectedItem);
         _resumeDetailLabel = new Label("") { X = 1, Y = row + 3, Width = Dim.Fill(3) };
-        form.Add(AddLabel("Resume from:"), _resumeRadio, _resumeDetailLabel);
+        _incrementalCheck = new CheckBox("Incremental — train only new/changed files, always continue from latest.")
+        {
+            X = 30, Y = row + 4, Checked = _job.IncrementalMode,
+        };
+        _incrementalCheck.Toggled += (a) => OnIncrementalToggled(a);
+        form.Add(AddLabel("Resume from:"), _resumeRadio, _resumeDetailLabel, _incrementalCheck);
         row += 5;
 
         _exportField = new TextField((ustring)(_job.ExportPath ?? "")) { X = 30, Y = row, Width = 34 };
@@ -210,7 +339,15 @@ public sealed class TrainingWizardView : View
             RefreshMap();
         };
         var expBrowse = new Button("Browse…") { X = Pos.Right(_exportField) + 1, Y = row };
-        expBrowse.Clicked += () => BrowseFolder("Export .smm", _exportField, s => _job.ExportPath = s);
+        expBrowse.Clicked += () => BrowseFolder("Export .smm", _exportField, s =>
+        {
+            _job.ExportPath = s;
+            if (!string.IsNullOrWhiteSpace(s))
+            {
+                _settings.LastExportPath = _job.ExportFolder;
+                _settings.Save(out _);
+            }
+        });
         form.Add(AddLabel("Export .smm:"), _exportField, expBrowse);
         row += 2;
 
@@ -308,6 +445,11 @@ public sealed class TrainingWizardView : View
         _keepCountField.Visible = keepIndex == 1;
         if (keepIndex == 1) _keepCountField.Text = (ustring)(_job.KeepRecent > 0 ? _job.KeepRecent : 3).ToString();
         _qatRadio.SelectedItem = QatIndexFor(_job.QuantAwareTraining);
+        _incrementalCheck.Checked = _job.IncrementalMode;
+        _updatingPreset = true;
+        try { _presetRadio.SelectedItem = PresetIndexFor(_job); }
+        finally { _updatingPreset = false; }
+        RefreshAdvancedOptions();
         _systemPromptField.Text = (ustring)(_job.SystemPromptPath ?? "");
         _skillsFolderField.Text = (ustring)(_job.SkillsFolder ?? "");
         RefreshPlugins();
@@ -362,6 +504,54 @@ public sealed class TrainingWizardView : View
         RefreshResume();
     }
 
+    /// <summary>Re-syncs the advanced architecture radios/size fields from the job.</summary>
+    private void RefreshAdvancedOptions()
+    {
+        if (_activationRadio is null) return;
+        _activationRadio.SelectedItem = IndexOf(ActivationLabelsArr, _job.Activation);
+        _gateRadio.SelectedItem = IndexOf(GateLabelsArr, _job.Gate);
+        _ffnRadio.SelectedItem = IndexOf(FfnLabelsArr, _job.Ffn);
+        _attentionRadio.SelectedItem = AttentionIndexOf(_job);
+        _normRadio.SelectedItem = IndexOf(NormLabelsArr, _job.Norm);
+        _archRadio.SelectedItem = IndexOf(ArchLabelsArr, _job.Arch);
+        _peRadio.SelectedItem = IndexOf(PeLabelsArr, _job.PositionalEncoding);
+        _optimizerRadio.SelectedItem = IndexOf(OptimizerLabelsArr, _job.Optimizer);
+        _numExpertsField.Text = (ustring)_job.NumExperts.ToString();
+        _topKField.Text = (ustring)_job.TopKExperts.ToString();
+        RefreshMoEFields();
+    }
+
+    /// <summary>Re-syncs the MoE expert counts and notes whether they apply to the current FFN.</summary>
+    private void RefreshMoEFields()
+    {
+        if (_numExpertsField is null) return;
+        _numExpertsField.Text = (ustring)_job.NumExperts.ToString();
+        _topKField.Text = (ustring)_job.TopKExperts.ToString();
+    }
+
+    /// <summary>Index into <paramref name="names"/> for a job enum name (0 fallback).</summary>
+    private static int IndexOf(string[] names, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return 0;
+        int i = Array.FindIndex(names, n => n.Equals(value, StringComparison.OrdinalIgnoreCase));
+        return i < 0 ? 0 : i;
+    }
+
+    /// <summary>Index into <see cref="AttentionLabelsArr"/> (0 = auto/derived).</summary>
+    private static int AttentionIndexOf(TrainJobSettings job)
+        => job.Attention is null ? 0 : IndexOf(["MHA", "GQA", "MQA"], job.Attention) + 1;
+
+    /// <summary>Index into <see cref="PresetLabelsArr"/> for the job's architecture preset (0 = none).</summary>
+    private static int PresetIndexFor(TrainJobSettings job)
+    {
+        if (job.ArchitecturePreset is null) return 0;
+        for (int i = 0; i < TrainingModelOptions.Presets.Length; i++)
+            if (TrainingModelOptions.Presets[i].ArchitecturePresetKey.Equals(
+                    job.ArchitecturePreset, StringComparison.OrdinalIgnoreCase))
+                return i + 1;
+        return 0;
+    }
+
     /// <summary>Re-syncs the resume radio group from the job's current settings.</summary>
     private void RefreshResume()
     {
@@ -398,6 +588,23 @@ public sealed class TrainingWizardView : View
             case 1:
                 _job.ResumeFrom = null;
                 break;
+        }
+        RefreshResumeDetail();
+    }
+
+    /// <summary>
+    /// Incremental mode forces "continue from latest" at run time regardless of
+    /// the resume radio, so switching it on also clears any explicit fresh/specific
+    /// choice to keep the form honest about what will actually happen.
+    /// </summary>
+    private void OnIncrementalToggled(bool on)
+    {
+        _job.IncrementalMode = on;
+        if (on)
+        {
+            _job.StartFresh = false;
+            _job.ResumeFrom = null;
+            RefreshResume();
         }
         RefreshResumeDetail();
     }
@@ -486,6 +693,15 @@ public sealed class TrainingWizardView : View
 
     private void RefreshResumeDetail()
     {
+        if (_job.IncrementalMode)
+        {
+            var incrementalLatest = Checkpoint.FindLatest(_job.CheckpointDir);
+            _resumeDetailLabel.Text = incrementalLatest is not null
+                ? $"Incremental — will continue from the latest checkpoint (step {Checkpoint.ReadMeta(incrementalLatest).Step}); only new/changed files train."
+                : "Incremental — no prior checkpoint; will train the whole corpus from random weights, then only new/changed files.";
+            return;
+        }
+
         // "Continue from…" defers the actual choice to Start time, so don't
         // claim a particular directory here — none has been picked yet.
         if (_resumeMode == 2)
@@ -853,7 +1069,7 @@ public sealed class TrainingWizardView : View
     private static TrainJobSettings NewJob(AppSettings settings) => new()
     {
         Name = $"{SharpMind.Inference.Agent.GreekTier.RandomDeity()}-{DateTime.Now:yyyyMMdd-HHmmss}",
-        ExportPath = string.IsNullOrWhiteSpace(settings.LastExportPath) ? null : settings.LastExportPath,
+        ExportPath = settings.ResolvedExportFolder,
     };
 
     private static string Sanitize(string name)

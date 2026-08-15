@@ -1,5 +1,6 @@
 using SharpMind.Core;
 using SharpMind.Core.Quantization;
+using SharpMind.Core.Training;
 using SharpMind.Data;
 using SharpMind.Data.Batching;
 using SharpMind.Data.Metadata;
@@ -22,6 +23,12 @@ public sealed class TrainRunResult
     public string? Error { get; init; }
     public string? ExportPath { get; init; }
     public int FinalStep { get; init; }
+
+    /// <summary>
+    /// True when an incremental run found no new or changed files to train on;
+    /// the run never entered the training loop and produced no export.
+    /// </summary>
+    public bool NothingToTrain { get; init; }
 }
 
 /// <summary>
@@ -48,6 +55,7 @@ public static class TrainRunner
         IProgress<string> status,
         IProgress<float> progress,
         Action<TrainStepResult>? onStep = null,
+        Action<int>? onResume = null,
         CancellationToken cancellationToken = default)
     {
         void Log(string line) => status.Report(line);
@@ -60,10 +68,35 @@ public static class TrainRunner
 
             if (job.Sources.Count == 0)
                 throw new InvalidOperationException("No data sources configured for this job.");
-            var sources = job.Sources.Select(s => BuildSource(s.Component, components)).ToList();
+
+            // Incremental mode decides which sources (and which files within a
+            // file-based source) feed this run. The plan carries, per source, the
+            // rebuilt IDataSource restricted to its new+changed files; unchanged
+            // sources contribute no node at all. Deltas are computed by diffing
+            // the current per-file hashes against the previous run's map.
+            // "Force resume latest" is applied later in the resume-resolution.
+            if (job.IncrementalMode && job.SourceFileHashes.Count == 0)
+            {
+                var persisted = IncrementalStore.Load(job);
+                if (persisted.Count > 0)
+                {
+                    job.SourceFileHashes = persisted;
+                    Log($"Incremental: loaded {persisted.Count} source hash map(s) recorded by a previous run.");
+                }
+            }
+
+            var plan = IncrementalPlanner.Build(job, components, Log);
+            if (plan.NothingToTrain)
+            {
+                Log($"Incremental: no new or changed files since the last run — nothing to train.");
+                return new TrainRunResult { Success = true, NothingToTrain = true };
+            }
+
+            var sources = plan.Sources;
             var sourceNodes = new List<PipelineNode>();
             for (int i = 0; i < job.Sources.Count; i++)
             {
+                if (plan.SkipSource[i]) continue;
                 var node = PipelineNode.From(sources[i]);
                 foreach (var stage in job.Sources[i].Stages)
                 {
@@ -83,7 +116,7 @@ public static class TrainRunner
                 pipeline = pipeline.Pipe((ICleaningStage)ComponentRegistry.Build<ICleaningStage>(descriptor, g.Args));
             }
 
-            var compositeSource = job.Sources.Count == 1 ? sources[0] : new CompositeSource(sources);
+            var compositeSource = sources.Count == 1 ? sources[0] : new CompositeSource(sources);
             Log($"Sources: {string.Join(", ", sources.Select(s => s.Description))}");
 
             // Source fingerprints: record what this job trains on, warn when it
@@ -103,27 +136,23 @@ public static class TrainRunner
 
             progress.Report(0.05f);
 
-            // 1. Tokenizer — BPE trained on the corpus, cached on disk.
+            // 1. Tokenizer — BPE trained on the corpus, cached on disk. The vocab
+            // must always reflect the FULL corpus, never just the deltas of an
+            // incremental run, so when the cache is missing we train it over the
+            // complete configured sources (a no-op for fresh jobs, where the
+            // deltas ARE the whole corpus anyway).
             string tokenizerPath = job.TokenizerCachePath
                 ?? Path.Combine(TrainJobSettings.DefaultFolder, Sanitize(job.Name) + ".tokenizer.json");
             var tokenizer = File.Exists(tokenizerPath)
                 ? TokenizationPipeline.Load(tokenizerPath)
-                : await TokenizationPipeline.TrainAndSaveAsync(compositeSource, tokenizerPath, job.TokenizerVocabSize);
+                : await TokenizationPipeline.TrainAndSaveAsync(
+                    job.IncrementalMode ? FullCorpusComposite(job, components) : compositeSource,
+                    tokenizerPath, job.TokenizerVocabSize);
             Log($"Tokenizer: vocab={tokenizer.VocabSize}");
             progress.Report(0.1f);
 
             // 2. Model config.
-            var modelConfig = new ModelConfig
-            {
-                VocabSize = tokenizer.VocabSize,
-                HiddenDim = job.HiddenDim,
-                NumLayers = job.NumLayers,
-                NumHeads = job.NumHeads,
-                NumKvHeads = job.NumKvHeads,
-                FfnDim = job.FfnDim,
-                MaxSeqLen = job.MaxSeqLen,
-                NormEps = job.NormEps,
-            };
+            var modelConfig = TrainingModelOptions.ResolveModelConfig(job, tokenizer.VocabSize);
             Log($"Model: H={job.HiddenDim} L={job.NumLayers} heads={job.NumHeads} ffn={job.FfnDim}");
 
             // 3. Data pipeline — clean → tokenise → packed TrainingBatches.
@@ -137,22 +166,41 @@ public static class TrainRunner
             Log($"Data pipeline: {loader.Describe()}");
 
             // 4. Model — empty float weights, randomised unless resuming.
-            var sharpConfig = SharpMindConfig.Gpt with { Hardware = HardwareTier.Auto };
+            var sharpConfig = TrainingModelOptions.ResolveSharpConfig(job);
 
             // Resume resolution: an explicit ResumeFrom wins; otherwise if any
             // checkpoint exists under the job's derived checkpoint folder we
             // auto-resume the latest one, so an interrupted run can always be
             // picked back up without re-entering the path manually. StartFresh
             // forces a from-scratch run regardless of what exists on disk.
+            // Incremental runs ALWAYS continue from the newest checkpoint —
+            // "force resume latest" — ignoring StartFresh/ResumeFrom, because
+            // the delta pipeline only delivers unseen data: building on top of
+            // the latest weights is the entire point.
             string checkpointDir = job.CheckpointDir;
-            string? resumeDir = job.StartFresh ? null
-                : !string.IsNullOrWhiteSpace(job.ResumeFrom) ? job.ResumeFrom
-                : Checkpoint.FindLatest(checkpointDir);
+            string? resumeDir;
+            if (job.IncrementalMode)
+            {
+                resumeDir = Checkpoint.FindLatest(checkpointDir);
+                if (resumeDir is null)
+                    Log("Incremental: no prior checkpoint found — starting from random weights on the new/changed files only.");
+            }
+            else
+            {
+                resumeDir = job.StartFresh ? null
+                    : !string.IsNullOrWhiteSpace(job.ResumeFrom) ? job.ResumeFrom
+                    : Checkpoint.FindLatest(checkpointDir);
+            }
             if (resumeDir is not null)
             {
                 job.ResumeFrom = resumeDir;
                 var resumeMeta = Checkpoint.ReadMeta(resumeDir);
                 Log($"Resuming from checkpoint {Path.GetFileName(resumeDir)} (step {resumeMeta.Step})");
+                onResume?.Invoke(resumeMeta.Step);
+            }
+            else
+            {
+                onResume?.Invoke(0);
             }
 
             var weights = ModelFactory.CreateForTraining(modelConfig, sharpConfig);
@@ -171,7 +219,9 @@ public static class TrainRunner
             var ops = TrainingOpsFactory.Create(sharpConfig);
 
             // 5. Optimizer + scheduler + loop.
-            using var optimizer = new AdamW(parameters, ops, lr: job.LearningRate, weightDecay: job.WeightDecay);
+            using IOptimizer optimizer = TrainingModelOptions.UsesSgd(job)
+                ? new SGD(parameters, lr: job.LearningRate, momentum: job.SgdMomentum, weightDecay: job.WeightDecay)
+                : new AdamW(parameters, ops, lr: job.LearningRate, weightDecay: job.WeightDecay);
             var scheduler = new CosineWithWarmup(
                 maxLr: job.LearningRate, minLr: job.MinLr,
                 warmupSteps: job.WarmupSteps, decaySteps: job.TotalSteps);
@@ -224,6 +274,18 @@ public static class TrainRunner
             progress.Report(1f);
             Log($"Saved: {exportPath} ({new FileInfo(exportPath).Length:N0} bytes)");
 
+            // Record the corpus as trained-that-far so the next incremental run
+            // diffs against EXACTLY what these weights have seen (not what the
+            // run started with). Persisted to both the job (in-memory, saved
+            // when the wizard saves) and the checkpoint folder (survives app
+            // restart even without a manual Save).
+            if (job.IncrementalMode)
+            {
+                job.SourceFileHashes = plan.CurrentFileHashes;
+                IncrementalStore.Save(job);
+                Log("Incremental: recorded per-file hashes for the corpus just trained.");
+            }
+
             return new TrainRunResult { Success = true, ExportPath = exportPath, FinalStep = lastStep };
         }
         catch (OperationCanceledException)
@@ -245,6 +307,17 @@ public static class TrainRunner
         var descriptor = ComponentRegistry.Find(component.TypeName, registry)
             ?? throw new InvalidOperationException($"Unknown data source '{component.TypeName}'.");
         return (IDataSource)ComponentRegistry.Build<IDataSource>(descriptor, component.Args);
+    }
+
+    /// <summary>
+    /// A composite over every configured source, unrestricted — used to train the
+    /// tokenizer over the complete corpus even when the training pipeline of an
+    /// incremental run is restricted to the delta files.
+    /// </summary>
+    private static IDataSource FullCorpusComposite(TrainJobSettings job, IReadOnlyList<ComponentDescriptor> registry)
+    {
+        var all = job.Sources.Select(s => BuildSource(s.Component, registry)).ToList();
+        return all.Count == 1 ? all[0] : new CompositeSource(all);
     }
 
     /// <summary>Exports a saved checkpoint directory as a testable .smm inside it.</summary>

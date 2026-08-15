@@ -25,6 +25,7 @@ public sealed class TrainingProgressView : View
     private readonly CancellationTokenSource _cts = new();
     private readonly Stopwatch _stopwatch = Stopwatch.StartNew();
     private readonly List<string> _log = [];
+    private readonly List<double> _recentStepSeconds = [];
     private readonly Label _statusLabel;
     private readonly Label _progressLabel;
     private readonly Label _memoryLabel;
@@ -35,6 +36,11 @@ public sealed class TrainingProgressView : View
     private readonly Button _backButton;
     private TrainRunResult? _result;
     private string _etaText = "";
+    private int _startStep;
+    private int _currentStep;
+
+    /// <summary>How many recent step durations feed the rolling ETA average.</summary>
+    private const int EtaWindowSteps = 25;
 
     public TrainingProgressView(
         AppSettings settings,
@@ -52,7 +58,7 @@ public sealed class TrainingProgressView : View
         var frame = new FrameView("Training") { X = 0, Y = 0, Width = Dim.Fill(), Height = Dim.Fill(1) };
 
         _statusLabel = new Label("Preparing…") { X = 1, Y = 0, Width = Dim.Fill(2) };
-        _progressLabel = new Label("[          ]  0.00%  step 0/0") { X = 1, Y = 1, Width = Dim.Fill(2) };
+        _progressLabel = new Label("[          ]   0.00%  step 0/0") { X = 1, Y = 1, Width = Dim.Fill(2) };
         _memoryLabel = new Label("") { X = 1, Y = 2, Width = Dim.Fill(2) };
         _logView = new TextView { X = 1, Y = 4, Width = Dim.Fill(2), Height = Dim.Fill(5), ReadOnly = true, TabStop = false };
         // Match the chat transcript's context menu: Copy + Select All only.
@@ -93,19 +99,52 @@ public sealed class TrainingProgressView : View
                 status,
                 progress,
                 onStep: r => Application.MainLoop.Invoke(() => OnStep(r)),
+                onResume: s => Application.MainLoop.Invoke(() => OnResume(s)),
                 cancellationToken: _cts.Token))
             .ContinueWith(t => Application.MainLoop.Invoke(() => OnComplete(t.Result)),
                 TaskScheduler.Default);
     }
 
+    /// <summary>
+    /// Called once training resolves its starting point: 0 for a fresh run, or
+    /// the checkpoint step when resuming, so the screen never shows "step 0"
+    /// (nor a nonsense ETA) for a run that actually resumes midway.
+    /// </summary>
+    private void OnResume(int startStep)
+    {
+        _startStep = Math.Max(0, startStep);
+        _currentStep = _startStep;
+        _progressLabel.Text = $"[          ]   0.00%  step {_startStep}/{_job.TotalSteps}" +
+                              (_startStep > 0 ? "  resuming…" : "");
+        SetNeedsDisplay();
+    }
+
     private void OnStep(TrainStepResult r)
     {
-        double secPerStep = _stopwatch.Elapsed.TotalSeconds / Math.Max(r.Step, 1);
+        _currentStep = r.Step;
+        _recentStepSeconds.Add(r.StepTime.TotalSeconds);
+        if (_recentStepSeconds.Count > EtaWindowSteps)
+            _recentStepSeconds.RemoveAt(0);
+
         int remaining = Math.Max(_job.TotalSteps - r.Step, 0);
         _etaText = remaining > 0
-            ? $"~{FormatDuration(TimeSpan.FromSeconds(secPerStep * remaining))} left"
+            ? $"~{FormatDuration(TimeSpan.FromSeconds(RollingAvgStepSeconds() * remaining))} left"
             : "done";
-        Log($"step {r.Step,5}/{_job.TotalSteps}: loss = {r.Loss:F4}  gradNorm = {r.GradNorm:F3}  {r.StepTime.TotalSeconds:F1}s");
+        Log($"step {r.Step,5}/{_job.TotalSteps}: loss = {r.Loss:F4}  gradNorm = {r.GradNorm:F3}  {FormatDuration(r.StepTime)}/step");
+    }
+
+    /// <summary>
+    /// Rolling average of recent per-step wall times (in seconds), falling back
+    /// to the whole-run average when the window isn't full yet — the ETA then
+    /// reflects "how fast am I actually stepping right now" rather than total
+    /// elapsed divided by step count (which is skewed by prep time and resume).
+    /// </summary>
+    private double RollingAvgStepSeconds()
+    {
+        if (_recentStepSeconds.Count == 0) return 0;
+        double sum = 0;
+        foreach (var s in _recentStepSeconds) sum += s;
+        return sum / _recentStepSeconds.Count;
     }
 
     private void Log(string line)
@@ -122,7 +161,8 @@ public sealed class TrainingProgressView : View
     {
         int ticks = (int)(p * 10);
         string eta = string.IsNullOrEmpty(_etaText) ? "" : $"  {_etaText}";
-        _progressLabel.Text = $"[{new string('#', ticks)}{new string(' ', 10 - ticks)}]  {p * 100:F2}%  step {CurrentStep(p)}/{_job.TotalSteps}{eta}";
+        int step = Math.Max(_currentStep, CurrentStep(p));
+        _progressLabel.Text = $"[{new string('#', ticks)}{new string(' ', 10 - ticks)}]  {p * 100:F2}%  step {step}/{_job.TotalSteps}{eta}";
         UpdateMemory();
         SetNeedsDisplay();
     }
@@ -164,11 +204,13 @@ public sealed class TrainingProgressView : View
 
     private static string FormatDuration(TimeSpan t)
     {
-        if (t.TotalHours >= 1)
-            return $"{(int)t.TotalHours}h {t.Minutes}m {t.Seconds}s";
-        if (t.TotalMinutes >= 1)
-            return $"{(int)t.TotalMinutes}m {t.Seconds}s";
-        return $"{t.Seconds}s";
+        long totalSeconds = Math.Max(0, (long)Math.Round(t.TotalSeconds));
+        long hours = totalSeconds / 3600;
+        long minutes = (totalSeconds % 3600) / 60;
+        long seconds = totalSeconds % 60;
+        return hours > 0
+            ? $"{hours}:{minutes:00}:{seconds:00}"
+            : $"{minutes:00}:{seconds:00}";
     }
 
     private void OnComplete(TrainRunResult result)
@@ -188,6 +230,19 @@ public sealed class TrainingProgressView : View
             _statusLabel.Text = $"Training interrupted after {FormatDuration(total)} — checkpoint saved. Returning to training options…";
             SetNeedsDisplay();
             _onBack();
+            return;
+        }
+
+        // An incremental run that found no new/changed files never entered the
+        // loop and exported nothing — report it as the clean no-op it is.
+        if (result.NothingToTrain)
+        {
+            _statusLabel.Text = "Incremental: nothing new to train — every configured source's files are unchanged since the last run.";
+            _interruptButton.Visible = false;
+            _browseButton.Visible = false;
+            _cleanButton.Visible = false;
+            _backButton.Visible = true;
+            SetNeedsDisplay();
             return;
         }
 

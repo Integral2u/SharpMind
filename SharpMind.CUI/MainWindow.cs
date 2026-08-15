@@ -54,6 +54,7 @@ public sealed class MainWindow : Window
         Title = "SharpMind CUI";
 
         _settings = AppSettings.Load();
+        SharpMindPaths.EnsureCreated();
         _options = LoadLastUsedOptions() ?? NewSessionOptionsFromSettings();
 
         ColorScheme = ThemeBuilder.Build(_settings.Theme);
@@ -105,7 +106,7 @@ public sealed class MainWindow : Window
     private SessionOptions NewSessionOptionsFromSettings()
     {
         var options = SessionOptions.Default;
-        options.ProjectPath = _settings.DefaultModelFolder;
+        options.ProjectPath = _settings.ResolvedModelFolder;
         options.ToolsFolder = _settings.ToolsFolder;
         return options;
     }
@@ -212,7 +213,7 @@ public sealed class MainWindow : Window
     /// </summary>
     private void ShowModelConverter()
     {
-        string start = _options.ProjectPath ?? _settings.DefaultModelFolder ?? Directory.GetCurrentDirectory();
+        string start = _options.ProjectPath ?? _settings.ResolvedModelFolder ?? Directory.GetCurrentDirectory();
         string? source = FilePickerDialog.Show("Convert model", start, PickerMode.File,
             patterns: ["*.gguf", "*.smm"]);
         if (source is null) return;
@@ -317,7 +318,7 @@ public sealed class MainWindow : Window
     /// </summary>
     private void ShowModelQuantizer()
     {
-        string start = _options.ProjectPath ?? _settings.DefaultModelFolder ?? Directory.GetCurrentDirectory();
+        string start = _options.ProjectPath ?? _settings.ResolvedModelFolder ?? Directory.GetCurrentDirectory();
         string? sourcePath = FilePickerDialog.Show("Quantize model", start, PickerMode.File, patterns: ["*.smm"]);
         if (sourcePath is null) return;
 
@@ -477,7 +478,7 @@ public sealed class MainWindow : Window
     /// </summary>
     private void ShowModelMetaModifier()
     {
-        string start = _options.ProjectPath ?? _settings.DefaultModelFolder ?? Directory.GetCurrentDirectory();
+        string start = _options.ProjectPath ?? _settings.ResolvedModelFolder ?? Directory.GetCurrentDirectory();
         string? path = FilePickerDialog.Show("Modify .SMM metadata", start, PickerMode.File, patterns: ["*.smm"]);
         if (path is null) return;
 

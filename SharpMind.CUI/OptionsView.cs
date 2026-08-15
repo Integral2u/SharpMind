@@ -468,7 +468,7 @@ public sealed class OptionsView : View
         var mPath = _options.ModelPath;
         var options = SessionOptions.Default;
         options.ModelPath = mPath;
-        options.ProjectPath = _settings.DefaultModelFolder;
+        options.ProjectPath = _settings.ResolvedModelFolder;
         options.ToolsFolder = _settings.ToolsFolder;
         CopyOptionsInto(_options, options);
         SetOptionsFrom(_options);

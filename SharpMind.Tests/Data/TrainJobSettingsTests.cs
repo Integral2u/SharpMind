@@ -1,8 +1,6 @@
 using SharpMind.CUI.App;
 
-namespace SharpMind.Tests.Data;
-
-/// <summary>
+namespace SharpMind.Tests.Data;/// <summary>
 /// Verifies <see cref="TrainJobSettings"/> JSON persistence: a full job with
 /// multiple sources (each with per-source stages), global stages, QAT, keep
 /// recent, export path, resume, and that the checkpoint directory is always
@@ -196,6 +194,47 @@ public sealed class TrainJobSettingsTests
     }
 
     [Fact]
+    public void SaveLoad_ArchitectureOptionsRoundTrip()
+    {
+        using var dir = new TempDirectory();
+        string path = Path.Combine(dir.Path, "arch" + TrainJobSettings.JobExtension);
+
+        var job = new TrainJobSettings
+        {
+            Name = "arch-job",
+            ArchitecturePreset = "mixtral",
+            Activation = "SiLU",
+            Gate = "SwiGLU",
+            Ffn = "MoE",
+            Attention = "GQA",
+            Norm = "RMSNorm",
+            Arch = "Decoder",
+            PositionalEncoding = "RoPE",
+            Optimizer = "SGD",
+            SgdMomentum = 0.9f,
+            NumExperts = 16,
+            TopKExperts = 4,
+        };
+        Assert.True(job.Save(path, out var saveErr), saveErr);
+
+        var loaded = TrainJobSettings.Load(path, out var loadErr);
+        Assert.NotNull(loaded);
+        Assert.Null(loadErr);
+        Assert.Equal("mixtral", loaded.ArchitecturePreset);
+        Assert.Equal("SiLU", loaded.Activation);
+        Assert.Equal("SwiGLU", loaded.Gate);
+        Assert.Equal("MoE", loaded.Ffn);
+        Assert.Equal("GQA", loaded.Attention);
+        Assert.Equal("RMSNorm", loaded.Norm);
+        Assert.Equal("Decoder", loaded.Arch);
+        Assert.Equal("RoPE", loaded.PositionalEncoding);
+        Assert.Equal("SGD", loaded.Optimizer);
+        Assert.Equal(0.9f, loaded.SgdMomentum);
+        Assert.Equal(16, loaded.NumExperts);
+        Assert.Equal(4, loaded.TopKExperts);
+    }
+
+    [Fact]
     public void SaveLoad_StartFreshRoundTrips()
     {
         using var dir = new TempDirectory();
@@ -237,5 +276,49 @@ public sealed class TrainJobSettingsTests
         Assert.Equal(@"C:\prompts\assistant.md", loaded.SystemPromptPath);
         Assert.Equal(@"C:\skills", loaded.SkillsFolder);
         Assert.Equal(["C:\\tools\\Weather.dll", "C:\\tools\\Calculator.dll"], loaded.PluginDllPaths);
+    }
+
+    [Fact]
+    public void Save_WritesVersionedContainer()
+    {
+        using var dir = new TempDirectory();
+        string path = Path.Combine(dir.Path, "v" + TrainJobSettings.JobExtension);
+
+        var job = new TrainJobSettings { Name = "versioned" };
+        Assert.True(job.Save(path, out var saveErr), saveErr);
+
+        using var root = System.Text.Json.JsonDocument.Parse(File.ReadAllText(path));
+        Assert.Equal(TrainJobSettings.CurrentFormatVersion, root.RootElement.GetProperty("version").GetInt32());
+        Assert.Equal(job.Name, root.RootElement.GetProperty("job").GetProperty("Name").GetString());
+    }
+
+    [Fact]
+    public void Load_LegacyUnwrappedJob_Migrates()
+    {
+        using var dir = new TempDirectory();
+        // A bare TrainJobSettings object — exactly what older builds wrote — must
+        // still load (so a legacy *.smmt can be re-saved into the new container).
+        string path = dir.Write("legacy.smmt",
+            """{"Name":"legacy-job","TotalSteps":42,"ExportPath":"/tmp/legacy.smm"}""");
+
+        var loaded = TrainJobSettings.Load(path, out var loadErr);
+        Assert.NotNull(loaded);
+        Assert.Null(loadErr);
+        Assert.Equal("legacy-job", loaded.Name);
+        Assert.Equal(42, loaded.TotalSteps);
+        Assert.Equal("/tmp/legacy.smm", loaded.ExportPath);
+    }
+
+    [Fact]
+    public void Load_NewerContainerVersion_Rejects()
+    {
+        using var dir = new TempDirectory();
+        int futureVersion = TrainJobSettings.CurrentFormatVersion + 1;
+        string path = dir.Write("future.smmt",
+            $"{{\"version\":{futureVersion},\"job\":{{\"Name\":\"future\"}}}}");
+
+        var loaded = TrainJobSettings.Load(path, out var loadErr);
+        Assert.Null(loaded);
+        Assert.Contains("newer", loadErr, StringComparison.OrdinalIgnoreCase);
     }
 }

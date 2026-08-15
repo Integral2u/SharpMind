@@ -22,6 +22,13 @@ public sealed class SettingsView : View
         Add(modelFolderField);
         row += 2;
 
+        Add(new Label("Default export folder:") { X = 1, Y = row });
+        var exportFolderField = new TextField(settings.LastExportPath ?? "") { X = 25, Y = row, Width = Dim.Fill(2) };
+        exportFolderField.TextChanged += (_) => _settings.LastExportPath =
+            string.IsNullOrWhiteSpace(exportFolderField.Text.ToString()) ? null : exportFolderField.Text.ToString();
+        Add(exportFolderField);
+        row += 2;
+
         Add(new Label("Tools folder:") { X = 1, Y = row });
         var toolsFolderField = new TextField(settings.ToolsFolder ?? "") { X = 25, Y = row, Width = Dim.Fill(2) };
         toolsFolderField.TextChanged += (_) => _settings.ToolsFolder =

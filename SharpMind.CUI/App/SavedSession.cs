@@ -21,15 +21,7 @@ public sealed class SavedSession
     public required SessionOptions Options { get; set; }
     public DateTime SavedAtUtc { get; set; } = DateTime.UtcNow;
 
-    public static string DefaultFolder
-    {
-        get
-        {
-            string root = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-            if (string.IsNullOrEmpty(root)) root = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            return Path.Combine(root, "SharpMind", "sessions");
-        }
-    }
+    public static string DefaultFolder => SharpMindPaths.ChatSessions;
 
     public static bool Save(SavedSession saved, string path, out string? error)
     {

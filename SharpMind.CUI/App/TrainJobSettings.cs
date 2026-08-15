@@ -9,6 +9,15 @@ public sealed class TrainJobSettings
     /// <summary>File extension for saved training jobs (<c>*.smmt</c>).</summary>
     public const string JobExtension = ".smmt";
 
+    /// <summary>
+    /// Current on-disk container version. Bumped only when the wrapped
+    /// <see cref="TrainJobDocument"/> shape changes incompatibly; the job's own
+    /// field additions remain additive and don't require a bump. Readers reject
+    /// files written by a newer build and (via <see cref="Load"/>) transparently
+    /// migrate unwrapped v1 files saved by older builds.
+    /// </summary>
+    public const int CurrentFormatVersion = 1;
+
     /// <summary>Display name; also the file name (<c>&lt;name&gt;.smmt</c>) under <see cref="DefaultFolder"/>.</summary>
     public string Name { get; set; } = "Untitled";
 
@@ -31,6 +40,27 @@ public sealed class TrainJobSettings
     /// </summary>
     public Dictionary<string, string?> SourceHashes { get; set; } = [];
 
+    // --- Incremental training ------------------------------------------
+
+    /// <summary>
+    /// True to train only on the corpus deltas since the last run: per-file
+    /// hashes (see <see cref="SourceFileHashes"/>) identify exactly which files
+    /// are new or changed, and the pipeline is built over only those files.
+    /// Runs always resume the latest checkpoint regardless of
+    /// <see cref="StartFresh"/>/<see cref="ResumeFrom"/>. When no deltas exist
+    /// the run is a clean no-op ("nothing to train").
+    /// </summary>
+    public bool IncrementalMode { get; set; }
+
+    /// <summary>
+    /// Per-source per-file content hashes (display name → absolute file path →
+    /// SHA-256), persisted after a successful incremental run. The next run
+    /// diffs the current corpus against this map to decide what still needs
+    /// training. Persisted on-disk alongside the checkpoints so it survives
+    /// app restarts even before the job file is manually saved.
+    /// </summary>
+    public Dictionary<string, Dictionary<string, string>> SourceFileHashes { get; set; } = [];
+
     // --- Tokenizer ---------------------------------------------------------
 
     /// <summary>Target BPE vocabulary size (not yet trained).</summary>
@@ -52,6 +82,55 @@ public sealed class TrainJobSettings
     public int FfnDim { get; set; } = 512;
     public int MaxSeqLen { get; set; } = 256;
     public float NormEps { get; set; } = 1e-3f;
+
+    // --- Architecture & kernel options ---
+    // Null means "use the architecture preset's default" (see TrainingPresets);
+    // explicit values override the preset. Without a preset the resolved config
+    // matches SharpMindConfig.Gpt so existing jobs behave exactly as before.
+
+    /// <summary>
+    /// Architecture preset key ("gpt2", "llama", "bert", "qwen", "mixtral").
+    /// Null = manual/custom (resolves to GPT-2 style unless options are set).
+    /// Used to pick activation/gate/ffn/norm defaults and to stamp the exported
+    /// model's architecture name so loading reproduces the same config.
+    /// </summary>
+    public string? ArchitecturePreset { get; set; }
+
+    /// <summary>Activation enum name ("GELU", "SiLU", "ReLU"); null = preset default.</summary>
+    public string? Activation { get; set; }
+
+    /// <summary>Gate enum name ("None", "SwiGLU", "GeGLU"); null = preset default.</summary>
+    public string? Gate { get; set; }
+
+    /// <summary>FFN enum name ("Dense", "Gated", "MoE"); null = preset default.</summary>
+    public string? Ffn { get; set; }
+
+    /// <summary>Attention enum name ("MHA", "GQA", "MQA"); null = derived from heads vs KV heads.</summary>
+    public string? Attention { get; set; }
+
+    /// <summary>Norm enum name ("RMSNorm", "LayerNorm"); null = preset default.</summary>
+    public string? Norm { get; set; }
+
+    /// <summary>Architecture kind ("Decoder", "Encoder"); null = preset default.</summary>
+    public string? Arch { get; set; }
+
+    /// <summary>Positional encoding enum name ("NoPE", "RoPE", "ALiBi"); null = RoPE.</summary>
+    public string? PositionalEncoding { get; set; }
+
+    /// <summary>
+    /// Optimizer name ("AdamW", "SGD"); null/empty = AdamW. SGD uses
+    /// <see cref="SgdMomentum"/>; AdamW keeps its internal beta defaults.
+    /// </summary>
+    public string? Optimizer { get; set; }
+
+    /// <summary>SGD momentum coefficient (ignored by AdamW). Default 0.</summary>
+    public float SgdMomentum { get; set; } = 0f;
+
+    /// <summary>Total number of experts when <see cref="Ffn"/> is MoE.</summary>
+    public int NumExperts { get; set; } = 8;
+
+    /// <summary>Experts activated per token (top-k) when <see cref="Ffn"/> is MoE.</summary>
+    public int TopKExperts { get; set; } = 2;
 
     public int TotalSteps { get; set; } = 200;
     public int LogInterval { get; set; } = 25;
@@ -157,15 +236,7 @@ public sealed class TrainJobSettings
 
     // --- Persistence -------------------------------------------------------
 
-    public static string DefaultFolder
-    {
-        get
-        {
-            string root = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-            if (string.IsNullOrEmpty(root)) root = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            return Path.Combine(root, "SharpMind", "train-jobs");
-        }
-    }
+    public static string DefaultFolder => SharpMindPaths.Training;
 
     public bool Save(string path, out string? error)
     {
@@ -174,7 +245,13 @@ public sealed class TrainJobSettings
         {
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             SavedAtUtc = DateTime.UtcNow;
-            File.WriteAllText(path, JsonSerializer.Serialize(this, Options));
+            var doc = new TrainJobDocument
+            {
+                Version = CurrentFormatVersion,
+                SavedAtUtc = SavedAtUtc,
+                Job = this,
+            };
+            File.WriteAllText(path, JsonSerializer.Serialize(doc, Options));
             return true;
         }
         catch (Exception ex)
@@ -190,7 +267,34 @@ public sealed class TrainJobSettings
         try
         {
             var json = File.ReadAllText(path);
-            return JsonSerializer.Deserialize<TrainJobSettings>(json, Options);
+            using var root = JsonDocument.Parse(json);
+            var rootElement = root.RootElement;
+
+            // Versioned container produced by this build. Older (v1, unwrapped)
+            // files are plain TrainJobSettings JSON and load straight through.
+            if (rootElement.TryGetProperty("version", out var versionProp))
+            {
+                int version = versionProp.GetInt32();
+                if (version > CurrentFormatVersion)
+                {
+                    error = $"Job file format v{version} is newer than this build supports (v{CurrentFormatVersion}).";
+                    return null;
+                }
+
+                if (version < CurrentFormatVersion)
+                {
+                    // Older wrapped container — the inner job shape is the same
+                    // payload type, just deserialize it. (Future migrations hook
+                    // in here.)
+                }
+
+                if (rootElement.TryGetProperty("job", out var jobProp) && jobProp.ValueKind == JsonValueKind.Object)
+                    return jobProp.Deserialize<TrainJobSettings>(Options);
+                error = "Job file is missing its 'job' payload.";
+                return null;
+            }
+
+            return rootElement.Deserialize<TrainJobSettings>(Options);
         }
         catch (Exception ex)
         {
@@ -224,4 +328,25 @@ public sealed class TrainJobSettings
             name = name.Replace(c, '_');
         return string.IsNullOrWhiteSpace(name) ? "job" : name.Trim();
     }
+}
+
+/// <summary>
+/// The on-disk wrapper around <see cref="TrainJobSettings"/>: a stable version
+/// stamp plus the saved-at time, with the job's JSON kept whole inside
+/// <c>job</c>. The version lets a future format change be detected (and
+/// migrated) instead of failing to parse; older builds saved the bare job
+/// object, which <see cref="TrainJobSettings.Load"/> still accepts so legacy
+/// <c>*.smmt</c> files (e.g. <c>shakespeare-job.smmt</c>) survive.
+/// </summary>
+public sealed class TrainJobDocument
+{
+    /// <summary>On-disk format version written by this build.</summary>
+    [System.Text.Json.Serialization.JsonPropertyName("version")]
+    public int Version { get; set; } = TrainJobSettings.CurrentFormatVersion;
+
+    [System.Text.Json.Serialization.JsonPropertyName("savedAtUtc")]
+    public DateTime SavedAtUtc { get; set; } = DateTime.UtcNow;
+
+    [System.Text.Json.Serialization.JsonPropertyName("job")]
+    public TrainJobSettings Job { get; set; } = new();
 }

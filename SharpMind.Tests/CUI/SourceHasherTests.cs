@@ -121,4 +121,115 @@ public sealed class SourceHasherTests
     {
         Assert.Null(SourceHasher.Combined(JobWithNoPathSource().Sources));
     }
+
+    [Fact]
+    public void ComputeFileHashes_MapsEachFileToItsHash()
+    {
+        using var dir = new TempDirectory();
+        string a = dir.Write("a.txt", "file one\n");
+        string b = dir.Write("b.txt", "file two\n");
+
+        var job = new TrainJobSettings
+        {
+            Sources =
+            {
+                new JobSource
+                {
+                    Component = new JobComponent
+                    {
+                        DisplayName = "multi",
+                        TypeName = "SharpMind.Data.Sources.TextFileSource, SharpMind.Data",
+                        Args = new Dictionary<string, string> { ["path"] = dir.Path + "\\*.txt" },
+                    },
+                },
+            },
+        };
+
+        var map = SourceHasher.ComputeFileHashes(job.Sources);
+
+        Assert.Single(map);
+        Assert.Equal(2, map["multi"].Count);
+        Assert.Contains(a, map["multi"].Keys);
+        Assert.Contains(b, map["multi"].Keys);
+        Assert.All(map["multi"].Values, v => Assert.Equal(64, v.Length));
+        Assert.NotEqual(map["multi"][a], map["multi"][b]);
+    }
+
+    [Fact]
+    public void ComputeFileHashes_SkipsSourcesWithoutResolvablePath()
+    {
+        var map = SourceHasher.ComputeFileHashes(JobWithNoPathSource().Sources);
+        Assert.Empty(map);
+    }
+
+    [Fact]
+    public void ComputeDeltas_IdentifiesNewChangedAndUnchanged()
+    {
+        var current = new Dictionary<string, Dictionary<string, string>>
+        {
+            ["src"] = new()
+            {
+                ["new.txt"] = "h-new",
+                ["changed.txt"] = "h-changed-v2",
+                ["same.txt"] = "h-same",
+            },
+        };
+        var previous = new Dictionary<string, Dictionary<string, string>>
+        {
+            ["src"] = new()
+            {
+                ["changed.txt"] = "h-changed-v1",
+                ["same.txt"] = "h-same",
+            },
+        };
+
+        var deltas = SourceHasher.ComputeDeltas(current, previous);
+
+        Assert.Single(deltas);
+        Assert.Equal(new[] { "changed.txt", "new.txt" }, deltas["src"].OrderBy(p => p, StringComparer.Ordinal).ToArray());
+        Assert.DoesNotContain("same.txt", deltas["src"]);
+    }
+
+    [Fact]
+    public void ComputeDeltas_AllFilesNew_WhenNoPreviousMap()
+    {
+        var current = new Dictionary<string, Dictionary<string, string>>
+        {
+            ["src"] = new() { ["a.txt"] = "h-a", ["b.txt"] = "h-b" },
+        };
+
+        var deltas = SourceHasher.ComputeDeltas(current, []);
+
+        Assert.Equal(new[] { "a.txt", "b.txt" }, deltas["src"].OrderBy(p => p, StringComparer.Ordinal).ToArray());
+    }
+
+    [Fact]
+    public void ComputeDeltas_Empty_WhenNoChanges()
+    {
+        var current = new Dictionary<string, Dictionary<string, string>>
+        {
+            ["src"] = new() { ["a.txt"] = "h-a" },
+        };
+
+        var deltas = SourceHasher.ComputeDeltas(current, current);
+
+        Assert.Empty(deltas);
+    }
+
+    [Fact]
+    public void ComputeDeltas_IgnoresRemovedFiles()
+    {
+        var current = new Dictionary<string, Dictionary<string, string>>
+        {
+            ["src"] = new() { ["kept.txt"] = "h-kept" },
+        };
+        var previous = new Dictionary<string, Dictionary<string, string>>
+        {
+            ["src"] = new() { ["deleted.txt"] = "h-gone", ["kept.txt"] = "h-kept" },
+        };
+
+        var deltas = SourceHasher.ComputeDeltas(current, previous);
+
+        Assert.Empty(deltas);
+    }
 }
