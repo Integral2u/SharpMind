@@ -6,6 +6,7 @@ using SharpMind.Core.Quantization;
 using SharpMind.Core.Tensors;
 using SharpMind.Model.Arch;
 using SharpMind.Model.Config;
+using SharpMind.Model.Encoders;
 using SharpMind.Model.Format;
 using SharpMind.Model.Layers;
 using SharpMind.Model.Layers.Attention;
@@ -186,7 +187,8 @@ public static class ModelFactory
         var finalNorm = BuildNorm(weights.Config.HiddenDim, sharpConfig, weights.Config.NormEps, weights.FinalNormWeight, weights.FinalNormBias);
 
         bool gemmaScale = sharpConfig.Activation == ActivationKind.GELU && sharpConfig.Gate == GateKind.GeGLU;
-        var transformer = new Transformer(weights, embedding, arch, finalNorm, weights.LmHeadWeight, qOps, fullMapping, gemmaEmbeddingScale: gemmaScale);
+        var (visionEncoder, audioEncoder) = BuildEncoders(weights.Config);
+        var transformer = new Transformer(weights, embedding, arch, finalNorm, weights.LmHeadWeight, qOps, fullMapping, gemmaEmbeddingScale: gemmaScale, visionEncoder: visionEncoder, audioEncoder: audioEncoder);
 
         // Free pre-allocated (zero-filled) float tensors from BuildBlock.
         // In streaming mode the cyclic load/unload manages raw quantized data;
@@ -228,7 +230,16 @@ public static class ModelFactory
         var finalNorm = BuildNorm(weights.Config.HiddenDim, sharpConfig, weights.Config.NormEps, weights.FinalNormWeight, weights.FinalNormBias);
 
         bool gemmaScale = sharpConfig.Activation == ActivationKind.GELU && sharpConfig.Gate == GateKind.GeGLU;
-        return new Transformer(weights, embedding, arch, finalNorm, weights.LmHeadWeight, qOps, fullMapping, gemmaEmbeddingScale: gemmaScale);
+        var (visionEncoder, audioEncoder) = BuildEncoders(weights.Config);
+        return new Transformer(weights, embedding, arch, finalNorm, weights.LmHeadWeight, qOps, fullMapping, gemmaEmbeddingScale: gemmaScale, visionEncoder: visionEncoder, audioEncoder: audioEncoder);
+    }
+
+    /// <summary>Builds the multimodal encoders declared by the model config (null when absent).</summary>
+    private static (VisionEncoder? Vision, AudioEncoder? Audio) BuildEncoders(ModelConfig config)
+    {
+        VisionEncoder? vision = config.HasVision ? new VisionEncoder(config) : null;
+        AudioEncoder? audio = config.HasAudio ? new AudioEncoder(config) : null;
+        return (vision, audio);
     }
 
     private static TransformerBlock BuildBlock(

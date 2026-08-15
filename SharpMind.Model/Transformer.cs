@@ -4,6 +4,7 @@ using SharpMind.Core.Tensors;
 using SharpMind.Core.Training;
 using SharpMind.Model.Arch;
 using SharpMind.Model.Config;
+using SharpMind.Model.Encoders;
 using SharpMind.Model.Layers;
 
 namespace SharpMind.Model;
@@ -14,6 +15,8 @@ public sealed class Transformer : IDisposable
     private readonly EmbeddingTable _embedding;
     private readonly IArchitecture _arch;
     private readonly NormLayer _finalNorm;
+    private readonly VisionEncoder? _visionEncoder;
+    private readonly AudioEncoder? _audioEncoder;
     private bool _disposed;
 
     // Separate LM head for non-weight-tied models (e.g. LLaMA 2/3).
@@ -40,7 +43,9 @@ public sealed class Transformer : IDisposable
         Tensor<float>? lmHead = null,
         QuantizationOps? qOps = null,
         Dictionary<string, string>? mapping = null,
-        bool gemmaEmbeddingScale = false)
+        bool gemmaEmbeddingScale = false,
+        VisionEncoder? visionEncoder = null,
+        AudioEncoder? audioEncoder = null)
     {
         ArgumentNullException.ThrowIfNull(weights);
         ArgumentNullException.ThrowIfNull(embedding);
@@ -53,6 +58,8 @@ public sealed class Transformer : IDisposable
         _finalNorm = finalNorm;
         _lmHead = lmHead;
         _qOps = qOps;
+        _visionEncoder = visionEncoder;
+        _audioEncoder = audioEncoder;
         var projWeight = _lmHead ?? _embedding.Weight;
         var rawW = _lmHead != null ? _weights.RawLmHead : _weights.RawEmbedding;
         var rawDtype = _lmHead != null ? _weights.RawLmHeadDtype : _weights.RawEmbeddingDtype;
@@ -142,6 +149,11 @@ public sealed class Transformer : IDisposable
     public QuantDType? RawEmbeddingDtype => _weights.RawEmbeddingDtype;
     public QuantizationOps? QOps => _qOps;
 
+    /// <summary>Vision encoder for image inputs, or null when the model is text-only.</summary>
+    public VisionEncoder? VisionEncoder => _visionEncoder;
+    /// <summary>Audio encoder for mel-spectrogram inputs, or null when the model is text-only.</summary>
+    public AudioEncoder? AudioEncoder => _audioEncoder;
+
     /// <summary>
     /// Returns the distinct quantization dtypes used across the model's weight
     /// tensors (file storage dtypes, or F32 when tensors are resident as floats).
@@ -216,6 +228,14 @@ public sealed class Transformer : IDisposable
 
         foreach (var p in _finalNorm.Parameters())
             yield return p;
+
+        if (_visionEncoder is not null)
+            foreach (var p in _visionEncoder.Parameters())
+                yield return p;
+
+        if (_audioEncoder is not null)
+            foreach (var p in _audioEncoder.Parameters())
+                yield return p;
     }
 
     /// <summary>
@@ -224,6 +244,107 @@ public sealed class Transformer : IDisposable
     /// Output: logits    [Batch, SeqLen, VocabSize]
     /// </summary>
     public Tensor<float> Forward(Tensor<int> tokenIds, int positionOffset = 0, Core.Memory.Workspace? workspace = null) => Forward(tokenIds, null, positionOffset, workspace);
+
+    /// <summary>
+    /// Multimodal forward pass: embeds optional image and audio inputs, fuses
+    /// their tokens with the text embeddings along the sequence dimension, then
+    /// runs the decoder stack. Modality tokens are placed before the text tokens,
+    /// so text can attend to them causally.
+    ///
+    /// Input:  text  [Batch, SeqLen] token IDs; image [Batch, C, H, W]; mel [Batch, Frames, MelBins]
+    /// Output: logits [Batch, VisionTokens + AudioTokens + SeqLen, VocabSize]
+    /// </summary>
+    public Tensor<float> ForwardMultimodal(
+        Tensor<int> textTokenIds,
+        Tensor<float>? image = null,
+        Tensor<float>? mel = null,
+        int positionOffset = 0,
+        Core.Memory.Workspace? workspace = null)
+    {
+        ThrowIfDisposed();
+
+        if (image is not null && _visionEncoder is null)
+            throw new InvalidOperationException("Model has no vision encoder — pass image only to a multimodal model.");
+        if (mel is not null && _audioEncoder is null)
+            throw new InvalidOperationException("Model has no audio encoder — pass mel only to a multimodal model.");
+
+        // 1. Token embeddings → [Batch, SeqLen, HiddenDim]
+        var textEmb = _embedding.Forward(textTokenIds, workspace);
+        if (_gemmaEmbeddingScale)
+            ScaleEmbedding(textEmb, _weights.Config.HiddenDim);
+
+        // 2. Modality encoders → [Batch, N, HiddenDim] each
+        Tensor<float>? visionTokens = null;
+        Tensor<float>? audioTokens = null;
+        if (image is not null) visionTokens = _visionEncoder!.Forward(image);
+        if (mel is not null) audioTokens = _audioEncoder!.Forward(mel);
+
+        int batch = textTokenIds.Shape.Rows;
+        int textLen = textTokenIds.Shape.Cols;
+        int visionLen = visionTokens?.Shape[1] ?? 0;
+        int audioLen = audioTokens?.Shape[1] ?? 0;
+        int totalLen = textLen + visionLen + audioLen;
+
+        // 3. Fuse: [vision | audio | text] along the sequence axis.
+        //    Owned by _cachedEmbedding (see DisposeCache); do NOT wrap in using.
+        var fused = new Tensor<float>(batch, totalLen, _weights.Config.HiddenDim);
+        var fusedData = fused.Data;
+        int hiddenDim = _weights.Config.HiddenDim;
+        int seqOffset = 0;
+        if (visionTokens is not null)
+        {
+            CopyBlock(fusedData, visionTokens.Data, batch, visionTokens.Shape[1], hiddenDim, totalLen, seqOffset);
+            seqOffset += visionTokens.Shape[1];
+        }
+        if (audioTokens is not null)
+        {
+            CopyBlock(fusedData, audioTokens.Data, batch, audioTokens.Shape[1], hiddenDim, totalLen, seqOffset);
+            seqOffset += audioTokens.Shape[1];
+        }
+        CopyBlock(fusedData, textEmb.Data, batch, textLen, hiddenDim, totalLen, seqOffset);
+        visionTokens?.Dispose();
+        audioTokens?.Dispose();
+        textEmb.Dispose();
+
+        // 4. Architecture (blocks mutate in place; _cachedHidden may alias fused).
+        _cachedEmbedding = fused;
+        _cachedHidden = _arch.Forward(_cachedEmbedding, new IKVCache[_arch.NumLayers], positionOffset, workspace);
+
+        if (_weights is TransformerWeightsStreaming sw) sw.CompleteForward();
+
+        // 5. Final norm + LM head → [Batch, totalLen, VocabSize]
+        _cachedNormed?.Dispose();
+        _cachedNormed = _finalNorm.Forward(_cachedHidden, workspace);
+
+        using var normedFlat = _cachedNormed.Reshape(batch * totalLen, hiddenDim);
+        int M = batch * totalLen;
+        int K = hiddenDim;
+        int N = _weights.Config.VocabSize;
+
+        var logits = _logitOps.Project(normedFlat, M, K, N, workspace);
+        var result = logits.Reshape(batch, totalLen, N);
+        logits.Dispose();
+        return result;
+    }
+
+    /// <summary>
+    /// Copies a [B, SeqLen, HiddenDim] block into the fused [B, TotalLen, HiddenDim]
+    /// buffer at <paramref name="seqOffset"/>, treating the source as the leading
+    /// rows of the sequence. Source and destination are both row-major; the source
+    /// occupies columns seqOffset..seqOffset+SeqLen of each batch row while the
+    /// destination spans the full TotalLen columns.
+    /// </summary>
+    private static void CopyBlock(Span<float> dst, ReadOnlySpan<float> src, int batch, int seqLen, int hiddenDim, int totalLen, int seqOffset)
+    {
+        // Layout note: for row-major [B, S, H] tensors, elements at buffer index
+        // (b*S*H + s*H + h) map to destination (b*T*H + (seqOffset+s)*H + h) in the
+        // fused [B, T, H] tensor.
+        int seqStride = seqLen * hiddenDim;
+        int totalStride = totalLen * hiddenDim;
+        int offStride = seqOffset * hiddenDim;
+        for (int b = 0; b < batch; b++)
+            src.Slice(b * seqStride, seqStride).CopyTo(dst.Slice(b * totalStride + offStride, seqStride));
+    }
 
     public Tensor<float> Forward(Tensor<int> tokenIds, IKVCache[]? caches, int positionOffset = 0, Core.Memory.Workspace? workspace = null)
     {
@@ -364,6 +485,8 @@ public sealed class Transformer : IDisposable
         _embedding.Dispose();
         _arch.Dispose();
         _finalNorm.Dispose();
+        _visionEncoder?.Dispose();
+        _audioEncoder?.Dispose();
     }
 
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, nameof(Transformer));

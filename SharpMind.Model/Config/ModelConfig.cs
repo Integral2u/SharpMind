@@ -114,6 +114,44 @@ public sealed record ModelConfig
     /// <summary>Whether the LM head weight is tied to the embedding weight.</summary>
     public bool? TieWordEmbeddings { get; init; }
 
+    // Multimodal encoders (vision / audio)
+
+    /// <summary>
+    /// Vision patch size (e.g. 16). A positive value enables the vision
+    /// encoder, which splits an <see cref="VisionImageSize"/>² input image into
+    /// patches of this size and projects each flattened patch to HiddenDim.
+    /// </summary>
+    public int? VisionPatchSize { get; init; }
+
+    /// <summary>Square image side length in pixels. Ignored when <see cref="VisionPatchSize"/> is null.</summary>
+    public int VisionImageSize { get; init; } = 224;
+
+    /// <summary>Number of image channels (3 = RGB). Ignored when <see cref="VisionPatchSize"/> is null.</summary>
+    public int VisionChannels { get; init; } = 3;
+
+    /// <summary>
+    /// Mel-spectrogram bin count (e.g. 80). A positive value enables the audio
+    /// encoder, which projects each mel frame to HiddenDim.
+    /// </summary>
+    public int? AudioMelBins { get; init; }
+
+    /// <summary>Maximum number of audio frames the encoder supports. Ignored when <see cref="AudioMelBins"/> is null.</summary>
+    public int AudioMaxFrames { get; init; } = 1_024;
+
+    /// <summary>True when the vision encoder is enabled.</summary>
+    public bool HasVision => VisionPatchSize is > 0;
+
+    /// <summary>Number of image patches for the configured image/patch sizes.</summary>
+    public int VisionNumPatches => !HasVision ? 0
+        : VisionImageSize / VisionPatchSize!.Value * (VisionImageSize / VisionPatchSize!.Value);
+
+    /// <summary>Flattened size of a single image patch (channels × patch²).</summary>
+    public int VisionPatchDim => !HasVision ? 0
+        : VisionChannels * VisionPatchSize!.Value * VisionPatchSize!.Value;
+
+    /// <summary>True when the audio encoder is enabled.</summary>
+    public bool HasAudio => AudioMelBins is > 0;
+
     // Normalisation
 
     /// <summary>Epsilon for RMS / LayerNorm. Qwen2 uses 1e-6; LLaMA 2 uses 1e-5.</summary>
@@ -158,6 +196,20 @@ public sealed record ModelConfig
         if (NumExperts < TopKExperts)
             throw new InvalidOperationException(
                 $"NumExperts ({NumExperts}) must be >= TopKExperts ({TopKExperts}).");
+        if (HasVision)
+        {
+            if (VisionImageSize <= 0)
+                throw new InvalidOperationException("VisionImageSize must be > 0 when the vision encoder is enabled.");
+            if (VisionImageSize % VisionPatchSize!.Value != 0)
+                throw new InvalidOperationException(
+                    $"VisionImageSize ({VisionImageSize}) must be divisible by VisionPatchSize ({VisionPatchSize}).");
+            if (VisionChannels <= 0)
+                throw new InvalidOperationException("VisionChannels must be > 0 when the vision encoder is enabled.");
+        }
+        if (HasAudio && AudioMaxFrames <= 0)
+            throw new InvalidOperationException("AudioMaxFrames must be > 0 when the audio encoder is enabled.");
+        if (HasAudio && AudioMelBins!.Value <= 0)
+            throw new InvalidOperationException("AudioMelBins must be > 0 when the audio encoder is enabled.");
     }
 
     // Presets
