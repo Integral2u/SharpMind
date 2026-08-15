@@ -22,7 +22,8 @@ public static class ComponentPickerDialog
     public static PickedComponent? Show(
         string? pluginsFolder,
         ComponentKind kind,
-        IReadOnlyDictionary<string, string>? prefill = null)
+        IReadOnlyDictionary<string, string>? prefill = null,
+        string? browseFolder = null)
     {
         var registry = ComponentRegistry.ScanFolder(pluginsFolder ?? "", out var warnings);
         var candidates = registry
@@ -56,7 +57,7 @@ public static class ComponentPickerDialog
             int idx = list.SelectedItem;
             if (idx < 0 || idx >= candidates.Count) return;
             var descriptor = candidates[idx];
-            var values = ComponentParamDialog.Show(descriptor, prefill);
+            var values = ComponentParamDialog.Show(descriptor, prefill, browseFolder);
             if (values is null) return; // cancelled inside the param form
             result = new PickedComponent { Descriptor = descriptor, Values = values };
             Application.RequestStop();
@@ -92,10 +93,13 @@ public static class ComponentParamDialog
     /// <summary>
     /// Shows the form modally for <paramref name="descriptor"/>. Returns the
     /// entered parameter-name→value map on OK, or null when cancelled.
+    /// <paramref name="browseFolder"/> seeds the file/folder pickers when no
+    /// value has been entered yet (e.g. the corpus folder for data sources).
     /// </summary>
     public static Dictionary<string, string>? Show(
         ComponentDescriptor descriptor,
-        IReadOnlyDictionary<string, string>? existing = null)
+        IReadOnlyDictionary<string, string>? existing = null,
+        string? browseFolder = null)
     {
         var values = new Dictionary<string, string>(StringComparer.Ordinal);
         if (existing is not null)
@@ -127,7 +131,7 @@ public static class ComponentParamDialog
                 {
                     var path = FilePickerDialog.Show(
                         fc.Help ?? $"Select {p.Name}",
-                        StartPath(current), PickerMode.File, fc.Pattern);
+                        StartPath(current, browseFolder), PickerMode.File, fc.Pattern);
                     if (path is not null) { field.Text = path; values[p.Name] = path; }
                 };
                 field.TextChanged += (_) => values[p.Name] = field.Text.ToString();
@@ -141,7 +145,7 @@ public static class ComponentParamDialog
                 {
                     var dir = FilePickerDialog.Show(
                         fo.Help ?? $"Select {p.Name}",
-                        StartPath(current), PickerMode.Folder);
+                        StartPath(current, browseFolder), PickerMode.Folder);
                     if (dir is not null) { field.Text = dir; values[p.Name] = dir; }
                 };
                 field.TextChanged += (_) => values[p.Name] = field.Text.ToString();
@@ -213,8 +217,10 @@ public static class ComponentParamDialog
         return p.Type == typeof(bool) ? "false" : "";
     }
 
-    private static string StartPath(string hint) =>
-        Directory.Exists(hint) ? hint : Directory.GetCurrentDirectory();
+    private static string StartPath(string hint, string? browseFolder = null) =>
+        Directory.Exists(hint) ? hint
+        : browseFolder is { Length: > 0 } && Directory.Exists(browseFolder) ? browseFolder
+        : Directory.GetCurrentDirectory();
 
     /// <summary>
     /// Mirrors the <c>row</c> counter used while building the parameter form so the

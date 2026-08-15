@@ -23,7 +23,7 @@ public sealed class AppSettings
 
     /// <summary>
     /// The model folder to use when <see cref="DefaultModelFolder"/> hasn't been
-    /// recorded yet — the default <c>Documents\SharpMind\Models</c> tree.
+    /// recorded yet — the default <c>%USERPROFILE%\SharpMind\Models</c> tree.
     /// </summary>
     public string ResolvedModelFolder => string.IsNullOrWhiteSpace(DefaultModelFolder)
         ? SharpMindPaths.Models
@@ -32,7 +32,7 @@ public sealed class AppSettings
     /// <summary>
     /// The export folder to prefill into new (non-loaded) training jobs.
     /// <see cref="LastExportPath"/> wins when recorded, then the default model
-    /// folder, then <c>Documents\SharpMind\Models</c>.
+    /// folder, then <c>%USERPROFILE%\SharpMind\Models</c>.
     /// </summary>
     public string ResolvedExportFolder => string.IsNullOrWhiteSpace(LastExportPath)
         ? ResolvedModelFolder

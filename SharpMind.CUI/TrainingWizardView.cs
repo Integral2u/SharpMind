@@ -751,7 +751,12 @@ public sealed class TrainingWizardView : View
     }
 
     private PickedComponent? Pick(ComponentKind kind, IReadOnlyDictionary<string, string>? prefill = null)
-        => ComponentPickerDialog.Show(_settings.PluginsFolder, kind, prefill);
+    {
+        // Data sources browse from the corpus folder by default; stages keep the
+        // current directory (their file params are wordlists, blocklists, etc.).
+        string? browseFolder = kind == ComponentKind.Source ? SharpMindPaths.Corpus : null;
+        return ComponentPickerDialog.Show(_settings.PluginsFolder, kind, prefill, browseFolder);
+    }
 
     private JobComponent ToJobComponent(PickedComponent picked) => new()
     {

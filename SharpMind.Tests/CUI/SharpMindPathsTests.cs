@@ -21,6 +21,7 @@ public sealed class SharpMindPathsTests
             Assert.Equal(Path.Combine(root, "SharpMind", "Training"), SharpMindPaths.Training);
             Assert.Equal(Path.Combine(root, "SharpMind", "Chat Sessions"), SharpMindPaths.ChatSessions);
             Assert.Equal(Path.Combine(root, "SharpMind", "Models"), SharpMindPaths.Models);
+            Assert.Equal(Path.Combine(root, "SharpMind", "Corpus"), SharpMindPaths.Corpus);
             Assert.Equal(SharpMindPaths.Training, TrainJobSettings.DefaultFolder);
             Assert.Equal(SharpMindPaths.ChatSessions, SavedSession.DefaultFolder);
 
@@ -28,6 +29,7 @@ public sealed class SharpMindPathsTests
             Assert.True(Directory.Exists(SharpMindPaths.Training));
             Assert.True(Directory.Exists(SharpMindPaths.ChatSessions));
             Assert.True(Directory.Exists(SharpMindPaths.Models));
+            Assert.True(Directory.Exists(SharpMindPaths.Corpus));
         }
         finally
         {
@@ -86,5 +88,20 @@ public sealed class SharpMindPathsTests
             SharpMindPaths.OverrideRoot = null;
             try { Directory.Delete(root, recursive: true); } catch { }
         }
+    }
+
+    [Fact]
+    public void DefaultRoot_LivesUnderUserProfile_NotDocuments()
+    {
+        // No override → the default tree sits at the profile root, beside Documents.
+        // This guards the Windows gotchas (Controlled Folder Access, OneDrive Known
+        // Folder Move) that Documents-based defaults would hit.
+        SharpMindPaths.OverrideRoot = null;
+        string profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        Assert.Equal(Path.Combine(profile, "SharpMind"), SharpMindPaths.Root);
+        Assert.Equal(Path.Combine(profile, "SharpMind", "Models"), SharpMindPaths.Models);
+        Assert.Equal(Path.Combine(profile, "SharpMind", "Corpus"), SharpMindPaths.Corpus);
+        Assert.False(SharpMindPaths.Root.StartsWith(
+            Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), StringComparison.OrdinalIgnoreCase));
     }
 }
