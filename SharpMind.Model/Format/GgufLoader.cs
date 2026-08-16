@@ -609,7 +609,17 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
             }
         }
 
-        // Dequantize to float
+        // Dequantize to float — but only if something will consume the floats.
+        // In streaming mode the 2D weight tensors are deliberately left null and
+        // the quantized forward reads the raw bytes instead, so dequantizing here
+        // did full work per layer per forward pass and discarded every value.
+        // Each tensor is seeked to explicitly above, so skipping reads nothing
+        // the next tensor depends on.
+        Tensor<float>? blockFloatTarget = target == null && block != null
+            ? weights.ResolveFloatTarget(info.Name)
+            : null;
+        if (target == null && blockFloatTarget == null) return;
+
         float[] buffer = ArrayPool<float>.Shared.Rent(count);
         try
         {
@@ -631,7 +641,7 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
             }
             else if (block != null)
             {
-                var floatTarget = weights.ResolveFloatTarget(info.Name);
+                var floatTarget = blockFloatTarget;
                 if (floatTarget != null)
                 {
                     if (info.Shape.Length == 2)
