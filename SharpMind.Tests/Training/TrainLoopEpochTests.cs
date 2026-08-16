@@ -67,7 +67,5 @@ public sealed class TrainLoopEpochTests : IDisposable
         Assert.Equal(20, lastStep);
     }
 
-    private static int[] Tokenise(string s) =>
-        [.. s.Split(' ', System.StringSplitOptions.RemoveEmptyEntries)
-             .Select(w => Math.Abs(w.GetHashCode()) % 16)];
+    private static int[] Tokenise(string s) => TestTokens.Encode(s, 16);
 }

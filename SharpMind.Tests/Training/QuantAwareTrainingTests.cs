@@ -255,8 +255,7 @@ public sealed class QuantAwareTrainingTests : IDisposable
             .Pipe(new NormaliseWhitespace());
         var loader = new DataLoader(
             pipeline,
-            s => s.Split(' ', StringSplitOptions.RemoveEmptyEntries)
-                  .Select(w => Math.Abs(w.GetHashCode()) % QatModelConfig.VocabSize).ToArray(),
+            s => TestTokens.Encode(s, QatModelConfig.VocabSize),
             new PackingBatcher(batchSize: 2, maxSeqLen: 8),
             prefetchBuffer: 1);
 
