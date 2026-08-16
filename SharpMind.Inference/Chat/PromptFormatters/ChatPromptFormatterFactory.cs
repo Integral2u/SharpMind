@@ -96,4 +96,46 @@ public static class ChatPromptFormatterFactory
 
         return new SimpleFormatter();
     }
+
+    /// <summary>
+    /// Explains why <paramref name="formatter"/> cannot frame turns for a model
+    /// with this vocabulary, or null when it can.
+    ///
+    /// A formatter whose end-of-turn marker is a control token the model does not
+    /// have is silently broken rather than merely suboptimal. The tokenizer has no
+    /// id for the marker, so it splits it into ordinary text pieces — Qwen2 encodes
+    /// Llama-3's &lt;|eot_id|&gt; as nine fragments — and the model therefore never
+    /// sees a turn boundary during prefill and has no single token it can emit to
+    /// end its own turn. In practice it generates until the token cap, reproducing
+    /// the marker in fragments (&lt;|eot_ id|&gt;) and often continuing past its
+    /// answer into a hallucinated next turn.
+    ///
+    /// Only control-token-shaped markers are checked. Formats whose stop strings
+    /// are ordinary text — Alpaca's "### Instruction:", Q&amp;A's "\nQ:" — are
+    /// meant to be tokenized as text and are not a mismatch.
+    /// </summary>
+    /// <param name="vocabContains">Vocabulary membership test, e.g. <c>tokenizer.Vocab.Contains</c>.</param>
+    public static string? DescribeVocabMismatch(IChatPromptFormatter formatter, Func<string, bool> vocabContains)
+    {
+        ArgumentNullException.ThrowIfNull(formatter);
+        ArgumentNullException.ThrowIfNull(vocabContains);
+
+        var missing = formatter.DefaultStopStrings
+            .Where(IsControlToken)
+            .Where(s => !vocabContains(s))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        if (missing.Count == 0) return null;
+
+        string list = string.Join(", ", missing);
+        return $"The {formatter.GetType().Name} ends turns with {list}, which " +
+               $"{(missing.Count == 1 ? "is" : "are")} not in this model's vocabulary. " +
+               "The model will see the marker as ordinary text, so it has no reliable way to stop " +
+               "and will likely run past its answer until the token limit. " +
+               "Set Formatter to Auto unless you know this pairing is correct.";
+    }
+
+    /// <summary>A special-token marker, as opposed to a plain-text turn separator.</summary>
+    private static bool IsControlToken(string s) =>
+        s.Length > 2 && s[0] == '<' && s[^1] == '>';
 }
