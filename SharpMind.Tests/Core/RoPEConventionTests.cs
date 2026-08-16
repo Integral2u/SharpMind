@@ -97,6 +97,30 @@ public sealed class RoPEConventionTests
         }
     }
 
+    /// <summary>
+    /// The cos/sin tables are shared through a static cache. It used to be keyed
+    /// by HashCode.Combine of the config, so a 32-bit collision would hand a model
+    /// another configuration's rotary tables. Distinct configs must stay distinct.
+    /// </summary>
+    [Fact]
+    public void DifferentConfigs_DoNotShareCachedTables()
+    {
+        using var a = Input();
+        using var b = Input();
+        using var c = Input();
+
+        new RoPE(HeadDim, maxSeqLen: 8, theta: 10_000f).Apply(a, positionOffset: 1);
+        new RoPE(HeadDim, maxSeqLen: 8, theta: 500_000f).Apply(b, positionOffset: 1);
+        // Same theta as the first, so it must reproduce the first result exactly.
+        new RoPE(HeadDim, maxSeqLen: 8, theta: 10_000f).Apply(c, positionOffset: 1);
+
+        // Pair 0 rotates at freq theta^0 == 1 for every theta, so only pair 1
+        // (indices 2 and 3) distinguishes the two configurations.
+        Assert.NotEqual(a.Data[2], b.Data[2], precision: 4);
+        Assert.Equal(a.Data[2], c.Data[2], precision: 6);
+        Assert.Equal(a.Data[3], c.Data[3], precision: 6);
+    }
+
     [Theory]
     [InlineData("qwen2", true)]
     [InlineData("qwen3", true)]

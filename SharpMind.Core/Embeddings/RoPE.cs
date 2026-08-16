@@ -23,7 +23,18 @@ namespace SharpMind.Core.Embeddings;
 /// </summary>
 public sealed class RoPE : PositionalEncoder
 {
-    private static readonly ConcurrentDictionary<int, (float[] cos, float[] sin)> TableCache = [];
+    /// <summary>
+    /// Identifies one set of cos/sin tables. Keyed by the values themselves, not
+    /// by HashCode.Combine of them: a hash is 32 bits and collides, and a
+    /// collision here silently hands a model another configuration's rotary
+    /// tables. neoxStyle is deliberately absent — it changes how the tables are
+    /// applied, not their contents.
+    /// </summary>
+    private readonly record struct TableKey(
+        float Theta, int RopeDim, int MaxSeqLen, float? ScalingFactor,
+        string? ScalingType, int? OriginalContextLength, float? LowFreqFactor, float? HighFreqFactor);
+
+    private static readonly ConcurrentDictionary<TableKey, (float[] cos, float[] sin)> TableCache = [];
     private readonly float[] _cosCache; // [MaxSeqLen, HeadDim/2]
     private readonly float[] _sinCache;
     private readonly int     _headDim;
@@ -86,7 +97,7 @@ public sealed class RoPE : PositionalEncoder
         else
         {
             (_cosCache, _sinCache) = TableCache.GetOrAdd(
-                HashCode.Combine(theta, halfDim, _maxSeqLen, ropeScalingFactor, ropeScalingType,
+                new TableKey(theta, _ropeDim, _maxSeqLen, ropeScalingFactor, ropeScalingType,
                     ropeOriginalContextLength, lowFreqFactor, highFreqFactor), (b) =>
             {
                 var cos = new float[_maxSeqLen * halfDim];
