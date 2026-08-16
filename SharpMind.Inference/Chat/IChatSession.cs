@@ -4,7 +4,15 @@ using SharpMind.Tokenization;
 namespace SharpMind.Inference.Chat;
 public interface IChatSession : IAsyncDisposable
 {
+    /// <summary>Context window the prompt is trimmed to fit, in tokens.</summary>
     public int MaxTokens { get; set; }
+
+    /// <summary>
+    /// Maximum tokens generated per turn. Distinct from <see cref="MaxTokens"/>,
+    /// which is the context budget — setting the generation length on MaxTokens
+    /// instead leaves generation at its default and starves the context.
+    /// </summary>
+    public int MaxNewTokens { get; set; }
     public float Temperature { get; set; }
     public int TopK { get; set; }
     public float TopP { get; set; }

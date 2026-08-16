@@ -393,7 +393,13 @@ public static class SessionLauncher
             return new LaunchResult { Error = $"Failed to start session with {options.Generator}/{options.Cache}: {ex.Message}", Warnings = warnings };
         }
 
-        session.MaxTokens = options.Generation.MaxNewTokens;
+        // MaxNewTokens is the generation length; MaxTokens is the context window
+        // ChatSession.TrimToFitContext budgets against. Assigning the user's
+        // "max new tokens" to MaxTokens left generation stuck at its 256 default
+        // and shrank the context budget to (setting - 256), so history was evicted
+        // after a couple of turns and the model lost the conversation.
+        session.MaxNewTokens = options.Generation.MaxNewTokens;
+        session.MaxTokens = loaded.Model.Config.MaxSeqLen;
         session.Temperature = options.Sampling.Temperature;
         session.TopK = options.Sampling.TopK;
         session.TopP = options.Sampling.TopP;
