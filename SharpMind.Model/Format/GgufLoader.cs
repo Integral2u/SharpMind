@@ -546,8 +546,17 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
         if (targetOffset >= stream.Length) return;
         stream.Position = targetOffset;
 
-        int count = 1;
-        foreach (int d in info.Shape) count *= d;
+        // long: a tensor can hold more elements than int can count (gemma-3n's
+        // per-layer embeddings are 2.3e9), and silently wrapping negative here
+        // surfaced far away as ArrayPool.Rent(-1946157056).
+        long longCount = 1;
+        foreach (int d in info.Shape) longCount *= d;
+        if (longCount > int.MaxValue)
+            throw new NotSupportedException(
+                $"Tensor '{info.Name}' has {longCount:N0} elements, more than this loader can " +
+                $"dequantize into a single float buffer (max {int.MaxValue:N0}). " +
+                "Shape: [" + string.Join(",", info.Shape) + "].");
+        int count = (int)longCount;
 
         // Load raw quantized data for block-level tensors
         if (block != null && rawField != null && rawSize > 0 && stream.Position + rawSize <= stream.Length)
@@ -654,8 +663,13 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
 
     private void ReadTensorInto(BinaryReader stream, QuantDType dtype, int[] shape, Span<float> destination)
     {
-        int count = 1;
-        foreach (int d in shape) count *= d;
+        long longCount = 1;
+        foreach (int d in shape) longCount *= d;
+        if (longCount > int.MaxValue)
+            throw new NotSupportedException(
+                $"Tensor with shape [{string.Join(",", shape)}] has {longCount:N0} elements, " +
+                $"more than a single float buffer can hold (max {int.MaxValue:N0}).");
+        int count = (int)longCount;
         if (destination.Length < count) throw new ArgumentException($"Destination buffer too small: {destination.Length} < {count}");
         _qOps.ReadFor(dtype, stream, destination, count);
     }
