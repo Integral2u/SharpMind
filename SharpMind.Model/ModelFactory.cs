@@ -58,6 +58,7 @@ public static class ModelFactory
         ArgumentNullException.ThrowIfNull(modelConfig);
         ArgumentNullException.ThrowIfNull(sharpConfig);
         modelConfig.Validate();
+        ThrowIfArchitectureUnsupported(modelConfig.Architecture);
         var fmt = ModelFormatHelpers.GetFormatForExtension(path) ?? throw new FileLoadException($"File type not supported: {path}", path);
         var embedding = new Tensor<float>(modelConfig.VocabSize, modelConfig.HiddenDim);
         Tensor<float>? lmHead = null;
@@ -89,6 +90,44 @@ public static class ModelFactory
         => config.PositionalEncoding == Config.PositionalEncoding.Learned
             ? new Tensor<float>(config.MaxSeqLen, config.HiddenDim)
             : null;
+
+    /// <summary>
+    /// Architectures known NOT to work, with the reason. A denylist rather than an
+    /// allowlist on purpose: only entries actually observed to fail belong here, so
+    /// this can never reject a model that would have loaded.
+    ///
+    /// Without it these fail late and misleadingly — the generic decoder derives
+    /// layer shapes from the config, those shapes disagree with the file, and the
+    /// first matmul reports a byte-count mismatch as if the file were corrupt.
+    /// </summary>
+    private static readonly Dictionary<string, string> UnsupportedArchitectures = new(StringComparer.OrdinalIgnoreCase)
+    {
+        // Verified against gemma-4-{E2B,e4b,26B-A4B}-it-Q4_K_M. The family is
+        // gemma-3n-style and departs from a standard decoder in several ways at
+        // once, so correcting any single one only moves the failure along.
+        ["gemma4"] = "per-layer input embeddings (per_layer_token_embd, inp_gate, proj), "
+                   + "per-layer FFN widths (feed_forward_length is an array), "
+                   + "KV sharing across layers (attention.shared_kv_layers), and "
+                   + "per-layer output scaling",
+        // Same family under the name llama.cpp uses for the 3n conversions.
+        ["gemma3n"] = "per-layer input embeddings, per-layer FFN widths and shared KV layers "
+                    + "(same architecture family as gemma4)",
+    };
+
+    /// <summary>
+    /// Fails a model whose architecture is known not to work, before anything is
+    /// allocated, so the message names the architecture instead of a tensor size.
+    /// </summary>
+    private static void ThrowIfArchitectureUnsupported(string? architecture)
+    {
+        if (string.IsNullOrWhiteSpace(architecture)) return;
+        if (!UnsupportedArchitectures.TryGetValue(architecture, out string? reason)) return;
+
+        throw new NotSupportedException(
+            $"Model architecture '{architecture}' is not supported. It uses {reason}, " +
+            "none of which the decoder implements. The file is fine — SharpMind cannot run it. " +
+            "Loading it anyway would derive the wrong layer shapes and produce garbage.");
+    }
 
     /// <summary>
     /// Per-block tensors for inference: norms and biases only. The 2D weights are
