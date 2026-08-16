@@ -9,7 +9,6 @@ namespace SharpMind.Model.Layers;
 public sealed class TrainingLinearLayer : LinearLayer
 {
     private static readonly QuantizationOps _staticOps = QuantizationFactory.Create();
-    private Tensor<float>? _weightBT;
     private QuantDType? _qatTarget;
 
     public TrainingLinearLayer(string name, int inFeatures, int outFeatures, bool bias, Tensor<float>? weight, Tensor<float>? biasTensor)
@@ -60,8 +59,10 @@ public sealed class TrainingLinearLayer : LinearLayer
 private unsafe Tensor<float> MatMulForward(Tensor<float> input, int batchSize, Workspace? workspace = null)
     {
         Tensor<float> output;
-        _weightBT?.Dispose();
-        _weightBT = _weight.Transpose();
+        // Local, not a field: MoE calls Forward on one shared expert layer from
+        // several Parallel.For threads at once, so a per-instance transpose gets
+        // disposed under another thread's matmul.
+        using var weightBT = _weight.Transpose();
         if (workspace != null)
             output = workspace.Rent<float>([batchSize, OutFeatures]);
         else
@@ -69,12 +70,12 @@ private unsafe Tensor<float> MatMulForward(Tensor<float> input, int batchSize, W
         if (_qatTarget is null or QuantDType.F32)
         {
             var fn = _staticOps.QuantizedMatMulOpFor(QuantDType.F32);
-            fn(input.DataPtr, (byte*)_weightBT.DataPtr, output.DataPtr, batchSize, InFeatures, OutFeatures);
+            fn(input.DataPtr, (byte*)weightBT.DataPtr, output.DataPtr, batchSize, InFeatures, OutFeatures);
         }
         else
         {
             var fn = _staticOps.QuantizedMatMulOpFor(_qatTarget.Value);
-            var raw = TensorQuantizer.Quantize(_weightBT.Data, [_weightBT.Shape.Rows, _weightBT.Shape.Cols], _qatTarget.Value);
+            var raw = TensorQuantizer.Quantize(weightBT.Data, [weightBT.Shape.Rows, weightBT.Shape.Cols], _qatTarget.Value);
             fixed (byte* rawPtr = raw)
                 fn(input.DataPtr, rawPtr, output.DataPtr, batchSize, InFeatures, OutFeatures);
         }
@@ -124,18 +125,17 @@ private unsafe Tensor<float> MatMulForward(Tensor<float> input, int batchSize, W
         bool needReshape = input.Rank > 2;
         int batchSize = input.ElementCount / input.Shape[^1];
 var flat = needReshape ? input.Reshape(batchSize, InFeatures) : input;
-        _weightBT?.Dispose();
-        _weightBT = _weight.Transpose();
+        using var weightBT = _weight.Transpose();
         var output = new Tensor<float>(batchSize, OutFeatures);
         if (_qatTarget is null or QuantDType.F32)
         {
             var fn = _staticOps.QuantizedMatMulOpFor(QuantDType.F32);
-            fn(flat.DataPtr, (byte*)_weightBT.DataPtr, output.DataPtr, batchSize, InFeatures, OutFeatures);
+            fn(flat.DataPtr, (byte*)weightBT.DataPtr, output.DataPtr, batchSize, InFeatures, OutFeatures);
         }
         else
         {
             var fn = _staticOps.QuantizedMatMulOpFor(_qatTarget.Value);
-            var raw = TensorQuantizer.Quantize(_weightBT.Data, [_weightBT.Shape.Rows, _weightBT.Shape.Cols], _qatTarget.Value);
+            var raw = TensorQuantizer.Quantize(weightBT.Data, [weightBT.Shape.Rows, weightBT.Shape.Cols], _qatTarget.Value);
             fixed (byte* rawPtr = raw)
                 fn(flat.DataPtr, rawPtr, output.DataPtr, batchSize, InFeatures, OutFeatures);
         }
@@ -200,11 +200,5 @@ var flat = needReshape ? input.Reshape(batchSize, InFeatures) : input;
             return reshaped;
         }
         return gradInputFlat;
-    }
-
-    protected override void InvalidateCache()
-    {
-        _weightBT?.Dispose();
-        _weightBT = null;
     }
 }
