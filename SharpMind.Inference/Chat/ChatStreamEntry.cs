@@ -21,4 +21,12 @@ public sealed class ChatStreamEntry
 
     /// <summary>Seconds from start to first output token (includes prefill).</summary>
     public float? TimeToFirstToken { get; init; }
+
+    /// <summary>
+    /// Set when generation ended because of an unexpected exception rather than
+    /// a user interruption. Without this an internal failure was indistinguishable
+    /// from a cancelled turn — it surfaced as an empty reply and nothing else.
+    /// Null for normal streaming and for genuine cancellation.
+    /// </summary>
+    public string? Error { get; init; }
 }
