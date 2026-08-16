@@ -382,13 +382,38 @@ namespace SharpMind.Model.Layers.Attention;
                 }
             }
 
-            if (totalHeads <= 16)
+            // Parallelise on total work, not head count.
+            //
+            // The old guard was `totalHeads <= 16`, which kept every model with
+            // 16 or fewer heads single-threaded — precisely the common case.
+            // Qwen2-0.5B has 14, so its attention ran on one core of sixteen
+            // while the projections around it used all of them. Head count says
+            // nothing about cost: 14 heads over a 1691-entry cache is 24x the
+            // work of 20 heads over a 32-entry one.
+            //
+            // Threshold measured on 16-core Zen 5, headDim 64, contiguous cache,
+            // sweeping kvLen at seqLen 1 (serial time / parallel time):
+            //     work  28.7K -> 0.88x   Parallel.For overhead still dominates
+            //     work  57.3K -> 1.35x
+            //     work   115K -> 1.54x
+            //     work   459K -> 2.10x
+            // Break-even is near 40K; 65536 sits clear of it on the winning side
+            // and costs at most a few microseconds per layer below that.
+            //
+            // Speedup saturates around 2x at decode because MQA/GQA has every
+            // head reading the same one or two K/V tensors, so the head loop is
+            // bandwidth-bound long before it is core-bound. Prefill, which
+            // reuses each K/V row across seqLen queries, reaches 4.6x.
+            const long MinWorkForParallelHeads = 65_536;
+            long attnWork = (long)totalHeads * seqLen * effectiveKvLen * headDim;
+
+            if (totalHeads > 1 && attnWork >= MinWorkForParallelHeads)
             {
-                for (int bh = 0; bh < totalHeads; bh++) DoHead(bh);
+                Parallel.For(0, totalHeads, DoHead);
             }
             else
             {
-                Parallel.For(0, totalHeads, DoHead);
+                for (int bh = 0; bh < totalHeads; bh++) DoHead(bh);
             }
 
             allTempK?.Dispose();
