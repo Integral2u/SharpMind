@@ -114,7 +114,32 @@ namespace SharpMind.Model.Layers.Attention;
                  ropeOriginalContextLength: config.RopeOriginalContextLength,
                  lowFreqFactor: config.RopeLowFreqFactor,
                  highFreqFactor: config.RopeHighFreqFactor,
-                 precomputedFreqs: config.PrecomputedRopeFreqs),
+                 precomputedFreqs: config.PrecomputedRopeFreqs,
+                 neoxStyle: UsesNeoxRope(config.Architecture)),
+        };
+    }
+
+    /// <summary>
+    /// Which rotary convention a GGUF architecture expects. llama.cpp fixes this
+    /// per architecture rather than storing it in the file: LLaMA-family models
+    /// are converted with their Q/K weights permuted, so adjacent (2i, 2i+1)
+    /// pairing reproduces HF's rotate_half; the architectures below are NOT
+    /// permuted at conversion and need true NeoX (d, d + ropeDim/2) pairing.
+    /// Getting this wrong leaves the model locally fluent but unable to use
+    /// position — it repeats and cannot recall facts from earlier tokens.
+    /// Unknown architectures keep the previous adjacent behaviour.
+    /// </summary>
+    public static bool UsesNeoxRope(string? architecture)
+    {
+        if (string.IsNullOrWhiteSpace(architecture)) return false;
+
+        return architecture.ToLowerInvariant() switch
+        {
+            "qwen" or "qwen2" or "qwen2moe" or "qwen3" or "qwen3moe" => true,
+            "gemma" or "gemma2" or "gemma3" => true,
+            "phi2" or "phi3" => true,
+            "stablelm" or "gptneox" or "starcoder2" or "olmo2" or "nemotron" or "exaone" => true,
+            _ => false,
         };
     }
 
