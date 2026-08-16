@@ -159,7 +159,10 @@ public static class SessionLauncher
             var qOps = QuantizationFactory.Create(mapping);
             weights = await Task.Run(() =>
             {
-                var w = ModelFactory.CreateWeights(modelConfig, sharpConfig, qOps, options.ModelPath, options.LoadMode);
+                // Chat only ever runs the quantized forward, which reads the raw
+                // bytes, so skip the dequantized F32 copy of every layer.
+                var w = ModelFactory.CreateWeights(modelConfig, sharpConfig, qOps, options.ModelPath, options.LoadMode,
+                    quantizedResident: true);
                 w.InitializeWeights(progress);
                 return w;
             },ct);

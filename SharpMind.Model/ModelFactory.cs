@@ -40,12 +40,20 @@ public static class ModelFactory
     /// <summary>Creates a <see cref="TransformerWeights"/> instance with a
     /// <see cref="GgufLoader"/> for the given path. Call <c>weights.InitializeWeights(progress)</c>
     /// after creation to populate weights from the GGUF file.</summary>
+    /// <param name="quantizedResident">
+    /// Skip allocating the per-layer F32 attention/FFN weights and keep only the
+    /// raw quantized bytes, which is all <see cref="InferenceLinearLayer"/>'s
+    /// forward reads. Roughly halves resident memory for a chat/inference load.
+    /// Leave false when the float tensors are needed after loading — SMM export
+    /// and format conversion read them back.
+    /// </param>
     public static TransformerWeights CreateWeights(
         ModelConfig modelConfig,
         SharpMindConfig sharpConfig,
         QuantizationOps qOps,
         string path,
-        LoadMode loadMode = LoadMode.Full)
+        LoadMode loadMode = LoadMode.Full,
+        bool quantizedResident = false)
     {
         ArgumentNullException.ThrowIfNull(modelConfig);
         ArgumentNullException.ThrowIfNull(sharpConfig);
@@ -56,34 +64,16 @@ public static class ModelFactory
         var finalNormW = Tensor<float>.Ones(modelConfig.HiddenDim);
         Tensor<float>? finalNormB = null;
 
-        TransformerWeights.BlockWeights[] blockWeights;
-        if (loadMode == LoadMode.Full)
-        {
-            blockWeights = AllocateBlockWeights(modelConfig, sharpConfig);
-        }
-        else
-        {
-            int kvDim = modelConfig.NumKvHeads * modelConfig.HeadDim;
-            int qDim = modelConfig.NumHeads * modelConfig.HeadDim;
-            blockWeights = new TransformerWeights.BlockWeights[modelConfig.NumLayers];
-            for (int i = 0; i < modelConfig.NumLayers; i++)
-            {
-                // Pre-allocate 1D tensors (norms, biases) that are needed as
-                // float targets by LoadSingleTensor and never streamed. The
-                // 2D weight tensors (attn, ffn) remain null — their raw
-                // quantized data is loaded per-layer and used directly by
-                // InferenceLinearLayer's quantized forward.
-                blockWeights[i] = new TransformerWeights.BlockWeights
-                {
-                    Norm1W = new Tensor<float>(modelConfig.HiddenDim),
-                    Norm2W = new Tensor<float>(modelConfig.HiddenDim),
-                    WqBias = new Tensor<float>(qDim),
-                    WkBias = new Tensor<float>(kvDim),
-                    WvBias = new Tensor<float>(kvDim),
-                    WoBias = new Tensor<float>(modelConfig.HiddenDim)
-                };
-            }
-        }
+        // Streaming has always left the 2D weights null; quantizedResident opts the
+        // Full path into the same thing. CreateTransformer builds
+        // InferenceLinearLayer, whose forward reads the raw quantized bytes and
+        // never touches the dequantized F32 duplicates, so for pure inference they
+        // cost ~4x the file size for nothing (3.57 GB before a byte was read, on a
+        // 0.49 GB model). It is opt-in because reading weights back as floats is a
+        // real use — SMM export and the conversion round-trip do exactly that.
+        var blockWeights = loadMode == LoadMode.Full && !quantizedResident
+            ? AllocateBlockWeights(modelConfig, sharpConfig)
+            : AllocateInferenceBlockWeights(modelConfig);
 
         var loader = ModelFormatHelpers.GetModelLoaderFor((ModelFormat)fmt, qOps, path, modelConfig);
 
@@ -99,6 +89,31 @@ public static class ModelFactory
         => config.PositionalEncoding == Config.PositionalEncoding.Learned
             ? new Tensor<float>(config.MaxSeqLen, config.HiddenDim)
             : null;
+
+    /// <summary>
+    /// Per-block tensors for inference: norms and biases only. The 2D weights are
+    /// left null so the quantized forward reads the raw bytes directly instead of
+    /// a dequantized F32 duplicate.
+    /// </summary>
+    private static TransformerWeights.BlockWeights[] AllocateInferenceBlockWeights(ModelConfig config)
+    {
+        int qDim = config.NumHeads * config.HeadDim;
+        int kvDim = config.NumKvHeads * config.HeadDim;
+        var blocks = new TransformerWeights.BlockWeights[config.NumLayers];
+        for (int i = 0; i < config.NumLayers; i++)
+        {
+            blocks[i] = new TransformerWeights.BlockWeights
+            {
+                Norm1W = new Tensor<float>(config.HiddenDim),
+                Norm2W = new Tensor<float>(config.HiddenDim),
+                WqBias = new Tensor<float>(qDim),
+                WkBias = new Tensor<float>(kvDim),
+                WvBias = new Tensor<float>(kvDim),
+                WoBias = new Tensor<float>(config.HiddenDim)
+            };
+        }
+        return blocks;
+    }
 
     private static TransformerWeights.BlockWeights[] AllocateBlockWeights(ModelConfig config, SharpMindConfig sharpConfig)
     {
