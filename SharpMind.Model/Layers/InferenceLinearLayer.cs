@@ -173,19 +173,7 @@ public abstract class InferenceLinearLayer : LinearLayer
         }
 
         if (_bias is not null)
-        {
-            if (workspace != null)
-            {
-                var biasB = workspace.Rent<float>([batchSize, OutFeatures]);
-                for (int i = 0; i < batchSize; i++)
-                    _bias!.Data.CopyTo(biasB.RowSpan(i));
-                result.AddInPlace(biasB);
-            }
-            else
-            {
-                result.AddInPlace(BroadcastBias(batchSize));
-            }
-        }
+            AddBiasInPlace(result, batchSize);
         if (needReshape)
         {
             Span<int> outDims = stackalloc int[input.Rank];

@@ -17,6 +17,15 @@ public sealed unsafe class Workspace : IDisposable
     private long _offset;
     private readonly long _capacity;
 
+    /// <summary>
+    /// Tokens a single forward pass may carry. The workspace is sized for
+    /// exactly this many (see <see cref="CalculateRequiredSize"/>), so a
+    /// prompt longer than this must be prefilled in chunks of at most this
+    /// size — see <c>Transformer.PrefillLastLogits</c>. Sizing for a full
+    /// context window instead would need tens of gigabytes.
+    /// </summary>
+    public const int MaxPrefillTokens = 128;
+
     public Workspace(long capacityBytes)
     {
         _capacity = capacityBytes;
@@ -92,9 +101,11 @@ public sealed unsafe class Workspace : IDisposable
     /// The LM head output is a fixed [Batch, VocabSize] tensor (not per-token),
     /// allocated once per forward pass independent of sequence length.
     ///
-    /// The prefill length used for sizing is capped to keep the workspace under
-    /// ~1 GiB. The workspace is primarily sized for the decode hot loop (1 token);
-    /// the prefill path for long prompts is handled by the generator.
+    /// The prefill length used for sizing is capped at
+    /// <see cref="MaxPrefillTokens"/> to keep the workspace under ~1 GiB. A
+    /// prompt longer than that must therefore be fed through in chunks of at
+    /// most that size — <c>Transformer.PrefillLastLogits</c> is the one place
+    /// that does it, and every generator prefills through it.
     /// </summary>
     public static long CalculateRequiredSize(long hiddenDim, long ffnDim, long vocabSize, int numLayers, int maxSeqLen)
     {
@@ -119,7 +130,7 @@ public sealed unsafe class Workspace : IDisposable
         long fixedFloats = vocabSize;
 
         // Cap prefill length to keep workspace under ~1 GiB for most models.
-        int effectivePrefillLen = Math.Min(maxSeqLen, 128);
+        int effectivePrefillLen = Math.Min(maxSeqLen, MaxPrefillTokens);
         long total = (perTokenFloats * effectivePrefillLen + fixedFloats) * bytesPerFloat;
 
         // Minimum 100MB to cover small-batch / short-prompt overheads.

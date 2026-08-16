@@ -462,6 +462,55 @@ public sealed class Transformer : IDisposable
         return result;
     }
 
+    /// <summary>
+    /// Prefill for a prompt of any length: same result as
+    /// <see cref="ForwardLastLogits"/> over the whole prompt, but split into
+    /// passes the workspace can actually hold.
+    ///
+    /// The workspace is a bump allocator sized for
+    /// <see cref="Core.Memory.Workspace.MaxPrefillTokens"/> tokens per pass —
+    /// sizing it for a whole context window would need tens of gigabytes — so
+    /// a one-shot prefill of a real chat prompt (a system prompt with tool
+    /// definitions is already well over a thousand tokens) overruns it and
+    /// throws OutOfMemoryException partway through the first turn.
+    ///
+    /// Every chunk but the last exists only to extend the KV cache; their
+    /// logits are discarded, and the workspace is rewound between them. The
+    /// returned tensor is the caller's, exactly as with ForwardLastLogits.
+    /// </summary>
+    public Tensor<float> PrefillLastLogits(int[] promptIds, IKVCache[] caches, int positionOffset = 0, Core.Memory.Workspace? workspace = null)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(promptIds);
+        if (promptIds.Length == 0)
+            throw new ArgumentException("Prompt has no token IDs; cannot prefill.", nameof(promptIds));
+
+        int chunkLen = Core.Memory.Workspace.MaxPrefillTokens;
+
+        // Without a workspace every tensor is heap-allocated, so there is no
+        // capacity to overrun and nothing to gain from chunking.
+        if (workspace is null || promptIds.Length <= chunkLen)
+        {
+            using var whole = Tensor<int>.From(promptIds, 1, promptIds.Length);
+            return ForwardLastLogits(whole, caches, positionOffset, workspace);
+        }
+
+        Tensor<float>? logits = null;
+        for (int start = 0; start < promptIds.Length; start += chunkLen)
+        {
+            int len = Math.Min(chunkLen, promptIds.Length - start);
+
+            // The previous chunk's logits live in the workspace being rewound.
+            logits?.Dispose();
+            workspace.Reset();
+
+            using var input = workspace.Rent<int>([1, len]);
+            promptIds.AsSpan(start, len).CopyTo(input.Data);
+            logits = ForwardLastLogits(input, caches, positionOffset + start, workspace);
+        }
+        return logits!;
+    }
+
     private void DisposeCache()
     {
         // _cachedHidden may alias _cachedEmbedding (blocks return input tensor in-place).

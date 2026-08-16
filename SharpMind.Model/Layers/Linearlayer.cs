@@ -121,12 +121,28 @@ public abstract class LinearLayer : IDisposable
         if (_ownsBias) _bias?.Dispose();
     }
 
-    protected Tensor<float> BroadcastBias(int batchSize)
+    /// <summary>
+    /// Adds the bias to every row of <paramref name="result"/> in place.
+    ///
+    /// This used to materialise the bias broadcast into a whole second
+    /// [batchSize, OutFeatures] tensor and then add tensor-to-tensor. For the
+    /// fused gate/up projection that duplicate is the single largest
+    /// allocation in a layer, and during prefill it pushed the forward pass
+    /// past the size Workspace.CalculateRequiredSize budgets for it — a long
+    /// prompt died with "Workspace capacity exceeded" in the last layers.
+    /// The add is O(batchSize × OutFeatures) against a matmul that is
+    /// O(batchSize × OutFeatures × InFeatures), so doing it row-wise costs
+    /// nothing measurable and allocates nothing at all.
+    /// </summary>
+    protected void AddBiasInPlace(Tensor<float> result, int batchSize)
     {
-        var broadcast = new Tensor<float>(batchSize, OutFeatures);
+        var bias = _bias!.Data;
         for (int i = 0; i < batchSize; i++)
-            _bias!.Data.CopyTo(broadcast.RowSpan(i));
-        return broadcast;
+        {
+            var row = result.RowSpan(i);
+            for (int j = 0; j < bias.Length; j++)
+                row[j] += bias[j];
+        }
     }
     private protected void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, nameof(LinearLayer));
 }

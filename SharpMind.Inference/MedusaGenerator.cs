@@ -183,14 +183,12 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
         int draftLen = numHeads + 1; // LM-head greedy + K head predictions
 
         // Prefill
-        // Process the full prompt in one go.  After this, the KV cache has
-        // promptLen entries and logitsTensor predicts the very next token.
+        // Process the whole prompt, in workspace-sized chunks. After this, the
+        // KV cache has promptLen entries and logitsTensor predicts the very
+        // next token.
         _workspace.Reset();
         int posOffset = _caches[0].Length;
-        using var prefillInput = _workspace.Rent<int>([1, promptIds.Length]);
-        promptIds.CopyTo(prefillInput.Data);
-        Tensor<float>? logitsTensor = _model.ForwardLastLogits(
-            prefillInput, _caches, posOffset, _workspace);
+        Tensor<float>? logitsTensor = _model.PrefillLastLogits(promptIds, _caches, posOffset, _workspace);
 
         try
         {

@@ -53,6 +53,7 @@ public sealed class ChatView : View
     private string? _activeSubAgentName;
     private bool _generating;
     private bool _interruptDialogOpen;
+    private bool _faultReported;
     private object? _timeoutToken;
     private bool _disposed;
 
@@ -421,6 +422,18 @@ public sealed class ChatView : View
         foreach (var entry in _bridge.DrainEntries())
             OnStreamEntry(entry);
 
+        // A fault kills the bridge's whole session loop, so nothing further
+        // will ever arrive on the queue. Without this the screen just sits on
+        // "Thinking..." forever with no clue why.
+        if (_bridge.Faulted && !_faultReported)
+        {
+            _faultReported = true;
+            if (_liveResponse.Length > 0) CommitLiveResponse();
+            AppendTranscript($"[session stopped: {_bridge.Fault?.Message ?? "unknown error"}]");
+            SetGenerating(false);
+            _statusLabel.Text = "Failed";
+        }
+
         if (_cuiContext?.TakePending() is { } request)
             ShowChoiceDialog(request);
 
@@ -478,6 +491,11 @@ public sealed class ChatView : View
         {
             if (_liveResponse.Length > 0)
                 CommitLiveResponse();
+            // ChatSession catches a failed turn and reports the reason on the
+            // entry rather than tearing the UI down. Dropping it here made an
+            // internal failure look exactly like an empty answer.
+            if (entry.Error is { Length: > 0 } error)
+                AppendTranscript($"[error: {error}]");
             SetGenerating(false);
             _toolLabel.Text = "Tool: none";
             _pendingSpeakerName = null;
