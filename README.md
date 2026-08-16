@@ -14,8 +14,6 @@
 ![GitHub Sponsor](https://img.shields.io/github/sponsors/Integral2u?label=Sponsor&logo=GitHub)
 [![Last commit](https://img.shields.io/github/last-commit/Integral2u/SharpMind)](https://github.com/Integral2u/SharpMind/commits/main)
 
-> **v1.0.0.0.** Inference — GGUF loading, quantized CPU/GPU execution, speculative/Medusa decoding, agent tooling — is the stable, supported core of SharpMind. Training (LoRA, distillation, from-scratch training) ships in this release as an **experimental** feature set: functional for basic runs, but still evolving and not yet held to the same stability bar as inference. See [Training](#training-experimental) below for current status.
-
 ---
 
 ## What is SharpMind?
