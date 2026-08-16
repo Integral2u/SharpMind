@@ -371,6 +371,15 @@ public static class SessionLauncher
             FormatterStrategy.Raw => new RawTemplateFormatter(),
             _ => throw new ArgumentOutOfRangeException(nameof(options))
         };
+
+        // An explicitly chosen formatter can be flatly wrong for the model — the
+        // Llama-3 formatter on a Qwen checkpoint frames every turn with tokens
+        // that vocabulary does not contain. Nothing downstream fails, it just
+        // generates badly, so say so here. Auto is exempt: it picks from this
+        // model's own template and vocab.
+        if (formatter is not null &&
+            ChatPromptFormatterFactory.DescribeVocabMismatch(formatter, loaded.Tokenizer.Vocab.Contains) is { } mismatch)
+            warnings.Add(mismatch);
         // Build available pre/post processors (built-in + plugin), filtered by disabled set
         var allPreProcessors = new List<IPromptPreProcessor>
         {
