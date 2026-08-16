@@ -208,6 +208,24 @@ public abstract class InferenceLinearLayer : LinearLayer
 
     public override void SetRawWeight(byte[]? rawData)
     {
+        // Check on arrival, not at the first matmul. The same mismatch used to
+        // surface deep inside a forward pass after the model had "loaded"
+        // successfully, which reads as a runtime failure rather than what it is:
+        // a model whose tensor shapes do not match the architecture we derived
+        // from its config. Forward keeps its own guard as defence in depth.
+        if (rawData is not null)
+        {
+            long expectedBytes = QuantizationOps.GetRawTensorByteCount([OutFeatures, InFeatures], QuantDtype);
+            if (rawData.Length != expectedBytes)
+                throw new NotSupportedException(
+                    $"[{Name}] weight shape does not match this architecture: dtype={QuantDtype}, " +
+                    $"K={InFeatures}, N={OutFeatures} expects {expectedBytes} bytes but the model " +
+                    $"provides {rawData.Length}. The file's tensor is " +
+                    $"{(expectedBytes % rawData.Length == 0 ? $"1/{expectedBytes / rawData.Length} of" : "not")} " +
+                    "the expected size, so the layer dimensions derived from the model config are wrong " +
+                    "for this architecture. Loading it would produce garbage or read past the buffer.");
+        }
+
         RawQuantizedData = rawData;
     }
 }
