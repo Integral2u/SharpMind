@@ -19,7 +19,6 @@
     <ProjectReference Include="..\SharpMind.Tokenization\SharpMind.Tokenization.csproj" />
     <ProjectReference Include="..\SharpMind.Core\SharpMind.Core.csproj" />
     <ProjectReference Include="..\SharpMind.Inference\SharpMind.Inference.csproj" />
-    <ProjectReference Include="..\ExternalAssets\ExternalAssets.csproj" />
     <ProjectReference Include="..\SharpMind.Training\SharpMind.Training.csproj" />
   </ItemGroup>
 

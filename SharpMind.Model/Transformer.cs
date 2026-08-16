@@ -283,6 +283,7 @@ public sealed class Transformer : IDisposable
         Core.Memory.Workspace? workspace = null)
     {
         ThrowIfDisposed();
+        DisposeCache();
 
         if (image is not null && _visionEncoder is null)
             throw new InvalidOperationException("Model has no vision encoder — pass image only to a multimodal model.");
@@ -370,6 +371,7 @@ public sealed class Transformer : IDisposable
     public Tensor<float> Forward(Tensor<int> tokenIds, IKVCache[]? caches, int positionOffset = 0, Core.Memory.Workspace? workspace = null)
     {
         ThrowIfDisposed();
+        DisposeCache();
 
         // 1. Token embeddings → [Batch, SeqLen, HiddenDim]
         _cachedEmbedding = _embedding.Forward(tokenIds, workspace);
@@ -415,6 +417,7 @@ public sealed class Transformer : IDisposable
     public Tensor<float> ForwardLastLogits(Tensor<int> tokenIds, IKVCache[] caches, int positionOffset = 0, Core.Memory.Workspace? workspace = null)
     {
         ThrowIfDisposed();
+        DisposeCache();
 
         _cachedEmbedding = _embedding.Forward(tokenIds, workspace);
         if (_gemmaEmbeddingScale)
@@ -507,6 +510,7 @@ public sealed class Transformer : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        DisposeCache();
         _embedding.Dispose();
         _arch.Dispose();
         _finalNorm.Dispose();
