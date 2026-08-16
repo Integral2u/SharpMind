@@ -43,9 +43,7 @@ public sealed class CheckpointRetentionTests : IDisposable
         return new DataLoader(pipeline, s => Tokenise(s), new PackingBatcher(batchSize: 2, maxSeqLen: 16));
     }
 
-    private static int[] Tokenise(string s) =>
-        [.. s.Split(' ', System.StringSplitOptions.RemoveEmptyEntries)
-             .Select(w => Math.Abs(w.GetHashCode()) % 16)];
+    private static int[] Tokenise(string s) => TestTokens.Encode(s, 16);
 
     [Fact]
     public async Task KeepRecent2_LeavesTwoRollingPlusFinal()

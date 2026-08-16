@@ -26,6 +26,30 @@ internal sealed class TempDirectory : IDisposable
     }
 }
 
+internal static class TestTokens
+{
+    /// <summary>
+    /// Maps a word to a token id in [0, vocabSize). Uses FNV-1a rather than
+    /// string.GetHashCode(), which is seeded per process — that made every test
+    /// run train on different data, so any assertion on a numeric training
+    /// outcome (e.g. "loss descends") passed or failed at random.
+    /// </summary>
+    public static int Id(string word, int vocabSize)
+    {
+        uint hash = 2166136261u;
+        foreach (char c in word)
+        {
+            hash ^= c;
+            hash *= 16777619u;
+        }
+        return (int)(hash % (uint)vocabSize);
+    }
+
+    /// <summary>Splits on spaces and maps each word with <see cref="Id"/>.</summary>
+    public static int[] Encode(string text, int vocabSize) =>
+        [.. text.Split(' ', StringSplitOptions.RemoveEmptyEntries).Select(w => Id(w, vocabSize))];
+}
+
 internal static class AsyncEnumerableExtensions
 {
     /// <summary>Collects all items from an async enumerable into a list.</summary>

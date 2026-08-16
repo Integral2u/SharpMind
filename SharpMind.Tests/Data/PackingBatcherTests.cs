@@ -6,7 +6,7 @@ public sealed class PackingBatcherTests
 {
     // Trivial tokeniser: splits on spaces, returns word indices from a fixed vocab
     private static int[] Tokenise(string s) =>
-        [.. s.Split(' ', StringSplitOptions.RemoveEmptyEntries).Select(w => Math.Abs(w.GetHashCode()) % 1000)];
+        TestTokens.Encode(s, 1000);
 
     private static async Task<List<TrainingBatch>> CollectBatches(
         IEnumerable<string> docs, PackingBatcher batcher)
