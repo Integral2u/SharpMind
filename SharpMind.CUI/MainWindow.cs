@@ -144,6 +144,10 @@ public sealed class MainWindow : Window
                 new("Close _current session...", "", CloseCurrentSession),
                 new("Toggle _show thinking", "", ToggleShowThinking),
                 new("Toggle _enable_thinking (Qwen3)", "", ToggleTemplateThinking)
+            }),
+            new("_Help", new MenuItem[]
+            {
+                new("_About SharpMind…", "", ShowAbout)
             })
         });
     }
@@ -180,7 +184,8 @@ public sealed class MainWindow : Window
                 _options = CloneOptions(lastSession.Options);
                 ShowOptions();
             }) : null,
-            onTrainModel: ShowTrainingWizard));
+            onTrainModel: ShowTrainingWizard,
+            onSponsor: () => OpenUrl("https://github.com/sponsors/Integral2u")));
     }
 
     private void ShowModelBrowser()
@@ -735,6 +740,50 @@ public sealed class MainWindow : Window
         var view = new SettingsView(_settings, onBack: onBack);
         view.OnThemeChanged = kind => ThemeBuilder.ApplyRecursively(this, ThemeBuilder.Build(kind));
         SwapContent(view);
+    }
+
+    /// <summary>
+    /// Help → About SharpMind…: project identity plus the GitHub repository and
+    /// sponsor pages, with optional one-click open in the default browser.
+    /// </summary>
+    private static void ShowAbout()
+    {
+        const string repo = "https://github.com/Integral2u/SharpMind";
+        const string sponsor = "https://github.com/sponsors/Integral2u";
+
+        var dialog = new Dialog("About SharpMind", 62, 12);
+        dialog.Add(new Label("SharpMind — an open source LLM toolkit written in pure C#.")
+        {
+            X = 1, Y = 1, Width = Dim.Fill(2),
+        });
+        dialog.Add(new Label((ustring)$"GitHub:  {repo}") { X = 1, Y = 3 });
+        dialog.Add(new Label((ustring)$"Sponsor: {sponsor}") { X = 1, Y = 4 });
+
+        var openRepo = new Button("Open GitHub") { X = 1, Y = 7 };
+        openRepo.Clicked += () => OpenUrl(repo);
+        var openSponsor = new Button("Open Sponsor") { X = Pos.Right(openRepo) + 2, Y = 7 };
+        openSponsor.Clicked += () => OpenUrl(sponsor);
+        var ok = new Button("OK") { X = Pos.Right(openSponsor) + 2, Y = 7, IsDefault = true };
+        ok.Clicked += () => Application.RequestStop();
+        dialog.Add(openRepo, openSponsor, ok);
+
+        Application.Run(dialog);
+    }
+
+    /// <summary>Opens <paramref name="url"/> in the default browser (best effort).</summary>
+    private static void OpenUrl(string url)
+    {
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url)
+            {
+                UseShellExecute = true,
+            });
+        }
+        catch
+        {
+            MessageBox.ErrorQuery("About SharpMind", $"Could not open the default browser.\n{url}", "OK");
+        }
     }
 
     private void ShowChat()

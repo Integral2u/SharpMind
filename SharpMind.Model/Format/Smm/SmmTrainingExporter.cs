@@ -67,6 +67,8 @@ public static class SmmTrainingExporter
 
         // Global tensors
         yield return Tensor2D("token_embd.weight", weights.EmbeddingWeight, transpose: false);
+        if (weights.PositionEmbedding is not null)
+            yield return Tensor2D("position_embd.weight", weights.PositionEmbedding, transpose: false);
         if (weights.LmHeadWeight is not null)
             yield return Tensor2D("output.weight", weights.LmHeadWeight);
         yield return Tensor1D("output_norm.weight", weights.FinalNormWeight);

@@ -47,17 +47,51 @@ public sealed class BpeEncoder
     // candidate merges by token score instead of an explicit rule list.
     public readonly bool UseSentencePieceMerge;
 
+    /// <summary>
+    /// True when this encoder is character-level (used by char-mode tokenizers):
+    /// each input character maps directly to its single vocab ID, with no byte
+    /// tokenisation, pre-tokenisation, or merge application.
+    /// </summary>
+    public readonly bool IsCharMode;
+
+    /// <summary>
+    /// Character-level encoding: maps each character of <paramref name="text"/>
+    /// to its vocab ID. Characters outside the vocabulary fall back to
+    /// <see cref="Vocabulary.UnkId"/>. Optional BOS/EOS are appended in the
+    /// usual way. Used by <see cref="IsCharMode"/> tokenizers.
+    /// </summary>
+    private int[] EncodeCharacters(string text, bool addBos, bool addEos)
+    {
+        if (!addBos && !addEos)
+        {
+            var direct = new int[text.Length];
+            for (int i = 0; i < text.Length; i++)
+                direct[i] = _vocab.TryGetId(text[i].ToString(), out int id) ? id : _vocab.UnkId;
+            return direct;
+        }
+
+        var ids = new List<int>(text.Length + (addBos ? 1 : 0) + (addEos ? 1 : 0));
+        if (addBos) ids.Add(_vocab.BosId);
+        for (int i = 0; i < text.Length; i++)
+            ids.Add(_vocab.TryGetId(text[i].ToString(), out int id) ? id : _vocab.UnkId);
+        if (addEos) ids.Add(_vocab.EosId);
+        return [.. ids];
+    }
+
     internal BpeEncoder(
         Vocabulary vocab,
         IReadOnlyList<MergeRule> merges,
         IPreTokeniser preTokeniser,
-        IReadOnlyList<float>? tokenScores = null)
+        IReadOnlyList<float>? tokenScores = null,
+        bool charMode = false)
     {
         _vocab = vocab;
         _preTokeniser = preTokeniser;
         _mergeIndex = new Dictionary<(string, string), (string, int)>(merges.Count);
         foreach (var rule in merges)
             _mergeIndex[(rule.Left, rule.Right)] = (rule.Merged, rule.Rank);
+
+        IsCharMode = charMode;
 
         _scores = tokenScores;
         // SentencePiece-style vocabularies ship no usable byte-level merges
@@ -104,6 +138,9 @@ public sealed class BpeEncoder
     /// </summary>
     public int[] Encode(string text, bool addBos = false, bool addEos = false)
     {
+        if (IsCharMode)
+            return EncodeCharacters(text, addBos, addEos);
+
         var ids = new List<int>();
 
         if (addBos) ids.Add(_vocab.BosId);

@@ -45,7 +45,8 @@ public sealed class TrainingWizardView : View
     private readonly Dictionary<string, TextField> _modelRows = new(StringComparer.Ordinal);
     private readonly Dictionary<string, TextField> _hyperRows = new(StringComparer.Ordinal);
 
-    private readonly RadioGroup _presetRadio;
+    private readonly Button[] _presetButtons;
+    private readonly Label _presetStatusLabel;
     private bool _updatingPreset;
     private readonly RadioGroup _activationRadio;
     private readonly RadioGroup _gateRadio;
@@ -58,6 +59,8 @@ public sealed class TrainingWizardView : View
     private readonly TextField _numExpertsField;
     private readonly TextField _topKField;
 
+    // Backing labels for the preset buttons: "Custom…" first, then each preset's
+    // display name (used to resolve the active preset at index+1).
     private static readonly string[] PresetLabelsArr =
         ["Custom…", .. TrainingModelOptions.Presets.Select(p => p.DisplayName)];
 
@@ -161,23 +164,37 @@ public sealed class TrainingWizardView : View
         form.Add(AddLabel("Model size:"), autoBtn);
         row += 2;
 
-        // --- Architecture preset picker ------------------
-        _presetRadio = new RadioGroup(PresetLabelsArr.Select(p => (ustring)p).ToArray())
+        // --- Architecture preset picker (horizontal buttons) ------
+        // One lean row of buttons (GPT-2 / LLaMA / BERT / Qwen / Mixtral /
+        // Custom) instead of a tall vertical radio list; the small status label on
+        // the label row always shows the preset the current job resolves to. The
+        // buttons wrap onto a second row only if the preset list ever outgrows
+        // the form width.
+        _presetStatusLabel = new Label("") { X = 30, Y = row, Width = Dim.Fill(2) };
+        form.Add(AddLabel("Architecture preset:"), _presetStatusLabel);
+
+        _presetButtons = new Button[PresetLabelsArr.Length];
+        const int presetRow = 86; // matches the form/content width
+        int bx = 30, by = row + 1;
+        for (int i = 0; i < PresetLabelsArr.Length; i++)
         {
-            X = 30, Y = row, SelectedItem = PresetIndexFor(_job),
-        };
-        _presetRadio.SelectedItemChanged += (a) =>
-        {
-            if (_updatingPreset) return; // programmatic sync from RefreshAll
-            if (a.SelectedItem <= 0) { _job.ArchitecturePreset = null; RefreshMap(); return; }
-            var preset = TrainingModelOptions.Presets[a.SelectedItem - 1];
-            TrainingModelOptions.Apply(_job, preset);
-            RefreshMap();
-            RefreshAdvancedOptions();
-            MessageBox.Query("Architecture preset", $"{preset.DisplayName} applied.", "OK");
-        };
-        form.Add(AddLabel("Architecture preset:"), _presetRadio);
-        row += PresetLabelsArr.Length + 1;
+            string label = PresetShortLabelFor(i);
+            int w = label.Length + 4;
+            var btn = new Button(label) { Height = 1, Width = w };
+            int idx = i;
+            btn.Clicked += () => ApplyPreset(idx);
+            if (bx > 30 && bx + w > presetRow)
+            {
+                by += 1;
+                bx = 30;
+            }
+            btn.X = bx;
+            btn.Y = by;
+            bx += w + 1;
+            _presetButtons[i] = btn;
+        }
+        form.Add(_presetButtons);
+        row = by + 2;
 
         row = NumRow(form, row, "Hidden dim:", _job.HiddenDim, v => _job.HiddenDim = v, _modelRows);
         row = NumRow(form, row, "Layers:", _job.NumLayers, v => _job.NumLayers = v, _modelRows);
@@ -446,9 +463,7 @@ public sealed class TrainingWizardView : View
         if (keepIndex == 1) _keepCountField.Text = (ustring)(_job.KeepRecent > 0 ? _job.KeepRecent : 3).ToString();
         _qatRadio.SelectedItem = QatIndexFor(_job.QuantAwareTraining);
         _incrementalCheck.Checked = _job.IncrementalMode;
-        _updatingPreset = true;
-        try { _presetRadio.SelectedItem = PresetIndexFor(_job); }
-        finally { _updatingPreset = false; }
+        RefreshPresetButtons();
         RefreshAdvancedOptions();
         _systemPromptField.Text = (ustring)(_job.SystemPromptPath ?? "");
         _skillsFolderField.Text = (ustring)(_job.SkillsFolder ?? "");
@@ -550,6 +565,58 @@ public sealed class TrainingWizardView : View
                     job.ArchitecturePreset, StringComparison.OrdinalIgnoreCase))
                 return i + 1;
         return 0;
+    }
+
+    /// <summary>Lean button label for preset index <paramref name="i"/> (0 = Custom).</summary>
+    private static string PresetShortLabelFor(int i)
+        => i <= 0 ? "Custom"
+           : TrainingModelOptions.Presets[i - 1].ArchitecturePresetKey switch
+           {
+               "gpt2" => "GPT-2",
+               "llama" => "LLaMA",
+               "bert" => "BERT",
+               "qwen3" => "Qwen",
+               "mixtral" => "Mixtral",
+               var key => key,
+           };
+
+    /// <summary>Applies the preset button <paramref name="idx"/> (0 = Custom).</summary>
+    private void ApplyPreset(int idx)
+    {
+        if (_updatingPreset) return; // programmatic sync from RefreshPresetButtons
+        if (idx <= 0)
+        {
+            _job.ArchitecturePreset = null;
+            RefreshMap();
+            RefreshAdvancedOptions();
+            RefreshPresetButtons();
+            return;
+        }
+        var preset = TrainingModelOptions.Presets[idx - 1];
+        TrainingModelOptions.Apply(_job, preset);
+        RefreshMap();
+        RefreshAdvancedOptions();
+        RefreshPresetButtons();
+        MessageBox.Query("Architecture preset", $"{preset.DisplayName} applied.", "OK");
+    }
+
+    /// <summary>Re-syncs the active-preset status label from the job.</summary>
+    private void RefreshPresetButtons()
+    {
+        if (_presetButtons is null || _presetStatusLabel is null) return;
+        _updatingPreset = true;
+        try
+        {
+            int active = PresetIndexFor(_job);
+            _presetStatusLabel.Text = (ustring)(active == 0
+                ? "Custom…"
+                : TrainingModelOptions.Presets[active - 1].DisplayName);
+            SetNeedsDisplay();
+        }
+        finally
+        {
+            _updatingPreset = false;
+        }
     }
 
     /// <summary>Re-syncs the resume radio group from the job's current settings.</summary>

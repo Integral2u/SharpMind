@@ -18,6 +18,13 @@ public abstract class TransformerWeights : IDisposable
     public Tensor<float> FinalNormWeight { get; }
     public Tensor<float>? FinalNormBias { get; }
 
+    /// <summary>
+    /// GPT-2 style learned positional embeddings [MaxSeqLen, HiddenDim]. Present
+    /// only when <see cref="ModelConfig.PositionalEncoding"/> is
+    /// <see cref="Config.PositionalEncoding.Learned"/>; null for NoPE/RoPE/ALiBi.
+    /// </summary>
+    public Tensor<float>? PositionEmbedding { get; }
+
     // Raw quantized data for non-block tensors (embedding, lm_head)
     public byte[]? RawEmbedding { get; set; }
     public QuantDType? RawEmbeddingDtype { get; set; }
@@ -42,7 +49,8 @@ public abstract class TransformerWeights : IDisposable
         Tensor<float> finalNormW,
         Tensor<float>? finalNormB,
         BlockWeights[] blocks,
-        IModelLoader? loader)
+        IModelLoader? loader,
+        Tensor<float>? positionEmbedding = null)
     {
         Config = config;
         EmbeddingWeight = embedding;
@@ -51,6 +59,7 @@ public abstract class TransformerWeights : IDisposable
         FinalNormBias = finalNormB;
         Blocks = blocks;
         Loader = loader;
+        PositionEmbedding = positionEmbedding;
     }
 
     /// <summary>Initialises weights using the stored <see cref="IModelLoader"/>.
@@ -71,6 +80,7 @@ public abstract class TransformerWeights : IDisposable
             LmHeadWeight?.Dispose();
             FinalNormWeight.Dispose();
             FinalNormBias?.Dispose();
+            PositionEmbedding?.Dispose();
             foreach (var block in Blocks) block.Dispose();
         }
     }
@@ -78,6 +88,7 @@ public abstract class TransformerWeights : IDisposable
     public (Tensor<float>? target, BlockWeights? block, string? rawField) ResolveTarget(string name)
     {
         if (name.Contains("token_embd", StringComparison.OrdinalIgnoreCase)) return (EmbeddingWeight, null, null);
+        if (name.Contains("position_embd", StringComparison.OrdinalIgnoreCase)) return (PositionEmbedding, null, null);
         if (name.Contains("output_norm", StringComparison.OrdinalIgnoreCase))
         {
             if (name.Contains("bias", StringComparison.OrdinalIgnoreCase)) return (FinalNormBias, null, null);
@@ -142,6 +153,7 @@ public abstract class TransformerWeights : IDisposable
     public Tensor<float>? ResolveFloatTarget(string name)
     {
         if (name.Contains("token_embd", StringComparison.OrdinalIgnoreCase)) return EmbeddingWeight;
+        if (name.Contains("position_embd", StringComparison.OrdinalIgnoreCase)) return PositionEmbedding;
         if (name.Contains("output_norm", StringComparison.OrdinalIgnoreCase))
         {
             if (name.Contains("bias", StringComparison.OrdinalIgnoreCase)) return FinalNormBias;
@@ -314,6 +326,7 @@ public abstract class TransformerWeights : IDisposable
         var seen = new HashSet<QuantDType>();
         Add(seen, RawEmbeddingDtype, EmbeddingWeight is not null);
         Add(seen, RawLmHeadDtype, LmHeadWeight is not null);
+        Add(seen, null, PositionEmbedding is not null);
 
         foreach (var block in Blocks)
         {
@@ -500,8 +513,9 @@ public sealed class TransformerWeightsFull : TransformerWeights
         Tensor<float> finalNormW,
         Tensor<float>? finalNormB,
         BlockWeights[] blocks,
-        IModelLoader loader)
-        : base(config, embedding, lmHead, finalNormW, finalNormB, blocks, loader) { }
+        IModelLoader loader,
+        Tensor<float>? positionEmbedding = null)
+        : base(config, embedding, lmHead, finalNormW, finalNormB, blocks, loader, positionEmbedding) { }
 
     public override void InitializeWeights(IProgress<float>? progress = null)
     {
@@ -534,8 +548,9 @@ public sealed class TransformerWeightsStreaming : TransformerWeights
         Tensor<float> finalNormW,
         Tensor<float>? finalNormB,
         BlockWeights[] blocks,
-        IModelLoader loader)
-        : base(config, embedding, lmHead, finalNormW, finalNormB, blocks, loader) { }
+        IModelLoader loader,
+        Tensor<float>? positionEmbedding = null)
+        : base(config, embedding, lmHead, finalNormW, finalNormB, blocks, loader, positionEmbedding) { }
 
     /// <summary>
     /// Metadata-only initialisation — reads the GGUF header and populates

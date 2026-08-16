@@ -31,10 +31,17 @@ public static class WeightInitializer
         var rng = new Random(seed);
 
         int total = 1 + weights.Blocks.Length * 6; // embedding + 6 matrices per block
+        if (weights.PositionEmbedding is not null) total++;
         int done = 0;
 
         FillNormal(weights.EmbeddingWeight.Data, rng, std);
         progress?.Report((float)++done / total);
+
+        if (weights.PositionEmbedding is { } posEmb)
+        {
+            FillNormal(posEmb.Data, rng, std);
+            progress?.Report((float)++done / total);
+        }
 
         foreach (var block in weights.Blocks)
         {

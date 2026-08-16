@@ -33,7 +33,8 @@ public static class ModelFactory
         var finalNormW = Tensor<float>.Ones(modelConfig.HiddenDim);
         Tensor<float>? finalNormB = null;
         var blockWeights = AllocateBlockWeights(modelConfig, sharpConfig);
-        return new TransformerWeightsFull(modelConfig, embedding, lmHead, finalNormW, finalNormB, blockWeights, null!);
+        return new TransformerWeightsFull(modelConfig, embedding, lmHead, finalNormW, finalNormB, blockWeights, null!,
+            positionEmbedding: AllocatePositionEmbedding(modelConfig));
     }
 
     /// <summary>Creates a <see cref="TransformerWeights"/> instance with a
@@ -87,10 +88,17 @@ public static class ModelFactory
         var loader = ModelFormatHelpers.GetModelLoaderFor((ModelFormat)fmt, qOps, path, modelConfig);
 
         if (loadMode == LoadMode.Full)
-            return new TransformerWeightsFull(modelConfig, embedding, lmHead, finalNormW, finalNormB, blockWeights, loader);
+            return new TransformerWeightsFull(modelConfig, embedding, lmHead, finalNormW, finalNormB, blockWeights, loader,
+                positionEmbedding: AllocatePositionEmbedding(modelConfig));
         else
-            return new TransformerWeightsStreaming(modelConfig, embedding, lmHead, finalNormW, finalNormB, blockWeights, loader) { GgufPath = path };
+            return new TransformerWeightsStreaming(modelConfig, embedding, lmHead, finalNormW, finalNormB, blockWeights, loader,
+                positionEmbedding: AllocatePositionEmbedding(modelConfig)) { GgufPath = path };
     }
+
+    private static Tensor<float>? AllocatePositionEmbedding(ModelConfig config)
+        => config.PositionalEncoding == Config.PositionalEncoding.Learned
+            ? new Tensor<float>(config.MaxSeqLen, config.HiddenDim)
+            : null;
 
     private static TransformerWeights.BlockWeights[] AllocateBlockWeights(ModelConfig config, SharpMindConfig sharpConfig)
     {

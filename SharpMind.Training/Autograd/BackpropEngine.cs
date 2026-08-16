@@ -88,6 +88,32 @@ public sealed class BackpropEngine : IDisposable
         if (_gemmaScale)
             ScaleInPlace(emb, MathF.Sqrt(H));
 
+        // GPT-2 style learned positional embeddings: x = wte(idx) + wpe(pos),
+        // positions 0..S-1 for this full window. Added in place so x aliases emb
+        // and the residual gradient flows into both the embedding and the pos rows.
+        if (_model.Config.PositionalEncoding == SharpMind.Model.Config.PositionalEncoding.Learned
+            && _model.PositionEmbedding is { } posEmb)
+        {
+            int S = tokenIds.Shape.Cols;
+            int B = tokenIds.Shape.Rows;
+            var dst = emb.Data;
+            var src = posEmb.Data;
+            int H2 = cfg.HiddenDim;
+            for (int b = 0; b < B; b++)
+            {
+                int baseB = b * S * H2;
+                for (int s = 0; s < S; s++)
+                {
+                    int baseS = s * H2;
+                    for (int h = 0; h < H2; h++)
+                        dst[baseB + baseS + h] += src[baseS + h];
+                }
+            }
+            ctx.UsesLearnedPositions = true;
+            ctx.Batch = B;
+            ctx.SeqLen = S;
+        }
+
         var x = emb;
         for (int l = 0; l < cfg.NumLayers; l++)
         {
@@ -153,6 +179,27 @@ public sealed class BackpropEngine : IDisposable
         // 4. Embedding backward (scatter-add into selected rows).
         if (_gemmaScale)
             ScaleInPlace(dX, MathF.Sqrt(H));
+
+        // Learned position embeddings: every column feed is the add x = wte + wpe,
+        // so dWpe[s] = Σ_b dX[b, s, :]. Accumulate row-wise into the shared param.
+        if (ctx.UsesLearnedPositions && _model.PositionEmbedding is { } posEmb)
+        {
+            var posParam = Param(posEmb);
+            var gradData = posParam.Grad.Data;
+            var dData = dX.Data;
+            int B = ctx.Batch, S = ctx.SeqLen;
+            for (int b = 0; b < B; b++)
+            {
+                int baseB = b * S * H;
+                for (int s = 0; s < S; s++)
+                {
+                    int baseS = s * H;
+                    for (int h = 0; h < H; h++)
+                        gradData[baseS + h] += dData[baseB + baseS + h];
+                }
+            }
+        }
+
         using var flatIds = tokenIds.Reshape(M);
         _mapping.Embedding(dX, flatIds, embParam);
         dX.Dispose();

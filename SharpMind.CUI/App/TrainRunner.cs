@@ -136,31 +136,45 @@ public static class TrainRunner
 
             progress.Report(0.05f);
 
-            // 1. Tokenizer — BPE trained on the corpus, cached on disk. The vocab
-            // must always reflect the FULL corpus, never just the deltas of an
-            // incremental run, so when the cache is missing we train it over the
+            // 1. Tokenizer — BPE trained on the corpus and cached on disk, or a
+            // character-level tokenizer derived from the corpus characters. The
+            // vocab must always reflect the FULL corpus, never just the deltas of
+            // an incremental run, so when the cache is missing we train it over the
             // complete configured sources (a no-op for fresh jobs, where the
             // deltas ARE the whole corpus anyway).
-            string tokenizerPath = job.TokenizerCachePath
-                ?? Path.Combine(TrainJobSettings.DefaultFolder, Sanitize(job.Name) + ".tokenizer.json");
-            var tokenizer = File.Exists(tokenizerPath)
-                ? TokenizationPipeline.Load(tokenizerPath)
-                : await TokenizationPipeline.TrainAndSaveAsync(
-                    job.IncrementalMode ? FullCorpusComposite(job, components) : compositeSource,
-                    tokenizerPath, job.TokenizerVocabSize);
-            Log($"Tokenizer: vocab={tokenizer.VocabSize}");
+            Tokenizer tokenizer;
+            if (job.UsesCharacterTokenizer)
+            {
+                tokenizer = await TokenizationPipeline.TrainCharacterAsync(
+                    job.IncrementalMode ? FullCorpusComposite(job, components) : compositeSource);
+            }
+            else
+            {
+                string tokenizerPath = job.TokenizerCachePath
+                    ?? Path.Combine(TrainJobSettings.DefaultFolder, Sanitize(job.Name) + ".tokenizer.json");
+                tokenizer = File.Exists(tokenizerPath)
+                    ? TokenizationPipeline.Load(tokenizerPath)
+                    : await TokenizationPipeline.TrainAndSaveAsync(
+                        job.IncrementalMode ? FullCorpusComposite(job, components) : compositeSource,
+                        tokenizerPath, job.TokenizerVocabSize);
+            }
+            Log($"Tokenizer: vocab={tokenizer.VocabSize} ({(job.UsesCharacterTokenizer ? "char" : "bpe")})");
             progress.Report(0.1f);
 
             // 2. Model config.
             var modelConfig = TrainingModelOptions.ResolveModelConfig(job, tokenizer.VocabSize);
             Log($"Model: H={job.HiddenDim} L={job.NumLayers} heads={job.NumHeads} ffn={job.FfnDim}");
 
-            // 3. Data pipeline — clean → tokenise → packed TrainingBatches.
-            var batcher = new PackingBatcher(
-                batchSize: job.BatchSize,
-                maxSeqLen: job.SeqLen,
-                eosTokenId: tokenizer.EosId,
-                padTokenId: tokenizer.PadId);
+            // 3. Data pipeline — clean → tokenise → TrainingBatches. Random-window
+            // batching samples contiguous windows from one flat corpus stream
+            // (nanoGPT-style); PackingBatcher is the default document packer.
+            IBatchStrategy batcher = job.UsesRandomWindowBatching
+                ? new RandomWindowBatcher(batchSize: job.BatchSize, seqLen: job.SeqLen, seed: Seed)
+                : new PackingBatcher(
+                    batchSize: job.BatchSize,
+                    maxSeqLen: job.SeqLen,
+                    eosTokenId: tokenizer.EosId,
+                    padTokenId: tokenizer.PadId);
             var loader = new DataLoader(pipeline, s => tokenizer.Encode(s), batcher, prefetchBuffer: 4,
                 maxBatches: job.TotalSteps * job.GradAccumSteps);
             Log($"Data pipeline: {loader.Describe()}");

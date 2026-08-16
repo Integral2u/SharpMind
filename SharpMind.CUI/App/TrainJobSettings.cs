@@ -66,6 +66,15 @@ public sealed class TrainJobSettings
     /// <summary>Target BPE vocabulary size (not yet trained).</summary>
     public int TokenizerVocabSize { get; set; } = 1024;
 
+    /// <summary>
+    /// Tokenizer kind, an additive choice. "Char" trains a character-level
+    /// tokenizer whose vocabulary is the sorted set of distinct characters in
+    /// the corpus (a byte/character GPT); "Bpe" (or null/empty) trains the
+    /// usual byte-pair-encoding tokenizer. Defaults to BPE so existing jobs
+    /// behave exactly as before.
+    /// </summary>
+    public string? TokenizerKind { get; set; }
+
     /// <summary>Where the trained tokenizer is cached on disk. Auto-derived from <see cref="Name"/> if null.</summary>
     public string? TokenizerCachePath { get; set; }
 
@@ -114,7 +123,7 @@ public sealed class TrainJobSettings
     /// <summary>Architecture kind ("Decoder", "Encoder"); null = preset default.</summary>
     public string? Arch { get; set; }
 
-    /// <summary>Positional encoding enum name ("NoPE", "RoPE", "ALiBi"); null = RoPE.</summary>
+    /// <summary>Positional encoding enum name ("NoPE", "RoPE", "ALiBi", "Learned"); null = RoPE.</summary>
     public string? PositionalEncoding { get; set; }
 
     /// <summary>
@@ -137,6 +146,26 @@ public sealed class TrainJobSettings
     public int BatchSize { get; set; } = 1;
     public int SeqLen { get; set; } = 16;
     public int GradAccumSteps { get; set; } = 1;
+
+    /// <summary>
+    /// Batch strategy, an additive choice. "RandomWindow" samples each batch of
+    /// <see cref="SeqLen"/>-token windows at random offsets from one flat corpus
+    /// stream (nanoGPT-style); "Packing" (or null/empty) uses the default
+    /// document-packing batcher. Defaults to packing so existing jobs behave
+    /// exactly as before.
+    /// </summary>
+    public string? BatchingKind { get; set; }
+
+    /// <summary>True when the job selects the character-level tokenizer.</summary>
+    public bool UsesCharacterTokenizer
+        => !string.IsNullOrWhiteSpace(TokenizerKind)
+           && TokenizerKind.Equals("Char", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>True when the job selects random-window batch sampling.</summary>
+    public bool UsesRandomWindowBatching
+        => !string.IsNullOrWhiteSpace(BatchingKind)
+           && BatchingKind.Equals("RandomWindow", StringComparison.OrdinalIgnoreCase);
+
     public float LearningRate { get; set; } = 8e-4f;
     public float MinLr { get; set; } = 3e-5f;
     public int WarmupSteps { get; set; } = 20;

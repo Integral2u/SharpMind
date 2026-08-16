@@ -5,7 +5,7 @@
 <p align="center"><b>SharpMind. A pure C# / .NET LLM engine — inference and agent tooling in one solution.</b></p>
 
 <p>
-  <img alt="status" src="https://img.shields.io/badge/status-pre--release-orange">
+  <img alt="status" src="https://img.shields.io/badge/status-1.0.0.0-brightgreen">
   <img alt="lang" src="https://img.shields.io/badge/language-C%23%20(.NET%2010)-239120">
   <img alt="deps" src="https://img.shields.io/badge/dependencies-near--zero-blue">
 </p>
@@ -14,7 +14,7 @@
 ![GitHub Sponsor](https://img.shields.io/github/sponsors/Integral2u?label=Sponsor&logo=GitHub)
 [![Last commit](https://img.shields.io/github/last-commit/Integral2u/SharpMind)](https://github.com/Integral2u/SharpMind/commits/main)
 
-> **⚠️ Pre-release.** SharpMind is under active development. APIs, config formats, and project layout are still moving. Inference is the most mature and best-tested part of the stack today; training is functional but earlier-stage and evolving fastest. Expect breaking changes between commits until a tagged `v0` release lands.
+> **v1.0.0.0.** Inference — GGUF loading, quantized CPU/GPU execution, speculative/Medusa decoding, agent tooling — is the stable, supported core of SharpMind. Training (LoRA, distillation, from-scratch training) ships in this release as an **experimental** feature set: functional for basic runs, but still evolving and not yet held to the same stability bar as inference. See [Training](#training-experimental) below for current status.
 
 ---
 
@@ -40,7 +40,7 @@ It ships as a set of composable libraries plus a terminal chat application (`Sha
 - **Modern decoding, not just greedy/top-p.** Both classic speculative decoding and Medusa-style multi-head speculative decoding are implemented from scratch, with careful KV-cache rollback on rejection.
 - **A genuinely pluggable kernel system.** Hardware-specific kernel variants (scalar/SSE/AVX2/FMA/GPU) are wired up at runtime through a small internal dispatch layer [JigSawDotNet](https://github.com/Integral2u/JigSawDotNet) rather than hand-written `if`/`switch` ladders — adding a new backend means adding an assembly, not editing the core.
 - **Agent tooling included.** Tool-calling, permission gating (`Never` / `Ask` / `Always`), and sub-agent orchestration ship in `SharpMind.Inference.Agent`.
-- **Inference *and* training(Experimental) in one codebase.** Most C# "LLM" libraries are thin bindings around llama.cpp and only run models. SharpMind can load a GGUF checkpoint, chat with it, LoRA-fine-tune it, distill it into a smaller student, or train a model from scratch — all with the same tensor/quantization primitives.
+- **Inference *and* training in one codebase.** Most C# "LLM" libraries are thin bindings around llama.cpp and only run models. SharpMind can load a GGUF checkpoint, chat with it, or train a model from scratch. LoRA fine-tuning and distillation are also present in the training stack but are still experimental — see [Training](#training-experimental).
 
 ---
 
@@ -132,6 +132,32 @@ void Response(ChatStreamEntry entry) => Console.Write(entry.Token);
 
 ---
 
+## Compatibility matrix
+
+Validated across two independent runs against 15 model/architecture/quantization combinations. "Runs clean" means the model loaded, built a transformer, and completed all five benchmark prompts with no exceptions or crashes — it is **not** a quality claim; output coherence varies a lot by model size and quant level, which is expected and not specific to SharpMind.
+
+| Architecture | Model | Quant | Runs clean (both runs) |
+|---|---|---|---|
+| Gemma (function-calling variant) | functiongemma-270m-it | Q8_0 | ✅ |
+| Gemma 3 | gemma-3-270m-it | Q8_0 | ✅ |
+| Gemma 3 | gemma-3-270m-it | Q4_K_M | ✅ |
+| SmolLM2 | SmolLM2-135M-Instruct | Q4_K_M | ✅ |
+| SmolLM | SmolLM-135M | Q4_K_M | ✅ |
+| Qwen2 | Qwen2-0.5B | Q2_K | ✅ |
+| Qwen2 (instruct) | qwen2-0.5b-instruct | Q4_K_M | ✅ |
+| Qwen2 (instruct) | qwen2-0.5b-instruct | Q8_0 | ✅ |
+| Qwen2.5 (instruct) | qwen2.5-1.5b-instruct | Q8_0 | ✅ |
+| Qwen3 | Qwen3-0.6B | Q8_0 | ✅ |
+| DeepSeek-R1-Distill-Qwen | DeepSeek-R1-Distill-Qwen-1.5B | Q3_K_M | ✅ |
+| DeepSeek-R1-Distill-Qwen | DeepSeek-R1-Distill-Qwen-1.5B | Q8_0 | ✅ |
+| TinyLlama | tinyllama-1.1b-chat-v1.0 | Q8_0 | ✅ |
+| Llama 3 (small) | llama3-small | Q2_K | ✅ |
+| Llama 3 (small) | llama3-small | Q3_K_M | ✅ |
+
+_Tested on: **AMD Ryzen 3 2200U (2C/4T, 2.5GHz base) w/ Radeon Vega Mobile Graphics, 12GB RAM** — a modest mobile/laptop-class chip, not a workstation. Load times and throughput scale heavily with hardware and quant level — as a rough sense of range on this machine, `SmolLM-135M.Q4_K_M` loaded in ~2s, while `qwen2.5-1.5b-instruct-q8_0` (the largest model tested) took ~2 minutes to load and initialize. That everything above ran clean on a 2-core/4-thread laptop CPU is itself a reasonable data point for SharpMind's baseline hardware requirements — run your own copy of the benchmark against your target hardware before relying on these numbers for capacity planning._
+
+---
+
 ## Extensibility: plugins
 
 Beyond JigSaw's compile-time kernel dispatch, `SharpMind.CUI` has a separate, simpler **runtime plugin loader** for extending the app itself without touching the core libraries. Drop a `.dll` into the app's `Plugins/` folder and `PluginLoader.LoadFrom` will scan it and wire up anything it recognizes:
@@ -211,15 +237,13 @@ The part that makes this genuinely extensible rather than just "reflection inste
 
 ---
 
-## Training (early-stage, actively evolving)
+## Training
 
 This half of SharpMind is functional today but earlier in its lifecycle than inference — expect the fastest churn here.
 
 - **Autograd** (`SharpMind.Training/Autograd`) — a from-scratch gradient engine (`ForwardContext`, `BlockContext`, `Gradients`) underpinning the training loop.
 - **Optimizers & schedulers** — including AdamW, gradient norm, and LR scheduling, each also dispatched through the JigSaw mapping system so training kernels get the same hardware-tier treatment as inference kernels.
 - **LoRA** (`SharpMind.Training/LoRA`) — low-rank adapters over attention and FFN layers for parameter-efficient fine-tuning.
-- **Distillation** (`SharpMind.Training/Distillation`) — teacher→student training support.
-- **Pruning** (`SharpMind.Training/Pruning`) — structured pruning kernels and a scheduler.
 - **`ModelSizer`** — given a data source, samples it, trains a throwaway tokenizer, and grid-searches architecture hyperparameters under a `SizingBudget`/`SizingConstraints` to recommend a model configuration that fits a target parameter budget — a small AutoML step for "how big a model should I even train on this data."
 - **Synthetic data** (`SharpMind.Data/Sources/PseudoLanguage`) — a generated toy-language pipeline (morphemes, vocabulary, configurable complexity) for exercising the tokenizer/training pipeline without needing a real corpus.
 - **Data sources** — CSV, JSONL, plain text, HuggingFace `datasets-server` streaming (dependency-free, via `HttpClient` + `System.Text.Json`), and a composable cleaning `Pipeline` with branch/merge nodes.
@@ -244,7 +268,7 @@ Expect the training API surface (config records, trainer entry points) to change
 SharpMind.Core          Zero-dependency tensor primitives, quantization, activations, memory pooling
 SharpMind.Model         Architectures, layers, GGUF loading, model config
 SharpMind.Inference     Generators (standard/speculative/Medusa), chat, agents, sampling
-SharpMind.Training      Autograd, optimizers, LoRA, distillation, pruning
+SharpMind.Training      Autograd, optimizers, LoRA
 SharpMind.Tokenization  BPE tokenizer, vocab, serialization
 SharpMind.Data          Data sources, cleaning pipeline, batching
 SharpMind.Data.Parquet  Parquet data source
@@ -259,16 +283,20 @@ SharpMind.Tests         Test suite
 
 ## Status & roadmap
 
-- [x] GGUF loading (full + streaming)
-- [x] CPU quantized inference (Q2–Q8, K-quants, classic blocks, 1-bit/ternary)
-- [x] GPU kernels for common quant types
-- [x] Speculative decoding
-- [x] Medusa-style speculative decoding (heads need manual calibration)
+# Version 1.0.0.0
+- [x] Console User Interface
+- [x] Model Loading. GGUF and SMM loading (full + streaming)
+- [x] Inference Standard, Quantized and Medusa decoding
+- [x] GPU kernels for common quant types via SharpMind.GPU
 - [x] Terminal chat app with agent tooling
-- [ ] Documentation and getting-started guides
-- [ ] Additional import formats beyond GGUF
-- [ ] Medusa head auto-calibration during load
-- [ ] Stabilized public API / first tagged release
-- [ ] LoRA, distillation, pruning
+- [x] Documentation and getting-started guides
+- [x] Training
+- [x] Quantization
+- [x] Conversion
 
-Issues, questions, and early feedback are welcome — this is a pre-release project and things will move.
+# Version 1.0.0.x (not ordered)
+- [ ] AVX512 Kernels
+- [ ] Additional Model Support
+- [ ] Optimiations
+
+Issues, questions, and early feedback are welcome.

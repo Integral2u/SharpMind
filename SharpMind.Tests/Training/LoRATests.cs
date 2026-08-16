@@ -147,4 +147,105 @@ public sealed class LoRATests
         long brokenEstimate = loraModel.LoRAParameters().Count() * 2L;
         Assert.NotEqual(brokenEstimate, loraParams);
     }
+
+    [Fact]
+    public void LoRAAttention_DefaultTargetsAllFourProjections()
+    {
+        using var attention = new LoRAAttention(hiddenDim: 8, numHeads: 2, headDim: 4, new LoRAConfig { Rank = 2 });
+
+        var ps = attention.Parameters().ToArray();
+        Assert.Equal(8, ps.Length);
+        Assert.Equal(128, ps.Sum(p => p.Data.ElementCount));
+    }
+
+    [Fact]
+    public void LoRAAttention_RespectsTargetModules()
+    {
+        using var qv = new LoRAAttention(
+            hiddenDim: 8, numHeads: 2, headDim: 4,
+            new LoRAConfig { Rank = 2, TargetModules = ["q_proj", "v_proj"] });
+
+        var ps = qv.Parameters().ToArray();
+        Assert.Equal(4, ps.Length);
+        Assert.Equal(64, ps.Sum(p => p.Data.ElementCount));
+    }
+
+    [Fact]
+    public void LoRAAttention_EmptyTargetModules_AddsNoParameters()
+    {
+        using var attention = new LoRAAttention(
+            hiddenDim: 8, numHeads: 2, headDim: 4,
+            new LoRAConfig { Rank = 2, TargetModules = [] });
+
+        Assert.Empty(attention.Parameters());
+    }
+
+    [Fact]
+    public void LoRAAttention_UntargetedApplyFallsBackToFrozen()
+    {
+        var config = new LoRAConfig { Rank = 2, TargetModules = ["o_proj"] };
+        using var attention = new LoRAAttention(hiddenDim: 8, numHeads: 2, headDim: 4, config);
+
+        using var x = InputTensor();
+        using var wq = WeightTensor();
+        using var actual = attention.ApplyToQ(x, wq);
+
+        Assert.Equal(new[] { 3, 8 }, actual.Shape.Dims);
+        for (int b = 0; b < 3; b++)
+        for (int o = 0; o < 8; o++)
+        {
+            float expected = 0f;
+            for (int i = 0; i < 8; i++) expected += x[b, i] * wq[i, o];
+            Assert.Equal(expected, actual[b, o], precision: 4);
+        }
+    }
+
+    [Fact]
+    public void LoRAAttention_TargetedApplyAddsScaleTimesADelta()
+    {
+        var config = new LoRAConfig { Rank = 2, Alpha = 4f, TargetModules = ["q_proj"] };
+        using var attention = new LoRAAttention(hiddenDim: 8, numHeads: 2, headDim: 4, config);
+
+        var ps = attention.Parameters().ToArray();
+        var aRaw = ps[0].Data; // [in, rank]
+        var bRaw = ps[1].Data; // [rank, out]
+        float scale = config.Scale;
+
+        using var x = InputTensor();
+        using var wq = WeightTensor();
+        using var actual = attention.ApplyToQ(x, wq);
+
+        for (int b = 0; b < 3; b++)
+        for (int o = 0; o < 8; o++)
+        {
+            float frozen = 0f;
+            for (int i = 0; i < 8; i++) frozen += x[b, i] * wq[i, o];
+
+            float delta = 0f;
+            for (int r = 0; r < 2; r++)
+            {
+                float projected = 0f;
+                for (int i = 0; i < 8; i++) projected += x[b, i] * aRaw[i * 2 + r];
+                delta += projected * bRaw[r * 8 + o];
+            }
+
+            Assert.Equal(frozen + scale * delta, actual[b, o], precision: 3);
+        }
+    }
+
+    private static Tensor<float> InputTensor()
+    {
+        var data = new float[24];
+        for (int i = 0; i < data.Length; i++) data[i] = (i % 8) * 0.25f + i % 3;
+        return Tensor<float>.From(data, 3, 8);
+    }
+
+    private static Tensor<float> WeightTensor()
+    {
+        var data = new float[64];
+        for (int i = 0; i < 8; i++)
+        for (int o = 0; o < 8; o++)
+            data[i * 8 + o] = (i + 1) * 0.1f + (o + 1) * 0.01f;
+        return Tensor<float>.From(data, 8, 8);
+    }
 }

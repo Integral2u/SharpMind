@@ -11,7 +11,8 @@ public sealed class WelcomeView : View
         Action? onContinueWithModel = null,
         string? lastSessionName = null,
         Action? onResumeLastSession = null,
-        Action? onTrainModel = null)
+        Action? onTrainModel = null,
+        Action? onSponsor = null)
     {
         var bannerText = "  ___ _                  __  __ _         _ \n / __| |_  __ _ _ _ _ __|  \\/  (_)_ _  __| |\n \\__ \\ ' \\/ _` | '_| '_ \\ |\\/| | | ' \\/ _` |\n |___/_||_\\__,_|_| | .__/_|  |_|_|_||_\\__,_|\n                   |_|                      ";
         var banner = new Label(bannerText)
@@ -76,6 +77,17 @@ public sealed class WelcomeView : View
             };
             trainBtn.Clicked += () => onTrainModel();
             items.Insert(items.Count - 1, trainBtn);
+        }
+
+        if (onSponsor is not null)
+        {
+            var sponsorBtn = new Button("♥ Sponsor on GitHub")
+            {
+                X = Pos.Center(),
+                Y = Pos.Bottom((View)items[^2]) + 1
+            };
+            sponsorBtn.Clicked += () => onSponsor();
+            items.Insert(items.Count - 1, sponsorBtn);
         }
 
         Add(items.ToArray());

@@ -19,6 +19,10 @@ public sealed class Transformer : IDisposable
     private readonly AudioEncoder? _audioEncoder;
     private bool _disposed;
 
+    // Learned positional embeddings [MaxSeqLen, HiddenDim]; null unless the
+    // model config selects PositionalEncoding.Learned.
+    private readonly Tensor<float>? _positionEmbedding;
+
     // Separate LM head for non-weight-tied models (e.g. LLaMA 2/3).
     // Null means the model is weight-tied — the embedding weight is used instead.
     private readonly Tensor<float>? _lmHead;
@@ -65,6 +69,7 @@ public sealed class Transformer : IDisposable
         var rawDtype = _lmHead != null ? _weights.RawLmHeadDtype : _weights.RawEmbeddingDtype;
 
         _gemmaEmbeddingScale = gemmaEmbeddingScale;
+        _positionEmbedding = weights.PositionEmbedding;
         _logitOps = LogitOpsFactory.Create(projWeight, rawW, rawDtype, mapping);
 
         if (arch is DecoderArch decodeArch)
@@ -78,6 +83,9 @@ public sealed class Transformer : IDisposable
     public Tensor<float>? LmHead => _lmHead;
     public Tensor<float> EmbeddingWeight => _embedding.Weight;
     public Tensor<float> ForwardEmbedding(Tensor<int> tokenIds) => _embedding.Forward(tokenIds);
+
+    /// <summary>Learned positional-embedding table [MaxSeqLen, HiddenDim], or null when not in use.</summary>
+    public Tensor<float>? PositionEmbedding => _positionEmbedding;
     public TransformerBlock? GetBlock(int layer) => _blocks is not null && layer < _blocks.Length ? _blocks[layer] : null;
 
     /// <summary>
@@ -202,8 +210,18 @@ public sealed class Transformer : IDisposable
         }
         if (target != null && block == null && rawData.Length > 0)
         {
-            _weights.RawEmbedding = rawData;
-            _weights.RawEmbeddingDtype = dtype;
+            // Only the (token) embedding and the LM head have raw storage; other
+            // global tensors (e.g. learned position embeddings) stay float-backed.
+            if (target == _weights.EmbeddingWeight)
+            {
+                _weights.RawEmbedding = rawData;
+                _weights.RawEmbeddingDtype = dtype;
+            }
+            else if (_lmHead is not null && target == _weights.LmHeadWeight)
+            {
+                _weights.RawLmHead = rawData;
+                _weights.RawLmHeadDtype = dtype;
+            }
             return true;
         }
         return false;
@@ -222,6 +240,9 @@ public sealed class Transformer : IDisposable
     {
         foreach (var p in _embedding.Parameters())
             yield return p;
+
+        if (_positionEmbedding is not null)
+            yield return new Parameter("position_embedding", _positionEmbedding);
 
         foreach (var p in _arch.Parameters())
             yield return p;
@@ -354,6 +375,8 @@ public sealed class Transformer : IDisposable
         _cachedEmbedding = _embedding.Forward(tokenIds, workspace);
         if (_gemmaEmbeddingScale)
             ScaleEmbedding(_cachedEmbedding, _weights.Config.HiddenDim);
+        if (_positionEmbedding is not null)
+            AddPositionEmbeddingInPlace(_cachedEmbedding, positionOffset);
 
         // 2. Architecture (stack of transformer blocks).
         //    Blocks mutate in-place and return the same tensor, so _cachedHidden
@@ -396,6 +419,8 @@ public sealed class Transformer : IDisposable
         _cachedEmbedding = _embedding.Forward(tokenIds, workspace);
         if (_gemmaEmbeddingScale)
             ScaleEmbedding(_cachedEmbedding, _weights.Config.HiddenDim);
+        if (_positionEmbedding is not null)
+            AddPositionEmbeddingInPlace(_cachedEmbedding, positionOffset);
 
         _cachedHidden = _arch.Forward(_cachedEmbedding, caches, positionOffset, workspace);
 
@@ -498,5 +523,37 @@ public sealed class Transformer : IDisposable
         var data = embedding.Data;
         for (int i = 0; i < data.Length; i++)
             data[i] *= scale;
+    }
+
+    /// <summary>
+    /// Adds the learned position-embedding row for each sequence position into
+    /// <paramref name="emb"/> in place (GPT-2 style: x = wte(idx) + wpe(pos)).
+    /// Positions are indexed from <paramref name="positionOffset"/>; positions at
+    /// or past <see cref="ModelConfig.MaxSeqLen"/> are clamped to the last row so
+    /// decoding past the trained length degrades gracefully instead of faulting.
+    /// </summary>
+    private void AddPositionEmbeddingInPlace(Tensor<float> emb, int positionOffset)
+    {
+        var pos = _positionEmbedding!;
+        int H = _weights.Config.HiddenDim;
+        int S = emb.Shape.Cols;
+        int maxPos = pos.Shape.Rows;
+        var src = pos.Data;
+        var dst = emb.Data;
+        int embStride = S * H;
+
+        for (int b = 0; b < emb.Shape.Rows; b++)
+        {
+            int ptr = b * embStride;
+            for (int s = 0; s < S; s++)
+            {
+                int p = positionOffset + s;
+                if (p >= maxPos) p = maxPos - 1;
+                int pBase = p * H;
+                for (int h = 0; h < H; h++)
+                    dst[ptr + h] += src[pBase + h];
+                ptr += H;
+            }
+        }
     }
 }

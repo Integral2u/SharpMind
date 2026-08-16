@@ -22,6 +22,19 @@ public sealed class ForwardContext : IDisposable
     /// <summary>Embedding output [Batch, SeqLen, HiddenDim].</summary>
     public Tensor<float>? EmbeddingOut { get; set; }
 
+    /// <summary>
+    /// True when the forward pass added learned positional embeddings to the
+    /// token embeddings in place; the backward pass must then accumulate the
+    /// gradient into the position-embedding parameter rows.
+    /// </summary>
+    public bool UsesLearnedPositions { get; set; }
+
+    /// <summary>Batch size of the forward pass (see <see cref="UsesLearnedPositions"/>).</summary>
+    public int Batch { get; set; }
+
+    /// <summary>Sequence length of the forward pass (see <see cref="UsesLearnedPositions"/>).</summary>
+    public int SeqLen { get; set; }
+
     /// <summary>Final norm output [Batch, SeqLen, HiddenDim].</summary>
     public Tensor<float>? FinalNormOut { get; set; }
 

@@ -52,6 +52,7 @@ public static class TokenizerFile
         var obj = new JsonObject
         {
             ["version"] = "1.0",
+            ["kind"] = model.IsCharMode ? "char" : "bpe",
             ["pre_tokeniser"] = PreTokeniserName(model.PreTokeniser),
             ["special_tokens"] = new JsonObject
             {
@@ -125,7 +126,13 @@ public static class TokenizerFile
             root.TryGetProperty("pre_tokeniser", out var ptEl)
                 ? ptEl.GetString() ?? "gpt2" : "gpt2");
 
-        return new BpeModel(vocab, merges, preTokeniser);
+        // Character-level tokenizers are stored with a "kind": "char" marker.
+        // They carry a per-character vocab and no merge rules; the encoder
+        // maps characters directly instead of running byte-level BPE.
+        bool charMode = root.TryGetProperty("kind", out var kindEl)
+                        && kindEl.GetString() == "char";
+
+        return new BpeModel(vocab, merges, preTokeniser, charMode: charMode);
     }
 
     // Helpers
