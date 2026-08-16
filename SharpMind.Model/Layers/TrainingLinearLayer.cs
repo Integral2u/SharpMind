@@ -92,21 +92,7 @@ private unsafe Tensor<float> MatMulForward(Tensor<float> input, int batchSize, W
         var output = MatMulForward(flat, batchSize, workspace);
 
         if (_bias is not null)
-        {
-            if (workspace != null)
-            {
-                var biasB = workspace.Rent<float>([batchSize, OutFeatures]);
-                for (int i = 0; i < batchSize; i++)
-                    _bias!.Data.CopyTo(biasB.RowSpan(i));
-                output.AddInPlace(biasB);
-            }
-            else
-            {
-                var biasBroadcast = BroadcastBias(batchSize);
-                output.AddInPlace(biasBroadcast);
-                biasBroadcast.Dispose();
-            }
-        }
+            AddBiasInPlace(output, batchSize);
         if (needReshape)
         {
             Span<int> outDims = stackalloc int[input.Rank];
@@ -140,7 +126,7 @@ var flat = needReshape ? input.Reshape(batchSize, InFeatures) : input;
                 fn(flat.DataPtr, rawPtr, output.DataPtr, batchSize, InFeatures, OutFeatures);
         }
         if (_bias is not null)
-            output.AddInPlace(BroadcastBias(batchSize));
+            AddBiasInPlace(output, batchSize);
         var state = new LinearLayerState(input, flat, needReshape, _weight);
         if (needReshape)
         {
