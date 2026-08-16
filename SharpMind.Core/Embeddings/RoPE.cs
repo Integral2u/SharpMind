@@ -42,11 +42,20 @@ public sealed class RoPE : PositionalEncoder
     /// <param name="ropeOriginalContextLength">Original context length before scaling (NTK-by-parts).</param>
     /// <param name="lowFreqFactor">NTK-by-parts low frequency factor (llama3).</param>
     /// <param name="highFreqFactor">NTK-by-parts high frequency factor (llama3).</param>
+    /// <summary>
+    /// True = NeoX/"rotate_half" pairing (d, d + ropeDim/2); false = adjacent
+    /// pairing (2i, 2i+1). llama.cpp picks this per architecture: LLaMA-family
+    /// GGUFs are converted with Q/K permuted so adjacent pairing is correct,
+    /// while Qwen/Gemma/Phi/StableLM/GPT-NeoX are not permuted and need NeoX.
+    /// </summary>
+    private readonly bool _neoxStyle;
+
     public RoPE(int headDim, int maxSeqLen, float theta = 10_000f,
         int? ropeDim = null, string? ropeScalingType = null, float? ropeScalingFactor = null,
         int? ropeOriginalContextLength = null, float? lowFreqFactor = null, float? highFreqFactor = null,
-        float[]? precomputedFreqs = null)
+        float[]? precomputedFreqs = null, bool neoxStyle = false)
     {
+        _neoxStyle = neoxStyle;
         if (headDim % 2 != 0)
             throw new ArgumentException($"HeadDim must be even, got {headDim}.");
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxSeqLen);
@@ -174,6 +183,24 @@ public sealed class RoPE : PositionalEncoder
             {
                 int offset = (s * numHead + h) * _headDim;
 
+                if (_neoxStyle)
+                {
+                    // NeoX / HF "rotate_half": pair dimension d with d + ropePairs.
+                    // ponytail: scalar only — correctness first; vectorise like the
+                    // adjacent path below if this shows up in a profile.
+                    for (int d = 0; d < ropePairs; d++)
+                    {
+                        float cosN = _cosCache[cacheBase + d];
+                        float sinN = _sinCache[cacheBase + d];
+                        float a = data[offset + d];
+                        float bHalf = data[offset + d + ropePairs];
+
+                        data[offset + d] = a * cosN - bHalf * sinN;
+                        data[offset + d + ropePairs] = bHalf * cosN + a * sinN;
+                    }
+                    continue;
+                }
+
                 // Adjacent-pairing (matches llama.cpp / ggml):
                 // pairs are (data[2i], data[2i + 1]) for i = 0..ropePairs-1,
                 // rotated by angle pos * theta^{-2i/_ropeDim}.
@@ -278,6 +305,21 @@ public sealed class RoPE : PositionalEncoder
             for (int h = 0; h < numHead; h++)
             {
                 int offset = (s * numHead + h) * _headDim;
+
+                if (_neoxStyle)
+                {
+                    for (int d = 0; d < ropePairs; d++)
+                    {
+                        float cosN = _cosCache[cacheBase + d];
+                        float sinN = _sinCache[cacheBase + d];
+                        float g0 = data[offset + d];
+                        float g1 = data[offset + d + ropePairs];
+
+                        data[offset + d] = cosN * g0 + sinN * g1;
+                        data[offset + d + ropePairs] = -sinN * g0 + cosN * g1;
+                    }
+                    continue;
+                }
 
                 for (int i = 0; i < ropePairs; i++)
                 {
