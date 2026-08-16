@@ -304,48 +304,59 @@ public sealed class BpeEncoder
     /// </summary>
     private void ApplyMerges(List<string> tokens)
     {
-        if (tokens.Count <= 1) return;
+        int n = tokens.Count;
+        if (n <= 1) return;
 
-        // Seed: evaluate all initial adjacent pairs.
-        var queue = new PriorityQueue<int, int>(); // (pairIndex, rank)
-        for (int i = 0; i < tokens.Count - 1; i++)
+        // Slot indices stay stable for the whole merge: a List.RemoveAt would
+        // shift every later element down one, so every queued index to the right
+        // of a merge silently pointed at the wrong pair, failed revalidation and
+        // was dropped. Those merges were then never retried — " helpful" came out
+        // as "Ġhelp|fu|l" even though "Ġhelpful" is in the vocab.
+        var parts = new string[n];
+        tokens.CopyTo(parts);
+        var next = new int[n];
+        var prev = new int[n];
+        var alive = new bool[n];
+        for (int i = 0; i < n; i++)
         {
-            if (_mergeIndex.TryGetValue((tokens[i], tokens[i + 1]), out var entry))
-                queue.Enqueue(i, entry.Rank);
+            next[i] = i + 1 < n ? i + 1 : -1;
+            prev[i] = i - 1;
+            alive[i] = true;
         }
 
-        while (queue.TryDequeue(out int idx, out int rank))
+        var queue = new PriorityQueue<int, int>(); // (left slot, rank)
+        for (int i = 0; i + 1 < n; i++)
         {
-            // --- Lazy-deletion guard ---
-            // The pair at `idx` may have been invalidated by a prior merge.
-            // Re-validate by checking that both halves still match.
-            if (idx >= tokens.Count - 1) continue;
-            if (!_mergeIndex.TryGetValue((tokens[idx], tokens[idx + 1]), out var entry)) continue;
-            if (entry.Rank != rank) continue; // stale — a higher-priority merge replaced one of these tokens
-
-            // --- Merge the pair at idx and idx+1 ---
-            tokens[idx] = entry.Merged;
-            tokens.RemoveAt(idx + 1);
-
-            // Re-evaluate the pair to the LEFT of the merged token (idx-1, idx).
-            if (idx > 0)
-                EnqueueSinglePair(queue, tokens, idx - 1);
-
-            // Re-evaluate the pair to the RIGHT of the merged token (idx, idx+1).
-            if (idx < tokens.Count - 1)
-                EnqueueSinglePair(queue, tokens, idx);
-
-            // Re-evaluate the pair that SHIFTED into position idx+1 (was at idx+2 before RemoveAt).
-            if (idx + 1 < tokens.Count - 1)
-                EnqueueSinglePair(queue, tokens, idx + 1);
+            if (_mergeIndex.TryGetValue((parts[i], parts[i + 1]), out var seed))
+                queue.Enqueue(i, seed.Rank);
         }
-    }
 
-    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
-    private void EnqueueSinglePair(PriorityQueue<int, int> queue, List<string> tokens, int idx)
-    {
-        if (_mergeIndex.TryGetValue((tokens[idx], tokens[idx + 1]), out var entry))
-            queue.Enqueue(idx, entry.Rank);
+        while (queue.TryDequeue(out int left, out int rank))
+        {
+            if (!alive[left]) continue;
+            int right = next[left];
+            if (right < 0 || !alive[right]) continue;
+            if (!_mergeIndex.TryGetValue((parts[left], parts[right]), out var entry)) continue;
+            if (entry.Rank != rank) continue; // stale: this slot's pair changed since enqueue
+
+            parts[left] = entry.Merged;
+            alive[right] = false;
+
+            int after = next[right];
+            next[left] = after;
+            if (after >= 0) prev[after] = left;
+
+            int before = prev[left];
+            if (before >= 0 && _mergeIndex.TryGetValue((parts[before], parts[left]), out var leftPair))
+                queue.Enqueue(before, leftPair.Rank);
+            if (after >= 0 && _mergeIndex.TryGetValue((parts[left], parts[after]), out var rightPair))
+                queue.Enqueue(left, rightPair.Rank);
+        }
+
+        // Slot 0 is never removed (only the right half of a pair is), so the
+        // surviving chain always starts there.
+        tokens.Clear();
+        for (int i = 0; i >= 0; i = next[i]) tokens.Add(parts[i]);
     }
 
     private void EncodeSentencePieceSegment(string text, bool isFirstSegment, List<int> ids)
@@ -399,30 +410,57 @@ public sealed class BpeEncoder
     {
         if (tokens.Count <= 1) return;
 
+        // Same stable-slot scheme as ApplyMerges: RemoveAt shifted positions out
+        // from under queued indices, dropping merges (and here, with no score
+        // revalidation, a shifted index could merge a pair that was never queued).
+        int n = tokens.Count;
+        var parts = new string[n];
+        for (int i = 0; i < n; i++) parts[i] = tokens[i].ToString();
+        var next = new int[n];
+        var prev = new int[n];
+        var alive = new bool[n];
+        for (int i = 0; i < n; i++)
+        {
+            next[i] = i + 1 < n ? i + 1 : -1;
+            prev[i] = i - 1;
+            alive[i] = true;
+        }
+
         var queue = new PriorityQueue<int, float>();
 
-        void TryEnqueue(int idx)
+        void TryEnqueue(int left)
         {
-            if (idx < 0 || idx >= tokens.Count - 1) return;
-            string merged = tokens[idx].ToString() + tokens[idx + 1].ToString();
-            if (_vocab.TryGetId(merged, out int id))
-                queue.Enqueue(idx, -ScoreOf(id));
+            if (left < 0 || !alive[left]) return;
+            int right = next[left];
+            if (right < 0 || !alive[right]) return;
+            if (_vocab.TryGetId(parts[left] + parts[right], out int id))
+                queue.Enqueue(left, -ScoreOf(id));
         }
 
-        for (int i = 0; i < tokens.Count - 1; i++) TryEnqueue(i);
+        for (int i = 0; i < n; i++) TryEnqueue(i);
 
-        while (queue.TryDequeue(out int idx, out _))
+        while (queue.TryDequeue(out int left, out float priority))
         {
-            if (idx >= tokens.Count - 1) continue;
-            string merged = tokens[idx].ToString() + tokens[idx + 1].ToString();
-            if (!_vocab.TryGetId(merged, out _)) continue;
+            if (!alive[left]) continue;
+            int right = next[left];
+            if (right < 0 || !alive[right]) continue;
+            string merged = parts[left] + parts[right];
+            if (!_vocab.TryGetId(merged, out int id)) continue;
+            if (-ScoreOf(id) != priority) continue; // stale: this slot's pair changed
 
-            tokens[idx] = merged.AsMemory();
-            tokens.RemoveAt(idx + 1);
+            parts[left] = merged;
+            alive[right] = false;
 
-            if (idx > 0) TryEnqueue(idx - 1);
-            if (idx < tokens.Count - 1) TryEnqueue(idx);
+            int after = next[right];
+            next[left] = after;
+            if (after >= 0) prev[after] = left;
+
+            TryEnqueue(prev[left]);
+            TryEnqueue(left);
         }
+
+        tokens.Clear();
+        for (int i = 0; i >= 0; i = next[i]) tokens.Add(parts[i].AsMemory());
     }
 
     private float ScoreOf(int id) => _scores != null && id >= 0 && id < _scores.Count ? _scores[id] : 0f;
