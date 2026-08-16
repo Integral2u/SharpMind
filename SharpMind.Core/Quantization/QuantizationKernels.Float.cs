@@ -153,34 +153,55 @@ public static partial class QuantizationKernels
         return sum;
     }
 
+    /// <summary>
+    /// Widens 8 consecutive IEEE-754 half bit patterns to a Vector256&lt;float&gt;.
+    ///
+    /// .NET exposes no F16C intrinsic (vcvtph2ps) and Half is not a supported
+    /// Vector128&lt;T&gt; element type, so this does it arithmetically. Multiplying
+    /// the shifted magnitude by 2^112 rescales normals and denormals in one step;
+    /// the blend then forces the float exponent to all-ones for half exponent 31,
+    /// which keeps Inf as Inf and NaN as NaN.
+    ///
+    /// Bit-exact against <c>(float)Half</c> for all 65536 patterns — see
+    /// <c>HalfWideningTests</c>. The scalar-per-element alternative is not just
+    /// slower arithmetic: writing 8 floats to a stack buffer and then vector-loading
+    /// that same buffer cannot store-forward, so it stalls once per 8 weights.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static unsafe Vector256<float> WidenHalf8(ushort* p)
+    {
+        Vector256<int> h = Avx2.ConvertToVector256Int32(Sse2.LoadVector128(p));
+        Vector256<int> sign = Avx2.ShiftLeftLogical(Avx2.And(h, Vector256.Create(0x8000)), 16);
+        Vector256<int> mag = Avx2.And(h, Vector256.Create(0x7FFF));
+        Vector256<int> shifted = Avx2.ShiftLeftLogical(mag, 13);
+        Vector256<float> scaled = Avx.Multiply(
+            shifted.AsSingle(),
+            Vector256.Create(BitConverter.Int32BitsToSingle(0x7780_0000))); // 2^112
+        Vector256<int> isSpecial = Avx2.CompareGreaterThan(mag, Vector256.Create(0x7BFF));
+        Vector256<float> special = Avx2.Or(shifted, Vector256.Create(0x7F80_0000)).AsSingle();
+        return Avx.Or(Avx.BlendVariable(scaled, special, isSpecial.AsSingle()), sign.AsSingle());
+    }
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static unsafe float VecDotF16_FMA(float* input, byte* rawWeights, int col, int inFeatures)
     {
         ushort* w = (ushort*)rawWeights;
         ushort* pW = w + (long)col * inFeatures;
-        float* stackBuf = stackalloc float[8];
         var vacc0 = Vector256<float>.Zero;
         var vacc1 = Vector256<float>.Zero;
+        var vacc2 = Vector256<float>.Zero;
+        var vacc3 = Vector256<float>.Zero;
         int i = 0;
-        for (; i <= inFeatures - 16; i += 16)
+        for (; i <= inFeatures - 32; i += 32)
         {
-            for (int j = 0; j < 8; j++) stackBuf[j] = HalfToFloat_F16C(pW[i + j]);
-            var vw0 = Vector256.Load(stackBuf);
-            for (int j = 0; j < 8; j++) stackBuf[j] = HalfToFloat_F16C(pW[i + 8 + j]);
-            var vw1 = Vector256.Load(stackBuf);
-            var vi0 = Vector256.LoadUnsafe(ref input[i]);
-            var vi1 = Vector256.LoadUnsafe(ref input[i + 8]);
-            vacc0 = Fma.MultiplyAdd(vw0, vi0, vacc0);
-            vacc1 = Fma.MultiplyAdd(vw1, vi1, vacc1);
+            vacc0 = Fma.MultiplyAdd(WidenHalf8(pW + i), Vector256.LoadUnsafe(ref input[i]), vacc0);
+            vacc1 = Fma.MultiplyAdd(WidenHalf8(pW + i + 8), Vector256.LoadUnsafe(ref input[i + 8]), vacc1);
+            vacc2 = Fma.MultiplyAdd(WidenHalf8(pW + i + 16), Vector256.LoadUnsafe(ref input[i + 16]), vacc2);
+            vacc3 = Fma.MultiplyAdd(WidenHalf8(pW + i + 24), Vector256.LoadUnsafe(ref input[i + 24]), vacc3);
         }
         for (; i <= inFeatures - 8; i += 8)
-        {
-            for (int j = 0; j < 8; j++) stackBuf[j] = HalfToFloat_F16C(pW[i + j]);
-            var vw = Vector256.Load(stackBuf);
-            var vi = Vector256.LoadUnsafe(ref input[i]);
-            vacc0 = Fma.MultiplyAdd(vw, vi, vacc0);
-        }
-        float sum = MathHelpers.HSum256_Avx(Avx.Add(vacc0, vacc1));
+            vacc0 = Fma.MultiplyAdd(WidenHalf8(pW + i), Vector256.LoadUnsafe(ref input[i]), vacc0);
+        float sum = MathHelpers.HSum256_Avx(Avx.Add(Avx.Add(vacc0, vacc1), Avx.Add(vacc2, vacc3)));
         for (; i < inFeatures; i++)
             sum += input[i] * HalfToFloat_F16C(pW[i]);
         return sum;
