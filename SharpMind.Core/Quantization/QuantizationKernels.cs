@@ -41,22 +41,53 @@ public static partial class QuantizationKernels
         }
     }
 
-    /// <summary>Column-parallel path for M == 1 (decode). Chunks N across cores.</summary>
+    /// <summary>One 64-byte cache line of float output. Chunks never split a line.</summary>
+    private const int MinColsPerChunk = 16;
+
+    /// <summary>
+    /// Work below which spreading across cores costs more than it saves,
+    /// measured as columns × inFeatures. See <see cref="DecodeParallel"/>.
+    /// </summary>
+    private const long MinWorkForDecodeParallel = 65_536;
+
+    /// <summary>
+    /// Column-parallel path for M == 1 (decode). Chunks N across cores.
+    ///
+    /// The previous rule refused to parallelise below 512 columns and then chose
+    /// ceil(N/512) chunks. Both halves misfire at real transformer widths: at
+    /// hidden 896 the K and V projections (N=128) ran single-threaded, and the
+    /// output and down projections (N=896) got two chunks — two cores of sixteen
+    /// — because 896 is barely over 512. Columns are a poor proxy for work in any
+    /// case, since a column costs inFeatures multiply-accumulates.
+    ///
+    /// Decide on N × K, then cut into as many chunks as there are cores, subject
+    /// to a whole cache line of output each. Measured on 16-core Zen 5, shipped
+    /// rule vs this one, times for the whole matmul:
+    ///     K=896  N=128     24.4 us -> 13.3 us   (was serial)
+    ///     K=896  N=896      109 us -> 58.9 us   (was 2 chunks)
+    ///     K=4864 N=896      585 us ->  280 us   (was 2 chunks)
+    ///     K=4864 N=4864    1494 us ->  962 us
+    /// Below the threshold the loop stays serial: at N=32, K=896 splitting the
+    /// work actually cost 1.4x, which is the case the old 512 floor got right.
+    /// </summary>
     private static unsafe void DecodeParallel(VecDotFn vecdot,
         float* input, byte* rawWeights, float* output,
         int K, int N)
     {
-        const int MinColsForParallel = 512;
-        if (N < MinColsForParallel)
+        int numChunks = (long)N * K >= MinWorkForDecodeParallel
+            ? Math.Min(Environment.ProcessorCount, N / MinColsPerChunk)
+            : 1;
+
+        if (numChunks <= 1)
         {
             for (int col = 0; col < N; col++)
                 output[col] = vecdot(input, rawWeights, col, K);
             return;
         }
 
-        int numChunks = Math.Min(Environment.ProcessorCount,
-            (N + MinColsForParallel - 1) / MinColsForParallel);
         int chunkSize = (N + numChunks - 1) / numChunks;
+        chunkSize = (chunkSize + MinColsPerChunk - 1) / MinColsPerChunk * MinColsPerChunk;
+        numChunks = (N + chunkSize - 1) / chunkSize;
 
         long inputAddr = (long)input;
         long weightsAddr = (long)rawWeights;

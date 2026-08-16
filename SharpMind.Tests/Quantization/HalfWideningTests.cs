@@ -140,6 +140,10 @@ public class HalfWideningTests
     /// </summary>
     [Theory]
     [InlineData(1, 896, 64)]     // decode: no blocking at all
+    [InlineData(1, 896, 17)]     // decode, below the parallel-chunking threshold
+    [InlineData(1, 896, 71)]     // decode, column count not a multiple of the chunk quantum
+    [InlineData(1, 896, 4864)]   // decode, chunked across every core
+    [InlineData(1, 4864, 896)]   // decode, down-projection shape
     [InlineData(2, 896, 64)]     // shorter than one row block
     [InlineData(4, 896, 128)]    // exactly one row block
     [InlineData(7, 896, 96)]     // one block + 3 tail rows
@@ -156,28 +160,47 @@ public class HalfWideningTests
         var input = new float[(long)M * K];
         for (int i = 0; i < input.Length; i++) input[i] = (float)(rng.NextDouble() * 2 - 1);
 
-        var expected = new float[(long)M * N];
         var serial = new float[(long)M * N];
         var parallel = new float[(long)M * N];
 
         fixed (ushort* pW = weights)
         fixed (float* pIn = input)
-        fixed (float* pE = expected)
         fixed (float* pS = serial)
         fixed (float* pP = parallel)
         {
-            QuantizationKernels.QuantizedMatMulF16_Serial_Scalar(pIn, (byte*)pW, pE, M, K, N);
             QuantizationKernels.QuantizedMatMulF16_Serial_FMA(pIn, (byte*)pW, pS, M, K, N);
             QuantizationKernels.QuantizedMatMulF16_Parallel_FMA(pIn, (byte*)pW, pP, M, K, N);
         }
 
-        for (long i = 0; i < expected.Length; i++)
+        // Reference in double, computed here rather than taken from another kernel.
+        // QuantizedMatMulF16_Serial_Scalar accumulates in float, so over a 4864-long
+        // K it carries more error than the kernels under test and makes a poor
+        // oracle — it disagreed with both by 1.5e-5 relative before this changed.
+        //
+        // Tolerance scales with the accumulated magnitude, not the final value. A
+        // dot product whose terms largely cancel has a small result and a large
+        // error budget, and judging it against its own tiny output would demand a
+        // precision float never had. A misplaced column still fails loudly: that
+        // error is the size of the sum itself, not of its rounding.
+        for (int m = 0; m < M; m++)
         {
-            float tol = 1e-5f * Math.Max(1f, Math.Abs(expected[i]));
-            Assert.True(Math.Abs(expected[i] - serial[i]) <= tol,
-                $"serial [{i / N},{i % N}]: scalar={expected[i]}, fma={serial[i]}");
-            Assert.True(Math.Abs(expected[i] - parallel[i]) <= tol,
-                $"parallel [{i / N},{i % N}]: scalar={expected[i]}, fma={parallel[i]}");
+            for (int n = 0; n < N; n++)
+            {
+                double acc = 0, absAcc = 0;
+                for (int k = 0; k < K; k++)
+                {
+                    double term = (double)input[(long)m * K + k]
+                                * (double)(float)BitConverter.UInt16BitsToHalf(weights[(long)n * K + k]);
+                    acc += term;
+                    absAcc += Math.Abs(term);
+                }
+                double tol = 1e-6 * Math.Max(1.0, absAcc);
+                long i = (long)m * N + n;
+                Assert.True(Math.Abs(acc - serial[i]) <= tol,
+                    $"serial [{m},{n}]: exact={acc}, fma={serial[i]}, tol={tol}");
+                Assert.True(Math.Abs(acc - parallel[i]) <= tol,
+                    $"parallel [{m},{n}]: exact={acc}, fma={parallel[i]}, tol={tol}");
+            }
         }
     }
 }
