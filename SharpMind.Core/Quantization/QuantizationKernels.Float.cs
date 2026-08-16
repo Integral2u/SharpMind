@@ -217,15 +217,117 @@ public static partial class QuantizationKernels
         int M, int K, int N)
         => QuantizedMatMul_Parallel_Wrapper(VecDotF32_FMA, input, rawWeights, output, M, K, N);
 
+    /// <summary>Rows processed together in the blocked F16 path. See <see cref="F16BlockedColumns"/>.</summary>
+    private const int F16RowBlock = 4;
+
+    /// <summary>
+    /// Computes columns [<paramref name="colStart"/>, <paramref name="colEnd"/>) of
+    /// an F16 matmul, four rows at a time.
+    ///
+    /// The row-at-a-time form widens every weight once per row: a 128-token prefill
+    /// chunk converts each fp16 weight 128 times to use it 128 times. Here each
+    /// widened vector feeds <see cref="F16RowBlock"/> FMAs before it is discarded.
+    ///
+    /// Four is measured, not assumed — R=8 was no faster on any shape, so past four
+    /// rows the widening has stopped being the limit and the input-row loads have
+    /// become it. Four also keeps the working set to 4 accumulators plus one weight
+    /// vector, well inside the 16 available YMM registers.
+    /// </summary>
+    private static unsafe void F16BlockedColumns(
+        float* input, ushort* w, float* output,
+        int M, int K, int N, int colStart, int colEnd)
+    {
+        for (int col = colStart; col < colEnd; col++)
+        {
+            ushort* pW = w + (long)col * K;
+            int r = 0;
+            for (; r + F16RowBlock <= M; r += F16RowBlock)
+            {
+                var a0 = Vector256<float>.Zero;
+                var a1 = Vector256<float>.Zero;
+                var a2 = Vector256<float>.Zero;
+                var a3 = Vector256<float>.Zero;
+                float* i0 = input + (long)(r + 0) * K;
+                float* i1 = input + (long)(r + 1) * K;
+                float* i2 = input + (long)(r + 2) * K;
+                float* i3 = input + (long)(r + 3) * K;
+
+                int k = 0;
+                for (; k <= K - 8; k += 8)
+                {
+                    var vw = WidenHalf8(pW + k);
+                    a0 = Fma.MultiplyAdd(vw, Vector256.LoadUnsafe(ref i0[k]), a0);
+                    a1 = Fma.MultiplyAdd(vw, Vector256.LoadUnsafe(ref i1[k]), a1);
+                    a2 = Fma.MultiplyAdd(vw, Vector256.LoadUnsafe(ref i2[k]), a2);
+                    a3 = Fma.MultiplyAdd(vw, Vector256.LoadUnsafe(ref i3[k]), a3);
+                }
+
+                float s0 = MathHelpers.HSum256_Avx(a0);
+                float s1 = MathHelpers.HSum256_Avx(a1);
+                float s2 = MathHelpers.HSum256_Avx(a2);
+                float s3 = MathHelpers.HSum256_Avx(a3);
+                for (; k < K; k++)
+                {
+                    float wf = HalfToFloat_F16C(pW[k]);
+                    s0 += i0[k] * wf;
+                    s1 += i1[k] * wf;
+                    s2 += i2[k] * wf;
+                    s3 += i3[k] * wf;
+                }
+
+                output[(long)(r + 0) * N + col] = s0;
+                output[(long)(r + 1) * N + col] = s1;
+                output[(long)(r + 2) * N + col] = s2;
+                output[(long)(r + 3) * N + col] = s3;
+            }
+
+            // Rows past the last full block fall back to the single-row kernel.
+            for (; r < M; r++)
+                output[(long)r * N + col] = VecDotF16_FMA(input + (long)r * K, (byte*)w, col, K);
+        }
+    }
+
     public static unsafe void QuantizedMatMulF16_Serial_FMA(
         float* input, byte* rawWeights, float* output,
         int M, int K, int N)
-        => QuantizedMatMul_Serial_Wrapper(VecDotF16_FMA, input, rawWeights, output, M, K, N);
+    {
+        if (M <= 1)
+        {
+            QuantizedMatMul_Serial_Wrapper(VecDotF16_FMA, input, rawWeights, output, M, K, N);
+            return;
+        }
+        F16BlockedColumns(input, (ushort*)rawWeights, output, M, K, N, 0, N);
+    }
 
     public static unsafe void QuantizedMatMulF16_Parallel_FMA(
         float* input, byte* rawWeights, float* output,
         int M, int K, int N)
-        => QuantizedMatMul_Parallel_Wrapper(VecDotF16_FMA, input, rawWeights, output, M, K, N);
+    {
+        // Decode has a single row, so there is nothing to block over; that path
+        // parallelises across columns instead.
+        if (M <= 1)
+        {
+            DecodeParallel(VecDotF16_FMA, input, rawWeights, output, K, N);
+            return;
+        }
+
+        // Split by column rather than by row, so each thread owns a contiguous
+        // span of every output row and the widening is amortised inside it.
+        // Chunks are rounded to 16 columns — one 64-byte line of float output —
+        // so two threads never write the same cache line.
+        int target = Math.Max(1, N / Environment.ProcessorCount);
+        int chunkSize = (target + 15) & ~15;
+        int numChunks = (N + chunkSize - 1) / chunkSize;
+
+        long inputAddr = (long)input, weightsAddr = (long)rawWeights, outputAddr = (long)output;
+        Parallel.For(0, numChunks, chunkIdx =>
+        {
+            int colStart = chunkIdx * chunkSize;
+            int colEnd = Math.Min(colStart + chunkSize, N);
+            F16BlockedColumns((float*)inputAddr, (ushort*)weightsAddr, (float*)outputAddr,
+                M, K, N, colStart, colEnd);
+        });
+    }
 
     public static void ReadF32_Scalar(BinaryReader reader, Span<float> data, int n)
     {

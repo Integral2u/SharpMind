@@ -130,4 +130,54 @@ public class HalfWideningTests
                 Math.Abs(expected[i] - actual[i]) <= 1e-5f * Math.Max(1f, Math.Abs(expected[i])),
                 $"column {i}: scalar={expected[i]}, fma={actual[i]}");
     }
+
+    /// <summary>
+    /// The M &gt; 1 path processes four rows per widened weight vector, so it has two
+    /// edges the single-row path does not: rows past the last full block of four,
+    /// and the column split used by the parallel variant. Row counts here are
+    /// deliberately not multiples of four, and the sizes straddle the point where
+    /// the parallel kernel starts handing columns to more than one thread.
+    /// </summary>
+    [Theory]
+    [InlineData(1, 896, 64)]     // decode: no blocking at all
+    [InlineData(2, 896, 64)]     // shorter than one row block
+    [InlineData(4, 896, 128)]    // exactly one row block
+    [InlineData(7, 896, 96)]     // one block + 3 tail rows
+    [InlineData(128, 896, 256)]  // a full prefill chunk
+    [InlineData(13, 133, 71)]    // awkward everywhere: rows, K tail, odd column count
+    public unsafe void QuantizedMatMulF16_FMA_AgreesWithScalar_ForAnyRowCount(int M, int K, int N)
+    {
+        if (!Avx2.IsSupported || !Fma.IsSupported) return;
+
+        var rng = new Random(31337);
+        var weights = new ushort[(long)K * N];
+        for (int i = 0; i < weights.Length; i++)
+            weights[i] = QuantizationKernels.FloatToHalf_Scalar((float)(rng.NextDouble() * 0.4 - 0.2));
+        var input = new float[(long)M * K];
+        for (int i = 0; i < input.Length; i++) input[i] = (float)(rng.NextDouble() * 2 - 1);
+
+        var expected = new float[(long)M * N];
+        var serial = new float[(long)M * N];
+        var parallel = new float[(long)M * N];
+
+        fixed (ushort* pW = weights)
+        fixed (float* pIn = input)
+        fixed (float* pE = expected)
+        fixed (float* pS = serial)
+        fixed (float* pP = parallel)
+        {
+            QuantizationKernels.QuantizedMatMulF16_Serial_Scalar(pIn, (byte*)pW, pE, M, K, N);
+            QuantizationKernels.QuantizedMatMulF16_Serial_FMA(pIn, (byte*)pW, pS, M, K, N);
+            QuantizationKernels.QuantizedMatMulF16_Parallel_FMA(pIn, (byte*)pW, pP, M, K, N);
+        }
+
+        for (long i = 0; i < expected.Length; i++)
+        {
+            float tol = 1e-5f * Math.Max(1f, Math.Abs(expected[i]));
+            Assert.True(Math.Abs(expected[i] - serial[i]) <= tol,
+                $"serial [{i / N},{i % N}]: scalar={expected[i]}, fma={serial[i]}");
+            Assert.True(Math.Abs(expected[i] - parallel[i]) <= tol,
+                $"parallel [{i / N},{i % N}]: scalar={expected[i]}, fma={parallel[i]}");
+        }
+    }
 }
