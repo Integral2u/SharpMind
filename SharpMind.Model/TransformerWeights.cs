@@ -87,7 +87,12 @@ public abstract class TransformerWeights : IDisposable
 
     public (Tensor<float>? target, BlockWeights? block, string? rawField) ResolveTarget(string name)
     {
-        if (name.Contains("token_embd", StringComparison.OrdinalIgnoreCase)) return (EmbeddingWeight, null, null);
+        // "per_layer_token_embd" (gemma-3n/gemma-4) also contains "token_embd" but is a
+        // separate per-layer table, not the token embedding — routing it here fed a
+        // [8960, 262144] tensor into EmbeddingWeight.
+        if (name.Contains("token_embd", StringComparison.OrdinalIgnoreCase)
+            && !name.Contains("per_layer", StringComparison.OrdinalIgnoreCase))
+            return (EmbeddingWeight, null, null);
         if (name.Contains("position_embd", StringComparison.OrdinalIgnoreCase)) return (PositionEmbedding, null, null);
         if (name.Contains("output_norm", StringComparison.OrdinalIgnoreCase))
         {
