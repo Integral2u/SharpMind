@@ -44,6 +44,15 @@ It ships as a set of composable libraries plus a terminal chat application (`Sha
 
 ---
 
+## Install the chat app (Windows)
+
+The quickest way to try the terminal chat client is the installer, which sets up `SharpMind.CUI`, Start Menu + desktop shortcuts, and the app folder:
+
+**[Download SharpMind Console Setup (MSI)](https://github.com/Integral2u/SharpMind/releases/download/v1.0.0.0/SharpMind.Console.Setup.msi)**
+
+Requires the [.NET 10 Runtime](https://dotnet.microsoft.com/download/dotnet/10.0). Running the MSI installs the app and shortcuts; uninstall or repair is available via Apps & Features. Then grab a model as described in [Quick Start](#quick-start-load-and-run-a-model) — the running app also has a built-in model browser.
+
+---
 ## Quick Start: Load and Run a Model
 
 This walks through the smallest possible program that loads a GGUF model and starts an interactive chat session.

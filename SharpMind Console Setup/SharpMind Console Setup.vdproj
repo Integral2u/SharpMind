@@ -21,26 +21,8 @@
         }
         "Entry"
         {
-        "MsmKey" = "8:_87BB66EE7A474D8EB698ADAF55EAA514"
+        "MsmKey" = "8:_92806CAF99CE4216"
         "OwnerKey" = "8:_UNDEFINED"
-        "MsmSig" = "8:_UNDEFINED"
-        }
-        "Entry"
-        {
-        "MsmKey" = "8:_A0EDCA1049E74457A4776BC8C786F9F0"
-        "OwnerKey" = "8:_UNDEFINED"
-        "MsmSig" = "8:_UNDEFINED"
-        }
-        "Entry"
-        {
-        "MsmKey" = "8:_UNDEFINED"
-        "OwnerKey" = "8:_A0EDCA1049E74457A4776BC8C786F9F0"
-        "MsmSig" = "8:_UNDEFINED"
-        }
-        "Entry"
-        {
-        "MsmKey" = "8:_UNDEFINED"
-        "OwnerKey" = "8:_87BB66EE7A474D8EB698ADAF55EAA514"
         "MsmSig" = "8:_UNDEFINED"
         }
     }
@@ -116,6 +98,26 @@
         }
         "File"
         {
+            "{1FB2D0AE-D3B9-43D4-B9DD-F88EC61E35DE}:_92806CAF99CE4216"
+            {
+            "SourcePath" = "8:..\\SharpMind.CUI\\SharpMind.ico"
+            "TargetName" = "8:SharpMind.ico"
+            "Tag" = "8:"
+            "Folder" = "8:_022D59405EE94A88B1F346145FC04B54"
+            "Condition" = "8:"
+            "Transitive" = "11:FALSE"
+            "Vital" = "11:TRUE"
+            "ReadOnly" = "11:FALSE"
+            "Hidden" = "11:FALSE"
+            "System" = "11:FALSE"
+            "Permanent" = "11:FALSE"
+            "SharedLegacy" = "11:FALSE"
+            "PackageAs" = "3:1"
+            "Register" = "3:1"
+            "Exclude" = "11:FALSE"
+            "IsDependency" = "11:FALSE"
+            "IsolateTo" = "8:"
+            }
         }
         "FileType"
         {
@@ -172,15 +174,15 @@
         {
         "Name" = "8:Microsoft Visual Studio"
         "ProductName" = "8:SharpMind Console Setup"
-        "ProductCode" = "8:{510AD342-78E3-4530-95F3-85C16ABDB7AB}"
-        "PackageCode" = "8:{BB1A4B2C-D66F-4482-A2D3-8754D9482CC1}"
+        "ProductCode" = "8:{5AC4CE64-B4F1-460C-A7DA-EEF252D4B090}"
+        "PackageCode" = "8:{973290AC-ED60-4320-A602-40A7043C9F4B}"
         "UpgradeCode" = "8:{FD76C489-C0D4-4981-AA82-037B63AC570F}"
         "AspNetVersion" = "8:4.0.30319.0"
         "RestartWWWService" = "11:FALSE"
-        "RemovePreviousVersions" = "11:FALSE"
+        "RemovePreviousVersions" = "11:TRUE"
         "DetectNewerInstalledVersion" = "11:TRUE"
         "InstallAllUsers" = "11:FALSE"
-        "ProductVersion" = "8:1.0.0"
+        "ProductVersion" = "8:1.1.0"
         "Manufacturer" = "8:HP"
         "ARPHELPTELEPHONE" = "8:"
         "ARPHELPLINK" = "8:"
@@ -190,7 +192,7 @@
         "Keywords" = "8:"
         "ARPCOMMENTS" = "8:"
         "ARPURLINFOABOUT" = "8:"
-        "ARPPRODUCTICON" = "8:"
+        "ARPPRODUCTICON" = "8:_92806CAF99CE4216"
         "ARPIconIndex" = "3:0"
         "SearchPath" = "8:"
         "UseSystemSearchPath" = "11:TRUE"
@@ -293,6 +295,34 @@
         }
         "Shortcut"
         {
+            "{970C0BB2-C7D0-45D7-ABFA-7EC378858BC0}:_A1C2E3F40B6D4C589E7F8A9B0C1D2E3F4"
+            {
+            "Name" = "8:SharpMind"
+            "Arguments" = "8:"
+            "Description" = "8:"
+            "ShowCmd" = "3:1"
+            "IconIndex" = "3:0"
+            "Transitive" = "11:FALSE"
+            "Target" = "8:_357B211285E64609AFCD1463969D016F"
+            "Folder" = "8:_0DC2A8957CA241E9983D1AA9B59EDE1C"
+            "WorkingFolder" = "8:_022D59405EE94A88B1F346145FC04B54"
+            "Icon" = "8:_92806CAF99CE4216"
+            "Feature" = "8:"
+            }
+            "{970C0BB2-C7D0-45D7-ABFA-7EC378858BC0}:_B5D6E7F8091A2B3C4D5E6F708192A3B4C"
+            {
+            "Name" = "8:SharpMind"
+            "Arguments" = "8:"
+            "Description" = "8:"
+            "ShowCmd" = "3:1"
+            "IconIndex" = "3:0"
+            "Transitive" = "11:FALSE"
+            "Target" = "8:_357B211285E64609AFCD1463969D016F"
+            "Folder" = "8:_4BE2E0D0ED3840D4B6A3D5FECA598D26"
+            "WorkingFolder" = "8:_022D59405EE94A88B1F346145FC04B54"
+            "Icon" = "8:_92806CAF99CE4216"
+            "Feature" = "8:"
+            }
         }
         "UserInterface"
         {
@@ -715,62 +745,6 @@
             "OutputConfiguration" = "8:"
             "OutputGroupCanonicalName" = "8:PublishItems"
             "OutputProjectGuid" = "8:{000D8F35-5B70-4E59-A7E4-8A124DFE5047}"
-            "ShowKeyOutput" = "11:TRUE"
-                "ExcludeFilters"
-                {
-                }
-            }
-            "{5259A561-127C-4D43-A0A1-72F10C7B3BF8}:_87BB66EE7A474D8EB698ADAF55EAA514"
-            {
-            "SourcePath" = "8:..\\ExternalAssets\\obj\\Release\\ExternalAssets.dll"
-            "TargetName" = "8:"
-            "Tag" = "8:"
-            "Folder" = "8:_0DC2A8957CA241E9983D1AA9B59EDE1C"
-            "Condition" = "8:"
-            "Transitive" = "11:FALSE"
-            "Vital" = "11:TRUE"
-            "ReadOnly" = "11:FALSE"
-            "Hidden" = "11:FALSE"
-            "System" = "11:FALSE"
-            "Permanent" = "11:FALSE"
-            "SharedLegacy" = "11:FALSE"
-            "PackageAs" = "3:1"
-            "Register" = "3:1"
-            "Exclude" = "11:FALSE"
-            "IsDependency" = "11:FALSE"
-            "IsolateTo" = "8:"
-            "ProjectOutputGroupRegister" = "3:1"
-            "OutputConfiguration" = "8:"
-            "OutputGroupCanonicalName" = "8:Built"
-            "OutputProjectGuid" = "8:{2877C705-D9DB-4862-886E-ADE82A030CF4}"
-            "ShowKeyOutput" = "11:TRUE"
-                "ExcludeFilters"
-                {
-                }
-            }
-            "{5259A561-127C-4D43-A0A1-72F10C7B3BF8}:_A0EDCA1049E74457A4776BC8C786F9F0"
-            {
-            "SourcePath" = "8:..\\ExternalAssets\\obj\\Release\\ExternalAssets.dll"
-            "TargetName" = "8:"
-            "Tag" = "8:"
-            "Folder" = "8:_4BE2E0D0ED3840D4B6A3D5FECA598D26"
-            "Condition" = "8:"
-            "Transitive" = "11:FALSE"
-            "Vital" = "11:TRUE"
-            "ReadOnly" = "11:FALSE"
-            "Hidden" = "11:FALSE"
-            "System" = "11:FALSE"
-            "Permanent" = "11:FALSE"
-            "SharedLegacy" = "11:FALSE"
-            "PackageAs" = "3:1"
-            "Register" = "3:1"
-            "Exclude" = "11:FALSE"
-            "IsDependency" = "11:FALSE"
-            "IsolateTo" = "8:"
-            "ProjectOutputGroupRegister" = "3:1"
-            "OutputConfiguration" = "8:"
-            "OutputGroupCanonicalName" = "8:Built"
-            "OutputProjectGuid" = "8:{2877C705-D9DB-4862-886E-ADE82A030CF4}"
             "ShowKeyOutput" = "11:TRUE"
                 "ExcludeFilters"
                 {
