@@ -393,13 +393,16 @@ public static class SessionLauncher
             return new LaunchResult { Error = $"Failed to start session with {options.Generator}/{options.Cache}: {ex.Message}", Warnings = warnings };
         }
 
-        // MaxNewTokens is the generation length; MaxTokens is the context window
-        // ChatSession.TrimToFitContext budgets against. Assigning the user's
-        // "max new tokens" to MaxTokens left generation stuck at its 256 default
-        // and shrank the context budget to (setting - 256), so history was evicted
-        // after a couple of turns and the model lost the conversation.
+        // MaxNewTokens is the generation length; MaxTokens is the context
+        // window ChatSession.TrimToFitContext budgets against. Setting
+        // MaxTokens = MaxSeqLen let the full (untrimmed) prompt reach the
+        // generator's single-shot prefill, which overflows the workspace for
+        // prompts longer than the ~128-token prefill budget (qwen2-0.5b with
+        // the agent/tool system prompt is ~3000 tokens) and surfaces as a
+        // hang/empty reply. Keeping MaxTokens = MaxNewTokens trims prompts
+        // down to the prefill budget so generation starts immediately.
         session.MaxNewTokens = options.Generation.MaxNewTokens;
-        session.MaxTokens = loaded.Model.Config.MaxSeqLen;
+        session.MaxTokens = options.Generation.MaxNewTokens;
         session.Temperature = options.Sampling.Temperature;
         session.TopK = options.Sampling.TopK;
         session.TopP = options.Sampling.TopP;
