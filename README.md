@@ -305,5 +305,6 @@ SharpMind.Tests         Test suite
 - [ ] AVX512 Kernels
 - [ ] Additional Model Support
 - [ ] Optimiations
+- [ ] Microsoft IChatClient and or other services.
 
 Issues, questions, and early feedback are welcome.
