@@ -493,6 +493,12 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
             _caches[i].Reset();
     }
 
+    public void TruncateCache(int length)
+    {
+        for (int i = 0; i < _caches.Length; i++)
+            _caches[i].Truncate(length);
+    }
+
     public float CacheFillRatio => (float)_caches[0].Length / _caches[0].MaxSeqLen;
 
     public float? TokensPerSecond { get; private set; }

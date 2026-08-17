@@ -334,6 +334,12 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
             _caches[i].Reset();
     }
 
+    public void TruncateCache(int length)
+    {
+        for (int i = 0; i < _caches.Length; i++)
+            _caches[i].Truncate(length);
+    }
+
     public float CacheFillRatio => (float)_caches[0].Length / _caches[0].MaxSeqLen;
 
     public float? TokensPerSecond { get; private set; }

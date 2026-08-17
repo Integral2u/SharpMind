@@ -36,6 +36,12 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
     private readonly bool _addBos;
     private List<int>? _generatedIds;
     private readonly bool _addEos;
+    /// <summary>
+    /// Ids resident in <see cref="_caches"/>, position by position; null once
+    /// the cache's contents can no longer be vouched for (a sliding-window trim,
+    /// or caches that were handed in already holding entries).
+    /// </summary>
+    private List<int>? _cacheTokens;
 
     public StandardGenerator(
         Transformer   model,
@@ -67,6 +73,7 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
                 _caches[i] = new T().CreateKVCache(1, numKvHeads, maxSeqLen, headDim);
         }
 
+        _cacheTokens = _caches[0].Length == 0 ? [] : null;
         _defaultRng = seed.HasValue ? new Random(seed.Value) : Random.Shared;
         _workspace = new Core.Memory.Workspace(SharpMind.Core.Memory.Workspace.CalculateRequiredSize(model.Config.HiddenDim,model.Config.FfnDim,model.Config.VocabSize,model.Config.NumLayers, model.Config.MaxSeqLen));
     }
@@ -116,7 +123,10 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
         {
                         // Prefill (chunked so long prompts fit the workspace; see Prefill)
             int posOffset = _caches[0].Length;
+            // Someone else moved the cache under us: stop vouching for it.
+            if (_cacheTokens is not null && _cacheTokens.Count != posOffset) _cacheTokens = null;
             logitsTensor = Prefill.ForwardLastLogitsChunked(_model, _caches, promptIds, _workspace, PrefillProgress);
+            _cacheTokens?.AddRange(promptIds);
 
 
             int vocabSize = logitsTensor.Shape[1];
@@ -213,6 +223,9 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
                         : cache0.MaxSeqLen / 2;
                     for (int i = 0; i < cachesLen; i++)
                         _caches[i].TrimToLast(keep);
+                    // Entries now sit at positions they were not computed for;
+                    // nothing about the cache is a prefix of any prompt any more.
+                    _cacheTokens = null;
                 }
 
                 Tensor<float>? prevTensor = logitsTensor;
@@ -225,6 +238,7 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
                 _decodeTokenScratch[0] = nextId;
                 stepInput.Data[0] = nextId;
                 logitsTensor = _model.ForwardLastLogits(stepInput, _caches, newPos, _workspace);
+                _cacheTokens?.Add(nextId);
             }
 
             if (!genCfg.Stream)
@@ -262,6 +276,17 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
     {
         for (int i = 0; i < _caches.Length; i++)
             _caches[i].Reset();
+        _cacheTokens = [];
+    }
+
+    public IReadOnlyList<int>? CacheTokens => _cacheTokens;
+
+    public void TruncateCache(int length)
+    {
+        for (int i = 0; i < _caches.Length; i++)
+            _caches[i].Truncate(length);
+        if (_cacheTokens is not null && _cacheTokens.Count > length)
+            _cacheTokens.RemoveRange(length, _cacheTokens.Count - length);
     }
 
     /// <summary>KV-cache fill as a fraction of maximum capacity.</summary>
