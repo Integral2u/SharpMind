@@ -94,9 +94,10 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     /// tool call is gated through the callback.
     /// </param>
     /// <param name="disposeModel">
-    /// When <see langword="false"/> the session disposes its generator but
-    /// leaves the underlying <see cref="Transformer"/> alive, so multiple
-    /// fresh sessions can share one loaded model.
+    /// Whether disposing the session also disposes the <see cref="Transformer"/>
+    /// passed in. Defaults to <see langword="false"/>: the caller constructed the
+    /// model, so the caller owns it, and multiple sessions can share one loaded
+    /// model. Pass <see langword="true"/> only to hand ownership over.
     /// </param>
     public int MaxToolCallsPerTurn { get; set; } = 10;
     /// <summary>Maximum sub-agent nesting depth. Default 2. Reached when both parent and one sub-agent are active.</summary>
@@ -113,7 +114,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         IKVCache[]? caches = null,
         IChatPromptFormatter? formatter = null,
         int? seed = null,
-        bool disposeModel = true)
+        bool disposeModel = false)
     {
         ArgumentNullException.ThrowIfNull(tokenizer);
         ArgumentNullException.ThrowIfNull(model);
@@ -1096,9 +1097,12 @@ private void ThrowIfDisposed()
                 if (token.IsCancellationRequested) break;
                 continue;
             }
-            catch
+            catch (Exception ex)
             {
-                response(new ChatStreamEntry { Status = ChatStatus.Interrupted, IsComplete = true, TokensPerSecond = _generator.TokensPerSecond, TimeToFirstToken = _generator.TimeToFirstToken });
+                // Still caught so a host UI is not torn down by a bad turn, but the
+                // reason travels with the entry now: swallowing it made an internal
+                // failure look identical to an empty answer.
+                response(new ChatStreamEntry { Status = ChatStatus.Interrupted, IsComplete = true, TokensPerSecond = _generator.TokensPerSecond, TimeToFirstToken = _generator.TimeToFirstToken, Error = $"{ex.GetType().Name}: {ex.Message}" });
                 break;
             }
 
