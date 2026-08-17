@@ -183,14 +183,12 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
         int draftLen = numHeads + 1; // LM-head greedy + K head predictions
 
         // Prefill
-        // Process the full prompt in one go.  After this, the KV cache has
-        // promptLen entries and logitsTensor predicts the very next token.
-        _workspace.Reset();
+        // Process the full prompt (in chunks that fit the workspace; see
+        // Prefill). After this, the KV cache has promptLen entries and
+        // logitsTensor predicts the very next token.
         int posOffset = _caches[0].Length;
-        using var prefillInput = _workspace.Rent<int>([1, promptIds.Length]);
-        promptIds.CopyTo(prefillInput.Data);
-        Tensor<float>? logitsTensor = _model.ForwardLastLogits(
-            prefillInput, _caches, posOffset, _workspace);
+        Tensor<float>? logitsTensor = Prefill.ForwardLastLogitsChunked(
+            _model, _caches, promptIds, _workspace);
 
         try
         {
@@ -205,10 +203,11 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
             int[] scratchOne = new int[1];
 
             // Extract the normed hidden state for the last prompt position.
-            // _cachedHidden after prefill is [1, promptLen, H] pre-norm;
-            // RefillNormedHidden copies row (promptLen - 1), norms it, and
-            // stores into _normedHiddenScratch for the first Medusa prediction.
-            RefillNormedHidden(promptLen - 1);
+            // After a chunked prefill _cachedHidden holds only the last prefill
+            // chunk [1, chunkLen, H] pre-norm, so the last prompt token is its
+            // final row; RefillNormedHidden copies that row, norms it, and stores
+            // it into _normedHiddenScratch for the first Medusa prediction.
+            RefillNormedHidden((_model.LastCachedHidden?.Shape[1] ?? 1) - 1);
 
             // Decode loop
             while (generatedIds.Count < genCfg.MaxNewTokens)

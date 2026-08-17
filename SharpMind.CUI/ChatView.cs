@@ -481,7 +481,15 @@ public sealed class ChatView : View
             SetGenerating(false);
             _toolLabel.Text = "Tool: none";
             _pendingSpeakerName = null;
-            _statusLabel.Text = "Ready";
+            if (entry.Error is { } error)
+            {
+                _statusLabel.Text = "Error";
+                AppendTranscript($"{AgentName} [error]: {error}");
+            }
+            else
+            {
+                _statusLabel.Text = "Ready";
+            }
         }
 
         SetNeedsDisplay();

@@ -15,13 +15,12 @@ namespace SharpMind.CUI.App;
 /// load/unload state.
 ///
 /// The one constraint that shapes this whole class:
-/// <c>ChatSession.DisposeAsync()</c> unconditionally disposes the
-/// Transformer it was built on. That means if two ChatSessions share one
-/// LoadedModel, only the session that closes *last* may actually call
-/// DisposeAsync — every session that closes while at least one sibling is
-/// still using the same model must be dropped without disposing anything,
-/// or it would destroy the model out from under the sibling still running.
-/// <see cref="Release"/> is exactly that decision, made by ref count.
+/// <c>ChatSession</c> does NOT dispose the Transformer it was built on by
+/// default (disposeModel defaults to false), so a session may safely end
+/// while siblings still use the shared model. The model is only disposed
+/// when the last session using it closes — the caller decides that via
+/// <see cref="Release"/>'s ref count and passes the answer on as the
+/// bridge's DisposeUnderlyingSession flag.
 /// </summary>
 public sealed class ModelCache
 {

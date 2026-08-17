@@ -107,12 +107,9 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
         Tensor<float>? logitsTensor = null;
         try
         {
-            // Prefill
-            _workspace.Reset();
+            // Prefill (chunked so long prompts fit the workspace; see Prefill)
             int posOffset = _caches[0].Length;
-            using var prefillInput = _workspace.Rent<int>([1, promptIds.Length]);
-            promptIds.CopyTo(prefillInput.Data);
-                logitsTensor = _model.ForwardLastLogits(prefillInput, _caches, posOffset, _workspace);
+            logitsTensor = Prefill.ForwardLastLogitsChunked(_model, _caches, promptIds, _workspace);
 
 
             int vocabSize = logitsTensor.Shape[1];

@@ -168,13 +168,15 @@ public sealed class ChatSessionBridge(IChatSession session, bool disposeUnderlyi
             try { await _loopTask; } catch { /* already surfaced via Fault if relevant */ }
         }
 
-        // ChatSession.DisposeAsync() unconditionally disposes the Transformer
-        // it was built on. When a model is shared across multiple named chat
-        // sessions (see ModelCache), only the session that closes last may
-        // actually call this — every earlier one must skip it entirely, or
-        // closing one tab would destroy the model out from under siblings
-        // still using it. The caller (MainWindow) decides this via ref
-        // counting and passes the answer in at construction time.
+        // ChatSession no longer disposes the Transformer it was built on by
+        // default (disposeModel defaults to false), but DisposeUnderlyingSession
+        // here still controls whether the underlying session object is unwound at
+        // all. When a model is shared across multiple named chat sessions (see
+        // ModelCache), only the session that closes last may actually call
+        // DisposeAsync — every earlier one must skip it entirely, or closing one
+        // tab would destroy the model out from under siblings still using it. The
+        // caller (MainWindow) decides this via ref counting and passes the answer
+        // in at construction time.
         if (DisposeUnderlyingSession)
             await session.DisposeAsync();
 

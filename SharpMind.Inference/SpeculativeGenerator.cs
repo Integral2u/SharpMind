@@ -98,9 +98,7 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
         rateTracker.Start();
 
         int posOffset = _caches[0].Length;
-        using var prefillInput = Tensor<int>.From(promptIds, 1, promptIds.Length);
-        _workspace?.Reset();
-        Tensor<float>? logitsTensor = _model.ForwardLastLogits(prefillInput, _caches, posOffset, _workspace);
+        Tensor<float>? logitsTensor = Prefill.ForwardLastLogitsChunked(_model, _caches, promptIds, _workspace!);
 
         try
         {
