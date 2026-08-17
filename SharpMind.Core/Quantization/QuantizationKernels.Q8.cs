@@ -43,7 +43,7 @@ public static partial class QuantizationKernels
             var vacc1 = Vector256<float>.Zero;
             var vd = Vector256.Create(d);
             int i = 0;
-            for (; i <= blockEnd - 24; i += 16)
+            for (; i <= blockEnd - 16; i += 16)
             {
                 var vi0 = Vector256.LoadUnsafe(ref pIn[i]);
                 var vi1 = Vector256.LoadUnsafe(ref pIn[i + 8]);
@@ -52,7 +52,7 @@ public static partial class QuantizationKernels
                 vacc0 = Avx.Add(vacc0, Avx.Multiply(vi0, Avx.Multiply(vw0, vd)));
                 vacc1 = Avx.Add(vacc1, Avx.Multiply(vi1, Avx.Multiply(vw1, vd)));
             }
-            for (; i <= blockEnd - 16; i += 8)
+            for (; i <= blockEnd - 8; i += 8)
             {
                 var vi = Vector256.LoadUnsafe(ref pIn[i]);
                 var vw = Avx.ConvertToVector256Single(Avx2.ConvertToVector256Int32(values + i));
@@ -83,7 +83,7 @@ public static partial class QuantizationKernels
 
             var vd = Vector256.Create(d);
             int i = 0;
-            for (; i <= blockEnd - 24; i += 16)
+            for (; i <= blockEnd - 16; i += 16)
             {
                 var vi0 = Vector256.LoadUnsafe(ref pIn[i]);
                 var vi1 = Vector256.LoadUnsafe(ref pIn[i + 8]);
@@ -92,7 +92,7 @@ public static partial class QuantizationKernels
                 vacc0 = Fma.MultiplyAdd(vi0, Avx.Multiply(vw0, vd), vacc0);
                 vacc1 = Fma.MultiplyAdd(vi1, Avx.Multiply(vw1, vd), vacc1);
             }
-            for (; i <= blockEnd - 16; i += 8)
+            for (; i <= blockEnd - 8; i += 8)
             {
                 var vi = Vector256.LoadUnsafe(ref pIn[i]);
                 var vw = Avx.ConvertToVector256Single(Avx2.ConvertToVector256Int32(values + i));
@@ -173,7 +173,7 @@ public static partial class QuantizationKernels
             var vacc1 = Vector256<float>.Zero;
             var vd = Vector256.Create(d);
             int i = 0;
-            for (; i <= blockEnd - 24; i += 16)
+            for (; i <= blockEnd - 16; i += 16)
             {
                 var vi0 = Vector256.LoadUnsafe(ref pIn[i]);
                 var vi1 = Vector256.LoadUnsafe(ref pIn[i + 8]);
@@ -182,7 +182,7 @@ public static partial class QuantizationKernels
                 vacc0 = Avx.Add(vacc0, Avx.Multiply(vi0, Avx.Multiply(vw0, vd)));
                 vacc1 = Avx.Add(vacc1, Avx.Multiply(vi1, Avx.Multiply(vw1, vd)));
             }
-            for (; i <= blockEnd - 16; i += 8)
+            for (; i <= blockEnd - 8; i += 8)
             {
                 var vi = Vector256.LoadUnsafe(ref pIn[i]);
                 var vw = Avx.ConvertToVector256Single(Avx2.ConvertToVector256Int32(qs + i));
@@ -213,7 +213,7 @@ public static partial class QuantizationKernels
 
             var vd = Vector256.Create(d);
             int i = 0;
-            for (; i <= blockEnd - 24; i += 16)
+            for (; i <= blockEnd - 16; i += 16)
             {
                 var vi0 = Vector256.LoadUnsafe(ref pIn[i]);
                 var vi1 = Vector256.LoadUnsafe(ref pIn[i + 8]);
@@ -222,7 +222,7 @@ public static partial class QuantizationKernels
                 vacc0 = Fma.MultiplyAdd(vi0, Avx.Multiply(vw0, vd), vacc0);
                 vacc1 = Fma.MultiplyAdd(vi1, Avx.Multiply(vw1, vd), vacc1);
             }
-            for (; i <= blockEnd - 16; i += 8)
+            for (; i <= blockEnd - 8; i += 8)
             {
                 var vi = Vector256.LoadUnsafe(ref pIn[i]);
                 var vw = Avx.ConvertToVector256Single(Avx2.ConvertToVector256Int32(qs + i));
