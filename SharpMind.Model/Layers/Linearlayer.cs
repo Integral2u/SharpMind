@@ -13,14 +13,22 @@ public abstract class LinearLayer : IDisposable
     protected bool _ownsBias;
     private bool _disposed;
 
-    protected LinearLayer(string name, int inFeatures, int outFeatures, bool bias, Tensor<float>? weight, Tensor<float>? biasTensor)
+    /// <param name="allocateFullWeight">
+    /// When <paramref name="weight"/> is null, whether to materialise a full
+    /// <c>[inFeatures, outFeatures]</c> float weight (true, the training default)
+    /// or only a one-column placeholder (false). Quantized inference layers run
+    /// off raw bytes and never read this float weight, so on a large model the
+    /// full copy is pure dead memory — ~28 GB on a 7B — and passing false here is
+    /// what lets quantized-resident loading actually stay resident.
+    /// </param>
+    protected LinearLayer(string name, int inFeatures, int outFeatures, bool bias, Tensor<float>? weight, Tensor<float>? biasTensor, bool allocateFullWeight = true)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(inFeatures);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(outFeatures);
         Name = name;
         InFeatures = inFeatures;
         OutFeatures = outFeatures;
-        _weight = weight ?? new Tensor<float>(inFeatures, outFeatures);
+        _weight = weight ?? new Tensor<float>(inFeatures, allocateFullWeight ? outFeatures : 1);
         _bias = biasTensor ?? (bias ? new Tensor<float>(outFeatures) : null);
         _ownsWeight = weight == null;
         _ownsBias = biasTensor == null && _bias != null;
