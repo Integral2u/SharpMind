@@ -52,8 +52,6 @@ public sealed class TextFileSource : IDataSource
             ? $"TextFile({Path.GetFileName(_paths[0])}, {_mode})"
             : $"TextFiles({_paths.Length} files, {_mode})";
 
-    public string Current => throw new NotImplementedException();
-
     public async IAsyncEnumerable<string> ReadAsync(
     [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
@@ -84,8 +82,4 @@ public sealed class TextFileSource : IDataSource
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
-    public ValueTask<bool> MoveNextAsync()
-    {
-        throw new NotImplementedException();
-    }
 }
