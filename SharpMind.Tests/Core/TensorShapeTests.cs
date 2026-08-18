@@ -92,5 +92,23 @@ namespace SharpMind.Tests.Core
             Assert.Throws<ArgumentException>(() =>
                 TensorShape.AssertMatMulCompatible(new TensorShape(2, 3), new TensorShape(4, 5)));
         }
+
+        [Theory]
+        [InlineData(new[] { int.MaxValue, 2 })]
+        [InlineData(new[] { int.MaxValue, 1, 2 })]
+        [InlineData(new[] { int.MaxValue, 1, 1, 2 })]
+        [InlineData(new[] { 1 << 30, 4 })]
+        [InlineData(new[] { 1 << 20, 1 << 20 })]
+        public void Constructors_ElementCountOverflow_Throws(int[] dims)
+        {
+            Assert.Throws<ArgumentOutOfRangeException>(() => new TensorShape(dims));
+        }
+
+        [Fact]
+        public void Constructor_FixedRank_ElementCountOverflow_Throws()
+        {
+            Assert.Throws<ArgumentOutOfRangeException>(() => new TensorShape(int.MaxValue, 2, 1, 1));
+            Assert.Throws<ArgumentOutOfRangeException>(() => new TensorShape(int.MaxValue, 2));
+        }
     }
 }

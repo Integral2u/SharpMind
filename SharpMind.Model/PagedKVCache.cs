@@ -50,8 +50,14 @@ public sealed class PagedKVCache : IDisposable
         _pageSize   = pageSize;
         _numPages   = (maxSeqLen + pageSize - 1) / pageSize;
 
-        _stridePage = numKvHeads * pageSize * headDim;
-        _strideHead = pageSize * headDim;
+        long stridePageLong = (long)numKvHeads * pageSize * headDim;
+        if (stridePageLong > int.MaxValue)
+            throw new ArgumentOutOfRangeException(nameof(pageSize), $"PagedKV page stride {stridePageLong} overflows int.");
+        long strideHeadLong = (long)pageSize * headDim;
+        if (strideHeadLong > int.MaxValue)
+            throw new ArgumentOutOfRangeException(nameof(headDim), $"PagedKV head stride {strideHeadLong} overflows int.");
+        _stridePage = (int)stridePageLong;
+        _strideHead = (int)strideHeadLong;
 
         _keys   = new Tensor<float>(batchSize, _numPages, numKvHeads, pageSize, headDim);
         _values = new Tensor<float>(batchSize, _numPages, numKvHeads, pageSize, headDim);
@@ -197,8 +203,12 @@ public sealed class PagedKVCache : IDisposable
         ThrowIfDisposed();
         if (_currentPosition == 0) return null;
         int activePages = (_currentPosition + _pageSize - 1) / _pageSize;
-        int batchFloats = activePages * _stridePage;
-        int totalFloats = batchFloats * _batchSize;
+        long totalFloatsLong = (long)activePages * _stridePage * _batchSize;
+        if (totalFloatsLong * 2 > int.MaxValue)
+            throw new InvalidOperationException(
+                $"PagedKVCache snapshot of {totalFloatsLong * 2} floats overflows int (position {_currentPosition}/{_maxSeqLen}).");
+        int batchFloats = checked(activePages * _stridePage);
+        int totalFloats = (int)totalFloatsLong;
         var data = new float[totalFloats * 2];
 
         for (int b = 0; b < _batchSize; b++)

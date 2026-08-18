@@ -152,7 +152,10 @@ public sealed class KVCache(int batchSize, int numKvHeads, int maxSeqLen, int he
     public object? Snapshot()
     {
         if (CurrentPosition == 0) return null;
-        int activeLen = _batchSize * _numKvHeads * CurrentPosition * _headDim;
+        long activeLenLong = (long)_batchSize * _numKvHeads * CurrentPosition * _headDim;
+        if (activeLenLong > int.MaxValue)
+            throw new InvalidOperationException($"KVCache snapshot of {activeLenLong} elements overflows int.");
+        int activeLen = (int)activeLenLong;
         var k = new float[activeLen];
         var v = new float[activeLen];
         _keys.Data[..activeLen].CopyTo(k);

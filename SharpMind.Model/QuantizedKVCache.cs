@@ -35,8 +35,14 @@ public sealed class QuantizedKVCache : IKVCache
             QuantDType.Q4_0 => Q4_BLOCK,
             _ => Q8_BLOCK
         };
-        _qStride = _nBlocks * _blockBytes;
-        _headStride = maxSeqLen * _qStride;
+        long qStrideLong = (long)_nBlocks * _blockBytes;
+        if (qStrideLong > int.MaxValue)
+            throw new ArgumentOutOfRangeException(nameof(headDim), $"QuantizedKV row stride {qStrideLong} overflows int.");
+        long headStrideLong = (long)maxSeqLen * qStrideLong;
+        if (headStrideLong > int.MaxValue)
+            throw new ArgumentOutOfRangeException(nameof(maxSeqLen), $"QuantizedKV head stride {headStrideLong} overflows int.");
+        _qStride = (int)qStrideLong;
+        _headStride = (int)headStrideLong;
         MaxSeqLen = maxSeqLen;
 
         long totalSize = (long)batchSize * numKvHeads * maxSeqLen * _qStride;
@@ -156,8 +162,10 @@ public sealed class QuantizedKVCache : IKVCache
     public object? Snapshot()
     {
         if (CurrentPosition == 0) return null;
-        int headBytes = CurrentPosition * _qStride;
-        int totalBytes = _batchSize * _numKvHeads * headBytes;
+        long totalBytesLong = (long)_batchSize * _numKvHeads * CurrentPosition * _qStride;
+        if (totalBytesLong > int.MaxValue)
+            throw new InvalidOperationException($"QuantizedKVCache snapshot of {totalBytesLong} bytes overflows int.");
+        int totalBytes = (int)totalBytesLong;
         var k = new byte[totalBytes];
         var v = new byte[totalBytes];
         Buffer.BlockCopy(_qKeys, 0, k, 0, totalBytes);
