@@ -297,5 +297,6 @@ See [CHANGELOG.md](CHANGELOG.md) for release history.
 - [ ] Additional Model Support
 - [ ] Optimiations
 - [ ] Microsoft IChatClient and or other services.
+- [ ] Common tools, GREP, GIT etc
 
 Issues, questions, and early feedback are welcome.
