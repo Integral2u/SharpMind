@@ -256,9 +256,12 @@ public static class SessionLauncher
         {
             DisabledTools = options.DisabledTools
         };
-        builder.WithTools(new CuiTools(cuiContext));
-        builder.WithTools(new WeatherTool());
-        builder.WithTools(new FileSystemTool(options.ProjectPath ?? Directory.GetCurrentDirectory()));
+        if (!options.DisableTools)
+        {
+            builder.WithTools(new CuiTools(cuiContext));
+            builder.WithTools(new WeatherTool());
+            builder.WithTools(new FileSystemTool(options.ProjectPath ?? Directory.GetCurrentDirectory()));
+        }
 
             foreach (var folder in options.SkillFolders)
             builder.WithSkills(folder);
@@ -276,7 +279,7 @@ public static class SessionLauncher
                 builder.WithAdditionalSystemPrompt(systemPrompt);
         }
 
-        if (resolvedToolPaths.Count > 0)
+        if (resolvedToolPaths.Count > 0 && !options.DisableTools)
         {
             var (toolInstances, toolWarnings) = ToolAssemblyLoader.Load(resolvedToolPaths);
             warnings.AddRange(toolWarnings);
@@ -306,14 +309,14 @@ public static class SessionLauncher
             pluginPreProcessors.AddRange(embedded.Plugins.PreProcessors);
             pluginPostProcessors.AddRange(embedded.Plugins.PostProcessors);
             pluginGenerators.AddRange(embedded.Plugins.Generators);
-            if (embedded.Plugins.Tools.Count > 0)
+            if (embedded.Plugins.Tools.Count > 0 && !options.DisableTools)
                 builder.WithTools([.. embedded.Plugins.Tools]);
         }
 
         builder.PluginCompactors = pluginCompactors;
         builder.PluginPreProcessors = pluginPreProcessors;
         builder.PluginPostProcessors = pluginPostProcessors;
-        if (pluginResult.Tools.Count > 0)
+        if (pluginResult.Tools.Count > 0 && !options.DisableTools)
             builder.WithTools([.. pluginResult.Tools]);
 
         // Resolve compactor: plugin compactor takes priority, then built-in strategy
@@ -327,7 +330,10 @@ public static class SessionLauncher
                 _ => null
             };
 
-        IAgentBuilder agentBuilder = builder;
+        // SkipAgentPrompt drops the whole agent layer — no synthesized agent
+        // prompt, no sub-agents, no tool-call loop. DisableTools is the narrower
+        // control that keeps the agent prompt but registers no tools.
+        IAgentBuilder? agentBuilder = options.SkipAgentPrompt ? null : builder;
 
         // --- Resolve generator/cache type combo and build the session ------
         Type cacheBuilder = options.Cache switch
@@ -406,8 +412,14 @@ public static class SessionLauncher
         // allocator and surfaced as an empty reply). The cost is that a long
         // first turn prefills slowly — progress is surfaced to the UI as
         // "Prefilling NN.NN%" via IGenerator.PrefillProgress.
+        //
+        // Options.MaxTokens opts back into a truncated context window (clamped to
+        // [1, MaxSeqLen]) to mimic the pre-restore fast-prefill behavior; when null,
+        // the full MaxSeqLen context is used.
         session.MaxNewTokens = options.Generation.MaxNewTokens;
-        session.MaxTokens = loaded.Model.Config.MaxSeqLen;
+        session.MaxTokens = options.MaxTokens is int maxTokens && maxTokens > 0
+            ? Math.Min(maxTokens, loaded.Model.Config.MaxSeqLen)
+            : loaded.Model.Config.MaxSeqLen;
         session.Temperature = options.Sampling.Temperature;
         session.TopK = options.Sampling.TopK;
         session.TopP = options.Sampling.TopP;

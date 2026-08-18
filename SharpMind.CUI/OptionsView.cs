@@ -27,6 +27,7 @@ public sealed class OptionsView : View
     private readonly TextField topPField;
     private readonly TextField repetitionPenaltyField;
     private readonly TextField maxTokensField;
+    private readonly TextField maxContextTokensField;
     private readonly TextField userNameField;
     private readonly RadioGroup generatorRadio;
     private readonly CheckBox gpuNonQuantCheck;
@@ -35,6 +36,8 @@ public sealed class OptionsView : View
     private readonly TextField agentNameField;
     private readonly CheckBox agentsCheck;
     private readonly CheckBox enableThinkingCheck;
+    private readonly CheckBox skipAgentPromptCheck;
+    private readonly CheckBox disableToolsCheck;
     private readonly RadioGroup compactorRadio;
     private readonly RadioGroup fileAccessRadio;
     private readonly RadioGroup networkAccessRadio;
@@ -209,6 +212,18 @@ public sealed class OptionsView : View
                 _options.Generation = _options.Generation with { MaxNewTokens = v };
         };
         _formContent.Add(maxTokensField);
+        row++;
+
+        AddLabel("Max context tokens (0 = full):");
+        maxContextTokensField = new TextField((ustring)(options.MaxTokens?.ToString() ?? "0")) { X = 30, Y = row, Width = 10 };
+        maxContextTokensField.TextChanged += (_) =>
+        {
+            if (int.TryParse(maxContextTokensField.Text.ToString(), out var v) && v > 0)
+                _options.MaxTokens = v;
+            else
+                _options.MaxTokens = null;
+        };
+        _formContent.Add(maxContextTokensField);
         row += 2;
 
         AddLabel("Agent name:");
@@ -231,6 +246,16 @@ public sealed class OptionsView : View
         enableThinkingCheck = new CheckBox("Enable model thinking (Qwen3 reasoning)", options.EnableThinking) { X = 1, Y = row };
         enableThinkingCheck.Toggled += (_) => _options.EnableThinking = enableThinkingCheck.Checked;
         _formContent.Add(enableThinkingCheck);
+        row++;
+
+        skipAgentPromptCheck = new CheckBox("Skip agent prompt (faster first turn)", options.SkipAgentPrompt) { X = 1, Y = row };
+        skipAgentPromptCheck.Toggled += (_) => _options.SkipAgentPrompt = skipAgentPromptCheck.Checked;
+        _formContent.Add(skipAgentPromptCheck);
+        row++;
+
+        disableToolsCheck = new CheckBox("Disable tools (no tool JSON / tool loop)", options.DisableTools) { X = 1, Y = row };
+        disableToolsCheck.Toggled += (_) => _options.DisableTools = disableToolsCheck.Checked;
+        _formContent.Add(disableToolsCheck);
         row++;
 
         AddLabel("Context compaction:");
@@ -388,10 +413,13 @@ public sealed class OptionsView : View
         repetitionPenaltyField.Text = (ustring)_options.Generation.RepetitionPenalty.ToString("F2");
         repetitionWindowField.Text = (ustring)_options.Generation.RepetitionWindow.ToString("F2");
         maxTokensField.Text = (ustring)_options.Generation.MaxNewTokens.ToString();
+        maxContextTokensField.Text = (ustring)(_options.MaxTokens?.ToString() ?? "0");
         agentNameField.Text = (ustring)_options.AgentName;
         userNameField.Text = (ustring)_options.UserName;
         agentsCheck.Checked = options.AgentsEnabled;
         enableThinkingCheck.Checked = options.EnableThinking;
+        skipAgentPromptCheck.Checked = options.SkipAgentPrompt;
+        disableToolsCheck.Checked = options.DisableTools;
         compactorRadio.SelectedItem = (int)options.Compactor;
         fileAccessRadio.SelectedItem = (int)options.FileAccess;
         networkAccessRadio.SelectedItem = (int)options.NetworkAccess;
@@ -585,33 +613,5 @@ public sealed class OptionsView : View
         Application.Run(dialog);
     }
 
-    private static void CopyOptionsInto(SessionOptions target, SessionOptions source)
-    {
-        target.ModelPath = source.ModelPath;
-        target.ProjectPath = source.ProjectPath;
-        target.SkillFolders = source.SkillFolders;
-        target.ToolAssemblyPaths = source.ToolAssemblyPaths;
-        target.ToolsFolder = source.ToolsFolder;
-        target.Generator = source.Generator;
-        target.Cache = source.Cache;
-        target.LoadMode = source.LoadMode;
-        target.Formatter = source.Formatter;
-        target.HardwareTier = source.HardwareTier;
-        target.UseGpu = source.UseGpu;
-        target.GpuNonQuant = source.GpuNonQuant;
-        target.GpuVecDot = source.GpuVecDot;
-        target.GpuMatMul = source.GpuMatMul;
-        target.FileAccess = source.FileAccess;
-        target.NetworkAccess = source.NetworkAccess;
-        target.Sampling = source.Sampling;
-        target.Generation = source.Generation;
-        target.AgentName = source.AgentName;
-        target.AgentsEnabled = source.AgentsEnabled;
-        target.EnableThinking = source.EnableThinking;
-        target.MaxAgentDepth = source.MaxAgentDepth;
-        target.MaxToolCallsPerTurn = source.MaxToolCallsPerTurn;
-        target.DisabledTools = [.. source.DisabledTools];
-        target.DisabledPreProcessors = [.. source.DisabledPreProcessors];
-        target.DisabledPostProcessors = [.. source.DisabledPostProcessors];
-    }
+    private static void CopyOptionsInto(SessionOptions target, SessionOptions source) => source.CopyTo(target);
 }

@@ -1089,39 +1089,7 @@ public sealed class MainWindow : Window
         ShowOptions();
     }
 
-    private static SessionOptions CloneOptions(SessionOptions source) => new()
-    {
-        ModelPath = source.ModelPath,
-        ProjectPath = source.ProjectPath,
-        SkillFolders = source.SkillFolders.ToList(),
-        ToolAssemblyPaths = source.ToolAssemblyPaths.ToList(),
-        ToolsFolder = source.ToolsFolder,
-        Generator = source.Generator,
-        Cache = source.Cache,
-        Formatter = source.Formatter,
-        LoadMode = source.LoadMode,
-        HardwareTier = source.HardwareTier,
-        UseGpu = source.UseGpu,
-        GpuNonQuant = source.GpuNonQuant,
-        GpuVecDot = source.GpuVecDot,
-        GpuMatMul = source.GpuMatMul,
-        UseParallelKernels = source.UseParallelKernels,
-        FileAccess = source.FileAccess,
-        NetworkAccess = source.NetworkAccess,
-        Sampling = source.Sampling,
-        Generation = source.Generation,
-        AgentName = source.AgentName,
-        Compactor = source.Compactor,
-        PluginCompactorName = source.PluginCompactorName,
-        AgentsEnabled = source.AgentsEnabled,
-        MaxAgentDepth = source.MaxAgentDepth,
-        MaxToolCallsPerTurn = source.MaxToolCallsPerTurn,
-        ShowThinking = source.ShowThinking,
-        EnableThinking = source.EnableThinking,
-        DisabledTools = new HashSet<string>(source.DisabledTools),
-        DisabledPreProcessors = new HashSet<string>(source.DisabledPreProcessors),
-        DisabledPostProcessors = new HashSet<string>(source.DisabledPostProcessors)
-    };
+    private static SessionOptions CloneOptions(SessionOptions source) => source.Clone();
 
     // --- Permission "Ask" dialogs --------------------------------------------
 

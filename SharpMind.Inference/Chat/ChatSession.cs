@@ -900,8 +900,12 @@ private void ThrowIfDisposed()
             var responseText = _responseBuffer.ToString();
             ChatTrace($"generation done, frags={genFrags} chars={responseText.Length}");
 
-            // Tool call detection
+            // Tool call detection. Guarded on RegisteredToolNames.Count > 0 so a
+            // session launched with tools disabled (or an agent builder with no
+            // registered tools) can never enter the tool-call loop, even if the
+            // model hallucinates a <tool_call> tag.
             if (_agentBuilder is not null
+                && _agentBuilder.RegisteredToolNames.Count > 0
                 && toolCallCount < MaxToolCallsPerTurn
                 && TryParseToolCall(responseText, out var toolCall)
                 && toolCall is not null)

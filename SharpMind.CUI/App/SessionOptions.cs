@@ -156,9 +156,20 @@ public sealed class SessionOptions
     /// <summary>Same as <see cref="FileAccess"/> but for ToolCategory.Network requests.</summary>
     public ToolPermission NetworkAccess { get; set; } = ToolPermission.Ask;
 
-    // Sampling / generation
+// Sampling / generation
     public SamplingConfig Sampling { get; set; } = SamplingConfig.Llama3Chat;
     public GenerationConfig Generation { get; set; } = GenerationConfig.Default;
+
+    /// <summary>
+    /// Override for the session's context window (<see cref="IChatSession.MaxTokens"/>).
+    /// When <see langword="null"/> (default) the session uses the model's full
+    /// <c>MaxSeqLen</c> so long conversations stay intact. Set to a smaller value to
+    /// mimic a truncated context window — e.g. the pre-restore behavior where
+    /// MaxTokens equalled the per-turn <c>MaxNewTokens</c> cap — which keeps the
+    /// first-turn prefill fast but trims older history (and the agent/tool system
+    /// prompt) via <c>TrimToFitContext</c>. Launch clamps it to [1, MaxSeqLen].
+    /// </summary>
+    public int? MaxTokens { get; set; }
 
     // Agent
     public string AgentName { get; set; } = "Delta";
@@ -188,8 +199,79 @@ public sealed class SessionOptions
     /// <summary>Set of pre-processor names that should be disabled for this session.</summary>
     public HashSet<string> DisabledPreProcessors { get; set; } = [];
 
-    /// <summary>Set of post-processor names that should be disabled for this session.</summary>
+/// <summary>Set of post-processor names that should be disabled for this session.</summary>
     public HashSet<string> DisabledPostProcessors { get; set; } = [];
+
+    /// <summary>
+    /// Skip injecting the synthesized AgentBuilder system prompt (behavior rules,
+    /// agent description, tool JSON) into the conversation. The first turn then
+    /// prefills far faster on lightweight models. Because the same AgentBuilder
+    /// backs the tool-call loop, skipping the prompt also drops the agent layer
+    /// entirely — <see cref="DisableTools"/> is the narrower control.
+    /// </summary>
+    public bool SkipAgentPrompt { get; set; }
+
+    /// <summary>
+    /// Master switch that registers no tools for this session — no tool JSON in the
+    /// agent prompt and no tool-call loop — even if tool DLLs/folders are otherwise
+    /// configured. Useful with untrained models that otherwise fan into runaway
+    /// tool-call loops on trivial questions.
+    /// </summary>
+    public bool DisableTools { get; set; }
+
+    /// <summary>
+    /// Deep-copies every field into a fresh instance. The CUI's launch path
+    /// clones options before building a session (so later edits to the Options
+    /// screen can't mutate an in-flight launch), and preset/resume paths use the
+    /// same copy logic — keeping one shared implementation prevents a field from
+    /// being silently dropped when it's added here but forgotten in a hand-written
+    /// copy list.
+    /// </summary>
+    public SessionOptions Clone()
+    {
+        var copy = new SessionOptions();
+        CopyTo(copy);
+        return copy;
+    }
+
+    /// <summary>Copies every field of this instance onto <paramref name="target"/>.</summary>
+    public void CopyTo(SessionOptions target)
+    {
+        target.ModelPath = ModelPath;
+        target.ProjectPath = ProjectPath;
+        target.SkillFolders = [.. SkillFolders];
+        target.ToolAssemblyPaths = [.. ToolAssemblyPaths];
+        target.ToolsFolder = ToolsFolder;
+        target.Generator = Generator;
+        target.Cache = Cache;
+        target.Formatter = Formatter;
+        target.LoadMode = LoadMode;
+        target.HardwareTier = HardwareTier;
+        target.UseGpu = UseGpu;
+        target.GpuNonQuant = GpuNonQuant;
+        target.GpuVecDot = GpuVecDot;
+        target.GpuMatMul = GpuMatMul;
+        target.UseParallelKernels = UseParallelKernels;
+        target.FileAccess = FileAccess;
+        target.NetworkAccess = NetworkAccess;
+        target.Sampling = Sampling;
+        target.Generation = Generation;
+        target.MaxTokens = MaxTokens;
+        target.AgentName = AgentName;
+        target.UserName = UserName;
+        target.Compactor = Compactor;
+        target.PluginCompactorName = PluginCompactorName;
+        target.AgentsEnabled = AgentsEnabled;
+        target.MaxAgentDepth = MaxAgentDepth;
+        target.MaxToolCallsPerTurn = MaxToolCallsPerTurn;
+        target.ShowThinking = ShowThinking;
+        target.EnableThinking = EnableThinking;
+        target.DisabledTools = [.. DisabledTools];
+        target.DisabledPreProcessors = [.. DisabledPreProcessors];
+        target.DisabledPostProcessors = [.. DisabledPostProcessors];
+        target.SkipAgentPrompt = SkipAgentPrompt;
+        target.DisableTools = DisableTools;
+    }
 
     public static SessionOptions Default => new();
 }
