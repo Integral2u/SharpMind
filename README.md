@@ -290,18 +290,9 @@ SharpMind.Tests         Test suite
 
 ## Status & roadmap
 
-# Version 1.0.0.0
-- [x] Console User Interface
-- [x] Model Loading. GGUF and SMM loading (full + streaming)
-- [x] Inference Standard, Quantized and Medusa decoding
-- [x] GPU kernels for common quant types via SharpMind.GPU
-- [x] Terminal chat app with agent tooling
-- [x] Documentation and getting-started guides
-- [x] Training
-- [x] Quantization
-- [x] Conversion
+See [CHANGELOG.md](CHANGELOG.md) for release history.
 
-# Version 1.0.0.x (not ordered)
+# Wishlist (not ordered)
 - [ ] AVX512 Kernels
 - [ ] Additional Model Support
 - [ ] Optimiations
