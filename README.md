@@ -5,7 +5,7 @@
 <p align="center"><b>SharpMind. A pure C# / .NET LLM engine — inference and agent tooling in one solution.</b></p>
 
 <p>
-  <img alt="status" src="https://img.shields.io/badge/status-1.0.0.0-brightgreen">
+  <img alt="status" src="https://img.shields.io/github/v/release/Integral2u/SharpMind?label=status&color=brightgreen">
   <img alt="lang" src="https://img.shields.io/badge/language-C%23%20(.NET%2010)-239120">
   <img alt="deps" src="https://img.shields.io/badge/dependencies-near--zero-blue">
 </p>
@@ -46,7 +46,7 @@ It ships as a set of composable libraries plus a terminal chat application (`Sha
 
 The quickest way to try the terminal chat client is the installer, which sets up `SharpMind.CUI`, Start Menu + desktop shortcuts, and the app folder:
 
-**[Download SharpMind Console Setup (MSI)](https://github.com/Integral2u/SharpMind/releases/download/v1.0.0.0/SharpMind.Console.Setup.msi)**
+**[Download SharpMind Console Setup (MSI)](https://github.com/Integral2u/SharpMind/releases/latest/download/SharpMind.Console.Setup.msi)**
 
 Requires the [.NET 10 Runtime](https://dotnet.microsoft.com/download/dotnet/10.0). Running the MSI installs the app and shortcuts; uninstall or repair is available via Apps & Features. Then grab a model as described in [Quick Start](#quick-start-load-and-run-a-model) — the running app also has a built-in model browser.
 
