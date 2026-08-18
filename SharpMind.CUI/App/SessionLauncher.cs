@@ -393,16 +393,21 @@ public static class SessionLauncher
             return new LaunchResult { Error = $"Failed to start session with {options.Generator}/{options.Cache}: {ex.Message}", Warnings = warnings };
         }
 
-        // MaxNewTokens is the generation length; MaxTokens is the context
-        // window ChatSession.TrimToFitContext budgets against. Setting
-        // MaxTokens = MaxSeqLen let the full (untrimmed) prompt reach the
-        // generator's single-shot prefill, which overflows the workspace for
-        // prompts longer than the ~128-token prefill budget (qwen2-0.5b with
-        // the agent/tool system prompt is ~3000 tokens) and surfaces as a
-        // hang/empty reply. Keeping MaxTokens = MaxNewTokens trims prompts
-        // down to the prefill budget so generation starts immediately.
+        // MaxNewTokens is the per-turn generation length cap; MaxTokens is the
+        // context window that ChatSession.TrimToFitContext budgets against.
+        // MaxTokens = MaxSeqLen (the model's full context window) so long
+        // conversations are kept intact rather than trimmed to a token count
+        // that silently drops the agent/tool system prompt and memory.
+        //
+        // The generator prefills in chunks (see Prefill.ForwardLastLogitsChunked),
+        // each sized to fit the workspace's ~128-token prefill budget, so a full
+        // context window no longer overflows the workspace the way the old
+        // single-shot prefill did (a 3k-token agent prompt once blew the bump
+        // allocator and surfaced as an empty reply). The cost is that a long
+        // first turn prefills slowly — progress is surfaced to the UI as
+        // "Prefilling NN.NN%" via IGenerator.PrefillProgress.
         session.MaxNewTokens = options.Generation.MaxNewTokens;
-        session.MaxTokens = options.Generation.MaxNewTokens;
+        session.MaxTokens = loaded.Model.Config.MaxSeqLen;
         session.Temperature = options.Sampling.Temperature;
         session.TopK = options.Sampling.TopK;
         session.TopP = options.Sampling.TopP;

@@ -437,7 +437,11 @@ public sealed class ChatView : View
             _activeSubAgentName = null;
         }
 
-        _statusLabel.Text = StatusLabel(entry.Status);
+        // Progress entries (e.g. "Prefilling 50.25%") carry their own status
+        // text in Token; everything else maps through the static label table.
+        _statusLabel.Text = entry.Status == ChatStatus.Updating && entry.Token is { } progress
+            ? progress
+            : StatusLabel(entry.Status);
 
         if (entry.TokensPerSecond is { } tps) _lastTokensPerSecond = tps;
         if (entry.TimeToFirstToken is { } ttft) _lastTimeToFirstToken = ttft;

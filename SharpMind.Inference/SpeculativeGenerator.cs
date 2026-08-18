@@ -21,6 +21,13 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
     private readonly bool _addBos;
     private readonly bool _addEos;
 
+    /// <summary>
+    /// Optional progress callback for the chunked prefill phase: invoked once per
+    /// chunk with the overall fraction (0..1) of the prompt prefilled so far.
+    /// See <see cref="Prefill.ForwardLastLogitsChunked"/>.
+    /// </summary>
+    public Action<double>? PrefillProgress { get; set; }
+
     public SpeculativeGenerator(
         Transformer model,
         Tokenization.Tokenizer tokenizer,
@@ -98,7 +105,7 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
         rateTracker.Start();
 
         int posOffset = _caches[0].Length;
-        Tensor<float>? logitsTensor = Prefill.ForwardLastLogitsChunked(_model, _caches, promptIds, _workspace!);
+        Tensor<float>? logitsTensor = Prefill.ForwardLastLogitsChunked(_model, _caches, promptIds, _workspace!, PrefillProgress);
 
         try
         {

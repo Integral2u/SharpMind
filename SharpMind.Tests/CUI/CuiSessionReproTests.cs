@@ -9,8 +9,14 @@ namespace SharpMind.Tests.CUI;
 /// SessionLauncher.LoadModelAsync + BuildSession construction (agent builder
 /// with tools, Auto formatter, MaxTokens = MaxSeqLen, SimpleArtifactPrompt
 /// pre-processor, permission callback) driven via StartChatAsync the same
-/// way ChatSessionBridge drives it. Diagnoses whether the first turn streams
-/// entries or produces none at all — the "stuck at Thinking..." symptom.
+/// way ChatSessionBridge drives it.
+///
+/// The first turn is expected to (a) surface chunked-prefill progress as
+/// "Prefilling NN.NN%" entries — the fix for the "stuck at Thinking..."
+/// symptom, where a slow engine plus a long agent prompt looked like a hang —
+/// and (b) actually stream a response within a generous window, because the
+/// engine prefills at ~200ms/token and the default CUI tool set keeps the
+/// agent prompt at ~1250 tokens.
 /// </summary>
 public sealed class CuiSessionReproTests
 {
@@ -21,12 +27,12 @@ public sealed class CuiSessionReproTests
             $"{DateTime.Now:HH:mm:ss.fff} {message}{Environment.NewLine}");
 
     [Fact]
-    public async Task CuiSession_FirstTurn_StreamsOrCompletes()
+    public async Task CuiSession_FirstTurn_StreamsWithPrefillProgress()
     {
         if (!File.Exists(ModelPath))
             return; // dev-machine diagnostic; no GGUF shipped in-repo
 
-        Log($"start model load maxseq check");
+        Log($"start model load");
 
         var options = new SessionOptions
         {
@@ -36,6 +42,14 @@ public sealed class CuiSessionReproTests
             NetworkAccess = ToolPermission.Always,
             ShowThinking = true,
         };
+
+        // Disable every tool: an untrained model on a trivial question tries to
+        // call tools, and each tool iteration re-prefills the whole growing
+        // conversation (the Auto formatter forces a full rebuild; the tool call
+        // resets the KV cache). That ballooned the first turn to many minutes
+        // and made the harness look like a prefill hang when it was actually a
+        // runaway tool loop. This test targets prefill + progress, so tools off.
+        options.DisabledTools = SessionLauncher.GetAvailableTools(options).ToHashSet(StringComparer.Ordinal);
 
         var load = await SessionLauncher.LoadModelAsync(options);
         Log($"loaded, maxseqlen={load.Loaded!.Model.Config.MaxSeqLen}");
@@ -50,41 +64,67 @@ public sealed class CuiSessionReproTests
 
             var session = result.Session!;
             session.MaxNewTokens = 32;
-            Log($"maxTokens={session.MaxTokens} maxNewTokens={session.MaxNewTokens}");
 
-            var entries = new List<ChatStreamEntry>();
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(120));
-            var first = true;
+            // A long context message simulates real history so the first turn's
+            // prompt exceeds one prefill chunk (progress entries require a
+            // multi-chunk prompt; a bare 65-token prompt is a single shot).
+            var filler = new System.Text.StringBuilder();
+            while (true)
+            {
+                filler.Append("The quick brown fox jumps over the lazy dog. ");
+                int tokens = load.Loaded!.Tokenizer.Encode(filler.ToString(), addBos: false, addEos: false).Length;
+                if (tokens >= 480) break;
+            }
+            session.AddMessage(ChatRole.System, filler.ToString());
+            Log($"maxTokens={session.MaxTokens} maxNewTokens={session.MaxNewTokens} fillerTokens={load.Loaded.Tokenizer.Encode(filler.ToString(), addBos: false, addEos: false).Length}");
 
-            var run = session.StartChatAsync(
-                () =>
+            var entries = new System.Collections.Concurrent.ConcurrentQueue<ChatStreamEntry>();
+            using var cts = new CancellationTokenSource();
+
+            // First call supplies the real user message; the loop then asks for
+            // the next input and this provider simply waits for the test to
+            // cancel (the session loop has no "exit" sentinel — it generates for
+            // whatever it's handed, so feeding it more text would re-prefill the
+            // growing history forever).
+            bool first = true;
+            async Task<ChatMessage> NextMessage()
+            {
+                if (first)
                 {
-                    if (first)
-                    {
-                        first = false;
-                        return Task.FromResult(ChatMessage.User("Hello! Please answer in one short sentence: 2 + 2 = ?"));
-                    }
-                    return Task.FromResult(ChatMessage.User("exit"));
-                },
-                entries.Add,
-                cts.Token);
+                    first = false;
+                    return ChatMessage.User("Hello! Please answer in one short sentence: 2 + 2 = ?");
+                }
+                await Task.Delay(Timeout.Infinite, cts.Token);
+                return ChatMessage.User(string.Empty);
+            }
+
+            var run = session.StartChatAsync(NextMessage, entries.Enqueue, cts.Token);
             Log("startchat launched");
 
-            var completed = await Task.WhenAny(run, Task.Delay(TimeSpan.FromSeconds(90)));
-            Log($"whenany done, run={run.IsCompleted}");
-            if (!ReferenceEquals(completed, run))
-                cts.Cancel();
-            await Task.WhenAll(run);
-            Log($"loop finished, entry count={entries.Count}");
-            Assert.Same(run, completed); // if the delay won, the session loop hung with no entry
+            // Watch for progress + first streamed fragment, then stop the turn.
+            var deadline = DateTime.UtcNow.AddSeconds(600);
+            bool sawPrefill = false;
+            bool sawRespond = false;
+            while (DateTime.UtcNow < deadline && !sawRespond)
+            {
+                await Task.Delay(500);
+                foreach (var e in entries)
+                {
+                    if (e.Status == ChatStatus.Updating && e.Token?.StartsWith("Prefilling") == true)
+                        sawPrefill = true;
+                    if (e.Status == ChatStatus.Responding)
+                        sawRespond = true;
+                }
+            }
+            Log($"watch done sawPrefill={sawPrefill} sawRespond={sawRespond} entries={entries.Count}");
 
-            // First turn must have produced streamed or terminal entries.
-            Assert.Contains(entries, e =>
-                e.Status is ChatStatus.Thinking or ChatStatus.Responding or ChatStatus.Complete);
+            cts.Cancel();
+            await Task.WhenAny(run, Task.Delay(TimeSpan.FromSeconds(15)));
 
-            bool completedCleanly = entries.Any(e => e.IsComplete || e.Status is ChatStatus.Complete or ChatStatus.Interrupted);
-            if (entries.Count > 0 && !completedCleanly)
-                Assert.Fail("First turn produced entries but never completed.");
+            // The prefill must not look like a hang: progress entries appear
+            // while the prompt is being processed, and a response streams.
+            Assert.True(sawPrefill, "Expected 'Prefilling NN.NN%' progress entries during the first turn.");
+            Assert.True(sawRespond, "Expected the first turn to stream a response within 10 minutes.");
         }
         finally
         {

@@ -16,6 +16,14 @@ public interface IGenerator<T> : IDisposable where T : IKVCacheBuilder, new()
         GenerationConfig? generation = null,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Optional callback fired once per prefill chunk with the overall fraction
+    /// (0..1) of the prompt prefilled so far. Lets a host surface "Prefilling
+    /// NN.NN%" during the (potentially slow) first turn instead of appearing
+    /// stuck. Set to <see langword="null"/> to suppress.
+    /// </summary>
+    Action<double>? PrefillProgress { get; set; }
+
     void ResetCache();
     float CacheFillRatio { get; }
     float? TokensPerSecond { get; }

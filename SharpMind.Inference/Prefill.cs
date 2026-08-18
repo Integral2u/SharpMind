@@ -35,12 +35,18 @@ internal static class Prefill
     /// at the current cache length, so positions (learned embeddings, RoPE, KV slots)
     /// advance exactly as they would for the whole prompt at once. Intermediate
     /// chunks' logits are discarded; only the final chunk's logits are returned.
+    ///
+    /// When <paramref name="progress"/> is supplied it is invoked once per finished
+    /// chunk with the overall fraction of the prompt prefilled so far (in
+    /// <c>0..1</c>), on the calling thread. Useful for surfacing "Prefilling NN%"
+    /// during the (potentially slow) first turn.
     /// </summary>
     public static Tensor<float> ForwardLastLogitsChunked(
         Transformer model,
         IKVCache[] caches,
         int[] promptIds,
-        Core.Memory.Workspace workspace)
+        Core.Memory.Workspace workspace,
+        Action<double>? progress = null)
     {
         if (promptIds.Length == 0)
             throw new ArgumentException("Prompt produced no token IDs; cannot prefill.", nameof(promptIds));
@@ -54,12 +60,15 @@ internal static class Prefill
         Tensor<float>? logits = null;
         try
         {
+            int processed = 0;
             for (int start = 0; start < promptIds.Length; start += MaxChunkLength)
             {
                 int len = Math.Min(MaxChunkLength, promptIds.Length - start);
                 logits?.Dispose();
                 workspace.Reset();
                 logits = RunChunk(model, caches, promptIds, start, len, workspace);
+                processed += len;
+                progress?.Invoke((double)processed / promptIds.Length);
             }
             return logits!;
         }
@@ -78,8 +87,21 @@ internal static class Prefill
         int len,
         Core.Memory.Workspace workspace)
     {
+        var sw = TraceEnabled ? System.Diagnostics.Stopwatch.StartNew() : null;
         using var chunkInput = workspace.Rent<int>([1, len]);
         promptIds.AsSpan(start, len).CopyTo(chunkInput.Data);
-        return model.ForwardLastLogits(chunkInput, caches, caches[0].Length, workspace);
+        var result = model.ForwardLastLogits(chunkInput, caches, caches[0].Length, workspace);
+        if (sw is not null)
+            Trace($"chunk [{start}..{start + len}) elapsed={sw.ElapsedMilliseconds}ms cacheLen={caches[0].Length}");
+        return result;
     }
+
+    /// <summary>Per-chunk timing trace, off by default; enabled with SHARPMIND_PREFILL_TRACE=1.</summary>
+    private static bool TraceEnabled =>
+        string.Equals(Environment.GetEnvironmentVariable("SHARPMIND_PREFILL_TRACE"), "1", StringComparison.Ordinal);
+
+    private static void Trace(string message) =>
+        File.AppendAllText(
+            Path.Combine(Path.GetTempPath(), "prefill_trace.log"),
+            $"{DateTime.Now:HH:mm:ss.fff} {message}{Environment.NewLine}");
 }

@@ -23,6 +23,13 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
     /// <summary>Diagnostic: fired for each generated token ID during the generation loop.</summary>
     public Action<int>? OnTokenGenerated;
 
+    /// <summary>
+    /// Optional progress callback for the chunked prefill phase: invoked once per
+    /// chunk with the overall fraction (0..1) of the prompt prefilled so far.
+    /// See <see cref="Prefill.ForwardLastLogitsChunked"/>.
+    /// </summary>
+    public Action<double>? PrefillProgress { get; set; }
+
     /// <summary>Cached scratch buffer for stop-string tail matching to avoid per-token allocation.</summary>
     private char[]?               _stopCheckBuf;
     private bool                  _disposed;
@@ -107,9 +114,9 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
         Tensor<float>? logitsTensor = null;
         try
         {
-            // Prefill (chunked so long prompts fit the workspace; see Prefill)
+                        // Prefill (chunked so long prompts fit the workspace; see Prefill)
             int posOffset = _caches[0].Length;
-            logitsTensor = Prefill.ForwardLastLogitsChunked(_model, _caches, promptIds, _workspace);
+            logitsTensor = Prefill.ForwardLastLogitsChunked(_model, _caches, promptIds, _workspace, PrefillProgress);
 
 
             int vocabSize = logitsTensor.Shape[1];

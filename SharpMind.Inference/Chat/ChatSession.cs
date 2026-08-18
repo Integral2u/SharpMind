@@ -59,6 +59,13 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     private readonly int? _seed;
     private string _userName = "User";
     private CancellationTokenSource? _turnCts;
+    /// <summary>
+    /// Fractions (0..1) reported by <see cref="IGenerator{T}.PrefillProgress"/>
+    /// during the generator's synchronous chunked-prefill phase. Drained into
+    /// <see cref="ChatStatus.Updating"/> stream entries at the top of the main
+    /// generation loop so the UI can display "Prefilling NN.NN%".
+    /// </summary>
+    private readonly Queue<double> _prefillProgressQueue = [];
 
 
     // Permission gate
@@ -148,6 +155,11 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
 
         _generator = new T().CreateGenerator(_model, _tokenizer, _addBos, _addEos, _caches, _seed);
         ArgumentNullException.ThrowIfNull(_generator);
+        // Chunked-prefill progress: queued on the calling thread during the
+        // generator's synchronous prefill phase, then drained into
+        // ChatStatus.Updating entries at the start of the main stream loop so
+        // the UI can show "Prefilling NN.NN%" instead of appearing stuck.
+        _generator.PrefillProgress = p => _prefillProgressQueue.Enqueue(p);
         progress?.Report(0.6f);
 
         if (_agentBuilder != null) AddAgentMessages();
@@ -669,6 +681,8 @@ private void ThrowIfDisposed()
         ThrowIfDisposed();
         EnsureInitialized();
 
+        ChatTrace("GetResponseStreamAsync enter");
+
 
         _history.Add(new ChatMessage { Role = ChatRole.User, Content = userInput, Name = _userName, Artifacts = artifacts });
         InvalidateHistoryCache();
@@ -814,8 +828,16 @@ private void ThrowIfDisposed()
 
             _progress?.Report(0f);
             int genFrags = 0;
+            _prefillProgressQueue.Clear();
+            ChatTrace($"starting generation, promptToks={generatorInput.Length}");
             await foreach (var fragment in _generator.GenerateFromTokensAsync(generatorInput, sampleCfg, genCfg, linkedCts.Token))
             {
+                // The generator prefills synchronously before yielding the first
+                // fragment, so every progress callback for this turn is already
+                // queued by now — surface it before the streamed text.
+                foreach (var prefillEntry in DrainPrefillProgress())
+                    yield return prefillEntry;
+
                 _responseBuffer.Append(fragment);
 
                 genFrags++;
@@ -876,6 +898,7 @@ private void ThrowIfDisposed()
 
             _progress?.Report(1f);
             var responseText = _responseBuffer.ToString();
+            ChatTrace($"generation done, frags={genFrags} chars={responseText.Length}");
 
             // Tool call detection
             if (_agentBuilder is not null
@@ -1108,6 +1131,36 @@ private void ThrowIfDisposed()
 
         }
         return [.. _history];
+    }
+
+    /// <summary>
+    /// Converts queued prefill-progress fractions into stream entries shown in
+    /// the host UI's status line ("Prefilling 50.25%"). Returns nothing when the
+    /// prompt was short enough to prefill in a single chunk (no progress events
+    /// were reported) or when the KV cache was extended incrementally.
+    /// </summary>
+    private IEnumerable<ChatStreamEntry> DrainPrefillProgress()
+    {
+        while (_prefillProgressQueue.Count > 0)
+        {
+            double fraction = _prefillProgressQueue.Dequeue();
+            yield return new ChatStreamEntry
+            {
+                Status = ChatStatus.Updating,
+                Token = $"Prefilling {fraction * 100:F2}%",
+                IsComplete = false,
+            };
+        }
+    }
+
+    /// <summary>Timing trace for the turn loop, off by default; enabled with SHARPMIND_PREFILL_TRACE=1.</summary>
+    private static void ChatTrace(string message)
+    {
+        if (!string.Equals(Environment.GetEnvironmentVariable("SHARPMIND_PREFILL_TRACE"), "1", StringComparison.Ordinal))
+            return;
+        File.AppendAllText(
+            Path.Combine(Path.GetTempPath(), "prefill_trace.log"),
+            $"{DateTime.Now:HH:mm:ss.fff} chat {message}{Environment.NewLine}");
     }
 
     public async Task<ChatMessage[]> StartChatAsync(Func<ChatMessage> prompt, Action<ChatStreamEntry> response, CancellationToken token = default)

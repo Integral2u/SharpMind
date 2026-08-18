@@ -270,6 +270,75 @@ namespace SharpMind.Inference.Agent
 
         private static JsonObject Typed(string type) => new() { ["type"] = type };
 
+        /// <summary>
+        /// Renders the registered tools as a single-line JSON array for the
+        /// system prompt. Every tool's name, argument names/types and required
+        /// list are preserved so the model can still call them; description text
+        /// is shed progressively when the whole list would exceed
+        /// <see cref="CompactToolBudget"/>. The full indented dump once made the
+        /// default CUI tool set dominate the system prompt (~3000 tokens with
+        /// tools, skills and memory), and since the CUI re-prefills the whole
+        /// conversation every turn, a smaller prompt is seconds of prefill saved
+        /// on a slow engine — not just cosmetics.
+        /// </summary>
+        private const int CompactToolBudget = 4000; // ~1000 tokens of compact JSON
+
+        private string BuildCompactToolList()
+        {
+            string full = ToolDefinitions.ToJsonString();
+            if (full.Length <= CompactToolBudget)
+                return full;
+
+            // First pass: cap each tool description, drop per-argument
+            // descriptions/defaults, keep name + args (name/type) + required.
+            var reduced = new JsonArray();
+            int detailDropped = 0;
+            foreach (var item in ToolDefinitions)
+            {
+                var tool = (JsonObject)item!;
+                var copy = new JsonObject { ["name"] = tool["name"]!.DeepClone() };
+
+                if (tool["description"] is JsonValue d && d.GetValue<string>().Length <= 140)
+                    copy["description"] = d;
+                else
+                    detailDropped++;
+
+                if (tool["parameters"] is JsonObject pars
+                    && pars["properties"] is JsonObject props)
+                {
+                    var args = new JsonObject();
+                    foreach (var (name, schema) in props)
+                        args[name] = JsonValue.Create(((JsonObject)schema!)?["type"]?.GetValue<string>() ?? "string");
+                    copy["args"] = args;
+
+                    if (pars["required"] is JsonArray req && req.Count > 0)
+                    {
+                        var names = req.Cast<JsonNode?>()
+                            .Where(r => r is not null)
+                            .Select(r => r!.GetValue<string>())
+                            .ToList();
+                        copy["required"] = new JsonArray([.. names.Select(n => JsonValue.Create(n))]);
+                    }
+                }
+
+                reduced.Add(copy);
+            }
+
+            string compact = reduced.ToJsonString();
+            if (compact.Length > CompactToolBudget)
+            {
+                // Still over budget: drop tool descriptions entirely.
+                foreach (var t in reduced.OfType<JsonObject>())
+                    t.Remove("description");
+                compact = reduced.ToJsonString();
+                detailDropped = ToolDefinitions.Count;
+            }
+
+            return detailDropped > 0
+                ? compact + $" …truncated {detailDropped} tool doc(s)"
+                : compact;
+        }
+
         // Sub-agent registration
 
         /// <summary>
@@ -471,7 +540,7 @@ namespace SharpMind.Inference.Agent
 
                 sb.AppendLine();
                 sb.AppendLine("## Available Tools");
-                sb.AppendLine(ToolDefinitions.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+                sb.AppendLine(BuildCompactToolList());
 
                 sb.AppendLine();
                 sb.AppendLine("## Final Response Format");
