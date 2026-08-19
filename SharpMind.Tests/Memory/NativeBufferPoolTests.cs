@@ -21,36 +21,39 @@ public sealed class NativeBufferPoolCollection;
 /// pool must keep handing out the same <see cref="NativeBuffer{T}"/> instance.
 /// Once <c>Count</c> drifts past the cap the buffer gets freed and every later
 /// rent allocates a brand-new instance.
+///
+/// The pool is generic over <c>T</c> and stateless except for per-<c>T</c>
+/// static buckets, and the product only ever allocates buffers for
+/// <c>float</c> and <c>int</c>. Probing with <c>double</c> therefore hits a
+/// bucket (1,048,576 elements) that no other test — running in any of the
+/// parallel worker threads — can ever touch, so the reuse assertion below is
+/// deterministic rather than hostage to what the rest of the suite is renting
+/// at the same instant.
 /// </summary>
 [Collection("NativeBufferPool (serialized)")]
 public sealed class NativeBufferPoolTests
 {
-    private const int BucketElements = 1_000_003; // GetBucket -> 1,048,576; within the poolable <= 1 Mi-element gate
+    // GetBucket -> 1,048,576; inside the poolable <= 1 Mi-element gate, but used
+    // only by the double pool (see above), so it stays private to this test.
+    private const int BucketElements = 1_000_003;
 
     [Fact]
     public void Rent_Reuses_SameInstance_WellBeyond_BucketCapacity()
     {
-        const int maxPerBucket = 4;
-        const long maxMemMb = 4_096; // far above suite peak so the memory gate never trips
         const int cycles = 500;
 
-        int oldMax = NativeBufferPoolConfig.MaxBuffersPerBucket;
-        long oldMemMb = NativeBufferPoolConfig.MaxTotalMemoryMB;
-        NativeBufferPool<float>.Clear();
+        NativeBufferPool<double>.Clear();
         try
         {
-            NativeBufferPoolConfig.MaxBuffersPerBucket = maxPerBucket;
-            NativeBufferPoolConfig.MaxTotalMemoryMB = maxMemMb;
-
-            NativeBuffer<float>? reused = null;
-            using (var first = NativeBufferPool<float>.Rent(BucketElements))
+            NativeBuffer<double>? reused = null;
+            using (var first = NativeBufferPool<double>.Rent(BucketElements))
             {
                 reused = first;
             }
 
             for (int i = 0; i < cycles; i++)
             {
-                using var b = NativeBufferPool<float>.Rent(BucketElements);
+                using var b = NativeBufferPool<double>.Rent(BucketElements);
                 Assert.True(ReferenceEquals(b, reused),
                     $"Pool stopped reusing at cycle {i}: new instance allocated — " +
                     "bucket.Count drifted past the cap (double-increment bug).");
@@ -58,9 +61,7 @@ public sealed class NativeBufferPoolTests
         }
         finally
         {
-            NativeBufferPoolConfig.MaxBuffersPerBucket = oldMax;
-            NativeBufferPoolConfig.MaxTotalMemoryMB = oldMemMb;
-            NativeBufferPool<float>.Clear();
+            NativeBufferPool<double>.Clear();
         }
     }
 }

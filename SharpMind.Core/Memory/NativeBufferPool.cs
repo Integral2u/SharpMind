@@ -31,8 +31,10 @@ public static class NativeBufferPool<T> where T : unmanaged
 
         if (_buckets.TryGetValue(bucketSize, out var bucket) && bucket.Stack.TryPop(out var buffer))
         {
-            // CAS refcount 0 → 1: only one caller wins the race.
-            if (Interlocked.CompareExchange(ref buffer._refCount, 1, 0) == 0)
+            // CAS pooled-marker -1 → 1: only one caller wins the race.
+            // CompareExchange returns the old value, which must have been the
+            // -1 pooled marker for the transition to have happened.
+            if (Interlocked.CompareExchange(ref buffer._refCount, 1, -1) == -1)
             {
                 Interlocked.Decrement(ref bucket.Count);
                 long byteLen = (long)bucketSize * sizeof(T);
@@ -62,7 +64,6 @@ public static class NativeBufferPool<T> where T : unmanaged
         int byteSize = bucketSize * sizeof(T);
         long maxBytes = NativeBufferPoolConfig.MaxTotalMemoryMB * 1024 * 1024;
 
-        bool pooled = false;
         if (bucketSize <= 1024 * 1024)
         {
             var bucket = _buckets.GetOrAdd(bucketSize, _ => new Bucket());
@@ -79,24 +80,38 @@ public static class NativeBufferPool<T> where T : unmanaged
             // A plain read is enough; it's a pressure-valve heuristic
             // ("free more aggressively as we approach the cap"), not a lock.
             int reservedCount = Interlocked.Increment(ref bucket.Count);
-            if (reservedCount <= NativeBufferPoolConfig.MaxBuffersPerBucket
-                && NativeBufferPoolConfig.TotalMemoryUsed + byteSize <= maxBytes)
-{
-                buffer.Detach();       // mark as pooled, do NOT free memory
+            bool underCaps = reservedCount <= NativeBufferPoolConfig.MaxBuffersPerBucket
+                && NativeBufferPoolConfig.TotalMemoryUsed + byteSize <= maxBytes;
+
+            // Take the pooled-marker transition atomically. If a concurrent
+            // AddRef (a view being created over this buffer) landed between
+            // Dispose() reaching zero and here, this buffer is genuinely owned
+            // by that view — TryMarkPooled loses and the buffer must stay alive
+            // for it, not be pooled or freed. Its eventual Dispose drives it
+            // through Return again.
+            if (underCaps && buffer.TryMarkPooled())
+            {
                 bucket.Stack.Push(buffer);
                 Interlocked.Add(ref bucket.Memory, byteSize);
-                pooled = true;
+                return; // Count stays; it represents this pooled buffer.
             }
-            else
-            {
-                // Reservation didn't pan out — release the slot we
-                // provisionally claimed so it doesn't stay permanently lost.
-                Interlocked.Decrement(ref bucket.Count);
-            }
-        }
 
-        if (!pooled)
+            // Reservation didn't pan out — release the slot we provisionally
+            // claimed so it doesn't stay permanently lost.
+            Interlocked.Decrement(ref bucket.Count);
+
+            if (buffer.TryMarkPooled())
+            {
+                // Nobody raced us: we hold the 0 → -1 transition, so no one is
+                // using the buffer and the memory can be returned.
+                buffer.Free();
+                NativeBufferPoolConfig.OnFree(byteSize);
+            }
+            // else: a concurrent AddRef took the buffer; leave it alive.
+        }
+        else
         {
+            // Outside the poolable size range: free unconditionally.
             buffer.Free();
             NativeBufferPoolConfig.OnFree(byteSize);
         }

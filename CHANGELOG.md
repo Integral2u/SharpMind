@@ -15,14 +15,37 @@ that are already on `master`.
 - `SessionOptions.SkipAgentPrompt` — drops the whole agent layer (no synthesized agent prompt, no sub-agents, no tool loop).
 - `SessionOptions.DisableTools` — keeps the agent prompt but registers no tools; the tool-call loop is additionally guarded on `RegisteredToolNames.Count > 0`.
 - Options view: "Max context tokens (0 = full)" field plus "Skip agent prompt" and "Disable tools" toggles.
-- Chunked prompt prefill with UI progress surfaced as "Prefilling NN.NN%" (`IGenerator<T>.PrefillProgress`, drained via `ChatSession`); optional timing trace with `SHARPMIND_PREFILL_TRACE=1` → `%TEMP%\prefill_trace.log`.
+- Chunked prompt prefill with UI progress surfaced as "Prefilling NN.NN%" (`IGenerator<T>.PrefillProgress`, drained via `ChatSession`); optional timing trace with `SHARMPIND_PREFILL_TRACE=1` → `%TEMP%\prefill_trace.log`.
 - `SessionOptions.Clone()` / `CopyTo()` — a single deep-copy path shared by every clone/preset/resume path.
 - CUI error surfacing for session-launch failures.
+- Quantized-resident loading — chat/inference loads keep only the raw quantized bytes and skip the per-layer dequantized F32 copies, roughly halving resident memory for a load.
+- Load-time validation: weight shapes are checked against the config by name and unsupported architectures rejected by name, so a bad model fails with a clear message instead of a byte-count mismatch at the first matmul.
+- Vectorised decode/prefill kernels — SIMD-widened fp16 weights (exact for normals and denormals), vectorised LM head, work-based attention parallelism, work-chunked decode, F16 matmul row blocking, cache-line-aligned row tiling, and vectorised Q8 block tails.
+- Deterministic test reference data — `TinyReferenceModel` builds a seed-fixed reference `.SMM` in milliseconds so the session/CUI tests exercise the full load → chat path without loading a real model file.
 
 ### Changed
 
 - `Session.MaxTokens` is now the **context-window budget** and defaults to the model's full `MaxSeqLen` instead of being capped at `MaxNewTokens`; long conversations are kept intact rather than trimmed into a token budget that silently evicted the agent/tool system prompt.
 - Agent system prompt reworked to be more compact.
+- BPE merge encoding rewritten; embeddings routed per-layer; NeoX rotary convention applied for architectures that need it.
+- The RoPE table cache is keyed by config instead of a hash of it.
+- Native buffer pooling: the pooled marker is now a CompareExchange transition (`0 → -1`), so a view racing a return-to-pool always wins and the buffer stays alive rather than being freed or re-rented out from under it.
+- CUI/formatter warnings surfaced when a chosen formatter's turn markers are absent from the model vocabulary.
+
+### Fixed
+
+- CUI option cloning silently dropped fields (`UserName`, and the new knobs) on every session launch/resume — launched sessions now honor all options.
+- Broken solution restore; `Transformer.DisposeCache` properly wired into disposal.
+- KV cache `Snapshot` used 32-bit arithmetic that could overflow at full context windows (`KVCache`, `PagedKVCache`, `QuantizedKVCache`).
+- A hallucinated `<tool_call>` no longer enters the tool loop when tools are disabled.
+- Removed redundant/unused implementation code.
+- Native buffer pool contamination under parallel load — a concurrent `AddRef` racing a buffer's return to the pool could free (or re-rent) a buffer a live view still held, surfacing as `ObjectDisposedException` in MoE backprop (`FfnOut.Reshape`) and foreign-bucket pops in the pool probe.
+- Pooled buffers were silently re-allocated on every rent (the Rent CAS compared against the old pooled marker) — pooling now actually reuses instances past its configured capacity.
+- Training linear layer data race on gradient writes under parallel backprop.
+
+### Removed
+
+- Real-model diagnostic probes (`ModelSpeedProbeTests`, `RealModelPrefillDiagnosticsTests`) — the suite no longer loads a real GGUF, cutting the full run from ~22 minutes to ~1.5 minutes (≈15× faster); the chunked-prefill regression coverage lives on in reference-model-driven tests.
 
 ### Breaking
 

@@ -14,14 +14,14 @@ namespace SharpMind.Tests.CUI;
 /// The first turn is expected to (a) surface chunked-prefill progress as
 /// "Prefilling NN.NN%" entries — the fix for the "stuck at Thinking..."
 /// symptom, where a slow engine plus a long agent prompt looked like a hang —
-/// and (b) actually stream a response within a generous window, because the
-/// engine prefills at ~200ms/token and the default CUI tool set keeps the
-/// agent prompt at ~1250 tokens.
+/// and (b) actually stream a response within a generous window.
+///
+/// Driven by <see cref="TinyReferenceModel"/> (deterministic, seed-fixed,
+/// millisecond-to-build reference .SMM) so the whole session plumbing is
+/// exercised end-to-end without loading a real model file.
 /// </summary>
 public sealed class CuiSessionReproTests
 {
-    private const string ModelPath = @"C:\Users\tarra\SharpMind\Models\qwen2-0_5b-instruct-q8_0.gguf";
-
     private static void Log(string message) =>
         File.AppendAllText(Path.Combine(Path.GetTempPath(), "cui_session_repro.log"),
             $"{DateTime.Now:HH:mm:ss.fff} {message}{Environment.NewLine}");
@@ -29,19 +29,17 @@ public sealed class CuiSessionReproTests
     [Fact]
     public async Task CuiSession_FirstTurn_StreamsWithPrefillProgress()
     {
-        if (!File.Exists(ModelPath))
-            return; // dev-machine diagnostic; no GGUF shipped in-repo
-
+        using var temp = new TempDirectory();
         Log($"start model load");
 
         var options = new SessionOptions
         {
-            ModelPath = ModelPath,
             AgentsEnabled = false,
             FileAccess = ToolPermission.Always,
             NetworkAccess = ToolPermission.Always,
             ShowThinking = true,
         };
+        options.ModelPath = TinyReferenceModel.Create(temp).SmmPath;
 
         // Disable every tool: an untrained model on a trivial question tries to
         // call tools, and each tool iteration re-prefills the whole growing
@@ -102,12 +100,14 @@ public sealed class CuiSessionReproTests
             Log("startchat launched");
 
             // Watch for progress + first streamed fragment, then stop the turn.
-            var deadline = DateTime.UtcNow.AddSeconds(600);
+            // The reference model prefills in milliseconds, so the deadline only
+            // guards a regression that turns prefill back into a hang.
+            var deadline = DateTime.UtcNow.AddSeconds(120);
             bool sawPrefill = false;
             bool sawRespond = false;
             while (DateTime.UtcNow < deadline && !sawRespond)
             {
-                await Task.Delay(500);
+                await Task.Delay(100);
                 foreach (var e in entries)
                 {
                     if (e.Status == ChatStatus.Updating && e.Token?.StartsWith("Prefilling") == true)
@@ -124,7 +124,7 @@ public sealed class CuiSessionReproTests
             // The prefill must not look like a hang: progress entries appear
             // while the prompt is being processed, and a response streams.
             Assert.True(sawPrefill, "Expected 'Prefilling NN.NN%' progress entries during the first turn.");
-            Assert.True(sawRespond, "Expected the first turn to stream a response within 10 minutes.");
+            Assert.True(sawRespond, "Expected the first turn to stream a response.");
         }
         finally
         {

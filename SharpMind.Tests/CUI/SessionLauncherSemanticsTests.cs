@@ -13,37 +13,43 @@ namespace SharpMind.Tests.CUI;
 /// (<see cref="SharpMind.Model.Transformer.Config.MaxSeqLen"/>) so long
 /// conversations are not silently trimmed away, while
 /// <see cref="IChatSession.MaxNewTokens"/> stays the per-turn generation cap.
+///
+/// Driven by <see cref="TinyReferenceModel"/> — a deterministic, seed-fixed,
+/// millisecond-to-build reference .SMM — so the whole session path is exercised
+/// without loading a real model file in tests.
 /// </summary>
 public sealed class SessionLauncherSemanticsTests
 {
-    private const string ModelPath = @"C:\Users\tarra\SharpMind\Models\qwen2-0_5b-instruct-q8_0.gguf";
+    private static async Task<LoadedModel> Load(TempDirectory temp, SessionOptions options)
+    {
+        options.ModelPath = TinyReferenceModel.Create(temp).SmmPath;
+        var load = await SessionLauncher.LoadModelAsync(options);
+        Assert.True(load.Success, load.Error ?? "load failed");
+        return load.Loaded!;
+    }
+
+    private static SessionOptions SwsOptions() => new()
+    {
+        AgentsEnabled = false,
+        FileAccess = ToolPermission.Always,
+        NetworkAccess = ToolPermission.Always,
+        Generation = new GenerationConfig { MaxNewTokens = 96 },
+    };
 
     [Fact]
     public async Task BuildSession_MaxTokensIsModelContextWindow_MaxNewTokensStaysPerTurnCap()
     {
-        if (!File.Exists(ModelPath))
-            return; // dev-machine diagnostic; no GGUF shipped in-repo
-
-        var options = new SessionOptions
-        {
-            ModelPath = ModelPath,
-            AgentsEnabled = false,
-            FileAccess = ToolPermission.Always,
-            NetworkAccess = ToolPermission.Always,
-            Generation = new GenerationConfig { MaxNewTokens = 96 },
-        };
-
-        var load = await SessionLauncher.LoadModelAsync(options);
-        Assert.True(load.Success, load.Error ?? "load failed");
-
+        using var temp = new TempDirectory();
+        var options = SwsOptions();
+        var loaded = await Load(temp, options);
         try
         {
-            var result = SessionLauncher.BuildSession(options, load.Loaded!,
+            var result = SessionLauncher.BuildSession(options, loaded,
                 permissions: _ => Task.FromResult(ToolPermission.Always));
             Assert.True(result.Success, result.Error ?? "build failed");
 
             var session = result.Session!;
-            int maxSeqLen = load.Loaded!.Model.Config.MaxSeqLen;
+            int maxSeqLen = loaded.Model.Config.MaxSeqLen;
 
             // The whole point: context window is the model's full capacity,
             // not trimmed to the per-turn generation cap.
@@ -54,7 +60,7 @@ public sealed class SessionLauncherSemanticsTests
         }
         finally
         {
-            load.Loaded!.Model.Dispose();
+            loaded.Model.Dispose();
         }
     }
 
@@ -63,30 +69,18 @@ public sealed class SessionLauncherSemanticsTests
     [InlineData(1)]
     public async Task BuildSession_MaxTokensOverride_TruncatesContext(int overrideTokens)
     {
-        if (!File.Exists(ModelPath))
-            return; // dev-machine diagnostic; no GGUF shipped in-repo
-
-        var options = new SessionOptions
-        {
-            ModelPath = ModelPath,
-            AgentsEnabled = false,
-            FileAccess = ToolPermission.Always,
-            NetworkAccess = ToolPermission.Always,
-            Generation = new GenerationConfig { MaxNewTokens = 96 },
-            MaxTokens = overrideTokens,
-        };
-
-        var load = await SessionLauncher.LoadModelAsync(options);
-        Assert.True(load.Success, load.Error ?? "load failed");
-
+        using var temp = new TempDirectory();
+        var options = SwsOptions();
+        options.MaxTokens = overrideTokens;
+        var loaded = await Load(temp, options);
         try
         {
-            var result = SessionLauncher.BuildSession(options, load.Loaded!,
+            var result = SessionLauncher.BuildSession(options, loaded,
                 permissions: _ => Task.FromResult(ToolPermission.Always));
             Assert.True(result.Success, result.Error ?? "build failed");
 
             var session = result.Session!;
-            int maxSeqLen = load.Loaded!.Model.Config.MaxSeqLen;
+            int maxSeqLen = loaded.Model.Config.MaxSeqLen;
 
             Assert.Equal(overrideTokens, session.MaxTokens);
             Assert.True(session.MaxTokens <= maxSeqLen,
@@ -95,66 +89,42 @@ public sealed class SessionLauncherSemanticsTests
         }
         finally
         {
-            load.Loaded!.Model.Dispose();
+            loaded.Model.Dispose();
         }
     }
 
     [Fact]
     public async Task BuildSession_MaxTokensOverride_AboveMaxSeqLen_ClampsToMaxSeqLen()
     {
-        if (!File.Exists(ModelPath))
-            return; // dev-machine diagnostic; no GGUF shipped in-repo
-
-        var options = new SessionOptions
-        {
-            ModelPath = ModelPath,
-            AgentsEnabled = false,
-            FileAccess = ToolPermission.Always,
-            NetworkAccess = ToolPermission.Always,
-            Generation = new GenerationConfig { MaxNewTokens = 96 },
-            MaxTokens = 100_000,
-        };
-
-        var load = await SessionLauncher.LoadModelAsync(options);
-        Assert.True(load.Success, load.Error ?? "load failed");
-
+        using var temp = new TempDirectory();
+        var options = SwsOptions();
+        options.MaxTokens = 100_000;
+        var loaded = await Load(temp, options);
         try
         {
-            var result = SessionLauncher.BuildSession(options, load.Loaded!,
+            var result = SessionLauncher.BuildSession(options, loaded,
                 permissions: _ => Task.FromResult(ToolPermission.Always));
             Assert.True(result.Success, result.Error ?? "build failed");
 
-            int maxSeqLen = load.Loaded!.Model.Config.MaxSeqLen;
+            int maxSeqLen = loaded.Model.Config.MaxSeqLen;
             Assert.Equal(maxSeqLen, result.Session!.MaxTokens);
         }
         finally
         {
-            load.Loaded!.Model.Dispose();
+            loaded.Model.Dispose();
         }
     }
 
     [Fact]
     public async Task BuildSession_DisableTools_RegistersNoTools()
     {
-        if (!File.Exists(ModelPath))
-            return; // dev-machine diagnostic; no GGUF shipped in-repo
-
-        var options = new SessionOptions
-        {
-            ModelPath = ModelPath,
-            AgentsEnabled = false,
-            FileAccess = ToolPermission.Always,
-            NetworkAccess = ToolPermission.Always,
-            Generation = new GenerationConfig { MaxNewTokens = 96 },
-            DisableTools = true,
-        };
-
-        var load = await SessionLauncher.LoadModelAsync(options);
-        Assert.True(load.Success, load.Error ?? "load failed");
-
+        using var temp = new TempDirectory();
+        var options = SwsOptions();
+        options.DisableTools = true;
+        var loaded = await Load(temp, options);
         try
         {
-            var result = SessionLauncher.BuildSession(options, load.Loaded!,
+            var result = SessionLauncher.BuildSession(options, loaded,
                 permissions: _ => Task.FromResult(ToolPermission.Always));
             Assert.True(result.Success, result.Error ?? "build failed");
 
@@ -165,32 +135,20 @@ public sealed class SessionLauncherSemanticsTests
         }
         finally
         {
-            load.Loaded!.Model.Dispose();
+            loaded.Model.Dispose();
         }
     }
 
     [Fact]
     public async Task BuildSession_SkipAgentPrompt_DropsAgentLayer()
     {
-        if (!File.Exists(ModelPath))
-            return; // dev-machine diagnostic; no GGUF shipped in-repo
-
-        var options = new SessionOptions
-        {
-            ModelPath = ModelPath,
-            AgentsEnabled = false,
-            FileAccess = ToolPermission.Always,
-            NetworkAccess = ToolPermission.Always,
-            Generation = new GenerationConfig { MaxNewTokens = 96 },
-            SkipAgentPrompt = true,
-        };
-
-        var load = await SessionLauncher.LoadModelAsync(options);
-        Assert.True(load.Success, load.Error ?? "load failed");
-
+        using var temp = new TempDirectory();
+        var options = SwsOptions();
+        options.SkipAgentPrompt = true;
+        var loaded = await Load(temp, options);
         try
         {
-            var result = SessionLauncher.BuildSession(options, load.Loaded!,
+            var result = SessionLauncher.BuildSession(options, loaded,
                 permissions: _ => Task.FromResult(ToolPermission.Always));
             Assert.True(result.Success, result.Error ?? "build failed");
 
@@ -199,39 +157,29 @@ public sealed class SessionLauncherSemanticsTests
         }
         finally
         {
-            load.Loaded!.Model.Dispose();
+            loaded.Model.Dispose();
         }
     }
 
     [Fact]
     public async Task BuildSession_AfterClone_AppliesSkipPromptDisableToolsAndMaxTokensOverride()
     {
-        if (!File.Exists(ModelPath))
-            return; // dev-machine diagnostic; no GGUF shipped in-repo
-
         // Mirrors the CUI launch path: MainWindow clones the Options-screen
         // SessionOptions before BuildSession. Regression for the bug where the
         // clone dropped MaxTokens/SkipAgentPrompt/DisableTools, so every CUI
         // launch silently launched with the full context window, the full agent
         // prompt, and tools enabled.
-        var launchOptions = new SessionOptions
-        {
-            ModelPath = ModelPath,
-            AgentsEnabled = false,
-            FileAccess = ToolPermission.Always,
-            NetworkAccess = ToolPermission.Always,
-            Generation = new GenerationConfig { MaxNewTokens = 96 },
-            MaxTokens = 255,
-            SkipAgentPrompt = true,
-            DisableTools = true,
-        }.Clone();
+        using var temp = new TempDirectory();
+        var options = SwsOptions();
+        options.MaxTokens = 255;
+        options.SkipAgentPrompt = true;
+        options.DisableTools = true;
+        var launchOptions = options.Clone();
 
-        var load = await SessionLauncher.LoadModelAsync(launchOptions);
-        Assert.True(load.Success, load.Error ?? "load failed");
-
+        var loaded = await Load(temp, launchOptions);
         try
         {
-            var result = SessionLauncher.BuildSession(launchOptions, load.Loaded!,
+            var result = SessionLauncher.BuildSession(launchOptions, loaded,
                 permissions: _ => Task.FromResult(ToolPermission.Always));
             Assert.True(result.Success, result.Error ?? "build failed");
 
@@ -243,7 +191,7 @@ public sealed class SessionLauncherSemanticsTests
         }
         finally
         {
-            load.Loaded!.Model.Dispose();
+            loaded.Model.Dispose();
         }
     }
 }

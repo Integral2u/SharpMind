@@ -20,6 +20,9 @@ public sealed unsafe class NativeBuffer<T> : IDisposable where T : unmanaged
 
     // fields 
     internal T* _ptr;
+    // Positive while live (1 on rent/construction, +1 per AddRef), and -1 while
+    // pooled in NativeBufferPool<T> awaiting reuse. Only the pool writes -1,
+    // via TryMarkPooled, so it never races a live AddRef.
     internal int _refCount = 1;
 
     // construction
@@ -104,13 +107,14 @@ public sealed unsafe class NativeBuffer<T> : IDisposable where T : unmanaged
     }
 
     /// <summary>
-    /// Detaches this buffer from the pool without freeing native memory.
-    /// Used when the buffer is returned to the pool for reuse.
+    /// Attempts to mark this buffer as pooled without freeing native memory.
+    /// The pooled marker is -1 (all other states are live reference counts).
+    /// Uses CompareExchange so a concurrent <see cref="AddRef"/> from a view
+    /// being created between our <see cref="Dispose"/> hitting zero and here is
+    /// not clobbered: that view genuinely owns the buffer now, so this loses
+    /// the race and the pool must not take it.
     /// </summary>
-    internal void Detach()
-    {
-        Volatile.Write(ref _refCount, 0);
-    }
+    internal bool TryMarkPooled() => Interlocked.CompareExchange(ref _refCount, -1, 0) == 0;
 
     // span access
 
