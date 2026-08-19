@@ -756,13 +756,14 @@ public static partial class QuantizationKernels
         float* input, byte* rawWeights, float* output,
         int M, int K, int N)
     {
-        for (int row = 0; row < M; row++)
+        if (M <= 1)
         {
-            float* pInRow = input + (long)row * K;
-            float* pOutRow = output + (long)row * N;
-            for (int col = 0; col < N; col++)
-                pOutRow[col] = VecDotQ5_0_FMA(pInRow, rawWeights, col, K);
+            QuantizedMatMul_Serial_Wrapper(VecDotQ5_0_FMA, input, rawWeights, output, M, K, N);
+            return;
         }
+        // M > 1 (prefill/training): dequantize each column once, then run the
+        // blocked four-row microkernel. See QuantBlockedColumns.
+        QuantBlockedMatMul(DequantColumnQ5_0, input, rawWeights, output, M, K, N, parallel: false);
     }
 
     public static unsafe void QuantizedMatMulQ5_0_Parallel_FMA(
@@ -775,13 +776,7 @@ public static partial class QuantizationKernels
         }
         else
         {
-            Parallel.For(0, M, row =>
-            {
-                float* pInRow = input + (long)row * K;
-                float* pOutRow = output + (long)row * N;
-                for (int col = 0; col < N; col++)
-                    pOutRow[col] = VecDotQ5_0_FMA(pInRow, rawWeights, col, K);
-            });
+            QuantBlockedMatMul(DequantColumnQ5_0, input, rawWeights, output, M, K, N, parallel: true);
         }
     }
 
