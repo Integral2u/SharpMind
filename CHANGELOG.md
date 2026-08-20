@@ -22,6 +22,7 @@ that are already on `master`.
 - Load-time validation: weight shapes are checked against the config by name and unsupported architectures rejected by name, so a bad model fails with a clear message instead of a byte-count mismatch at the first matmul.
 - Vectorised decode/prefill kernels — SIMD-widened fp16 weights (exact for normals and denormals), vectorised LM head, work-based attention parallelism, work-chunked decode, F16 matmul row blocking, cache-line-aligned row tiling, and vectorised Q8 block tails.
 - Deterministic test reference data — `TinyReferenceModel` builds a seed-fixed reference `.SMM` in milliseconds so the session/CUI tests exercise the full load → chat path without loading a real model file.
+- KV-cache persistence: sessions now save and restore the pre-filled KV cache alongside chat history. On resume, if the prompt (system prompt + tools + history) hasn't changed, the expensive prefill is skipped entirely — the cache is restored from disk and the first user turn extends it incrementally.
 
 ### Changed
 
@@ -31,6 +32,9 @@ that are already on `master`.
 - The RoPE table cache is keyed by config instead of a hash of it.
 - Native buffer pooling: the pooled marker is now a CompareExchange transition (`0 → -1`), so a view racing a return-to-pool always wins and the buffer stays alive rather than being freed or re-rented out from under it.
 - CUI/formatter warnings surfaced when a chosen formatter's turn markers are absent from the model vocabulary.
+- Chat turns now extend the KV cache incrementally instead of re-prefilling the whole conversation every turn. The previous turn's cache is reused when a single re-encode of the full conversation provably reproduces the cached prefix token-for-token; any mismatch falls back to a full prefill. The feature is formatter-agnostic — it previously required `_formatter is null` and so effectively never fired for chat-template (Jinja/ChatML/Llama-3) models, which is the common case in the CUI.
+- Chat status sidebar now shows the resolved formatter name (e.g. "Llama3Formatter", "ChatMLFormatter") instead of the strategy enum value ("Auto").
+- Saved sessions now include chat history — loading a saved session restores the previous conversation in the chat view instead of starting empty.
 
 ### Fixed
 
@@ -42,6 +46,17 @@ that are already on `master`.
 - Native buffer pool contamination under parallel load — a concurrent `AddRef` racing a buffer's return to the pool could free (or re-rent) a buffer a live view still held, surfacing as `ObjectDisposedException` in MoE backprop (`FfnOut.Reshape`) and foreign-bucket pops in the pool probe.
 - Pooled buffers were silently re-allocated on every rent (the Rent CAS compared against the old pooled marker) — pooling now actually reuses instances past its configured capacity.
 - Training linear layer data race on gradient writes under parallel backprop.
+- Session loading now shows chunked "Prefilling X%" progress while encoding the system prompt, tools, and agent configuration into the KV cache — the first user turn then extends the already-warm cache instead of re-prefilling everything from scratch.
+- `ChatSession.ResetCaches()` now invalidates the incremental-cache hypothesis (`_cachedPromptTokens`/`_cacheValid`) instead of leaving it stale, and a failed prefix match resets the physical KV cache before a full re-prefill — feeding the full prompt over still-populated caches would otherwise duplicate key/value rows.
+- Transcript now correctly populates when loading a saved session — `RebuildTranscript()` runs after the view is added to the layout instead of during construction, so `SetNeedsDisplay` actually takes effect; `SourceFilePath` is now carried through all load/resume paths including the welcome screen.
+- Progress during session loading now renders in real time via main-loop polling (not `MainLoop.Invoke` which never drains while `await`-ing), displays two decimal places, and labels reflect whether the KV cache is being built or rebuilt.
+- Chat sidebar widened by 6 characters to accommodate longer formatter names.
+- Save session now offers a Save As file picker for first-time saves and asks before overwriting an existing file instead of silently replacing it.
+- CUI option cloning silently dropped fields (`UserName`, and the new knobs) on every session launch/resume — launched sessions now honor all options.
+- Broken solution restore; `Transformer.DisposeCache` properly wired into disposal.
+- KV cache `Snapshot` used 32-bit arithmetic that could overflow at full context windows (`KVCache`, `PagedKVCache`, `QuantizedKVCache`).
+- A hallucinated `<tool_call>` no longer enters the tool loop when tools are disabled.
+- Removed redundant/unused implementation code.
 
 ### Removed
 
@@ -50,17 +65,10 @@ that are already on `master`.
 ### Breaking
 
 - `IGenerator<T>` gained a `PrefillProgress` member — custom/plugin generator implementations must add it (build break).
+- `IGenerator<T>` gained a `Caches` member — custom/plugin generator implementations must expose their KV-cache array (build break).
 - `Prefill.ForwardLastLogitsChunked` now takes a prefill-progress callback parameter — direct callers are affected (build break).
 - `ChatSession` no longer disposes a model it was handed by the caller (ownership is now explicit) — callers that relied on the session disposing the model must dispose it themselves.
 - KV caches now throw `ArgumentOutOfRangeException` where a buffer/stride would overflow `int` instead of silently truncating/overflowing.
-
-### Fixed
-
-- CUI option cloning silently dropped fields (`UserName`, and the new knobs) on every session launch/resume — launched sessions now honor all options.
-- Broken solution restore; `Transformer.DisposeCache` properly wired into disposal.
-- KV cache `Snapshot` used 32-bit arithmetic that could overflow at full context windows (`KVCache`, `PagedKVCache`, `QuantizedKVCache`).
-- A hallucinated `<tool_call>` no longer enters the tool loop when tools are disabled.
-- Removed redundant/unused implementation code.
 
 ## [1.0.0.0] - 2026-08-16
 

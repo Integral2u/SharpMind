@@ -1,4 +1,5 @@
-﻿using SharpMind.Model;
+﻿using SharpMind.Inference.Chat.PromptFormatters;
+using SharpMind.Model;
 using SharpMind.Tokenization;
 
 namespace SharpMind.Inference.Chat;
@@ -28,6 +29,21 @@ public interface IChatSession : IAsyncDisposable
     public Transformer Model { get; }
     public IReadOnlyList<ChatMessage> History { get; }
 
+    /// <summary>
+    /// The resolved chat prompt formatter after <see cref="InitializeChat"/>
+    /// runs. Null until the session is initialized. Use
+    /// <c>Formatter?.GetType().Name</c> to display the concrete formatter name
+    /// (e.g. "Llama3Formatter", "ChatMLFormatter") in the UI.
+    /// </summary>
+    IChatPromptFormatter? Formatter { get; }
+
+    /// <summary>
+    /// Number of tokens fed to the generator as prefill on the most recent turn:
+    /// the full prompt when the KV cache could not be extended, or just the delta
+    /// when the previous turn's cache was verified and extended incrementally.
+    /// </summary>
+    internal int LastPrefillTokenCount { get; }
+
     public void AddMessage(ChatRole role, string content);
     public void AddMessage(ChatMessage message);
     public string GetFormattedPrompt();
@@ -35,6 +51,8 @@ public interface IChatSession : IAsyncDisposable
     public void ResetCaches();
     public void Interrupt();
     public void InitializeChat(IProgress<float>? progress = null);
+    public ChatSessionSnapshot GetSnapshot();
+    public void LoadSnapshot(ChatSessionSnapshot snapshot);
     public Task<ChatMessage[]> StartChatAsync(Func<Task<ChatMessage>> prompt, Action<ChatStreamEntry> response, CancellationToken token = default);
     public Task<ChatMessage[]> StartChatAsync(Func<ChatMessage> prompt, Action<ChatStreamEntry> response, CancellationToken token = default);
     public Task<ChatMessage[]> StartChatAsync(Func<Task<string>> prompt, Action<string> response, CancellationToken token = default);

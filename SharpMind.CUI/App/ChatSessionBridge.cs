@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using SharpMind.Inference.Chat;
+using SharpMind.Inference.Chat.PromptFormatters;
 
 namespace SharpMind.CUI.App;
 
@@ -19,6 +20,8 @@ public interface IChatBridge : IAsyncDisposable
     IEnumerable<ChatStreamEntry> DrainEntries();
     void Interrupt();
     IReadOnlyList<ChatMessage> GetHistory();
+    ChatSessionSnapshot GetSnapshot();
+    void LoadSnapshot(ChatSessionSnapshot snapshot);
     void ToggleIgnore(int index);
     void ResetCache();
     bool ShowThinking { get; set; }
@@ -26,6 +29,13 @@ public interface IChatBridge : IAsyncDisposable
     bool Faulted { get; }
     Exception? Fault { get; }
     ChatArtifact[]? LastArtifacts { get; }
+
+    /// <summary>
+    /// The resolved chat prompt formatter after session initialization, or
+    /// null if the session hasn't been initialized yet. Use
+    /// <c>Formatter?.GetType().Name</c> for the display name.
+    /// </summary>
+    IChatPromptFormatter? Formatter { get; }
 }
 
 /// <summary>
@@ -57,6 +67,8 @@ public sealed class ChatSessionBridge(IChatSession session, bool disposeUnderlyi
     public bool Faulted { get; private set; }
     public Exception? Fault { get; private set; }
     public ChatArtifact[]? LastArtifacts => _lastArtifacts;
+
+    public IChatPromptFormatter? Formatter => session.Formatter;
 
     /// <summary>
     /// Whether DisposeAsync should actually dispose the underlying
@@ -135,6 +147,10 @@ public sealed class ChatSessionBridge(IChatSession session, bool disposeUnderlyi
     public void Interrupt() => session.Interrupt();
 
     public IReadOnlyList<ChatMessage> GetHistory() => session.History;
+
+    public ChatSessionSnapshot GetSnapshot() => session.GetSnapshot();
+
+    public void LoadSnapshot(ChatSessionSnapshot snapshot) => session.LoadSnapshot(snapshot);
 
     public void ToggleIgnore(int index)
     {

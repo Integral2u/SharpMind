@@ -16,4 +16,12 @@ public sealed class ChatSessionState
     public required SessionOptions Options { get; init; }
     public required IChatBridge Bridge { get; init; }
     public required ChatView View { get; init; }
+
+    /// <summary>
+    /// Path to the JSON file this session was last saved to / loaded from,
+    /// or null when the session has never been persisted. Used by
+    /// SaveCurrentSession to decide whether to overwrite in place or offer
+    /// a Save As dialog.
+    /// </summary>
+    public string? SourceFilePath { get; set; }
 }

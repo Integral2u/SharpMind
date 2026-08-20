@@ -29,16 +29,27 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     /// <summary>
     /// True when the generator's KV cache is known to correspond exactly to
     /// <see cref="_cachedPromptTokens"/> plus whatever the model generated on
-    /// top of it last turn, so the next turn can extend the cache incrementally
-    /// instead of reprocessing the whole conversation from scratch.
+    /// top of it last turn (captured in <see cref="_lastGeneratedIds"/>), so the
+    /// next turn can extend the cache incrementally instead of reprocessing the
+    /// whole conversation from scratch.
     /// Set false by anything that leaves the cache's actual contents unknown or
     /// out of sync with history: compaction, message eviction / context
     /// trimming, snapshot loads, sub-agent calls (which repurpose the same
-    /// generator/cache), a prompt formatter being in use, generators that don't
-    /// report how many tokens they committed (<see cref="IGenerator{T}.CurrentGeneratedIds"/>
-    /// is null), and interrupted/cancelled generations.
+    /// generator/cache), generators that don't report how many tokens they
+    /// committed (<see cref="IGenerator{T}.CurrentGeneratedIds"/> is null), and
+    /// interrupted/cancelled generations.
+    /// A prompt formatter no longer invalidates the cache: the incremental path
+    /// is formatter-agnostic because it re-encodes the full conversation and
+    /// proves the prefix reproduces the cached tokens before extending.
     /// </summary>
     private bool _cacheValid;
+    private IReadOnlyList<int>? _lastGeneratedIds;
+    /// <summary>
+    /// Test/observation hook: how many tokens were actually fed to the generator
+    /// as prefill on the most recent turn (the full prompt on a fallback, the
+    /// delta slice when the KV cache was extended incrementally).
+    /// </summary>
+    public int LastPrefillTokenCount { get; private set; }
     private IReadOnlyList<ChatMessage>? _filteredHistoryCache;
     private IReadOnlyList<ChatMessage>? _promptHistoryCache;
     // IO interceptors (optional)
@@ -55,10 +66,33 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     private readonly IPromptPostProcessor? _postProcessor;
     private readonly IProgress<float>? _progress;
     private readonly ModelMetaData? _meta;
+
+    /// <summary>
+    /// Optional callback fired during the warm-up prefill in
+    /// <see cref="InitializeChat"/> with the overall fraction (0..1) of the
+    /// initial prompt prefilled. Lets the loading view surface "Prefilling X%"
+    /// during session startup instead of jumping from 15% to done. Set null to
+    /// suppress.
+    /// </summary>
+    internal Action<double>? PrefillProgress { get; set; }
     private readonly IKVCache[]? _caches;
+
+    /// <summary>
+    /// Resolves the live KV cache array — either the explicitly-passed
+    /// <see cref="_caches"/> or, when null (factory path), the caches
+    /// owned by the generator after <see cref="InitializeChat"/>.
+    /// </summary>
+    private IKVCache[]? ActiveCaches => _caches ?? _generator?.Caches?.ToArray();
+
     private readonly int? _seed;
     private string _userName = "User";
     private CancellationTokenSource? _turnCts;
+    /// <summary>
+    /// KV-cache snapshot restored from a saved session. Consumed (and
+    /// nulled) by <see cref="WarmupPrefillAsync"/> when the prompt hash
+    /// matches, allowing the prefill to be skipped entirely.
+    /// </summary>
+    private KVCacheSnapshot? _pendingKvCacheSnapshot;
     /// <summary>
     /// Fractions (0..1) reported by <see cref="IGenerator{T}.PrefillProgress"/>
     /// during the generator's synchronous chunked-prefill phase. Drained into
@@ -151,8 +185,9 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
 
         progress?.Report(0f);
         _formatter = _formatterOverride ?? ChatPromptFormatterFactory.Create(_meta, _tokenizer);
-        progress?.Report(0.15f);
+        progress?.Report(0.08f);
 
+        progress?.Report(0.10f);
         _generator = new T().CreateGenerator(_model, _tokenizer, _addBos, _addEos, _caches, _seed);
         ArgumentNullException.ThrowIfNull(_generator);
         // Chunked-prefill progress: queued on the calling thread during the
@@ -160,16 +195,72 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         // ChatStatus.Updating entries at the start of the main stream loop so
         // the UI can show "Prefilling NN.NN%" instead of appearing stuck.
         _generator.PrefillProgress = p => _prefillProgressQueue.Enqueue(p);
-        progress?.Report(0.6f);
+        progress?.Report(0.40f);
 
         if (_agentBuilder != null) AddAgentMessages();
-        progress?.Report(0.8f);
+        progress?.Report(0.55f);
 
         // Warm up: encode the system prompt to ensure tokenizer is ready
         _tokenizer.Encode("", _addBos, _addEos);
-        progress?.Report(1f);
+        progress?.Report(0.60f);
 
         _initialized = true;
+    }
+
+    /// <summary>
+    /// Prefills the initial prompt (system prompt + tools) into the generator's
+    /// KV cache after <see cref="InitializeChat"/> completes. Reports chunked
+    /// progress (0..1) via <see cref="PrefillProgress"/> so the loading view
+    /// can surface "Prefilling X%" during startup.
+    /// When a <see cref="KVCacheSnapshot"/> was restored via
+    /// <see cref="LoadSnapshot"/> and its prompt hash matches the freshly-built
+    /// prompt, the prefill is skipped and the cache is restored directly — the
+    /// first user turn then extends it incrementally as usual.
+    /// </summary>
+    internal async Task WarmupPrefillAsync()
+    {
+        EnsureInitialized();
+        string prompt = BuildPrompt();
+        int[] promptToks = _tokenizer.Encode(prompt, _addBos, _addEos);
+        if (promptToks.Length == 0) return;
+
+        // Fast path: if a cached KV-cache snapshot was loaded and the prompt
+        // tokens hash matches, restore the cache directly — no prefill needed.
+        if (_pendingKvCacheSnapshot is { } cached)
+        {
+            string currentHash = KVCacheSnapshot.HashPromptTokens(promptToks);
+            if (string.Equals(currentHash, cached.PromptHash, StringComparison.OrdinalIgnoreCase)
+                && cached.Layers.Count == (ActiveCaches?.Length ?? 0))
+            {
+                PrefillProgress?.Invoke(1.0);
+                _generator!.ResetCache();
+                var ac = ActiveCaches!;
+                for (int i = 0; i < ac.Length && i < cached.Layers.Count; i++)
+                    ac[i].RestoreBytes(cached.Layers[i]);
+                _cachedPromptTokens = promptToks;
+                _lastGeneratedIds = Array.Empty<int>();
+                _cacheValid = true;
+                _pendingKvCacheSnapshot = null;
+                return;
+            }
+            // Hash mismatch — fall through to full prefill.
+            _pendingKvCacheSnapshot = null;
+        }
+
+        _generator!.ResetCache();
+        var warmupCfg = new SamplingConfig { Temperature = 0, TopK = 1 };
+        var warmupGen = new GenerationConfig { MaxNewTokens = 0, Stream = false };
+        _prefillProgressQueue.Clear();
+        _generator.PrefillProgress = p =>
+        {
+            _prefillProgressQueue.Enqueue(p);
+            PrefillProgress?.Invoke(p);
+        };
+        await foreach (var _ in _generator.GenerateFromTokensAsync(promptToks, warmupCfg, warmupGen)) { }
+        _generator.PrefillProgress = p => _prefillProgressQueue.Enqueue(p);
+        _cachedPromptTokens = promptToks;
+        _lastGeneratedIds = Array.Empty<int>();
+        _cacheValid = true;
     }
 
     private void EnsureInitialized()
@@ -188,6 +279,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     public Tokenizer Tokenizer => _tokenizer;
     public Transformer Model => _model;
     public IReadOnlyList<ChatMessage> History => _filteredHistoryCache ??= [.. _history.Where(p => p.Role != ChatRole.System)];
+    public IChatPromptFormatter? Formatter => _formatter;
 
     public int MaxTokens { get; set; } = 2048;
     /// <summary>Max generation tokens. Defaults to 256 so context trimming leaves room.</summary>
@@ -283,6 +375,7 @@ _pendingDraft = null;
         if (_agentBuilder != null) AddAgentMessages();
         _cachedPromptTokens = null;
         _cacheValid = false;
+        _lastGeneratedIds = null;
         _generator.ResetCache();
     }
 
@@ -290,6 +383,31 @@ _pendingDraft = null;
     {
         EnsureInitialized();
         _generator.ResetCache();
+        // The physical KV cache is gone, so the next turn must not assume the
+        // incremental hypothesis still holds — a full re-prefill is required.
+        _cachedPromptTokens = null;
+        _cacheValid = false;
+        _lastGeneratedIds = null;
+    }
+
+    /// <summary>
+    /// Test hook: primes the generator's physical KV cache with
+    /// <paramref name="prefixToks"/> and installs the post-clean-turn hypothesis
+    /// state — cache holds exactly <paramref name="prefixToks"/> followed by no
+    /// generated tokens — so tests can drive the incremental-prefill path with a
+    /// cache prefix of their choosing (the render preceding the next turn)
+    /// instead of relying on a tokenizer that round-trips sampled ids.
+    /// </summary>
+    internal async Task PrimeIncrementalCacheForTestAsync(int[] prefixToks)
+    {
+        EnsureInitialized();
+        _generator.ResetCache();
+        var sampleCfg = new SamplingConfig { Temperature = 0, TopK = 1 };
+        var genCfg = new GenerationConfig { MaxNewTokens = 0, Stream = false };
+        await foreach (var _ in _generator.GenerateFromTokensAsync(prefixToks, sampleCfg, genCfg)) { }
+        _cachedPromptTokens = prefixToks;
+        _lastGeneratedIds = Array.Empty<int>();
+        _cacheValid = true;
     }
     /// <summary>
     /// Returns true when the rendered prompt ends inside an unclosed &lt;think&gt;
@@ -414,6 +532,7 @@ _pendingDraft = null;
             InvalidateHistoryCache();
             _cachedPromptTokens = null;
             _cacheValid = false;
+            _lastGeneratedIds = null;
 
             promptToks = _tokenizer.Encode(BuildPrompt(), addBos: false, addEos: false);
         }
@@ -691,53 +810,10 @@ private void ThrowIfDisposed()
         // rather than a tool call, or until MaxToolCallsPerTurn is reached.
         for (int toolCallCount = 0; ; toolCallCount++)
         {
-            // Tokenise.
-            // `promptToks` is always the *full logical* prompt (used for budget
-            // checks, compaction, and next turn's bookkeeping); `generatorInput`
-            // is what we actually feed the generator this call, which is just
-            // the unseen delta when the KV cache can be safely extended.
-            int[] promptToks;
-            int[] generatorInput;
-            bool canIncrement = _cacheValid
-                && _cachedPromptTokens is not null
-                && _formatter is null
-                && _history.Count >= 2
-                && _history[^2].Role == ChatRole.Agent;
-
-            if (canIncrement)
-            {
-                // Full logical prompt, for bookkeeping only — mirrors what
-                // BuildPrompt() would produce, so budget/eviction logic below
-                // keeps working exactly as before.
-                var incremental = new System.Text.StringBuilder();
-                incremental.Append(_history[^2].Content).Append('\n');
-                incremental.Append("user: ").Append(userInput).Append("\nassistant: ");
-                int[] newToks = _tokenizer.Encode(incremental.ToString(), addBos: false, addEos: false);
-
-                promptToks = GC.AllocateUninitializedArray<int>(_cachedPromptTokens!.Length + newToks.Length);
-                _cachedPromptTokens.CopyTo(promptToks.AsSpan());
-                newToks.CopyTo(promptToks.AsSpan(_cachedPromptTokens.Length));
-
-                // What we actually send: the previous assistant turn's content
-                // is already resident in the KV cache from when it was
-                // generated, so only the closing newline and the new turn are
-                // "new" tokens. NOTE: encoding this suffix separately from the
-                // full string above can, in principle, tokenise the boundary
-                // (the char right after the previous assistant content)
-                // slightly differently than one joint BPE pass would — a
-                // known limitation of incremental/delta tokenisation. In
-                // practice this only risks the token(s) right at the seam,
-                // not the already-cached content before it.
-                var delta = new System.Text.StringBuilder();
-                delta.Append('\n').Append("user: ").Append(userInput).Append("\nassistant: ");
-                generatorInput = _tokenizer.Encode(delta.ToString(), addBos: false, addEos: false);
-            }
-            else
-            {
-                var prompt = BuildPrompt();
-                promptToks = _tokenizer.Encode(prompt, addBos: false, addEos: false);
-                generatorInput = promptToks;
-            }
+            // Tokenise the *full logical* prompt — what the whole conversation
+            // renders to right now. `promptToks` is used for budget checks,
+            // compaction, and next turn's bookkeeping.
+            int[] promptToks = _tokenizer.Encode(BuildPrompt(), addBos: false, addEos: false);
 
             // Context compaction
             var compactor = _agentBuilder?.Compactor;
@@ -765,24 +841,62 @@ private void ThrowIfDisposed()
                     InvalidateHistoryCache();
                     _cachedPromptTokens = null;
                     _cacheValid = false;
+                    _lastGeneratedIds = null;
                     promptToks = _tokenizer.Encode(BuildPrompt(), addBos: false, addEos: false);
-                    generatorInput = promptToks;
                 }
             }
 
             if (promptToks.Length > MaxTokens)
             {
                 promptToks = TrimToFitContext(promptToks); // may itself set _cacheValid = false
-                generatorInput = promptToks;
             }
+
+            // Incremental KV-cache extension, decided *after* compaction/trimming
+            // so it sees the final promptToks and cache state. If the previous
+            // turn completed cleanly, the generator's cache holds exactly
+            // `_cachedPromptTokens` followed by `_lastGeneratedIds` (the ids it
+            // generated on top). Re-encoding the full conversation provably
+            // reproduces that prefix — checked by an exact token comparison —
+            // and then only the unseen tail is fed to the generator and
+            // ResetCache is skipped. This is formatter-agnostic: no per-format
+            // seam logic, because the prefix check is the safety net. Any
+            // mismatch (seam re-tokenisation drift on the regenerated content,
+            // nondeterministic templates, an EOS committed into the cache,
+            // tools/thinking toggles that change the render) falls back to a
+            // full prefill below.
+            bool canIncrement = _cacheValid
+                && _cachedPromptTokens is not null
+                && _lastGeneratedIds is not null;
+            int incStart = -1;
+            if (canIncrement)
+            {
+                var hyp = GC.AllocateUninitializedArray<int>(_cachedPromptTokens!.Length + _lastGeneratedIds!.Count);
+                _cachedPromptTokens.CopyTo(hyp.AsSpan());
+                for (int k = 0; k < _lastGeneratedIds.Count; k++)
+                    hyp[_cachedPromptTokens.Length + k] = _lastGeneratedIds[k];
+
+                // The re-render must reproduce the cached prefix token-for-token
+                // (not just as text) and must contain more than it (a new turn
+                // always adds tokens), otherwise incremental is unsafe.
+                canIncrement = hyp.Length < promptToks.Length
+                    && promptToks.AsSpan(0, hyp.Length).SequenceEqual(hyp);
+                if (canIncrement)
+                    incStart = hyp.Length;
+            }
+            int[] generatorInput = canIncrement ? promptToks[incStart..] : promptToks;
 
             if (promptToks.Length == 0)
                 throw new InvalidOperationException("Prompt produced no token IDs; cannot generate.");
 
-            // Only reset the KV cache when something above invalidated it —
-            // this is the one case that used to run unconditionally every
-            // turn, forcing a full reprocessing of the whole conversation.
-            if (!_cacheValid)
+            // Reset the KV cache whenever the incremental hypothesis failed —
+            // both when it was already invalidated above and when a mismatch was
+            // detected: the generator always *extends* the given cache (see
+            // StandardGenerator.GenerateFromTokensAsync, which appends promptIds
+            // after _caches[0].Length), so feeding the full prompt over a still
+            // populated cache would duplicate the conversation's KVs.
+            // This is the one case that used to run unconditionally every turn,
+            // forcing a full reprocessing of the whole conversation.
+            if (!canIncrement)
             {
                 _generator.ResetCache();
                 generatorInput = promptToks; // cache is gone; must resend everything
@@ -829,6 +943,7 @@ private void ThrowIfDisposed()
             _progress?.Report(0f);
             int genFrags = 0;
             _prefillProgressQueue.Clear();
+            LastPrefillTokenCount = generatorInput.Length;
             ChatTrace($"starting generation, promptToks={generatorInput.Length}");
             await foreach (var fragment in _generator.GenerateFromTokensAsync(generatorInput, sampleCfg, genCfg, linkedCts.Token))
             {
@@ -942,6 +1057,7 @@ private void ThrowIfDisposed()
 
                 _cachedPromptTokens = null; // history grew; invalidate incremental cache
                 _cacheValid = false;
+                _lastGeneratedIds = null;
                 continue;                   // generate again with enriched history
             }
 
@@ -1019,6 +1135,7 @@ private void ThrowIfDisposed()
 
                 _cachedPromptTokens = null; // history grew; invalidate incremental cache
                 _cacheValid = false;
+                _lastGeneratedIds = null;
                 continue;                   // generate again with enriched history
             }
 
@@ -1038,6 +1155,7 @@ private void ThrowIfDisposed()
                 InvalidateHistoryCache();
                 _cachedPromptTokens = null;
                 _cacheValid = false;
+                _lastGeneratedIds = null;
                 continue;
             }
 
@@ -1060,6 +1178,7 @@ private void ThrowIfDisposed()
             // cache's exact length, so we conservatively fall back to a full
             // rebuild next turn.
             _cacheValid = _generator.CurrentGeneratedIds is not null;
+            _lastGeneratedIds = _generator.CurrentGeneratedIds;
 
             yield return new ChatStreamEntry
             {
@@ -1185,10 +1304,30 @@ private void ThrowIfDisposed()
     public ChatSessionSnapshot GetSnapshot()
     {
         ThrowIfDisposed();
+        KVCacheSnapshot? kvCache = null;
+        if (ActiveCaches is { Length: > 0 } ac && _cacheValid && _cachedPromptTokens is not null)
+        {
+            var layers = new List<byte[]>();
+            bool anyData = false;
+            foreach (var cache in ac)
+            {
+                var blob = cache.SnapshotBytes();
+                if (blob is not null) { layers.Add(blob); anyData = true; }
+                else layers.Add(Array.Empty<byte>());
+            }
+            if (anyData)
+                kvCache = new KVCacheSnapshot
+                {
+                    PromptHash = KVCacheSnapshot.HashPromptTokens(_cachedPromptTokens),
+                    PromptTokenCount = _cachedPromptTokens.Length,
+                    Layers = layers
+                };
+        }
         return new ChatSessionSnapshot
         {
             History = [.. _history],
-            PendingDraft = _pendingDraft
+            PendingDraft = _pendingDraft,
+            KVCache = kvCache
         };
     }
 
@@ -1197,7 +1336,7 @@ private void ThrowIfDisposed()
         ThrowIfDisposed();
         ArgumentNullException.ThrowIfNull(snapshot);
 
-_history.Clear();
+        _history.Clear();
         _pendingDraft = snapshot.PendingDraft;
 
         if (_agentBuilder != null)
@@ -1214,7 +1353,12 @@ _history.Clear();
 
         _cachedPromptTokens = null;
         _cacheValid = false;
+        _lastGeneratedIds = null;
         _generator.ResetCache();
+
+        // Restore KV-cache state if the snapshot carried one.
+        // The hash check in WarmupPrefillAsync decides whether to use it.
+        _pendingKvCacheSnapshot = snapshot.KVCache;
     }
 
     public static readonly JsonSerializerOptions IndentedEnumConverter = new()

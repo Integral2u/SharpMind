@@ -27,6 +27,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="SharpMind.Tests" />
+    <InternalsVisibleTo Include="SharpMind.CUI" />
   </ItemGroup>
 
 </Project>

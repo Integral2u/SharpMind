@@ -73,7 +73,7 @@ public sealed class ChatView : View
         _onExit = onExit;
         _onGeneratingChanged = onGeneratingChanged;
 
-        int sidebarWidth = 28;
+        int sidebarWidth = 34;
 
         _transcriptView = new TextView
         {
@@ -120,7 +120,10 @@ public sealed class ChatView : View
         };
         string hwDisplay = options.UseGpu ? $"GPU ({resolvedHw})" : resolvedHw;
 
-        _strategyLabel = new Label($"Generator: {options.Generator}\nKV Cache: {options.Cache}\nFormatting:{options.Formatter}\nHW Tier: {hwDisplay}")
+        string formatterDisplay = bridge.Formatter is { } fmt
+            ? fmt.GetType().Name
+            : options.Formatter.ToString();
+        _strategyLabel = new Label($"Generator: {options.Generator}\nKV Cache: {options.Cache}\nFormatting:{formatterDisplay}\nHW Tier: {hwDisplay}")
         { X = 0, Y = 4, Width = Dim.Fill(), Height = 4 };
         _toolLabel = new Label("Tool: none") { X = 0, Y = 8, Width = Dim.Fill() };
 

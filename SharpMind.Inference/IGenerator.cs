@@ -30,4 +30,7 @@ public interface IGenerator<T> : IDisposable where T : IKVCacheBuilder, new()
     float? CumulativeTokensPerSecond { get; }
     float? TimeToFirstToken { get; }
     IReadOnlyList<int>? CurrentGeneratedIds => null;
+
+    /// <summary>The per-layer KV caches backing this generator.</summary>
+    IReadOnlyList<IKVCache> Caches { get; }
 }

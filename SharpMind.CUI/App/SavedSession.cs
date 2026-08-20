@@ -1,4 +1,5 @@
 using System.Text.Json;
+using SharpMind.Inference.Chat;
 
 namespace SharpMind.CUI.App;
 
@@ -20,6 +21,14 @@ public sealed class SavedSession
     public string Name { get; set; } = "Untitled";
     public required SessionOptions Options { get; set; }
     public DateTime SavedAtUtc { get; set; } = DateTime.UtcNow;
+
+    /// <summary>
+    /// Optional chat history snapshot. When present, the session is restored
+    /// with its previous conversation after launch instead of starting empty.
+    /// This field is null for preset/options-only saves.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public ChatSessionSnapshot? Snapshot { get; set; }
 
     public static string DefaultFolder => SharpMindPaths.ChatSessions;
 

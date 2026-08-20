@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Text.Json.Nodes;
 using SharpMind.Inference.Agent;
 using SharpMind.Inference.Chat;
+using SharpMind.Inference.Chat.PromptFormatters;
 
 namespace SharpMind.CUI.App;
 
@@ -32,6 +33,8 @@ public sealed class DebugChatBridge(CuiToolContext cuiContext, Func<ToolPermissi
     public bool ShowThinking { get; set; } = true;
     public bool EnableThinking { get; set; }
     public ChatArtifact[]? LastArtifacts { get; private set; }
+
+    public IChatPromptFormatter? Formatter => null;
 
     public void SubmitUserInput(string text, ChatArtifact[]? artifacts = null)
     {
@@ -354,6 +357,15 @@ public sealed class DebugChatBridge(CuiToolContext cuiContext, Func<ToolPermissi
     }
 
     public IReadOnlyList<ChatMessage> GetHistory() => _history;
+
+    public ChatSessionSnapshot GetSnapshot() => new() { History = [.. _history] };
+
+    public void LoadSnapshot(ChatSessionSnapshot snapshot)
+    {
+        _history.Clear();
+        foreach (var msg in snapshot.History)
+            _history.Add(msg);
+    }
 
     public void ToggleIgnore(int index)
     {

@@ -1,6 +1,8 @@
+using System.Text.Json.Serialization;
 using SharpMind.Core;
 using SharpMind.Inference;
 using SharpMind.Inference.Agent;
+using SharpMind.Inference.Chat;
 using SharpMind.Model.Config;
 using SharpMind.Model.Format;
 
@@ -271,7 +273,27 @@ public sealed class SessionOptions
         target.DisabledPostProcessors = [.. DisabledPostProcessors];
         target.SkipAgentPrompt = SkipAgentPrompt;
         target.DisableTools = DisableTools;
+        target.PendingSnapshot = PendingSnapshot;
+        target.SourceFilePath = SourceFilePath;
     }
+
+    /// <summary>
+    /// Transient carrier: when a saved session includes a chat history
+    /// snapshot, it's stashed here so CreateAndShowSession can restore it
+    /// into the session after initialization. This field is not serialized
+    /// as part of SessionOptions (the snapshot lives in SavedSession.Snapshot)
+    /// and is not copied by Clone/CopyTo.
+    /// </summary>
+    [JsonIgnore]
+    public ChatSessionSnapshot? PendingSnapshot { get; set; }
+
+    /// <summary>
+    /// Path to the JSON file this session was loaded from. Used by
+    /// SaveCurrentSession to decide whether to overwrite in place or
+    /// present a Save As dialog. Not serialized with the session options.
+    /// </summary>
+    [JsonIgnore]
+    public string? SourceFilePath { get; set; }
 
     public static SessionOptions Default => new();
 }

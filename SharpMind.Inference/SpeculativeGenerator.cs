@@ -8,6 +8,7 @@ namespace SharpMind.Inference;
 public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBuilder, new()
 {
     public string Name { get; init; } = "Speculative";
+    public IReadOnlyList<IKVCache> Caches => _caches;
     private readonly Transformer _model;
     private readonly Tokenization.Tokenizer _tokenizer;
     private readonly IKVCache[] _caches;

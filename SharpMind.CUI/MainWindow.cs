@@ -1,7 +1,10 @@
 using NStack;
 using SharpMind.CUI.App;
 using SharpMind.Core.Quantization;
+using SharpMind.Inference;
 using SharpMind.Inference.Agent;
+using SharpMind.Inference.Chat;
+using SharpMind.Model;
 using SharpMind.Model.Format;
 using SharpMind.Model.Format.Conversion;
 using Terminal.Gui;
@@ -34,14 +37,28 @@ public sealed class MainWindow : Window
         Path.Combine(SavedSession.DefaultFolder, "__last_used__.json");
 
     /// <summary>Returns the most recently saved session (excluding __last_used__.json), or null.</summary>
-    private static SavedSession? FindLastSession()
+    private static (SavedSession session, string path)? FindLastSession()
     {
         try
         {
             var saved = SavedSession.ListSaved(SavedSession.DefaultFolder);
-            var last = saved.FirstOrDefault(f =>
+            // Prefer manually-saved sessions (named files), but fall back to
+            // __last_used__.json when no manual saves exist — it now carries a
+            // KV-cache snapshot on session launch.
+            var manual = saved.FirstOrDefault(f =>
                 !Path.GetFileName(f).Equals("__last_used__.json", StringComparison.OrdinalIgnoreCase));
-            return last is not null ? SavedSession.Load(last, out _) : null;
+            if (manual is not null)
+                return (SavedSession.Load(manual, out _)!, manual);
+
+            var autoSave = saved.FirstOrDefault(f =>
+                Path.GetFileName(f).Equals("__last_used__.json", StringComparison.OrdinalIgnoreCase));
+            if (autoSave is not null)
+            {
+                var session = SavedSession.Load(autoSave, out _);
+                if (session?.Snapshot is not null)
+                    return (session, autoSave);
+            }
+            return null;
         }
         catch { return null; }
     }
@@ -79,13 +96,13 @@ public sealed class MainWindow : Window
         _permissionPollToken = Application.MainLoop.AddTimeout(TimeSpan.FromMilliseconds(100), PollPermissionRequests);
     }
 
-    private static void SaveLastUsedOptions(SessionOptions options)
+    private static void SaveLastUsedOptions(SessionOptions options, ChatSessionSnapshot? snapshot = null)
     {
         try
         {
             var dir = SavedSession.DefaultFolder;
             Directory.CreateDirectory(dir);
-            var saved = new SavedSession { Name = "__last_used__", Options = options };
+            var saved = new SavedSession { Name = "__last_used__", Options = options, Snapshot = snapshot };
             SavedSession.Save(saved, Path.Combine(dir, "__last_used__.json"), out _);
         }
         catch { /* best-effort save */ }
@@ -178,10 +195,12 @@ public sealed class MainWindow : Window
                 _options.ModelPath = _options.ModelPath!;
                 ShowOptions();
             }) : null,
-            lastSessionName: lastSession?.Name,
+            lastSessionName: lastSession?.session.Name,
             onResumeLastSession: lastSession is not null ? new Action(() =>
             {
-                _options = CloneOptions(lastSession.Options);
+                _options = CloneOptions(lastSession.Value.session.Options);
+                _options.PendingSnapshot = lastSession.Value.session.Snapshot;
+                _options.SourceFilePath = lastSession.Value.path;
                 ShowOptions();
             }) : null,
             onTrainModel: ShowTrainingWizard,
@@ -790,6 +809,15 @@ public sealed class MainWindow : Window
     {
         if (_currentSession is null) return;
         SwapContent(_currentSession.View);
+        // Defer transcript rebuild to the next main-loop tick so the view
+        // is fully laid out and parented. A direct call here can race with
+        // Terminal.Gui's first draw of the empty ChatView, leaving the
+        // transcript blank even though history is present.
+        Application.MainLoop.AddTimeout(TimeSpan.FromMilliseconds(50), _ =>
+        {
+            _currentSession?.View.RebuildTranscript();
+            return false; // one-shot
+        });
     }
 
     private void ShowSessionManager()
@@ -823,7 +851,7 @@ public sealed class MainWindow : Window
         _currentSession.Options.ShowThinking = newValue;
         _options.ShowThinking = newValue;
         _currentSession.View.RebuildTranscript();
-        SaveLastUsedOptions(_options);
+        SaveLastUsedOptions(_options, _currentSession?.Bridge?.GetSnapshot());
 
         MessageBox.Query("Show Thinking",
             $"Show thinking is now {(_currentSession.Bridge.ShowThinking ? "on" : "off")}.",
@@ -838,7 +866,7 @@ public sealed class MainWindow : Window
         _currentSession.Bridge.EnableThinking = newValue;
         _currentSession.Options.EnableThinking = newValue;
         _options.EnableThinking = newValue;
-        SaveLastUsedOptions(_options);
+        SaveLastUsedOptions(_options, _currentSession?.Bridge?.GetSnapshot());
 
         MessageBox.Query("Enable Thinking (Template)",
             $"enable_thinking is now {(_currentSession.Bridge.EnableThinking ? "enabled" : "disabled")}.\nOnly takes effect on the next turn.",
@@ -931,9 +959,43 @@ public sealed class MainWindow : Window
             var session = result.Session;
             if (session is not null)
             {
-                var chatProgress = new Progress<float>(p => Application.MainLoop.Invoke(() =>
-                    progressView.SetMessage($"Starting session... {p * 100:F0}%")));
-                await Task.Run(() => session.InitializeChat(chatProgress));
+                // --- Combined build/rebuild progress (main-loop polling) ---
+                // A single 0→100% progress across both InitializeChat and
+                // WarmupPrefillAsync, updated by a main-loop timeout at ~10 fps.
+                // LambdaProgress writes directly to the shared float from the
+                // background thread (avoiding Progress<T>'s SynchronizationContext.Post).
+                bool hasSnapshot = launchOptions.PendingSnapshot is not null;
+                string progressLabel = hasSnapshot ? "Rebuilding KV cache..." : "Building KV cache...";
+                float buildProgress = 0f;
+                var buildTimer = Application.MainLoop.AddTimeout(
+                    TimeSpan.FromMilliseconds(100), _ =>
+                    {
+                        progressView.SetMessage($"{progressLabel} {buildProgress * 100:F2}%");
+                        return true;
+                    });
+
+                // Phase 1: InitializeChat — formatter, generator, agent, tokenizer (~0..0.5)
+                await Task.Run(() => session.InitializeChat(new LambdaProgress<float>(p => buildProgress = p * 0.5f)));
+
+                if (launchOptions.PendingSnapshot is { } snapshot)
+                {
+                    session.LoadSnapshot(snapshot);
+                    launchOptions.PendingSnapshot = null;
+                }
+
+                // Phase 2: Warm-up prefill — encode prompt into KV cache (~0.5..1.0)
+                if (session is ChatSession<StandardGeneratorBuilder<KVCacherBuilder>, KVCacherBuilder> concrete)
+                {
+                    await Task.Run(async () =>
+                    {
+                        concrete.PrefillProgress = fraction => buildProgress = 0.5f + (float)fraction * 0.5f;
+                        await concrete.WarmupPrefillAsync();
+                        concrete.PrefillProgress = null;
+                    });
+                }
+
+                Application.MainLoop.RemoveTimeout(buildTimer);
+                Application.MainLoop.Invoke(() => progressView.SetMessage("Starting session..."));
             }
 
             // disposeUnderlyingSession defaults to false here regardless of
@@ -948,7 +1010,7 @@ public sealed class MainWindow : Window
 
             if (bridge is ChatSessionBridge realBridge) realBridge.Start();
 
-            SaveLastUsedOptions(launchOptions);
+            SaveLastUsedOptions(launchOptions, session?.GetSnapshot());
 
             string displayName = result.IsDebugMode ? $"{launchOptions.AgentName} [DEBUG]" : launchOptions.AgentName;
             var chatView = new ChatView(displayName, launchOptions, bridge, result.CuiContext, onExit: ShowSessionManager);
@@ -959,7 +1021,8 @@ public sealed class MainWindow : Window
                 DisplayName = MakeUniqueDisplayName(displayName),
                 Options = launchOptions,
                 Bridge = bridge,
-                View = chatView
+                View = chatView,
+                SourceFilePath = launchOptions.SourceFilePath
             };
             chatView.SessionDisplayName = state.DisplayName;
 
@@ -1039,7 +1102,9 @@ public sealed class MainWindow : Window
         }
 
         _currentSession = null;
-        _options = CloneOptions(lastSession.Options);
+        _options = CloneOptions(lastSession.Value.session.Options);
+        _options.PendingSnapshot = lastSession.Value.session.Snapshot;
+        _options.SourceFilePath = lastSession.Value.path;
         ShowOptions();
     }
 
@@ -1053,14 +1118,54 @@ public sealed class MainWindow : Window
             return;
         }
 
-        var saved = new SavedSession { Name = _currentSession.DisplayName, Options = _currentSession.Options };
+        var saved = new SavedSession
+        {
+            Name = _currentSession.DisplayName,
+            Options = _currentSession.Options,
+            Snapshot = _currentSession.Bridge.GetSnapshot()
+        };
         string safeFileName = string.Concat(_currentSession.DisplayName.Split(Path.GetInvalidFileNameChars()));
-        string path = Path.Combine(SavedSession.DefaultFolder, $"{safeFileName}.json");
+        string defaultPath = Path.Combine(SavedSession.DefaultFolder, $"{safeFileName}.json");
+
+        string? path = null;
+        if (_currentSession.SourceFilePath is { } existing)
+        {
+            // Session was previously saved or loaded — ask before
+            // overwriting the same file, and always offer Save As for a
+            // different destination.
+            int choice = MessageBox.Query("Save session",
+                $"Save to:\n{existing}\n\nOverwrite or choose a different location?",
+                "Overwrite", "Save As", "Cancel");
+            if (choice == 0)
+            {
+                path = existing;
+            }
+            else if (choice == 1)
+            {
+                path = FilePickerDialog.Show("Save session as", SavedSession.DefaultFolder, PickerMode.SaveFile, $"{safeFileName}.json");
+            }
+            else
+            {
+                return; // Cancel
+            }
+        }
+        else
+        {
+            // First save for this session — offer Save As with a sensible default.
+            path = FilePickerDialog.Show("Save session", SavedSession.DefaultFolder, PickerMode.SaveFile, $"{safeFileName}.json");
+        }
+
+        if (path is null) return;
 
         if (SavedSession.Save(saved, path, out var error))
+        {
+            _currentSession.SourceFilePath = path;
             MessageBox.Query("Saved", $"Saved session to:\n{path}", "OK");
+        }
         else
+        {
             MessageBox.ErrorQuery("Save failed", error ?? "Unknown error", "OK");
+        }
     }
 
     /// <summary>
@@ -1086,6 +1191,8 @@ public sealed class MainWindow : Window
 
         _currentSession = null;
         _options = CloneOptions(loaded.Options);
+        _options.PendingSnapshot = loaded.Snapshot;
+        _options.SourceFilePath = picked;
         ShowOptions();
     }
 
@@ -1127,5 +1234,19 @@ public sealed class MainWindow : Window
 
         dialog.Add(allowOnce, allowAlways, deny);
         Application.Run(dialog);
+    }
+
+    /// <summary>
+    /// Thin IProgress&lt;T&gt; adapter that invokes a delegate directly on the
+    /// calling thread, avoiding Progress&lt;T&gt;'s SynchronizationContext.Post
+    /// which in a console app routes to a thread-pool thread instead of the
+    /// main loop — making main-loop timeout polling useless during awaited
+    /// Task.Run blocks.
+    /// </summary>
+    private sealed class LambdaProgress<T> : IProgress<T>
+    {
+        private readonly Action<T> _action;
+        public LambdaProgress(Action<T> action) => _action = action;
+        public void Report(T value) => _action(value);
     }
 }
