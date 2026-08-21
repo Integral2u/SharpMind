@@ -298,6 +298,6 @@ See [CHANGELOG.md](CHANGELOG.md) for release history.
 - [ ] Optimiations
 - [ ] Microsoft IChatClient and or other services.
 - [ ] Common tools, GREP, GIT etc
-- [ ] Limit breaker, int.MaxValue element-count limit workaround. Solutions not excuses.
+- [ ] Limit breaker(Project Goku), int.MaxValue element-count limit workaround. Solutions not excuses.
 
 Issues, questions, and early feedback are welcome.

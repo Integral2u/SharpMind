@@ -174,7 +174,7 @@
         {
         "Name" = "8:Microsoft Visual Studio"
         "ProductName" = "8:SharpMind Console Setup"
-        "ProductCode" = "8:{5AC4CE64-B4F1-460C-A7DA-EEF252D4B090}"
+        "ProductCode" = "8:{A3B7D91E-4F2C-4856-9E0A-1C8B5D3F7E62}"
         "PackageCode" = "8:{973290AC-ED60-4320-A602-40A7043C9F4B}"
         "UpgradeCode" = "8:{FD76C489-C0D4-4981-AA82-037B63AC570F}"
         "AspNetVersion" = "8:4.0.30319.0"
@@ -182,7 +182,7 @@
         "RemovePreviousVersions" = "11:TRUE"
         "DetectNewerInstalledVersion" = "11:TRUE"
         "InstallAllUsers" = "11:FALSE"
-        "ProductVersion" = "8:1.1.0"
+        "ProductVersion" = "8:1.0.2"
         "Manufacturer" = "8:HP"
         "ARPHELPTELEPHONE" = "8:"
         "ARPHELPLINK" = "8:"
