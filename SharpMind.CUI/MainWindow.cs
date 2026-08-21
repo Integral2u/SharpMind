@@ -173,6 +173,8 @@ public sealed class MainWindow : Window
 
     private void SwapContent(View view)
     {
+        foreach (var old in _content.Subviews.ToArray())
+            old.Dispose();
         _content.RemoveAll();
         _content.Add(view);
         view.Width = Dim.Fill();
@@ -905,6 +907,11 @@ public sealed class MainWindow : Window
             // rather than chasing whatever _options points to by the time the
             // async load finishes.
             var launchOptions = CloneOptions(_options);
+            // PendingSnapshot is transient — not carried by CopyTo — so transfer
+            // it manually and clear the source so it doesn't leak into unrelated
+            // sessions launched later.
+            launchOptions.PendingSnapshot = _options.PendingSnapshot;
+            _options.PendingSnapshot = null;
 
             if (launchOptions.Generator != GeneratorStrategy.UIDebug)
             {

@@ -496,7 +496,7 @@ public sealed class ChatView : View
 
         if (entry.IsComplete || entry.Status is ChatStatus.Complete or ChatStatus.Interrupted)
         {
-            if (_liveResponse.Length > 0)
+            if (_liveResponse.Length > 0 || _liveThinking.Length > 0)
                 CommitLiveResponse();
             SetGenerating(false);
             _toolLabel.Text = "Tool: none";

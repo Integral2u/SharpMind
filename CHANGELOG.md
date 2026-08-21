@@ -23,6 +23,7 @@ that are already on `master`.
 - Vectorised decode/prefill kernels — SIMD-widened fp16 weights (exact for normals and denormals), vectorised LM head, work-based attention parallelism, work-chunked decode, F16 matmul row blocking, cache-line-aligned row tiling, and vectorised Q8 block tails.
 - Deterministic test reference data — `TinyReferenceModel` builds a seed-fixed reference `.SMM` in milliseconds so the session/CUI tests exercise the full load → chat path without loading a real model file.
 - KV-cache persistence: sessions now save and restore the pre-filled KV cache alongside chat history. On resume, if the prompt (system prompt + tools + history) hasn't changed, the expensive prefill is skipped entirely — the cache is restored from disk and the first user turn extends it incrementally.
+- Quantized-resident loading no longer allocates a dead full-F32 weight per inference layer — `InferenceLinearLayer` passes `allocateFullWeight: false` to the base constructor, cutting peak memory by ~28 GB on a 7B model (PR #8).
 
 ### Changed
 
@@ -51,6 +52,10 @@ that are already on `master`.
 - Progress during session loading now renders in real time via main-loop polling (not `MainLoop.Invoke` which never drains while `await`-ing), displays two decimal places, and labels reflect whether the KV cache is being built or rebuilt.
 - Chat sidebar widened by 6 characters to accommodate longer formatter names.
 - Save session now offers a Save As file picker for first-time saves and asks before overwriting an existing file instead of silently replacing it.
+- Q4_0 KV-cache quantization packed nibbles in half-split layout but attention kernels dequantized interleaved — swapped to interleaved packing so the two are consistent.
+- `SessionOptions.CopyTo` was copying the transient `PendingSnapshot` field, causing a stale snapshot to silently resurrect old history into unrelated sessions launched later.
+- Interrupting a turn that only produced `<think>` tokens left stale thinking content and a stale `_liveResponseStartOffset`, corrupting the next turn's transcript rendering.
+- Swapping away from a ChatView (e.g. launching a new session while one is generating) left its 16ms poll timer running on the orphaned view; `SwapContent` now disposes removed child views.
 
 ### Removed
 

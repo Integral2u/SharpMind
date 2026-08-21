@@ -273,7 +273,6 @@ public sealed class SessionOptions
         target.DisabledPostProcessors = [.. DisabledPostProcessors];
         target.SkipAgentPrompt = SkipAgentPrompt;
         target.DisableTools = DisableTools;
-        target.PendingSnapshot = PendingSnapshot;
         target.SourceFilePath = SourceFilePath;
     }
 
