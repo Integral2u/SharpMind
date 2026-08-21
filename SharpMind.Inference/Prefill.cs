@@ -87,21 +87,9 @@ internal static class Prefill
         int len,
         Core.Memory.Workspace workspace)
     {
-        var sw = TraceEnabled ? System.Diagnostics.Stopwatch.StartNew() : null;
         using var chunkInput = workspace.Rent<int>([1, len]);
         promptIds.AsSpan(start, len).CopyTo(chunkInput.Data);
         var result = model.ForwardLastLogits(chunkInput, caches, caches[0].Length, workspace);
-        if (sw is not null)
-            Trace($"chunk [{start}..{start + len}) elapsed={sw.ElapsedMilliseconds}ms cacheLen={caches[0].Length}");
         return result;
     }
-
-    /// <summary>Per-chunk timing trace, off by default; enabled with SHARPMIND_PREFILL_TRACE=1.</summary>
-    private static bool TraceEnabled =>
-        string.Equals(Environment.GetEnvironmentVariable("SHARPMIND_PREFILL_TRACE"), "1", StringComparison.Ordinal);
-
-    private static void Trace(string message) =>
-        File.AppendAllText(
-            Path.Combine(Path.GetTempPath(), "prefill_trace.log"),
-            $"{DateTime.Now:HH:mm:ss.fff} {message}{Environment.NewLine}");
 }

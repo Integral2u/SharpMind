@@ -15,7 +15,7 @@ that are already on `master`.
 - `SessionOptions.SkipAgentPrompt` — drops the whole agent layer (no synthesized agent prompt, no sub-agents, no tool loop).
 - `SessionOptions.DisableTools` — keeps the agent prompt but registers no tools; the tool-call loop is additionally guarded on `RegisteredToolNames.Count > 0`.
 - Options view: "Max context tokens (0 = full)" field plus "Skip agent prompt" and "Disable tools" toggles.
-- Chunked prompt prefill with UI progress surfaced as "Prefilling NN.NN%" (`IGenerator<T>.PrefillProgress`, drained via `ChatSession`); optional timing trace with `SHARMPIND_PREFILL_TRACE=1` → `%TEMP%\prefill_trace.log`.
+- Chunked prompt prefill with UI progress surfaced as "Prefilling NN.NN%" (`IGenerator<T>.PrefillProgress`, drained via `ChatSession`);
 - `SessionOptions.Clone()` / `CopyTo()` — a single deep-copy path shared by every clone/preset/resume path.
 - CUI error surfacing for session-launch failures.
 - Quantized-resident loading — chat/inference loads keep only the raw quantized bytes and skip the per-layer dequantized F32 copies, roughly halving resident memory for a load.
@@ -65,8 +65,7 @@ that are already on `master`.
 ### Breaking
 
 - `IGenerator<T>` gained a `PrefillProgress` member — custom/plugin generator implementations must add it (build break).
-- `IGenerator<T>` gained a `Caches` member — custom/plugin generator implementations must expose their KV-cache array (build break).
-- `Prefill.ForwardLastLogitsChunked` now takes a prefill-progress callback parameter — direct callers are affected (build break).
+- `IGenerator<T>` gained a `Caches`, `CacheTokens`, `TruncateCache`, and `SetCacheTokens` members — custom/plugin generator implementations must expose their KV-cache array and cache-token tracking (build break).
 - `ChatSession` no longer disposes a model it was handed by the caller (ownership is now explicit) — callers that relied on the session disposing the model must dispose it themselves.
 - KV caches now throw `ArgumentOutOfRangeException` where a buffer/stride would overflow `int` instead of silently truncating/overflowing.
 

@@ -48,7 +48,7 @@ public sealed class WelcomeView : View
 
         if (lastModelName is not null && onContinueWithModel is not null)
         {
-            var modelBtn = new Button($"Continue with {lastModelName}")
+            var modelBtn = new Button($"_Continue with \"{lastModelName}\"")
             {
                 X = Pos.Center(),
                 Y = Pos.Bottom(browseButton) + 1

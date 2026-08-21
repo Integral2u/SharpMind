@@ -207,7 +207,7 @@ public sealed class PagedKVCache : IDisposable
         if (totalFloatsLong * 2 > int.MaxValue)
             throw new InvalidOperationException(
                 $"PagedKVCache snapshot of {totalFloatsLong * 2} floats overflows int (position {_currentPosition}/{_maxSeqLen}).");
-        int batchFloats = checked(activePages * _stridePage);
+        int batchFloats = activePages * _stridePage;
         int totalFloats = (int)totalFloatsLong;
         var data = new float[totalFloats * 2];
 
