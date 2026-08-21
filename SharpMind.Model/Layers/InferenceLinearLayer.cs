@@ -14,7 +14,10 @@ public abstract class InferenceLinearLayer : LinearLayer
     public readonly QuantDType QuantDtype;
 
     protected InferenceLinearLayer(string name, int inFeatures, int outFeatures, bool bias, Tensor<float>? weight, Tensor<float>? biasTensor, QuantDType quantDType)
-        : base(name, inFeatures, outFeatures, bias, weight, biasTensor)
+        // Forward reads RawQuantizedData, never the float weight, so a null weight
+        // (quantized-resident loading) must not materialise a full F32 copy —
+        // that second copy is what put a 7B out of reach and OOM'd a 14B at load.
+        : base(name, inFeatures, outFeatures, bias, weight, biasTensor, allocateFullWeight: false)
     {
         QuantDtype = quantDType;
     }
