@@ -917,27 +917,19 @@ private void ThrowIfDisposed()
                     if (loop) break;
                 }
 
-                // Detect <think> / </think> tag boundaries across fragments
-                // by inspecting the trailing portion of the accumulated output.
-                if (!_inThinkBlock)
-                {
-                    // Use a slightly larger window to detect the tag if it's split or has trailing chars
-                    string tail = _responseBuffer.ToString();
-                    if (tail.Contains("<think>"))
-                    {
-                        _inThinkBlock = true;
-                        // We don't 'continue' here because the fragment might contain 
-                        // text after the tag. We just mark the block as started.
-                    }
-                }
-                else
+                // Detect <think> / </think> tag boundaries across fragments: the
+                // block is open when the last opening tag comes after the last
+                // closing one. Until the reply contains either tag the state seeded
+                // from the prompt stands (Qwen3/DeepSeek-R1 templates open the block
+                // in the assistant prefix). Checking only "contains <think>" here
+                // used to re-arm on the already-closed tag, so every other token
+                // after a think block was flagged as thinking.
                 {
                     string tail = _responseBuffer.ToString();
-                    if (tail.Contains("</think>"))
-                    {
-                        _inThinkBlock = false;
-                        // Similarly, don't 'continue' to avoid losing tokens after the tag.
-                    }
+                    int lastOpen = tail.LastIndexOf("<think>", StringComparison.Ordinal);
+                    int lastClose = tail.LastIndexOf("</think>", StringComparison.Ordinal);
+                    if (lastOpen >= 0 || lastClose >= 0)
+                        _inThinkBlock = lastOpen > lastClose;
                 }
 
                 var ids = _generator.CurrentGeneratedIds;
