@@ -6,8 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-Planned next release: **1.0.3** — contains a few slightly breaking changes
+Planned next release: **1.0.4** — contains a few slightly breaking changes
 that are already on `master`.
+
+## [1.0.3.0] - 2026-08-22
+contains a few slightly breaking changes.
 
 ### Added
 
