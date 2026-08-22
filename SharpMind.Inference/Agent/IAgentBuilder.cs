@@ -1,4 +1,5 @@
-﻿using System.Text.Json.Nodes;
+﻿using System.Text.Json;
+using System.Text.Json.Nodes;
 using SharpMind.Inference.Chat;
 
 namespace SharpMind.Inference.Agent
@@ -25,6 +26,25 @@ namespace SharpMind.Inference.Agent
         /// <summary>Standalone system prompts inserted at the top of the history, before the synthesized agent prompt.</summary>
         public IReadOnlyList<string> AdditionalSystemPrompts { get; }
         public IAgentBuilder WithTools(params object[] toolClasses);
+
+        /// <summary>
+        /// Registers a delegate-based tool with an explicit JSON-schema definition.
+        /// Unlike <see cref="WithTools"/>, which reflects over <c>[ToolDesc]</c>
+        /// attributes, this overload is designed for external callers (e.g. the
+        /// Microsoft.Extensions.AI adapter) that supply their own tool metadata
+        /// and invocation logic.
+        /// </summary>
+        /// <param name="name">Tool name the model will emit in JSON.</param>
+        /// <param name="description">Human-readable description for the agent prompt.</param>
+        /// <param name="schema">
+        /// A JSON Schema <c>parameters</c> object describing the tool's arguments.
+        /// Example: <c>{"type":"object","properties":{"q":{"type":"string"}},"required":["q"]}</c>.
+        /// </param>
+        /// <param name="execute">
+        /// Async delegate invoked with the parsed <c>arguments</c> object.
+        /// Must return a string result for the model.
+        /// </param>
+        IAgentBuilder WithTool(string name, string description, JsonObject schema, Func<JsonObject, Task<string>> execute);
         /// <summary>Builds the system prompt text for the current agent configuration.</summary>
         public string BuildAgentPrompt();
         /// <summary>

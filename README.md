@@ -259,12 +259,121 @@ Expect the training API surface (config records, trainer entry points) to change
 
 ---
 
+## IChatClient integration (`Microsoft.Extensions.AI`)
+
+`SharpMind.Extensions.AI` bridges SharpMind into the standard .NET AI ecosystem by wrapping an `IChatSession` behind an `IChatClient`. This means any library that accepts `IChatClient` — semantic-kernel planners, ASP.NET minimal APIs, MAUI apps, or your own code — can use a SharpMind-backed model without knowing anything about GGUF, KV caches, or prompt formatters.
+
+### What it does
+
+| Component | Role |
+|---|---|
+| `SharpMindChatClient` | `IChatClient` adapter — supports both single-shot (`GetResponseAsync`) and streaming (`GetStreamingResponseAsync`). |
+| `ChatMessageConverter` | Bidirectional `ChatMessage` mapping (MEAI ↔ SharpMind) plus `ChatOptions` → `IChatSession` forwarding (temperature, top-k, top-p, max tokens). |
+| `AiFunctionToolAdapter` | Routes MEAI `AIFunction` instances into SharpMind's `IAgentBuilder.WithTool` delegate path — MEAI tools run inside SharpMind's agent loop, not as a separate execution path. |
+
+### Quick start
+
+```csharp
+using Microsoft.Extensions.AI;
+using SharpMind.Core.Quantization;
+using SharpMind.Extensions.AI;
+using SharpMind.Inference;
+using SharpMind.Inference.Agent;
+using SharpMind.Inference.Chat;
+using SharpMind.Model;
+using SharpMind.Model.Config;
+using SharpMind.Model.Format;
+using SharpMind.Tokenization;
+
+var modelPath = @"C:\Models\Qwen3-0.6B-Q8_0.gguf";
+
+// 1. Load the model (same as the basic Quick Start).
+var metaHelper = ModelFormatHelpers.GetModelMetaHelperFor(ModelFormat.Gguf);
+metaHelper.Load(modelPath, null, out ModelMetaData meta, out ModelConfig modelConfig, out Tokenizer? tokenizer);
+var sharpConfig = modelConfig.ForModel();
+var qOps = QuantizationFactory.Create(sharpConfig.ResolvedHardware);
+using var weights = ModelFactory.CreateWeights(modelConfig, sharpConfig, qOps, modelPath, LoadMode.Full);
+weights.InitializeWeights();
+using var model = ModelFactory.CreateTransformer(weights, sharpConfig);
+
+// 2. Create a SharpMind chat session (with optional agent builder for tools).
+var agentBuilder = new AgentBuilder("MyAgent");
+using IChatSession session = ChatSessionFactory.CreateChatSession(
+    typeof(StandardGeneratorBuilder<KVCacherBuilder>),
+    typeof(KVCacherBuilder),
+    model, tokenizer!, meta,
+    agentBuilder: agentBuilder);
+
+// 3. Wrap it in the IChatClient adapter.
+await using var client = new SharpMindChatClient(session, agentBuilder);
+
+// 4. Use the standard IChatClient API.
+var messages = new List<ChatMessage>
+{
+    new(ChatRole.System, "You are a helpful assistant."),
+    new(ChatRole.User, "What is 2 + 2?"),
+};
+
+// Single-shot response.
+ChatResponse response = await client.GetResponseAsync(messages);
+Console.WriteLine(response.Text);
+
+// Streaming response.
+await foreach (ChatResponseUpdate update in client.GetStreamingResponseAsync(messages))
+    Console.Write(update.Text);
+```
+
+### Using MEAI tools with SharpMind
+
+Tools defined as `AIFunction` instances are automatically routed into SharpMind's agent loop when passed via `ChatOptions.Tools`:
+
+```csharp
+using Microsoft.Extensions.AI;
+
+// Define a tool using the MEAI factory.
+var getWeather = AIFunctionFactory.Create(
+    (string city) => $"72°F and sunny in {city}",
+    name: "GetWeather",
+    description: "Get the current weather for a city.");
+
+// The adapter registers it with the agent builder on first use.
+var response = await client.GetResponseAsync(
+    new List<ChatMessage>
+    {
+        new(ChatRole.User, "What's the weather in London?")
+    },
+    new ChatOptions { Tools = [getWeather] });
+
+Console.WriteLine(response.Text);
+```
+
+The tool executes inside SharpMind's existing tool-loop infrastructure — no separate execution path, no extra dependencies beyond `Microsoft.Extensions.AI.Abstractions`.
+
+### Installation
+
+`SharpMind.Extensions.AI` is a separate project/package. Add it alongside your SharpMind references:
+
+```xml
+<ProjectReference Include="..\SharpMind.Extensions.AI\SharpMind.Extensions.AI.csproj" />
+```
+
+Or as a NuGet package (once published):
+
+```
+dotnet add package SharpMind.Extensions.AI
+```
+
+The only additional dependency is `Microsoft.Extensions.AI.Abstractions` — no full `Microsoft.Extensions.AI` or `Microsoft.Extensions.DependencyInjection` required.
+
+---
+
 ## Also included
 
 - **Agent framework** (`SharpMind.Inference.Agent`) — tool-calling with a three-state permission model (`Never` / `Ask` / `Always`), tool categories, and auto-named sub-agents (temperature → a "Greek tier" naming scheme, e.g. `Athena-Alpha` at low temperature, `Prometheus-Epsilon` at high).
 - **Chat layer** (`SharpMind.Inference.Chat`) — pluggable prompt formatters (ChatML, a small Jinja-template evaluator, a simple formatter), pinned-message-aware context compaction (summarizing or truncating), and a `ChatArtifact` concept for attaching text/image/code/JSON blocks to a response.
 - **`SharpMind.CUI`** — a full terminal chat client: model browser, session manager, settings, file picker, plugin loading, and a permission gate UI, shown above.
 - **`SharpMind.GPU`** — ILGPU-backed kernels for activations, norms, and quantized ops, isolated from the core so the CPU path has zero GPU dependency.
+- **`SharpMind.Extensions.AI`** — `IChatClient` adapter for the `Microsoft.Extensions.AI` ecosystem. Wraps any SharpMind `IChatSession` into a standard `IChatClient`, routes MEAI tools through SharpMind's agent loop, and maps chat types bidirectionally — see [IChatClient integration](#ichatclient-integration-microsoftextensionsai).
 - **`SharpMind.Benchmarks`** — evaluation kernels for measuring model/generator performance.
 
 ---
@@ -281,6 +390,7 @@ SharpMind.Data          Data sources, cleaning pipeline, batching
 SharpMind.Data.Parquet  Parquet data source
 SharpMind.GPU           ILGPU-backed GPU kernels (optional)
 SharpMind.CUI           Terminal chat application
+SharpMind.Extensions.AI Microsoft.Extensions.AI IChatClient adapter
 SharpMind.Samples       Example programs
 SharpMind.Benchmarks    Evaluation harness
 SharpMind.Tests         Test suite
@@ -296,7 +406,7 @@ See [CHANGELOG.md](CHANGELOG.md) for release history.
 - [ ] AVX512 Kernels
 - [ ] Additional Model Support
 - [ ] Optimiations
-- [ ] Microsoft IChatClient and or other services.
+- [x] Microsoft IChatClient and or other services. — shipped as `SharpMind.Extensions.AI`
 - [ ] Common tools, GREP, GIT etc
 - [ ] Limit breaker(Project Goku), int.MaxValue element-count limit workaround. Solutions not excuses.
 

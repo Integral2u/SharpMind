@@ -26,12 +26,13 @@ namespace SharpMind.Inference.Agent
         public IReadOnlyList<IPromptPostProcessor> PluginPostProcessors { get; set; } = [];
         public HashSet<string> DisabledTools { get; set; } = [];
 
-        public IReadOnlyList<string> RegisteredToolNames => [.. ToolMethods.Keys];
+        public IReadOnlyList<string> RegisteredToolNames => [.. ToolMethods.Keys, .. _delegateTools.Keys];
 
         // Not currently used in prompt building but available for callers that want to
         // inspect or manipulate sections as keyed lists.
         public Dictionary<AgentSections, List<string>> Sections = [];
         private readonly Dictionary<string, (MethodInfo Method, object Instance)> ToolMethods = [];
+        private readonly Dictionary<string, (string Name, string Description, JsonObject Schema, Func<JsonObject, Task<string>> Execute)> _delegateTools = [];
         public readonly JsonArray ToolDefinitions = [];
 
         public readonly List<string> Behaviors = [];
@@ -200,6 +201,32 @@ namespace SharpMind.Inference.Agent
                     ToolDefinitions.Add(BuildToolDef(tool));
                 }
             }
+            return this;
+        }
+
+        /// <summary>
+        /// Registers a delegate-based tool with an explicit name, description,
+        /// and JSON Schema — no reflection needed. Designed for external callers
+        /// (e.g. the Microsoft.Extensions.AI adapter) that supply their own
+        /// tool metadata and invocation logic.
+        /// </summary>
+        public IAgentBuilder WithTool(string name, string description, JsonObject schema, Func<JsonObject, Task<string>> execute)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(name);
+            ArgumentNullException.ThrowIfNull(schema);
+            ArgumentNullException.ThrowIfNull(execute);
+            if (ToolMethods.ContainsKey(name) || _delegateTools.ContainsKey(name))
+                return this;
+            if (DisabledTools.Contains(name))
+                return this;
+
+            _delegateTools[name] = (name, description, schema, execute);
+            ToolDefinitions.Add(new JsonObject
+            {
+                ["name"] = name,
+                ["description"] = description,
+                ["parameters"] = schema
+            });
             return this;
         }
 
@@ -394,11 +421,20 @@ namespace SharpMind.Inference.Agent
                 var toolName = toolCall["tool"]?.GetValue<string>()
                     ?? throw new ArgumentException("Missing required field: 'tool'.");
 
+                // Delegate-based tool (added via WithTool(name, desc, schema, fn))
+                if (_delegateTools.TryGetValue(toolName, out var delegateEntry))
+                {
+                    var delegateArgs = toolCall["arguments"]?.AsObject() ?? [];
+                    var result = await delegateEntry.Execute(delegateArgs);
+                    return Success(result);
+                }
+
+                // Reflection-based tool (added via WithTools(typeof(MyTools)))
                 if (!ToolMethods.TryGetValue(toolName, out var entry))
                     throw new ArgumentException($"Unknown tool: '{toolName}'.");
 
-                var args = toolCall["arguments"]?.AsObject() ?? [];
-                var invokeArgs = BindArguments(entry.Method, args);
+                var reflectionArgs = toolCall["arguments"]?.AsObject() ?? [];
+                var invokeArgs = BindArguments(entry.Method, reflectionArgs);
 
                 var raw = entry.Method.Invoke(entry.Instance, invokeArgs)
                     ?? throw new InvalidOperationException("Tool returned null.");

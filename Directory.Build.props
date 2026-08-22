@@ -1,9 +1,9 @@
 <Project>
   <PropertyGroup>
     <!-- Version: single place to bump for all packages -->
-    <Version>1.0.1.0</Version>
-    <AssemblyVersion>1.0.1.0</AssemblyVersion>
-    <FileVersion>1.0.1.0</FileVersion>
+    <Version>1.0.3.0</Version>
+    <AssemblyVersion>1.0.3.0</AssemblyVersion>
+    <FileVersion>1.0.3.0</FileVersion>
 
     <!-- NuGet publishing defaults -->
     <Authors>SharpMind</Authors>

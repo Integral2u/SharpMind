@@ -32,6 +32,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.AI.Abstractions" Version="10.9.0" />
     <PackageReference Include="coverlet.collector" Version="10.0.0">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
@@ -48,6 +49,7 @@
     <ProjectReference Include="..\SharpMind.Core\SharpMind.Core.csproj" />
     <ProjectReference Include="..\SharpMind.CUI\SharpMind.CUI.csproj" />
     <ProjectReference Include="..\SharpMind.Data\SharpMind.Data.csproj" />
+    <ProjectReference Include="..\SharpMind.Extensions.AI\SharpMind.Extensions.AI.csproj" />
     <ProjectReference Include="..\SharpMind.GPU\SharpMind.GPU.csproj" />
     <ProjectReference Include="..\SharpMind.Inference\SharpMind.Inference.csproj" />
     <ProjectReference Include="..\SharpMind.Model\SharpMind.Model.csproj" />

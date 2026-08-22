@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-Planned next release: **1.0.2** — contains a few slightly breaking changes
+Planned next release: **1.0.3** — contains a few slightly breaking changes
 that are already on `master`.
 
 ### Added
@@ -24,6 +24,11 @@ that are already on `master`.
 - Deterministic test reference data — `TinyReferenceModel` builds a seed-fixed reference `.SMM` in milliseconds so the session/CUI tests exercise the full load → chat path without loading a real model file.
 - KV-cache persistence: sessions now save and restore the pre-filled KV cache alongside chat history. On resume, if the prompt (system prompt + tools + history) hasn't changed, the expensive prefill is skipped entirely — the cache is restored from disk and the first user turn extends it incrementally.
 - Quantized-resident loading no longer allocates a dead full-F32 weight per inference layer — `InferenceLinearLayer` passes `allocateFullWeight: false` to the base constructor, cutting peak memory by ~28 GB on a 7B model (PR #8).
+- **`SharpMind.Extensions.AI`** — new library bridging SharpMind into the `Microsoft.Extensions.AI` ecosystem:
+  - `SharpMindChatClient` — `IChatClient` adapter wrapping any `IChatSession`; supports both single-shot (`GetResponseAsync`) and streaming (`GetStreamingResponseAsync`) via a channel-based bridge.
+  - `ChatMessageConverter` — bidirectional `ChatMessage` mapping between MEAI and SharpMind types, plus `ChatOptions` → `IChatSession` option forwarding.
+  - `AiFunctionToolAdapter` — routes MEAI `AIFunction` instances into SharpMind's `IAgentBuilder.WithTool` delegate path, so MEAI-defined tools work inside SharpMind's agent loop without a separate execution path.
+- `IAgentBuilder.WithTool(name, description, schema, execute)` — delegate-based tool registration overload, enabling external callers (e.g. the MEAI adapter) to register tools with an explicit JSON Schema and async executor without reflection or `[ToolDesc]` attributes.
 
 ### Changed
 

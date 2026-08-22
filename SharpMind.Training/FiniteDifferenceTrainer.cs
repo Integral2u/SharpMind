@@ -54,7 +54,6 @@ public sealed class FiniteDifferenceTrainer
         ArgumentNullException.ThrowIfNull(model);
         ArgumentNullException.ThrowIfNull(batches);
         ArgumentNullException.ThrowIfNull(optimizer);
-
         _model = model;
         _batches = batches;
         _optimizer = optimizer;
