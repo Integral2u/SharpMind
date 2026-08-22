@@ -29,6 +29,11 @@ that are already on `master`.
   - `ChatMessageConverter` — bidirectional `ChatMessage` mapping between MEAI and SharpMind types, plus `ChatOptions` → `IChatSession` option forwarding.
   - `AiFunctionToolAdapter` — routes MEAI `AIFunction` instances into SharpMind's `IAgentBuilder.WithTool` delegate path, so MEAI-defined tools work inside SharpMind's agent loop without a separate execution path.
 - `IAgentBuilder.WithTool(name, description, schema, execute)` — delegate-based tool registration overload, enabling external callers (e.g. the MEAI adapter) to register tools with an explicit JSON Schema and async executor without reflection or `[ToolDesc]` attributes.
+- **`SharpMind.Extensions.Tools`** — optional common tools package, auto-discovered from the CUI plugins folder:
+  - `GrepTool` — regex/literal file-content search across a directory tree, returns matching lines with file paths and line numbers.
+  - `GitTool` — read-only git command execution (status, log, diff, show, blame, branch, remote); write commands (push, commit, merge, etc.) are blocked.
+  - `DateTimeTool` — current UTC/local time, time zone conversion, time zone listing.
+  - CUI build automatically copies `SharpMind.Tools.dll` to the `plugins/` output folder via a post-build target.
 
 ### Changed
 

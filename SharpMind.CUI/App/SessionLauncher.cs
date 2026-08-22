@@ -468,6 +468,11 @@ public static class SessionLauncher
                 builder.WithTools([.. toolInstances]);
         }
 
+        // Also include plugin tools from the plugins folder.
+        var pluginResult = PluginLoader.LoadFrom(Path.Combine(AppContext.BaseDirectory, "plugins"));
+        if (pluginResult.Tools.Count > 0)
+            builder.WithTools([.. pluginResult.Tools]);
+
         return [.. builder.RegisteredToolNames];
     }
 

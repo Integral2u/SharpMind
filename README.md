@@ -374,6 +374,7 @@ The only additional dependency is `Microsoft.Extensions.AI.Abstractions` — no 
 - **`SharpMind.CUI`** — a full terminal chat client: model browser, session manager, settings, file picker, plugin loading, and a permission gate UI, shown above.
 - **`SharpMind.GPU`** — ILGPU-backed kernels for activations, norms, and quantized ops, isolated from the core so the CPU path has zero GPU dependency.
 - **`SharpMind.Extensions.AI`** — `IChatClient` adapter for the `Microsoft.Extensions.AI` ecosystem. Wraps any SharpMind `IChatSession` into a standard `IChatClient`, routes MEAI tools through SharpMind's agent loop, and maps chat types bidirectionally — see [IChatClient integration](#ichatclient-integration-microsoftextensionsai).
+- **`SharpMind.Extensions.Tools`** — optional common tools (grep, git, datetime) packaged as a plugin DLL. Auto-discovered from the CUI's `plugins/` folder at runtime — no compile-time dependency required. The CUI build copies it there automatically.
 - **`SharpMind.Benchmarks`** — evaluation kernels for measuring model/generator performance.
 
 ---
@@ -391,6 +392,7 @@ SharpMind.Data.Parquet  Parquet data source
 SharpMind.GPU           ILGPU-backed GPU kernels (optional)
 SharpMind.CUI           Terminal chat application
 SharpMind.Extensions.AI Microsoft.Extensions.AI IChatClient adapter
+SharpMind.Extensions.Tools Optional common tools (grep, git, datetime) — plugin DLL
 SharpMind.Samples       Example programs
 SharpMind.Benchmarks    Evaluation harness
 SharpMind.Tests         Test suite
@@ -407,7 +409,7 @@ See [CHANGELOG.md](CHANGELOG.md) for release history.
 - [ ] Additional Model Support
 - [ ] Optimiations
 - [x] Microsoft IChatClient and or other services. — shipped as `SharpMind.Extensions.AI`
-- [ ] Common tools, GREP, GIT etc
+- [x] Common tools, GREP, GIT etc — shipped as `SharpMind.Extensions.Tools`
 - [ ] Limit breaker(Project Goku), int.MaxValue element-count limit workaround. Solutions not excuses.
 
 Issues, questions, and early feedback are welcome.

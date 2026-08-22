@@ -35,6 +35,8 @@ Project("{54435603-DBB4-11D2-8724-00A0C9A8B90C}") = "SharpMind Console Setup", "
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SharpMind.Extensions.AI", "SharpMind.Extensions.AI\SharpMind.Extensions.AI.csproj", "{B214F6A8-E3C6-496B-B922-F155D5CFEEF2}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SharpMind.Extensions.Tools", "SharpMind.Extensions.Tools\SharpMind.Extensions.Tools.csproj", "{0DDA4280-4AFF-4836-8365-48B5F308B288}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -219,6 +221,18 @@ Global
 		{B214F6A8-E3C6-496B-B922-F155D5CFEEF2}.Release|x64.Build.0 = Release|Any CPU
 		{B214F6A8-E3C6-496B-B922-F155D5CFEEF2}.Release|x86.ActiveCfg = Release|Any CPU
 		{B214F6A8-E3C6-496B-B922-F155D5CFEEF2}.Release|x86.Build.0 = Release|Any CPU
+		{0DDA4280-4AFF-4836-8365-48B5F308B288}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{0DDA4280-4AFF-4836-8365-48B5F308B288}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{0DDA4280-4AFF-4836-8365-48B5F308B288}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{0DDA4280-4AFF-4836-8365-48B5F308B288}.Debug|x64.Build.0 = Debug|Any CPU
+		{0DDA4280-4AFF-4836-8365-48B5F308B288}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{0DDA4280-4AFF-4836-8365-48B5F308B288}.Debug|x86.Build.0 = Debug|Any CPU
+		{0DDA4280-4AFF-4836-8365-48B5F308B288}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{0DDA4280-4AFF-4836-8365-48B5F308B288}.Release|Any CPU.Build.0 = Release|Any CPU
+		{0DDA4280-4AFF-4836-8365-48B5F308B288}.Release|x64.ActiveCfg = Release|Any CPU
+		{0DDA4280-4AFF-4836-8365-48B5F308B288}.Release|x64.Build.0 = Release|Any CPU
+		{0DDA4280-4AFF-4836-8365-48B5F308B288}.Release|x86.ActiveCfg = Release|Any CPU
+		{0DDA4280-4AFF-4836-8365-48B5F308B288}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
