@@ -34,14 +34,11 @@ public static class SmmMeaiChatExample
 {
     public const string Name = "meai-chat";
 
-    /// <summary>Path to a GGUF model file. Update this to a model you have on disk.</summary>
-    private const string ModelPath = @"c:\temp\models\SmolLM2-135M-Instruct-Q4_K_M.gguf";
-
-    public static async Task RunAsync()
+    public static async Task RunAsync(string modelPath)
     {
-        if (!File.Exists(ModelPath))
+        if (!File.Exists(modelPath))
         {
-            await Console.Out.WriteLineAsync($"MEAI chat example — model not found: {ModelPath}");
+            await Console.Out.WriteLineAsync($"MEAI chat example — model not found: {modelPath}");
             await Console.Out.WriteLineAsync("Update ModelPath to point at any GGUF instruct model.");
             return;
         }
@@ -52,10 +49,10 @@ public static class SmmMeaiChatExample
         // ------------------------------------------------------------------
         // 1. Load the model — same as the basic Quick Start.
         // ------------------------------------------------------------------
-        await Console.Out.WriteLineAsync($"Loading model: {Path.GetFileName(ModelPath)}");
+        await Console.Out.WriteLineAsync($"Loading model: {Path.GetFileName(modelPath)}");
 
         var metaHelper = ModelFormatHelpers.GetModelMetaHelperFor(ModelFormat.Gguf);
-        metaHelper.Load(ModelPath, null, out ModelMetaData meta, out ModelConfig modelConfig, out Tokenizer? tokenizer);
+        metaHelper.Load(modelPath, null, out ModelMetaData meta, out ModelConfig modelConfig, out Tokenizer? tokenizer);
 
         if (tokenizer is null)
         {
@@ -66,7 +63,7 @@ public static class SmmMeaiChatExample
         var sharpConfig = modelConfig.ForModel();
         var qOps = QuantizationFactory.Create(sharpConfig.ResolvedHardware);
 
-        using var weights = ModelFactory.CreateWeights(modelConfig, sharpConfig, qOps, ModelPath, LoadMode.Full);
+        using var weights = ModelFactory.CreateWeights(modelConfig, sharpConfig, qOps, modelPath, LoadMode.Full);
         weights.InitializeWeights();
 
         using var model = ModelFactory.CreateTransformer(weights, sharpConfig);
