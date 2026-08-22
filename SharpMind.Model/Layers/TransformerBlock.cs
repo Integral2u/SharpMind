@@ -119,13 +119,13 @@ public abstract class TransformerBlock : IDisposable
         if (name.Contains("post_attention_norm", StringComparison.OrdinalIgnoreCase))
         {
             if (name.Contains("bias", StringComparison.OrdinalIgnoreCase)) return false;
-            if (_postAttnNorm != null) _postAttnNorm.LoadWeight(data);
+            _postAttnNorm?.LoadWeight(data);
             return true;
         }
         if (name.Contains("post_ffw_norm", StringComparison.OrdinalIgnoreCase))
         {
             if (name.Contains("bias", StringComparison.OrdinalIgnoreCase)) return false;
-            if (_postFfnNorm != null) _postFfnNorm.LoadWeight(data);
+            _postFfnNorm?.LoadWeight(data);
             return true;
         }
         if (name.Contains("attn_norm", StringComparison.OrdinalIgnoreCase) || name.Contains("input_layernorm", StringComparison.OrdinalIgnoreCase))
@@ -179,14 +179,23 @@ public abstract class TransformerBlock : IDisposable
 
     public void Dispose()
     {
+        Dispose(true);
+        GC.SuppressFinalize(this);
+    }
+
+    protected virtual void Dispose(bool disposing)
+    {
         if (_disposed) return;
         _disposed = true;
-        _attention.Dispose();
-        _ffn.Dispose();
-        _norm1.Dispose();
-        _norm2.Dispose();
-        _postAttnNorm?.Dispose();
-        _postFfnNorm?.Dispose();
+        if (disposing)
+        {
+            _attention.Dispose();
+            _ffn.Dispose();
+            _norm1.Dispose();
+            _norm2.Dispose();
+            _postAttnNorm?.Dispose();
+            _postFfnNorm?.Dispose();
+        }
     }
 
     protected void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, nameof(TransformerBlock));

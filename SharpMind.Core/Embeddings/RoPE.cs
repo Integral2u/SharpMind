@@ -303,7 +303,7 @@ public sealed class RoPE : PositionalEncoder
     {
         int seqLen  = dx.Shape[0];
         int numHead = dx.Shape[1];
-        int dim     = dx.Shape[2];
+        //int dim     = dx.Shape[2];
 
         int ropePairs = _ropeDim / 2;
         var data      = dx.Data;

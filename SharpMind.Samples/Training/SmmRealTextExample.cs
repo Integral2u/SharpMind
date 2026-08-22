@@ -96,7 +96,7 @@ public static class SmmRealTextExample
         var pipeline = PipelineNode.From(source)
             .Pipe(new NormaliseWhitespace())
             .Pipe(new MinLengthFilter(8));
-        var tokenise = (string text) => tokenizer.Encode(text);
+        int[] tokenise(string text) => tokenizer.Encode(text);
         var batcher = new PackingBatcher(
             batchSize: BatchSize,
             maxSeqLen: SeqLen,

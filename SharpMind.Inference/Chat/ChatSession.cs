@@ -1218,7 +1218,7 @@ private void ThrowIfDisposed()
             {
                 var blob = cache.SnapshotBytes();
                 if (blob is not null) { layers.Add(blob); anyData = true; }
-                else layers.Add(Array.Empty<byte>());
+                else layers.Add([]);
             }
             if (anyData)
                 kvCache = new KVCacheSnapshot

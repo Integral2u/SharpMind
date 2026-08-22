@@ -29,17 +29,13 @@ namespace SharpMind.Training.Loss;
 ///   dL/dLogits[t, v] = (softmax(logits[t])[v] - u[v]) / N
 /// which is what <see cref="Backward"/> returns.
 /// </summary>
-public sealed class CrossEntropyLoss(int ignoreId = -100, float labelSmoothing = 0f) : ILoss<int>
+public sealed class CrossEntropyLoss(int ignoreId = -100, float labelSmoothing = 0.0f) : ILoss<int>
 {
-    public int IgnoreId { get; } = ignoreId;
+    public int IgnoreId { get; init; } = ignoreId;
 
     /// <summary>Label smoothing epsilon. 0 = plain one-hot cross-entropy.</summary>
-    public float LabelSmoothing { get; } = labelSmoothing;
+    public float LabelSmoothing { get; init; } = labelSmoothing;
 
-    public CrossEntropyLoss()
-        : this(ignoreId: -100, labelSmoothing: 0f)
-    {
-    }
 
     /// <summary>
     /// Computes the scalar loss.
@@ -53,15 +49,13 @@ public sealed class CrossEntropyLoss(int ignoreId = -100, float labelSmoothing =
         if (labels.ElementCount != T)
             throw new ArgumentException(
                 $"Label count {labels.ElementCount} must match logit rows {T}.");
-
-        if (labelSmoothing < 0f || labelSmoothing >= 1f)
-            throw new ArgumentOutOfRangeException(nameof(labelSmoothing),
-                "Label smoothing must be in [0, 1).");
+        ArgumentOutOfRangeException.ThrowIfLessThan(LabelSmoothing, 0f, nameof(LabelSmoothing));
+        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(LabelSmoothing, 1f, nameof(LabelSmoothing));
 
         double totalLoss = 0.0;
         int realCount = 0;
 
-        if (labelSmoothing <= 0f)
+        if (LabelSmoothing <= 0f)
         {
             for (int t = 0; t < T; t++)
             {
@@ -81,7 +75,7 @@ public sealed class CrossEntropyLoss(int ignoreId = -100, float labelSmoothing =
         }
         else
         {
-            float smooth = labelSmoothing;
+            float smooth = LabelSmoothing;
             float epsOverV = smooth / V;
             float oneMinusEps = 1f - smooth;
 
@@ -118,5 +112,5 @@ public sealed class CrossEntropyLoss(int ignoreId = -100, float labelSmoothing =
     /// form collapses to a simple elementwise operation and is always used.
     /// </summary>
     public Tensor<float> Backward(Tensor<float> logits, Tensor<int> labels)
-        => Gradients.CrossEntropySoftmax(logits, labels, IgnoreId, labelSmoothing);
+        => Gradients.CrossEntropySoftmax(logits, labels, IgnoreId, LabelSmoothing);
 }

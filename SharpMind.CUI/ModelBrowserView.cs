@@ -90,9 +90,7 @@ public sealed class ModelBrowserView : View
             ? Directory.GetFiles(_currentPath, "*.*").Where(f => ModelFormatHelpers.GetExtensions().Contains(Path.GetExtension(f), StringComparer.InvariantCultureIgnoreCase)).Select(f => Path.GetFileName(f)!).OrderBy(s => s)
             : Enumerable.Empty<string>();
 
-        _entries = new List<string> { ".. (up one level)" };
-        _entries.AddRange(dirs);
-        _entries.AddRange(ggufs);
+        _entries = [".. (up one level)", .. dirs, .. ggufs];
 
         // SetSource, not mutating the existing list in place — ListView doesn't
         // observe changes to the underlying IList, only to Source itself.

@@ -63,8 +63,7 @@ namespace SharpMind.Model.Format
         /// </summary>
         public static ModelMetaData LoadMetaForFile(string path)
         {
-            var fmt = GetFormatForExtension(path);
-            if (fmt == null) throw new InvalidDataException($"File type not supported: {path}");
+            var fmt = GetFormatForExtension(path) ?? throw new InvalidDataException($"File type not supported: {path}");
             return GetModelMetaHelperFor((ModelFormat)fmt).LoadMeta(path);
         }
 

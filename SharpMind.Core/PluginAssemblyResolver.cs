@@ -29,7 +29,7 @@ namespace SharpMind.Core;
 /// </summary>
 public static class PluginAssemblyResolver
 {
-    private static readonly object _sync = new();
+    private static readonly Lock _sync = new();
 
     private sealed record DirectoryProbe(string Directory);
     private sealed record EmbeddedSource(Assembly Assembly);

@@ -60,7 +60,7 @@ public sealed class BackpropEngine : IDisposable
         _activation = config.Activation;
         _gemmaScale = config.Activation == ActivationKind.GELU && config.Gate == GateKind.GeGLU;
 
-        _paramsByTensor = new Dictionary<Tensor<float>, Parameter>();
+        _paramsByTensor = [];
         foreach (var p in parameters)
             _paramsByTensor[p.Data] = p;
     }
@@ -565,18 +565,18 @@ public sealed class BackpropEngine : IDisposable
             for (int h = 0; h < numH; h++)
             {
                 int kvHead = h / cfg.KvGroupSize;
-                using var dOutHead = SliceHead(dAttnOut, b, h, B, S, qDim, D);
-                using var qHead = SliceHead(bc.Q!, b, h, B, S, qDim, D);
-                using var kHead = SliceHead(bc.K!, b, kvHead, B, S, kvDim, D);
-                using var vHead = SliceHead(bc.V!, b, kvHead, B, S, kvDim, D);
+                using var dOutHead = SliceHead(dAttnOut, b, h, S, qDim, D);
+                using var qHead = SliceHead(bc.Q!, b, h, S, qDim, D);
+                using var kHead = SliceHead(bc.K!, b, kvHead, S, kvDim, D);
+                using var vHead = SliceHead(bc.V!, b, kvHead, S, kvDim, D);
                 using var probsHead = SliceProbs(bc.AttnProbs, b, h, S);
 
                 var grads = _mapping.Attention(dOutHead, qHead, kHead, vHead, probsHead, scale);
                 using (grads.DQ) using (grads.DK) using (grads.DV)
                 {
-                    AddHead(dQ, grads.DQ, b, h, B, S, qDim, D);
-                    AddHead(dK, grads.DK, b, kvHead, B, S, kvDim, D);
-                    AddHead(dV, grads.DV, b, kvHead, B, S, kvDim, D);
+                    AddHead(dQ, grads.DQ, b, h, S, qDim, D);
+                    AddHead(dK, grads.DK, b, kvHead, S, kvDim, D);
+                    AddHead(dV, grads.DV, b, kvHead, S, kvDim, D);
                 }
             }
         });
@@ -925,7 +925,7 @@ public sealed class BackpropEngine : IDisposable
         return logits;
     }
 
-    private static Tensor<float> SliceHead(Tensor<float> t, int b, int h, int B, int S, int cols, int D)
+    private static Tensor<float> SliceHead(Tensor<float> t, int b, int h, int S, int cols, int D)
     {
         var res = Tensor<float>.Zeros(S, D);
         var src = t.Data;
@@ -952,7 +952,7 @@ public sealed class BackpropEngine : IDisposable
         return res;
     }
 
-    private static void AddHead(Tensor<float> dst, Tensor<float> src, int b, int h, int B, int S, int cols, int D)
+    private static void AddHead(Tensor<float> dst, Tensor<float> src, int b, int h, int S, int cols, int D)
     {
         var d = dst.Data;
         var s = src.Data;

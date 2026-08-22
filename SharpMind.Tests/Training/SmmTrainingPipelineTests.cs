@@ -58,7 +58,7 @@ public class SmmTrainingPipelineTests : IDisposable
             Assert.InRange(id, 0, 63);
 
         // Decode is well-defined for the whole sequence.
-        string text = reloadedTokenizer.Decode(ids.ToArray());
+        string text = reloadedTokenizer.Decode([.. ids]);
         Assert.False(string.IsNullOrWhiteSpace(text));
     }
 }

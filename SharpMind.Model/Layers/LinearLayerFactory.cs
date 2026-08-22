@@ -33,7 +33,7 @@ public static class LinearLayerFactory
 
     public static LinearLayer Create(
         string name, int inFeatures, int outFeatures, bool bias,
-        Tensor<float>? weight, Tensor<float>? biasTensor, QuantDType quantDType)
+        Tensor<float>? weight, Tensor<float>? biasTensor, QuantDType _)
     {
         return new TrainingLinearLayer(name, inFeatures, outFeatures, bias, weight, biasTensor);
     }

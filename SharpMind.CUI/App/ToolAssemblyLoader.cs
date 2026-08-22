@@ -60,7 +60,7 @@ public static class ToolAssemblyLoader
             {
                 // Some types in the assembly failed to load (missing deps etc).
                 // Still use whichever types DID load rather than discarding the whole DLL.
-                types = ex.Types.Where(t => t is not null).Select(t => t!).ToArray();
+                types = [.. ex.Types.Where(t => t is not null).Select(t => t!)];
                 warnings.Add($"'{Path.GetFileName(path)}' loaded with {ex.LoaderExceptions.Length} type-load warning(s).");
             }
 

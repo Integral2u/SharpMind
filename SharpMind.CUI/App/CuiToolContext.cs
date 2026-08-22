@@ -19,7 +19,7 @@ namespace SharpMind.CUI.App;
 /// </summary>
 public sealed class CuiToolContext
 {
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private ChoiceRequest? _pending;
 
     /// <summary>

@@ -260,7 +260,7 @@ public abstract class TransformerWeights : IDisposable
         if (dict is not null && dict.TryGetValue(key, out var existing))
             return existing;
         var value = factory();
-        dict ??= new Dictionary<int, Tensor<float>>();
+        dict ??= [];
         dict[key] = value;
         store(dict);
         return value;
@@ -357,7 +357,7 @@ public abstract class TransformerWeights : IDisposable
                 seen.Add(meta.Dtype);
         }
 
-        return seen.OrderBy(d => d).ToArray();
+        return [.. seen.OrderBy(d => d)];
     }
 
     private static void Add(HashSet<QuantDType> seen, QuantDType? quant, bool hasFloat)
@@ -509,23 +509,17 @@ public abstract class TransformerWeights : IDisposable
 }
 
 /// <summary>Loads all weights into memory at once.</summary>
-public sealed class TransformerWeightsFull : TransformerWeights
+public sealed class TransformerWeightsFull(
+    ModelConfig config,
+    Tensor<float> embedding,
+    Tensor<float>? lmHead,
+    Tensor<float> finalNormW,
+    Tensor<float>? finalNormB,
+TransformerWeights.BlockWeights[] blocks,
+    IModelLoader loader,
+    Tensor<float>? positionEmbedding = null) : TransformerWeights(config, embedding, lmHead, finalNormW, finalNormB, blocks, loader, positionEmbedding)
 {
-    public TransformerWeightsFull(
-        ModelConfig config,
-        Tensor<float> embedding,
-        Tensor<float>? lmHead,
-        Tensor<float> finalNormW,
-        Tensor<float>? finalNormB,
-        BlockWeights[] blocks,
-        IModelLoader loader,
-        Tensor<float>? positionEmbedding = null)
-        : base(config, embedding, lmHead, finalNormW, finalNormB, blocks, loader, positionEmbedding) { }
-
-    public override void InitializeWeights(IProgress<float>? progress = null)
-    {
-        Loader!.LoadAllWeights(this, progress);
-    }
+    public override void InitializeWeights(IProgress<float>? progress = null) => Loader!.LoadAllWeights(this, progress);
 }
 
 /// <summary>
@@ -533,29 +527,26 @@ public sealed class TransformerWeightsFull : TransformerWeights
 /// Only a small window of layers has float tensors+raw data resident at any moment.
 /// Each agent in LoadMode.Streaming requires its own instance.
 /// </summary>
-public sealed class TransformerWeightsStreaming : TransformerWeights
+public sealed class TransformerWeightsStreaming(
+    ModelConfig config,
+    Tensor<float> embedding,
+    Tensor<float>? lmHead,
+    Tensor<float> finalNormW,
+    Tensor<float>? finalNormB,
+TransformerWeights.BlockWeights[] blocks,
+    IModelLoader loader,
+    Tensor<float>? positionEmbedding = null) : TransformerWeights(config, embedding, lmHead, finalNormW, finalNormB, blocks, loader, positionEmbedding)
 {
     /// <summary>Reference to the TransformerBlock[] so loaded weights can be pushed via SetWeights.</summary>
-    internal Model.Layers.TransformerBlock[]? BlockRefs { get; set; }
+    internal Layers.TransformerBlock[]? BlockRefs { get; set; }
 
     // Async preload tracking
     private Task? _preloadTask;
     private int _preloadLayerIndex = -1;
-    private readonly object _preloadLock = new();
+    private readonly Lock _preloadLock = new();
 
     /// <summary>Tracks which layers have been pushed into their TransformerBlock's LinearLayers.</summary>
     private readonly HashSet<int> _pushedLayers = [];
-
-    public TransformerWeightsStreaming(
-        ModelConfig config,
-        Tensor<float> embedding,
-        Tensor<float>? lmHead,
-        Tensor<float> finalNormW,
-        Tensor<float>? finalNormB,
-        BlockWeights[] blocks,
-        IModelLoader loader,
-        Tensor<float>? positionEmbedding = null)
-        : base(config, embedding, lmHead, finalNormW, finalNormB, blocks, loader, positionEmbedding) { }
 
     /// <summary>
     /// Metadata-only initialisation — reads the GGUF header and populates

@@ -339,9 +339,7 @@ public sealed class TrainJobSettings
     public static List<string> ListSavedIn(string folder)
     {
         if (!Directory.Exists(folder)) return [];
-        return Directory.GetFiles(folder, "*" + JobExtension)
-            .OrderByDescending(File.GetLastWriteTimeUtc)
-            .ToList();
+        return [.. Directory.GetFiles(folder, "*" + JobExtension).OrderByDescending(File.GetLastWriteTimeUtc)];
     }
 
     private static readonly JsonSerializerOptions Options = new() { WriteIndented = true };

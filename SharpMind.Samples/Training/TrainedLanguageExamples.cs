@@ -102,13 +102,13 @@ public static class TrainedLanguageExamples
             models.Add((ModelQuantAware, PromptsTinyShakespeare));
         }
 
-        foreach (var model in models)
+        foreach (var (Name, Prompts) in models)
         {
             await Console.Out.WriteLineAsync();
             // Multi-prompt overload: load this model once, run all its prompts
             // in fresh sessions, then move on to the next model. formatter: null
             // resolves each model's formatter from its stored chat template.
-            await ModelListRunner.RunAsync(model.Prompts, ModelDir, [model.Name], formatter: null);
+            await ModelListRunner.RunAsync(Prompts, ModelDir, [Name], formatter: null);
         }
     }
 }

@@ -19,13 +19,13 @@ namespace SharpMind.Samples.Examples
         /// Convenience overload testing a single prompt against every model.
         /// </summary>
         public static Task RunAsync(string prompt, string ModelPath, string[] Models, bool withGPU = false, int maxTokens = 100, LoadMode loadMode = LoadMode.Full, IChatPromptFormatter? formatter = null)
-            => RunAsync(new[] { prompt }, ModelPath, Models, withGPU, maxTokens, loadMode, formatter);
+            => RunAsync([prompt], ModelPath, Models, withGPU, maxTokens, loadMode, formatter);
 
         /// <summary>
         /// Convenience overload testing a single prompt with tuning overrides.
         /// </summary>
         public static Task RunAsync(string prompt, string ModelPath, string[] Models, InferenceKnobs knobs, bool withGPU = false, LoadMode loadMode = LoadMode.Full, IChatPromptFormatter? formatter = null)
-            => RunAsync(new[] { prompt }, ModelPath, Models, knobs, withGPU, loadMode, formatter);
+            => RunAsync([prompt], ModelPath, Models, knobs, withGPU, loadMode, formatter);
 
         /// <summary>
         /// Loads each model once, then runs every <paramref name="prompts"/> against
@@ -130,7 +130,7 @@ namespace SharpMind.Samples.Examples
             await Console.Out.WriteLineAsync();
         }
 
-        private static async Task<ChatMessage[]> RunPromptAsync(IChatSession session, string prompt, int maxTokens)
+        private static async Task<ChatMessage[]> RunPromptAsync(ChatSession<StandardGeneratorBuilder<KVCacherBuilder>, KVCacherBuilder> session, string prompt, int maxTokens)
         {
             var returnedPrompt = false;
             var tok = 0;

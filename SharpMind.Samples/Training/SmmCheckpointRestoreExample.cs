@@ -110,7 +110,7 @@ public static class SmmCheckpointRestoreExample
         var pipeline = PipelineNode.From(new TextFileSource(CorpusPath, TextFileSource.DocumentMode.LinePerDoc))
             .Pipe(new NormaliseWhitespace())
             .Pipe(new MinLengthFilter(8));
-        var tokenise = (string text) => tokenizer.Encode(text);
+        int[] tokenise(string text) => tokenizer.Encode(text);
         var batcher = new PackingBatcher(
             batchSize: BatchSize,
             maxSeqLen: SeqLen,

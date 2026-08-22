@@ -128,7 +128,7 @@ public static class TrainRunner
                 && sourceHashes.Count > 0
                 && !job.SourceHashes.OrderBy(kv => kv.Key).SequenceEqual(sourceHashes.OrderBy(kv => kv.Key));
             foreach (var kv in sourceHashes.Where(kv => kv.Value is not null))
-                Log($"Source hash {kv.Key}: {kv.Value![..Math.Min(12, kv.Value.Length)]}…");
+                Log($"Source hash {kv.Key}: {kv.Value![..Math.Min(12, kv.Value == null ? 0 : kv.Value.Length)]}…");
             if (changed)
                 Log("WARNING: training sources changed since the last run — the cached tokenizer may be stale for this corpus.");
             if (sourceHashes.Count > 0)
@@ -376,10 +376,9 @@ public static class TrainRunner
         {
             if (!Directory.Exists(job.SkillsFolder))
                 throw new InvalidOperationException($"Skills folder not found: {job.SkillsFolder}");
-            skills = Directory.GetFiles(job.SkillsFolder, "*.md", SearchOption.TopDirectoryOnly)
+            skills = [.. Directory.GetFiles(job.SkillsFolder, "*.md", SearchOption.TopDirectoryOnly)
                 .OrderBy(f => Path.GetFileName(f))
-                .Select(File.ReadAllText)
-                .ToList();
+                .Select(File.ReadAllText)];
             if (skills.Count == 0)
                 throw new InvalidOperationException($"No *.md skill files found in: {job.SkillsFolder}");
         }

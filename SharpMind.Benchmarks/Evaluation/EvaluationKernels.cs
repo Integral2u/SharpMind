@@ -266,6 +266,6 @@ public static class EvaluationKernels
             (indices[i], indices[maxIdx]) = (indices[maxIdx], indices[i]);
         }
 
-        return indices.Take(k).ToArray();
+        return [.. indices.Take(k)];
     }
 }

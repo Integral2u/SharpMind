@@ -18,7 +18,7 @@ public sealed class CrossEntropyLossTests
     {
         float max = row.Max();
         float sum = row.Sum(v => MathF.Exp(v - max));
-        return row.Select(v => MathF.Exp(v - max) / sum).ToArray();
+        return [.. row.Select(v => MathF.Exp(v - max) / sum)];
     }
 
     [Fact]

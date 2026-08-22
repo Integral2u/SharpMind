@@ -57,8 +57,7 @@ public static class FilePickerDialog
         {
             pathLabel.Text = currentPath;
             var dirs = Directory.GetDirectories(currentPath).Select(d => "[DIR] " + Path.GetFileName(d)).OrderBy(s => s);
-            entries = new List<string> { ".. (up one level)" };
-            entries.AddRange(dirs);
+            entries = [".. (up one level)", .. dirs];
             if (mode == PickerMode.File || mode == PickerMode.SaveFile)
                 entries.AddRange(activePatterns
                     .SelectMany(p => Directory.GetFiles(currentPath, p))

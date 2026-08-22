@@ -137,7 +137,8 @@ public static class Checkpoint
     /// <summary>Parses the step number from "step-0000123" / "step-0000123-final" names.</summary>
     private static long ParseStep(string name)
     {
-        if (!name?.StartsWith("step-", StringComparison.Ordinal) == true) return 0;
+        if (string.IsNullOrWhiteSpace(name)) return 0;
+        if (name.StartsWith("step-", StringComparison.Ordinal) == true) return 0;
         int end = name.IndexOf('-', 5);
         var number = end < 0 ? name[5..] : name[5..end];
         return long.TryParse(number, out var v) ? v : 0;

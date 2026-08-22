@@ -58,7 +58,7 @@ public sealed class AppSettings
             return Path.Combine(configRoot, "SharpMind", "cui-settings.json");
         }
     }
-
+    private static readonly JsonSerializerOptions SerializerOptions = new() { WriteIndented = true };
     public static AppSettings Load()
     {
         try
@@ -74,8 +74,7 @@ public sealed class AppSettings
             // from starting — fall back to defaults rather than crash on launch.
             return new AppSettings();
         }
-    }
-
+    }    
     public bool Save(out string? error)
     {
         error = null;
@@ -83,7 +82,7 @@ public sealed class AppSettings
         {
             var path = SettingsFilePath;
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            var json = JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true });
+            var json = JsonSerializer.Serialize(this, SerializerOptions);
             File.WriteAllText(path, json);
             return true;
         }

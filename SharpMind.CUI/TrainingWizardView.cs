@@ -91,6 +91,8 @@ public sealed class TrainingWizardView : View
             ? _job.Sources[_sourceList.SelectedItem]
             : null;
 
+    private static readonly string[] sourceArray = ["Start fresh", "Continue from latest", "Continue from…"];
+
     public TrainingWizardView(AppSettings settings, TrainJobSettings? job, Action<TrainJobSettings> onStart, Action? onCancel = null)
     {
         _settings = settings;
@@ -119,7 +121,7 @@ public sealed class TrainingWizardView : View
         row += 1;
 
         _nameField = new TextField((ustring)_job.Name) { X = 30, Y = row, Width = 30 };
-        _nameField.TextChanged += (_) => _job.Name = string.IsNullOrWhiteSpace(_nameField.Text.ToString()) ? "Untitled" : _nameField.Text.ToString();
+        _nameField.TextChanged += (_) => _job.Name = string.IsNullOrWhiteSpace(_nameField.Text.ToString()) ? "Untitled" : _nameField.Text.ToString() ?? string.Empty;
         var saveBtn = new Button("Save job") { X = 62, Y = row };
         saveBtn.Clicked += SaveJob;
         var loadBtn = new Button("Load job…") { X = Pos.Right(saveBtn) + 1, Y = row };
@@ -160,7 +162,7 @@ public sealed class TrainingWizardView : View
         // --- Model size -------------------------------
         row += 1;
         var autoBtn = new Button("Auto-size model…") { X = 30, Y = row };
-        autoBtn.Clicked += AutoSize;
+        autoBtn.Clicked += AutoSizeModel;
         form.Add(AddLabel("Model size:"), autoBtn);
         row += 2;
 
@@ -206,7 +208,7 @@ public sealed class TrainingWizardView : View
         row += 1;
 
         // --- Advanced architecture options (override the preset) -------
-        _activationRadio = new RadioGroup(ActivationLabelsArr.Select(a => (ustring)a).ToArray())
+        _activationRadio = new RadioGroup([.. ActivationLabelsArr.Select(a => (ustring)a)])
         {
             X = 30, Y = row, SelectedItem = IndexOf(ActivationLabelsArr, _job.Activation),
         };
@@ -214,7 +216,7 @@ public sealed class TrainingWizardView : View
         form.Add(AddLabel("Activation:"), _activationRadio);
         row += ActivationLabelsArr.Length + 1;
 
-        _gateRadio = new RadioGroup(GateLabelsArr.Select(g => (ustring)g).ToArray())
+        _gateRadio = new RadioGroup([.. GateLabelsArr.Select(g => (ustring)g)])
         {
             X = 30, Y = row, SelectedItem = IndexOf(GateLabelsArr, _job.Gate),
         };
@@ -222,7 +224,7 @@ public sealed class TrainingWizardView : View
         form.Add(AddLabel("Gate:"), _gateRadio);
         row += GateLabelsArr.Length + 1;
 
-        _ffnRadio = new RadioGroup(FfnLabelsArr.Select(f => (ustring)f).ToArray())
+        _ffnRadio = new RadioGroup([.. FfnLabelsArr.Select(f => (ustring)f)])
         {
             X = 30, Y = row, SelectedItem = IndexOf(FfnLabelsArr, _job.Ffn),
         };
@@ -239,7 +241,7 @@ public sealed class TrainingWizardView : View
         row = NumRow(form, row, "MoE top-k:", _job.TopKExperts, v => _job.TopKExperts = v, _hyperRows);
         _topKField = _hyperRows["MoE top-k:"];
 
-        _attentionRadio = new RadioGroup(AttentionLabelsArr.Select(a => (ustring)a).ToArray())
+        _attentionRadio = new RadioGroup([.. AttentionLabelsArr.Select(a => (ustring)a)])
         {
             X = 30, Y = row, SelectedItem = AttentionIndexOf(_job),
         };
@@ -252,7 +254,7 @@ public sealed class TrainingWizardView : View
         form.Add(AddLabel("Attention:"), _attentionRadio);
         row += AttentionLabelsArr.Length + 1;
 
-        _normRadio = new RadioGroup(NormLabelsArr.Select(n => (ustring)n).ToArray())
+        _normRadio = new RadioGroup([.. NormLabelsArr.Select(n => (ustring)n)])
         {
             X = 30, Y = row, SelectedItem = IndexOf(NormLabelsArr, _job.Norm),
         };
@@ -260,7 +262,7 @@ public sealed class TrainingWizardView : View
         form.Add(AddLabel("Normalisation:"), _normRadio);
         row += NormLabelsArr.Length + 1;
 
-        _archRadio = new RadioGroup(ArchLabelsArr.Select(a => (ustring)a).ToArray())
+        _archRadio = new RadioGroup([.. ArchLabelsArr.Select(a => (ustring)a)])
         {
             X = 30, Y = row, SelectedItem = IndexOf(ArchLabelsArr, _job.Arch),
         };
@@ -268,7 +270,7 @@ public sealed class TrainingWizardView : View
         form.Add(AddLabel("Architecture:"), _archRadio);
         row += ArchLabelsArr.Length + 1;
 
-        _peRadio = new RadioGroup(PeLabelsArr.Select(p => (ustring)p).ToArray())
+        _peRadio = new RadioGroup([.. PeLabelsArr.Select(p => (ustring)p)])
         {
             X = 30, Y = row, SelectedItem = IndexOf(PeLabelsArr, _job.PositionalEncoding),
         };
@@ -276,7 +278,7 @@ public sealed class TrainingWizardView : View
         form.Add(AddLabel("Positional enc:"), _peRadio);
         row += PeLabelsArr.Length + 1;
 
-        _optimizerRadio = new RadioGroup(OptimizerLabelsArr.Select(o => (ustring)o).ToArray())
+        _optimizerRadio = new RadioGroup([.. OptimizerLabelsArr.Select(o => (ustring)o)])
         {
             X = 30, Y = row, SelectedItem = IndexOf(OptimizerLabelsArr, _job.Optimizer),
         };
@@ -297,7 +299,7 @@ public sealed class TrainingWizardView : View
 
         // --- QAT target -----------------------------------
         int qatIndex = QatIndexFor(_job.QuantAwareTraining);
-        _qatRadio = new RadioGroup(QatLabelsArr.Select(q => (ustring)q).ToArray()) { X = 30, Y = row, SelectedItem = qatIndex };
+        _qatRadio = new RadioGroup([.. QatLabelsArr.Select(q => (ustring)q)]) { X = 30, Y = row, SelectedItem = qatIndex };
         _qatRadio.SelectedItemChanged += (a) =>
             _job.QuantAwareTraining = QatStoredName(a.SelectedItem);
         form.Add(AddLabel("QAT target:"), _qatRadio);
@@ -307,7 +309,7 @@ public sealed class TrainingWizardView : View
         row = NumRow(form, row, "Checkpoint interval:", _job.CheckpointInterval, v => _job.CheckpointInterval = v, _hyperRows);
 
         int keepIndex = KeepModeIndexFor(_job.KeepRecent);
-        _keepModeRadio = new RadioGroup(KeepLabelsArr.Select(k => (ustring)k).ToArray())
+        _keepModeRadio = new RadioGroup([.. KeepLabelsArr.Select(k => (ustring)k)])
         {
             X = 30, Y = row, SelectedItem = keepIndex
         };
@@ -319,7 +321,7 @@ public sealed class TrainingWizardView : View
         {
             _job.KeepRecent = KeepRecentFromSelection(a.SelectedItem);
             _keepCountField.Visible = a.SelectedItem == 1;
-            _checkpointDirLabel.Text = $"Checkpoints (derived): {_job.CheckpointDir}";
+            _checkpointDirLabel?.Text = $"Checkpoints (derived): {_job.CheckpointDir}";
             SetNeedsDisplay();
         };
         _keepCountField.TextChanged += (_) =>
@@ -337,8 +339,7 @@ public sealed class TrainingWizardView : View
         // Resume-from-checkpoint control: fresh start / latest / explicit directory.
         // Picking a specific checkpoint opens a chooser at Start time so the
         // wizard itself never turns into a long list of checkpoints.
-        _resumeRadio = new RadioGroup(new[] { "Start fresh", "Continue from latest", "Continue from…" }
-            .Select(s => (ustring)s).ToArray()) { X = 30, Y = row };
+        _resumeRadio = new RadioGroup([.. sourceArray.Select(s => (ustring)s)]) { X = 30, Y = row };
         _resumeRadio.SelectedItemChanged += (a) => OnResumeModeChanged(a.SelectedItem);
         _resumeDetailLabel = new Label("") { X = 1, Y = row + 3, Width = Dim.Fill(3) };
         _incrementalCheck = new CheckBox("Incremental — train only new/changed files, always continue from latest.")
@@ -437,7 +438,7 @@ public sealed class TrainingWizardView : View
         var field = new TextField((ustring)initial) { X = 30, Y = row, Width = 12 };
         field.TextChanged += (_) =>
         {
-            string text = field.Text.ToString();
+            string text = field.Text.ToString() ?? string.Empty;
             if (!validate(text)) return;
             if (set is Action<int> setInt && int.TryParse(text, out var i)) { setInt(i); return; }
             if (set is Action<float> setFloat && float.TryParse(text, System.Globalization.CultureInfo.InvariantCulture, out var f)) setFloat(f);
@@ -695,7 +696,7 @@ public sealed class TrainingWizardView : View
             };
             list.Add((meta.Step, dir, $"step {meta.Step,5} — {Path.GetFileName(dir)}{note}"));
         }
-        return list.OrderByDescending(c => c.Step).ThenBy(c => c.Dir, StringComparer.Ordinal).ToList();
+        return [.. list.OrderByDescending(c => c.Step).ThenBy(c => c.Dir, StringComparer.Ordinal)];
     }
 
     /// <summary>
@@ -825,7 +826,7 @@ public sealed class TrainingWizardView : View
         return ComponentPickerDialog.Show(_settings.PluginsFolder, kind, prefill, browseFolder);
     }
 
-    private JobComponent ToJobComponent(PickedComponent picked) => new()
+    private static JobComponent ToJobComponent(PickedComponent picked) => new()
     {
         DisplayName = picked.Descriptor.Name,
         TypeName = picked.Descriptor.Type.AssemblyQualifiedName!,
@@ -927,7 +928,7 @@ public sealed class TrainingWizardView : View
 
     // --- Keep-recent / QAT mappings ----------------------------------------
 
-    private int KeepModeIndexFor(int keepRecent)
+    private static int KeepModeIndexFor(int keepRecent)
     {
         if (keepRecent == 0) return 0;   // All
         if (keepRecent < 0) return 2;    // None
@@ -941,7 +942,7 @@ public sealed class TrainingWizardView : View
         _ => int.TryParse(_keepCountField.Text.ToString(), out var n) && n > 0 ? n : 3,
     };
 
-    private int QatIndexFor(string? qat) => qat switch
+    private static int QatIndexFor(string? qat) => qat switch
     {
         null or "" or "F32" => 0,
         "F16" => 1,
@@ -969,7 +970,7 @@ public sealed class TrainingWizardView : View
 
     // --- Auto-size -----------------------------------------------------------
 
-    private async void AutoSize()
+    private async void AutoSizeModel()
     {
         if (_job.Sources.Count == 0)
         {
@@ -1131,9 +1132,10 @@ public sealed class TrainingWizardView : View
         _onStart(_job);
     }
 
-    private void BrowseFolder(string labelForPicker, TextField field, Action<string> set)
+    private static void BrowseFolder(string labelForPicker, TextField field, Action<string> set)
     {
-        string start = Directory.Exists(field.Text.ToString()) ? field.Text.ToString() : Directory.GetCurrentDirectory();
+        var path = field.Text.ToString() ?? string.Empty;
+        string start = Directory.Exists(path) ? path : Directory.GetCurrentDirectory();
         var picked = FilePickerDialog.Show(labelForPicker, start, PickerMode.Folder);
         if (picked is not null) { field.Text = picked; set(picked); }
     }

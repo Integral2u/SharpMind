@@ -90,6 +90,6 @@ public sealed class WelcomeView : View
             items.Insert(items.Count - 1, sponsorBtn);
         }
 
-        Add(items.ToArray());
+        Add([.. items]);
     }
 }

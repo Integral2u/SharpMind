@@ -5,15 +5,12 @@ using SharpMind.Model.Layers.Ffn;
 
 namespace SharpMind.Model.Layers;
 
-public sealed class HookedTransformerBlock : TransformerBlock
+public sealed class HookedTransformerBlock(int layerIdx, AttentionLayer attention, FfnLayer ffn, NormLayer norm1, NormLayer norm2,
+    NormLayer? postAttnNorm = null, NormLayer? postFfnNorm = null) : TransformerBlock(layerIdx, attention, ffn, norm1, norm2, postAttnNorm, postFfnNorm)
 {
     private IActivationHook? _hook;
 
     public IActivationHook? Hook => _hook;
-
-    public HookedTransformerBlock(int layerIdx, AttentionLayer attention, FfnLayer ffn, NormLayer norm1, NormLayer norm2,
-        NormLayer? postAttnNorm = null, NormLayer? postFfnNorm = null)
-        : base(layerIdx, attention, ffn, norm1, norm2, postAttnNorm, postFfnNorm) { }
 
     public override void SetActivationHook(IActivationHook? hook) => _hook = hook;
 

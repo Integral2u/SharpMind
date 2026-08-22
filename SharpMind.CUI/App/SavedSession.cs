@@ -31,14 +31,14 @@ public sealed class SavedSession
     public ChatSessionSnapshot? Snapshot { get; set; }
 
     public static string DefaultFolder => SharpMindPaths.ChatSessions;
-
+    private static readonly JsonSerializerOptions SerializerOptions = new() { WriteIndented = true };
     public static bool Save(SavedSession saved, string path, out string? error)
     {
         error = null;
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            var json = JsonSerializer.Serialize(saved, new JsonSerializerOptions { WriteIndented = true });
+            var json = JsonSerializer.Serialize(saved, SerializerOptions);
             File.WriteAllText(path, json);
             return true;
         }
@@ -70,8 +70,6 @@ public sealed class SavedSession
     public static List<string> ListSaved(string folder)
     {
         if (!Directory.Exists(folder)) return [];
-        return Directory.GetFiles(folder, "*.json")
-            .OrderByDescending(File.GetLastWriteTimeUtc)
-            .ToList();
+        return [.. Directory.GetFiles(folder, "*.json").OrderByDescending(File.GetLastWriteTimeUtc)];
     }
 }

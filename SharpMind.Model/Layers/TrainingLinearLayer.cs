@@ -1,20 +1,13 @@
-//Can be upgraded to JigSawDotNet Pattern.  Would remove QuantizationOps and calls to fn = _staticOps.QuantizedMatMulOpFor(QuantDType.F32);
 using SharpMind.Core.Memory;
 using SharpMind.Core.Quantization;
 using SharpMind.Core.Tensors;
-using SharpMind.Core.Training;
 
 namespace SharpMind.Model.Layers;
 
-public sealed class TrainingLinearLayer : LinearLayer
+public sealed class TrainingLinearLayer(string name, int inFeatures, int outFeatures, bool bias, Tensor<float>? weight, Tensor<float>? biasTensor) : LinearLayer(name, inFeatures, outFeatures, bias, weight, biasTensor)
 {
     private static readonly QuantizationOps _staticOps = QuantizationFactory.Create();
     private QuantDType? _qatTarget;
-
-    public TrainingLinearLayer(string name, int inFeatures, int outFeatures, bool bias, Tensor<float>? weight, Tensor<float>? biasTensor)
-        : base(name, inFeatures, outFeatures, bias, weight, biasTensor)
-    {
-    }
 
     /// <summary>
     /// Enables quantization-aware training for this layer. The master weight
@@ -56,7 +49,7 @@ public sealed class TrainingLinearLayer : LinearLayer
     public bool QuantAwareEnabled => _qatTarget is not null and not QuantDType.F32;
     public QuantDType? QuantAwareTarget => _qatTarget;
 
-private unsafe Tensor<float> MatMulForward(Tensor<float> input, int batchSize, Workspace? workspace = null)
+    private unsafe Tensor<float> MatMulForward(Tensor<float> input, int batchSize, Workspace? workspace = null)
     {
         Tensor<float> output;
         // Local, not a field: MoE calls Forward on one shared expert layer from
@@ -110,7 +103,7 @@ private unsafe Tensor<float> MatMulForward(Tensor<float> input, int batchSize, W
         ThrowIfDisposed();
         bool needReshape = input.Rank > 2;
         int batchSize = input.ElementCount / input.Shape[^1];
-var flat = needReshape ? input.Reshape(batchSize, InFeatures) : input;
+        var flat = needReshape ? input.Reshape(batchSize, InFeatures) : input;
         using var weightBT = _weight.Transpose();
         var output = new Tensor<float>(batchSize, OutFeatures);
         if (_qatTarget is null or QuantDType.F32)

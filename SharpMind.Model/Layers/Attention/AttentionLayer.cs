@@ -180,12 +180,12 @@ namespace SharpMind.Model.Layers.Attention;
         // Q/K norm must be checked BEFORE the broader attn_q/attn_k checks
         if (name.Contains("attn_q_norm", StringComparison.OrdinalIgnoreCase))
         {
-            if (_qNorm != null) _qNorm.LoadWeight(data);
+            _qNorm?.LoadWeight(data);
             return;
         }
         if (name.Contains("attn_k_norm", StringComparison.OrdinalIgnoreCase))
         {
-            if (_kNorm != null) _kNorm.LoadWeight(data);
+            _kNorm?.LoadWeight(data);
             return;
         }
         if (name.Contains("attn_q", StringComparison.OrdinalIgnoreCase) || name.Contains("q_proj", StringComparison.OrdinalIgnoreCase))
@@ -211,7 +211,7 @@ namespace SharpMind.Model.Layers.Attention;
         }
     }
 
-    public bool SetRawWeight(string weightName, byte[] rawData, QuantDType dtype)
+    public bool SetRawWeight(string weightName, byte[] rawData, QuantDType _)
     {
         bool isBias = weightName.EndsWith(".bias", StringComparison.OrdinalIgnoreCase);
         if (isBias) return false;
@@ -281,12 +281,8 @@ namespace SharpMind.Model.Layers.Attention;
         // Forward always allocates a new tensor; using var disposes it at scope exit.
         // The normed tensor is 2D [totalHeads, headDim]; reshape at use sites below.
         // DEBUG: ForceBypassQKNorm skips normalization to isolate norm-related issues.
-        using var qNormed = (_qNorm != null)
-            ? _qNorm.Forward(q.Reshape(batch * seqLen * numH, headDim), workspace)
-            : null;
-        using var kNormed = (_kNorm != null)
-            ? _kNorm.Forward(k.Reshape(batch * seqLen * numKv, headDim), workspace)
-            : null;
+        using var qNormed = _qNorm?.Forward(q.Reshape(batch * seqLen * numH, headDim), workspace);
+        using var kNormed = _kNorm?.Forward(k.Reshape(batch * seqLen * numKv, headDim), workspace);
 
         // Use normed tensors where available, fall back to raw projections
         var qForAttn = (Tensor<float>?)qNormed ?? q;

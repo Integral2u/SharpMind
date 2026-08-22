@@ -89,7 +89,7 @@ public class Tokenizer
                 stopIds.Add(Vocab.GetId(token));
         }
         // Deduplicate in case EosId matches one of the above
-        return stopIds.Distinct().ToList();
+        return [.. stopIds.Distinct()];
     }
 
     // True for SentencePiece-style vocabularies (original LLaMA/LLaMA-2,
@@ -122,7 +122,7 @@ public class Tokenizer
     /// </summary>
     public int AddAdditionalToken(string token)
     {
-        bool isNew = !Vocab.Contains(token);
+        //bool isNew = !Vocab.Contains(token);
         int id = Vocab.AddToken(token);
         Vocab.Specials.AddAdditional(token);
         _model.Encoder.RefreshSpecials();

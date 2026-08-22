@@ -33,7 +33,7 @@ public sealed class CuiTools(CuiToolContext context)
     }
 
     [ToolDesc("Reports how much memory is currently available on the machine this session is running on, in megabytes. Use this before suggesting memory-heavy operations (e.g. loading another large model) to check whether there's realistically room for it.")]
-    public string UIGetFreeMemory()
+    public static string UIGetFreeMemory()
     {
         // GCMemoryInfo reflects the .NET GC's own view of available memory, which
         // tracks total physical memory reasonably closely on most systems without
@@ -47,7 +47,7 @@ public sealed class CuiTools(CuiToolContext context)
     }
 
     [ToolDesc("Reports basic specs of the machine this session is running on: operating system, processor architecture, and logical core count. Use this to tailor advice about performance, threading, or hardware-dependent options to the actual machine in use.")]
-    public string UIGetSystemSpecs()
+    public static string UIGetSystemSpecs()
     {
         string os = RuntimeInformation.OSDescription;
         string arch = RuntimeInformation.OSArchitecture.ToString();

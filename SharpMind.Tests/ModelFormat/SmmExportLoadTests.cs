@@ -285,7 +285,7 @@ public class SmmExportLoadTests : IDisposable
         cts.Cancel();
 
         Assert.Throws<OperationCanceledException>(() =>
-            GgufToSmmConverter.Convert(ggufPath, smmPath, new SmmWriteOptions(), cts.Token));
+            GgufToSmmConverter.Convert(ggufPath, smmPath, new SmmWriteOptions(),null, cts.Token));
 
         // No partial output and no leftover temp file.
         Assert.False(File.Exists(smmPath));
@@ -303,7 +303,7 @@ public class SmmExportLoadTests : IDisposable
         using var cts = new CancellationTokenSource();
         cts.Cancel();
 
-        Assert.Throws<OperationCanceledException>(() => SmmToGufConverter.Convert(smmPath, ggufPath, cts.Token));
+        Assert.Throws<OperationCanceledException>(() => SmmToGufConverter.Convert(smmPath, ggufPath, null, cts.Token));
 
         Assert.False(File.Exists(ggufPath));
         Assert.False(File.Exists(ggufPath + ".tmp"));
@@ -317,8 +317,8 @@ public class SmmExportLoadTests : IDisposable
 
         string smmPath = Path.Combine(_temp.Path, "tiny.smm");
         var reported = new List<float>();
-        GgufToSmmConverter.Convert(ggufPath, smmPath, new SmmWriteOptions(), CancellationToken.None,
-            new InlineProgress(reported.Add));
+        GgufToSmmConverter.Convert(ggufPath, smmPath, new SmmWriteOptions(),
+            new InlineProgress(reported.Add), CancellationToken.None);
 
         Assert.True(File.Exists(smmPath));
         Assert.NotEmpty(reported);
@@ -480,7 +480,8 @@ public class SmmExportLoadTests : IDisposable
     {
         var modelConfig = ModelConfig.Learnable with { NumExperts = 4, TopKExperts = 2 };
         var sharpConfig = SharpMindConfig.ForModel(modelConfig.NumHeads, modelConfig.NumKvHeads, "mixtral")
-            with { Hardware = HardwareTier.Scalar };
+            with
+        { Hardware = HardwareTier.Scalar };
         var weights = ModelFactory.CreateForTraining(modelConfig, sharpConfig);
         WeightInitializer.InitializeRandomly(weights, 4242);
         var model = ModelFactory.CreateTrainingTransformer(weights, sharpConfig);

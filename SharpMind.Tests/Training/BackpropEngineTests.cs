@@ -234,7 +234,7 @@ public sealed class BackpropEngineTests
                 targets.AddRange(block.Ffn.ExpertDownLayers!.SelectMany(l => l.Parameters()));
             }
         }
-        return targets.Distinct().ToList();
+        return [.. targets.Distinct()];
     }
 
     private static void AssertGradientsMatch(

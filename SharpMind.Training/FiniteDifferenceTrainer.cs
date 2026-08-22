@@ -80,8 +80,8 @@ public sealed class FiniteDifferenceTrainer
         float finalLoss = float.NaN;
         string? lastCheckpoint = null;
 
-        int batchSize = -1;
-        int seqLen = -1;
+        int batchSize;
+        int seqLen;
 
         await foreach (var batch in _batches.WithCancellation(ct))
         {
@@ -165,6 +165,7 @@ public sealed class FiniteDifferenceTrainer
 
         foreach (var p in _parameters)
         {
+            if (ct.IsCancellationRequested) return;
             var data = p.Data.Data;
             var grad = p.Grad.Data;
             for (int i = 0; i < data.Length; i++)

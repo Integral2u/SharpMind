@@ -25,7 +25,7 @@ public static class ComponentPickerDialog
         IReadOnlyDictionary<string, string>? prefill = null,
         string? browseFolder = null)
     {
-        var registry = ComponentRegistry.ScanFolder(pluginsFolder ?? "", out var warnings);
+        var registry = ComponentRegistry.ScanFolder(pluginsFolder, out var warnings);
         var candidates = registry
             .Where(c => c.Kind == kind)
             .OrderBy(c => c.Name)
@@ -134,7 +134,7 @@ public static class ComponentParamDialog
                         StartPath(current, browseFolder), PickerMode.File, fc.Pattern);
                     if (path is not null) { field.Text = path; values[p.Name] = path; }
                 };
-                field.TextChanged += (_) => values[p.Name] = field.Text.ToString();
+                field.TextChanged += (_) => values[p.Name] = field.Text.ToString() ?? string.Empty;
                 dialog.Add(labelView, field, btn);
             }
             else if (p.FolderChooser is { } fo)
@@ -148,7 +148,7 @@ public static class ComponentParamDialog
                         StartPath(current, browseFolder), PickerMode.Folder);
                     if (dir is not null) { field.Text = dir; values[p.Name] = dir; }
                 };
-                field.TextChanged += (_) => values[p.Name] = field.Text.ToString();
+                field.TextChanged += (_) => values[p.Name] = field.Text.ToString() ?? string.Empty;
                 dialog.Add(labelView, field, btn);
             }
             else if (p.Type == typeof(bool))
@@ -160,7 +160,7 @@ public static class ComponentParamDialog
             else if (p.Type.IsEnum)
             {
                 var names = Enum.GetNames(p.Type);
-                var radio = new RadioGroup(names.Select(n => (ustring)n).ToArray()) { X = 24, Y = row, SelectedItem = IndexOf(names, current) };
+                var radio = new RadioGroup([.. names.Select(n => (ustring)n)]) { X = 24, Y = row, SelectedItem = IndexOf(names, current) };
                 radio.SelectedItemChanged += (a) => values[p.Name] = names[a.SelectedItem];
                 dialog.Add(labelView, radio);
                 row += names.Length + 1;
@@ -176,7 +176,7 @@ public static class ComponentParamDialog
             else
             {
                 var field = new TextField((ustring)current) { X = 24, Y = row, Width = Dim.Fill(2) };
-                field.TextChanged += (_) => values[p.Name] = field.Text.ToString();
+                field.TextChanged += (_) => values[p.Name] = field.Text.ToString() ?? string.Empty;
                 dialog.Add(labelView, field);
                 row++;
             }

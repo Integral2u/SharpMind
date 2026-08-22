@@ -67,22 +67,23 @@ public sealed class JsonlSource : IDataSource
                 path, FileMode.Open, FileAccess.Read,
                 FileShare.Read, bufferSize: 65_536, useAsync: true);
             using var reader = new StreamReader(stream, detectEncodingFromByteOrderMarks: true);
-
-            while (!reader.EndOfStream)
+            
+            while (true)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+
                 string? line = await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false);
+                if (line is null) break; // true EOF
                 if (string.IsNullOrWhiteSpace(line)) continue;
 
                 string? text = ExtractField(line, opts);
-                if (text is null)
+                if (string.IsNullOrWhiteSpace(text))
                 {
                     Interlocked.Increment(ref _skippedLines);
                     continue;
                 }
 
-                if (!string.IsNullOrWhiteSpace(text))
-                    yield return text;
+                yield return text;
             }
         }
     }

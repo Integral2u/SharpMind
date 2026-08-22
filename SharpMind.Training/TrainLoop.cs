@@ -83,9 +83,9 @@ public sealed class TrainLoop
     /// </summary>
     public async Task RunAsync(
         Action<TrainStepResult>? onStep            = null,
-        IProgress<float>?        progress           = null,
-        CancellationToken        cancellationToken  = default,
-        Action<string>?          onCheckpoint       = null)
+        IProgress<float>?        progress           = null,        
+        Action<string>?          onCheckpoint       = null,
+        CancellationToken cancellationToken = default)
     {
         int startStep = 0;
 

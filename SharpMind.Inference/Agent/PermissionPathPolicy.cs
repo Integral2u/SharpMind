@@ -60,7 +60,7 @@ public static class PermissionPathPolicy
         List<string> rootsList;
         try
         {
-            rootsList = roots.Where(r => !string.IsNullOrWhiteSpace(r)).ToList();
+            rootsList = [.. roots.Where(r => !string.IsNullOrWhiteSpace(r))];
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException)
         {

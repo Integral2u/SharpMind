@@ -228,7 +228,7 @@ public static class SessionLauncher
 
         return new EmbeddedPluginInfo
         {
-            AssemblyNames = entries.Select(e => e.Name).ToList(),
+            AssemblyNames = [.. entries.Select(e => e.Name)],
             ToolNames = toolNames.ToHashSet(StringComparer.Ordinal),
             Plugins = result
         };

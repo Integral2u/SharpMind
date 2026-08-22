@@ -712,7 +712,28 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
                         sliceEnd = ev is long l ? (int)l : ev is int i ? i : null;
                     }
                 }
-                return AccessSlice(obj, sliceStart, sliceEnd);
+                switch (obj)
+                {
+                    case List<JinjaDict> list:
+                        {
+                            int sIdx = sliceStart ?? 0;
+                            int eIdx = sliceEnd ?? list.Count;
+                            sIdx = sIdx < 0 ? list.Count + sIdx : sIdx;
+                            eIdx = eIdx < 0 ? list.Count + eIdx : eIdx;
+                            sIdx = Math.Clamp(sIdx, 0, list.Count);
+                            eIdx = Math.Clamp(eIdx, 0, list.Count);
+                            return sIdx >= eIdx ? [] : list[sIdx..eIdx];
+                        }
+                    case string s:
+                        {
+                            int sIdx = sliceStart ?? 0;
+                            int eIdx = sliceEnd ?? s.Length;
+                            sIdx = Math.Clamp(sIdx, 0, s.Length);
+                            eIdx = Math.Clamp(eIdx, 0, s.Length);
+                            return sIdx >= eIdx ? "" : s[sIdx..eIdx];
+                        }
+                    default: return null;
+                }
             }
 
             var key = Eval(rawKey, env, errors);
@@ -845,29 +866,6 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
             long idx = key is long l ? l : key is int i ? i : 0;
             int real = idx < 0 ? list.Count + (int)idx : (int)idx;
             return (real >= 0 && real < list.Count) ? list[real] : null;
-        }
-        return null;
-    }
-
-    private static object? AccessSlice(object? obj, int? start, int? end)
-    {
-        if (obj is string s)
-        {
-            int sIdx = start ?? 0;
-            int eIdx = end ?? s.Length;
-            sIdx = Math.Clamp(sIdx, 0, s.Length);
-            eIdx = Math.Clamp(eIdx, 0, s.Length);
-            return sIdx >= eIdx ? "" : s[sIdx..eIdx];
-        }
-        if (obj is List<JinjaDict> list)
-        {
-            int sIdx = start ?? 0;
-            int eIdx = end ?? list.Count;
-            sIdx = sIdx < 0 ? list.Count + sIdx : sIdx;
-            eIdx = eIdx < 0 ? list.Count + eIdx : eIdx;
-            sIdx = Math.Clamp(sIdx, 0, list.Count);
-            eIdx = Math.Clamp(eIdx, 0, list.Count);
-            return sIdx >= eIdx ? [] : list[sIdx..eIdx];
         }
         return null;
     }

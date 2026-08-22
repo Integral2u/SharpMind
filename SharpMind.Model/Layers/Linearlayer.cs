@@ -123,10 +123,19 @@ public abstract class LinearLayer : IDisposable
 
     public void Dispose()
     {
+        Dispose(true);
+        GC.SuppressFinalize(this);
+    }
+
+    protected virtual void Dispose(bool disposing)
+    {
         if (_disposed) return;
         _disposed = true;
-        if (_ownsWeight) _weight.Dispose();
-        if (_ownsBias) _bias?.Dispose();
+        if (disposing)
+        {
+            if (_ownsWeight) _weight.Dispose();
+            if (_ownsBias) _bias?.Dispose();
+        }
     }
 
     /// <summary>

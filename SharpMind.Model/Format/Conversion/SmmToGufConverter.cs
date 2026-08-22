@@ -30,9 +30,8 @@ public static class SmmToGufConverter
     /// </summary>
     public static void Convert(
         string smmPath,
-        string ggufPath,
-        CancellationToken ct = default,
-        IProgress<float>? progress = null)
+        string ggufPath,        
+        IProgress<float>? progress = null, CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(smmPath);
         ArgumentException.ThrowIfNullOrWhiteSpace(ggufPath);
@@ -46,7 +45,7 @@ public static class SmmToGufConverter
         var tokenizer = SmmLoader.LoadTokenizerFromMeta(meta);
 
         var kv = BuildKvPairs(meta, config, tokenizer);
-        var tensors = BuildTensors(smmPath, meta, ct, progress);
+        var tensors = BuildTensors(smmPath, ct, progress);
 
         string tmpPath = ggufPath + ".tmp";
         try
@@ -218,7 +217,7 @@ public static class SmmToGufConverter
         }
     }
 
-    private static List<GgufTensor> BuildTensors(string smmPath, ModelMetaData meta, CancellationToken ct, IProgress<float>? progress)
+    private static List<GgufTensor> BuildTensors(string smmPath, CancellationToken ct, IProgress<float>? progress)
     {
         var entries = SmmLoader.ReadTensorIndex(smmPath);
         int totalTensors = 0;

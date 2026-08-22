@@ -44,7 +44,7 @@ public sealed class BpeMergeCompletenessTests
 
         int[] ids = tok.Encode("abzzzef", addBos: false, addEos: false);
 
-        Assert.Equal(["ab", "z", "z", "z", "ef"], ids.Select(tok.IdToToken).ToArray());
+        Assert.Equal(["ab", "z", "z", "z", "ef"], [.. ids.Select(tok.IdToToken)]);
     }
 
     /// <summary>Same shape, with the distant merge outranking the near one.</summary>
@@ -55,7 +55,7 @@ public sealed class BpeMergeCompletenessTests
 
         int[] ids = tok.Encode("abzzzef", addBos: false, addEos: false);
 
-        Assert.Equal(["ab", "z", "z", "z", "ef"], ids.Select(tok.IdToToken).ToArray());
+        Assert.Equal(["ab", "z", "z", "z", "ef"], [.. ids.Select(tok.IdToToken)]);
     }
 
     /// <summary>A full merge chain still collapses to the single largest token.</summary>

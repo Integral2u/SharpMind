@@ -29,13 +29,13 @@ public sealed class UsedQuantizationTests
 
     private static ModelMetaData Meta(params (string Name, QuantDType Dtype)[] tensors) => new()
     {
-        Tensors = tensors.Select(t => new TensorInfo
+        Tensors = [.. tensors.Select(t => new TensorInfo
         {
             Name = t.Name,
             Dtype = t.Dtype,
             Shape = [8, 8],
             Offset = 0,
-        }).ToList(),
+        })],
     };
 
     [Fact]

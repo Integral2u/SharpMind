@@ -54,7 +54,7 @@ public sealed class ChatView : View
     private bool _generating;
     private bool _interruptDialogOpen;
     private bool _faultReported;
-    private object? _timeoutToken;
+    private readonly object? _timeoutToken;
     private bool _disposed;
 
     // Sidebar stats persist after a turn completes instead of resetting to
@@ -120,9 +120,9 @@ public sealed class ChatView : View
         };
         string hwDisplay = options.UseGpu ? $"GPU ({resolvedHw})" : resolvedHw;
 
-        string formatterDisplay = bridge.Formatter is { } fmt
+        string formatterDisplay = SanitizeFormatterName(bridge.Formatter is { } fmt
             ? fmt.GetType().Name
-            : options.Formatter.ToString();
+            : options.Formatter.ToString());
         _strategyLabel = new Label($"Generator: {options.Generator}\nKV Cache: {options.Cache}\nFormatting:{formatterDisplay}\nHW Tier: {hwDisplay}")
         { X = 0, Y = 4, Width = Dim.Fill(), Height = 4 };
         _toolLabel = new Label("Tool: none") { X = 0, Y = 8, Width = Dim.Fill() };
@@ -200,6 +200,12 @@ public sealed class ChatView : View
         _timeoutToken = Application.MainLoop.AddTimeout(TimeSpan.FromMilliseconds(16), PollBackgroundState);
 
         _inputField.SetFocus();
+    }
+
+    private static string SanitizeFormatterName(string name)
+    {
+        var r = name.Replace("formatter", string.Empty, StringComparison.OrdinalIgnoreCase).Replace("format", string.Empty, StringComparison.OrdinalIgnoreCase);
+        return string.IsNullOrWhiteSpace(r) ? name : r;
     }
 
     private static string FormatMemory()
@@ -319,7 +325,7 @@ public sealed class ChatView : View
         ShowArtifactListDialog(remaining);
     }
 
-    private void ShowArtifactListDialog(List<ChatArtifact> artifacts)
+    private static void ShowArtifactListDialog(List<ChatArtifact> artifacts)
     {
         var dialog = new Dialog("Artifacts", 60, 20);
         var listView = new ListView
@@ -353,7 +359,7 @@ public sealed class ChatView : View
                 MessageBox.Query("Empty content", "This artifact has no content to save.", "OK");
                 return;
             }
-            string fileName = artifact.FileName;
+            string fileName = artifact.FileName ?? string.Empty;
             if (string.IsNullOrEmpty(fileName))
                 fileName = string.IsNullOrEmpty(artifact.Type) ? "artifact" : $"artifact.{artifact.Type}";
             string? savePath = FilePickerDialog.Show($"Save: {fileName}", Directory.GetCurrentDirectory(), PickerMode.SaveFile, "*.*");
@@ -560,7 +566,7 @@ public sealed class ChatView : View
     {
         string savedLive = _liveResponse.ToString();
         string savedThinking = _liveThinking.ToString();
-        int savedOffset = _liveResponseStartOffset;
+        //int savedOffset = _liveResponseStartOffset;
 
         _transcriptView.Text = "";
         _liveResponse.Clear();
@@ -609,8 +615,7 @@ public sealed class ChatView : View
     private static string StripThinkBlocks(string text)
     {
         if (string.IsNullOrWhiteSpace(text)) return text;
-        return System.Text.RegularExpressions.Regex.Replace(text, @"<think>.*?</think>", "", System.Text.RegularExpressions.RegexOptions.Singleline)
-            .TrimEnd('\uFFFD', '\u0000', '\u0001', '\u0002', '\u0003').Trim();
+        return Inference.RegexGenerated.ThinkingBlocks.Replace(text,"").TrimEnd('\uFFFD', '\u0000', '\u0001', '\u0002', '\u0003').Trim();
     }
 
     private static string StatusLabel(ChatStatus s) => s switch
@@ -632,11 +637,11 @@ public sealed class ChatView : View
     /// hand-rolled overlay from the console-UI version. Resolves the
     /// blocked tool call the instant a button is pressed.
     /// </summary>
-    private void ShowChoiceDialog(ChoiceRequest request)
+    private static void ShowChoiceDialog(ChoiceRequest request)
     {
         var dialog = new Dialog("Choose an option", 60, Math.Min(20, request.Options.Count + (request.AllowFreeText ? 8 : 5)));
 
-        var radio = new RadioGroup(request.Options.Select(p => (ustring)p).ToArray()) { X = 1, Y = 1 };
+        var radio = new RadioGroup([.. request.Options.Select(p => (ustring)p)]) { X = 1, Y = 1 };
         dialog.Add(new Label((ustring)request.Prompt) { X = 1, Y = 0, Width = Dim.Fill(2) }, radio);
 
         TextField? freeTextField = null;

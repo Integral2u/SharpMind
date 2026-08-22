@@ -112,7 +112,7 @@ public static class ComponentRegistry
         try { types = assembly.GetTypes(); }
         catch (ReflectionTypeLoadException ex)
         {
-            types = ex.Types.Where(t => t is not null).Select(t => t!).ToArray();
+            types = [.. ex.Types.Where(t => t is not null).Select(t => t!)];
             if (warnings is not null)
             {
                 foreach (var le in ex.LoaderExceptions)
@@ -160,9 +160,10 @@ public static class ComponentRegistry
     /// result with the built-in components from <see cref="SharpMind.Data"/>.
     /// Failures in one module are collected as <paramref name="warnings"/>.
     /// </summary>
-    public static List<ComponentDescriptor> ScanFolder(string directory, out List<string> warnings)
+    public static List<ComponentDescriptor> ScanFolder(string? directory, out List<string> warnings)
     {
-        warnings = new List<string>();
+        warnings = [];
+        if (string.IsNullOrWhiteSpace(directory)) return [];
         var result = Scan(typeof(ComponentRegistry).Assembly);
 
         if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
@@ -234,7 +235,7 @@ public static class ComponentRegistry
             descriptor.Type,
             BindingFlags.Instance | BindingFlags.Public,
             binder: null,
-            args: args.ToArray(),
+            args: [.. args],
             culture: CultureInfo.InvariantCulture)!;
     }
 

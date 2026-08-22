@@ -56,7 +56,7 @@ public sealed class ModelMetaData
     /// but works purely from the on-disk metadata, before any weights are loaded.
     /// </summary>
     public QuantDType[] GetUsedQuantizations()
-        => Tensors.Select(t => t.Dtype).Distinct().OrderBy(d => d).ToArray();
+        => [.. Tensors.Select(t => t.Dtype).Distinct().OrderBy(d => d)];
 
     /// <summary>
     /// Resolves the <c>tokenizer.ggml.add_bos_token</c> flag, defaulting to

@@ -355,7 +355,7 @@ public static partial class QuantizationKernels
         });
     }
 
-    public static void ReadF32_Scalar(BinaryReader reader, Span<float> data, int n)
+    public static void ReadF32_Scalar(BinaryReader reader, Span<float> data, int _)
     {
         Span<byte> byteView = MemoryMarshal.AsBytes(data);
         reader.Read(byteView);
@@ -594,6 +594,9 @@ public static partial class QuantizationKernels
         double sum = 0;
         var vacc0 = Vector256<float>.Zero;
         var vacc1 = Vector256<float>.Zero;
+
+        float* tmp = stackalloc float[16]; // hoisted out of both loops: allocated once per call, reused every iteration
+
         for (int b = 0; b < nBlocks; b++)
         {
             byte* block = rawWeights + (long)col * nBlocks * blockBytes + b * blockBytes;
@@ -601,12 +604,10 @@ public static partial class QuantizationKernels
             byte* qs = block + 2;
             int blockEnd = Math.Min(qk, inFeatures - b * qk);
             float* pIn = input + b * qk;
-            var vd = Vector256.Create(d);
             int i = 0;
             for (; i <= blockEnd - 16; i += 16)
             {
                 int byteBase = i / 4;
-                float* tmp = stackalloc float[16];
                 for (int j = 0; j < 16; j++)
                 {
                     int bIdx = j / 4;
@@ -632,7 +633,6 @@ public static partial class QuantizationKernels
         sum += MathHelpers.HSum256_Avx(Avx.Add(vacc0, vacc1));
         return (float)sum;
     }
-
     public static unsafe void QuantizedMatMulTQ2_0_Serial_Scalar(
         float* input, byte* rawWeights, float* output, int M, int K, int N)
     {

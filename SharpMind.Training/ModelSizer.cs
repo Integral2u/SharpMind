@@ -23,7 +23,7 @@ public static class ModelSizer
 
         // 1. Sample data and train a temporary tokenizer
         var sampleTexts = new List<string>();
-        await foreach (var text in source.ReadAsync().WithCancellation(ct))
+        await foreach (var text in source.ReadAsync(ct))
         {
             sampleTexts.Add(text);
             if (sampleTexts.Count >= budget.SampleSize) break;
@@ -33,7 +33,7 @@ public static class ModelSizer
             throw new InvalidOperationException("Source yielded no documents. Cannot determine optimal size.");
 
         var trainer = new BpeTrainer(targetVocabSize: 1024);
-        var bpeModel = await trainer.TrainAsync(SampleToAsyncEnumerable(sampleTexts));
+        var bpeModel = await trainer.TrainAsync(SampleToAsyncEnumerable(sampleTexts),ct);
         var tokenizer = new Tokenizer(bpeModel);
         int vocabSize = tokenizer.VocabSize;
 

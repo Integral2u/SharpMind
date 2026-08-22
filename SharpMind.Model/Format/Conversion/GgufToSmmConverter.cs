@@ -25,9 +25,8 @@ public static class GgufToSmmConverter
     public static void Convert(
         string ggufPath,
         string smmPath,
-        SmmWriteOptions? options = null,
-        CancellationToken ct = default,
-        IProgress<float>? progress = null)
+        SmmWriteOptions? options = null,        
+        IProgress<float>? progress = null, CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(ggufPath);
         ArgumentException.ThrowIfNullOrWhiteSpace(smmPath);

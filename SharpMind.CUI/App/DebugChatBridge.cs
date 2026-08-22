@@ -214,7 +214,7 @@ public sealed class DebugChatBridge(CuiToolContext cuiContext, Func<ToolPermissi
             ToolName = "GetCurrentWeather",
             Category = ToolCategory.Network,
             Resource = "api.open-meteo.com",
-            Arguments = new JsonObject()
+            Arguments = []
         });
 
         if (permission == ToolPermission.Never)
@@ -249,7 +249,7 @@ public sealed class DebugChatBridge(CuiToolContext cuiContext, Func<ToolPermissi
             ToolName = "ListFiles",
             Category = ToolCategory.File,
             Resource = ".",
-            Arguments = new JsonObject()
+            Arguments = []
         });
 
         if (permission == ToolPermission.Never)

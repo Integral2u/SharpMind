@@ -42,10 +42,10 @@ public sealed class PseudoLanguageSource : IDataSource
         [Tooltip("Syntactic level")]
         ComplexityLevel level = ComplexityLevel.Syntactic)
     {
-        if (vocabSize <= 0) throw new ArgumentOutOfRangeException(nameof(vocabSize));
-        if (rootMorphemes < 0) throw new ArgumentOutOfRangeException(nameof(rootMorphemes));
-        if (affixes < 0) throw new ArgumentOutOfRangeException(nameof(affixes));
-        if (sequenceCount <= 0) throw new ArgumentOutOfRangeException(nameof(sequenceCount));
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(vocabSize);
+        ArgumentOutOfRangeException.ThrowIfNegative(rootMorphemes);
+        ArgumentOutOfRangeException.ThrowIfNegative(affixes);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(sequenceCount);
 
         _config = new VocabConfig
         {

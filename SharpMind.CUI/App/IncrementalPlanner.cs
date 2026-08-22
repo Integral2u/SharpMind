@@ -154,15 +154,18 @@ public static class IncrementalPlanner
         return (IDataSource)ComponentRegistry.Build<IDataSource>(descriptor, component.Args);
     }
 
-    private static TextFileSource.DocumentMode ModeArg(IReadOnlyDictionary<string, string> args)
-        => args.TryGetValue("mode", out var raw) &&
+    private static TextFileSource.DocumentMode ModeArg(Dictionary<string, string> args)
+    {
+        ArgumentNullException.ThrowIfNull(args);
+        return args.TryGetValue("mode", out var raw) &&
            Enum.TryParse<TextFileSource.DocumentMode>(raw, ignoreCase: true, out var mode)
             ? mode : TextFileSource.DocumentMode.LinePerDoc;
+    }
 
-    private static string TextFieldArg(IReadOnlyDictionary<string, string> args)
+    private static string TextFieldArg(Dictionary<string, string> args)
         => args.TryGetValue("textField", out var raw) && !string.IsNullOrWhiteSpace(raw)
             ? raw : "text";
 
-    private static string? PathArg(IReadOnlyDictionary<string, string> args)
+    private static string? PathArg(Dictionary<string, string> args)
         => args.TryGetValue("path", out var raw) ? raw : null;
 }

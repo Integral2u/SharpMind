@@ -45,10 +45,10 @@ public sealed class OptionsView : View
     private readonly TextField toolsFolderField;
     private readonly RadioGroup? pluginCompactorRadio;
     private readonly TextField toolField;
-    private PluginLoadResult pluginResult = new();
+    private readonly PluginLoadResult pluginResult = new();
     private readonly EmbeddedPluginInfo? _embedded;
     private readonly List<IContextCompactor> _pluginCompactors = [];
-    private ustring[] pluginCompactorNames = [];
+    private readonly ustring[] pluginCompactorNames = [];
 
     public OptionsView(SessionOptions options, AppSettings settings, Action onLaunch, Action onCancel)
     {
@@ -228,13 +228,13 @@ public sealed class OptionsView : View
 
         AddLabel("Agent name:");
         agentNameField = new TextField((ustring)options.AgentName) { X = 30, Y = row, Width = 30 };
-        agentNameField.TextChanged += (_) => _options.AgentName = agentNameField.Text.ToString();
+        agentNameField.TextChanged += (_) => _options.AgentName = agentNameField.Text.ToString() ?? string.Empty;
         _formContent.Add(agentNameField);
         row++;
 
         AddLabel("User name:");
         userNameField = new TextField((ustring)options.UserName) { X = 30, Y = row, Width = 30 };
-        userNameField.TextChanged += (_) => _options.UserName = userNameField.Text.ToString();
+        userNameField.TextChanged += (_) => _options.UserName = userNameField.Text.ToString() ?? string.Empty;
         _formContent.Add(userNameField);
         row++;
 
@@ -278,7 +278,7 @@ public sealed class OptionsView : View
 
         AddLabel("Skill folders (;-sep):");
         skillField = new TextField((ustring)string.Join(";", options.SkillFolders)) { X = 30, Y = row, Width = 40 };
-        skillField.TextChanged += (_) => _options.SkillFolders = [.. skillField.Text.ToString().Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)];
+        skillField.TextChanged += (_) => _options.SkillFolders = [.. (skillField.Text.ToString() ?? string.Empty).Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)];
         var skillOpen = new Button("Add...") { X = Pos.Right(skillField) + 1, Y = row };
         skillOpen.Clicked += () =>
         {
@@ -294,7 +294,7 @@ public sealed class OptionsView : View
 
         AddLabel("Tool DLLs (;-sep):");
         toolField = new TextField((ustring)string.Join(";", options.ToolAssemblyPaths)) { X = 30, Y = row, Width = 40 };
-        toolField.TextChanged += (_) => _options.ToolAssemblyPaths = [.. toolField.Text.ToString().Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)];
+        toolField.TextChanged += (_) => _options.ToolAssemblyPaths = [.. (toolField.Text.ToString() ?? string.Empty).Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)];
         var toolOpen = new Button("Add...") { X = Pos.Right(toolField) + 1, Y = row };
         toolOpen.Clicked += () =>
         {
@@ -353,9 +353,7 @@ public sealed class OptionsView : View
         if (_pluginCompactors.Count > 0)
         {
             AddLabel("Plugin compactor:");
-            pluginCompactorNames = _pluginCompactors
-                .Select(c => (ustring)(c.Name + (_embedded?.Plugins.Compactors.Contains(c) == true ? "  (Plugin Embedded)" : "")))
-                .ToArray();
+            pluginCompactorNames = [.. _pluginCompactors.Select(c => (ustring)(c.Name + (_embedded?.Plugins.Compactors.Contains(c) == true ? "  (Plugin Embedded)" : "")))];
             var selectedIdx = _options.PluginCompactorName is not null
                 ? _pluginCompactors.FindIndex(c =>
                     string.Equals(c.Name, _options.PluginCompactorName, StringComparison.OrdinalIgnoreCase))
@@ -544,8 +542,10 @@ public sealed class OptionsView : View
 
     private void ManageProcessors()
     {
-        var pre = new List<(string Name, string Desc)>();
-        pre.Add(("Simple Artifact Injection", "Inlines text artifacts; adds path hints for binary files"));
+        var pre = new List<(string Name, string Desc)>
+        {
+            ("Simple Artifact Injection", "Inlines text artifacts; adds path hints for binary files")
+        };
         pre.AddRange(SessionLauncher.GetAvailablePreProcessors()
             .Select(p => (p.Name, p.Description)));
         if (_embedded is not null && _embedded.HasPlugins)

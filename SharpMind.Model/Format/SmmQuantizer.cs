@@ -34,10 +34,9 @@ public static class SmmQuantizer
     /// </summary>
     public static void Quantize(
         string path,
-        SmmQuantOptions options,
-        CancellationToken ct = default,
-        IProgress<float>? progress = null)
-        => Quantize(path, path, options, ct, progress);
+        SmmQuantOptions options,        
+        IProgress<float>? progress = null, CancellationToken ct = default)
+        => Quantize(path, path, options, progress, ct);
 
     /// <summary>
     /// Quantizes every tensor in <paramref name="sourcePath"/> to a fresh file at
@@ -48,16 +47,15 @@ public static class SmmQuantizer
     public static void Quantize(
         string sourcePath,
         string destPath,
-        SmmQuantOptions options,
-        CancellationToken ct = default,
-        IProgress<float>? progress = null)
+        SmmQuantOptions options,        
+        IProgress<float>? progress = null, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(options);
 
         var entries = SmmLoader.ReadTensorIndex(sourcePath);
         long sourceLength = new FileInfo(sourcePath).Length;
         var plan = SmmQuantPlan.Resolve(entries, options, sourceLength);
-        Quantize(sourcePath, destPath, name => plan.GetValueOrDefault(name, QuantDType.F16), ct, progress);
+        Quantize(sourcePath, destPath, name => plan.GetValueOrDefault(name, QuantDType.F16), progress, ct);
     }
 
     /// <summary>
@@ -67,10 +65,9 @@ public static class SmmQuantizer
     /// </summary>
     public static void Quantize(
         string path,
-        QuantDType target,
-        CancellationToken ct = default,
-        IProgress<float>? progress = null)
-        => Quantize(path, path, target, ct, progress);
+        QuantDType target,       
+        IProgress<float>? progress = null, CancellationToken ct = default)
+        => Quantize(path, path, target, progress, ct);
 
     /// <summary>
     /// Quantizes every tensor in <paramref name="sourcePath"/> to a fresh file at
@@ -81,23 +78,21 @@ public static class SmmQuantizer
     public static void Quantize(
         string sourcePath,
         string destPath,
-        QuantDType target,
-        CancellationToken ct = default,
-        IProgress<float>? progress = null)
+        QuantDType target,        
+        IProgress<float>? progress = null, CancellationToken ct = default)
     {
         if (target == QuantDType.F32 || !TensorQuantizer.IsSupportedTarget(target))
             throw new NotSupportedException(
                 $"Quantization level {target} is not supported. Use F16 or a K-quant (Q2_K..Q8_K).");
 
-        Quantize(sourcePath, destPath, _ => target, ct, progress);
+        Quantize(sourcePath, destPath, _ => target, progress, ct);
     }
 
     private static void Quantize(
         string sourcePath,
         string destPath,
-        Func<string, QuantDType> targetFor,
-        CancellationToken ct = default,
-        IProgress<float>? progress = null)
+        Func<string, QuantDType> targetFor,        
+        IProgress<float>? progress = null, CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(sourcePath);
         ArgumentException.ThrowIfNullOrWhiteSpace(destPath);

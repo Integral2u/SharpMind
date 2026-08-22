@@ -57,7 +57,7 @@ public static class TokenizationPipeline
         }
 
         var vocab = new Vocabulary(ordered, specials);
-        var model = new BpeModel(vocab, new List<MergeRule>(), new WhitespacePreTokeniser(), charMode: true);
+        var model = new BpeModel(vocab, [], new WhitespacePreTokeniser(), charMode: true);
         return new Tokenizer(model);
     }
 

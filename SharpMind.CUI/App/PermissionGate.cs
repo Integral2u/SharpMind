@@ -31,7 +31,7 @@ public sealed class PermissionRequest
 /// </summary>
 public sealed class PermissionGate
 {
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private PermissionRequest? _pending;
 
     /// <summary>

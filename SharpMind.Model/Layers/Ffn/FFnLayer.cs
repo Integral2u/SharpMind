@@ -93,7 +93,7 @@ public abstract class FfnLayer : IDisposable
     private void LoadFusedBias(ReadOnlySpan<float> data, int offset)
         => data.CopyTo(WGated!.Bias!.Data.Slice(offset, data.Length));
 
-    public bool SetRawWeight(string name, byte[] rawData, QuantDType dtype)
+    public bool SetRawWeight(string name, byte[] rawData, QuantDType _)
     {
         if (name.Contains("bias", StringComparison.OrdinalIgnoreCase)) return false;
 

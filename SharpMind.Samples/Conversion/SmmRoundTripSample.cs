@@ -126,8 +126,7 @@ public static class SmmRoundTripSample
 
     private static async Task<string> RunPromptAsync(string modelPath, string prompt, int maxTokens)
     {
-        ModelFormat? fmt = ModelFormatHelpers.GetFormatForExtension(modelPath);
-        if (fmt == null) throw new InvalidDataException($"File type not supported: {modelPath}");
+        ModelFormat? fmt = ModelFormatHelpers.GetFormatForExtension(modelPath) ?? throw new InvalidDataException($"File type not supported: {modelPath}");
         var metaHelper = ModelFormatHelpers.GetModelMetaHelperFor((ModelFormat)fmt);
         metaHelper.Load(modelPath, null, out ModelMetaData meta, out ModelConfig modelConfig, out Tokenizer? tokenizer);
         if (tokenizer == null) return "(no tokenizer)";

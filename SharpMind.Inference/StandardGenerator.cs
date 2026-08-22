@@ -291,10 +291,7 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
             _cacheTokens.RemoveRange(length, _cacheTokens.Count - length);
     }
 
-    public void SetCacheTokens(IReadOnlyList<int> tokens)
-    {
-        _cacheTokens = new List<int>(tokens);
-    }
+    public void SetCacheTokens(IReadOnlyList<int> tokens) => _cacheTokens = [.. tokens];
 
     /// <summary>KV-cache fill as a fraction of maximum capacity.</summary>
     public float CacheFillRatio => (float)_caches[0].Length / _caches[0].MaxSeqLen;

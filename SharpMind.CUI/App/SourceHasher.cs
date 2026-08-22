@@ -109,12 +109,12 @@ public static class SourceHasher
                     delta.Add(file);
             }
             if (delta.Count > 0)
-                deltas[sourceKey] = delta.ToArray();
+                deltas[sourceKey] = [.. delta];
         }
         return deltas;
     }
 
     /// <summary>Extracts the wizard-supplied "path" constructor arg, if any.</summary>
-    private static string? PathArg(IReadOnlyDictionary<string, string> args)
+    private static string? PathArg(Dictionary<string, string> args)
         => args.TryGetValue("path", out var raw) ? raw : null;
 }

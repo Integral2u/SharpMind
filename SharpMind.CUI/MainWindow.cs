@@ -26,7 +26,7 @@ public sealed class MainWindow : Window
     private readonly AppSettings _settings;
     private readonly ModelCache _modelCache = new();
     private readonly List<ChatSessionState> _sessions = [];
-    private readonly Dictionary<Guid, PermissionGate> _activePermissionGates = new();
+    private readonly Dictionary<Guid, PermissionGate> _activePermissionGates = [];
 
     private SessionOptions _options;
     private ChatSessionState? _currentSession;
@@ -130,8 +130,8 @@ public sealed class MainWindow : Window
 
     private MenuBar BuildMenuBar()
     {
-        return new MenuBar(new MenuBarItem[]
-        {
+        return new MenuBar(
+        [
             new("_File", new MenuItem[]
             {
                 new("_New session...", "", StartNewSession, shortcut: Key.N | Key.CtrlMask),
@@ -166,7 +166,7 @@ public sealed class MainWindow : Window
             {
                 new("_About SharpMind…", "", ShowAbout)
             })
-        });
+        ]);
     }
 
     // --- Screen navigation -------------------------------------------------
@@ -298,9 +298,9 @@ public sealed class MainWindow : Window
             {
                 if (toSmm)
                     GgufToSmmConverter.Convert(source, target, new SmmWriteOptions { Source = "gguf" },
-                        cancelSource.Token, taskProgress);
+                        taskProgress, cancelSource.Token);
                 else
-                    SmmToGufConverter.Convert(source, target, cancelSource.Token, taskProgress);
+                    SmmToGufConverter.Convert(source, target, taskProgress, cancelSource.Token);
             }
             catch (OperationCanceledException) { }
             catch (Exception ex) { error = ex.Message; }
@@ -391,7 +391,7 @@ public sealed class MainWindow : Window
             int fi = floorList.SelectedItem;
             if (fi < 0) fi = 2; // default Q4_K when nothing was highlighted
             var floor = new[] { QuantDType.Q8_K, QuantDType.Q6_K, QuantDType.Q5_K, QuantDType.Q4_K, QuantDType.Q3_K, QuantDType.Q2_K }[fi];
-            if (!double.TryParse(budgetInput.Text.ToString().Trim(), out double mb) || mb <= 0)
+            if (!double.TryParse((budgetInput.Text.ToString() ?? string.Empty).Trim(), out double mb) || mb <= 0)
             {
                 MessageBox.ErrorQuery("Quantize model", "Enter a positive target size in MB.", "OK");
                 return;
@@ -459,7 +459,7 @@ public sealed class MainWindow : Window
         {
             try
             {
-                SmmQuantizer.Quantize(src, dst, options, cancelSource.Token, taskProgress);
+                SmmQuantizer.Quantize(src, dst, options, taskProgress, cancelSource.Token);
             }
             catch (OperationCanceledException) { }
             catch (Exception ex) { error = ex.Message; }
@@ -758,8 +758,10 @@ public sealed class MainWindow : Window
     private void ShowSettings()
     {
         Action onBack = _currentSession is not null ? ShowChat : ShowWelcome;
-        var view = new SettingsView(_settings, onBack: onBack);
-        view.OnThemeChanged = kind => ThemeBuilder.ApplyRecursively(this, ThemeBuilder.Build(kind));
+        var view = new SettingsView(_settings, onBack: onBack)
+        {
+            OnThemeChanged = kind => ThemeBuilder.ApplyRecursively(this, ThemeBuilder.Build(kind))
+        };
         SwapContent(view);
     }
 
@@ -775,7 +777,9 @@ public sealed class MainWindow : Window
         var dialog = new Dialog("About SharpMind", 62, 12);
         dialog.Add(new Label("SharpMind — an open source LLM toolkit written in pure C#.")
         {
-            X = 1, Y = 1, Width = Dim.Fill(2),
+            X = 1,
+            Y = 1,
+            Width = Dim.Fill(2),
         });
         dialog.Add(new Label((ustring)$"GitHub:  {repo}") { X = 1, Y = 3 });
         dialog.Add(new Label((ustring)$"Sponsor: {sponsor}") { X = 1, Y = 4 });
@@ -854,9 +858,9 @@ public sealed class MainWindow : Window
         _options.ShowThinking = newValue;
         _currentSession.View.RebuildTranscript();
         SaveLastUsedOptions(_options, _currentSession?.Bridge?.GetSnapshot());
-
+        var thinking = _currentSession == null ? "off" : _currentSession.Bridge.ShowThinking ? "on" : "off";
         MessageBox.Query("Show Thinking",
-            $"Show thinking is now {(_currentSession.Bridge.ShowThinking ? "on" : "off")}.",
+            $"Show thinking is now {thinking}.",
             "OK");
     }
 
@@ -869,9 +873,9 @@ public sealed class MainWindow : Window
         _currentSession.Options.EnableThinking = newValue;
         _options.EnableThinking = newValue;
         SaveLastUsedOptions(_options, _currentSession?.Bridge?.GetSnapshot());
-
+        var thinking = _currentSession == null ? "disabled" : _currentSession.Bridge.EnableThinking ? "enabled" : "disabled";
         MessageBox.Query("Enable Thinking (Template)",
-            $"enable_thinking is now {(_currentSession.Bridge.EnableThinking ? "enabled" : "disabled")}.\nOnly takes effect on the next turn.",
+            $"enable_thinking is now {thinking}.\nOnly takes effect on the next turn.",
             "OK");
     }
 
@@ -1132,9 +1136,9 @@ public sealed class MainWindow : Window
             Snapshot = _currentSession.Bridge.GetSnapshot()
         };
         string safeFileName = string.Concat(_currentSession.DisplayName.Split(Path.GetInvalidFileNameChars()));
-        string defaultPath = Path.Combine(SavedSession.DefaultFolder, $"{safeFileName}.json");
+        //string defaultPath = Path.Combine(SavedSession.DefaultFolder, $"{safeFileName}.json");
 
-        string? path = null;
+        string? path;
         if (_currentSession.SourceFilePath is { } existing)
         {
             // Session was previously saved or loaded — ask before
@@ -1250,10 +1254,8 @@ public sealed class MainWindow : Window
     /// main loop — making main-loop timeout polling useless during awaited
     /// Task.Run blocks.
     /// </summary>
-    private sealed class LambdaProgress<T> : IProgress<T>
+    private sealed class LambdaProgress<T>(Action<T> action) : IProgress<T>
     {
-        private readonly Action<T> _action;
-        public LambdaProgress(Action<T> action) => _action = action;
-        public void Report(T value) => _action(value);
+        public void Report(T value) => action(value);
     }
 }
