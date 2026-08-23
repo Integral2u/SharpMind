@@ -257,6 +257,20 @@ This half of SharpMind is functional today but earlier in its lifecycle than inf
 
 Expect the training API surface (config records, trainer entry points) to change as this matures.
 
+### Training sample with actual data
+
+`SharpMind.Samples/Training/Acutal/` ships a complete, reproducible end-to-end training run on real text:
+
+| File | Description |
+|---|---|
+| `shakespeare.txt` | The training corpus — 40,000 lines of Shakespeare's complete works. |
+| `shakespeare-job.smmt` | The training job config (GPT-2-style: HiddenDim=384, 6 layers, 6 heads, MaxSeqLen=256, 600 steps, AdamW with warmup). |
+| `shakespeare.smm` | The resulting trained checkpoint — a real model you can load and chat with immediately. |
+
+Run `SmmRealTextExample` to reproduce the full pipeline: BPE tokenizer training → data loading → finite-difference training → .SMM export → reload → greedy/sampled/chat inference. The model is deliberately tiny (finite-difference gradients are O(parameters) forwards per step), but it produces recognisably language-like output and exercises every stage of the training-to-inference path.
+
+To load the pre-trained checkpoint directly in the CUI, point it at `shakespeare.smm` or use `SmmTrainingPipeline.LoadForInference` in code. The chat formatter is auto-resolved from the ChatML-style Jinja template embedded in the .SMM file.
+
 ---
 
 ## IChatClient integration (`Microsoft.Extensions.AI`)
@@ -393,7 +407,7 @@ SharpMind.GPU           ILGPU-backed GPU kernels (optional)
 SharpMind.CUI           Terminal chat application
 SharpMind.Extensions.AI Microsoft.Extensions.AI IChatClient adapter
 SharpMind.Extensions.Tools Optional common tools (grep, git, datetime) — plugin DLL
-SharpMind.Samples       Example programs
+SharpMind.Samples       Example programs + training sample data (Shakespeare corpus, checkpoint, job config)
 SharpMind.Benchmarks    Evaluation harness
 SharpMind.Tests         Test suite
 ```

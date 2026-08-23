@@ -20,6 +20,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - SmmLoader int-overflow bug fixed — the element-count computation `int count = 1; foreach (int d in shape) count *= d;` silently wrapped negative for large tensors, causing `ArrayPool.Rent(-...)` crashes downstream. Now uses `TensorLoadHelper.ComputeElementCountChecked` with an explicit guard.
 - Oversized tensor guards added to both loaders — LmHead creation, rawSize casts, and colBytes casts in GgufLoader and SmmLoader now throw `NotSupportedException` with a clear message instead of silently overflowing.
 - Oversized tensors in both loaders now degrade gracefully instead of crashing — when element count exceeds int.MaxValue, raw quantized bytes are loaded but dequantization is skipped, matching the streaming-mode precedent. The streaming forward pass reads the raw bytes directly.
+- **Training sample with actual data** — `SharpMind.Samples/Training/Acutal/` now ships a complete, reproducible training run: the Shakespeare corpus (`shakespeare.txt`, 40K lines), the training job config (`shakespeare-job.smmt`), and the resulting trained checkpoint (`shakespeare.smm`). Run `SmmRealTextExample` to reproduce the end-to-end pipeline from raw text to a chat-capable .SMM model.
+- **Actual training checkpoint** — `shakespeare.smm` is a pre-trained GPT-2-style model (HiddenDim=384, 6 layers, 6 heads, MaxSeqLen=256) trained on the Shakespeare corpus for 600 steps. Load it directly in the CUI or via `SmmTrainingPipeline.LoadForInference` to chat with a model that was genuinely trained (not just loaded from a GGUF).
 
 ### Changed
 
@@ -30,6 +32,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `Sampler` all ArrayPool calls (6 Rent + 6 Return) routed through `MemoryHelpers.RentArray<T>` / `MemoryHelpers.ReturnArray`.
 - `GgufLoader` and `SmmLoader` ArrayPool calls routed through `MemoryHelpers.RentArray<float>` / `MemoryHelpers.ReturnArray`.
 - GgufLoader manual long guard for element count replaced with `TensorLoadHelper.ComputeElementCountChecked`.
+
+### Fixed
+
+- `WarmupPrefillAsync` now trims the encoded prompt to `MaxTokens` (= `MaxSeqLen`) before prefill, preventing RoPE overflow on small-context trained SMM checkpoints (e.g. MaxSeqLen=256) where the agent/system prompt exceeds the model's context window.
+- `TrimToFitContext` negative-capacity crash fixed — the importance-scored message-level eviction loop computed `new List<ChatMessage>(_history.Count - removed.Count)` where `removed` tracked original indices but `_history` shrank each iteration, eventually producing a negative capacity. Removed the capacity hint and added a no-progress break so the loop falls through to Phase 2 token-level truncation when message eviction can't shrink enough.
+- Sliding-window decode position bug fixed in all three generators (`StandardGenerator`, `SpeculativeGenerator`, `MedusaGenerator`) — after `TrimToLast` rewound the KV cache, the decode position was still computed from pre-trim bookkeeping (`posOffset + promptLen + step` / `currentPos`), causing RoPE to receive an offset past `MaxSeqLen`. All three generators now derive position from `_caches[0].Length` (the live cache length) after any trim operation.
 
 ## [1.0.3.0] - 2026-08-22
 contains a few slightly breaking changes.
