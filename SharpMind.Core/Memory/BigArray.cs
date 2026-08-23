@@ -63,7 +63,7 @@ public sealed class BigArray<T> : IDisposable where T : unmanaged
         if ((uint)blockIndex >= (uint)_pageCount) throw new ArgumentOutOfRangeException(nameof(blockIndex));
         blockCount = GetPageSize(blockIndex);
         blockOffset = 0;
-        return _pages[blockIndex];
+        return _pages[blockIndex].AsSpan(0, blockCount);
     }
 
     /// <summary>

@@ -125,7 +125,6 @@ public sealed class SharpMindChatClient : IChatClient, IAsyncDisposable
         {
             try { await startTask; }
             catch (OperationCanceledException) { }
-            catch (InvalidOperationException) { }
             finally { channel.Writer.TryComplete(); }
         }, CancellationToken.None);
 
