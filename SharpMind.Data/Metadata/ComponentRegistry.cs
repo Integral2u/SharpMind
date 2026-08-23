@@ -163,7 +163,7 @@ public static class ComponentRegistry
     public static List<ComponentDescriptor> ScanFolder(string? directory, out List<string> warnings)
     {
         warnings = [];
-        if (string.IsNullOrWhiteSpace(directory)) return [];
+        //if (string.IsNullOrWhiteSpace(directory)) return [];
         var result = Scan(typeof(ComponentRegistry).Assembly);
 
         if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
