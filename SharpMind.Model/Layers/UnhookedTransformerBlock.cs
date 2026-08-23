@@ -9,7 +9,7 @@ public sealed class UnhookedTransformerBlock(int layerIdx, AttentionLayer attent
     NormLayer? postAttnNorm = null, NormLayer? postFfnNorm = null)
     : TransformerBlock(layerIdx, attention, ffn, norm1, norm2, postAttnNorm, postFfnNorm)
 {
-    public override Tensor<float> Forward(Tensor<float> x, IKVCache? cache, int positionOffset = 0, bool causal = true, Workspace? workspace = null)
+    public override Tensor<float> Forward(Tensor<float> x, IKVCache? cache, int positionOffset = 0, bool causal = true, IWorkspace? workspace = null)
     {
         ThrowIfDisposed();
 

@@ -66,7 +66,7 @@ public sealed class ChunkedPrefillTests
 
         // Actual: chunked, against a workspace sized the way the generators size it.
         var caches = BuildCaches();
-        using var workspace = new Workspace(
+        using var workspace = MemoryHelpers.CreateWorkspace(
             Workspace.CalculateRequiredSize(Cfg.HiddenDim, Cfg.FfnDim, Cfg.VocabSize, Cfg.NumLayers, Cfg.MaxSeqLen));
         using var actual = Prefill.ForwardLastLogitsChunked(model, caches, promptIds, workspace);
 
@@ -90,7 +90,7 @@ public sealed class ChunkedPrefillTests
 
         using var model = BuildModel();
         var caches = BuildCaches();
-        using var workspace = new Workspace(
+        using var workspace = MemoryHelpers.CreateWorkspace(
             Workspace.CalculateRequiredSize(Cfg.HiddenDim, Cfg.FfnDim, Cfg.VocabSize, Cfg.NumLayers, Cfg.MaxSeqLen));
 
         using (var _ = Prefill.ForwardLastLogitsChunked(model, caches, first, workspace)) { }

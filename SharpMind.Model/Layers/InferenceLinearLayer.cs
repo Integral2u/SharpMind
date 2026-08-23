@@ -145,7 +145,7 @@ public abstract class InferenceLinearLayer : LinearLayer
         "f16_parallel_scalar", $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulF16_Parallel_Scalar)}")]
     public unsafe abstract void QuantizedMatMulFn(float* input, byte* rawWeights, float* output, int M, int K, int N);
 
-    public override unsafe Tensor<float> Forward(Tensor<float> input, Workspace? workspace = null)
+    public override unsafe Tensor<float> Forward(Tensor<float> input, IWorkspace? workspace = null)
     {
         ThrowIfDisposed();
         bool needReshape = input.Rank > 2;

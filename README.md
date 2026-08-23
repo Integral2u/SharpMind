@@ -382,7 +382,7 @@ The only additional dependency is `Microsoft.Extensions.AI.Abstractions` — no 
 ## Project layout
 
 ```
-SharpMind.Core          Zero-dependency tensor primitives, quantization, activations, memory pooling
+SharpMind.Core          Zero-dependency tensor primitives, quantization, activations, memory pooling, MemoryHelpers/BigArray
 SharpMind.Model         Architectures, layers, GGUF loading, model config
 SharpMind.Inference     Generators (standard/speculative/Medusa), chat, agents, sampling
 SharpMind.Training      Autograd, optimizers, LoRA
@@ -410,6 +410,6 @@ See [CHANGELOG.md](CHANGELOG.md) for release history.
 - [ ] Optimiations
 - [x] Microsoft IChatClient and or other services. — shipped as `SharpMind.Extensions.AI`
 - [x] Common tools, GREP, GIT etc — shipped as `SharpMind.Extensions.Tools`
-- [ ] Limit breaker(Project Goku), int.MaxValue element-count limit workaround. Solutions not excuses.
+- [x] Limit breaker(Project Goku), int.MaxValue element-count limit workaround. Solutions not excuses. — shipped as `MemoryHelpers`, `BigArray<T>`, `IWorkspace`, `BigWorkspace`
 
 Issues, questions, and early feedback are welcome.

@@ -257,7 +257,7 @@ namespace SharpMind.Model.Layers.Attention;
         SharpMindConfig.ValMqaFlashScalar, NS + "." + nameof(AttentionKernels.ScaledDotProductFlashScalar))]
     public abstract unsafe void ScaledDotProduct(float* q, float* k, float* v, float* o, int seqLen, int kvLen, int headDim, float scale, bool causal, int qStride, int oStride, float alibiSlope);
 
-    public Tensor<float> Forward( Tensor<float> x, int positionOffset = 0, bool causal = true, IKVCache? cache = null, Core.Memory.Workspace? workspace = null)
+    public Tensor<float> Forward( Tensor<float> x, int positionOffset = 0, bool causal = true, IKVCache? cache = null, Core.Memory.IWorkspace? workspace = null)
     {
         ThrowIfDisposed();
         int batch = x.Shape[0];

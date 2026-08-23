@@ -182,7 +182,7 @@ public sealed class Transformer : IDisposable
     /// applies final norm, and returns a new [1, HiddenDim] tensor.
     /// Returns null if no cached hidden state is available.
     /// </summary>
-    public Tensor<float>? GetNormedHiddenRow(int positionIndex, SharpMind.Core.Memory.Workspace? workspace = null)
+    public Tensor<float>? GetNormedHiddenRow(int positionIndex, SharpMind.Core.Memory.IWorkspace? workspace = null)
     {
         if (_cachedHidden == null) return null;
         int hiddenDim = _weights.Config.HiddenDim;
@@ -264,7 +264,7 @@ public sealed class Transformer : IDisposable
     /// Input:  token IDs [Batch, SeqLen]
     /// Output: logits    [Batch, SeqLen, VocabSize]
     /// </summary>
-    public Tensor<float> Forward(Tensor<int> tokenIds, int positionOffset = 0, Core.Memory.Workspace? workspace = null) => Forward(tokenIds, null, positionOffset, workspace);
+    public Tensor<float> Forward(Tensor<int> tokenIds, int positionOffset = 0, Core.Memory.IWorkspace? workspace = null) => Forward(tokenIds, null, positionOffset, workspace);
 
     /// <summary>
     /// Multimodal forward pass: embeds optional image and audio inputs, fuses
@@ -280,7 +280,7 @@ public sealed class Transformer : IDisposable
         Tensor<float>? image = null,
         Tensor<float>? mel = null,
         int positionOffset = 0,
-        Core.Memory.Workspace? workspace = null)
+        Core.Memory.IWorkspace? workspace = null)
     {
         ThrowIfDisposed();
         DisposeCache();
@@ -368,7 +368,7 @@ public sealed class Transformer : IDisposable
             src.Slice(b * seqStride, seqStride).CopyTo(dst.Slice(b * totalStride + offStride, seqStride));
     }
 
-    public Tensor<float> Forward(Tensor<int> tokenIds, IKVCache[]? caches, int positionOffset = 0, Core.Memory.Workspace? workspace = null)
+    public Tensor<float> Forward(Tensor<int> tokenIds, IKVCache[]? caches, int positionOffset = 0, Core.Memory.IWorkspace? workspace = null)
     {
         ThrowIfDisposed();
         DisposeCache();
@@ -414,7 +414,7 @@ public sealed class Transformer : IDisposable
     /// Input:  token IDs [Batch, SeqLen]
     /// Output: logits    [Batch, VocabSize]
     /// </summary>
-    public Tensor<float> ForwardLastLogits(Tensor<int> tokenIds, IKVCache[] caches, int positionOffset = 0, Core.Memory.Workspace? workspace = null)
+    public Tensor<float> ForwardLastLogits(Tensor<int> tokenIds, IKVCache[] caches, int positionOffset = 0, Core.Memory.IWorkspace? workspace = null)
     {
         ThrowIfDisposed();
         DisposeCache();

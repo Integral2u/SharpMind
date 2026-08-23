@@ -1,3 +1,4 @@
+using SharpMind.Core.Memory;
 using SharpMind.Core.Tensors;
 using SharpMind.Model;
 
@@ -45,7 +46,7 @@ internal static class Prefill
         Transformer model,
         IKVCache[] caches,
         int[] promptIds,
-        Core.Memory.Workspace workspace,
+        Core.Memory.IWorkspace workspace,
         Action<double>? progress = null)
     {
         if (promptIds.Length == 0)
@@ -85,7 +86,7 @@ internal static class Prefill
         int[] promptIds,
         int start,
         int len,
-        Core.Memory.Workspace workspace)
+        Core.Memory.IWorkspace workspace)
     {
         using var chunkInput = workspace.Rent<int>([1, len]);
         promptIds.AsSpan(start, len).CopyTo(chunkInput.Data);

@@ -1,4 +1,4 @@
-using System.Buffers;
+using SharpMind.Core.Memory;
 
 namespace SharpMind.Inference;
 
@@ -21,7 +21,7 @@ public static class Sampler
 
         // Work on a copy so we don't mutate the model output — ArrayPool avoids a per-step GC allocation.
         int n = logits.Length;
-        float[] rented = ArrayPool<float>.Shared.Rent(n);
+        float[] rented = MemoryHelpers.RentArray<float>(n);
         try
         {
             Span<float> probs = rented.AsSpan(0, n);
@@ -42,7 +42,7 @@ public static class Sampler
         }
         finally
         {
-            ArrayPool<float>.Shared.Return(rented);
+            MemoryHelpers.ReturnArray(rented);
         }
     }
 
@@ -110,8 +110,8 @@ public static class Sampler
         if (k >= probs.Length) return;
 
         int n = probs.Length;
-        float[] rentedVals = ArrayPool<float>.Shared.Rent(n);
-        int[] rentedIdxs = ArrayPool<int>.Shared.Rent(n);
+        float[] rentedVals = MemoryHelpers.RentArray<float>(n);
+        int[] rentedIdxs = MemoryHelpers.RentArray<int>(n);
         try
         {
             Span<float> vals = rentedVals.AsSpan(0, n);
@@ -148,8 +148,8 @@ public static class Sampler
         }
         finally
         {
-            ArrayPool<float>.Shared.Return(rentedVals);
-            ArrayPool<int>.Shared.Return(rentedIdxs);
+            MemoryHelpers.ReturnArray(rentedVals);
+            MemoryHelpers.ReturnArray(rentedIdxs);
         }
     }
 
@@ -182,8 +182,8 @@ public static class Sampler
         if (p <= 0f || probs.Length == 0) return;
 
         int n = probs.Length;
-        float[] rentedVals = ArrayPool<float>.Shared.Rent(n);
-        int[] rentedIdxs = ArrayPool<int>.Shared.Rent(n);
+        float[] rentedVals = MemoryHelpers.RentArray<float>(n);
+        int[] rentedIdxs = MemoryHelpers.RentArray<int>(n);
         try
         {
             Span<float> vals = rentedVals.AsSpan(0, n);
@@ -217,8 +217,8 @@ public static class Sampler
         }
         finally
         {
-            ArrayPool<float>.Shared.Return(rentedVals);
-            ArrayPool<int>.Shared.Return(rentedIdxs);
+            MemoryHelpers.ReturnArray(rentedVals);
+            MemoryHelpers.ReturnArray(rentedIdxs);
         }
     }
 

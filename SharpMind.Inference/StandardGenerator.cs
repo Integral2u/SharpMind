@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using SharpMind.Core.Memory;
 using SharpMind.Core.Tensors;
 using SharpMind.Model;
 
@@ -16,7 +17,7 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
     private readonly Tokenization.Tokenizer _tokenizer;
     private readonly IKVCache[]     _caches;
     private readonly Random       _defaultRng;
-    private readonly Core.Memory.Workspace _workspace;
+    private readonly IWorkspace _workspace;
     /// <summary>Reused decode step (<c>[1]</c>) to avoid allocating a new <see cref="int"/>[] each token.</summary>
     private readonly int[]       _decodeTokenScratch = new int[1];
     /// <summary>Cached scratch buffer for repetition-penalty copy to avoid <see cref="ArrayPool{T}.Rent"/> per token.</summary>
@@ -77,7 +78,7 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
         _cacheTokens = _caches[0].Length == 0 ? [] : null;
 
         _defaultRng = seed.HasValue ? new Random(seed.Value) : Random.Shared;
-        _workspace = new Core.Memory.Workspace(SharpMind.Core.Memory.Workspace.CalculateRequiredSize(model.Config.HiddenDim,model.Config.FfnDim,model.Config.VocabSize,model.Config.NumLayers, model.Config.MaxSeqLen));
+        _workspace = MemoryHelpers.CreateWorkspace(Workspace.CalculateRequiredSize(model.Config.HiddenDim,model.Config.FfnDim,model.Config.VocabSize,model.Config.NumLayers, model.Config.MaxSeqLen));
     }
 
     // Public API

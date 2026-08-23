@@ -1,4 +1,5 @@
 using SharpMind.Core.Diagnostics;
+using SharpMind.Core.Memory;
 using SharpMind.Core.Quantization;
 using SharpMind.Core.Tensors;
 using SharpMind.Model.Config;
@@ -278,7 +279,9 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
         if (!entry.Name.Contains("blk.") && entry.Name.Contains("output.weight") && weights.LmHeadWeight == null)
         {
             long ggufIn = entry.Shape[0];
-            weights.SetLmHead(new Tensor<float>((int)_config.VocabSize, (int)ggufIn));
+            int lmRows = TensorLoadHelper.CheckedInt(_config.VocabSize, "VocabSize for LmHead");
+            int lmCols = TensorLoadHelper.CheckedInt(ggufIn, "LmHead input dim");
+            weights.SetLmHead(new Tensor<float>(lmRows, lmCols));
             (target, block, rawField) = weights.ResolveTarget(entry.Name);
         }
 
@@ -296,7 +299,7 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
             else if (target == weights.EmbeddingWeight) weights.RawEmbeddingDtype = entry.Dtype;
         }
         if (block != null && rawField != null)
-            SetTensorMeta(block, rawField, index.Meta.DataOffset + entry.Offset, (int)rawSize, entry.Dtype);
+            SetTensorMeta(block, rawField, index.Meta.DataOffset + entry.Offset, TensorLoadHelper.CheckedInt(rawSize, "rawSize"), entry.Dtype);
 
         // Load raw quantized data
         if (block != null && rawField != null)
@@ -312,9 +315,10 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
                 if (paddedVocab > tensorVocab)
                 {
                     long colBytes = rawSize / tensorVocab;
+                    int safeColBytes = TensorLoadHelper.CheckedInt(colBytes, "colBytes");
                     var padded = new byte[paddedVocab * colBytes];
                     for (long r = 0; r < tensorVocab; r++)
-                        Buffer.BlockCopy(rawBytes, (int)(r * colBytes), padded, (int)(r * colBytes), (int)colBytes);
+                        Buffer.BlockCopy(rawBytes, (int)(r * colBytes), padded, (int)(r * colBytes), safeColBytes);
                     data = padded;
                 }
             }
@@ -324,10 +328,9 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
         }
 
         // Dequantize to float (same GGUF transpose semantics as GgufLoader)
-        int count = 1;
-        foreach (int d in entry.Shape) count *= d;
+        int count = TensorLoadHelper.ComputeElementCountChecked(entry.Shape);
 
-        float[] buffer = ArrayPool<float>.Shared.Rent(count);
+        float[] buffer = MemoryHelpers.RentArray<float>(count);
         try
         {
             using var ms = new MemoryStream(rawBytes);
@@ -377,14 +380,13 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
         }
         finally
         {
-            ArrayPool<float>.Shared.Return(buffer);
+            MemoryHelpers.ReturnArray(buffer);
         }
     }
 
     private void ReadTensorInto(BinaryReader stream, QuantDType dtype, int[] shape, Span<float> destination)
     {
-        int count = 1;
-        foreach (int d in shape) count *= d;
+        int count = TensorLoadHelper.ComputeElementCountChecked(shape);
         if (destination.Length < count)
             throw new ArgumentException($"Destination buffer too small: {destination.Length} < {count}");
         _qOps.ReadFor(dtype, stream, destination, count);

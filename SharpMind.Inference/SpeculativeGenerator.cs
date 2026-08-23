@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using SharpMind.Core.Memory;
 using SharpMind.Core.Tensors;
 using SharpMind.Model;
 
@@ -13,7 +14,7 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
     private readonly Tokenization.Tokenizer _tokenizer;
     private readonly IKVCache[] _caches;
     private readonly Random _defaultRng;
-    private readonly Core.Memory.Workspace? _workspace;
+    private readonly IWorkspace? _workspace;
     private readonly int[] _decodeTokenScratch = new int[1];
     private float[]? _penaltyScratch;
     private bool _disposed;
@@ -59,7 +60,7 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
             _caches[i] = new T().CreateKVCache(1, numKvHeads, maxSeqLen, headDim);
     }
 
-    _workspace = new Core.Memory.Workspace(SharpMind.Core.Memory.Workspace.CalculateRequiredSize(model.Config.HiddenDim, model.Config.FfnDim, model.Config.VocabSize, model.Config.NumLayers, model.Config.MaxSeqLen));
+    _workspace = MemoryHelpers.CreateWorkspace(Workspace.CalculateRequiredSize(model.Config.HiddenDim, model.Config.FfnDim, model.Config.VocabSize, model.Config.NumLayers, model.Config.MaxSeqLen));
     _defaultRng = seed.HasValue ? new Random(seed.Value) : Random.Shared;
 }
 

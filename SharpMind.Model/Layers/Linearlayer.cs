@@ -48,7 +48,7 @@ public abstract class LinearLayer : IDisposable
             yield return new Parameter($"{Name}.bias", _bias);
     }
 
-    public abstract Tensor<float> Forward(Tensor<float> input, Workspace? workspace = null);
+    public abstract Tensor<float> Forward(Tensor<float> input, IWorkspace? workspace = null);
 
     public virtual (Tensor<float> Output, LinearLayerState State) ForwardWithState(Tensor<float> input)
         => throw new NotSupportedException($"{GetType().Name} does not support ForwardWithState");

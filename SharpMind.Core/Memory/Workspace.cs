@@ -11,7 +11,7 @@ namespace SharpMind.Core.Memory;
 /// Uses a linear bump allocator: rents advance an offset, and <see cref="Reset"/> rewinds it.
 /// Tensors obtained via <see cref="Rent{T}"/> do not own memory and must not be disposed independently.
 /// </summary>
-public sealed unsafe class Workspace : IDisposable
+public sealed unsafe class Workspace : IWorkspace
 {
     private byte* _buffer;
     private long _offset;

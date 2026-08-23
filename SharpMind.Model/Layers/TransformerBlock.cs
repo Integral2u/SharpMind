@@ -42,9 +42,9 @@ public abstract class TransformerBlock : IDisposable
         _postFfnNorm = postFfnNorm;
     }
 
-    public abstract Tensor<float> Forward(Tensor<float> x, IKVCache? cache, int positionOffset = 0, bool causal = true, Workspace? workspace = null);
+    public abstract Tensor<float> Forward(Tensor<float> x, IKVCache? cache, int positionOffset = 0, bool causal = true, IWorkspace? workspace = null);
 
-    public Tensor<float> Forward(Tensor<float> x, int positionOffset = 0, bool causal = true, Workspace? workspace = null)
+    public Tensor<float> Forward(Tensor<float> x, int positionOffset = 0, bool causal = true, IWorkspace? workspace = null)
         => Forward(x, null, positionOffset, causal, workspace);
 
     public virtual void SetActivationHook(IActivationHook? hook) { }

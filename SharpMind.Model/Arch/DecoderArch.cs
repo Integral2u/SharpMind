@@ -107,12 +107,12 @@ public sealed class DecoderArch : IArchitecture
     /// <paramref name="positionOffset"/> supports KV-cache decode:
     /// set to the current cache length to correctly encode positions.
     /// </summary>
-    public Tensor<float> Forward(Tensor<float> hiddenStates, int positionOffset = 0, SharpMind.Core.Memory.Workspace? workspace = null)
+    public Tensor<float> Forward(Tensor<float> hiddenStates, int positionOffset = 0, SharpMind.Core.Memory.IWorkspace? workspace = null)
     {
         return Forward(hiddenStates, [], positionOffset, workspace);
     }
 
-    public Tensor<float> Forward(Tensor<float> hiddenStates, IKVCache[] caches, int positionOffset = 0, SharpMind.Core.Memory.Workspace? workspace = null)
+    public Tensor<float> Forward(Tensor<float> hiddenStates, IKVCache[] caches, int positionOffset = 0, SharpMind.Core.Memory.IWorkspace? workspace = null)
     {
         ThrowIfDisposed();
         

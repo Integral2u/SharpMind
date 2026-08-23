@@ -14,7 +14,7 @@ public sealed class HookedTransformerBlock(int layerIdx, AttentionLayer attentio
 
     public override void SetActivationHook(IActivationHook? hook) => _hook = hook;
 
-    public override Tensor<float> Forward(Tensor<float> x, IKVCache? cache, int positionOffset = 0, bool causal = true, Workspace? workspace = null)
+    public override Tensor<float> Forward(Tensor<float> x, IKVCache? cache, int positionOffset = 0, bool causal = true, IWorkspace? workspace = null)
     {
         ThrowIfDisposed();
 

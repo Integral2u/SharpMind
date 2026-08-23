@@ -40,7 +40,7 @@ public sealed unsafe class Tensor<T> : IDisposable
     // constructors
     
     /// <summary>Allocates a new zero-initialised tensor of the given shape.</summary>
-    public Tensor(TensorShape shape) : this(shape, NativeBufferPool<T>.Rent(shape.ElementCount), 0, true) { }
+    public Tensor(TensorShape shape) : this(shape, MemoryHelpers.RentBuffer<T>(shape.ElementCount), 0, true) { }
 
     /// <inheritdoc cref="Tensor(TensorShape)"/>
     public Tensor(params int[] dims) : this(new TensorShape(dims)) { }

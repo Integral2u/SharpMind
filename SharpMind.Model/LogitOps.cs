@@ -142,7 +142,7 @@ public abstract class LogitOps
         "f16_parallel_scalar",$"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulF16_Parallel_Scalar)}")]
     public unsafe abstract void ProjectFn(float* input, byte* rawWeights, float* output, int M, int K, int N);
 
-    public unsafe Tensor<float> Project(Tensor<float> input, int M, int K, int N, Workspace? workspace = null)
+    public unsafe Tensor<float> Project(Tensor<float> input, int M, int K, int N, IWorkspace? workspace = null)
     {
         var result = workspace != null
             ? workspace.Rent<float>([M, N])

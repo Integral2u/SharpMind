@@ -57,6 +57,7 @@
 
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using SharpMind.Core.Memory;
 using SharpMind.Core.Tensors;
 using SharpMind.Model;
 using SharpMind.Model.Layers;
@@ -71,7 +72,7 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
     private readonly Tokenization.Tokenizer _tokenizer;
     private readonly IKVCache[] _caches;
     private readonly Random _defaultRng;
-    private readonly Core.Memory.Workspace _workspace;
+    private readonly IWorkspace _workspace;
     private readonly MedusaHeads _medusaHeads;
 
     // _normedHiddenScratch caches the RMS-normed hidden state that feeds the Medusa heads.
@@ -131,8 +132,8 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
                 _caches[i] = new T().CreateKVCache(1, numKvHeads, maxSeqLen, headDim);
         }
 
-        _workspace = new Core.Memory.Workspace(
-            Core.Memory.Workspace.CalculateRequiredSize(
+        _workspace = MemoryHelpers.CreateWorkspace(
+            Workspace.CalculateRequiredSize(
                 model.Config.HiddenDim, model.Config.FfnDim, model.Config.VocabSize,
                 model.Config.NumLayers, model.Config.MaxSeqLen));
 

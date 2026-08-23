@@ -49,7 +49,7 @@ public sealed class TrainingLinearLayer(string name, int inFeatures, int outFeat
     public bool QuantAwareEnabled => _qatTarget is not null and not QuantDType.F32;
     public QuantDType? QuantAwareTarget => _qatTarget;
 
-    private unsafe Tensor<float> MatMulForward(Tensor<float> input, int batchSize, Workspace? workspace = null)
+    private unsafe Tensor<float> MatMulForward(Tensor<float> input, int batchSize, IWorkspace? workspace = null)
     {
         Tensor<float> output;
         // Local, not a field: MoE calls Forward on one shared expert layer from
@@ -75,7 +75,7 @@ public sealed class TrainingLinearLayer(string name, int inFeatures, int outFeat
         return output;
     }
 
-    public override Tensor<float> Forward(Tensor<float> input, Workspace? workspace = null)
+    public override Tensor<float> Forward(Tensor<float> input, IWorkspace? workspace = null)
     {
         ThrowIfDisposed();
         bool needReshape = input.Rank > 2;

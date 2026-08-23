@@ -90,7 +90,7 @@ public abstract class ActivationOps
     
 
     /// <summary>Applies the configured pointwise activation to every element.</summary>
-    public Tensor<float> Activate(Tensor<float> x, SharpMind.Core.Memory.Workspace? workspace = null)
+    public Tensor<float> Activate(Tensor<float> x, SharpMind.Core.Memory.IWorkspace? workspace = null)
     {
         Tensor<float> result = workspace != null 
             ? workspace.Rent<float>(x.Shape.Dims) 
@@ -104,7 +104,7 @@ public abstract class ActivationOps
     /// <paramref name="gate"/> and <paramref name="up"/> are the two halves of a
     /// split linear projection — the standard SwiGLU / GeGLU FFN pattern.
     /// </summary>
-    public Tensor<float> GatedActivate(Tensor<float> gate, Tensor<float> up, SharpMind.Core.Memory.Workspace? workspace = null)
+    public Tensor<float> GatedActivate(Tensor<float> gate, Tensor<float> up, SharpMind.Core.Memory.IWorkspace? workspace = null)
     {
         TensorShape.AssertSameShape(gate.Shape, up.Shape);
         Tensor<float> result = workspace != null 

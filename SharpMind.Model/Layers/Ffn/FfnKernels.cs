@@ -20,7 +20,7 @@ public static class FfnKernels
         LinearLayer w1,
         LinearLayer w2,
         ActivationOps acts,
-        SharpMind.Core.Memory.Workspace? workspace = null)
+        SharpMind.Core.Memory.IWorkspace? workspace = null)
     {
         using var hidden = w1.Forward(x, workspace);
         using var acted = acts.Activate(hidden, workspace);
@@ -37,7 +37,7 @@ public static class FfnKernels
         LinearLayer wGated,
         LinearLayer wDown,
         ActivationOps acts,
-        SharpMind.Core.Memory.Workspace? workspace = null)
+        SharpMind.Core.Memory.IWorkspace? workspace = null)
     {
         using var fused = wGated.Forward(x, workspace);
         int ffnDim = wDown.InFeatures;
@@ -69,7 +69,7 @@ public static class FfnKernels
         LinearLayer wUp,
         LinearLayer wDown,
         ActivationOps acts,
-        SharpMind.Core.Memory.Workspace? workspace = null)
+        SharpMind.Core.Memory.IWorkspace? workspace = null)
     {
         using var gate = wGate.Forward(x, workspace);
         using var up = wUp.Forward(x, workspace);
@@ -89,7 +89,7 @@ public static class FfnKernels
         LinearLayer[] wDown,
         int topK,
         ActivationOps acts,
-        SharpMind.Core.Memory.Workspace? workspace = null)
+        SharpMind.Core.Memory.IWorkspace? workspace = null)
     {
         int batch = x.ElementCount / x.Shape[^1];
         int hidden = x.Shape[^1];
@@ -153,7 +153,7 @@ public static class FfnKernels
         return result;
     }
 
-    public static Tensor<float> SoftmaxOverExperts(Tensor<float> logits, SharpMind.Core.Memory.Workspace? workspace = null)
+    public static Tensor<float> SoftmaxOverExperts(Tensor<float> logits, SharpMind.Core.Memory.IWorkspace? workspace = null)
     {
         Tensor<float> result = workspace != null 
             ? workspace.Rent<float>(logits.Shape.Dims) 

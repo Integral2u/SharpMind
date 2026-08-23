@@ -6,7 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-Planned next release: **1.0.4**
+## [1.0.4.0] - 2026-08-23
+
+### Added
+
+- **Limit Breaker (Phase 1-4)** — removed the int.MaxValue element-count ceiling from the inference and loading paths:
+  - `BigArray<T>` — paged array backed by `ArrayPool<T>.Shared` segments, supporting more than int.MaxValue elements with long-indexed access and int-sized block iteration for SIMD kernels.
+  - `IWorkspace` interface extracted from `Workspace`, enabling pluggable workspace implementations.
+  - `BigWorkspace` — workspace variant for oversized contexts (throws for >int.MaxValue deferred to a future release).
+  - `MemoryHelpers` — central routing layer for all memory allocations: `RentArray<T>`, `ReturnArray<T>`, `Rent<T>` (auto-selects array vs BigArray based on count), `CreateWorkspace`, `RentBuffer<T>`, `ReturnBuffer<T>`. All ArrayPool and NativeBufferPool calls in production code now route through this single entry point.
+  - `TensorLoadHelper` — shared helper for computing element counts (`ComputeElementCount`, `ComputeElementCountChecked`) and guarding long→int casts (`CheckedInt`) during model loading.
+  - 20 unit tests covering BigArray, BigWorkspace, and MemoryHelpers.
+- SmmLoader int-overflow bug fixed — the element-count computation `int count = 1; foreach (int d in shape) count *= d;` silently wrapped negative for large tensors, causing `ArrayPool.Rent(-...)` crashes downstream. Now uses `TensorLoadHelper.ComputeElementCountChecked` with an explicit guard.
+- Oversized tensor guards added to both loaders — LmHead creation, rawSize casts, and colBytes casts in GgufLoader and SmmLoader now throw `NotSupportedException` with a clear message instead of silently overflowing.
+
+### Changed
+
+- All layer/model method signatures changed from `Workspace?` to `IWorkspace?` across 36 method signatures in 20 files (IArchitecture, Transformer, TransformerBlock, AttentionLayer, FfnLayer, LinearLayer, NormLayer, LogitOps, ActivationOps, EmbeddingTable, and their implementations).
+- Generator workspace creation (`StandardGenerator`, `SpeculativeGenerator`, `MedusaGenerator`) now uses `MemoryHelpers.CreateWorkspace` instead of `new Workspace(...)`, routing through the central allocation layer.
+- `Prefill.ForwardLastLogitsChunked` internal parameter type changed from `Workspace` to `IWorkspace`.
+- `Tensor` constructor routes `NativeBufferPool<T>.Rent` through `MemoryHelpers.RentBuffer<T>`.
+- `Sampler` all ArrayPool calls (6 Rent + 6 Return) routed through `MemoryHelpers.RentArray<T>` / `MemoryHelpers.ReturnArray`.
+- `GgufLoader` and `SmmLoader` ArrayPool calls routed through `MemoryHelpers.RentArray<float>` / `MemoryHelpers.ReturnArray`.
+- GgufLoader manual long guard for element count replaced with `TensorLoadHelper.ComputeElementCountChecked`.
 
 ## [1.0.3.0] - 2026-08-22
 contains a few slightly breaking changes.
@@ -98,4 +120,6 @@ Initial release of SharpMind.
 - **JigSaw kernel dispatch** — pluggable hardware-specific kernel variants selected at runtime without `if`/`switch` ladders.
 
 [Unreleased]: https://github.com/Integral2u/SharpMind
+[1.0.4.0]: https://github.com/Integral2u/SharpMind/releases/tag/v1.0.4.0
+[1.0.3.0]: https://github.com/Integral2u/SharpMind/releases/tag/v1.0.3.0
 [1.0.0.0]: https://github.com/Integral2u/SharpMind/releases/tag/v1.0.0.0

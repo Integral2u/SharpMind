@@ -1,5 +1,6 @@
 using SharpMind.Core;
 using SharpMind.Core.Diagnostics;
+using SharpMind.Core.Memory;
 using SharpMind.Core.Quantization;
 using SharpMind.Core.Tensors;
 using SharpMind.Model.Config;
@@ -522,7 +523,9 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
         if (!info.Name.Contains("blk.") && info.Name.Contains("output.weight") && weights.LmHeadWeight == null)
         {
             long ggufIn = info.Shape[0];
-            weights.SetLmHead(new Tensor<float>((int)_config.VocabSize, (int)ggufIn));
+            int lmRows = TensorLoadHelper.CheckedInt(_config.VocabSize, "VocabSize for LmHead");
+            int lmCols = TensorLoadHelper.CheckedInt(ggufIn, "LmHead input dim");
+            weights.SetLmHead(new Tensor<float>(lmRows, lmCols));
             // Re-resolve now that LmHeadWeight is set
             (target, block, rawField) = weights.ResolveTarget(info.Name);
         }
@@ -540,7 +543,7 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
                 weights.RawEmbeddingDtype = info.Dtype;
         }
         if (block != null && rawField != null && rawSize > 0)
-            SetTensorMeta(block, rawField, meta.DataOffset + info.Offset, (int)rawSize, info.Dtype);
+            SetTensorMeta(block, rawField, meta.DataOffset + info.Offset, TensorLoadHelper.CheckedInt(rawSize, "rawSize"), info.Dtype);
 
         long targetOffset = meta.DataOffset + info.Offset;
         if (targetOffset >= stream.Length) return;
@@ -549,14 +552,7 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
         // long: a tensor can hold more elements than int can count (gemma-3n's
         // per-layer embeddings are 2.3e9), and silently wrapping negative here
         // surfaced far away as ArrayPool.Rent(-1946157056).
-        long longCount = 1;
-        foreach (int d in info.Shape) longCount *= d;
-        if (longCount > int.MaxValue)
-            throw new NotSupportedException(
-                $"Tensor '{info.Name}' has {longCount:N0} elements, more than this loader can " +
-                $"dequantize into a single float buffer (max {int.MaxValue:N0}). " +
-                "Shape: [" + string.Join(",", info.Shape) + "].");
-        int count = (int)longCount;
+        int count = TensorLoadHelper.ComputeElementCountChecked(info.Shape);
 
         // Load raw quantized data for block-level tensors
         if (block != null && rawField != null && rawSize > 0 && stream.Position + rawSize <= stream.Length)
@@ -578,9 +574,10 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
                 if (paddedVocab > tensorVocab)
                 {
                     long colBytes = rawSize / tensorVocab;
+                    int safeColBytes = TensorLoadHelper.CheckedInt(colBytes, "colBytes");
                     rawData = new byte[paddedVocab * colBytes];
                     for (long r = 0; r < tensorVocab; r++)
-                        stream.ReadExactly(rawData, (int)(r * colBytes), (int)colBytes);
+                        stream.ReadExactly(rawData, (int)(r * colBytes), safeColBytes);
                     stream.Position -= rawSize;
                 }
                 else
@@ -620,7 +617,7 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
             : null;
         if (target == null && blockFloatTarget == null) return;
 
-        float[] buffer = ArrayPool<float>.Shared.Rent(count);
+        float[] buffer = MemoryHelpers.RentArray<float>(count);
         try
         {
             ReadTensorInto(reader, info.Dtype, info.Shape, buffer.AsSpan(0, count));
@@ -667,7 +664,7 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
         }
         finally
         {
-            ArrayPool<float>.Shared.Return(buffer);
+            MemoryHelpers.ReturnArray(buffer);
         }
     }
 

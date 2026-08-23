@@ -38,9 +38,9 @@ public sealed class EncoderArch : IArchitecture
     /// positionOffset is accepted for API compatibility but is typically 0
     /// for encoders since they see the full sequence in one pass.
     /// </summary>
-    public Tensor<float> Forward(Tensor<float> hiddenStates, int positionOffset = 0, SharpMind.Core.Memory.Workspace? workspace = null) => Forward(hiddenStates, [], positionOffset, workspace);
+    public Tensor<float> Forward(Tensor<float> hiddenStates, int positionOffset = 0, SharpMind.Core.Memory.IWorkspace? workspace = null) => Forward(hiddenStates, [], positionOffset, workspace);
 
-    public Tensor<float> Forward(Tensor<float> hiddenStates, IKVCache[] caches, int positionOffset = 0, SharpMind.Core.Memory.Workspace? workspace = null)
+    public Tensor<float> Forward(Tensor<float> hiddenStates, IKVCache[] caches, int positionOffset = 0, SharpMind.Core.Memory.IWorkspace? workspace = null)
     {
         ThrowIfDisposed();
         var current = hiddenStates;
