@@ -10,7 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
-- **Limit Breaker (Phase 1-6)** — removed the int.MaxValue element-count ceiling from the inference and loading paths:
+- **Limit Breaker** — removed the int.MaxValue element-count ceiling from the inference and loading paths:
   - `BigArray<T>` — paged array backed by `ArrayPool<T>.Shared` segments, supporting more than int.MaxValue elements with long-indexed access and int-sized block iteration for SIMD kernels.
   - `IWorkspace` interface extracted from `Workspace`, enabling pluggable workspace implementations.
   - `BigWorkspace` — workspace variant for oversized contexts (throws for >int.MaxValue deferred to a future release).

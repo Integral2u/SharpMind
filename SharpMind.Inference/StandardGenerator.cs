@@ -233,7 +233,7 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
 
                 Tensor<float>? prevTensor = logitsTensor;
                 logitsTensor = null;
-                int newPos = posOffset + promptLen + step;
+                int newPos = _caches[0].Length;
 
                 _workspace.Reset();
                 prevTensor.Dispose();

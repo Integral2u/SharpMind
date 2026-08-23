@@ -205,6 +205,17 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         int[] promptToks = _tokenizer.Encode(prompt, _addBos, _addEos);
         if (promptToks.Length == 0) return;
 
+        // Trim to the model's context window so small-context checkpoints
+        // (e.g. MaxSeqLen=256 from training defaults) don't overflow RoPE.
+        int maxContext = MaxTokens;
+        if (maxContext > 0 && promptToks.Length > maxContext)
+        {
+            int start = promptToks.Length - maxContext;
+            var trimmed = GC.AllocateUninitializedArray<int>(maxContext);
+            promptToks.AsSpan(start, maxContext).CopyTo(trimmed);
+            promptToks = trimmed;
+        }
+
         // Fast path: if a cached KV-cache snapshot was loaded and the prompt
         // tokens hash matches, restore the cache directly — no prefill needed.
         if (_pendingKvCacheSnapshot is { } cached)
@@ -483,9 +494,9 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         foreach (var (idx, _, _) in candidates)
         {
             if (promptToks.Length <= contextBudget) break;
-            removed.Add(idx);
+            if (!removed.Add(idx)) continue;
 
-            var surviving = new List<ChatMessage>(_history.Count - removed.Count);
+            var surviving = new List<ChatMessage>();
             for (int i = 0; i < _history.Count; i++)
                 if (!removed.Contains(i))
                     surviving.Add(_history[i]);

@@ -360,6 +360,7 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
                             : _caches[0].MaxSeqLen / 2;
                         for (int i = 0; i < _caches.Length; i++)
                             _caches[i].TrimToLast(keep);
+                        currentPos = _caches[0].Length;
                     }
 
                     currentPos += draftLen;
@@ -406,6 +407,7 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
                             : _caches[0].MaxSeqLen / 2;
                         for (int i = 0; i < _caches.Length; i++)
                             _caches[i].TrimToLast(keep);
+                        currentPos = _caches[0].Length;
                     }
 
                     // The next round's starting logits come from the last accepted

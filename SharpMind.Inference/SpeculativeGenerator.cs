@@ -205,6 +205,7 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
                                 : _caches[0].MaxSeqLen / 2;
                             for (int i = 0; i < _caches.Length; i++)
                                 _caches[i].TrimToLast(keep);
+                            currentPos = _caches[0].Length;
                         }
                     }
                     else
@@ -215,7 +216,7 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
                             for (int i = 0; i < _caches.Length; i++)
                                 _caches[i].Restore(snapshots[i]);
                         }
-                        currentPos = posOffset + promptLen + generatedIds.Count;
+                        currentPos = _caches[0].Length;
 
                         int correctionToken = greedyChoice;
                         generatedIds.Add(correctionToken);

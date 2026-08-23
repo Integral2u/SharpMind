@@ -1,0 +1,70 @@
+{
+  "version": 1,
+  "savedAtUtc": "2026-08-16T00:00:00.0000000Z",
+  "job": {
+    "Name": "shakespeare-job",
+    "SavedAtUtc": "2026-08-16T00:00:00.0000000Z",
+    "Sources": [
+      {
+        "Component": {
+          "DisplayName": "Text File",
+          "TypeName": "SharpMind.Data.Sources.TextFileSource",
+          "Args": {
+            "path": "C:\\temp\\shakespeare.txt",
+            "mode": "FilePerDoc"
+          }
+        },
+        "Stages": []
+      }
+    ],
+    "GlobalStages": [],
+    "SourceHashes": {},
+    "IncrementalMode": false,
+    "SourceFileHashes": {},
+    "TokenizerKind": "Char",
+    "TokenizerVocabSize": 1024,
+    "TokenizerCachePath": null,
+    "AutoSized": false,
+    "VocabSize": 0,
+    "HiddenDim": 384,
+    "NumLayers": 6,
+    "NumHeads": 6,
+    "NumKvHeads": 6,
+    "FfnDim": 1536,
+    "MaxSeqLen": 256,
+    "NormEps": 0.00001,
+    "ArchitecturePreset": "gpt2",
+    "Activation": "GELU",
+    "Gate": "None",
+    "Ffn": "Dense",
+    "Attention": "MHA",
+    "Norm": "LayerNorm",
+    "Arch": "Decoder",
+    "PositionalEncoding": "Learned",
+    "Optimizer": null,
+    "SgdMomentum": 0,
+    "NumExperts": 8,
+    "TopKExperts": 2,
+    "TotalSteps": 600,
+    "LogInterval": 100,
+    "BatchSize": 64,
+    "SeqLen": 256,
+    "GradAccumSteps": 1,
+    "BatchingKind": "RandomWindow",
+    "LearningRate": 0.001,
+    "MinLr": 0.0001,
+    "WarmupSteps": 100,
+    "WeightDecay": 0.01,
+    "GradClipNorm": 1.0,
+    "LabelSmoothing": 0.0,
+    "QuantAwareTraining": null,
+    "CheckpointInterval": 1000,
+    "KeepRecent": 0,
+    "ExportPath": "C:\\temp\\out-shakespeare",
+    "ResumeFrom": null,
+    "StartFresh": false,
+    "SystemPromptPath": null,
+    "SkillsFolder": null,
+    "PluginDllPaths": []
+  }
+}

@@ -31,7 +31,6 @@
     <Folder Include="Conversion\" />
     <Folder Include="ExtensionsAI\" />
     <Folder Include="Quantization\" />
-    <Folder Include="Training\" />
   </ItemGroup>
 
 </Project>
