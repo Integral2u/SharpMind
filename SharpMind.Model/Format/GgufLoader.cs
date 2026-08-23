@@ -552,7 +552,15 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
         // long: a tensor can hold more elements than int can count (gemma-3n's
         // per-layer embeddings are 2.3e9), and silently wrapping negative here
         // surfaced far away as ArrayPool.Rent(-1946157056).
-        int count = TensorLoadHelper.ComputeElementCountChecked(info.Shape);
+        long longCount = TensorLoadHelper.ComputeElementCount(info.Shape);
+        if (longCount > int.MaxValue)
+        {
+            // Oversized tensor: raw bytes are already loaded above for both
+            // block-level and top-level tensors. Skip dequant — the streaming
+            // forward pass reads the raw quantized bytes directly.
+            return;
+        }
+        int count = (int)longCount;
 
         // Load raw quantized data for block-level tensors
         if (block != null && rawField != null && rawSize > 0 && stream.Position + rawSize <= stream.Length)

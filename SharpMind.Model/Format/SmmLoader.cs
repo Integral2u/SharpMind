@@ -328,7 +328,14 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
         }
 
         // Dequantize to float (same GGUF transpose semantics as GgufLoader)
-        int count = TensorLoadHelper.ComputeElementCountChecked(entry.Shape);
+        long longCount = TensorLoadHelper.ComputeElementCount(entry.Shape);
+        if (longCount > int.MaxValue)
+        {
+            // Oversized tensor: raw bytes are already loaded above.
+            // Skip dequant — the streaming forward pass reads them directly.
+            return;
+        }
+        int count = (int)longCount;
 
         float[] buffer = MemoryHelpers.RentArray<float>(count);
         try

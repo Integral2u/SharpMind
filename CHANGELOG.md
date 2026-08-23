@@ -10,7 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
-- **Limit Breaker (Phase 1-4)** — removed the int.MaxValue element-count ceiling from the inference and loading paths:
+- **Limit Breaker (Phase 1-6)** — removed the int.MaxValue element-count ceiling from the inference and loading paths:
   - `BigArray<T>` — paged array backed by `ArrayPool<T>.Shared` segments, supporting more than int.MaxValue elements with long-indexed access and int-sized block iteration for SIMD kernels.
   - `IWorkspace` interface extracted from `Workspace`, enabling pluggable workspace implementations.
   - `BigWorkspace` — workspace variant for oversized contexts (throws for >int.MaxValue deferred to a future release).
@@ -19,6 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   - 20 unit tests covering BigArray, BigWorkspace, and MemoryHelpers.
 - SmmLoader int-overflow bug fixed — the element-count computation `int count = 1; foreach (int d in shape) count *= d;` silently wrapped negative for large tensors, causing `ArrayPool.Rent(-...)` crashes downstream. Now uses `TensorLoadHelper.ComputeElementCountChecked` with an explicit guard.
 - Oversized tensor guards added to both loaders — LmHead creation, rawSize casts, and colBytes casts in GgufLoader and SmmLoader now throw `NotSupportedException` with a clear message instead of silently overflowing.
+- Oversized tensors in both loaders now degrade gracefully instead of crashing — when element count exceeds int.MaxValue, raw quantized bytes are loaded but dequantization is skipped, matching the streaming-mode precedent. The streaming forward pass reads the raw bytes directly.
 
 ### Changed
 
