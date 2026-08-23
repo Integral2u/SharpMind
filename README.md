@@ -421,7 +421,7 @@ See [CHANGELOG.md](CHANGELOG.md) for release history.
 # Wishlist (not ordered)
 - [ ] AVX512 Kernels
 - [ ] Additional Model Support
-- [ ] Optimiations
+- [ ] Optimizations
 - [x] Microsoft IChatClient and or other services. — shipped as `SharpMind.Extensions.AI`
 - [x] Common tools, GREP, GIT etc — shipped as `SharpMind.Extensions.Tools`
 - [x] Limit breaker(Project Goku), int.MaxValue element-count limit workaround. Solutions not excuses. — shipped as `MemoryHelpers`, `BigArray<T>`, `IWorkspace`, `BigWorkspace`
