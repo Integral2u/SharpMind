@@ -160,6 +160,7 @@ Validated across two independent runs against 15 model/architecture/quantization
 | TinyLlama | tinyllama-1.1b-chat-v1.0 | Q8_0 | ✅ |
 | Llama 3 (small) | llama3-small | Q2_K | ✅ |
 | Llama 3 (small) | llama3-small | Q3_K_M | ✅ |
+| Ministral 3 (sliding window) | Ministral-3-3B-Instruct-2512 | Q4_K_M | ✅ |
 
 _Tested on: **AMD Ryzen 3 2200U (2C/4T, 2.5GHz base) w/ Radeon Vega Mobile Graphics, 12GB RAM** — a modest mobile/laptop-class chip, not a workstation. Load times and throughput scale heavily with hardware and quant level — as a rough sense of range on this machine, `SmolLM-135M.Q4_K_M` loaded in ~2s, while `qwen2.5-1.5b-instruct-q8_0` (the largest model tested) took ~2 minutes to load and initialize. That everything above ran clean on a 2-core/4-thread laptop CPU is itself a reasonable data point for SharpMind's baseline hardware requirements — run your own copy of the benchmark against your target hardware before relying on these numbers for capacity planning._
 
@@ -420,7 +421,7 @@ See [CHANGELOG.md](CHANGELOG.md) for release history.
 
 # Wishlist (not ordered)
 - [ ] AVX512 Kernels
-- [ ] Additional Model Support
+- [x] Additional Model Support — Ministral-3-3B-Instruct (sliding window attention) now supported
 - [ ] Optimizations
 - [x] Microsoft IChatClient and or other services. — shipped as `SharpMind.Extensions.AI`
 - [x] Common tools, GREP, GIT etc — shipped as `SharpMind.Extensions.Tools`
