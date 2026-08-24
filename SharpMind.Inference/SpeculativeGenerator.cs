@@ -51,7 +51,7 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
         else
         {
             int numLayers = model.Config.NumLayers;
-            int maxSeqLen = model.Config.MaxSeqLen;
+            int maxSeqLen = model.Config.EffectiveInferenceCacheLength;
             int numKvHeads = model.Config.NumKvHeads;
             int headDim = model.Config.HeadDim;
 
@@ -203,6 +203,8 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
                             int keep = genCfg is { SlidingWindowSize: > 0 }
                                 ? genCfg.SlidingWindowSize
                                 : _caches[0].MaxSeqLen / 2;
+                            if (keep >= _caches[0].MaxSeqLen)
+                                keep = Math.Max(1, _caches[0].MaxSeqLen / 2);
                             for (int i = 0; i < _caches.Length; i++)
                                 _caches[i].TrimToLast(keep);
                             currentPos = _caches[0].Length;

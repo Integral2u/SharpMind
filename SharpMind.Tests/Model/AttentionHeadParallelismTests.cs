@@ -51,7 +51,7 @@ public class AttentionHeadParallelismTests
                     fk + (long)(h / kvGroup) * kvLen * headDim,
                     fv + (long)(h / kvGroup) * kvLen * headDim,
                     outBase + (long)h * headDim,
-                    seqLen, kvLen, headDim, scale, causal: true, qStride, oStride, alibiSlope: 0f);
+                    seqLen, kvLen, headDim, scale, causal: true, qStride, oStride, alibiSlope: 0f, windowSize: 0);
 
             float* so = pSerial, po = pParallel;
             for (int h = 0; h < numHeads; h++) Head(h, so);
@@ -96,7 +96,7 @@ public class AttentionHeadParallelismTests
                     fk + (long)(h / kvGroup) * kvLen * headDim,
                     fv + (long)(h / kvGroup) * kvLen * headDim,
                     fo + (long)h * headDim,
-                    seqLen, kvLen, headDim, 1f / MathF.Sqrt(headDim), causal: true, qStride, oStride, 0f));
+                    seqLen, kvLen, headDim, 1f / MathF.Sqrt(headDim), causal: true, qStride, oStride, 0f, windowSize: 0));
         }
 
         // V is positive and softmax weights sum to 1, so every slot must be finite

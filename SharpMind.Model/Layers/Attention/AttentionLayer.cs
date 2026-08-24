@@ -36,7 +36,7 @@ namespace SharpMind.Model.Layers.Attention;
         SharpMindConfig.ValMqaFlashQ8_0Scalar, NS + "." + nameof(AttentionKernels.ScaledDotProductFlashQ8_0Scalar))]
     public abstract unsafe void ScaledDotProductQ8_0(float* q, byte* kQuant, byte* vQuant, float* output,
         int seqLen, int kvLen, int headDim, float scale, bool causal,
-        int qStride, int oStride, float alibiSlope);
+        int qStride, int oStride, float alibiSlope, int windowSize);
 
     [PuzzleCornerPiece(SharpMindConfig.KeyAttentionQ4,
         SharpMindConfig.ValMhaFlashQ4_0Avx2, NS + "." + nameof(AttentionKernels.ScaledDotProductFlashQ4_0AVX2),
@@ -50,20 +50,20 @@ namespace SharpMind.Model.Layers.Attention;
         SharpMindConfig.ValMqaFlashQ4_0Scalar, NS + "." + nameof(AttentionKernels.ScaledDotProductFlashQ4_0Scalar))]
     public abstract unsafe void ScaledDotProductQ4_0(float* q, byte* kQuant, byte* vQuant, float* output,
         int seqLen, int kvLen, int headDim, float scale, bool causal,
-        int qStride, int oStride, float alibiSlope);
+        int qStride, int oStride, float alibiSlope, int windowSize);
 
     private unsafe void ScaledDotProductForQuantized(QuantDType quantKind,
         float* q, byte* kQuant, byte* vQuant, float* output,
         int seqLen, int kvLen, int headDim, float scale, bool causal,
-        int qStride, int oStride, float alibiSlope)
+        int qStride, int oStride, float alibiSlope, int windowSize)
     {
         switch (quantKind)
         {
             case QuantDType.Q4_0:
-                ScaledDotProductQ4_0(q, kQuant, vQuant, output, seqLen, kvLen, headDim, scale, causal, qStride, oStride, alibiSlope);
+                ScaledDotProductQ4_0(q, kQuant, vQuant, output, seqLen, kvLen, headDim, scale, causal, qStride, oStride, alibiSlope, windowSize);
                 break;
             case QuantDType.Q8_0:
-                ScaledDotProductQ8_0(q, kQuant, vQuant, output, seqLen, kvLen, headDim, scale, causal, qStride, oStride, alibiSlope);
+                ScaledDotProductQ8_0(q, kQuant, vQuant, output, seqLen, kvLen, headDim, scale, causal, qStride, oStride, alibiSlope, windowSize);
                 break;
             default:
                 throw new NotSupportedException($"Quantized attention not supported for {quantKind}");
@@ -108,7 +108,7 @@ namespace SharpMind.Model.Layers.Attention;
         {
             PositionalEncoding.NoPE => new NoPE(),
             PositionalEncoding.ALiBi => new AlibiEncoder(config.NumHeads),
-            _ => new RoPE(config.HeadDim, config.MaxSeqLen, config.RopeTheta,
+            _ => new RoPE(config.HeadDim, config.EffectiveInferenceCacheLength, config.RopeTheta,
                  ropeDim: config.RopeDim, ropeScalingType: config.RopeScalingType,
                  ropeScalingFactor: config.RopeScalingFactor,
                  ropeOriginalContextLength: config.RopeOriginalContextLength,
@@ -255,9 +255,9 @@ namespace SharpMind.Model.Layers.Attention;
         SharpMindConfig.ValMqaFlashAvx2, NS + "." + nameof(AttentionKernels.ScaledDotProductFlashAVX2),
         SharpMindConfig.ValMqaFlashFma, NS + "." + nameof(AttentionKernels.ScaledDotProductFlashFMA),
         SharpMindConfig.ValMqaFlashScalar, NS + "." + nameof(AttentionKernels.ScaledDotProductFlashScalar))]
-    public abstract unsafe void ScaledDotProduct(float* q, float* k, float* v, float* o, int seqLen, int kvLen, int headDim, float scale, bool causal, int qStride, int oStride, float alibiSlope);
+    public abstract unsafe void ScaledDotProduct(float* q, float* k, float* v, float* o, int seqLen, int kvLen, int headDim, float scale, bool causal, int qStride, int oStride, float alibiSlope, int windowSize);
 
-    public Tensor<float> Forward( Tensor<float> x, int positionOffset = 0, bool causal = true, IKVCache? cache = null, Core.Memory.IWorkspace? workspace = null)
+    public Tensor<float> Forward( Tensor<float> x, int positionOffset = 0, bool causal = true, IKVCache? cache = null, Core.Memory.IWorkspace? workspace = null, int windowSize = 0)
     {
         ThrowIfDisposed();
         int batch = x.Shape[0];
@@ -339,13 +339,13 @@ namespace SharpMind.Model.Layers.Attention;
                         ScaledDotProductForQuantized(cache.QuantKind, pQ,
                             cache.GetQuantizedKeyPtr(b, 0, kvHead),
                             cache.GetQuantizedValuePtr(b, 0, kvHead),
-                            pO, seqLen, effectiveKvLen, headDim, scale, causal, qStride, oStride, alibiSlope);
+                            pO, seqLen, effectiveKvLen, headDim, scale, causal, qStride, oStride, alibiSlope, windowSize);
                     }
                     else if (cache is { IsContiguous: true })
                     {
                         float* pK = cache.GetKeyPtr(b, 0, kvHead);
                         float* pV = cache.GetValuePtr(b, 0, kvHead);
-                        ScaledDotProduct(pQ, pK, pV, pO, seqLen, effectiveKvLen, headDim, scale, causal, qStride, oStride, alibiSlope);
+                        ScaledDotProduct(pQ, pK, pV, pO, seqLen, effectiveKvLen, headDim, scale, causal, qStride, oStride, alibiSlope, windowSize);
                     }
                     else
                     {
@@ -373,7 +373,7 @@ namespace SharpMind.Model.Layers.Attention;
                             }
                         }
 
-                        ScaledDotProduct(pQ, pK, pV, pO, seqLen, effectiveKvLen, headDim, scale, causal, qStride, oStride, alibiSlope);
+                        ScaledDotProduct(pQ, pK, pV, pO, seqLen, effectiveKvLen, headDim, scale, causal, qStride, oStride, alibiSlope, windowSize);
                     }
                 }
             }

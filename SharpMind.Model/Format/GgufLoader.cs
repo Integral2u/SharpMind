@@ -254,6 +254,19 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
         long rawTopK = meta.GetLong($"{arch}.expert_used_count", -1);
         int topKExperts = rawTopK > 0 ? (int)rawTopK : 2;
 
+        long rawSlidingWindow = meta.GetLong($"{arch}.attention.sliding_window", -1);
+        int slidingWindowSize = rawSlidingWindow > 0 ? (int)rawSlidingWindow : 0;
+
+        // Fallback: ministral and mistral3 use sliding-window attention by
+        // default. When the GGUF omits the key, assume a 4096-token window
+        // so the KV cache is capped and the model can load without OOM.
+        if (slidingWindowSize <= 0 &&
+            (string.Equals(arch, "ministral", StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(arch, "mistral3", StringComparison.OrdinalIgnoreCase)))
+        {
+            slidingWindowSize = Math.Min(4096, maxSeqLen);
+        }
+
         return new ModelConfig
         {
             Architecture = arch,
@@ -280,6 +293,7 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
             NormTypeOverride = normTypeOverride,
             NumExperts = expertCount,
             TopKExperts = topKExperts,
+            SlidingWindowSize = slidingWindowSize,
         };
     }
 
@@ -384,7 +398,8 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
                 {
                     tokenizer = Tokenizer.FromLlama(tokenizerPath);
                 }
-                else if (arch.Contains("mistral", StringComparison.OrdinalIgnoreCase))
+                else if (arch.Contains("mistral", StringComparison.OrdinalIgnoreCase)
+                      || arch.Contains("ministral", StringComparison.OrdinalIgnoreCase))
                 {
                     tokenizer = Tokenizer.FromMistral(tokenizerPath);
                 }

@@ -15,7 +15,7 @@ public static class GPUActivationKernels
     private static readonly Lazy<Accelerator> _sharedAccelerator = new(() =>
     {
         _context = Context.CreateDefault();
-        return _context.GetPreferredDevice(!GPUMode.Cuda.Equals(GPUSharpMindConfig.BestBackend)).CreateAccelerator(_context);
+        return _context.GetPreferredDevice(GPUMode.Cpu.Equals(GPUSharpMindConfig.BestBackend)).CreateAccelerator(_context);
     }, LazyThreadSafetyMode.ExecutionAndPublication);
 
     public static Accelerator SharedAccelerator => _sharedAccelerator.Value;

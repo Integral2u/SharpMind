@@ -219,6 +219,7 @@ public sealed record SharpMindConfig
             "gemma" or "gemma3" or "gemma-3"                              => (ActivationKind.GELU,    GateKind.GeGLU,  FfnKind.Gated, NormKind.RMSNorm,   ArchKind.Decoder),
             "mixtral" or "qwen2moe" or "deepseek2" or "dbrx"            => (ActivationKind.SiLU,    GateKind.SwiGLU, FfnKind.MoE,   NormKind.RMSNorm,   ArchKind.Decoder),
             "qwen3"                                                       => (ActivationKind.SiLU,    GateKind.SwiGLU, FfnKind.Gated, NormKind.RMSNorm,   ArchKind.Decoder),
+            "mistral" or "mistral3" or "ministral"                        => (ActivationKind.SiLU,    GateKind.SwiGLU, FfnKind.Gated, NormKind.RMSNorm,   ArchKind.Decoder),
             _                                                              => (ActivationKind.SiLU,    GateKind.SwiGLU, FfnKind.Gated, NormKind.RMSNorm,   ArchKind.Decoder),
         };
 

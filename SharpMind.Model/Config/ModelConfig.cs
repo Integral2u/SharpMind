@@ -51,6 +51,15 @@ public sealed record ModelConfig
     public int MaxSeqLen { get; init; }
 
     /// <summary>
+    /// Effective context length for KV-cache allocation at inference.
+    /// When a sliding window is declared, the cache is sized to the window
+    /// (tokens beyond it are never attended to). Falls back to
+    /// <see cref="MaxSeqLen"/> for full-context models.
+    /// </summary>
+    public int EffectiveInferenceCacheLength =>
+        SlidingWindowSize > 0 ? Math.Min(MaxSeqLen, SlidingWindowSize) : MaxSeqLen;
+
+    /// <summary>
     /// Override for head dimension (per-head key/value size).
     /// If null, derived as HiddenDim / NumHeads.
     /// Qwen3 GGUF specifies explicit key_length (e.g. 128).
@@ -59,6 +68,13 @@ public sealed record ModelConfig
 
     /// <summary>Override for value head dimension. Falls back to <see cref="KeyLength"/> then derived.</summary>
     public int? ValueLength { get; init; }
+
+    /// <summary>
+    /// Sliding window attention size. When &gt; 0, each token attends only
+    /// to the previous <see cref="SlidingWindowSize"/> tokens in the KV cache.
+    /// 0 = full causal attention (default for most architectures).
+    /// </summary>
+    public int SlidingWindowSize { get; init; }
 
     /// <summary>
     /// Explicit head_dim from GGUF ({arch}.head_dim).

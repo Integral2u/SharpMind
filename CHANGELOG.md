@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- KV-cache allocation now respects a model's declared sliding window when present. Cache capacity is capped to `min(MaxSeqLen, SlidingWindowSize)` via `ModelConfig.EffectiveInferenceCacheLength`, and RoPE tables are sized accordingly. This prevents out-of-memory allocations on sliding-window architectures while preserving full-context behavior for models that declare no window.
+
 ## [1.0.4.0] - 2026-08-23
 
 ### Added

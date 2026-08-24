@@ -188,7 +188,8 @@ public static class GgufConverter
             || arch.Contains("deepseek")
             || arch.StartsWith("phi3") || arch.StartsWith("phi4")
             || arch.StartsWith("gemma2") || arch.StartsWith("gemma3") || arch.StartsWith("gemma-3")
-            || arch is "dbrx")
+            || arch is "dbrx"
+            || arch is "mistral3" or "ministral")
             return new Cl100kPreTokeniser();
 
         return new Gpt2PreTokeniser();
