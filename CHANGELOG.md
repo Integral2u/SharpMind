@@ -6,9 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-### Changed
+### Added
 
-- KV-cache allocation now respects a model's declared sliding window when present. Cache capacity is capped to `min(MaxSeqLen, SlidingWindowSize)` via `ModelConfig.EffectiveInferenceCacheLength`, and RoPE tables are sized accordingly. This prevents out-of-memory allocations on sliding-window architectures while preserving full-context behavior for models that declare no window.
+- **Ministral-3-3B-Instruct support** — full sliding-window attention (SWA) for ministral/mistral3 architectures. All 12 SDPA kernels updated with per-layer window masking; KV-cache capped to the model's sliding window; RoPE tables sized accordingly; GgufLoader fallback defaults to 4096 when the GGUF omits the key. Branch: `feature/ministral-support`.
 
 ## [1.0.4.0] - 2026-08-23
 
