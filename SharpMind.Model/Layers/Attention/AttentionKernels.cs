@@ -24,7 +24,7 @@ public static class AttentionKernels
     public static unsafe void ScaledDotProductAVX2(
         float* q, float* k, float* v, float* output,
         int seqLen, int kvLen, int headDim, float scale, bool causal,
-        int qStride, int oStride, float alibiSlope)
+        int qStride, int oStride, float alibiSlope, int windowSize)
     {
         EnsureScoreBuffer(kvLen);
         fixed (float* pRow = &t_ScoreScratch![0])
@@ -35,14 +35,16 @@ public static class AttentionKernels
             {
                 float* qi = q + (long)i * qStride;
                 int absQPos = queryBase + i;
+                int kvOffset = 0;
                 int effKvLen = causal ? Math.Min(absQPos + 1, kvLen) : kvLen;
+                if (windowSize > 0) { kvOffset = Math.Max(0, absQPos - windowSize + 1); effKvLen -= kvOffset; }
 
                 // Pass 1: compute scores + online softmax statistics
                 float max = float.NegativeInfinity;
                 float lSum = 0f;
                 for (int j = 0; j < effKvLen; j++)
                 {
-                    float* kj = k + (long)j * headDim;
+                    float* kj = k + (long)(kvOffset + j) * headDim;
                     var acc = Vector256<float>.Zero;
                     int d = 0;
                     for (; d <= headDim - 8; d += 8)
@@ -51,7 +53,7 @@ public static class AttentionKernels
                             Vector256.LoadUnsafe(ref kj[d])));
                     float dot = MathHelpers.HSum256_Avx(acc);
                     for (; d < headDim; d++) dot += qi[d] * kj[d];
-                    float score = dot * scale - alibiSlope * (absQPos - j);
+                    float score = dot * scale - alibiSlope * (absQPos - kvOffset - j);
                     scoreRow[j] = score;
                     float oldMax = max;
                     max = Math.Max(max, score);
@@ -67,7 +69,7 @@ public static class AttentionKernels
                     for (int j = 0; j < effKvLen; j++)
                     {
                         float sm = MathF.Exp(scoreRow[j] - max) * invSum;
-                        float* vj = v + (long)j * headDim;
+                        float* vj = v + (long)(kvOffset + j) * headDim;
                         var vSm = Vector256.Create(sm);
                         int d = 0;
                         for (; d <= headDim - 8; d += 8)
@@ -91,7 +93,7 @@ public static class AttentionKernels
     public static unsafe void ScaledDotProductFMA(
         float* q, float* k, float* v, float* output,
         int seqLen, int kvLen, int headDim, float scale, bool causal,
-        int qStride, int oStride, float alibiSlope)
+        int qStride, int oStride, float alibiSlope, int windowSize)
     {
         EnsureScoreBuffer(kvLen);
         fixed (float* pRow = &t_ScoreScratch![0])
@@ -102,13 +104,15 @@ public static class AttentionKernels
             {
                 float* qi = q + (long)i * qStride;
                 int absQPos = queryBase + i;
+                int kvOffset = 0;
                 int effKvLen = causal ? Math.Min(absQPos + 1, kvLen) : kvLen;
+                if (windowSize > 0) { kvOffset = Math.Max(0, absQPos - windowSize + 1); effKvLen -= kvOffset; }
 
                 float max = float.NegativeInfinity;
                 float lSum = 0f;
                 for (int j = 0; j < effKvLen; j++)
                 {
-                    float* kj = k + (long)j * headDim;
+                    float* kj = k + (long)(kvOffset + j) * headDim;
                     var acc = Vector256<float>.Zero;
                     int d = 0;
                     for (; d <= headDim - 8; d += 8)
@@ -116,7 +120,7 @@ public static class AttentionKernels
                                               Vector256.LoadUnsafe(ref kj[d]), acc);
                     float dot = MathHelpers.HSum256_Avx(acc);
                     for (; d < headDim; d++) dot += qi[d] * kj[d];
-                    float score = dot * scale - alibiSlope * (absQPos - j);
+                    float score = dot * scale - alibiSlope * (absQPos - kvOffset - j);
                     scoreRow[j] = score;
                     float oldMax = max;
                     max = Math.Max(max, score);
@@ -131,7 +135,7 @@ public static class AttentionKernels
                     for (int j = 0; j < effKvLen; j++)
                     {
                         float sm = MathF.Exp(scoreRow[j] - max) * invSum;
-                        float* vj = v + (long)j * headDim;
+                        float* vj = v + (long)(kvOffset + j) * headDim;
                         var vSm = Vector256.Create(sm);
                         int d = 0;
                         for (; d <= headDim - 8; d += 8)
@@ -155,7 +159,7 @@ public static class AttentionKernels
     public static unsafe void ScaledDotProductScalar(
         float* q, float* k, float* v, float* output,
         int seqLen, int kvLen, int headDim, float scale, bool causal,
-        int qStride, int oStride, float alibiSlope)
+        int qStride, int oStride, float alibiSlope, int windowSize)
     {
         EnsureScoreBuffer(kvLen);
         fixed (float* pRow = &t_ScoreScratch![0])
@@ -166,16 +170,18 @@ public static class AttentionKernels
             {
                 float* qi = q + (long)i * qStride;
                 int absQPos = queryBase + i;
+                int kvOffset = 0;
                 int effKvLen = causal ? Math.Min(absQPos + 1, kvLen) : kvLen;
+                if (windowSize > 0) { kvOffset = Math.Max(0, absQPos - windowSize + 1); effKvLen -= kvOffset; }
 
                 float max = float.NegativeInfinity;
                 float lSum = 0f;
                 for (int j = 0; j < effKvLen; j++)
                 {
-                    float* kj = k + (long)j * headDim;
+                    float* kj = k + (long)(kvOffset + j) * headDim;
                     float dot = 0f;
                     for (int d = 0; d < headDim; d++) dot += qi[d] * kj[d];
-                    float score = dot * scale - alibiSlope * (absQPos - j);
+                    float score = dot * scale - alibiSlope * (absQPos - kvOffset - j);
                     scoreRow[j] = score;
                     float oldMax = max;
                     max = Math.Max(max, score);
@@ -190,7 +196,7 @@ public static class AttentionKernels
                     for (int j = 0; j < effKvLen; j++)
                     {
                         float sm = MathF.Exp(scoreRow[j] - max) * invSum;
-                        float* vj = v + (long)j * headDim;
+                        float* vj = v + (long)(kvOffset + j) * headDim;
                         for (int d = 0; d < headDim; d++)
                             outI[d] += sm * vj[d];
                     }
@@ -220,7 +226,7 @@ public static class AttentionKernels
     public static unsafe void ScaledDotProductFlashAVX2(
         float* q, float* k, float* v, float* output,
         int seqLen, int kvLen, int headDim, float scale, bool causal,
-        int qStride, int oStride, float alibiSlope)
+        int qStride, int oStride, float alibiSlope, int windowSize)
     {
         if ((uint)headDim > FlashMaxHeadDim)
             throw new ArgumentOutOfRangeException(nameof(headDim),
@@ -233,7 +239,9 @@ public static class AttentionKernels
         {
             float* qi = q + (long)i * qStride;
             int absQPos = queryBase + i;
+            int kvOffset = 0;
             int effKvLen = causal ? Math.Min(absQPos + 1, kvLen) : kvLen;
+            if (windowSize > 0) { kvOffset = Math.Max(0, absQPos - windowSize + 1); effKvLen -= kvOffset; }
 
             float mMax = float.NegativeInfinity;
             float lSum = 0f;
@@ -248,7 +256,7 @@ public static class AttentionKernels
                 float tileMax = float.NegativeInfinity;
                 for (int j = start; j < end; j++)
                 {
-                    float* kj = k + (long)j * headDim;
+                    float* kj = k + (long)(kvOffset + j) * headDim;
                     var acc = Vector256<float>.Zero;
                     int d = 0;
                     for (; d <= headDim - 8; d += 8)
@@ -257,7 +265,7 @@ public static class AttentionKernels
                             Vector256.LoadUnsafe(ref kj[d])));
                     float dot = MathHelpers.HSum256_Avx(acc);
                     for (; d < headDim; d++) dot += qi[d] * kj[d];
-                    dot = dot * scale - alibiSlope * (absQPos - j);
+                    dot = dot * scale - alibiSlope * (absQPos - kvOffset - j);
                     tileScores[j - start] = dot;
                     if (dot > tileMax) tileMax = dot;
                 }
@@ -282,7 +290,7 @@ public static class AttentionKernels
                     pO[d0] *= scaleOld;
                 for (int t = 0; t < tileLen; t++)
                 {
-                    float* vj = v + (long)(start + t) * headDim;
+                    float* vj = v + (long)(kvOffset + start + t) * headDim;
                     var vSm = Vector256.Create(tileScores[t]);
                     int d = 0;
                     for (; d <= headDim - 8; d += 8)
@@ -315,7 +323,7 @@ public static class AttentionKernels
     public static unsafe void ScaledDotProductFlashFMA(
         float* q, float* k, float* v, float* output,
         int seqLen, int kvLen, int headDim, float scale, bool causal,
-        int qStride, int oStride, float alibiSlope)
+        int qStride, int oStride, float alibiSlope, int windowSize)
     {
         if ((uint)headDim > FlashMaxHeadDim)
             throw new ArgumentOutOfRangeException(nameof(headDim),
@@ -328,7 +336,9 @@ public static class AttentionKernels
         {
             float* qi = q + (long)i * qStride;
             int absQPos = queryBase + i;
+            int kvOffset = 0;
             int effKvLen = causal ? Math.Min(absQPos + 1, kvLen) : kvLen;
+            if (windowSize > 0) { kvOffset = Math.Max(0, absQPos - windowSize + 1); effKvLen -= kvOffset; }
 
             float mMax = float.NegativeInfinity;
             float lSum = 0f;
@@ -343,7 +353,7 @@ public static class AttentionKernels
                 float tileMax = float.NegativeInfinity;
                 for (int j = start; j < end; j++)
                 {
-                    float* kj = k + (long)j * headDim;
+                    float* kj = k + (long)(kvOffset + j) * headDim;
                     var acc = Vector256<float>.Zero;
                     int d = 0;
                     for (; d <= headDim - 8; d += 8)
@@ -351,7 +361,7 @@ public static class AttentionKernels
                                               Vector256.LoadUnsafe(ref kj[d]), acc);
                     float dot = MathHelpers.HSum256_Avx(acc);
                     for (; d < headDim; d++) dot += qi[d] * kj[d];
-                    dot = dot * scale - alibiSlope * (absQPos - j);
+                    dot = dot * scale - alibiSlope * (absQPos - kvOffset - j);
                     tileScores[j - start] = dot;
                     if (dot > tileMax) tileMax = dot;
                 }
@@ -376,7 +386,7 @@ public static class AttentionKernels
                     pO[d0] *= scaleOld;
                 for (int t = 0; t < tileLen; t++)
                 {
-                    float* vj = v + (long)(start + t) * headDim;
+                    float* vj = v + (long)(kvOffset + start + t) * headDim;
                     var vSm = Vector256.Create(tileScores[t]);
                     int d = 0;
                     for (; d <= headDim - 8; d += 8)
@@ -409,7 +419,7 @@ public static class AttentionKernels
     public static unsafe void ScaledDotProductFlashScalar(
         float* q, float* k, float* v, float* output,
         int seqLen, int kvLen, int headDim, float scale, bool causal,
-        int qStride, int oStride, float alibiSlope)
+        int qStride, int oStride, float alibiSlope, int windowSize)
     {
         if ((uint)headDim > FlashMaxHeadDim)
             throw new ArgumentOutOfRangeException(nameof(headDim),
@@ -422,7 +432,9 @@ public static class AttentionKernels
         {
             float* qi = q + (long)i * qStride;
             int absQPos = queryBase + i;
+            int kvOffset = 0;
             int effKvLen = causal ? Math.Min(absQPos + 1, kvLen) : kvLen;
+            if (windowSize > 0) { kvOffset = Math.Max(0, absQPos - windowSize + 1); effKvLen -= kvOffset; }
 
             float mMax = float.NegativeInfinity;
             float lSum = 0f;
@@ -437,10 +449,10 @@ public static class AttentionKernels
                 float tileMax = float.NegativeInfinity;
                 for (int j = start; j < end; j++)
                 {
-                    float* kj = k + (long)j * headDim;
+                    float* kj = k + (long)(kvOffset + j) * headDim;
                     float dot = 0f;
                     for (int d = 0; d < headDim; d++) dot += qi[d] * kj[d];
-                    dot = dot * scale - alibiSlope * (absQPos - j);
+                    dot = dot * scale - alibiSlope * (absQPos - kvOffset - j);
                     tileScores[j - start] = dot;
                     if (dot > tileMax) tileMax = dot;
                 }
@@ -459,7 +471,7 @@ public static class AttentionKernels
                     pO[d] *= scaleOld;
                 for (int t = 0; t < tileLen; t++)
                 {
-                    float* vj = v + (long)(start + t) * headDim;
+                    float* vj = v + (long)(kvOffset + start + t) * headDim;
                     for (int d = 0; d < headDim; d++)
                         pO[d] += tileScores[t] * vj[d];
                 }
@@ -489,7 +501,7 @@ public static class AttentionKernels
     public static unsafe void ScaledDotProductFlashQ8_0AVX2(
         float* q, byte* kQuant, byte* vQuant, float* output,
         int seqLen, int kvLen, int headDim, float scale, bool causal,
-        int qStride, int oStride, float alibiSlope)
+        int qStride, int oStride, float alibiSlope, int windowSize)
     {
         if ((uint)headDim > FlashMaxHeadDim)
             throw new ArgumentOutOfRangeException(nameof(headDim),
@@ -504,7 +516,9 @@ public static class AttentionKernels
         {
             float* qi = q + (long)i * qStride;
             int absQPos = queryBase + i;
+            int kvOffset = 0;
             int effKvLen = causal ? Math.Min(absQPos + 1, kvLen) : kvLen;
+            if (windowSize > 0) { kvOffset = Math.Max(0, absQPos - windowSize + 1); effKvLen -= kvOffset; }
 
             float mMax = float.NegativeInfinity;
             float lSum = 0f;
@@ -519,7 +533,7 @@ public static class AttentionKernels
                 float tileMax = float.NegativeInfinity;
                 for (int j = start; j < end; j++)
                 {
-                    byte* kj_base = kQuant + (long)j * colStride;
+                    byte* kj_base = kQuant + (long)(kvOffset + j) * colStride;
                     double dot = 0;
                     for (int b = 0; b < nBlocks; b++)
                     {
@@ -545,7 +559,7 @@ public static class AttentionKernels
                             s += qi_b[k] * (vals[k] * d);
                         dot += s;
                     }
-                    float score = (float)dot * scale - alibiSlope * (absQPos - j);
+                    float score = (float)dot * scale - alibiSlope * (absQPos - kvOffset - j);
                     tileScores[j - start] = score;
                     if (score > tileMax) tileMax = score;
                 }
@@ -565,7 +579,7 @@ public static class AttentionKernels
 
                 for (int t = 0; t < tileLen; t++)
                 {
-                    byte* vj_base = vQuant + (long)(start + t) * colStride;
+                    byte* vj_base = vQuant + (long)(kvOffset + start + t) * colStride;
                     float sm = tileScores[t];
                     var vSm = Vector256.Create(sm);
                     for (int b = 0; b < nBlocks; b++)
@@ -607,7 +621,7 @@ public static class AttentionKernels
     public static unsafe void ScaledDotProductFlashQ8_0FMA(
         float* q, byte* kQuant, byte* vQuant, float* output,
         int seqLen, int kvLen, int headDim, float scale, bool causal,
-        int qStride, int oStride, float alibiSlope)
+        int qStride, int oStride, float alibiSlope, int windowSize)
     {
         if ((uint)headDim > FlashMaxHeadDim)
             throw new ArgumentOutOfRangeException(nameof(headDim),
@@ -622,7 +636,9 @@ public static class AttentionKernels
         {
             float* qi = q + (long)i * qStride;
             int absQPos = queryBase + i;
+            int kvOffset = 0;
             int effKvLen = causal ? Math.Min(absQPos + 1, kvLen) : kvLen;
+            if (windowSize > 0) { kvOffset = Math.Max(0, absQPos - windowSize + 1); effKvLen -= kvOffset; }
 
             float mMax = float.NegativeInfinity;
             float lSum = 0f;
@@ -637,7 +653,7 @@ public static class AttentionKernels
                 float tileMax = float.NegativeInfinity;
                 for (int j = start; j < end; j++)
                 {
-                    byte* kj_base = kQuant + (long)j * colStride;
+                    byte* kj_base = kQuant + (long)(kvOffset + j) * colStride;
                     double dot = 0;
                     for (int b = 0; b < nBlocks; b++)
                     {
@@ -663,7 +679,7 @@ public static class AttentionKernels
                             s += qi_b[k] * (vals[k] * d);
                         dot += s;
                     }
-                    float score = (float)dot * scale - alibiSlope * (absQPos - j);
+                    float score = (float)dot * scale - alibiSlope * (absQPos - kvOffset - j);
                     tileScores[j - start] = score;
                     if (score > tileMax) tileMax = score;
                 }
@@ -683,7 +699,7 @@ public static class AttentionKernels
 
                 for (int t = 0; t < tileLen; t++)
                 {
-                    byte* vj_base = vQuant + (long)(start + t) * colStride;
+                    byte* vj_base = vQuant + (long)(kvOffset + start + t) * colStride;
                     float sm = tileScores[t];
                     var vSm = Vector256.Create(sm);
                     for (int b = 0; b < nBlocks; b++)
@@ -725,7 +741,7 @@ public static class AttentionKernels
     public static unsafe void ScaledDotProductFlashQ8_0Scalar(
         float* q, byte* kQuant, byte* vQuant, float* output,
         int seqLen, int kvLen, int headDim, float scale, bool causal,
-        int qStride, int oStride, float alibiSlope)
+        int qStride, int oStride, float alibiSlope, int windowSize)
     {
         if ((uint)headDim > FlashMaxHeadDim)
             throw new ArgumentOutOfRangeException(nameof(headDim),
@@ -740,7 +756,9 @@ public static class AttentionKernels
         {
             float* qi = q + (long)i * qStride;
             int absQPos = queryBase + i;
+            int kvOffset = 0;
             int effKvLen = causal ? Math.Min(absQPos + 1, kvLen) : kvLen;
+            if (windowSize > 0) { kvOffset = Math.Max(0, absQPos - windowSize + 1); effKvLen -= kvOffset; }
 
             float mMax = float.NegativeInfinity;
             float lSum = 0f;
@@ -755,7 +773,7 @@ public static class AttentionKernels
                 float tileMax = float.NegativeInfinity;
                 for (int j = start; j < end; j++)
                 {
-                    byte* kj_base = kQuant + (long)j * colStride;
+                    byte* kj_base = kQuant + (long)(kvOffset + j) * colStride;
                     double dot = 0;
                     for (int b = 0; b < nBlocks; b++)
                     {
@@ -767,7 +785,7 @@ public static class AttentionKernels
                         for (int k = 0; k < blockEnd; k++)
                             dot += qi_b[k] * (vals[k] * d);
                     }
-                    float score = (float)dot * scale - alibiSlope * (absQPos - j);
+                    float score = (float)dot * scale - alibiSlope * (absQPos - kvOffset - j);
                     tileScores[j - start] = score;
                     if (score > tileMax) tileMax = score;
                 }
@@ -787,7 +805,7 @@ public static class AttentionKernels
 
                 for (int t = 0; t < tileLen; t++)
                 {
-                    byte* vj_base = vQuant + (long)(start + t) * colStride;
+                    byte* vj_base = vQuant + (long)(kvOffset + start + t) * colStride;
                     float sm = tileScores[t];
                     for (int b = 0; b < nBlocks; b++)
                     {
@@ -817,7 +835,7 @@ public static class AttentionKernels
     public static unsafe void ScaledDotProductFlashQ4_0AVX2(
         float* q, byte* kQuant, byte* vQuant, float* output,
         int seqLen, int kvLen, int headDim, float scale, bool causal,
-        int qStride, int oStride, float alibiSlope)
+        int qStride, int oStride, float alibiSlope, int windowSize)
     {
         if ((uint)headDim > FlashMaxHeadDim)
             throw new ArgumentOutOfRangeException(nameof(headDim),
@@ -833,7 +851,9 @@ public static class AttentionKernels
         {
             float* qi = q + (long)i * qStride;
             int absQPos = queryBase + i;
+            int kvOffset = 0;
             int effKvLen = causal ? Math.Min(absQPos + 1, kvLen) : kvLen;
+            if (windowSize > 0) { kvOffset = Math.Max(0, absQPos - windowSize + 1); effKvLen -= kvOffset; }
 
             float mMax = float.NegativeInfinity;
             float lSum = 0f;
@@ -848,7 +868,7 @@ public static class AttentionKernels
                 float tileMax = float.NegativeInfinity;
                 for (int j = start; j < end; j++)
                 {
-                    byte* kj_base = kQuant + (long)j * colStride;
+                    byte* kj_base = kQuant + (long)(kvOffset + j) * colStride;
                     double dot = 0;
                     for (int b = 0; b < nBlocks; b++)
                     {
@@ -901,7 +921,7 @@ public static class AttentionKernels
                             dot += qi_b[k] * ((nib - 8) * dScale);
                         }
                     }
-                    float score = (float)dot * scale - alibiSlope * (absQPos - j);
+                    float score = (float)dot * scale - alibiSlope * (absQPos - kvOffset - j);
                     tileScores[j - start] = score;
                     if (score > tileMax) tileMax = score;
                 }
@@ -921,7 +941,7 @@ public static class AttentionKernels
 
                 for (int t = 0; t < tileLen; t++)
                 {
-                    byte* vj_base = vQuant + (long)(start + t) * colStride;
+                    byte* vj_base = vQuant + (long)(kvOffset + start + t) * colStride;
                     float sm = tileScores[t];
                     var vSm = Vector256.Create(sm);
                     for (int b = 0; b < nBlocks; b++)
@@ -989,7 +1009,7 @@ public static class AttentionKernels
     public static unsafe void ScaledDotProductFlashQ4_0FMA(
         float* q, byte* kQuant, byte* vQuant, float* output,
         int seqLen, int kvLen, int headDim, float scale, bool causal,
-        int qStride, int oStride, float alibiSlope)
+        int qStride, int oStride, float alibiSlope, int windowSize)
     {
         if ((uint)headDim > FlashMaxHeadDim)
             throw new ArgumentOutOfRangeException(nameof(headDim),
@@ -1005,7 +1025,9 @@ public static class AttentionKernels
         {
             float* qi = q + (long)i * qStride;
             int absQPos = queryBase + i;
+            int kvOffset = 0;
             int effKvLen = causal ? Math.Min(absQPos + 1, kvLen) : kvLen;
+            if (windowSize > 0) { kvOffset = Math.Max(0, absQPos - windowSize + 1); effKvLen -= kvOffset; }
 
             float mMax = float.NegativeInfinity;
             float lSum = 0f;
@@ -1020,7 +1042,7 @@ public static class AttentionKernels
                 float tileMax = float.NegativeInfinity;
                 for (int j = start; j < end; j++)
                 {
-                    byte* kj_base = kQuant + (long)j * colStride;
+                    byte* kj_base = kQuant + (long)(kvOffset + j) * colStride;
                     double dot = 0;
                     for (int b = 0; b < nBlocks; b++)
                     {
@@ -1071,7 +1093,7 @@ public static class AttentionKernels
                             dot += qi_b[k] * ((nib - 8) * dScale);
                         }
                     }
-                    float score = (float)dot * scale - alibiSlope * (absQPos - j);
+                    float score = (float)dot * scale - alibiSlope * (absQPos - kvOffset - j);
                     tileScores[j - start] = score;
                     if (score > tileMax) tileMax = score;
                 }
@@ -1091,7 +1113,7 @@ public static class AttentionKernels
 
                 for (int t = 0; t < tileLen; t++)
                 {
-                    byte* vj_base = vQuant + (long)(start + t) * colStride;
+                    byte* vj_base = vQuant + (long)(kvOffset + start + t) * colStride;
                     float sm = tileScores[t];
                     var vSm = Vector256.Create(sm);
                     for (int b = 0; b < nBlocks; b++)
@@ -1159,7 +1181,7 @@ public static class AttentionKernels
     public static unsafe void ScaledDotProductFlashQ4_0Scalar(
         float* q, byte* kQuant, byte* vQuant, float* output,
         int seqLen, int kvLen, int headDim, float scale, bool causal,
-        int qStride, int oStride, float alibiSlope)
+        int qStride, int oStride, float alibiSlope, int windowSize)
     {
         if ((uint)headDim > FlashMaxHeadDim)
             throw new ArgumentOutOfRangeException(nameof(headDim),
@@ -1174,7 +1196,9 @@ public static class AttentionKernels
         {
             float* qi = q + (long)i * qStride;
             int absQPos = queryBase + i;
+            int kvOffset = 0;
             int effKvLen = causal ? Math.Min(absQPos + 1, kvLen) : kvLen;
+            if (windowSize > 0) { kvOffset = Math.Max(0, absQPos - windowSize + 1); effKvLen -= kvOffset; }
 
             float mMax = float.NegativeInfinity;
             float lSum = 0f;
@@ -1189,7 +1213,7 @@ public static class AttentionKernels
                 float tileMax = float.NegativeInfinity;
                 for (int j = start; j < end; j++)
                 {
-                    byte* kj_base = kQuant + (long)j * colStride;
+                    byte* kj_base = kQuant + (long)(kvOffset + j) * colStride;
                     double dot = 0;
                     for (int b = 0; b < nBlocks; b++)
                     {
@@ -1204,7 +1228,7 @@ public static class AttentionKernels
                             dot += qi_b[k] * ((nib - 8) * dScale);
                         }
                     }
-                    float score = (float)dot * scale - alibiSlope * (absQPos - j);
+                    float score = (float)dot * scale - alibiSlope * (absQPos - kvOffset - j);
                     tileScores[j - start] = score;
                     if (score > tileMax) tileMax = score;
                 }
@@ -1224,7 +1248,7 @@ public static class AttentionKernels
 
                 for (int t = 0; t < tileLen; t++)
                 {
-                    byte* vj_base = vQuant + (long)(start + t) * colStride;
+                    byte* vj_base = vQuant + (long)(kvOffset + start + t) * colStride;
                     float sm = tileScores[t];
                     for (int b = 0; b < nBlocks; b++)
                     {

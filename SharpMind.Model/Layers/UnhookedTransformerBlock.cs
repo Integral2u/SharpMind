@@ -9,13 +9,13 @@ public sealed class UnhookedTransformerBlock(int layerIdx, AttentionLayer attent
     NormLayer? postAttnNorm = null, NormLayer? postFfnNorm = null)
     : TransformerBlock(layerIdx, attention, ffn, norm1, norm2, postAttnNorm, postFfnNorm)
 {
-    public override Tensor<float> Forward(Tensor<float> x, IKVCache? cache, int positionOffset = 0, bool causal = true, IWorkspace? workspace = null)
+    public override Tensor<float> Forward(Tensor<float> x, IKVCache? cache, int positionOffset = 0, bool causal = true, IWorkspace? workspace = null, int windowSize = 0)
     {
         ThrowIfDisposed();
 
         var normed1 = _norm1.Forward(x, workspace);
 
-        var attnOut = _attention.Forward(normed1, positionOffset, causal, cache, workspace);
+        var attnOut = _attention.Forward(normed1, positionOffset, causal, cache, workspace, windowSize);
         normed1.Dispose();
 
         if (_postAttnNorm != null)

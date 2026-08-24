@@ -413,9 +413,11 @@ public static class SessionLauncher
 
         // MaxNewTokens is the per-turn generation length cap; MaxTokens is the
         // context window that ChatSession.TrimToFitContext budgets against.
-        // MaxTokens = MaxSeqLen (the model's full context window) so long
-        // conversations are kept intact rather than trimmed to a token count
-        // that silently drops the agent/tool system prompt and memory.
+        // MaxTokens = EffectiveInferenceCacheLength (the model's actual usable
+        // context window, which may be smaller than MaxSeqLen for sliding-window
+        // architectures) so long conversations are kept intact rather than
+        // trimmed to a token count that silently drops the agent/tool system
+        // prompt and memory.
         //
         // The generator prefills in chunks (see Prefill.ForwardLastLogitsChunked),
         // each sized to fit the workspace's ~128-token prefill budget, so a full
@@ -426,12 +428,13 @@ public static class SessionLauncher
         // "Prefilling NN.NN%" via IGenerator.PrefillProgress.
         //
         // Options.MaxTokens opts back into a truncated context window (clamped to
-        // [1, MaxSeqLen]) to mimic the pre-restore fast-prefill behavior; when null,
-        // the full MaxSeqLen context is used.
+        // [1, EffectiveInferenceCacheLength]) to mimic the pre-restore fast-prefill
+        // behavior; when null, the full EffectiveInferenceCacheLength context is used.
         session.MaxNewTokens = options.Generation.MaxNewTokens;
+        int effectiveCacheLen = loaded.Model.Config.EffectiveInferenceCacheLength;
         session.MaxTokens = options.MaxTokens is int maxTokens && maxTokens > 0
-            ? Math.Min(maxTokens, loaded.Model.Config.MaxSeqLen)
-            : loaded.Model.Config.MaxSeqLen;
+            ? Math.Min(maxTokens, effectiveCacheLen)
+            : effectiveCacheLen;
         session.Temperature = options.Sampling.Temperature;
         session.TopK = options.Sampling.TopK;
         session.TopP = options.Sampling.TopP;

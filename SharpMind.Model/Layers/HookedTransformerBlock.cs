@@ -14,13 +14,13 @@ public sealed class HookedTransformerBlock(int layerIdx, AttentionLayer attentio
 
     public override void SetActivationHook(IActivationHook? hook) => _hook = hook;
 
-    public override Tensor<float> Forward(Tensor<float> x, IKVCache? cache, int positionOffset = 0, bool causal = true, IWorkspace? workspace = null)
+    public override Tensor<float> Forward(Tensor<float> x, IKVCache? cache, int positionOffset = 0, bool causal = true, IWorkspace? workspace = null, int windowSize = 0)
     {
         ThrowIfDisposed();
 
         var normed1 = _norm1.Forward(x, workspace);
         _hook?.OnPreAttention(_layerIdx, normed1);
-        var attnOut = _attention.Forward(normed1, positionOffset, causal, cache, workspace);
+        var attnOut = _attention.Forward(normed1, positionOffset, causal, cache, workspace, windowSize);
         normed1.Dispose();
 
         if (_postAttnNorm != null)

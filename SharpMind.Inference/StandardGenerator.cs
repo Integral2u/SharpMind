@@ -66,7 +66,7 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
         else
         {
             int numLayers = model.Config.NumLayers;
-            int maxSeqLen = model.Config.MaxSeqLen;
+            int maxSeqLen = model.Config.EffectiveInferenceCacheLength;
             int numKvHeads = model.Config.NumKvHeads;
             int headDim   = model.Config.HeadDim;
 
@@ -128,6 +128,10 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
             int posOffset = _caches[0].Length;
             // Someone else moved the cache under us: stop vouching for it.
             if (_cacheTokens is not null && _cacheTokens.Count != posOffset) _cacheTokens = null;
+            // Prompt exceeds cache capacity — Prefill will trim mid-loop;
+            // invalidate prefix tracking up-front.
+            if (_cacheTokens is not null && posOffset + promptIds.Length > _caches[0].MaxSeqLen)
+                _cacheTokens = null;
             logitsTensor = Prefill.ForwardLastLogitsChunked(_model, _caches, promptIds, _workspace, PrefillProgress);
             _cacheTokens?.AddRange(promptIds);
 
@@ -224,6 +228,8 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
                     int keep = slidingWindowSize > 0
                         ? slidingWindowSize
                         : cache0.MaxSeqLen / 2;
+                    if (keep >= cache0.MaxSeqLen)
+                        keep = Math.Max(1, cache0.MaxSeqLen / 2);
                     for (int i = 0; i < cachesLen; i++)
                         _caches[i].TrimToLast(keep);
                     // Entries now sit at positions they were not computed for;

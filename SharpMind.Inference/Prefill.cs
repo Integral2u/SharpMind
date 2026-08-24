@@ -65,6 +65,23 @@ internal static class Prefill
             for (int start = 0; start < promptIds.Length; start += MaxChunkLength)
             {
                 int len = Math.Min(MaxChunkLength, promptIds.Length - start);
+
+                // Sliding-window safety: when the next chunk would overflow
+                // the KV cache, trim to half capacity so there is room to
+                // continue without throwing. This discards early prompt tokens
+                // the window can no longer hold — correct for SWA models.
+                if (caches[0].Length + len > caches[0].MaxSeqLen)
+                {
+                    int keep = Math.Max(1, caches[0].MaxSeqLen / 2);
+                    for (int i = 0; i < caches.Length; i++)
+                        caches[i].TrimToLast(keep);
+                }
+
+                // Cap chunk length to remaining capacity after any trim.
+                int available = caches[0].MaxSeqLen - caches[0].Length;
+                if (len > available) len = available;
+                if (len <= 0) break;
+
                 logits?.Dispose();
                 workspace.Reset();
                 logits = RunChunk(model, caches, promptIds, start, len, workspace);
