@@ -185,6 +185,17 @@ public sealed class MainWindow : Window
         _content.SetNeedsDisplay();
     }
 
+    /// <summary>
+    /// Removes the current content without disposing it. Used when the
+    /// outgoing view is long-lived and will be re-added later (e.g.
+    /// <see cref="ChatView"/> instances stored in <see cref="ChatSessionState"/>).
+    /// </summary>
+    private void RemoveContent()
+    {
+        _content.RemoveAll();
+        _content.SetNeedsDisplay();
+    }
+
     private void ShowWelcome()
     {
         var lastSession = FindLastSession();
@@ -814,7 +825,15 @@ public sealed class MainWindow : Window
     private void ShowChat()
     {
         if (_currentSession is null) return;
-        SwapContent(_currentSession.View);
+        RemoveContent();
+        var view = _currentSession.View;
+        _content.Add(view);
+        view.Width = Dim.Fill();
+        view.Height = Dim.Fill();
+        view.X = 0;
+        view.Y = 0;
+        _content.FocusFirst();
+        _content.SetNeedsDisplay();
         // Defer transcript rebuild to the next main-loop tick so the view
         // is fully laid out and parented. A direct call here can race with
         // Terminal.Gui's first draw of the empty ChatView, leaving the
