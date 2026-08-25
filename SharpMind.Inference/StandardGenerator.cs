@@ -193,7 +193,7 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
                 if (stopTokenIds.Contains(nextId)) break;
 
                 _decodeTokenScratch[0] = nextId;
-                string fragment = _tokenizer.Decode(_decodeTokenScratch.AsSpan(0, 1), skipSpecials: true);
+                string fragment = _tokenizer.Decode(_decodeTokenScratch.AsSpan(0, 1), skipSpecials: true).Replace("\uFFFD", "");
                 decodedSoFar.Append(fragment);
 
                 bool hitStop = false;
