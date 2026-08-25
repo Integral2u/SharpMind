@@ -6,9 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.0.5.0] - 2026-08-26
+
 ### Added
 
-- **Ministral-3-3B-Instruct support** — full sliding-window attention (SWA) for ministral/mistral3 architectures. All 12 SDPA kernels updated with per-layer window masking; KV-cache capped to the model's sliding window; RoPE tables sized accordingly; GgufLoader fallback defaults to 4096 when the GGUF omits the key. Branch: `feature/ministral-support`.
+- **SharpMind.Server** — OpenAI-compatible HTTP server (`SharpMind.Server` class library + `SharpMind.Server.CLI` executable). Exposes `/v1/chat/completions` (streaming and non-streaming), `/v1/models`, `/v1/models/loaded`, `/v1/models/{model}`, `/v1/models/{model}/load`, `DELETE /v1/models/{model}`, `/v1/health`, and `/v1/shutdown`. Models load lazily on first request, cache with ref-counting, and stay resident until explicitly unloaded. CLI spawns the service as an orphaned process and provides an interactive REPL with `/model`, `/models`, `/loaded`, `/unload`, `/unloadall`, `/clear`, `/restart`, `/stop`, `/exit` commands. Flags: `--models`, `--host`, `--port`, `--model` (comma-separated), `--stop`, `--nocli`, `--no-files`, `--no-network`.
+- **Ministral-3-3B-Instruct support** — full sliding-window attention (SWA) for ministral/mistral3 architectures. All 12 SDPA kernels updated with per-layer window masking; KV-cache capped to the model's sliding window; RoPE tables sized accordingly; GgufLoader fallback defaults to 4096 when the GGUF omits the key.
+- `IChatSession.StopStrings` property — allows callers to set text-based stop sequences on a session. `ChatSession` merges formatter defaults with session-level stop strings into `GenerationConfig.StopStrings` at generation time.
+- `IChatPromptFormatter.MergeStopStrings` helper in `ChatSession` — deduplicates formatter default stop strings with caller-supplied stop strings.
+
+### Fixed
+
+- **Multi-part message content passed as raw JSON** — `OpenAiMapper.ExtractTextContent` now parses JSON array content (`[{"type":"text","text":"..."}]`) sent by modern OpenAI client libraries, extracting and concatenating text parts instead of passing the raw JSON string to the model as if it were the user's message.
+- **Stop sequences silently ignored** — `OpenAiMapper.ApplyToSession` no longer attempts `int.TryParse` on stop strings (which silently dropped all non-numeric values). Stop strings from the OpenAI request are now mapped to `IChatSession.StopStrings` and merged into `GenerationConfig.StopStrings` at generation time.
+- **Progress tick display** — service-side `CreateProgress` now calls `Output.Flush()` after writing `\r`-prefixed tick text, ensuring data hits the pipe immediately. CLI-side `PipeStreamAsync` now flushes accumulated text at the end of each read batch, so the final progress tick (e.g. `100.00%`) is always visible instead of being stuck in an unflushed buffer.
+- **Progress line overlap** — status messages following a tick (e.g. "Creating transformer...") now advance past the tick line with `\n` before writing, preventing them from appearing on the same line as the progress percentage.
+- **Prefill progress leaked to client** — the streaming handler in `SharpMindService` now skips `ChatStatus.Updating` entries (prefill progress like "Prefilling 92.75%") so they are not sent as SSE content to the CLI client.
 
 ## [1.0.4.0] - 2026-08-23
 
@@ -133,6 +146,7 @@ Initial release of SharpMind.
 - **JigSaw kernel dispatch** — pluggable hardware-specific kernel variants selected at runtime without `if`/`switch` ladders.
 
 [Unreleased]: https://github.com/Integral2u/SharpMind
+[1.0.5.0]: https://github.com/Integral2u/SharpMind/releases/tag/v1.0.5.0
 [1.0.4.0]: https://github.com/Integral2u/SharpMind/releases/tag/v1.0.4.0
 [1.0.3.0]: https://github.com/Integral2u/SharpMind/releases/tag/v1.0.3.0
 [1.0.0.0]: https://github.com/Integral2u/SharpMind/releases/tag/v1.0.0.0

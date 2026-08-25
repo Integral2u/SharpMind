@@ -304,6 +304,8 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     public int RepetitionWindow { get; set; } = 32;
     /// <summary>Token IDs that stop generation. Defaults to EOS if not set.</summary>
     public IReadOnlyList<int>? StopTokenIds { get; set; }
+    /// <summary>Text strings that stop generation when matched in the decoded output.</summary>
+    public IReadOnlyList<string>? StopStrings { get; set; }
     public bool ShowThinking { get; set; } = true;
     /// <summary>
     /// Value of the <c>enable_thinking</c> chat-template variable (checked by
@@ -592,6 +594,14 @@ private void ThrowIfDisposed()
         return result.TrimEnd('\uFFFD', '\u0000', '\u0001', '\u0002', '\u0003').Trim();
     }
 
+    private static IReadOnlyList<string> MergeStopStrings(
+        IReadOnlyList<string>? formatter, IReadOnlyList<string>? session)
+    {
+        if (session is { Count: > 0 } && formatter is { Count: > 0 })
+            return formatter.Concat(session).Distinct().ToList();
+        return session ?? formatter ?? [];
+    }
+
     /// <summary>
     /// Returns true when <paramref name="text"/> contains a valid agent tool-call
     /// JSON object, i.e. has both a <c>tool</c> string field and an
@@ -736,7 +746,7 @@ private void ThrowIfDisposed()
             RepetitionPenalty = RepetitionPenalty,
             RepetitionWindow = RepetitionWindow,
             StopTokenIds = StopTokenIds ?? _tokenizer.GetEndOfGenerationIds(),
-            StopStrings = _formatter?.DefaultStopStrings ?? [],
+            StopStrings = MergeStopStrings(_formatter?.DefaultStopStrings, StopStrings),
             Stream = true,
         };
 
@@ -869,7 +879,7 @@ private void ThrowIfDisposed()
                 RepetitionPenalty = RepetitionPenalty,
                 RepetitionWindow = RepetitionWindow,
                 StopTokenIds = StopTokenIds ?? _tokenizer.GetEndOfGenerationIds(),
-                StopStrings = _formatter?.DefaultStopStrings ?? [],
+                StopStrings = MergeStopStrings(_formatter?.DefaultStopStrings, StopStrings),
                 SlidingWindowSize = 0,
                 Stream = true,
             };

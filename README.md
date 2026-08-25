@@ -382,6 +382,105 @@ The only additional dependency is `Microsoft.Extensions.AI.Abstractions` — no 
 
 ---
 
+## OpenAI-compatible HTTP server
+
+`SharpMind.Server` exposes an HTTP API wire-compatible with the OpenAI chat completions spec, so any OpenAI client library (or raw `curl`) can talk to a SharpMind-backed model. It ships as two projects:
+
+| Project | Role |
+|---|---|
+| `SharpMind.Server` | Class library — `SharpMindService`, `ModelManager`, `SessionFactory`, and the ASP.NET endpoint map. |
+| `SharpMind.Server.CLI` | Executable — spawns the service as an orphaned process, provides an interactive REPL, and forwards chat messages over HTTP. |
+
+### Quick start
+
+```
+# Start the server with a model directory
+sharpmind-server --models C:\Models
+
+# Start and preload a specific model
+sharpmind-server --models C:\Models --model Qwen3-0.6B-Q8_0.gguf
+
+# Connect to an already-running service
+sharpmind-server
+```
+
+The CLI spawns the service process, waits for the health endpoint, then drops into a REPL:
+
+```
+you (Qwen3-0.6B-Q8_0.gguf)> Hello!
+assistant> Hello! How can I help you today?
+you> /models                  # list available models on disk
+you> /loaded                  # list models loaded in memory
+you> /model SmolLM-135M.Q4_K_M.gguf   # switch model (unloads previous)
+you> /unload                  # unload current model from memory
+you> /stop                    # shut down the service and exit
+```
+
+### CLI flags
+
+| Flag | Description |
+|---|---|
+| `--models <path>` | Directory containing `.gguf` model files (default: `~/SharpMind/Models`) |
+| `--host <host>` | Hostname or IP to bind to (default: `localhost`) |
+| `--port <port>` | HTTP port to listen on (default: `11435`) |
+| `--model <names>` | Model(s) to preload at startup (comma-separated for multiple) |
+| `--stop` | Shut down a running service and exit |
+| `--nocli` | Process args, start service, then exit without REPL |
+| `--no-files` | Disable file IO for tool calls (read/write only) |
+| `--no-network` | Disable network IO for tool calls |
+| `-h, --help` | Show help |
+
+### API endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/v1/health` | Returns `{"status":"ok"}` when the service is up. |
+| `POST` | `/v1/chat/completions` | OpenAI-compatible chat completion (streaming and non-streaming). |
+| `GET` | `/v1/models` | List all `.gguf` models found on disk. |
+| `GET` | `/v1/models/loaded` | List models currently loaded in memory. |
+| `GET` | `/v1/models/{model}` | Get info for a specific model. |
+| `POST` | `/v1/models/{model}/load` | Load a model into memory. |
+| `DELETE` | `/v1/models/{model}` | Unload a model from memory. |
+| `POST` | `/v1/shutdown` | Gracefully stop the service. |
+
+### Example: curl
+
+```bash
+# Non-streaming
+curl http://localhost:11435/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"Qwen3-0.6B-Q8_0.gguf","messages":[{"role":"user","content":"Hello"}]}'
+
+# Streaming
+curl http://localhost:11435/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"Qwen3-0.6B-Q8_0.gguf","messages":[{"role":"user","content":"Hello"}],"stream":true}'
+```
+
+### Example: Python (openai library)
+
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="http://localhost:11435/v1", api_key="not-needed")
+
+response = client.chat.completions.create(
+    model="Qwen3-0.6B-Q8_0.gguf",
+    messages=[{"role": "user", "content": "What is 2+2?"}],
+)
+print(response.choices[0].message.content)
+```
+
+### Architecture notes
+
+- **Lazy loading** — models are loaded on first request (or at startup with `--model`). The `ModelManager` scans the models directory at startup and reports available models immediately; weights are loaded on demand.
+- **Ref-counted caching** — each `/v1/chat/completions` request increments the model's ref count; when the response completes, the ref count decrements. Models stay resident until explicitly unloaded (`DELETE /v1/models/{model}`) or the service stops.
+- **Session-per-request** — each chat completion creates a fresh `IChatSession`. Conversation history from the `messages` array is replayed via `AddMessage` before generation.
+- **Permission gating** — `--no-files` and `--no-network` restrict tool calls at the session level. The flags are forwarded from the CLI to the service process.
+- **Streaming** — uses `text/event-stream` (SSE) with the standard `data: {...}` / `data: [DONE]` framing. Prefill progress and other status-only entries are filtered out; only actual token content is streamed to the client.
+
+---
+
 ## Also included
 
 - **Agent framework** (`SharpMind.Inference.Agent`) — tool-calling with a three-state permission model (`Never` / `Ask` / `Always`), tool categories, and auto-named sub-agents (temperature → a "Greek tier" naming scheme, e.g. `Athena-Alpha` at low temperature, `Prometheus-Epsilon` at high).
@@ -390,6 +489,7 @@ The only additional dependency is `Microsoft.Extensions.AI.Abstractions` — no 
 - **`SharpMind.GPU`** — ILGPU-backed kernels for activations, norms, and quantized ops, isolated from the core so the CPU path has zero GPU dependency.
 - **`SharpMind.Extensions.AI`** — `IChatClient` adapter for the `Microsoft.Extensions.AI` ecosystem. Wraps any SharpMind `IChatSession` into a standard `IChatClient`, routes MEAI tools through SharpMind's agent loop, and maps chat types bidirectionally — see [IChatClient integration](#ichatclient-integration-microsoftextensionsai).
 - **`SharpMind.Extensions.Tools`** — optional common tools (grep, git, datetime) packaged as a plugin DLL. Auto-discovered from the CUI's `plugins/` folder at runtime — no compile-time dependency required. The CUI build copies it there automatically.
+- **`SharpMind.Server`** — OpenAI-compatible HTTP server. Serves `/v1/chat/completions` (streaming and non-streaming), `/v1/models`, and related endpoints. Models load lazily, cache with ref-counting, and stay resident until explicitly unloaded. Ships as a class library (`SharpMind.Server`) and a CLI executable (`SharpMind.Server.CLI`) with an interactive REPL, permission gating (`--no-files`, `--no-network`), and multi-model management.
 - **`SharpMind.Benchmarks`** — evaluation kernels for measuring model/generator performance.
 
 ---
@@ -408,6 +508,8 @@ SharpMind.GPU           ILGPU-backed GPU kernels (optional)
 SharpMind.CUI           Terminal chat application
 SharpMind.Extensions.AI Microsoft.Extensions.AI IChatClient adapter
 SharpMind.Extensions.Tools Optional common tools (grep, git, datetime) — plugin DLL
+SharpMind.Server        OpenAI-compatible HTTP server (class library)
+SharpMind.Server.CLI    Server CLI executable + interactive REPL
 SharpMind.Samples       Example programs + training sample data (Shakespeare corpus, checkpoint, job config)
 SharpMind.Benchmarks    Evaluation harness
 SharpMind.Tests         Test suite
@@ -424,6 +526,7 @@ See [CHANGELOG.md](CHANGELOG.md) for release history.
 - [x] Additional Model Support — Ministral-3-3B-Instruct (sliding window attention) now supported
 - [ ] Optimizations
 - [x] Microsoft IChatClient and or other services. — shipped as `SharpMind.Extensions.AI`
+- [x] OpenAI Protocol Server. — shipped as `SharpMind.Server` and `SharpMind.Server.CLI`
 - [x] Common tools, GREP, GIT etc — shipped as `SharpMind.Extensions.Tools`
 - [x] Limit breaker(Project Goku), int.MaxValue element-count limit workaround. Solutions not excuses. — shipped as `MemoryHelpers`, `BigArray<T>`, `IWorkspace`, `BigWorkspace`
 

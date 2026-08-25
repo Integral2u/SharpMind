@@ -298,7 +298,7 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
 
                     scratchOne[0] = tid;
                     string fragment = _tokenizer.Decode(
-                        scratchOne.AsSpan(0, 1), skipSpecials: true);
+                        scratchOne.AsSpan(0, 1), skipSpecials: true).Replace("\uFFFD", "");
                     decodedSoFar.Append(fragment);
 
                     ReadOnlySpan<char> decoded = decodedSoFar.ToString().AsSpan();
@@ -342,7 +342,7 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
 
                     scratchOne[0] = bonus;
                     string bonusFragment = _tokenizer.Decode(
-                        scratchOne.AsSpan(0, 1), skipSpecials: true);
+                        scratchOne.AsSpan(0, 1), skipSpecials: true).Replace("\uFFFD", "");
                     decodedSoFar.Append(bonusFragment);
 
                     if (genCfg.Stream && bonusFragment.Length > 0)
@@ -448,7 +448,7 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
             if (!genCfg.Stream)
             {
                 string full = _tokenizer.Decode(
-                    CollectionsMarshal.AsSpan(generatedIds), skipSpecials: true);
+                    CollectionsMarshal.AsSpan(generatedIds), skipSpecials: true).Replace("\uFFFD", "");
                 if (full.Length > 0)
                     yield return full;
             }

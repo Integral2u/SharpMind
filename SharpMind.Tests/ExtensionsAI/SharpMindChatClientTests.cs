@@ -148,6 +148,7 @@ public sealed class SharpMindChatClientTests
         public float RepetitionPenalty { get; set; }
         public int RepetitionWindow { get; set; }
         public IReadOnlyList<int>? StopTokenIds { get; set; }
+        public IReadOnlyList<string>? StopStrings { get; set; }
         public bool ShowThinking { get; set; }
         public bool EnableThinking { get; set; }
         public string UserName { get; set; } = "User";
@@ -168,6 +169,12 @@ public sealed class SharpMindChatClientTests
         public void InitializeChat(IProgress<float>? progress = null) { }
         public SmChatSessionSnapshot GetSnapshot() => new() { History = [] };
         public void LoadSnapshot(SmChatSessionSnapshot snapshot) { }
+
+        public async IAsyncEnumerable<SmChatStreamEntry> GetResponseStreamAsync(string userInput, SmChatArtifact[]? artifacts = null, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+        {
+            await Task.CompletedTask;
+            yield break;
+        }
 
         public Task<SmChatMessage[]> StartChatAsync(
             Func<SmChatMessage> prompt,

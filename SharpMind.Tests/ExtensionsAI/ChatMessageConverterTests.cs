@@ -131,6 +131,7 @@ public sealed class ChatMessageConverterTests
         public float RepetitionPenalty { get; set; }
         public int RepetitionWindow { get; set; }
         public IReadOnlyList<int>? StopTokenIds { get; set; }
+        public IReadOnlyList<string>? StopStrings { get; set; }
         public bool ShowThinking { get; set; }
         public bool EnableThinking { get; set; }
         public string UserName { get; set; } = "User";
@@ -150,6 +151,11 @@ public sealed class ChatMessageConverterTests
         public void InitializeChat(IProgress<float>? progress = null) { }
         public SmChatSessionSnapshot GetSnapshot() => new() { History = [] };
         public void LoadSnapshot(SmChatSessionSnapshot snapshot) { }
+        public async IAsyncEnumerable<SmChatStreamEntry> GetResponseStreamAsync(string userInput, SmChatArtifact[]? artifacts = null, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+        {
+            await Task.CompletedTask;
+            yield break;
+        }
         public Task<SmChatMessage[]> StartChatAsync(Func<Task<SmChatMessage>> prompt, Action<SmChatStreamEntry> response, CancellationToken token = default) => Task.FromResult(Array.Empty<SmChatMessage>());
         public Task<SmChatMessage[]> StartChatAsync(Func<SmChatMessage> prompt, Action<SmChatStreamEntry> response, CancellationToken token = default) => Task.FromResult(Array.Empty<SmChatMessage>());
         public Task<SmChatMessage[]> StartChatAsync(Func<Task<string>> prompt, Action<string> response, CancellationToken token = default) => Task.FromResult(Array.Empty<SmChatMessage>());

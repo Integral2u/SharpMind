@@ -251,7 +251,7 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
             }
 
             if (!genCfg.Stream)
-                yield return _tokenizer.Decode(CollectionsMarshal.AsSpan(_generatedIds), skipSpecials: true);
+                yield return _tokenizer.Decode(CollectionsMarshal.AsSpan(_generatedIds), skipSpecials: true).Replace("\uFFFD", "");
         }
         finally
         {

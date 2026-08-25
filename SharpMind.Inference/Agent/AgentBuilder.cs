@@ -326,7 +326,7 @@ namespace SharpMind.Inference.Agent
                 var copy = new JsonObject { ["name"] = tool["name"]!.DeepClone() };
 
                 if (tool["description"] is JsonValue d && d.GetValue<string>().Length <= 140)
-                    copy["description"] = d;
+                    copy["description"] = d.DeepClone();
                 else
                     detailDropped++;
 

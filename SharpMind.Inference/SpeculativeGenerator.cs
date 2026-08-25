@@ -180,7 +180,7 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
                         CumulativeTokensPerSecond = rateTracker.CumulativeTokensPerSecond;
                         tokensAccepted++;
 
-                        string fragment = _tokenizer.Decode(_decodeTokenScratch.AsSpan(0, 1), skipSpecials: true);
+                        string fragment = _tokenizer.Decode(_decodeTokenScratch.AsSpan(0, 1), skipSpecials: true).Replace("\uFFFD", "");
                         decodedSoFar.Append(fragment);
 
                         bool hitStop = false;
@@ -228,7 +228,7 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
                         CumulativeTokensPerSecond = rateTracker.CumulativeTokensPerSecond;
 
                         _decodeTokenScratch[0] = correctionToken;
-                        string corrFragment = _tokenizer.Decode(_decodeTokenScratch.AsSpan(0, 1), skipSpecials: true);
+                        string corrFragment = _tokenizer.Decode(_decodeTokenScratch.AsSpan(0, 1), skipSpecials: true).Replace("\uFFFD", "");
                         decodedSoFar.Append(corrFragment);
 
                         if (genCfg.Stream && corrFragment.Length > 0)
@@ -269,7 +269,7 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
                     CumulativeTokensPerSecond = rateTracker.CumulativeTokensPerSecond;
 
                     _decodeTokenScratch[0] = bonusToken;
-                    string bonusFragment = _tokenizer.Decode(_decodeTokenScratch.AsSpan(0, 1), skipSpecials: true);
+                    string bonusFragment = _tokenizer.Decode(_decodeTokenScratch.AsSpan(0, 1), skipSpecials: true).Replace("\uFFFD", "");
                     decodedSoFar.Append(bonusFragment);
 
                     if (genCfg.Stream && bonusFragment.Length > 0)
@@ -292,7 +292,7 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
             }
 
             if (!genCfg.Stream && decodedSoFar.Length > 0)
-                yield return _tokenizer.Decode(CollectionsMarshal.AsSpan(generatedIds), skipSpecials: true);
+                yield return _tokenizer.Decode(CollectionsMarshal.AsSpan(generatedIds), skipSpecials: true).Replace("\uFFFD", "");
         }
         finally
         {

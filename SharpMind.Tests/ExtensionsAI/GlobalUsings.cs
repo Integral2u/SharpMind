@@ -3,6 +3,7 @@ global using SmChatRole = SharpMind.Inference.Chat.ChatRole;
 global using SmChatStatus = SharpMind.Inference.Chat.ChatStatus;
 global using SmChatStreamEntry = SharpMind.Inference.Chat.ChatStreamEntry;
 global using SmChatSessionSnapshot = SharpMind.Inference.Chat.ChatSessionSnapshot;
+global using SmChatArtifact = SharpMind.Inference.Chat.ChatArtifact;
 global using SmIChatSession = SharpMind.Inference.Chat.IChatSession;
 global using SmIChatPromptFormatter = SharpMind.Inference.Chat.PromptFormatters.IChatPromptFormatter;
 global using MeChatMessage = Microsoft.Extensions.AI.ChatMessage;

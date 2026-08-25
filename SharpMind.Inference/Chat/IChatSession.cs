@@ -20,6 +20,7 @@ public interface IChatSession : IAsyncDisposable
     public float RepetitionPenalty { get; set; }
     public int RepetitionWindow { get; set; }
     public IReadOnlyList<int>? StopTokenIds { get; set; }
+    public IReadOnlyList<string>? StopStrings { get; set; }
     public bool ShowThinking { get; set; }
     public bool EnableThinking { get; set; }
     public string UserName { get; set; }
@@ -53,6 +54,16 @@ public interface IChatSession : IAsyncDisposable
     public void InitializeChat(IProgress<float>? progress = null);
     public ChatSessionSnapshot GetSnapshot();
     public void LoadSnapshot(ChatSessionSnapshot snapshot);
+
+    /// <summary>
+    /// Generate a single response to <paramref name="userInput"/>.
+    /// The user message is added to history automatically.
+    /// </summary>
+    public IAsyncEnumerable<ChatStreamEntry> GetResponseStreamAsync(
+        string userInput,
+        ChatArtifact[]? artifacts = null,
+        CancellationToken ct = default);
+
     public Task<ChatMessage[]> StartChatAsync(Func<Task<ChatMessage>> prompt, Action<ChatStreamEntry> response, CancellationToken token = default);
     public Task<ChatMessage[]> StartChatAsync(Func<ChatMessage> prompt, Action<ChatStreamEntry> response, CancellationToken token = default);
     public Task<ChatMessage[]> StartChatAsync(Func<Task<string>> prompt, Action<string> response, CancellationToken token = default);

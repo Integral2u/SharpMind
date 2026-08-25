@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <ApplicationIcon>SharpMindDark.ico</ApplicationIcon>
+    <PublishAot>False</PublishAot>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Content Include="SharpMindDark.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SharpMind.Server\SharpMind.Server.csproj" />
+  </ItemGroup>
+
+</Project>
