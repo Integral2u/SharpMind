@@ -653,24 +653,12 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
             if (target != null)
             {
                 target.Data.Clear();
-                if (target == weights.LmHeadWeight && info.Shape.Length == 2)
-                {
-                    // The head's data is [in, vocab] row-major in both file flavors (the
-                    // SMM exporter transposes on write, matching foreign GGUFs) — but the
-                    // header order differs: foreign files declare [in, vocab], our own
-                    // SMM->GGUF export declares [vocab, in]. Pick the dims by role, not
-                    // position, or the transpose builds a scrambled head.
-                    int d0 = (int)info.Shape[0], d1 = (int)info.Shape[1];
-                    bool vocabFirst = d0 == _config.VocabSize && d1 != _config.VocabSize;
-                    int ggufIn = vocabFirst ? d1 : d0, ggufOut = vocabFirst ? d0 : d1;
-                    for (int i = 0; i < ggufIn; i++)
-                        for (int j = 0; j < ggufOut; j++)
-                            target.Data[j * ggufIn + i] = buffer[i * ggufOut + j];
-                }
-                else
-                {
-                    buffer.AsSpan(0, count).CopyTo(target.Data);
-                }
+                // The head's data is [vocab, in] row-major in every real file — foreign
+                // GGUFs store it exactly like the embedding (only the header order
+                // differs: [in, vocab]), and SmmTrainingExporter now writes it verbatim
+                // too. The transpose this branch used to do scrambled every float head;
+                // it went unnoticed because serving consumes the raw bytes instead.
+                buffer.AsSpan(0, count).CopyTo(target.Data);
             }
             else if (block != null)
             {
