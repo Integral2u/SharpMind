@@ -69,6 +69,10 @@ public static class TokenizerFile
                      .OrderBy(m => m.Rank)
                      .Select(m => JsonValue.Create($"{m.Left} {m.Right}")!)]),
         };
+        if (model.GgufPreTokenizer is { Length: > 0 } pre)
+            obj["gguf_pre"] = pre;
+        if (model.GgufTokenizerModel is { Length: > 0 } ggufModel)
+            obj["gguf_model"] = ggufModel;
 
         return obj.ToJsonString(JsonOpts);
     }
@@ -132,7 +136,11 @@ public static class TokenizerFile
         bool charMode = root.TryGetProperty("kind", out var kindEl)
                         && kindEl.GetString() == "char";
 
-        return new BpeModel(vocab, merges, preTokeniser, charMode: charMode);
+        return new BpeModel(vocab, merges, preTokeniser, charMode: charMode)
+        {
+            GgufPreTokenizer = root.TryGetProperty("gguf_pre", out var preEl) ? preEl.GetString() : null,
+            GgufTokenizerModel = root.TryGetProperty("gguf_model", out var modelEl) ? modelEl.GetString() : null,
+        };
     }
 
     // Helpers

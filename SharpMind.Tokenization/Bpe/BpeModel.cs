@@ -37,4 +37,14 @@ public sealed class BpeModel
     /// character→id map; there are no merge rules in char mode.
     /// </summary>
     public bool IsCharMode { get; }
+
+    /// <summary>
+    /// The source GGUF's <c>tokenizer.ggml.pre</c> (e.g. "qwen2", "llama-bpe"), carried
+    /// through the native JSON so an SMM→GGUF export stays loadable by llama.cpp, which
+    /// picks its pre-tokenizer regex from this key. Null when unknown.
+    /// </summary>
+    public string? GgufPreTokenizer { get; set; }
+
+    /// <summary>The source GGUF's <c>tokenizer.ggml.model</c> ("gpt2", "llama", ...). Null when unknown.</summary>
+    public string? GgufTokenizerModel { get; set; }
 }

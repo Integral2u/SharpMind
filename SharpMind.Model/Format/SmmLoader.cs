@@ -280,8 +280,9 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
 
         if (isLmHead && !weights.HasLmHead)
         {
-            // The input dim is whichever shape entry is not the vocab size — our own
-            // exports declare [vocab, in], canonical GGUF-derived files [in, vocab].
+            // The input dim is whichever shape entry is not the vocab size — exports
+            // before 2026-08-25 declare [vocab, in]; canonical GGUF order (and ours
+            // since then) is [in, vocab]. Data layout is [vocab][in] either way.
             long ggufIn = entry.Shape[0];
             if (entry.Shape.Length > 1 && ggufIn == _config.VocabSize) ggufIn = entry.Shape[1];
             int lmRows = TensorLoadHelper.CheckedInt(_config.VocabSize, "VocabSize for LmHead");

@@ -106,7 +106,7 @@ public static class SmmToGufConverter
             kv.Add(new GgufKvPair { Key = $"{arch}.attention.value_length", Value = (uint)valLen });
         if (config.RopeDim is { } ropeDim)
             kv.Add(new GgufKvPair { Key = $"{arch}.rope.dimension_count", Value = (uint)ropeDim });
-        if (config.RopeScalingType is { } scaling)
+        if (config.RopeScalingType is { Length: > 0 } scaling) // "" in older SMMs: omit, never write an empty type
         {
             kv.Add(new GgufKvPair { Key = $"{arch}.rope.scaling.type", Value = scaling });
             if (config.RopeScalingFactor is { } factor)
@@ -122,9 +122,12 @@ public static class SmmToGufConverter
             kv.Add(new GgufKvPair { Key = $"{arch}.norm_type", Value = (uint)normType });
         if (config.TieWordEmbeddings is { } tie)
             kv.Add(new GgufKvPair { Key = $"{arch}.tie_word_embeddings", Value = tie });
-        if (config.NumExperts > 0)
+        // GgufLoader defaults NumExperts/TopKExperts (8/2) even for dense models; only a
+        // file that actually carries expert tensors is MoE (same test the loaders use).
+        bool isMoE = meta.Tensors.Any(t => t.Name.Contains(".exps."));
+        if (isMoE && config.NumExperts > 0)
             kv.Add(new GgufKvPair { Key = $"{arch}.expert_count", Value = (uint)config.NumExperts });
-        if (config.TopKExperts > 0)
+        if (isMoE && config.TopKExperts > 0)
             kv.Add(new GgufKvPair { Key = $"{arch}.expert_used_count", Value = (uint)config.TopKExperts });
 
         AddTokenizerKvPairs(kv, meta, tokenizer);
@@ -156,6 +159,13 @@ public static class SmmToGufConverter
         string[]? merges = ParseMerges(tokenizerJson);
         if (merges is { Length: > 0 })
             kv.Add(new GgufKvPair { Key = "tokenizer.ggml.merges", Value = merges });
+
+        // llama.cpp requires tokenizer.ggml.model ("gpt2" = byte-level BPE with merges,
+        // "llama" = SentencePiece scored vocab) and picks its pre-tokenizer regex from
+        // tokenizer.ggml.pre, which we carry through from the source GGUF when known.
+        kv.Add(new GgufKvPair { Key = "tokenizer.ggml.model", Value = tokenizer.GgufTokenizerModel ?? (merges is { Length: > 0 } ? "gpt2" : "llama") });
+        if (tokenizer.GgufPreTokenizer is { Length: > 0 } pre)
+            kv.Add(new GgufKvPair { Key = "tokenizer.ggml.pre", Value = pre });
     }
 
     private static int[] BuildTokenTypes(int count, string? tokenizerJson, Tokenizer tokenizer)

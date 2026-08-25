@@ -302,7 +302,9 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
         // GGUF omits rope.dimension_count — Gemma-3 rotates the full 256-dim
         // head, not headDim/2. Only an explicit key narrows the rotary span.
 
-        string? ropeScalingType = meta.GetString($"{arch}.rope.scaling.type");
+        // GetString returns "" for an absent key; keep the config null so the SMM->GGUF
+        // converter omits the key (llama.cpp treats an empty scaling type as an error).
+        string? ropeScalingType = meta.GetString($"{arch}.rope.scaling.type") is { Length: > 0 } rst ? rst : null;
         float ropeFactor = meta.GetFloat($"{arch}.rope.scaling.factor", float.NaN);
         float? ropeScalingFactor = float.IsNaN(ropeFactor) ? null : ropeFactor;
         long rawRopeOrigCtx = meta.GetLong($"{arch}.rope.scaling.original_context_length", -1);
@@ -414,7 +416,10 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
         try
         {
             string arch = meta.GetString("general.architecture") ?? "";
-            return Tokenizer.FromGguf(tokens, merges, types, bosId, eosId, scores, arch);
+            var tokenizer = Tokenizer.FromGguf(tokens, merges, types, bosId, eosId, scores, arch);
+            tokenizer.GgufPreTokenizer = meta.GetString("tokenizer.ggml.pre") is { Length: > 0 } pre ? pre : null;
+            tokenizer.GgufTokenizerModel = meta.GetString("tokenizer.ggml.model") is { Length: > 0 } tm ? tm : null;
+            return tokenizer;
         }
         catch (Exception ex)
         {
