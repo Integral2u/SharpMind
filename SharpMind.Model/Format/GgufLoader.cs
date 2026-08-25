@@ -537,7 +537,13 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
         // the LM head tensor is never allocated and the weight data is skipped.
         if (!info.Name.Contains("blk.") && info.Name.Contains("output.weight") && weights.LmHeadWeight == null)
         {
+            // Canonical GGUFs store output.weight as [input, vocab]; our own SMM->GGUF
+            // export writes the tensor's in-memory [vocab, input] order (same bytes either
+            // way — the input dim is contiguous in both). The input dim is whichever shape
+            // entry is not the vocab size; trusting Shape[0] blindly built a [vocab, vocab]
+            // head for exported fine-tunes, which overflows int at real vocab sizes.
             long ggufIn = info.Shape[0];
+            if (info.Shape.Length > 1 && ggufIn == _config.VocabSize) ggufIn = info.Shape[1];
             int lmRows = TensorLoadHelper.CheckedInt(_config.VocabSize, "VocabSize for LmHead");
             int lmCols = TensorLoadHelper.CheckedInt(ggufIn, "LmHead input dim");
             weights.SetLmHead(new Tensor<float>(lmRows, lmCols));
@@ -647,17 +653,12 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
             if (target != null)
             {
                 target.Data.Clear();
-                if (target == weights.LmHeadWeight && info.Shape.Length == 2)
-                {
-                    int ggufIn = (int)info.Shape[0], ggufOut = (int)info.Shape[1];
-                    for (int i = 0; i < ggufIn; i++)
-                        for (int j = 0; j < ggufOut; j++)
-                            target.Data[j * ggufIn + i] = buffer[i * ggufOut + j];
-                }
-                else
-                {
-                    buffer.AsSpan(0, count).CopyTo(target.Data);
-                }
+                // The head's data is [vocab, in] row-major in every real file — foreign
+                // GGUFs store it exactly like the embedding (only the header order
+                // differs: [in, vocab]), and SmmTrainingExporter now writes it verbatim
+                // too. The transpose this branch used to do scrambled every float head;
+                // it went unnoticed because serving consumes the raw bytes instead.
+                buffer.AsSpan(0, count).CopyTo(target.Data);
             }
             else if (block != null)
             {

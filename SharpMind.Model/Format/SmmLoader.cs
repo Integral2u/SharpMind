@@ -278,7 +278,10 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
         // GgufLoader for the rationale).
         if (!entry.Name.Contains("blk.") && entry.Name.Contains("output.weight") && weights.LmHeadWeight == null)
         {
+            // The input dim is whichever shape entry is not the vocab size — our own
+            // exports declare [vocab, in], canonical GGUF-derived files [in, vocab].
             long ggufIn = entry.Shape[0];
+            if (entry.Shape.Length > 1 && ggufIn == _config.VocabSize) ggufIn = entry.Shape[1];
             int lmRows = TensorLoadHelper.CheckedInt(_config.VocabSize, "VocabSize for LmHead");
             int lmCols = TensorLoadHelper.CheckedInt(ggufIn, "LmHead input dim");
             weights.SetLmHead(new Tensor<float>(lmRows, lmCols));
@@ -347,17 +350,9 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
             if (target != null)
             {
                 target.Data.Clear();
-                if (target == weights.LmHeadWeight && entry.Shape.Length == 2)
-                {
-                    int ggufIn = entry.Shape[0], ggufOut = entry.Shape[1];
-                    for (int i = 0; i < ggufIn; i++)
-                        for (int j = 0; j < ggufOut; j++)
-                            target.Data[j * ggufIn + i] = buffer[i * ggufOut + j];
-                }
-                else
-                {
-                    buffer.AsSpan(0, count).CopyTo(target.Data);
-                }
+                // Head data is [vocab, in] row-major in every file (see GgufLoader's
+                // matching comment) — verbatim copy, same as the embedding.
+                buffer.AsSpan(0, count).CopyTo(target.Data);
             }
             else if (block != null)
             {

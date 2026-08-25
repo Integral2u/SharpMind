@@ -70,7 +70,7 @@ public static class SmmTrainingExporter
         if (weights.PositionEmbedding is not null)
             yield return Tensor2D("position_embd.weight", weights.PositionEmbedding, transpose: false);
         if (weights.LmHeadWeight is not null)
-            yield return Tensor2D("output.weight", weights.LmHeadWeight);
+            yield return Tensor2D("output.weight", weights.LmHeadWeight, transpose: false);
         yield return Tensor1D("output_norm.weight", weights.FinalNormWeight);
         if (weights.FinalNormBias is not null)
             yield return Tensor1D("output_norm.bias", weights.FinalNormBias);
