@@ -275,6 +275,32 @@ public class SmmExportLoadTests : IDisposable
     }
 
     [Fact]
+    public void GgufConversion_UntiedLmHead_ReloadsWithCorrectShape()
+    {
+        // CARD-1404: a fine-tuned model with a separate LM head (Qwen2.5-1.5B) exported
+        // SMM->GGUF and failed to reload. GgufLoader sizes the head from Shape[0] because
+        // canonical GGUFs put the input dim first — but our own converter writes the
+        // tensor's in-memory [vocab, hidden] order, so the head came back [vocab, vocab]:
+        // an int overflow at real vocab sizes, a silently wrong shape here.
+        using var fixture = TrainFixture();
+        int vocab = fixture.Config.VocabSize, hidden = fixture.Config.HiddenDim;
+        var head = new Tensor<float>(vocab, hidden);
+        for (int i = 0; i < head.Data.Length; i++) head.Data[i] = i * 1e-3f;
+        fixture.Weights.SetLmHead(head); // fixture.Weights owns and disposes it
+
+        string smmPath = Path.Combine(_temp.Path, "untied.smm");
+        SmmTrainingExporter.Export(fixture.Weights, fixture.Tokenizer, smmPath, new SmmWriteOptions { Source = "training" });
+        string ggufPath = Path.Combine(_temp.Path, "untied.gguf");
+        SmmToGufConverter.Convert(smmPath, ggufPath);
+
+        using var reloaded = LoadWeightsFrom(ggufPath, fixture.Config, out _);
+        Assert.NotNull(reloaded.LmHeadWeight);
+        Assert.Equal(vocab, reloaded.LmHeadWeight!.Shape.Rows);
+        Assert.Equal(hidden, reloaded.LmHeadWeight.Shape.Cols);
+        AssertTensorClose(head, reloaded.LmHeadWeight, 1e-6f, "gguf.output");
+    }
+
+    [Fact]
     public void GgufConversion_CancelledBeforeStart_WritesNothing()
     {
         string ggufPath = Path.Combine(_temp.Path, "tiny.gguf");
