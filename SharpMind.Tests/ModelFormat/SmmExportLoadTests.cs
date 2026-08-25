@@ -301,6 +301,56 @@ public class SmmExportLoadTests : IDisposable
     }
 
     [Fact]
+    public void GgufLoad_CanonicalLmHeadHeader_ReloadsVerbatim()
+    {
+        // Canonical GGUFs (llama.cpp converters) declare output.weight as [hidden, vocab]
+        // while storing exactly the same [vocab, hidden] row-major bytes as the embedding.
+        // The loader used to "correct" that header order with a transpose of the data,
+        // which scrambled every float head. Build a canonical-order file by swapping the
+        // two dims in the header of our own export — the data bytes are identical either
+        // way — and check the head comes back untouched.
+        using var fixture = TrainFixture();
+        int vocab = fixture.Config.VocabSize, hidden = fixture.Config.HiddenDim;
+        Assert.NotEqual(vocab, hidden); // a transpose would be invisible on a square head
+        var head = new Tensor<float>(vocab, hidden);
+        for (int i = 0; i < head.Data.Length; i++) head.Data[i] = i * 1e-3f;
+        fixture.Weights.SetLmHead(head);
+
+        string smmPath = Path.Combine(_temp.Path, "canonical.smm");
+        SmmTrainingExporter.Export(fixture.Weights, fixture.Tokenizer, smmPath, new SmmWriteOptions { Source = "training" });
+        string ggufPath = Path.Combine(_temp.Path, "canonical.gguf");
+        SmmToGufConverter.Convert(smmPath, ggufPath);
+        SwapHeaderDims(ggufPath, "output.weight");
+
+        using var reloaded = LoadWeightsFrom(ggufPath, fixture.Config, out _);
+        Assert.NotNull(reloaded.LmHeadWeight);
+        Assert.Equal(vocab, reloaded.LmHeadWeight!.Shape.Rows);
+        Assert.Equal(hidden, reloaded.LmHeadWeight.Shape.Cols);
+        AssertTensorClose(head, reloaded.LmHeadWeight, 1e-6f, "gguf.output(canonical)");
+    }
+
+    /// <summary>
+    /// Swaps the two dims of a 2D tensor's header entry in a GGUF file, leaving the data
+    /// untouched. Tensor info layout: u64 name length, name bytes, u32 n_dims, u64 dims[].
+    /// The length-prefixed name is unique (blk.N.attn_output.weight has a different prefix).
+    /// </summary>
+    private static void SwapHeaderDims(string ggufPath, string tensorName)
+    {
+        byte[] file = File.ReadAllBytes(ggufPath);
+        byte[] nameBytes = Encoding.UTF8.GetBytes(tensorName);
+        byte[] needle = [.. BitConverter.GetBytes((ulong)nameBytes.Length), .. nameBytes];
+        int at = file.AsSpan().IndexOf(needle);
+        Assert.True(at >= 0, $"{tensorName} not found in GGUF header");
+        int dimsAt = at + needle.Length;
+        Assert.Equal(2u, BitConverter.ToUInt32(file, dimsAt));
+        dimsAt += 4;
+        ulong d0 = BitConverter.ToUInt64(file, dimsAt), d1 = BitConverter.ToUInt64(file, dimsAt + 8);
+        BitConverter.GetBytes(d1).CopyTo(file, dimsAt);
+        BitConverter.GetBytes(d0).CopyTo(file, dimsAt + 8);
+        File.WriteAllBytes(ggufPath, file);
+    }
+
+    [Fact]
     public void GgufConversion_CancelledBeforeStart_WritesNothing()
     {
         string ggufPath = Path.Combine(_temp.Path, "tiny.gguf");
