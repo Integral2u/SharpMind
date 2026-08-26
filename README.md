@@ -11,7 +11,7 @@
 </p>
 
 [![NuGet Downloads](https://img.shields.io/nuget/dt/SharpMind.Core.svg)](https://www.nuget.org/packages/SharpMind.Core)
-![GitHub Sponsor](https://img.shields.io/github/sponsors/Integral2u?label=Sponsor&logo=GitHub)
+[![GitHub Sponsor](https://img.shields.io/github/sponsors/Integral2u?label=Sponsor&logo=GitHub)](https://github.com/sponsors/Integral2u)
 [![Last commit](https://img.shields.io/github/last-commit/Integral2u/SharpMind)](https://github.com/Integral2u/SharpMind/commits/main)
 
 ---
