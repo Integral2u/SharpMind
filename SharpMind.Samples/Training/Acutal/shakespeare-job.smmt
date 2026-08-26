@@ -45,7 +45,7 @@
     "SgdMomentum": 0,
     "NumExperts": 8,
     "TopKExperts": 2,
-    "TotalSteps": 600,
+    "TotalSteps": 653,
     "LogInterval": 100,
     "BatchSize": 64,
     "SeqLen": 256,

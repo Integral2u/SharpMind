@@ -272,6 +272,24 @@ Run `SmmRealTextExample` to reproduce the full pipeline: BPE tokenizer training 
 
 To load the pre-trained checkpoint directly in the CUI, point it at `shakespeare.smm` or use `SmmTrainingPipeline.LoadForInference` in code. The chat formatter is auto-resolved from the ChatML-style Jinja template embedded in the .SMM file.
 
+###Actual output run to 650 steps
+```You: who dwells there
+
+Delta: Have the heavy haste to thy face should be my fortune.
+
+PETRUCHIO:
+What said he will be as we are gone and you?
+
+QUEEN MARGARET:
+Thishatefltrerofffrvisoutt,
+KING RICHARD ARD:
+Though Gire:
+Tearry, sat said myondon faseveronown abo.
+
+GRUMIO:
+
+KEEEN MARGARET:```
+
 ---
 
 ## IChatClient integration (`Microsoft.Extensions.AI`)
