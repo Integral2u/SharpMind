@@ -4,9 +4,8 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
 
-## [1.0.5.0] - 2026-08-26
+## [1.0.5.0] - unreleased
 
 ### Added
 
@@ -14,6 +13,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Ministral-3-3B-Instruct support** — full sliding-window attention (SWA) for ministral/mistral3 architectures. All 12 SDPA kernels updated with per-layer window masking; KV-cache capped to the model's sliding window; RoPE tables sized accordingly; GgufLoader fallback defaults to 4096 when the GGUF omits the key.
 - `IChatSession.StopStrings` property — allows callers to set text-based stop sequences on a session. `ChatSession` merges formatter defaults with session-level stop strings into `GenerationConfig.StopStrings` at generation time.
 - `IChatPromptFormatter.MergeStopStrings` helper in `ChatSession` — deduplicates formatter default stop strings with caller-supplied stop strings.
+- **Fused QKV tensor support** — `GgufLoader.LoadSingleTensor` now detects a single `attn_qkv` weight and splits it into separate Q/K/V projections, enabling models that export attention as a fused matrix.
+- **Q1_0 quantization (1-bit)** — new `QuantDType.Q1_0` (dtype 41) with sign-only quantization: `value = (2*bit - 1) * d`. VecDot kernels (scalar, FMA, AVX2, AVX512) and QuantizedMatMul dispatch added.
+- **`ComputeMaxCacheLength`** — static helper on `ModelConfig` that caps KV-cache size to 40% of available system memory, with optional user override. Prevents OOM on large models with high head counts.
+- **`--max-cache-len` CLI option** — allows manual KV-cache cap override, threaded through generator builders to `ChatSession`.
+- **Streaming layer sentinel** — `EnsureLayerLoadedSync`, `PreloadLayerAsync`, `FreeLayer`, and `CompleteForward` now check `Wq == null && RawWq == null` instead of just `Wq == null`, correctly detecting layer-loaded state for models with fused QKV where the float tensor is never allocated.
 
 ### Fixed
 
@@ -22,6 +26,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Progress tick display** — service-side `CreateProgress` now calls `Output.Flush()` after writing `\r`-prefixed tick text, ensuring data hits the pipe immediately. CLI-side `PipeStreamAsync` now flushes accumulated text at the end of each read batch, so the final progress tick (e.g. `100.00%`) is always visible instead of being stuck in an unflushed buffer.
 - **Progress line overlap** — status messages following a tick (e.g. "Creating transformer...") now advance past the tick line with `\n` before writing, preventing them from appearing on the same line as the progress percentage.
 - **Prefill progress leaked to client** — the streaming handler in `SharpMindService` now skips `ChatStatus.Updating` entries (prefill progress like "Prefilling 92.75%") so they are not sent as SSE content to the CLI client.
+- **Streaming KV weight typo** — `TransformerWeights` streaming path wrote `RawVv` instead of `RawWv` for the V projection, causing the attention layer to default to F32 for V weights on every forward pass.
+- **Non-block dequant memory** — `GgufLoader.LoadSingleTensor` now reads non-block tensors (embedding, lm_head, norms) directly into the target tensor's backing array instead of allocating a temporary buffer, eliminating a large transient allocation for models with very large embedding tables.
+- **Inner exception chain in error dialog** — the CUI error dialog now walks `InnerException` showing each exception type, message, and stack trace, instead of displaying only the top-level message.
+- **Fused gate+up FFN support** — `FfnLayer.SetWeights` now handles the case where only `RawWup` is present (fused gate+up tensor), using it directly instead of discarding it when `RawWgate` is absent. `ResolveFloatTarget` now lazily initializes `Wf1` so the float fallback path has valid data.
 
 ## [1.0.4.0] - 2026-08-23
 

@@ -18,7 +18,7 @@ namespace SharpMind.Model.Format;
 /// so a single loader serves both GGUF-converted and training-exported files.
 /// The only differences are the container header/index.
 /// </summary>
-public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig config) : IModelLoader
+public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig config, bool useSafeIo = false) : IModelLoader
 {
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
@@ -28,6 +28,7 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
     private readonly QuantizationOps _qOps = qOps ?? throw new ArgumentNullException(nameof(qOps));
     private readonly string _path = File.Exists(path) ? path : throw new FileNotFoundException(path);
     private readonly ModelConfig _config = config ?? throw new ArgumentNullException(nameof(config));
+    private readonly bool _useSafeIo = useSafeIo;
 
     // ── Static helpers (metadata / config / tokenizer / plugins) ──────────
 
@@ -209,8 +210,7 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
         weights.GgufPath = _path;
         weights.IsMoE = index.Meta.Tensors.Any(t => t.Name.Contains(".exps."));
 
-        using var mmf = MemoryMappedFile.CreateFromFile(_path, FileMode.Open, null, 0, MemoryMappedFileAccess.Read);
-        using var stream = mmf.CreateViewStream(0, 0, MemoryMappedFileAccess.Read);
+        using var stream = WeightStreamFactory.Open(_path, _useSafeIo);
 
         int total = index.Entries.Count;
         int loaded = 0;
@@ -236,8 +236,7 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
         var targetBlock = layerIndex < weights.Blocks.Length ? weights.Blocks[layerIndex] : null;
         if (targetBlock == null) return;
 
-        using var mmf = MemoryMappedFile.CreateFromFile(_path, FileMode.Open, null, 0, MemoryMappedFileAccess.Read);
-        using var stream = mmf.CreateViewStream(0, 0, MemoryMappedFileAccess.Read);
+        using var stream = WeightStreamFactory.Open(_path, _useSafeIo);
 
         foreach (var entry in index.Entries)
         {
@@ -257,8 +256,7 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
             weights.IsMoE = index.Meta.Tensors.Any(t => t.Name.Contains(".exps."));
         }
 
-        using var mmf = MemoryMappedFile.CreateFromFile(_path, FileMode.Open, null, 0, MemoryMappedFileAccess.Read);
-        using var stream = mmf.CreateViewStream(0, 0, MemoryMappedFileAccess.Read);
+        using var stream = WeightStreamFactory.Open(_path, _useSafeIo);
 
         foreach (var entry in index.Entries)
         {
@@ -270,7 +268,7 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
 
     private void LoadSingleTensor(
         TransformerWeights weights, SmmFileIndex index,
-        MemoryMappedViewStream stream, SmmTensorIndexEntry entry)
+        Stream stream, SmmTensorIndexEntry entry)
     {
         var (target, block, rawField) = weights.ResolveTarget(entry.Name);
 
@@ -518,7 +516,7 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
         }
     }
 
-    private static byte[] ReadTensorBytes(MemoryMappedViewStream stream, SmmFileIndex index, SmmTensorIndexEntry entry, long rawSize)
+    private static byte[] ReadTensorBytes(Stream stream, SmmFileIndex index, SmmTensorIndexEntry entry, long rawSize)
     {
         long absolute = index.Meta.DataOffset + entry.Offset;
         if (absolute < 0 || absolute + rawSize > stream.Length)

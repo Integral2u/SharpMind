@@ -248,7 +248,11 @@ public abstract class TransformerWeights : IDisposable
                 if (IsMoE && name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase))
                     return b.WRouter ??= new Tensor<float>(Config.HiddenDim, Config.NumExperts);
 
-                if (name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase) || name.Contains("ffn_up", StringComparison.OrdinalIgnoreCase)) return b.Wf1;
+                if (name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase) || name.Contains("ffn_up", StringComparison.OrdinalIgnoreCase))
+                {
+                    b.Wf1 ??= new Tensor<float>(Config.HiddenDim, 2 * Config.FfnDim);
+                    return b.Wf1;
+                }
                 if (name.Contains("ffn_down", StringComparison.OrdinalIgnoreCase)) return b.Wf2;
             }
         }

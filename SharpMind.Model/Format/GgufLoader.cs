@@ -12,12 +12,13 @@ using static SharpMind.Model.TransformerWeights;
 
 namespace SharpMind.Model.Format;
 
-public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig config) : IModelLoader
+public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig config, bool useSafeIo = false) : IModelLoader
 {
     private const uint Magic = 0x46554747;
     private readonly QuantizationOps _qOps = qOps ?? throw new ArgumentNullException(nameof(qOps));
     private readonly string _path = File.Exists(path)? path : throw new FileNotFoundException(path);
     private readonly ModelConfig _config = config ?? throw new ArgumentNullException(nameof(config));
+    private readonly bool _useSafeIo = useSafeIo;
     private static object ReadValue(BinaryReader reader, uint valType) => valType switch
     {
         0 => reader.ReadByte(),
@@ -460,8 +461,7 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
         int total = meta.Tensors.Count;
         int loaded = 0;
 
-        using var mmf = MemoryMappedFile.CreateFromFile(_path, FileMode.Open, null, 0, MemoryMappedFileAccess.Read);
-        using var stream = mmf.CreateViewStream(0, 0, MemoryMappedFileAccess.Read);
+        using var stream = WeightStreamFactory.Open(_path, _useSafeIo);
         using var reader = new BinaryReader(stream);
 
         foreach (var info in meta.Tensors)
@@ -487,8 +487,7 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
         var targetBlock = layerIndex < weights.Blocks.Length ? weights.Blocks[layerIndex] : null;
         if (targetBlock == null) return;
 
-        using var mmf = MemoryMappedFile.CreateFromFile(_path, FileMode.Open, null, 0, MemoryMappedFileAccess.Read);
-        using var stream = mmf.CreateViewStream(0, 0, MemoryMappedFileAccess.Read);
+        using var stream = WeightStreamFactory.Open(_path, _useSafeIo);
         using var reader = new BinaryReader(stream);
 
         foreach (var info in meta.Tensors)
@@ -511,8 +510,7 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
             weights.IsMoE = meta.Tensors.Any(t => t.Name.Contains(".exps."));
         }
 
-        using var mmf = MemoryMappedFile.CreateFromFile(_path, FileMode.Open, null, 0, MemoryMappedFileAccess.Read);
-        using var stream = mmf.CreateViewStream(0, 0, MemoryMappedFileAccess.Read);
+        using var stream = WeightStreamFactory.Open(_path, _useSafeIo);
         using var reader = new BinaryReader(stream);
 
         foreach (var info in meta.Tensors)
@@ -527,7 +525,7 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
 
     private void LoadSingleTensor(
         TransformerWeights weights, ModelMetaData meta,
-        MemoryMappedViewStream stream, BinaryReader reader, TensorInfo info)
+        Stream stream, BinaryReader reader, TensorInfo info)
     {
         var (target, block, rawField) = weights.ResolveTarget(info.Name);
 

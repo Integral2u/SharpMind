@@ -551,3 +551,12 @@ See [CHANGELOG.md](CHANGELOG.md) for release history.
 - [x] Limit breaker(Project Goku), int.MaxValue element-count limit workaround. Solutions not excuses. — shipped as `MemoryHelpers`, `BigArray<T>`, `IWorkspace`, `BigWorkspace`
 
 Issues, questions, and early feedback are welcome.
+
+# Notice
+<sub>
+This repository includes SmolLM2-135M-Instruct-Q3_K_M.gguf, a quantized
+derivative of HuggingFaceTB/SmolLM2-135M-Instruct
+(https://huggingface.co/HuggingFaceTB/SmolLM2-135M-Instruct), GGUF conversion
+by Unsloth (https://huggingface.co/unsloth/SmolLM2-135M-Instruct-GGUF).
+Licensed under Apache 2.0. See LICENSE-SmolLM2 for the full license text.
+</<sub>

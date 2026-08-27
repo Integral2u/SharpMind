@@ -1,0 +1,859 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SharpMind — a .NET LLM engine, running in this tab</title>
+    <meta name="description" content="A pure C#/.NET LLM engine — inference, training, and agent tooling in one solution. No native dependencies, no wrapped libraries.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Work+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #12121C;
+            --bg-1: #1A1A2E;
+            --bg-2: #20203A;
+            --border: #2A2A45;
+            --border-strong: #38385C;
+            --text: #E8E8F0;
+            --text-soft: #9B9BB8;
+            --text-dim: #666688;
+            --accent: #3B82F6;
+            --accent-soft: #6BA3F8;
+            --accent-wash: rgba(59,130,246,0.12);
+            --good: #4ADE80;
+            --warn: #F2A65A;
+            --radius: 6px;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        html {
+            scroll-behavior: smooth;
+        }
+
+        body {
+            margin: 0;
+            background: var(--bg);
+            color: var(--text);
+            font-family: 'Work Sans',sans-serif;
+            line-height: 1.55;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        .wrap {
+            max-width: 920px;
+            margin: 0 auto;
+            padding: 0 24px;
+        }
+
+        h1, h2 {
+            font-family: 'Space Grotesk',sans-serif;
+            font-weight: 600;
+            margin: 0;
+        }
+
+        code {
+            font-family: 'IBM Plex Mono',monospace;
+            font-size: 0.9em;
+            background: var(--bg-2);
+            padding: 0.15em 0.45em;
+            border-radius: 4px;
+            border: 1px solid var(--border);
+            color: var(--accent-soft);
+        }
+
+        a {
+            color: var(--accent-soft);
+        }
+
+        /* ---------- header / hero ---------- */
+        header {
+            padding: 44px 0 30px;
+        }
+
+        .topbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            margin: 0 0 18px;
+        }
+
+        .wordmark-row {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }
+
+        .seal {
+            width: 44px;
+            height: 44px;
+            flex-shrink: 0;
+        }
+
+        .wordmark {
+            font-size: 32px;
+            letter-spacing: -0.01em;
+        }
+
+        .sponsor-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            flex-shrink: 0;
+            font-family: 'Work Sans',sans-serif;
+            font-weight: 500;
+            font-size: 13px;
+            padding: 7px 14px;
+            border-radius: 999px;
+            border: 1px solid var(--border-strong);
+            color: var(--text-soft);
+            text-decoration: none;
+            transition: border-color .15s,color .15s,background .15s;
+        }
+
+            .sponsor-btn svg {
+                width: 14px;
+                height: 14px;
+                flex-shrink: 0;
+            }
+
+            .sponsor-btn:hover {
+                border-color: #DB61A2;
+                color: #DB61A2;
+                background: rgba(219,97,162,0.08);
+            }
+
+            .sponsor-btn:focus-visible {
+                outline: 2px solid #DB61A2;
+                outline-offset: 2px;
+            }
+
+        .topbar-right {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-shrink: 0;
+        }
+
+        .gh-icon-link {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            color: var(--text-soft);
+            transition: color .15s,background .15s;
+        }
+
+            .gh-icon-link svg {
+                width: 19px;
+                height: 19px;
+            }
+
+            .gh-icon-link:hover {
+                color: var(--text);
+                background: var(--bg-2);
+            }
+
+            .gh-icon-link:focus-visible {
+                outline: 2px solid var(--accent-soft);
+                outline-offset: 2px;
+            }
+
+        .thesis {
+            margin: 0 0 26px;
+            font-size: 17px;
+            max-width: 58ch;
+            color: var(--text-soft);
+        }
+
+        /* ---------- try it: promoted, front and center ---------- */
+        .try-it {
+            padding: 6px 0 52px;
+        }
+
+        .try-it-label {
+            font-family: 'IBM Plex Mono',monospace;
+            font-size: 11px;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: var(--accent-soft);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 0 0 10px;
+        }
+
+            .try-it-label::before {
+                content: "";
+                width: 6px;
+                height: 6px;
+                border-radius: 50%;
+                background: var(--accent);
+                box-shadow: 0 0 0 4px var(--accent-wash);
+            }
+
+        .try-it h2 {
+            font-size: 24px;
+            margin-bottom: 8px;
+        }
+
+        .try-it-lede {
+            color: var(--text-soft);
+            font-size: 15px;
+            margin: 0 0 22px;
+            max-width: 60ch;
+        }
+
+        .engine {
+            background: var(--bg-1);
+            border: 1px solid var(--border);
+            border-radius: var(--radius) var(--radius) 0 0;
+            border-bottom: none;
+            overflow: hidden;
+        }
+
+        .engine-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 11px 16px;
+            border-bottom: 1px solid var(--border);
+            font-family: 'IBM Plex Mono',monospace;
+            font-size: 12px;
+            color: var(--text-dim);
+        }
+
+        .engine-head-right {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .status-dot {
+            display: inline-block;
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            margin-right: 7px;
+        }
+
+            .status-dot.loading {
+                background: var(--warn);
+                box-shadow: 0 0 0 3px rgba(242,166,90,0.18);
+            }
+
+            .status-dot.ready {
+                background: var(--good);
+                box-shadow: 0 0 0 3px rgba(74,222,128,0.18);
+            }
+
+            .status-dot.thinking {
+                background: var(--accent);
+                box-shadow: 0 0 0 3px var(--accent-wash);
+                animation: pulse 1s ease-in-out infinite;
+            }
+
+        @keyframes pulse {
+            0%,100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: .45;
+            }
+        }
+
+        .engine-toggle {
+            background: none;
+            border: none;
+            color: var(--text-dim);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            padding: 2px;
+        }
+
+            .engine-toggle:hover {
+                color: var(--accent-soft);
+            }
+
+            .engine-toggle:focus-visible {
+                outline: 2px solid var(--accent-soft);
+                outline-offset: 2px;
+            }
+
+            .engine-toggle .chev {
+                width: 14px;
+                height: 14px;
+                transition: transform .2s;
+            }
+
+            .engine-toggle[aria-expanded="false"] .chev {
+                transform: rotate(-90deg);
+            }
+
+        .engine-log {
+            font-family: 'IBM Plex Mono',monospace;
+            font-size: 12.5px;
+            line-height: 1.8;
+            padding: 9px 16px;
+            height: 64px;
+            overflow: hidden;
+            transition: height .2s ease,padding .2s ease;
+        }
+
+            .engine-log.collapsed {
+                height: 0;
+                padding-top: 0;
+                padding-bottom: 0;
+            }
+
+            .engine-log .line {
+                white-space: pre-wrap;
+            }
+
+                .engine-log .line .tag {
+                    color: var(--text-dim);
+                }
+
+                .engine-log .line .warn {
+                    color: var(--warn);
+                }
+
+        .chat-shell {
+            background: var(--bg-2);
+            border: 1px solid var(--border);
+            border-radius: 0 0 var(--radius) var(--radius);
+        }
+
+        .messages-wrap {
+            position: relative;
+        }
+
+        .messages {
+            padding: 20px 20px 4px;
+            min-height: 200px;
+            max-height: 46vh;
+            overflow-y: auto;
+        }
+
+        .scroll-to-bottom {
+            position: absolute;
+            left: 50%;
+            bottom: 14px;
+            transform: translateX(-50%);
+            width: 34px;
+            height: 34px;
+            border-radius: 50%;
+            background: var(--bg-1);
+            border: 1px solid var(--border-strong);
+            color: var(--text-soft);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 0;
+            pointer-events: none;
+            cursor: pointer;
+            transition: opacity .18s ease,border-color .15s,color .15s;
+        }
+
+            .scroll-to-bottom.visible {
+                opacity: 1;
+                pointer-events: auto;
+            }
+
+            .scroll-to-bottom:hover {
+                border-color: var(--accent-soft);
+                color: var(--accent-soft);
+            }
+
+            .scroll-to-bottom:focus-visible {
+                outline: 2px solid var(--accent-soft);
+                outline-offset: 2px;
+            }
+
+            .scroll-to-bottom svg {
+                width: 16px;
+                height: 16px;
+            }
+
+        .msg {
+            margin: 0 0 20px;
+            padding-left: 14px;
+            border-left: 2px solid var(--border-strong);
+        }
+
+            .msg.you {
+                border-left-color: var(--accent);
+            }
+
+            .msg .who {
+                font-family: 'IBM Plex Mono',monospace;
+                font-size: 11px;
+                letter-spacing: 0.06em;
+                text-transform: uppercase;
+                color: var(--text-dim);
+                margin-bottom: 4px;
+            }
+
+            .msg.you .who {
+                color: var(--accent-soft);
+            }
+
+            .msg .body {
+                font-size: 15px;
+                white-space: pre-wrap;
+                color: var(--text);
+            }
+
+                .msg .body.placeholder {
+                    color: var(--text-soft);
+                    font-style: italic;
+                }
+
+        .composer {
+            display: flex;
+            gap: 10px;
+            padding: 14px 20px 20px;
+            border-top: 1px solid var(--border);
+        }
+
+            .composer input {
+                flex: 1;
+                font-family: 'Work Sans',sans-serif;
+                font-size: 15px;
+                padding: 11px 14px;
+                background: var(--bg);
+                border: 1px solid var(--border-strong);
+                border-radius: var(--radius);
+                color: var(--text);
+            }
+
+                .composer input::placeholder {
+                    color: var(--text-dim);
+                }
+
+                .composer input:focus {
+                    outline: 2px solid var(--accent);
+                    outline-offset: 1px;
+                }
+
+            .composer button {
+                font-family: 'Work Sans',sans-serif;
+                font-weight: 600;
+                font-size: 14px;
+                padding: 0 20px;
+                background: var(--accent);
+                color: #08080F;
+                border: none;
+                border-radius: var(--radius);
+                cursor: pointer;
+                transition: background .15s;
+            }
+
+                .composer button:hover {
+                    background: var(--accent-soft);
+                }
+
+                .composer button:disabled {
+                    background: var(--border-strong);
+                    color: var(--text-dim);
+                    cursor: not-allowed;
+                }
+
+                .composer button:focus-visible {
+                    outline: 2px solid var(--accent-soft);
+                    outline-offset: 2px;
+                }
+
+        .demo-note {
+            margin-top: 16px;
+            font-size: 13px;
+            color: var(--text-soft);
+            border-left: 2px solid var(--border-strong);
+            padding-left: 14px;
+        }
+
+            .demo-note strong {
+                color: var(--text);
+            }
+
+        /* ---------- lower sections ---------- */
+        section {
+            padding: 48px 0;
+            border-top: 1px solid var(--border);
+        }
+
+        .section-kicker {
+            font-family: 'IBM Plex Mono',monospace;
+            font-size: 11px;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--accent-soft);
+            margin: 0 0 10px;
+        }
+
+        section h2 {
+            font-size: 22px;
+            margin-bottom: 6px;
+        }
+
+        .section-lede {
+            color: var(--text-soft);
+            font-size: 15px;
+            max-width: 60ch;
+            margin: 0 0 26px;
+        }
+
+        .entries {
+            margin: 0;
+            padding: 0;
+            list-style: none;
+        }
+
+        .entry {
+            display: grid;
+            grid-template-columns: 190px 1fr;
+            gap: 20px;
+            padding: 18px 0;
+            border-top: 1px solid var(--border);
+        }
+
+            .entry:last-child {
+                border-bottom: none;
+            }
+
+            .entry dt {
+                font-family: 'Space Grotesk',sans-serif;
+                font-weight: 600;
+                font-size: 16px;
+                color: var(--accent-soft);
+            }
+
+            .entry dd {
+                margin: 0;
+                color: var(--text-soft);
+                font-size: 15px;
+            }
+
+        @media (max-width:640px) {
+            .entry {
+                grid-template-columns: 1fr;
+                gap: 4px;
+            }
+        }
+
+        pre.code-block {
+            font-family: 'IBM Plex Mono',monospace;
+            font-size: 13.5px;
+            background: var(--bg-1);
+            border: 1px solid var(--border);
+            color: var(--text);
+            padding: 16px 18px;
+            border-radius: var(--radius);
+            overflow-x: auto;
+            line-height: 1.8;
+            margin: 0 0 18px;
+        }
+
+            pre.code-block .comment {
+                color: var(--text-dim);
+            }
+
+        footer {
+            padding: 24px 0 40px;
+            font-size: 12.5px;
+            color: var(--text-dim);
+            display: flex;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+            footer a {
+                color: var(--text-dim);
+            }
+
+        @media (max-width:560px) {
+            .wordmark {
+                font-size: 26px;
+            }
+
+            .messages {
+                max-height: 38vh;
+            }
+        }
+
+        @media (prefers-reduced-motion:reduce) {
+            .engine-log .line {
+                animation: none;
+                opacity: 1;
+            }
+
+            html {
+                scroll-behavior: auto;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="wrap">
+
+        <header>
+            <div class="topbar">
+                <div class="wordmark-row">
+                    <svg class="seal" viewBox="0 0 680 680" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="SharpMind logo">
+                        <rect x="140" y="140" width="400" height="400" rx="88" fill="#1a1a2e" />
+                        <line x1="304" y1="295" x2="258" y2="252" stroke="#3B82F6" stroke-width="2" stroke-opacity="0.4" />
+                        <line x1="376" y1="295" x2="422" y2="252" stroke="#3B82F6" stroke-width="2" stroke-opacity="0.4" />
+                        <line x1="300" y1="358" x2="258" y2="404" stroke="#3B82F6" stroke-width="2" stroke-opacity="0.4" />
+                        <line x1="372" y1="358" x2="422" y2="404" stroke="#3B82F6" stroke-width="2" stroke-opacity="0.4" />
+                        <line x1="258" y1="252" x2="422" y2="252" stroke="#3B82F6" stroke-width="1.2" stroke-opacity="0.2" />
+                        <line x1="258" y1="404" x2="422" y2="404" stroke="#3B82F6" stroke-width="1.2" stroke-opacity="0.2" />
+                        <line x1="311" y1="228" x2="296" y2="428" stroke="white" stroke-width="18" stroke-linecap="round" />
+                        <line x1="381" y1="228" x2="366" y2="428" stroke="white" stroke-width="18" stroke-linecap="round" />
+                        <line x1="264" y1="295" x2="414" y2="295" stroke="white" stroke-width="18" stroke-linecap="round" />
+                        <line x1="264" y1="358" x2="414" y2="358" stroke="white" stroke-width="18" stroke-linecap="round" />
+                        <circle cx="304" cy="295" r="22" fill="#1a1a2e" stroke="#3B82F6" stroke-width="5" />
+                        <circle cx="304" cy="295" r="8" fill="#3B82F6" />
+                        <circle cx="376" cy="295" r="22" fill="#1a1a2e" stroke="#3B82F6" stroke-width="5" />
+                        <circle cx="376" cy="295" r="8" fill="#3B82F6" />
+                        <circle cx="300" cy="358" r="22" fill="#1a1a2e" stroke="#3B82F6" stroke-width="5" />
+                        <circle cx="300" cy="358" r="8" fill="#3B82F6" />
+                        <circle cx="372" cy="358" r="22" fill="#1a1a2e" stroke="#3B82F6" stroke-width="5" />
+                        <circle cx="372" cy="358" r="8" fill="#3B82F6" />
+                        <circle cx="258" cy="252" r="9" fill="#1a1a2e" stroke="#3B82F6" stroke-width="3" />
+                        <circle cx="422" cy="252" r="9" fill="#1a1a2e" stroke="#3B82F6" stroke-width="3" />
+                        <circle cx="258" cy="404" r="9" fill="#1a1a2e" stroke="#3B82F6" stroke-width="3" />
+                        <circle cx="422" cy="404" r="9" fill="#1a1a2e" stroke="#3B82F6" stroke-width="3" />
+                    </svg>
+                    <h1 class="wordmark">SharpMind</h1>
+                </div>
+                <div class="topbar-right">
+                    <a class="gh-icon-link" href="https://github.com/Integral2u/SharpMind" target="_blank" rel="noopener" aria-label="View source on GitHub">
+                        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z" /></svg>
+                    </a>
+                    <a class="sponsor-btn" href="https://github.com/sponsors/Integral2u" target="_blank" rel="noopener">
+                        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" /></svg>
+                        Sponsor
+                    </a>
+                </div>
+            </div>
+            <p class="thesis">A pure C#/.NET LLM engine — inference, training, and agent tooling in one solution. No wrapped native library, no P/Invoke, no platform-specific binaries.</p>
+        </header>
+
+        <div class="try-it" id="try-it">
+            <p class="try-it-label">Live in this page</p>
+            <h2>SmolLM2-135M-Instruct, running client-side</h2>
+            <p class="try-it-lede">Loads and runs entirely in your browser via WebAssembly — no server, no API call leaving this tab. GitHub Pages serves the compiled runtime fine; it just can't set the cross-origin headers WASM threading needs, so this runs single-threaded on scalar kernels regardless of the machine it's on.</p>
+
+            <div class="engine">
+                <div class="engine-head">
+                    <span><span class="status-dot loading" id="statusDot"></span><span id="statusText">Loading</span></span>
+                    <div class="engine-head-right">
+                        <span id="engineMeta">SmolLM2-135M-Instruct · Q3_K_M</span>
+                        <button class="engine-toggle" id="engineToggle" type="button" aria-expanded="true" aria-controls="engineLog" aria-label="Toggle engine log">
+                            <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6" /></svg>
+                        </button>
+                    </div>
+                </div>
+                <div class="engine-log" id="engineLog" aria-live="polite"></div>
+            </div>
+
+            <div class="chat-shell">
+                <div class="messages-wrap">
+                    <div class="messages" id="messages">
+                        <div class="msg">
+                            <div class="who">SharpMind</div>
+                            <div class="body placeholder">Say something below once the engine reports ready.</div>
+                        </div>
+                    </div>
+                    <button class="scroll-to-bottom" id="scrollToBottom" type="button" aria-label="Scroll to latest message">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7 7 7-7" /></svg>
+                    </button>
+                </div>
+                <form class="composer" id="composer">
+                    <input type="text" id="input" placeholder="Type a message…" autocomplete="off" disabled aria-label="Message">
+                    <button type="submit" id="send" disabled>Send</button>
+                </form>
+            </div>
+
+            <p class="demo-note">
+                <strong>The status indicator behaves like the real thing — replies don't yet.</strong> Loading, Ready, and Thinking reflect what a live Blazor WebAssembly build of SharpMind will actually report once it's wired in. What you type back right now is a plain echo, clearly labeled, so the send/receive flow is real to look at even though no model is generating anything. Want to help wire up the real engine? <a href="https://github.com/Integral2u/SharpMind" target="_blank" rel="noopener">The repo</a> is where that happens.
+            </p>
+        </div>
+
+        <section id="what-it-is">
+            <p class="section-kicker">What it is</p>
+            <h2>One engine, not a wrapper around one</h2>
+            <p class="section-lede">Most .NET options for running a language model are bindings over a native library written in C or C++. SharpMind's inference, training, and quantization kernels are C# from the ground up — which is also why the demo above can run directly in this page.</p>
+            <dl class="entries">
+                <div class="entry">
+                    <dt>Inference &amp; training</dt>
+                    <dd>A full training loop — its own autograd engine, backprop, mixture-of-experts support — not just fine-tuning a checkpoint someone else trained. The same engine that serves a model can train one from scratch.</dd>
+                </div>
+                <div class="entry">
+                    <dt>Zero native dependencies</dt>
+                    <dd>No compiled C library to ship per platform. Runs anywhere the .NET runtime does — desktop, server, or, as of this patch, a browser tab via WebAssembly.</dd>
+                </div>
+                <div class="entry">
+                    <dt>Agent tooling, gated</dt>
+                    <dd>A built-in tool-calling loop with explicit File and Network permission checks enforced at the point of actual I/O — not just function-calling with no policy layer above it.</dd>
+                </div>
+                <div class="entry">
+                    <dt>OpenAI-compatible server</dt>
+                    <dd><code>/v1/chat/completions</code>, streaming and non-streaming, plus model management — so anything that already speaks that API can talk to SharpMind without knowing it's C#.</dd>
+                </div>
+            </dl>
+        </section>
+
+        <section id="get-started">
+            <p class="section-kicker">Get started</p>
+            <h2>Build it yourself</h2>
+            <p class="section-lede">Clone, build, and point it at a GGUF or .smm model file.</p>
+            <pre class="code-block"><span class="comment"># clone and build</span>
+git clone https://github.com/Integral2u/SharpMind.git
+cd SharpMind
+dotnet build
+
+<span class="comment"># run the terminal chat client</span>
+dotnet run --project SharpMind.CUI
+
+<span class="comment"># or start the OpenAI-compatible server</span>
+dotnet run --project SharpMind.Server.CLI -- --models ./models</pre>
+            <p class="section-lede" style="margin-bottom:0;">See the <a href="https://github.com/Integral2u/SharpMind#readme" target="_blank" rel="noopener">README</a> for supported model formats, the agent tooling API, and the HTTP server's full endpoint list.</p>
+        </section>
+
+        <footer>
+            <span>SharpMind is MIT-licensed C#/.NET.</span>
+            <a href="https://github.com/Integral2u/SharpMind" target="_blank" rel="noopener">github.com/Integral2u/SharpMind</a>
+        </footer>
+
+    </div>
+
+    <script>
+/* =========================================================================
+           INTEGRATION SEAM — see wasm-integration-spec.md in the repo for the full
+           plan (loading, [JSInvokable] surface, and why streaming needs a callback-
+           based restructure here, not just a return value). Short version: replace
+           SharpMindEngine.generate() below with a real call into the compiled
+           engine once a Blazor WASM build exists. Everything else here -- the
+           status state machine, the log, the scroll affordance -- is already the
+           real behavior, not a mock.
+           ========================================================================= */
+const SharpMindEngine = {
+          ready: false,
+
+          setStatus(dotEl, textEl, state) {
+            dotEl.className = 'status-dot ' + state;
+            textEl.textContent = state === 'loading' ? 'Loading' : state === 'thinking' ? 'Thinking' : 'Ready';
+          },
+
+          async boot(logEl, dotEl, textEl) {
+            this.setStatus(dotEl, textEl, 'loading');
+            const steps = [
+              { text: 'fetching SmolLM2-135M-Instruct-Q3_K_M.gguf…', delay: 550 },
+              { text: 'writing model bytes to Blazor virtual filesystem…', delay: 480 },
+              { text: 'ModelFactory.CreateWeights(..., useSafeIo: true)…', delay: 620 },
+              { text: 'hardware tier: <span class="warn">Scalar</span> (WebAssembly has no AVX2/FMA)', delay: 420 },
+              { text: 'threads: <span class="warn">1</span> (GitHub Pages can\'t set the headers WASM threading needs)', delay: 420 },
+              { text: 'model ready', delay: 420 },
+            ];
+            for (const step of steps) {
+              await this._logLine(logEl, step.text, step.delay);
+            }
+            this.setStatus(dotEl, textEl, 'ready');
+          },
+
+          _logLine(logEl, html, delay) {
+            return new Promise(resolve => {
+              setTimeout(() => {
+                const line = document.createElement('div');
+                line.className = 'line';
+                line.innerHTML = '<span class="tag">&gt;</span> ' + html;
+                logEl.appendChild(line);
+                while (logEl.children.length > 3) logEl.removeChild(logEl.firstChild);
+                resolve();
+              }, delay);
+            });
+          },
+
+          // Mock only: real generation replaces this, but the status transitions
+          // around it (thinking -> ready) are the real behavior to preserve.
+          async generate(prompt, logEl, dotEl, textEl) {
+            this.setStatus(dotEl, textEl, 'thinking');
+            await this._logLine(logEl, 'generating response…', 0);
+            await new Promise(r => setTimeout(r, 750));
+            this.setStatus(dotEl, textEl, 'ready');
+            return 'Echo: "' + prompt + '" — mock reply, not from the model. Real generated text lands here once the engine is wired in.';
+          }
+};
+
+const logEl = document.getElementById('engineLog');
+const dotEl = document.getElementById('statusDot');
+const textEl = document.getElementById('statusText');
+const engineToggle = document.getElementById('engineToggle');
+const messagesEl = document.getElementById('messages');
+const scrollBtn = document.getElementById('scrollToBottom');
+const composerEl = document.getElementById('composer');
+const inputEl = document.getElementById('input');
+const sendEl = document.getElementById('send');
+
+engineToggle.addEventListener('click', () => {
+          const expanded = engineToggle.getAttribute('aria-expanded') === 'true';
+          engineToggle.setAttribute('aria-expanded', String(!expanded));
+          logEl.classList.toggle('collapsed', expanded);
+});
+
+function addMessage(who, text, placeholder) {
+          const msg = document.createElement('div');
+          msg.className = 'msg' + (who === 'You' ? ' you' : '');
+          const bodyClass = placeholder ? ' placeholder' : '';
+          msg.innerHTML = '<div class="who">' + who + '</div><div class="body' + bodyClass + '"></div>';
+          msg.querySelector('.body').textContent = text;
+          messagesEl.appendChild(msg);
+          messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+// Reveal the scroll-to-bottom button when hovering the lower portion of the
+// messages panel, but only if there's actually somewhere to scroll to.
+messagesEl.addEventListener('mousemove', (e) => {
+          const rect = messagesEl.getBoundingClientRect();
+          const relY = (e.clientY - rect.top) / rect.height;
+          const notAtBottom = messagesEl.scrollTop + messagesEl.clientHeight < messagesEl.scrollHeight - 12;
+          scrollBtn.classList.toggle('visible', relY > 0.55 && notAtBottom);
+});
+messagesEl.addEventListener('mouseleave', () => scrollBtn.classList.remove('visible'));
+scrollBtn.addEventListener('click', () => {
+          messagesEl.scrollTo({ top: messagesEl.scrollHeight, behavior: 'smooth' });
+});
+
+composerEl.addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const text = inputEl.value.trim();
+          if (!text) return;
+          addMessage('You', text, false);
+          inputEl.value = '';
+          sendEl.disabled = true;
+
+          const reply = await SharpMindEngine.generate(text, logEl, dotEl, textEl);
+          addMessage('SharpMind', reply, true);
+          sendEl.disabled = false;
+          inputEl.focus();
+});
+
+(async () => {
+          await SharpMindEngine.boot(logEl, dotEl, textEl);
+          inputEl.disabled = false;
+          sendEl.disabled = false;
+          inputEl.placeholder = 'Type a message… (echo replies for now)';
+})();
+    </script>
+</body>
+</html>

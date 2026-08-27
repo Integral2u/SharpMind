@@ -40,10 +40,17 @@ namespace SharpMind.Model.Format
             return null;
         }
 
-        public static IModelLoader GetModelLoaderFor(this ModelFormat format, QuantizationOps qOps, string path, ModelConfig config) => format switch
+        /// <param name="useSafeIo">
+        /// False (default) preserves current behavior exactly: tensor data is read
+        /// via a memory-mapped view. Set true on platforms where memory-mapped
+        /// files aren't available -- notably wasm-browser, where
+        /// System.IO.MemoryMappedFiles throws PlatformNotSupportedException --
+        /// to fall back to a plain FileStream instead. See WeightStreamFactory.
+        /// </param>
+        public static IModelLoader GetModelLoaderFor(this ModelFormat format, QuantizationOps qOps, string path, ModelConfig config, bool useSafeIo = false) => format switch
         {
-            ModelFormat.Gguf => new GgufLoader(qOps, path, config),
-            ModelFormat.Smm => new SmmLoader(qOps, path, config),
+            ModelFormat.Gguf => new GgufLoader(qOps, path, config, useSafeIo),
+            ModelFormat.Smm => new SmmLoader(qOps, path, config, useSafeIo),
             _ => throw new ArgumentOutOfRangeException(nameof(format), format, null)
         };
         private readonly static GgufModelFormatMetaHelper ggufModelFormatMetaHelper = new();

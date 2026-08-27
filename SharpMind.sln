@@ -41,6 +41,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SharpMind.Server", "SharpMi
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SharpMind.Server.CLI", "SharpMind.Server.CLI\SharpMind.Server.CLI.csproj", "{74BF37CE-1868-4C3C-B77C-88080861F055}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SharpMind.Live", "SharpMind.Live\SharpMind.Live.csproj", "{81C556C3-BAD5-4B7F-9294-B8EC73D724A0}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -261,6 +263,18 @@ Global
 		{74BF37CE-1868-4C3C-B77C-88080861F055}.Release|x64.Build.0 = Release|Any CPU
 		{74BF37CE-1868-4C3C-B77C-88080861F055}.Release|x86.ActiveCfg = Release|Any CPU
 		{74BF37CE-1868-4C3C-B77C-88080861F055}.Release|x86.Build.0 = Release|Any CPU
+		{81C556C3-BAD5-4B7F-9294-B8EC73D724A0}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{81C556C3-BAD5-4B7F-9294-B8EC73D724A0}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{81C556C3-BAD5-4B7F-9294-B8EC73D724A0}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{81C556C3-BAD5-4B7F-9294-B8EC73D724A0}.Debug|x64.Build.0 = Debug|Any CPU
+		{81C556C3-BAD5-4B7F-9294-B8EC73D724A0}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{81C556C3-BAD5-4B7F-9294-B8EC73D724A0}.Debug|x86.Build.0 = Debug|Any CPU
+		{81C556C3-BAD5-4B7F-9294-B8EC73D724A0}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{81C556C3-BAD5-4B7F-9294-B8EC73D724A0}.Release|Any CPU.Build.0 = Release|Any CPU
+		{81C556C3-BAD5-4B7F-9294-B8EC73D724A0}.Release|x64.ActiveCfg = Release|Any CPU
+		{81C556C3-BAD5-4B7F-9294-B8EC73D724A0}.Release|x64.Build.0 = Release|Any CPU
+		{81C556C3-BAD5-4B7F-9294-B8EC73D724A0}.Release|x86.ActiveCfg = Release|Any CPU
+		{81C556C3-BAD5-4B7F-9294-B8EC73D724A0}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

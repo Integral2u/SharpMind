@@ -53,7 +53,8 @@ public static class ModelFactory
         QuantizationOps qOps,
         string path,
         LoadMode loadMode = LoadMode.Full,
-        bool quantizedResident = false)
+        bool quantizedResident = false, 
+        bool useSafeIo = false)
     {
         ArgumentNullException.ThrowIfNull(modelConfig);
         ArgumentNullException.ThrowIfNull(sharpConfig);
@@ -76,7 +77,7 @@ public static class ModelFactory
             ? AllocateBlockWeights(modelConfig, sharpConfig)
             : AllocateInferenceBlockWeights(modelConfig);
 
-        var loader = ModelFormatHelpers.GetModelLoaderFor((ModelFormat)fmt, qOps, path, modelConfig);
+        var loader = ModelFormatHelpers.GetModelLoaderFor((ModelFormat)fmt, qOps, path, modelConfig, useSafeIo);
 
         if (loadMode == LoadMode.Full)
             return new TransformerWeightsFull(modelConfig, embedding, lmHead, finalNormW, finalNormB, blockWeights, loader,

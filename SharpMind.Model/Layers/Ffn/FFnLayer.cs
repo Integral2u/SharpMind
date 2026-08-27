@@ -198,6 +198,10 @@ public abstract class FfnLayer : IDisposable
                 Buffer.BlockCopy(weights.RawWup, 0, fused, weights.RawWgate.Length, weights.RawWup.Length);
                 WGated.SetRawWeight(fused);
             }
+            else if (weights.RawWup != null)
+            {
+                WGated.SetRawWeight(weights.RawWup);
+            }
             else
             {
                 WGated.SetRawWeight(null);
