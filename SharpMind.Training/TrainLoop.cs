@@ -39,8 +39,9 @@ public sealed class TrainLoop
 
     /// <param name="engine">
     /// The compute engine for forward + backward. Null selects the CPU reference
-    /// engine; an accelerator plugin supplies its own. The caller owns the engine's
-    /// lifetime — the loop never disposes it.
+    /// engine; an accelerator plugin supplies its own. An engine you pass in remains
+    /// yours to dispose — the loop never disposes it. The default CPU engine (used
+    /// when this is null) lives with the loop instead.
     /// </param>
     public TrainLoop(
         Transformer           model,

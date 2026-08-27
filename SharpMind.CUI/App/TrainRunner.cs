@@ -245,8 +245,13 @@ public static class TrainRunner
                     BatchSize: job.BatchSize, SeqLen: job.SeqLen, LabelSmoothing: job.LabelSmoothing));
             if (engine is not null)
             {
-                var chosen = accelerators.First(p => string.Equals(p.Name, job.Accelerator!.Trim(), StringComparison.OrdinalIgnoreCase));
-                Log($"Accelerator: {chosen.Name} — {chosen.Description}");
+                // Re-derived from the same name Resolve just matched — FirstOrDefault
+                // rather than First so a future drift between the two lookups logs
+                // nothing instead of throwing "Sequence contains no matching element"
+                // into the generic catch around this run.
+                var chosen = accelerators.FirstOrDefault(p => string.Equals(p.Name, job.Accelerator!.Trim(), StringComparison.OrdinalIgnoreCase));
+                if (chosen is not null)
+                    Log($"Accelerator: {chosen.Name} — {chosen.Description}");
             }
 
             // 5. Optimizer + scheduler + loop.

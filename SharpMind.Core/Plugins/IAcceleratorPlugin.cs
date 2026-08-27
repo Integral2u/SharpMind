@@ -9,6 +9,13 @@ namespace SharpMind.Core.Plugins;
 /// host picks by type: <see cref="IMappingOverrides"/> for kernel-level (JigSaw)
 /// substitution, <c>SharpMind.Training.ITrainingEngineFactory</c> for a resident
 /// whole-step training engine, further capability types as they are defined.
+///
+/// Lifetime contract: implementations must have a parameterless constructor that
+/// is cheap and side-effect free. The host constructs a plugin every time it scans
+/// the plugins folder — the training wizard does so each time it opens — and never
+/// disposes it, since this interface is not <see cref="IDisposable"/>. Acquire
+/// device resources (a CUDA context, a driver handle, ...) in a capability such as
+/// <c>ITrainingEngineFactory.TryCreate</c>, not in the constructor.
 /// </summary>
 public interface IAcceleratorPlugin
 {

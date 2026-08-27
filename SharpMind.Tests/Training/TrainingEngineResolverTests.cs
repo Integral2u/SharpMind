@@ -102,4 +102,17 @@ public sealed class TrainingEngineResolverTests : IDisposable
 
         Assert.Contains("MoE layers are not supported", ex.Message);
     }
+
+    [Fact]
+    public void FactoryThrows_Throws_AttributedToThePlugin_WithTheOriginalAsInnerException()
+    {
+        var thrown = new InvalidOperationException("driver not found");
+        var plugins = new List<IAcceleratorPlugin> { new Plugin("cuda", new Factory(_ => throw thrown)) };
+
+        var ex = Assert.Throws<InvalidOperationException>(() => TrainingEngineResolver.Resolve("cuda", plugins, _ctx));
+
+        Assert.Contains("cuda", ex.Message);
+        Assert.Contains("driver not found", ex.Message);
+        Assert.Same(thrown, ex.InnerException);
+    }
 }

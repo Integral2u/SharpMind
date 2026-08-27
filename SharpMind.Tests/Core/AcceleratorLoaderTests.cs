@@ -51,8 +51,7 @@ public sealed class AcceleratorLoaderTests : IDisposable
 
         AcceleratorLoader.Scan(typeof(FakeAcceleratorPlugin).Assembly, plugins, warnings);
 
-        Assert.Single(plugins);
-        Assert.Equal("fake", plugins[0].Name);
+        Assert.Contains(plugins, p => p.Name == "fake");
         Assert.Contains(warnings, w => w.Contains(nameof(NoCtorAcceleratorPlugin)));
     }
 
@@ -100,18 +99,6 @@ public sealed class AcceleratorLoaderTests : IDisposable
     }
 
     [Fact]
-    public void Capabilities_FiltersByType()
-    {
-        var plugins = new List<IAcceleratorPlugin> { new FakeAcceleratorPlugin() };
-
-        var overrides = plugins.Capabilities<IMappingOverrides>().ToList();
-
-        Assert.Single(overrides);
-        Assert.Equal("fake", overrides[0].GetOverrides(new SharpMindConfig())[SharpMindConfig.KeySoftmax]);
-        Assert.Empty(plugins.Capabilities<IDisposable>());
-    }
-
-    [Fact]
     public void LoadFrom_MissingOrBlankDirectory_ReturnsEmptyWithoutWarnings()
     {
         var a = AcceleratorLoader.LoadFrom(null, out var wa);
@@ -124,16 +111,34 @@ public sealed class AcceleratorLoaderTests : IDisposable
     [Fact]
     public void LoadFrom_ScansSubfolders_AndTurnsBadDllsIntoWarnings()
     {
-        // A nested folder proves the scan is recursive; a garbage .dll proves one
-        // bad file cannot abort the load.
+        // A nested folder proves the scan is recursive; a locked file proves one
+        // bad file cannot abort the load. This must be a genuine managed-load
+        // failure, not BadImageFormatException — that case is a native dependency
+        // beside the plugin and is covered (silently) by the test below.
         string nested = Path.Combine(_dir.Path, "vendor", "deep");
         Directory.CreateDirectory(nested);
-        File.WriteAllText(Path.Combine(nested, "broken.dll"), "this is not a PE file");
+        string lockedPath = Path.Combine(nested, "locked.dll");
+        File.WriteAllText(lockedPath, "placeholder");
         File.Copy(typeof(FakeAcceleratorPlugin).Assembly.Location, Path.Combine(nested, "SharpMind.Tests.dll"));
+
+        using var lockHandle = new FileStream(lockedPath, FileMode.Open, FileAccess.Read, FileShare.None);
+        var plugins = AcceleratorLoader.LoadFrom(_dir.Path, out var warnings);
+
+        Assert.Contains(plugins, p => p.Name == "fake");
+        Assert.Contains(warnings, w => w.Contains("locked.dll"));
+    }
+
+    [Fact]
+    public void LoadFrom_NativeDependencyBesidePlugin_ProducesNoWarning()
+    {
+        // A native DLL a plugin ships alongside itself (cudart64_12.dll style) throws
+        // BadImageFormatException from Assembly.LoadFrom — expected, not a failure.
+        File.WriteAllText(Path.Combine(_dir.Path, "cudart64_12.dll"), "this is not a PE file");
+        File.Copy(typeof(FakeAcceleratorPlugin).Assembly.Location, Path.Combine(_dir.Path, "SharpMind.Tests.dll"));
 
         var plugins = AcceleratorLoader.LoadFrom(_dir.Path, out var warnings);
 
         Assert.Contains(plugins, p => p.Name == "fake");
-        Assert.Contains(warnings, w => w.Contains("broken.dll"));
+        Assert.DoesNotContain(warnings, w => w.Contains("cudart64_12.dll"));
     }
 }

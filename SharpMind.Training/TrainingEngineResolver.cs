@@ -39,10 +39,30 @@ public static class TrainingEngineResolver
             throw new InvalidOperationException($"Accelerator '{wanted}' was not found in the plugins folder (available: {available}).");
         }
 
-        var factory = plugin.Capabilities.OfType<ITrainingEngineFactory>().FirstOrDefault()
+        // Capabilities and TryCreate are third-party plugin code, called unprotected —
+        // mirrors the same convention AcceleratorLoader.Scan already applies to the
+        // Name getter and constructor: a throw here must not surface to the user as a
+        // bare, unattributed exception.
+        IReadOnlyList<object> capabilities;
+        try { capabilities = plugin.Capabilities; }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException(
+                $"Accelerator '{plugin.Name}' failed while creating its training engine: {ex.GetBaseException().Message}", ex);
+        }
+
+        var factory = capabilities.OfType<ITrainingEngineFactory>().FirstOrDefault()
             ?? throw new InvalidOperationException($"Accelerator '{plugin.Name}' does not provide a training engine.");
 
-        var engine = factory.TryCreate(context, out var reason);
+        ITrainingEngine? engine;
+        string? reason;
+        try { engine = factory.TryCreate(context, out reason); }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException(
+                $"Accelerator '{plugin.Name}' failed while creating its training engine: {ex.GetBaseException().Message}", ex);
+        }
+
         return engine
             ?? throw new InvalidOperationException($"Accelerator '{plugin.Name}' cannot train this job: {reason ?? "no reason given"}.");
     }

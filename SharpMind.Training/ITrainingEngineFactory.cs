@@ -17,6 +17,12 @@ namespace SharpMind.Training;
 /// <param name="SeqLen">Sequence length the run will present.</param>
 /// <param name="IgnoreId">Label id excluded from the loss.</param>
 /// <param name="LabelSmoothing">Label smoothing the run was configured with.</param>
+/// <remarks>
+/// <paramref name="IgnoreId"/> and <paramref name="LabelSmoothing"/> must agree with
+/// whatever <paramref name="Loss"/> was itself constructed with — they are carried
+/// here separately only because <see cref="ILoss{TLabel}"/> does not expose them
+/// for a device engine to read back.
+/// </remarks>
 public sealed record TrainingEngineContext(
     Transformer              Model,
     IReadOnlyList<Parameter> Parameters,

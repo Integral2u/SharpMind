@@ -33,6 +33,14 @@ public static class AcceleratorLoader
                 PluginAssemblyResolver.RegisterDirectory(Path.GetDirectoryName(dllPath));
                 asm = Assembly.LoadFrom(dllPath);
             }
+            catch (BadImageFormatException)
+            {
+                // Not a managed assembly — a native dependency sitting beside the plugin
+                // (cudart64_12.dll, cublas64_12.dll, ...). The scan is recursive precisely
+                // so a plugin can ship these in its own folder; this is expected, not a
+                // load failure worth warning about on every run.
+                continue;
+            }
             catch (Exception ex)
             {
                 warnings.Add($"Failed to load '{Path.GetFileName(dllPath)}': {ex.Message}");
@@ -51,7 +59,7 @@ public static class AcceleratorLoader
     /// whose constructor throws, and names already present (case-insensitive) are
     /// skipped with a warning.
     /// </summary>
-    public static void Scan(Assembly assembly, List<IAcceleratorPlugin> into, List<string> warnings)
+    internal static void Scan(Assembly assembly, List<IAcceleratorPlugin> into, List<string> warnings)
     {
         ArgumentNullException.ThrowIfNull(assembly);
         ArgumentNullException.ThrowIfNull(into);
@@ -112,8 +120,4 @@ public static class AcceleratorLoader
         warnings.Add($"Some types in '{assembly.GetName().Name}' failed to load: {string.Join("; ", messages)}");
         return [.. ex.Types.OfType<Type>()];
     }
-
-    /// <summary>All capabilities of type <typeparamref name="T"/> across <paramref name="plugins"/>, in plugin order.</summary>
-    public static IEnumerable<T> Capabilities<T>(this IEnumerable<IAcceleratorPlugin> plugins)
-        => plugins.SelectMany(p => p.Capabilities).OfType<T>();
 }
