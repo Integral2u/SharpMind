@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using SharpMind.Core.Memory;
 using SharpMind.Core.Tensors;
 using SharpMind.Model;
+using SharpMind.Model.Config;
 
 namespace SharpMind.Inference;
 
@@ -35,7 +36,8 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
         Tokenization.Tokenizer tokenizer,
         bool addBos, bool addEos,
         IKVCache[]? caches = null,
-        int? seed = null)
+        int? seed = null,
+        int? maxCacheLen = null)
     {
         ArgumentNullException.ThrowIfNull(model);
         ArgumentNullException.ThrowIfNull(tokenizer);
@@ -51,7 +53,7 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
         else
         {
             int numLayers = model.Config.NumLayers;
-            int maxSeqLen = model.Config.EffectiveInferenceCacheLength;
+            int maxSeqLen = ModelConfig.ComputeMaxCacheLength(model.Config, maxCacheLen);
             int numKvHeads = model.Config.NumKvHeads;
             int headDim = model.Config.HeadDim;
 

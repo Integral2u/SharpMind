@@ -11,7 +11,7 @@
 </p>
 
 [![NuGet Downloads](https://img.shields.io/nuget/dt/SharpMind.Core.svg)](https://www.nuget.org/packages/SharpMind.Core)
-![GitHub Sponsor](https://img.shields.io/github/sponsors/Integral2u?label=Sponsor&logo=GitHub)
+[![GitHub Sponsor](https://img.shields.io/github/sponsors/Integral2u?label=Sponsor&logo=GitHub)](https://github.com/sponsors/Integral2u)
 [![Last commit](https://img.shields.io/github/last-commit/Integral2u/SharpMind)](https://github.com/Integral2u/SharpMind/commits/main)
 
 ---
@@ -265,7 +265,7 @@ Expect the training API surface (config records, trainer entry points) to change
 | File | Description |
 |---|---|
 | `shakespeare.txt` | The training corpus — 40,000 lines of Shakespeare's complete works. |
-| `shakespeare-job.smmt` | The training job config (GPT-2-style: HiddenDim=384, 6 layers, 6 heads, MaxSeqLen=256, 600 steps, AdamW with warmup). |
+| `shakespeare-job.smmt` | The training job config (GPT-2-style: HiddenDim=384, 6 layers, 6 heads, MaxSeqLen=256, 650 steps, AdamW with warmup). |
 | `shakespeare.smm` | The resulting trained checkpoint — a real model you can load and chat with immediately. |
 
 Run `SmmRealTextExample` to reproduce the full pipeline: BPE tokenizer training → data loading → finite-difference training → .SMM export → reload → greedy/sampled/chat inference. The model is deliberately tiny (finite-difference gradients are O(parameters) forwards per step), but it produces recognisably language-like output and exercises every stage of the training-to-inference path.

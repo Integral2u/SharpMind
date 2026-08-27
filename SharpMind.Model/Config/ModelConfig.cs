@@ -278,4 +278,37 @@ public sealed record ModelConfig
         FfnDim = 64,
         MaxSeqLen = 16,
     };
+
+    /// <summary>
+    /// Computes a safe KV cache length that fits in available memory,
+    /// applying the user-specified cap if provided.
+    /// </summary>
+    /// <param name="config">Model configuration.</param>
+    /// <param name="userMaxCacheLen">User-specified cap (from CLI --max-cache-len). Null means no explicit cap.</param>
+    /// <param name="headDim">Per-head dimension for KV tensors. Uses config.HeadDim when null.</param>
+    /// <returns>The maximum cache length to use for KV cache allocation.</returns>
+    public static int ComputeMaxCacheLength(ModelConfig config, int? userMaxCacheLen = null, int? headDim = null)
+    {
+        int effectiveLen = config.EffectiveInferenceCacheLength;
+        int hd = headDim ?? config.HeadDim;
+
+        // Bytes per token position in one layer: keys + values, each float32
+        long bytesPerPosition = (long)config.NumKvHeads * hd * sizeof(float) * 2;
+        long totalBytes = bytesPerPosition * effectiveLen * config.NumLayers;
+
+        // Use at most 40% of available memory for KV cache (leaves room for
+        // model weights, workspace, OS overhead, and other allocations).
+        long availableBytes = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes;
+        long budget = (long)(availableBytes * 0.40);
+
+        int maxLen = effectiveLen;
+        if (totalBytes > budget && bytesPerPosition > 0)
+            maxLen = (int)Math.Max(1, budget / (bytesPerPosition * config.NumLayers));
+
+        // Clamp to the user-specified cap (if any)
+        if (userMaxCacheLen is int userMax && userMax > 0)
+            maxLen = Math.Min(maxLen, userMax);
+
+        return Math.Min(maxLen, effectiveLen);
+    }
 }

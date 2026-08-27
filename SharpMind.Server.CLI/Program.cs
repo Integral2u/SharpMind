@@ -45,6 +45,10 @@ for (int i = 0; i < cliArgs.Length; i++)
             foreach (var m in raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
                 modelArgs.Add(m);
             break;
+        case "--max-cache-len" when i + 1 < cliArgs.Length:
+            if (int.TryParse(cliArgs[++i], out var maxCacheLen))
+                options.MaxCacheLen = maxCacheLen;
+            break;
         case "--help" or "-h":
             if (!serviceMode) PrintUsage();
             return;
@@ -416,6 +420,7 @@ static async Task SpawnServiceProcessAsync(SharpMindServerOptions options, List<
         args += $" --model \"{m}\"";
     if (options.DisableFileIO) args += " --no-files";
     if (options.DisableNetworkIO) args += " --no-network";
+    if (options.MaxCacheLen is int maxCacheLen) args += $" --max-cache-len {maxCacheLen}";
 
     var psi = new ProcessStartInfo
     {
@@ -694,6 +699,8 @@ static void PrintUsage()
                             (default: shut down service we started on exit)
       --no-files            Disable file IO for tool calls (read/write only)
       --no-network          Disable network IO for tool calls
+      --max-cache-len <n>   Cap KV cache length (tokens). Auto-caps by
+                            available memory when not specified
       -h, --help            Show this help message
     """);
 }

@@ -127,6 +127,14 @@ public abstract class InferenceLinearLayer : LinearLayer
         "q4_nl_parallel_sse", $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ4_NL_Parallel_Scalar)}",
         "q4_nl_serial_scalar", $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ4_NL_Serial_Scalar)}",
         "q4_nl_parallel_scalar", $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ4_NL_Parallel_Scalar)}",
+        "q1_0_serial_fma", $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ1_0_Serial_FMA)}",
+        "q1_0_parallel_fma", $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ1_0_Parallel_FMA)}",
+        "q1_0_serial_avx2", $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ1_0_Serial_FMA)}",
+        "q1_0_parallel_avx2", $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ1_0_Parallel_FMA)}",
+        "q1_0_serial_sse", $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ1_0_Serial_Scalar)}",
+        "q1_0_parallel_sse", $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ1_0_Parallel_Scalar)}",
+        "q1_0_serial_scalar", $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ1_0_Serial_Scalar)}",
+        "q1_0_parallel_scalar", $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ1_0_Parallel_Scalar)}",
         "f32_serial_fma", $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulF32_Serial_FMA)}",
         "f32_parallel_fma", $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulF32_Parallel_FMA)}",
         "f32_serial_avx2", $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulF32_Serial_FMA)}",
@@ -170,9 +178,27 @@ public abstract class InferenceLinearLayer : LinearLayer
                     $"A kernel would write beyond this buffer.");
         }
 
-        fixed (byte* pRaw = RawQuantizedData)
+        if (RawQuantizedData is not null)
         {
-            QuantizedMatMulFn(flat.DataPtr, pRaw, result.DataPtr, m, InFeatures, OutFeatures);
+            fixed (byte* pRaw = RawQuantizedData)
+            {
+                QuantizedMatMulFn(flat.DataPtr, pRaw, result.DataPtr, m, InFeatures, OutFeatures);
+            }
+        }
+        else if (QuantDtype == QuantDType.F32 && _weight.ElementCount == (long)InFeatures * OutFeatures)
+        {
+            fixed (float* pWeight = _weight.Data)
+            {
+                QuantizedMatMulFn(flat.DataPtr, (byte*)pWeight, result.DataPtr, m, InFeatures, OutFeatures);
+            }
+        }
+        else
+        {
+            throw new InvalidOperationException(
+                $"[{Name}] RawQuantizedData is null and no float fallback available " +
+                $"(dtype={QuantDtype}, weightElements={_weight.ElementCount}, " +
+                $"expected={(long)InFeatures * OutFeatures}). " +
+                $"The forward pass cannot proceed without weight data.");
         }
 
         if (_bias is not null)

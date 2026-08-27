@@ -1053,7 +1053,15 @@ public sealed class MainWindow : Window
         }
         catch (Exception ex)
         {
-            MessageBox.ErrorQuery("Launch failed", $"Unexpected error while starting the session:\n{ex.Message}", "OK");
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine("Unexpected error while starting the session:");
+            for (var e = ex; e != null; e = e.InnerException)
+            {
+                sb.AppendLine($"[{e.GetType().Name}] {e.Message}");
+                if (e.StackTrace != null)
+                    sb.AppendLine(e.StackTrace);
+            }
+            MessageBox.ErrorQuery("Launch failed", sb.ToString(), "OK");
             ShowOptions();
         }
     }

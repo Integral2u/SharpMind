@@ -13,20 +13,30 @@ public static class MemoryHelpers
 {
     public const int MaxArrayPoolLength = int.MaxValue / 2; // ~1 billion elements
 
+    // For large arrays, ArrayPool power-of-2 bucketing over-allocates by up to
+    // 2x (e.g. 155M floats → 268M bucket = 1 GB vs 594 MB needed).  Direct
+    // allocation avoids OOM on models with large vocab embeddings (Bonsai-8B).
+    private const int DirectAllocThreshold = 8 * 1024 * 1024; // 8 M elements
+
     /// <summary>
-    /// Rents an int-sized array from <see cref="ArrayPool{T}.Shared"/>.
+    /// Rents an int-sized array.  For small arrays uses <see cref="ArrayPool{T}.Shared"/>;
+    /// for large arrays allocates directly to avoid power-of-2 over-allocation.
     /// </summary>
     public static T[] RentArray<T>(int length) where T : unmanaged
     {
+        if (length > DirectAllocThreshold)
+            return new T[length];
         return ArrayPool<T>.Shared.Rent(length);
     }
 
     /// <summary>
-    /// Returns a rented array to <see cref="ArrayPool{T}.Shared"/>.
+    /// Returns a rented array.  Arrays above the direct-allocation threshold
+    /// are left for the GC; only pool-rented arrays are returned to the pool.
     /// </summary>
     public static void ReturnArray<T>(T[] array) where T : unmanaged
     {
-        if (array is not null) ArrayPool<T>.Shared.Return(array);
+        if (array is not null && array.Length <= DirectAllocThreshold)
+            ArrayPool<T>.Shared.Return(array);
     }
 
     /// <summary>

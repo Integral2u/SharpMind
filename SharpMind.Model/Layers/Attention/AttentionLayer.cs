@@ -331,6 +331,8 @@ namespace SharpMind.Model.Layers.Attention;
                 float alibiSlope = PositionalEncoder is AlibiEncoder alibi ? alibi.Slopes[h] : 0f;
                 unsafe
                 {
+                    if (qr is null) throw new NullReferenceException($"[DoHead bh={bh}] qr is null");
+                    if (output is null) throw new NullReferenceException($"[DoHead bh={bh}] output is null");
                     float* pQ = qr.DataPtr + (long)(b * seqLen * numH + h) * headDim;
                     float* pO = output.DataPtr + (long)(b * seqLen * qDim + h * headDim);
 
@@ -345,6 +347,8 @@ namespace SharpMind.Model.Layers.Attention;
                     {
                         float* pK = cache.GetKeyPtr(b, 0, kvHead);
                         float* pV = cache.GetValuePtr(b, 0, kvHead);
+                        if (pK == null) throw new NullReferenceException($"[DoHead bh={bh}] pK is null (cache type={cache.GetType().Name}, pos={cache.Length}, kvHead={kvHead})");
+                        if (pV == null) throw new NullReferenceException($"[DoHead bh={bh}] pV is null (cache type={cache.GetType().Name}, pos={cache.Length}, kvHead={kvHead})");
                         ScaledDotProduct(pQ, pK, pV, pO, seqLen, effectiveKvLen, headDim, scale, causal, qStride, oStride, alibiSlope, windowSize);
                     }
                     else

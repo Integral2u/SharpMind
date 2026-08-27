@@ -62,7 +62,7 @@ internal sealed class ScriptedGenerator : IGenerator<KVCacherBuilder>
 
 internal sealed class ScriptedGeneratorBuilder : IGeneratorBuilder<KVCacherBuilder>
 {
-    public IGenerator<KVCacherBuilder> CreateGenerator(Transformer model, Tokenizer tokenizer, bool addBos, bool addEos, IKVCache[]? caches, int? seed = null)
+    public IGenerator<KVCacherBuilder> CreateGenerator(Transformer model, Tokenizer tokenizer, bool addBos, bool addEos, IKVCache[]? caches, int? seed = null, int? maxCacheLen = null)
         => new ScriptedGenerator(seed ?? throw new ArgumentNullException(nameof(seed), "Pass the seed returned by ScriptedGenerator.Register."));
 }
 

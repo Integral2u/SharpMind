@@ -42,6 +42,12 @@ public sealed class SharpMindServerOptions
     /// When true, tool calls that perform network IO are denied.
     /// </summary>
     public bool DisableNetworkIO { get; set; }
+
+    /// <summary>
+    /// Optional cap on KV cache length. When null, auto-caps by available
+    /// memory. Set via --max-cache-len CLI flag.
+    /// </summary>
+    public int? MaxCacheLen { get; set; }
 }
 
 /// <summary>

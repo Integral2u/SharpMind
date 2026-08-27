@@ -66,6 +66,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     private IKVCache[]? ActiveCaches => _caches ?? _generator?.Caches?.ToArray();
 
     private readonly int? _seed;
+    private readonly int? _maxCacheLen;
     private string _userName = "User";
     private CancellationTokenSource? _turnCts;
     /// <summary>
@@ -136,7 +137,8 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         IKVCache[]? caches = null,
         IChatPromptFormatter? formatter = null,
         int? seed = null,
-        bool disposeModel = false)
+        bool disposeModel = false,
+        int? maxCacheLen = null)
     {
         ArgumentNullException.ThrowIfNull(tokenizer);
         ArgumentNullException.ThrowIfNull(model);
@@ -154,6 +156,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         _addBos = ModelMetaData.ResolveAddBos(meta, tokenizer.UseSentencePieceMerge);
         _addEos = ModelMetaData.ResolveAddEos(meta);
         _formatterOverride = formatter;
+        _maxCacheLen = maxCacheLen;
         PermissionCallback = permissions ?? new Func<ToolPermissionContext, Task<ToolPermission>>(async (ctx) => { await Task.CompletedTask; return ToolPermission.Never; });
         _fileSystem = new InterceptingFileSystem();
         _networkHandler = new InterceptingNetworkHandler();
@@ -169,7 +172,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         progress?.Report(0.08f);
 
         progress?.Report(0.10f);
-        _generator = new T().CreateGenerator(_model, _tokenizer, _addBos, _addEos, _caches, _seed);
+        _generator = new T().CreateGenerator(_model, _tokenizer, _addBos, _addEos, _caches, _seed, _maxCacheLen);
         ArgumentNullException.ThrowIfNull(_generator);
         // Chunked-prefill progress: queued on the calling thread during the
         // generator's synchronous prefill phase, then drained into

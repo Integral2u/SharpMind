@@ -189,7 +189,8 @@ public static class GgufConverter
             || arch.StartsWith("phi3") || arch.StartsWith("phi4")
             || arch.StartsWith("gemma2") || arch.StartsWith("gemma3") || arch.StartsWith("gemma-3")
             || arch is "dbrx"
-            || arch is "mistral3" or "ministral")
+            || arch is "mistral3" or "ministral"
+            || arch is "lfm2")
             return new Cl100kPreTokeniser();
 
         return new Gpt2PreTokeniser();

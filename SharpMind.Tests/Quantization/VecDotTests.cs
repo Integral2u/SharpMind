@@ -472,6 +472,7 @@ public class VecDotTests
         // Q5_0=6, Q5_1=7, Q8_0=8, Q8_1=9, Q2_K=10, Q3_K=11,
         // Q4_K=12, Q5_K=13, Q6_K=14, Q8_K=15, I8=16, I16=17, I32=18,
         // IQ1_S=19, IQ4_NL=20, IQ1_M=21, TQ1_0=22, TQ2_0=23
+        // Q1_0=41 pending C reference files
         int[] dtypes = [0, 1, 2, 3, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 21, 20, 23, 22];
         string[] names = ["VecDotF32", "VecDotF16", "VecDotQ4_0", "VecDotQ4_1",
                           "VecDotQ5_0", "VecDotQ5_1", "VecDotQ8_0", "VecDotQ8_1",
@@ -490,7 +491,7 @@ public class VecDotTests
         QuantDType.I16 => 1,
         QuantDType.I32 => 1,
         QuantDType.IQ4_NL => 32,
-        QuantDType.IQ1_S or QuantDType.IQ1_M or QuantDType.TQ1_0 or QuantDType.TQ2_0 => 256,
+        QuantDType.IQ1_S or QuantDType.IQ1_M or QuantDType.TQ1_0 or QuantDType.TQ2_0 or QuantDType.Q1_0 => 256,
         _ => dtype >= QuantDType.Q2_K ? 256 : 32
     };
 
@@ -518,6 +519,7 @@ public class VecDotTests
         QuantDType.IQ1_M => 56,
         QuantDType.TQ2_0 => 66,
         QuantDType.TQ1_0 => 54,
+        QuantDType.Q1_0 => 34,
         _ => throw new ArgumentOutOfRangeException(nameof(dtype), dtype, null)
     };
 

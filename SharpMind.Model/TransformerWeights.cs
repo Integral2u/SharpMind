@@ -122,6 +122,10 @@ public abstract class TransformerWeights : IDisposable
                 if (name.Contains("post_ffw_norm", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
                 if (name.Contains("attn_q_norm", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
                 if (name.Contains("attn_k_norm", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
+                // Fused QKV (e.g. Phi-3: "blk.N.attn_qkv.weight") must be matched
+                // BEFORE the individual attn_q/attn_k/attn_v substring checks,
+                // because "attn_qkv".Contains("attn_q") is true.
+                if (name.Contains("attn_qkv", StringComparison.OrdinalIgnoreCase)) return (null, block, "RawWqkv");
                 if (name.Contains("attn_q", StringComparison.OrdinalIgnoreCase) || name.Contains("q_proj", StringComparison.OrdinalIgnoreCase)) return (null, block, "RawWq");
                 if (name.Contains("attn_k", StringComparison.OrdinalIgnoreCase) || name.Contains("k_proj", StringComparison.OrdinalIgnoreCase)) return (null, block, "RawWk");
                 if (name.Contains("attn_v", StringComparison.OrdinalIgnoreCase) || name.Contains("v_proj", StringComparison.OrdinalIgnoreCase)) return (null, block, "RawWv");
@@ -567,7 +571,23 @@ TransformerWeights.BlockWeights[] blocks,
             {
                 long rawSize = Core.Quantization.QuantizationOps.GetRawTensorByteCount(info.Shape, info.Dtype);
                 if (rawSize > 0)
-                    SetTensorMeta(block, rawField, meta.DataOffset + info.Offset, (int)rawSize, info.Dtype);
+                {
+                    if (rawField == "RawWqkv")
+                    {
+                        // Fused QKV: register individual TensorMeta entries so the
+                        // AttentionLayer constructor reads the correct dtype instead
+                        // of defaulting to F32.
+                        int partSize = (int)(rawSize / 3);
+                        long baseOffset = meta.DataOffset + info.Offset;
+                        SetTensorMeta(block, "RawWq", baseOffset, partSize, info.Dtype);
+                        SetTensorMeta(block, "RawWk", baseOffset + partSize, partSize, info.Dtype);
+                        SetTensorMeta(block, "RawWv", baseOffset + partSize * 2, partSize, info.Dtype);
+                    }
+                    else
+                    {
+                        SetTensorMeta(block, rawField, meta.DataOffset + info.Offset, (int)rawSize, info.Dtype);
+                    }
+                }
             }
         }
 
@@ -593,7 +613,9 @@ TransformerWeights.BlockWeights[] blocks,
 
         bool needsPush = false;
 
-        if (Blocks[layerIndex].Wq == null)
+        // For fused QKV models (e.g. Phi-3), Wq is never set — only RawWq is.
+        // Check both so the layer isn't reloaded every forward pass.
+        if (Blocks[layerIndex].Wq == null && Blocks[layerIndex].RawWq == null)
         {
             // Wait for any running preload of this layer
             lock (_preloadLock)
@@ -606,7 +628,7 @@ TransformerWeights.BlockWeights[] blocks,
                 }
             }
 
-            if (Blocks[layerIndex].Wq == null)
+            if (Blocks[layerIndex].Wq == null && Blocks[layerIndex].RawWq == null)
             {
                 Loader!.LoadLayerWeights(layerIndex, this);
             }
@@ -628,7 +650,7 @@ TransformerWeights.BlockWeights[] blocks,
     public void PreloadLayerAsync(int layerIndex)
     {
         if (layerIndex < 0 || layerIndex >= Blocks.Length) return;
-        if (Blocks[layerIndex].Wq != null) return;
+        if (Blocks[layerIndex].Wq != null || Blocks[layerIndex].RawWq != null) return;
 
         lock (_preloadLock)
         {
@@ -648,7 +670,7 @@ TransformerWeights.BlockWeights[] blocks,
     public void FreeLayer(int layerIndex)
     {
         if (layerIndex < 0 || layerIndex >= Blocks.Length) return;
-        if (Blocks[layerIndex].Wq == null) return;
+        if (Blocks[layerIndex].Wq == null && Blocks[layerIndex].RawWq == null) return;
 
         // Push empty weights into LinearLayers (clears raw data references)
         BlockRefs?[layerIndex]?.SetWeights(new BlockWeights());
@@ -673,7 +695,7 @@ TransformerWeights.BlockWeights[] blocks,
         // Free any layers that are still loaded (typical: last layer(s) of the pass)
         for (int i = 0; i < Blocks.Length; i++)
         {
-            if (Blocks[i].Wq != null)
+            if (Blocks[i].Wq != null || Blocks[i].RawWq != null)
                 FreeLayer(i);
         }
     }

@@ -431,7 +431,7 @@ public static class SessionLauncher
         // [1, EffectiveInferenceCacheLength]) to mimic the pre-restore fast-prefill
         // behavior; when null, the full EffectiveInferenceCacheLength context is used.
         session.MaxNewTokens = options.Generation.MaxNewTokens;
-        int effectiveCacheLen = loaded.Model.Config.EffectiveInferenceCacheLength;
+        int effectiveCacheLen = ModelConfig.ComputeMaxCacheLength(loaded.Model.Config);
         session.MaxTokens = options.MaxTokens is int maxTokens && maxTokens > 0
             ? Math.Min(maxTokens, effectiveCacheLen)
             : effectiveCacheLen;

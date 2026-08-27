@@ -21,7 +21,8 @@ public class MedusaGeneratorBuilder<T> : IGeneratorBuilder<T> where T : IKVCache
         Tokenization.Tokenizer tokenizer,
         bool addBos, bool addEos,
         IKVCache[]? caches,
-        int? seed = null)
+        int? seed = null,
+        int? maxCacheLen = null)
     {
         var lmHeadWeight = model.LmHead ?? model.EmbeddingWeight;
         var medusaHeads = new MedusaHeads(
@@ -44,6 +45,6 @@ public class MedusaGeneratorBuilder<T> : IGeneratorBuilder<T> where T : IKVCache
 
         return new MedusaGenerator<T>(
             model, tokenizer, addBos, addEos,
-            medusaHeads, caches, seed);
+            medusaHeads, caches, seed, maxCacheLen);
     }
 }

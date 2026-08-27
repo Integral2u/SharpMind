@@ -586,6 +586,39 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
         // Load raw quantized data for block-level tensors
         if (block != null && rawField != null && rawSize > 0 && stream.Position + rawSize <= stream.Length)
         {
+            // Fused QKV (e.g. Phi-3: "blk.N.attn_qkv.weight" → [out, 3*in]): split
+            // into separate Q/K/V byte buffers so each InferenceLinearLayer gets the
+            // exact [out, in] chunk its size guard expects.
+            if (rawField == "RawWqkv")
+            {
+                if (rawSize % 3 != 0)
+                    throw new InvalidDataException(
+                        $"Fused QKV tensor '{info.Name}' has {rawSize} bytes which is not divisible by 3.");
+
+                int partSize = (int)(rawSize / 3);
+                byte[] fused = new byte[rawSize];
+                stream.ReadExactly(fused);
+                stream.Position -= rawSize;
+
+                byte[] qPart = new byte[partSize];
+                byte[] kPart = new byte[partSize];
+                byte[] vPart = new byte[partSize];
+                Buffer.BlockCopy(fused, 0, qPart, 0, partSize);
+                Buffer.BlockCopy(fused, partSize, kPart, 0, partSize);
+                Buffer.BlockCopy(fused, partSize * 2, vPart, 0, partSize);
+
+                SetRawField(block, "RawWq", qPart, info.Dtype);
+                SetRawField(block, "RawWk", kPart, info.Dtype);
+                SetRawField(block, "RawWv", vPart, info.Dtype);
+
+                // Record metadata for each split portion (offsets are approximate;
+                // the streaming forward path reads RawWq/RawWk/RawWv directly).
+                SetTensorMeta(block, "RawWq", meta.DataOffset + info.Offset, partSize, info.Dtype);
+                SetTensorMeta(block, "RawWk", meta.DataOffset + info.Offset + partSize, partSize, info.Dtype);
+                SetTensorMeta(block, "RawWv", meta.DataOffset + info.Offset + partSize * 2, partSize, info.Dtype);
+                return;
+            }
+
             byte[] rawData = new byte[rawSize];
             stream.ReadExactly(rawData);
             stream.Position -= rawSize;
@@ -646,21 +679,22 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
             : null;
         if (target == null && blockFloatTarget == null) return;
 
+        // For non-block tensors (embedding, lm_head, norms) read directly into
+        // target.Data — no temp buffer needed.  This saves ~600 MB for Bonsai-8B's
+        // token_embd.weight [151936, 1024] which previously allocated a duplicate
+        // float buffer via ArrayPool power-of-2 bucketing on top of the target tensor.
+        if (target != null && block == null)
+        {
+            target.Data.Clear();
+            ReadTensorInto(reader, info.Dtype, info.Shape, target.Data);
+            return;
+        }
+
         float[] buffer = MemoryHelpers.RentArray<float>(count);
         try
         {
             ReadTensorInto(reader, info.Dtype, info.Shape, buffer.AsSpan(0, count));
-            if (target != null)
-            {
-                target.Data.Clear();
-                // The head's data is [vocab, in] row-major in every real file — foreign
-                // GGUFs store it exactly like the embedding (only the header order
-                // differs: [in, vocab]), and SmmTrainingExporter now writes it verbatim
-                // too. The transpose this branch used to do scrambled every float head;
-                // it went unnoticed because serving consumes the raw bytes instead.
-                buffer.AsSpan(0, count).CopyTo(target.Data);
-            }
-            else if (block != null)
+            if (block != null)
             {
                 var floatTarget = blockFloatTarget;
                 if (floatTarget != null)

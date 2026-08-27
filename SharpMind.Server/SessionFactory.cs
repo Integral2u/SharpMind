@@ -2,6 +2,7 @@ using SharpMind.Inference;
 using SharpMind.Inference.Agent;
 using SharpMind.Inference.Chat;
 using SharpMind.Model;
+using SharpMind.Model.Config;
 using SharpMind.Server.Protocol;
 
 namespace SharpMind.Server;
@@ -57,13 +58,14 @@ public sealed class SessionFactory(SharpMindServerOptions options)
             progress: null,
             permissions: BuildPermissionCallback(),
             formatter: null,
-            seed: null);
+            seed: null,
+            maxCacheLen: _options.MaxCacheLen);
 
         // Map OpenAI params → session properties
         OpenAiMapper.ApplyToSession(request, session);
 
         // Set context window
-        int effectiveCacheLen = loaded.Model.Config.EffectiveInferenceCacheLength;
+        int effectiveCacheLen = ModelConfig.ComputeMaxCacheLength(loaded.Model.Config, _options.MaxCacheLen);
         session.MaxTokens = session.MaxNewTokens > 0
             ? Math.Min(session.MaxNewTokens, effectiveCacheLen)
             : effectiveCacheLen;
