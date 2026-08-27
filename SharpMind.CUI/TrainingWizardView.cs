@@ -57,6 +57,7 @@ public sealed class TrainingWizardView : View
     private readonly RadioGroup _peRadio;
     private readonly RadioGroup _optimizerRadio;
     private readonly RadioGroup _acceleratorRadio;
+    private bool _updatingAccelerator;
     private readonly TextField _numExpertsField;
     private readonly TextField _topKField;
 
@@ -298,7 +299,8 @@ public sealed class TrainingWizardView : View
         {
             X = 30, Y = row, SelectedItem = IndexOf(AcceleratorLabelsArr, _job.Accelerator),
         };
-        _acceleratorRadio.SelectedItemChanged += (a) => _job.Accelerator = a.SelectedItem == 0 ? null : AcceleratorLabelsArr[a.SelectedItem];
+        _acceleratorRadio.SelectedItemChanged += (a) =>
+            _job.Accelerator = AcceleratorForSelection(AcceleratorLabelsArr, a.SelectedItem, !_updatingAccelerator, _job.Accelerator);
         form.Add(AddLabel("Accelerator:"), _acceleratorRadio);
         row += AcceleratorLabelsArr.Length + 1;
         row += 1;
@@ -479,7 +481,15 @@ public sealed class TrainingWizardView : View
         _keepCountField.Visible = keepIndex == 1;
         if (keepIndex == 1) _keepCountField.Text = (ustring)(_job.KeepRecent > 0 ? _job.KeepRecent : 3).ToString();
         _qatRadio.SelectedItem = QatIndexFor(_job.QuantAwareTraining);
-        _acceleratorRadio.SelectedItem = IndexOf(AcceleratorLabelsArr, _job.Accelerator);
+        _updatingAccelerator = true;
+        try
+        {
+            _acceleratorRadio.SelectedItem = IndexOf(AcceleratorLabelsArr, _job.Accelerator);
+        }
+        finally
+        {
+            _updatingAccelerator = false;
+        }
         _incrementalCheck.Checked = _job.IncrementalMode;
         RefreshPresetButtons();
         RefreshAdvancedOptions();
@@ -569,6 +579,21 @@ public sealed class TrainingWizardView : View
         int i = Array.FindIndex(names, n => n.Equals(value, StringComparison.OrdinalIgnoreCase));
         return i < 0 ? 0 : i;
     }
+
+    /// <summary>
+    /// What <see cref="TrainJobSettings.Accelerator"/> should become after the accelerator
+    /// radio reports <paramref name="selectedIndex"/> against <paramref name="labels"/> ("CPU"
+    /// + discovered plugin names). <paramref name="isUserChange"/> is <c>false</c> for the
+    /// programmatic sync in <c>RefreshAll</c> (mirrors <c>!_updatingAccelerator</c>) — a
+    /// refresh always keeps <paramref name="currentValue"/> untouched, so a job whose saved
+    /// accelerator names a plugin that isn't currently discoverable survives a refresh instead
+    /// of being silently reset to CPU (Terminal.Gui 1.19's <c>RadioGroup.SelectedItem</c>
+    /// setter fires <c>SelectedItemChanged</c> unconditionally, even reasserting index 0). A
+    /// real user pick (<paramref name="isUserChange"/> = true) maps index 0 to null (CPU) and
+    /// any other index to that label.
+    /// </summary>
+    public static string? AcceleratorForSelection(string[] labels, int selectedIndex, bool isUserChange, string? currentValue)
+        => !isUserChange ? currentValue : selectedIndex <= 0 ? null : labels[selectedIndex];
 
     /// <summary>Index into <see cref="AttentionLabelsArr"/> (0 = auto/derived).</summary>
     private static int AttentionIndexOf(TrainJobSettings job)

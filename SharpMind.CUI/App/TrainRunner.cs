@@ -236,7 +236,7 @@ public static class TrainRunner
 
             // Accelerator plugins live in the same folder as data-pipeline plugins.
             // An explicit accelerator that cannot be honoured fails the run here,
-            // before any weights are touched — never a silent CPU fallback.
+            // well before the optimizer/scheduler and RunAsync — never a silent CPU fallback.
             var accelerators = AcceleratorLoader.LoadFrom(pluginsFolder, out var acceleratorWarnings);
             foreach (var w in acceleratorWarnings) Log($"Accelerator: {w}");
             var loss = new CrossEntropyLoss(labelSmoothing: job.LabelSmoothing);

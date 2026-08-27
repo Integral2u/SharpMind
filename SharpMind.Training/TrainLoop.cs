@@ -1,5 +1,4 @@
 using SharpMind.Core;
-using SharpMind.Core.Tensors;
 using SharpMind.Data;
 using SharpMind.Data.Batching;
 using SharpMind.Model;
