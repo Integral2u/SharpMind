@@ -48,7 +48,7 @@ public static class TrainingEngineResolver
         catch (Exception ex)
         {
             throw new InvalidOperationException(
-                $"Accelerator '{plugin.Name}' failed while creating its training engine: {ex.GetBaseException().Message}", ex);
+                $"Accelerator '{plugin.Name}' failed while reading its capabilities: {ex.GetBaseException().Message}", ex);
         }
 
         var factory = capabilities.OfType<ITrainingEngineFactory>().FirstOrDefault()
