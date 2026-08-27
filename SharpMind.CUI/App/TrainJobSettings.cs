@@ -132,6 +132,14 @@ public sealed class TrainJobSettings
     /// </summary>
     public string? Optimizer { get; set; }
 
+    /// <summary>
+    /// Accelerator plugin name (<c>IAcceleratorPlugin.Name</c>, case-insensitive)
+    /// that supplies the training engine; null/empty/"CPU" = the built-in CPU
+    /// engine. Resolved against the plugins folder at run time — a name that is
+    /// not found fails the run rather than silently training on the CPU.
+    /// </summary>
+    public string? Accelerator { get; set; }
+
     /// <summary>SGD momentum coefficient (ignored by AdamW). Default 0.</summary>
     public float SgdMomentum { get; set; } = 0f;
 

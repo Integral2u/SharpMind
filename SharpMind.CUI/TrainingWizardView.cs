@@ -56,6 +56,7 @@ public sealed class TrainingWizardView : View
     private readonly RadioGroup _archRadio;
     private readonly RadioGroup _peRadio;
     private readonly RadioGroup _optimizerRadio;
+    private readonly RadioGroup _acceleratorRadio;
     private readonly TextField _numExpertsField;
     private readonly TextField _topKField;
 
@@ -72,6 +73,7 @@ public sealed class TrainingWizardView : View
     private readonly string[] ArchLabelsArr = ["Decoder", "Encoder"];
     private readonly string[] PeLabelsArr = ["RoPE", "NoPE", "ALiBi"];
     private readonly string[] OptimizerLabelsArr = ["AdamW", "SGD"];
+    private readonly string[] AcceleratorLabelsArr;   // "CPU" + every IAcceleratorPlugin.Name found in the plugins folder
 
     private readonly string[] QatLabelsArr = ["F32 (off)", "F16", "Q8", "Q6", "Q5", "Q4", "Q3", "Q2"];
     private readonly string[] KeepLabelsArr = ["All", "Fixed", "None"];
@@ -96,6 +98,11 @@ public sealed class TrainingWizardView : View
     public TrainingWizardView(AppSettings settings, TrainJobSettings? job, Action<TrainJobSettings> onStart, Action? onCancel = null)
     {
         _settings = settings;
+        AcceleratorLabelsArr =
+        [
+            SharpMind.Training.TrainingEngineResolver.CpuName,
+            .. SharpMind.Core.Plugins.AcceleratorLoader.LoadFrom(settings.PluginsFolder, out _).Select(p => p.Name),
+        ];
         _job = job ?? NewJob(settings);
         _onStart = onStart;
         _onCancel = onCancel;
@@ -287,6 +294,15 @@ public sealed class TrainingWizardView : View
         row += OptimizerLabelsArr.Length + 1;
         row += 1;
 
+        _acceleratorRadio = new RadioGroup([.. AcceleratorLabelsArr.Select(a => (ustring)a)])
+        {
+            X = 30, Y = row, SelectedItem = IndexOf(AcceleratorLabelsArr, _job.Accelerator),
+        };
+        _acceleratorRadio.SelectedItemChanged += (a) => _job.Accelerator = a.SelectedItem == 0 ? null : AcceleratorLabelsArr[a.SelectedItem];
+        form.Add(AddLabel("Accelerator:"), _acceleratorRadio);
+        row += AcceleratorLabelsArr.Length + 1;
+        row += 1;
+
         // --- Training hyperparameters -----------------
         row = NumRow(form, row, "Seq len:", _job.SeqLen, v => _job.SeqLen = v, _hyperRows);
         row = NumRow(form, row, "Batch size:", _job.BatchSize, v => _job.BatchSize = v, _hyperRows);
@@ -463,6 +479,7 @@ public sealed class TrainingWizardView : View
         _keepCountField.Visible = keepIndex == 1;
         if (keepIndex == 1) _keepCountField.Text = (ustring)(_job.KeepRecent > 0 ? _job.KeepRecent : 3).ToString();
         _qatRadio.SelectedItem = QatIndexFor(_job.QuantAwareTraining);
+        _acceleratorRadio.SelectedItem = IndexOf(AcceleratorLabelsArr, _job.Accelerator);
         _incrementalCheck.Checked = _job.IncrementalMode;
         RefreshPresetButtons();
         RefreshAdvancedOptions();
