@@ -554,7 +554,7 @@ Issues, questions, and early feedback are welcome.
 
 # Notice
 <sub>
-This repository includes SmolLM2-135M-Instruct-Q3_K_M.gguf, a quantized
+The SharpMind.Live example in this repository uses SmolLM2-135M-Instruct-Q3_K_M.gguf Hosted on huggingface, a quantized
 derivative of HuggingFaceTB/SmolLM2-135M-Instruct
 (https://huggingface.co/HuggingFaceTB/SmolLM2-135M-Instruct), GGUF conversion
 by Unsloth (https://huggingface.co/unsloth/SmolLM2-135M-Instruct-GGUF).

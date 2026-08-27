@@ -303,8 +303,8 @@
             font-size: 12.5px;
             line-height: 1.8;
             padding: 9px 16px;
-            height: 64px;
-            overflow: hidden;
+            height: 210px;
+            overflow-y: auto;
             transition: height .2s ease,padding .2s ease;
         }
 
@@ -601,8 +601,10 @@
             }
         }
     </style>
+    <script type="importmap"></script>
 </head>
 <body>
+    <div id="app" style="display:none"></div>
     <div class="wrap">
 
         <header>
@@ -651,7 +653,7 @@
         <div class="try-it" id="try-it">
             <p class="try-it-label">Live in this page</p>
             <h2>SmolLM2-135M-Instruct, running client-side</h2>
-            <p class="try-it-lede">Loads and runs entirely in your browser via WebAssembly — no server, no API call leaving this tab. GitHub Pages serves the compiled runtime fine; it just can't set the cross-origin headers WASM threading needs, so this runs single-threaded on scalar kernels regardless of the machine it's on.</p>
+            <p class="try-it-lede">(VERY SLOW) Loads and runs entirely in your browser via WebAssembly — no server, no API call leaving this tab. GitHub Pages serves the compiled runtime fine; it just can't set the cross-origin headers WASM threading needs, so this runs single-threaded on scalar kernels regardless of the machine it's on.</p>
 
             <div class="engine">
                 <div class="engine-head">
@@ -685,7 +687,7 @@
             </div>
 
             <p class="demo-note">
-                <strong>The status indicator behaves like the real thing — replies don't yet.</strong> Loading, Ready, and Thinking reflect what a live Blazor WebAssembly build of SharpMind will actually report once it's wired in. What you type back right now is a plain echo, clearly labeled, so the send/receive flow is real to look at even though no model is generating anything. Want to help wire up the real engine? <a href="https://github.com/Integral2u/SharpMind" target="_blank" rel="noopener">The repo</a> is where that happens.
+                <strong>This is the real engine running in your browser.</strong> The GGUF model is fetched from HuggingFace, loaded into the Blazor virtual filesystem, and runs inference via compiled C# — no server, no native dependencies. First load takes a moment while the ~75 MB model downloads. <a href="https://github.com/Integral2u/SharpMind" target="_blank" rel="noopener">Source on GitHub</a>.
             </p>
         </div>
 
@@ -737,16 +739,15 @@ dotnet run --project SharpMind.Server.CLI -- --models ./models</pre>
 
     </div>
 
+    <script src="_framework/blazor.webassembly#[.{fingerprint}].js" autostart="false"></script>
     <script>
 /* =========================================================================
-           INTEGRATION SEAM — see wasm-integration-spec.md in the repo for the full
-           plan (loading, [JSInvokable] surface, and why streaming needs a callback-
-           based restructure here, not just a return value). Short version: replace
-           SharpMindEngine.generate() below with a real call into the compiled
-           engine once a Blazor WASM build exists. Everything else here -- the
-           status state machine, the log, the scroll affordance -- is already the
-           real behavior, not a mock.
-           ========================================================================= */
+       SHARPMIND LIVE — Blazor WASM interop. The C# SharpMindEngine
+       exposes [JSInvokable] LoadModel / Generate. This JS drives the UI and
+       calls into the compiled engine via DotNet.invokeMethodAsync.
+       ========================================================================= */
+const MODEL_URL = 'https://huggingface.co/unsloth/SmolLM2-135M-Instruct-GGUF/resolve/main/SmolLM2-135M-Instruct-Q3_K_M.gguf?download=true';
+
 const SharpMindEngine = {
           ready: false,
 
@@ -755,20 +756,29 @@ const SharpMindEngine = {
             textEl.textContent = state === 'loading' ? 'Loading' : state === 'thinking' ? 'Thinking' : 'Ready';
           },
 
+          logLine(html) {
+            const logEl = document.getElementById('engineLog');
+            if (!logEl) return;
+            const line = document.createElement('div');
+            line.className = 'line';
+            line.innerHTML = '<span class="tag">&gt;</span> ' + html;
+            logEl.appendChild(line);
+            while (logEl.children.length > 500) logEl.removeChild(logEl.firstChild);
+            logEl.scrollTop = logEl.scrollHeight;
+          },
+
           async boot(logEl, dotEl, textEl) {
             this.setStatus(dotEl, textEl, 'loading');
-            const steps = [
-              { text: 'fetching SmolLM2-135M-Instruct-Q3_K_M.gguf…', delay: 550 },
-              { text: 'writing model bytes to Blazor virtual filesystem…', delay: 480 },
-              { text: 'ModelFactory.CreateWeights(..., useSafeIo: true)…', delay: 620 },
-              { text: 'hardware tier: <span class="warn">Scalar</span> (WebAssembly has no AVX2/FMA)', delay: 420 },
-              { text: 'threads: <span class="warn">1</span> (GitHub Pages can\'t set the headers WASM threading needs)', delay: 420 },
-              { text: 'model ready', delay: 420 },
-            ];
-            for (const step of steps) {
-              await this._logLine(logEl, step.text, step.delay);
+            try {
+              // LoadModel is a [JSInvokable] on SharpMindEngine (static class).
+              // Every step is streamed to the log live from C# via SharpMindEngine.logLine.
+              await DotNet.invokeMethodAsync('SharpMind.Live', 'LoadModel', MODEL_URL);
+              this.ready = true;
+              this.setStatus(dotEl, textEl, 'ready');
+            } catch (err) {
+              await this._logLine(logEl, '<span class="err">' + err + '</span>', 0);
+              this.setStatus(dotEl, textEl, 'ready');
             }
-            this.setStatus(dotEl, textEl, 'ready');
           },
 
           _logLine(logEl, html, delay) {
@@ -778,22 +788,28 @@ const SharpMindEngine = {
                 line.className = 'line';
                 line.innerHTML = '<span class="tag">&gt;</span> ' + html;
                 logEl.appendChild(line);
-                while (logEl.children.length > 3) logEl.removeChild(logEl.firstChild);
+                while (logEl.children.length > 500) logEl.removeChild(logEl.firstChild);
+                logEl.scrollTop = logEl.scrollHeight;
                 resolve();
               }, delay);
             });
           },
 
-          // Mock only: real generation replaces this, but the status transitions
-          // around it (thinking -> ready) are the real behavior to preserve.
           async generate(prompt, logEl, dotEl, textEl) {
             this.setStatus(dotEl, textEl, 'thinking');
             await this._logLine(logEl, 'generating response…', 0);
-            await new Promise(r => setTimeout(r, 750));
-            this.setStatus(dotEl, textEl, 'ready');
-            return 'Echo: "' + prompt + '" — mock reply, not from the model. Real generated text lands here once the engine is wired in.';
+            try {
+              const reply = await DotNet.invokeMethodAsync('SharpMind.Live', 'Generate', prompt);
+              this.setStatus(dotEl, textEl, 'ready');
+              return reply;
+            } catch (err) {
+              this.setStatus(dotEl, textEl, 'ready');
+              return 'Error: ' + err;
+            }
           }
 };
+
+window.SharpMindEngine = SharpMindEngine;
 
 const logEl = document.getElementById('engineLog');
 const dotEl = document.getElementById('statusDot');
@@ -821,8 +837,6 @@ function addMessage(who, text, placeholder) {
           messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
-// Reveal the scroll-to-bottom button when hovering the lower portion of the
-// messages panel, but only if there's actually somewhere to scroll to.
 messagesEl.addEventListener('mousemove', (e) => {
           const rect = messagesEl.getBoundingClientRect();
           const relY = (e.clientY - rect.top) / rect.height;
@@ -849,10 +863,21 @@ composerEl.addEventListener('submit', async (e) => {
 });
 
 (async () => {
+          SharpMindEngine.logLine('<span class="warn">booting Blazor runtime…</span>');
+          try {
+            // Boot Blazor WASM runtime first (non-blocking autostart).
+            await Blazor.start();
+          } catch (err) {
+            SharpMindEngine.logLine('<span class="err">Blazor.start failed: ' + err + '</span>');
+            sendEl.disabled = false;
+            inputEl.disabled = false;
+            return;
+          }
+          // Now the [JSInvokable] surface is available — load the model.
           await SharpMindEngine.boot(logEl, dotEl, textEl);
           inputEl.disabled = false;
           sendEl.disabled = false;
-          inputEl.placeholder = 'Type a message… (echo replies for now)';
+          inputEl.placeholder = 'Type a message…';
 })();
     </script>
 </body>
