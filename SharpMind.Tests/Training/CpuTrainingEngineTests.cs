@@ -13,11 +13,21 @@ using SharpMind.Training.Loss;
 
 namespace SharpMind.Tests.Training;
 
+[CollectionDefinition("CpuTrainingEngine (serialized)", DisableParallelization = true)]
+public sealed class CpuTrainingEngineCollection;
+
 /// <summary>
 /// <see cref="CpuTrainingEngine"/> is the reference implementation of
 /// <see cref="ITrainingEngine"/>: it must produce exactly the loss and gradients
-/// the raw BackpropEngine + loss path produces, because it *is* that path.
+/// the raw BackpropEngine + loss path produces, because it *is* that path — so
+/// the bit-exact assertion below is deliberate, verifying a verbatim code
+/// extraction, not a tolerance-worthy numeric result. It is serialized (this
+/// collection never runs in parallel with any other) because the underlying
+/// <c>BackpropEngine</c> exhibits ULP-scale non-determinism when many test
+/// classes share the process — a separate, pre-existing issue unrelated to
+/// this branch and not what this test measures.
 /// </summary>
+[Collection("CpuTrainingEngine (serialized)")]
 public sealed class CpuTrainingEngineTests : IDisposable
 {
     private readonly TempDirectory _dir = new();
