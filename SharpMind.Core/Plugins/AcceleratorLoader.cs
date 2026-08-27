@@ -12,8 +12,8 @@ public static class AcceleratorLoader
 {
     /// <summary>
     /// Loads every <c>*.dll</c> under <paramref name="directory"/> (recursively) and
-    /// instantiates each public, non-abstract <see cref="IAcceleratorPlugin"/> with a
-    /// parameterless constructor. A missing or blank directory yields an empty list.
+    /// instantiates each non-abstract <see cref="IAcceleratorPlugin"/> implementation
+    /// with a parameterless constructor. A missing or blank directory yields an empty list.
     /// </summary>
     public static IReadOnlyList<IAcceleratorPlugin> LoadFrom(string? directory, out List<string> warnings)
     {
@@ -59,7 +59,7 @@ public static class AcceleratorLoader
 
         Type[] types;
         try { types = assembly.GetTypes(); }
-        catch (ReflectionTypeLoadException ex) { types = ex.Types.OfType<Type>().ToArray(); }
+        catch (ReflectionTypeLoadException ex) { types = HandleTypeLoadFailure(ex, assembly, warnings); }
 
         foreach (var type in types)
         {
@@ -80,14 +80,37 @@ public static class AcceleratorLoader
                 continue;
             }
 
-            if (into.Any(p => string.Equals(p.Name, plugin.Name, StringComparison.OrdinalIgnoreCase)))
+            // The Name getter is plugin code and may touch driver/VRAM state; a throw
+            // here must not abort the scan of the rest of the assembly.
+            string name;
+            try { name = plugin.Name; }
+            catch (Exception ex)
             {
-                warnings.Add($"Accelerator '{plugin.Name}' ({type.FullName}) is a duplicate of an already loaded plugin, skipped.");
+                warnings.Add($"Accelerator plugin {type.FullName} threw from its Name property, skipped: {ex.GetBaseException().Message}");
+                continue;
+            }
+
+            if (into.Any(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase)))
+            {
+                warnings.Add($"Accelerator '{name}' ({type.FullName}) is a duplicate of an already loaded plugin, skipped.");
                 continue;
             }
 
             into.Add(plugin);
         }
+    }
+
+    /// <summary>
+    /// Turns a partial <see cref="Assembly.GetTypes"/> failure into a warning naming the
+    /// distinct loader failures, and returns the types that did resolve. Split out from
+    /// <see cref="Scan"/> so the warning text is unit-testable without needing a genuinely
+    /// broken assembly on disk.
+    /// </summary>
+    internal static Type[] HandleTypeLoadFailure(ReflectionTypeLoadException ex, Assembly assembly, List<string> warnings)
+    {
+        string[] messages = [.. ex.LoaderExceptions.OfType<Exception>().Select(le => le.Message).Distinct()];
+        warnings.Add($"Some types in '{assembly.GetName().Name}' failed to load: {string.Join("; ", messages)}");
+        return [.. ex.Types.OfType<Type>()];
     }
 
     /// <summary>All capabilities of type <typeparamref name="T"/> across <paramref name="plugins"/>, in plugin order.</summary>
