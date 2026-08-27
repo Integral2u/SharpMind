@@ -592,7 +592,7 @@ public sealed class TrainingWizardView : View
     /// real user pick (<paramref name="isUserChange"/> = true) maps index 0 to null (CPU) and
     /// any other index to that label.
     /// </summary>
-    public static string? AcceleratorForSelection(string[] labels, int selectedIndex, bool isUserChange, string? currentValue)
+    internal static string? AcceleratorForSelection(string[] labels, int selectedIndex, bool isUserChange, string? currentValue)
         => !isUserChange ? currentValue : selectedIndex <= 0 ? null : labels[selectedIndex];
 
     /// <summary>Index into <see cref="AttentionLabelsArr"/> (0 = auto/derived).</summary>
