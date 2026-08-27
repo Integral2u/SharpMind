@@ -28,7 +28,6 @@ namespace SharpMind.Training;
 /// </summary>
 public sealed class TrainLoop
 {
-    private readonly Transformer           _model;
     private readonly List<Parameter>       _parameters;
     private readonly DataLoader            _loader;
     private readonly IOptimizer            _optimizer;
@@ -37,8 +36,13 @@ public sealed class TrainLoop
     private readonly ILoss<int>            _loss;
     private readonly TrainingOps           _ops;
     private readonly GradientMapping       _mapping;
-    private readonly BackpropEngine        _engine;
+    private readonly ITrainingEngine       _engine;
 
+    /// <param name="engine">
+    /// The compute engine for forward + backward. Null selects the CPU reference
+    /// engine; an accelerator plugin supplies its own. The caller owns the engine's
+    /// lifetime — the loop never disposes it.
+    /// </param>
     public TrainLoop(
         Transformer           model,
         IEnumerable<Parameter> parameters,
@@ -49,7 +53,8 @@ public sealed class TrainLoop
         ILoss<int>?            loss      = null,
         GradientMapping?       mapping   = null,
         SharpMindConfig?       smmConfig = null,
-        TrainConfig?           config    = null)
+        TrainConfig?           config    = null,
+        ITrainingEngine?       engine    = null)
     {
         ArgumentNullException.ThrowIfNull(model);
         ArgumentNullException.ThrowIfNull(parameters);
@@ -57,7 +62,6 @@ public sealed class TrainLoop
         ArgumentNullException.ThrowIfNull(optimizer);
         ArgumentNullException.ThrowIfNull(scheduler);
 
-        _model      = model;
         _parameters = [.. parameters];
         _loader     = loader;
         _optimizer  = optimizer;
@@ -70,7 +74,7 @@ public sealed class TrainLoop
         if (_config.QuantAwareTraining is { } qat)
             model.EnableQuantAwareTraining(qat);
 
-        _engine     = new BackpropEngine(model, _mapping, _parameters, smmConfig ?? new SharpMindConfig());
+        _engine     = engine ?? new CpuTrainingEngine(model, _mapping, _parameters, smmConfig ?? new SharpMindConfig(), _loss);
     }
 
     /// <summary>
@@ -217,28 +221,8 @@ public sealed class TrainLoop
         return long.TryParse(number, out var v) ? v : 0;
     }
 
-    // Forward + backward
+    // Forward + backward — delegated to the engine (CPU reference or an accelerator plugin's).
 
     private float ForwardBackward(TrainingBatch batch, CancellationToken cancellationToken)
-    {
-        int batch2  = batch.TokenIds.Shape.Rows;
-        int seqLen  = batch.TokenIds.Shape.Cols;
-        int vocab   = _model.Config.VocabSize;
-
-        using var ctx       = new ForwardContext();
-        using var flatLabels = batch.Labels.Reshape(batch2 * seqLen);
-
-        // Recording forward — ctx owns the returned logits (disposed on scope exit).
-        var logits = _engine.ForwardAndRecord(ctx, batch.TokenIds, cancellationToken);
-        using var logitsFlat = logits.Reshape(batch2 * seqLen, vocab);
-
-        float loss = _loss.Compute(logitsFlat, flatLabels);
-
-        using var dLogits = _loss.Backward(logitsFlat, flatLabels);
-        using var flatIds = batch.TokenIds.Reshape(batch2 * seqLen);
-
-        _engine.Backward(ctx, dLogits, flatIds, cancellationToken);
-
-        return loss;
-    }
+        => _engine.ForwardBackward(batch, cancellationToken);
 }
