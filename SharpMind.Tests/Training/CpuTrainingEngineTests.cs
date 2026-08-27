@@ -13,9 +13,6 @@ using SharpMind.Training.Loss;
 
 namespace SharpMind.Tests.Training;
 
-[CollectionDefinition("CpuTrainingEngine (serialized)", DisableParallelization = true)]
-public sealed class CpuTrainingEngineCollection;
-
 /// <summary>
 /// <see cref="CpuTrainingEngine"/> is the reference implementation of
 /// <see cref="ITrainingEngine"/>: it must produce exactly the loss and gradients
@@ -27,7 +24,7 @@ public sealed class CpuTrainingEngineCollection;
 /// classes share the process — a separate, pre-existing issue unrelated to
 /// this branch and not what this test measures.
 /// </summary>
-[Collection("CpuTrainingEngine (serialized)")]
+[Collection("Non-Parallel")]
 public sealed class CpuTrainingEngineTests : IDisposable
 {
     private readonly TempDirectory _dir = new();
@@ -44,7 +41,10 @@ public sealed class CpuTrainingEngineTests : IDisposable
             string.Join('\n', Enumerable.Range(0, 8).Select(i => $"the quick fox jumps over the lazy dog number {i}")));
         var pipeline = CleaningPipeline.From(new TextFileSource(path)).Pipe(new NormaliseWhitespace());
         var loader = new DataLoader(pipeline, s => TestTokens.Encode(s, 16), new PackingBatcher(batchSize: 2, maxSeqLen: 16));
-        await foreach (var batch in loader.LoadAsync())
+        // maxBatches: 1 lets the loader complete normally instead of the caller
+        // abandoning the enumeration early — keeps this parity test independent of
+        // DataLoader's abandon-early disposal behaviour (see eca6a13).
+        await foreach (var batch in loader.LoadAsync(maxBatches: 1))
             return batch;
         throw new InvalidOperationException("loader produced no batch");
     }
