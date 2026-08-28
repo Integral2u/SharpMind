@@ -64,6 +64,11 @@ public sealed class DataLoader
             SingleWriter = true
         });
 
+        // Linked so that abandoning the enumeration (e.g. the caller breaks out of
+        // its `await foreach`) can cancel the producer even when the caller's own
+        // token is never cancelled — see the finally block below.
+        using var producerCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+
         // Background producer: feeds the channel from the batcher, re-enumerating
         // the pipeline (epoch style) until the batch budget is satisfied.
         var producer = Task.Run(async () =>
@@ -76,11 +81,11 @@ public sealed class DataLoader
                 {
                     firstPass = false;
                     int passBatches = 0;
-                    await foreach (var batch in _batcher.BatchAsync(_pipeline.ReadAsync(cancellationToken), _tokenise, cancellationToken))
+                    await foreach (var batch in _batcher.BatchAsync(_pipeline.ReadAsync(producerCts.Token), _tokenise, producerCts.Token))
                     {
                         if (budget is { } remaining && produced >= remaining)
                             break;
-                        await channel.Writer.WriteAsync(batch, cancellationToken);
+                        await channel.Writer.WriteAsync(batch, producerCts.Token);
                         produced++;
                         passBatches++;
                     }
@@ -99,19 +104,39 @@ public sealed class DataLoader
             {
                 channel.Writer.TryComplete();
             }
-        }, cancellationToken);
+        }, producerCts.Token);
 
-        // Consumer: reads from the channel
-        while (await channel.Reader.WaitToReadAsync(cancellationToken))
+        try
         {
-            while (channel.Reader.TryRead(out var batch))
+            // Consumer: reads from the channel
+            while (await channel.Reader.WaitToReadAsync(cancellationToken))
             {
-                yield return batch;
+                while (channel.Reader.TryRead(out var batch))
+                {
+                    yield return batch;
+                }
             }
         }
+        finally
+        {
+            // Runs on every exit path — normal completion, early disposal from a
+            // caller breaking out of its `await foreach`, or an exception — not
+            // just the happy path. Without this, an abandoned producer keeps
+            // running in the background, still holding the corpus source open.
+            producerCts.Cancel();
+            try
+            {
+                await producer;
+            }
+            catch (OperationCanceledException) { }
 
-        // Ensure producer is cleaned up
-        await producer;
+            // The producer may have written batches the consumer never read (early
+            // break). Drain and dispose them now rather than leaving their
+            // NativeMemory-backed tensors alive until finalisation. Safe only after
+            // awaiting the producer above — nothing can write to the channel anymore.
+            while (channel.Reader.TryRead(out var abandoned))
+                abandoned.Dispose();
+        }
     }
 
     /// <summary>
