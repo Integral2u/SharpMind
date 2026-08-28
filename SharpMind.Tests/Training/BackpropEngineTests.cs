@@ -196,6 +196,64 @@ public sealed class BackpropEngineTests
         Assert.True(losses[^1] < losses[0], $"backprop MoE loss did not descend: {losses[0]:F4} → {losses[^1]:F4}");
     }
 
+    [Fact]
+    public unsafe void ForwardAndRecord_KeepsBlockContextBuffersDistinctFromLaterAllocations()
+    {
+        // Regression test for a premature-dispose bug in ForwardBlock: after
+        // ForwardAttention/ForwardFfn store their output tensor into BlockContext
+        // (bc.AttnProjOut / bc.FfnOut) for backward to read later, ForwardBlock
+        // immediately Dispose()s that SAME tensor object -- returning its buffer to
+        // NativeBufferPool while BlockContext still holds what looks like a live
+        // reference.
+        //
+        // This is not a rare concurrency race: NativeBufferPool buckets by
+        // power-of-two element count, and the very next same-shape allocation
+        // after each early dispose -- block.Norm2.ForwardWithState(x) right after
+        // attnProj.Dispose(), and _model.FinalNorm.ForwardWithState(x) right after
+        // ffnOut.Dispose() -- pops that exact freed buffer straight back off the
+        // free list and hands it out, deterministically, on every single-threaded
+        // run, with no other thread involved. Verified empirically: on unfixed
+        // code, bc.FfnOut.DataPtr == ctx.FinalNormOut.DataPtr and
+        // bc.AttnProjOut.DataPtr == bc.Norm2Out.DataPtr -- BlockContext's fields
+        // silently alias unrelated later tensors instead of holding the block's
+        // own activations. Only the MoE FFN's backward reads bc.FfnOut back
+        // (Σ w·dW = dOut·out in BackpropEngine's MoE FfnBackward case), so that's
+        // where the aliasing turns into a silently wrong gradient.
+        var modelConfig = SmallMoEConfig;
+        var sharpConfig = SharpMindConfig.ForModel(modelConfig.NumHeads, modelConfig.NumKvHeads, "mixtral");
+        var (model, parameters, config) = Fixture(modelConfig, sharpConfig);
+        using var _m = model;
+
+        var mapping = GradientMappingFactory.Create(config);
+        using var engine = new BackpropEngine(model, mapping, parameters, config);
+
+        using var tokenIds = DeterministicBatch(out _);
+        using var ctx = new ForwardContext();
+        var logits = engine.ForwardAndRecord(ctx, tokenIds);
+        using var logitsFlat = logits.Reshape(Batch * Seq, modelConfig.VocabSize);
+
+        var bc = ctx.Blocks[0];
+        Assert.NotNull(bc.FfnOut);
+        Assert.NotNull(bc.AttnProjOut);
+        Assert.NotNull(bc.Norm2Out);
+        Assert.NotNull(ctx.FinalNormOut);
+
+        IntPtr ffnOutPtr = (IntPtr)bc.FfnOut!.DataPtr;
+        IntPtr finalNormOutPtr = (IntPtr)ctx.FinalNormOut!.DataPtr;
+        Assert.True(ffnOutPtr != finalNormOutPtr,
+            "bc.FfnOut aliases ctx.FinalNormOut's buffer: ForwardBlock's early ffnOut.Dispose() " +
+            "returned the buffer to NativeBufferPool, and the final RMSNorm's same-shape output " +
+            "immediately rented it back -- backward's MoE router-weight gradient " +
+            "(Σ w·dW = dOut·out) would silently read FinalNormOut's data instead of the real FFN output.");
+
+        IntPtr attnProjPtr = (IntPtr)bc.AttnProjOut!.DataPtr;
+        IntPtr norm2OutPtr = (IntPtr)bc.Norm2Out!.DataPtr;
+        Assert.True(attnProjPtr != norm2OutPtr,
+            "bc.AttnProjOut aliases bc.Norm2Out's buffer: ForwardBlock's early attnProj.Dispose() " +
+            "returned the buffer to NativeBufferPool, and norm2's same-shape output immediately " +
+            "rented it back -- the same premature-dispose bug as bc.FfnOut, one line earlier.");
+    }
+
     // ── helpers ─────────────────────────────────────────────────────────────
 
     private static List<Parameter> SelectTargets(Transformer model)
