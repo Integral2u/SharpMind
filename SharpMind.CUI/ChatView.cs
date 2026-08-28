@@ -118,7 +118,7 @@ public sealed class ChatView : View
             HardwareTier.Auto => Fma.IsSupported ? "FMA" : Avx2.IsSupported ? "AVX2" : Sse3.IsSupported ? "SSE" : "Scalar",
             _ => options.HardwareTier.ToString()
         };
-        string hwDisplay = options.UseGpu ? $"GPU ({resolvedHw})" : resolvedHw;
+        string hwDisplay = resolvedHw;
 
         string formatterDisplay = SanitizeFormatterName(bridge.Formatter is { } fmt
             ? fmt.GetType().Name

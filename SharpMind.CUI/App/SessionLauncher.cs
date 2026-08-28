@@ -1,7 +1,6 @@
 ﻿using SharpMind.Core;
 using SharpMind.Core.AgentTools;
 using SharpMind.Core.Quantization;
-using SharpMind.GPU;
 using SharpMind.Inference;
 using SharpMind.Inference.Agent;
 using SharpMind.Inference.Chat;
@@ -31,7 +30,6 @@ public sealed class LoadedModel
     public required Tokenizer Tokenizer { get; init; }
     public required ModelMetaData Meta { get; init; }
     public required HardwareTier HardwareTier { get; init; }
-    public required bool UseGpu { get; init; }
     public int RefCount;
 }
 
@@ -92,8 +90,8 @@ public sealed class LaunchResult
 /// against the same GGUF file doesn't have to re-read it. The caller (see
 /// ModelCache in MainWindow) is responsible for deciding when a
 /// <see cref="LoadedModel"/> can be reused versus when option changes
-/// (different hardware tier, different GPU setting) mean it actually needs
-/// a fresh load â€” those choices change what gets baked into the Transformer
+/// (different hardware tier) mean it actually needs a fresh load â€” those
+/// choices change what gets baked into the Transformer
 /// itself, not just session-level behaviour, so they can't share a
 /// LoadedModel even though the file path is the same.
 /// </summary>
@@ -138,15 +136,7 @@ public static class SessionLauncher
         ;
 
         // Build the full mapping via SharpMindConfig.ToJigSawMapping().
-        // The GPU path additionally applies WithGpu() on a fresh MappingBuilder
-        // to produce GPU-overridden values for selected kernel slots.
-        Dictionary<string, string> mapping = options.UseGpu
-            ? new MappingBuilder(sharpConfig.ResolvedHardware)
-                .ApplyPreset(sharpConfig)
-                .ApplyQuantPreset(parallel: options.UseParallelKernels)
-                .WithGpu(nonQuant: options.GpuNonQuant, vecDot: options.GpuVecDot, matMul: options.GpuMatMul)
-                .Build()
-            : sharpConfig.ToJigSawMapping(parallel: options.UseParallelKernels);
+        Dictionary<string, string> mapping = sharpConfig.ToJigSawMapping(parallel: options.UseParallelKernels);
 
         status?.Report("Loading weights...");
         TransformerWeights weights;
@@ -189,8 +179,7 @@ public static class SessionLauncher
                 Model = model,
                 Tokenizer = tokenizer,
                 Meta = meta,
-                HardwareTier = sharpConfig.ResolvedHardware,
-                UseGpu = options.UseGpu
+                HardwareTier = sharpConfig.ResolvedHardware
             }
         };
     }

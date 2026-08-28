@@ -30,10 +30,6 @@ public sealed class SessionOptionsCloneTests
             Formatter = FormatterStrategy.ChatML,
             LoadMode = LoadMode.Streaming,
             HardwareTier = HardwareTier.AVX2,
-            UseGpu = true,
-            GpuNonQuant = false,
-            GpuVecDot = true,
-            GpuMatMul = true,
             UseParallelKernels = false,
             FileAccess = ToolPermission.Always,
             NetworkAccess = ToolPermission.Never,
@@ -68,10 +64,6 @@ public sealed class SessionOptionsCloneTests
         Assert.Equal(source.Formatter, clone.Formatter);
         Assert.Equal(source.LoadMode, clone.LoadMode);
         Assert.Equal(source.HardwareTier, clone.HardwareTier);
-        Assert.Equal(source.UseGpu, clone.UseGpu);
-        Assert.Equal(source.GpuNonQuant, clone.GpuNonQuant);
-        Assert.Equal(source.GpuVecDot, clone.GpuVecDot);
-        Assert.Equal(source.GpuMatMul, clone.GpuMatMul);
         Assert.Equal(source.UseParallelKernels, clone.UseParallelKernels);
         Assert.Equal(source.FileAccess, clone.FileAccess);
         Assert.Equal(source.NetworkAccess, clone.NetworkAccess);
