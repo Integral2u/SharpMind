@@ -24,8 +24,10 @@ It ships as a set of composable libraries plus a terminal chat application (`Sha
 
 | | |
 |---|---|
-| **Chat / conversation view** | **Model & session welcome view** |
-| ![Chat view](<SharpMind.Core/CUI ChatView.PNG>) | ![Welcome screen](<SharpMind.Core/CUI WelcomeScreen.PNG>) |
+| **Live in-browser demo** | **Chat / conversation view** |
+| ![Live in-browser view](<SharpMind.Core/Live OnlineView.PNG>) | ![Chat view](<SharpMind.Core/CUI ChatView.PNG>) |
+| **Model & session welcome view** | |
+| ![Welcome screen](<SharpMind.Core/CUI WelcomeScreen.PNG>) | |
 | **Runtime options (hardware tier, load mode, sampling)** | |
 | ![Options view](<SharpMind.Core/CUI OptionsView.PNG>) | |
 
