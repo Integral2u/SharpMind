@@ -1,0 +1,53 @@
+name: Deploy SharpMind.Live to GitHub Pages
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'SharpMind.Live/**'
+      - 'SharpMind.Core/**'
+      - 'SharpMind.Model/**'
+      - 'SharpMind.Inference/**'
+      - 'SharpMind.Tokenization/**'
+      - 'SharpMind.Data/**'
+      - '.github/workflows/deploy-pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Install wasm-tools workload
+        run: dotnet workload install wasm-tools
+
+      - name: Publish (AOT)
+        run: dotnet publish SharpMind.Live/SharpMind.Live.csproj -c Release -o publish_out
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: publish_out/wwwroot
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

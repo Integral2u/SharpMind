@@ -1,6 +1,11 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+        <script>
+            // GitHub Pages serves this at /SharpMind/, localhost serves it at /.
+            // Pin the base to the current path so the Blazor loader resolves _framework correctly in both.
+            document.head.appendChild(document.createElement('base')).href = location.origin + location.pathname;
+        </script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SharpMind — a .NET LLM engine, running in this tab</title>
