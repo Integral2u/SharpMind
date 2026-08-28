@@ -210,12 +210,112 @@ public static partial class QuantizationKernels
     public static unsafe void QuantizedMatMulF32_Serial_FMA(
         float* input, byte* rawWeights, float* output,
         int M, int K, int N)
-        => QuantizedMatMul_Serial_Wrapper(VecDotF32_FMA, input, rawWeights, output, M, K, N);
+    {
+        if (M <= 1)
+        {
+            QuantizedMatMul_Serial_Wrapper(VecDotF32_FMA, input, rawWeights, output, M, K, N);
+            return;
+        }
+        F32BlockedColumns(input, (float*)rawWeights, output, M, K, N, 0, N);
+    }
 
     public static unsafe void QuantizedMatMulF32_Parallel_FMA(
         float* input, byte* rawWeights, float* output,
         int M, int K, int N)
-        => QuantizedMatMul_Parallel_Wrapper(VecDotF32_FMA, input, rawWeights, output, M, K, N);
+    {
+        if (M <= 1)
+        {
+            DecodeParallel(VecDotF32_FMA, input, rawWeights, output, K, N);
+            return;
+        }
+
+        // Same split as the F16 path: by column, 16-column quanta, so each thread
+        // owns a contiguous span of every output row and no two threads share an
+        // output cache line.
+        int target = Math.Max(1, N / Environment.ProcessorCount);
+        int chunkSize = (target + 15) & ~15;
+        int numChunks = (N + chunkSize - 1) / chunkSize;
+
+        long inputAddr = (long)input, weightsAddr = (long)rawWeights, outputAddr = (long)output;
+        Parallel.For(0, numChunks, chunkIdx =>
+        {
+            int colStart = chunkIdx * chunkSize;
+            int colEnd = Math.Min(colStart + chunkSize, N);
+            F32BlockedColumns((float*)inputAddr, (float*)weightsAddr, (float*)outputAddr,
+                M, K, N, colStart, colEnd);
+        });
+    }
+
+    /// <summary>
+    /// The F32 twin of <see cref="F16BlockedColumns"/>: columns
+    /// [<paramref name="colStart"/>, <paramref name="colEnd"/>) of an F32 matmul,
+    /// four rows per weight vector, rows tiled by <see cref="F16RowTile"/>.
+    ///
+    /// The M &gt; 1 F32 path used to run M independent GEMVs (one row at a time,
+    /// every column), so a 256-row training step streamed the whole weight set 256
+    /// times — in the forward and again in the backward's dInput. Training is the
+    /// only caller with M &gt; 1 here (inference prefill runs the quantized or F16
+    /// kernels), which is why it lagged PR #7's F16 work. Each weight vector now
+    /// feeds four rows before it is discarded, and the row tile keeps those four
+    /// rows' inputs resident while the columns stream past.
+    /// </summary>
+    private static unsafe void F32BlockedColumns(
+        float* input, float* w, float* output,
+        int M, int K, int N, int colStart, int colEnd)
+    {
+        for (int rowTile = 0; rowTile < M; rowTile += F16RowTile)
+        {
+            int tileEnd = Math.Min(rowTile + F16RowTile, M);
+
+            for (int col = colStart; col < colEnd; col++)
+            {
+                float* pW = w + (long)col * K;
+                int r = rowTile;
+                for (; r + F16RowBlock <= tileEnd; r += F16RowBlock)
+                {
+                    var a0 = Vector256<float>.Zero;
+                    var a1 = Vector256<float>.Zero;
+                    var a2 = Vector256<float>.Zero;
+                    var a3 = Vector256<float>.Zero;
+                    float* i0 = input + (long)(r + 0) * K;
+                    float* i1 = input + (long)(r + 1) * K;
+                    float* i2 = input + (long)(r + 2) * K;
+                    float* i3 = input + (long)(r + 3) * K;
+
+                    int k = 0;
+                    for (; k <= K - 8; k += 8)
+                    {
+                        var vw = Vector256.LoadUnsafe(ref pW[k]);
+                        a0 = Fma.MultiplyAdd(vw, Vector256.LoadUnsafe(ref i0[k]), a0);
+                        a1 = Fma.MultiplyAdd(vw, Vector256.LoadUnsafe(ref i1[k]), a1);
+                        a2 = Fma.MultiplyAdd(vw, Vector256.LoadUnsafe(ref i2[k]), a2);
+                        a3 = Fma.MultiplyAdd(vw, Vector256.LoadUnsafe(ref i3[k]), a3);
+                    }
+
+                    float s0 = MathHelpers.HSum256_Avx(a0);
+                    float s1 = MathHelpers.HSum256_Avx(a1);
+                    float s2 = MathHelpers.HSum256_Avx(a2);
+                    float s3 = MathHelpers.HSum256_Avx(a3);
+                    for (; k < K; k++)
+                    {
+                        float wf = pW[k];
+                        s0 += i0[k] * wf;
+                        s1 += i1[k] * wf;
+                        s2 += i2[k] * wf;
+                        s3 += i3[k] * wf;
+                    }
+
+                    output[(long)(r + 0) * N + col] = s0;
+                    output[(long)(r + 1) * N + col] = s1;
+                    output[(long)(r + 2) * N + col] = s2;
+                    output[(long)(r + 3) * N + col] = s3;
+                }
+
+                for (; r < tileEnd; r++)
+                    output[(long)r * N + col] = VecDotF32_FMA(input + (long)r * K, (byte*)w, col, K);
+            }
+        }
+    }
 
     /// <summary>Rows processed together in the blocked F16 path. See <see cref="F16BlockedColumns"/>.</summary>
     private const int F16RowBlock = 4;
