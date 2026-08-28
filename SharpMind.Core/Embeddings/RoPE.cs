@@ -153,6 +153,10 @@ public sealed class RoPE : PositionalEncoder
 
     public int HeadDim   => _headDim;
     public int MaxSeqLen => _maxSeqLen;
+    public ReadOnlySpan<float> CosTable => _cosCache;
+    public ReadOnlySpan<float> SinTable => _sinCache;
+    public int RopeDim => _ropeDim;
+    public bool NeoxStyle => _neoxStyle;
 
     // Forward (in-place)
 

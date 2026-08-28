@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Description>CUDA/ILGPU training accelerator for SharpMind, loaded as a plugin.</Description>
+    <PackageTags>LLM; C#; GPU; ILGPU; CUDA</PackageTags>
+    <!-- A library does not copy its NuGet dependencies to the output folder; an application
+         resolves them through deps.json instead. This assembly is loaded from a path by
+         AcceleratorLoader, with no deps resolution, so ILGPU must physically sit beside it. -->
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="ILGPU" Version="1.5.3" />
+    <PackageReference Include="ILGPU.Algorithms" Version="1.5.3" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\SharpMind.Core\SharpMind.Core.csproj" />
+    <ProjectReference Include="..\SharpMind.Model\SharpMind.Model.csproj" />
+    <ProjectReference Include="..\SharpMind.Training\SharpMind.Training.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="SharpMind.GPU.Tests" />
+  </ItemGroup>
+</Project>
