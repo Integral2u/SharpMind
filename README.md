@@ -24,7 +24,7 @@ It ships as a set of composable libraries plus a terminal chat application (`Sha
 
 | | |
 |---|---|
-| **Live in-browser demo** | **Chat / conversation view** |
+| **[Live in-browser demo](https://integral2u.github.io/SharpMind/)** | **Chat / conversation view** |
 | ![Live in-browser view](<SharpMind.Core/Live OnlineView.PNG>) | ![Chat view](<SharpMind.Core/CUI ChatView.PNG>) |
 | **Model & session welcome view** | **Runtime options (hardware tier, load mode, sampling)** |
 | ![Welcome screen](<SharpMind.Core/CUI WelcomeScreen.PNG>) | ![Options view](<SharpMind.Core/CUI OptionsView.PNG>) |
