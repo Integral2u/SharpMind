@@ -45,7 +45,11 @@ public class QuantizationAgreementTests
     private static int GetBlockBytes(QuantDType dtype)
     {
         int blockSize = GetBlockSize(dtype);
-        return (int)QuantizationOps.GetRawTensorByteCount([blockSize, 1], dtype);
+        // One block is blockSize elements along the LAST axis. The 32-element formats size
+        // themselves from that axis, so [blockSize, 1] asks for blockSize rows of one padded
+        // block each - 32x the real stride, which left SanitizeScaleValues pinning one scale
+        // in every 32 blocks. The 256-element K-quants divide total elements and were unaffected.
+        return (int)QuantizationOps.GetRawTensorByteCount([1, blockSize], dtype);
     }
 
     private static byte[] GenerateRawData(QuantDType dtype, int K, int N, int seed)
@@ -260,6 +264,41 @@ public class QuantizationAgreementTests
             if (exp <= 0) return (ushort)sign;
             if (exp >= 31) return (ushort)(sign | 0x7C00);
             return (ushort)(sign | ((uint)exp << 10) | (mantissa >> 13));
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(UniqueDtypes))]
+    public unsafe void GenerateRawData_LeavesNoNonFiniteWeights(QuantDType dtype)
+    {
+        // The fixture weights are random bytes, so SanitizeScaleValues has to overwrite
+        // every block's scale field or a block can carry an fp16 Inf/NaN (any scale whose
+        // five exponent bits are all set - about 3% of random draws). That poisons a dot
+        // product silently: a NaN difference loses every '>' comparison, so a tier that
+        // disagreed would still be reported as agreeing.
+        var tiers = GetAvailableTiers();
+        if (tiers.Count < 2) return;
+
+        int blockSize = GetBlockSize(dtype);
+        int K = blockSize * 8;
+        int N = blockSize * 4;
+        if (dtype is QuantDType.F32 or QuantDType.F16) { K = 256; N = 128; }
+
+        var rawData = GenerateRawData(dtype, K, N, 42);
+        var input = new float[K];
+        var rng = new Random(42);
+        for (int i = 0; i < K; i++) input[i] = (float)(rng.NextDouble() * 2 - 1);
+
+        var ops = CreateSerialOps(tiers[0].tier);
+        fixed (float* pIn = input)
+        fixed (byte* pRaw = rawData)
+        {
+            for (int col = 0; col < N; col++)
+            {
+                float v = ops.VecDotFor(dtype, pIn, pRaw, col, K);
+                Assert.True(float.IsFinite(v),
+                    $"[{dtype}] column {col} dotted to {v} - a block scale was left unsanitised.");
+            }
         }
     }
 }
