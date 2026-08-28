@@ -109,6 +109,37 @@ public sealed class DataLoaderIntegrationTests : IDisposable
     }
 
     [Fact]
+    public async Task LoadAsync_AbandonedEarly_ReleasesTheCorpusFile()
+    {
+        // Windows-only guard: File.Delete happily unlinks an open file on Linux, so
+        // Assert.Null below passes there regardless of whether the file is actually
+        // released — don't "fix" this test off a green ubuntu-latest run (ci.yml runs
+        // both ubuntu-latest and windows-latest).
+        // Far more lines than the prefetch buffer + what we consume below, so the
+        // background producer is still mid-file (StreamReader open) and blocked
+        // writing to a full channel at the moment the consumer walks away.
+        string path = _dir.Write("corpus.txt",
+            string.Join('\n', Enumerable.Range(0, 500).Select(i => $"word{i} foo bar")));
+
+        var pipeline = CleaningPipeline.From(new TextFileSource(path));
+        var loader   = new DataLoader(pipeline, Tokenise,
+                          new PackingBatcher(batchSize: 1, maxSeqLen: 16),
+                          prefetchBuffer: 1);
+
+        int consumed = 0;
+        await foreach (var batch in loader.LoadAsync())
+        {
+            batch.Dispose();
+            if (++consumed >= 2) break;
+        }
+
+        // Breaking out of the enumeration must not abandon the producer while it
+        // still holds the corpus file open.
+        var ex = Record.Exception(() => File.Delete(path));
+        Assert.Null(ex);
+    }
+
+    [Fact]
     public async Task EndToEnd_Jsonl_SafetyStages()
     {
         string path = _dir.Write("data.jsonl",
