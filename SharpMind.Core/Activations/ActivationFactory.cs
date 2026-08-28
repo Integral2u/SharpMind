@@ -30,11 +30,15 @@ public static class ActivationFactory
 {
     private static readonly ConcurrentDictionary<int, ActivationOps> _opsCache = [];
 
-    // Fast last-hit slot: skips the dictionary probe when the same mapping
-    // hash is resolved repeatedly. Volatile semantics keep the hash/ops pair
-    // consistent across concurrent readers and writers.
-    private static int _lastHash;
-    private static ActivationOps? _lastOps;
+    // Fast last-hit slot: skips the dictionary probe when the same mapping hash is
+    // resolved repeatedly. The slot is READ as a pair - "does the hash match? then take
+    // the ops" - so it must also be WRITTEN as a pair. Holding it as two fields cannot do
+    // that however they are marked: volatile orders each field on its own, it does not
+    // publish both at once, so two threads resolving different mappings can interleave
+    // into a stored hash from one and stored ops from the other. One immutable record
+    // behind one reference write makes the pair indivisible.
+    private sealed record LastHit(int Hash, ActivationOps Ops);
+    private static LastHit? _lastHit;
 
     // Type-indexed cache: keyed by the config runtime type so a repeated
     // Create(config) call with an equal SharpMindConfig (a sealed record, so
@@ -76,13 +80,12 @@ public static class ActivationFactory
     {
         int hash = MappingHash.Compute(mappings);
 
-        if (Volatile.Read(ref _lastHash) == hash && Volatile.Read(ref _lastOps) is { } hit)
-            return hit;
+        if (Volatile.Read(ref _lastHit) is { } hit && hit.Hash == hash)
+            return hit.Ops;
 
         var ops = _opsCache.GetOrAdd(hash, _ => Assembler.CreateInstance<ActivationOps>(mappings));
 
-        Volatile.Write(ref _lastHash, hash);
-        Volatile.Write(ref _lastOps, ops);
+        Volatile.Write(ref _lastHit, new LastHit(hash, ops));
         return ops;
     }
 }

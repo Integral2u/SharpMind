@@ -263,5 +263,33 @@ namespace SharpMind.Tests.Core
             var m2 = cfg.ToJigSawMapping();
             Assert.Same(ActivationFactory.Create(m1), ActivationFactory.Create(m2));
         }
+
+        [Fact]
+        public void Factory_ConcurrentAlternatingMappings_NeverServesAnotherMappingsOps()
+        {
+            // The last-hit slot is read as a pair (does the hash match? then take the ops),
+            // so it must be written as a pair. Two threads resolving different mappings can
+            // otherwise interleave into a state where the stored hash belongs to one mapping
+            // and the stored ops to the other, and the next caller is handed the wrong
+            // kernels - GELU where it asked for SwiGLU. That is silent: the ops are valid,
+            // just not the ones requested.
+            var mapA = (SharpMindConfig.Llama with { Hardware = HardwareTier.Scalar }).ToJigSawMapping();
+            var mapB = (SharpMindConfig.Gpt with { Hardware = HardwareTier.Scalar }).ToJigSawMapping();
+
+            var opsA = ActivationFactory.Create(mapA);
+            var opsB = ActivationFactory.Create(mapB);
+            Assert.NotSame(opsA, opsB);
+
+            int mismatches = 0;
+            Parallel.For(0, 400_000, i =>
+            {
+                bool wantA = (i & 1) == 0;
+                var got = ActivationFactory.Create(wantA ? mapA : mapB);
+                if (!ReferenceEquals(got, wantA ? opsA : opsB))
+                    Interlocked.Increment(ref mismatches);
+            });
+
+            Assert.Equal(0, mismatches);
+        }
     }
 }
