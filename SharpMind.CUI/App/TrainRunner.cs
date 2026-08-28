@@ -1,4 +1,5 @@
 using SharpMind.Core;
+using SharpMind.Core.Plugins;
 using SharpMind.Core.Quantization;
 using SharpMind.Core.Training;
 using SharpMind.Data;
@@ -11,6 +12,7 @@ using SharpMind.Model.Config;
 using SharpMind.Model.Format;
 using SharpMind.Tokenization;
 using SharpMind.Training;
+using SharpMind.Training.Loss;
 using SharpMind.Training.Optimizers;
 using SharpMind.Training.Schedulers;
 
@@ -232,6 +234,26 @@ public static class TrainRunner
             var parameters = model.Parameters().ToList();
             var ops = TrainingOpsFactory.Create(sharpConfig);
 
+            // Accelerator plugins live in the same folder as data-pipeline plugins.
+            // An explicit accelerator that cannot be honoured fails the run here,
+            // well before the optimizer/scheduler and RunAsync — never a silent CPU fallback.
+            var accelerators = AcceleratorLoader.LoadFrom(pluginsFolder, out var acceleratorWarnings);
+            foreach (var w in acceleratorWarnings) Log($"Accelerator: {w}");
+            var loss = new CrossEntropyLoss(labelSmoothing: job.LabelSmoothing);
+            using var engine = TrainingEngineResolver.Resolve(job.Accelerator, accelerators,
+                new TrainingEngineContext(model, parameters, GradientMappingFactory.Create(sharpConfig), sharpConfig, loss,
+                    BatchSize: job.BatchSize, SeqLen: job.SeqLen, LabelSmoothing: job.LabelSmoothing));
+            if (engine is not null)
+            {
+                // Re-derived from the same name Resolve just matched — FirstOrDefault
+                // rather than First so a future drift between the two lookups logs
+                // nothing instead of throwing "Sequence contains no matching element"
+                // into the generic catch around this run.
+                var chosen = accelerators.FirstOrDefault(p => string.Equals(p.Name, job.Accelerator!.Trim(), StringComparison.OrdinalIgnoreCase));
+                if (chosen is not null)
+                    Log($"Accelerator: {chosen.Name} — {chosen.Description}");
+            }
+
             // 5. Optimizer + scheduler + loop.
             using IOptimizer optimizer = TrainingModelOptions.UsesSgd(job)
                 ? new SGD(parameters, lr: job.LearningRate, momentum: job.SgdMomentum, weightDecay: job.WeightDecay)
@@ -250,6 +272,8 @@ public static class TrainRunner
                 optimizer: optimizer,
                 scheduler: scheduler,
                 ops: ops,
+                loss: loss,
+                engine: engine,
                 smmConfig: sharpConfig,
                 config: new TrainConfig
                 {

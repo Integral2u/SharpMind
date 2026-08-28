@@ -56,6 +56,8 @@ public sealed class TrainingWizardView : View
     private readonly RadioGroup _archRadio;
     private readonly RadioGroup _peRadio;
     private readonly RadioGroup _optimizerRadio;
+    private readonly RadioGroup _acceleratorRadio;
+    private bool _updatingAccelerator;
     private readonly TextField _numExpertsField;
     private readonly TextField _topKField;
 
@@ -72,6 +74,7 @@ public sealed class TrainingWizardView : View
     private readonly string[] ArchLabelsArr = ["Decoder", "Encoder"];
     private readonly string[] PeLabelsArr = ["RoPE", "NoPE", "ALiBi"];
     private readonly string[] OptimizerLabelsArr = ["AdamW", "SGD"];
+    private readonly string[] AcceleratorLabelsArr;   // "CPU" + every IAcceleratorPlugin.Name found in the plugins folder
 
     private readonly string[] QatLabelsArr = ["F32 (off)", "F16", "Q8", "Q6", "Q5", "Q4", "Q3", "Q2"];
     private readonly string[] KeepLabelsArr = ["All", "Fixed", "None"];
@@ -96,6 +99,11 @@ public sealed class TrainingWizardView : View
     public TrainingWizardView(AppSettings settings, TrainJobSettings? job, Action<TrainJobSettings> onStart, Action? onCancel = null)
     {
         _settings = settings;
+        AcceleratorLabelsArr =
+        [
+            SharpMind.Training.TrainingEngineResolver.CpuName,
+            .. SharpMind.Core.Plugins.AcceleratorLoader.LoadFrom(settings.PluginsFolder, out _).Select(p => p.Name),
+        ];
         _job = job ?? NewJob(settings);
         _onStart = onStart;
         _onCancel = onCancel;
@@ -287,6 +295,16 @@ public sealed class TrainingWizardView : View
         row += OptimizerLabelsArr.Length + 1;
         row += 1;
 
+        _acceleratorRadio = new RadioGroup([.. AcceleratorLabelsArr.Select(a => (ustring)a)])
+        {
+            X = 30, Y = row, SelectedItem = IndexOf(AcceleratorLabelsArr, _job.Accelerator),
+        };
+        _acceleratorRadio.SelectedItemChanged += (a) =>
+            _job.Accelerator = AcceleratorForSelection(AcceleratorLabelsArr, a.SelectedItem, !_updatingAccelerator, _job.Accelerator);
+        form.Add(AddLabel("Accelerator:"), _acceleratorRadio);
+        row += AcceleratorLabelsArr.Length + 1;
+        row += 1;
+
         // --- Training hyperparameters -----------------
         row = NumRow(form, row, "Seq len:", _job.SeqLen, v => _job.SeqLen = v, _hyperRows);
         row = NumRow(form, row, "Batch size:", _job.BatchSize, v => _job.BatchSize = v, _hyperRows);
@@ -463,6 +481,15 @@ public sealed class TrainingWizardView : View
         _keepCountField.Visible = keepIndex == 1;
         if (keepIndex == 1) _keepCountField.Text = (ustring)(_job.KeepRecent > 0 ? _job.KeepRecent : 3).ToString();
         _qatRadio.SelectedItem = QatIndexFor(_job.QuantAwareTraining);
+        _updatingAccelerator = true;
+        try
+        {
+            _acceleratorRadio.SelectedItem = IndexOf(AcceleratorLabelsArr, _job.Accelerator);
+        }
+        finally
+        {
+            _updatingAccelerator = false;
+        }
         _incrementalCheck.Checked = _job.IncrementalMode;
         RefreshPresetButtons();
         RefreshAdvancedOptions();
@@ -552,6 +579,21 @@ public sealed class TrainingWizardView : View
         int i = Array.FindIndex(names, n => n.Equals(value, StringComparison.OrdinalIgnoreCase));
         return i < 0 ? 0 : i;
     }
+
+    /// <summary>
+    /// What <see cref="TrainJobSettings.Accelerator"/> should become after the accelerator
+    /// radio reports <paramref name="selectedIndex"/> against <paramref name="labels"/> ("CPU"
+    /// + discovered plugin names). <paramref name="isUserChange"/> is <c>false</c> for the
+    /// programmatic sync in <c>RefreshAll</c> (mirrors <c>!_updatingAccelerator</c>) — a
+    /// refresh always keeps <paramref name="currentValue"/> untouched, so a job whose saved
+    /// accelerator names a plugin that isn't currently discoverable survives a refresh instead
+    /// of being silently reset to CPU (Terminal.Gui 1.19's <c>RadioGroup.SelectedItem</c>
+    /// setter fires <c>SelectedItemChanged</c> unconditionally, even reasserting index 0). A
+    /// real user pick (<paramref name="isUserChange"/> = true) maps index 0 to null (CPU) and
+    /// any other index to that label.
+    /// </summary>
+    internal static string? AcceleratorForSelection(string[] labels, int selectedIndex, bool isUserChange, string? currentValue)
+        => !isUserChange ? currentValue : selectedIndex <= 0 ? null : labels[selectedIndex];
 
     /// <summary>Index into <see cref="AttentionLabelsArr"/> (0 = auto/derived).</summary>
     private static int AttentionIndexOf(TrainJobSettings job)
