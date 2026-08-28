@@ -126,23 +126,6 @@ public sealed class SessionOptions
     /// </summary>
     public HardwareTier HardwareTier { get; set; } = HardwareTier.Auto;
 
-    /// <summary>
-    /// Whether to chain MappingBuilder.WithGpu() into the launch mapping.
-    /// Requires SharpMind.GPU to be referenced by whatever project starts
-    /// the session — JigSaw discovers the GPU kernel entries by scanning the
-    /// loaded AppDomain, so the reference is what actually makes WithGpu()'s
-    /// overrides resolve to real kernels rather than no-ops.
-    /// </summary>
-    public bool UseGpu { get; set; }
-
-    /// <summary>Override non-quantized operations (pointwise, gate, softmax, RMSNorm) on GPU.</summary>
-    public bool GpuNonQuant { get; set; } = true;
-
-    /// <summary>Override quantized vector dot operations on GPU.</summary>
-    public bool GpuVecDot { get; set; }
-
-    /// <summary>Override quantized matrix multiplication operations on GPU.</summary>
-    public bool GpuMatMul { get; set; }
     public bool UseParallelKernels { get; set; } = true;
 
     /// <summary>
@@ -249,10 +232,6 @@ public sealed class SessionOptions
         target.Formatter = Formatter;
         target.LoadMode = LoadMode;
         target.HardwareTier = HardwareTier;
-        target.UseGpu = UseGpu;
-        target.GpuNonQuant = GpuNonQuant;
-        target.GpuVecDot = GpuVecDot;
-        target.GpuMatMul = GpuMatMul;
         target.UseParallelKernels = UseParallelKernels;
         target.FileAccess = FileAccess;
         target.NetworkAccess = NetworkAccess;

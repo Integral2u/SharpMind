@@ -1,6 +1,5 @@
 ﻿using SharpMind.Core;
 using SharpMind.Core.Quantization;
-using SharpMind.GPU;
 using SharpMind.Inference;
 using SharpMind.Inference.Chat;
 using SharpMind.Inference.Chat.PromptFormatters;
@@ -75,14 +74,7 @@ namespace SharpMind.Samples.Examples
                 }
 
                 var sharpConfig = modelConfig.ForModel();
-                // Build a single combined mapping. WithGpu() now overrides quant ops
-                // as well as model-level ops — no separate qOpsMapping needed.
-                var mapping = withGPU ? new MappingBuilder(sharpConfig.ResolvedHardware)
-                    .ApplyPreset(sharpConfig)
-                    .ApplyQuantPreset(sharpConfig)
-                    .WithGpu()
-                    .Build() :
-                    new MappingBuilder(sharpConfig.ResolvedHardware)
+                var mapping = new MappingBuilder(sharpConfig.ResolvedHardware)
                     .ApplyPreset(sharpConfig)
                     .ApplyQuantPreset(sharpConfig)
                     .Build();

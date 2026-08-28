@@ -15,8 +15,6 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SharpMind.Model", "SharpMin
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SharpMind.Tests", "SharpMind.Tests\SharpMind.Tests.csproj", "{33A6FE2C-DA48-4718-80F0-07B331F71260}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SharpMind.GPU", "SharpMind.GPU\SharpMind.GPU.csproj", "{7AEE28F0-3A11-3136-2DA8-39B07754A3C7}"
-EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SharpMind.Inference", "SharpMind.Inference\SharpMind.Inference.csproj", "{ECB2DC09-D735-4B6A-B1AB-EBAF826ED29E}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SharpMind.Tokenization", "SharpMind.Tokenization\SharpMind.Tokenization.csproj", "{B80693C1-AF0C-68B5-7593-88A7065FC26B}"
@@ -125,18 +123,6 @@ Global
 		{33A6FE2C-DA48-4718-80F0-07B331F71260}.Release|x64.Build.0 = Release|Any CPU
 		{33A6FE2C-DA48-4718-80F0-07B331F71260}.Release|x86.ActiveCfg = Release|Any CPU
 		{33A6FE2C-DA48-4718-80F0-07B331F71260}.Release|x86.Build.0 = Release|Any CPU
-		{7AEE28F0-3A11-3136-2DA8-39B07754A3C7}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{7AEE28F0-3A11-3136-2DA8-39B07754A3C7}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{7AEE28F0-3A11-3136-2DA8-39B07754A3C7}.Debug|x64.ActiveCfg = Debug|Any CPU
-		{7AEE28F0-3A11-3136-2DA8-39B07754A3C7}.Debug|x64.Build.0 = Debug|Any CPU
-		{7AEE28F0-3A11-3136-2DA8-39B07754A3C7}.Debug|x86.ActiveCfg = Debug|Any CPU
-		{7AEE28F0-3A11-3136-2DA8-39B07754A3C7}.Debug|x86.Build.0 = Debug|Any CPU
-		{7AEE28F0-3A11-3136-2DA8-39B07754A3C7}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{7AEE28F0-3A11-3136-2DA8-39B07754A3C7}.Release|Any CPU.Build.0 = Release|Any CPU
-		{7AEE28F0-3A11-3136-2DA8-39B07754A3C7}.Release|x64.ActiveCfg = Release|Any CPU
-		{7AEE28F0-3A11-3136-2DA8-39B07754A3C7}.Release|x64.Build.0 = Release|Any CPU
-		{7AEE28F0-3A11-3136-2DA8-39B07754A3C7}.Release|x86.ActiveCfg = Release|Any CPU
-		{7AEE28F0-3A11-3136-2DA8-39B07754A3C7}.Release|x86.Build.0 = Release|Any CPU
 		{ECB2DC09-D735-4B6A-B1AB-EBAF826ED29E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{ECB2DC09-D735-4B6A-B1AB-EBAF826ED29E}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{ECB2DC09-D735-4B6A-B1AB-EBAF826ED29E}.Debug|x64.ActiveCfg = Debug|Any CPU

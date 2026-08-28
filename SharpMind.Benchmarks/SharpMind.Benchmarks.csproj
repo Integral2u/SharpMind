@@ -19,7 +19,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\SharpMind.Core\SharpMind.Core.csproj" />
-    <ProjectReference Include="..\SharpMind.GPU\SharpMind.GPU.csproj" />
   </ItemGroup>
 
 </Project>

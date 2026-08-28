@@ -19,9 +19,6 @@ public sealed class OptionsView : View
     private readonly RadioGroup loadModeRadio;
     private readonly RadioGroup formatterRadio;
     private readonly RadioGroup hwRadio;
-    private readonly CheckBox gpuCheck;
-    private readonly CheckBox gpuVecDotCheck;
-    private readonly CheckBox gpuMatMulCheck;
     private readonly CheckBox parallelCheck;
     private readonly TextField topKField;
     private readonly TextField topPField;
@@ -30,7 +27,6 @@ public sealed class OptionsView : View
     private readonly TextField maxContextTokensField;
     private readonly TextField userNameField;
     private readonly RadioGroup generatorRadio;
-    private readonly CheckBox gpuNonQuantCheck;
     private readonly TextField tempField;
     private readonly TextField repetitionWindowField;
     private readonly TextField agentNameField;
@@ -132,26 +128,6 @@ public sealed class OptionsView : View
         _formContent.Add(hwRadio);
         row += Enum.GetValues<HardwareTier>().Length + 1;
         
-        gpuCheck = new CheckBox("Use GPU (requires SharpMind.GPU reference)", options.UseGpu) { X = 1, Y = row };
-        gpuCheck.Toggled += (_) => _options.UseGpu = gpuCheck.Checked;
-        _formContent.Add(gpuCheck);
-        row++;
-
-        gpuNonQuantCheck = new CheckBox("  GPU: non-quantized ops (pointwise, gate, softmax, rmsnorm)", options.GpuNonQuant) { X = 1, Y = row };
-        gpuNonQuantCheck.Toggled += (_) => _options.GpuNonQuant = gpuNonQuantCheck.Checked;
-        _formContent.Add(gpuNonQuantCheck);
-        row++;
-
-        gpuVecDotCheck = new CheckBox("  GPU: quantized vector dot", options.GpuVecDot) { X = 1, Y = row };
-        gpuVecDotCheck.Toggled += (_) => _options.GpuVecDot = gpuVecDotCheck.Checked;
-        _formContent.Add(gpuVecDotCheck);
-        row++;
-
-        gpuMatMulCheck = new CheckBox("  GPU: quantized matrix multiply", options.GpuMatMul) { X = 1, Y = row };
-        gpuMatMulCheck.Toggled += (_) => _options.GpuMatMul = gpuMatMulCheck.Checked;
-        _formContent.Add(gpuMatMulCheck);
-        row++;
-
         parallelCheck = new CheckBox("Use parallel kernels (faster on multi-core CPU)", options.UseParallelKernels) { X = 1, Y = row };
         parallelCheck.Toggled += (_) => _options.UseParallelKernels = parallelCheck.Checked;
         row += 2;
@@ -400,10 +376,6 @@ public sealed class OptionsView : View
         loadModeRadio.SelectedItem = (int)options.LoadMode;
         formatterRadio.SelectedItem = (int)options.Formatter;
         hwRadio.SelectedItem = (int)options.HardwareTier;
-        gpuCheck.Checked = options.UseGpu;
-        gpuNonQuantCheck.Checked = options.GpuNonQuant;
-        gpuVecDotCheck.Checked = options.GpuVecDot;
-        gpuMatMulCheck.Checked = options.GpuMatMul;
         parallelCheck.Checked = options.UseParallelKernels;
         tempField.Text = (ustring)_options.Sampling.Temperature.ToString("F2");
         topKField.Text = (ustring)_options.Sampling.TopK.ToString("F2");

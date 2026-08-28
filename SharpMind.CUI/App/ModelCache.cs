@@ -4,8 +4,8 @@ using SharpMind.Model.Config;
 namespace SharpMind.CUI.App;
 
 /// <summary>
-/// Tracks loaded models by file path (+ the hardware/GPU settings baked into
-/// them, since those affect the actual Transformer instance, not just
+/// Tracks loaded models by file path (+ the hardware tier baked into them,
+/// since that affects the actual Transformer instance, not just
 /// session-level behaviour) so that opening a second named chat session
 /// against the same GGUF file reuses the already-loaded weights instead of
 /// reading them from disk again.
@@ -27,7 +27,7 @@ public sealed class ModelCache
     private readonly Dictionary<string, LoadedModel> _byKey = new(StringComparer.OrdinalIgnoreCase);
 
     private static string KeyFor(SessionOptions options) =>
-        $"{options.ModelPath}|{options.HardwareTier}|{options.UseGpu}";
+        $"{options.ModelPath}|{options.HardwareTier}";
 
     /// <summary>Returns an already-loaded model for these exact settings if one exists,
     /// incrementing its ref count. Returns null for streaming mode (never cached).</summary>

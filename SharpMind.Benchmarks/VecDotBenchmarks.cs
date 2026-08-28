@@ -4,7 +4,6 @@ using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Jobs;
 using SharpMind.Core;
 using SharpMind.Core.Quantization;
-using SharpMind.GPU;
 
 namespace SharpMind.Benchmarks;
 
@@ -14,12 +13,6 @@ public static class VecDotHelper
     public static QuantizationOps CreateSse()    => Sse3.IsSupported ? QuantizationFactory.Create(HardwareTier.SSE) : CreateScalar();
     public static QuantizationOps CreateAvx2()   => Avx2.IsSupported ? QuantizationFactory.Create(HardwareTier.AVX2) : CreateSse();
     public static QuantizationOps CreateFma()    => Fma.IsSupported  ? QuantizationFactory.Create(HardwareTier.FMA)  : CreateAvx2();
-
-    public static Func<float> TryCreateGpu(Func<float> kernel)
-    {
-        try { var _ = kernel(); return kernel; }
-        catch { return static () => float.NaN; }
-    }
 }
 
 [SimpleJob(RuntimeMoniker.Net90, warmupCount: 5, iterationCount: 10)]
@@ -28,7 +21,6 @@ public unsafe class Q8_0Benchmarks
 {
     private const int Size = 8192;
     private QuantizationOps _scalar, _sse, _avx2, _fma;
-    private Func<float> _gpu;
     private float* _input;
     private byte* _w;
 
@@ -46,7 +38,6 @@ public unsafe class Q8_0Benchmarks
         ushort d = BitConverter.HalfToUInt16Bits((Half)0.1f);
         for (int b = 0; b < Size / 32; b++)
         { _w[b * 34 + 0] = (byte)(d & 0xFF); _w[b * 34 + 1] = (byte)(d >> 8); }
-        _gpu = VecDotHelper.TryCreateGpu(() => GPUQuantizationKernels.VecDotQ8_0_GPU(_input, _w, 0, Size));
     }
 
     [GlobalCleanup]
@@ -56,7 +47,6 @@ public unsafe class Q8_0Benchmarks
     [Benchmark] public float SSE()   => _sse.VecDotQ8_0(_input, _w, 0, Size);
     [Benchmark] public float AVX2()  => _avx2.VecDotQ8_0(_input, _w, 0, Size);
     [Benchmark] public float FMA()   => _fma.VecDotQ8_0(_input, _w, 0, Size);
-    [Benchmark] public float GPU()   => _gpu();
 }
 
 [SimpleJob(RuntimeMoniker.Net90, warmupCount: 5, iterationCount: 10)]
@@ -65,7 +55,6 @@ public unsafe class Q3KBenchmarks
 {
     private const int Size = 8192;
     private QuantizationOps _scalar, _sse, _avx2, _fma;
-    private Func<float> _gpu;
     private float* _input;
     private byte* _w;
 
@@ -80,7 +69,6 @@ public unsafe class Q3KBenchmarks
         for (int i = 0; i < Size; i++) _input[i] = (float)(rng.NextDouble() - 0.5);
         _w = (byte*)NativeMemory.Alloc((nuint)bytes);
         new Random(42).NextBytes(new Span<byte>(_w, bytes));
-        _gpu = VecDotHelper.TryCreateGpu(() => GPUQuantizationKernels.VecDotQ3K_GPU(_input, _w, 0, Size));
     }
 
     [GlobalCleanup]
@@ -90,7 +78,6 @@ public unsafe class Q3KBenchmarks
     [Benchmark] public float SSE()   => _sse.VecDotQ3K(_input, _w, 0, Size);
     [Benchmark] public float AVX2()  => _avx2.VecDotQ3K(_input, _w, 0, Size);
     [Benchmark] public float FMA()   => _fma.VecDotQ3K(_input, _w, 0, Size);
-    [Benchmark] public float GPU()   => _gpu();
 }
 
 [SimpleJob(RuntimeMoniker.Net90, warmupCount: 5, iterationCount: 10)]
@@ -99,7 +86,6 @@ public unsafe class Q4KBenchmarks
 {
     private const int Size = 8192;
     private QuantizationOps _scalar, _sse, _avx2, _fma;
-    private Func<float> _gpu;
     private float* _input;
     private byte* _w;
 
@@ -114,7 +100,6 @@ public unsafe class Q4KBenchmarks
         for (int i = 0; i < Size; i++) _input[i] = (float)(rng.NextDouble() - 0.5);
         _w = (byte*)NativeMemory.Alloc((nuint)bytes);
         new Random(42).NextBytes(new Span<byte>(_w, bytes));
-        _gpu = VecDotHelper.TryCreateGpu(() => GPUQuantizationKernels.VecDotQ4K_GPU(_input, _w, 0, Size));
     }
 
     [GlobalCleanup]
@@ -124,5 +109,4 @@ public unsafe class Q4KBenchmarks
     [Benchmark] public float SSE()   => _sse.VecDotQ4K(_input, _w, 0, Size);
     [Benchmark] public float AVX2()  => _avx2.VecDotQ4K(_input, _w, 0, Size);
     [Benchmark] public float FMA()   => _fma.VecDotQ4K(_input, _w, 0, Size);
-    [Benchmark] public float GPU()   => _gpu();
 }
