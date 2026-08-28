@@ -221,7 +221,6 @@ public sealed class BackpropEngine : IDisposable
 
         var attnProj = ForwardAttention(norm1Out, block.Attention, bc);
         x.AddInPlace(attnProj);
-        attnProj.Dispose();
 
         var (norm2Out, norm2State) = block.Norm2.ForwardWithState(x);
         bc.Norm2Out = norm2Out;
@@ -229,7 +228,6 @@ public sealed class BackpropEngine : IDisposable
 
         var ffnOut = ForwardFfn(norm2Out, block.Ffn, bc);
         x.AddInPlace(ffnOut);
-        ffnOut.Dispose();
 
         return x;
     }
