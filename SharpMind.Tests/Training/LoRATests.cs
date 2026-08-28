@@ -1,251 +1,279 @@
 using SharpMind.Core;
 using SharpMind.Core.Tensors;
+using SharpMind.Core.Training;
 using SharpMind.Model;
 using SharpMind.Model.Config;
+using SharpMind.Model.Layers;
+using SharpMind.Training;
+using SharpMind.Training.Autograd;
 using SharpMind.Training.LoRA;
+using SharpMind.Training.Loss;
+using SharpMind.Training.Optimizers;
 
 namespace SharpMind.Tests.Training;
 
 /// <summary>
-/// Regression tests for the LoRA adapters. LoRALayer previously swapped the
-/// constructor arguments (A became <c>[rank, in]</c> and B <c>[out, rank]</c>,
-/// so <see cref="LoRALayer.InFeatures"/>/<see cref="LoRALayer.OutFeatures"/>
-/// both reported the rank) and the matmul kernels were invoked with
-/// InFeatures/rank in place of the layers' output dims. These tests pin the
-/// corrected contracts: A is <c>[in, rank]</c>, B is <c>[rank, out]</c>, the
-/// forward produces <c>[batch, out]</c>, and the deltas reproduce the
-/// reference <c>x @ W + scale * (x @ A @ B)</c> maths.
+/// LoRA as something a training loop can actually run: <see cref="LoRAModel"/>
+/// attaches rank-r adapters to the targeted projections of every block,
+/// <see cref="BackpropEngine"/> trains only those adapters (the base weights are
+/// frozen by not being in the parameter list), and <see cref="LoRAModel.Merge"/>
+/// folds the adapters back into the base weights so the existing export path
+/// serves the result. Gradients are checked against finite differences, the base
+/// is checked bit-identical after training, and the merged model is checked to
+/// reproduce the adapted forward.
 /// </summary>
 public sealed class LoRATests
 {
-    private const int Batch = 3;
-
-    [Fact]
-    public void LoRALayer_ExposesInOutAndRank()
+    private static readonly ModelConfig SmallConfig = new()
     {
-        using var layer = new LoRALayer(inFeatures: 6, outFeatures: 4, rank: 2);
-        Assert.Equal(6, layer.InFeatures);
-        Assert.Equal(4, layer.OutFeatures);
-        Assert.Equal(2, layer.Rank);
+        VocabSize = 32,
+        HiddenDim = 8,
+        NumLayers = 2,
+        NumHeads = 2,
+        NumKvHeads = 2,
+        FfnDim = 16,
+        MaxSeqLen = 512,
+    };
+
+    private const int Batch = 2;
+    private const int Seq = 4;
+
+    private static Tensor<int> DeterministicBatch(out Tensor<int> labels)
+    {
+        labels = Tensor<int>.From([0, 1, 2, 3, 4, 5, 6, 7], Batch, Seq);
+        return Tensor<int>.From([3, 9, 12, 5, 17, 2, 8, 31], Batch, Seq);
     }
 
-    [Fact]
-    public void LoRALayer_ClampsRankToSmallestDimension()
+    private static (Transformer Model, SharpMindConfig Config) Fixture(SharpMindConfig preset, int seed = 9001)
     {
-        using var layer = new LoRALayer(inFeatures: 4, outFeatures: 8, rank: 32);
-        Assert.Equal(4, layer.Rank);
+        var sc = preset with { Hardware = HardwareTier.Scalar };
+        var weights = ModelFactory.CreateForTraining(SmallConfig, sc);
+        WeightInitializer.InitializeRandomly(weights, seed);
+        return (ModelFactory.CreateTrainingTransformer(weights, sc), sc);
     }
 
-    [Fact]
-    public void LoRALayer_Parameters_HaveRankSizedShapes()
+    private static float LossFor(Transformer model, Tensor<int> ids, Tensor<int> labels, ILoss<int> loss)
     {
-        using var layer = new LoRALayer(inFeatures: 6, outFeatures: 4, rank: 2);
-        var ps = layer.Parameters().ToArray();
-
-        // A = [in, rank], B = [rank, out]
-        Assert.Equal(new[] { 6, 2 }, ps[0].Data.Shape.Dims);
-        Assert.Equal(new[] { 2, 4 }, ps[1].Data.Shape.Dims);
-
-        long total = ps.Sum(p => p.Data.ElementCount);
-        Assert.Equal(6L * 2 + 2 * 4, total);
+        using var logits = model.Forward(ids);
+        using var flat = logits.Reshape(Batch * Seq, SmallConfig.VocabSize);
+        using var flatLabels = labels.Reshape(Batch * Seq);
+        return loss.Compute(flat, flatLabels);
     }
 
-    [Fact]
-    public void LoRALayer_Forward_ProducesOutColumnsAndMatchesReference()
+    private static IEnumerable<TrainingLinearLayer> AllLinears(Transformer model)
     {
-        using var layer = new LoRALayer(inFeatures: 6, outFeatures: 4, rank: 2, scale: 1.5f);
-        var ps = layer.Parameters().ToArray();
-        var aRaw = ps[0].Data; // [in, rank]
-        var bRaw = ps[1].Data; // [rank, out]
-
-        using var input = Tensor<float>.From(
-            [1f, 2f, 3f, 4f, 5f, 6f,
-             2f, 1f, 4f, 3f, 6f, 5f,
-             0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f], Batch, 6);
-
-        using var frozenWeights = Tensor<float>.From(
-            [0.1f, -0.2f, 0.3f, 0.4f,
-             -0.5f, 0.6f, -0.7f, 0.8f,
-             0.9f, -1.0f, 0.11f, -0.12f,
-             0.13f, 0.14f, -0.15f, 0.16f,
-             -0.17f, 0.18f, 0.19f, -0.2f,
-             0.21f, -0.22f, 0.23f, 0.24f], 6, 4);
-
-        using var actual = layer.Forward(input, frozenWeights);
-
-        Assert.Equal(new[] { Batch, 4 }, actual.Shape.Dims);
-
-        // Reference: result = x @ W + scale * (x @ A @ B)
-        for (int b = 0; b < Batch; b++)
+        for (int l = 0; l < model.Config.NumLayers; l++)
         {
-            for (int o = 0; o < 4; o++)
+            var b = model.GetBlock(l)!;
+            yield return (TrainingLinearLayer)b.Attention.Wq;
+            yield return (TrainingLinearLayer)b.Attention.Wk;
+            yield return (TrainingLinearLayer)b.Attention.Wv;
+            yield return (TrainingLinearLayer)b.Attention.Wo;
+            if (b.Ffn.W1Layer is { } w1) yield return (TrainingLinearLayer)w1;
+            if (b.Ffn.W2Layer is { } w2) yield return (TrainingLinearLayer)w2;
+            if (b.Ffn.WGated is { } wg) yield return (TrainingLinearLayer)wg;
+            if (b.Ffn.WDown is { } wd) yield return (TrainingLinearLayer)wd;
+        }
+    }
+
+    [Fact]
+    public void LoRAModel_AttachesAdaptersToTargetedProjectionsOfEveryBlock()
+    {
+        var (model, _) = Fixture(SharpMindConfig.Llama);
+        using var _m = model;
+
+        using var lora = new LoRAModel(model, new LoRAConfig { Rank = 2, TargetModules = ["q_proj", "v_proj"] });
+
+        // 2 layers x (q, v) = 4 adapters, each A + B.
+        Assert.Equal(4, lora.AdapterCount);
+        Assert.Equal(8, lora.LoRAParameters().Count);
+        for (int l = 0; l < SmallConfig.NumLayers; l++)
+        {
+            var b = model.GetBlock(l)!;
+            Assert.True(((TrainingLinearLayer)b.Attention.Wq).HasLoRA);
+            Assert.True(((TrainingLinearLayer)b.Attention.Wv).HasLoRA);
+            Assert.False(((TrainingLinearLayer)b.Attention.Wk).HasLoRA);
+            Assert.False(((TrainingLinearLayer)b.Attention.Wo).HasLoRA);
+            Assert.False(((TrainingLinearLayer)b.Ffn.WDown!).HasLoRA);
+        }
+        // Same instances every time: the optimizer and the engine must share them.
+        Assert.Same(lora.LoRAParameters()[0], lora.LoRAParameters()[0]);
+        Assert.True(lora.TrainableRatio() > 0 && lora.TrainableRatio() < 0.2);
+    }
+
+    [Theory]
+    [InlineData("Gpt")]
+    [InlineData("Llama")]
+    public void LoRAModel_TargetsFfnProjectionsByName(string preset)
+    {
+        var (model, _) = Fixture(preset == "Gpt" ? SharpMindConfig.Gpt : SharpMindConfig.Llama);
+        using var _m = model;
+        using var lora = new LoRAModel(model, new LoRAConfig { Rank = 2, TargetModules = ["up_proj", "down_proj"] });
+
+        // Dense (Gpt): W1 = up, W2 = down. Gated (Llama): WGated = fused gate+up, WDown = down.
+        Assert.Equal(2 * SmallConfig.NumLayers, lora.AdapterCount);
+        for (int l = 0; l < SmallConfig.NumLayers; l++)
+        {
+            var b = model.GetBlock(l)!;
+            Assert.False(((TrainingLinearLayer)b.Attention.Wq).HasLoRA);
+            Assert.False(((TrainingLinearLayer)b.Attention.Wo).HasLoRA);
+            var up = (TrainingLinearLayer)(b.Ffn.W1Layer ?? b.Ffn.WGated)!;
+            var down = (TrainingLinearLayer)(b.Ffn.W2Layer ?? b.Ffn.WDown)!;
+            Assert.True(up.HasLoRA);
+            Assert.True(down.HasLoRA);
+        }
+    }
+
+    [Fact]
+    public void LoRA_IsIdentityAtInitialisation()
+    {
+        var (model, _) = Fixture(SharpMindConfig.Llama);
+        using var _m = model;
+        using var ids = DeterministicBatch(out var labels);
+        using var _l = labels;
+
+        using var before = model.Forward(ids);
+        using var lora = new LoRAModel(model, new LoRAConfig { Rank = 2 });
+        using var after = model.Forward(ids);
+
+        // B starts at zero, so the adapted model is the base model, bit for bit.
+        Assert.Equal(before.Data.ToArray(), after.Data.ToArray());
+    }
+
+    [Theory]
+    [InlineData("Gpt")]
+    [InlineData("Llama")]
+    public void LoRA_GradientsMatchFiniteDifference(string preset)
+    {
+        var (model, config) = Fixture(preset == "Gpt" ? SharpMindConfig.Gpt : SharpMindConfig.Llama);
+        using var _m = model;
+        using var lora = new LoRAModel(model,
+            new LoRAConfig { Rank = 2, Alpha = 4f, TargetModules = ["q_proj", "k_proj", "v_proj", "o_proj", "up_proj", "down_proj"] },
+            seed: 7);
+        var parameters = lora.LoRAParameters();
+
+        // B is zero at init, which makes dA exactly zero; perturb B so both
+        // factors carry a real gradient to check.
+        var rng = new Random(11);
+        foreach (var p in parameters.Where(p => p.Name.EndsWith(".lora_B", StringComparison.Ordinal)))
+            for (int i = 0; i < p.Data.ElementCount; i++)
+                p.Data.Data[i] = (float)(rng.NextDouble() - 0.5) * 0.2f;
+
+        var mapping = GradientMappingFactory.Create(config);
+        using var engine = new BackpropEngine(model, mapping, parameters, config);
+
+        using var ids = DeterministicBatch(out var labels);
+        using var _l = labels;
+        using var flatLabels = labels.Reshape(Batch * Seq);
+        using var flatIds = ids.Reshape(Batch * Seq);
+
+        using var ctx = new ForwardContext();
+        var logits = engine.ForwardAndRecord(ctx, ids);
+        using var logitsFlat = logits.Reshape(Batch * Seq, SmallConfig.VocabSize);
+        var loss = new CrossEntropyLoss();
+        loss.Compute(logitsFlat, flatLabels);
+        using var dLogits = loss.Backward(logitsFlat, flatLabels);
+        engine.Backward(ctx, dLogits, flatIds);
+
+        const float h = 1e-3f;
+        int checkedParams = 0;
+        foreach (var p in parameters)
+        {
+            var data = p.Data.Data;
+            var grad = p.Grad.Data;
+            Assert.True(grad.ToArray().Any(g => g != 0f), $"{p.Name}: gradient is all zero");
+            for (int i = 0; i < Math.Min(data.Length, 16); i++)
             {
-                float frozen = 0f;
-                for (int i = 0; i < 6; i++) frozen += input[b, i] * frozenWeights[i, o];
-
-                float delta = 0f;
-                for (int r = 0; r < 2; r++)
-                {
-                    float projected = 0f;
-                    for (int i = 0; i < 6; i++) projected += input[b, i] * aRaw[i * 2 + r];
-                    delta += projected * bRaw[r * 4 + o];
-                }
-
-                float expected = frozen + 1.5f * delta;
-                Assert.Equal(expected, actual[b, o], precision: 4);
+                float original = data[i];
+                data[i] = original + h;
+                float plus = LossFor(model, ids, labels, loss);
+                data[i] = original - h;
+                float minus = LossFor(model, ids, labels, loss);
+                data[i] = original;
+                float fd = (plus - minus) / (2 * h);
+                float diff = Math.Abs(grad[i] - fd);
+                Assert.True(diff <= 2e-2f * (1f + Math.Abs(fd)),
+                    $"{p.Name}[{i}] backprop={grad[i]:E3} fd={fd:E3} diff={diff:E3}");
             }
+            checkedParams++;
         }
+        Assert.Equal(parameters.Count, checkedParams);
     }
 
     [Fact]
-    public void LoRALayer_ForwardEmbedding_ProducesInByOutDelta()
+    public void LoRA_TrainsOnlyTheAdapters_AndLossDescends()
     {
-        using var layer = new LoRALayer(inFeatures: 6, outFeatures: 4, rank: 2, scale: 2f);
-        var ps = layer.Parameters().ToArray();
-        var aRaw = ps[0].Data; // [in, rank]
-        var bRaw = ps[1].Data; // [rank, out]
+        var (model, config) = Fixture(SharpMindConfig.Llama);
+        using var _m = model;
+        using var lora = new LoRAModel(model, new LoRAConfig { Rank = 4, Alpha = 8f }, seed: 3);
+        var parameters = lora.LoRAParameters();
 
-        using var lora = layer.ForwardEmbedding();
+        // Snapshot every base tensor (weights, biases, norms, embedding).
+        var baseSnapshots = model.Parameters().Select(p => (p.Name, Data: p.Data.Data.ToArray())).ToList();
+        Assert.DoesNotContain(baseSnapshots, s => s.Name.Contains("lora", StringComparison.OrdinalIgnoreCase));
 
-        Assert.Equal(new[] { 6, 4 }, lora.Shape.Dims);
+        var mapping = GradientMappingFactory.Create(config);
+        using var engine = new BackpropEngine(model, mapping, parameters, config);
+        using var optimizer = new AdamW(parameters, lr: 5e-2f, weightDecay: 0f);
+        var loss = new CrossEntropyLoss();
 
-        // Reference: delta = scale * (A @ B)
-        for (int i = 0; i < 6; i++)
-        for (int o = 0; o < 4; o++)
+        using var ids = DeterministicBatch(out var labels);
+        using var _l = labels;
+        using var flatLabels = labels.Reshape(Batch * Seq);
+        using var flatIds = ids.Reshape(Batch * Seq);
+
+        float first = -1, last = -1;
+        for (int step = 0; step < 8; step++)
         {
-            float dot = 0f;
-            for (int r = 0; r < 2; r++) dot += aRaw[i * 2 + r] * bRaw[r * 4 + o];
-            Assert.Equal(2f * dot, lora[i, o], precision: 4);
+            optimizer.ZeroGrad();
+            using var ctx = new ForwardContext();
+            var logits = engine.ForwardAndRecord(ctx, ids);
+            using var logitsFlat = logits.Reshape(Batch * Seq, SmallConfig.VocabSize);
+            float l = loss.Compute(logitsFlat, flatLabels);
+            if (first < 0) first = l;
+            last = l;
+            using var dLogits = loss.Backward(logitsFlat, flatLabels);
+            engine.Backward(ctx, dLogits, flatIds);
+            optimizer.Update();
         }
+        Assert.True(last < first, $"loss did not descend: {first} -> {last}");
+
+        // The frozen base did not move by a single bit.
+        var after = model.Parameters().Select(p => p.Data.Data.ToArray()).ToList();
+        for (int i = 0; i < baseSnapshots.Count; i++)
+            Assert.True(baseSnapshots[i].Data.AsSpan().SequenceEqual(after[i]), $"{baseSnapshots[i].Name} changed");
     }
 
     [Fact]
-    public void LoRAModel_TrainableRatio_CountsActualElements()
+    public void LoRA_MergeReproducesTheAdaptedForward_AndDetaches()
     {
-        var cfg = new ModelConfig
-        {
-            VocabSize = 16,
-            HiddenDim = 8,
-            NumLayers = 1,
-            NumHeads = 2,
-            NumKvHeads = 2,
-            FfnDim = 16,
-            MaxSeqLen = 16,
-        };
-        var sharpConfig = SharpMindConfig.Gpt with { Hardware = HardwareTier.Scalar };
-        var weights = ModelFactory.CreateForTraining(cfg, sharpConfig);
-        using var model = ModelFactory.CreateTrainingTransformer(weights, sharpConfig);
+        var (model, _) = Fixture(SharpMindConfig.Llama);
+        using var _m = model;
+        using var lora = new LoRAModel(model, new LoRAConfig { Rank = 2, Alpha = 4f }, seed: 5);
+        var rng = new Random(13);
+        foreach (var p in lora.LoRAParameters())
+            for (int i = 0; i < p.Data.ElementCount; i++)
+                p.Data.Data[i] = (float)(rng.NextDouble() - 0.5) * 0.3f;
 
-        using var loraModel = new LoRAModel(model, new LoRAConfig { Rank = 2 });
+        using var ids = DeterministicBatch(out var labels);
+        using var _l = labels;
+        using var adapted = model.Forward(ids);
 
-        long loraParams = loraModel.LoRAParameters().Sum(p => p.Data.ElementCount);
-        double ratio = loraModel.TrainableRatio();
+        lora.Merge();
 
-        Assert.Equal((double)loraParams / model.ParameterCount, ratio, precision: 12);
-
-        // The old estimate (paramCount * Rank) must not equal the true count here.
-        long brokenEstimate = loraModel.LoRAParameters().Count() * 2L;
-        Assert.NotEqual(brokenEstimate, loraParams);
+        Assert.Equal(0, lora.AdapterCount);
+        Assert.All(AllLinears(model), layer => Assert.False(layer.HasLoRA));
+        using var merged = model.Forward(ids);
+        for (int i = 0; i < adapted.ElementCount; i++)
+            Assert.True(Math.Abs(adapted.Data[i] - merged.Data[i]) <= 1e-4f * (1f + Math.Abs(adapted.Data[i])),
+                $"logit {i}: adapted={adapted.Data[i]} merged={merged.Data[i]}");
     }
 
     [Fact]
-    public void LoRAAttention_DefaultTargetsAllFourProjections()
+    public void LoRAModel_RejectsUnknownTargetAndMoE()
     {
-        using var attention = new LoRAAttention(hiddenDim: 8, numHeads: 2, headDim: 4, new LoRAConfig { Rank = 2 });
-
-        var ps = attention.Parameters().ToArray();
-        Assert.Equal(8, ps.Length);
-        Assert.Equal(128, ps.Sum(p => p.Data.ElementCount));
-    }
-
-    [Fact]
-    public void LoRAAttention_RespectsTargetModules()
-    {
-        using var qv = new LoRAAttention(
-            hiddenDim: 8, numHeads: 2, headDim: 4,
-            new LoRAConfig { Rank = 2, TargetModules = ["q_proj", "v_proj"] });
-
-        var ps = qv.Parameters().ToArray();
-        Assert.Equal(4, ps.Length);
-        Assert.Equal(64, ps.Sum(p => p.Data.ElementCount));
-    }
-
-    [Fact]
-    public void LoRAAttention_EmptyTargetModules_AddsNoParameters()
-    {
-        using var attention = new LoRAAttention(
-            hiddenDim: 8, numHeads: 2, headDim: 4,
-            new LoRAConfig { Rank = 2, TargetModules = [] });
-
-        Assert.Empty(attention.Parameters());
-    }
-
-    [Fact]
-    public void LoRAAttention_UntargetedApplyFallsBackToFrozen()
-    {
-        var config = new LoRAConfig { Rank = 2, TargetModules = ["o_proj"] };
-        using var attention = new LoRAAttention(hiddenDim: 8, numHeads: 2, headDim: 4, config);
-
-        using var x = InputTensor();
-        using var wq = WeightTensor();
-        using var actual = attention.ApplyToQ(x, wq);
-
-        Assert.Equal(new[] { 3, 8 }, actual.Shape.Dims);
-        for (int b = 0; b < 3; b++)
-        for (int o = 0; o < 8; o++)
-        {
-            float expected = 0f;
-            for (int i = 0; i < 8; i++) expected += x[b, i] * wq[i, o];
-            Assert.Equal(expected, actual[b, o], precision: 4);
-        }
-    }
-
-    [Fact]
-    public void LoRAAttention_TargetedApplyAddsScaleTimesADelta()
-    {
-        var config = new LoRAConfig { Rank = 2, Alpha = 4f, TargetModules = ["q_proj"] };
-        using var attention = new LoRAAttention(hiddenDim: 8, numHeads: 2, headDim: 4, config);
-
-        var ps = attention.Parameters().ToArray();
-        var aRaw = ps[0].Data; // [in, rank]
-        var bRaw = ps[1].Data; // [rank, out]
-        float scale = config.Scale;
-
-        using var x = InputTensor();
-        using var wq = WeightTensor();
-        using var actual = attention.ApplyToQ(x, wq);
-
-        for (int b = 0; b < 3; b++)
-        for (int o = 0; o < 8; o++)
-        {
-            float frozen = 0f;
-            for (int i = 0; i < 8; i++) frozen += x[b, i] * wq[i, o];
-
-            float delta = 0f;
-            for (int r = 0; r < 2; r++)
-            {
-                float projected = 0f;
-                for (int i = 0; i < 8; i++) projected += x[b, i] * aRaw[i * 2 + r];
-                delta += projected * bRaw[r * 8 + o];
-            }
-
-            Assert.Equal(frozen + scale * delta, actual[b, o], precision: 3);
-        }
-    }
-
-    private static Tensor<float> InputTensor()
-    {
-        var data = new float[24];
-        for (int i = 0; i < data.Length; i++) data[i] = (i % 8) * 0.25f + i % 3;
-        return Tensor<float>.From(data, 3, 8);
-    }
-
-    private static Tensor<float> WeightTensor()
-    {
-        var data = new float[64];
-        for (int i = 0; i < 8; i++)
-        for (int o = 0; o < 8; o++)
-            data[i * 8 + o] = (i + 1) * 0.1f + (o + 1) * 0.01f;
-        return Tensor<float>.From(data, 8, 8);
+        var (model, _) = Fixture(SharpMindConfig.Llama);
+        using var _m = model;
+        Assert.Throws<ArgumentException>(() => new LoRAModel(model, new LoRAConfig { TargetModules = ["nope_proj"] }));
     }
 }

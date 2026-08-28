@@ -40,12 +40,18 @@ public sealed class BackpropEngine : IDisposable
     private readonly ActivationKind _activation;
     private readonly bool _gemmaScale;
     private bool _disposed;
+    private static readonly QuantizationOps _qOps = QuantizationFactory.Create();
+    // Grad sink for a frozen (weight-tied) LM head; see Backward step 1.
+    private Parameter? _frozenHeadScratch;
 
     /// <param name="model">Training transformer (float layers, weight-tied LM head).</param>
     /// <param name="mapping">Gradient kernels. Create with the same SharpMindConfig the model used.</param>
     /// <param name="parameters">
     /// The parameter instances the optimizer was built from (must be the SAME
     /// instances, captured once — never a fresh <c>model.Parameters()</c> call).
+    /// Any model tensor NOT wrapped by one of these is frozen: the backward still
+    /// flows through it but accumulates no gradient for it. Pass only
+    /// <c>LoRAModel.LoRAParameters()</c> to train adapters alone.
     /// </param>
     /// <param name="config">The SharpMindConfig the training transformer was built with.</param>
     public BackpropEngine(Transformer model, GradientMapping mapping, IReadOnlyList<Parameter> parameters, SharpMindConfig config)
@@ -160,7 +166,13 @@ public sealed class BackpropEngine : IDisposable
 
         // 1. LM head (weight-tied): dLogits @ head gives dFinalNormOut and
         //    accumulates the head-weight gradient into the embedding parameter.
-        var embParam = Param(_model.EmbeddingWeight);
+        //    A frozen head (LoRA) still needs dFinalNormOut; the kernel computes
+        //    both, so its weight gradient goes to a scratch sink kept for reuse.
+        //    ponytail: frozen head still pays the dW GEMM; a dInput-only kernel
+        //    is CARD-1350's job.
+        var embParam = TryParam(_model.EmbeddingWeight)
+            ?? (_frozenHeadScratch ??= new Parameter("__frozen_head__", _model.EmbeddingWeight));
+        bool headTrainable = !ReferenceEquals(embParam, _frozenHeadScratch);
         using var normedFlat = ctx.FinalNormOut!.Reshape(M, H);
         var dFinalOut = _mapping.Linear(dLogits, normedFlat, embParam);
 
@@ -182,9 +194,8 @@ public sealed class BackpropEngine : IDisposable
 
         // Learned position embeddings: every column feed is the add x = wte + wpe,
         // so dWpe[s] = Σ_b dX[b, s, :]. Accumulate row-wise into the shared param.
-        if (ctx.UsesLearnedPositions && _model.PositionEmbedding is { } posEmb)
+        if (ctx.UsesLearnedPositions && _model.PositionEmbedding is { } posEmb && TryParam(posEmb) is { } posParam)
         {
-            var posParam = Param(posEmb);
             var gradData = posParam.Grad.Data;
             var dData = dX.Data;
             int B = ctx.Batch, S = ctx.SeqLen;
@@ -200,12 +211,15 @@ public sealed class BackpropEngine : IDisposable
             }
         }
 
-        using var flatIds = tokenIds.Reshape(M);
-        _mapping.Embedding(dX, flatIds, embParam);
+        if (headTrainable)
+        {
+            using var flatIds = tokenIds.Reshape(M);
+            _mapping.Embedding(dX, flatIds, embParam);
+        }
         dX.Dispose();
     }
 
-    public void Dispose() { GC.SuppressFinalize(this); _disposed = true; }
+    public void Dispose() { GC.SuppressFinalize(this); _disposed = true; _frozenHeadScratch?.Dispose(); _frozenHeadScratch = null; }
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, nameof(BackpropEngine));
 
     // ── Forward ─────────────────────────────────────────────────────────────
@@ -547,7 +561,7 @@ public sealed class BackpropEngine : IDisposable
         // Wo backward
         using var dAttnProjFlat = dAttnProj.Reshape(M, H);
         using var attnOutFlat = bc.AttnOut!.Reshape(M, qDim);
-        var dAttnOut = LinearBackward(dAttnProjFlat, attnOutFlat, attn.Wo.Weight, BiasParam(attn.Wo));
+        var dAttnOut = LinearBackward(dAttnProjFlat, attnOutFlat, attn.Wo);
 
         // Per-head attention backward → dQ/dK/dV
         // Parallelised over batch rows: each row writes a disjoint block of the
@@ -588,9 +602,9 @@ public sealed class BackpropEngine : IDisposable
 
         // Wq/Wk/Wv backward
         using var norm1OutFlat = bc.Norm1Out!.Reshape(M, H);
-        var dNorm1 = LinearBackward(dQ, norm1OutFlat, attn.Wq.Weight, BiasParam(attn.Wq));
-        using var dKpath = LinearBackward(dK, norm1OutFlat, attn.Wk.Weight, BiasParam(attn.Wk));
-        using var dVpath = LinearBackward(dV, norm1OutFlat, attn.Wv.Weight, BiasParam(attn.Wv));
+        var dNorm1 = LinearBackward(dQ, norm1OutFlat, attn.Wq);
+        using var dKpath = LinearBackward(dK, norm1OutFlat, attn.Wk);
+        using var dVpath = LinearBackward(dV, norm1OutFlat, attn.Wv);
         dQ.Dispose();
         dK.Dispose();
         dV.Dispose();
@@ -611,17 +625,17 @@ public sealed class BackpropEngine : IDisposable
             case DenseFfnLayer:
             {
                 using var actFlat = bc.FfnActOut!.Reshape(rows, ffnDim);
-                var dAct = LinearBackward(dFfn, actFlat, ffn.W2Layer!.Weight, BiasParam(ffn.W2Layer));
+                var dAct = LinearBackward(dFfn, actFlat, ffn.W2Layer);
                 using var hiddenFlat = bc.FfnHidden!.Reshape(rows, ffnDim);
                 var dHidden = ActivationBackward(dAct, hiddenFlat);
                 dAct.Dispose();
                 using var norm2Flat = bc.Norm2Out!.Reshape(rows, H);
-                return LinearBackward(dHidden, norm2Flat, ffn.W1Layer!.Weight, BiasParam(ffn.W1Layer));
+                return LinearBackward(dHidden, norm2Flat, ffn.W1Layer);
             }
             case GatedFfnLayer:
             {
                 using var actFlat = bc.FfnActOut!.Reshape(rows, ffnDim);
-                var dAct = LinearBackward(dFfn, actFlat, ffn.WDown!.Weight, BiasParam(ffn.WDown));
+                var dAct = LinearBackward(dFfn, actFlat, ffn.WDown);
                 var dGate = Tensor<float>.Zeros(rows, ffnDim);
                 var dUp = Tensor<float>.Zeros(rows, ffnDim);
                 for (int i = 0; i < rows; i++)
@@ -649,7 +663,7 @@ public sealed class BackpropEngine : IDisposable
                 dGate.Dispose();
                 dUp.Dispose();
                 using var norm2Flat = bc.Norm2Out!.Reshape(rows, H);
-                var dNorm2 = LinearBackward(dFused, norm2Flat, ffn.WGated!.Weight, BiasParam(ffn.WGated));
+                var dNorm2 = LinearBackward(dFused, norm2Flat, ffn.WGated);
                 dFused.Dispose();
                 return dNorm2;
             }
@@ -709,7 +723,7 @@ public sealed class BackpropEngine : IDisposable
                     }
 
                     // Down backward: dActE [n, ffnDim] + accumulated wDown/bias grads.
-                    using var dActE = LinearBackward(dOutE, actE, wDown[e].Weight, BiasParam(wDown[e]));
+                    using var dActE = LinearBackward(dOutE, actE, wDown[e]);
 
                     // Gated backward per pair: out = gateValue(g) ⊙ u.
                     var dGateE = Tensor<float>.Zeros(n, ffnDim);
@@ -731,8 +745,8 @@ public sealed class BackpropEngine : IDisposable
                     dActE.Dispose();
 
                     // Gate/Up linear backward into norm2 input rows.
-                    using var dxGate = LinearBackward(dGateE, xE, wGate[e].Weight, BiasParam(wGate[e]));
-                    using var dxUp = LinearBackward(dUpE, xE, wUp[e].Weight, BiasParam(wUp[e]));
+                    using var dxGate = LinearBackward(dGateE, xE, wGate[e]);
+                    using var dxUp = LinearBackward(dUpE, xE, wUp[e]);
                     dGateE.Dispose();
                     dUpE.Dispose();
                     for (int j = 0; j < n; j++)
@@ -787,7 +801,7 @@ public sealed class BackpropEngine : IDisposable
                     for (int e = 0; e < E; e++)
                         dlRow[e] = pRow[e] * (dlRow[e] - pDot);
                 }
-                using var dRouter = LinearBackward(dLogits, xFlat, router.Weight, BiasParam(router));
+                using var dRouter = LinearBackward(dLogits, xFlat, router);
                 dLogits.Dispose();
                 dNorm2.AddInPlace(dRouter);
                 return dNorm2;
@@ -815,7 +829,8 @@ public sealed class BackpropEngine : IDisposable
                 for (int d = 0; d < D; d++)
                     dst[d] = input[d] * ri;
             }
-            var dInput = _mapping.RMSNorm(dOut, xNorm, rmsInv, Param(norm.NormWeight));
+            using var w = ParamOrSink(norm.NormWeight);
+            var dInput = _mapping.RMSNorm(dOut, xNorm, rmsInv, w.Value);
             xNorm.Dispose();
             return dInput;
         }
@@ -823,11 +838,12 @@ public sealed class BackpropEngine : IDisposable
         // LayerNorm
         if (norm.NormBias is null)
             throw new InvalidOperationException("LayerNorm backward requires a bias parameter.");
-        var bias = Param(norm.NormBias);
+        using var biasP = ParamOrSink(norm.NormBias);
+        using var weightP = ParamOrSink(norm.NormWeight);
         var inputTensor = Tensor<float>.Zeros(T, D);
         for (int i = 0; i < T; i++)
             state.GetInput(i).CopyTo(inputTensor.RowSpan(i));
-        var result = _mapping.LayerNorm(dOut, inputTensor, Param(norm.NormWeight), bias, norm.Eps);
+        var result = _mapping.LayerNorm(dOut, inputTensor, weightP.Value, biasP.Value, norm.Eps);
         inputTensor.Dispose();
         return result;
     }
@@ -985,38 +1001,126 @@ public sealed class BackpropEngine : IDisposable
         return p * MathF.Pow(2f, n);
     }
 
-    private Parameter Param(Tensor<float> tensor)
-        => _paramsByTensor.TryGetValue(tensor, out var p)
-            ? p
-            : throw new InvalidOperationException($"No parameter wraps tensor {tensor}.");
-
-    private Parameter? BiasParam(LinearLayer layer) => layer.Bias is null ? null : Param(layer.Bias);
+    private Parameter? TryParam(Tensor<float> tensor)
+        => _paramsByTensor.TryGetValue(tensor, out var p) ? p : null;
 
     /// <summary>
-    /// GradientMapping.Linear expects its weight as [Out, In] (PyTorch layout), but
-    /// LinearLayer stores weights as [In, Out] (transposed at matmul time). Feed the
-    /// kernel a transposed weight through a throwaway parameter, then scatter the
-    /// produced [Out, In] weight gradient back into the original parameter in place.
-    /// The embedding/LM-head weight is already [Vocab, Hidden] = [Out, In], so the
-    /// head path calls _mapping.Linear directly with the real parameter.
+    /// The trainable parameter wrapping <paramref name="tensor"/>, or — when it
+    /// is frozen — a throwaway parameter whose gradient is discarded, so kernels
+    /// that insist on accumulating somewhere have somewhere. Dispose the slot;
+    /// it only disposes a parameter it created.
     /// </summary>
-private Tensor<float> LinearBackward(Tensor<float> dOutput, Tensor<float> input, Tensor<float> weight, Parameter? bias)
+    private ParamSlot ParamOrSink(Tensor<float> tensor)
     {
-        using var wT = weight.Transpose(); // [Out, In]
-        using var tmpW = new Parameter("__transposed__", wT);
-        var dInput = _mapping.Linear(dOutput, input, tmpW, bias);
+        var p = TryParam(tensor);
+        return new ParamSlot(p ?? new Parameter("__frozen__", tensor), owned: p is null);
+    }
 
-        var orig = Param(weight);
-        int Out = weight.Shape.Cols; // weight is [In, Out]
-        int In = weight.Shape.Rows;
-        var src = tmpW.Grad.Data;
-        var dst = orig.Grad.Data;
-        for (int o = 0; o < Out; o++)
+    private readonly struct ParamSlot(Parameter value, bool owned) : IDisposable
+    {
+        public Parameter Value { get; } = value;
+        public void Dispose() { if (owned) Value.Dispose(); }
+    }
+
+    /// <summary>
+    /// Linear backward for a layer whose weight is stored [In, Out]. Returns
+    /// dInput [B, In] and accumulates dW / dBias into their parameters when they
+    /// are trainable. A frozen weight (not in the parameter list) costs one
+    /// matmul and no weight-sized allocation: the F32 matmul takes its weight as
+    /// [N, K] = [In, Out], which is exactly how the layer stores W. A
+    /// <see cref="TrainingLinearLayer"/> with a LoRA adapter additionally gets
+    /// dA, dB and the adapter's share of dInput.
+    ///
+    /// GradientMapping.Linear expects its weight as [Out, In] (PyTorch layout),
+    /// so the trainable path feeds it a transposed weight through a throwaway
+    /// parameter and scatters the produced [Out, In] gradient back into the real
+    /// [In, Out] parameter. (The embedding/LM-head weight is already [Vocab,
+    /// Hidden] = [Out, In], so the head path calls _mapping.Linear directly.)
+    /// </summary>
+    private unsafe Tensor<float> LinearBackward(Tensor<float> dOutput, Tensor<float> input, LinearLayer layer)
+    {
+        var weight = layer.Weight;
+        int In = weight.Shape.Rows, Out = weight.Shape.Cols, B = dOutput.Shape.Rows;
+        var biasParam = layer.Bias is null ? null : TryParam(layer.Bias);
+        Tensor<float> dInput;
+
+        if (TryParam(weight) is { } orig)
         {
-            var srcRow = src.Slice(o * In, In);
-            for (int i = 0; i < In; i++)
-                dst[i * Out + o] += srcRow[i];
+            using var wT = weight.Transpose(); // [Out, In]
+            using var tmpW = new Parameter("__transposed__", wT);
+            dInput = _mapping.Linear(dOutput, input, tmpW, biasParam);
+
+            var src = tmpW.Grad.Data;
+            var dst = orig.Grad.Data;
+            for (int o = 0; o < Out; o++)
+            {
+                var srcRow = src.Slice(o * In, In);
+                for (int i = 0; i < In; i++)
+                    dst[i * Out + o] += srcRow[i];
+            }
         }
+        else
+        {
+            var fn = _qOps.QuantizedMatMulOpFor(QuantDType.F32);
+            dInput = new Tensor<float>(B, In);
+            fn(dOutput.DataPtr, (byte*)weight.DataPtr, dInput.DataPtr, B, Out, In);
+            if (biasParam is not null)
+            {
+                var g = biasParam.Grad.Data;
+                for (int b = 0; b < B; b++)
+                {
+                    var row = dOutput.Data.Slice(b * Out, Out);
+                    for (int o = 0; o < Out; o++) g[o] += row[o];
+                }
+            }
+        }
+
+        if (layer is TrainingLinearLayer { HasLoRA: true } lora)
+            LoRABackward(dOutput, input, lora, dInput);
         return dInput;
+    }
+
+    /// <summary>
+    /// y = s·(x·A)·B on top of the frozen matmul. With h = x·A and dH = s·dy·Bᵀ:
+    /// dB += s·hᵀ·dy, dA += xᵀ·dH, dx += dH·Aᵀ. All four products go through the
+    /// F32 matmul, whose weight operand is [N, K]; A [In, r] and B [r, Out] are
+    /// already in that layout for two of them, and the transposes that remain
+    /// are of rank-r or activation-sized tensors.
+    /// </summary>
+    private unsafe void LoRABackward(Tensor<float> dOutput, Tensor<float> input, TrainingLinearLayer layer, Tensor<float> dInput)
+    {
+        var A = layer.LoRAA!; var Bm = layer.LoRAB!; float s = layer.LoRAScale;
+        int In = A.Shape.Rows, r = A.Shape.Cols, Out = Bm.Shape.Cols, B = dOutput.Shape.Rows;
+        var fn = _qOps.QuantizedMatMulOpFor(QuantDType.F32);
+
+        using var aT = A.Transpose();                       // [r, In]
+        using var h = new Tensor<float>(B, r);
+        fn(input.DataPtr, (byte*)aT.DataPtr, h.DataPtr, B, In, r);          // h = x·A
+
+        using var dH = new Tensor<float>(B, r);
+        fn(dOutput.DataPtr, (byte*)Bm.DataPtr, dH.DataPtr, B, Out, r);     // dH = dy·Bᵀ
+        ScaleInPlace(dH, s);
+
+        using var dIn = new Tensor<float>(B, In);
+        fn(dH.DataPtr, (byte*)A.DataPtr, dIn.DataPtr, B, r, In);            // dx += dH·Aᵀ
+        dInput.AddInPlace(dIn);
+
+        if (TryParam(Bm) is { } pB)
+        {
+            using var hT = h.Transpose();                   // [r, B]
+            using var dyT = dOutput.Transpose();            // [Out, B]
+            using var dB = new Tensor<float>(r, Out);
+            fn(hT.DataPtr, (byte*)dyT.DataPtr, dB.DataPtr, r, B, Out);      // dB = hᵀ·dy
+            ScaleInPlace(dB, s);
+            pB.AccumulateGrad(dB.Data);
+        }
+        if (TryParam(A) is { } pA)
+        {
+            using var xT = input.Transpose();               // [In, B]
+            using var dHT = dH.Transpose();                 // [r, B]
+            using var dA = new Tensor<float>(In, r);
+            fn(xT.DataPtr, (byte*)dHT.DataPtr, dA.DataPtr, In, B, r);       // dA = xᵀ·dH
+            pA.AccumulateGrad(dA.Data);
+        }
     }
 }
