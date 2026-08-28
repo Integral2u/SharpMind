@@ -3,7 +3,7 @@ namespace SharpMind.Core;
 public class MappingBuilder(HardwareTier hardware = HardwareTier.Auto)
 {
     private readonly Dictionary<string, string> _mapping = [];
-    private readonly HardwareTier _hardware = hardware;
+    private readonly HardwareTier _hardware = hardware==HardwareTier.Auto?HardwareTierHelpers.DetectBestTier():hardware;
 
     public MappingBuilder ApplyPreset(SharpMindConfig config)
     {

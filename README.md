@@ -42,6 +42,17 @@ It ships as a set of composable libraries plus a terminal chat application (`Sha
 
 ---
 
+## Live in-browser demo
+
+**[SharpMind.Live](https://integral2u.github.io/SharpMind/)** is the engine running entirely inside your browser tab — no server, no native runtime, no API call leaving the page. It fetches SmolLM2-135M-Instruct (Q3_K_M) from Hugging Face into the Blazor virtual filesystem, then runs inference through the **AOT-compiled** engine (IL →
+WebAssembly via `RunAOTCompilation`, from the same managed C# kernels the desktop CLI uses).
+
+- **Zero backend.** GitHub Pages hosts the static site; the model streams in client-side on first load.
+- **Live streaming.** Boot, model load, and every generated token stream to the page as they happen — the decode loop yields to the browser between tokens.
+- **What to expect:** GitHub Pages can't set the cross-origin headers WASM threading needs, so the demo runs single-threaded on scalar kernels — roughly 1 token/s on a mid-size laptop. It's the real engine in a tab, not a wrapper.
+
+---
+
 ## Install the chat app (Windows)
 
 The quickest way to try the terminal chat client is the installer, which sets up `SharpMind.CUI`, Start Menu + desktop shortcuts, and the app folder:
@@ -533,6 +544,7 @@ SharpMind.Server.CLI    Server CLI executable + interactive REPL
 SharpMind.Samples       Example programs + training sample data (Shakespeare corpus, checkpoint, job config)
 SharpMind.Benchmarks    Evaluation harness
 SharpMind.Tests         Test suite
+SharpMind.Live          Blazor WebAssembly browser demo — AOT-compiled engine, static-hostable on GitHub Pages
 ```
 
 ---

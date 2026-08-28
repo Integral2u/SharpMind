@@ -24,14 +24,40 @@ public static class SharpMindEngine
     private static IJSRuntime? _js;
 
     /// <summary>Wired up from Program.cs after the host is built.</summary>
-    public static void SetRuntime(IJSRuntime js) => _js = js;
+    public static void SetRuntime(IJSRuntime js)
+    {
+        _js = js;
+        // Handshake: this runs inside Main, so SharpMind.Live is guaranteed loaded
+        // by the time the JS-side promise resolves. Release (trimmed) WASM can
+        // resolve Blazor.start() before the app module is imported, so the page
+        // must not invoke [JSInvokable]s until it sees this signal.
+        if (js is IJSInProcessRuntime inProc)
+        {
+            try { inProc.InvokeVoid("SharpMindEngine.onManagedReady"); }
+            catch { /* page may be tearing down before boot completes */ }
+        }
+    }
 
     private static void Log(StringBuilder log, string line)
     {
         log.AppendLine(line);
+        Stream(line);
+    }
+
+    private static void Stream(string line)
+    {
         if (_js is IJSInProcessRuntime inProc)
         {
             try { inProc.InvokeVoid("SharpMindEngine.logLine", line); }
+            catch { /* the page may already be tearing down */ }
+        }
+    }
+
+    private static void StreamTokens(string text)
+    {
+        if (_js is IJSInProcessRuntime inProc)
+        {
+            try { inProc.InvokeVoid("SharpMindEngine.outputTokens", text); }
             catch { /* the page may already be tearing down */ }
         }
     }
@@ -64,7 +90,7 @@ public static class SharpMindEngine
             var sharpConfig = SharpMindConfig.ForModel(
                 config.NumHeads, config.NumKvHeads, config.Architecture);
 
-            var mapping = new MappingBuilder(HardwareTier.Scalar)
+            var mapping = new MappingBuilder(HardwareTier.Auto)
                 .ApplyQuantPreset(sharpConfig)
                 .Build();
             var qOps = QuantizationFactory.Create(mapping);
@@ -109,9 +135,13 @@ public static class SharpMindEngine
             return "Error: no model loaded. Call LoadModel first.";
 
         var sb = new StringBuilder();
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var tokens = 0;
 
         try
         {
+            Stream("generating response…");
+
             await foreach (var entry in _state.Session.GetResponseStreamAsync(prompt))
             {
                 if (entry.Status == ChatStatus.Complete ||
@@ -119,11 +149,19 @@ public static class SharpMindEngine
                     break;
 
                 if (entry.Token is not null)
+                {
                     sb.Append(entry.Token);
+                    tokens++;
+                    StreamTokens(entry.Token);
+                }
             }
+
+            sw.Stop();
+            Stream($"response complete — <b>{tokens}</b> tokens in {sw.Elapsed.TotalSeconds:F1}s ({tokens / Math.Max(sw.Elapsed.TotalSeconds, 0.001):F1} tok/s)");
         }
         catch (Exception ex)
         {
+            Stream($"<span class=\"err\">generate failed: {ex.GetType().Name}: {ex.Message}</span>");
             return $"Error: {ex.GetType().Name}: {ex.Message}";
         }
 

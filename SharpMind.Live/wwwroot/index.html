@@ -71,7 +71,7 @@
 
         /* ---------- header / hero ---------- */
         header {
-            padding: 44px 0 30px;
+            padding: 44px 0 12px;
         }
 
         .topbar {
@@ -89,13 +89,13 @@
         }
 
         .seal {
-            width: 44px;
-            height: 44px;
+            width: 88px;
+            height: 88px;
             flex-shrink: 0;
         }
 
         .wordmark {
-            font-size: 32px;
+            font-size: 56px;
             letter-spacing: -0.01em;
         }
 
@@ -166,9 +166,8 @@
             }
 
         .thesis {
-            margin: 0 0 26px;
+            margin: 0 0 14px;
             font-size: 17px;
-            max-width: 58ch;
             color: var(--text-soft);
         }
 
@@ -206,8 +205,7 @@
         .try-it-lede {
             color: var(--text-soft);
             font-size: 15px;
-            margin: 0 0 22px;
-            max-width: 60ch;
+            margin: 0 0 16px;
         }
 
         .engine {
@@ -303,7 +301,7 @@
             font-size: 12.5px;
             line-height: 1.8;
             padding: 9px 16px;
-            height: 210px;
+            height: 130px;
             overflow-y: auto;
             transition: height .2s ease,padding .2s ease;
         }
@@ -325,6 +323,14 @@
                 .engine-log .line .warn {
                     color: var(--warn);
                 }
+
+                .engine-log .line.out {
+                    color: var(--accent-soft);
+                }
+
+                    .engine-log .line.out .tok {
+                        word-break: break-word;
+                    }
 
         .chat-shell {
             background: var(--bg-2);
@@ -649,12 +655,10 @@
             </div>
             <p class="thesis">A pure C#/.NET LLM engine — inference, training, and agent tooling in one solution. No wrapped native library, no P/Invoke, no platform-specific binaries.</p>
         </header>
-
         <div class="try-it" id="try-it">
             <p class="try-it-label">Live in this page</p>
             <h2>SmolLM2-135M-Instruct, running client-side</h2>
             <p class="try-it-lede">(VERY SLOW) Loads and runs entirely in your browser via WebAssembly — no server, no API call leaving this tab. GitHub Pages serves the compiled runtime fine; it just can't set the cross-origin headers WASM threading needs, so this runs single-threaded on scalar kernels regardless of the machine it's on.</p>
-
             <div class="engine">
                 <div class="engine-head">
                     <span><span class="status-dot loading" id="statusDot"></span><span id="statusText">Loading</span></span>
@@ -667,7 +671,6 @@
                 </div>
                 <div class="engine-log" id="engineLog" aria-live="polite"></div>
             </div>
-
             <div class="chat-shell">
                 <div class="messages-wrap">
                     <div class="messages" id="messages">
@@ -685,7 +688,6 @@
                     <button type="submit" id="send" disabled>Send</button>
                 </form>
             </div>
-
             <p class="demo-note">
                 <strong>This is the real engine running in your browser.</strong> The GGUF model is fetched from HuggingFace, loaded into the Blazor virtual filesystem, and runs inference via compiled C# — no server, no native dependencies. First load takes a moment while the ~75 MB model downloads. <a href="https://github.com/Integral2u/SharpMind" target="_blank" rel="noopener">Source on GitHub</a>.
             </p>
@@ -748,12 +750,21 @@ dotnet run --project SharpMind.Server.CLI -- --models ./models</pre>
        ========================================================================= */
 const MODEL_URL = 'https://huggingface.co/unsloth/SmolLM2-135M-Instruct-GGUF/resolve/main/SmolLM2-135M-Instruct-Q3_K_M.gguf?download=true';
 
+let sharpMindHandshakeResolve;
+let managedHandshakeReceived = false;
+const managedHandshake = new Promise(resolve => { sharpMindHandshakeResolve = resolve; });
+
 const SharpMindEngine = {
           ready: false,
 
           setStatus(dotEl, textEl, state) {
             dotEl.className = 'status-dot ' + state;
             textEl.textContent = state === 'loading' ? 'Loading' : state === 'thinking' ? 'Thinking' : 'Ready';
+          },
+
+          onManagedReady() {
+            managedHandshakeReceived = true;
+            if (sharpMindHandshakeResolve) sharpMindHandshakeResolve();
           },
 
           logLine(html) {
@@ -763,6 +774,23 @@ const SharpMindEngine = {
             line.className = 'line';
             line.innerHTML = '<span class="tag">&gt;</span> ' + html;
             logEl.appendChild(line);
+            while (logEl.children.length > 500) logEl.removeChild(logEl.firstChild);
+            logEl.scrollTop = logEl.scrollHeight;
+          },
+
+          outputTokens(text) {
+            const logEl = document.getElementById('engineLog');
+            if (!logEl) return;
+            let last = logEl.querySelector('div.line.out:last-child');
+            if (!last) {
+              last = document.createElement('div');
+              last.className = 'line out';
+              logEl.appendChild(last);
+            }
+            const tok = document.createElement('span');
+            tok.className = 'tok';
+            tok.textContent = text;
+            last.appendChild(tok);
             while (logEl.children.length > 500) logEl.removeChild(logEl.firstChild);
             logEl.scrollTop = logEl.scrollHeight;
           },
@@ -797,7 +825,6 @@ const SharpMindEngine = {
 
           async generate(prompt, logEl, dotEl, textEl) {
             this.setStatus(dotEl, textEl, 'thinking');
-            await this._logLine(logEl, 'generating response…', 0);
             try {
               const reply = await DotNet.invokeMethodAsync('SharpMind.Live', 'Generate', prompt);
               this.setStatus(dotEl, textEl, 'ready');
@@ -868,11 +895,33 @@ composerEl.addEventListener('submit', async (e) => {
             // Boot Blazor WASM runtime first (non-blocking autostart).
             await Blazor.start();
           } catch (err) {
-            SharpMindEngine.logLine('<span class="err">Blazor.start failed: ' + err + '</span>');
+            const msg = (err && err.message) ? err.message : String(err);
+            const safe = msg.replace(/</g, '&lt;');
+            console.error('Blazor.start failed', err);
+            SharpMindEngine.logLine('<span class="err">Blazor.start failed: ' + safe + '</span>');
+            try { alert('SharpMind boot failed: ' + msg); } catch { }
             sendEl.disabled = false;
             inputEl.disabled = false;
             return;
           }
+          // Release (trimmed) WASM can resolve Blazor.start() before the app assembly
+          // is loaded into the runtime. Wait for the C#->JS handshake fired from Main,
+          // which runs only once SharpMind.Live is loaded.
+          SharpMindEngine.logLine('waiting for managed handshake…');
+          const handshake = await Promise.race([
+            managedHandshake,
+            new Promise(resolve => setTimeout(() => resolve('timeout'), 60000))
+          ]);
+          if (handshake === 'timeout') {
+            const msg = 'timed out waiting for the .NET runtime to load SharpMind.Live';
+            console.error(msg);
+            SharpMindEngine.logLine('<span class="err">' + msg + '</span>');
+            try { alert('SharpMind boot failed: ' + msg); } catch { }
+            sendEl.disabled = false;
+            inputEl.disabled = false;
+            return;
+          }
+          SharpMindEngine.logLine('managed handshake received — SharpMind.Live loaded');
           // Now the [JSInvokable] surface is available — load the model.
           await SharpMindEngine.boot(logEl, dotEl, textEl);
           inputEl.disabled = false;

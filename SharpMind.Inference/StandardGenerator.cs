@@ -8,6 +8,20 @@ using SharpMind.Model.Config;
 namespace SharpMind.Inference;
 
 /// <summary>
+/// Non-generic switchboard for <see cref="StandardGenerator{T}"/> host knobs so
+/// callers don't need to name a concrete generic instantiation.
+/// </summary>
+public static class StandardGenerator
+{
+    /// <summary>
+    /// When true, the decode loop awaits <see cref="Task.Yield"/> once per token so
+    /// the host (e.g. single-threaded Blazor WASM) can repaint/process other work
+    /// between steps. Off by default: desktop/server callers pay no overhead.
+    /// </summary>
+    public static bool YieldBetweenTokens { get; set; }
+}
+
+/// <summary>
 /// Token generation loop for autoregressive decoding.
 /// </summary>
 public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuilder, new ()
@@ -166,6 +180,10 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
             for (int step = 0; step < maxNewTokens; step++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+
+                // Yield once per token when running on a single-threaded host
+                // (e.g. Blazor WASM) so the browser can repaint between forward passes.
+                if (StandardGenerator.YieldBetweenTokens) await Task.Yield();
 
                 ReadOnlySpan<float> logitsSlice = logitsTensor.Data[..vocabSize];
                 GeneratorDiagnostics.PrintTopLogits(_tokenizer, step, logitsSlice);
