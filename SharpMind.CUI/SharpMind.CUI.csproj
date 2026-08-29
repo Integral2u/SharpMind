@@ -38,4 +38,30 @@
   <ItemGroup>
     <InternalsVisibleTo Include="SharpMind.Tests" />
   </ItemGroup>
+
+  <!-- Build-order only: ReferenceOutputAssembly="false" keeps SharpMind.GPU out of the CUI's
+       compile-time reference set (issue #13 - no accelerator assembly in the main line) while
+       still guaranteeing it is built before the copy below runs. -->
+  <ItemGroup>
+    <ProjectReference Include="..\SharpMind.GPU\SharpMind.GPU.csproj"
+                      ReferenceOutputAssembly="false"
+                      Private="false" />
+  </ItemGroup>
+
+  <Target Name="CopyAcceleratorPlugin" AfterTargets="Build">
+    <ItemGroup>
+      <!-- The plugin plus its own dependencies only. The host's assemblies are already
+           loaded; a second copy beside the plugin would give the loader a duplicate
+           SharpMind.Core to bind against. -->
+      <AcceleratorPluginFiles Include="$(MSBuildThisFileDirectory)..\SharpMind.GPU\bin\$(Configuration)\$(TargetFramework)\*.dll"
+                              Exclude="$(MSBuildThisFileDirectory)..\SharpMind.GPU\bin\$(Configuration)\$(TargetFramework)\SharpMind.Core.dll;
+                                       $(MSBuildThisFileDirectory)..\SharpMind.GPU\bin\$(Configuration)\$(TargetFramework)\SharpMind.Model.dll;
+                                       $(MSBuildThisFileDirectory)..\SharpMind.GPU\bin\$(Configuration)\$(TargetFramework)\SharpMind.Training.dll;
+                                       $(MSBuildThisFileDirectory)..\SharpMind.GPU\bin\$(Configuration)\$(TargetFramework)\SharpMind.Data.dll;
+                                       $(MSBuildThisFileDirectory)..\SharpMind.GPU\bin\$(Configuration)\$(TargetFramework)\SharpMind.Tokenization.dll" />
+    </ItemGroup>
+    <Copy SourceFiles="@(AcceleratorPluginFiles)"
+          DestinationFolder="$(OutputPath)Plugins\cuda\"
+          SkipUnchangedFiles="true" />
+  </Target>
 </Project>
