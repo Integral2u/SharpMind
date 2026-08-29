@@ -1,6 +1,7 @@
 using SharpMind.Core.Memory;
 using SharpMind.Core.Quantization;
 using SharpMind.Core.Tensors;
+using SharpMind.Core.Training;
 
 namespace SharpMind.Model.Layers;
 
@@ -8,6 +9,99 @@ public sealed class TrainingLinearLayer(string name, int inFeatures, int outFeat
 {
     private static readonly QuantizationOps _staticOps = QuantizationFactory.Create();
     private QuantDType? _qatTarget;
+
+    // LoRA: y = x·W + scale · (x·A)·B with W frozen. A [In, r], B [r, Out].
+    private Tensor<float>? _loraA;
+    private Tensor<float>? _loraB;
+    private float _loraScale;
+
+    public bool HasLoRA => _loraA is not null;
+    public int LoRARank => _loraA?.Shape.Cols ?? 0;
+    public float LoRAScale => _loraScale;
+    /// <summary>LoRA down-projection A [InFeatures, rank], or null.</summary>
+    public Tensor<float>? LoRAA => _loraA;
+    /// <summary>LoRA up-projection B [rank, OutFeatures], or null.</summary>
+    public Tensor<float>? LoRAB => _loraB;
+
+    /// <summary>
+    /// Attaches a rank-<paramref name="rank"/> LoRA adapter. A is initialised
+    /// uniformly in ±1/√InFeatures and B to zero, so the layer's output is
+    /// unchanged until B is trained. The base weight is not touched and is
+    /// frozen by convention: train <see cref="LoRAParameters"/>, not
+    /// <see cref="LinearLayer.Parameters"/>. Replaces any existing adapter.
+    /// </summary>
+    public void EnableLoRA(int rank, float scale, Random rng)
+    {
+        ArgumentNullException.ThrowIfNull(rng);
+        if (rank <= 0 || rank > Math.Min(InFeatures, OutFeatures))
+            throw new ArgumentOutOfRangeException(nameof(rank), $"{Name}: LoRA rank must be in 1..{Math.Min(InFeatures, OutFeatures)}, got {rank}.");
+        DisableLoRA();
+        _loraA = new Tensor<float>(InFeatures, rank);
+        _loraB = new Tensor<float>(rank, OutFeatures);   // zero
+        _loraScale = scale;
+        float bound = 1f / MathF.Sqrt(InFeatures);
+        var a = _loraA.Data;
+        for (int i = 0; i < a.Length; i++)
+            a[i] = (float)(rng.NextDouble() * 2 - 1) * bound;
+    }
+
+    /// <summary>Drops the adapter without merging it.</summary>
+    public void DisableLoRA()
+    {
+        _loraA?.Dispose();
+        _loraB?.Dispose();
+        _loraA = null;
+        _loraB = null;
+        _loraScale = 0f;
+    }
+
+    /// <summary>Folds the adapter into the base weight (W += scale·A·B) and drops it.</summary>
+    public void MergeLoRA()
+    {
+        if (_loraA is null || _loraB is null) return;
+        int r = _loraA.Shape.Cols;
+        var a = _loraA.Data; var b = _loraB.Data; var w = _weight.Data;
+        for (int i = 0; i < InFeatures; i++)
+        {
+            var wRow = w.Slice(i * OutFeatures, OutFeatures);
+            for (int k = 0; k < r; k++)
+            {
+                float aik = a[i * r + k] * _loraScale;
+                if (aik == 0f) continue;
+                var bRow = b.Slice(k * OutFeatures, OutFeatures);
+                for (int o = 0; o < OutFeatures; o++)
+                    wRow[o] += aik * bRow[o];
+            }
+        }
+        DisableLoRA();
+        InvalidateCache();
+    }
+
+    /// <summary>The adapter's A and B as trainable parameters (fresh wrappers each call, like <see cref="LinearLayer.Parameters"/>).</summary>
+    public IEnumerable<Parameter> LoRAParameters()
+    {
+        if (_loraA is null || _loraB is null) yield break;
+        yield return new Parameter($"{Name}.lora_A", _loraA);
+        yield return new Parameter($"{Name}.lora_B", _loraB);
+    }
+
+    /// <summary>Adds scale·(x·A)·B into <paramref name="output"/> [batch, Out] for flat input [batch, In].</summary>
+    private unsafe void AddLoRAInPlace(Tensor<float> flatInput, Tensor<float> output, int batchSize)
+    {
+        if (_loraA is null || _loraB is null) return;
+        int r = _loraA.Shape.Cols;
+        var fn = _staticOps.QuantizedMatMulOpFor(QuantDType.F32);
+        // The F32 matmul wants its weight as [N, K]; A and B are tiny, so transposing per call is nothing.
+        using var aT = _loraA.Transpose();               // [r, In]
+        using var bT = _loraB.Transpose();               // [Out, r]
+        using var h = new Tensor<float>(batchSize, r);
+        fn(flatInput.DataPtr, (byte*)aT.DataPtr, h.DataPtr, batchSize, InFeatures, r);
+        using var delta = new Tensor<float>(batchSize, OutFeatures);
+        fn(h.DataPtr, (byte*)bT.DataPtr, delta.DataPtr, batchSize, r, OutFeatures);
+        var o = output.Data; var d = delta.Data; float s = _loraScale;
+        for (int i = 0; i < o.Length; i++)
+            o[i] += s * d[i];
+    }
 
     /// <summary>
     /// Enables quantization-aware training for this layer. The master weight
@@ -83,6 +177,7 @@ public sealed class TrainingLinearLayer(string name, int inFeatures, int outFeat
         var flat = needReshape ? input.Reshape(batchSize, InFeatures) : input;
 
         var output = MatMulForward(flat, batchSize, workspace);
+        AddLoRAInPlace(flat, output, batchSize);
 
         if (_bias is not null)
             AddBiasInPlace(output, batchSize);
@@ -97,6 +192,8 @@ public sealed class TrainingLinearLayer(string name, int inFeatures, int outFeat
         }
         return output;
     }
+
+    protected override void OnDispose() => DisableLoRA();
 
     public override unsafe (Tensor<float> Output, LinearLayerState State) ForwardWithState(Tensor<float> input)
     {
