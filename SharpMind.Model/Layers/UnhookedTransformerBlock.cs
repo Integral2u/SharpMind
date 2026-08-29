@@ -2,12 +2,13 @@ using SharpMind.Core.Memory;
 using SharpMind.Core.Tensors;
 using SharpMind.Model.Layers.Attention;
 using SharpMind.Model.Layers.Ffn;
+using SharpMind.Model.Layers.ShortConv;
 
 namespace SharpMind.Model.Layers;
 
-public sealed class UnhookedTransformerBlock(int layerIdx, AttentionLayer attention, FfnLayer ffn, NormLayer norm1, NormLayer norm2,
-    NormLayer? postAttnNorm = null, NormLayer? postFfnNorm = null)
-    : TransformerBlock(layerIdx, attention, ffn, norm1, norm2, postAttnNorm, postFfnNorm)
+public sealed class UnhookedTransformerBlock(int layerIdx, AttentionLayer? attention, FfnLayer ffn, NormLayer norm1, NormLayer norm2,
+    NormLayer? postAttnNorm = null, NormLayer? postFfnNorm = null, ShortConvLayer? shortConv = null)
+    : TransformerBlock(layerIdx, attention, ffn, norm1, norm2, postAttnNorm, postFfnNorm, shortConv)
 {
     public override Tensor<float> Forward(Tensor<float> x, IKVCache? cache, int positionOffset = 0, bool causal = true, IWorkspace? workspace = null, int windowSize = 0)
     {
@@ -15,7 +16,7 @@ public sealed class UnhookedTransformerBlock(int layerIdx, AttentionLayer attent
 
         var normed1 = _norm1.Forward(x, workspace);
 
-        var attnOut = _attention.Forward(normed1, positionOffset, causal, cache, workspace, windowSize);
+        var attnOut = FirstBranch(normed1, cache, positionOffset, causal, workspace, windowSize);
         normed1.Dispose();
 
         if (_postAttnNorm != null)

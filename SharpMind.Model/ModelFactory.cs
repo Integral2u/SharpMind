@@ -331,17 +331,6 @@ public static class ModelFactory
         // layers exactly as before.
         var layerMapping = floatLayers ? null : cfg;
         var blockWeights = weights.Blocks[layerIdx];
-        var t = _attnCache.GetOrAdd(MappingHash.Compute(cfg), (h) =>
-        {
-            return Assembler.Assemble<AttentionLayer>(cfg);
-        });
-        var attn = Activator.CreateInstance(t, weights.Config, blockWeights, layerMapping) as AttentionLayer;
-        ArgumentNullException.ThrowIfNull(attn);
-        attn.SetWeights(blockWeights);
-        
-        var ffn = BuildFfn(layerIdx, weights, sharpConfig, acts, qOps, layerMapping);
-        ffn.SetWeights(blockWeights);
-        
         float eps = weights.Config.NormEps;
 
         // Norm tensors may be null in streaming/Cached mode. When null,
@@ -356,6 +345,29 @@ public static class ModelFactory
             postAttnNorm = BuildNorm(weights.Config.HiddenDim, sharpConfig, eps, blockWeights.PostNorm1W, null);
         if (blockWeights.PostNorm2W != null)
             postFfnNorm = BuildNorm(weights.Config.HiddenDim, sharpConfig, eps, blockWeights.PostNorm2W, null);
+
+        var ffn = BuildFfn(layerIdx, weights, sharpConfig, acts, qOps, layerMapping);
+        ffn.SetWeights(blockWeights);
+
+        // LFM2 short-conv blocks have no attention tensors; the ShortConvLayer
+        // replaces the KV-cache branch entirely (its state lives in the
+        // per-layer ShortConvCache, never in the KVCache).
+        if (weights.Config.IsShortConvLayer(layerIdx))
+        {
+            var shortConv = new ShortConvLayer(weights.Config, qOps, blockWeights, layerMapping);
+            shortConv.SetWeights(blockWeights);
+            return useHooks
+                ? new HookedTransformerBlock(layerIdx, null, ffn, norm1, norm2, postAttnNorm, postFfnNorm, shortConv)
+                : new UnhookedTransformerBlock(layerIdx, null, ffn, norm1, norm2, postAttnNorm, postFfnNorm, shortConv);
+        }
+
+        var t = _attnCache.GetOrAdd(MappingHash.Compute(cfg), (h) =>
+        {
+            return Assembler.Assemble<AttentionLayer>(cfg);
+        });
+        var attn = Activator.CreateInstance(t, weights.Config, blockWeights, layerMapping) as AttentionLayer;
+        ArgumentNullException.ThrowIfNull(attn);
+        attn.SetWeights(blockWeights);
 
         return useHooks
             ? new HookedTransformerBlock(layerIdx, attn, ffn, norm1, norm2, postAttnNorm, postFfnNorm)
