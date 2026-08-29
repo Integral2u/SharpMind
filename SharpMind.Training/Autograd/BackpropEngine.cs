@@ -41,8 +41,6 @@ public sealed class BackpropEngine : IDisposable
     private readonly bool _gemmaScale;
     private bool _disposed;
     private static readonly QuantizationOps _qOps = QuantizationFactory.Create();
-    // Grad sink for a frozen (weight-tied) LM head; see Backward step 1.
-    private Parameter? _frozenHeadScratch;
 
     /// <param name="model">Training transformer (float layers, weight-tied LM head).</param>
     /// <param name="mapping">Gradient kernels. Create with the same SharpMindConfig the model used.</param>
@@ -149,7 +147,7 @@ public sealed class BackpropEngine : IDisposable
     /// w.r.t. logits, shape [Batch*SeqLen, VocabSize] (flat). Accumulates
     /// gradients into the parameters supplied at construction.
     /// </summary>
-    public void Backward(ForwardContext ctx, Tensor<float> dLogits, Tensor<int> tokenIds, CancellationToken cancellationToken = default)
+    public unsafe void Backward(ForwardContext ctx, Tensor<float> dLogits, Tensor<int> tokenIds, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
         ArgumentNullException.ThrowIfNull(ctx);
@@ -166,15 +164,23 @@ public sealed class BackpropEngine : IDisposable
 
         // 1. LM head (weight-tied): dLogits @ head gives dFinalNormOut and
         //    accumulates the head-weight gradient into the embedding parameter.
-        //    A frozen head (LoRA) still needs dFinalNormOut; the kernel computes
-        //    both, so its weight gradient goes to a scratch sink kept for reuse.
-        //    ponytail: frozen head still pays the dW GEMM; a dInput-only kernel
-        //    is CARD-1350's job.
-        var embParam = TryParam(_model.EmbeddingWeight)
-            ?? (_frozenHeadScratch ??= new Parameter("__frozen_head__", _model.EmbeddingWeight));
-        bool headTrainable = !ReferenceEquals(embParam, _frozenHeadScratch);
+        //    A frozen head (LoRA) only needs dFinalNormOut: one blocked matmul
+        //    against headᵀ, no weight gradient. Measured at the 0.5B training
+        //    shape: 3.1 s for the trainable kernel's dInput+dW vs 0.12 s to
+        //    transpose the head plus 1.45 s for the matmul.
+        var embParam = TryParam(_model.EmbeddingWeight);
         using var normedFlat = ctx.FinalNormOut!.Reshape(M, H);
-        var dFinalOut = _mapping.Linear(dLogits, normedFlat, embParam);
+        Tensor<float> dFinalOut;
+        if (embParam is not null)
+        {
+            dFinalOut = _mapping.Linear(dLogits, normedFlat, embParam);
+        }
+        else
+        {
+            using var headT = _model.EmbeddingWeight.Transpose();   // [H, V] = the kernel's [N, K]
+            dFinalOut = new Tensor<float>(M, H);
+            _qOps.QuantizedMatMulOpFor(QuantDType.F32)(dLogits.DataPtr, (byte*)headT.DataPtr, dFinalOut.DataPtr, M, V, H);
+        }
 
         // 2. Final norm backward.
         var dX = NormBackward(_model.FinalNorm, ctx.FinalNormState!, dFinalOut);
@@ -211,7 +217,7 @@ public sealed class BackpropEngine : IDisposable
             }
         }
 
-        if (headTrainable)
+        if (embParam is not null)
         {
             using var flatIds = tokenIds.Reshape(M);
             _mapping.Embedding(dX, flatIds, embParam);
@@ -219,7 +225,7 @@ public sealed class BackpropEngine : IDisposable
         dX.Dispose();
     }
 
-    public void Dispose() { GC.SuppressFinalize(this); _disposed = true; _frozenHeadScratch?.Dispose(); _frozenHeadScratch = null; }
+    public void Dispose() { GC.SuppressFinalize(this); _disposed = true; }
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, nameof(BackpropEngine));
 
     // ── Forward ─────────────────────────────────────────────────────────────
@@ -900,23 +906,19 @@ public sealed class BackpropEngine : IDisposable
     private const float Sqrt2PiInv = 0.7978845608028654f;
     private const float GeluCoeff = 0.044715f;
 
-    private static Tensor<float> ProjectHead(Tensor<float> normed, Tensor<float> head, int M, int V)
+    /// <summary>
+    /// logits [M, V] = normed [M, H] · headᵀ. The tied head is stored [V, H],
+    /// which is the [N, K] layout the F32 matmul takes its weight in, so this is
+    /// one kernel call. It used to be a scalar triple loop on one core: at
+    /// 256 tokens × 151936 vocab × 896 hidden that was 35 G multiply-adds per
+    /// step and three quarters of the whole forward+backward time.
+    /// </summary>
+    private static unsafe Tensor<float> ProjectHead(Tensor<float> normed, Tensor<float> head, int M, int V)
     {
         int H = normed.Shape[^1];
         var logits = new Tensor<float>(M, V);
-        var n = normed.Data;
-        var w = head.Data;
-        var l = logits.Data;
-        for (int m = 0; m < M; m++)
-        {
-            for (int v = 0; v < V; v++)
-            {
-                float s = 0f;
-                for (int h = 0; h < H; h++)
-                    s += n[m * H + h] * w[v * H + h];
-                l[m * V + v] = s;
-            }
-        }
+        var fn = _qOps.QuantizedMatMulOpFor(QuantDType.F32);
+        fn(normed.DataPtr, (byte*)head.DataPtr, logits.DataPtr, M, H, V);   // normed is contiguous [M, H] whatever its rank
         return logits;
     }
 
@@ -1025,53 +1027,48 @@ public sealed class BackpropEngine : IDisposable
     /// <summary>
     /// Linear backward for a layer whose weight is stored [In, Out]. Returns
     /// dInput [B, In] and accumulates dW / dBias into their parameters when they
-    /// are trainable. A frozen weight (not in the parameter list) costs one
-    /// matmul and no weight-sized allocation: the F32 matmul takes its weight as
-    /// [N, K] = [In, Out], which is exactly how the layer stores W. A
-    /// <see cref="TrainingLinearLayer"/> with a LoRA adapter additionally gets
-    /// dA, dB and the adapter's share of dInput.
+    /// are trainable; a frozen weight (not in the parameter list) gets neither.
+    /// Both products run on the F32 matmul kernel, whose weight operand is
+    /// [N, K]: for dInput that is W as stored, for dW it is dOutᵀ — so the only
+    /// transposes are activation-sized. A <see cref="TrainingLinearLayer"/> with
+    /// a LoRA adapter additionally gets dA, dB and the adapter's share of dInput.
     ///
-    /// GradientMapping.Linear expects its weight as [Out, In] (PyTorch layout),
-    /// so the trainable path feeds it a transposed weight through a throwaway
-    /// parameter and scatters the produced [Out, In] gradient back into the real
-    /// [In, Out] parameter. (The embedding/LM-head weight is already [Vocab,
-    /// Hidden] = [Out, In], so the head path calls _mapping.Linear directly.)
+    /// This used to go through GradientMapping.Linear, which wants its weight as
+    /// [Out, In] (PyTorch layout): a transposed copy of W per call, a throwaway
+    /// weight-sized Parameter for it to accumulate into, a scalar column-strided
+    /// scatter back into the real [In, Out] gradient, and a dInput kernel that
+    /// streams the weight once per row. (The LM head is stored [Vocab, Hidden] =
+    /// [Out, In] already, so the trainable head still calls _mapping.Linear.)
     /// </summary>
     private unsafe Tensor<float> LinearBackward(Tensor<float> dOutput, Tensor<float> input, LinearLayer layer)
     {
         var weight = layer.Weight;
         int In = weight.Shape.Rows, Out = weight.Shape.Cols, B = dOutput.Shape.Rows;
-        var biasParam = layer.Bias is null ? null : TryParam(layer.Bias);
-        Tensor<float> dInput;
+        var fn = _qOps.QuantizedMatMulOpFor(QuantDType.F32);
 
-        if (TryParam(weight) is { } orig)
+        // dInput = dOut · Wᵀ: the kernel's weight operand is [N, K] = [In, Out],
+        // which is how the layer stores W — no transpose, frozen or not.
+        var dInput = new Tensor<float>(B, In);
+        fn(dOutput.DataPtr, (byte*)weight.DataPtr, dInput.DataPtr, B, Out, In);
+
+        if (TryParam(weight) is { } wParam)
         {
-            using var wT = weight.Transpose(); // [Out, In]
-            using var tmpW = new Parameter("__transposed__", wT);
-            dInput = _mapping.Linear(dOutput, input, tmpW, biasParam);
-
-            var src = tmpW.Grad.Data;
-            var dst = orig.Grad.Data;
-            for (int o = 0; o < Out; o++)
-            {
-                var srcRow = src.Slice(o * In, In);
-                for (int i = 0; i < In; i++)
-                    dst[i * Out + o] += srcRow[i];
-            }
+            // dW [In, Out] += xᵀ · dOut. Rows of the product are xᵀ [In, B]; the
+            // weight operand is dOutᵀ [Out, B] — both activation-sized transposes.
+            // The kernel overwrites, so accumulate through a scratch of W's size.
+            using var xT = input.Transpose();
+            using var dyT = dOutput.Transpose();
+            using var dW = new Tensor<float>(In, Out);
+            fn(xT.DataPtr, (byte*)dyT.DataPtr, dW.DataPtr, In, B, Out);
+            wParam.AccumulateGrad(dW.Data);
         }
-        else
+        if (layer.Bias is not null && TryParam(layer.Bias) is { } bParam)
         {
-            var fn = _qOps.QuantizedMatMulOpFor(QuantDType.F32);
-            dInput = new Tensor<float>(B, In);
-            fn(dOutput.DataPtr, (byte*)weight.DataPtr, dInput.DataPtr, B, Out, In);
-            if (biasParam is not null)
+            var g = bParam.Grad.Data;
+            for (int b = 0; b < B; b++)
             {
-                var g = biasParam.Grad.Data;
-                for (int b = 0; b < B; b++)
-                {
-                    var row = dOutput.Data.Slice(b * Out, Out);
-                    for (int o = 0; o < Out; o++) g[o] += row[o];
-                }
+                var row = dOutput.Data.Slice(b * Out, Out);
+                for (int o = 0; o < Out; o++) g[o] += row[o];
             }
         }
 
