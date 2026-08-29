@@ -61,20 +61,47 @@ public sealed class AppSettings
     private static readonly JsonSerializerOptions SerializerOptions = new() { WriteIndented = true };
     public static AppSettings Load()
     {
-        try
+        static AppSettings UnResolvedLoad()
         {
-            var path = SettingsFilePath;
-            if (!File.Exists(path)) return new AppSettings();
-            var json = File.ReadAllText(path);
-            return JsonSerializer.Deserialize<AppSettings>(json) ?? new AppSettings();
+            try
+            {
+                var path = SettingsFilePath;
+                if (!File.Exists(path)) return new AppSettings();
+                var json = File.ReadAllText(path);
+                return JsonSerializer.Deserialize<AppSettings>(json) ?? new AppSettings();
+            }
+            catch
+            {
+                // A corrupt or unreadable settings file shouldn't prevent the app
+                // from starting — fall back to defaults rather than crash on launch.
+                return new AppSettings();
+            }
         }
-        catch
+        static string GetDefaultPluginPath(string? initial)
         {
-            // A corrupt or unreadable settings file shouldn't prevent the app
-            // from starting — fall back to defaults rather than crash on launch.
-            return new AppSettings();
+            var path = Path.Combine(AppContext.BaseDirectory, "Plugins");
+            if (Directory.Exists(path)) return path;
+            try
+            {
+                Directory.CreateDirectory(path);
+                return path;
+            }
+            catch
+            {
+                return initial ?? string.Empty;
+            }
         }
-    }    
+        var settings = UnResolvedLoad();
+        if(string.IsNullOrWhiteSpace(settings.PluginsFolder) || !Directory.Exists(settings.PluginsFolder))
+        {
+            settings.PluginsFolder = GetDefaultPluginPath(settings.PluginsFolder);
+        }
+        if (string.IsNullOrWhiteSpace(settings.ToolsFolder) || !Directory.Exists(settings.PluginsFolder))
+        {
+            settings.PluginsFolder = GetDefaultPluginPath(settings.PluginsFolder);
+        }
+        return settings;
+    }
     public bool Save(out string? error)
     {
         error = null;
