@@ -32,7 +32,15 @@ public sealed class GpuBackpropEngine : ITrainingEngine
     private readonly int _ropeDim;
     private readonly DeviceArena _arena;
     private readonly int[] _hostIds, _hostLabels;
+    private readonly GpuStepProfiler _prof;
     private bool _disposed;
+
+    /// <summary>
+    /// Per-phase breakdown of <see cref="ForwardBackward"/>. Disabled unless <c>SM_PROF=1</c>;
+    /// see <see cref="GpuStepProfiler"/> for why enabling it makes the step slower than the one
+    /// it is reporting on.
+    /// </summary>
+    public GpuStepProfiler Profiler => _prof;
 
     /// <summary>Ignored-label id for the loss, as <c>CrossEntropyLoss.IgnoreId</c>.</summary>
     internal int IgnoreId { get; }
@@ -59,6 +67,7 @@ public sealed class GpuBackpropEngine : ITrainingEngine
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(seqLen);
         ValidateSupported(model, parameters, config);
         _dev = device; _cfg = model.Config; _batch = batch; _seq = seqLen; IgnoreId = ignoreId; LabelSmoothing = labelSmoothing; _flash = flashAttention;
+        _prof = new GpuStepProfiler(device);
         // The CPU forward picks its gate kernel from config.Gate (MappingBuilder's "gate" key)
         // while BackpropEngine's backward picks from config.Activation. They agree for both
         // shipped presets (SiLU+SwiGLU, GELU+GeGLU), so one flag mirrors both.
@@ -185,14 +194,19 @@ public sealed class GpuBackpropEngine : ITrainingEngine
         var x = _arena.Rent(m, H);
         k.EmbedGather(x, _embedding.Tensor, ids.View);
         if (_gemmaScale) k.Scale(x, MathF.Sqrt(H));
+        _prof.Mark("fwd/embed");
         foreach (var blk in _blocks)
         {
             blk.X = _arena.Rent(m, H); k.Copy(blk.X, x);                       // x_in (kept for the residual path's identity)
+            _prof.Mark("fwd/copy");
             blk.Norm1Out = _arena.Rent(m, H); blk.RInv1 = _arena.Rent(m, 1);
             k.RmsNormFwd(blk.Norm1Out, blk.RInv1, x, blk.Norm1W.Tensor, _cfg.NormEps);
+            _prof.Mark("fwd/norm");
             blk.Q = _arena.Rent(m, nh * D); blk.K = _arena.Rent(m, nkv * D); blk.V = _arena.Rent(m, nkv * D);
             blk.Wq.Forward(blk.Q, blk.Norm1Out, _arena); blk.Wk.Forward(blk.K, blk.Norm1Out, _arena); blk.Wv.Forward(blk.V, blk.Norm1Out, _arena);
+            _prof.Mark("fwd/qkv-proj");
             if (_rope) { k.RopeFwd(blk.Q, _cos!.Tensor, _sin!.Tensor, _seq, nh, D, _ropeDim, _neox); k.RopeFwd(blk.K, _cos.Tensor, _sin.Tensor, _seq, nkv, D, _ropeDim, _neox); }
+            _prof.Mark("fwd/rope");
             blk.AttnOut = _arena.Rent(m, nh * D);
             if (_flash)
             {
@@ -208,21 +222,32 @@ public sealed class GpuBackpropEngine : ITrainingEngine
                 blk.Probs = _arena.Rent(_batch * nh * _seq, _seq);
                 k.AttnFwd(blk.AttnOut, blk.Probs, blk.Q, blk.K, blk.V, _batch, _seq, nh, nkv, D);
             }
+            _prof.Mark("fwd/attn");                                            // both paths, so the two are comparable
             var proj = _arena.Rent(m, H); blk.Wo.Forward(proj, blk.AttnOut, _arena);
+            _prof.Mark("fwd/wo");
             k.AddInPlace(x, proj);
+            _prof.Mark("fwd/resid-add");
             blk.X1 = _arena.Rent(m, H); k.Copy(blk.X1, x);
+            _prof.Mark("fwd/copy");
             blk.Norm2Out = _arena.Rent(m, H); blk.RInv2 = _arena.Rent(m, 1);
             k.RmsNormFwd(blk.Norm2Out, blk.RInv2, x, blk.Norm2W.Tensor, _cfg.NormEps);
+            _prof.Mark("fwd/norm");
             blk.Fused = _arena.Rent(m, 2 * _cfg.FfnDim); blk.WGated.Forward(blk.Fused, blk.Norm2Out, _arena);
+            _prof.Mark("fwd/ffn-gated");
             blk.Act = _arena.Rent(m, _cfg.FfnDim); k.GateFwd(blk.Act, blk.Fused, _gelu);
+            _prof.Mark("fwd/gate");
             var down = _arena.Rent(m, H); blk.WDown.Forward(down, blk.Act, _arena);
+            _prof.Mark("fwd/ffn-down");
             k.AddInPlace(x, down);
+            _prof.Mark("fwd/resid-add");
         }
         finalIn = x;
         finalNormed = _arena.Rent(m, H); finalRInv = _arena.Rent(m, 1);
         k.RmsNormFwd(finalNormed, finalRInv, x, _finalNormW.Tensor, _cfg.NormEps);
+        _prof.Mark("fwd/final-norm");
         var logits = _arena.Rent(m, _cfg.VocabSize);
         _dev.Gemm(logits, finalNormed, _embedding.Tensor, m, _cfg.VocabSize, H, saI: H, saK: 1, sbK: 1, sbJ: H);   // logits = n·Eᵀ, E [V,H]
+        _prof.Mark("fwd/lm-head");
         return logits;
     }
 
@@ -282,24 +307,30 @@ public sealed class GpuBackpropEngine : ITrainingEngine
         int m = _batch * _seq, H = _cfg.HiddenDim, D = _cfg.HeadDim, nh = _cfg.NumHeads, nkv = _cfg.NumKvHeads, F = _cfg.FfnDim, V = _cfg.VocabSize;
 
         _arena.Reset();
+        _prof.BeginStep();
         // The optimizer moved A and B on the host since the last step; the device grads are
         // this step's alone (the host Parameter.Grad is what accumulates across micro-batches).
         foreach (var b in _blocks) foreach (var l in b.Linears()) { l.SyncLoRAToDevice(); l.ZeroLoRAGrads(); }
+        _prof.Mark("step/lora-upload");
         batch.TokenIds.Data.CopyTo(_hostIds); batch.Labels.Data.CopyTo(_hostLabels);
         using var ids = _dev.UploadInts(_hostIds);
         using var labels = _dev.UploadInts(_hostLabels);
+        _prof.Mark("step/ids-upload");
 
         var logits = Forward(ids, out _, out var finalRInv, out var finalIn);
 
         // Loss + dLogits, in place: logits becomes (softmax − u)/N.
         var rowLoss = _arena.Rent(m, 1);
         float loss = k.CeLossAndGrad(logits, labels.View, _hostLabels, rowLoss, IgnoreId, LabelSmoothing);
+        _prof.Mark("loss/ce+dlogits");
 
         // Head (frozen, weight-tied): dN = dLogits · E, then the final norm.
         var dN = _arena.Rent(m, H);
         _dev.Gemm(dN, logits, _embedding.Tensor, m, H, V, saI: V, saK: 1, sbK: H, sbJ: 1);
+        _prof.Mark("bwd/lm-head");
         var dX = _arena.Rent(m, H);
         k.RmsNormBwd(dX, dN, finalIn, finalRInv, _finalNormW.Tensor);
+        _prof.Mark("bwd/final-norm");
 
         for (int l = _blocks.Length - 1; l >= 0; l--)
         {
@@ -307,15 +338,21 @@ public sealed class GpuBackpropEngine : ITrainingEngine
             var blk = _blocks[l];
             // FFN: WDown → gate → WGated → norm2, then the residual's direct path.
             var dAct = _arena.Rent(m, F); blk.WDown.Backward(dAct, dX, blk.Act, _arena);
+            _prof.Mark("bwd/ffn-down");
             var dFused = _arena.Rent(m, 2 * F); k.GateBwd(dFused, dAct, blk.Fused, _gelu);
+            _prof.Mark("bwd/gate");
             var dN2 = _arena.Rent(m, H); blk.WGated.Backward(dN2, dFused, blk.Norm2Out, _arena);
+            _prof.Mark("bwd/ffn-gated");
             // RmsNormBwd wants the norm's INPUT: X1 is x after the attention residual, which is
             // exactly what norm2 read in the forward. Its output (Norm2Out) would be wrong.
             var dN2in = _arena.Rent(m, H); k.RmsNormBwd(dN2in, dN2, blk.X1, blk.RInv2, blk.Norm2W.Tensor);
+            _prof.Mark("bwd/norm");
             k.AddInPlace(dX, dN2in);
+            _prof.Mark("bwd/resid-add");
 
             // Attention: Wo → attention → the inverse RoPE rotation → Wq/Wk/Wv → norm1.
             var dAttnOut = _arena.Rent(m, nh * D); blk.Wo.Backward(dAttnOut, dX, blk.AttnOut, _arena);
+            _prof.Mark("bwd/wo");
             var dQ = _arena.Rent(m, nh * D); var dK = _arena.Rent(m, nkv * D); var dV = _arena.Rent(m, nkv * D);
             if (_flash)
             {
@@ -328,19 +365,26 @@ public sealed class GpuBackpropEngine : ITrainingEngine
                 var scratch = _arena.Rent(_batch * nh * _seq, _seq);
                 k.AttnBwd(dQ, dK, dV, dAttnOut, blk.Q, blk.K, blk.V, blk.Probs, scratch, _batch, _seq, nh, nkv, D);
             }
+            _prof.Mark("bwd/attn");                                            // both paths, so the two are comparable
             // Q/K went into attention post-RoPE, so dQ/dK come out pre-inverse-rotation and the
             // rotation belongs here — after AttnBwd, before the Wq/Wk/Wv backwards read them.
             if (_rope) { k.RopeBwd(dQ, _cos!.Tensor, _sin!.Tensor, _seq, nh, D, _ropeDim, _neox); k.RopeBwd(dK, _cos.Tensor, _sin.Tensor, _seq, nkv, D, _ropeDim, _neox); }
+            _prof.Mark("bwd/rope");
             var dN1 = _arena.Rent(m, H);
             blk.Wq.Backward(dN1, dQ, blk.Norm1Out, _arena);                  // starts the sum
             blk.Wk.Backward(dN1, dK, blk.Norm1Out, _arena, betaDx: 1f);      // accumulates
             blk.Wv.Backward(dN1, dV, blk.Norm1Out, _arena, betaDx: 1f);
+            _prof.Mark("bwd/qkv");
             var dN1in = _arena.Rent(m, H); k.RmsNormBwd(dN1in, dN1, blk.X, blk.RInv1, blk.Norm1W.Tensor);
+            _prof.Mark("bwd/norm");
             k.AddInPlace(dX, dN1in);
+            _prof.Mark("bwd/resid-add");
         }
 
         _dev.Synchronize();
         foreach (var b in _blocks) foreach (var lin in b.Linears()) lin.AccumulateLoRAGradsToHost();
+        _prof.Mark("step/grad-download");
+        _prof.EndStep();
         return loss;
     }
 
