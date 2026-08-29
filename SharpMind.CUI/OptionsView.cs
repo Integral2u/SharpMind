@@ -429,7 +429,7 @@ public sealed class OptionsView : View
         if (SavedSession.Save(saved, path, out var error))
             MessageBox.Query("Saved", $"Saved preset to:\n{path}", "OK");
         else
-            MessageBox.ErrorQuery("Save failed", error ?? "Unknown error", "OK");
+            ErrorBox.Show("Save failed", error ?? "Unknown error", "OK");
     }
 
     private void OpenPreset()
@@ -447,7 +447,7 @@ public sealed class OptionsView : View
         var loaded = SavedSession.Load(picked, out var error);
         if (loaded is null)
         {
-            MessageBox.ErrorQuery("Load failed", error ?? "Unknown error", "OK");
+            ErrorBox.Show("Load failed", error ?? "Unknown error", "OK");
             return;
         }
 

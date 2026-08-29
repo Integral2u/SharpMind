@@ -280,7 +280,7 @@ public sealed class ChatView : View
         }
         catch (Exception ex)
         {
-            MessageBox.ErrorQuery("Error", $"Could not read file:\n{ex.Message}", "OK");
+            ErrorBox.Show("Error", $"Could not read file:\n{ex.Message}", "OK");
             return;
         }
 
@@ -375,7 +375,7 @@ public sealed class ChatView : View
             }
             catch (Exception ex)
             {
-                MessageBox.ErrorQuery("Error", $"Could not save:\n{ex.Message}", "OK");
+                ErrorBox.Show("Error", $"Could not save:\n{ex.Message}", "OK");
             }
         };
 

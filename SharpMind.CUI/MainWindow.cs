@@ -253,7 +253,7 @@ public sealed class MainWindow : Window
         bool toGguf = source.EndsWith(".smm", StringComparison.OrdinalIgnoreCase);
         if (!toSmm && !toGguf)
         {
-            MessageBox.ErrorQuery("Convert model", "Pick a .gguf or .smm model file.", "OK");
+            ErrorBox.Show("Convert model", "Pick a .gguf or .smm model file.", "OK");
             return;
         }
 
@@ -332,7 +332,7 @@ public sealed class MainWindow : Window
         }
         else if (error is not null)
         {
-            MessageBox.ErrorQuery("Convert model", $"Conversion failed:\n{error}", "OK");
+            ErrorBox.Show("Convert model", $"Conversion failed:\n{error}", "OK");
         }
         else if (File.Exists(target))
         {
@@ -398,7 +398,7 @@ public sealed class MainWindow : Window
             var floor = new[] { QuantDType.Q8_K, QuantDType.Q6_K, QuantDType.Q5_K, QuantDType.Q4_K, QuantDType.Q3_K, QuantDType.Q2_K }[fi];
             if (!double.TryParse((budgetInput.Text.ToString() ?? string.Empty).Trim(), out double mb) || mb <= 0)
             {
-                MessageBox.ErrorQuery("Quantize model", "Enter a positive target size in MB.", "OK");
+                ErrorBox.Show("Quantize model", "Enter a positive target size in MB.", "OK");
                 return;
             }
             Application.RequestStop();
@@ -491,7 +491,7 @@ public sealed class MainWindow : Window
         }
         else if (error is not null)
         {
-            MessageBox.ErrorQuery(title, $"Quantization failed:\n{error}", "OK");
+            ErrorBox.Show(title, $"Quantization failed:\n{error}", "OK");
         }
         else if (File.Exists(destPath))
         {
@@ -520,7 +520,7 @@ public sealed class MainWindow : Window
         }
         catch (Exception ex)
         {
-            MessageBox.ErrorQuery("Modify metadata", $"Could not read {Path.GetFileName(path)}:\n{ex.Message}", "OK");
+            ErrorBox.Show("Modify metadata", $"Could not read {Path.GetFileName(path)}:\n{ex.Message}", "OK");
             return;
         }
 
@@ -566,7 +566,7 @@ public sealed class MainWindow : Window
         editSkill.Clicked += () =>
         {
             int i = skillList.SelectedItem;
-            if (i < 0 || i >= doc.Skills.Count) { MessageBox.ErrorQuery("Edit skill", "Select a skill first.", "OK"); return; }
+            if (i < 0 || i >= doc.Skills.Count) { ErrorBox.Show("Edit skill", "Select a skill first.", "OK"); return; }
             var edited = EditTextModal("Edit skill", doc.Skills[i]);
             if (edited is not null) { doc.Skills[i] = edited; RefreshSkills(skillsCaption, skillList, doc); }
         };
@@ -626,7 +626,7 @@ public sealed class MainWindow : Window
             }
             catch (Exception ex)
             {
-                MessageBox.ErrorQuery("Modify metadata", $"Could not write {Path.GetFileName(path)}:\n{ex.Message}", "OK");
+                ErrorBox.Show("Modify metadata", $"Could not write {Path.GetFileName(path)}:\n{ex.Message}", "OK");
             }
         };
         cancel.Clicked += () => Application.RequestStop();
@@ -812,7 +812,7 @@ public sealed class MainWindow : Window
         }
         catch
         {
-            MessageBox.ErrorQuery("About SharpMind", $"Could not open the default browser.\n{url}", "OK");
+            ErrorBox.Show("About SharpMind", $"Could not open the default browser.\n{url}", "OK");
         }
     }
 
@@ -847,7 +847,7 @@ public sealed class MainWindow : Window
     {
         if (_currentSession is null)
         {
-            MessageBox.ErrorQuery("Close current session", "No session is currently open.", "OK");
+            ErrorBox.Show("Close current session", "No session is currently open.", "OK");
             return;
         }
         CloseSession(_currentSession);
@@ -935,7 +935,7 @@ public sealed class MainWindow : Window
                     var loadResult = await SessionLauncher.LoadModelAsync(launchOptions, progress);
                     if (!loadResult.Success)
                     {
-                        MessageBox.ErrorQuery("Load failed", loadResult.Error ?? "Unknown error", "OK");
+                        ErrorBox.Show("Load failed", loadResult.Error ?? "Unknown error", "OK");
                         ShowOptions();
                         return;
                     }
@@ -952,7 +952,7 @@ public sealed class MainWindow : Window
         }
         catch (Exception ex)
         {
-            MessageBox.ErrorQuery("Load failed", $"Unexpected error while loading the model:\n{ex.Message}", "OK");
+            ErrorBox.Show("Load failed", $"Unexpected error while loading the model:\n{ex.Message}", "OK");
             ShowOptions();
         }
     }
@@ -967,7 +967,7 @@ public sealed class MainWindow : Window
 
             if (!result.Success)
             {
-                MessageBox.ErrorQuery("Launch failed", result.Error ?? "Unknown error", "OK");
+                ErrorBox.Show("Launch failed", result.Error ?? "Unknown error", "OK");
                 ShowOptions();
                 return;
             }
@@ -1061,7 +1061,7 @@ public sealed class MainWindow : Window
                 if (e.StackTrace != null)
                     sb.AppendLine(e.StackTrace);
             }
-            MessageBox.ErrorQuery("Launch failed", sb.ToString(), "OK");
+            ErrorBox.Show("Launch failed", sb.ToString(), "OK");
             ShowOptions();
         }
     }
@@ -1101,7 +1101,7 @@ public sealed class MainWindow : Window
         }
         catch (Exception ex)
         {
-            MessageBox.ErrorQuery("Close failed", $"Unexpected error while closing the session:\n{ex.Message}", "OK");
+            ErrorBox.Show("Close failed", $"Unexpected error while closing the session:\n{ex.Message}", "OK");
         }
         finally
         {
@@ -1188,7 +1188,7 @@ public sealed class MainWindow : Window
         }
         else
         {
-            MessageBox.ErrorQuery("Save failed", error ?? "Unknown error", "OK");
+            ErrorBox.Show("Save failed", error ?? "Unknown error", "OK");
         }
     }
 
@@ -1209,7 +1209,7 @@ public sealed class MainWindow : Window
         var loaded = SavedSession.Load(picked, out var error);
         if (loaded is null)
         {
-            MessageBox.ErrorQuery("Load failed", error ?? "Unknown error", "OK");
+            ErrorBox.Show("Load failed", error ?? "Unknown error", "OK");
             return;
         }
 

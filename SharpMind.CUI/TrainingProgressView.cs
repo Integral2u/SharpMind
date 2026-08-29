@@ -271,7 +271,7 @@ public sealed class TrainingProgressView : View
         }
         catch (Exception ex)
         {
-            MessageBox.ErrorQuery("Clean checkpoints", ex.Message, "OK");
+            ErrorBox.Show("Clean checkpoints", ex.Message, "OK");
         }
     }
 }

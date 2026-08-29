@@ -33,7 +33,7 @@ public static class ComponentPickerDialog
 
         if (candidates.Count == 0)
         {
-            MessageBox.ErrorQuery("No components", $"No {(kind == ComponentKind.Source ? "data sources" : "stages")} are available.", "OK");
+            ErrorBox.Show("No components", $"No {(kind == ComponentKind.Source ? "data sources" : "stages")} are available.", "OK");
             return null;
         }
 

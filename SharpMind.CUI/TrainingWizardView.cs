@@ -752,7 +752,7 @@ public sealed class TrainingWizardView : View
         var candidates = CheckpointCandidates();
         if (candidates.Count == 0)
         {
-            MessageBox.ErrorQuery("Continue from checkpoint",
+            ErrorBox.Show("Continue from checkpoint",
                 $"No checkpoints found under:\n{_job.CheckpointDir}\n\n" +
                 "Run training once to create one, or pick the folder where they live.",
                 "OK");
@@ -892,7 +892,7 @@ public sealed class TrainingWizardView : View
         var descriptor = ComponentRegistry.Find(source.Component.TypeName, registry);
         if (descriptor is null)
         {
-            MessageBox.ErrorQuery("Edit source", $"Unknown source: {source.Component.TypeName}", "OK");
+            ErrorBox.Show("Edit source", $"Unknown source: {source.Component.TypeName}", "OK");
             return;
         }
         var updated = ComponentParamDialog.Show(descriptor, source.Component.Args);
@@ -915,7 +915,7 @@ public sealed class TrainingWizardView : View
         var stages = SelectedStages;
         if (stages is null)
         {
-            MessageBox.ErrorQuery("Add stage", "Select a data source first — each source has its own stage chain.", "OK");
+            ErrorBox.Show("Add stage", "Select a data source first — each source has its own stage chain.", "OK");
             return;
         }
         var picked = Pick(ComponentKind.Stage);
@@ -936,7 +936,7 @@ public sealed class TrainingWizardView : View
         var descriptor = ComponentRegistry.Find(comp.TypeName, registry);
         if (descriptor is null)
         {
-            MessageBox.ErrorQuery("Edit stage", $"Unknown stage: {comp.TypeName}", "OK");
+            ErrorBox.Show("Edit stage", $"Unknown stage: {comp.TypeName}", "OK");
             return;
         }
         var updated = ComponentParamDialog.Show(descriptor, comp.Args);
@@ -1016,7 +1016,7 @@ public sealed class TrainingWizardView : View
     {
         if (_job.Sources.Count == 0)
         {
-            MessageBox.ErrorQuery("Auto-size", "Add at least one data source first.", "OK");
+            ErrorBox.Show("Auto-size", "Add at least one data source first.", "OK");
             return;
         }
 
@@ -1035,7 +1035,7 @@ public sealed class TrainingWizardView : View
         }
         catch (Exception ex)
         {
-            MessageBox.ErrorQuery("Auto-size", ex.Message, "OK");
+            ErrorBox.Show("Auto-size", ex.Message, "OK");
             return;
         }
 
@@ -1086,7 +1086,7 @@ public sealed class TrainingWizardView : View
         if (cancelled) return;
         if (error is not null)
         {
-            MessageBox.ErrorQuery("Auto-size", $"Sizing failed:\n{error}", "OK");
+            ErrorBox.Show("Auto-size", $"Sizing failed:\n{error}", "OK");
             return;
         }
         if (result is null) return;
@@ -1113,7 +1113,7 @@ public sealed class TrainingWizardView : View
             _savedPath = path;
             _jobPathLabel.Text = $"Saved: {Path.GetFileName(path)}";
         }
-        else MessageBox.ErrorQuery("Save job", error ?? "Unknown error", "OK");
+        else ErrorBox.Show("Save job", error ?? "Unknown error", "OK");
     }
 
     private void LoadJob()
@@ -1126,7 +1126,7 @@ public sealed class TrainingWizardView : View
         if (picked is null) return;
 
         var loaded = TrainJobSettings.Load(picked, out var err);
-        if (loaded is null) { MessageBox.ErrorQuery("Load job", err ?? "Not a valid job file.", "OK"); return; }
+        if (loaded is null) { ErrorBox.Show("Load job", err ?? "Not a valid job file.", "OK"); return; }
         _job = loaded;
         _savedPath = picked;
         RefreshAll();
@@ -1137,24 +1137,24 @@ public sealed class TrainingWizardView : View
     {
         if (_job.Sources.Count == 0)
         {
-            MessageBox.ErrorQuery("Start training", "Add at least one data source first.", "OK");
+            ErrorBox.Show("Start training", "Add at least one data source first.", "OK");
             return;
         }
         if (!string.IsNullOrWhiteSpace(_job.SystemPromptPath) && !File.Exists(_job.SystemPromptPath))
         {
-            MessageBox.ErrorQuery("Start training", $"System prompt file not found:\n{_job.SystemPromptPath}", "OK");
+            ErrorBox.Show("Start training", $"System prompt file not found:\n{_job.SystemPromptPath}", "OK");
             return;
         }
         if (!string.IsNullOrWhiteSpace(_job.SkillsFolder))
         {
             if (!Directory.Exists(_job.SkillsFolder))
             {
-                MessageBox.ErrorQuery("Start training", $"Skills folder not found:\n{_job.SkillsFolder}", "OK");
+                ErrorBox.Show("Start training", $"Skills folder not found:\n{_job.SkillsFolder}", "OK");
                 return;
             }
             if (Directory.GetFiles(_job.SkillsFolder, "*.md", SearchOption.TopDirectoryOnly).Length == 0)
             {
-                MessageBox.ErrorQuery("Start training", $"No *.md files found in:\n{_job.SkillsFolder}", "OK");
+                ErrorBox.Show("Start training", $"No *.md files found in:\n{_job.SkillsFolder}", "OK");
                 return;
             }
         }
@@ -1162,7 +1162,7 @@ public sealed class TrainingWizardView : View
         {
             if (!File.Exists(dll))
             {
-                MessageBox.ErrorQuery("Start training", $"Plugin DLL not found:\n{dll}", "OK");
+                ErrorBox.Show("Start training", $"Plugin DLL not found:\n{dll}", "OK");
                 return;
             }
         }
