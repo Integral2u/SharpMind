@@ -145,36 +145,40 @@ public abstract class FfnLayer : IDisposable
         Acts = acts;
         _qOps = qOps;
 
-        var tm = weights?.TensorMeta;
-
         switch (kind)
         {
             case FfnKind.Dense:
                 W1 = LinearLayerFactory.Create("gate_proj", config.HiddenDim, config.FfnDim, true,
-                    weights?.Wf1, weights?.Wf1Bias, tm?.GetValueOrDefault("RawWup").Dtype ?? QuantDType.F32, mapping);
+                    weights?.Wf1, weights?.Wf1Bias, weights?.QuantDtypeWup ?? QuantDType.F32, mapping);
                 W2 = LinearLayerFactory.Create("down_proj", config.FfnDim, config.HiddenDim, true,
-                    weights?.Wf2, weights?.Wf2Bias, tm?.GetValueOrDefault("RawWf2").Dtype ?? QuantDType.F32, mapping);
+                    weights?.Wf2, weights?.Wf2Bias, weights?.QuantDtypeWf2 ?? QuantDType.F32, mapping);
                 break;
 
             case FfnKind.Gated:
+                // GGUFs store the gated FFN either as separate ffn_gate/ffn_up
+                // tensors or as a single fused [HiddenDim, 2*FfnDim] tensor. When
+                // fused, the file may name it "ffn_gate_up" (mapped to RawWgate)
+                // or keep the fused matrix under "ffn_up" alone (no RawWgate
+                // tensor), so fall back to the up tensor's dtype for WGated.
                 WGated = LinearLayerFactory.Create("wgated_proj", config.HiddenDim, 2 * config.FfnDim, true,
-                    weights?.Wf1, weights?.Wf1Bias, tm?.GetValueOrDefault("RawWgate").Dtype ?? QuantDType.F32, mapping);
+                    weights?.Wf1, weights?.Wf1Bias,
+                    weights?.QuantDtypeWgate ?? weights?.QuantDtypeWup ?? QuantDType.F32, mapping);
                 WDown = LinearLayerFactory.Create("down_proj", config.FfnDim, config.HiddenDim, true,
-                    weights?.Wf2, weights?.Wf2Bias, tm?.GetValueOrDefault("RawWf2").Dtype ?? QuantDType.F32, mapping);
+                    weights?.Wf2, weights?.Wf2Bias, weights?.QuantDtypeWf2 ?? QuantDType.F32, mapping);
                 break;
 
             case FfnKind.MoE:
                 Router = LinearLayerFactory.Create("router", config.HiddenDim, config.NumExperts, true,
-                    null, null, tm?.GetValueOrDefault("RawRouter").Dtype ?? QuantDType.F32, mapping);
+                    null, null, weights?.QuantDtypeRouter ?? QuantDType.F32, mapping);
                 ExpertGate = [.. Enumerable.Range(0, config.NumExperts).Select(i =>
                     LinearLayerFactory.Create($"expert_{i}_gate_proj", config.HiddenDim, config.FfnDim, true,
-                        null, null, tm?.GetValueOrDefault($"RawWgateExp_{i}").Dtype ?? QuantDType.F32, mapping))];
+                        null, null, weights?.QuantDtypeWgateExp?.GetValueOrDefault(i) ?? QuantDType.F32, mapping))];
                 ExpertUp = [.. Enumerable.Range(0, config.NumExperts).Select(i =>
                     LinearLayerFactory.Create($"expert_{i}_up_proj", config.HiddenDim, config.FfnDim, true,
-                        null, null, tm?.GetValueOrDefault($"RawWupExp_{i}").Dtype ?? QuantDType.F32, mapping))];
+                        null, null, weights?.QuantDtypeWupExp?.GetValueOrDefault(i) ?? QuantDType.F32, mapping))];
                 ExpertDown = [.. Enumerable.Range(0, config.NumExperts).Select(i =>
                     LinearLayerFactory.Create($"expert_{i}_down_proj", config.FfnDim, config.HiddenDim, true,
-                        null, null, tm?.GetValueOrDefault($"RawWdownExp_{i}").Dtype ?? QuantDType.F32, mapping))];
+                        null, null, weights?.QuantDtypeWdownExp?.GetValueOrDefault(i) ?? QuantDType.F32, mapping))];
                 break;
         }
     }
@@ -201,6 +205,12 @@ public abstract class FfnLayer : IDisposable
             else if (weights.RawWup != null)
             {
                 WGated.SetRawWeight(weights.RawWup);
+            }
+            else if (weights.RawWgate != null)
+            {
+                // Fused gate+up stored under the gate name (e.g. "ffn_gate_up"):
+                // RawWgate already holds the full [HiddenDim, 2*FfnDim] tensor.
+                WGated.SetRawWeight(weights.RawWgate);
             }
             else
             {
