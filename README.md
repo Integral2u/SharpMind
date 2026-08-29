@@ -18,7 +18,7 @@
 
 ## What is SharpMind?
 
-SharpMind is an end-to-end LLM stack written entirely in C#, with no dependency on llama.cpp, PyTorch, or any native runtime for its core path. It loads GGUF models, runs quantized CPU/GPU inference with modern decoding acceleration (speculative + Medusa-style drafting), and — unusually for a C# inference engine — also includes its own autograd engine so you can fine-tune (LoRA), distill, and prune models in the same process that serves them.
+SharpMind is an end-to-end LLM stack written entirely in C#, with no dependency on llama.cpp, PyTorch, or any native runtime for its core path. It loads GGUF models, runs quantized CPU inference with modern decoding acceleration (speculative + Medusa-style drafting), and — unusually for a C# inference engine — also includes its own autograd engine so you can fine-tune (LoRA), distill, and prune models in the same process that serves them. LoRA fine-tuning can optionally run on an NVIDIA GPU via a separate accelerator plugin (see [GPU-accelerated training](#gpu-accelerated-training)).
 
 It ships as a set of composable libraries plus a terminal chat application (`SharpMind.CUI`) built on top of them.
 
@@ -33,10 +33,10 @@ It ships as a set of composable libraries plus a terminal chat application (`Sha
 
 ## Why SharpMind
 
-- **No native runtime required.** Tensor math, quantization kernels, and the training loop are all managed C#. GPU acceleration (via ILGPU) is opt-in and lives in its own assembly — the CPU path never needs it.
+- **No native runtime required.** Tensor math, quantization kernels, and the training loop are all managed C#. Inference runs entirely on the CPU; GPU acceleration (via ILGPU/cuBLAS) is opt-in, training-only, and lives in its own assembly loaded as a plugin — the CPU path never needs it.
 - **Runs models bigger than your RAM.** A disk-streaming load mode pages transformer layers in and out during the forward pass instead of holding the whole model resident (details below).
 - **Modern decoding, not just greedy/top-p.** Both classic speculative decoding and Medusa-style multi-head speculative decoding are implemented from scratch, with careful KV-cache rollback on rejection.
-- **A genuinely pluggable kernel system.** Hardware-specific kernel variants (scalar/SSE/AVX2/FMA/GPU) are wired up at runtime through a small internal dispatch layer [JigSawDotNet](https://github.com/Integral2u/JigSawDotNet) rather than hand-written `if`/`switch` ladders — adding a new backend means adding an assembly, not editing the core.
+- **A genuinely pluggable kernel system.** Hardware-specific kernel variants (scalar/SSE/AVX2/FMA) are wired up at runtime through a small internal dispatch layer [JigSawDotNet](https://github.com/Integral2u/JigSawDotNet) rather than hand-written `if`/`switch` ladders — adding a new backend means adding an assembly, not editing the core.
 - **Agent tooling included.** Tool-calling, permission gating (`Never` / `Ask` / `Always`), and sub-agent orchestration ship in `SharpMind.Inference.Agent`.
 - **Inference *and* training in one codebase.** Most C# "LLM" libraries are thin bindings around llama.cpp and only run models. SharpMind can load a GGUF checkpoint, chat with it, or train a model from scratch. LoRA fine-tuning and distillation are also present in the training stack but are still experimental — see [Training](#training-experimental).
 
@@ -136,7 +136,7 @@ void Response(ChatStreamEntry entry) => Console.Write(entry.Token);
 | Step | Purpose |
 |---|---|
 | `metaHelper.Load` | Reads the GGUF file's architecture, hyperparameters, and tokenizer vocab. Pass `null` for the second argument unless the model ships an external tokenizer file. |
-| `modelConfig.ForModel()` | Resolves the config into a hardware-aware mapping (CPU/GPU, quant ops). |
+| `modelConfig.ForModel()` | Resolves the config into a hardware-aware mapping (CPU SIMD tier, quant ops). |
 | `ModelFactory.CreateWeights(..., LoadMode.Full)` | Loads and dequantizes all weights into memory up front. Use `LoadMode.Streaming` instead on memory-constrained machines — it loads one layer at a time during inference rather than holding everything resident. |
 | `ModelFactory.CreateTransformer` | Wires the loaded weights into the actual forward-pass graph. |
 | `ChatSession<...>` | Manages conversation history, prompt formatting (auto-detected from the model's chat template), and the generation loop. |
@@ -234,7 +234,7 @@ Speculative decoding follows the more familiar draft-and-verify pattern with an 
 
 ### Quantization
 
-Full GGUF-style quant coverage — Q2_K through Q8_0/Q8_1/Q8_K, plus the classic block types (Q4_0/Q4_1/Q5_0/Q5_1) and several 1-bit/ternary formats (IQ1_S, IQ1_M, TQ1_0, TQ2_0) — each with scalar, SSE, AVX2, and FMA kernel variants, and GPU kernels for the most common types.
+Full GGUF-style quant coverage — Q2_K through Q8_0/Q8_1/Q8_K, plus the classic block types (Q4_0/Q4_1/Q5_0/Q5_1) and several 1-bit/ternary formats (IQ1_S, IQ1_M, TQ1_0, TQ2_0) — each with scalar, SSE, AVX2, and FMA kernel variants. (No GPU variants — inference is CPU-only; see [GPU-accelerated training](#gpu-accelerated-training) for where the GPU is used.)
 
 ---
 
@@ -251,9 +251,9 @@ Most inference engines pick a kernel implementation with a big `switch` over CPU
 public abstract unsafe float VecDotQ4K(float* input, byte* rawWeights, int col, int inFeatures);
 ```
 
-At startup, a `MappingBuilder` inspects the detected `HardwareTier` (or an explicit override) and the active `SharpMindConfig` (activation, attention, gating, quantization scheme, etc.) and produces a `Dictionary<string,string>` mapping each operation key to the variant name it should use — `"q4k_fma"`, `"gpu"`, and so on. `Assembler.CreateInstance<QuantizationOps>(mapping)` then builds a concrete implementation of the abstract class at runtime, resolving every abstract method straight to its chosen static kernel. The result is cached by a hash of the mapping, so a given hardware/config combination only pays the assembly cost once.
+At startup, a `MappingBuilder` inspects the detected `HardwareTier` (or an explicit override) and the active `SharpMindConfig` (activation, attention, gating, quantization scheme, etc.) and produces a `Dictionary<string,string>` mapping each operation key to the variant name it should use — `"q4k_fma"`, `"q4k_avx2"`, and so on. `Assembler.CreateInstance<QuantizationOps>(mapping)` then builds a concrete implementation of the abstract class at runtime, resolving every abstract method straight to its chosen static kernel. The result is cached by a hash of the mapping, so a given hardware/config combination only pays the assembly cost once.
 
-The part that makes this genuinely extensible rather than just "reflection instead of a switch": **other assemblies can contribute additional variants for an existing key without the core project referencing them.** `SharpMind.GPU` declares its own `[PuzzlePeice]` entries against the *same* keys (`KeyVecDotQ4_0`, `KeyQuantizedMatMulQ4K`, …) pointing at ILGPU-backed kernels. JigSaw discovers these via assembly scanning at startup, so calling `WithGpu()` — which just causes `SharpMind.GPU` to be loaded into the process — is enough for GPU variants to become selectable, with no compile-time dependency from `SharpMind.Core` on the GPU project at all. Adding a future Metal, Vulkan, or SIMD-width-specific backend is the same pattern: a new assembly, new `[PuzzlePeice]` entries, zero changes to existing call sites.
+The part that makes this genuinely extensible rather than just "reflection instead of a switch": **other assemblies can contribute additional variants for an existing key without the core project referencing them.** An assembly declares its own `[PuzzleCornerPiece]` entries against an existing key (`KeyVecDotQ4_0`, `KeyQuantizedMatMulQ4K`, …) pointing at its own kernels; JigSaw discovers these via assembly scanning at startup, so loading that assembly into the process is enough for its variants to become selectable, with no compile-time dependency from `SharpMind.Core` on the contributing project at all. Adding a future Metal, Vulkan, or SIMD-width-specific inference backend is the same pattern: a new assembly, new `[PuzzleCornerPiece]` entries, zero changes to existing call sites. (`SharpMind.GPU` does not currently use this mechanism — it contributes a training engine through a separate plugin interface instead; see [GPU-accelerated training](#gpu-accelerated-training).)
 
 ---
 
@@ -270,6 +270,13 @@ This half of SharpMind is functional today but earlier in its lifecycle than inf
 
 Expect the training API surface (config records, trainer entry points) to change as this matures.
 
+### GPU-accelerated training
+
+`SharpMind.GPU` is an optional NVIDIA accelerator for LoRA fine-tuning — not an inference backend. It's loaded as a plugin (dropped in the CUI's `Plugins/cuda/` folder, discovered at runtime via `AcceleratorLoader`), so the CPU-only main line never references it at compile time. Weights and activations stay device-resident for the whole training step (a bump-allocated arena, reset once per step), and matmuls run through cuBLAS on CUDA hardware, falling back to a tiled ILGPU kernel on OpenCL. A training job (`.smmt`) opts in with an `Accelerator: cuda` setting; if the named plugin or a suitable device isn't found, the run fails with an explicit error rather than silently falling back to the CPU.
+
+Current scope (`GpuBackpropEngine`, "M1"): RMSNorm-only models with RoPE or no positional encoding, a gated FFN, and LoRA adapters of rank ≥ 2 as the only trainable parameters — LayerNorm, MoE, dense (ungated) FFN, and quantization-aware training all fall back to the CPU engine (`BackpropEngine`), which supports the full training surface. Measured on a GTX 1060 with cuBLAS 12.8 at SmolLM2-135M scale, LoRA rank 8, sequence length 256: roughly 1,150 tok/s at batch 2.
+
+Special Thanks to [MBrekhof](https://github.com/MBrekhof) efforts.
 ### Training sample with actual data
 
 `SharpMind.Samples/Training/Acutal/` ships a complete, reproducible end-to-end training run on real text:
@@ -518,7 +525,7 @@ print(response.choices[0].message.content)
 - **Agent framework** (`SharpMind.Inference.Agent`) — tool-calling with a three-state permission model (`Never` / `Ask` / `Always`), tool categories, and auto-named sub-agents (temperature → a "Greek tier" naming scheme, e.g. `Athena-Alpha` at low temperature, `Prometheus-Epsilon` at high).
 - **Chat layer** (`SharpMind.Inference.Chat`) — pluggable prompt formatters (ChatML, a small Jinja-template evaluator, a simple formatter), pinned-message-aware context compaction (summarizing or truncating), and a `ChatArtifact` concept for attaching text/image/code/JSON blocks to a response.
 - **`SharpMind.CUI`** — a full terminal chat client: model browser, session manager, settings, file picker, plugin loading, and a permission gate UI, shown above.
-- **`SharpMind.GPU`** — ILGPU-backed kernels for activations, norms, and quantized ops, isolated from the core so the CPU path has zero GPU dependency.
+- **`SharpMind.GPU`** — optional NVIDIA accelerator for LoRA training (ILGPU + cuBLAS), loaded as a plugin — see [GPU-accelerated training](#gpu-accelerated-training). Inference has no GPU path; it's CPU-only.
 - **`SharpMind.Extensions.AI`** — `IChatClient` adapter for the `Microsoft.Extensions.AI` ecosystem. Wraps any SharpMind `IChatSession` into a standard `IChatClient`, routes MEAI tools through SharpMind's agent loop, and maps chat types bidirectionally — see [IChatClient integration](#ichatclient-integration-microsoftextensionsai).
 - **`SharpMind.Extensions.Tools`** — optional common tools (grep, git, datetime) packaged as a plugin DLL. Auto-discovered from the CUI's `plugins/` folder at runtime — no compile-time dependency required. The CUI build copies it there automatically.
 - **`SharpMind.Server`** — OpenAI-compatible HTTP server. Serves `/v1/chat/completions` (streaming and non-streaming), `/v1/models`, and related endpoints. Models load lazily, cache with ref-counting, and stay resident until explicitly unloaded. Ships as a class library (`SharpMind.Server`) and a CLI executable (`SharpMind.Server.CLI`) with an interactive REPL, permission gating (`--no-files`, `--no-network`), and multi-model management.
@@ -536,7 +543,7 @@ SharpMind.Training      Autograd, optimizers, LoRA
 SharpMind.Tokenization  BPE tokenizer, vocab, serialization
 SharpMind.Data          Data sources, cleaning pipeline, batching
 SharpMind.Data.Parquet  Parquet data source
-SharpMind.GPU           ILGPU-backed GPU kernels (optional)
+SharpMind.GPU           Optional NVIDIA accelerator plugin for LoRA training (ILGPU/cuBLAS)
 SharpMind.CUI           Terminal chat application
 SharpMind.Extensions.AI Microsoft.Extensions.AI IChatClient adapter
 SharpMind.Extensions.Tools Optional common tools (grep, git, datetime) — plugin DLL
@@ -556,6 +563,7 @@ See [CHANGELOG.md](CHANGELOG.md) for release history.
 
 # Wishlist (not ordered)
 - [ ] AVX512 Kernels
+- [ ] GPU Inference and OpenCL fallback
 - [x] Additional Model Support — Ministral-3-3B-Instruct (sliding window attention) now supported
 - [ ] Optimizations
 - [x] Microsoft IChatClient and or other services. — shipped as `SharpMind.Extensions.AI`
