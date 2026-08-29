@@ -20,6 +20,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **`--max-cache-len` CLI option** — allows manual KV-cache cap override, threaded through generator builders to `ChatSession`.
 - **Streaming layer sentinel** — `EnsureLayerLoadedSync`, `PreloadLayerAsync`, `FreeLayer`, and `CompleteForward` now check `Wq == null && RawWq == null` instead of just `Wq == null`, correctly detecting layer-loaded state for models with fused QKV where the float tensor is never allocated.
 - **Chat sidebar model name** — the chat screen's status sidebar pins the loaded model's file name (extension stripped) to its bottom row so it stays visible while chatting; debug sessions show `(none — UIDebug mode)`. Same name source as the session manager's "Continue with" button.
+- **Phi-3-mini-4k-instruct support** — validated end to end (load → fused-QKV prefill → decode, Q4_K, `Phi-3-mini-4k-instruct-q4.gguf`) and added to the README compatibility matrix. Phi-3's GGUF lays out a fused `attn_qkv.weight` and a fused gate+up FFN stored under `ffn_up` with no `ffn_gate` tensor; together the two fused-tensor corrections above and below are what make it load and generate.
 
 ### Fixed
 
@@ -31,7 +32,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Streaming KV weight typo** — `TransformerWeights` streaming path wrote `RawVv` instead of `RawWv` for the V projection, causing the attention layer to default to F32 for V weights on every forward pass.
 - **Non-block dequant memory** — `GgufLoader.LoadSingleTensor` now reads non-block tensors (embedding, lm_head, norms) directly into the target tensor's backing array instead of allocating a temporary buffer, eliminating a large transient allocation for models with very large embedding tables.
 - **Inner exception chain in error dialog** — the CUI error dialog now walks `InnerException` showing each exception type, message, and stack trace, instead of displaying only the top-level message.
-- **Fused gate+up FFN support** — `FfnLayer.SetWeights` now handles the case where only `RawWup` is present (fused gate+up tensor), using it directly instead of discarding it when `RawWgate` is absent. `ResolveFloatTarget` now lazily initializes `Wf1` so the float fallback path has valid data.
+- **Fused gate+up FFN support** — `FfnLayer` now handles GGUFs that store the gated FFN as a single fused `[HiddenDim, 2*FfnDim]` tensor under only `ffn_up` (no separate `ffn_gate`, e.g. Phi-3): `SetWeights` uses `RawWup` directly when `RawWgate` is absent, and the gated projection's quant dtype comes from the nullable `QuantDtypeWgate`/`QuantDtypeWup` properties that `SetRawField` fills. Previously the dtype was read with `TensorMeta.GetValueOrDefault(...)`; `TensorMeta` is a record struct, so a missing key returned the default (`F32`, never null) and the `RawWup` fallback was dead code — `SetRawWeight` then validated the fused Q4_K tensor's 28,311,552 bytes against an F32 shape expecting 201,326,592 and threw `NotSupportedException`. `ResolveFloatTarget` lazily initializes `Wf1` so the float fallback path has valid data.
 
 ## [1.0.4.0] - 2026-08-23
 
