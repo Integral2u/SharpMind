@@ -120,6 +120,28 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
     public static int[]? GetIntArray(ModelMetaData meta, string key)
         => meta.KvPairs.FirstOrDefault(p => p.Key == key).Value as int[];
 
+    /// <summary>
+    /// Reads an integer-array metadata key, accepting both GGUF INT32 arrays
+    /// (etype 5) and UINT32 arrays (etype 4). Returns null when absent, empty,
+    /// of an unexpected type, or containing values outside the int range.
+    /// </summary>
+    public static int[]? GetIntArrayNormalized(ModelMetaData meta, string key)
+    {
+        var value = meta.KvPairs.FirstOrDefault(p => p.Key == key).Value;
+        if (value is int[] ia) return ia.Length == 0 ? null : ia;
+        if (value is uint[] ua)
+        {
+            var result = new int[ua.Length];
+            for (int i = 0; i < ua.Length; i++)
+            {
+                if (ua[i] > int.MaxValue) return null;
+                result[i] = (int)ua[i];
+            }
+            return result.Length == 0 ? null : result;
+        }
+        return null;
+    }
+
     public static float[]? GetFloatArray(ModelMetaData meta, string key)
         => meta.KvPairs.FirstOrDefault(p => p.Key == key).Value as float[];
 
@@ -204,6 +226,24 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
         numKvHeads = (int)meta.GetLong($"{arch}.attention.head_count_kv", -1);
         if (numKvHeads <= 0) numKvHeads = numHeads;
 
+        // Per-layer KV head counts ({arch}.attention.head_count_kv as an array).
+        // Zero entries mark blocks without attention (e.g. LFM2 short-conv layers).
+        // NumKvHeads is set to the maximum across all attention blocks.
+        int[]? layerKvHeads = GetIntArrayNormalized(meta, $"{arch}.attention.head_count_kv");
+        if (layerKvHeads is { Length: > 0 })
+        {
+            int maxLayerKvHeads = layerKvHeads.Max();
+            if (maxLayerKvHeads > 0)
+            {
+                numKvHeads = maxLayerKvHeads;
+            }
+            else
+            {
+                // All zeros — treat the key as absent and keep the scalar path.
+                layerKvHeads = null;
+            }
+        }
+
         long rawKeyLen = meta.GetLong($"{arch}.attention.key_length", -1);
         int? keyLength = rawKeyLen > 0 ? (int)rawKeyLen : null;
         long rawValLen = meta.GetLong($"{arch}.attention.value_length", -1);
@@ -276,6 +316,8 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
             NumLayers = numLayers,
             NumHeads = numHeads,
             NumKvHeads = numKvHeads,
+            LayerKvHeads = layerKvHeads,
+            ShortConvCacheLength = (int)meta.GetLong($"{arch}.shortconv.l_cache", 3),
             FfnDim = ffnDim,
             MaxSeqLen = maxSeqLen,
             RopeTheta = ropeTheta,
@@ -697,7 +739,15 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
                 var floatTarget = blockFloatTarget;
                 if (floatTarget != null)
                 {
-                    if (info.Shape.Length == 2)
+                    // LFM2 short-conv kernel [l_cache, hidden] is not a linear-layer
+                    // weight — it stays row-major [kernelRow, channel], so it must not
+                    // go through the in/out transposition below.
+                    if (info.Name.Contains("shortconv.conv.weight", StringComparison.OrdinalIgnoreCase))
+                    {
+                        floatTarget.Data.Clear();
+                        buffer.AsSpan(0, count).CopyTo(floatTarget.Data);
+                    }
+                    else if (info.Shape.Length == 2)
                     {
                         int ggufIn = info.Shape[0];
                         int ggufOut = info.Shape[1];
