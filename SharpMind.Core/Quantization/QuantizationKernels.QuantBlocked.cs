@@ -81,6 +81,7 @@ public static partial class QuantizationKernels
 
     private const int QuantScratchBudgetBytes = 256 * 1024;
 
+
     private static int QuantTileCols(int K, int maxCols)
     {
         int cols = QuantScratchBudgetBytes / (K * sizeof(float));
@@ -107,7 +108,139 @@ public static partial class QuantizationKernels
                 for (int rowTile = 0; rowTile < M; rowTile += F16RowTile)
                 {
                     int tileEnd = Math.Min(rowTile + F16RowTile, M);
-                    for (int c = 0; c < tc; c++)
+                    int cPair = 0;
+
+                    // Three columns at a time. The 4x1 shape this replaced did four FMAs per five
+                    // loads, leaving the FMA units waiting on the load ports; a 4x3 tile does twelve
+                    // per seven. Twelve accumulators plus three weight vectors is 15 of the 16 YMM
+                    // registers, with the input side reachable as FMA memory operands.
+                    //
+                    // 4x3 is the measured optimum here, not a guess: 4x4 (sixteen accumulators) was
+                    // built and measured level with 4x3, i.e. the spill cancels the extra work.
+                    // llama.cpp's tinyBLAS independently picks 4x3 for 16-register targets and only
+                    // widens to 4x6 when 32 vector registers are available (sgemm.cpp, the
+                    // VECTOR_REGISTERS == 32 branch) - which .NET does not give us here.
+                    for (; cPair + 3 <= tc; cPair += 3)
+                    {
+                        float* pW0 = scratch + (long)cPair * K;
+                        float* pW1 = scratch + (long)(cPair + 1) * K;
+                        float* pW2 = scratch + (long)(cPair + 2) * K;
+                        int col0 = ct + cPair, col1 = col0 + 1, col2 = col0 + 2;
+                        int r3 = rowTile;
+                        for (; r3 + F16RowBlock <= tileEnd; r3 += F16RowBlock)
+                        {
+                            var x00 = Vector256<float>.Zero; var x01 = Vector256<float>.Zero; var x02 = Vector256<float>.Zero;
+                            var x10 = Vector256<float>.Zero; var x11 = Vector256<float>.Zero; var x12 = Vector256<float>.Zero;
+                            var x20 = Vector256<float>.Zero; var x21 = Vector256<float>.Zero; var x22 = Vector256<float>.Zero;
+                            var x30 = Vector256<float>.Zero; var x31 = Vector256<float>.Zero; var x32 = Vector256<float>.Zero;
+                            float* q0 = input + (long)(r3 + 0) * K;
+                            float* q1 = input + (long)(r3 + 1) * K;
+                            float* q2 = input + (long)(r3 + 2) * K;
+                            float* q3 = input + (long)(r3 + 3) * K;
+
+                            int k3 = 0;
+                            for (; k3 <= K - 8; k3 += 8)
+                            {
+                                var w0 = Vector256.LoadUnsafe(ref pW0[k3]);
+                                var w1 = Vector256.LoadUnsafe(ref pW1[k3]);
+                                var w2 = Vector256.LoadUnsafe(ref pW2[k3]);
+                                var u0 = Vector256.LoadUnsafe(ref q0[k3]);
+                                x00 = Fma.MultiplyAdd(w0, u0, x00); x01 = Fma.MultiplyAdd(w1, u0, x01); x02 = Fma.MultiplyAdd(w2, u0, x02);
+                                var u1 = Vector256.LoadUnsafe(ref q1[k3]);
+                                x10 = Fma.MultiplyAdd(w0, u1, x10); x11 = Fma.MultiplyAdd(w1, u1, x11); x12 = Fma.MultiplyAdd(w2, u1, x12);
+                                var u2 = Vector256.LoadUnsafe(ref q2[k3]);
+                                x20 = Fma.MultiplyAdd(w0, u2, x20); x21 = Fma.MultiplyAdd(w1, u2, x21); x22 = Fma.MultiplyAdd(w2, u2, x22);
+                                var u3 = Vector256.LoadUnsafe(ref q3[k3]);
+                                x30 = Fma.MultiplyAdd(w0, u3, x30); x31 = Fma.MultiplyAdd(w1, u3, x31); x32 = Fma.MultiplyAdd(w2, u3, x32);
+                            }
+
+                            float* op0 = output + (long)(r3 + 0) * N; float* op1 = output + (long)(r3 + 1) * N;
+                            float* op2 = output + (long)(r3 + 2) * N; float* op3 = output + (long)(r3 + 3) * N;
+                            float s00 = MathHelpers.HSum256_Avx(x00), s01 = MathHelpers.HSum256_Avx(x01), s02 = MathHelpers.HSum256_Avx(x02);
+                            float s10 = MathHelpers.HSum256_Avx(x10), s11 = MathHelpers.HSum256_Avx(x11), s12 = MathHelpers.HSum256_Avx(x12);
+                            float s20 = MathHelpers.HSum256_Avx(x20), s21 = MathHelpers.HSum256_Avx(x21), s22 = MathHelpers.HSum256_Avx(x22);
+                            float s30 = MathHelpers.HSum256_Avx(x30), s31 = MathHelpers.HSum256_Avx(x31), s32 = MathHelpers.HSum256_Avx(x32);
+                            for (; k3 < K; k3++)
+                            {
+                                float f0 = pW0[k3], f1 = pW1[k3], f2 = pW2[k3];
+                                s00 += q0[k3] * f0; s01 += q0[k3] * f1; s02 += q0[k3] * f2;
+                                s10 += q1[k3] * f0; s11 += q1[k3] * f1; s12 += q1[k3] * f2;
+                                s20 += q2[k3] * f0; s21 += q2[k3] * f1; s22 += q2[k3] * f2;
+                                s30 += q3[k3] * f0; s31 += q3[k3] * f1; s32 += q3[k3] * f2;
+                            }
+                            op0[col0] = s00; op0[col1] = s01; op0[col2] = s02;
+                            op1[col0] = s10; op1[col1] = s11; op1[col2] = s12;
+                            op2[col0] = s20; op2[col1] = s21; op2[col2] = s22;
+                            op3[col0] = s30; op3[col1] = s31; op3[col2] = s32;
+                        }
+                        for (; r3 < tileEnd; r3++)
+                        {
+                            output[(long)r3 * N + col0] = VecDotF32_FMA(input + (long)r3 * K, (byte*)pW0, 0, K);
+                            output[(long)r3 * N + col1] = VecDotF32_FMA(input + (long)r3 * K, (byte*)pW1, 0, K);
+                            output[(long)r3 * N + col2] = VecDotF32_FMA(input + (long)r3 * K, (byte*)pW2, 0, K);
+                        }
+                    }
+
+                    // Two- and one-column remainders for a tile whose width is not a multiple
+                    // of three.
+                    for (; cPair + 2 <= tc; cPair += 2)
+                    {
+                        float* pWa = scratch + (long)cPair * K;
+                        float* pWb = scratch + (long)(cPair + 1) * K;
+                        int colA = ct + cPair, colB = ct + cPair + 1;
+                        int rr = rowTile;
+                        for (; rr + F16RowBlock <= tileEnd; rr += F16RowBlock)
+                        {
+                            var a0 = Vector256<float>.Zero; var b0 = Vector256<float>.Zero;
+                            var a1 = Vector256<float>.Zero; var b1 = Vector256<float>.Zero;
+                            var a2 = Vector256<float>.Zero; var b2 = Vector256<float>.Zero;
+                            var a3 = Vector256<float>.Zero; var b3 = Vector256<float>.Zero;
+                            float* j0 = input + (long)(rr + 0) * K;
+                            float* j1 = input + (long)(rr + 1) * K;
+                            float* j2 = input + (long)(rr + 2) * K;
+                            float* j3 = input + (long)(rr + 3) * K;
+
+                            int kk = 0;
+                            for (; kk <= K - 8; kk += 8)
+                            {
+                                var wa = Vector256.LoadUnsafe(ref pWa[kk]);
+                                var wb = Vector256.LoadUnsafe(ref pWb[kk]);
+                                var v0 = Vector256.LoadUnsafe(ref j0[kk]);
+                                var v1 = Vector256.LoadUnsafe(ref j1[kk]);
+                                var v2 = Vector256.LoadUnsafe(ref j2[kk]);
+                                var v3 = Vector256.LoadUnsafe(ref j3[kk]);
+                                a0 = Fma.MultiplyAdd(wa, v0, a0); b0 = Fma.MultiplyAdd(wb, v0, b0);
+                                a1 = Fma.MultiplyAdd(wa, v1, a1); b1 = Fma.MultiplyAdd(wb, v1, b1);
+                                a2 = Fma.MultiplyAdd(wa, v2, a2); b2 = Fma.MultiplyAdd(wb, v2, b2);
+                                a3 = Fma.MultiplyAdd(wa, v3, a3); b3 = Fma.MultiplyAdd(wb, v3, b3);
+                            }
+
+                            float ta0 = MathHelpers.HSum256_Avx(a0), tb0 = MathHelpers.HSum256_Avx(b0);
+                            float ta1 = MathHelpers.HSum256_Avx(a1), tb1 = MathHelpers.HSum256_Avx(b1);
+                            float ta2 = MathHelpers.HSum256_Avx(a2), tb2 = MathHelpers.HSum256_Avx(b2);
+                            float ta3 = MathHelpers.HSum256_Avx(a3), tb3 = MathHelpers.HSum256_Avx(b3);
+                            for (; kk < K; kk++)
+                            {
+                                float wfa = pWa[kk], wfb = pWb[kk];
+                                ta0 += j0[kk] * wfa; tb0 += j0[kk] * wfb;
+                                ta1 += j1[kk] * wfa; tb1 += j1[kk] * wfb;
+                                ta2 += j2[kk] * wfa; tb2 += j2[kk] * wfb;
+                                ta3 += j3[kk] * wfa; tb3 += j3[kk] * wfb;
+                            }
+
+                            output[(long)(rr + 0) * N + colA] = ta0; output[(long)(rr + 0) * N + colB] = tb0;
+                            output[(long)(rr + 1) * N + colA] = ta1; output[(long)(rr + 1) * N + colB] = tb1;
+                            output[(long)(rr + 2) * N + colA] = ta2; output[(long)(rr + 2) * N + colB] = tb2;
+                            output[(long)(rr + 3) * N + colA] = ta3; output[(long)(rr + 3) * N + colB] = tb3;
+                        }
+                        for (; rr < tileEnd; rr++)
+                        {
+                            output[(long)rr * N + colA] = VecDotF32_FMA(input + (long)rr * K, (byte*)pWa, 0, K);
+                            output[(long)rr * N + colB] = VecDotF32_FMA(input + (long)rr * K, (byte*)pWb, 0, K);
+                        }
+                    }
+
+                    for (int c = cPair; c < tc; c++)
                     {
                         float* pW = scratch + (long)c * K;
                         int col = ct + c;
