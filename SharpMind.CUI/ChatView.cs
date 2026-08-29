@@ -45,6 +45,7 @@ public sealed class ChatView : View
     private readonly Label _memLabel;
     private readonly Label _showThinkingLabel;
     private readonly Label _enableThinkingLabel;
+    private readonly Label _modelLabel;
 
     private readonly System.Text.StringBuilder _liveResponse = new();
     private readonly System.Text.StringBuilder _liveThinking = new();
@@ -133,6 +134,15 @@ public sealed class ChatView : View
         _ttftLabel = new Label("--") { X = 0, Y = 15, Width = Dim.Fill() };
         _memLabel = new Label(FormatMemory()) { X = 0, Y = 17, Width = Dim.Fill(), Height = 3 };
 
+        // Model name (extension stripped) pinned to the sidebar's bottom row so
+        // it stays visible even on short terminals; UIDebug sessions have no file.
+        _modelLabel = new Label($"Model: {GetFileNameWithoutExtension(options.ModelPath)}")
+        {
+            X = 0,
+            Y = Pos.AnchorEnd(1),
+            Width = Dim.Fill()
+        };
+
         sidebarFrame.Add(
             new Label("Status:") { X = 0, Y = 0 }, _statusLabel,
             new Label("Agent:") { X = 0, Y = 2 }, _agentLabel,
@@ -143,7 +153,8 @@ public sealed class ChatView : View
             _enableThinkingLabel,
             new Label("Speed:") { X = 0, Y = 12 }, _speedLabel,
             new Label("Time to 1st tok:") { X = 0, Y = 14 }, _ttftLabel,
-            _memLabel);
+            _memLabel,
+            _modelLabel);
 
         _getButton = new Button("Get")
         {
@@ -207,6 +218,9 @@ public sealed class ChatView : View
         var r = name.Replace("formatter", string.Empty, StringComparison.OrdinalIgnoreCase).Replace("format", string.Empty, StringComparison.OrdinalIgnoreCase);
         return string.IsNullOrWhiteSpace(r) ? name : r;
     }
+
+    private static string GetFileNameWithoutExtension(string? path) =>
+        string.IsNullOrWhiteSpace(path) ? "(none — UIDebug mode)" : Path.GetFileNameWithoutExtension(path);
 
     private static string FormatMemory()
     {

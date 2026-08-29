@@ -19,6 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **`ComputeMaxCacheLength`** — static helper on `ModelConfig` that caps KV-cache size to 40% of available system memory, with optional user override. Prevents OOM on large models with high head counts.
 - **`--max-cache-len` CLI option** — allows manual KV-cache cap override, threaded through generator builders to `ChatSession`.
 - **Streaming layer sentinel** — `EnsureLayerLoadedSync`, `PreloadLayerAsync`, `FreeLayer`, and `CompleteForward` now check `Wq == null && RawWq == null` instead of just `Wq == null`, correctly detecting layer-loaded state for models with fused QKV where the float tensor is never allocated.
+- **Chat sidebar model name** — the chat screen's status sidebar pins the loaded model's file name (extension stripped) to its bottom row so it stays visible while chatting; debug sessions show `(none — UIDebug mode)`. Same name source as the session manager's "Continue with" button.
 
 ### Fixed
 
