@@ -34,7 +34,7 @@ public sealed class GpuDevice : IDisposable
 
     private readonly Context _context;
     private readonly IntPtr _cublas;
-    private readonly Action<KernelConfig, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int, int, int, int, int, float> _tiled;
+    private readonly Action<KernelConfig, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int, int, int, int, int, float, int> _tiled;
     private bool _disposed;
     private bool _tf32;
 
@@ -132,7 +132,9 @@ public sealed class GpuDevice : IDisposable
     {
         _context = ctx;
         Accelerator = acc;
-        Kernels = new GpuKernels(acc);
+        // GpuKernels only stores this reference — attention's GEMMs go back through Gemm, which
+        // is not reached until the constructor has returned and _tiled/_cublas are in place.
+        Kernels = new GpuKernels(this, acc);
         _tiled = GemmKernels.Load(acc);
         string blas = "tiled16";
         if (acc is CudaAccelerator cuda)
@@ -159,7 +161,13 @@ public sealed class GpuDevice : IDisposable
     }
 
     /// <summary>Row-major C[m×n] = A·B + beta·C with A[i,k]=a[i·saI+k·saK], B[k,j]=b[k·sbK+j·sbJ].</summary>
-    internal void Gemm(DeviceTensor c, DeviceTensor a, DeviceTensor b, int m, int n, int k, int saI, int saK, int sbK, int sbJ, float beta = 0f)
+    /// <param name="ldc">
+    /// C's row stride: C[i,j] = c[i·ldc + j]. 0 means n — a dense result, which is what every
+    /// caller outside <see cref="GpuKernels.AttnFwd"/>/<see cref="GpuKernels.AttnBwd"/> wants.
+    /// Those two write one attention head's [seqLen, headDim] block into a [B·S, heads·headDim]
+    /// tensor, whose rows sit a full head-stride apart, and pass that stride here.
+    /// </param>
+    internal void Gemm(DeviceTensor c, DeviceTensor a, DeviceTensor b, int m, int n, int k, int saI, int saK, int sbK, int sbJ, float beta = 0f, int ldc = 0)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(m);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(n);
@@ -171,7 +179,10 @@ public sealed class GpuDevice : IDisposable
             throw new ArgumentException($"A strides (saI={saI}, saK={saK}) must be positive with exactly one equal to 1.");
         if (sbK < 1 || sbJ < 1 || (sbK == 1) == (sbJ == 1))
             throw new ArgumentException($"B strides (sbK={sbK}, sbJ={sbJ}) must be positive with exactly one equal to 1.");
-        if (c.Length < (long)m * n) throw new ArgumentException($"C holds {c.Length} floats, GEMM needs {m}×{n}.");
+        if (ldc == 0) ldc = n;
+        else if (ldc < n) throw new ArgumentException($"ldc {ldc} is narrower than C's {n} columns.");
+        long needC = (long)(m - 1) * ldc + n;
+        if (c.Length < needC) throw new ArgumentException($"C holds {c.Length} floats, GEMM needs {needC} for {m}×{n} at ldc {ldc}.");
         // Highest element each operand is addressed at, +1. An undersized operand reads out of
         // bounds — on the cuBLAS path in Release that is memory corruption, not an exception.
         long needA = (long)(m - 1) * saI + (long)(k - 1) * saK + 1;
@@ -180,11 +191,11 @@ public sealed class GpuDevice : IDisposable
         if (b.Length < needB) throw new ArgumentException($"B holds {b.Length} floats, GEMM needs {needB} at strides (sbK={sbK}, sbJ={sbJ}).");
         if (HasCublas)
         {
-            Cublas.GemmRowMajor(_cublas, Ptr(c), Ptr(a), Ptr(b), m, n, k, saI, saK, sbK, sbJ, beta);
+            Cublas.GemmRowMajor(_cublas, Ptr(c), Ptr(a), Ptr(b), m, n, k, saI, saK, sbK, sbJ, beta, ldc);
         }
         else
         {
-            _tiled(GemmKernels.Config(m, n), c.View, a.View, b.View, m, n, k, saI, saK, sbK, sbJ, beta);
+            _tiled(GemmKernels.Config(m, n), c.View, a.View, b.View, m, n, k, saI, saK, sbK, sbJ, beta, ldc);
         }
     }
 

@@ -203,9 +203,9 @@ public sealed class GpuBackpropEngine : ITrainingEngine
             }
             else
             {
-                // AttnFwd writes only j <= i; the arena hands the same memory out every step, so
-                // without this the upper triangle is the previous step's probabilities.
-                blk.Probs = _arena.Rent(_batch * nh * _seq, _seq); blk.Probs.Zero();
+                // No pre-zero: AttnFwd's softmax writes the whole row, upper triangle included,
+                // so the previous step's probabilities in this arena memory cannot survive.
+                blk.Probs = _arena.Rent(_batch * nh * _seq, _seq);
                 k.AttnFwd(blk.AttnOut, blk.Probs, blk.Q, blk.K, blk.V, _batch, _seq, nh, nkv, D);
             }
             var proj = _arena.Rent(m, H); blk.Wo.Forward(proj, blk.AttnOut, _arena);

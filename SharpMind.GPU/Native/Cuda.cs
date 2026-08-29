@@ -31,13 +31,17 @@ internal static class Cublas
     /// Exactly one of (saI, saK) is 1 and exactly one of (sbK, sbJ) is 1. Translated to the
     /// column-major call Cᵀ = Bᵀ·Aᵀ so no data is ever transposed.
     /// </summary>
+    /// <param name="ldc">
+    /// C's row stride. Equals <paramref name="n"/> for a dense result; larger when C is a column
+    /// block of a wider tensor, as an attention head's [S, headDim] slice of [B·S, heads·headDim] is.
+    /// </param>
     public static void GemmRowMajor(IntPtr h, IntPtr c, IntPtr a, IntPtr b, int m, int n, int k,
-        int saI, int saK, int sbK, int sbJ, float beta = 0f)
+        int saI, int saK, int sbK, int sbJ, float beta, int ldc)
     {
         int transA = saK == 1 ? OpN : OpT, lda = saK == 1 ? saI : saK;
         int transB = sbJ == 1 ? OpN : OpT, ldb = sbJ == 1 ? sbK : sbJ;
         float alpha = 1f;
-        Check(Sgemm(h, transB, transA, n, m, k, ref alpha, b, ldb, a, lda, ref beta, c, n), "cublasSgemm");
+        Check(Sgemm(h, transB, transA, n, m, k, ref alpha, b, ldb, a, lda, ref beta, c, ldc), "cublasSgemm");
     }
 }
 

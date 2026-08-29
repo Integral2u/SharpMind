@@ -71,4 +71,58 @@ public sealed class GemmTests
         dev.Gemm(c, full, full, 4, 4, 4, 4, 1, 4, 1);   // exactly-sized operands are accepted
         dev.Synchronize();
     }
+
+    // Attention writes one head's [S, headDim] result into a [B·S, heads·headDim] tensor, so C is
+    // a column block of something wider and ldc carries its row stride. Nothing outside the block
+    // may be touched — on the cuBLAS path a wrong ldc would silently smear into the next head.
+    [Fact]
+    public void Gemm_StridedC_WritesOnlyItsColumnBlock()
+    {
+        var dev = GpuTestDevice.Device;
+        const int m = 12, n = 5, k = 7, wide = 13, colOffset = 6, sentinel = -7;
+        var a = GpuTestDevice.Random(m * k, 51); var b = GpuTestDevice.Random(k * n, 52);
+        var want = new float[m * n];
+        for (int i = 0; i < m; i++) for (int j = 0; j < n; j++) { double s = 0; for (int t = 0; t < k; t++) s += (double)a[i * k + t] * b[t * n + j]; want[i * n + j] = (float)s; }
+
+        using var arena = new DeviceArena(dev, 1 << 14);
+        var da = arena.Rent(1, m * k); da.Upload(a);
+        var db = arena.Rent(1, k * n); db.Upload(b);
+        var dc = arena.Rent(m, wide);
+        var filled = new float[m * wide]; Array.Fill(filled, (float)sentinel); dc.Upload(filled);
+
+        dev.Gemm(dc.Window(colOffset, (long)(m - 1) * wide + n), da, db, m, n, k, k, 1, n, 1, ldc: wide);
+        dev.Synchronize();
+
+        var got = dc.ToArray();
+        for (int i = 0; i < m; i++)
+            for (int j = 0; j < wide; j++)
+            {
+                bool inBlock = j >= colOffset && j < colOffset + n;
+                float expect = inBlock ? want[i * n + (j - colOffset)] : sentinel;
+                Assert.True(Math.Abs(got[i * wide + j] - expect) < 1e-5f, $"C[{i},{j}] = {got[i * wide + j]}, want {expect}");
+            }
+    }
+
+    [Fact]
+    public void Gemm_LdcNarrowerThanN_Throws()
+    {
+        var dev = GpuTestDevice.Device;
+        using var arena = new DeviceArena(dev, 1 << 12);
+        var a = arena.Rent(1, 16); var b = arena.Rent(1, 16); var c = arena.Rent(4, 4);
+        Assert.Contains("narrower", Assert.Throws<ArgumentException>(() => dev.Gemm(c, a, b, 4, 4, 4, 4, 1, 4, 1, ldc: 3)).Message);
+    }
+
+    /// <summary>An ldc that reaches past the destination must be caught here, not by the driver:
+    /// on the cuBLAS path an out-of-bounds C write is memory corruption, not an exception.</summary>
+    [Fact]
+    public void Gemm_StridedC_UndersizedDestination_Throws()
+    {
+        var dev = GpuTestDevice.Device;
+        using var arena = new DeviceArena(dev, 1 << 12);
+        var a = arena.Rent(1, 16); var b = arena.Rent(1, 16);
+        var c = arena.Rent(1, 27);          // [4,4] at ldc 8 is addressed up to element 28
+        Assert.Throws<ArgumentException>(() => dev.Gemm(c, a, b, 4, 4, 4, 4, 1, 4, 1, ldc: 8));
+        dev.Gemm(arena.Rent(1, 28), a, b, 4, 4, 4, 4, 1, 4, 1, ldc: 8);   // exactly-sized is accepted
+        dev.Synchronize();
+    }
 }

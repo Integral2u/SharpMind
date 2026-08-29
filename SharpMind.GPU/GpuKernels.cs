@@ -16,19 +16,19 @@ internal sealed class GpuKernels
     private readonly Action<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int, int, int, float> _rope;
     private readonly Action<Index1D, ArrayView<float>, ArrayView<float>, int, int> _gateFwd;
     private readonly Action<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int> _gateBwd;
-    private readonly Action<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int, int, float> _attnFwd;
-    private readonly Action<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int, int> _attnBwdScores;
-    private readonly Action<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int, int, float> _attnBwdQ;
-    private readonly Action<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int, int, float> _attnBwdKv;
+    private readonly Action<Index1D, ArrayView<float>, int, float> _softmaxRow;
+    private readonly Action<Index1D, ArrayView<float>, ArrayView<float>, int, float> _softmaxRowBwd;
     private readonly Action<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int, int, float> _flashFwd;
     private readonly Action<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int> _flashRowDot;
     private readonly Action<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int, int, float> _flashBwdQ;
     private readonly Action<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int, int, float> _flashBwdKv;
     private readonly Action<Index1D, ArrayView<float>, ArrayView<int>, ArrayView<float>, int, int, float, float> _ceRow;
     private float[]? _rowLossHost;
+    private readonly GpuDevice _dev;
 
-    internal GpuKernels(Accelerator acc)
+    internal GpuKernels(GpuDevice device, Accelerator acc)
     {
+        _dev = device;
         _add = acc.LoadAutoGroupedStreamKernel<Index1D, ArrayView<float>, ArrayView<float>>(ElementwiseKernels.AddInPlace);
         _copy = acc.LoadAutoGroupedStreamKernel<Index1D, ArrayView<float>, ArrayView<float>>(ElementwiseKernels.Copy);
         _addBias = acc.LoadAutoGroupedStreamKernel<Index1D, ArrayView<float>, ArrayView<float>, int>(ElementwiseKernels.AddBiasRows);
@@ -39,10 +39,8 @@ internal sealed class GpuKernels
         _rope = acc.LoadAutoGroupedStreamKernel<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int, int, int, float>(RopeKernels.Rope);
         _gateFwd = acc.LoadAutoGroupedStreamKernel<Index1D, ArrayView<float>, ArrayView<float>, int, int>(GateKernels.Fwd);
         _gateBwd = acc.LoadAutoGroupedStreamKernel<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int>(GateKernels.Bwd);
-        _attnFwd = acc.LoadAutoGroupedStreamKernel<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int, int, float>(AttentionKernels.Fwd);
-        _attnBwdScores = acc.LoadAutoGroupedStreamKernel<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int, int>(AttentionKernels.BwdScores);
-        _attnBwdQ = acc.LoadAutoGroupedStreamKernel<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int, int, float>(AttentionKernels.BwdQ);
-        _attnBwdKv = acc.LoadAutoGroupedStreamKernel<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int, int, float>(AttentionKernels.BwdKV);
+        _softmaxRow = acc.LoadAutoGroupedStreamKernel<Index1D, ArrayView<float>, int, float>(AttentionKernels.SoftmaxRow);
+        _softmaxRowBwd = acc.LoadAutoGroupedStreamKernel<Index1D, ArrayView<float>, ArrayView<float>, int, float>(AttentionKernels.SoftmaxRowBwd);
         _flashFwd = acc.LoadAutoGroupedStreamKernel<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int, int, float>(FlashAttentionKernels.Fwd);
         _flashRowDot = acc.LoadAutoGroupedStreamKernel<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int>(FlashAttentionKernels.BwdRowDot);
         _flashBwdQ = acc.LoadAutoGroupedStreamKernel<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int, int, float>(FlashAttentionKernels.BwdQ);
@@ -87,30 +85,63 @@ internal sealed class GpuKernels
 
     /// <summary>
     /// Causal GQA attention forward: <paramref name="outp"/> [B·S, H·D] and the materialised
-    /// <paramref name="probs"/> [B·H·S, S] (row (b·H + h)·S + i), scale 1/√headDim. Only j ≤ i
-    /// of each probs row is written — zero the tensor first if the upper triangle must read 0.
+    /// <paramref name="probs"/> [B·H·S, S] (row (b·H + h)·S + i), scale 1/√headDim. The whole
+    /// probs row is written, the upper triangle as zero, so the caller need not pre-zero it.
     /// <paramref name="q"/>/<paramref name="k"/> are post-RoPE, as BackpropEngine's bc.Q/bc.K are:
     /// the caller applies the rotation before this call.
+    ///
+    /// Two GEMMs per (b, h) around one softmax launch: scores = Q·Kᵀ into the head's probs block,
+    /// then out = P·V straight into the head's column band of <paramref name="outp"/> (hence the
+    /// ldc). Both are ordinary strided products, so on CUDA they are cuBLAS calls.
     /// </summary>
     public void AttnFwd(DeviceTensor outp, DeviceTensor probs, DeviceTensor q, DeviceTensor k, DeviceTensor v,
         int batch, int seqLen, int numHeads, int numKv, int headDim)
     {
         CheckAttnOperands(q, k, v, probs, batch, seqLen, numHeads, numKv, headDim);
         Same(outp, q);
-        _attnFwd(batch * numHeads * seqLen, outp.View, probs.View, q.View, k.View, v.View, seqLen, numHeads, numKv, headDim, 1f / MathF.Sqrt(headDim));
+        int grp = numHeads / numKv, qDim = numHeads * headDim, kvDim = numKv * headDim;
+        for (int b = 0; b < batch; b++)
+            for (int h = 0; h < numHeads; h++)
+            {
+                // scores[i,j] = Σ_d Q[i,d]·K[j,d]: K is read transposed by its strides, not moved.
+                _dev.Gemm(HeadScores(probs, b, h, seqLen, numHeads), Head(q, b, h, seqLen, qDim, headDim), Head(k, b, h / grp, seqLen, kvDim, headDim),
+                    seqLen, seqLen, headDim, saI: qDim, saK: 1, sbK: 1, sbJ: kvDim);
+            }
+        _softmaxRow(batch * numHeads * seqLen, probs.View, seqLen, 1f / MathF.Sqrt(headDim));
+        for (int b = 0; b < batch; b++)
+            for (int h = 0; h < numHeads; h++)
+            {
+                // out[i,d] = Σ_j P[i,j]·V[j,d], written into head h's columns of a [B·S, H·D] tensor.
+                _dev.Gemm(Head(outp, b, h, seqLen, qDim, headDim), HeadScores(probs, b, h, seqLen, numHeads), Head(v, b, h / grp, seqLen, kvDim, headDim),
+                    seqLen, headDim, seqLen, saI: seqLen, saK: 1, sbK: kvDim, sbJ: 1, ldc: qDim);
+            }
     }
 
+    /// <summary>One head's [seqLen, headDim] block of a [B·S, heads·headDim] tensor, as the flat
+    /// window that spans it: rows a <paramref name="stride"/> apart, headDim wide.</summary>
+    private static DeviceTensor Head(DeviceTensor t, int b, int head, int seqLen, int stride, int headDim)
+        => t.Window((long)b * seqLen * stride + (long)head * headDim, (long)(seqLen - 1) * stride + headDim);
+
+    /// <summary>One head's [seqLen, seqLen] score block of a [B·H·S, S] tensor. Dense, unlike
+    /// <see cref="Head"/>, because probs is laid out head-major.</summary>
+    private static DeviceTensor HeadScores(DeviceTensor probs, int b, int h, int seqLen, int numHeads)
+        => probs.Slice((b * numHeads + h) * seqLen, seqLen);
+
     /// <summary>
-    /// Causal GQA attention backward, three launches on the in-order default stream: dS into
-    /// <paramref name="dProbsScratch"/>, then dQ, then dK/dV. Every output element is written
-    /// exactly once by exactly one thread, so dQ/dK/dV need no pre-zeroing and are overwritten,
-    /// not accumulated — the GQA group sum the CPU engine builds with per-head AddHead calls is
-    /// done inside the single (b, kvHead, j) thread that owns the destination.
-    /// Two aliases are rejected because a later launch still reads what an earlier one overwrites:
+    /// Causal GQA attention backward, in four stages on the in-order default stream: dP = dO·Vᵀ
+    /// into <paramref name="dProbsScratch"/>, the softmax backward that turns it into dS in place,
+    /// then dQ, then dK/dV. Every one of those products is a GEMM per (b, h); only the softmax
+    /// backward is a kernel. dQ/dK/dV are overwritten, not accumulated, so they need no
+    /// pre-zeroing — the GQA group sum the CPU engine builds with per-head AddHead calls is here
+    /// the beta = 1 of the second and later GEMMs writing one kv head's block.
+    ///
+    /// The stage order is what makes the aliasing rules below hold, so it is not free to change:
+    /// v is fully read in stage 1 and k in stage 3, both before stage 4 writes dV and dK.
+    /// Two aliases are rejected because a later stage still reads what an earlier one overwrites:
     /// <paramref name="dProbsScratch"/> over <paramref name="probs"/> (corrupts dV) and
     /// <paramref name="dQ"/> over <paramref name="q"/> (corrupts dK) — the latter is what an
     /// in-place dQ would look like, and Same(dQ, q) makes the two shape-identical. dK/dV may alias
-    /// k/v: those are read in launches 1-2, before launch 3 writes. Nothing else may overlap.
+    /// k/v. Nothing else may overlap.
     /// <paramref name="q"/>/<paramref name="k"/> are post-RoPE, so dQ/dK come out pre-inverse-
     /// rotation: the caller owns the RoPE backward, as BackpropEngine.AttentionBackward does.
     /// </summary>
@@ -122,11 +153,36 @@ internal sealed class GpuKernels
         Same(dProbsScratch, probs);
         NoOverlap(dProbsScratch, probs, nameof(dProbsScratch), nameof(probs));
         NoOverlap(dQ, q, nameof(dQ), nameof(q));
-        int qRows = batch * numHeads * seqLen;
-        float scale = 1f / MathF.Sqrt(headDim);
-        _attnBwdScores(qRows, dProbsScratch.View, dOut.View, v.View, probs.View, seqLen, numHeads, numKv, headDim);
-        _attnBwdQ(qRows, dQ.View, dProbsScratch.View, k.View, seqLen, numHeads, numKv, headDim, scale);
-        _attnBwdKv(batch * numKv * seqLen, dK.View, dV.View, dProbsScratch.View, probs.View, q.View, dOut.View, seqLen, numHeads, numKv, headDim, scale);
+        int grp = numHeads / numKv, qDim = numHeads * headDim, kvDim = numKv * headDim;
+
+        // 1: dP[i,j] = Σ_d dO[i,d]·V[j,d] — V transposed by its strides.
+        for (int b = 0; b < batch; b++)
+            for (int h = 0; h < numHeads; h++)
+                _dev.Gemm(HeadScores(dProbsScratch, b, h, seqLen, numHeads), Head(dOut, b, h, seqLen, qDim, headDim), Head(v, b, h / grp, seqLen, kvDim, headDim),
+                    seqLen, seqLen, headDim, saI: qDim, saK: 1, sbK: 1, sbJ: kvDim);
+
+        // 2: dP → dS, scale folded in so stages 3 and 4 are plain products.
+        _softmaxRowBwd(batch * numHeads * seqLen, dProbsScratch.View, probs.View, seqLen, 1f / MathF.Sqrt(headDim));
+
+        // 3: dQ[i,d] = Σ_j dS[i,j]·K[j,d].
+        for (int b = 0; b < batch; b++)
+            for (int h = 0; h < numHeads; h++)
+                _dev.Gemm(Head(dQ, b, h, seqLen, qDim, headDim), HeadScores(dProbsScratch, b, h, seqLen, numHeads), Head(k, b, h / grp, seqLen, kvDim, headDim),
+                    seqLen, headDim, seqLen, saI: seqLen, saK: 1, sbK: kvDim, sbJ: 1, ldc: qDim);
+
+        // 4: dK[j,d] = Σ_{h∈group} Σ_i dS[i,j]·Q[i,d] and dV[j,d] = Σ_{h∈group} Σ_i P[i,j]·dO[i,d].
+        // dS and P are read transposed by their strides; the group sum is the beta below.
+        for (int b = 0; b < batch; b++)
+            for (int kvh = 0; kvh < numKv; kvh++)
+                for (int g = 0; g < grp; g++)
+                {
+                    int h = kvh * grp + g;
+                    float beta = g == 0 ? 0f : 1f;
+                    _dev.Gemm(Head(dK, b, kvh, seqLen, kvDim, headDim), HeadScores(dProbsScratch, b, h, seqLen, numHeads), Head(q, b, h, seqLen, qDim, headDim),
+                        seqLen, headDim, seqLen, saI: 1, saK: seqLen, sbK: qDim, sbJ: 1, beta: beta, ldc: kvDim);
+                    _dev.Gemm(Head(dV, b, kvh, seqLen, kvDim, headDim), HeadScores(probs, b, h, seqLen, numHeads), Head(dOut, b, h, seqLen, qDim, headDim),
+                        seqLen, headDim, seqLen, saI: 1, saK: seqLen, sbK: qDim, sbJ: 1, beta: beta, ldc: kvDim);
+                }
     }
 
     /// <summary>

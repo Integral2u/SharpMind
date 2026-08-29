@@ -15,6 +15,16 @@ internal readonly struct DeviceTensor(ArrayView<float> view, int rows, int cols)
     public DeviceTensor Slice(int rowStart, int rowCount)
         => new(View.SubView((long)rowStart * Cols, (long)rowCount * Cols), rowCount, Cols);
 
+    /// <summary>
+    /// A flat window of this tensor's memory: <paramref name="count"/> floats from
+    /// <paramref name="start"/>, shaped [1, count]. <see cref="GpuDevice.Gemm"/> addresses its
+    /// operands as flat memory plus strides, so one attention head's [S, D] block inside a
+    /// [B·S, heads·D] tensor — rows a whole row-stride apart, not contiguous — is passed as the
+    /// window that spans it, exactly as <see cref="Slice"/> passes a contiguous row block.
+    /// </summary>
+    public DeviceTensor Window(long start, long count)
+        => new(View.SubView(start, count), 1, checked((int)count));
+
     public DeviceTensor Reshape(int rows, int cols)
     {
         if ((long)rows * cols != Length) throw new ArgumentException($"Cannot reshape [{Rows},{Cols}] to [{rows},{cols}].");

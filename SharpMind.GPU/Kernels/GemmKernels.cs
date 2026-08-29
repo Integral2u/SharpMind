@@ -12,15 +12,15 @@ internal static class GemmKernels
 {
     public const int Tile = 16;
 
-    public static Action<KernelConfig, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int, int, int, int, int, float> Load(Accelerator acc)
-        => acc.LoadStreamKernel<ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int, int, int, int, int, float>(Tiled16);
+    public static Action<KernelConfig, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int, int, int, int, int, float, int> Load(Accelerator acc)
+        => acc.LoadStreamKernel<ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int, int, int, int, int, float, int>(Tiled16);
 
     public static KernelConfig Config(int m, int n)
         => new(new Index2D((n + Tile - 1) / Tile, (m + Tile - 1) / Tile), new Index2D(Tile, Tile));
 
-    // C[i,j] = Σ_t A[i·saI + t·saK] · B[t·sbK + j·sbJ]  (+ beta·C)
+    // C[i,j] = Σ_t A[i·saI + t·saK] · B[t·sbK + j·sbJ]  (+ beta·C), C's row stride being ldc
     private static void Tiled16(ArrayView<float> c, ArrayView<float> a, ArrayView<float> b,
-        int m, int n, int k, int saI, int saK, int sbK, int sbJ, float beta)
+        int m, int n, int k, int saI, int saK, int sbK, int sbJ, float beta, int ldc)
     {
         var tileA = SharedMemory.Allocate2DDenseX<float>(new Index2D(Tile, Tile)); // [k, row]
         var tileB = SharedMemory.Allocate2DDenseX<float>(new Index2D(Tile, Tile)); // [col, k]
@@ -40,7 +40,7 @@ internal static class GemmKernels
         }
         if (row < m && col < n)
         {
-            long idx = (long)row * n + col;
+            long idx = (long)row * ldc + col;
             c[idx] = beta == 0f ? s : s + beta * c[idx];
         }
     }
