@@ -124,7 +124,7 @@ public static class SmmPseudoLanguageExample
         await Console.Out.WriteLineAsync($"Decoded    : {decoded}");
         await Console.Out.WriteLineAsync();
 
-        // 5b. Chat formatter â€” built from the chat template stored in the .SMM,
+        // 5b. Chat formatter - built from the chat template stored in the .SMM,
         //     so a real English prompt exercises the stored-template path too.
         var chatFormatter = ChatPromptFormatterFactory.Create(reloadedChatTemplate);
         await Console.Out.WriteLineAsync($"[chat] formatter: {chatFormatter.GetType().Name}");

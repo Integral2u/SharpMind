@@ -44,12 +44,12 @@ namespace SharpMind.Samples.Training;
 /// Stability note (kept so these hard-won settings are not revisited casually):
 /// with backprop verified numerically correct, this model/corpus combination
 /// hits a robust training barrier at loss â‰ˆ 5.3 (ppl â‰ˆ 195) that is independent
-/// of LR, NormEps, and batch size â€” every run that descends below ~5.27 then
+/// of LR, NormEps, and batch size - every run that descends below ~5.27 then
 /// diverges within ~300 steps. The "harvest" run stopped at 1,700 steps right
 /// before the sharp-minimum divergence re-triggered (final eval ppl â‰ˆ 216).
 ///
 /// This version adds <see cref="TrainConfig.LabelSmoothing"/> (Îµ = 0.1) to soften
-/// the hard one-hot targets â€” a trained-for exit from the sharp basin â€” and
+/// the hard one-hot targets - a trained-for exit from the sharp basin - and
 /// raises <see cref="Steps"/> to 3,000. Success is judged by the held-out eval
 /// (plain cross-entropy): expect eval ppl to fall below 216. The printed training
 /// loss reads HIGHER than the hard-CE value because smoothing adds an entropy
@@ -88,7 +88,7 @@ public static class SmmBackpropTextExample
         await Console.Out.WriteLineAsync("== SharpMind real-text backprop SMM training example ==");
         await Console.Out.WriteLineAsync();
 
-        // 1. Tokenizer â€” BPE trained on the corpus, cached on disk. Shared with
+        // 1. Tokenizer - BPE trained on the corpus, cached on disk. Shared with
         //    the finite-difference baseline (same corpus â†’ same vocabulary).
         Tokenizer tokenizer = File.Exists(TokenizerPath)
             ? TokenizationPipeline.Load(TokenizerPath)
@@ -97,7 +97,7 @@ public static class SmmBackpropTextExample
                                          $"unk={tokenizer.UnkId} bos={tokenizer.BosId} eos={tokenizer.EosId} pad={tokenizer.PadId}");
         await Console.Out.WriteLineAsync();
 
-        // 2. Model size â€” a real transformer now that backprop replaces the
+        // 2. Model size - a real transformer now that backprop replaces the
         //    O(parameters)-forward finite-difference loop.
         var modelConfig = new ModelConfig
         {
@@ -117,7 +117,7 @@ public static class SmmBackpropTextExample
         await Console.Out.WriteLineAsync($"Training config: {modelConfig}");
         await Console.Out.WriteLineAsync();
 
-        // 3. Data pipeline â€” lines â†’ clean â†’ tokenise â†’ packed TrainingBatches.
+        // 3. Data pipeline - lines â†’ clean â†’ tokenise â†’ packed TrainingBatches.
         //    The corpus source repeats forever so the loop can reach `Steps`
         //    regardless of how small tinyshakespeare.txt is.
         var source = new RepeatingDataSource(new TextFileSource(CorpusPath, TextFileSource.DocumentMode.LinePerDoc));
@@ -134,7 +134,7 @@ public static class SmmBackpropTextExample
         await Console.Out.WriteLineAsync($"Data pipeline: {loader.Describe()}");
         await Console.Out.WriteLineAsync();
 
-        // 4. Model â€” empty float weights, randomised so gradients are meaningful.
+        // 4. Model - empty float weights, randomised so gradients are meaningful.
         var sharpConfig = SharpMindConfig.Gpt with { Hardware = HardwareTier.Auto };
         var weights = ModelFactory.CreateForTraining(modelConfig, sharpConfig);
         WeightInitializer.InitializeRandomly(weights, Seed);
@@ -230,7 +230,7 @@ SmmTrainingExporter.Export(weights, tokenizer, SavePath, new SmmWriteOptions
         await Console.Out.WriteLineAsync();
         await Console.Out.WriteLineAsync();
 
-        // 9c. Chat formatter â€” built from the chat template stored in the .SMM,
+        // 9c. Chat formatter - built from the chat template stored in the .SMM,
         //     exactly as a real consumer would resolve it.
         var chatFormatter = ChatPromptFormatterFactory.Create(reloadedChatTemplate);
         await Console.Out.WriteLineAsync($"[chat] formatter: {chatFormatter.GetType().Name}");

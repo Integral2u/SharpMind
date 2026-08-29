@@ -71,8 +71,8 @@ public sealed class LaunchResult
 
     /// <summary>
     /// True when GeneratorStrategy.UIDebug was selected. In this case Session
-    /// is deliberately null â€” there is no real model, tokenizer, or
-    /// transformer involved â€” and the caller should drive the chat screen
+    /// is deliberately null - there is no real model, tokenizer, or
+    /// transformer involved - and the caller should drive the chat screen
     /// with a DebugChatBridge instead of a ChatSessionBridge.
     /// </summary>
     public bool IsDebugMode { get; init; }
@@ -81,16 +81,16 @@ public sealed class LaunchResult
 /// <summary>
 /// Turns a <see cref="SessionOptions"/> into a running session. This is the
 /// one place that knows how to map the UI's plain enums onto the engine's
-/// generic ChatSession&lt;T,K&gt; combinatorics â€” everything upstream of here
+/// generic ChatSession&lt;T,K&gt; combinatorics - everything upstream of here
 /// only ever deals with GeneratorStrategy/CacheStrategy, never with the
 /// generic types themselves.
 ///
-/// Split into two phases â€” <see cref="LoadModelAsync"/> and
-/// <see cref="BuildSession"/> â€” specifically so a second chat session
+/// Split into two phases - <see cref="LoadModelAsync"/> and
+/// <see cref="BuildSession"/> - specifically so a second chat session
 /// against the same GGUF file doesn't have to re-read it. The caller (see
 /// ModelCache in MainWindow) is responsible for deciding when a
 /// <see cref="LoadedModel"/> can be reused versus when option changes
-/// (different hardware tier) mean it actually needs a fresh load â€” those
+/// (different hardware tier) mean it actually needs a fresh load - those
 /// choices change what gets baked into the Transformer
 /// itself, not just session-level behaviour, so they can't share a
 /// LoadedModel even though the file path is the same.
@@ -209,7 +209,7 @@ public static class SessionLauncher
 
         var result = PluginLoader.LoadFromBytes(entries.Select(e => (e.Name, e.AssemblyBytes)));
 
-        // Tool names are the method names the model will actually call â€” reuse
+        // Tool names are the method names the model will actually call - reuse
         // AgentBuilder's registration so the set exactly matches live tools.
         var toolNames = new AgentBuilder()
             .WithTools([.. result.Tools])
@@ -230,7 +230,7 @@ public static class SessionLauncher
 
         if (options.Generator == GeneratorStrategy.UIDebug)
         {
-            // No model required at all â€” that's the entire point of this mode.
+            // No model required at all - that's the entire point of this mode.
             // A CuiToolContext is still created so TestOptions can exercise the
             // same choice-dialog path a real model's UIShowOptionSelection call
             // would use.
@@ -488,7 +488,7 @@ public static class SessionLauncher
     /// Combines the explicit tool DLL paths with a fresh scan of
     /// <see cref="SessionOptions.ToolsFolder"/> at launch time. The folder is
     /// deliberately re-read here rather than ever being snapshotted into
-    /// <see cref="SessionOptions.ToolAssemblyPaths"/> â€” that's what makes
+    /// <see cref="SessionOptions.ToolAssemblyPaths"/> - that's what makes
     /// dropping a new tool DLL into the folder between sessions (or even
     /// while sitting on the Options screen before pressing Launch) actually
     /// take effect, instead of requiring the path list to be manually

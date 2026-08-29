@@ -33,7 +33,7 @@ namespace SharpMind.Samples.Training;
 /// computed by <see cref="FiniteDifferenceTrainer"/> (O(parameters) forwards
 /// per step); <see cref="ModelSizer.DetermineOptimalConfigAsync"/> can size it
 /// automatically once backprop replaces the finite-difference loop.
-/// Output is therefore crude but recognisably language-like â€” a pipeline demo,
+/// Output is therefore crude but recognisably language-like - a pipeline demo,
 /// not a capable model. Full backprop through the transformer is not yet wired
 /// in the training loops, which is the next step toward real-scale training.
 /// </summary>
@@ -65,7 +65,7 @@ public static class SmmRealTextExample
 
         var source = new TextFileSource(CorpusPath, TextFileSource.DocumentMode.LinePerDoc);
 
-        // 1. Tokenizer â€” BPE trained on the corpus, cached on disk.
+        // 1. Tokenizer - BPE trained on the corpus, cached on disk.
         Tokenizer tokenizer = File.Exists(TokenizerPath)
             ? TokenizationPipeline.Load(TokenizerPath)
             : await TokenizationPipeline.TrainAndSaveAsync(source, TokenizerPath, TargetVocabSize);
@@ -73,7 +73,7 @@ public static class SmmRealTextExample
                                          $"unk={tokenizer.UnkId} bos={tokenizer.BosId} eos={tokenizer.EosId} pad={tokenizer.PadId}");
         await Console.Out.WriteLineAsync();
 
-        // 2. Model size â€” pinned to a tiny config so the finite-difference run
+        // 2. Model size - pinned to a tiny config so the finite-difference run
         //    is a bounded baseline. FD costs O(elements Ã— forward) per step, so
         //    each parameter element re-runs the full (vocab-1024) forward; at
         //    H8/L1 this measures ~8.5s/step on this machine. The next step after
@@ -92,7 +92,7 @@ public static class SmmRealTextExample
         await Console.Out.WriteLineAsync($"Training config: {modelConfig}");
         await Console.Out.WriteLineAsync();
 
-        // 3. Data pipeline â€” lines â†’ clean â†’ tokenise â†’ packed TrainingBatches.
+        // 3. Data pipeline - lines â†’ clean â†’ tokenise â†’ packed TrainingBatches.
         var pipeline = PipelineNode.From(source)
             .Pipe(new NormaliseWhitespace())
             .Pipe(new MinLengthFilter(8));
@@ -106,7 +106,7 @@ public static class SmmRealTextExample
         await Console.Out.WriteLineAsync($"Data pipeline: {loader.Describe()}");
         await Console.Out.WriteLineAsync();
 
-        // 4. Model â€” empty float weights, randomised so gradients are meaningful.
+        // 4. Model - empty float weights, randomised so gradients are meaningful.
         var sharpConfig = SharpMindConfig.Gpt with { Hardware = HardwareTier.Auto };
         var weights = ModelFactory.CreateForTraining(modelConfig, sharpConfig);
         WeightInitializer.InitializeRandomly(weights, Seed);
@@ -184,7 +184,7 @@ public static class SmmRealTextExample
         await Console.Out.WriteLineAsync();
         await Console.Out.WriteLineAsync();
 
-        // 9c. Chat formatter â€” built from the chat template stored in the .SMM,
+        // 9c. Chat formatter - built from the chat template stored in the .SMM,
         //     exactly as a real consumer would resolve it, so a user prompt
         //     produces an (crude) response.
         var chatFormatter = ChatPromptFormatterFactory.Create(reloadedChatTemplate);

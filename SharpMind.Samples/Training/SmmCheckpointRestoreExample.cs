@@ -28,7 +28,7 @@ namespace SharpMind.Samples.Training;
 /// checkpoint back into a freshly built model and writes a clean .SMM, so a
 /// diverged run still yields its best-observed weights.
 ///
-/// It is intentionally train-free: no optimizer, no loader loop â€” just
+/// It is intentionally train-free: no optimizer, no loader loop - just
 /// <see cref="Checkpoint.Load"/> (weights + a fresh-pass eval) then
 /// <see cref="SmmTrainingExporter.Export"/>. Running it is fast (seconds to
 /// minutes), unlike the multi-hour training sample.
@@ -66,7 +66,7 @@ public static class SmmCheckpointRestoreExample
         await Console.Out.WriteLineAsync("== .SMM checkpoint restore example ==");
         await Console.Out.WriteLineAsync();
 
-        // 1. Tokenizer â€” must be the same cached tokenizer used by the training run.
+        // 1. Tokenizer - must be the same cached tokenizer used by the training run.
         Tokenizer tokenizer = File.Exists(TokenizerPath)
             ? TokenizationPipeline.Load(TokenizerPath)
             : await TokenizationPipeline.TrainAndSaveAsync(new TextFileSource(CorpusPath, TextFileSource.DocumentMode.LinePerDoc), TokenizerPath, TargetVocabSize);
@@ -74,7 +74,7 @@ public static class SmmCheckpointRestoreExample
                                          $"unk={tokenizer.UnkId} bos={tokenizer.BosId} eos={tokenizer.EosId} pad={tokenizer.PadId}");
         await Console.Out.WriteLineAsync();
 
-        // 2. Model size â€” must reproduce the training run's fixture exactly so the
+        // 2. Model size - must reproduce the training run's fixture exactly so the
         //    checkpoint's parameter names map 1:1 onto the rebuilt parameters.
         var modelConfig = new ModelConfig
         {
@@ -90,7 +90,7 @@ public static class SmmCheckpointRestoreExample
         await Console.Out.WriteLineAsync($"Restored model config: {modelConfig}");
         await Console.Out.WriteLineAsync();
 
-        // 3. Model â€” empty host weights; Checkpoint.Load overwrites their values
+        // 3. Model - empty host weights; Checkpoint.Load overwrites their values
         //    in place. The parameter name set comes from model.Parameters().
         var sharpConfig = SharpMindConfig.Gpt with { Hardware = HardwareTier.Auto };
         var weights = ModelFactory.CreateForTraining(modelConfig, sharpConfig);
@@ -104,7 +104,7 @@ public static class SmmCheckpointRestoreExample
         await Console.Out.WriteLineAsync($"  saved step={meta.Step}  loss={(float.IsNaN(meta.Loss) ? "n/a" : meta.Loss.ToString("F4"))}  note={(string.IsNullOrEmpty(meta.Note) ? "n/a" : meta.Note)}");
         await Console.Out.WriteLineAsync();
 
-        // 5. Fresh-vision eval with a plain cross-entropy loss (no smoothing) â€”
+        // 5. Fresh-vision eval with a plain cross-entropy loss (no smoothing) -
         //    the true held-out metric; this is the number the diverged final .SMM
         //    never exposed.
         var pipeline = PipelineNode.From(new TextFileSource(CorpusPath, TextFileSource.DocumentMode.LinePerDoc))
