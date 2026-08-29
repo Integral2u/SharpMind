@@ -62,6 +62,7 @@ namespace SharpMind.GPU
             QuantizationKeys.KeyQuantizedMatMulQ5_1,
         ];
         // TODO: Future Stub Only no actual implementation
+        [Obsolete("Inference has no GPU path anymore; this is a no-op. See GPU-accelerated training for the current GPU support.")]
         public static MappingBuilder WithGpu(this MappingBuilder builder, bool nonQuant = true, bool vecDot = false, bool matMul = false)
         {
             return builder;
