@@ -9,6 +9,47 @@ namespace SharpMind.Tests.Server;
 
 public class OpenAiMapperTests
 {
+    // ── IsContent ────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Progress entries reuse Token for status text, so the non-streaming path
+    /// concatenated "Prefilling 3.99%Prefilling 7.98%..." into the completion.
+    /// Only visible on prompts long enough to prefill in more than one chunk —
+    /// which is why it hid behind the context-window bug.
+    /// </summary>
+    [Fact]
+    public void IsContent_RejectsPrefillProgressEntries()
+    {
+        var progress = new ChatStreamEntry { Status = ChatStatus.Updating, Token = "Prefilling 50.25%" };
+        Assert.False(OpenAiMapper.IsContent(progress));
+    }
+
+    [Theory]
+    [InlineData(ChatStatus.Responding)]
+    [InlineData(ChatStatus.Thinking)]
+    public void IsContent_AcceptsModelOutput(ChatStatus status)
+    {
+        Assert.True(OpenAiMapper.IsContent(new ChatStreamEntry { Status = status, Token = "hello" }));
+    }
+
+    [Theory]
+    [InlineData(ChatStatus.Updating)]
+    [InlineData(ChatStatus.Executing)]
+    [InlineData(ChatStatus.Waiting)]
+    [InlineData(ChatStatus.Researching)]
+    [InlineData(ChatStatus.ToolCall)]
+    public void IsContent_RejectsStatusOnlyEntries(ChatStatus status)
+    {
+        Assert.False(OpenAiMapper.IsContent(new ChatStreamEntry { Status = status, Token = "status text" }));
+    }
+
+    [Fact]
+    public void IsContent_RejectsEmptyAndNullTokens()
+    {
+        Assert.False(OpenAiMapper.IsContent(new ChatStreamEntry { Status = ChatStatus.Responding, Token = "" }));
+        Assert.False(OpenAiMapper.IsContent(new ChatStreamEntry { Status = ChatStatus.Responding, Token = null }));
+    }
+
     // ── ToChatHistory ────────────────────────────────────────────────────
 
     [Fact]

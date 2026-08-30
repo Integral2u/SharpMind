@@ -355,11 +355,13 @@ public sealed class SharpMindService : IAsyncDisposable
         {
             await foreach (var entry in session.GetResponseStreamAsync(lastUserMessage, null, ct))
             {
-                if (entry.Token is { Length: > 0 } delta)
-                {
-                    sb.Append(delta);
-                    Interlocked.Increment(ref tokenCount);
-                }
+                // Status-only entries carry their status text in Token; appending
+                // every non-empty Token put "Prefilling 50.25%..." in the completion.
+                // The streaming path below filtered these out, this one did not.
+                if (!OpenAiMapper.IsContent(entry)) continue;
+
+                sb.Append(entry.Token);
+                Interlocked.Increment(ref tokenCount);
             }
         }
         catch (OperationCanceledException)
@@ -406,15 +408,11 @@ public sealed class SharpMindService : IAsyncDisposable
             {
                 // Skip prefill progress and other status-only entries — only
                 // stream actual token content to the client.
-                if (entry.Status != ChatStatus.Responding && entry.Status != ChatStatus.Thinking)
-                    continue;
+                if (!OpenAiMapper.IsContent(entry)) continue;
 
-                if (entry.Token is { Length: > 0 } delta)
-                {
-                    Interlocked.Increment(ref tokenCount);
-                    var chunk = OpenAiMapper.ToStreamChunk(completionId, created, loaded.ModelId, delta, null, null);
-                    await WriteSSE(writer, chunk, options);
-                }
+                Interlocked.Increment(ref tokenCount);
+                var chunk = OpenAiMapper.ToStreamChunk(completionId, created, loaded.ModelId, entry.Token, null, null);
+                await WriteSSE(writer, chunk, options);
             }
         }
         catch (OperationCanceledException) { }
