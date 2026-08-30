@@ -13,7 +13,7 @@ using SharpMind.Training.LoRA;
 using SharpMind.Training.Loss;
 using Xunit;
 
-namespace SharpMind.GPU.Tests;
+namespace SharpMind.Tests.GPU;
 
 [Collection("GPU")]
 public sealed class GpuBackpropEngineTests

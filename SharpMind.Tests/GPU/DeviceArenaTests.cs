@@ -2,7 +2,7 @@ using ILGPU.Runtime;   // LoadEffectiveAddressAsPtr is an ArrayViewExtensions ex
 using SharpMind.GPU;
 using Xunit;
 
-namespace SharpMind.GPU.Tests;
+namespace SharpMind.Tests.GPU;
 
 [Collection("GPU")]
 public sealed class DeviceArenaTests

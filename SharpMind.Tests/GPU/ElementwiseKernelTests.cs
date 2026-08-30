@@ -1,7 +1,7 @@
 using SharpMind.GPU;
 using Xunit;
 
-namespace SharpMind.GPU.Tests;
+namespace SharpMind.Tests.GPU;
 
 [Collection("GPU")]
 public sealed class ElementwiseKernelTests
