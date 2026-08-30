@@ -64,11 +64,18 @@ public sealed class SessionFactory(SharpMindServerOptions options)
         // Map OpenAI params → session properties
         OpenAiMapper.ApplyToSession(request, session);
 
-        // Set context window
-        int effectiveCacheLen = ModelConfig.ComputeMaxCacheLength(loaded.Model.Config, _options.MaxCacheLen);
-        session.MaxTokens = session.MaxNewTokens > 0
-            ? Math.Min(session.MaxNewTokens, effectiveCacheLen)
-            : effectiveCacheLen;
+        // Set context window.
+        //
+        // MaxTokens is the CONTEXT WINDOW; MaxNewTokens is the GENERATION limit.
+        // This used to clamp the window to `Math.Min(MaxNewTokens, cacheLen)`,
+        // which made ChatSession.TrimToFitContext compute
+        // `contextBudget = MaxTokens - MaxNewTokens = 0`, fall back to
+        // `MaxTokens / 2`, and cut the prompt down to a handful of tokens — so
+        // every completion answered a prompt the caller never sent (and
+        // `max_tokens: 1` trimmed to zero and threw "Prompt produced no token
+        // IDs"). The two values are not interchangeable: leaving room for the
+        // response is already TrimToFitContext's job.
+        session.MaxTokens = ModelConfig.ComputeMaxCacheLength(loaded.Model.Config, _options.MaxCacheLen);
 
         // Replay conversation history — all messages EXCEPT the last user
         // message. The last user message is returned separately so the caller
