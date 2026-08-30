@@ -65,33 +65,11 @@ public sealed class SharpMindChatClient : IChatClient, IAsyncDisposable
         ChatOptions? options,
         CancellationToken ct)
     {
-        ApplyOptions(options);
-        RegisterToolsOnce(options);
-
-        var messageList = messages.ToList();
-        var lastUser = FindLastUserMessage(messageList);
-        if (lastUser is null)
-            return new ChatResponse([]);
-
-        _session.InitializeChat();
-
-        var sb = new StringBuilder();
-        var task = _session.StartChatAsync(
-            () => new SmChatMessage { Content = lastUser, Role = SmChatRole.User, Name = "User" },
-            entry =>
-            {
-                if (entry.Status == ChatStatus.Interrupted && entry.Error is not null)
-                    throw new InvalidOperationException($"SharpMind turn failed: {entry.Error}");
-
-                if (entry.Token is { Length: > 0 } tok)
-                    sb.Append(tok);
-            },
-            ct);
-
-        await task;
-
-        var responseMsg = new MeChatMessage(MeChatRole.Assistant, sb.ToString());
-        return new ChatResponse(responseMsg);
+        // Both paths must strip tool-call markup and surface returned calls
+        // identically, so there is one implementation and the non-streaming
+        // form aggregates it.
+        return await GetStreamingResponseCoreAsync(messages, options, ct)
+            .ToChatResponseAsync(ct);
     }
 
     /// <inheritdoc/>
@@ -137,19 +115,56 @@ public sealed class SharpMindChatClient : IChatClient, IAsyncDisposable
             finally { channel.Writer.TryComplete(); }
         }, CancellationToken.None);
 
+        string responseId = Guid.NewGuid().ToString("N");
+        string messageId = Guid.NewGuid().ToString("N");
+        ChatResponseUpdate Update(AIContent content) =>
+            new(MeChatRole.Assistant, [content]) { ResponseId = responseId, MessageId = messageId };
+
+        var pending = new StringBuilder();
+        bool returnedCall = false;
+        ChatFinishReason? finish = null;
+
         await foreach (var entry in channel.Reader.ReadAllAsync(ct))
         {
+            // A call handed back by ToolRequestOutcome.ReturnToCaller. The markup
+            // that produced it is still sitting in `pending`; drop it and surface
+            // the call itself, which is what a tool middleware is waiting for.
+            if (entry.Status == ChatStatus.ToolCall && entry.ToolCall is { } toolCall)
+            {
+                pending.Clear();
+                returnedCall = true;
+                finish = ChatFinishReason.ToolCalls;
+                yield return Update(ChatMessageConverter.ToFunctionCall(toolCall));
+                continue;
+            }
+
             if (entry.Token is { Length: > 0 } tok)
-                yield return new ChatResponseUpdate(MeChatRole.Assistant, tok);
+            {
+                pending.Append(tok);
+                if (TakeEmittable(pending) is { Length: > 0 } emit)
+                    yield return Update(new TextContent(emit));
+            }
 
             if (entry.Status == ChatStatus.Complete)
                 break;
         }
 
         await readTask;
+
+        // Anything still held is either a partial "<tool_call>" prefix or a call
+        // the model never closed; trailing prose is released, markup is not.
+        if (!returnedCall && pending.Length > 0)
+        {
+            string tail = pending.ToString();
+            if (!tail.StartsWith(ToolOpen, StringComparison.Ordinal))
+                yield return Update(new TextContent(tail));
+        }
+
         yield return new ChatResponseUpdate(MeChatRole.Assistant, (string?)null)
         {
-            FinishReason = ChatFinishReason.Stop
+            ResponseId = responseId,
+            MessageId = messageId,
+            FinishReason = finish ?? ChatFinishReason.Stop
         };
     }
 
@@ -189,6 +204,74 @@ public sealed class SharpMindChatClient : IChatClient, IAsyncDisposable
         if (options?.Tools is not { Count: > 0 }) return;
         _toolAdapter.RegisterTools(_agentBuilder, options.Tools);
         _toolsRegistered = true;
+    }
+
+    private const string ToolOpen = "<tool_call>";
+    private const string ToolClose = "</tool_call>";
+
+    /// <summary>
+    /// Takes the text that is safe to emit now out of <paramref name="pending"/>,
+    /// leaving behind anything that is, or might still become, tool-call markup.
+    /// <para>
+    /// The session streams every generated fragment as it arrives and only parses
+    /// the completed buffer for a tool call afterwards, so the markup reaches this
+    /// adapter as ordinary text. A <b>completed</b> block means the session's own
+    /// agent loop dispatched the tool (the default wiring) — the MEAI caller should
+    /// see the reply that follows, never the call. An <b>unterminated</b> one is
+    /// held: it may still be completed by the next fragment.
+    /// </para>
+    /// <para>
+    /// ponytail: recognises the tagged form only, which is what
+    /// <c>AgentBuilder</c>'s tool prompt asks the model for. A model that emits a
+    /// bare <c>{"tool": ...}</c> object without the tag still has it dispatched
+    /// correctly by the session; only the suppression here misses it.
+    /// </para>
+    /// </summary>
+    private static string TakeEmittable(StringBuilder pending)
+    {
+        string s = pending.ToString();
+        var emit = new StringBuilder();
+        int i = 0;
+
+        while (true)
+        {
+            int open = s.IndexOf(ToolOpen, i, StringComparison.Ordinal);
+            if (open < 0) break;
+
+            emit.Append(s, i, open - i);
+
+            int close = s.IndexOf(ToolClose, open, StringComparison.Ordinal);
+            if (close < 0)
+            {
+                // Unterminated — hold from the opening tag on.
+                pending.Clear();
+                pending.Append(s, open, s.Length - open);
+                return emit.ToString();
+            }
+
+            i = close + ToolClose.Length;   // drop the whole block
+        }
+
+        // No open tag left. Hold back only a trailing partial "<tool_call>" prefix.
+        int hold = TrailingPartialOpenLength(s);
+        emit.Append(s, i, s.Length - i - hold);
+        pending.Clear();
+        pending.Append(s, s.Length - hold, hold);
+        return emit.ToString();
+    }
+
+    /// <summary>
+    /// Length of the suffix of <paramref name="s"/> that is a proper prefix of
+    /// <see cref="ToolOpen"/> — the part that must be held because the next
+    /// fragment could complete an opening tag.
+    /// </summary>
+    private static int TrailingPartialOpenLength(string s)
+    {
+        int max = Math.Min(ToolOpen.Length - 1, s.Length);
+        for (int len = max; len > 0; len--)
+            if (string.CompareOrdinal(s, s.Length - len, ToolOpen, 0, len) == 0)
+                return len;
+        return 0;
     }
 
     private static string? FindLastUserMessage(IList<MeChatMessage> messages)
