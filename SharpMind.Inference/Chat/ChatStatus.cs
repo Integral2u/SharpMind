@@ -11,6 +11,8 @@ public enum ChatStatus
     Updating,
     /// <summary>Executing tools/skills.</summary>
     Executing,
+    /// <summary>A parsed tool call is being handed back to the caller to dispatch (never executed in-session).</summary>
+    ToolCall,
     /// <summary>Generating text response.</summary>
     Responding,
     /// <summary>Waiting for input.</summary>

@@ -268,6 +268,7 @@ public class OpenAiMapperTests
         public bool ShowThinking { get; set; }
         public bool EnableThinking { get; set; }
         public string UserName { get; set; } = "User";
+        public Func<string, System.Text.Json.Nodes.JsonObject, CancellationToken, Task<ToolRequestResult>>? ProcessToolRequest { get; set; }
         public float? TokensPerSecond => null;
         public float? TimeToFirstToken => null;
         public Tokenizer Tokenizer => throw new NotSupportedException();

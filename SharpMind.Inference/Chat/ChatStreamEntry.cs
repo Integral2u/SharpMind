@@ -1,3 +1,5 @@
+using System.Text.Json.Nodes;
+
 namespace SharpMind.Inference.Chat;
 
 /// <summary>
@@ -10,6 +12,14 @@ public sealed class ChatStreamEntry
     public ChatArtifact? Artifact { get; init; }
     public bool IsComplete { get; init; }
     public int? TokenId { get; init; }
+
+    /// <summary>
+    /// The parsed tool call <c>{"tool": "...", "arguments": { ... }}</c> when
+    /// <see cref="Status"/> is <see cref="ChatStatus.ToolCall"/> — i.e. when an
+    /// external <see cref="IChatSession.ProcessToolRequest"/> handler asked the
+    /// session to hand the call back to the caller. Null otherwise.
+    /// </summary>
+    public JsonObject? ToolCall { get; init; }
 
     /// <summary>
     /// Live tokens-per-second at this point in the stream.

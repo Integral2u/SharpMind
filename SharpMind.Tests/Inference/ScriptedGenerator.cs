@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using SharpMind.Core;
 using SharpMind.Inference;
+using SharpMind.Inference.Agent;
 using SharpMind.Inference.Chat;
 using SharpMind.Model;
 using SharpMind.Model.Config;
@@ -75,6 +76,9 @@ internal static class ScriptedSession
     };
 
     public static ChatSession<ScriptedGeneratorBuilder, KVCacherBuilder> Create(params string[] replies)
+        => Create(null, replies);
+
+    public static ChatSession<ScriptedGeneratorBuilder, KVCacherBuilder> Create(IAgentBuilder? agentBuilder, params string[] replies)
     {
         var tokens = new List<string>();
         for (int b = 0; b < 256; b++) tokens.Add(Vocabulary.ByteTokenString(b));
@@ -85,7 +89,7 @@ internal static class ScriptedSession
         WeightInitializer.InitializeRandomly(weights, 1234);
         var model = ModelFactory.CreateTrainingTransformer(weights, sharpConfig);
 
-        return new ChatSession<ScriptedGeneratorBuilder, KVCacherBuilder>(model, tokenizer, seed: ScriptedGenerator.Register(replies), disposeModel: true)
+        return new ChatSession<ScriptedGeneratorBuilder, KVCacherBuilder>(model, tokenizer, agentBuilder: agentBuilder, seed: ScriptedGenerator.Register(replies), disposeModel: true)
         {
             MaxTokens = 8192,   // byte tokenizer: one token per character; keep the tool prompt clear of trimming
         };

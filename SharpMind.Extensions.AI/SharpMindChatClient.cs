@@ -20,6 +20,7 @@ public sealed class SharpMindChatClient : IChatClient, IAsyncDisposable
 {
     private readonly IChatSession _session;
     private readonly IAgentBuilder? _agentBuilder;
+    private readonly AiFunctionToolAdapter _toolAdapter = new();
     private bool _toolsRegistered;
 
     /// <summary>
@@ -40,6 +41,14 @@ public sealed class SharpMindChatClient : IChatClient, IAsyncDisposable
         ArgumentNullException.ThrowIfNull(session);
         _session = session;
         _agentBuilder = agentBuilder;
+
+        // Single seam for tool dispatch: MEAI functions are invoked here
+        // (the host owns the loop for them, so caching/telemetry/approval
+        // wrappers can hang off an individual call); everything else defers
+        // to the session's native agent loop, which keeps its File/Network
+        // gating. Callers may replace this for a fully host-owned loop, e.g.
+        // to return calls to a FunctionInvokingChatClient middleware.
+        session.ProcessToolRequest = _toolAdapter.DispatchAsync;
     }
 
     /// <inheritdoc/>
@@ -178,7 +187,7 @@ public sealed class SharpMindChatClient : IChatClient, IAsyncDisposable
     {
         if (_agentBuilder is null || _toolsRegistered) return;
         if (options?.Tools is not { Count: > 0 }) return;
-        AiFunctionToolAdapter.RegisterTools(_agentBuilder, options.Tools);
+        _toolAdapter.RegisterTools(_agentBuilder, options.Tools);
         _toolsRegistered = true;
     }
 

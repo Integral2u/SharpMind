@@ -152,6 +152,7 @@ public sealed class SharpMindChatClientTests
         public bool ShowThinking { get; set; }
         public bool EnableThinking { get; set; }
         public string UserName { get; set; } = "User";
+        public Func<string, System.Text.Json.Nodes.JsonObject, CancellationToken, Task<SharpMind.Inference.Chat.ToolRequestResult>>? ProcessToolRequest { get; set; }
         public float? TokensPerSecond => null;
         public float? TimeToFirstToken => null;
         public SharpMind.Tokenization.Tokenizer Tokenizer => throw new NotSupportedException();

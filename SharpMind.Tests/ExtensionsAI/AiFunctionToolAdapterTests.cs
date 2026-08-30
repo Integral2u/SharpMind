@@ -3,6 +3,7 @@ using System.Text.Json.Nodes;
 using Microsoft.Extensions.AI;
 using SharpMind.Extensions.AI;
 using SharpMind.Inference.Agent;
+using SharpMind.Inference.Chat;
 
 namespace SharpMind.Tests.ExtensionsAI;
 
@@ -17,7 +18,7 @@ public sealed class AiFunctionToolAdapterTests
     public void RegisterTools_NullTools_NoOp()
     {
         var builder = new AgentBuilder("Test");
-        AiFunctionToolAdapter.RegisterTools(builder, null);
+        new AiFunctionToolAdapter().RegisterTools(builder, null);
         Assert.Empty(builder.RegisteredToolNames);
     }
 
@@ -25,7 +26,7 @@ public sealed class AiFunctionToolAdapterTests
     public void RegisterTools_EmptyList_NoOp()
     {
         var builder = new AgentBuilder("Test");
-        AiFunctionToolAdapter.RegisterTools(builder, new List<AITool>());
+        new AiFunctionToolAdapter().RegisterTools(builder, new List<AITool>());
         Assert.Empty(builder.RegisteredToolNames);
     }
 
@@ -39,7 +40,7 @@ public sealed class AiFunctionToolAdapterTests
             description: "Get weather for a city");
         var tools = new List<AITool> { fn };
 
-        AiFunctionToolAdapter.RegisterTools(builder, tools);
+        new AiFunctionToolAdapter().RegisterTools(builder, tools);
 
         Assert.Contains("Weather", builder.RegisteredToolNames);
         Assert.Single(builder.ToolDefinitions);
@@ -54,7 +55,7 @@ public sealed class AiFunctionToolAdapterTests
         var builder = new AgentBuilder("Test");
         var tools = new List<AITool> { new FakeTool("NotAFunction") };
 
-        AiFunctionToolAdapter.RegisterTools(builder, tools);
+        new AiFunctionToolAdapter().RegisterTools(builder, tools);
 
         Assert.Empty(builder.RegisteredToolNames);
     }
@@ -69,7 +70,7 @@ public sealed class AiFunctionToolAdapterTests
             description: "Get weather for a city");
         var tools = new List<AITool> { fn };
 
-        AiFunctionToolAdapter.RegisterTools(builder, tools);
+        new AiFunctionToolAdapter().RegisterTools(builder, tools);
 
         var toolCall = new JsonObject
         {
@@ -80,6 +81,41 @@ public sealed class AiFunctionToolAdapterTests
         var result = await builder.CallToolAsync(toolCall);
         Assert.Equal("success", result["status"]?.GetValue<string>());
         Assert.Equal("Weather in London", result["data"]?.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task DispatchAsync_RegisteredFunction_HandledWithResult()
+    {
+        var builder = new AgentBuilder("Test");
+        var fn = AIFunctionFactory.Create(
+            (string city) => $"Weather in {city}",
+            name: "Weather",
+            description: "Get weather for a city");
+        var tools = new List<AITool> { fn };
+
+        var adapter = new AiFunctionToolAdapter();
+        adapter.RegisterTools(builder, tools);
+
+        var outcome = await adapter.DispatchAsync(
+            "Weather",
+            new JsonObject { ["city"] = "Paris" },
+            CancellationToken.None);
+
+        Assert.Equal(ToolRequestOutcome.Handled, outcome.Outcome);
+        Assert.Equal("Weather in Paris", outcome.Result);
+    }
+
+    [Fact]
+    public async Task DispatchAsync_UnknownTool_Defers()
+    {
+        var adapter = new AiFunctionToolAdapter();
+
+        var outcome = await adapter.DispatchAsync(
+            "NativeTool",
+            new JsonObject(),
+            CancellationToken.None);
+
+        Assert.Equal(ToolRequestOutcome.Defer, outcome.Outcome);
     }
 
     [Fact]
@@ -96,7 +132,7 @@ public sealed class AiFunctionToolAdapterTests
             description: "Second");
         var tools = new List<AITool> { fn1, fn2 };
 
-        AiFunctionToolAdapter.RegisterTools(builder, tools);
+        new AiFunctionToolAdapter().RegisterTools(builder, tools);
 
         Assert.Single(builder.RegisteredToolNames);
         Assert.Contains("Dup", builder.RegisteredToolNames);

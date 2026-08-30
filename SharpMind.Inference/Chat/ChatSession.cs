@@ -104,6 +104,15 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     /// </summary>
     public readonly Func<ToolPermissionContext, Task<ToolPermission>> PermissionCallback;
 
+    /// <summary>
+    /// Optional external tool-call interceptor. When set, every tool call the
+    /// model makes is routed through this delegate before the native agent
+    /// dispatches it — see <see cref="IChatSession.ProcessToolRequest"/> for
+    /// the <see cref="ToolRequestOutcome"/> semantics. Null restores the
+    /// built-in agent loop that dispatches every tool call itself.
+    /// </summary>
+    public Func<string, JsonObject, CancellationToken, Task<ToolRequestResult>>? ProcessToolRequest { get; set; }
+
     /// <param name="fileSystem">
     /// Optional <see cref="InterceptingFileSystem"/> wrapping your real
     /// <c>System.IO.Abstractions.FileSystem</c>. When provided and
@@ -993,6 +1002,46 @@ private void ThrowIfDisposed()
                     TokensPerSecond = _generator.TokensPerSecond,
                     TimeToFirstToken = _generator.TimeToFirstToken
                 };
+
+                // External interception seam. When set, the host decides what
+                // happens to this call before the native agent dispatches it.
+                if (ProcessToolRequest is not null)
+                {
+                    var external = await ProcessToolRequest(toolName, args, ct);
+                    switch (external.Outcome)
+                    {
+                        case ToolRequestOutcome.Handled:
+                            // The host ran the tool; feed its result back and
+                            // continue the agentic loop as usual.
+                            _history.Add(new ChatMessage
+                            {
+                                Role = ChatRole.System,
+                                Content = $"Tool result: {external.Result}"
+                            });
+                            InvalidateHistoryCache();
+                            continue;
+
+                        case ToolRequestOutcome.ReturnToCaller:
+                            // Hand the whole call back to the caller and end the
+                            // turn without dispatching or feeding a result back.
+                            yield return new ChatStreamEntry
+                            {
+                                Status = ChatStatus.ToolCall,
+                                Token = toolName,
+                                ToolCall = toolCall,
+                                IsComplete = true,
+                                TokensPerSecond = _generator.TokensPerSecond,
+                                TimeToFirstToken = _generator.TimeToFirstToken
+                            };
+                            yield break;
+
+                        case ToolRequestOutcome.Defer:
+                        default:
+                            // The host did not handle it; fall through to the
+                            // native agent dispatch (with File/Network gating).
+                            break;
+                    }
+                }
 
                 // Dispatch with IO interception — interceptors gate any actual
                 // file/network access the tool makes through PermissionCallback.

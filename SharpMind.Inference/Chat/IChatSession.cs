@@ -1,10 +1,29 @@
 ﻿using SharpMind.Inference.Chat.PromptFormatters;
 using SharpMind.Model;
 using SharpMind.Tokenization;
+using System.Text.Json.Nodes;
 
 namespace SharpMind.Inference.Chat;
 public interface IChatSession : IAsyncDisposable
 {
+    /// <summary>
+    /// Optional external tool-call interceptor. When set, every tool call the
+    /// model makes is first routed through this delegate before the session's
+    /// native agent dispatches it. Return:
+    /// <list type="bullet">
+    ///   <item><see cref="ToolRequestResult.Handled(string?)"/> — you ran the tool; the session
+    ///         feeds your result back and continues its loop.</item>
+    ///   <item><see cref="ToolRequestResult.Defer"/> — you didn't handle it; the session
+    ///         dispatches it natively (with its File/Network permission gate).</item>
+    ///   <item><see cref="ToolRequestResult.ReturnToCaller"/> — the session stops, surfaces the
+    ///         call via a <see cref="ChatStatus.ToolCall"/> entry, and ends the turn so the
+    ///         caller can dispatch it and resume by adding the result.</item>
+    /// </list>
+    /// Null (the default) keeps the current behaviour: the built-in agent loop
+    /// dispatches every tool call itself.
+    /// </summary>
+    public Func<string, JsonObject, CancellationToken, Task<ToolRequestResult>>? ProcessToolRequest { get; set; }
+
     /// <summary>Context window the prompt is trimmed to fit, in tokens.</summary>
     public int MaxTokens { get; set; }
 

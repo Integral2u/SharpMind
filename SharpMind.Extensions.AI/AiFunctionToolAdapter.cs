@@ -2,41 +2,60 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.AI;
 using SharpMind.Inference.Agent;
+using SharpMind.Inference.Chat;
 
 namespace SharpMind.Extensions.AI;
 
 /// <summary>
 /// Bridges MEAI <see cref="AIFunction"/> instances into SharpMind's
 /// <see cref="IAgentBuilder"/> tool infrastructure.
+/// <para>
+/// MEAI functions are (a) registered into the native agent builder so they
+/// appear in the tool loop's gate and prompt, and (b) kept here so the
+/// <see cref="SharpMindChatClient"/>'s <see cref="IChatSession.ProcessToolRequest"/>
+/// seam can dispatch them itself — the host owns the loop for MEAI tools while
+/// native SharpMind tools defer to the session's own agent dispatch.
+/// </para>
 /// </summary>
-internal static class AiFunctionToolAdapter
+internal sealed class AiFunctionToolAdapter
 {
+    private readonly Dictionary<string, AIFunction> _functions = new(StringComparer.Ordinal);
+
     /// <summary>
-    /// Registers every <see cref="AIFunction"/> found in
-    /// <paramref name="tools"/> with <paramref name="builder"/> using the
-    /// delegate-based <see cref="IAgentBuilder.WithTool"/> overload. Tool
-    /// names and descriptions come from the <see cref="AITool"/> base class;
-    /// the parameter schema is extracted via
+    /// Registers every <see cref="AIFunction"/> found in <paramref name="tools"/>
+    /// with <paramref name="builder"/> using the delegate-based
+    /// <see cref="IAgentBuilder.WithTool"/> overload, and remembers it so the
+    /// seam can dispatch by name. Tool names and descriptions come from the
+    /// <see cref="AITool"/> base class; the parameter schema is extracted via
     /// <see cref="AIFunction.AsDeclarationOnly"/>.
     /// </summary>
-    public static void RegisterTools(IAgentBuilder builder, IList<AITool>? tools)
+    public void RegisterTools(IAgentBuilder builder, IList<AITool>? tools)
     {
         if (tools is null or { Count: 0 }) return;
 
         foreach (var tool in tools)
         {
-            if (tool is AIFunction fn)
-                RegisterOne(builder, fn);
+            if (tool is not AIFunction fn) continue;
+            string name = fn.Name ?? fn.GetType().Name;
+            if (!_functions.TryAdd(name, fn)) continue;
+
+            JsonObject schema = BuildParameterSchema(fn);
+            builder.WithTool(name, fn.Description ?? "", schema, args => InvokeFunction(fn, args));
         }
     }
 
-    private static void RegisterOne(IAgentBuilder builder, AIFunction fn)
+    /// <summary>
+    /// Handles a tool-call request through the <see cref="IChatSession.ProcessToolRequest"/>
+    /// seam. When the tool name matches a registered MEAI function, invokes it
+    /// and returns <see cref="ToolRequestResult.Handled(string?)"/>; otherwise
+    /// returns <see cref="ToolRequestResult.Defer"/> so the session's native
+    /// agent loop dispatches it.
+    /// </summary>
+    public async Task<ToolRequestResult> DispatchAsync(string toolName, JsonObject args, CancellationToken ct)
     {
-        string name = fn.Name ?? fn.GetType().Name;
-        string description = fn.Description ?? "";
-        JsonObject schema = BuildParameterSchema(fn);
-
-        builder.WithTool(name, description, schema, args => InvokeFunction(fn, args));
+        if (_functions.TryGetValue(toolName, out var fn))
+            return ToolRequestResult.Handled(await InvokeFunction(fn, args));
+        return ToolRequestResult.Defer();
     }
 
     /// <summary>
