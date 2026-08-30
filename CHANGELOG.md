@@ -31,6 +31,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `GpuDevice.Gemm` takes an `ldc` row stride for C (0 = dense = `n`), so one attention head's `[seqLen, headDim]` result can be written directly into a `[batch·seqLen, heads·headDim]` tensor whose rows sit a head-stride apart. Threaded through `Cublas.GemmRowMajor` and the `tiled16` ILGPU fallback.
 - `GpuKernels` holds its `GpuDevice` so the attention entry points can issue GEMMs through it.
 
+### Removed
+
+- **`SharpMind.Benchmarks` project** — removed from the solution. It was the sole consumer of BenchmarkDotNet but was unreferenced by any other project: its active `KernelsBenchmarks` was trivial, the VecDot/HSum256 benchmarks were commented out and used a stale net9 job moniker, `BenchToConfig` produced a `qconfig.json` with no consumer in the codebase, and the `Evaluation/` metrics (perplexity/BLEU/F1) were referenced nowhere and untested. Contrast with the retained `tools/GpuTrainBench`, which has no equivalent parity tool.
+
 ### Fixed
 
 - **Multi-part message content passed as raw JSON** — `OpenAiMapper.ExtractTextContent` now parses JSON array content (`[{"type":"text","text":"..."}]`) sent by modern OpenAI client libraries, extracting and concatenating text parts instead of passing the raw JSON string to the model as if it were the user's message.

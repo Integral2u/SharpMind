@@ -3,8 +3,6 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 18
 VisualStudioVersion = 18.8.11918.235
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SharpMind.Benchmarks", "SharpMind.Benchmarks\SharpMind.Benchmarks.csproj", "{1FF9542F-B7FC-4C06-9055-AFA563C0D75D}"
-EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SharpMind.Samples", "SharpMind.Samples\SharpMind.Samples.csproj", "{82FE97BC-6756-4B93-8DC4-F8622C74CF6C}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SharpMind.Core", "SharpMind.Core\SharpMind.Core.csproj", "{DC89A12A-4A73-42BE-807C-663DD3CADBB6}"
@@ -57,18 +55,6 @@ Global
 		Release|x86 = Release|x86
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
-		{1FF9542F-B7FC-4C06-9055-AFA563C0D75D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{1FF9542F-B7FC-4C06-9055-AFA563C0D75D}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{1FF9542F-B7FC-4C06-9055-AFA563C0D75D}.Debug|x64.ActiveCfg = Debug|Any CPU
-		{1FF9542F-B7FC-4C06-9055-AFA563C0D75D}.Debug|x64.Build.0 = Debug|Any CPU
-		{1FF9542F-B7FC-4C06-9055-AFA563C0D75D}.Debug|x86.ActiveCfg = Debug|Any CPU
-		{1FF9542F-B7FC-4C06-9055-AFA563C0D75D}.Debug|x86.Build.0 = Debug|Any CPU
-		{1FF9542F-B7FC-4C06-9055-AFA563C0D75D}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{1FF9542F-B7FC-4C06-9055-AFA563C0D75D}.Release|Any CPU.Build.0 = Release|Any CPU
-		{1FF9542F-B7FC-4C06-9055-AFA563C0D75D}.Release|x64.ActiveCfg = Release|Any CPU
-		{1FF9542F-B7FC-4C06-9055-AFA563C0D75D}.Release|x64.Build.0 = Release|Any CPU
-		{1FF9542F-B7FC-4C06-9055-AFA563C0D75D}.Release|x86.ActiveCfg = Release|Any CPU
-		{1FF9542F-B7FC-4C06-9055-AFA563C0D75D}.Release|x86.Build.0 = Release|Any CPU
 		{82FE97BC-6756-4B93-8DC4-F8622C74CF6C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{82FE97BC-6756-4B93-8DC4-F8622C74CF6C}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{82FE97BC-6756-4B93-8DC4-F8622C74CF6C}.Debug|x64.ActiveCfg = Debug|Any CPU
