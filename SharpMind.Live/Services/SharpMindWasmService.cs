@@ -144,10 +144,10 @@ public static class SharpMindEngine
 
             await foreach (var entry in _state.Session.GetResponseStreamAsync(prompt))
             {
-                if (entry.Status == ChatStatus.Complete ||
-                    entry.Status == ChatStatus.Interrupted)
+                if (entry.Status == ChatStatus.Complete || entry.Status == ChatStatus.Interrupted)
                     break;
-
+                if (entry.Status is not (ChatStatus.Responding or ChatStatus.Thinking))
+                    continue;
                 if (entry.Token is not null)
                 {
                     sb.Append(entry.Token);
