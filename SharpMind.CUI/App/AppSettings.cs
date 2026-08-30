@@ -92,15 +92,27 @@ public sealed class AppSettings
             }
         }
         var settings = UnResolvedLoad();
-        if(string.IsNullOrWhiteSpace(settings.PluginsFolder) || !Directory.Exists(settings.PluginsFolder))
-        {
-            settings.PluginsFolder = GetDefaultPluginPath(settings.PluginsFolder);
-        }
-        if (string.IsNullOrWhiteSpace(settings.ToolsFolder) || !Directory.Exists(settings.PluginsFolder))
-        {
-            settings.PluginsFolder = GetDefaultPluginPath(settings.PluginsFolder);
-        }
+        ApplyFolderDefaults(settings, GetDefaultPluginPath);
         return settings;
+    }
+
+    /// <summary>
+    /// Points <see cref="PluginsFolder"/> and <see cref="ToolsFolder"/> at
+    /// <paramref name="resolveDefault"/> when they are unset or name a directory that is
+    /// no longer there. Separated from <see cref="Load"/>, with the resolver injected, so
+    /// the decision can be tested without touching the real settings file or creating
+    /// directories.
+    /// </summary>
+    internal static void ApplyFolderDefaults(AppSettings settings, Func<string?, string> resolveDefault)
+    {
+        if (string.IsNullOrWhiteSpace(settings.PluginsFolder) || !Directory.Exists(settings.PluginsFolder))
+        {
+            settings.PluginsFolder = resolveDefault(settings.PluginsFolder);
+        }
+        if (string.IsNullOrWhiteSpace(settings.ToolsFolder) || !Directory.Exists(settings.ToolsFolder))
+        {
+            settings.ToolsFolder = resolveDefault(settings.ToolsFolder);
+        }
     }
     public bool Save(out string? error)
     {
