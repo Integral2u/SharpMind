@@ -21,6 +21,6 @@
     <ProjectReference Include="..\SharpMind.Training\SharpMind.Training.csproj" />
   </ItemGroup>
   <ItemGroup>
-    <InternalsVisibleTo Include="SharpMind.GPU.Tests" />
+    <InternalsVisibleTo Include="SharpMind.Tests" />
   </ItemGroup>
 </Project>

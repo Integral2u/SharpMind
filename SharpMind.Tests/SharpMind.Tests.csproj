@@ -50,6 +50,7 @@
     <ProjectReference Include="..\SharpMind.CUI\SharpMind.CUI.csproj" />
     <ProjectReference Include="..\SharpMind.Data\SharpMind.Data.csproj" />
     <ProjectReference Include="..\SharpMind.Extensions.AI\SharpMind.Extensions.AI.csproj" />
+    <ProjectReference Include="..\SharpMind.GPU\SharpMind.GPU.csproj" />
     <ProjectReference Include="..\SharpMind.Inference\SharpMind.Inference.csproj" />
     <ProjectReference Include="..\SharpMind.Model\SharpMind.Model.csproj" />
     <ProjectReference Include="..\SharpMind.Samples\SharpMind.Samples.csproj" />

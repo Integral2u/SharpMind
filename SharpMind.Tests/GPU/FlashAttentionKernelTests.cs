@@ -2,7 +2,7 @@ using SharpMind.GPU;
 using SharpMind.GPU.Kernels;
 using Xunit;
 
-namespace SharpMind.GPU.Tests;
+namespace SharpMind.Tests.GPU;
 
 /// <summary>
 /// The flash kernels must compute what <see cref="AttentionKernels"/> computes, so they are

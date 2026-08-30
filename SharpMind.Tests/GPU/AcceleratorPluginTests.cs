@@ -1,7 +1,8 @@
 using SharpMind.Core.Plugins;
+using SharpMind.GPU;
 using SharpMind.Training;
 
-namespace SharpMind.GPU.Tests;
+namespace SharpMind.Tests.GPU;
 
 /// <summary>
 /// The plugin surface the host binds to. These are deliberately device-independent: the point is
@@ -35,9 +36,19 @@ public sealed class AcceleratorPluginTests
     public void Plugin_IsDiscoverableThroughTheHostsOwnLoader()
     {
         // Through the public entry point the CUI itself calls, against a real folder holding a
-        // real DLL - not a reflection shortcut. SharpMind.GPU.dll sits in this test project's
-        // output because it is a project reference, so this directory stands in for Plugins/.
-        var plugins = AcceleratorLoader.LoadFrom(AppContext.BaseDirectory, out var warnings);
+        // real DLL - not a reflection shortcut. The standalone GPU.Tests output contained only
+        // SharpMind.GPU.dll and its dependency DLLs, so that folder stood in for Plugins/ with no
+        // competing plugin types. Now that these tests live in the main suite, AppContext's output
+        // also holds SharpMind.Tests.dll with its own IAcceleratorPlugin test fakes - so isolate the
+        // scan folder to just the plugin and its dependencies, reproducing the original layout.
+        using var dir = new TempDirectory();
+        foreach (var dll in Directory.EnumerateFiles(AppContext.BaseDirectory, "*.dll"))
+        {
+            if (Path.GetFileName(dll) == "SharpMind.Tests.dll") continue;
+            File.Copy(dll, Path.Combine(dir.Path, Path.GetFileName(dll)));
+        }
+
+        var plugins = AcceleratorLoader.LoadFrom(dir.Path, out var warnings);
 
         Assert.Contains(plugins, p => p.Name == "cuda");
         Assert.Empty(warnings);

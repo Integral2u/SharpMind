@@ -42,6 +42,16 @@ public sealed class NativeBufferPoolTests
     {
         const int cycles = 500;
 
+        // This tests the pool's index bookkeeping (the bucket.Count double-increment bug), not
+        // its free-headroom heuristic. The MaxTotalMemoryMB pressure valve is a global counter
+        // across every pooled type, and earlier behaviour treated "reuse stops" as proof of the
+        // bug — but once the GPU tests were merged in-process their (much larger) cumulative
+        // native-float allocations push TotalMemoryUsed toward/over the 512 MB cap, which makes
+        // Return() free this ~8 MB double buffer instead of pooling it. That is the cap working,
+        // not the bug. Pin the cap high for the duration so reuse is decided purely by Count.
+        long savedCap = NativeBufferPoolConfig.MaxTotalMemoryMB;
+        NativeBufferPoolConfig.MaxTotalMemoryMB = long.MaxValue / (1024L * 1024L);
+
         NativeBufferPool<double>.Clear();
         try
         {
@@ -62,6 +72,7 @@ public sealed class NativeBufferPoolTests
         finally
         {
             NativeBufferPool<double>.Clear();
+            NativeBufferPoolConfig.MaxTotalMemoryMB = savedCap;
         }
     }
 }

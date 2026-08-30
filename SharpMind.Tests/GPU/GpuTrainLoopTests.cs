@@ -9,7 +9,7 @@ using SharpMind.Training.Optimizers;
 using SharpMind.Training.Schedulers;
 using Xunit;
 
-namespace SharpMind.GPU.Tests;
+namespace SharpMind.Tests.GPU;
 
 [Collection("GPU")]
 public sealed class GpuTrainLoopTests

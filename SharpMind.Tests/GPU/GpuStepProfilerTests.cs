@@ -1,4 +1,6 @@
-namespace SharpMind.GPU.Tests;
+using SharpMind.GPU;
+
+namespace SharpMind.Tests.GPU;
 
 /// <summary>
 /// The profiler's own bookkeeping. The timings it produces are wall clock and not worth

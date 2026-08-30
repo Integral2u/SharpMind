@@ -1,6 +1,6 @@
 using SharpMind.GPU;
 
-namespace SharpMind.GPU.Tests;
+namespace SharpMind.Tests.GPU;
 
 /// <summary>One device per test run. CUDA on the pod, OpenCL on the laptop, ILGPU's CPU accelerator in CI.</summary>
 public static class GpuTestDevice
