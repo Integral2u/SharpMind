@@ -52,6 +52,29 @@ internal static class ChatMessageConverter
     };
 
     /// <summary>
+    /// Converts a parsed SharpMind tool call — <c>{"tool": "...", "arguments": { ... }}</c>,
+    /// as carried on <see cref="ChatStreamEntry.ToolCall"/> — into the MEAI
+    /// <see cref="FunctionCallContent"/> a host's tool middleware expects.
+    /// </summary>
+    public static FunctionCallContent ToFunctionCall(System.Text.Json.Nodes.JsonObject toolCall)
+    {
+        Dictionary<string, object?>? args = null;
+        if (toolCall["arguments"] is System.Text.Json.Nodes.JsonObject a)
+        {
+            args = [];
+            foreach (var (name, value) in a)
+                args[name] = value is null
+                    ? null
+                    : System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(value);
+        }
+
+        return new FunctionCallContent(
+            Guid.NewGuid().ToString("N"),
+            toolCall["tool"]!.GetValue<string>(),
+            args);
+    }
+
+    /// <summary>
     /// Maps MEAI <see cref="ChatOptions"/> onto a SharpMind
     /// <see cref="IChatSession"/>. Only non-null properties are applied.
     /// </summary>

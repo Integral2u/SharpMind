@@ -130,14 +130,131 @@ public sealed class SharpMindChatClientTests
         Assert.True(session.Disposed);
     }
 
+    // ------------------------------------------------------------------
+    // Tool calls. The session streams every generated fragment as it arrives
+    // and only parses the completed buffer for a <tool_call> afterwards, so
+    // the markup reaches this adapter as ordinary Responding text. It must
+    // not reach the MEAI caller that way, and a call handed back by
+    // ToolRequestOutcome.ReturnToCaller must surface as FunctionCallContent.
+    // ------------------------------------------------------------------
+
+    private static System.Text.Json.Nodes.JsonObject WeatherCall() => new()
+    {
+        ["tool"] = "get_weather",
+        ["arguments"] = new System.Text.Json.Nodes.JsonObject { ["city"] = "Delft" }
+    };
+
+    private const string ToolCallMarkup =
+        """<tool_call>{"tool":"get_weather","arguments":{"city":"Delft"}}</tool_call>""";
+
+    [Fact]
+    public async Task GetStreamingResponseAsync_DoesNotLeakToolCallMarkupAsText()
+    {
+        // The native loop dispatched the tool itself and carried on — the default
+        // wiring. The caller should see the reply, never the call that produced it.
+        var session = new FakeChatSession(responseText: ToolCallMarkup + "It is 19C in Delft.");
+        using var client = new SharpMindChatClient(session);
+
+        var text = new System.Text.StringBuilder();
+        await foreach (var update in client.GetStreamingResponseAsync([new(MeChatRole.User, "weather?")]))
+            if (update.Text is { Length: > 0 } t) text.Append(t);
+
+        Assert.DoesNotContain("<tool_call>", text.ToString());
+        Assert.DoesNotContain("get_weather", text.ToString());
+        Assert.Contains("It is 19C in Delft.", text.ToString());
+    }
+
+    [Fact]
+    public async Task GetResponseAsync_DoesNotLeakToolCallMarkupAsText()
+    {
+        var session = new FakeChatSession(responseText: ToolCallMarkup + "It is 19C in Delft.");
+        using var client = new SharpMindChatClient(session);
+
+        var response = await client.GetResponseAsync([new(MeChatRole.User, "weather?")]);
+
+        Assert.DoesNotContain("<tool_call>", response.Text);
+        Assert.Contains("It is 19C in Delft.", response.Text);
+    }
+
+    [Fact]
+    public async Task GetStreamingResponseAsync_ReturnedToolCall_YieldsFunctionCallContent()
+    {
+        var session = new FakeChatSession(responseText: ToolCallMarkup, toolCall: WeatherCall());
+        using var client = new SharpMindChatClient(session);
+
+        var contents = new List<AIContent>();
+        await foreach (var update in client.GetStreamingResponseAsync([new(MeChatRole.User, "weather?")]))
+            contents.AddRange(update.Contents);
+
+        var call = Assert.Single(contents.OfType<FunctionCallContent>());
+        Assert.Equal("get_weather", call.Name);
+        Assert.NotNull(call.Arguments);
+        Assert.Equal("Delft", call.Arguments!["city"]?.ToString());
+    }
+
+    [Fact]
+    public async Task GetStreamingResponseAsync_ReturnedToolCall_FinishesWithToolCalls()
+    {
+        var session = new FakeChatSession(responseText: ToolCallMarkup, toolCall: WeatherCall());
+        using var client = new SharpMindChatClient(session);
+
+        ChatFinishReason? finish = null;
+        await foreach (var update in client.GetStreamingResponseAsync([new(MeChatRole.User, "weather?")]))
+            finish = update.FinishReason ?? finish;
+
+        Assert.Equal(ChatFinishReason.ToolCalls, finish);
+    }
+
+    [Fact]
+    public async Task GetResponseAsync_ReturnedToolCall_YieldsFunctionCallContent()
+    {
+        var session = new FakeChatSession(responseText: ToolCallMarkup, toolCall: WeatherCall());
+        using var client = new SharpMindChatClient(session);
+
+        var response = await client.GetResponseAsync([new(MeChatRole.User, "weather?")]);
+
+        var call = Assert.Single(response.Messages.SelectMany(m => m.Contents).OfType<FunctionCallContent>());
+        Assert.Equal("get_weather", call.Name);
+        Assert.Equal(ChatFinishReason.ToolCalls, response.FinishReason);
+    }
+
+    [Fact]
+    public async Task GetStreamingResponseAsync_ReplyOpeningWithBrace_IsStillDelivered()
+    {
+        // Held-back text must be released once it can no longer be a tool call,
+        // and flushed at end of turn — otherwise a reply that merely opens with
+        // "{" would be swallowed.
+        var session = new FakeChatSession(responseText: "{not a tool call after all}");
+        using var client = new SharpMindChatClient(session);
+
+        var text = new System.Text.StringBuilder();
+        await foreach (var update in client.GetStreamingResponseAsync([new(MeChatRole.User, "hi")]))
+            if (update.Text is { Length: > 0 } t) text.Append(t);
+
+        Assert.Equal("{not a tool call after all}", text.ToString());
+    }
+
     private sealed class FakeChatSession : SmIChatSession
     {
         private readonly string _responseText;
+        private readonly System.Text.Json.Nodes.JsonObject? _toolCall;
         public bool Disposed;
 
-        public FakeChatSession(string responseText)
+        /// <param name="responseText">
+        /// Streamed one character at a time as <see cref="SmChatStatus.Responding"/>
+        /// entries, mirroring the real session: every generated fragment is yielded
+        /// as it arrives, *before* the completed buffer is parsed for a tool call.
+        /// </param>
+        /// <param name="toolCall">
+        /// When set, the turn ends with a <see cref="SmChatStatus.ToolCall"/> entry
+        /// carrying this call and no <see cref="SmChatStatus.Complete"/> entry —
+        /// exactly what the real session yields for
+        /// <see cref="SharpMind.Inference.Chat.ToolRequestOutcome.ReturnToCaller"/>.
+        /// </param>
+        public FakeChatSession(string responseText, System.Text.Json.Nodes.JsonObject? toolCall = null)
         {
             _responseText = responseText;
+            _toolCall = toolCall;
         }
 
         public float Temperature { get; set; }
@@ -193,6 +310,24 @@ public sealed class SharpMindChatClientTests
                     Status = SmChatStatus.Responding,
                     Token = c.ToString(),
                     IsComplete = false
+                });
+            }
+
+            if (_toolCall is not null)
+            {
+                // The real session hands the call back and ends the turn without
+                // a Complete entry (ChatSession.cs, ToolRequestOutcome.ReturnToCaller).
+                response(new SmChatStreamEntry
+                {
+                    Status = SmChatStatus.ToolCall,
+                    Token = _toolCall["tool"]!.GetValue<string>(),
+                    ToolCall = _toolCall,
+                    IsComplete = true
+                });
+
+                return Task.FromResult(new[]
+                {
+                    new SmChatMessage { Role = SmChatRole.User, Content = input.Content }
                 });
             }
 
