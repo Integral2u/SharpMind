@@ -43,6 +43,20 @@ public static class OpenAiMapper
     }
 
     /// <summary>
+    /// True when a stream entry carries model output that belongs in the completion.
+    /// </summary>
+    /// <remarks>
+    /// Progress entries reuse <see cref="ChatStreamEntry.Token"/> for status text
+    /// (<c>"Prefilling 50.25%"</c>) under <see cref="ChatStatus.Updating"/>, so a
+    /// consumer that concatenates every non-empty Token emits that to the client as
+    /// if the model had said it. The streaming and non-streaming paths each wrote
+    /// this rule out separately and drifted — streaming filtered, non-streaming did
+    /// not — so it lives in one place now.
+    /// </remarks>
+    public static bool IsContent(ChatStreamEntry entry)
+        => entry is { Status: ChatStatus.Responding or ChatStatus.Thinking, Token: { Length: > 0 } };
+
+    /// <summary>
     /// Map OpenAI request params to session properties.
     /// </summary>
     public static void ApplyToSession(CreateChatCompletionRequest request, IChatSession session)
