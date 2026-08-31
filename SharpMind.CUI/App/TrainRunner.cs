@@ -31,6 +31,16 @@ public sealed class TrainRunResult
     /// the run never entered the training loop and produced no export.
     /// </summary>
     public bool NothingToTrain { get; init; }
+
+    /// <summary>
+    /// Set when an accelerator was explicitly requested (its sanity-checked name in
+    /// <see cref="AcceleratorRequested"/>) but its engine factory declined — e.g. the ILGPU plugin was
+    /// chosen but no CUDA/OpenCL device is present. The CUI turns this into a consent picker (CPU +
+    /// every other capable plugin, from <see cref="AcceleratorReason"/> as the why) rather than failing
+    /// the run outright. Never set alongside <see cref="Success"/>.
+    /// </summary>
+    public string? AcceleratorRequested { get; init; }
+    public string? AcceleratorReason { get; init; }
 }
 
 /// <summary>
@@ -235,23 +245,46 @@ public static class TrainRunner
             var ops = TrainingOpsFactory.Create(sharpConfig);
 
             // Accelerator plugins live in the same folder as data-pipeline plugins.
-            // An explicit accelerator that cannot be honoured fails the run here,
-            // well before the optimizer/scheduler and RunAsync — never a silent CPU fallback.
+            // An explicit accelerator that cannot be honoured (no device, unsupported shape) is
+            // reported back to the UI, which shows a consent picker (CPU + every other capable
+            // plugin) rather than failing the run — never a silent CPU fallback. Only genuinely
+            // unfindable/non-capable names fail here with an error.
             var accelerators = AcceleratorLoader.LoadFrom(pluginsFolder, out var acceleratorWarnings);
             foreach (var w in acceleratorWarnings) Log($"Accelerator: {w}");
             var loss = new CrossEntropyLoss(labelSmoothing: job.LabelSmoothing);
-            using var engine = TrainingEngineResolver.Resolve(job.Accelerator, accelerators,
-                new TrainingEngineContext(model, parameters, GradientMappingFactory.Create(sharpConfig), sharpConfig, loss,
-                    BatchSize: job.BatchSize, SeqLen: job.SeqLen, LabelSmoothing: job.LabelSmoothing));
+            var mapping = GradientMappingFactory.Create(sharpConfig);
+
+            (ITrainingEngine? Engine, string? Refusal, string Name) ResolveEngine()
+            {
+                string name = job.Accelerator?.Trim() ?? "";
+                try
+                {
+                    var engine = TrainingEngineResolver.Resolve(name, accelerators,
+                        new TrainingEngineContext(model, parameters, mapping, sharpConfig, loss,
+                            BatchSize: job.BatchSize, SeqLen: job.SeqLen, LabelSmoothing: job.LabelSmoothing));
+                    return (engine, null, name);
+                }
+                catch (AcceleratorUnavailableException ex)
+                {
+                    return (null, ex.Reason, name);
+                }
+            }
+
+            var resolved = ResolveEngine();
+            if (resolved.Refusal is not null)
+                return new TrainRunResult { Success = false, AcceleratorRequested = resolved.Name, AcceleratorReason = resolved.Refusal };
+
+            using var engine = resolved.Engine;
             if (engine is not null)
             {
                 // Re-derived from the same name Resolve just matched — FirstOrDefault
                 // rather than First so a future drift between the two lookups logs
                 // nothing instead of throwing "Sequence contains no matching element"
                 // into the generic catch around this run.
-                var chosen = accelerators.FirstOrDefault(p => string.Equals(p.Name, job.Accelerator!.Trim(), StringComparison.OrdinalIgnoreCase));
+                var chosen = accelerators.FirstOrDefault(p => string.Equals(p.Name, resolved.Name, StringComparison.OrdinalIgnoreCase));
                 if (chosen is not null)
                     Log($"Accelerator: {chosen.Name} — {chosen.Description}");
+                Log($"Engine: {engine.Description}");
             }
 
             // 5. Optimizer + scheduler + loop.

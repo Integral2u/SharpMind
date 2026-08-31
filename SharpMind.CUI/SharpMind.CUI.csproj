@@ -49,6 +49,12 @@
   </ItemGroup>
 
   <Target Name="CopyAcceleratorPlugin" AfterTargets="Build">
+    <!-- Remove any plugin folder from an earlier release of a plugin whose name changed
+         (the GPU plugin shipped as "cuda" before being renamed "ilgpu"). AcceleratorLoader
+         scans the plugins folder recursively, so a stale folder (which MSBuild's clean does
+         NOT track) would keep loading the orphaned plugin alongside the current one. -->
+    <RemoveDir Directories="$(OutputPath)Plugins\cuda"
+               Condition="Exists('$(OutputPath)Plugins\cuda')" />
     <ItemGroup>
       <!-- The plugin plus its own dependencies only. The host's assemblies are already
            loaded; a second copy beside the plugin would give the loader a duplicate
@@ -61,7 +67,7 @@
                                        $(MSBuildThisFileDirectory)..\SharpMind.GPU\bin\$(Configuration)\$(TargetFramework)\SharpMind.Tokenization.dll" />
     </ItemGroup>
     <Copy SourceFiles="@(AcceleratorPluginFiles)"
-          DestinationFolder="$(OutputPath)Plugins\cuda\"
+          DestinationFolder="$(OutputPath)Plugins\ilgpu\"
           SkipUnchangedFiles="true" />
   </Target>
 </Project>

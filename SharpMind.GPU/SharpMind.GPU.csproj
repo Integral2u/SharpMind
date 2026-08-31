@@ -17,6 +17,7 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\SharpMind.Core\SharpMind.Core.csproj" />
+    <ProjectReference Include="..\SharpMind.Inference\SharpMind.Inference.csproj" />
     <ProjectReference Include="..\SharpMind.Model\SharpMind.Model.csproj" />
     <ProjectReference Include="..\SharpMind.Training\SharpMind.Training.csproj" />
   </ItemGroup>

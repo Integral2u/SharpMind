@@ -42,6 +42,14 @@ public sealed class GpuBackpropEngine : ITrainingEngine
     /// </summary>
     public GpuStepProfiler Profiler => _prof;
 
+    /// <summary>
+    /// The backend this engine actually runs on, for the UI. A real CUDA/OpenCL device shows
+    /// <see cref="GpuDevice.Description"/> (e.g. <c>"[Cuda] ..., cuBLAS 12.8"</c>); an ILGPU CPU
+    /// fallback device reports <c>"CPU"</c> so the display never claims GPU acceleration that
+    /// isn't happening.
+    /// </summary>
+    public string Description => _dev.IsCpuFallback ? "CPU" : _dev.Description;
+
     /// <summary>Ignored-label id for the loss, as <c>CrossEntropyLoss.IgnoreId</c>.</summary>
     internal int IgnoreId { get; }
     /// <summary>Cross-entropy label smoothing, as <c>CrossEntropyLoss.LabelSmoothing</c>.</summary>

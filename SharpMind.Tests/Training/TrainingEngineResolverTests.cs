@@ -30,6 +30,7 @@ public sealed class TrainingEngineResolverTests : IDisposable
 
     private sealed class NullEngine : ITrainingEngine
     {
+        public string Description => "CPU";
         public float ForwardBackward(TrainingBatch batch, CancellationToken cancellationToken = default) => 0f;
         public void Dispose() { }
     }
@@ -57,7 +58,7 @@ public sealed class TrainingEngineResolverTests : IDisposable
     [InlineData("cpu")]
     public void NullBlankOrCpu_ReturnsNull_MeaningDefaultEngine(string? accelerator)
     {
-        var plugins = new List<IAcceleratorPlugin> { new Plugin("cuda", new Factory(_ => (new NullEngine(), null))) };
+        var plugins = new List<IAcceleratorPlugin> { new Plugin("ilgpu", new Factory(_ => (new NullEngine(), null))) };
 
         Assert.Null(TrainingEngineResolver.Resolve(accelerator, plugins, _ctx));
     }
@@ -66,52 +67,75 @@ public sealed class TrainingEngineResolverTests : IDisposable
     public void KnownName_ReturnsTheFactoryEngine_CaseInsensitive()
     {
         var engine = new NullEngine();
-        var plugins = new List<IAcceleratorPlugin> { new Plugin("cuda", new Factory(_ => (engine, null))) };
+        var plugins = new List<IAcceleratorPlugin> { new Plugin("ilgpu", new Factory(_ => (engine, null))) };
+
+        Assert.Same(engine, TrainingEngineResolver.Resolve("ILGPU", plugins, _ctx));
+    }
+
+    [Fact]
+    public void LegacyCuda_ResolvesToTheCanonicalIlgpuPlugin()
+    {
+        // A stored pre-rename .smmt job names "cuda"; the plugin now ships as "ilgpu" and must
+        // still be found (case-insensitively) so old saved jobs don't break the run.
+        var engine = new NullEngine();
+        var plugins = new List<IAcceleratorPlugin> { new Plugin("ilgpu", new Factory(_ => (engine, null))) };
+
+        Assert.Same(engine, TrainingEngineResolver.Resolve("cuda", plugins, _ctx));
+    }
+
+    [Fact]
+    public void LegacyCuda_RouteIsCaseInsensitive()
+    {
+        var engine = new NullEngine();
+        var plugins = new List<IAcceleratorPlugin> { new Plugin("ilgpu", new Factory(_ => (engine, null))) };
 
         Assert.Same(engine, TrainingEngineResolver.Resolve("CUDA", plugins, _ctx));
+        Assert.Same(engine, TrainingEngineResolver.Resolve("Cuda", plugins, _ctx));
     }
 
     [Fact]
     public void UnknownName_Throws_ListingWhatIsAvailable()
     {
-        var plugins = new List<IAcceleratorPlugin> { new Plugin("cuda"), new Plugin("ilgpu") };
+        var plugins = new List<IAcceleratorPlugin> { new Plugin("ilgpu") };
 
         var ex = Assert.Throws<InvalidOperationException>(() => TrainingEngineResolver.Resolve("metal", plugins, _ctx));
 
         Assert.Contains("'metal'", ex.Message);
-        Assert.Contains("cuda", ex.Message);
         Assert.Contains("ilgpu", ex.Message);
     }
 
     [Fact]
     public void PluginWithoutTrainingCapability_Throws()
     {
-        var plugins = new List<IAcceleratorPlugin> { new Plugin("cuda", "not a factory") };
+        var plugins = new List<IAcceleratorPlugin> { new Plugin("ilgpu", "not a factory") };
 
-        var ex = Assert.Throws<InvalidOperationException>(() => TrainingEngineResolver.Resolve("cuda", plugins, _ctx));
+        var ex = Assert.Throws<InvalidOperationException>(() => TrainingEngineResolver.Resolve("ilgpu", plugins, _ctx));
 
         Assert.Contains("does not provide a training engine", ex.Message);
     }
 
     [Fact]
-    public void FactoryDeclines_Throws_WithItsReason()
+    public void FactoryDeclines_ThrowsAcceleratorUnavailable_WithItsReason()
     {
-        var plugins = new List<IAcceleratorPlugin> { new Plugin("cuda", new Factory(_ => (null, "MoE layers are not supported"))) };
+        var plugins = new List<IAcceleratorPlugin> { new Plugin("ilgpu", new Factory(_ => (null, "MoE layers are not supported"))) };
 
-        var ex = Assert.Throws<InvalidOperationException>(() => TrainingEngineResolver.Resolve("cuda", plugins, _ctx));
+        // The declined case is the consent-dialog signal: a subtype of InvalidOperationException
+        // carrying the factory's reason, so the CUI knows to offer the picker rather than fail hard.
+        var ex = Assert.Throws<AcceleratorUnavailableException>(() => TrainingEngineResolver.Resolve("ilgpu", plugins, _ctx));
 
         Assert.Contains("MoE layers are not supported", ex.Message);
+        Assert.Equal("MoE layers are not supported", ex.Reason);
     }
 
     [Fact]
     public void FactoryThrows_Throws_AttributedToThePlugin_WithTheOriginalAsInnerException()
     {
         var thrown = new InvalidOperationException("driver not found");
-        var plugins = new List<IAcceleratorPlugin> { new Plugin("cuda", new Factory(_ => throw thrown)) };
+        var plugins = new List<IAcceleratorPlugin> { new Plugin("ilgpu", new Factory(_ => throw thrown)) };
 
-        var ex = Assert.Throws<InvalidOperationException>(() => TrainingEngineResolver.Resolve("cuda", plugins, _ctx));
+        var ex = Assert.Throws<InvalidOperationException>(() => TrainingEngineResolver.Resolve("ilgpu", plugins, _ctx));
 
-        Assert.Contains("cuda", ex.Message);
+        Assert.Contains("ilgpu", ex.Message);
         Assert.Contains("driver not found", ex.Message);
         Assert.Same(thrown, ex.InnerException);
     }

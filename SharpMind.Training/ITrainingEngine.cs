@@ -12,6 +12,14 @@ namespace SharpMind.Training;
 /// </summary>
 public interface ITrainingEngine : IDisposable
 {
+    /// <summary>
+    /// What the engine actually runs on, for the UI: e.g. <c>"CPU"</c>, or a device string like
+    /// <c>"[Cuda] GeForce GTX 1060, 6144 MB, cuBLAS 12.8"</c> (ILGPU <c>GpuDevice.Description</c>).
+    /// Shown on the training-progress screen so OpenCL vs. ILGPU-CUDA vs. cuBLAS vs. CPU is always
+    /// visible.
+    /// </summary>
+    string Description { get; }
+
     /// <summary>Runs forward and backward for <paramref name="batch"/>; returns the mean loss.</summary>
     float ForwardBackward(TrainingBatch batch, CancellationToken cancellationToken = default);
 }

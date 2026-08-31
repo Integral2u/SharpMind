@@ -19,7 +19,10 @@ namespace SharpMind.Core.Plugins;
 /// </summary>
 public interface IAcceleratorPlugin
 {
-    /// <summary>Stable identifier ("cuda", "ilgpu"); shown in the CUI and stored in training jobs. Case-insensitive.</summary>
+    /// <summary>
+    /// Stable identifier ("ilgpu"); shown in the CUI and stored in training jobs. Case-insensitive.
+    /// See <see cref="AcceleratorNames"/> for legacy-alias handling when a name is later renamed.
+    /// </summary>
     string Name { get; }
 
     /// <summary>One line for humans: backend, requirements, what it accelerates.</summary>

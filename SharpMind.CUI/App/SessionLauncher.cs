@@ -1,5 +1,6 @@
 ﻿using SharpMind.Core;
 using SharpMind.Core.AgentTools;
+using SharpMind.Core.Plugins;
 using SharpMind.Core.Quantization;
 using SharpMind.Inference;
 using SharpMind.Inference.Agent;
@@ -30,6 +31,8 @@ public sealed class LoadedModel
     public required Tokenizer Tokenizer { get; init; }
     public required ModelMetaData Meta { get; init; }
     public required HardwareTier HardwareTier { get; init; }
+    /// <summary>Architecture/kernel config the model was built with — needed by accelerator engines to pick matching kernels.</summary>
+    public required SharpMindConfig Config { get; init; }
     public int RefCount;
 }
 
@@ -68,6 +71,21 @@ public sealed class LaunchResult
     public List<string> Warnings { get; init; } = [];
     public string? Error { get; init; }
     public bool Success => Error is null && (Session is not null || IsDebugMode);
+
+    /// <summary>
+    /// The backend actually used for inference, for the chat status sidebar — e.g. <c>"CPU"</c>
+    /// (the default, no accelerator) or a device string like <c>"[Cuda] GTX 1060, cuBLAS 12.8"</c>
+    /// (the resolved engine's <see cref="IInferenceEngine.Description"/>).
+    /// </summary>
+    public string? EngineDescription { get; init; }
+
+    /// <summary>
+    /// Set when the requested accelerator exists but its engine factory declined (no device,
+    /// unsupported shape): the factory's human-readable reason. When present the caller should show
+    /// <see cref="AcceleratorPicker"/> (CPU + other capable plugins) rather than treating it as a
+    /// hard launch failure. <see cref="Success"/> stays false; there is no <see cref="Session"/>.
+    /// </summary>
+    public string? AcceleratorRefusal { get; init; }
 
     /// <summary>
     /// True when GeneratorStrategy.UIDebug was selected. In this case Session
@@ -179,7 +197,8 @@ public static class SessionLauncher
                 Model = model,
                 Tokenizer = tokenizer,
                 Meta = meta,
-                HardwareTier = sharpConfig.ResolvedHardware
+                HardwareTier = sharpConfig.ResolvedHardware,
+                Config = sharpConfig
             }
         };
     }
@@ -224,7 +243,7 @@ public static class SessionLauncher
     }
 
     /// <summary>The cheap phase: build a ChatSession (or a debug bridge context) on top of an already-loaded model.</summary>
-    public static LaunchResult BuildSession(SessionOptions options, LoadedModel? loaded, Func<ToolPermissionContext, Task<ToolPermission>>? permissions, EmbeddedPluginInfo? embedded = null)
+    public static LaunchResult BuildSession(SessionOptions options, LoadedModel? loaded, Func<ToolPermissionContext, Task<ToolPermission>>? permissions, EmbeddedPluginInfo? embedded = null, string? pluginsFolder = null)
     {
         var warnings = new List<string>();
 
@@ -388,15 +407,40 @@ public static class SessionLauncher
 
 
         IChatSession session;
+        IInferenceEngine? engine = null;
         try
         {
+            // Resolve an accelerator-backed inference engine when the session asks for one.
+            // Mirrors the training path (TrainRunner): plugins are scanned from the plugins
+            // folder and the choice is honoured or the launch fails — never a silent CPU fallback.
+            if (!string.IsNullOrWhiteSpace(options.InferenceAccelerator))
+            {
+                if (string.IsNullOrWhiteSpace(pluginsFolder))
+                    throw new InvalidOperationException(
+                        "No accelerator plugins folder is configured; cannot resolve inference accelerator "
+                        + $"'{options.InferenceAccelerator}'.");
+                var accelerators = AcceleratorLoader.LoadFrom(pluginsFolder, out _);
+                int maxCache = ModelConfig.ComputeMaxCacheLength(loaded.Model.Config);
+                engine = InferenceEngineResolver.Resolve(options.InferenceAccelerator, accelerators,
+                    new InferenceEngineContext(loaded.Model, loaded.Config, maxCache));
+            }
+
             session = ChatSessionFactory.CreateChatSession(
                 generatorBuilderDef, cacheBuilder, loaded.Model, loaded.Tokenizer, loaded.Meta, agentBuilder,
                 preProcessor: preProcessor, postProcessor: postProcessor, progress: null, permissions: permissions, formatter: formatter,
-                seed: options.Sampling.Seed);
+                seed: options.Sampling.Seed, engine: engine);
+        }
+        catch (AcceleratorUnavailableException ex)
+        {
+            // The chosen accelerator exists but can't run here (no device / unsupported shape).
+            // Don't fail the launch — the caller shows a consent picker offering the CPU and any
+            // other plug-in that can do the job, then re-runs BuildSession with the choice.
+            engine?.Dispose();
+            return new LaunchResult { AcceleratorRefusal = ex.Reason, Warnings = warnings };
         }
         catch (Exception ex)
         {
+            engine?.Dispose();
             return new LaunchResult { Error = $"Failed to start session with {options.Generator}/{options.Cache}: {ex.Message}", Warnings = warnings };
         }
 
@@ -435,7 +479,7 @@ public static class SessionLauncher
         if (options.Generation.StopTokenIds.Count > 0)
             session.StopTokenIds = options.Generation.StopTokenIds;
 
-        return new LaunchResult { Session = session, Agent = agentBuilder, CuiContext = cuiContext, Warnings = warnings };
+        return new LaunchResult { Session = session, Agent = agentBuilder, CuiContext = cuiContext, Warnings = warnings, EngineDescription = engine?.Description ?? InferenceEngineResolver.CpuName };
     }
 
     /// <summary>Discovers all tools that would be registered for the given options, ignoring the disabled set.</summary>

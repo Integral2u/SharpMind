@@ -57,6 +57,16 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     /// </summary>
     internal Action<double>? PrefillProgress { get; set; }
     private readonly IKVCache[]? _caches;
+    /// <summary>
+    /// Optional accelerator-backed inference engine. When present,
+    /// <see cref="InitializeChat"/> builds an <see cref="EngineGenerator{K}"/> around it
+    /// instead of the generic builder, and session snapshots round-trip through the
+    /// engine's whole-cache <see cref="IInferenceEngine.ExportCache"/>/
+    /// <see cref="IInferenceEngine.ImportCache"/> APIs. Ownership follows the generator:
+    /// <see cref="EngineGenerator{T}.Dispose"/> disposes the engine.
+    /// </summary>
+    private readonly IInferenceEngine? _engine;
+    private readonly bool _hasEngine;
 
     /// <summary>
     /// Resolves the live KV cache array — either the explicitly-passed
@@ -147,7 +157,8 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         IChatPromptFormatter? formatter = null,
         int? seed = null,
         bool disposeModel = false,
-        int? maxCacheLen = null)
+        int? maxCacheLen = null,
+        IInferenceEngine? engine = null)
     {
         ArgumentNullException.ThrowIfNull(tokenizer);
         ArgumentNullException.ThrowIfNull(model);
@@ -159,6 +170,8 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         _postProcessor = postProcessor;
         _progress = progress;
         _caches = caches;
+        _engine = engine;
+        _hasEngine = engine is not null;
         _seed = seed;
         _disposeModel = disposeModel;
         MaxAgentDepth = _agentBuilder?.MaxAgentDepth ?? 2;
@@ -181,7 +194,9 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         progress?.Report(0.08f);
 
         progress?.Report(0.10f);
-        _generator = new T().CreateGenerator(_model, _tokenizer, _addBos, _addEos, _caches, _seed, _maxCacheLen);
+        _generator = _engine is null
+            ? new T().CreateGenerator(_model, _tokenizer, _addBos, _addEos, _caches, _seed, _maxCacheLen)
+            : new EngineGenerator<K>(_engine, _tokenizer, _addBos, _addEos, _model.Config.NumLayers, _seed);
         ArgumentNullException.ThrowIfNull(_generator);
         // Chunked-prefill progress: queued on the calling thread during the
         // generator's synchronous prefill phase, then drained into
@@ -233,14 +248,22 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         if (_pendingKvCacheSnapshot is { } cached)
         {
             string currentHash = KVCacheSnapshot.HashPromptTokens(promptToks);
+            bool shapeMatches = _hasEngine
+                ? cached.Layers.Count == _model.Config.NumLayers
+                : cached.Layers.Count == (ActiveCaches?.Length ?? 0);
             if (string.Equals(currentHash, cached.PromptHash, StringComparison.OrdinalIgnoreCase)
-                && cached.Layers.Count == (ActiveCaches?.Length ?? 0))
+                && shapeMatches)
             {
                 PrefillProgress?.Invoke(1.0);
                 _generator!.ResetCache();
-                var ac = ActiveCaches!;
-                for (int i = 0; i < ac.Length && i < cached.Layers.Count; i++)
-                    ac[i].RestoreBytes(cached.Layers[i]);
+                if (_hasEngine && _engine is not null)
+                    _engine.ImportCache(cached);
+                else
+                {
+                    var ac = ActiveCaches!;
+                    for (int i = 0; i < ac.Length && i < cached.Layers.Count; i++)
+                        ac[i].RestoreBytes(cached.Layers[i]);
+                }
                 _generator!.SetCacheTokens(promptToks);
                 _pendingKvCacheSnapshot = null;
                 return;
@@ -1275,7 +1298,13 @@ private void ThrowIfDisposed()
         ThrowIfDisposed();
         KVCacheSnapshot? kvCache = null;
         var cacheTokens = _generator?.CacheTokens;
-        if (ActiveCaches is { Length: > 0 } ac && cacheTokens is not null && cacheTokens.Count > 0)
+        if (_hasEngine && _engine is not null && cacheTokens is not null && cacheTokens.Count > 0)
+        {
+            // Engine-backed caches have no per-layer host blob (EngineKVCacheView throws);
+            // the whole-engine snapshot is the engine's own responsibility.
+            kvCache = _engine.ExportCache([.. cacheTokens]);
+        }
+        else if (ActiveCaches is { Length: > 0 } ac && cacheTokens is not null && cacheTokens.Count > 0)
         {
             var layers = new List<byte[]>();
             bool anyData = false;

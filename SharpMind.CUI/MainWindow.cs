@@ -963,7 +963,36 @@ public sealed class MainWindow : Window
         {
             var embedded = SessionLauncher.LoadEmbeddedPlugins(launchOptions.ModelPath);
             var gate = new PermissionGate();
-            var result = SessionLauncher.BuildSession(launchOptions, loaded, gate.BuildCallback(launchOptions, embedded?.ToolNames), embedded);
+
+            LaunchResult result;
+            while (true)
+            {
+                result = SessionLauncher.BuildSession(launchOptions, loaded, gate.BuildCallback(launchOptions, embedded?.ToolNames), embedded, _settings.PluginsFolder);
+
+                // The named accelerator exists but can't run here (no device, unsupported shape):
+                // ask the user how to proceed (CPU or another capable plugin) instead of failing the
+                // launch — or, worse, silently dropping them onto the CPU. Cancel aborts the launch.
+                if (result.AcceleratorRefusal is not null)
+                {
+                    var accelerators = SharpMind.Core.Plugins.AcceleratorLoader.LoadFrom(_settings.PluginsFolder, out _);
+                    var picked = AcceleratorPicker.Show(
+                        launchOptions.InferenceAccelerator?.Trim() ?? "",
+                        result.AcceleratorRefusal,
+                        accelerators,
+                        typeof(IInferenceEngineFactory));
+                    if (picked is null)
+                    {
+                        ShowOptions();
+                        return;
+                    }
+                    // Persist the choice under its canonical name (CPU maps to null) and retry.
+                    launchOptions.InferenceAccelerator = picked.Equals(InferenceEngineResolver.CpuName, StringComparison.OrdinalIgnoreCase)
+                        ? null
+                        : picked;
+                    continue;
+                }
+                break;
+            }
 
             if (!result.Success)
             {
@@ -1029,7 +1058,7 @@ public sealed class MainWindow : Window
             SaveLastUsedOptions(launchOptions, session?.GetSnapshot());
 
             string displayName = result.IsDebugMode ? $"{launchOptions.AgentName} [DEBUG]" : launchOptions.AgentName;
-            var chatView = new ChatView(displayName, launchOptions, bridge, result.CuiContext, onExit: ShowSessionManager);
+            var chatView = new ChatView(displayName, launchOptions, bridge, result.CuiContext, onExit: ShowSessionManager, engineDescription: result.EngineDescription);
 
             var state = new ChatSessionState
             {

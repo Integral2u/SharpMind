@@ -47,6 +47,9 @@ public sealed class ChatView : View
     private readonly Label _enableThinkingLabel;
     private readonly Label _modelLabel;
 
+    /// <summary>Which backend is doing inference (e.g. "CPU", "[Cuda] ..., cuBLAS 12.8") — from the resolved engine.</summary>
+    private readonly string _engineDescription;
+
     private readonly System.Text.StringBuilder _liveResponse = new();
     private readonly System.Text.StringBuilder _liveThinking = new();
     private readonly System.Text.StringBuilder _subAgentBuffer = new();
@@ -65,7 +68,7 @@ public sealed class ChatView : View
     private float? _lastTokensPerSecond;
     private float? _lastTimeToFirstToken;
 
-    public ChatView(string agentName, SessionOptions options, IChatBridge bridge, CuiToolContext? cuiContext, Action onExit, Action<bool>? onGeneratingChanged = null)
+    public ChatView(string agentName, SessionOptions options, IChatBridge bridge, CuiToolContext? cuiContext, Action onExit, Action<bool>? onGeneratingChanged = null, string? engineDescription = null)
     {
         AgentName = agentName;
         SessionDisplayName = agentName;
@@ -73,6 +76,7 @@ public sealed class ChatView : View
         _cuiContext = cuiContext;
         _onExit = onExit;
         _onGeneratingChanged = onGeneratingChanged;
+        _engineDescription = engineDescription ?? "CPU";
 
         int sidebarWidth = 34;
 
@@ -124,15 +128,15 @@ public sealed class ChatView : View
         string formatterDisplay = SanitizeFormatterName(bridge.Formatter is { } fmt
             ? fmt.GetType().Name
             : options.Formatter.ToString());
-        _strategyLabel = new Label($"Generator: {options.Generator}\nKV Cache: {options.Cache}\nFormatting:{formatterDisplay}\nHW Tier: {hwDisplay}")
-        { X = 0, Y = 4, Width = Dim.Fill(), Height = 4 };
-        _toolLabel = new Label("Tool: none") { X = 0, Y = 8, Width = Dim.Fill() };
+        _strategyLabel = new Label($"Generator: {options.Generator}\nKV Cache: {options.Cache}\nFormatting:{formatterDisplay}\nHW Tier: {hwDisplay}\nAccelerator: {_engineDescription}")
+        { X = 0, Y = 4, Width = Dim.Fill(), Height = 5 };
+        _toolLabel = new Label("Tool: none") { X = 0, Y = 9, Width = Dim.Fill() };
 
-        _showThinkingLabel = new Label("Show: on") { X = 2, Y = 10, Width = Dim.Fill() };
-        _enableThinkingLabel = new Label("Enable: off") { X = 2, Y = 11, Width = Dim.Fill() };
-        _speedLabel = new Label("--") { X = 0, Y = 13, Width = Dim.Fill() };
-        _ttftLabel = new Label("--") { X = 0, Y = 15, Width = Dim.Fill() };
-        _memLabel = new Label(FormatMemory()) { X = 0, Y = 17, Width = Dim.Fill(), Height = 3 };
+        _showThinkingLabel = new Label("Show: on") { X = 2, Y = 11, Width = Dim.Fill() };
+        _enableThinkingLabel = new Label("Enable: off") { X = 2, Y = 12, Width = Dim.Fill() };
+        _speedLabel = new Label("--") { X = 0, Y = 14, Width = Dim.Fill() };
+        _ttftLabel = new Label("--") { X = 0, Y = 16, Width = Dim.Fill() };
+        _memLabel = new Label(FormatMemory()) { X = 0, Y = 18, Width = Dim.Fill(), Height = 3 };
 
         // Model name (extension stripped) pinned to the sidebar's bottom row so
         // it stays visible even on short terminals; UIDebug sessions have no file.
@@ -148,11 +152,11 @@ public sealed class ChatView : View
             new Label("Agent:") { X = 0, Y = 2 }, _agentLabel,
             new Label("Strategy:") { X = 0, Y = 3 }, _strategyLabel,
             _toolLabel,
-            new Label("Thinking:") { X = 0, Y = 9 },
+            new Label("Thinking:") { X = 0, Y = 10 },
             _showThinkingLabel,
             _enableThinkingLabel,
-            new Label("Speed:") { X = 0, Y = 12 }, _speedLabel,
-            new Label("Time to 1st tok:") { X = 0, Y = 14 }, _ttftLabel,
+            new Label("Speed:") { X = 0, Y = 13 }, _speedLabel,
+            new Label("Time to 1st tok:") { X = 0, Y = 15 }, _ttftLabel,
             _memLabel,
             _modelLabel);
 

@@ -17,6 +17,9 @@ public sealed class CpuTrainingEngine : ITrainingEngine
     private readonly ILoss<int>     _loss;
     private readonly BackpropEngine _engine;
 
+    /// <summary>The backend this engine runs on — always the CPU for the reference engine.</summary>
+    public string Description => "CPU";
+
     public CpuTrainingEngine(Transformer model, GradientMapping mapping, IReadOnlyList<Parameter> parameters, SharpMindConfig config, ILoss<int> loss)
     {
         ArgumentNullException.ThrowIfNull(model);

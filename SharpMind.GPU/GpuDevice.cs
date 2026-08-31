@@ -60,6 +60,40 @@ public sealed class GpuDevice : IDisposable
 
     public string Description { get; }
 
+    private static readonly Lock _hintLock = new();
+    private static string? _backendHint;
+
+    /// <summary>
+    /// Cached, non-owning, side-effect-free probe describing which backend <see cref="Create"/>
+    /// would pick on this machine — <c>"OpenCL"</c>, <c>"CUDA · cuBLAS"</c>, <c>"CUDA"</c>, or
+    /// <c>null</c> when only the CPU fallback is possible (which the plugin path refuses anyway).
+    /// The options screen appends this to the GPU plugin's label so the user sees what the ILGPU
+    /// path would actually run, not just a bare plugin name.
+    /// </summary>
+    public static string? BackendHint()
+    {
+        if (_backendHint is not null) return _backendHint.Length == 0 ? null : _backendHint;
+        lock (_hintLock)
+        {
+            if (_backendHint is not null) return _backendHint.Length == 0 ? null : _backendHint;
+            string? hint = null;
+            try
+            {
+                using var ctx = Context.Create(b => b.Default().EnableAlgorithms());
+                if (ctx.GetCudaDevices().Count > 0)
+                    hint = NativeResolver.CublasAvailable() ? "CUDA · cuBLAS" : "CUDA";
+                else if (ctx.GetCLDevices().Count > 0)
+                    hint = "OpenCL";
+            }
+            catch
+            {
+                hint = null;
+            }
+            _backendHint = hint ?? "";
+            return hint;
+        }
+    }
+
     public static GpuDevice Create(bool preferCpu = false)
     {
         // EnableAlgorithms is REQUIRED on the CUDA backend: XMath's Exp/Log/Sqrt/Tanh
@@ -91,7 +125,8 @@ public sealed class GpuDevice : IDisposable
     /// The plugin path needs that question answered rather than signalled: the host turns the
     /// reason into the message the user reads, and must never fall back silently.
     ///
-    /// Unlike <see cref="Create"/> this refuses ILGPU's CPU accelerator. A plugin named "cuda"
+    /// Unlike <see cref="Create"/> this refuses ILGPU's CPU accelerator. A plugin requesting a
+    /// device (the "ilgpu"/"cuda" accelerator plugin)
     /// quietly executing on the CPU would be slower than the CPU engine it displaced, and the
     /// user asked for a GPU.
     /// </summary>
@@ -204,6 +239,8 @@ public sealed class GpuDevice : IDisposable
     public void Synchronize() => Accelerator.Synchronize();
 
     internal DeviceIntBuffer UploadInts(int[] host) => new(Accelerator, host);
+
+    internal DeviceIntBuffer UploadInts(ReadOnlySpan<int> host) => new(Accelerator, host.ToArray());
 
     public void Dispose()
     {

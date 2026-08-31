@@ -17,6 +17,7 @@ internal sealed class CountingEngine : ITrainingEngine
 {
     public int Calls { get; private set; }
     public bool Disposed { get; private set; }
+    public string Description => "CPU";
     public float ForwardBackward(TrainingBatch batch, CancellationToken cancellationToken = default)
     {
         Calls++;

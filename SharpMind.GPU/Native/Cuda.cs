@@ -75,4 +75,20 @@ internal static class NativeResolver
             if (NativeLibrary.TryLoad(c, out var h)) return h;
         return IntPtr.Zero;
     }
+
+    /// <summary>
+    /// Cheap, side-effect-free probe: is a usable cuBLAS library present? Used by the options
+    /// screen to describe what the ILGPU path would run (e.g. "CUDA · cuBLAS" vs bare "CUDA").
+    /// Mirrors <see cref="CublasCandidates"/> exactly, so it agrees with what
+    /// <see cref="Install"/> would actually resolve.
+    /// </summary>
+    internal static bool CublasAvailable()
+    {
+        foreach (var c in CublasCandidates)
+        {
+            try { if (NativeLibrary.TryLoad(c, out var h) && h != IntPtr.Zero) return true; }
+            catch { /* ignore a single bad candidate */ }
+        }
+        return false;
+    }
 }

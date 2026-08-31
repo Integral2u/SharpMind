@@ -100,10 +100,12 @@ public sealed class TrainingWizardView : View
     {
         _settings = settings;
         AcceleratorLabelsArr =
-        [
-            SharpMind.Training.TrainingEngineResolver.CpuName,
-            .. SharpMind.Core.Plugins.AcceleratorLoader.LoadFrom(settings.PluginsFolder, out _).Select(p => p.Name),
-        ];
+
+            // "CPU" + every discovered plugin that actually offers a training engine
+            // (ITrainingEngineFactory), so a plugin that can't train doesn't appear selectable.
+            // Legacy names (e.g. stored "cuda" -> "ilgpu") are resolved to the right row via
+            // AcceleratorSelector.IndexFor and rewritten to the canonical name on save.
+            SharpMind.CUI.App.AcceleratorSelector.LabelNames(settings.PluginsFolder, typeof(SharpMind.Training.ITrainingEngineFactory));
         _job = job ?? NewJob(settings);
         _onStart = onStart;
         _onCancel = onCancel;
@@ -297,7 +299,7 @@ public sealed class TrainingWizardView : View
 
         _acceleratorRadio = new RadioGroup([.. AcceleratorLabelsArr.Select(a => (ustring)a)])
         {
-            X = 30, Y = row, SelectedItem = IndexOf(AcceleratorLabelsArr, _job.Accelerator),
+            X = 30, Y = row, SelectedItem = SharpMind.CUI.App.AcceleratorSelector.IndexFor(AcceleratorLabelsArr, _job.Accelerator),
         };
         _acceleratorRadio.SelectedItemChanged += (a) =>
             _job.Accelerator = AcceleratorForSelection(AcceleratorLabelsArr, a.SelectedItem, !_updatingAccelerator, _job.Accelerator);
@@ -484,7 +486,7 @@ public sealed class TrainingWizardView : View
         _updatingAccelerator = true;
         try
         {
-            _acceleratorRadio.SelectedItem = IndexOf(AcceleratorLabelsArr, _job.Accelerator);
+            _acceleratorRadio.SelectedItem = SharpMind.CUI.App.AcceleratorSelector.IndexFor(AcceleratorLabelsArr, _job.Accelerator);
         }
         finally
         {
@@ -593,7 +595,7 @@ public sealed class TrainingWizardView : View
     /// any other index to that label.
     /// </summary>
     internal static string? AcceleratorForSelection(string[] labels, int selectedIndex, bool isUserChange, string? currentValue)
-        => !isUserChange ? currentValue : selectedIndex <= 0 ? null : labels[selectedIndex];
+        => !isUserChange ? currentValue : selectedIndex <= 0 ? null : SharpMind.CUI.App.AcceleratorSelector.ValueOf(labels[selectedIndex]);
 
     /// <summary>Index into <see cref="AttentionLabelsArr"/> (0 = auto/derived).</summary>
     private static int AttentionIndexOf(TrainJobSettings job)

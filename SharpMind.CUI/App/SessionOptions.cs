@@ -111,6 +111,15 @@ public sealed class SessionOptions
     public GeneratorStrategy Generator { get; set; } = GeneratorStrategy.Standard;
     public CacheStrategy Cache { get; set; } = CacheStrategy.Standard;
 
+    /// <summary>
+    /// Inference accelerator plugin name (<see cref="SharpMind.Core.Plugins.IAcceleratorPlugin.Name"/>,
+    /// case-insensitive; null or "CPU" = CPU). Mirrors <see cref="App.TrainJobSettings.Accelerator"/>
+    /// for training. Resolved against the plugins folder by
+    /// <see cref="SharpMind.Inference.InferenceEngineResolver"/> at session launch; a name that
+    /// cannot be honoured fails the launch instead of silently falling back to the CPU.
+    /// </summary>
+    public string? InferenceAccelerator { get; set; }
+
     public FormatterStrategy Formatter { get; set; } = FormatterStrategy.Auto;
     /// <summary>How model weights are loaded — Full (all at once, shared) or Streaming (per-layer, isolated).</summary>
     public LoadMode LoadMode { get; set; } = LoadMode.Full;
@@ -229,6 +238,7 @@ public sealed class SessionOptions
         target.ToolsFolder = ToolsFolder;
         target.Generator = Generator;
         target.Cache = Cache;
+        target.InferenceAccelerator = InferenceAccelerator;
         target.Formatter = Formatter;
         target.LoadMode = LoadMode;
         target.HardwareTier = HardwareTier;

@@ -15,7 +15,7 @@ namespace SharpMind.Inference;
 /// <c>OutOfMemoryException</c> then travelled up to ChatSession's catch-all and
 /// surfaced as an empty reply with no stream at all.
 /// </summary>
-internal static class Prefill
+public static class Prefill
 {
     /// <summary>
     /// Maximum prompt tokens fed to a single <see cref="Transformer.ForwardLastLogits"/>

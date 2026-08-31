@@ -1,6 +1,8 @@
 using NStack;
 using SharpMind.Core;
+using SharpMind.Core.Plugins;
 using SharpMind.CUI.App;
+using SharpMind.Inference;
 using SharpMind.Inference.Agent;
 using SharpMind.Inference.Chat;
 using SharpMind.Model.Config;
@@ -16,6 +18,9 @@ public sealed class OptionsView : View
     private readonly View _formContent;
     private readonly TextField projectPathField;
     private readonly RadioGroup cacheRadio;
+    private readonly RadioGroup acceleratorRadio;
+    private readonly string[] acceleratorLabels;
+    private bool _updatingAccelerator;
     private readonly RadioGroup loadModeRadio;
     private readonly RadioGroup formatterRadio;
     private readonly RadioGroup hwRadio;
@@ -109,6 +114,18 @@ public sealed class OptionsView : View
         cacheRadio.SelectedItemChanged += (args) => _options.Cache = (CacheStrategy)args.SelectedItem;
         _formContent.Add(cacheRadio);
         row += Enum.GetValues<CacheStrategy>().Length + 1;
+
+        AddLabel("Inference accelerator:");
+        // "CPU" + every discovered plugin that actually offers an inference engine (IInferenceEngineFactory),
+        // mirroring the training wizard's Accelerator selector. A choice that can't be honoured
+        // (no such plugin, or its device can't run here) is resolved via a consent dialog at launch —
+        // never silently running on the CPU.
+        acceleratorLabels = AcceleratorSelector.LabelNames(_settings.PluginsFolder, typeof(IInferenceEngineFactory));
+        acceleratorRadio = new RadioGroup([.. acceleratorLabels.Select(a => (ustring)a)]) { X = 30, Y = row, SelectedItem = AcceleratorIndexFor(options.InferenceAccelerator) };
+        acceleratorRadio.SelectedItemChanged += (args) =>
+            _options.InferenceAccelerator = AcceleratorForSelection(acceleratorLabels, args.SelectedItem, !_updatingAccelerator, _options.InferenceAccelerator);
+        _formContent.Add(acceleratorRadio);
+        row += acceleratorLabels.Length + 1;
 
         AddLabel("Weight load mode:");
         loadModeRadio = new RadioGroup([.. Enum.GetNames<LoadMode>().Select(p => (ustring)p)]) { X = 30, Y = row, SelectedItem = (int)options.LoadMode };
@@ -373,6 +390,9 @@ public sealed class OptionsView : View
         projectPathField.Text = (ustring)options.ProjectPath ?? "";
         generatorRadio.SelectedItem = (int)options.Generator;
         cacheRadio.SelectedItem = (int)options.Cache;
+        _updatingAccelerator = true;
+        acceleratorRadio.SelectedItem = AcceleratorIndexFor(_options.InferenceAccelerator);
+        _updatingAccelerator = false;
         loadModeRadio.SelectedItem = (int)options.LoadMode;
         formatterRadio.SelectedItem = (int)options.Formatter;
         hwRadio.SelectedItem = (int)options.HardwareTier;
@@ -402,6 +422,23 @@ public sealed class OptionsView : View
             : -1;
         pluginCompactorRadio?.SelectedItem = Math.Max(0, selectedIdx);
     }
+
+    /// <summary>Index into <see cref="acceleratorLabels"/> ("CPU" + discovered plugin names) for the session's accelerator (0 = CPU/null).</summary>
+    private int AcceleratorIndexFor(string? value) => AcceleratorSelector.IndexFor(acceleratorLabels, value);
+
+    /// <summary>
+    /// What <see cref="SessionOptions.InferenceAccelerator"/> should become after the accelerator
+    /// radio reports <paramref name="selectedIndex"/> against <paramref name="labels"/> ("CPU" +
+    /// discovered plugin names). <paramref name="isUserChange"/> is <c>false</c> for the
+    /// programmatic sync in <see cref="SetOptionsFrom"/> — it keeps <paramref name="currentValue"/>
+    /// untouched, so a session whose saved accelerator names a plugin that isn't currently
+    /// discoverable survives a preset load instead of being silently reset to CPU (Terminal.Gui's
+    /// <c>RadioGroup.SelectedItem</c> setter fires <c>SelectedItemChanged</c> unconditionally, even
+    /// reasserting index 0). A real user pick maps index 0 to null (CPU) and any other index to
+    /// that label. Mirrors <c>TrainingWizardView.AcceleratorForSelection</c>.
+    /// </summary>
+    private static string? AcceleratorForSelection(string[] labels, int selectedIndex, bool isUserChange, string? currentValue)
+        => !isUserChange ? currentValue : selectedIndex <= 0 ? null : AcceleratorSelector.ValueOf(labels[selectedIndex]);
 
     /// <summary>Saves the current SessionOptions as a named preset — no model needs to be loaded, no session needs to be running. Usable purely for code/scripted launches too, since it's just the plain JSON SessionLauncher.BuildSession already consumes.</summary>
     private void SaveOptionsAs()

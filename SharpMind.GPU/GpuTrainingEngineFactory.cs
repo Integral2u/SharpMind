@@ -4,7 +4,7 @@ using SharpMind.Training;
 namespace SharpMind.GPU;
 
 /// <summary>
-/// Training capability of <see cref="CudaAcceleratorPlugin"/>.
+/// Training capability of <see cref="IlgpuAcceleratorPlugin"/>.
 ///
 /// Two conversions happen here and nowhere else. First, the device is acquired lazily:
 /// <c>IAcceleratorPlugin</c>'s lifetime contract says a plugin is constructed on every

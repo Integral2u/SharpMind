@@ -22,7 +22,7 @@ public sealed class TrainingProgressView : View
     private readonly Action _onBack;
     private readonly Action _onDetach;
 
-    private readonly CancellationTokenSource _cts = new();
+    private CancellationTokenSource _cts = new();
     private readonly Stopwatch _stopwatch = Stopwatch.StartNew();
     private readonly List<string> _log = [];
     private readonly List<double> _recentStepSeconds = [];
@@ -90,11 +90,27 @@ public sealed class TrainingProgressView : View
         Add(frame);
         _interruptButton.SetFocus();
 
-        // Kick off training on a background task; callbacks marshal to UI.
+        StartRun();
+    }
+
+    /// <summary>
+    /// Kicks off (or, after a refused accelerator was re-picked, re-kicks off) training on a
+    /// background task; callbacks marshal to UI. A fresh <see cref="CancellationTokenSource"/> per
+    /// launch so a prior run's interrupt can't poison the relaunch.
+    /// </summary>
+    private void StartRun()
+    {
+        _cts.Dispose();
+        _cts = new CancellationTokenSource();
+        _etaText = "";
+        _currentStep = 0;
+        _recentStepSeconds.Clear();
+        _result = null;
+
         var status = new Progress<string>(s => Application.MainLoop.Invoke(() => Log(s)));
         var progress = new Progress<float>(p => Application.MainLoop.Invoke(() => SetProgress(p)));
         _ = Task.Run(() => TrainRunner.RunAsync(
-                job,
+                _job,
                 _settings.PluginsFolder ?? "",
                 status,
                 progress,
@@ -216,6 +232,17 @@ public sealed class TrainingProgressView : View
     private void OnComplete(TrainRunResult result)
     {
         _stopwatch.Stop();
+
+        // The requested accelerator exists but its engine declined (no device, unsupported shape).
+        // On the UI thread, ask the user how to proceed (CPU + every other capable plugin); a pick
+        // rewrites the job's accelerator to its canonical name and relaunches. Runs on the UI thread
+        // — OnComplete is reached via Application.MainLoop.Invoke.
+        if (result.AcceleratorReason is not null)
+        {
+            HandleAcceleratorRefusal(result);
+            return;
+        }
+
         TimeSpan total = _stopwatch.Elapsed;
         _result = result;
 
@@ -254,6 +281,31 @@ public sealed class TrainingProgressView : View
         _cleanButton.Visible = _job.CheckpointDir is not null && Directory.Exists(_job.CheckpointDir);
         _backButton.Visible = true;
         SetNeedsDisplay();
+    }
+
+    /// <summary>
+    /// The chosen accelerator can't run here (no device / unsupported shape). Present the consent
+    /// picker — CPU (guaranteed) plus every plugin offering an <see cref="ITrainingEngineFactory"/> —
+    /// on the UI thread. A pick rewrites <see cref="_job"/>'s accelerator to the canonical name and
+    /// relaunches the run; cancel returns to the training options without training.
+    /// </summary>
+    private void HandleAcceleratorRefusal(TrainRunResult result)
+    {
+        string requested = result.AcceleratorRequested?.Trim() ?? "";
+        var accelerators = SharpMind.Core.Plugins.AcceleratorLoader.LoadFrom(_settings.PluginsFolder, out _);
+        string? picked = AcceleratorPicker.Show(requested, result.AcceleratorReason!, accelerators, typeof(ITrainingEngineFactory));
+
+        if (picked is null)
+        {
+            _statusLabel.Text = $"Training aborted — accelerator '{requested}' can't run here: {result.AcceleratorReason}";
+            SetNeedsDisplay();
+            _onDetach();
+            _onBack();
+            return;
+        }
+
+        _job.Accelerator = picked.Equals(AcceleratorSelector.CpuName, StringComparison.OrdinalIgnoreCase) ? null : picked;
+        StartRun();
     }
 
     private void CleanCheckpoints()

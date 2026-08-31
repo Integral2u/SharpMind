@@ -98,4 +98,19 @@ public sealed class CpuTrainingEngineTests : IDisposable
             }
         }
     }
+
+    [Fact]
+    public void Description_IsCpu()
+    {
+        // The engine-usage display contract: the CPU engine names itself "CPU" so the CUI can show
+        // which engine handled a training run.
+        var sharpConfig = SharpMindConfig.Gpt with { Hardware = HardwareTier.Scalar };
+        var mapping = GradientMappingFactory.Create(sharpConfig);
+        var (model, ps) = Model(sharpConfig);
+        using (model)
+        using (var cpu = new CpuTrainingEngine(model, mapping, ps, sharpConfig, new CrossEntropyLoss()))
+        {
+            Assert.Equal("CPU", cpu.Description);
+        }
+    }
 }
