@@ -1,5 +1,7 @@
 using SharpMind.Core;
 using SharpMind.Model;
+using SharpMind.Model.Config;
+using SharpMind.Model.Format;
 
 namespace SharpMind.Inference;
 
@@ -22,4 +24,14 @@ public sealed record InferenceEngineContext(Transformer Model, SharpMindConfig C
 public interface IInferenceEngineFactory
 {
     IInferenceEngine? TryCreate(InferenceEngineContext context, out string? reason);
+
+    /// <summary>
+    /// Metadata-only, pre-weight-load compatibility check. The host calls this once it has read a
+    /// model's headers (dtype usage, architecture config) but before materializing the weights, so
+    /// a model this engine cannot run fails fast instead of loading the whole file then refusing.
+    /// Returns null when this factory has no verdict (either it's not applicable, or the caller
+    /// should still attempt <see cref="TryCreate"/> for the authoritative per-layer gate); a
+    /// non-null string is a refusal reason the host surfaces to the user.
+    /// </summary>
+    string? CheckSupported(ModelMetaData meta, ModelConfig modelConfig, SharpMindConfig config) => null;
 }

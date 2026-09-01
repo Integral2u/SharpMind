@@ -34,23 +34,38 @@ public static class AcceleratorPicker
         var ordered = options.ToArray();
         int defaultIndex = 0; // CPU is the guaranteed-workable default
 
-        var dialog = new Dialog((ustring)$"Accelerator '{requestedName}' can't run here", 74, Math.Min(17, ordered.Length + 5));
-        var prompt = new Label((ustring)($"Reason: {OneLine(reason)}"))
-        {
-            X = 1, Y = 0, Width = Dim.Fill(2), Height = 2
-        };
+        // Layout is laid out in absolute rows (not AnchorEnd) so no two controls ever overlap:
+        // the reason text has its own height (it wraps), the option list sits below it, then the
+        // hint and the buttons. Wrapping the reason separately stops the long NotSupportedException
+        // messages from running over — and under — the button row.
+        const int width = 78;                                           // dialog width
+        int innerWidth = width - 5;                                     // usable text width inside the border
+        string reasonText = $"Reason: {(reason?.Replace('\n', ' ').Trim() ?? "unknown")}";
+        int reasonLines = WrappedLineCount(reasonText, innerWidth);     // how tall the reason box must be
+        int listRows = Math.Min(8, ordered.Length);                     // the option list (scrollable, never taller than 8)
+        int row = 0;
+
+        int dialogHeight = Math.Min(24, 2 + reasonLines + 1 + listRows + 2);
+        // If the reason is very long, cap it and let the list stay visible; the reason box scrolls.
+        reasonLines = Math.Min(reasonLines, Math.Max(3, dialogHeight - (listRows + 5)));
+
+        var dialog = new Dialog((ustring)$"Accelerator '{requestedName}' can't run here", width, dialogHeight);
+        var prompt = new TextView { ReadOnly = true, WordWrap = true, TabStop = false, X = 1, Y = 0, Width = Dim.Fill(2), Height = reasonLines };
+        prompt.Text = (ustring)reasonText;
+        row = reasonLines + 1;
         var list = new ListView(ordered.Select(o => (ustring)o.Label).ToArray())
         {
-            X = 1, Y = 3, Width = Dim.Fill(2), Height = Math.Max(3, dialog.Frame.Height - 8),
+            X = 1, Y = row, Width = Dim.Fill(2), Height = listRows,
             AllowsMarking = false
         };
         list.SelectedItem = defaultIndex;
+        row += listRows;
         var hint = new Label("Up/Down: choose   Enter: use this engine   Esc: cancel")
         {
-            X = 1, Y = Pos.AnchorEnd(3), Width = Dim.Fill(2)
+            X = 1, Y = row, Width = Dim.Fill(2)
         };
-        var ok = new Button(IsCpu(defaultIndex, ordered) ? "Use CPU" : "Use engine") { X = 1, Y = Pos.AnchorEnd(1), IsDefault = true };
-        var cancel = new Button("Cancel") { X = Pos.Right(ok) + 2, Y = Pos.AnchorEnd(1) };
+        var ok = new Button(IsCpu(defaultIndex, ordered) ? "Use CPU" : "Use engine") { X = 1, Y = row + 1, IsDefault = true };
+        var cancel = new Button("Cancel") { X = Pos.Right(ok) + 2, Y = row + 1 };
 
         string? result = null;
 
@@ -92,5 +107,33 @@ public static class AcceleratorPicker
     {
         string s = description?.Replace('\n', ' ')?.Trim() ?? "";
         return s.Length <= 48 ? s : s[..45] + "…";
+    }
+
+    /// <summary>Number of lines a string occupies when word-wrapped at <paramref name="width"/> columns
+    /// (greedy, splitting on spaces; falls back to hard-breaking a too-long word). Drives the height of
+    /// the reason box in <see cref="Show"/> so long "does not support ..." messages are fully visible
+    /// and never overlap the controls below.</summary>
+    private static int WrappedLineCount(string text, int width)
+    {
+        if (width < 2) return 1;
+        int lines = 0, col = 0;
+        foreach (var rawWord in text.Split(' '))
+        {
+            string word = string.IsNullOrEmpty(rawWord) ? "" : rawWord;
+            int w = Math.Min(word.Length, width);
+            if (lines == 0 || col == 0)
+            {
+                lines++; col = w;
+            }
+            else if (col + 1 + w <= width)
+            {
+                col += 1 + w;
+            }
+            else
+            {
+                lines++; col = w;
+            }
+        }
+        return lines > 0 ? lines : 1;
     }
 }

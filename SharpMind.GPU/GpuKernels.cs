@@ -14,15 +14,19 @@ internal sealed class GpuKernels
     private readonly Action<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, float> _rmsFwd;
     private readonly Action<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, int> _rmsBwd;
     private readonly Action<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int, int, int, float> _rope;
+    private readonly Action<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int, int, int, int, float> _ropePos;
     private readonly Action<Index1D, ArrayView<float>, ArrayView<float>, int, int> _gateFwd;
     private readonly Action<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int> _gateBwd;
     private readonly Action<Index1D, ArrayView<float>, int, float> _softmaxRow;
     private readonly Action<Index1D, ArrayView<float>, ArrayView<float>, int, float> _softmaxRowBwd;
     private readonly Action<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int, int, float> _flashFwd;
+    private readonly Action<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int, int, int, int, float> _flashFwdKvLen;
     private readonly Action<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int> _flashRowDot;
     private readonly Action<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int, int, float> _flashBwdQ;
     private readonly Action<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int, int, float> _flashBwdKv;
     private readonly Action<Index1D, ArrayView<float>, ArrayView<int>, ArrayView<float>, int, int, float, float> _ceRow;
+    private readonly Action<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<byte>, int, int, int> _q8Matmul;
+    private readonly Action<Index1D, ArrayView<float>, ArrayView<byte>, ArrayView<int>, int, int> _q8Gather;
     private float[]? _rowLossHost;
     private readonly GpuDevice _dev;
 
@@ -37,15 +41,19 @@ internal sealed class GpuKernels
         _rmsFwd = acc.LoadAutoGroupedStreamKernel<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, float>(NormKernels.RmsNormFwd);
         _rmsBwd = acc.LoadAutoGroupedStreamKernel<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, int>(NormKernels.RmsNormBwd);
         _rope = acc.LoadAutoGroupedStreamKernel<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int, int, int, float>(RopeKernels.Rope);
+        _ropePos = acc.LoadAutoGroupedStreamKernel<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int, int, int, int, float>(RopeKernels.RopePos);
         _gateFwd = acc.LoadAutoGroupedStreamKernel<Index1D, ArrayView<float>, ArrayView<float>, int, int>(GateKernels.Fwd);
         _gateBwd = acc.LoadAutoGroupedStreamKernel<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int>(GateKernels.Bwd);
         _softmaxRow = acc.LoadAutoGroupedStreamKernel<Index1D, ArrayView<float>, int, float>(AttentionKernels.SoftmaxRow);
         _softmaxRowBwd = acc.LoadAutoGroupedStreamKernel<Index1D, ArrayView<float>, ArrayView<float>, int, float>(AttentionKernels.SoftmaxRowBwd);
         _flashFwd = acc.LoadAutoGroupedStreamKernel<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int, int, float>(FlashAttentionKernels.Fwd);
+        _flashFwdKvLen = acc.LoadAutoGroupedStreamKernel<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int, int, int, int, float>(FlashAttentionKernels.FwdKvLen);
         _flashRowDot = acc.LoadAutoGroupedStreamKernel<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int>(FlashAttentionKernels.BwdRowDot);
         _flashBwdQ = acc.LoadAutoGroupedStreamKernel<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int, int, float>(FlashAttentionKernels.BwdQ);
         _flashBwdKv = acc.LoadAutoGroupedStreamKernel<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int, int, float>(FlashAttentionKernels.BwdKV);
         _ceRow = acc.LoadAutoGroupedStreamKernel<Index1D, ArrayView<float>, ArrayView<int>, ArrayView<float>, int, int, float, float>(LossKernels.CeRow);
+        _q8Matmul = acc.LoadAutoGroupedStreamKernel<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<byte>, int, int, int>(QuantMatmulKernels.Q8_0Matmul);
+        _q8Gather = acc.LoadAutoGroupedStreamKernel<Index1D, ArrayView<float>, ArrayView<byte>, ArrayView<int>, int, int>(QuantMatmulKernels.Q8_0Gather);
     }
 
     public void AddInPlace(DeviceTensor dst, DeviceTensor src) { Same(dst, src); _add(dst.Length, dst.View, src.View); }
@@ -53,6 +61,38 @@ internal sealed class GpuKernels
     public void AddBiasRows(DeviceTensor x, DeviceTensor bias) { if (bias.Length != x.Cols) throw new ArgumentException("bias length != cols"); _addBias(x.Length, x.View, bias.View, x.Cols); }
     public void Scale(DeviceTensor x, float s) => _scale(x.Length, x.View, s);
     public void EmbedGather(DeviceTensor x, DeviceTensor table, ArrayView<int> ids) { if (table.Cols != x.Cols || ids.Length != x.Rows) throw new ArgumentException("gather shapes"); _gather(x.Length, x.View, table.View, ids, x.Cols); }
+
+    /// <summary>
+    /// y[i,o] = Σ_k x[i,k]·wQ8[o,k] for a [N, K] Q8_0 matrix in raw bytes
+    /// (<see cref="QuantMatmulKernels.Q8_0Matmul"/>). One thread per output element; the
+    /// reduction order replicates the CPU <c>VecDotQ8_0_Scalar</c> oracle. Used for every block
+    /// linear (y=[m,Out], x=[m,In], w=the layer's raw weights, K=In, N=Out) and the weight-tied
+    /// LM head (y=[m,Vocab], x=[m,Hidden], w=the embedding's raw bytes, K=Hidden, N=Vocab).
+    /// </summary>
+    public void Q8_0Matmul(DeviceTensor y, DeviceTensor x, DeviceByteBuffer w, int K, int N)
+    {
+        if (x.Cols != K) throw new ArgumentException($"x cols {x.Cols} != K {K}.");
+        if (y.Rows != x.Rows || y.Cols != N) throw new ArgumentException($"y must be [{x.Rows},{N}], got [{y.Rows},{y.Cols}].");
+        int nBlocks = (K + QuantMatmulKernels.QK - 1) / QuantMatmulKernels.QK;
+        long expect = (long)N * nBlocks * QuantMatmulKernels.Q8BlockBytes;
+        if (w.Length < expect) throw new ArgumentException($"raw Q8_0 weights hold {w.Length} bytes, need {expect} for [{N},{K}].");
+        _q8Matmul(y.Length, y.View, x.View, w.View, K, N, nBlocks);
+    }
+
+    /// <summary>
+    /// x[i,d] = dequant(embedding[ids[i]][d]) from a [V, K] Q8_0 embedding table in raw bytes
+    /// (<see cref="QuantMatmulKernels.Q8_0Gather"/>). The embedding row for a token is the same
+    /// output column the LM head matmul reads, so one physical table serves both.
+    /// </summary>
+    public void EmbedGatherQ8_0(DeviceTensor x, DeviceByteBuffer table, ArrayView<int> ids, int K)
+    {
+        if (ids.Length != x.Rows) throw new ArgumentException($"ids length {ids.Length} != x rows {x.Rows}.");
+        if (x.Cols != K) throw new ArgumentException($"x cols {x.Cols} != K {K}.");
+        int nBlocks = (K + QuantMatmulKernels.QK - 1) / QuantMatmulKernels.QK;
+        long need = (long)x.Rows * nBlocks * QuantMatmulKernels.Q8BlockBytes;
+        if (table.Length < need) throw new ArgumentException($"raw Q8_0 embedding holds {table.Length} bytes, need {need} of table.");
+        _q8Gather(x.Length, x.View, table.View, ids, K, nBlocks);
+    }
     public void RmsNormFwd(DeviceTensor y, DeviceTensor rInv, DeviceTensor x, DeviceTensor w, float eps) { Same(y, x); CheckNormOperands(x, rInv, w); _rmsFwd(x.Rows, y.View, rInv.View, x.View, w.View, x.Cols, eps); }
     public void RmsNormBwd(DeviceTensor dx, DeviceTensor dy, DeviceTensor x, DeviceTensor rInv, DeviceTensor w) { Same(dx, dy); Same(dx, x); CheckNormOperands(x, rInv, w); _rmsBwd(x.Rows, dx.View, dy.View, x.View, rInv.View, w.View, x.Cols); }
 
@@ -66,6 +106,21 @@ internal sealed class GpuKernels
     {
         CheckRopeOperands(x, cos, sin, seqLen, numHeads, headDim, ropeDim);
         _rope(x.Rows * numHeads * (ropeDim / 2), x.View, cos.View, sin.View, seqLen, numHeads, headDim, ropeDim, neox ? 1 : 0, -1f);
+    }
+
+    /// <summary>
+    /// Position-offset forward RoPE: rows are rotated at absolute positions [pos0, pos0+seqLen)
+    /// instead of [0, seqLen). <paramref name="x"/> has <paramref name="seqLen"/> rows; cos/sin
+    /// are the full [MaxSeqLen, ropeDim/2] tables. Inference decode and continued prefill rotate
+    /// a fresh row at <c>pos0 = cache length</c>. No inverse variant (no backward in inference).
+    /// </summary>
+    public void RopeFwdPos(DeviceTensor x, DeviceTensor cos, DeviceTensor sin, int seqLen, int pos0, int numHeads, int headDim, int ropeDim, bool neox)
+    {
+        CheckRopeOperands(x, cos, sin, seqLen, numHeads, headDim, ropeDim);
+        int pairs = ropeDim / 2;
+        if (cos.Rows < pos0 + seqLen) throw new ArgumentException($"cos rows {cos.Rows} < pos0+seqLen {pos0 + seqLen} (positions actually indexed).");
+        if (sin.Rows < pos0 + seqLen) throw new ArgumentException($"sin rows {sin.Rows} < pos0+seqLen {pos0 + seqLen} (positions actually indexed).");
+        _ropePos(x.Rows * numHeads * pairs, x.View, cos.View, sin.View, seqLen, pos0, numHeads, headDim, ropeDim, neox ? 1 : 0, 1f);
     }
 
     /// <summary>act = gate(g)·u, g/u read from fused's [M, 2F] columns (gate first, up last).</summary>
@@ -204,6 +259,33 @@ internal sealed class GpuKernels
     }
 
     /// <summary>
+    /// Positioned, KV-length-forward flash attention for inference: queries Q [qLen, H·D] at
+    /// absolute positions [pos0, pos0+qLen) attend the contiguous cache K/V [kvLen, kvH·D]
+    /// (kvLen = pos0 + qLen) with causal mask <c>j &lt;= pos0+i</c>. Single batch. Used by decode
+    /// (<c>pos0 = c, qLen = 1, kvLen = c+1</c>) and continued prefill (<c>pos0 = c, qLen = p</c>).
+    /// Same numbers as <see cref="AttnFwdFlash"/>, no probabilities materialised; q/k post-RoPE.
+    /// </summary>
+    public void AttnFwdKvLen(DeviceTensor outp, DeviceTensor stats, DeviceTensor q, DeviceTensor k, DeviceTensor v,
+        int pos0, int qLen, int kvLen, int numHeads, int numKv, int headDim)
+    {
+        int qDim = numHeads * headDim, kvDim = numKv * headDim;
+        if (pos0 < 0 || qLen <= 0 || kvLen <= 0 || kvLen != pos0 + qLen) throw new ArgumentException($"pos0 {pos0}, qLen {qLen}, kvLen {kvLen}: need kvLen == pos0 + qLen > 0.");
+        if (numHeads % numKv != 0) throw new ArgumentException($"numHeads {numHeads} must be a multiple of numKv {numKv}.");
+        if (outp.Rows != qLen || outp.Cols != qDim) throw new ArgumentException($"outp must be [{qLen},{qDim}], got [{outp.Rows},{outp.Cols}].");
+        if (q.Rows != qLen || q.Cols != qDim) throw new ArgumentException($"q must be [{qLen},{qDim}], got [{q.Rows},{q.Cols}].");
+        if (k.Rows != kvLen || k.Cols != kvDim) throw new ArgumentException($"k must be [{kvLen},{kvDim}], got [{k.Rows},{k.Cols}].");
+        if (v.Rows != kvLen || v.Cols != kvDim) throw new ArgumentException($"v must be [{kvLen},{kvDim}], got [{v.Rows},{v.Cols}].");
+        StatsColsOrThrow(stats, qLen, numHeads);
+        // NoOverlap(outp, k/v) is deliberately omitted here: in inference the output is always an
+        // arena rent while k/v are always slices of the persistent device KV cache — two different
+        // allocations, so aliasing is impossible by construction. The generic range check would
+        // false-positive as the cache grows toward the arena's address span (larger kvLen extends
+        // the k/v view upward into the region the small arena output occupies), which is why the
+        // shared AttnFwd/AttnBwd path, where all operands share one arena, has it and this does not.
+        _flashFwdKvLen(numHeads * qLen, outp.View, stats.View, q.View, k.View, v.View, pos0, qLen, kvLen, numHeads, numKv, headDim, 1f / MathF.Sqrt(headDim));
+    }
+
+    /// <summary>
     /// Flash-style causal GQA attention backward, three launches on the in-order default stream:
     /// the row constant into <paramref name="stats"/> column 2, then dQ, then dK/dV. Each output
     /// element is written by exactly one thread, so dQ/dK/dV are overwritten rather than
@@ -307,6 +389,13 @@ internal sealed class GpuKernels
     {
         int rows = batch * numHeads * seqLen;
         if (stats.Rows != rows) throw new ArgumentException($"stats rows {stats.Rows} != batch*numHeads*seqLen {rows}.");
+        if (stats.Cols != Kernels.FlashAttentionKernels.StatCols) throw new ArgumentException($"stats cols {stats.Cols} != {Kernels.FlashAttentionKernels.StatCols}.");
+    }
+
+    private static void StatsColsOrThrow(DeviceTensor stats, int qLen, int numHeads)
+    {
+        int rows = numHeads * qLen;
+        if (stats.Rows != rows) throw new ArgumentException($"stats rows {stats.Rows} != numHeads*qLen {rows}.");
         if (stats.Cols != Kernels.FlashAttentionKernels.StatCols) throw new ArgumentException($"stats cols {stats.Cols} != {Kernels.FlashAttentionKernels.StatCols}.");
     }
 

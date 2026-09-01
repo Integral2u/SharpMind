@@ -1,3 +1,4 @@
+using SharpMind.Core.Quantization;
 using SharpMind.Core.Training;
 using SharpMind.Model.Layers;
 
@@ -19,6 +20,8 @@ internal sealed class GpuLinear : IDisposable
     private readonly GpuDevice _dev;
     private readonly DeviceBuffer _w;
     private readonly DeviceBuffer? _bias;
+    private readonly DeviceByteBuffer? _rawW;
+    private readonly bool _q8_0;
     private readonly DeviceBuffer? _a, _b, _dA, _dB;
     private readonly Parameter? _pA, _pB;
     private readonly float _scale;
@@ -40,7 +43,24 @@ internal sealed class GpuLinear : IDisposable
         var owned = new List<IDisposable>();
         try
         {
-            _w = DeviceBuffer.From(device, layer.Weight); owned.Add(_w);
+            // A quantized-resident layer (the standard chat loader's InferenceLinearLayer) holds its
+            // real weights as GGUF raw bytes: layer.Weight is only a tiny [In,1] place-holder, so the
+            // F32 GEMM below would read far past it — the "B holds N floats, GEMM needs M" crash.
+            // Upload the raw bytes and run the on-device Q8_0 dequant matmul instead. F32 raw data
+            // (InferenceLinearLayer with QuantDtype.F32) is just a full float weight and takes the
+            // ordinary path. Only Q8_0 has a GPU kernel in this engine; ValidateSupported refuses the rest.
+            if (layer is InferenceLinearLayer inf && inf.RawQuantizedData is not null)
+            {
+                if (inf.QuantDtype != QuantDType.Q8_0)
+                    throw new NotSupportedException($"{layer.Name}: GPU inference supports Q8_0 quantized weights, got {inf.QuantDtype}.");
+                _q8_0 = true;
+                _rawW = new DeviceByteBuffer(device.Accelerator, inf.RawQuantizedData); owned.Add(_rawW);
+                _w = DeviceBuffer.From(device, layer.Weight); owned.Add(_w);
+            }
+            else
+            {
+                _w = DeviceBuffer.From(device, layer.Weight); owned.Add(_w);
+            }
             if (layer.Bias is { } bias) { _bias = DeviceBuffer.From(device, bias); owned.Add(_bias); }
             if (layer is TrainingLinearLayer { HasLoRA: true } t)
             {
@@ -97,7 +117,8 @@ internal sealed class GpuLinear : IDisposable
         int m = x.Rows;
         Check(x, m, In, "x"); Check(y, m, Out, "y");
         GpuKernels.NoOverlap(y, x, "y", "x");
-        _dev.Gemm(y, x, _w.Tensor, m, Out, In, saI: In, saK: 1, sbK: Out, sbJ: 1);                    // y = x·W
+        if (_q8_0) _dev.Kernels.Q8_0Matmul(y, x, _rawW!, In, Out);                       // y = x·W (quantized)
+        else _dev.Gemm(y, x, _w.Tensor, m, Out, In, saI: In, saK: 1, sbK: Out, sbJ: 1);   // y = x·W
         if (_bias is not null) _dev.Kernels.AddBiasRows(y, _bias.Tensor);
         if (_a is null) return;
         _hs = arena.Rent(m, Rank);
@@ -133,5 +154,5 @@ internal sealed class GpuLinear : IDisposable
             throw new ArgumentException($"{name} must be [{rows},{cols}], got [{t.Rows},{t.Cols}].");
     }
 
-    public void Dispose() { _w.Dispose(); _bias?.Dispose(); _a?.Dispose(); _b?.Dispose(); _dA?.Dispose(); _dB?.Dispose(); }
+    public void Dispose() { _w.Dispose(); _rawW?.Dispose(); _bias?.Dispose(); _a?.Dispose(); _b?.Dispose(); _dA?.Dispose(); _dB?.Dispose(); }
 }

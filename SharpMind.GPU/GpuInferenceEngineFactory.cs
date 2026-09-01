@@ -5,9 +5,10 @@ namespace SharpMind.GPU;
 /// <summary>
 /// Inference capability of <see cref="IlgpuAcceleratorPlugin"/>. Same device-acquisition and
 /// exception-to-reason conversions as <see cref="GpuTrainingEngineFactory"/> — see its doc
-/// comment. M0 hybrid: <see cref="GpuInferenceEngine"/> accelerates the first prefill on the
-/// device and runs continued prefill/decode on the CPU; <see cref="MaxPromptTokens"/> bounds
-/// the GPU prefill's arena because the engine does not chunk long GPU prompts yet.
+/// comment. <see cref="GpuInferenceEngine"/> runs the whole forward on the device: first prefill,
+/// continued prefill, and KV-cache-efficient decode. <see cref="MaxPromptTokens"/> bounds the
+/// total continuous GPU run's arena, because the engine does not chunk long GPU prompts yet —
+/// a prompt that would push past it falls back to the CPU <see cref="SharpMind.Model.Transformer"/>.
 /// </summary>
 public sealed class GpuInferenceEngineFactory : IInferenceEngineFactory
 {

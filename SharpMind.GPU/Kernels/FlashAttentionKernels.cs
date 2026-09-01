@@ -70,6 +70,53 @@ internal static class FlashAttentionKernels
     }
 
     /// <summary>
+    /// Positioned, KV-length-forward variant of <see cref="Fwd"/> for inference, where the
+    /// key/value matrix lives in a growable cache rather than sharing the query's batch×seqLen
+    /// shape. One thread per (h, i): query rows Q[0, qLen) at absolute positions
+    /// [pos0, pos0 + qLen) attend over the contiguous K/V rows K[0, kvLen) (kvLen = pos0 + qLen)
+    /// with the causal mask <c>j &lt;= pos0 + i</c>. Single batch only.
+    ///
+    /// Decode: <c>pos0 = c</c>, <c>qLen = 1</c>, <c>kvLen = c + 1</c> — the one fresh query row at
+    /// position c attends the whole cache [0, c+1]. Continued prefill after a warm cache uses the
+    /// same call with <c>qLen = p</c>. K and V rows come from the cache tensors <c>k</c>/<c>v</c>
+    /// [kvLen, numKv·headDim]; Q has its own rows [qLen, numHeads·headDim]. The cache row for a
+    /// given position equals <c>row - pos0</c> in k/v. No probabilities are materialised.
+    /// </summary>
+    public static void FwdKvLen(Index1D idx, ArrayView<float> outp, ArrayView<float> stats,
+        ArrayView<float> q, ArrayView<float> k, ArrayView<float> v,
+        int pos0, int qLen, int kvLen, int numHeads, int numKv, int headDim, float scale)
+    {
+        int i = idx % qLen; int h = (idx / qLen) % numHeads;
+        int grp = numHeads / numKv, kvh = h / grp; int qDim = numHeads * headDim, kvDim = numKv * headDim;
+        int absPos = pos0 + i;
+        long qOff = (long)i * qDim + (long)h * headDim;
+
+        for (int d = 0; d < headDim; d++) outp[qOff + d] = 0f;
+        float m = float.NegativeInfinity, l = 0f;
+        for (int j = 0; j <= absPos && j < kvLen; j++)
+        {
+            long kvOff = (long)j * kvDim + (long)kvh * headDim;
+            float s = 0f;
+            for (int d = 0; d < headDim; d++) s += q[qOff + d] * k[kvOff + d];
+            s *= scale;
+            if (s > m)
+            {
+                float alpha = m == float.NegativeInfinity ? 0f : XMath.Exp(m - s);
+                l *= alpha;
+                for (int d = 0; d < headDim; d++) outp[qOff + d] *= alpha;
+                m = s;
+            }
+            float p = XMath.Exp(s - m);
+            l += p;
+            for (int d = 0; d < headDim; d++) outp[qOff + d] += p * v[kvOff + d];
+        }
+        float inv = 1f / l;
+        for (int d = 0; d < headDim; d++) outp[qOff + d] *= inv;
+        long st = ((long)h * qLen + i) * StatCols;
+        stats[st] = m; stats[st + 1] = l;
+    }
+
+    /// <summary>
     /// D_i = Σ_d dO[i,d]·O[i,d] into stats column 2, one thread per (b, h, i). The row constant
     /// that turns dP into dS; <see cref="AttentionKernels.BwdScores"/> forms the same quantity
     /// as <c>Σ_j dP·P</c> while it still has P to hand.

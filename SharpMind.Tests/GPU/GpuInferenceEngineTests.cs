@@ -13,11 +13,12 @@ using Xunit;
 namespace SharpMind.Tests.GPU;
 
 /// <summary>
-/// The M0 hybrid engine: GPU first-prefill that materialises a host CPU cache, then CPU
-/// continued-prefill/decode against that cache. The load-bearing assertion is that an
-/// <see cref="EngineGenerator{T}"/> backed by the engine generates the SAME greedy token
-/// sequence as a pure-CPU <see cref="StandardGenerator{T}"/> on the same model — the GPU
-/// path must never change what the model says. Runs on <see cref="GpuTestDevice.Device"/>,
+/// The GPU inference engine: the whole forward — first prefill, continued prefill, and
+/// KV-cache-efficient single-token decode — runs on the device against a persistent device
+/// K/V cache. The load-bearing assertion is that an <see cref="EngineGenerator{T}"/> backed by
+/// the engine generates the SAME greedy token sequence as a pure-CPU <see cref="StandardGenerator{T}"/>
+/// on the same model — the GPU path (including decode, which previous versions proxied on the
+/// CPU) must never change what the model says. Runs on <see cref="GpuTestDevice.Device"/>,
 /// which is ILGPU's CPU accelerator when no GPU is present, so no real hardware is needed.
 /// </summary>
 [Collection("GPU")]
@@ -166,6 +167,75 @@ public sealed class GpuInferenceEngineTests : IClassFixture<GpuInferenceEngineTe
         Assert.Equal(cpuIds, engineIds);
     }
 
+    /// <summary>A longer generation forces many single-token GPU decode steps against a device cache
+    /// that grows each step — exercising the positioned KV-cache-efficient attention on every token
+    /// beyond the first. The generated sequence must still match the pure-CPU generator one-for-one.</summary>
+    [Fact]
+    public async Task EngineGenerator_LongDecode_MatchesCpuGenerator()
+    {
+        using var engine = BuildEngine();
+        using var engineGen = new EngineGenerator<KVCacherBuilder>(engine, _tokenizer, addBos: false, addEos: false, numLayers: Cfg.NumLayers, seed: 1);
+        using var cpuGen = new StandardGenerator<KVCacherBuilder>(_model, _tokenizer, addBos: false, addEos: false, seed: 1);
+
+        var engineIds = await GreedyIds(engineGen, Prompt(), maxNew: 20);
+        var cpuIds = await GreedyIds(cpuGen, Prompt(), maxNew: 20);
+
+        Assert.NotEmpty(engineIds);
+        Assert.Equal(cpuIds, engineIds);
+
+        // Every decoded token advanced the engine's cache (prompt + generated) on device.
+        Assert.Equal(Prompt().Length + engineIds.Count, engine.CachedLength);
+    }
+
+    /// <summary>A third turn runs GPU continued prefill on top of an already GPU-decoded cache and
+    /// must still track the CPU generator, which continues from its own matching state.</summary>
+    [Fact]
+    public async Task ThirdTurn_GpuContinuedPrefill_StillMatchesCpuGenerator()
+    {
+        int[] turn1 = Prompt();
+        int[] turn3 = [73, 74, 75]; // "IJK"
+
+        using var engine = BuildEngine();
+        using var engineGen = new EngineGenerator<KVCacherBuilder>(engine, _tokenizer, addBos: false, addEos: false, numLayers: Cfg.NumLayers, seed: 1);
+        using var cpuGen = new StandardGenerator<KVCacherBuilder>(_model, _tokenizer, addBos: false, addEos: false, seed: 1);
+
+        await GreedyIds(engineGen, turn1, maxNew: 5);
+        await GreedyIds(cpuGen, turn1, maxNew: 5);
+
+        var engineTurn3 = await GreedyIds(engineGen, turn3, maxNew: 6);
+        var cpuTurn3 = await GreedyIds(cpuGen, turn3, maxNew: 6);
+
+        Assert.NotEmpty(engineTurn3);
+        Assert.Equal(cpuTurn3, engineTurn3);
+    }
+
+    /// <summary>Import restores a saved cache into a fresh engine; the next turn (GPU continued
+    /// prefill + decode against the re-synced device cache) must produce the same greedy output a
+    /// CPU generator produces from the same prompt — proving the device cache is rewritten from the
+    /// imported host cache before the GPU attention reads it.</summary>
+    [Fact]
+    public async Task ImportedCache_GpuContinuedPrefill_MatchesCpuGenerator()
+    {
+        var prompt = Prompt();
+
+        using var source = BuildEngine();
+        source.Prefill(prompt);
+        var snapshot = source.ExportCache([.. prompt]);
+
+        using var engine = BuildEngine();
+        engine.ImportCache(snapshot);
+        Assert.Equal(source.CachedLength, engine.CachedLength);
+
+        using var engineGen = new EngineGenerator<KVCacherBuilder>(engine, _tokenizer, addBos: false, addEos: false, numLayers: Cfg.NumLayers, seed: 1);
+        using var cpuGen = new StandardGenerator<KVCacherBuilder>(_model, _tokenizer, addBos: false, addEos: false, seed: 1);
+
+        var engineIds = await GreedyIds(engineGen, prompt, maxNew: 5);
+        var cpuIds = await GreedyIds(cpuGen, prompt, maxNew: 5);
+
+        Assert.NotEmpty(engineIds);
+        Assert.Equal(cpuIds, engineIds);
+    }
+
     /// <summary>Reset empties the cache so a fresh conversation starts its own GPU prefill cleanly.</summary>
     [Fact]
     public async Task Reset_ClearsCache_AndEnablesFreshGpuPrefill()
@@ -230,5 +300,21 @@ public sealed class GpuInferenceEngineTests : IClassFixture<GpuInferenceEngineTe
         Reject(SharpMindConfig.Llama with { Gate = GateKind.None, Ffn = FfnKind.Dense }, "dense");
         Reject(SharpMindConfig.ForModel(4, 4, "mixtral") with { Ffn = FfnKind.MoE }, "MoE");
         Reject(SharpMindConfig.Llama with { Norm = NormKind.LayerNorm }, "RMSNorm");
+    }
+
+    /// <summary>A model built for the standard chat loader (CreateTransformer) wires
+    /// InferenceLinearLayer whose "weight" only backs RawQuantizedData — running the GPU F32 GEMMs on
+    /// it reads far past the tensor. The engine must refuse it up front (so the picker can offer CPU)
+    /// rather than crash on the first forward, as it used to ("B holds N floats, GEMM needs M").</summary>
+    [Fact]
+    public void ValidateSupported_RejectsQuantizedResidentModel()
+    {
+        var sc = SharpMindConfig.Llama with { Hardware = HardwareTier.Scalar };
+        var weights = ModelFactory.CreateForTraining(Cfg, sc);
+        using var inference = ModelFactory.CreateTransformer(weights, sc, optimizeMemory: false);
+
+        var ex = Assert.Throws<NotSupportedException>(() => GpuInferenceEngine.ValidateSupported(inference, sc));
+        Assert.Contains("quantized", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("F32", ex.Message);
     }
 }

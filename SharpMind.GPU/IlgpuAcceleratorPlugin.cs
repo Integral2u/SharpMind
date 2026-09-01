@@ -23,9 +23,9 @@ public sealed class IlgpuAcceleratorPlugin : IAcceleratorPlugin
     public string Description =>
         "GPU training via ILGPU kernels and cuBLAS GEMMs (NVIDIA CUDA) or ILGPU OpenCL. LoRA "
         + "fine-tuning of RMSNorm + RoPE/NoPE + gated-FFN models; requires a CUDA or OpenCL "
-        + "device. Also provides GPU acceleration of the first inference prefill for the same "
-        + "model shapes, with continued prefill and decode on the CPU (no incremental GPU decode "
-        + "yet — see GpuInferenceEngine.DecodeStep).";
+        + "device. Also provides full GPU inference for the same model shapes — first prefill, "
+        + "continued prefill, and KV-cache-efficient decode all run on the device (see "
+        + "GpuInferenceEngine), falling back to the CPU only when a prompt overruns its arena.";
 
     public IReadOnlyList<object> Capabilities { get; } =
     [
