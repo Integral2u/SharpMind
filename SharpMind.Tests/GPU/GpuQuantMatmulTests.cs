@@ -301,4 +301,194 @@ public sealed class GpuQuantMatmulTests
             QuantDType.Q8_0 => QuantizationKernels.VecDotQ8_0_Scalar(input, raw, col, features),
             _ => throw new InvalidOperationException(),
         };
+
+    // ---- K-quant oracle tests (Q2_K..Q6_K, 256-element super-blocks) ----
+
+    private const int QK_K = 256;
+
+    private static int BlockBytesKOf(QuantDType q) => q switch
+    {
+        QuantDType.Q2_K => 84, QuantDType.Q3_K => 110, QuantDType.Q4_K => 144, QuantDType.Q5_K => 176, QuantDType.Q6_K => 210,
+        _ => throw new InvalidOperationException(),
+    };
+
+    /// <summary>Direct port of <see cref="Gpu.Kernels.QuantMatmulKernels.KValue"/> (and the byte
+    /// helpers it reads) for the CPU-side gather oracle: one 256-super-block at <paramref name="bs"/>,
+    /// element <paramref name="pos"/>. Valid for the aligned geometry of the tests (K a multiple of
+    /// QK_K, so every output column starts a super-block), which is exactly the real GGUF geometry.</summary>
+    private static float CpuKValue(QuantDType q, byte[] raw, int bs, int pos)
+    {
+        if (q == QuantDType.Q2_K)
+        {
+            float dS = HalfToFloat((ushort)(raw[bs + 80] | (raw[bs + 81] << 8)));
+            float mS = HalfToFloat((ushort)(raw[bs + 82] | (raw[bs + 83] << 8)));
+            int g = pos >> 4;
+            int s0 = raw[bs + g] & 0x0F;
+            int m0 = raw[bs + g] >> 4;
+            int qsByte = (pos >> 7) * 32 + (pos & 31);
+            int v = (raw[bs + 16 + qsByte] >> (((pos & 127) >> 5) << 1)) & 3;
+            return (float)s0 * v * dS - (float)m0 * mS;
+        }
+        if (q == QuantDType.Q3_K)
+        {
+            float dAll = HalfToFloat((ushort)(raw[bs + 108] | (raw[bs + 109] << 8)));
+            int g = pos >> 4;
+            int sc = K3ScaleC(raw, bs, g) - 32;
+            int qsByte = (pos >> 7) * 32 + (pos & 31);
+            int s2 = (raw[bs + 32 + qsByte] >> (((pos & 127) >> 5) << 1)) & 3;
+            int hBit = (raw[bs + (pos & 31)] >> (pos >> 5)) & 1;
+            int actual = s2 - (hBit == 0 ? 4 : 0);
+            return dAll * sc * actual;
+        }
+        if (q == QuantDType.Q4_K)
+        {
+            float dS = HalfToFloat((ushort)(raw[bs] | (raw[bs + 1] << 8)));
+            float mS = HalfToFloat((ushort)(raw[bs + 2] | (raw[bs + 3] << 8)));
+            int j = pos >> 5;
+            int s = KScaleC(raw, bs + 4, j);
+            int m = KMinC(raw, bs + 4, j);
+            int qsByte = (pos >> 6) * 32 + (pos & 31);
+            int v = (raw[bs + 16 + qsByte] >> (((pos & 63) >> 5) << 2)) & 0x0F;
+            return (float)s * v * dS - (float)m * mS;
+        }
+        if (q == QuantDType.Q5_K)
+        {
+            float d = HalfToFloat((ushort)(raw[bs] | (raw[bs + 1] << 8)));
+            float min = HalfToFloat((ushort)(raw[bs + 2] | (raw[bs + 3] << 8)));
+            int j = pos >> 5;
+            int sc = KScaleC(raw, bs + 4, j);
+            int mn = KMinC(raw, bs + 4, j);
+            int idx32 = pos & 31, group64 = pos >> 6, half = (pos & 63) >> 5;
+            int bitPos = group64 * 2 + half;
+            int hAdd = (raw[bs + 16 + idx32] & (1 << bitPos)) != 0 ? 16 : 0;
+            int q5 = half == 0 ? raw[bs + 48 + group64 * 32 + idx32] & 0x0F : raw[bs + 48 + group64 * 32 + idx32] >> 4;
+            q5 |= hAdd;
+            return (float)sc * q5 * d - (float)mn * min;
+        }
+        // Q6_K
+        float dAll6 = HalfToFloat((ushort)(raw[bs + 208] | (raw[bs + 209] << 8)));
+        int nOff = (pos >> 7) << 7;
+        int l = pos & 31;
+        int col = (pos - nOff) >> 5;
+        int qlOff = nOff == 0 ? 0 : 64;
+        int qhOff = nOff == 0 ? 0 : 32;
+        int qlIdx = (col & 1) == 0 ? l : l + 32;
+        int nib = (raw[bs + qlOff + qlIdx] >> ((col & 2) != 0 ? 4 : 0)) & 0x0F;
+        int hi = (raw[bs + 128 + qhOff + l] >> (col << 1)) & 0x03;
+        int qq = nib | (hi << 4);
+        int scaleOff = 192 + (nOff == 0 ? 0 : 8) + (l >> 4) + (col << 1);
+        int sc8 = raw[bs + scaleOff] < 128 ? raw[bs + scaleOff] : raw[bs + scaleOff] - 256;
+        return dAll6 * sc8 * (qq - 32);
+    }
+
+    /// <summary>Port of <see cref="Gpu.Kernels.QuantMatmulKernels.K3Scale"/>: byte-level unwinding
+    /// of the Q3_K 12-byte scale block (the CPU scalar's uint shuffle, algebraically equal).</summary>
+    private static int K3ScaleC(byte[] raw, int bs, int g)
+    {
+        int high, low;
+        if (g < 4) { low = raw[bs + 96 + g] & 0x0F; high = raw[bs + 104 + g] & 0x03; }
+        else if (g < 8) { low = raw[bs + 100 + g - 4] & 0x0F; high = (raw[bs + 104 + g - 4] >> 2) & 0x03; }
+        else if (g < 12) { low = (raw[bs + 96 + g - 8] >> 4) & 0x0F; high = (raw[bs + 104 + g - 8] >> 4) & 0x03; }
+        else { low = (raw[bs + 100 + g - 12] >> 4) & 0x0F; high = (raw[bs + 104 + g - 12] >> 6) & 0x03; }
+        int sc8 = low | (high << 4);
+        return sc8 >= 128 ? sc8 - 256 : sc8;
+    }
+
+    /// <summary>Port of <see cref="Gpu.Kernels.QuantMatmulKernels.KScale"/> (GetScaleMinK4_Scale_Scalar).</summary>
+    private static int KScaleC(byte[] raw, int scales, int j)
+        => j < 4 ? raw[scales + j] & 0x3F : (raw[scales + j + 4] & 0x0F) | ((raw[scales + j - 4] >> 6) << 4);
+
+    /// <summary>Port of <see cref="Gpu.Kernels.QuantMatmulKernels.KMin"/> (GetScaleMinK4_Min_Scalar).</summary>
+    private static int KMinC(byte[] raw, int scales, int j)
+        => j < 4 ? raw[scales + j + 4] & 0x3F : (raw[scales + j + 4] >> 4) | ((raw[scales + j] >> 6) << 4);
+
+    private static unsafe float VecDotForK(float* input, byte* raw, int col, int features, QuantDType q)
+        => q switch
+        {
+            QuantDType.Q2_K => QuantizationKernels.VecDotQ2K_Scalar(input, raw, col, features),
+            QuantDType.Q3_K => QuantizationKernels.VecDotQ3K_Scalar(input, raw, col, features),
+            QuantDType.Q4_K => QuantizationKernels.VecDotQ4K_Scalar(input, raw, col, features),
+            QuantDType.Q5_K => QuantizationKernels.VecDotQ5K_Scalar(input, raw, col, features),
+            QuantDType.Q6_K => QuantizationKernels.VecDotQ6K_Scalar(input, raw, col, features),
+            _ => throw new InvalidOperationException(),
+        };
+
+    /// <summary>The on-device K-quant dequant matmul must reproduce the matching <see cref="VecDot*K_Scalar"/>
+    /// on identical raw bytes for every K-quant the engine claims to support. K must be a multiple of
+    /// 256: the K-quant super-block layout then lines every output column up on a block boundary (the
+    /// real GGUF geometry), which is the geometry <see cref="Gpu.Kernels.QuantMatmulKernels.KValue"/>
+    /// addresses by absolute super-block position.</summary>
+    [Theory]
+    [InlineData(QuantDType.Q2_K)]
+    [InlineData(QuantDType.Q3_K)]
+    [InlineData(QuantDType.Q4_K)]
+    [InlineData(QuantDType.Q5_K)]
+    [InlineData(QuantDType.Q6_K)]
+    public void DequantMatmulK_AgreesWithVecDotScalar(QuantDType q)
+    {
+        int M = 2, K = 512, N = 96;
+        var rnd = new Random(7 + (int)q);
+        var w = new float[N * K];
+        for (int i = 0; i < w.Length; i++) w[i] = (float)(rnd.NextDouble() * 2 - 1) * 0.5f;
+        byte[] raw = TensorQuantizer.Quantize(w, [N, K], q);
+
+        var x = new float[M * K];
+        for (int i = 0; i < x.Length; i++) x[i] = (float)(rnd.NextDouble() * 2 - 1) * 0.5f;
+
+        var want = new float[M * N];
+        unsafe
+        {
+            fixed (float* px = x)
+            fixed (byte* praw = raw)
+                for (int i = 0; i < M; i++)
+                    for (int o = 0; o < N; o++)
+                        want[i * N + o] = VecDotForK(px + i * K, praw, o, K, q);
+        }
+
+        using var xb = new DeviceBuffer(Dev, M, K);
+        using var yb = new DeviceBuffer(Dev, M, N);
+        using var wb = new DeviceByteBuffer(Dev.Accelerator, raw);
+        xb.Tensor.Upload(x);
+        Dev.Kernels.DequantMatmul(yb.Tensor, xb.Tensor, wb, K, N, q);
+        var got = yb.Tensor.ToArray();
+
+        GpuTestDevice.AssertClose(want, got, 2e-5, $"{q} DequantMatmulK vs VecDot*K_Scalar");
+    }
+
+    /// <summary>The on-device DequantGatherK reproduces the CPU block decode of the K-quant embedding
+    /// table rows (the same super-block layout the weight-tied LM head matmul consumes). The matmul
+    /// theory validates the per-super-block decode; this checks the gather's row addressing.</summary>
+    [Theory]
+    [InlineData(QuantDType.Q2_K)]
+    [InlineData(QuantDType.Q3_K)]
+    [InlineData(QuantDType.Q4_K)]
+    [InlineData(QuantDType.Q5_K)]
+    [InlineData(QuantDType.Q6_K)]
+    public void DequantGatherK_MatchesCpuBlockDecode(QuantDType q)
+    {
+        int V = 64, K = 512;
+        var rnd = new Random(11 + (int)q);
+        var emb = new float[V * K];
+        for (int i = 0; i < emb.Length; i++) emb[i] = (float)(rnd.NextDouble() * 2 - 1) * 0.5f;
+        byte[] raw = TensorQuantizer.Quantize(emb, [V, K], q);
+
+        var ids = new int[] { 3, 40, 9, 1, 63 };
+        int M = ids.Length;
+
+        var want = new float[M * K];
+        for (int i = 0; i < M; i++)
+            for (int d = 0; d < K; d++)
+            {
+                long qd = (long)ids[i] * K + d;
+                want[i * K + d] = CpuKValue(q, raw, (int)(qd / QK_K) * BlockBytesKOf(q), (int)(qd % QK_K));
+            }
+
+        using var gxb = new DeviceBuffer(Dev, M, K);
+        using var tb = new DeviceByteBuffer(Dev.Accelerator, raw);
+        using var idsDev = Dev.UploadInts(ids);
+        Dev.Kernels.DequantGather(gxb.Tensor, tb, idsDev.View, K, q);
+        var got = gxb.Tensor.ToArray();
+
+        GpuTestDevice.AssertClose(want, got, 2e-5, $"{q} DequantGatherK vs CPU block decode");
+    }
 }

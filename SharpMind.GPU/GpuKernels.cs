@@ -28,6 +28,8 @@ internal sealed class GpuKernels
     private readonly Action<Index1D, ArrayView<float>, ArrayView<int>, ArrayView<float>, int, int, float, float> _ceRow;
     private readonly Action<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<byte>, int, int, int, QuantDType> _dequantMatmul;
     private readonly Action<Index1D, ArrayView<float>, ArrayView<byte>, ArrayView<int>, int, int, QuantDType> _dequantGather;
+    private readonly Action<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<byte>, int, int, int, QuantDType> _dequantMatmulK;
+    private readonly Action<Index1D, ArrayView<float>, ArrayView<byte>, ArrayView<int>, int, QuantDType> _dequantGatherK;
     private float[]? _rowLossHost;
     private readonly GpuDevice _dev;
 
@@ -55,6 +57,8 @@ internal sealed class GpuKernels
         _ceRow = acc.LoadAutoGroupedStreamKernel<Index1D, ArrayView<float>, ArrayView<int>, ArrayView<float>, int, int, float, float>(LossKernels.CeRow);
         _dequantMatmul = acc.LoadAutoGroupedStreamKernel<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<byte>, int, int, int, QuantDType>(QuantMatmulKernels.DequantMatmul);
         _dequantGather = acc.LoadAutoGroupedStreamKernel<Index1D, ArrayView<float>, ArrayView<byte>, ArrayView<int>, int, int, QuantDType>(QuantMatmulKernels.DequantGather);
+        _dequantMatmulK = acc.LoadAutoGroupedStreamKernel<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<byte>, int, int, int, QuantDType>(QuantMatmulKernels.DequantMatmulK);
+        _dequantGatherK = acc.LoadAutoGroupedStreamKernel<Index1D, ArrayView<float>, ArrayView<byte>, ArrayView<int>, int, QuantDType>(QuantMatmulKernels.DequantGatherK);
     }
 
     public void AddInPlace(DeviceTensor dst, DeviceTensor src) { Same(dst, src); _add(dst.Length, dst.View, src.View); }
@@ -64,35 +68,44 @@ internal sealed class GpuKernels
     public void EmbedGather(DeviceTensor x, DeviceTensor table, ArrayView<int> ids) { if (table.Cols != x.Cols || ids.Length != x.Rows) throw new ArgumentException("gather shapes"); _gather(x.Length, x.View, table.View, ids, x.Cols); }
 
     /// <summary>
-    /// y[i,o] = Σ_k x[i,k]·wQ[o,k] for a [N, K] block-quantized matrix in raw bytes
-    /// (<see cref="QuantMatmulKernels.DequantMatmul"/>). One thread per output element; the
-    /// reduction order replicates the CPU <c>VecDot*_Scalar</c> oracle. Used for every block
-    /// linear (y=[m,Out], x=[m,In], w=the layer's raw weights, K=In, N=Out) and the weight-tied
-    /// LM head (y=[m,Vocab], x=[m,Hidden], w=the embedding's raw bytes, K=Hidden, N=Vocab).
+    /// y[i,o] = Σ_k x[i,k]·wQ[o,k] for a [N, K] quantized matrix in raw bytes — the block quants
+    /// (<see cref="QuantMatmulKernels.DequantMatmul"/>, 32-element blocks) and the K-quants
+    /// (<see cref="QuantMatmulKernels.DequantMatmulK"/>, 256-element super-blocks). One thread per
+    /// output element; the reduction order replicates the matching CPU <c>VecDot*_Scalar</c> oracle.
+    /// Used for every quantized linear (y=[m,Out], x=[m,In], w=the layer's raw weights, K=In, N=Out)
+    /// and the weight-tied LM head (y=[m,Vocab], x=[m,Hidden], w=the embedding's raw bytes,
+    /// K=Hidden, N=Vocab).
     /// </summary>
     public void DequantMatmul(DeviceTensor y, DeviceTensor x, DeviceByteBuffer w, int K, int N, QuantDType q)
     {
         if (x.Cols != K) throw new ArgumentException($"x cols {x.Cols} != K {K}.");
         if (y.Rows != x.Rows || y.Cols != N) throw new ArgumentException($"y must be [{x.Rows},{N}], got [{y.Rows},{y.Cols}].");
-        int nBlocks = (K + QuantMatmulKernels.QK - 1) / QuantMatmulKernels.QK;
-        long expect = (long)N * nBlocks * QuantMatmulKernels.BlockBytes(q);
+        bool k = QuantMatmulKernels.IsKQuant(q);
+        int qk = k ? QuantMatmulKernels.QK_K : QuantMatmulKernels.QK;
+        int nBlocks = (K + qk - 1) / qk;
+        long expect = (long)N * nBlocks * (k ? QuantMatmulKernels.BlockBytesK(q) : QuantMatmulKernels.BlockBytes(q));
         if (w.Length < expect) throw new ArgumentException($"raw {q} weights hold {w.Length} bytes, need {expect} for [{N},{K}].");
-        _dequantMatmul(y.Length, y.View, x.View, w.View, K, N, nBlocks, q);
+        if (k) _dequantMatmulK(y.Length, y.View, x.View, w.View, K, N, nBlocks, q);
+        else _dequantMatmul(y.Length, y.View, x.View, w.View, K, N, nBlocks, q);
     }
 
     /// <summary>
-    /// x[i,d] = dequant(embedding[ids[i]][d]) from a [V, K] block-quantized embedding table in raw
-    /// bytes (<see cref="QuantMatmulKernels.DequantGather"/>). The embedding row for a token is the
+    /// x[i,d] = dequant(embedding[ids[i]][d]) from a [V, K] quantized embedding table in raw bytes
+    /// — the block quants (<see cref="QuantMatmulKernels.DequantGather"/>) and the K-quants
+    /// (<see cref="QuantMatmulKernels.DequantGatherK"/>). The embedding row for a token is the
     /// same output column the LM head matmul reads, so one physical table serves both.
     /// </summary>
     public void DequantGather(DeviceTensor x, DeviceByteBuffer table, ArrayView<int> ids, int K, QuantDType q)
     {
         if (ids.Length != x.Rows) throw new ArgumentException($"ids length {ids.Length} != x rows {x.Rows}.");
         if (x.Cols != K) throw new ArgumentException($"x cols {x.Cols} != K {K}.");
-        int nBlocks = (K + QuantMatmulKernels.QK - 1) / QuantMatmulKernels.QK;
-        long need = (long)x.Rows * nBlocks * QuantMatmulKernels.BlockBytes(q);
+        bool k = QuantMatmulKernels.IsKQuant(q);
+        int qk = k ? QuantMatmulKernels.QK_K : QuantMatmulKernels.QK;
+        int nBlocks = (K + qk - 1) / qk;
+        long need = (long)x.Rows * nBlocks * (k ? QuantMatmulKernels.BlockBytesK(q) : QuantMatmulKernels.BlockBytes(q));
         if (table.Length < need) throw new ArgumentException($"raw {q} embedding holds {table.Length} bytes, need {need} of table.");
-        _dequantGather(x.Length, x.View, table.View, ids, K, nBlocks, q);
+        if (k) _dequantGatherK(x.Length, x.View, table.View, ids, K, q);
+        else _dequantGather(x.Length, x.View, table.View, ids, K, nBlocks, q);
     }
 
     /// <summary>Q8_0 convenience over <see cref="DequantMatmul"/>; see <see cref="QuantMatmulKernels.Q8_0Matmul"/>.</summary>

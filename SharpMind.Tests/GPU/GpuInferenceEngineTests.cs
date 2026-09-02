@@ -337,16 +337,17 @@ public sealed class GpuInferenceEngineTests : IClassFixture<GpuInferenceEngineTe
         Assert.True(GpuInferenceEngine.CheckSupported(meta, Cfg, sc, out var reason), reason);
     }
 
-    /// <summary>A quant the engine has no kernel for (Q6_K here) must be refused from mere metadata —
-    /// this is the pre-load gate that keeps the host from loading a whole file it will reject at creation.</summary>
+    /// <summary>A quant the engine has no kernel for — Q8_K here (its F32 super-block scale cannot be
+    /// reinterpreted in ILGPU device code) — must be refused from mere metadata; this is the pre-load
+    /// gate that keeps the host from loading a whole file it will reject at creation.</summary>
     [Fact]
     public void CheckSupported_RejectsMetadataWithUnsupportedQuant()
     {
         var sc = SharpMindConfig.Llama with { Hardware = HardwareTier.Scalar };
-        var meta = Meta(("blk.0.attn_wq.weight", QuantDType.Q6_K));
+        var meta = Meta(("blk.0.attn_wq.weight", QuantDType.Q8_K));
 
         Assert.False(GpuInferenceEngine.CheckSupported(meta, Cfg, sc, out var reason));
-        Assert.Contains("Q6_K", reason, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Q8_K", reason, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>The plugin factory forwards the metadata gate so the host can refuse before loading weights.</summary>
@@ -358,8 +359,8 @@ public sealed class GpuInferenceEngineTests : IClassFixture<GpuInferenceEngineTe
 
         Assert.Null(factory.CheckSupported(Meta(("a", QuantDType.Q8_0)), Cfg, sc));
 
-        var reason = factory.CheckSupported(Meta(("a", QuantDType.Q6_K)), Cfg, sc);
+        var reason = factory.CheckSupported(Meta(("a", QuantDType.Q8_K)), Cfg, sc);
         Assert.NotNull(reason);
-        Assert.Contains("Q6_K", reason, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Q8_K", reason, StringComparison.OrdinalIgnoreCase);
     }
 }

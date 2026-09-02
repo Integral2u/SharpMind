@@ -222,19 +222,22 @@ public sealed class GpuInferenceEngine : IInferenceEngine
     /// The raw weight dtypes this engine can run on the device, the single source of truth for
     /// both the post-load <see cref="ValidateSupported(Transformer, SharpMindConfig)"/> gate and the
     /// metadata-only, pre-weight-load <see cref="CheckSupported(ModelMetaData, ModelConfig, SharpMindConfig)"/>
-    /// gate. F32 layers use the ordinary GEMM (the raw bytes are a full float weight); Q8_0 layers
-    /// run the on-device dequant matmul/gather. Every other quant is deferred — it has no GPU kernel.
+    /// gate. F32 layers use the ordinary GEMM (the raw bytes are a full float weight); the block
+    /// quants and K-quants run the on-device dequant matmul/gather. Q8_K is deliberately absent:
+    /// its block holds an F32 scale, which ILGPU device code cannot reinterpret, so it has no kernel
+    /// and is refused here. Every other quant is deferred — it has no GPU kernel.
     /// </summary>
     public static readonly IReadOnlySet<QuantDType> SupportedDtypes = new HashSet<QuantDType>
     {
         QuantDType.F32, QuantDType.Q8_0, QuantDType.Q4_0, QuantDType.Q4_1, QuantDType.Q5_0, QuantDType.Q5_1,
+        QuantDType.Q2_K, QuantDType.Q3_K, QuantDType.Q4_K, QuantDType.Q5_K, QuantDType.Q6_K,
     };
 
-    /// <summary>True for the block quants with an on-device dequant matmul/gather kernel
-    /// (<see cref="Kernels.QuantMatmulKernels.DequantMatmul"/>) — i.e. <see cref="SupportedDtypes"/>
-    /// minus the F32 float path.</summary>
+    /// <summary>True for the quant dtypes with an on-device dequant matmul/gather kernel
+    /// (<see cref="Kernels.QuantMatmulKernels.DequantMatmul"/>/<see cref="Kernels.QuantMatmulKernels.DequantMatmulK"/>)
+    /// — i.e. <see cref="SupportedDtypes"/> minus the F32 float path.</summary>
     private static bool IsOnDeviceDequant(QuantDType q)
-        => q is QuantDType.Q8_0 or QuantDType.Q4_0 or QuantDType.Q4_1 or QuantDType.Q5_0 or QuantDType.Q5_1;
+        => q is not QuantDType.F32 && SupportedDtypes.Contains(q);
 
     /// <summary>
     /// True when this model can be inferred on the device and which dtypes the device cannot run.
@@ -280,9 +283,9 @@ public sealed class GpuInferenceEngine : IInferenceEngine
         static string Why(string s) => $"GPU inference engine (M0) does not support {s}; use CPU inference, which does.";
         static void CheckDtype(QuantDType? dtype, string what)
         {
-            // F32 and Q8_0 are both supported on the device: F32 raw layers use the ordinary GEMM
-            // (the raw bytes are a full float weight), Q8_0 layers run the on-device dequant
-            // matmul/gather. Any other quant has no GPU kernel here.
+            // F32 uses the ordinary GEMM (the raw bytes are a full float weight); the block quants
+            // and K-quants (minus Q8_K) run the on-device dequant matmul/gather. Anything else has
+            // no GPU kernel here.
             if (dtype is { } q && !GpuInferenceEngine.SupportedDtypes.Contains(q))
                 throw new NotSupportedException(Why($"{what} quantized as {dtype} — GPU inference supports only {string.Join(", ", GpuInferenceEngine.SupportedDtypes)} weights"));
         }
@@ -306,7 +309,7 @@ public sealed class GpuInferenceEngine : IInferenceEngine
             // ValidateSupported_RejectsQuantizedResidentModel pins this per-type behaviour.
             foreach (var lin in BlockLinears(b))
                 if (lin is InferenceLinearLayer il && !IsOnDeviceDequant(il.QuantDtype))
-                    throw new NotSupportedException(Why($"{il.Name} quantized as {il.QuantDtype} — GPU inference supports only {string.Join(", ", QuantDType.Q8_0, QuantDType.Q4_0, QuantDType.Q4_1, QuantDType.Q5_0, QuantDType.Q5_1)} quantized linears"));
+                    throw new NotSupportedException(Why($"{il.Name} quantized as {il.QuantDtype} — GPU inference supports only {string.Join(", ", SupportedDtypes.Where(d => d != QuantDType.F32))} quantized linears"));
             if (b.PostAttnNorm is not null || b.PostFfnNorm is not null) throw new NotSupportedException(Why("Gemma post-attention/post-FFN norms"));
             if (b.Norm1 is not RmsNormLayer || b.Norm2 is not RmsNormLayer) throw new NotSupportedException(Why($"a {b.Norm1.GetType().Name} block norm — LayerNorm, only RMSNorm"));
             if (b.Ffn is not GatedFfnLayer) throw new NotSupportedException(Why($"FFN kind {b.Ffn.GetType().Name}"));

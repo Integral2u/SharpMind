@@ -46,9 +46,10 @@ internal sealed class GpuLinear : IDisposable
             // A quantized-resident layer (the standard chat loader's InferenceLinearLayer) holds its
             // real weights as GGUF raw bytes: layer.Weight is only a tiny [In,1] place-holder, so the
             // F32 GEMM below would read far past it — the "B holds N floats, GEMM needs M" crash.
-            // Upload the raw bytes and run the on-device Q8_0 dequant matmul instead. F32 raw data
+            // Upload the raw bytes and run the on-device dequant matmul instead. F32 raw data
             // (InferenceLinearLayer with QuantDtype.F32) is just a full float weight and takes the
-            // ordinary path. Only Q8_0 has a GPU kernel in this engine; ValidateSupported refuses the rest.
+            // ordinary path. Only the block and K quants (minus Q8_K) have a GPU kernel in this
+            // engine; ValidateSupported refuses the rest.
             if (layer is InferenceLinearLayer inf && inf.RawQuantizedData is not null)
             {
                 _quant = inf.QuantDtype;
