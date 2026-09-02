@@ -1,8 +1,12 @@
 using SharpMind.Core;
 using SharpMind.Core.AgentTools;
+using SharpMind.Core.Plugins;
 using SharpMind.CUI.App;
 using SharpMind.Inference;
 using SharpMind.Inference.Agent;
+using SharpMind.Model;
+using SharpMind.Model.Config;
+using SharpMind.Model.Format;
 using Xunit;
 
 namespace SharpMind.Tests.CUI;
@@ -192,6 +196,117 @@ public sealed class SessionLauncherSemanticsTests
         finally
         {
             loaded.Model.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task LoadModelAsync_CpuFallbackConsent_RefusesBeforeLoad_ThenLoadsAfterConsent()
+    {
+        // A quant with no on-device kernel (the fake factory reports Q8_K host fallback) must be
+        // refused from the metadata alone — before any weight is read — as a consent signal
+        // (CpuFallbackWarning), never as a hard Error, until the caller sets AllowCpuFallback.
+        using var temp = new TempDirectory();
+        string pluginsDir = CopyTestAssembly(temp, nameof(CpuFallbackConsentAcceleratorPlugin));
+        var options = SwsOptions();
+        options.ModelPath = TinyReferenceModel.Create(temp).SmmPath;
+        options.InferenceAccelerator = "consentacc";
+
+        var first = await SessionLauncher.LoadModelAsync(options, pluginsFolder: pluginsDir);
+        Assert.False(first.Success);
+        Assert.Null(first.Error);
+        Assert.Null(first.Loaded);
+        Assert.Null(first.AcceleratorRefusal);
+        Assert.NotNull(first.CpuFallbackWarning);
+        Assert.Contains("Q8_K", first.CpuFallbackWarning, StringComparison.OrdinalIgnoreCase);
+
+        // The same load with consent (what the picker's "Allow CPU fallback" sentinel sets) retries
+        // past the metadata gate and proceeds to a real load.
+        options.AllowCpuFallback = true;
+        var second = await SessionLauncher.LoadModelAsync(options, pluginsFolder: pluginsDir);
+        Assert.True(second.Success, second.Error ?? "load failed");
+        using (second.Loaded!.Model) { }
+    }
+
+    [Fact]
+    public async Task LoadModelAsync_ArchitectureRefusal_IsNotAnError_AndIgnoresConsent()
+    {
+        // An architecture the accelerator can never run (the fake factory reports MoE) is refused
+        // from the metadata alone as AcceleratorRefusal — the picker signal — and the CPU-fallback
+        // consent flag must not mask it.
+        using var temp = new TempDirectory();
+        string pluginsDir = CopyTestAssembly(temp, nameof(ArchRefusingAcceleratorPlugin));
+        var options = SwsOptions();
+        options.ModelPath = TinyReferenceModel.Create(temp).SmmPath;
+        options.InferenceAccelerator = "refusingacc";
+        options.AllowCpuFallback = true;   // irrelevant for an arch refusal
+
+        var result = await SessionLauncher.LoadModelAsync(options, pluginsFolder: pluginsDir);
+        Assert.False(result.Success);
+        Assert.Null(result.Error);
+        Assert.Null(result.Loaded);
+        Assert.Null(result.CpuFallbackWarning);
+        Assert.NotNull(result.AcceleratorRefusal);
+        Assert.Contains("MoE", result.AcceleratorRefusal, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task LoadModelAsync_CpuAccelerator_SkipsTheMetadataGate()
+    {
+        // null / "CPU" take the CPU path — the consent and refusal gates exist only for a named
+        // accelerator, so a plain CPU load must not be blocked by a fake refusing plugin.
+        using var temp = new TempDirectory();
+        string pluginsDir = CopyTestAssembly(temp, nameof(CpuFallbackConsentAcceleratorPlugin));
+        var options = SwsOptions();
+        options.ModelPath = TinyReferenceModel.Create(temp).SmmPath;
+        options.InferenceAccelerator = null;
+
+        var result = await SessionLauncher.LoadModelAsync(options, pluginsFolder: pluginsDir);
+        Assert.True(result.Success, result.Error ?? "load failed");
+        using (result.Loaded!.Model) { }
+    }
+
+    private static string CopyTestAssembly(TempDirectory temp, string _)
+    {
+        string pluginsDir = Path.Combine(temp.Path, "plugins");
+        Directory.CreateDirectory(pluginsDir);
+        File.Copy(typeof(CpuFallbackConsentAcceleratorPlugin).Assembly.Location,
+            Path.Combine(pluginsDir, Path.GetFileName(typeof(CpuFallbackConsentAcceleratorPlugin).Assembly.Location)));
+        return pluginsDir;
+    }
+
+    /// <summary>
+    /// Fake accelerator discovered from SharpMind.Tests.dll by the launcher's metadata gate: its
+    /// inference factory runs the model but reports a per-tensor CPU-fallback (Q8_K) from the
+    /// metadata alone — the consent signal <see cref="ModelLoadResult.CpuFallbackWarning"/>.
+    /// </summary>
+    public sealed class CpuFallbackConsentAcceleratorPlugin : IAcceleratorPlugin
+    {
+        public string Name => "consentacc";
+        public string Description => "fake accelerator with host-fallback consent";
+        public IReadOnlyList<object> Capabilities { get; } = [new ConsentFactory()];
+
+        private sealed class ConsentFactory : IInferenceEngineFactory
+        {
+            public IInferenceEngine? TryCreate(InferenceEngineContext context, out string? reason) { reason = null; return null; }
+            public string? CheckSupported(ModelMetaData meta, ModelConfig modelConfig, SharpMindConfig config) => null;
+            public string? DescribeCpuFallback(ModelMetaData meta, ModelConfig modelConfig, SharpMindConfig config)
+                => "will run on the CPU: Q8_K weights (block linears); the rest of the model stays on the GPU.";
+        }
+    }
+
+    /// <summary>Fake accelerator whose inference factory refuses the model's architecture outright.</summary>
+    public sealed class ArchRefusingAcceleratorPlugin : IAcceleratorPlugin
+    {
+        public string Name => "refusingacc";
+        public string Description => "fake accelerator that refuses the architecture";
+        public IReadOnlyList<object> Capabilities { get; } = [new RefusingFactory()];
+
+        private sealed class RefusingFactory : IInferenceEngineFactory
+        {
+            public IInferenceEngine? TryCreate(InferenceEngineContext context, out string? reason) { reason = null; return null; }
+            public string? CheckSupported(ModelMetaData meta, ModelConfig modelConfig, SharpMindConfig config)
+                => "GPU inference engine does not support MoE; use CPU inference, which does.";
+            public string? DescribeCpuFallback(ModelMetaData meta, ModelConfig modelConfig, SharpMindConfig config) => null;
         }
     }
 }

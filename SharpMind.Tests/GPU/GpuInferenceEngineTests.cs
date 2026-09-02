@@ -7,6 +7,7 @@ using SharpMind.Inference.Chat;
 using SharpMind.Model;
 using SharpMind.Model.Config;
 using SharpMind.Model.Format;
+using SharpMind.Model.Layers;
 using SharpMind.Tokenization;
 using SharpMind.Tokenization.Vocab;
 using SharpMind.Training;
@@ -306,18 +307,60 @@ public sealed class GpuInferenceEngineTests : IClassFixture<GpuInferenceEngineTe
 
     /// <summary>A model built for the standard chat loader (CreateTransformer) wires
     /// InferenceLinearLayer whose "weight" only backs RawQuantizedData — running the GPU F32 GEMMs on
-    /// it reads far past the tensor. The engine must refuse it up front (so the picker can offer CPU)
-    /// rather than crash on the first forward, as it used to ("B holds N floats, GEMM needs M").</summary>
+    /// it used to read far past the tensor ("B holds N floats, GEMM needs M"). The engine now
+    /// accepts it: dtypes with a device kernel run their quantized matmul on-device, any other quant
+    /// (e.g. Q8_K) is host-routed per tensor, and a F32-resident layer (raw null) is an ordinary
+    /// float GEMM — so a quantized-resident model in any quant the CPU transformer runs is runnable,
+    /// never a refusal.</summary>
     [Fact]
-    public void ValidateSupported_RejectsQuantizedResidentModel()
+    public void ValidateSupported_AcceptsQuantizedResidentModel()
     {
         var sc = SharpMindConfig.Llama with { Hardware = HardwareTier.Scalar };
         var weights = ModelFactory.CreateForTraining(Cfg, sc);
         using var inference = ModelFactory.CreateTransformer(weights, sc, optimizeMemory: false);
 
-        var ex = Assert.Throws<NotSupportedException>(() => GpuInferenceEngine.ValidateSupported(inference, sc));
-        Assert.Contains("quantized", ex.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("F32", ex.Message);
+        GpuInferenceEngine.ValidateSupported(inference, sc);   // must not throw
+    }
+
+    /// <summary>A quant with no on-device kernel — Q8_K — is host-routed by <see cref="GpuLinear"/>:
+    /// download x, run the layer's own CPU quantized matmul, upload y. The result must match running
+    /// the same layer's forward directly on the host (same raw bytes, same kernel function), modulo
+    /// the device round-trip.</summary>
+    [Fact]
+    public void HostRoutedLinear_MatchesHostForward()
+    {
+        const int m = 4, inF = 512, outF = 256;   // multiples of QK_K = 256
+        var rnd = new Random(11);
+        var w = new float[outF * inF];
+        for (int i = 0; i < w.Length; i++) w[i] = (float)(rnd.NextDouble() * 2 - 1) * 0.5f;
+        byte[] raw = TensorQuantizer.Quantize(w, [outF, inF], QuantDType.Q8_K);
+
+        var b = new float[outF];
+        for (int i = 0; i < b.Length; i++) b[i] = (float)(rnd.NextDouble() * 2 - 1) * 0.1f;
+
+        using var biasTensor = Tensor<float>.From(b, outF);
+        using var layer = LinearLayerFactory.Create(
+            "host_route", inF, outF, bias: true, weight: null, biasTensor: biasTensor,
+            QuantDType.Q8_K, SharpMindConfig.Gpt.ToJigSawMapping(parallel: false));
+        layer.SetRawWeight(raw);
+
+        var x = new float[m * inF];
+        for (int i = 0; i < x.Length; i++) x[i] = (float)(rnd.NextDouble() * 2 - 1) * 0.5f;
+
+        // Host oracle: the exact forward the CPU transformer runs on the same raw bytes.
+        using var xt = Tensor<float>.From(x, m, inF);
+        using var yt = layer.Forward(xt);
+        var want = yt.Data.ToArray();
+
+        using var gl = new GpuLinear(GpuTestDevice.Device, layer, null, null);
+        using var arena = new DeviceArena(GpuTestDevice.Device, 1_000_000);
+        var xDev = arena.Rent(m, inF);
+        var yDev = arena.Rent(m, outF);
+        xDev.Upload(x);
+        gl.Forward(yDev, xDev, arena);
+        var got = yDev.ToArray();
+
+        GpuTestDevice.AssertClose(want, got, 1e-5, "host-routed Q8_K linear vs host forward");
     }
 
     private static ModelMetaData Meta(params (string Name, QuantDType Dtype)[] tensors) => new()
@@ -325,9 +368,11 @@ public sealed class GpuInferenceEngineTests : IClassFixture<GpuInferenceEngineTe
         Tensors = [.. tensors.Select(t => new TensorInfo { Name = t.Name, Dtype = t.Dtype, Shape = [8, 8], Offset = 0 })],
     };
 
-    /// <summary>The metadata-only, pre-weight-load gate accepts the same dtypes the engine runs
-    /// (F32 + the on-device block quants Q8_0/Q4_0/Q4_1/Q5_0/Q5_1) on the same architecture the
-    /// built Transformer accepts.</summary>
+    /// <summary>The metadata-only, pre-weight-load gate accepts everything the CPU transformer can run:
+    /// F32, the on-device block quants (Q8_0/Q4_0/…), and quants with no device kernel — Q8_K here
+    /// (its F32 super-block scale cannot be reinterpreted in ILGPU device code) — which fall back to
+    /// the host per tensor. <see cref="GpuInferenceEngine.DescribeCpuFallback"/> reports which quants
+    /// actually land on block linears, so the host can consent before loading any weights.</summary>
     [Fact]
     public void CheckSupported_AcceptsF32AndQ8_0FromMetadata()
     {
@@ -335,32 +380,42 @@ public sealed class GpuInferenceEngineTests : IClassFixture<GpuInferenceEngineTe
         var meta = Meta(("token_embd.weight", QuantDType.Q8_0), ("blk.0.ffn_down.weight", QuantDType.Q8_0), ("output_norm.weight", QuantDType.F32));
 
         Assert.True(GpuInferenceEngine.CheckSupported(meta, Cfg, sc, out var reason), reason);
+        Assert.Null(GpuInferenceEngine.DescribeCpuFallback(meta, Cfg, sc));
     }
 
-    /// <summary>A quant the engine has no kernel for — Q8_K here (its F32 super-block scale cannot be
-    /// reinterpreted in ILGPU device code) — must be refused from mere metadata; this is the pre-load
-    /// gate that keeps the host from loading a whole file it will reject at creation.</summary>
+    /// <summary>A quant the engine has no kernel for — Q8_K here — never refuses the pre-load gate:
+    /// it is a per-tensor host fallback, so the metadata gate must not make the host reject a file it
+    /// can run. The fallback description still names it for the consent dialog.</summary>
     [Fact]
-    public void CheckSupported_RejectsMetadataWithUnsupportedQuant()
+    public void CheckSupported_AcceptsMetadataWithUnsupportedQuant()
     {
         var sc = SharpMindConfig.Llama with { Hardware = HardwareTier.Scalar };
         var meta = Meta(("blk.0.attn_wq.weight", QuantDType.Q8_K));
 
-        Assert.False(GpuInferenceEngine.CheckSupported(meta, Cfg, sc, out var reason));
-        Assert.Contains("Q8_K", reason, StringComparison.OrdinalIgnoreCase);
+        Assert.True(GpuInferenceEngine.CheckSupported(meta, Cfg, sc, out var reason), reason);
+
+        var description = GpuInferenceEngine.DescribeCpuFallback(meta, Cfg, sc);
+        Assert.NotNull(description);
+        Assert.Contains("Q8_K", description, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("CPU", description, StringComparison.OrdinalIgnoreCase);
     }
 
-    /// <summary>The plugin factory forwards the metadata gate so the host can refuse before loading weights.</summary>
+    /// <summary>The plugin factory forwards the metadata gate so the host can consent before loading
+    /// weights: CheckSupported clears for any runnable quant, while DescribeCpuFallback describes the
+    /// per-tensor host work (null when nothing falls back).</summary>
     [Fact]
-    public void Factory_CheckSupported_RefusesUnsupportedQuantMeta()
+    public void Factory_CheckSupported_AcceptsUnsupportedQuantMeta()
     {
         var factory = new GpuInferenceEngineFactory();
         var sc = SharpMindConfig.Llama with { Hardware = HardwareTier.Scalar };
 
-        Assert.Null(factory.CheckSupported(Meta(("a", QuantDType.Q8_0)), Cfg, sc));
+        Assert.Null(factory.CheckSupported(Meta(("blk.0.attn_wq.weight", QuantDType.Q8_0)), Cfg, sc));
+        Assert.Null(factory.DescribeCpuFallback(Meta(("blk.0.attn_wq.weight", QuantDType.Q8_0)), Cfg, sc));
 
-        var reason = factory.CheckSupported(Meta(("a", QuantDType.Q8_K)), Cfg, sc);
-        Assert.NotNull(reason);
-        Assert.Contains("Q8_K", reason, StringComparison.OrdinalIgnoreCase);
+        var q8k = Meta(("blk.0.attn_wq.weight", QuantDType.Q8_K));
+        Assert.Null(factory.CheckSupported(q8k, Cfg, sc));   // accepted, not refused
+        var description = factory.DescribeCpuFallback(q8k, Cfg, sc);
+        Assert.NotNull(description);
+        Assert.Contains("Q8_K", description, StringComparison.OrdinalIgnoreCase);
     }
 }

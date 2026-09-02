@@ -924,23 +924,60 @@ public sealed class MainWindow : Window
 
             if (launchOptions.Generator != GeneratorStrategy.UIDebug)
             {
-                var cached = _modelCache.TryAcquire(launchOptions);
                 LoadedModel loaded;
-                if (cached is not null)
+                while (true)
                 {
-                    loaded = cached;
-                }
-                else
-                {
-                    var loadResult = await SessionLauncher.LoadModelAsync(launchOptions, progress, _settings.PluginsFolder);
-                    if (!loadResult.Success)
+                    var cached = _modelCache.TryAcquire(launchOptions);
+                    if (cached is not null)
                     {
-                        ErrorBox.Show("Load failed", loadResult.Error ?? "Unknown error", "OK");
-                        ShowOptions();
-                        return;
+                        loaded = cached;
+                        break;
                     }
-                    loaded = loadResult.Loaded!;
-                    _modelCache.Register(launchOptions, loaded);
+
+                    var loadResult = await SessionLauncher.LoadModelAsync(launchOptions, progress, _settings.PluginsFolder);
+                    if (loadResult.Success)
+                    {
+                        loaded = loadResult.Loaded!;
+                        _modelCache.Register(launchOptions, loaded);
+                        break;
+                    }
+
+                    // Pre-load accelerator gate: the chosen accelerator either cannot run this
+                    // model's architecture at all (AcceleratorRefusal) or runs it except for some
+                    // quant that needs per-tensor CPU fallback (CpuFallbackWarning). Ask instead of
+                    // failing the load. Consent mode puts "Allow CPU fallback" first so keeping the
+                    // accelerator is a single Enter; any pick past the sentinel just maps to CPU or
+                    // another plugin exactly like the post-load launch refusal below.
+                    if (loadResult.CpuFallbackWarning is not null || loadResult.AcceleratorRefusal is not null)
+                    {
+                        bool cpuFallbackFirst = loadResult.CpuFallbackWarning is not null;
+                        var accelerators = SharpMind.Core.Plugins.AcceleratorLoader.LoadFrom(_settings.PluginsFolder, out _);
+                        var picked = AcceleratorPicker.Show(
+                            launchOptions.InferenceAccelerator?.Trim() ?? "",
+                            loadResult.CpuFallbackWarning ?? loadResult.AcceleratorRefusal!,
+                            accelerators,
+                            typeof(IInferenceEngineFactory),
+                            cpuFallbackFirst);
+                        if (picked is null)
+                        {
+                            ShowOptions();
+                            return;
+                        }
+                        if (cpuFallbackFirst)
+                        {
+                            // Consent given (the sentinel keeps the accelerator; CPU / another
+                            // plugin are also fine) — the retry load must not re-prompt.
+                            launchOptions.AllowCpuFallback = true;
+                        }
+                        launchOptions.InferenceAccelerator = picked.Equals(InferenceEngineResolver.CpuName, StringComparison.OrdinalIgnoreCase)
+                            ? null
+                            : picked;
+                        continue;
+                    }
+
+                    ErrorBox.Show("Load failed", loadResult.Error ?? "Unknown error", "OK");
+                    ShowOptions();
+                    return;
                 }
                 CreateAndShowSession(launchOptions, loaded, progressView);
             }

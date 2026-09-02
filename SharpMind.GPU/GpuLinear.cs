@@ -1,4 +1,6 @@
+using System.Buffers;
 using SharpMind.Core.Quantization;
+using SharpMind.Core.Tensors;
 using SharpMind.Core.Training;
 using SharpMind.Model.Layers;
 
@@ -27,6 +29,9 @@ internal sealed class GpuLinear : IDisposable
     private readonly float _scale;
     private readonly float[]? _gradScratch;
     private DeviceTensor _hs;   // s·(x·A) from the last Forward (arena memory, valid until Reset)
+    /// <summary>A quantized-resident layer whose quant has no on-device kernel (e.g. Q8_K): its
+    /// forward is host-routed — download x, run the layer's own CPU quantized matmul, upload y.</summary>
+    private readonly InferenceLinearLayer? _hostLayer;
 
     public int In { get; }
     public int Out { get; }
@@ -46,21 +51,32 @@ internal sealed class GpuLinear : IDisposable
             // A quantized-resident layer (the standard chat loader's InferenceLinearLayer) holds its
             // real weights as GGUF raw bytes: layer.Weight is only a tiny [In,1] place-holder, so the
             // F32 GEMM below would read far past it — the "B holds N floats, GEMM needs M" crash.
-            // Upload the raw bytes and run the on-device dequant matmul instead. F32 raw data
-            // (InferenceLinearLayer with QuantDtype.F32) is just a full float weight and takes the
-            // ordinary path. Only the block and K quants (minus Q8_K) have a GPU kernel in this
-            // engine; ValidateSupported refuses the rest.
+            // Upload the raw bytes and run the on-device dequant matmul for the dtypes with a kernel
+            // (F32 raw data — InferenceLinearLayer with QuantDtype.F32 — is a full float weight and
+            // takes the ordinary path). A quant with no device kernel (e.g. Q8_K) is host-routed: the
+            // layer's own CPU forward runs the matmul, so every quant the CPU transformer runs works,
+            // just on the host for that tensor.
             if (layer is InferenceLinearLayer inf && inf.RawQuantizedData is not null)
             {
-                _quant = inf.QuantDtype;
-                _rawW = new DeviceByteBuffer(device.Accelerator, inf.RawQuantizedData); owned.Add(_rawW);
-                _w = DeviceBuffer.From(device, layer.Weight); owned.Add(_w);
+                if (IsOnDeviceDequant(inf.QuantDtype))
+                {
+                    _quant = inf.QuantDtype;
+                    _rawW = new DeviceByteBuffer(device.Accelerator, inf.RawQuantizedData); owned.Add(_rawW);
+                    _w = DeviceBuffer.From(device, layer.Weight); owned.Add(_w);
+                }
+                else
+                {
+                    _hostLayer = inf;
+                    _w = null!;   // never used: the host-routed forward uploads x/y around the CPU matmul
+                }
             }
             else
             {
                 _w = DeviceBuffer.From(device, layer.Weight); owned.Add(_w);
             }
-            if (layer.Bias is { } bias) { _bias = DeviceBuffer.From(device, bias); owned.Add(_bias); }
+            // The host-routed forward bicycles the layer's own bias (InferenceLinearLayer.Forward adds
+            // it); uploading a device copy would be dead weight.
+            if (_hostLayer is null && layer.Bias is { } bias) { _bias = DeviceBuffer.From(device, bias); owned.Add(_bias); }
             if (layer is TrainingLinearLayer { HasLoRA: true } t)
             {
                 if (loraA is null || loraB is null || !ReferenceEquals(loraA.Data, t.LoRAA) || !ReferenceEquals(loraB.Data, t.LoRAB))
@@ -116,6 +132,7 @@ internal sealed class GpuLinear : IDisposable
         int m = x.Rows;
         Check(x, m, In, "x"); Check(y, m, Out, "y");
         GpuKernels.NoOverlap(y, x, "y", "x");
+        if (_hostLayer is not null) { ForwardHost(y, x, m); return; }
         if (_quant is { } q) _dev.Kernels.DequantMatmul(y, x, _rawW!, In, Out, q);       // y = x·W (quantized)
         else _dev.Gemm(y, x, _w.Tensor, m, Out, In, saI: In, saK: 1, sbK: Out, sbJ: 1);   // y = x·W
         if (_bias is not null) _dev.Kernels.AddBiasRows(y, _bias.Tensor);
@@ -125,6 +142,40 @@ internal sealed class GpuLinear : IDisposable
         _dev.Kernels.Scale(_hs, _scale);                                                              // hs = s·h
         _dev.Gemm(y, _hs, _b!.Tensor, m, Out, Rank, saI: Rank, saK: 1, sbK: Out, sbJ: 1, beta: 1f);   // y += hs·B
     }
+
+    /// <summary>
+    /// Per-tensor CPU fallback for a quant with no on-device kernel: download <paramref name="x"/>,
+    /// run the layer's own host <see cref="InferenceLinearLayer.Forward"/> (the exact call the CPU
+    /// transformer makes, raw-weighted, bias included), upload the result back into <paramref name="y"/>.
+    /// The download forces a device sync, so the rest of the model keeps its GPU kernels.
+    /// </summary>
+    private unsafe void ForwardHost(DeviceTensor y, DeviceTensor x, int m)
+    {
+        int xLen = m * In;
+        int yLen = m * Out;
+        float[] xh = ArrayPool<float>.Shared.Rent(xLen);
+        float[] yh = ArrayPool<float>.Shared.Rent(yLen);
+        try
+        {
+            x.Download(xh.AsSpan(0, xLen));
+            using (var xt = Tensor<float>.From(xh.AsSpan(0, xLen), m, In))
+            using (var yt = _hostLayer!.Forward(xt, workspace: null))
+            {
+                if (yt.ElementCount != yLen)
+                    throw new InvalidOperationException($"{_hostLayer.Name}: host forward produced {yt.ElementCount} elements, expected {yLen}.");
+                yt.Data.CopyTo(yh.AsSpan(0, yLen));
+            }
+            y.Upload(yh.AsSpan(0, yLen));
+        }
+        finally
+        {
+            ArrayPool<float>.Shared.Return(xh);
+            ArrayPool<float>.Shared.Return(yh);
+        }
+    }
+
+    /// <summary>True for the quant dtypes with an on-device dequant matmul kernel in this engine.</summary>
+    private static bool IsOnDeviceDequant(QuantDType q) => GpuInferenceEngine.IsOnDeviceDequant(q);
 
     /// <summary>dx = dy·Wᵀ (+ dH·Aᵀ with dH = s·dy·Bᵀ); dB += hsᵀ·dy; dA += xᵀ·dH. betaDx = 1 accumulates into dx.</summary>
     public void Backward(DeviceTensor dx, DeviceTensor dy, DeviceTensor x, DeviceArena arena, float betaDx = 0f)
@@ -153,5 +204,5 @@ internal sealed class GpuLinear : IDisposable
             throw new ArgumentException($"{name} must be [{rows},{cols}], got [{t.Rows},{t.Cols}].");
     }
 
-    public void Dispose() { _w.Dispose(); _rawW?.Dispose(); _bias?.Dispose(); _a?.Dispose(); _b?.Dispose(); _dA?.Dispose(); _dB?.Dispose(); }
+    public void Dispose() { _w?.Dispose(); _rawW?.Dispose(); _bias?.Dispose(); _a?.Dispose(); _b?.Dispose(); _dA?.Dispose(); _dB?.Dispose(); }
 }

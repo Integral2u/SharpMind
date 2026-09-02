@@ -11,6 +11,10 @@ namespace SharpMind.CUI.App;
 /// the user explicitly chooses the fallback — never a silent CPU fallback, and never a hard fail
 /// when the only problem is that a device is simply absent.
 ///
+/// When <paramref name="cpuFallbackFirst"/> is set the first (default) row is a consent sentinel,
+/// "Allow CPU fallback", for the accelerator's per-tensor host fallback — the chosen accelerator
+/// itself is kept, so choosing it returns the requested name unchanged.
+///
 /// Returns the chosen accelerator name, or null when the user cancels (which the caller treats as
 /// aborting the launch/run). A chosen CPU maps to the reserved <see cref="InferenceEngineResolver.CpuName"/>.
 /// </summary>
@@ -22,17 +26,33 @@ public static class AcceleratorPicker
         string requestedName,
         string reason,
         IReadOnlyList<IAcceleratorPlugin> plugins,
-        Type capabilityType)
+        Type capabilityType,
+        bool cpuFallbackFirst = false)
     {
-        var options = new List<Option> { new(AcceleratorSelector.CpuName, "CPU — built-in, no accelerator") };
+        string requested = requestedName?.Trim() ?? "";
+        var options = new List<Option>();
+        if (cpuFallbackFirst)
+        {
+            // The accelerator itself stays selected; consenting just lets it route the
+            // kernels it lacks to the host. Return the requested name so the caller can't
+            // tell consent apart from "keep this accelerator".
+            options.Add(new(requested, "Allow CPU fallback — keep the accelerator, run the fallen-back tensors on the CPU"));
+        }
+        options.Add(new(AcceleratorSelector.CpuName, "CPU — built-in, no accelerator"));
         foreach (var p in plugins)
         {
             if (!Offers(p, capabilityType)) continue;
+            // In the consent dialog the requested accelerator is already the sentinel's subject;
+            // re-listing it as a separate row would be a duplicate of the "keep it" choice.
+            if (cpuFallbackFirst && string.Equals(p.Name, requested, StringComparison.OrdinalIgnoreCase)) continue;
             options.Add(new(p.Name, $"{p.Name} — {OneLine(p.Description)}"));
         }
 
         var ordered = options.ToArray();
-        int defaultIndex = 0; // CPU is the guaranteed-workable default
+        int defaultIndex = 0; // the consent sentinel (or the CPU, when no sentinel) is the default
+        // Row 0 is the consent sentinel exactly when the caller asked for it — its Name is the
+        // requested accelerator (which no plugin row re-lists) and it is not the CPU.
+        int? sentinelIndex = cpuFallbackFirst ? 0 : null;
 
         // Layout is laid out in absolute rows (not AnchorEnd) so no two controls ever overlap:
         // the reason text has its own height (it wraps), the option list sits below it, then the
@@ -49,7 +69,10 @@ public static class AcceleratorPicker
         // If the reason is very long, cap it and let the list stay visible; the reason box scrolls.
         reasonLines = Math.Min(reasonLines, Math.Max(3, dialogHeight - (listRows + 5)));
 
-        var dialog = new Dialog((ustring)$"Accelerator '{requestedName}' can't run here", width, dialogHeight);
+        string title = cpuFallbackFirst
+            ? $"Accelerator '{(string.IsNullOrEmpty(requested) ? "selected" : requested)}' needs CPU fallback"
+            : $"Accelerator '{(string.IsNullOrEmpty(requested) ? "unknown" : requested)}' can't run here";
+        var dialog = new Dialog((ustring)title, width, dialogHeight);
         var prompt = new TextView { ReadOnly = true, WordWrap = true, TabStop = false, X = 1, Y = 0, Width = Dim.Fill(2), Height = reasonLines };
         prompt.Text = (ustring)reasonText;
         row = reasonLines + 1;
@@ -64,7 +87,7 @@ public static class AcceleratorPicker
         {
             X = 1, Y = row, Width = Dim.Fill(2)
         };
-        var ok = new Button(IsCpu(defaultIndex, ordered) ? "Use CPU" : "Use engine") { X = 1, Y = row + 1, IsDefault = true };
+        var ok = new Button(IsCpu(defaultIndex, ordered) ? "Use CPU" : defaultIndex == sentinelIndex ? "Allow CPU fallback" : "Use engine") { X = 1, Y = row + 1, IsDefault = true };
         var cancel = new Button("Cancel") { X = Pos.Right(ok) + 2, Y = row + 1 };
 
         string? result = null;
@@ -80,7 +103,7 @@ public static class AcceleratorPicker
         void RefreshButton()
         {
             int idx = list.SelectedItem;
-            ok.Text = IsCpu(idx, ordered) ? "Use CPU" : "Use engine";
+            ok.Text = IsCpu(idx, ordered) ? "Use CPU" : idx == sentinelIndex ? "Allow CPU fallback" : "Use engine";
         }
 
         list.SelectedItemChanged += (_) => RefreshButton();

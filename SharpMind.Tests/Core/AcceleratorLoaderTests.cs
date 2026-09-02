@@ -64,7 +64,9 @@ public sealed class AcceleratorLoaderTests : IDisposable
         AcceleratorLoader.Scan(typeof(FakeAcceleratorPlugin).Assembly, plugins, warnings);
         AcceleratorLoader.Scan(typeof(FakeAcceleratorPlugin).Assembly, plugins, warnings);
 
-        Assert.Single(plugins);
+        // The assembly carries several accelerator plugins (the consent/refusal fakes too); the
+        // contract is that a repeated name never appends a second instance of itself.
+        Assert.Single(plugins, p => p.Name == "fake");
         Assert.Contains(warnings, w => w.Contains("'fake'") && w.Contains("duplicate"));
     }
 

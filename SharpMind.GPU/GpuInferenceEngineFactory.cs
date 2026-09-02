@@ -21,6 +21,9 @@ public sealed class GpuInferenceEngineFactory : IInferenceEngineFactory
     public string? CheckSupported(ModelMetaData meta, ModelConfig modelConfig, SharpMindConfig config)
         => GpuInferenceEngine.CheckSupported(meta, modelConfig, config, out var reason) ? null : reason;
 
+    public string? DescribeCpuFallback(ModelMetaData meta, ModelConfig modelConfig, SharpMindConfig config)
+        => GpuInferenceEngine.DescribeCpuFallback(meta, modelConfig, config);
+
     public IInferenceEngine? TryCreate(InferenceEngineContext context, out string? reason)
     {
         ArgumentNullException.ThrowIfNull(context);

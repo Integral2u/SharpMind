@@ -42,6 +42,26 @@ public sealed class ModelLoadResult
     public LoadedModel? Loaded { get; init; }
     public string? Error { get; init; }
     public bool Success => Error is null && Loaded is not null;
+
+    /// <summary>
+    /// Set when the requested accelerator exists but its engine factory refused the model's
+    /// architecture from the metadata alone (no device kernel for the shape — MoE, LayerNorm,
+    /// non-RoPE, …). Nothing was loaded. The caller should show <see cref="AcceleratorPicker"/>
+    /// (CPU + other capable plugins) rather than a hard failure. <see cref="Success"/> stays false.
+    /// Mutually exclusive with <see cref="CpuFallbackWarning"/>.
+    /// </summary>
+    public string? AcceleratorRefusal { get; init; }
+
+    /// <summary>
+    /// Set when the requested accelerator can run the model, but some block-linears use a quant
+    /// with no on-device kernel (e.g. Q8_K) and the caller has not yet consented to the per-tensor
+    /// CPU fallback (no <see cref="SessionOptions.AllowCpuFallback"/>). Nothing was loaded — the
+    /// fail-fast gate refuses before paying for the weight read. The caller should show
+    /// <see cref="AcceleratorPicker"/> in consent mode ("Allow CPU fallback" first) and retry the
+    /// load with <see cref="SessionOptions.AllowCpuFallback"/> set. <see cref="Success"/> stays false.
+    /// Mutually exclusive with <see cref="AcceleratorRefusal"/>.
+    /// </summary>
+    public string? CpuFallbackWarning { get; init; }
 }
 
 /// <summary>
@@ -158,15 +178,18 @@ public static class SessionLauncher
         Dictionary<string, string> mapping = sharpConfig.ToJigSawMapping(parallel: options.UseParallelKernels);
 
         // Fail fast before paying for the weight load: an accelerator that can never run this
-        // model's quant dtypes / shape is refused from the metadata alone (the refusal reason is
-        // the same one BuildSession would surface after loading). Otherwise we would read the
-        // whole file only to refuse it at engine creation.
+        // model's shape is refused from the metadata alone, and one whose selected quant has no
+        // on-device kernel is offered its per-tensor CPU-fallback consent — also from the metadata
+        // alone, before we have read a byte of weights. Otherwise we would read the whole file
+        // only to refuse or surprise at engine creation.
         if (!string.IsNullOrWhiteSpace(options.InferenceAccelerator)
             && !options.InferenceAccelerator.Trim().Equals(InferenceEngineResolver.CpuName, StringComparison.OrdinalIgnoreCase))
         {
-            var refusal = CheckAcceleratorCompatibility(options.InferenceAccelerator, meta, modelConfig, sharpConfig, pluginsFolder);
+            var (refusal, cpuFallback) = CheckAcceleratorCompatibility(options.InferenceAccelerator, meta, modelConfig, sharpConfig, pluginsFolder);
             if (refusal is not null)
-                return new ModelLoadResult { Error = refusal };
+                return new ModelLoadResult { AcceleratorRefusal = refusal };
+            if (cpuFallback is not null && !options.AllowCpuFallback)
+                return new ModelLoadResult { CpuFallbackWarning = cpuFallback };
         }
 
         status?.Report("Loading weights...");
@@ -258,35 +281,44 @@ public static class SessionLauncher
     /// <summary>
     /// Pre-weight-load accelerator compatibility gate. Resolves the named accelerator plugin and
     /// asks its inference capability <i>from the metadata alone</i> whether this model can run on
-    /// it. Returns a refusal reason (or null when compatible / the plugin does not implement the
-    /// metadata check, in which case the authoritative per-layer check at BuildSession still runs).
+    /// it. Returns the pair (refusal reason, cpu-fallback description):
+    /// <list type="bullet">
+    /// <item><c>refusal</c> — set when the accelerator can never run this model's architecture
+    /// (the same reason BuildSession would surface after loading);</item>
+    /// <item><c>cpuFallback</c> — set when the model runs on the accelerator except for some quant
+    /// that has no on-device kernel and falls back per tensor to the host.</item>
+    /// </list>
+    /// Both are null when the plugin does not implement the metadata check (the authoritative
+    /// per-layer check at BuildSession then still runs).
     /// </summary>
-    private static string? CheckAcceleratorCompatibility(string accelerator, ModelMetaData meta,
-        ModelConfig modelConfig, SharpMindConfig sharpConfig, string? pluginsFolder)
+    private static (string? Refusal, string? CpuFallback) CheckAcceleratorCompatibility(
+        string accelerator, ModelMetaData meta, ModelConfig modelConfig, SharpMindConfig sharpConfig, string? pluginsFolder)
     {
         try
         {
             if (string.IsNullOrWhiteSpace(pluginsFolder))
-                return "No accelerator plugins folder is configured; cannot resolve inference accelerator " +
-                    $"'{accelerator}' to check compatibility.";
+                return ("No accelerator plugins folder is configured; cannot resolve inference accelerator " +
+                    $"'{accelerator}' to check compatibility.", null);
 
             var accelerators = AcceleratorLoader.LoadFrom(pluginsFolder, out _);
             string wanted = AcceleratorNames.Canonicalize(accelerator.Trim());
             var plugin = accelerators.FirstOrDefault(p => string.Equals(p.Name, wanted, StringComparison.OrdinalIgnoreCase));
             if (plugin is null)
-                return $"Accelerator '{wanted}' was not found in the plugins folder (available: " +
-                    $"{(accelerators.Count == 0 ? "none loaded" : string.Join(", ", accelerators.Select(p => p.Name)))}).";
+                return ($"Accelerator '{wanted}' was not found in the plugins folder (available: " +
+                    $"{(accelerators.Count == 0 ? "none loaded" : string.Join(", ", accelerators.Select(p => p.Name)))}).", null);
 
             var factory = plugin.Capabilities.OfType<IInferenceEngineFactory>().FirstOrDefault();
-            if (factory is null) return null;   // no inference capability -> let BuildSession resolve
+            if (factory is null) return (null, null);   // no inference capability -> let BuildSession resolve
 
-            return factory.CheckSupported(meta, modelConfig, sharpConfig);
+            string? refusal = factory.CheckSupported(meta, modelConfig, sharpConfig);
+            if (refusal is not null) return (refusal, null);
+            return (null, factory.DescribeCpuFallback(meta, modelConfig, sharpConfig));
         }
-        catch (Exception ex)
+        catch (Exception)
         {
             // Never block the load on a plugin failure; the engine creation at BuildSession is the
             // authoritative gate and reports underlying plugin problems there.
-            return null;
+            return (null, null);
         }
     }
 

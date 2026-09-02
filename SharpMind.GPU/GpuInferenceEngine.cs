@@ -43,8 +43,9 @@ namespace SharpMind.GPU;
 ///
 /// Model constraints mirror <see cref="GpuBackpropEngine.ValidateSupported"/> minus the
 /// LoRA/trainable-parameter checks, which don't apply here: RMSNorm final norm and block
-/// norms, RoPE or NoPE, gated FFN, no MoE. F32 weights only — quantized GGUF weights must
-/// already be dequantized on the host <see cref="Transformer"/> (load with <c>LoadMode.Full</c>).
+/// norms, RoPE or NoPE, gated FFN, no MoE. Quantized GGUF weights run on the device for the
+/// dtypes in <see cref="SupportedDtypes"/>; a block linear in any other quant (e.g. Q8_K) falls
+/// back per-tensor to the host and the rest of the model stays on the device.
 /// </summary>
 public sealed class GpuInferenceEngine : IInferenceEngine
 {
@@ -219,13 +220,16 @@ public sealed class GpuInferenceEngine : IInferenceEngine
     }
 
     /// <summary>
-    /// The raw weight dtypes this engine can run on the device, the single source of truth for
-    /// both the post-load <see cref="ValidateSupported(Transformer, SharpMindConfig)"/> gate and the
-    /// metadata-only, pre-weight-load <see cref="CheckSupported(ModelMetaData, ModelConfig, SharpMindConfig)"/>
-    /// gate. F32 layers use the ordinary GEMM (the raw bytes are a full float weight); the block
-    /// quants and K-quants run the on-device dequant matmul/gather. Q8_K is deliberately absent:
-    /// its block holds an F32 scale, which ILGPU device code cannot reinterpret, so it has no kernel
-    /// and is refused here. Every other quant is deferred — it has no GPU kernel.
+    /// The raw weight dtypes this engine can run <i>on the device</i>, consulted by the embedding
+    /// path, <see cref="ValidateSupported(Transformer, SharpMindConfig)"/>, the metadata-only
+    /// <see cref="CheckSupported(ModelMetaData, ModelConfig, SharpMindConfig)"/> gate, and
+    /// <see cref="DescribeCpuFallback(ModelMetaData, ModelConfig, SharpMindConfig)"/>. F32 layers use
+    /// the ordinary GEMM (the raw bytes are a full float weight); the block quants and K-quants run
+    /// the on-device dequant matmul/gather. Dtypes absent here (notably Q8_K, whose block holds an
+    /// F32 scale ILGPU device code cannot reinterpret, and the deferred dtypes with no kernel at all)
+    /// are not refused: a block linear in such a quant falls back per-tensor to the host
+    /// <see cref="SharpMind.Model.Layers.InferenceLinearLayer"/> forward, which handles every quant the
+    /// CPU transformer runs.
     /// </summary>
     public static readonly IReadOnlySet<QuantDType> SupportedDtypes = new HashSet<QuantDType>
     {
@@ -236,27 +240,29 @@ public sealed class GpuInferenceEngine : IInferenceEngine
     /// <summary>True for the quant dtypes with an on-device dequant matmul/gather kernel
     /// (<see cref="Kernels.QuantMatmulKernels.DequantMatmul"/>/<see cref="Kernels.QuantMatmulKernels.DequantMatmulK"/>)
     /// — i.e. <see cref="SupportedDtypes"/> minus the F32 float path.</summary>
-    private static bool IsOnDeviceDequant(QuantDType q)
+    internal static bool IsOnDeviceDequant(QuantDType q)
         => q is not QuantDType.F32 && SupportedDtypes.Contains(q);
 
-    /// <summary>
-    /// True when this model can be inferred on the device and which dtypes the device cannot run.
-    /// Used as a compatibility pre-screen, reported once.</summary>
-    private static bool CheckDtypes(IEnumerable<QuantDType> dtypes, out string? missing)
+    /// <summary>The quant dtypes in <paramref name="meta"/> that have no on-device kernel, i.e. the
+    /// per-tensor CPU fallback set <see cref="DescribeCpuFallback(ModelMetaData, ModelConfig, SharpMindConfig)"/>
+    /// reports. Consults the tensors directly so block linears can be told apart from the embedding
+    /// and the LM head (which always run on the device via the loader's F32 copies / device dequant).
+    private static IEnumerable<QuantDType> CpuFallbackDtypes(ModelMetaData meta)
     {
-        var unsupported = dtypes.Where(d => !SupportedDtypes.Contains(d)).ToArray();
-        if (unsupported.Length == 0) { missing = null; return true; }
-        missing = string.Join(", ", unsupported.Select(d => d.ToString()));
-        return false;
+        foreach (var dtype in meta.GetUsedQuantizations())
+            if (!SupportedDtypes.Contains(dtype))
+                yield return dtype;
     }
 
     /// <summary>
     /// Metadata-only (pre-weight-load) compatibility gate. The host calls this as soon as it has
-    /// read a GGUF's headers — before paying for the weight load — so picking the GPU for a model
-    /// this engine can't quant-run fails fast instead of loading the whole file only to refuse it.
-    /// Mirrors the dtype + config-level checks of <see cref="ValidateSupported(Transformer, SharpMindConfig)"/>
-    /// that are derivable from <paramref name="meta"/> and <paramref name="modelConfig"/>; the
-    /// per-layer check still runs on the built model as the authoritative gate.
+    /// read a GGUF's headers — before paying for the weight load. Mirrors the config-level checks of
+    /// <see cref="ValidateSupported(Transformer, SharpMindConfig)"/> that are derivable from
+    /// <paramref name="meta"/> and <paramref name="modelConfig"/>. Only architecture limits refuse
+    /// here — those are whole-model CPU cases the accelerator genuinely cannot run. Quant dtypes are
+    /// <i>not</i> a refusal: unsupported-quant block linears fall back per-tensor to the host (see
+    /// <see cref="DescribeCpuFallback(ModelMetaData, ModelConfig, SharpMindConfig)"/>), and the
+    /// per-layer gate still runs on the built model as the authoritative check.
     /// </summary>
     /// <returns>true when supported, with <paramref name="reason"/> null; otherwise false.</returns>
     public static bool CheckSupported(ModelMetaData meta, ModelConfig modelConfig, SharpMindConfig config, out string? reason)
@@ -270,9 +276,38 @@ public sealed class GpuInferenceEngine : IInferenceEngine
         if (modelConfig.PositionalEncoding is not (PositionalEncoding.RoPE or PositionalEncoding.NoPE)) { reason = Why($"positional encoding {modelConfig.PositionalEncoding}"); return false; }
         if (config.Ffn == FfnKind.MoE) { reason = Why("MoE"); return false; }
         if (config.Gate == GateKind.None) { reason = Why("dense (ungated) FFN"); return false; }
-        if (!CheckDtypes(meta.GetUsedQuantizations(), out var missing)) { reason = Why($"weights quantized as {missing} — GPU inference supports only {string.Join(", ", SupportedDtypes)}"); return false; }
         reason = null;
         return true;
+    }
+
+    /// <summary>
+    /// Describes per-tensor CPU fallback for <paramref name="meta"/>: which model content this engine
+    /// would run on the host rather than the device. Null means the whole model runs on the device
+    /// (no consent needed). Non-null names the block-line quant dtypes that fall back. Embeddings and
+    /// the LM head are deliberately excluded — whatever their storage quant, the loader always
+    /// materialises their F32 copies (or the engine's device dequant handles them), so they never
+    /// fall back. The caller (factory → launcher → CUI) surfaces this once, before loading weights.
+    /// </summary>
+    public static string? DescribeCpuFallback(ModelMetaData meta, ModelConfig modelConfig, SharpMindConfig config)
+    {
+        ArgumentNullException.ThrowIfNull(meta);
+        var dtypes = CpuFallbackDtypes(meta).ToArray();
+        if (dtypes.Length == 0) return null;
+
+        // Which of the fallen-back dtypes actually land on block linears? The embedding and the LM
+        // head store their quants too, but (as above) always run on the device; only block linears
+        // genuinely fall back. When a dtype appears on block tensors, it is reported.
+        var blockDtypes = meta.Tensors
+            .Where(t => t.Name.Contains("blk.", StringComparison.OrdinalIgnoreCase))
+            .Select(t => t.Dtype)
+            .Where(dtypes.Contains)
+            .Distinct()
+            .OrderBy(d => d)
+            .ToArray();
+        if (blockDtypes.Length == 0) return null;
+
+        return $"will run on the CPU: {string.Join(", ", blockDtypes.Select(d => d.ToString()))} " +
+            $"weights (block linears); the rest of the model stays on the GPU.";
     }
 
     public static void ValidateSupported(Transformer model, SharpMindConfig config)
@@ -281,46 +316,25 @@ public sealed class GpuInferenceEngine : IInferenceEngine
         ArgumentNullException.ThrowIfNull(config);
         var c = model.Config;
         static string Why(string s) => $"GPU inference engine (M0) does not support {s}; use CPU inference, which does.";
-        static void CheckDtype(QuantDType? dtype, string what)
-        {
-            // F32 uses the ordinary GEMM (the raw bytes are a full float weight); the block quants
-            // and K-quants (minus Q8_K) run the on-device dequant matmul/gather. Anything else has
-            // no GPU kernel here.
-            if (dtype is { } q && !GpuInferenceEngine.SupportedDtypes.Contains(q))
-                throw new NotSupportedException(Why($"{what} quantized as {dtype} — GPU inference supports only {string.Join(", ", GpuInferenceEngine.SupportedDtypes)} weights"));
-        }
         if (model.FinalNorm is not RmsNormLayer) throw new NotSupportedException(Why($"a {model.FinalNorm.GetType().Name} final norm — LayerNorm, only RMSNorm"));
         if (c.PositionalEncoding is not (PositionalEncoding.RoPE or PositionalEncoding.NoPE)) throw new NotSupportedException(Why($"positional encoding {c.PositionalEncoding}"));
         if (config.Ffn == FfnKind.MoE) throw new NotSupportedException(Why("MoE"));
         if (model.QuantAwareTrainingTarget is not null and not Core.Quantization.QuantDType.F32) throw new NotSupportedException(Why("a quantized model — dequantize first (LoadMode.Full)"));
         if (config.Gate == GateKind.None) throw new NotSupportedException(Why("dense (ungated) FFN"));
         if (c.NumLayers <= 0 || model.GetBlock(0) is null) throw new NotSupportedException(Why("a model without blocks"));
-        // The embedding may be quantized-resident (the chat loader's Q8_0 token_embd): the engine
-        // dequantises it on the device for both the gather and the weight-tied LM head. Allow F32/Q8_0.
-        CheckDtype(model.RawEmbeddingDtype ?? QuantDType.F32, "the embedding");
+        // Quant dtypes are NOT a gate here: a block linear in a quant with no on-device kernel
+        // (Q8_K, or any deferred quant) falls back per-tensor to the host InferenceLinearLayer
+        // forward, which runs every quant the CPU transformer runs. The embedding and the tied LM
+        // head run on the device for every storage quant — the loader always materialises their F32
+        // copies, and the device-dequant path handles the dtypes with a kernel. Only architecture
+        // limits refuse below (whole-model CPU cases).
         for (int l = 0; l < c.NumLayers; l++)
         {
             var b = model.GetBlock(l) ?? throw new NotSupportedException(Why($"a model missing block {l}"));
-            // The GPU engine reads frozen weights into cuBLAS/tiled GEMMs (float TrainingLinearLayer)
-            // or the on-device Q8_0 dequant matmul (quantized-resident InferenceLinearLayer). A model
-            // built by the standard chat loader (CreateTransformer) wraps quantized-resident weights
-            // in InferenceLinearLayer whose "weight" backs RawQuantizedData; only Q8_0 has a device
-            // kernel, so any other quant (and the F32 inference-layer edge) is rejected up front.
-            // ValidateSupported_RejectsQuantizedResidentModel pins this per-type behaviour.
-            foreach (var lin in BlockLinears(b))
-                if (lin is InferenceLinearLayer il && !IsOnDeviceDequant(il.QuantDtype))
-                    throw new NotSupportedException(Why($"{il.Name} quantized as {il.QuantDtype} — GPU inference supports only {string.Join(", ", SupportedDtypes.Where(d => d != QuantDType.F32))} quantized linears"));
             if (b.PostAttnNorm is not null || b.PostFfnNorm is not null) throw new NotSupportedException(Why("Gemma post-attention/post-FFN norms"));
             if (b.Norm1 is not RmsNormLayer || b.Norm2 is not RmsNormLayer) throw new NotSupportedException(Why($"a {b.Norm1.GetType().Name} block norm — LayerNorm, only RMSNorm"));
             if (b.Ffn is not GatedFfnLayer) throw new NotSupportedException(Why($"FFN kind {b.Ffn.GetType().Name}"));
         }
-    }
-
-    /// <summary>The six weight linears of one block, in a stable order, for dtype validation.</summary>
-    private static IEnumerable<LinearLayer> BlockLinears(TransformerBlock b)
-    {
-        yield return b.Attention.Wq; yield return b.Attention.Wk; yield return b.Attention.Wv; yield return b.Attention.Wo;
-        if (b.Ffn is GatedFfnLayer g) { yield return g.WGated!; yield return g.WDown!; }
     }
 
     public ReadOnlyMemory<float> Prefill(ReadOnlySpan<int> tokenIds, Action<double>? onChunkProgress = null,

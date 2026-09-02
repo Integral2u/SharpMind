@@ -563,6 +563,7 @@ See [CHANGELOG.md](CHANGELOG.md) for release history.
 
 # Wishlist (not ordered)
 - [ ] AVX512 Kernels
+- [ ] DetectBestTier Profiler, quick test for HardwareTier.Auto, ensure fastest Tier.
 - [ ] GPU Inference and OpenCL fallback
 - [x] Additional Model Support — Ministral-3-3B-Instruct (sliding window attention) now supported
 - [ ] Optimizations

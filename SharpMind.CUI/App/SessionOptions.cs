@@ -115,10 +115,24 @@ public sealed class SessionOptions
     /// Inference accelerator plugin name (<see cref="SharpMind.Core.Plugins.IAcceleratorPlugin.Name"/>,
     /// case-insensitive; null or "CPU" = CPU). Mirrors <see cref="App.TrainJobSettings.Accelerator"/>
     /// for training. Resolved against the plugins folder by
-    /// <see cref="SharpMind.Inference.InferenceEngineResolver"/> at session launch; a name that
-    /// cannot be honoured fails the launch instead of silently falling back to the CPU.
+    /// <see cref="SharpMind.Inference.InferenceEngineResolver"/> at session launch. A quant the
+    /// accelerator has no on-device kernel for (e.g. Q8_K) no longer fails the launch — those block
+    /// linears fall back per tensor to the CPU (host-routed) after the user consents via
+    /// <see cref="AllowCpuFallback"/>; an architecture the accelerator truly cannot run (MoE,
+    /// LayerNorm, non-RoPE) defaults to the CPU without a hard failure.
     /// </summary>
     public string? InferenceAccelerator { get; set; }
+
+    /// <summary>
+    /// Transient per-launch consent for CPU fallback of CUDA/OpenCL-host-routed block linears
+    /// (quants with no on-device dequant kernel). The metadata gate in
+    /// <see cref="SharpMind.CUI.App.SessionLauncher.LoadModelAsync"/> refuses to load — before any
+    /// weight cost — when such a quant is present and this flag is false, so the UI can show the
+    /// "Allow CPU fallback" consent picker. Not serialized and not copied by Clone/CopyTo: a fresh
+    /// launch always asks again.
+    /// </summary>
+    [JsonIgnore]
+    public bool AllowCpuFallback { get; set; }
 
     public FormatterStrategy Formatter { get; set; } = FormatterStrategy.Auto;
     /// <summary>How model weights are loaded — Full (all at once, shared) or Streaming (per-layer, isolated).</summary>
