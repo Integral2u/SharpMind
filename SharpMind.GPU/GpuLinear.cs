@@ -21,7 +21,7 @@ internal sealed class GpuLinear : IDisposable
     private readonly DeviceBuffer _w;
     private readonly DeviceBuffer? _bias;
     private readonly DeviceByteBuffer? _rawW;
-    private readonly bool _q8_0;
+    private readonly QuantDType? _quant;
     private readonly DeviceBuffer? _a, _b, _dA, _dB;
     private readonly Parameter? _pA, _pB;
     private readonly float _scale;
@@ -51,9 +51,7 @@ internal sealed class GpuLinear : IDisposable
             // ordinary path. Only Q8_0 has a GPU kernel in this engine; ValidateSupported refuses the rest.
             if (layer is InferenceLinearLayer inf && inf.RawQuantizedData is not null)
             {
-                if (inf.QuantDtype != QuantDType.Q8_0)
-                    throw new NotSupportedException($"{layer.Name}: GPU inference supports Q8_0 quantized weights, got {inf.QuantDtype}.");
-                _q8_0 = true;
+                _quant = inf.QuantDtype;
                 _rawW = new DeviceByteBuffer(device.Accelerator, inf.RawQuantizedData); owned.Add(_rawW);
                 _w = DeviceBuffer.From(device, layer.Weight); owned.Add(_w);
             }
@@ -117,7 +115,7 @@ internal sealed class GpuLinear : IDisposable
         int m = x.Rows;
         Check(x, m, In, "x"); Check(y, m, Out, "y");
         GpuKernels.NoOverlap(y, x, "y", "x");
-        if (_q8_0) _dev.Kernels.Q8_0Matmul(y, x, _rawW!, In, Out);                       // y = x·W (quantized)
+        if (_quant is { } q) _dev.Kernels.DequantMatmul(y, x, _rawW!, In, Out, q);       // y = x·W (quantized)
         else _dev.Gemm(y, x, _w.Tensor, m, Out, In, saI: In, saK: 1, sbK: Out, sbJ: 1);   // y = x·W
         if (_bias is not null) _dev.Kernels.AddBiasRows(y, _bias.Tensor);
         if (_a is null) return;

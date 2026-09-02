@@ -1,10 +1,12 @@
 using SharpMind.Core;
+using SharpMind.Core.Quantization;
 using SharpMind.Core.Tensors;
 using SharpMind.GPU;
 using SharpMind.Inference;
 using SharpMind.Inference.Chat;
 using SharpMind.Model;
 using SharpMind.Model.Config;
+using SharpMind.Model.Format;
 using SharpMind.Tokenization;
 using SharpMind.Tokenization.Vocab;
 using SharpMind.Training;
@@ -316,5 +318,48 @@ public sealed class GpuInferenceEngineTests : IClassFixture<GpuInferenceEngineTe
         var ex = Assert.Throws<NotSupportedException>(() => GpuInferenceEngine.ValidateSupported(inference, sc));
         Assert.Contains("quantized", ex.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("F32", ex.Message);
+    }
+
+    private static ModelMetaData Meta(params (string Name, QuantDType Dtype)[] tensors) => new()
+    {
+        Tensors = [.. tensors.Select(t => new TensorInfo { Name = t.Name, Dtype = t.Dtype, Shape = [8, 8], Offset = 0 })],
+    };
+
+    /// <summary>The metadata-only, pre-weight-load gate accepts the same dtypes the engine runs
+    /// (F32 + the on-device block quants Q8_0/Q4_0/Q4_1/Q5_0/Q5_1) on the same architecture the
+    /// built Transformer accepts.</summary>
+    [Fact]
+    public void CheckSupported_AcceptsF32AndQ8_0FromMetadata()
+    {
+        var sc = SharpMindConfig.Llama with { Hardware = HardwareTier.Scalar };
+        var meta = Meta(("token_embd.weight", QuantDType.Q8_0), ("blk.0.ffn_down.weight", QuantDType.Q8_0), ("output_norm.weight", QuantDType.F32));
+
+        Assert.True(GpuInferenceEngine.CheckSupported(meta, Cfg, sc, out var reason), reason);
+    }
+
+    /// <summary>A quant the engine has no kernel for (Q6_K here) must be refused from mere metadata —
+    /// this is the pre-load gate that keeps the host from loading a whole file it will reject at creation.</summary>
+    [Fact]
+    public void CheckSupported_RejectsMetadataWithUnsupportedQuant()
+    {
+        var sc = SharpMindConfig.Llama with { Hardware = HardwareTier.Scalar };
+        var meta = Meta(("blk.0.attn_wq.weight", QuantDType.Q6_K));
+
+        Assert.False(GpuInferenceEngine.CheckSupported(meta, Cfg, sc, out var reason));
+        Assert.Contains("Q6_K", reason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>The plugin factory forwards the metadata gate so the host can refuse before loading weights.</summary>
+    [Fact]
+    public void Factory_CheckSupported_RefusesUnsupportedQuantMeta()
+    {
+        var factory = new GpuInferenceEngineFactory();
+        var sc = SharpMindConfig.Llama with { Hardware = HardwareTier.Scalar };
+
+        Assert.Null(factory.CheckSupported(Meta(("a", QuantDType.Q8_0)), Cfg, sc));
+
+        var reason = factory.CheckSupported(Meta(("a", QuantDType.Q6_K)), Cfg, sc);
+        Assert.NotNull(reason);
+        Assert.Contains("Q6_K", reason, StringComparison.OrdinalIgnoreCase);
     }
 }

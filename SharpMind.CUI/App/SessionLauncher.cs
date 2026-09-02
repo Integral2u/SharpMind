@@ -116,7 +116,8 @@ public sealed class LaunchResult
 public static class SessionLauncher
 {
     /// <summary>The expensive phase: read a GGUF file into a real, ready-to-use Transformer + Tokenizer.</summary>
-    public static async Task<ModelLoadResult> LoadModelAsync(SessionOptions options, IProgress<string>? status = null, CancellationToken ct = default)
+    public static async Task<ModelLoadResult> LoadModelAsync(SessionOptions options, IProgress<string>? status = null,
+        string? pluginsFolder = null, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(options.ModelPath) || !File.Exists(options.ModelPath))
             return new ModelLoadResult { Error = $"Model file not found: {options.ModelPath}" };
@@ -155,6 +156,18 @@ public static class SessionLauncher
 
         // Build the full mapping via SharpMindConfig.ToJigSawMapping().
         Dictionary<string, string> mapping = sharpConfig.ToJigSawMapping(parallel: options.UseParallelKernels);
+
+        // Fail fast before paying for the weight load: an accelerator that can never run this
+        // model's quant dtypes / shape is refused from the metadata alone (the refusal reason is
+        // the same one BuildSession would surface after loading). Otherwise we would read the
+        // whole file only to refuse it at engine creation.
+        if (!string.IsNullOrWhiteSpace(options.InferenceAccelerator)
+            && !options.InferenceAccelerator.Trim().Equals(InferenceEngineResolver.CpuName, StringComparison.OrdinalIgnoreCase))
+        {
+            var refusal = CheckAcceleratorCompatibility(options.InferenceAccelerator, meta, modelConfig, sharpConfig, pluginsFolder);
+            if (refusal is not null)
+                return new ModelLoadResult { Error = refusal };
+        }
 
         status?.Report("Loading weights...");
         TransformerWeights weights;
@@ -240,6 +253,41 @@ public static class SessionLauncher
             ToolNames = toolNames.ToHashSet(StringComparer.Ordinal),
             Plugins = result
         };
+    }
+
+    /// <summary>
+    /// Pre-weight-load accelerator compatibility gate. Resolves the named accelerator plugin and
+    /// asks its inference capability <i>from the metadata alone</i> whether this model can run on
+    /// it. Returns a refusal reason (or null when compatible / the plugin does not implement the
+    /// metadata check, in which case the authoritative per-layer check at BuildSession still runs).
+    /// </summary>
+    private static string? CheckAcceleratorCompatibility(string accelerator, ModelMetaData meta,
+        ModelConfig modelConfig, SharpMindConfig sharpConfig, string? pluginsFolder)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(pluginsFolder))
+                return "No accelerator plugins folder is configured; cannot resolve inference accelerator " +
+                    $"'{accelerator}' to check compatibility.";
+
+            var accelerators = AcceleratorLoader.LoadFrom(pluginsFolder, out _);
+            string wanted = AcceleratorNames.Canonicalize(accelerator.Trim());
+            var plugin = accelerators.FirstOrDefault(p => string.Equals(p.Name, wanted, StringComparison.OrdinalIgnoreCase));
+            if (plugin is null)
+                return $"Accelerator '{wanted}' was not found in the plugins folder (available: " +
+                    $"{(accelerators.Count == 0 ? "none loaded" : string.Join(", ", accelerators.Select(p => p.Name)))}).";
+
+            var factory = plugin.Capabilities.OfType<IInferenceEngineFactory>().FirstOrDefault();
+            if (factory is null) return null;   // no inference capability -> let BuildSession resolve
+
+            return factory.CheckSupported(meta, modelConfig, sharpConfig);
+        }
+        catch (Exception ex)
+        {
+            // Never block the load on a plugin failure; the engine creation at BuildSession is the
+            // authoritative gate and reports underlying plugin problems there.
+            return null;
+        }
     }
 
     /// <summary>The cheap phase: build a ChatSession (or a debug bridge context) on top of an already-loaded model.</summary>

@@ -58,7 +58,7 @@ public sealed class GpuInferenceEngine : IInferenceEngine
     private readonly DeviceBuffer? _embedding;
     private readonly DeviceBuffer _finalNormW;
     private readonly DeviceByteBuffer? _embeddingRaw;
-    private readonly bool _embeddingQ8_0;
+    private readonly QuantDType? _embeddingDtype;
     private readonly DeviceBuffer? _cos, _sin;
 
     /// <summary>
@@ -133,17 +133,19 @@ public sealed class GpuInferenceEngine : IInferenceEngine
         {
             _blocks = new GpuBlock[_cfg.NumLayers];
             for (int l = 0; l < _cfg.NumLayers; l++) { _blocks[l] = new GpuBlock(device, model.GetBlock(l)!, static _ => null); owned.Add(_blocks[l]); }
-            _embedding = model.RawEmbeddingDtype == QuantDType.Q8_0
+            var rawEmbDtype = model.RawEmbeddingDtype;
+            bool blockQuantEmb = rawEmbDtype is { } ed && IsOnDeviceDequant(ed);
+            _embedding = blockQuantEmb
                 ? null
                 : DeviceBuffer.From(device, model.EmbeddingWeight);
             if (_embedding is not null) owned.Add(_embedding);
             // Quantized-resident embedding: upload the GGUF raw bytes and dequant on the device
             // (compact ~ a third of the F32 size), reading them for both the gather and the
             // weight-tied LM head. F32 embedding follows the ordinary float buffer above.
-            if (model.RawEmbeddingDtype == QuantDType.Q8_0)
+            if (blockQuantEmb)
             {
-                if (model.RawEmbedding is null) throw new InvalidOperationException("Model reports a Q8_0 embedding but carries no raw bytes.");
-                _embeddingQ8_0 = true;
+                if (model.RawEmbedding is null) throw new InvalidOperationException($"Model reports a {rawEmbDtype} embedding but carries no raw bytes.");
+                _embeddingDtype = rawEmbDtype;
                 _embeddingRaw = new DeviceByteBuffer(device.Accelerator, model.RawEmbedding); owned.Add(_embeddingRaw);
             }
             _finalNormW = DeviceBuffer.From(device, model.FinalNorm.NormWeight); owned.Add(_finalNormW);
@@ -225,8 +227,14 @@ public sealed class GpuInferenceEngine : IInferenceEngine
     /// </summary>
     public static readonly IReadOnlySet<QuantDType> SupportedDtypes = new HashSet<QuantDType>
     {
-        QuantDType.F32, QuantDType.Q8_0,
+        QuantDType.F32, QuantDType.Q8_0, QuantDType.Q4_0, QuantDType.Q4_1, QuantDType.Q5_0, QuantDType.Q5_1,
     };
+
+    /// <summary>True for the block quants with an on-device dequant matmul/gather kernel
+    /// (<see cref="Kernels.QuantMatmulKernels.DequantMatmul"/>) — i.e. <see cref="SupportedDtypes"/>
+    /// minus the F32 float path.</summary>
+    private static bool IsOnDeviceDequant(QuantDType q)
+        => q is QuantDType.Q8_0 or QuantDType.Q4_0 or QuantDType.Q4_1 or QuantDType.Q5_0 or QuantDType.Q5_1;
 
     /// <summary>
     /// True when this model can be inferred on the device and which dtypes the device cannot run.
@@ -275,7 +283,7 @@ public sealed class GpuInferenceEngine : IInferenceEngine
             // F32 and Q8_0 are both supported on the device: F32 raw layers use the ordinary GEMM
             // (the raw bytes are a full float weight), Q8_0 layers run the on-device dequant
             // matmul/gather. Any other quant has no GPU kernel here.
-            if (dtype is not null && !GpuInferenceEngine.SupportedDtypes.Contains(dtype))
+            if (dtype is { } q && !GpuInferenceEngine.SupportedDtypes.Contains(q))
                 throw new NotSupportedException(Why($"{what} quantized as {dtype} — GPU inference supports only {string.Join(", ", GpuInferenceEngine.SupportedDtypes)} weights"));
         }
         if (model.FinalNorm is not RmsNormLayer) throw new NotSupportedException(Why($"a {model.FinalNorm.GetType().Name} final norm — LayerNorm, only RMSNorm"));
@@ -297,8 +305,8 @@ public sealed class GpuInferenceEngine : IInferenceEngine
             // kernel, so any other quant (and the F32 inference-layer edge) is rejected up front.
             // ValidateSupported_RejectsQuantizedResidentModel pins this per-type behaviour.
             foreach (var lin in BlockLinears(b))
-                if (lin is InferenceLinearLayer il && il.QuantDtype != QuantDType.Q8_0)
-                    throw new NotSupportedException(Why($"{il.Name} quantized as {il.QuantDtype} — GPU inference supports only Q8_0 quantized linears (float layers use the CreateTrainingTransformer path)"));
+                if (lin is InferenceLinearLayer il && !IsOnDeviceDequant(il.QuantDtype))
+                    throw new NotSupportedException(Why($"{il.Name} quantized as {il.QuantDtype} — GPU inference supports only {string.Join(", ", QuantDType.Q8_0, QuantDType.Q4_0, QuantDType.Q4_1, QuantDType.Q5_0, QuantDType.Q5_1)} quantized linears"));
             if (b.PostAttnNorm is not null || b.PostFfnNorm is not null) throw new NotSupportedException(Why("Gemma post-attention/post-FFN norms"));
             if (b.Norm1 is not RmsNormLayer || b.Norm2 is not RmsNormLayer) throw new NotSupportedException(Why($"a {b.Norm1.GetType().Name} block norm — LayerNorm, only RMSNorm"));
             if (b.Ffn is not GatedFfnLayer) throw new NotSupportedException(Why($"FFN kind {b.Ffn.GetType().Name}"));
@@ -337,17 +345,17 @@ public sealed class GpuInferenceEngine : IInferenceEngine
     /// dequantising on the device when the embedding is a Q8_0 raw table, ordinary gather otherwise.</summary>
     private void EmbedOnce(DeviceTensor x, ArrayView<int> ids)
     {
-        if (_embeddingQ8_0) _dev.Kernels.EmbedGatherQ8_0(x, _embeddingRaw!, ids, _cfg.HiddenDim);
+        if (_embeddingDtype is { } q) _dev.Kernels.DequantGather(x, _embeddingRaw!, ids, _cfg.HiddenDim, q);
         else _dev.Kernels.EmbedGather(x, _embedding!.Tensor, ids);
     }
 
-    /// <summary>Weight-tied LM head: logits = n·Eᵀ. For a Q8_0 embedding this is the on-device
+    /// <summary>Weight-tied LM head: logits = n·Eᵀ. For a block-quantized embedding this is the on-device
     /// dequant matmul (K = Hidden, N = Vocab, raw = <see cref="_embeddingRaw"/>); an F32 embedding
     /// is the same weight via <see cref="GpuDevice.Gemm"/> as before.</summary>
     private void LmHead(DeviceTensor logits, DeviceTensor finalNormed, int m)
     {
         int H = _cfg.HiddenDim, V = _cfg.VocabSize;
-        if (_embeddingQ8_0) _dev.Kernels.Q8_0Matmul(logits, finalNormed, _embeddingRaw!, H, V);
+        if (_embeddingDtype is { } q) _dev.Kernels.DequantMatmul(logits, finalNormed, _embeddingRaw!, H, V, q);
         else _dev.Gemm(logits, finalNormed, _embedding!.Tensor, m, V, H, saI: H, saK: 1, sbK: 1, sbJ: H);
     }
 

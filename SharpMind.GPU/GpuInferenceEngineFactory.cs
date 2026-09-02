@@ -1,4 +1,7 @@
+using SharpMind.Core;
 using SharpMind.Inference;
+using SharpMind.Model.Config;
+using SharpMind.Model.Format;
 
 namespace SharpMind.GPU;
 
@@ -14,6 +17,9 @@ public sealed class GpuInferenceEngineFactory : IInferenceEngineFactory
 {
     /// <summary>Upper bound on a single GPU Prefill call's token count. See <see cref="GpuInferenceEngine"/>'s constructor doc.</summary>
     public int MaxPromptTokens { get; init; } = 4096;
+
+    public string? CheckSupported(ModelMetaData meta, ModelConfig modelConfig, SharpMindConfig config)
+        => GpuInferenceEngine.CheckSupported(meta, modelConfig, config, out var reason) ? null : reason;
 
     public IInferenceEngine? TryCreate(InferenceEngineContext context, out string? reason)
     {

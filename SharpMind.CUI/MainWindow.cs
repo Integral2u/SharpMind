@@ -932,7 +932,7 @@ public sealed class MainWindow : Window
                 }
                 else
                 {
-                    var loadResult = await SessionLauncher.LoadModelAsync(launchOptions, progress);
+                    var loadResult = await SessionLauncher.LoadModelAsync(launchOptions, progress, _settings.PluginsFolder);
                     if (!loadResult.Success)
                     {
                         ErrorBox.Show("Load failed", loadResult.Error ?? "Unknown error", "OK");
