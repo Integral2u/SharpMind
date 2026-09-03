@@ -36,10 +36,12 @@ namespace SharpMind.GPU;
 /// engine's multi-turn and session contracts are unchanged; the device cache is the authority
 /// the GPU attention actually reads.
 ///
-/// <see cref="_maxPromptTokens"/> bounds the total continuous GPU run: a fresh prompt longer
-/// than it, a continued prompt that would push the cache past it, or a cache-mutating operation
-/// outside the GPU path, all fall back to the CPU <see cref="Transformer"/> instead of throwing,
-/// so over-long conversations always work, just without GPU acceleration.
+/// <see cref="_maxPromptTokens"/> bounds the arena for one GPU <see cref="Prefill"/> call's new
+/// tokens: a fresh prompt longer than it, or an over-long conversation step, falls back to the
+/// CPU <see cref="Transformer"/> instead of throwing. The persistent device KV cache is sized by
+/// <see cref="MaxCacheLength"/>, so continued prefill and decode stay on the device for any
+/// context up to that cache cap — the two gates are independent and over-long conversations always
+/// work, just without GPU acceleration past the cap.
 ///
 /// Model constraints mirror <see cref="GpuBackpropEngine.ValidateSupported"/> minus the
 /// LoRA/trainable-parameter checks, which don't apply here: RMSNorm final norm and block
@@ -344,15 +346,19 @@ public sealed class GpuInferenceEngine : IInferenceEngine
         if (tokenIds.Length == 0) throw new ArgumentException("tokenIds must not be empty.", nameof(tokenIds));
         cancellationToken.ThrowIfCancellationRequested();
 
-        // GPU-accelerate any prefill that keeps the whole continuous run within the arena bound.
-        // A fresh conversation starts on the device; so does a continued conversation's incremental
-        // prefill, which appends to the device cache the prior turns already filled. Anything that
-        // would push past the bound uses the CPU path through the host caches, never recomputing
-        // the prefix.
+        // GPU-accelerate any prefill whose new tokens fit the arena. Fresh (empty-cache) prompt
+        // starts on the device; a continued conversation's incremental prefill appends to the
+        // device cache the prior turns already filled. The arena is sized for one call's new tokens
+        // only (_maxPromptTokens) — the persistent device KV cache it reads is a separate,
+        // pre-allocated buffer — so a continued prefill stays on the device for any context length
+        // up to the cache cap, matching decode. Anything that would overflow the arena or the
+        // device cache uses the CPU path through the host caches, never recomputing the prefix.
         if (CachedLength == 0 && tokenIds.Length <= _maxPromptTokens)
             return PrefillGpu(tokenIds, onChunkProgress, cancellationToken);
 
-        if (CachedLength > 0 && CachedLength + tokenIds.Length <= _maxPromptTokens)
+        if (CachedLength > 0
+            && tokenIds.Length <= _maxPromptTokens
+            && CachedLength + tokenIds.Length <= MaxCacheLength)
             return PrefillGpuContinued(tokenIds, onChunkProgress, cancellationToken);
 
         return PrefillCpu(tokenIds, onChunkProgress, cancellationToken);

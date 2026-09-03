@@ -10,8 +10,9 @@ namespace SharpMind.GPU;
 /// exception-to-reason conversions as <see cref="GpuTrainingEngineFactory"/> — see its doc
 /// comment. <see cref="GpuInferenceEngine"/> runs the whole forward on the device: first prefill,
 /// continued prefill, and KV-cache-efficient decode. <see cref="MaxPromptTokens"/> bounds the
-/// total continuous GPU run's arena, because the engine does not chunk long GPU prompts yet —
-/// a prompt that would push past it falls back to the CPU <see cref="SharpMind.Model.Transformer"/>.
+/// arena for one GPU prefill call's new tokens, because the engine does not chunk long GPU prompts
+/// yet — a call that would overflow it, or overrun the device cache, falls back to the CPU
+/// <see cref="SharpMind.Model.Transformer"/>.
 /// </summary>
 public sealed class GpuInferenceEngineFactory : IInferenceEngineFactory
 {

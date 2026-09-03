@@ -125,8 +125,9 @@ public sealed class GpuInferenceEngineTests : IClassFixture<GpuInferenceEngineTe
 
     /// <summary>
     /// A second turn with a warm cache must continue from the first turn's decoder state, exactly
-    /// like the CPU generator does. The engine's continued prefill runs on the CPU (PrefillCpu)
-    /// against the materialised host cache — never recomputing the first-turn prefix.
+    /// like the CPU generator does. The engine's continued prefill runs GPU continued prefill
+    /// (PrefillGpuContinued) against the materialised device cache — never recomputing the
+    /// first-turn prefix.
     /// </summary>
     [Fact]
     public async Task EngineGenerator_MatchesCpuGenerator_OnSecondTurn()
@@ -210,6 +211,37 @@ public sealed class GpuInferenceEngineTests : IClassFixture<GpuInferenceEngineTe
 
         Assert.NotEmpty(engineTurn3);
         Assert.Equal(cpuTurn3, engineTurn3);
+    }
+
+    /// <summary>
+    /// The continued-prefill gate must be governed by the arena bound (the new tokens this one call
+    /// processes) plus the device-cache cap, not by the total context length. A conversation whose
+    /// cache already exceeds maxPromptTokens (32) — but is still under MaxCacheLength (64) — must
+    /// keep running continued prefill on the GPU rather than silently dropping every later turn to
+    /// the CPU path while decode stays on the device. The greedy output must still match the pure-CPU
+    /// generator one-for-one (it is the same forward, just on the device).
+    /// </summary>
+    [Fact]
+    public async Task ContinuedPrefill_PastMaxPromptTokens_StillMatchesCpuGenerator()
+    {
+        int[] turn1 = Prompt();              // 6 tokens
+        int[] turn2 = [70, 71, 32, 72];      // "FG H" — small continuation
+
+        using var engine = BuildEngine();    // maxPromptTokens = 32, MaxCacheLength = 64
+        using var engineGen = new EngineGenerator<KVCacherBuilder>(engine, _tokenizer, addBos: false, addEos: false, numLayers: Cfg.NumLayers, seed: 1);
+        using var cpuGen = new StandardGenerator<KVCacherBuilder>(_model, _tokenizer, addBos: false, addEos: false, seed: 1);
+
+        // Warm both caches past maxPromptTokens (32) but below MaxCacheLength (64) via decode only.
+        await GreedyIds(engineGen, turn1, maxNew: 30);
+        await GreedyIds(cpuGen, turn1, maxNew: 30);
+        Assert.True(engine.CachedLength > 32);
+        Assert.True(engine.CachedLength + turn2.Length <= 64);
+
+        var engineTurn2 = await GreedyIds(engineGen, turn2, maxNew: 6);
+        var cpuTurn2 = await GreedyIds(cpuGen, turn2, maxNew: 6);
+
+        Assert.NotEmpty(engineTurn2);
+        Assert.Equal(cpuTurn2, engineTurn2);
     }
 
     /// <summary>Import restores a saved cache into a fresh engine; the next turn (GPU continued
