@@ -56,6 +56,12 @@ public sealed class SharpMindService : IAsyncDisposable
     /// </summary>
     public IHost BuildHost()
     {
+        // Cache it. This used to build and return without assigning _host, so
+        // PreloadModelAsync — which reads _host — threw "Host not built" even
+        // when the caller had just called BuildHost(), and StartAsync then built
+        // a second host through its own `_host ??=`.
+        if (_host is not null) return _host;
+
         var builder = WebApplication.CreateBuilder();
 
         builder.Services.AddSharpMindServer(opts =>
@@ -70,19 +76,21 @@ public sealed class SharpMindService : IAsyncDisposable
         var app = builder.Build();
         app.Urls.Add($"http://{Options.Host}:{Options.Port}");
         MapEndpoints(app);
+        _host = app;
         return app;
     }
 
     /// <summary>
-    /// Load a single model by name. Useful before the host is built (e.g. to
-    /// pre-warm a model at startup). Requires that <see cref="BuildHost"/>
-    /// was called first.
+    /// Load a single model by name at startup, e.g. to pre-warm it before the
+    /// server begins listening. Calls <see cref="BuildHost"/> if it has not run
+    /// yet. Returns false when <paramref name="modelId"/> is not in the models
+    /// directory, so a caller can report an unknown id instead of assuming success.
     /// </summary>
-    public async Task PreloadModelAsync(string modelId, IProgress<string>? progress = null, CancellationToken ct = default)
+    public async Task<bool> PreloadModelAsync(string modelId, IProgress<string>? progress = null, CancellationToken ct = default)
     {
-        var app = (WebApplication)(_host ?? throw new InvalidOperationException("Host not built."));
+        var app = (WebApplication)(_host ??= BuildHost());
         var modelManager = app.Services.GetRequiredService<ModelManager>();
-        await modelManager.LoadAsync(modelId, progress ?? CreateProgress(), ct);
+        return await modelManager.PreloadAsync(modelId, progress ?? CreateProgress(), ct);
     }
 
     /// <summary>
