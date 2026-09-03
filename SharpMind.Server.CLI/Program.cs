@@ -87,8 +87,12 @@ static async Task RunServiceAsync(SharpMindServerOptions options, List<string> m
         {
             Console.WriteLine($"[SharpMind] Pre-loading model: {modelArg}");
             var progress = new Progress<string>(msg => Console.WriteLine($"[SharpMind] {msg}"));
-            await server.PreloadModelAsync(modelArg, progress, cts.Token);
-            Console.WriteLine($"[SharpMind] Model loaded: {modelArg}");
+            // Report what actually happened. This used to print "Model loaded"
+            // unconditionally, so an unknown model id read as a success.
+            if (await server.PreloadModelAsync(modelArg, progress, cts.Token))
+                Console.WriteLine($"[SharpMind] Model loaded: {modelArg}");
+            else
+                Console.Error.WriteLine($"[SharpMind] Model '{modelArg}' not found in {options.ResolvedModelsDir} — not preloaded. Use an id from /v1/models (they include the file extension).");
         }
         catch (Exception ex)
         {

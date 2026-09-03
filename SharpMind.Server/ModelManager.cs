@@ -170,7 +170,71 @@ public sealed class ModelManager : IDisposable
         var loaded = await LoadAsync(modelId, progress, ct);
         if (loaded is null) return false;
         // Ref count is already 1 from LoadAsync — that's the preloaded reference
+
+        // No separate opt-in: asking to preload a model is already the choice to
+        // spend startup time so that requests are fast. The warm-up is part of
+        // what "preloaded" should mean.
+        progress?.Report($"Warming up kernels: {modelId}");
+        await Task.Run(() => WarmUp(loaded, ct), ct);
         return true;
+    }
+
+    /// <summary>
+    /// Runs a few prefill-shaped forward passes so the JIT has promoted the matmul
+    /// kernels to tier-1 before the first request arrives.
+    ///
+    /// .NET quick-JITs loop-containing methods at tier-0, and on a cold prefill
+    /// that costs about 1.36x. Promotion is gated by background-thread compilation
+    /// wall-clock rather than call count, so the ramp spans the first ~6-9 chunks
+    /// and one pass is not enough — 5 flattens it, 1-3 do not.
+    ///
+    /// Measured (qwen2-0.5b q8_0, ~600-token prompt, medians of 9 interleaved
+    /// passes, fresh process each run): first request 1805 ms -> 1082 ms, a
+    /// 1.67x speedup, for 1610 ms of extra startup.
+    ///
+    /// STARTUP ONLY. Never call this from the request path: it costs more than it
+    /// saves on the very request it would be trying to help. It pays here only
+    /// because the server does not begin listening until preload has finished,
+    /// so the cost lands where no caller is waiting.
+    ///
+    /// Best-effort — a warm-up failure must never stop the server from serving.
+    /// </summary>
+    private static void WarmUp(LoadedModel loaded, CancellationToken ct)
+    {
+        const int Passes = 5;
+        var cfg = loaded.Model.Config;
+        int chunk = Math.Min(64, cfg.MaxSeqLen);   // 64 = Prefill.MaxChunkLength
+        if (chunk <= 0) return;
+
+        IKVCache[]? caches = null;
+        try
+        {
+            caches = new IKVCache[cfg.NumLayers];
+            for (int i = 0; i < caches.Length; i++)
+                caches[i] = new KVCache(1, cfg.NumKvHeads, chunk * Passes, cfg.HeadDim);
+
+            using var ws = new Core.Memory.Workspace(Core.Memory.Workspace.CalculateRequiredSize(
+                cfg.HiddenDim, cfg.FfnDim, cfg.VocabSize, cfg.NumLayers, chunk));
+
+            for (int p = 0; p < Passes && !ct.IsCancellationRequested; p++)
+            {
+                ws.Reset();
+                using var input = ws.Rent<int>([1, chunk]);
+                for (int i = 0; i < chunk; i++) input.Data[i] = i % cfg.VocabSize;
+                using var _ = loaded.Model.ForwardLastLogits(input, caches, p * chunk, ws);
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch
+        {
+            // An unusual model shape must not break startup — the only cost of
+            // skipping the warm-up is that the first request pays the JIT ramp.
+        }
+        finally
+        {
+            if (caches is not null)
+                foreach (var c in caches) c?.Dispose();
+        }
     }
 
     public void Dispose()
