@@ -43,6 +43,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SharpMind.GPU", "SharpMind.
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GpuTrainBench", "tools\GpuTrainBench\GpuTrainBench.csproj", "{4FD145B9-0410-4C15-8158-4F4585740F54}"
 EndProject
+Project("{54435603-DBB4-11D2-8724-00A0C9A8B90C}") = "SharpMind CLI Setup", "SharpMind CLI Setup\SharpMind CLI Setup.vdproj", "{6A51F5D4-D475-AB27-78E8-1471A2E7CF36}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -275,6 +277,18 @@ Global
 		{4FD145B9-0410-4C15-8158-4F4585740F54}.Release|x64.Build.0 = Release|Any CPU
 		{4FD145B9-0410-4C15-8158-4F4585740F54}.Release|x86.ActiveCfg = Release|Any CPU
 		{4FD145B9-0410-4C15-8158-4F4585740F54}.Release|x86.Build.0 = Release|Any CPU
+		{6A51F5D4-D475-AB27-78E8-1471A2E7CF36}.Debug|Any CPU.ActiveCfg = Debug
+		{6A51F5D4-D475-AB27-78E8-1471A2E7CF36}.Debug|Any CPU.Build.0 = Debug
+		{6A51F5D4-D475-AB27-78E8-1471A2E7CF36}.Debug|x64.ActiveCfg = Debug
+		{6A51F5D4-D475-AB27-78E8-1471A2E7CF36}.Debug|x64.Build.0 = Debug
+		{6A51F5D4-D475-AB27-78E8-1471A2E7CF36}.Debug|x86.ActiveCfg = Debug
+		{6A51F5D4-D475-AB27-78E8-1471A2E7CF36}.Debug|x86.Build.0 = Debug
+		{6A51F5D4-D475-AB27-78E8-1471A2E7CF36}.Release|Any CPU.ActiveCfg = Release
+		{6A51F5D4-D475-AB27-78E8-1471A2E7CF36}.Release|Any CPU.Build.0 = Release
+		{6A51F5D4-D475-AB27-78E8-1471A2E7CF36}.Release|x64.ActiveCfg = Release
+		{6A51F5D4-D475-AB27-78E8-1471A2E7CF36}.Release|x64.Build.0 = Release
+		{6A51F5D4-D475-AB27-78E8-1471A2E7CF36}.Release|x86.ActiveCfg = Release
+		{6A51F5D4-D475-AB27-78E8-1471A2E7CF36}.Release|x86.Build.0 = Release
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
