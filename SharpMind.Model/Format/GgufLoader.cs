@@ -255,6 +255,9 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
                           meta.GetFloat("rope_theta",
                           meta.GetFloat("rope.freq_base", 10_000f)));
 
+        float ropeThetaSwa = meta.GetFloat($"{arch}.rope.freq_base_swa", float.NaN);
+        float? ropeThetaSwaValue = float.IsNaN(ropeThetaSwa) ? null : ropeThetaSwa;
+
         int tensorVocabSize = vocabSize; // from token_embd.weight shape
         int metaVocab = (int)meta.GetLong($"{arch}.vocab_size",
                          meta.GetLong("tokenizer.ggml.token_count",
@@ -268,10 +271,9 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
 
         long rawRopeDim = meta.GetLong($"{arch}.rope.dimension_count", -1);
         int? ropeDim = rawRopeDim > 0 ? (int)rawRopeDim : null;
-        // Gemma-3 uses partial RoPE (headDim/2) — default if metadata missing.
-        // HeadDim = KeyLength ?? HeadDimOverride ?? HiddenDim / NumHeads
-        if (ropeDim == null && arch.StartsWith("gemma3", StringComparison.OrdinalIgnoreCase))
-            ropeDim = (keyLength ?? headDimOverride ?? hiddenDim / numHeads) / 2;
+        // llama.cpp defaults n_rot to the key length (full rotary) when the
+        // GGUF omits rope.dimension_count — Gemma-3 rotates the full 256-dim
+        // head, not headDim/2. Only an explicit key narrows the rotary span.
 
         string? ropeScalingType = meta.GetString($"{arch}.rope.scaling.type");
         float ropeFactor = meta.GetFloat($"{arch}.rope.scaling.factor", float.NaN);
@@ -308,6 +310,27 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
             slidingWindowSize = Math.Min(4096, maxSeqLen);
         }
 
+        // Gemma-3: sliding-window attention with full-attention layers at
+        // il % period == period - 1 (layers 5, 11, 17 for 18 blocks), and a
+        // distinct RoPE base for the windowed layers (10_000 vs 1_000_000).
+        // llama.cpp defaults swa_period=6 and the SWA base to 10_000 when the
+        // GGUF omits sliding_window_pattern / rope.freq_base_swa, which this
+        // file (Unsloth gemma-3-270m) does — matching the model's own config
+        // (rope_local_base_freq=10000, rope_theta=1000000).
+        bool isGemma3Family = arch.StartsWith("gemma3", StringComparison.OrdinalIgnoreCase) ||
+                              arch.StartsWith("gemma4", StringComparison.OrdinalIgnoreCase);
+        int? slidingWindowPattern = null;
+        if (slidingWindowSize > 0)
+        {
+            long rawPattern = meta.GetLong($"{arch}.attention.sliding_window_pattern", -1);
+            slidingWindowPattern = rawPattern > 0
+                ? (int)rawPattern
+                : isGemma3Family ? 6 : null;
+
+            if (ropeThetaSwaValue == null && isGemma3Family)
+                ropeThetaSwaValue = 10_000f;
+        }
+
         return new ModelConfig
         {
             Architecture = arch,
@@ -321,6 +344,8 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
             FfnDim = ffnDim,
             MaxSeqLen = maxSeqLen,
             RopeTheta = ropeTheta,
+            RopeThetaSwa = ropeThetaSwaValue,
+            SlidingWindowPattern = slidingWindowPattern,
             NormEps = meta.GetFloat($"{arch}.attention.layer_norm_rms_epsilon",
                       meta.GetFloat("rms_norm_eps", 1e-5f)),
             KeyLength = keyLength,

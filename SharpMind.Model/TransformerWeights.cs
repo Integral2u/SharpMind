@@ -412,6 +412,13 @@ else
 
     public sealed class BlockWeights : IDisposable
     {
+        /// <summary>
+        /// Zero-based index of this block within the model. Used by the
+        /// attention layer to pick the per-layer RoPE base (sliding-window
+        /// models such as Gemma-3 use a different theta for windowed layers).
+        /// </summary>
+        public int LayerIndex { get; init; }
+
         // Attention float tensors (nullable — Full mode populates all; Cached mode populates on demand)
         public Tensor<float>? Wq { get; set; }
         public Tensor<float>? Wk { get; set; }

@@ -26,6 +26,9 @@ public sealed class SharpMindModelConfig
     public int FfnDim { get; set; }
     public int MaxSeqLen { get; set; }
     public float RopeTheta { get; set; } = 10000f;
+    public float? RopeThetaSwa { get; set; }
+    public int SlidingWindowSize { get; set; }
+    public int? SlidingWindowPattern { get; set; }
     
     // Activation settings
     public string Activation { get; set; } = "silu";
@@ -63,6 +66,9 @@ public sealed class SharpMindModelConfig
             FfnDim = config.FfnDim,
             MaxSeqLen = config.MaxSeqLen,
             RopeTheta = config.RopeTheta,
+            RopeThetaSwa = config.RopeThetaSwa,
+            SlidingWindowSize = config.SlidingWindowSize,
+            SlidingWindowPattern = config.SlidingWindowPattern,
             Source = source,
         };
     }
@@ -79,6 +85,9 @@ public sealed class SharpMindModelConfig
             FfnDim = FfnDim,
             MaxSeqLen = MaxSeqLen,
             RopeTheta = RopeTheta,
+            RopeThetaSwa = RopeThetaSwa,
+            SlidingWindowSize = SlidingWindowSize,
+            SlidingWindowPattern = SlidingWindowPattern,
         };
     }
 

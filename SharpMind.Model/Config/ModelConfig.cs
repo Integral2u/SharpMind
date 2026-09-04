@@ -77,6 +77,15 @@ public sealed record ModelConfig
     public int SlidingWindowSize { get; init; }
 
     /// <summary>
+    /// Sliding-window pattern period (llama.cpp {arch}.attention.sliding_window_pattern).
+    /// With llama.cpp's gemma-3 semantics (dense_first=false) a layer is
+    /// full-attention when il % period == period - 1; every other layer is
+    /// windowed. Null = legacy behaviour — when <see cref="SlidingWindowSize"/>
+    /// is set, every layer is windowed (how SharpMind treated pre-gemma-3 files).
+    /// </summary>
+    public int? SlidingWindowPattern { get; init; }
+
+    /// <summary>
     /// Explicit head_dim from GGUF ({arch}.head_dim).
     /// Some models (Gemma 2, DeepSeek V2) specify head_dim directly
     /// rather than deriving it from HiddenDim / NumHeads.
@@ -113,6 +122,16 @@ public sealed record ModelConfig
     /// LLaMA 2: 10_000. LLaMA 3: 500_000.
     /// </summary>
     public float RopeTheta { get; init; } = 10_000f;
+
+    /// <summary>
+    /// RoPE base frequency for sliding-window attention layers
+    /// (llama.cpp {arch}.rope.freq_base_swa). Gemma-3 uses 10_000 for
+    /// sliding-window layers while full-attention layers keep
+    /// <see cref="RopeTheta"/> (1_000_000). llama.cpp defaults the SWA base
+    /// to 10_000 when the GGUF omits the key. When null, sliding-window
+    /// layers use <see cref="RopeTheta"/>.
+    /// </summary>
+    public float? RopeThetaSwa { get; init; }
 
     /// <summary>
     /// RoPE dimension count. If non-null, only the first N dimensions
@@ -211,6 +230,36 @@ public sealed record ModelConfig
         (uint)layerIndex < (uint)LayerKvHeads.Length &&
         LayerKvHeads[layerIndex] == 0;
 
+    /// <summary>
+    /// True when the given block uses sliding-window attention (window mask
+    /// plus the SWA RoPE base). Without a declared pattern every layer of a
+    /// windowed model is treated as SWA (legacy behaviour).
+    /// </summary>
+    public bool IsSwaLayer(int layerIndex)
+    {
+        if (SlidingWindowSize <= 0) return false;
+        int period = SlidingWindowPattern ?? 0;
+        if (period <= 0) return true;
+        // llama.cpp set_swa_pattern(n, dense_first: false):
+        // SWA unless il % n == n - 1 (Gemma-3 full-attention layers).
+        return (uint)layerIndex % (uint)period != (uint)period - 1;
+    }
+
+    /// <summary>
+    /// RoPE base frequency for the given block. Sliding-window layers of
+    /// models with <see cref="RopeThetaSwa"/> (e.g. Gemma-3) use the SWA base
+    /// (10_000); full-attention layers use <see cref="RopeTheta"/> (1_000_000).
+    /// </summary>
+    public float RopeThetaForLayer(int layerIndex) =>
+        IsSwaLayer(layerIndex) && RopeThetaSwa is { } swa ? swa : RopeTheta;
+
+    /// <summary>
+    /// Attention window for the given block: <see cref="SlidingWindowSize"/>
+    /// for sliding-window layers, 0 for full-attention layers.
+    /// </summary>
+    public int WindowSizeForLayer(int layerIndex) =>
+        IsSwaLayer(layerIndex) ? SlidingWindowSize : 0;
+
 
     // Validation
 
@@ -237,6 +286,10 @@ public sealed record ModelConfig
                 "LayerKvHeads entries must be >= 0 (0 marks a no-attention layer).");
         if (ShortConvCacheLength < 1)
             throw new InvalidOperationException($"ShortConvCacheLength must be >= 1 (was {ShortConvCacheLength}).");
+        if (SlidingWindowPattern is int period && period <= 0)
+            throw new InvalidOperationException($"SlidingWindowPattern must be > 0 (was {period}).");
+        if (SlidingWindowPattern is not null && SlidingWindowSize <= 0)
+            throw new InvalidOperationException("SlidingWindowPattern requires a SlidingWindowSize > 0.");
         if (NumExperts < TopKExperts)
             throw new InvalidOperationException(
                 $"NumExperts ({NumExperts}) must be >= TopKExperts ({TopKExperts}).");

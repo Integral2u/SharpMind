@@ -88,6 +88,14 @@ public static class SmmToGufConverter
         kv.Add(new GgufKvPair { Key = $"{arch}.attention.head_count_kv", Value = (uint)config.NumKvHeads });
         kv.Add(new GgufKvPair { Key = $"{arch}.attention.layer_norm_rms_epsilon", Value = config.NormEps });
         kv.Add(new GgufKvPair { Key = $"{arch}.rope.freq_base", Value = config.RopeTheta });
+        if (config.RopeThetaSwa is { } thetaSwa)
+            kv.Add(new GgufKvPair { Key = $"{arch}.rope.freq_base_swa", Value = thetaSwa });
+        if (config.SlidingWindowSize > 0)
+        {
+            kv.Add(new GgufKvPair { Key = $"{arch}.attention.sliding_window", Value = (uint)config.SlidingWindowSize });
+            if (config.SlidingWindowPattern is { } pattern)
+                kv.Add(new GgufKvPair { Key = $"{arch}.attention.sliding_window_pattern", Value = (uint)pattern });
+        }
         kv.Add(new GgufKvPair { Key = $"{arch}.vocab_size", Value = (uint)config.VocabSize });
 
         if (config.HeadDimOverride is { } headDim)
