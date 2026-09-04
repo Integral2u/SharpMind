@@ -1,4 +1,4 @@
-ï»¿using JigSawDotNet;
+using JigSawDotNet;
 using SharpMind.Core;
 using SharpMind.Core.Activations;
 using SharpMind.Core.Embeddings;
@@ -45,7 +45,7 @@ public static class ModelFactory
     /// Skip allocating the per-layer F32 attention/FFN weights and keep only the
     /// raw quantized bytes, which is all <see cref="InferenceLinearLayer"/>'s
     /// forward reads. Roughly halves resident memory for a chat/inference load.
-    /// Leave false when the float tensors are needed after loading â€” SMM export
+    /// Leave false when the float tensors are needed after loading — SMM export
     /// and format conversion read them back.
     /// </param>
     public static TransformerWeights CreateWeights(
@@ -73,7 +73,7 @@ public static class ModelFactory
         // never touches the dequantized F32 duplicates, so for pure inference they
         // cost ~4x the file size for nothing (3.57 GB before a byte was read, on a
         // 0.49 GB model). It is opt-in because reading weights back as floats is a
-        // real use â€” SMM export and the conversion round-trip do exactly that.
+        // real use — SMM export and the conversion round-trip do exactly that.
         var blockWeights = loadMode == LoadMode.Full && !quantizedResident
             ? AllocateBlockWeights(modelConfig, sharpConfig)
             : AllocateInferenceBlockWeights(modelConfig);
@@ -98,7 +98,7 @@ public static class ModelFactory
     /// allowlist on purpose: only entries actually observed to fail belong here, so
     /// this can never reject a model that would have loaded.
     ///
-    /// Without it these fail late and misleadingly â€” the generic decoder derives
+    /// Without it these fail late and misleadingly — the generic decoder derives
     /// layer shapes from the config, those shapes disagree with the file, and the
     /// first matmul reports a byte-count mismatch as if the file were corrupt.
     /// </summary>
@@ -127,7 +127,7 @@ public static class ModelFactory
 
         throw new NotSupportedException(
             $"Model architecture '{architecture}' is not supported. It uses {reason}, " +
-            "none of which the decoder implements. The file is fine â€” SharpMind cannot run it. " +
+            "none of which the decoder implements. The file is fine — SharpMind cannot run it. " +
             "Loading it anyway would derive the wrong layer shapes and produce garbage.");
     }
 
@@ -145,6 +145,7 @@ public static class ModelFactory
         {
             blocks[i] = new TransformerWeights.BlockWeights
             {
+                LayerIndex = i,
                 Norm1W = new Tensor<float>(config.HiddenDim),
                 Norm2W = new Tensor<float>(config.HiddenDim),
                 WqBias = new Tensor<float>(qDim),
@@ -188,7 +189,10 @@ public static class ModelFactory
                 null,                                                 // KNormW
                 null,                                                 // PostNorm1W
                 null                                                  // PostNorm2W
-            );
+            )
+            {
+                LayerIndex = i,
+            };
         }
         return blocks;
     }
@@ -209,7 +213,7 @@ public static class ModelFactory
 
         IArchitecture arch = sharpConfig.Arch switch
         {
-            ArchKind.Decoder => new DecoderArch(blocks, weights.Config.SlidingWindowSize),
+            ArchKind.Decoder => new DecoderArch(blocks, weights.Config),
             ArchKind.Encoder => new EncoderArch(blocks),
             _ => throw new NotSupportedException($"Unknown ArchKind: {sharpConfig.Arch}")
         };
@@ -239,7 +243,7 @@ public static class ModelFactory
             };
         }
 
-        // Free float LM head in streaming mode â€” quantized projection uses RawLmHead
+        // Free float LM head in streaming mode — quantized projection uses RawLmHead
         // and never accesses the float tensor. Avoiding this ~544 MB allocation
         // is the single biggest memory reduction after block float weights.
         if (weights is TransformerWeightsStreaming && weights.LmHeadWeight != null)
@@ -286,7 +290,7 @@ public static class ModelFactory
 
         IArchitecture arch = sharpConfig.Arch switch
         {
-            ArchKind.Decoder => new DecoderArch(blocks, weights.Config.SlidingWindowSize),
+            ArchKind.Decoder => new DecoderArch(blocks, weights.Config),
             ArchKind.Encoder => new EncoderArch(blocks),
             _ => throw new NotSupportedException($"Unknown ArchKind: {sharpConfig.Arch}")
         };

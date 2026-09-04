@@ -1,6 +1,7 @@
 ﻿using SharpMind.Core.Quantization;
 using SharpMind.Core.Tensors;
 using SharpMind.Core.Training;
+using SharpMind.Model.Config;
 using SharpMind.Model.Layers;
 
 namespace SharpMind.Model.Arch;
@@ -14,6 +15,7 @@ namespace SharpMind.Model.Arch;
 public sealed class DecoderArch : IArchitecture
 {
     private readonly TransformerBlock[] _blocks;
+    private readonly ModelConfig? _config;
     private readonly int _slidingWindowSize;
     private bool _disposed;
     
@@ -24,6 +26,22 @@ public sealed class DecoderArch : IArchitecture
         ArgumentNullException.ThrowIfNull(blocks);
         _blocks = [.. blocks];
         _slidingWindowSize = slidingWindowSize;
+        if (_blocks.Length == 0)
+            throw new ArgumentException("DecoderArch requires at least one block.", nameof(blocks));
+    }
+
+    /// <summary>
+    /// Constructs the decoder from the model config so each block applies the
+    /// per-layer sliding window: 0 (full causal) on full-attention layers,
+    /// <see cref="ModelConfig.SlidingWindowSize"/> on sliding-window layers.
+    /// </summary>
+    public DecoderArch(IEnumerable<TransformerBlock> blocks, ModelConfig config)
+    {
+        ArgumentNullException.ThrowIfNull(blocks);
+        ArgumentNullException.ThrowIfNull(config);
+        _blocks = [.. blocks];
+        _config = config;
+        _slidingWindowSize = config.SlidingWindowSize;
         if (_blocks.Length == 0)
             throw new ArgumentException("DecoderArch requires at least one block.", nameof(blocks));
     }
@@ -123,8 +141,9 @@ public sealed class DecoderArch : IArchitecture
         for (int i = 0; i < _blocks.Length; i++)
         {
             BeforeBlock?.Invoke(i);
-            
-            int layerWindow = _slidingWindowSize > 0 ? _slidingWindowSize : 0;
+
+            int layerWindow = _config?.WindowSizeForLayer(i)
+                ?? (_slidingWindowSize > 0 ? _slidingWindowSize : 0);
             var next = _blocks[i].Forward(current, caches?[i], positionOffset, causal: true, workspace: workspace, windowSize: layerWindow);
             
             if (i > 0 && !ReferenceEquals(current, hiddenStates))

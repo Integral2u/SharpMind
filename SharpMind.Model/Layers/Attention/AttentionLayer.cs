@@ -104,11 +104,14 @@ namespace SharpMind.Model.Layers.Attention;
             Wo = LinearLayerFactory.Create("o_proj", qDim, config.HiddenDim, true,
                 weights?.Wo, weights?.WoBias, tm?.GetValueOrDefault("RawWo").Dtype ?? QuantDType.F32);
         }
+        // Per-layer RoPE base: sliding-window models (Gemma-3) use a different
+        // theta for windowed layers (10_000) vs full-attention layers (1_000_000).
+        int layerIndex = weights?.LayerIndex ?? 0;
         PositionalEncoder = config.PositionalEncoding switch
         {
             PositionalEncoding.NoPE => new NoPE(),
             PositionalEncoding.ALiBi => new AlibiEncoder(config.NumHeads),
-            _ => new RoPE(config.HeadDim, config.EffectiveInferenceCacheLength, config.RopeTheta,
+            _ => new RoPE(config.HeadDim, config.EffectiveInferenceCacheLength, config.RopeThetaForLayer(layerIndex),
                  ropeDim: config.RopeDim, ropeScalingType: config.RopeScalingType,
                  ropeScalingFactor: config.RopeScalingFactor,
                  ropeOriginalContextLength: config.RopeOriginalContextLength,
