@@ -137,8 +137,9 @@ public sealed class Transformer : IDisposable
         foreach (var block in _blocks)
         {
             var attn = block.Attention;
-            foreach (var layer in new[] { attn.Wq, attn.Wk, attn.Wv, attn.Wo })
-                layer.EnableQuantAwareTraining(target);
+            if (attn != null)
+                foreach (var layer in new[] { attn.Wq, attn.Wk, attn.Wv, attn.Wo })
+                    layer.EnableQuantAwareTraining(target);
             foreach (var layer in new[] { block.Ffn.W1Layer, block.Ffn.W2Layer, block.Ffn.WGated, block.Ffn.WDown })
                 layer?.EnableQuantAwareTraining(target);
         }

@@ -329,13 +329,13 @@ public class Lfm2ShortConvTests
         using var cache = new ShortConvCache(stateRows: 2, channels: 16);
         using var input = new Tensor<float>(1, 2, 16);
 
-        // Forward updates the conv state tensor; cache.Length is managed by the caller.
+        // Forward updates the conv state tensor AND advances the cache's position
+        // length by the number of tokens processed (mirroring how AttentionLayer
+        // advances its KV-cache length internally), so the caller need not.
         using var _ = layer.Forward(input, cache);
-        cache.Advance(2);
         Assert.Equal(2, cache.Length);
 
         using var __ = layer.Forward(input, cache);
-        cache.Advance(2);
         Assert.Equal(4, cache.Length);
     }
 

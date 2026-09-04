@@ -739,13 +739,19 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
                 var floatTarget = blockFloatTarget;
                 if (floatTarget != null)
                 {
-                    // LFM2 short-conv kernel [l_cache, hidden] is not a linear-layer
-                    // weight — it stays row-major [kernelRow, channel], so it must not
-                    // go through the in/out transposition below.
+                    // LFM2 short-conv kernel is a ggml {l_cache, hidden} tensor, which
+                    // stores its raw floats channel-major ([channel][tap] at
+                    // channel*l_cache + tap). The conv kernel must be read as
+                    // [tap][channel] (ApplyConv indexes pKernel[tap*hidden + channel]),
+                    // so transpose the block-major data into target's row-major layout.
                     if (info.Name.Contains("shortconv.conv.weight", StringComparison.OrdinalIgnoreCase))
                     {
                         floatTarget.Data.Clear();
-                        buffer.AsSpan(0, count).CopyTo(floatTarget.Data);
+                        int taps = info.Shape[0];
+                        int chan = info.Shape[1];
+                        for (int c = 0; c < chan; c++)
+                            for (int k = 0; k < taps; k++)
+                                floatTarget.Data[k * chan + c] = buffer[c * taps + k];
                     }
                     else if (info.Shape.Length == 2)
                     {

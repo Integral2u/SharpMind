@@ -124,7 +124,7 @@ public sealed class ShortConvLayer : IDisposable
     /// (training, unit tests, or any cache-less forward) a private fallback buffer
     /// is used so the layer still progresses step to step.
     /// </summary>
-    public Tensor<float> Forward(Tensor<float> x, ShortConvCache? cache, IWorkspace? workspace = null)
+    public Tensor<float> Forward(Tensor<float> x, IKVCache? cache, IWorkspace? workspace = null)
     {
         ThrowIfDisposed();
 
@@ -144,7 +144,14 @@ public sealed class ShortConvLayer : IDisposable
         using var bx = RentOrNew(batch, seq, hidden, x.Rank, workspace);
         ShortConvKernels.ComputeGatedInput(projected, bx, rows, hidden);
 
-        var state = cache?.State ?? _fallbackState;
+        // Advance the cache's position bookkeeping by the number of tokens processed
+        // this step, mirroring how AttentionLayer advances its KV-cache length via
+        // Update. Generators read _caches[0].Length as the RoPE position offset for
+        // attention layers, so a short-conv layer in slot 0 must keep that length in
+        // sync or every attention layer would process every token at position 0.
+        if (cache is ShortConvCache sc) sc.Advance(seq);
+
+        var state = (cache as ShortConvCache)?.State ?? _fallbackState;
         if (state.Shape.Dims[0] < batch)
             throw new InvalidOperationException(
                 $"ShortConvCache holds {state.Shape.Dims[0]} sequence(s) but this forward sees {batch}.");

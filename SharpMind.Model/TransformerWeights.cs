@@ -87,14 +87,24 @@ public abstract class TransformerWeights : IDisposable
 
     public (Tensor<float>? target, BlockWeights? block, string? rawField) ResolveTarget(string name)
     {
-        // "per_layer_token_embd" (gemma-3n/gemma-4) also contains "token_embd" but is a
-        // separate per-layer table, not the token embedding — routing it here fed a
-        // [8960, 262144] tensor into EmbeddingWeight.
-        if (name.Contains("token_embd", StringComparison.OrdinalIgnoreCase)
+        // The token embedding tensor is exactly "token_embd.weight". Exclude
+        // "token_embd_norm.weight" (LFM2's pre-embedding RMSNorm of the token
+        // embedding) — routing it here overwrote the real Q8_0 embedding raw
+        // bytes with the tiny [hidden] F32 norm weights, which then blew up the
+        // logits decode with an access violation. Also exclude "per_layer_token_embd"
+        // (gemma-3n/gemma-4), a separate per-layer table.
+        if (name.EndsWith(".weight", StringComparison.OrdinalIgnoreCase)
+            && name.Contains("token_embd", StringComparison.OrdinalIgnoreCase)
+            && !name.Contains("token_embd_norm", StringComparison.OrdinalIgnoreCase)
             && !name.Contains("per_layer", StringComparison.OrdinalIgnoreCase))
             return (EmbeddingWeight, null, null);
         if (name.Contains("position_embd", StringComparison.OrdinalIgnoreCase)) return (PositionEmbedding, null, null);
-        if (name.Contains("output_norm", StringComparison.OrdinalIgnoreCase))
+        // LFM2's output RMSNorm is stored as "token_embd_norm.weight" (the gguf
+        // converter maps LLM_TENSOR_OUTPUT_NORM_LFM2 "model.embedding_norm" to
+        // that name). Route it to the final norm, NOT the embedding — the strict
+        // token_embd match above already excludes it, so it must land here.
+        if (name.Contains("output_norm", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("token_embd_norm", StringComparison.OrdinalIgnoreCase))
         {
             if (name.Contains("bias", StringComparison.OrdinalIgnoreCase)) return (FinalNormBias, null, null);
             return (FinalNormWeight, null, null);
@@ -155,6 +165,10 @@ public abstract class TransformerWeights : IDisposable
                 // always stored F32 so it loads via the float path, not as a raw field.
                 if (name.Contains("shortconv.in_proj", StringComparison.OrdinalIgnoreCase)) return (null, block, "RawWScIn");
                 if (name.Contains("shortconv.out_proj", StringComparison.OrdinalIgnoreCase)) return (null, block, "RawWScOut");
+                // LFM2 short-conv depthwise kernel: F32, loaded via the float path
+                // (ResolveFloatTarget maps it to WScConv). No raw field — it is always
+                // dequantized into the float tensor, so match the block but no rawField.
+                if (name.Contains("shortconv.conv.weight", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
 
                 if (name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase)) return (null, block, "RawWgate");
                 if (name.Contains("ffn_up", StringComparison.OrdinalIgnoreCase)) return (null, block, "RawWup");
@@ -166,9 +180,13 @@ public abstract class TransformerWeights : IDisposable
 
     public Tensor<float>? ResolveFloatTarget(string name)
     {
-        if (name.Contains("token_embd", StringComparison.OrdinalIgnoreCase)) return EmbeddingWeight;
+        if (name.EndsWith(".weight", StringComparison.OrdinalIgnoreCase)
+            && name.Contains("token_embd", StringComparison.OrdinalIgnoreCase)
+            && !name.Contains("token_embd_norm", StringComparison.OrdinalIgnoreCase)
+            && !name.Contains("per_layer", StringComparison.OrdinalIgnoreCase)) return EmbeddingWeight;
         if (name.Contains("position_embd", StringComparison.OrdinalIgnoreCase)) return PositionEmbedding;
-        if (name.Contains("output_norm", StringComparison.OrdinalIgnoreCase))
+        if (name.Contains("output_norm", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("token_embd_norm", StringComparison.OrdinalIgnoreCase))
         {
             if (name.Contains("bias", StringComparison.OrdinalIgnoreCase)) return FinalNormBias;
             return FinalNormWeight;

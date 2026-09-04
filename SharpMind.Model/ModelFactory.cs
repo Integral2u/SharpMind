@@ -11,6 +11,7 @@ using SharpMind.Model.Format;
 using SharpMind.Model.Layers;
 using SharpMind.Model.Layers.Attention;
 using SharpMind.Model.Layers.Ffn;
+using SharpMind.Model.Layers.ShortConv;
 using System.Collections.Concurrent;
 
 namespace SharpMind.Model;

@@ -139,6 +139,7 @@ namespace SharpMind.Model.Layers.Attention;
             "gemma" or "gemma2" or "gemma3" => true,
             "phi2" or "phi3" => true,
             "stablelm" or "gptneox" or "starcoder2" or "olmo2" or "nemotron" or "exaone" => true,
+            "lfm2" => true,
             _ => false,
         };
     }
