@@ -171,7 +171,7 @@ public sealed class GpuInferenceEngine : IInferenceEngine
             // so clamp the continuous GPU bound to whatever the flash-only arena can actually fit.
             // Over-bound prompts still work — the CPU path handles them, see the class doc.
             _maxPromptTokens = ClampRowsToDeviceBudget(maxPromptTokens);
-            _arena = new DeviceArena(device, ArenaFloats(_cfg, _maxPromptTokens)); owned.Add(_arena);
+            _arena = new DeviceArena(device, ArenaFloats(_cfg, _maxPromptTokens, maxCacheLength)); owned.Add(_arena);
 
             _cpuCaches = new IKVCache[_cfg.NumLayers];
             var cpuCacheBuilder = new KVCacherBuilder();
@@ -190,14 +190,16 @@ public sealed class GpuInferenceEngine : IInferenceEngine
         _logitsHost = new float[_cfg.VocabSize];
     }
 
-    /// <summary>Forward-only version of <see cref="GpuBackpropEngine.ArenaFloats"/>: no backward terms, no LoRA rank slots (inference weights are frozen/merged). Sized flash-only — the positioned attention materialises no S² probabilities, so the arena needs no <c>rows²·heads</c> term.</summary>
-    private static long ArenaFloats(ModelConfig c, int rows)
+    /// <summary>Forward-only version of <see cref="GpuBackpropEngine.ArenaFloats"/>: no backward terms, no LoRA rank slots (inference weights are frozen/merged). Sized flash-only — the positioned attention materialises no S² probabilities, so the arena needs no <c>rows²·heads</c> term. The split-K decode/continued-prefill path adds per-layer chunk slots that grow with <paramref name="maxKvLen"/> (worst-case cache span), so both scales are parameters: decode's per-layer partials are <c>numChunks(maxKvLen)·qDim</c> floats, sized for the worst-case <c>rows·numChunks</c> product the engine can request (initial prefill never allocates them, so this is a ceiling, not a floor).</summary>
+    private static long ArenaFloats(ModelConfig c, int rows, int maxKvLen)
     {
         long H = c.HiddenDim, qDim = (long)c.NumHeads * c.HeadDim, kvDim = (long)c.NumKvHeads * c.HeadDim, F = c.FfnDim, V = c.VocabSize;
+        int numChunks = (maxKvLen + Kernels.FlashChunkedAttentionKernels.ChunkSize - 1) / Kernels.FlashChunkedAttentionKernels.ChunkSize;
+        long chunkSlots = (long)rows * numChunks * (qDim + 2 * c.NumHeads);   // partialOut [rows, numChunks·qDim] + partialStat [rows, numChunks·2·numHeads] per (h,i) row
         long entry = (long)rows * H;
         long fwdBlock = (long)rows * (6 * H + 2 + 2 * qDim + 2 * kvDim + 3 * F);   // flash attention: no materialised probs
         long head = (long)rows * (H + 1 + V);
-        return (entry + fwdBlock * c.NumLayers + head) * 5 / 4 + 4096;
+        return (entry + (fwdBlock + chunkSlots) * c.NumLayers + head) * 5 / 4 + 4096;
     }
 
     /// <summary>Largest rows in [1, requested] whose flash-only arena fits on the device, so arena
@@ -211,14 +213,43 @@ public sealed class GpuInferenceEngine : IInferenceEngine
         long memBytes = _dev.Accelerator.MemorySize;
         if (memBytes <= 0) return requested;
         long budgetFloats = memBytes * 3 / 4 / 4;
-        if (ArenaFloats(_cfg, 1) > budgetFloats) return 1;
+        if (ArenaFloats(_cfg, 1, MaxCacheLength) > budgetFloats) return 1;
         int lo = 1, hi = requested;
         while (lo < hi)
         {
             int mid = (lo + hi + 1) / 2;
-            if (ArenaFloats(_cfg, mid) <= budgetFloats) lo = mid; else hi = mid - 1;
+            if (ArenaFloats(_cfg, mid, MaxCacheLength) <= budgetFloats) lo = mid; else hi = mid - 1;
         }
         return lo;
+    }
+
+    /// <summary>
+    /// Positioned flash attention for the decode/continued-prefill paths. Once <paramref name="kvLen"/>
+    /// (= <c>pos0 + qLen</c>) spans <see cref="Kernels.FlashChunkedAttentionKernels.MinChunksForSplit"/>
+    /// chunks or more, the single-kernel launch is only numHeads·qLen threads each looping the whole
+    /// cache — decode is just numHeads threads — so it is split into chunk partials
+    /// (<see cref="GpuKernels.AttnFwdKvLenChunked"/>, numHeads·qLen·numChunks threads for the parallel
+    /// half). Short caches keep <see cref="GpuKernels.AttnFwdKvLen"/>: with 1–3 chunks the merge
+    /// launch is not worth the extra threads. Partial scratch is rented per layer inside the caller's
+    /// layer loop and accumulates across layers, exactly the term ArenaFloats reserves.
+    /// </summary>
+    private void ForwardAttention(GpuKernels k, DeviceTensor attnOut, DeviceTensor stats, DeviceTensor q,
+        DeviceBuffer kCache, DeviceBuffer vCache, int pos0, int qLen)
+    {
+        int kvLen = pos0 + qLen;
+        int numChunks = (kvLen + Kernels.FlashChunkedAttentionKernels.ChunkSize - 1) / Kernels.FlashChunkedAttentionKernels.ChunkSize;
+        var sliceK = kCache.Tensor.Slice(0, kvLen);
+        var sliceV = vCache.Tensor.Slice(0, kvLen);
+        if (numChunks < Kernels.FlashChunkedAttentionKernels.MinChunksForSplit)
+        {
+            k.AttnFwdKvLen(attnOut, stats, q, sliceK, sliceV, pos0, qLen, kvLen, _cfg.NumHeads, _cfg.NumKvHeads, _cfg.HeadDim);
+            return;
+        }
+        int rows = qLen * _cfg.NumHeads * numChunks;
+        var partialOut = _arena.Rent(rows, _cfg.HeadDim);
+        var partialStat = _arena.Rent(rows, Kernels.FlashChunkedAttentionKernels.PartialStatCols);
+        k.AttnFwdKvLenChunked(attnOut, stats, q, sliceK, sliceV, partialOut, partialStat,
+            pos0, qLen, kvLen, _cfg.NumHeads, _cfg.NumKvHeads, _cfg.HeadDim, numChunks);
     }
 
     /// <summary>
@@ -420,6 +451,10 @@ public sealed class GpuInferenceEngine : IInferenceEngine
 
             var stats = _arena.Rent(nh * m, 3);
             var attnOut = _arena.Rent(m, nh * D);
+            // This first prefill deliberately stays on the single-kernel AttnFwdKvLen (unlike
+            // decode and continued prefill via ForwardAttention): here qLen = kvLen = m, so the
+            // launch already has m·numHeads threads and occupancy is not the problem — chunking
+            // would only add a merge launch and duplicate output traffic.
             k.AttnFwdKvLen(attnOut, stats, q, _kCache[l].Tensor.Slice(0, m), _vCache[l].Tensor.Slice(0, m),
                 pos0: 0, qLen: m, kvLen: m, numHeads: nh, numKv: nkv, headDim: D);
 
@@ -504,8 +539,7 @@ public sealed class GpuInferenceEngine : IInferenceEngine
 
             var stats = _arena.Rent(nh * m, 3);
             var attnOut = _arena.Rent(m, nh * D);
-            k.AttnFwdKvLen(attnOut, stats, q, _kCache[l].Tensor.Slice(0, c + m), _vCache[l].Tensor.Slice(0, c + m),
-                pos0: c, qLen: m, kvLen: c + m, numHeads: nh, numKv: nkv, headDim: D);
+            ForwardAttention(k, attnOut, stats, q, _kCache[l], _vCache[l], pos0: c, qLen: m);
 
             var proj = _arena.Rent(m, H); blk.Wo.Forward(proj, attnOut, _arena);
             k.AddInPlace(x, proj);
@@ -676,8 +710,7 @@ public sealed class GpuInferenceEngine : IInferenceEngine
             // Decode attention: one query row at position c over the whole c+1-row cache.
             var stats = _arena.Rent(nh, 3);
             var attnOut = _arena.Rent(1, nh * D);
-            k.AttnFwdKvLen(attnOut, stats, q, _kCache[l].Tensor.Slice(0, c + 1), _vCache[l].Tensor.Slice(0, c + 1),
-                pos0: c, qLen: 1, kvLen: c + 1, numHeads: nh, numKv: nkv, headDim: D);
+            ForwardAttention(k, attnOut, stats, q, _kCache[l], _vCache[l], pos0: c, qLen: 1);
 
             var proj = _arena.Rent(1, H); blk.Wo.Forward(proj, attnOut, _arena);
             k.AddInPlace(x, proj);

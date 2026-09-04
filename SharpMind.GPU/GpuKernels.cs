@@ -22,6 +22,8 @@ internal sealed class GpuKernels
     private readonly Action<Index1D, ArrayView<float>, ArrayView<float>, int, float> _softmaxRowBwd;
     private readonly Action<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int, int, float> _flashFwd;
     private readonly Action<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int, int, int, int, float> _flashFwdKvLen;
+    private readonly Action<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int, int, int, int, int, float> _flashPartialKvLen;
+    private readonly Action<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int, int> _flashMergeKvLen;
     private readonly Action<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int> _flashRowDot;
     private readonly Action<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int, int, float> _flashBwdQ;
     private readonly Action<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int, int, float> _flashBwdKv;
@@ -51,6 +53,8 @@ internal sealed class GpuKernels
         _softmaxRowBwd = acc.LoadAutoGroupedStreamKernel<Index1D, ArrayView<float>, ArrayView<float>, int, float>(AttentionKernels.SoftmaxRowBwd);
         _flashFwd = acc.LoadAutoGroupedStreamKernel<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int, int, float>(FlashAttentionKernels.Fwd);
         _flashFwdKvLen = acc.LoadAutoGroupedStreamKernel<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int, int, int, int, float>(FlashAttentionKernels.FwdKvLen);
+        _flashPartialKvLen = acc.LoadAutoGroupedStreamKernel<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int, int, int, int, int, float>(FlashChunkedAttentionKernels.PartialKvLen);
+        _flashMergeKvLen = acc.LoadAutoGroupedStreamKernel<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int, int>(FlashChunkedAttentionKernels.MergeKvLen);
         _flashRowDot = acc.LoadAutoGroupedStreamKernel<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int>(FlashAttentionKernels.BwdRowDot);
         _flashBwdQ = acc.LoadAutoGroupedStreamKernel<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int, int, float>(FlashAttentionKernels.BwdQ);
         _flashBwdKv = acc.LoadAutoGroupedStreamKernel<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int, int, float>(FlashAttentionKernels.BwdKV);
@@ -303,8 +307,43 @@ internal sealed class GpuKernels
         // allocations, so aliasing is impossible by construction. The generic range check would
         // false-positive as the cache grows toward the arena's address span (larger kvLen extends
         // the k/v view upward into the region the small arena output occupies), which is why the
-        // shared AttnFwd/AttnBwd path, where all operands share one arena, has it and this does not.
+        // shared AttnFwd/AttnBwd path, where all operands share one arena, has this and it does not.
         _flashFwdKvLen(numHeads * qLen, outp.View, stats.View, q.View, k.View, v.View, pos0, qLen, kvLen, numHeads, numKv, headDim, 1f / MathF.Sqrt(headDim));
+    }
+
+    /// <summary>
+    /// Split-K variant of <see cref="AttnFwdKvLen"/>, the same positioned flash attention for
+    /// inference but run as two launches: <see cref="Kernels.FlashChunkedAttentionKernels.PartialKvLen"/>
+    /// computes per-chunk partials in parallel (one thread per (h, i, chunk) — numHeads·qLen·numChunks
+    /// threads, so decode's numHeads-thread launch grows to numHeads·numChunks), then
+    /// <see cref="Kernels.FlashChunkedAttentionKernels.MergeKvLen"/> reduces them back to the real
+    /// output and statistics with one thread per (h, i). Both launches are friends on the in-order
+    /// default stream. Same numbers as <see cref="AttnFwdKvLen"/>, so <paramref name="partialOut"/>/
+    /// <paramref name="partialStat"/> are chunk-private scratch: [numHeads·qLen·numChunks, headDim]
+    /// and [numHeads·qLen·numChunks, 2].
+    ///
+    /// Aliasing is the same story as <see cref="AttnFwdKvLen"/>: partials are always arena rents,
+    /// k/v are always cache slices — two allocations, no overlap by construction, so NoOverlap is
+    /// deliberately omitted again.
+    /// </summary>
+    public void AttnFwdKvLenChunked(DeviceTensor outp, DeviceTensor stats, DeviceTensor q, DeviceTensor k, DeviceTensor v,
+        DeviceTensor partialOut, DeviceTensor partialStat,
+        int pos0, int qLen, int kvLen, int numHeads, int numKv, int headDim, int numChunks)
+    {
+        int qDim = numHeads * headDim, kvDim = numKv * headDim;
+        if (numChunks <= 0) throw new ArgumentException($"numChunks {numChunks} must be positive.");
+        if (pos0 < 0 || qLen <= 0 || kvLen <= 0 || kvLen != pos0 + qLen) throw new ArgumentException($"pos0 {pos0}, qLen {qLen}, kvLen {kvLen}: need kvLen == pos0 + qLen > 0.");
+        if (numHeads % numKv != 0) throw new ArgumentException($"numHeads {numHeads} must be a multiple of numKv {numKv}.");
+        if (outp.Rows != qLen || outp.Cols != qDim) throw new ArgumentException($"outp must be [{qLen},{qDim}], got [{outp.Rows},{outp.Cols}].");
+        if (q.Rows != qLen || q.Cols != qDim) throw new ArgumentException($"q must be [{qLen},{qDim}], got [{q.Rows},{q.Cols}].");
+        if (k.Rows != kvLen || k.Cols != kvDim) throw new ArgumentException($"k must be [{kvLen},{kvDim}], got [{k.Rows},{k.Cols}].");
+        if (v.Rows != kvLen || v.Cols != kvDim) throw new ArgumentException($"v must be [{kvLen},{kvDim}], got [{v.Rows},{v.Cols}].");
+        StatsColsOrThrow(stats, qLen, numHeads);
+        int partialRows = numHeads * qLen * numChunks;
+        if (partialOut.Rows != partialRows || partialOut.Cols != headDim) throw new ArgumentException($"partialOut must be [{partialRows},{headDim}], got [{partialOut.Rows},{partialOut.Cols}].");
+        if (partialStat.Rows != partialRows || partialStat.Cols != Kernels.FlashChunkedAttentionKernels.PartialStatCols) throw new ArgumentException($"partialStat must be [{partialRows},{Kernels.FlashChunkedAttentionKernels.PartialStatCols}], got [{partialStat.Rows},{partialStat.Cols}].");
+        _flashPartialKvLen(numHeads * qLen * numChunks, partialOut.View, partialStat.View, q.View, k.View, v.View, pos0, qLen, kvLen, numHeads, numKv, headDim, numChunks, 1f / MathF.Sqrt(headDim));
+        _flashMergeKvLen(numHeads * qLen, outp.View, stats.View, partialOut.View, partialStat.View, qLen, numHeads, headDim, numChunks);
     }
 
     /// <summary>

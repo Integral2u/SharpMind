@@ -1,7 +1,9 @@
 using SharpMind.Core;
+using SharpMind.Core.Memory;
 using SharpMind.Core.Quantization;
 using SharpMind.Core.Tensors;
 using SharpMind.GPU;
+using SharpMind.GPU.Kernels;
 using SharpMind.Inference;
 using SharpMind.Inference.Chat;
 using SharpMind.Model;
@@ -148,6 +150,82 @@ public sealed class GpuInferenceEngineTests : IClassFixture<GpuInferenceEngineTe
 
         Assert.NotEmpty(engineTurn2);
         Assert.Equal(cpuTurn2, engineTurn2);
+    }
+
+    /// <summary>
+    /// The split-K decode path — active once the cache spans <see cref="FlashChunkedAttentionKernels.MinChunksForSplit"/>
+    /// chunks (kvLen ≥ 385 at <see cref="FlashChunkedAttentionKernels.ChunkSize"/> 128) — must still
+    /// produce the same greedy text as the CPU transformer, and so must the split continued-prefill
+    /// branch that appends to a warm split-length cache. A generator is not the driver here (its
+    /// greedy decode could stop at EOS before the threshold is crossed): the engine's DecodeStep is
+    /// driven by a fixed greedy schedule for enough steps to guarantee the split path runs, each
+    /// step's greedy choice checked against the CPU oracle. The oracle is the transformer's own
+    /// chunked-prefill helper (<see cref="Prefill.ForwardLastLogitsChunked"/>) over an independent
+    /// host cache, so the GPU path shares no state with it.
+    /// </summary>
+    [Fact]
+    public void DecodeAndContinuedPrefill_SplitPath_MatchesCpuOracle_Greedy()
+    {
+        const int cacheCap = 520, decodeStop = 460;   // 460 > 384 (4 chunks); continued prefill to kvLen 520 (5 chunks)
+
+        // The class fixture's model is capped at MaxSeqLen 64 (RoPE tables size 64), so decode cannot
+        // pass position ~64; the split path needs ~385. Build a same-shape model with the cache cap.
+        var cfg = new ModelConfig
+        {
+            VocabSize = Cfg.VocabSize, HiddenDim = Cfg.HiddenDim, NumLayers = Cfg.NumLayers,
+            NumHeads = Cfg.NumHeads, NumKvHeads = Cfg.NumKvHeads, FfnDim = Cfg.FfnDim, MaxSeqLen = cacheCap,
+            Architecture = Cfg.Architecture,
+        };
+        var weights = ModelFactory.CreateForTraining(cfg, _config);
+        WeightInitializer.InitializeRandomly(weights, 9001);
+        using var model = ModelFactory.CreateTrainingTransformer(weights, _config);
+
+        using var engine = new GpuInferenceEngine(GpuTestDevice.Device, model, _config, cacheCap, maxPromptTokens: 64);
+
+        int numKvHeads = cfg.NumKvHeads, headDim = cfg.HiddenDim / cfg.NumHeads;
+        var cpuCaches = new IKVCache[cfg.NumLayers];
+        var builder = new KVCacherBuilder();
+        for (int l = 0; l < cfg.NumLayers; l++) cpuCaches[l] = builder.CreateKVCache(1, numKvHeads, cacheCap, headDim);
+        using var workspace = MemoryHelpers.CreateWorkspace(Workspace.CalculateRequiredSize(cfg.HiddenDim, cfg.FfnDim, cfg.VocabSize, cfg.NumLayers, cfg.MaxSeqLen));
+        try
+        {
+            int[] prompt = Prompt();
+            var gpuPrefill = engine.Prefill(prompt);
+            using var cpuPrefill = Prefill.ForwardLastLogitsChunked(model, cpuCaches, prompt, workspace);
+            int token = ArgMax(cpuPrefill.Data);
+            Assert.Equal(token, ArgMax(gpuPrefill.Span));
+            Assert.Equal(prompt.Length, engine.CachedLength);
+
+            // Drive greedy decodes until the cache is well past the split threshold.
+            for (int step = 0; step < decodeStop - prompt.Length; step++)
+            {
+                var gpu = engine.DecodeStep(token);
+                using var cpu = Prefill.ForwardLastLogitsChunked(model, cpuCaches, new[] { token }, workspace);
+                token = ArgMax(cpu.Data);
+                Assert.Equal(token, ArgMax(gpu.Span));
+            }
+            Assert.True(engine.CachedLength >= FlashChunkedAttentionKernels.MinChunksForSplit * FlashChunkedAttentionKernels.ChunkSize - FlashChunkedAttentionKernels.ChunkSize + 1,
+                $"the cache {engine.CachedLength} never spanned the {FlashChunkedAttentionKernels.MinChunksForSplit} chunks the split path needs.");
+
+            // A continued prefill on top of the warm split-length cache exercises the split branch.
+            var turn2 = new int[60];
+            for (int t = 0; t < turn2.Length; t++) turn2[t] = 10 + (t * 31) % 200;   // valid ids, never BOS/EOS
+            var gpuCont = engine.Prefill(turn2);
+            using var cpuCont = Prefill.ForwardLastLogitsChunked(model, cpuCaches, turn2, workspace);
+            Assert.Equal(ArgMax(cpuCont.Data), ArgMax(gpuCont.Span));
+            Assert.Equal(decodeStop + turn2.Length, engine.CachedLength);
+        }
+        finally
+        {
+            foreach (var c in cpuCaches) c.Dispose();
+        }
+    }
+
+    private static int ArgMax(ReadOnlySpan<float> logits)
+    {
+        int best = 0;
+        for (int i = 1; i < logits.Length; i++) if (logits[i] > logits[best]) best = i;
+        return best;
     }
 
     /// <summary>
