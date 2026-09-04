@@ -84,6 +84,20 @@ public sealed record ModelConfig
     /// </summary>
     public int? HeadDimOverride { get; init; }
 
+    /// <summary>
+    /// Per-layer key/value head counts ({arch}.attention.head_count_kv array).
+    /// When set, index i is the KV head count of block i and 0 marks a block
+    /// without attention (e.g. LFM2 short-conv layers). When null, every block
+    /// uses <see cref="NumKvHeads"/>.
+    /// </summary>
+    public int[]? LayerKvHeads { get; init; }
+
+    /// <summary>
+    /// Look-back length for the causal depthwise conv in no-attention layers
+    /// (LFM2 short-conv). GGUF key: {arch}.shortconv.l_cache.
+    /// </summary>
+    public int ShortConvCacheLength { get; init; } = 3;
+
     // MoE
 
     /// <summary>Total number of experts. Ignored when FfnKind is not MoE.</summary>
@@ -191,6 +205,12 @@ public sealed record ModelConfig
     /// <summary>Number of query heads each KV head serves (GQA group size).</summary>
     public int KvGroupSize => NumHeads / NumKvHeads;
 
+    /// <summary>True when the given block is a no-attention (short-conv) layer.</summary>
+    public bool IsShortConvLayer(int layerIndex) =>
+        LayerKvHeads != null &&
+        (uint)layerIndex < (uint)LayerKvHeads.Length &&
+        LayerKvHeads[layerIndex] == 0;
+
 
     // Validation
 
@@ -209,6 +229,14 @@ public sealed record ModelConfig
         if (NumHeads % NumKvHeads != 0)
             throw new InvalidOperationException(
                 $"NumHeads ({NumHeads}) must be divisible by NumKvHeads ({NumKvHeads}).");
+        if (LayerKvHeads != null && LayerKvHeads.Length != NumLayers)
+            throw new InvalidOperationException(
+                $"LayerKvHeads must have one entry per layer ({LayerKvHeads.Length} != {NumLayers}).");
+        if (LayerKvHeads != null && LayerKvHeads.Any(v => v < 0))
+            throw new InvalidOperationException(
+                "LayerKvHeads entries must be >= 0 (0 marks a no-attention layer).");
+        if (ShortConvCacheLength < 1)
+            throw new InvalidOperationException($"ShortConvCacheLength must be >= 1 (was {ShortConvCacheLength}).");
         if (NumExperts < TopKExperts)
             throw new InvalidOperationException(
                 $"NumExperts ({NumExperts}) must be >= TopKExperts ({TopKExperts}).");

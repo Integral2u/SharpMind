@@ -87,14 +87,24 @@ public abstract class TransformerWeights : IDisposable
 
     public (Tensor<float>? target, BlockWeights? block, string? rawField) ResolveTarget(string name)
     {
-        // "per_layer_token_embd" (gemma-3n/gemma-4) also contains "token_embd" but is a
-        // separate per-layer table, not the token embedding — routing it here fed a
-        // [8960, 262144] tensor into EmbeddingWeight.
-        if (name.Contains("token_embd", StringComparison.OrdinalIgnoreCase)
+        // The token embedding tensor is exactly "token_embd.weight". Exclude
+        // "token_embd_norm.weight" (LFM2's pre-embedding RMSNorm of the token
+        // embedding) — routing it here overwrote the real Q8_0 embedding raw
+        // bytes with the tiny [hidden] F32 norm weights, which then blew up the
+        // logits decode with an access violation. Also exclude "per_layer_token_embd"
+        // (gemma-3n/gemma-4), a separate per-layer table.
+        if (name.EndsWith(".weight", StringComparison.OrdinalIgnoreCase)
+            && name.Contains("token_embd", StringComparison.OrdinalIgnoreCase)
+            && !name.Contains("token_embd_norm", StringComparison.OrdinalIgnoreCase)
             && !name.Contains("per_layer", StringComparison.OrdinalIgnoreCase))
             return (EmbeddingWeight, null, null);
         if (name.Contains("position_embd", StringComparison.OrdinalIgnoreCase)) return (PositionEmbedding, null, null);
-        if (name.Contains("output_norm", StringComparison.OrdinalIgnoreCase))
+        // LFM2's output RMSNorm is stored as "token_embd_norm.weight" (the gguf
+        // converter maps LLM_TENSOR_OUTPUT_NORM_LFM2 "model.embedding_norm" to
+        // that name). Route it to the final norm, NOT the embedding — the strict
+        // token_embd match above already excludes it, so it must land here.
+        if (name.Contains("output_norm", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("token_embd_norm", StringComparison.OrdinalIgnoreCase))
         {
             if (name.Contains("bias", StringComparison.OrdinalIgnoreCase)) return (FinalNormBias, null, null);
             return (FinalNormWeight, null, null);
@@ -151,6 +161,15 @@ public abstract class TransformerWeights : IDisposable
                 if (IsMoE && name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase))
                     return (null, block, "RawRouter");
 
+                // LFM2 short-conv (no-attention) block weights. The conv kernel is
+                // always stored F32 so it loads via the float path, not as a raw field.
+                if (name.Contains("shortconv.in_proj", StringComparison.OrdinalIgnoreCase)) return (null, block, "RawWScIn");
+                if (name.Contains("shortconv.out_proj", StringComparison.OrdinalIgnoreCase)) return (null, block, "RawWScOut");
+                // LFM2 short-conv depthwise kernel: F32, loaded via the float path
+                // (ResolveFloatTarget maps it to WScConv). No raw field — it is always
+                // dequantized into the float tensor, so match the block but no rawField.
+                if (name.Contains("shortconv.conv.weight", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
+
                 if (name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase)) return (null, block, "RawWgate");
                 if (name.Contains("ffn_up", StringComparison.OrdinalIgnoreCase)) return (null, block, "RawWup");
                 if (name.Contains("ffn_down", StringComparison.OrdinalIgnoreCase)) return (null, block, "RawWf2");
@@ -161,9 +180,13 @@ public abstract class TransformerWeights : IDisposable
 
     public Tensor<float>? ResolveFloatTarget(string name)
     {
-        if (name.Contains("token_embd", StringComparison.OrdinalIgnoreCase)) return EmbeddingWeight;
+        if (name.EndsWith(".weight", StringComparison.OrdinalIgnoreCase)
+            && name.Contains("token_embd", StringComparison.OrdinalIgnoreCase)
+            && !name.Contains("token_embd_norm", StringComparison.OrdinalIgnoreCase)
+            && !name.Contains("per_layer", StringComparison.OrdinalIgnoreCase)) return EmbeddingWeight;
         if (name.Contains("position_embd", StringComparison.OrdinalIgnoreCase)) return PositionEmbedding;
-        if (name.Contains("output_norm", StringComparison.OrdinalIgnoreCase))
+        if (name.Contains("output_norm", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("token_embd_norm", StringComparison.OrdinalIgnoreCase))
         {
             if (name.Contains("bias", StringComparison.OrdinalIgnoreCase)) return FinalNormBias;
             return FinalNormWeight;
@@ -201,8 +224,16 @@ public abstract class TransformerWeights : IDisposable
                 if (name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase) || name.Contains("ffn_up", StringComparison.OrdinalIgnoreCase)) return b.Wf1Bias;
                 if (name.Contains("ffn_down", StringComparison.OrdinalIgnoreCase)) return b.Wf2Bias;
             }
-            else
+else
             {
+                // LFM2 short-conv (no-attention) block weights
+                if (name.Contains("shortconv.in_proj", StringComparison.OrdinalIgnoreCase))
+                    return b.WScIn ??= new Tensor<float>(Config.HiddenDim, 3 * Config.HiddenDim);
+                if (name.Contains("shortconv.out_proj", StringComparison.OrdinalIgnoreCase))
+                    return b.WScOut ??= new Tensor<float>(Config.HiddenDim, Config.HiddenDim);
+                if (name.Contains("shortconv.conv.weight", StringComparison.OrdinalIgnoreCase))
+                    return b.WScConv ??= new Tensor<float>(Config.ShortConvCacheLength, Config.HiddenDim);
+
                 if (name.Contains("post_attention_norm", StringComparison.OrdinalIgnoreCase))
                 {
                     b.PostNorm1W ??= new Tensor<float>(Config.HiddenDim);
@@ -314,6 +345,8 @@ public abstract class TransformerWeights : IDisposable
             case "RawWup": block.RawWup = data; block.QuantDtypeWup = dtype; break;
             case "RawWf1": block.RawWf1 = data; block.QuantDtypeWf1 = dtype; break;
             case "RawWf2": block.RawWf2 = data; block.QuantDtypeWf2 = dtype; break;
+            case "RawWScIn": block.RawWScIn = data; block.QuantDtypeWScIn = dtype; break;
+            case "RawWScOut": block.RawWScOut = data; block.QuantDtypeWScOut = dtype; break;
             case "RawRouter": block.RawRouter = data; block.QuantDtypeRouter = dtype; break;
         }
     }
@@ -352,6 +385,9 @@ public abstract class TransformerWeights : IDisposable
             Add(seen, block.QuantDtypeWup,  block.RawWup  is not null);
             Add(seen, block.QuantDtypeWf1,  block.Wf1  is not null);
             Add(seen, block.QuantDtypeWf2,  block.Wf2  is not null);
+            Add(seen, block.QuantDtypeWScIn,  block.WScIn  is not null);
+            Add(seen, block.QuantDtypeWScOut, block.WScOut is not null);
+            Add(seen, null, block.WScConv is not null);
             Add(seen, block.QuantDtypeRouter, block.RawRouter is not null);
 
             if (block.QuantDtypeWgateExp is { } gateExp)
@@ -406,6 +442,11 @@ public abstract class TransformerWeights : IDisposable
         public Tensor<float>? PostNorm1W { get; set; }
         public Tensor<float>? PostNorm2W { get; set; }
 
+        // LFM2 short-conv (no-attention) float tensors
+        public Tensor<float>? WScIn { get; set; }   // [HiddenDim, 3*HiddenDim]
+        public Tensor<float>? WScOut { get; set; }  // [HiddenDim, HiddenDim]
+        public Tensor<float>? WScConv { get; set; } // [ShortConvCacheLength, HiddenDim] (F32 conv kernel)
+
         // Quantized data (byte arrays)
         public byte[]? RawWq { get; set; }
         public byte[]? RawWk { get; set; }
@@ -415,6 +456,10 @@ public abstract class TransformerWeights : IDisposable
         public byte[]? RawWup { get; set; }
         public byte[]? RawWf1 { get; set; }
         public byte[]? RawWf2 { get; set; }
+
+        // LFM2 short-conv (no-attention) quantized projections
+        public byte[]? RawWScIn { get; set; }
+        public byte[]? RawWScOut { get; set; }
 
         // MoE expert quantized data
         public Dictionary<int, byte[]>? RawWgateExp { get; set; }
@@ -442,6 +487,8 @@ public abstract class TransformerWeights : IDisposable
         public QuantDType? QuantDtypeWup { get; set; }
         public QuantDType? QuantDtypeWf1 { get; set; }
         public QuantDType? QuantDtypeWf2 { get; set; }
+        public QuantDType? QuantDtypeWScIn { get; set; }
+        public QuantDType? QuantDtypeWScOut { get; set; }
         public Dictionary<int, QuantDType>? QuantDtypeWgateExp { get; set; }
         public Dictionary<int, QuantDType>? QuantDtypeWupExp { get; set; }
         public Dictionary<int, QuantDType>? QuantDtypeWdownExp { get; set; }
@@ -476,6 +523,7 @@ public abstract class TransformerWeights : IDisposable
             Norm1W?.Dispose(); Norm1B?.Dispose(); Norm2W?.Dispose(); Norm2B?.Dispose();
             QNormW?.Dispose(); KNormW?.Dispose();
             PostNorm1W?.Dispose(); PostNorm2W?.Dispose();
+            WScIn?.Dispose(); WScOut?.Dispose(); WScConv?.Dispose();
             WRouter?.Dispose(); WRouterBias?.Dispose();
             DisposeDict(WgateExp); DisposeDict(WgateExpBias);
             DisposeDict(WupExp); DisposeDict(WupExpBias);
@@ -501,10 +549,13 @@ public abstract class TransformerWeights : IDisposable
             Norm1W = null; Norm1B = null; Norm2W = null; Norm2B = null;
             QNormW = null; KNormW = null;
             PostNorm1W = null; PostNorm2W = null;
+            WScIn = null; WScOut = null; WScConv = null;
             RawWq = null; RawWk = null; RawWv = null; RawWo = null;
             RawWgate = null; RawWup = null; RawWf1 = null; RawWf2 = null;
+            RawWScIn = null; RawWScOut = null;
             QuantDtypeWq = null; QuantDtypeWk = null; QuantDtypeWv = null; QuantDtypeWo = null;
             QuantDtypeWgate = null; QuantDtypeWup = null; QuantDtypeWf1 = null; QuantDtypeWf2 = null;
+            QuantDtypeWScIn = null; QuantDtypeWScOut = null;
             RawWgateExp = null; RawWupExp = null; RawWdownExp = null;
             QuantDtypeWgateExp = null; QuantDtypeWupExp = null; QuantDtypeWdownExp = null;
             RawRouter = null; QuantDtypeRouter = null;

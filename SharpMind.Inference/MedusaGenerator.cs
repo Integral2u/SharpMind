@@ -131,7 +131,9 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
 
             _caches = new IKVCache[numLayers];
             for (int i = 0; i < numLayers; i++)
-                _caches[i] = new T().CreateKVCache(1, numKvHeads, maxSeqLen, headDim);
+                _caches[i] = model.Config.IsShortConvLayer(i)
+                    ? new ShortConvCache(model.Config.ShortConvCacheLength - 1, model.Config.HiddenDim, 1, maxSeqLen)
+                    : new T().CreateKVCache(1, numKvHeads, maxSeqLen, headDim);
         }
 
         _workspace = MemoryHelpers.CreateWorkspace(

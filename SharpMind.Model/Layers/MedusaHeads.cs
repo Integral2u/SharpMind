@@ -328,8 +328,9 @@ public sealed class MedusaHeads : IDisposable
         try
         {
             for (int i = 0; i < caches.Length; i++)
-                caches[i] = new KVCache(1, model.Config.NumKvHeads,
-                    totalSteps, model.Config.HeadDim);
+                caches[i] = model.Config.IsShortConvLayer(i)
+                    ? new ShortConvCache(model.Config.ShortConvCacheLength - 1, model.Config.HiddenDim, 1, totalSteps)
+                    : new KVCache(1, model.Config.NumKvHeads, totalSteps, model.Config.HeadDim);
 
             // Storage: one hidden vector per sample, K target token IDs per sample.
             var hiddenStates = new Tensor<float>(numSamples, _hiddenDim);
