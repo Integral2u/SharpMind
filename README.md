@@ -173,6 +173,7 @@ Validated across two independent runs against 15 model/architecture/quantization
 | Llama 3 (small) | llama3-small | Q3_K_M | ✅ |
 | Ministral 3 (sliding window) | Ministral-3-3B-Instruct-2512 | Q4_K_M | ✅ |
 | Phi-3 | Phi-3-mini-4k-instruct | Q4_K | ✅ |
+| LFM2 (short-conv) | LFM2.5-2.6B-Instruct | Q8_0 | ✅ |
 
 _Tested on: **AMD Ryzen 3 2200U (2C/4T, 2.5GHz base) w/ Radeon Vega Mobile Graphics, 12GB RAM** — a modest mobile/laptop-class chip, not a workstation. Load times and throughput scale heavily with hardware and quant level — as a rough sense of range on this machine, `SmolLM-135M.Q4_K_M` loaded in ~2s, while `qwen2.5-1.5b-instruct-q8_0` (the largest model tested) took ~2 minutes to load and initialize. That everything above ran clean on a 2-core/4-thread laptop CPU is itself a reasonable data point for SharpMind's baseline hardware requirements — run your own copy of the benchmark against your target hardware before relying on these numbers for capacity planning._
 
@@ -564,7 +565,7 @@ See [CHANGELOG.md](CHANGELOG.md) for release history.
 # Wishlist (not ordered)
 - [ ] AVX512 Kernels
 - [x] GPU Inference and OpenCL fallback
-- [x] Additional Model Support — Ministral-3-3B-Instruct (sliding window attention) now supported
+- [x] Additional Model Support — Ministral-3-3B-Instruct (sliding window attention) and LFM2 (short-conv blocks) now supported
 - [ ] Optimizations
 - [x] Microsoft IChatClient and or other services. — shipped as `SharpMind.Extensions.AI`
 - [x] OpenAI Protocol Server. — shipped as `SharpMind.Server` and `SharpMind.Server.CLI`
