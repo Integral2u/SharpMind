@@ -57,7 +57,8 @@ WebAssembly via `RunAOTCompilation`, from the same managed C# kernels the deskto
 
 The quickest way to try the terminal chat client is the installer, which sets up `SharpMind.CUI`, Start Menu + desktop shortcuts, and the app folder:
 
-**[Download SharpMind Console Setup (MSI)](https://github.com/Integral2u/SharpMind/releases/latest/download/SharpMind.Console.Setup.msi)**
+**[Download SharpMind Console Setup (MSI)](https://github.com/Integral2u/SharpMind/releases/latest/download/SharpMind.Console.Setup.zip)**
+**[Download SharpMind CLI Setup (MSI)](https://github.com/Integral2u/SharpMind/releases/latest/download/SharpMind.CLI.Setup.zip)**
 
 Requires the [.NET 10 Runtime](https://dotnet.microsoft.com/download/dotnet/10.0). Running the MSI installs the app and shortcuts; uninstall or repair is available via Apps & Features. Then grab a model as described in [Quick Start](#quick-start-load-and-run-a-model) — the running app also has a built-in model browser.
 
@@ -562,15 +563,9 @@ SharpMind.Live          Blazor WebAssembly browser demo — AOT-compiled engine,
 
 See [CHANGELOG.md](CHANGELOG.md) for release history.
 
-# Wishlist (not ordered)
-- [ ] AVX512 Kernels
-- [x] GPU Inference and OpenCL fallback
-- [x] Additional Model Support — Ministral-3-3B-Instruct (sliding window attention) and LFM2 (short-conv blocks) now supported
-- [ ] Optimizations
-- [x] Microsoft IChatClient and or other services. — shipped as `SharpMind.Extensions.AI`
-- [x] OpenAI Protocol Server. — shipped as `SharpMind.Server` and `SharpMind.Server.CLI`
-- [x] Common tools, GREP, GIT etc — shipped as `SharpMind.Extensions.Tools`
-- [x] Limit breaker(Project Goku), int.MaxValue element-count limit workaround. Solutions not excuses. — shipped as `MemoryHelpers`, `BigArray<T>`, `IWorkspace`, `BigWorkspace`
+Longer-term ideas and proposals live in [Discussions → Wishlist](https://github.com/Integral2u/SharpMind/discussions/categories/wishlist-and-proposals) rather than here, so they can be discussed and voted on without going stale in the README.
+
+Issues, questions, and early feedback are welcome.
 
 Issues, questions, and early feedback are welcome.
 
