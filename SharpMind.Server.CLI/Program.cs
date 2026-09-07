@@ -634,21 +634,30 @@ static async Task<StringBuilder> StreamChatCompletion(HttpClient http, Dictionar
     });
 
     using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
-    var content = new StringContent(json, Encoding.UTF8, "application/json");
-    var response = await http.PostAsync("/v1/chat/completions", content, cts.Token);
+    // ResponseHeadersRead: PostAsync's default (ResponseContentRead) buffers the
+    // whole SSE body before returning, so nothing was displayed until generation
+    // had finished and the read loop below only ever replayed a complete answer.
+    using var httpRequest = new HttpRequestMessage(HttpMethod.Post, "/v1/chat/completions")
+    {
+        Content = new StringContent(json, Encoding.UTF8, "application/json"),
+    };
+    using var response = await http.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, cts.Token);
     response.EnsureSuccessStatusCode();
 
-    var stream = await response.Content.ReadAsStreamAsync(cts.Token);
-    var reader = new StreamReader(stream);
+    using var stream = await response.Content.ReadAsStreamAsync(cts.Token);
+    using var reader = new StreamReader(stream);
     var sb = new StringBuilder();
 
-    using var lineCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+    // Inactivity timeout: re-armed before every line, so a long answer that keeps
+    // producing tokens is not cut off at a fixed 30 s after the request started.
+    using var lineCts = new CancellationTokenSource();
 
     while (true)
     {
         string? line;
         try
         {
+            lineCts.CancelAfter(TimeSpan.FromSeconds(30));
             line = await reader.ReadLineAsync(lineCts.Token);
         }
         catch (OperationCanceledException)
