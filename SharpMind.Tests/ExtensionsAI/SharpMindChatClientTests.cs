@@ -264,6 +264,7 @@ public sealed class SharpMindChatClientTests
         public int MaxTokens { get; set; }
         public float RepetitionPenalty { get; set; }
         public int RepetitionWindow { get; set; }
+        public int MaxToolCallsPerTurn { get; set; }
         public IReadOnlyList<int>? StopTokenIds { get; set; }
         public IReadOnlyList<string>? StopStrings { get; set; }
         public bool ShowThinking { get; set; }

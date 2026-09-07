@@ -130,6 +130,7 @@ public sealed class ChatMessageConverterTests
         public float TopP { get; set; }
         public float RepetitionPenalty { get; set; }
         public int RepetitionWindow { get; set; }
+        public int MaxToolCallsPerTurn { get; set; }
         public IReadOnlyList<int>? StopTokenIds { get; set; }
         public IReadOnlyList<string>? StopStrings { get; set; }
         public bool ShowThinking { get; set; }

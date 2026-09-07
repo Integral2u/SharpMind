@@ -63,7 +63,7 @@ public interface IChatSession : IAsyncDisposable
     /// when the previous turn's cache was verified and extended incrementally.
     /// </summary>
     internal int LastPrefillTokenCount { get; }
-
+    public int MaxToolCallsPerTurn { get; set; }
     public void AddMessage(ChatRole role, string content);
     public void AddMessage(ChatMessage message);
     public string GetFormattedPrompt();
