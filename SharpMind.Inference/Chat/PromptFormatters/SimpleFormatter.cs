@@ -20,6 +20,7 @@ public sealed class SimpleFormatter : IChatPromptFormatter
                 ChatRole.System => "user: ",
                 ChatRole.Agent => "assistant: ",
                 ChatRole.User => "user: ",
+                ChatRole.Tool => "user: ",
                 _ => ""
             };
             sb.Append(prefix);

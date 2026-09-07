@@ -1198,6 +1198,7 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
         ChatRole.System => "system",
         ChatRole.Agent => "assistant",
         ChatRole.User => "user",
+        ChatRole.Tool => "tool",
         _ => "user"
     };
 

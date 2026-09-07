@@ -20,6 +20,7 @@ namespace SharpMind.Inference.Agent
         }
         public string AgentName { get; init; } = agentName;
         public SamplingConfig SamplingConfig { get; init; } = samplingConfig ?? new();
+        public ToolCallFormat CallFormat { get; set; } = ToolCallFormat.SharpMind;
         public IContextCompactor? Compactor { get; set; }
         public IReadOnlyList<IContextCompactor> PluginCompactors { get; set; } = [];
         public IReadOnlyList<IPromptPreProcessor> PluginPreProcessors { get; set; } = [];
@@ -366,6 +367,41 @@ namespace SharpMind.Inference.Agent
                 : compact;
         }
 
+        /// <summary>
+        /// Builds a ready-to-copy example call using the first registered tool,
+        /// so the model sees a real tool name and argument shape it must match
+        /// rather than a placeholder.
+        /// </summary>
+        private string BuildQwenCallExample()
+        {
+            var tool = ToolDefinitions.OfType<JsonObject>().FirstOrDefault();
+            if (tool is null)
+                return "{\"name\":\"<tool>\",\"arguments\":{}}";
+
+            string toolName = tool["name"]?.GetValue<string>() ?? "<tool>";
+            var args = new JsonObject();
+
+            if (tool["parameters"] is JsonObject pars
+                && pars["properties"] is JsonObject props)
+            {
+                foreach (var (argName, schema) in props.Take(3))
+                {
+                    string type = ((JsonObject?)schema)?["type"]?.GetValue<string>()
+                                  ?? ((JsonObject?)schema)?["items"]?["type"]?.GetValue<string>()
+                                  ?? "string";
+                    args[argName] = type switch
+                    {
+                        "array" => new JsonArray("...", "..."),
+                        "integer" or "number" => 0,
+                        "boolean" => false,
+                        _ => "..."
+                    };
+                }
+            }
+
+            return $$"""{"name":"{{toolName}}","arguments":{{args.ToJsonString()}}}""";
+        }
+
         // Sub-agent registration
 
         /// <summary>
@@ -515,6 +551,38 @@ namespace SharpMind.Inference.Agent
         // Prompt building
 
         /// <summary>
+        /// The tool-calling instructions for the current <see cref="CallFormat"/>:
+        /// SharpMind teaches narration plus &lt;tool_call&gt; tags; Qwen teaches
+        /// its native raw-JSON function-calling shape.
+        /// </summary>
+        private List<string> BuildToolRules() => CallFormat switch
+        {
+            ToolCallFormat.Qwen =>
+            [
+                "You are an agent that calls tools. When the user asks you to do something, you IMMEDIATELY emit the tool call JSON. Do not explain, do not narrate, do not apologize.",
+                "- The user telling you to run a tool IS the instruction: treat \"can you...\" and \"could you please...\" as an order, not a question. Never answer a tool request by describing what you could do — do it.",
+                "- Only tools in ## Available Tools exist. Use the matching one for the job and emit its call; never apologize that a task is impossible when a listed tool can do it.",
+                "- Reply with exactly one JSON object — the tool call itself. Nothing else.",
+                "- Use the tool name and argument keys exactly as declared in ## Available Tools.",
+                "- Never invent tool names or argument values.",
+                "- When a parameter is a list (e.g. options), pass a JSON array of strings in that argument itself — do not merge the list into the prompt or other arguments.",
+                "- Call one tool at a time. Wait for its result before calling the next.",
+                "- When the tool result arrives, use it directly in your next reply: report what the tool actually returned. Never claim the tool was unavailable, never apologize, never refuse, after a result is already in your context.",
+                "- If a required argument's value is unknown, do not guess: say so briefly instead."
+            ],
+            _ =>
+            [
+                "- The user telling you to run a tool IS the instruction: treat \"can you...\" and \"could you please...\" as an order, not a question. Never answer a tool request by describing what you could do — do it.",
+                "- Narrate freely in prose, then place your tool call as a single JSON object inside \u003Ctool_call\u003E...\u003C/tool_call\u003E tags.",
+                "- Everything outside \u003Ctool_call\u003E tags is treated as narration to the player — write it in character.",
+                "- Never invent tool names or argument values.",
+                "- If a required argument is missing, explain it in your narration and do not call the tool.",
+                "- Call one tool at a time. Wait for the result before proceeding.",
+                "- You only act using the tools provided."
+            ]
+        };
+
+        /// <summary>
         /// Builds a plain-text system prompt from the current builder state.
         /// The result is architecture-agnostic markdown; the caller (e.g. ChatSession
         /// via <c>IChatPromptFormatter</c>) is responsible for wrapping it in whatever
@@ -529,17 +597,13 @@ namespace SharpMind.Inference.Agent
         {
             // Collect tool-specific rules separately so we don't mutate Rules on
             // every call to BuildAgentPrompt() (the original code appended to Rules
-            // directly, causing duplicates on repeated calls).
-            var toolRules = ToolDefinitions.Count == 0
+            // directly, causing duplicates on repeated calls). The rules and the
+            // call-format contract below are per-format: with CallFormat.None the
+            // whole Tools section is omitted, so an unknown model is never drifted
+            // towards a call shape it may not know.
+            var toolRules = ToolDefinitions.Count == 0 || CallFormat == ToolCallFormat.None
                 ? []
-                : new List<string>
-                {
-                    "- Respond ONLY in valid JSON. No prose. No markdown fences.",
-                    "- Never invent tool names or argument values.",
-                    """- If a required argument is missing, respond with: {"status":"error","message":"Missing required argument: <name>"}""",
-                    "- Call one tool at a time. Wait for the result before proceeding.",
-                    "- You only act using the tools provided."
-                };
+                : BuildToolRules();
 
             var sb = new StringBuilder();
 
@@ -568,19 +632,24 @@ namespace SharpMind.Inference.Agent
             }
 
             // Tools
-            if (ToolDefinitions.Count > 0)
+            if (ToolDefinitions.Count > 0 && CallFormat != ToolCallFormat.None)
             {
                 sb.AppendLine();
                 sb.AppendLine("## Tool Call Format");
-                sb.AppendLine("""Respond ONLY with this JSON: { "tool": "<name>", "arguments": { ... } }""");
+                if (CallFormat == ToolCallFormat.Qwen)
+                {
+                    sb.AppendLine("Call a tool by replying with exactly one JSON object — nothing else. Example:");
+                    sb.AppendLine(BuildQwenCallExample());
+                }
+                else
+                {
+                    sb.AppendLine("Narrate in prose; to act, place exactly one JSON object inside these tags:");
+                    sb.AppendLine("\u003Ctool_call\u003E{\"tool\":\"\u003Cname\u003E\",\"arguments\":{\"...\":\"...\"}}\u003C/tool_call\u003E");
+                }
 
                 sb.AppendLine();
                 sb.AppendLine("## Available Tools");
                 sb.AppendLine(BuildCompactToolList());
-
-                sb.AppendLine();
-                sb.AppendLine("## Final Response Format");
-                sb.AppendLine("""{ "status": "success" | "error", "data": "<result>" }""");
             }
 
             // Skills

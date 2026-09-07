@@ -60,6 +60,13 @@ public sealed class ChatMLFormatter : IChatPromptFormatter
                     sb.Append(msg.Content);
                     sb.Append(_end);
                     break;
+                case ChatRole.Tool:
+                    // Tool results are a user-turn construct in ChatML — a role the
+                    // model knows it can read, rather than a second system block.
+                    sb.Append(_userStart);
+                    sb.Append(msg.Content);
+                    sb.Append(_end);
+                    break;
                 case ChatRole.User:
                     sb.Append(_userStart);
                     sb.Append(msg.Content);

@@ -10,5 +10,10 @@ public enum ChatRole
     /// <summary>AI assistant/agent responses.</summary>
     Agent,
     /// <summary>Human user input.</summary>
-    User
+    User,
+    /// <summary>Result of a tool the assistant called. Native to function-calling
+    /// templates (e.g. Qwen's <c>&lt;|im_start|&gt;tool</c> turn), where it must
+    /// NOT be a second system block or the model will not recognize the result
+    /// as its own.</summary>
+    Tool
 }

@@ -6,6 +6,7 @@ using SharpMind.Inference.Agent;
 using SharpMind.Inference.Chat;
 using SharpMind.Model;
 using SharpMind.Model.Config;
+using SharpMind.Model.Format;
 using SharpMind.Tokenization;
 using SharpMind.Tokenization.Vocab;
 using SharpMind.Training;
@@ -79,6 +80,20 @@ internal static class ScriptedSession
         => Create(null, replies);
 
     public static ChatSession<ScriptedGeneratorBuilder, KVCacherBuilder> Create(IAgentBuilder? agentBuilder, params string[] replies)
+        => CreateCore(agentBuilder, meta: null, toolCallFormat: ToolCallFormat.SharpMind, replies);
+
+    public static ChatSession<ScriptedGeneratorBuilder, KVCacherBuilder> Create(IAgentBuilder? agentBuilder, ToolCallFormat toolCallFormat, params string[] replies)
+        => CreateCore(agentBuilder, meta: null, toolCallFormat: toolCallFormat, replies);
+
+    /// <summary>
+    /// Session whose call format is left to the metadata detector (meta-driven),
+    /// for tests of <see cref="ToolCallFormatDetector"/> resolution.
+    /// </summary>
+    public static ChatSession<ScriptedGeneratorBuilder, KVCacherBuilder> CreateForMeta(ModelMetaData meta, IAgentBuilder? agentBuilder, params string[] replies)
+        => CreateCore(agentBuilder, meta: meta, toolCallFormat: null, replies);
+
+    private static ChatSession<ScriptedGeneratorBuilder, KVCacherBuilder> CreateCore(
+        IAgentBuilder? agentBuilder, ModelMetaData? meta, ToolCallFormat? toolCallFormat, params string[] replies)
     {
         var tokens = new List<string>();
         for (int b = 0; b < 256; b++) tokens.Add(Vocabulary.ByteTokenString(b));
@@ -89,7 +104,7 @@ internal static class ScriptedSession
         WeightInitializer.InitializeRandomly(weights, 1234);
         var model = ModelFactory.CreateTrainingTransformer(weights, sharpConfig);
 
-        return new ChatSession<ScriptedGeneratorBuilder, KVCacherBuilder>(model, tokenizer, agentBuilder: agentBuilder, seed: ScriptedGenerator.Register(replies), disposeModel: true)
+        return new ChatSession<ScriptedGeneratorBuilder, KVCacherBuilder>(model, tokenizer, agentBuilder: agentBuilder, seed: ScriptedGenerator.Register(replies), disposeModel: true, meta: meta, toolCallFormat: toolCallFormat)
         {
             MaxTokens = 8192,   // byte tokenizer: one token per character; keep the tool prompt clear of trimming
         };

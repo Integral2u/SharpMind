@@ -64,6 +64,13 @@ public sealed class QuestionAnswerFormatter : IChatPromptFormatter
                     sb.Append(msg.Content.Trim());
                     sb.Append('\n');
                     break;
+
+                case ChatRole.Tool:
+                    // Surface tool results as plain text so base models see the
+                    // fact rather than a framing they have never been trained with.
+                    sb.Append(msg.Content.Trim());
+                    sb.Append('\n');
+                    break;
             }
         }
 

@@ -1,4 +1,4 @@
-﻿using SharpMind.Inference.Agent;
+using SharpMind.Inference.Agent;
 using SharpMind.Inference.Chat.PromptFormatters;
 using SharpMind.Model;
 using SharpMind.Model.Format;
@@ -47,6 +47,20 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     private readonly IPromptPostProcessor? _postProcessor;
     private readonly IProgress<float>? _progress;
     private readonly ModelMetaData? _meta;
+    private readonly ToolCallFormat _toolCallFormat;
+
+    /// <summary>
+    /// Role used to feed a tool's result back into the history for the next
+    /// generation pass. For native function-calling models (Qwen) the result is
+    /// a <see cref="ChatRole.Tool"/> turn rendered as the template's tool block
+    /// (<c>&lt;|im_start|&gt;tool</c>), which is what those models were trained to
+    /// continue from; a mid-conversation system block reads as a stray system
+    /// message and they respond as if no result ever arrived. Other formats keep
+    /// the legacy system-message framing.
+    /// </summary>
+    private ChatRole ResultRole => _toolCallFormat == ToolCallFormat.Qwen
+        ? ChatRole.Tool
+        : ChatRole.System;
 
     /// <summary>
     /// Optional callback fired during the warm-up prefill in
@@ -158,7 +172,8 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         int? seed = null,
         bool disposeModel = false,
         int? maxCacheLen = null,
-        IInferenceEngine? engine = null)
+        IInferenceEngine? engine = null,
+        ToolCallFormat? toolCallFormat = null)
     {
         ArgumentNullException.ThrowIfNull(tokenizer);
         ArgumentNullException.ThrowIfNull(model);
@@ -174,6 +189,8 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         _hasEngine = engine is not null;
         _seed = seed;
         _disposeModel = disposeModel;
+        _toolCallFormat = toolCallFormat ?? ToolCallFormatDetector.Resolve(_meta, _tokenizer);
+        if (_agentBuilder is not null) _agentBuilder.CallFormat = _toolCallFormat;
         MaxAgentDepth = _agentBuilder?.MaxAgentDepth ?? 2;
         _addBos = ModelMetaData.ResolveAddBos(meta, tokenizer.UseSentencePieceMerge);
         _addEos = ModelMetaData.ResolveAddEos(meta);
@@ -453,6 +470,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
                 ChatRole.System => "system: ",
                 ChatRole.Agent => "assistant: ",
                 ChatRole.User => "user: ",
+                ChatRole.Tool => "tool: ",
                 _ => ""
             };
             sb.Append(prefix);
@@ -649,30 +667,171 @@ private void ThrowIfDisposed()
     /// commas, truncated brackets) before attempting to parse. Sets
     /// <paramref name="parsed"/> on success.
     /// </summary>
-    private static bool TryParseToolCall(string text, out JsonObject? parsed)
+    private static bool TryParseToolCall(string text, ToolCallFormat format, out JsonObject? parsed)
     {
         parsed = null;
+        if (format == ToolCallFormat.None) return false;
         var trimmed = text.Trim();
         if (trimmed.Length == 0) return false;
 
-        // 1. Try <tool_call>...</tool_call> block first
-        var toolCallM = RegexGenerated.ToolCallBlocks.Match(trimmed);// Regex.Match(trimmed, @"<tool_call>(.*?)</tool_call>", RegexOptions.Singleline);
-        if (toolCallM.Success)
+        // Qwen-instruct's native contract: a raw {"name":...,"arguments":...}
+        // object with no wrapper. Look there first; tolerates the tagged wrapper
+        // for a model that half-remembers the SharpMind shape.
+        if (format == ToolCallFormat.Qwen)
         {
-            string inner = toolCallM.Groups[1].Value.Trim();
-            if (TryParseJsonObject(inner, out parsed)) return true;
+            if (trimmed[0] == '{')
+            {
+                int valueEnd = FindJsonValueEnd(trimmed, 0);
+                if (valueEnd >= 0 && TryParseJsonObject(trimmed[..valueEnd], out parsed)) return true;
+                // Cut off mid-generation (no closing brace) — the repair logic
+                // in TryParseJsonObject finishes it.
+                if (TryParseJsonObject(trimmed, out parsed)) return true;
+            }
+            if (TryParseTaggedBlock(trimmed, out parsed)) return true;
+            return TryParseSloppyBlock(trimmed, out parsed);
         }
 
-        // 2. Fall back to raw JSON
-        if (trimmed[0] != '{') return false;
-        return TryParseJsonObject(trimmed, out parsed);
+        // SharpMind: the tagged contract first, then the sloppy
+        // "<tool_call {json}" a small model drifts to, then a raw JSON object.
+        if (TryParseTaggedBlock(trimmed, out parsed)) return true;
+        if (TryParseSloppyBlock(trimmed, out parsed)) return true;
+        if (trimmed[0] == '{') return TryParseJsonObject(trimmed, out parsed);
+        return false;
+    }
+
+    private static bool TryParseTaggedBlock(string trimmed, out JsonObject? parsed)
+    {
+        parsed = null;
+        var toolCallM = RegexGenerated.ToolCallBlocks.Match(trimmed);// Regex.Match(trimmed, @"<tool_call>(.*?)</tool_call>", RegexOptions.Singleline);
+        if (!toolCallM.Success) return false;
+        string inner = toolCallM.Groups[1].Value.Trim();
+        return TryParseJsonObject(inner, out parsed);
+    }
+
+    private static bool TryParseSloppyBlock(string trimmed, out JsonObject? parsed)
+    {
+        parsed = null;
+        // A model that starts a call as "<tool_call {json}" and never emits the
+        // '>' or the closing tag. The first parseable tool-call JSON after the
+        // <tool_call marker is the call; a narration prefix is fine.
+        int marker = trimmed.IndexOf("<tool_call", StringComparison.Ordinal);
+        if (marker < 0) return false;
+        int jsonStart = marker + "<tool_call".Length;
+        while (jsonStart < trimmed.Length && (char.IsWhiteSpace(trimmed[jsonStart]) || trimmed[jsonStart] == '>'))
+            jsonStart++;
+        if (jsonStart >= trimmed.Length || trimmed[jsonStart] != '{') return false;
+        int valueEnd = FindJsonValueEnd(trimmed, jsonStart);
+        if (valueEnd >= 0 && TryParseJsonObject(trimmed[jsonStart..valueEnd], out parsed)) return true;
+        // The JSON was cut off mid-generation (no closing brace) — let
+        // TryParseJsonObject's truncation repair finish it.
+        return TryParseJsonObject(trimmed[jsonStart..], out parsed);
+    }
+
+    /// <summary>
+    /// Strips model output that is tool machinery rather than prose:
+    /// complete <c>&lt;tool_call&gt;</c> blocks (parsed above, or too malformed
+    /// to parse) and a trailing unclosed <c>&lt;tool_call&gt;</c> span. Prevents
+    /// call markup from leaking into the transcript as ordinary text.
+    /// </summary>
+    private static string SanitizeToolMarkup(string text)
+    {
+        if (text.IndexOf("<tool_call", StringComparison.Ordinal) < 0)
+            return text;
+        string stripped = RegexGenerated.ToolCallBlocks.Replace(text, string.Empty);
+        int open = stripped.IndexOf("<tool_call", StringComparison.Ordinal);
+        // Any <tool_call left after removing complete blocks is unclosed, or a
+        // sloppy "<tool_call {json}" the model never closed with '>' — drop it
+        // and whatever follows, since it is generation that failed to become a
+        // call.
+        return open < 0 ? stripped : stripped[..open];
+    }
+
+    /// <summary>
+    /// True when the whole trimmed response is a JSON envelope in the agent's
+    /// "Final Response Format" (<c>{ "status": "success"|"error", "data"|
+    /// "message": ... }</c>) instead of an actual reply. A model that is still
+    /// learning the tool contract emits this envelope rather than
+    /// <c>&lt;tool_call&gt;</c> markup; showing it as prose just dumps JSON on
+    /// the user. Only fires when there is no wrapper text at all, so a genuine
+    /// answer that happens to quote one is untouched.
+    /// </summary>
+    private static bool IsFabricatedToolResultJson(string text)
+    {
+        string trimmed = text.Trim();
+        if (trimmed.Length == 0 || trimmed[0] != '{') return false;
+        try
+        {
+            if (JsonNode.Parse(trimmed) is not JsonObject obj) return false;
+            if (obj["status"]?.GetValueKind() != JsonValueKind.String) return false;
+            string status = obj["status"]!.GetValue<string>();
+            return status is "success" or "error"
+                && (obj.ContainsKey("data") || obj.ContainsKey("message"));
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// True when the response begins with a JSON object shaped like a tool call
+    /// (<c>arguments</c> plus a <c>name</c>/<c>tool</c> key) that did not parse
+    /// as one — truncated or malformed call machinery a small model emits when
+    /// it runs out of attention (e.g. <c>{"name":"UIGetFreeMemory","arguments":{"}}</c>).
+    /// Such output is neither a call to dispatch nor prose worth showing or
+    /// persisting: drop it from both the stream and the history.
+    /// </summary>
+    private static bool LooksLikeFailedToolAttempt(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return false;
+        int start = 0;
+        while (start < text.Length && char.IsWhiteSpace(text[start])) start++;
+        if (start >= text.Length || text[start] != '{') return false;
+        string lower = text.ToLowerInvariant();
+        return lower.Contains("\"arguments\"", StringComparison.Ordinal)
+            && (lower.Contains("\"name\"", StringComparison.Ordinal)
+                || lower.Contains("\"tool\"", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// Returns the index just past the outermost JSON value that starts at
+    /// <paramref name="start"/> (which must be <c>{</c> or <c>[</c>), honouring
+    /// strings and escapes, or -1 when the value is not yet complete. Used to
+    /// decide at stream time whether the response is still a pure JSON envelope
+    /// that should be held back.
+    /// </summary>
+    private static int FindJsonValueEnd(string s, int start)
+    {
+        char open = s[start];
+        char close = open == '{' ? '}' : open == '[' ? ']' : '\0';
+        if (close == '\0') return -1;
+        bool inString = false, escaped = false;
+        int depth = 0;
+        for (int i = start; i < s.Length; i++)
+        {
+            char c = s[i];
+            if (inString)
+            {
+                if (escaped) { escaped = false; continue; }
+                if (c == '\\') { escaped = true; continue; }
+                if (c == '"') inString = false;
+                continue;
+            }
+            if (c == '"') { inString = true; continue; }
+            if (c == open) depth++;
+            else if (c == close) { depth--; if (depth == 0) return i + 1; }
+        }
+        return -1;
     }
 
     /// <summary>
     /// Attempts to parse <paramref name="text"/> as a tool-call JSON object
     /// (with light repair: trailing comma removal, bracket truncation fixup).
     /// Returns true when the result is a <see cref="JsonObject"/> containing
-    /// both a <c>tool</c> string and an <c>arguments</c> object.
+    /// both a tool name and an <c>arguments</c> object. Accepts SharpMind's
+    /// <c>tool</c> field or Qwen-instruct's native <c>name</c> field; the
+    /// latter is normalized into <c>tool</c> so downstream code only reads one
+    /// key.
     /// </summary>
     private static bool TryParseJsonObject(string text, out JsonObject? parsed)
     {
@@ -692,8 +851,19 @@ private void ThrowIfDisposed()
         {
             var node = JsonNode.Parse(repaired);
             if (node is not JsonObject obj) return false;
-            if (obj["tool"]?.GetValueKind() != JsonValueKind.String) return false;
+            var nameNode = obj["tool"] ?? obj["name"];
+            if (nameNode?.GetValueKind() != JsonValueKind.String) return false;
             if (obj["arguments"] is not JsonObject) return false;
+            // Normalize the Qwen-native {"name": ...} shape so the rest of the
+            // pipeline (dispatch, the ProcessToolRequest seam, the ToolCall
+            // entry) always reads obj["tool"]. Remove "name" first — the node
+            // still has "name" as its parent, so it cannot be re-attached under
+            // "tool" while it sits there.
+            if (obj["tool"] is null && obj["name"] is { } nameValue)
+            {
+                obj.Remove("name");
+                obj["tool"] = nameValue;
+            }
             parsed = obj;
             return true;
         }
@@ -923,6 +1093,14 @@ private void ThrowIfDisposed()
             _responseBuffer.Clear();
             List<ChatArtifact> responseArtifacts = [];
 
+            // Streaming view of the visible text: `shownThrough` is how much has
+            // been emitted, `droppedThrough` how much has been conclusively
+            // classified as a fabricated tool-result envelope and suppressed.
+            // A response that is still a pure JSON object is held back until it
+            // resolves into either the envelope (dropped) or real prose (shown).
+            int shownThrough = 0;
+            int droppedThrough = 0;
+
             // Seed think-block detection from the rendered prompt, not just the
             // generated stream. Qwen3 and DeepSeek-R1 templates embed <think>\n
             // in the assistant prefix — the model never generates the opening tag,
@@ -969,7 +1147,7 @@ private void ThrowIfDisposed()
                 // in the assistant prefix). Checking only "contains <think>" here
                 // used to re-arm on the already-closed tag, so every other token
                 // after a think block was flagged as thinking.
-                {
+{
                     string tail = _responseBuffer.ToString();
                     int lastOpen = tail.LastIndexOf("<think>", StringComparison.Ordinal);
                     int lastClose = tail.LastIndexOf("</think>", StringComparison.Ordinal);
@@ -977,18 +1155,71 @@ private void ThrowIfDisposed()
                         _inThinkBlock = lastOpen > lastClose;
                 }
 
-                var ids = _generator.CurrentGeneratedIds;
-                int? tokenId = ids != null && ids.Count > 0 ? ids[^1] : null;
+// Strip tag/tool markup from the whole accumulated buffer — never
+                // from the fragment alone — so content split across fragments is
+                // suppressed consistently and stray <tool_call> markup cannot leak
+                // into the UI as prose.
+                string visible = SanitizeToolMarkup(
+                    _responseBuffer.ToString().Replace("<think>", "").Replace("</think>", ""));
 
-                // Strip tags from the fragment to prevent them from appearing in the UI
-                string cleanFragment = fragment.Replace("<think>", "").Replace("</think>", "");
+                // Hold back a response that is still a pure JSON value on the
+                // first pass: it might be the fabricated tool-result envelope,
+                // which must not be shown. Once anything real commits (prose, a
+                // non-envelope JSON answer) emission resumes normally.
+                if (shownThrough == 0 && droppedThrough == 0 && visible.Length > 0)
+                {
+                    int start = 0;
+                    while (start < visible.Length && char.IsWhiteSpace(visible[start])) start++;
+                    if (start < visible.Length && (visible[start] == '{' || visible[start] == '['))
+                    {
+                        int valueEnd = FindJsonValueEnd(visible, start);
+                        if (valueEnd < 0)
+                        {
+                            // The value is still open — it might yet close into
+                            // the envelope, so hold everything back for now.
+                            continue;
+                        }
+                        string jsonValue = visible[start..valueEnd];
+                        if (string.IsNullOrWhiteSpace(visible[valueEnd..]) && IsFabricatedToolResultJson(jsonValue))
+                        {
+                            // Conclusively the envelope — drop it for good.
+                            droppedThrough = valueEnd;
+                        }
+                        else if (_toolCallFormat != ToolCallFormat.None
+                                 && TryParseJsonObject(jsonValue, out _))
+                        {
+                            // A leading call-shaped object ({"tool"/{"name"}+
+                            // "arguments"}) is tool machinery, whether it is
+                            // followed by prose (Qwen models keep narrating after
+                            // the object) or stands alone — never show it. It is
+                            // either dispatched below or, if malformed, the
+                            // stream still suppresses the attempt.
+                            droppedThrough = valueEnd;
+                            // Small models often trail an extra stray '}'
+                            // (sometimes several) after the object they just
+                            // closed — swallow immediately-following closers and
+                            // whitespace so that machinery cannot leak as prose.
+                            while (droppedThrough < visible.Length
+                                   && (visible[droppedThrough] == '}' || visible[droppedThrough] == ']'
+                                       || char.IsWhiteSpace(visible[droppedThrough])))
+                                droppedThrough++;
+                        }
+                    }
+                }
+
+                int emitStart = Math.Max(shownThrough, droppedThrough);
+                if (emitStart >= visible.Length) continue;
+                string delta = visible[emitStart..];
+                shownThrough = visible.Length;
 
                 // Always yield the real token content — the UI decides whether to
                 // display vs suppress thinking tokens via ShowThinking.
+                var ids = _generator.CurrentGeneratedIds;
+                int? tokenId = ids != null && ids.Count > 0 ? ids[^1] : null;
                 yield return new ChatStreamEntry
                 {
                     Status = _inThinkBlock ? ChatStatus.Thinking : ChatStatus.Responding,
-                    Token = cleanFragment,
+                    Token = delta,
                     IsComplete = false,
                     TokensPerSecond = _generator.TokensPerSecond,
                     TimeToFirstToken = _generator.TimeToFirstToken,
@@ -999,14 +1230,35 @@ private void ThrowIfDisposed()
             _progress?.Report(1f);
             var responseText = _responseBuffer.ToString();
 
-            // Tool call detection. Guarded on RegisteredToolNames.Count > 0 so a
-            // session launched with tools disabled (or an agent builder with no
-            // registered tools) can never enter the tool-call loop, even if the
-            // model hallucinates a <tool_call> tag.
+            // Final call on a response held back as a possible JSON envelope that
+            // never resolved while streaming: a genuine pure-JSON reply (or a
+            // truncated JSON blob) still gets delivered; a fabricated envelope is
+            // dropped below by the normal-response sanitization.
+            if (shownThrough == 0 && droppedThrough == 0 && responseText.Length > 0
+                && !IsFabricatedToolResultJson(SanitizeToolMarkup(responseText))
+                && !LooksLikeFailedToolAttempt(responseText))
+            {
+                string held = SanitizeToolMarkup(
+                    responseText.Replace(" thinking", "").Replace("</think>", ""));
+                if (held.Length > 0)
+                    yield return new ChatStreamEntry
+                    {
+                        Status = _inThinkBlock ? ChatStatus.Thinking : ChatStatus.Responding,
+                        Token = held,
+                        IsComplete = false,
+                    };
+            }
+
+            // Tool call detection. Guarded on RegisteredToolNames.Count > 0 and a known
+            // call format so a session launched with tools disabled, an agent
+            // builder with no registered tools, or an unknown model (None) can
+            // never enter the tool-call loop, even if the model hallucinates a
+            // <tool_call> tag or an envelope.
             if (_agentBuilder is not null
                 && _agentBuilder.RegisteredToolNames.Count > 0
+                && _toolCallFormat != ToolCallFormat.None
                 && toolCallCount < MaxToolCallsPerTurn
-                && TryParseToolCall(responseText, out var toolCall)
+                && TryParseToolCall(responseText, _toolCallFormat, out var toolCall)
                 && toolCall is not null)
             {
                 var toolName = toolCall["tool"]!.GetValue<string>();
@@ -1038,7 +1290,7 @@ private void ThrowIfDisposed()
                             // continue the agentic loop as usual.
                             _history.Add(new ChatMessage
                             {
-                                Role = ChatRole.System,
+                                Role = ResultRole,
                                 Content = $"Tool result: {external.Result}"
                             });
                             InvalidateHistoryCache();
@@ -1074,7 +1326,7 @@ private void ThrowIfDisposed()
                 // Feed the result back as a system message for the next generation pass
                 _history.Add(new ChatMessage
                 {
-                    Role = ChatRole.System,
+                    Role = ResultRole,
                     Content = $"Tool result: {toolResult.ToJsonString()}"
                 });
                 InvalidateHistoryCache();
@@ -1148,7 +1400,7 @@ private void ThrowIfDisposed()
                 // Feed the result back as a system message
                 _history.Add(new ChatMessage
                 {
-                    Role = ChatRole.System,
+                    Role = ResultRole,
                     Content = $"Tool result: {agentResult}"
                 });
                 InvalidateHistoryCache();
@@ -1172,7 +1424,14 @@ private void ThrowIfDisposed()
                 continue;
             }
 
-            // Normal (non-tool) response
+            // Normal (non-tool) response — sanitized so tool machinery that never
+            // became a call (stray <tool_call> markup, or a response that is only
+            // the fabricated tool-result envelope) is not persisted as prose.
+            responseText = SanitizeToolMarkup(responseText);
+            if (IsFabricatedToolResultJson(responseText))
+                responseText = string.Empty;
+            if (LooksLikeFailedToolAttempt(responseText))
+                responseText = string.Empty;
             if (responseText.Length > 0)
             {
                 var agentMsg = ChatMessage.Agent(responseText, _agentBuilder?.AgentName);

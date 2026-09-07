@@ -22,7 +22,7 @@ namespace SharpMind.Inference.Chat
             // across sessions. This used to be hardcoded true, so ending one chat
             // disposed the shared Transformer and every later session threw
             // ObjectDisposedException — swallowed and shown as an empty reply.
-            return (IChatSession)Activator.CreateInstance(sessionType, [model, tokenizer, meta, agentBuilder, preProcessor, postProcessor, progress, permissions, null, formatter, seed, disposeModel, maxCacheLen, engine])!;
+            return (IChatSession)Activator.CreateInstance(sessionType, [model, tokenizer, meta, agentBuilder, preProcessor, postProcessor, progress, permissions, null, formatter, seed, disposeModel, maxCacheLen, engine, null])!;
         }
         // Compile-time — for known type combos
         public static ChatSession<T, K> CreateChatSession<T, K>(

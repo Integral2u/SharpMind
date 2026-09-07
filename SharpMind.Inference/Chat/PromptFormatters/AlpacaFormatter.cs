@@ -79,6 +79,14 @@ public sealed class AlpacaFormatter : IChatPromptFormatter
                     sb.Append("\n\n");
                     break;
 
+                // Alpaca has no native tool-role turn; surface the result as a
+                // response from the previous turn so it is never dropped.
+                case ChatRole.Tool:
+                    sb.Append("### Response:\n");
+                    sb.Append(msg.Content.Trim());
+                    sb.Append("\n\n");
+                    break;
+
                 // Alpaca has no system-role turns beyond the leading one
                 // folded into the preamble above; treat any later system
                 // message as an additional instruction rather than dropping it.

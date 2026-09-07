@@ -613,6 +613,7 @@ public sealed class ChatView : View
             ChatRole.Agent => $"{AgentName}: ",
             ChatRole.User => $"{msg.Name ?? "User"}: ",
             ChatRole.System => "system: ",
+            ChatRole.Tool => "tool: ",
             _ => ""
         };
         string content = _bridge.ShowThinking

@@ -13,6 +13,12 @@ namespace SharpMind.Inference.Agent
         public string AgentName { get; }
         public HashSet<string> DisabledTools { get; set; }
         public IReadOnlyList<string> RegisteredToolNames { get; }
+        /// <summary>
+        /// The tool-calling contract <see cref="BuildAgentPrompt"/> teaches and
+        /// the session captures. Set by the session from metadata resolution;
+        /// defaults to <see cref="Chat.ToolCallFormat.SharpMind"/>.
+        /// </summary>
+        public ToolCallFormat CallFormat { get; set; }
         public IContextCompactor? Compactor { get; }
         public IReadOnlyList<IContextCompactor> PluginCompactors { get; }
         public IReadOnlyList<IPromptPreProcessor> PluginPreProcessors { get; }

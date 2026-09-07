@@ -5,6 +5,18 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.0.6.0]
+
+### Changed
+
+- **Tool-call format is now a first-class `ToolCallFormat` enum** (`None`, `SharpMind`, `Qwen`) resolved automatically from the model's metadata by `ToolCallFormatDetector`: models whose chat template speaks `tool_calls`, or whose name/basename/finetune mentions Qwen, get `Qwen`; anything else defaults to the tagged `SharpMind` format. `ChatSession` syncs the resolved format onto the agent builder, so prompt building and tool-call capture can never disagree. `None` (unknown model / no metadata) omits the tools section from the prompt entirely and disables capture.
+- **Qwen-native tool calling in the prompt** — `AgentBuilder` now teaches models the format they were actually trained with. For Qwen, `## Tool Call Format` shows a ready-to-copy example built from a real registered tool (`{"name":"<tool>","arguments":{...}}` instead of a placeholder), and the rules treat "can you run a tool" as an order (never answer a tool request by describing what you could do), require reporting what a tool actually returned (never claim it was unavailable after a result is in context), and forbid inventing names or merging list arguments into `prompt`. The legacy `<tool_call>…</tool_call>` narration rules remain the `SharpMind` default.
+- **`ChatRole.Tool`** — tool results are fed back to the model under the role its template was trained with. Qwen's function-calling shape uses `<|im_start|>tool`, which the Jinja formatter previously rendered as a mid-conversation `<|im_start|>system` block; a 0.5B model recognized neither and answered "the tool is not available". Result-role messaging is now template-faithful for Qwen and unchanged (system framing) for the tagged format. All prompt formatters and the summarization compactor explicitly render `Tool` instead of silently dropping it.
+
+### Fixed
+
+- **Qwen-slop tool calls now work end-to-end** — a 0.5B model half-remembering its function-calling contract no longer breaks the loop. Capture accepts the raw JSON object (`{"name":…,"arguments":…}`) with or without a `<tool_call` prefix and with missing closing braces, tolerates trailing prose after a call, silently swallows straggler closing brackets, and drops a held-back response that is a failed call attempt (`{"name":…,"arguments":{"}}`) instead of leaking it as user-visible text. Malformed or failed attempts are never shown, persisted, or dispatched.
+
 ## [1.0.5.0]
 
 ### Added

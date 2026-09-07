@@ -51,6 +51,7 @@ public sealed class SummarizingCompactor : IContextCompactor
                 ChatRole.System => "system",
                 ChatRole.User => "user",
                 ChatRole.Agent => "assistant",
+                ChatRole.Tool => "tool",
                 _ => "unknown"
             };
             sb.AppendLine($"<|{role}|>");
