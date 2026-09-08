@@ -21,4 +21,20 @@ public enum ToolCallFormat
     /// <summary>Qwen-instruct's native function-calling shape: a raw
     /// <c>{"name":...,"arguments":{...}}</c> JSON object with no wrapper.</summary>
     Qwen,
+
+    /// <summary>Mistral/Ministral native function-calling: a
+    /// <c>[TOOL_CALLS]</c> marker followed by a <c>{"name":...,"arguments":{...}}</c>
+    /// JSON object. Tool results use the <c>tool</c> role.</summary>
+    Mistral,
+
+    /// <summary>Llama-3/3.1/3.2 native function-calling: a
+    /// <c>&lt;|python_tag|&gt;</c> marker followed by a
+    /// <c>{"name":...,"arguments":{...}}</c> JSON object.</summary>
+    Llama3,
+
+    /// <summary>Gemma/functiongemma native function-calling: a
+    /// <c>{"name":...,"args":{...}}</c> JSON object, optionally wrapped in
+    /// <c>&lt;function_call&gt;</c> tags. Note the <c>args</c> key (not
+    /// <c>arguments</c>).</summary>
+    Gemma,
 }

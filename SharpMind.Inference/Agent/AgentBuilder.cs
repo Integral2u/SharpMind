@@ -402,6 +402,40 @@ namespace SharpMind.Inference.Agent
             return $$"""{"name":"{{toolName}}","arguments":{{args.ToJsonString()}}}""";
         }
 
+        /// <summary>
+        /// Builds the Gemma/functiongemma call example using the first registered
+        /// tool. Gemma uses <c>args</c> (not <c>arguments</c>) as the key.
+        /// </summary>
+        private string BuildGemmaCallExample()
+        {
+            var tool = ToolDefinitions.OfType<JsonObject>().FirstOrDefault();
+            if (tool is null)
+                return "{\"name\":\"<tool>\",\"args\":{}}";
+
+            string toolName = tool["name"]?.GetValue<string>() ?? "<tool>";
+            var args = new JsonObject();
+
+            if (tool["parameters"] is JsonObject pars
+                && pars["properties"] is JsonObject props)
+            {
+                foreach (var (argName, schema) in props.Take(3))
+                {
+                    string type = ((JsonObject?)schema)?["type"]?.GetValue<string>()
+                                  ?? ((JsonObject?)schema)?["items"]?["type"]?.GetValue<string>()
+                                  ?? "string";
+                    args[argName] = type switch
+                    {
+                        "array" => new JsonArray("...", "..."),
+                        "integer" or "number" => 0,
+                        "boolean" => false,
+                        _ => "..."
+                    };
+                }
+            }
+
+            return $$"""{"name":"{{toolName}}","args":{{args.ToJsonString()}}}""";
+        }
+
         // Sub-agent registration
 
         /// <summary>
@@ -553,15 +587,35 @@ namespace SharpMind.Inference.Agent
         /// <summary>
         /// The tool-calling instructions for the current <see cref="CallFormat"/>:
         /// SharpMind teaches narration plus &lt;tool_call&gt; tags; Qwen teaches
-        /// its native raw-JSON function-calling shape.
+        /// its native raw-JSON function-calling shape; Mistral uses
+        /// [TOOL_CALLS] markers; Llama-3 uses &lt;|python_tag|&gt;;
+        /// Gemma/functiongemma uses functionCall/functionResponse JSON.
         /// </summary>
         private List<string> BuildToolRules() => CallFormat switch
         {
             ToolCallFormat.Qwen =>
             [
                 "You are an agent that calls tools. Answer factual/conversational questions directly—only call a tool for explicit actions, UI interactions, or capabilities that require it. Treat \"can you...\" and \"could you please...\" as orders, not questions.",
-                "Use only tools in ## Available Tools. Emit exactly one JSON tool call per response—no narration, no apologies. Never invent tool names or values. Call one tool at a time, then use its result directly.",
+                "To call a tool, reply with ONLY the JSON object and nothing else, then stop—no preamble, no follow-up text, no restating the arguments. Use only tools in ## Available Tools; never invent tool names or values.",
+                "Call one tool at a time, wait for its result, then answer directly from it—never answer before the result arrives. For list parameters pass a JSON array in the argument; unknown args: say so briefly."
+            ],
+            ToolCallFormat.Mistral =>
+            [
+                "Answer factual/conversational questions directly—only call a tool for explicit actions, UI interactions, or capabilities that require it.",
+                "Use only tools in ## Available Tools. Emit [TOOL_CALLS] followed by exactly one JSON object {\"name\":\"...\",\"arguments\":{...}}, then stop and wait for the result. Never invent tool names or values.",
                 "For list parameters pass a JSON array in the argument. If a required arg is unknown, say so briefly."
+            ],
+            ToolCallFormat.Llama3 =>
+            [
+                "Answer factual/conversational questions directly—only call a tool for explicit actions, UI interactions, or capabilities that require it.",
+                "Use only tools in ## Available Tools. Emit exactly one JSON object {\"name\":\"...\",\"arguments\":{...}}, then stop and wait for the result. Never invent tool names or values.",
+                "For list parameters pass a JSON array in the argument. If a required arg is unknown, say so briefly."
+            ],
+            ToolCallFormat.Gemma =>
+            [
+                "Answer factual/conversational questions directly—only call a tool for explicit actions, UI interactions, or capabilities that require it.",
+                "Use only tools in ## Available Tools. Emit exactly one JSON object {\"name\":\"...\",\"args\":{...}}, then stop and wait for the result. Never invent tool names or values.",
+                "For list parameters pass a JSON array in the args field. If a required arg is unknown, say so briefly."
             ],
             _ =>
             [
@@ -625,15 +679,28 @@ namespace SharpMind.Inference.Agent
             {
                 sb.AppendLine();
                 sb.AppendLine("## Tool Call Format");
-                if (CallFormat == ToolCallFormat.Qwen)
+                switch (CallFormat)
                 {
-                    sb.AppendLine("Call a tool by replying with exactly one JSON object — nothing else. Example:");
-                    sb.AppendLine(BuildQwenCallExample());
-                }
-                else
-                {
-                    sb.AppendLine("Narrate in prose; to act, place exactly one JSON object inside these tags:");
-                    sb.AppendLine("\u003Ctool_call\u003E{\"tool\":\"\u003Cname\u003E\",\"arguments\":{\"...\":\"...\"}}\u003C/tool_call\u003E");
+                    case ToolCallFormat.Qwen:
+                        sb.AppendLine("Call a tool by replying with exactly one JSON object — nothing else. Example:");
+                        sb.AppendLine(BuildQwenCallExample());
+                        break;
+                    case ToolCallFormat.Mistral:
+                        sb.AppendLine("Call a tool by replying with [TOOL_CALLS] followed by exactly one JSON object. Example:");
+                        sb.AppendLine("[TOOL_CALLS]" + BuildQwenCallExample());
+                        break;
+                    case ToolCallFormat.Llama3:
+                        sb.AppendLine("Call a tool by replying with exactly one JSON object — nothing else. Example:");
+                        sb.AppendLine(BuildQwenCallExample());
+                        break;
+                    case ToolCallFormat.Gemma:
+                        sb.AppendLine("Call a tool by replying with exactly one JSON object using \"args\" (not \"arguments\"). Example:");
+                        sb.AppendLine(BuildGemmaCallExample());
+                        break;
+                    default:
+                        sb.AppendLine("Narrate in prose; to act, place exactly one JSON object inside these tags:");
+                        sb.AppendLine("\u003Ctool_call\u003E{\"tool\":\"\u003Cname\u003E\",\"arguments\":{\"...\":\"...\"}}\u003C/tool_call\u003E");
+                        break;
                 }
 
                 sb.AppendLine();

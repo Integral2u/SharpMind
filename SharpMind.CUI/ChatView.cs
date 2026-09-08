@@ -4,6 +4,7 @@ using SharpMind.CUI.App;
 using SharpMind.Inference.Chat;
 using Terminal.Gui;
 using System.Runtime.Intrinsics.X86;
+using System.Text;
 
 namespace SharpMind.CUI;
 
@@ -655,13 +656,38 @@ public sealed class ChatView : View
     /// Dialog with RadioGroup + optional free-text field, replacing the
     /// hand-rolled overlay from the console-UI version. Resolves the
     /// blocked tool call the instant a button is pressed.
+    ///
+    /// Terminal.Gui v1 Label clips instead of wrapping, so a long prompt
+    /// (the model's question) was getting lopped off at the dialog edge.
+    /// The prompt is word-wrapped to the dialog's content width here and the
+    /// dialog height grown to fit the wrapped lines, with the RadioGroup
+    /// placed below them.
     /// </summary>
     private static void ShowChoiceDialog(ChoiceRequest request)
     {
-        var dialog = new Dialog("Choose an option", 60, Math.Min(20, request.Options.Count + (request.AllowFreeText ? 8 : 5)));
+        // Dialog is 60 wide: 2 border columns, 1 left margin on the label,
+        // 2 more reserved on the right — 55 text columns actually visible.
+        const int labelTextWidth = 60 - 2 - 1 - 2;
 
-        var radio = new RadioGroup([.. request.Options.Select(p => (ustring)p)]) { X = 1, Y = 1 };
-        dialog.Add(new Label((ustring)request.Prompt) { X = 1, Y = 0, Width = Dim.Fill(2) }, radio);
+        var promptLines = WordWrap(request.Prompt, labelTextWidth);
+        var promptLabel = new Label(string.Join("\n", promptLines))
+        {
+            X = 1,
+            Y = 0,
+            Width = Dim.Fill(2)
+        };
+
+        var radio = new RadioGroup([.. request.Options.Select(p => (ustring)p)])
+        {
+            X = 1,
+            Y = promptLines.Count + 1,
+            Width = Dim.Fill(2)
+        };
+
+        int height = Math.Min(20, promptLines.Count + request.Options.Count + (request.AllowFreeText ? 8 : 5));
+        var dialog = new Dialog("Choose an option", 60, height);
+
+        dialog.Add(promptLabel, radio);
 
         TextField? freeTextField = null;
         if (request.AllowFreeText)
@@ -683,6 +709,42 @@ public sealed class ChatView : View
         dialog.AddButton(okButton);
 
         Application.Run(dialog);
+    }
+
+    /// <summary>
+    /// Breaks <paramref name="text"/> into lines no longer than
+    /// <paramref name="maxWidth"/> characters, splitting at spaces so words
+    /// stay intact (a single word longer than the width keeps its own line).
+    /// Terminal.Gui v1 labels don't wrap, so this is the wrapping.
+    /// </summary>
+    private static List<string> WordWrap(string text, int maxWidth)
+    {
+        var lines = new List<string>();
+        foreach (string rawLine in text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n'))
+        {
+            var words = rawLine.Split(' ');
+            var current = new StringBuilder();
+            foreach (string word in words)
+            {
+                if (current.Length == 0)
+                {
+                    current.Append(word);
+                }
+                else if (current.Length + 1 + word.Length <= maxWidth)
+                {
+                    current.Append(' ').Append(word);
+                }
+                else
+                {
+                    lines.Add(current.ToString());
+                    current.Clear().Append(word);
+                }
+            }
+
+            lines.Add(current.ToString());
+        }
+
+        return lines;
     }
 
     protected override void Dispose(bool disposing)

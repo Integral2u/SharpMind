@@ -5,6 +5,19 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.0.7.0]
+
+### Added
+
+- **Native tool-call formats for Mistral, Llama 3, and Gemma** — `ToolCallFormat` gains `Mistral`, `Llama3`, and `Gemma` alongside `None`/`SharpMind`/`Qwen`, resolved by `ToolCallFormatDetector` from the chat template that actually fills the model's context (template markers are weighed above model-name heuristics): `[TOOL_CALLS]` for Mistral, `<|python_tag|>` for Llama 3, `functionCall`/`<function_call>` for Gemma, plus name fallbacks. `AgentBuilder` teaches each format its native shape — Mistral wraps the raw call object in `[TOOL_CALLS]`, Llama 3 emits `<|python_tag|>` + raw JSON, Gemma uses `{"name":…,"args":{…}}` with a dedicated example — and `ChatSession` captures, sanitizes and dispatches all three (including a pipe-less `<python_tag>` variant), feeding results back under `ChatRole.Tool` for Mistral (Qwen-style) and `ChatRole.System` for Llama 3/Gemma. Gemma's `args` key is normalized to `arguments` so dispatch reads one shape everywhere.
+- **Prompt rules tell native-format models to stop at the call** — each native format's rules say to emit only the call JSON and then stop (no preamble, no follow-up narration, no restating the arguments), and to wait for the tool result before speaking again, so a model never answers a request it has already handed to a tool.
+
+### Fixed
+
+- **Small models no longer duplicate the option-list dialog** — a 0.5B Qwen calling `UIShowOptionSelection` and then ALSO narrating the options ("I recommend: Red, Green, Blue") before the tool result arrived showed the options twice. In native JSON formats, a call object naming a registered tool now suppresses the entire pre-result tail (the tool loop regenerates after the result); an unregistered-tool object still drops only the object and keeps its surrounding narration.
+- **`TruncatingCompactor` no longer evicts the agent prompt** — the first System message (the synthesized prompt: role, rules, tool schema) is now always protected from truncation, matching `SummarizingCompactor`, instead of being silently removed as the oldest message — which looked identical from outside to "the model stopped trying to call tools".
+- **`UIShowOptionSelection` wraps long prompts** — Terminal.Gui v1 labels clip rather than wrap, so a long question was lopped off at the dialog edge. The prompt is now word-wrapped to the dialog's content width, the dialog grows to fit the wrapped lines, and the option list sits below them.
+
 ## [1.0.6.0]
 
 ### Changed

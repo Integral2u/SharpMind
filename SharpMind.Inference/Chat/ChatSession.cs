@@ -58,7 +58,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     /// message and they respond as if no result ever arrived. Other formats keep
     /// the legacy system-message framing.
     /// </summary>
-    private ChatRole ResultRole => _toolCallFormat == ToolCallFormat.Qwen
+    private ChatRole ResultRole => _toolCallFormat is ToolCallFormat.Qwen or ToolCallFormat.Mistral
         ? ChatRole.Tool
         : ChatRole.System;
 
@@ -691,6 +691,101 @@ private void ThrowIfDisposed()
             return TryParseSloppyBlock(trimmed, out parsed);
         }
 
+        // Mistral's native contract: [TOOL_CALLS]{"name":...,"arguments":...}
+        if (format == ToolCallFormat.Mistral)
+        {
+            int marker = trimmed.IndexOf("[TOOL_CALLS]", StringComparison.Ordinal);
+            if (marker >= 0)
+            {
+                int jsonStart = marker + "[TOOL_CALLS]".Length;
+                while (jsonStart < trimmed.Length && char.IsWhiteSpace(trimmed[jsonStart]))
+                    jsonStart++;
+                if (jsonStart < trimmed.Length && trimmed[jsonStart] == '{')
+                {
+                    int valueEnd = FindJsonValueEnd(trimmed, jsonStart);
+                    if (valueEnd >= 0 && TryParseJsonObject(trimmed[jsonStart..valueEnd], out parsed)) return true;
+                    if (TryParseJsonObject(trimmed[jsonStart..], out parsed)) return true;
+                }
+            }
+            // Tolerate a raw JSON object with no marker.
+            if (trimmed[0] == '{')
+            {
+                int valueEnd = FindJsonValueEnd(trimmed, 0);
+                if (valueEnd >= 0 && TryParseJsonObject(trimmed[..valueEnd], out parsed)) return true;
+                if (TryParseJsonObject(trimmed, out parsed)) return true;
+            }
+            return false;
+        }
+
+        // Llama-3's native contract: a raw JSON object (often preceded by
+        // <|python_tag|> but that token is stripped from the visible stream).
+        // Tolerates the pipe-less <python_tag> variant a model may drift to.
+        if (format == ToolCallFormat.Llama3)
+        {
+            int marker = trimmed.IndexOf("<|python_tag|>", StringComparison.Ordinal);
+            if (marker < 0) marker = trimmed.IndexOf("<python_tag>", StringComparison.Ordinal);
+            int markerLen = marker >= 0
+                ? (trimmed.AsSpan(marker).StartsWith("<|python_tag|>") ? "<|python_tag|>".Length : "<python_tag>".Length)
+                : 0;
+            int start = marker >= 0 ? marker + markerLen : 0;
+            while (start < trimmed.Length && char.IsWhiteSpace(trimmed[start]))
+                start++;
+            if (start < trimmed.Length && trimmed[start] == '{')
+            {
+                int valueEnd = FindJsonValueEnd(trimmed, start);
+                if (valueEnd >= 0 && TryParseJsonObject(trimmed[start..valueEnd], out parsed)) return true;
+                if (TryParseJsonObject(trimmed[start..], out parsed)) return true;
+            }
+            if (trimmed[0] == '{' && start != 0)
+            {
+                int valueEnd = FindJsonValueEnd(trimmed, 0);
+                if (valueEnd >= 0 && TryParseJsonObject(trimmed[..valueEnd], out parsed)) return true;
+                if (TryParseJsonObject(trimmed, out parsed)) return true;
+            }
+            // Tolerate a <tool_call> wrapper if the model drifts.
+            if (TryParseTaggedBlock(trimmed, out parsed)) return true;
+            return false;
+        }
+
+        // Gemma/functiongemma's native contract: a {"name":...,"args":...}
+        // JSON object, optionally wrapped in <function_call> tags, or preceded
+        // by a "functionCall" marker.
+        if (format == ToolCallFormat.Gemma)
+        {
+            // <function_call>{...}</function_call> wrapper
+            int fcStart = trimmed.IndexOf("<function_call>", StringComparison.Ordinal);
+            if (fcStart >= 0)
+            {
+                int jsonStart = fcStart + "<function_call>".Length;
+                while (jsonStart < trimmed.Length && char.IsWhiteSpace(trimmed[jsonStart]))
+                    jsonStart++;
+                int fcEnd = trimmed.IndexOf("</function_call>", StringComparison.Ordinal);
+                int end = fcEnd >= 0 ? fcEnd : trimmed.Length;
+                if (jsonStart < end && jsonStart < trimmed.Length && trimmed[jsonStart] == '{')
+                    if (TryParseJsonObject(trimmed[jsonStart..end], out parsed)) return true;
+            }
+            // "functionCall" prefix marker (Gemini-style output)
+            int fname = trimmed.IndexOf("functionCall", StringComparison.Ordinal);
+            if (fname >= 0)
+            {
+                int jsonStart = trimmed.IndexOf('{', fname);
+                if (jsonStart >= 0)
+                {
+                    int valueEnd = FindJsonValueEnd(trimmed, jsonStart);
+                    if (valueEnd >= 0 && TryParseJsonObject(trimmed[jsonStart..valueEnd], out parsed)) return true;
+                    if (TryParseJsonObject(trimmed[jsonStart..], out parsed)) return true;
+                }
+            }
+            // Raw JSON object with "args" key
+            if (trimmed[0] == '{')
+            {
+                int valueEnd = FindJsonValueEnd(trimmed, 0);
+                if (valueEnd >= 0 && TryParseJsonObject(trimmed[..valueEnd], out parsed)) return true;
+                if (TryParseJsonObject(trimmed, out parsed)) return true;
+            }
+            return false;
+        }
+
         // SharpMind: the tagged contract first, then the sloppy
         // "<tool_call {json}" a small model drifts to, then a raw JSON object.
         if (TryParseTaggedBlock(trimmed, out parsed)) return true;
@@ -730,20 +825,51 @@ private void ThrowIfDisposed()
     /// <summary>
     /// Strips model output that is tool machinery rather than prose:
     /// complete <c>&lt;tool_call&gt;</c> blocks (parsed above, or too malformed
-    /// to parse) and a trailing unclosed <c>&lt;tool_call&gt;</c> span. Prevents
-    /// call markup from leaking into the transcript as ordinary text.
+    /// to parse) and a trailing unclosed <c>&lt;tool_call&gt;</c> span. Also
+    /// strips the leading markers of native-function-calling models
+    /// (<c>[TOOL_CALLS]</c>, <c>&lt;|python_tag|&gt;</c>,
+    /// <c>&lt;function_call&gt;</c>) so their machinery cannot leak into the
+    /// transcript as ordinary text.
     /// </summary>
     private static string SanitizeToolMarkup(string text)
     {
-        if (text.IndexOf("<tool_call", StringComparison.Ordinal) < 0)
-            return text;
-        string stripped = RegexGenerated.ToolCallBlocks.Replace(text, string.Empty);
-        int open = stripped.IndexOf("<tool_call", StringComparison.Ordinal);
-        // Any <tool_call left after removing complete blocks is unclosed, or a
-        // sloppy "<tool_call {json}" the model never closed with '>' — drop it
-        // and whatever follows, since it is generation that failed to become a
-        // call.
-        return open < 0 ? stripped : stripped[..open];
+        string result = text;
+
+        // Remove complete <tool_call>...</tool_call> blocks
+        int tcIdx = result.IndexOf("<tool_call", StringComparison.Ordinal);
+        if (tcIdx >= 0)
+        {
+            string stripped = RegexGenerated.ToolCallBlocks.Replace(result, string.Empty);
+            int open = stripped.IndexOf("<tool_call", StringComparison.Ordinal);
+            result = open < 0 ? stripped : stripped[..open];
+        }
+
+        // Remove complete <function_call>...</function_call> blocks
+        int fcOpen = result.IndexOf("<function_call>", StringComparison.Ordinal);
+        if (fcOpen >= 0)
+        {
+            result = System.Text.RegularExpressions.Regex.Replace(
+                result, "<function_call>.*?</function_call>", string.Empty, System.Text.RegularExpressions.RegexOptions.Singleline);
+            // Drop a trailing unclosed <function_call span
+            int fcRemaining = result.IndexOf("<function_call", StringComparison.Ordinal);
+            if (fcRemaining >= 0)
+                result = result[..fcRemaining];
+        }
+
+        // Remove [TOOL_CALLS] marker (Mistral)
+        result = result.Replace("[TOOL_CALLS]", string.Empty);
+
+        // Remove <|python_tag|> marker (Llama-3) — and the pipe-less
+        // <python_tag> variant a model may drift to.
+        result = result.Replace("<|python_tag|>", string.Empty);
+        result = result.Replace("<python_tag>", string.Empty);
+
+        // Remove a leading "functionCall" marker (Gemma/Gemini-style)
+        int fcMarker = result.IndexOf("functionCall", StringComparison.Ordinal);
+        if (fcMarker >= 0 && fcMarker <= 1)
+            result = result[(fcMarker + "functionCall".Length)..];
+
+        return result;
     }
 
     /// <summary>
@@ -853,7 +979,7 @@ private void ThrowIfDisposed()
             if (node is not JsonObject obj) return false;
             var nameNode = obj["tool"] ?? obj["name"];
             if (nameNode?.GetValueKind() != JsonValueKind.String) return false;
-            if (obj["arguments"] is not JsonObject) return false;
+            if (obj["arguments"] is not JsonObject && obj["args"] is not JsonObject) return false;
             // Normalize the Qwen-native {"name": ...} shape so the rest of the
             // pipeline (dispatch, the ProcessToolRequest seam, the ToolCall
             // entry) always reads obj["tool"]. Remove "name" first — the node
@@ -863,6 +989,14 @@ private void ThrowIfDisposed()
             {
                 obj.Remove("name");
                 obj["tool"] = nameValue;
+            }
+            // Normalize Gemma's {"args": ...} key to "arguments" so the rest of
+            // the pipeline (line: toolCall["arguments"]!.AsObject()) works
+            // unchanged.
+            if (obj["args"] is { } argsValue)
+            {
+                obj.Remove("args");
+                obj["arguments"] = argsValue;
             }
             parsed = obj;
             return true;
@@ -1101,6 +1235,13 @@ private void ThrowIfDisposed()
             int shownThrough = 0;
             int droppedThrough = 0;
 
+            // When a native JSON tool-call object names a registered tool, the
+            // whole turn is tool machinery: anything a small model emits after
+            // the object is it answering before the result arrives (and would
+            // duplicate what the tool itself will show). Set once, then the rest
+            // of the turn is suppressed; the tool loop dispatches and regenerates.
+            bool dropTurnTail = false;
+
             // Seed think-block detection from the rendered prompt, not just the
             // generated stream. Qwen3 and DeepSeek-R1 templates embed <think>\n
             // in the assistant prefix — the model never generates the opening tag,
@@ -1186,26 +1327,46 @@ private void ThrowIfDisposed()
                             droppedThrough = valueEnd;
                         }
                         else if (_toolCallFormat != ToolCallFormat.None
-                                 && TryParseJsonObject(jsonValue, out _))
+                                 && TryParseJsonObject(jsonValue, out var heldCall))
                         {
                             // A leading call-shaped object ({"tool"/{"name"}+
                             // "arguments"}) is tool machinery, whether it is
-                            // followed by prose (Qwen models keep narrating after
+                            // followed by prose (small models keep narrating after
                             // the object) or stands alone — never show it. It is
                             // either dispatched below or, if malformed, the
                             // stream still suppresses the attempt.
-                            droppedThrough = valueEnd;
-                            // Small models often trail an extra stray '}'
-                            // (sometimes several) after the object they just
-                            // closed — swallow immediately-following closers and
-                            // whitespace so that machinery cannot leak as prose.
-                            while (droppedThrough < visible.Length
-                                   && (visible[droppedThrough] == '}' || visible[droppedThrough] == ']'
-                                       || char.IsWhiteSpace(visible[droppedThrough])))
-                                droppedThrough++;
+                            //
+                            // Native JSON formats (Qwen/Mistral/Llama3/Gemma)
+                            // contract the object alone: a registered tool call
+                            // means the turn ends and the tool loop regenerates.
+                            // Text after the object is the model answering before
+                            // the result — suppress the whole tail so it cannot
+                            // duplicate what the tool will show. SharpMind keeps
+                            // the object-only drop so narration around tags stays.
+                            string heldTool = heldCall?["tool"]?.GetValue<string>() ?? "";
+                            if (_toolCallFormat != ToolCallFormat.SharpMind
+                                && _agentBuilder is not null
+                                && _agentBuilder.RegisteredToolNames.Contains(heldTool))
+                            {
+                                dropTurnTail = true;
+                            }
+                            else
+                            {
+                                droppedThrough = valueEnd;
+                                // Small models often trail an extra stray '}'
+                                // (sometimes several) after the object they just
+                                // closed — swallow immediately-following closers
+                                // and whitespace so machinery cannot leak as prose.
+                                while (droppedThrough < visible.Length
+                                       && (visible[droppedThrough] == '}' || visible[droppedThrough] == ']'
+                                           || char.IsWhiteSpace(visible[droppedThrough])))
+                                    droppedThrough++;
+                            }
                         }
                     }
                 }
+
+                if (dropTurnTail) continue;
 
                 int emitStart = Math.Max(shownThrough, droppedThrough);
                 if (emitStart >= visible.Length) continue;
@@ -1234,7 +1395,7 @@ private void ThrowIfDisposed()
             // never resolved while streaming: a genuine pure-JSON reply (or a
             // truncated JSON blob) still gets delivered; a fabricated envelope is
             // dropped below by the normal-response sanitization.
-            if (shownThrough == 0 && droppedThrough == 0 && responseText.Length > 0
+            if (!dropTurnTail && shownThrough == 0 && droppedThrough == 0 && responseText.Length > 0
                 && !IsFabricatedToolResultJson(SanitizeToolMarkup(responseText))
                 && !LooksLikeFailedToolAttempt(responseText))
             {

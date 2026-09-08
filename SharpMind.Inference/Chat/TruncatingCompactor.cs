@@ -28,12 +28,24 @@ public sealed class TruncatingCompactor : IContextCompactor
         int targetTokens = (int)(context.MaxTokens * Target);
         int currentTokens = context.CurrentTokenCount;
 
-        // Count tokens for each non-pinned, non-ignored message
+        // Count tokens for each non-pinned, non-ignored message. The first System
+        // message (the agent's synthesized prompt — role, rules, tool schema) is
+        // always protected here too, the same way SummarizingCompactor protects
+        // it — NOT via IsPinned, because ChatSession never sets IsPinned on the
+        // message it builds from AgentBuilder.BuildAgentPrompt(). Without this,
+        // that message is both the oldest and (with a non-trivial tool set) often
+        // the single largest entry in history, making it the first thing this
+        // loop would remove — silently deleting the tool schema itself rather
+        // than just trimming older turns, which looks identical from the
+        // outside to "the model stopped trying to call tools" but is actually
+        // "the tools were removed from what it can see."
         var candidates = new List<(int Index, int EstimatedTokens)>();
+        bool sawFirstSystem = false;
         for (int i = 0; i < context.History.Count; i++)
         {
             var msg = context.History[i];
             if (msg.Ignore || msg.IsPinned) continue;
+            if (msg.Role == ChatRole.System && !sawFirstSystem) { sawFirstSystem = true; continue; }
             int est = EstimateTokens(context.Tokenizer, msg);
             candidates.Add((i, est));
         }

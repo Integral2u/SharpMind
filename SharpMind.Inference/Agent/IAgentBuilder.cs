@@ -19,7 +19,7 @@ namespace SharpMind.Inference.Agent
         /// defaults to <see cref="Chat.ToolCallFormat.SharpMind"/>.
         /// </summary>
         public ToolCallFormat CallFormat { get; set; }
-        public IContextCompactor? Compactor { get; }
+        public IContextCompactor? Compactor { get; set; }
         public IReadOnlyList<IContextCompactor> PluginCompactors { get; }
         public IReadOnlyList<IPromptPreProcessor> PluginPreProcessors { get; }
         public IReadOnlyList<IPromptPostProcessor> PluginPostProcessors { get; }
