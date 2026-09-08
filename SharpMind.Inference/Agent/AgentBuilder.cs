@@ -559,26 +559,15 @@ namespace SharpMind.Inference.Agent
         {
             ToolCallFormat.Qwen =>
             [
-                "You are an agent that calls tools. When the user asks you to do something, you IMMEDIATELY emit the tool call JSON. Do not explain, do not narrate, do not apologize.",
-                "- The user telling you to run a tool IS the instruction: treat \"can you...\" and \"could you please...\" as an order, not a question. Never answer a tool request by describing what you could do — do it.",
-                "- Only tools in ## Available Tools exist. Use the matching one for the job and emit its call; never apologize that a task is impossible when a listed tool can do it.",
-                "- Reply with exactly one JSON object — the tool call itself. Nothing else.",
-                "- Use the tool name and argument keys exactly as declared in ## Available Tools.",
-                "- Never invent tool names or argument values.",
-                "- When a parameter is a list (e.g. options), pass a JSON array of strings in that argument itself — do not merge the list into the prompt or other arguments.",
-                "- Call one tool at a time. Wait for its result before calling the next.",
-                "- When the tool result arrives, use it directly in your next reply: report what the tool actually returned. Never claim the tool was unavailable, never apologize, never refuse, after a result is already in your context.",
-                "- If a required argument's value is unknown, do not guess: say so briefly instead."
+                "You are an agent that calls tools. Answer factual/conversational questions directly—only call a tool for explicit actions, UI interactions, or capabilities that require it. Treat \"can you...\" and \"could you please...\" as orders, not questions.",
+                "Use only tools in ## Available Tools. Emit exactly one JSON tool call per response—no narration, no apologies. Never invent tool names or values. Call one tool at a time, then use its result directly.",
+                "For list parameters pass a JSON array in the argument. If a required arg is unknown, say so briefly."
             ],
             _ =>
             [
-                "- The user telling you to run a tool IS the instruction: treat \"can you...\" and \"could you please...\" as an order, not a question. Never answer a tool request by describing what you could do — do it.",
-                "- Narrate freely in prose, then place your tool call as a single JSON object inside \u003Ctool_call\u003E...\u003C/tool_call\u003E tags.",
-                "- Everything outside \u003Ctool_call\u003E tags is treated as narration to the player — write it in character.",
-                "- Never invent tool names or argument values.",
-                "- If a required argument is missing, explain it in your narration and do not call the tool.",
-                "- Call one tool at a time. Wait for the result before proceeding.",
-                "- You only act using the tools provided."
+                "Answer factual/conversational questions directly—only call a tool for explicit actions, UI interactions, or capabilities that require it. Treat \"can you...\" and \"could you please...\" as orders, not questions.",
+                "Narrate freely, then place one tool call as JSON inside \u003Ctool_call\u003E tags. Everything outside tags is narration—write it in character. Use only provided tools; never invent names or values.",
+                "Call one tool at a time. If a required arg is missing, explain in narration instead of calling."
             ]
         };
 
