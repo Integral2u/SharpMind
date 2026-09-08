@@ -64,14 +64,9 @@ public sealed class SharpMindService : IAsyncDisposable
 
         var builder = WebApplication.CreateBuilder();
 
-        builder.Services.AddSharpMindServer(opts =>
-        {
-            opts.ModelsDir = Options.ModelsDir;
-            opts.Host = Options.Host;
-            opts.Port = Options.Port;
-            opts.DisableFileIO = Options.DisableFileIO;
-            opts.DisableNetworkIO = Options.DisableNetworkIO;
-        });
+        // Register this instance rather than copying fields into a new one: the
+        // copy skipped MaxCacheLen, so --max-cache-len was accepted and ignored.
+        builder.Services.AddSharpMindServer(Options);
 
         var app = builder.Build();
         app.Urls.Add($"http://{Options.Host}:{Options.Port}");

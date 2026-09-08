@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection;
 using SharpMind.Server;
 
 namespace SharpMind.Tests.Server;
@@ -43,6 +44,31 @@ public sealed class ServiceStartupPreloadTests
             // Not merely equal — the same host, or the service is holding a
             // different one than the caller was handed.
             Assert.Same(first, second);
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+
+    /// <summary>
+    /// <c>BuildHost</c> copied options field by field into the DI-registered
+    /// instance and skipped <c>MaxCacheLen</c>, so <c>--max-cache-len</c> was
+    /// accepted by the CLI and then silently ignored by every session.
+    /// </summary>
+    [Fact]
+    public void BuildHost_RegistersEveryOption()
+    {
+        string dir = NewTempDir();
+        try
+        {
+            var options = EmptyModelsDir(dir);
+            options.MaxCacheLen = 128;
+            options.DisableFileIO = true;
+            var service = new SharpMindService(options);
+
+            var registered = service.BuildHost().Services.GetRequiredService<SharpMindServerOptions>();
+
+            Assert.Equal(128, registered.MaxCacheLen);
+            Assert.True(registered.DisableFileIO);
+            Assert.Equal(dir, registered.ModelsDir);
         }
         finally { Directory.Delete(dir, true); }
     }

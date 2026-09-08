@@ -64,6 +64,16 @@ public static class SharpMindServerExtensions
     {
         var options = new SharpMindServerOptions();
         configure?.Invoke(options);
+        return services.AddSharpMindServer(options);
+    }
+
+    /// <summary>
+    /// Register SharpMind server services with an existing options instance.
+    /// </summary>
+    public static IServiceCollection AddSharpMindServer(
+        this IServiceCollection services,
+        SharpMindServerOptions options)
+    {
         services.AddSingleton(options);
         services.AddSingleton<ModelManager>();
         services.AddSingleton<SessionFactory>();
