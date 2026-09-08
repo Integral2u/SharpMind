@@ -343,6 +343,12 @@ public sealed class SharpMindService : IAsyncDisposable
             }
             finally
             {
+                // The session owns its generator, KV caches and a native-memory
+                // workspace (≥100 MiB, no finalizer). Only the model reference was
+                // released here, so every completion leaked its workspace for good.
+                // Dispose the session before Release: Release may unload the model
+                // at ref count zero, and the session must not outlive it.
+                await session.DisposeAsync();
                 modelManager.Release(request.Model);
             }
         });
