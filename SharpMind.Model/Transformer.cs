@@ -156,6 +156,8 @@ public sealed class Transformer : IDisposable
 
     public byte[]? RawEmbedding => _weights.RawEmbedding;
     public QuantDType? RawEmbeddingDtype => _weights.RawEmbeddingDtype;
+    public byte[]? RawLmHead => _weights.RawLmHead;
+    public QuantDType? RawLmHeadDtype => _weights.RawLmHeadDtype;
     public QuantizationOps? QOps => _qOps;
 
     /// <summary>Vision encoder for image inputs, or null when the model is text-only.</summary>

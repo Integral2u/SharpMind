@@ -62,6 +62,9 @@ public sealed class GpuInferenceEngine : IInferenceEngine
     private readonly DeviceBuffer _finalNormW;
     private readonly DeviceByteBuffer? _embeddingRaw;
     private readonly QuantDType? _embeddingDtype;
+    private readonly DeviceBuffer? _lmHead;
+    private readonly DeviceByteBuffer? _lmHeadRaw;
+    private readonly QuantDType? _lmHeadDtype;
     private readonly DeviceBuffer? _cos, _sin;
 
     /// <summary>
@@ -150,6 +153,29 @@ public sealed class GpuInferenceEngine : IInferenceEngine
                 if (model.RawEmbedding is null) throw new InvalidOperationException($"Model reports a {rawEmbDtype} embedding but carries no raw bytes.");
                 _embeddingDtype = rawEmbDtype;
                 _embeddingRaw = new DeviceByteBuffer(device.Accelerator, model.RawEmbedding); owned.Add(_embeddingRaw);
+            }
+            // Untied models carry a separate output head (output.weight distinct from token_embd.weight,
+            // e.g. the larger checkpoints). Mirror the embedding upload so LmHead projects against the
+            // head, not the tied embedding: an on-device-dequant head keeps its raw bytes for the
+            // DequantMatmul path, anything else (F32, or a quant with no device kernel like Q8_K whose
+            // F32 copy the loader always materialises) rides the ordinary float buffer. When the head
+            // is absent the two fields stay null and LmHead falls back to the weight tie below.
+            if (model.LmHead is not null)
+            {
+                int V = _cfg.VocabSize, H = _cfg.HiddenDim;
+                var rawHeadDtype = model.RawLmHeadDtype;
+                if (rawHeadDtype is { } hd && IsOnDeviceDequant(hd))
+                {
+                    if (model.RawLmHead is null) throw new InvalidOperationException($"Model reports a {hd} LM head but carries no raw bytes.");
+                    _lmHeadDtype = hd;
+                    _lmHeadRaw = new DeviceByteBuffer(device.Accelerator, model.RawLmHead); owned.Add(_lmHeadRaw);
+                }
+                else
+                {
+                    if (model.LmHead.Shape.Rows != V || model.LmHead.Shape.Cols != H)
+                        throw new NotSupportedException($"GPU inference engine (M0) needs the separate LM head loaded at [{V},{H}]; got [{model.LmHead.Shape.Rows},{model.LmHead.Shape.Cols}] — a streaming model holds only a placeholder there, so use a full load or the CPU path.");
+                    _lmHead = DeviceBuffer.From(device, model.LmHead); owned.Add(_lmHead);
+                }
             }
             _finalNormW = DeviceBuffer.From(device, model.FinalNorm.NormWeight); owned.Add(_finalNormW);
             if (model.GetBlock(0)!.Attention.PositionalEncoder is RoPE rope)
@@ -403,12 +429,16 @@ public sealed class GpuInferenceEngine : IInferenceEngine
         else _dev.Kernels.EmbedGather(x, _embedding!.Tensor, ids);
     }
 
-    /// <summary>Weight-tied LM head: logits = n·Eᵀ. For a block-quantized embedding this is the on-device
-    /// dequant matmul (K = Hidden, N = Vocab, raw = <see cref="_embeddingRaw"/>); an F32 embedding
-    /// is the same weight via <see cref="GpuDevice.Gemm"/> as before.</summary>
+    /// <summary>LM head: logits = n·Wᵀ for W ([V,H]) the separate output head when the model is
+    /// untied, else the weight-tied embedding. For a block-quantized head this is the on-device
+    /// dequant matmul (K = Hidden, N = Vocab, raw = <see cref="_lmHeadRaw"/>); an F32 head is the
+    /// same weight via <see cref="GpuDevice.Gemm" />. The tied path keeps the embedding branches —
+    /// dequant matmul over <see cref="_embeddingRaw"/> or the F32 embedding GEMM.</summary>
     private void LmHead(DeviceTensor logits, DeviceTensor finalNormed, int m)
     {
         int H = _cfg.HiddenDim, V = _cfg.VocabSize;
+        if (_lmHeadRaw is not null) { _dev.Kernels.DequantMatmul(logits, finalNormed, _lmHeadRaw, H, V, _lmHeadDtype!.Value); return; }
+        if (_lmHead is not null) { _dev.Gemm(logits, finalNormed, _lmHead.Tensor, m, V, H, saI: H, saK: 1, sbK: 1, sbJ: H); return; }
         if (_embeddingDtype is { } q) _dev.Kernels.DequantMatmul(logits, finalNormed, _embeddingRaw!, H, V, q);
         else _dev.Gemm(logits, finalNormed, _embedding!.Tensor, m, V, H, saI: H, saK: 1, sbK: 1, sbJ: H);
     }
@@ -796,7 +826,7 @@ public sealed class GpuInferenceEngine : IInferenceEngine
         if (_disposed) return;
         _disposed = true;
         foreach (var b in _blocks) b.Dispose();
-        _embedding?.Dispose(); _embeddingRaw?.Dispose(); _finalNormW.Dispose(); _cos?.Dispose(); _sin?.Dispose();
+        _embedding?.Dispose(); _embeddingRaw?.Dispose(); _finalNormW.Dispose(); _lmHead?.Dispose(); _lmHeadRaw?.Dispose(); _cos?.Dispose(); _sin?.Dispose();
         foreach (var b in _kCache) b.Dispose();
         foreach (var b in _vCache) b.Dispose();
         foreach (var c in _cpuCaches) c.Dispose();

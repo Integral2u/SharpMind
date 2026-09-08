@@ -221,6 +221,137 @@ public sealed class GpuInferenceEngineTests : IClassFixture<GpuInferenceEngineTe
         }
     }
 
+    /// <summary>
+    /// CARD/issue: an untied model (separate output.weight) must produce logits from that head, not
+    /// from the weight-tied embedding the engine used to assume — on the GPU path the head was never
+    /// uploaded, so "the gadgets said what the wrong matrix says", silently, for exactly the
+    /// larger checkpoints whose linear head is not token_embd. The F32 variant exercises the
+    /// separate-head GEMM; the Q8_0 variant exercises the raw-bytes DequantMatmul branch.
+    /// Both check against the CPU oracle over an independent cache, and both also decode.
+    /// </summary>
+    [Fact]
+    public void UntiedLmHead_F32_LogitsMatchCpuOracle()
+    {
+        const int maxCache = 64, maxPrompt = 32;
+        int[] ids = Prompt();
+        var (untied, engineCfg) = BuildModelWithHead(9001, w => w.SetLmHead(DistinctHead()));
+        using var engine = new GpuInferenceEngine(GpuTestDevice.Device, untied, engineCfg, maxCache, maxPrompt);
+        using var workspace = WorkspaceFor(untied);
+        IKVCache[] caches = CachesFor(untied, maxCache);
+        var (tied, _) = BuildModelWithHead(9001, null);
+        using var tiedWorkspace = WorkspaceFor(tied);
+        IKVCache[] tiedCaches = CachesFor(tied, maxCache);
+        try
+        {
+            float[] untiedLogits = LastLogits(untied, caches, ids, workspace);
+            float[] tiedLogits = LastLogits(tied, tiedCaches, ids, tiedWorkspace);
+
+            // The head must actually move the answer, or a degenerate test model could pass the
+            // GPU-vs-CPU checks vacuously while the head still goes unread.
+            Assert.True(MaxAbsDiff(untiedLogits, tiedLogits) > 1e-3f,
+                "the separate head must change the logits vs a tied model — the test model is degenerate.");
+
+            float[] gpu = engine.Prefill(ids).ToArray();
+            Assert.True(MaxAbsDiff(gpu, untiedLogits) <= 1e-4f,
+                $"F32 untied head: GPU prefill deviates from CPU oracle by {MaxAbsDiff(gpu, untiedLogits):G2}.");
+
+            int token = ArgMax(untiedLogits);
+            var gpuDec = engine.DecodeStep(token);
+            using var cpuDec = Prefill.ForwardLastLogitsChunked(untied, caches, new[] { token }, workspace);
+            Assert.True(MaxAbsDiff(gpuDec.Span, cpuDec.Data) <= 1e-4f,
+                $"F32 untied head: GPU decode deviates from CPU oracle by {MaxAbsDiff(gpuDec.Span, cpuDec.Data):G2}.");
+        }
+        finally
+        {
+            foreach (var c in caches) c.Dispose();
+            foreach (var c in tiedCaches) c.Dispose();
+        }
+    }
+
+    [Fact]
+    public void UntiedLmHead_Q8_0_LogitsMatchCpuOracle()
+    {
+        const int maxCache = 64, maxPrompt = 32;
+        int[] ids = Prompt();
+        var (untied, engineCfg) = BuildModelWithHead(9001, w =>
+        {
+            var head = DistinctHead();
+            w.SetLmHead(head);
+            // GGUF-compatible raw bytes + dtype: the engine must take the DequantMatmul branch
+            // (upload the raw head), not the F32 copy.
+            w.RawLmHead = TensorQuantizer.Quantize(head.Data, [Cfg.VocabSize, Cfg.HiddenDim], QuantDType.Q8_0);
+            w.RawLmHeadDtype = QuantDType.Q8_0;
+        });
+        using var engine = new GpuInferenceEngine(GpuTestDevice.Device, untied, engineCfg, maxCache, maxPrompt);
+        using var workspace = WorkspaceFor(untied);
+        IKVCache[] caches = CachesFor(untied, maxCache);
+        try
+        {
+            float[] oracle = LastLogits(untied, caches, ids, workspace);
+            Assert.NotEqual(0f, MaxAbsDiff(oracle, new float[oracle.Length]));   // non-degenerate head
+
+            float[] gpu = engine.Prefill(ids).ToArray();
+            Assert.True(MaxAbsDiff(gpu, oracle) <= 1e-3f,
+                $"Q8_0 untied head: GPU prefill deviates from CPU oracle by {MaxAbsDiff(gpu, oracle):G2}.");
+
+            int token = ArgMax(oracle);
+            var gpuDec = engine.DecodeStep(token);
+            using var cpuDec = Prefill.ForwardLastLogitsChunked(untied, caches, new[] { token }, workspace);
+            Assert.True(MaxAbsDiff(gpuDec.Span, cpuDec.Data) <= 1e-3f,
+                $"Q8_0 untied head: GPU decode deviates from CPU oracle by {MaxAbsDiff(gpuDec.Span, cpuDec.Data):G2}.");
+        }
+        finally
+        {
+            foreach (var c in caches) c.Dispose();
+        }
+    }
+
+    /// <summary>Builds the fixture-shaped qwen2 model, optionally mutating its weights before the
+    /// transformer is constructed (SetLmHead / RawLmHead land on fields the transformer reads).
+    /// Deterministic: same seed → same embeddings and blocks.</summary>
+    private static (Transformer Model, SharpMindConfig Config) BuildModelWithHead(int seed, Action<TransformerWeights>? mutate)
+    {
+        var config = SharpMindConfig.Llama with { Hardware = HardwareTier.Scalar };
+        var weights = ModelFactory.CreateForTraining(Cfg, config);
+        WeightInitializer.InitializeRandomly(weights, seed);
+        mutate?.Invoke(weights);
+        return (ModelFactory.CreateTrainingTransformer(weights, config), config);
+    }
+
+    /// <summary>A separate-head tensor whose coefficients are deliberately unrelated to the
+    /// embedding (an i·1e-3 ladder would not be: the ladder's rows are parallel to the embedding's
+    /// rows only by luck of the seed).</summary>
+    private static Tensor<float> DistinctHead()
+    {
+        var head = new Tensor<float>(Cfg.VocabSize, Cfg.HiddenDim);
+        for (int i = 0; i < head.Data.Length; i++) head.Data[i] = ((i * 31) % 4096) / 4096f - 0.5f;
+        return head;
+    }
+
+    private static IWorkspace WorkspaceFor(Transformer model)
+        => MemoryHelpers.CreateWorkspace(Workspace.CalculateRequiredSize(model.Config.HiddenDim, model.Config.FfnDim, model.Config.VocabSize, model.Config.NumLayers, model.Config.MaxSeqLen));
+
+    private static IKVCache[] CachesFor(Transformer model, int maxCache)
+    {
+        var builder = new KVCacherBuilder();
+        var caches = new IKVCache[model.Config.NumLayers];
+        for (int l = 0; l < caches.Length; l++) caches[l] = builder.CreateKVCache(1, model.Config.NumKvHeads, maxCache, model.Config.HeadDim);
+        return caches;
+    }
+
+    private static float[] LastLogits(Transformer model, IKVCache[] caches, int[] ids, IWorkspace workspace)
+    {
+        using var r = Prefill.ForwardLastLogitsChunked(model, caches, ids, workspace);
+        return r.Data.ToArray();
+    }
+
+    private static float MaxAbsDiff(ReadOnlySpan<float> a, ReadOnlySpan<float> b)
+    {
+        float max = 0f;
+        for (int i = 0; i < a.Length; i++) { float d = MathF.Abs(a[i] - b[i]); if (d > max) max = d; }
+        return max;
+    }
+
     private static int ArgMax(ReadOnlySpan<float> logits)
     {
         int best = 0;
