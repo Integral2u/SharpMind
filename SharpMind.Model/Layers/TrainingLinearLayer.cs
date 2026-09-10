@@ -174,7 +174,8 @@ public sealed class TrainingLinearLayer(string name, int inFeatures, int outFeat
         ThrowIfDisposed();
         bool needReshape = input.Rank > 2;
         int batchSize = input.ElementCount / input.Shape[^1];
-        var flat = needReshape ? input.Reshape(batchSize, InFeatures) : input;
+        using var flatView = needReshape ? input.Reshape(batchSize, InFeatures) : null;
+        var flat = flatView ?? input;
 
         var output = MatMulForward(flat, batchSize, workspace);
         AddLoRAInPlace(flat, output, batchSize);

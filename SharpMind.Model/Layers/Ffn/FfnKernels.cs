@@ -46,8 +46,7 @@ public static class FfnKernels
         using var gated = workspace != null 
             ? workspace.Rent<float>(hasBatch ? new[] { fused.Shape[0], fused.Shape[1], ffnDim } : [total, ffnDim])
             : (hasBatch ? new Tensor<float>(fused.Shape[0], fused.Shape[1], ffnDim) : new Tensor<float>(total, ffnDim));
-        Tensor<float>? flatView = fused.Reshape(total, 2 * ffnDim);
-        var flat = flatView;
+        using var flat = fused.Reshape(total, 2 * ffnDim);
 
         for (int i = 0; i < total; i++)
         {
@@ -98,7 +97,8 @@ public static class FfnKernels
             : new Tensor<float>(x.Shape);
 
         // Router logits: [batch, numExperts]
-        using var logits = router.Forward(x.Rank > 2 ? x.Reshape(batch, hidden) : x, workspace);
+        using var routerInput = x.Rank > 2 ? x.Reshape(batch, hidden) : null;
+        using var logits = router.Forward(routerInput ?? x, workspace);
         using var probs = SoftmaxOverExperts(logits, workspace);
 
         // Thread-local bump allocator — one private arena per worker thread,

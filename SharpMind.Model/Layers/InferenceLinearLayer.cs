@@ -158,7 +158,7 @@ public abstract class InferenceLinearLayer : LinearLayer
         ThrowIfDisposed();
         bool needReshape = input.Rank > 2;
         int batchSize = input.ElementCount / input.Shape[^1];
-        Tensor<float>? flatView = needReshape ? input.Reshape(batchSize, InFeatures) : null;
+        using var flatView = needReshape ? input.Reshape(batchSize, InFeatures) : null;
         var flat = flatView ?? input;
 
         int m = flat.ElementCount / InFeatures;

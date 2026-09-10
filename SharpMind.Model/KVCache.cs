@@ -158,8 +158,18 @@ public sealed class KVCache(int batchSize, int numKvHeads, int maxSeqLen, int he
         int activeLen = (int)activeLenLong;
         var k = new float[activeLen];
         var v = new float[activeLen];
-        _keys.Data[..activeLen].CopyTo(k);
-        _values.Data[..activeLen].CopyTo(v);
+        int destination = 0;
+        int rowsPerHead = CurrentPosition * _headDim;
+        for (int b = 0; b < _batchSize; b++)
+        {
+            for (int h = 0; h < _numKvHeads; h++)
+            {
+                int source = (b * _numKvHeads + h) * MaxSeqLen * _headDim;
+                _keys.Data.Slice(source, rowsPerHead).CopyTo(k.AsSpan(destination, rowsPerHead));
+                _values.Data.Slice(source, rowsPerHead).CopyTo(v.AsSpan(destination, rowsPerHead));
+                destination += rowsPerHead;
+            }
+        }
         return (CurrentPosition, k, v);
     }
 
@@ -167,8 +177,24 @@ public sealed class KVCache(int batchSize, int numKvHeads, int maxSeqLen, int he
     {
         if (snapshot is null) return;
         var (pos, k, v) = ((int, float[], float[]))snapshot;
-        k.AsSpan().CopyTo(_keys.Data);
-        v.AsSpan().CopyTo(_values.Data);
+        if ((uint)pos > (uint)MaxSeqLen)
+            throw new InvalidDataException($"KVCache snapshot position {pos} exceeds capacity {MaxSeqLen}.");
+        int rowsPerHead = checked(pos * _headDim);
+        int expectedLength = checked(_batchSize * _numKvHeads * rowsPerHead);
+        if (k.Length != expectedLength || v.Length != expectedLength)
+            throw new InvalidDataException("KVCache snapshot dimensions do not match this cache.");
+
+        int source = 0;
+        for (int b = 0; b < _batchSize; b++)
+        {
+            for (int h = 0; h < _numKvHeads; h++)
+            {
+                int destination = (b * _numKvHeads + h) * MaxSeqLen * _headDim;
+                k.AsSpan(source, rowsPerHead).CopyTo(_keys.Data.Slice(destination, rowsPerHead));
+                v.AsSpan(source, rowsPerHead).CopyTo(_values.Data.Slice(destination, rowsPerHead));
+                source += rowsPerHead;
+            }
+        }
         CurrentPosition = pos;
     }
 

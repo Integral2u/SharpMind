@@ -288,8 +288,10 @@ namespace SharpMind.Model.Layers.Attention;
         // Forward always allocates a new tensor; using var disposes it at scope exit.
         // The normed tensor is 2D [totalHeads, headDim]; reshape at use sites below.
         // DEBUG: ForceBypassQKNorm skips normalization to isolate norm-related issues.
-        using var qNormed = _qNorm?.Forward(q.Reshape(batch * seqLen * numH, headDim), workspace);
-        using var kNormed = _kNorm?.Forward(k.Reshape(batch * seqLen * numKv, headDim), workspace);
+        using var qNormInput = _qNorm is null ? null : q.Reshape(batch * seqLen * numH, headDim);
+        using var kNormInput = _kNorm is null ? null : k.Reshape(batch * seqLen * numKv, headDim);
+        using var qNormed = _qNorm?.Forward(qNormInput!, workspace);
+        using var kNormed = _kNorm?.Forward(kNormInput!, workspace);
 
         // Use normed tensors where available, fall back to raw projections
         var qForAttn = (Tensor<float>?)qNormed ?? q;
@@ -303,8 +305,8 @@ namespace SharpMind.Model.Layers.Attention;
         // Use the (possibly normed) K and V for cache storage
         if (cache != null)
         {
-            var kCache = kNormed != null ? kNormed.Reshape(batch, seqLen, kvDim) : k;
-            cache.Update(kCache, v, numKv, headDim);
+            using var kCache = kNormed?.Reshape(batch, seqLen, kvDim);
+            cache.Update(kCache ?? k, v, numKv, headDim);
         }
 
         Tensor<float> output = workspace != null

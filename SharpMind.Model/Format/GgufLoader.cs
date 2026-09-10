@@ -38,22 +38,38 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
     private static (ulong len, string str) ReadString(BinaryReader reader)
     {
         var len = reader.ReadUInt64();
-        if (len > 10000) return (len, "");
-        var bytes = reader.ReadBytes((int)len);
+        var bytes = ReadBytes(reader, len, "string");
         return (len, System.Text.Encoding.UTF8.GetString(bytes));
     }
 
     private static string ReadStringValue(BinaryReader reader)
     {
         var len = reader.ReadUInt64();
-        var bytes = reader.ReadBytes((int)len);
+        var bytes = ReadBytes(reader, len, "string value");
         return System.Text.Encoding.UTF8.GetString(bytes);
+    }
+
+    private static byte[] ReadBytes(BinaryReader reader, ulong length, string description)
+    {
+        if (length > int.MaxValue)
+            throw new InvalidDataException($"GGUF {description} length {length} exceeds supported limits.");
+
+        long remaining = reader.BaseStream.Length - reader.BaseStream.Position;
+        if ((long)length > remaining)
+            throw new InvalidDataException($"GGUF {description} length {length} exceeds the remaining file data.");
+
+        var bytes = reader.ReadBytes((int)length);
+        if ((ulong)bytes.Length != length)
+            throw new EndOfStreamException($"Unexpected end of file while reading GGUF {description}.");
+        return bytes;
     }
 
     private static object? ReadArrayValue(BinaryReader reader)
     {
         var elemType = reader.ReadUInt32();
         var arrLen = reader.ReadUInt64();
+        if (arrLen > int.MaxValue)
+            throw new InvalidDataException($"GGUF array length {arrLen} exceeds supported limits.");
         int len = (int)arrLen;
 
         switch (elemType)
@@ -106,7 +122,18 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
                         12 => 8,
                         _ => 4
                     };
-                    reader.BaseStream.Position += (long)len * elemSize;
+                    long byteCount;
+                    try
+                    {
+                        byteCount = checked((long)len * elemSize);
+                    }
+                    catch (OverflowException ex)
+                    {
+                        throw new InvalidDataException("GGUF array byte count overflows a signed 64-bit value.", ex);
+                    }
+                    if (byteCount > reader.BaseStream.Length - reader.BaseStream.Position)
+                        throw new InvalidDataException("GGUF array exceeds the remaining file data.");
+                    reader.BaseStream.Position += byteCount;
                     return null;
                 }
         }

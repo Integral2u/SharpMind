@@ -17,7 +17,7 @@ public sealed class GatedFfnLayer(ModelConfig config, ActivationOps acts, Quanti
         using var gateUp = Output;
         int ffnDim = Config.FfnDim;
         int total = gateUp.ElementCount / (2 * ffnDim);
-        var flat = gateUp.Reshape(total, 2 * ffnDim);
+        using var flat = gateUp.Reshape(total, 2 * ffnDim);
         bool hasBatch = gateUp.Rank > 2;
         using var activated = hasBatch
             ? Tensor<float>.Zeros(gateUp.Shape.Dims[0], gateUp.Shape.Dims[1], ffnDim)

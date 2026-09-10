@@ -142,16 +142,18 @@ public sealed class QuantizedKVCache : IKVCache
             {
                 for (int h = 0; h < _numKvHeads; h++)
                 {
-                    byte* headBaseK = GetQuantizedKeyPtr(b, 0, h) - (long)b * (_numKvHeads * _headStride) - (long)h * _headStride;
-                byte* headBaseV = GetQuantizedValuePtr(b, 0, h) - (long)b * (_numKvHeads * _headStride) - (long)h * _headStride;
+                    // Copy a row at a time so each source row is read before a
+                    // later destination write can overlap it.
+                    for (int i = 0; i < keep; i++)
+                    {
+                        byte* srcK = GetQuantizedKeyPtr(b, offset + i, h);
+                        byte* dstK = GetQuantizedKeyPtr(b, i, h);
+                        Buffer.MemoryCopy(srcK, dstK, _qStride, _qStride);
 
-                    byte* srcK = headBaseK + (long)b * (_numKvHeads * _headStride) + (long)h * _headStride + (long)offset * _qStride;
-                    byte* dstK = headBaseK + (long)b * (_numKvHeads * _headStride) + (long)h * _headStride;
-                    Buffer.MemoryCopy(srcK, dstK, (long)keep * _qStride, (long)keep * _qStride);
-
-                    byte* srcV = headBaseV + (long)b * (_numKvHeads * _headStride) + (long)h * _headStride + (long)offset * _qStride;
-                    byte* dstV = headBaseV + (long)b * (_numKvHeads * _headStride) + (long)h * _headStride;
-                    Buffer.MemoryCopy(srcV, dstV, (long)keep * _qStride, (long)keep * _qStride);
+                        byte* srcV = GetQuantizedValuePtr(b, offset + i, h);
+                        byte* dstV = GetQuantizedValuePtr(b, i, h);
+                        Buffer.MemoryCopy(srcV, dstV, _qStride, _qStride);
+                    }
                 }
             }
         }
@@ -168,8 +170,18 @@ public sealed class QuantizedKVCache : IKVCache
         int totalBytes = (int)totalBytesLong;
         var k = new byte[totalBytes];
         var v = new byte[totalBytes];
-        Buffer.BlockCopy(_qKeys, 0, k, 0, totalBytes);
-        Buffer.BlockCopy(_qValues, 0, v, 0, totalBytes);
+        int bytesPerHead = checked(CurrentPosition * _qStride);
+        int destination = 0;
+        for (int b = 0; b < _batchSize; b++)
+        {
+            for (int h = 0; h < _numKvHeads; h++)
+            {
+                int source = (b * _numKvHeads + h) * _headStride;
+                Buffer.BlockCopy(_qKeys, source, k, destination, bytesPerHead);
+                Buffer.BlockCopy(_qValues, source, v, destination, bytesPerHead);
+                destination += bytesPerHead;
+            }
+        }
         return (CurrentPosition, k, v);
     }
 
@@ -177,8 +189,24 @@ public sealed class QuantizedKVCache : IKVCache
     {
         if (snapshot is null) return;
         var (pos, k, v) = ((int, byte[], byte[]))snapshot;
-        Buffer.BlockCopy(k, 0, _qKeys, 0, k.Length);
-        Buffer.BlockCopy(v, 0, _qValues, 0, v.Length);
+        if ((uint)pos > (uint)MaxSeqLen)
+            throw new InvalidDataException($"QuantizedKVCache snapshot position {pos} exceeds capacity {MaxSeqLen}.");
+        int bytesPerHead = checked(pos * _qStride);
+        int expectedLength = checked(_batchSize * _numKvHeads * bytesPerHead);
+        if (k.Length != expectedLength || v.Length != expectedLength)
+            throw new InvalidDataException("QuantizedKVCache snapshot dimensions do not match this cache.");
+
+        int source = 0;
+        for (int b = 0; b < _batchSize; b++)
+        {
+            for (int h = 0; h < _numKvHeads; h++)
+            {
+                int destination = (b * _numKvHeads + h) * _headStride;
+                Buffer.BlockCopy(k, source, _qKeys, destination, bytesPerHead);
+                Buffer.BlockCopy(v, source, _qValues, destination, bytesPerHead);
+                source += bytesPerHead;
+            }
+        }
         CurrentPosition = pos;
     }
 
