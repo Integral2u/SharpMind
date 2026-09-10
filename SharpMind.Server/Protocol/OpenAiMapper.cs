@@ -54,7 +54,7 @@ public static class OpenAiMapper
     /// not — so it lives in one place now.
     /// </remarks>
     public static bool IsContent(ChatStreamEntry entry)
-        => entry is { Status: ChatStatus.Responding or ChatStatus.Thinking, Token: { Length: > 0 } };
+        => entry is { Status: ChatStatus.Responding or ChatStatus.Thinking, Token.Length: > 0 };
 
     /// <summary>
     /// Map OpenAI request params to session properties.

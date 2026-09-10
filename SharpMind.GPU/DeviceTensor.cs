@@ -60,7 +60,7 @@ internal readonly struct DeviceTensor(ArrayView<float> view, int rows, int cols)
     // offsetBytes >= elementCount and silently zeroes the wrong window below that. Every arena
     // tensor is a sub-view, so zeroing goes through a kernel. ILGPU caches the compiled kernel;
     // this table caches the launcher delegate per accelerator.
-    private static readonly ConditionalWeakTable<Accelerator, Action<Index1D, ArrayView<float>>> ZeroLaunchers = new();
+    private static readonly ConditionalWeakTable<Accelerator, Action<Index1D, ArrayView<float>>> ZeroLaunchers = [];
 
     private static void ZeroKernel(Index1D i, ArrayView<float> v) => v[i] = 0f;
 }

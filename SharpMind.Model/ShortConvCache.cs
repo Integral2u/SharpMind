@@ -24,8 +24,7 @@ public sealed class ShortConvCache : IKVCache
     /// <param name="maxSeqLen">Effective context bound used by the generator's IsFull check.</param>
     public ShortConvCache(int stateRows, int channels, int batch = 1, int maxSeqLen = 0)
     {
-        if (stateRows <= 0)
-            throw new ArgumentOutOfRangeException(nameof(stateRows));
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(stateRows);
         StateRows = stateRows;
         Channels = channels;
         _state = new Tensor<float>(batch, stateRows, channels);

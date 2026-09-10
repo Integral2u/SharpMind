@@ -83,7 +83,7 @@ internal static class Program
             .Select(_ => string.Join(' ', Enumerable.Range(0, seq - 1).Select(_ => rng.Next(3, mc.VocabSize))))
             .ToList();
         return new DataLoader(CleaningPipeline.From(new FixedTokenSource(text)),
-            t => t.Split(' ').Select(int.Parse).ToArray(),
+            t => [.. t.Split(' ').Select(int.Parse)],
             new PackingBatcher(batchSize: batch, maxSeqLen: seq), maxBatches: 10_000);
     }
 

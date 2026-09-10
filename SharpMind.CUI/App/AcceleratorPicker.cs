@@ -73,8 +73,17 @@ public static class AcceleratorPicker
             ? $"Accelerator '{(string.IsNullOrEmpty(requested) ? "selected" : requested)}' needs CPU fallback"
             : $"Accelerator '{(string.IsNullOrEmpty(requested) ? "unknown" : requested)}' can't run here";
         var dialog = new Dialog((ustring)title, width, dialogHeight);
-        var prompt = new TextView { ReadOnly = true, WordWrap = true, TabStop = false, X = 1, Y = 0, Width = Dim.Fill(2), Height = reasonLines };
-        prompt.Text = (ustring)reasonText;
+        var prompt = new TextView
+        {
+            ReadOnly = true,
+            WordWrap = true,
+            TabStop = false,
+            X = 1,
+            Y = 0,
+            Width = Dim.Fill(2),
+            Height = reasonLines,
+            Text = (ustring)reasonText
+        };
         row = reasonLines + 1;
         var list = new ListView(ordered.Select(o => (ustring)o.Label).ToArray())
         {

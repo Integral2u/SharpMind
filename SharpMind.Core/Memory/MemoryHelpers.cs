@@ -90,10 +90,10 @@ public static class MemoryHelpers
         NativeBufferPool<T>.Return(buffer);
     }
 
-    private sealed class ArrayPoolToken<T> : IDisposable where T : unmanaged
+    private sealed class ArrayPoolToken<T>(T[] array) : IDisposable where T : unmanaged
     {
-        private readonly T[] _array;
-        public ArrayPoolToken(T[] array) => _array = array;
+        private readonly T[] _array = array;
+
         public void Dispose() => ArrayPool<T>.Shared.Return(_array);
     }
 

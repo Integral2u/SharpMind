@@ -715,7 +715,7 @@ public sealed class GpuInferenceEngine : IInferenceEngine
     {
         int c = CachedLength;
         _arena.Reset();
-        using var ids = _dev.UploadInts(new[] { tokenId });
+        using var ids = _dev.UploadInts([tokenId]);
 
         var k = _dev.Kernels;
         int H = _cfg.HiddenDim, D = _cfg.HeadDim, nh = _cfg.NumHeads, nkv = _cfg.NumKvHeads;

@@ -75,13 +75,7 @@ public static class SmmMeaiChatExample
         // ------------------------------------------------------------------
         var agentBuilder = new AgentBuilder("MeaiExampleAgent");
 
-        await using IChatSession session = ChatSessionFactory.CreateChatSession(
-            typeof(StandardGeneratorBuilder<KVCacherBuilder>),
-            typeof(KVCacherBuilder),
-            model,
-            tokenizer,
-            meta,
-            agentBuilder: agentBuilder);
+        await using IChatSession session = ChatSessionFactory.CreateChatSession<StandardGeneratorBuilder<KVCacherBuilder>, KVCacherBuilder>(model, tokenizer, meta, agentBuilder: agentBuilder);
 
         // ------------------------------------------------------------------
         // 3. Wrap it in the IChatClient adapter.

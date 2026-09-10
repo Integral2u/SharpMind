@@ -21,7 +21,7 @@ public sealed class BigArray<T> : IDisposable where T : unmanaged
 
     public BigArray(long length)
     {
-        if (length < 0) throw new ArgumentOutOfRangeException(nameof(length));
+        ArgumentOutOfRangeException.ThrowIfNegative(length);
         _length = length;
         _pageCount = (int)((length + PageSize - 1) / PageSize);
         _pages = new T[_pageCount][];

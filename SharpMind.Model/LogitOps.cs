@@ -6,18 +6,12 @@ using SharpMind.Core.Tensors;
 
 namespace SharpMind.Model;
 
-public abstract class LogitOps
+public abstract class LogitOps(Tensor<float> projectionWeight, byte[]? rawWeight)
 {
     private const string QKernels = $"{nameof(SharpMind)}.{nameof(Core)}.{nameof(SharpMind.Core.Quantization)}.{nameof(QuantizationKernels)}";
 
-    protected readonly Tensor<float> ProjectionWeight;
-    protected readonly byte[]? RawWeight;
-
-    protected LogitOps(Tensor<float> projectionWeight, byte[]? rawWeight)
-    {
-        ProjectionWeight = projectionWeight;
-        RawWeight = rawWeight;
-    }
+    protected readonly Tensor<float> ProjectionWeight = projectionWeight;
+    protected readonly byte[]? RawWeight = rawWeight;
 
     [PuzzleCornerPiece(SharpMindConfig.KeyLogit, true, null,
         "q8_0_serial_fma",    $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ8_0_Serial_FMA)}",

@@ -274,7 +274,7 @@ public sealed class SharpMindChatClient : IChatClient, IAsyncDisposable
         return 0;
     }
 
-    private static string? FindLastUserMessage(IList<MeChatMessage> messages)
+    private static string? FindLastUserMessage(List<MeChatMessage> messages)
     {
         for (int i = messages.Count - 1; i >= 0; i--)
         {

@@ -173,15 +173,15 @@ internal static class QuantMatmulKernels
     /// <summary>Block size for host-side guards of the K-quant super-block formats (throwing).</summary>
     internal static int BlockBytesK(QuantDType q)
     {
-        switch (BaseK(q))
+        return BaseK(q) switch
         {
-            case QuantDType.Q2_K: return 84;
-            case QuantDType.Q3_K: return 110;
-            case QuantDType.Q4_K: return 144;
-            case QuantDType.Q5_K: return 176;
-            case QuantDType.Q6_K: return 210;
-        }
-        throw new NotSupportedException($"GPU inference supports only Q2_K/Q3_K/Q4_K/Q5_K/Q6_K K-quantized weights, got {q}.");
+            QuantDType.Q2_K => 84,
+            QuantDType.Q3_K => 110,
+            QuantDType.Q4_K => 144,
+            QuantDType.Q5_K => 176,
+            QuantDType.Q6_K => 210,
+            _ => throw new NotSupportedException($"GPU inference supports only Q2_K/Q3_K/Q4_K/Q5_K/Q6_K K-quantized weights, got {q}."),
+        };
     }
 
     /// <summary>Throw-free <see cref="BlockBytesK"/> for device kernels (ILGPU rejects throw).</summary>
