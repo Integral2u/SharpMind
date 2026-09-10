@@ -391,6 +391,7 @@ public sealed class GpuInferenceEngine : IInferenceEngine
         {
             var b = model.GetBlock(l) ?? throw new NotSupportedException(Why($"a model missing block {l}"));
             if (b.PostAttnNorm is not null || b.PostFfnNorm is not null) throw new NotSupportedException(Why("Gemma post-attention/post-FFN norms"));
+            if (b.Attention.QNorm is not null || b.Attention.KNorm is not null) throw new NotSupportedException(Why("per-head Q/K RMS norms"));
             if (b.Norm1 is not RmsNormLayer || b.Norm2 is not RmsNormLayer) throw new NotSupportedException(Why($"a {b.Norm1.GetType().Name} block norm — LayerNorm, only RMSNorm"));
             if (b.Ffn is not GatedFfnLayer) throw new NotSupportedException(Why($"FFN kind {b.Ffn.GetType().Name}"));
         }

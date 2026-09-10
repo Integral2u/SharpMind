@@ -24,6 +24,9 @@ namespace SharpMind.Model.Layers.Attention;
         private NormLayer? _kNorm;
         private bool _disposed;
 
+        public NormLayer? QNorm => _qNorm;
+        public NormLayer? KNorm => _kNorm;
+
     [PuzzleCornerPiece(SharpMindConfig.KeyAttentionQ8,
         SharpMindConfig.ValMhaFlashQ8_0Avx2, NS + "." + nameof(AttentionKernels.ScaledDotProductFlashQ8_0AVX2),
         SharpMindConfig.ValMhaFlashQ8_0Fma, NS + "." + nameof(AttentionKernels.ScaledDotProductFlashQ8_0FMA),

@@ -546,6 +546,22 @@ public sealed class GpuInferenceEngineTests : IClassFixture<GpuInferenceEngineTe
         Reject(SharpMindConfig.Llama with { Norm = NormKind.LayerNorm }, "RMSNorm");
     }
 
+    /// <summary>The GPU engine does not yet implement the per-head Q/K RMS norm Qwen3-style
+    /// checkpoints wire via attn_q_norm/attn_k_norm (the ILGPU forward projects Q/K and RoPEs them
+    /// directly, so such models would run with unmatchable logits), so ValidateSupported refuses them
+    /// and they stay on the CPU transformer, which does apply the norm.</summary>
+    [Fact]
+    public void ValidateSupported_RejectsPerHeadQKNorms()
+    {
+        var sc = SharpMindConfig.Llama with { Hardware = HardwareTier.Scalar };
+        var weights = ModelFactory.CreateForTraining(Cfg, sc);
+        weights.Blocks[0].QNormW = new Tensor<float>(Cfg.HeadDim);
+
+        using var model = ModelFactory.CreateTrainingTransformer(weights, sc);
+        var ex = Assert.Throws<NotSupportedException>(() => GpuInferenceEngine.ValidateSupported(model, sc));
+        Assert.Contains("per-head Q/K", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     /// <summary>A model built for the standard chat loader (CreateTransformer) wires
     /// InferenceLinearLayer whose "weight" only backs RawQuantizedData — running the GPU F32 GEMMs on
     /// it used to read far past the tensor ("B holds N floats, GEMM needs M"). The engine now
