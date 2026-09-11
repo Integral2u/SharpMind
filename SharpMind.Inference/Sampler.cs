@@ -22,6 +22,7 @@ public static class Sampler
         // Work on a copy so we don't mutate the model output — ArrayPool avoids a per-step GC allocation.
         int n = logits.Length;
         float[] rented = MemoryHelpers.RentArray<float>(n);
+        int[]? topKIdxs = null;
         try
         {
             Span<float> probs = rented.AsSpan(0, n);
@@ -31,8 +32,20 @@ public static class Sampler
             Softmax(probs);
 
             if (config.MinP > 0f) ApplyMinP(probs, config.MinP);
-            if (config.TopK > 0) ApplyTopK(probs, config.TopK);
-            if (config.TopP < 1.0f) ApplyTopP(probs, config.TopP);
+
+            // Top-k and top-p share work: top-k already selected its k survivors,
+            // so top-p reuses those exact indices and sorts only the survivors
+            // (O(k log k)) instead of re-scanning the full vocabulary (O(n log n)).
+            if (config.TopK > 0)
+            {
+                topKIdxs = ApplyTopK(probs, config.TopK);
+                if (config.TopP < 1.0f)
+                    ApplyTopP(probs, topKIdxs is not null ? topKIdxs.AsSpan(0, config.TopK) : default, config.TopP);
+            }
+            else if (config.TopP < 1.0f)
+            {
+                ApplyTopP(probs, default, config.TopP);
+            }
 
             Normalise(probs);
 
@@ -42,6 +55,7 @@ public static class Sampler
         }
         finally
         {
+            if (topKIdxs is not null) MemoryHelpers.ReturnArray(topKIdxs);
             MemoryHelpers.ReturnArray(rented);
         }
     }
@@ -101,13 +115,17 @@ public static class Sampler
     // Top-k
 
     /// <summary>
-    /// Zeroes all but the top-k highest-probability tokens.
-    /// Uses an O(n log k) min-heap select instead of O(n log n) full sort.
-    /// No per-call GC allocations — uses ArrayPool.
+    /// Zeroes all but the top-k highest-probability tokens and returns the
+    /// indices of the k survivors (min-heap select, O(n log k); ArrayPool-backed).
+    /// Survivors occupy [0..k-1] of the returned array; the caller must return
+    /// the array to the pool via <see cref="MemoryHelpers.ReturnArray{T}"/>.
+    /// Returns null when nothing was filtered (k &gt;= vocab, or k or fewer
+    /// non-zero probabilities) — top-p can then treat all non-zero entries as
+    /// candidates, exactly as if top-k had not run.
     /// </summary>
-    private static void ApplyTopK(Span<float> probs, int k)
+    private static int[]? ApplyTopK(Span<float> probs, int k)
     {
-        if (k >= probs.Length) return;
+        if (k >= probs.Length) return null;
 
         int n = probs.Length;
         float[] rentedVals = MemoryHelpers.RentArray<float>(n);
@@ -124,7 +142,11 @@ public static class Sampler
                 if (v > 0f) { vals[count] = v; idxs[count] = i; count++; }
             }
 
-            if (count <= k) return;
+            if (count <= k)
+            {
+                MemoryHelpers.ReturnArray(rentedIdxs);
+                return null;
+            }
 
             // Build initial min-heap from first k entries
             for (int i = k / 2 - 1; i >= 0; i--)
@@ -142,14 +164,16 @@ public static class Sampler
                 }
             }
 
-            // Zero all ejected (non-top-k) probabilities in one linear pass
+            // Zero all ejected (non-top-k) probabilities in one linear pass.
+            // The winners remain in the heap at [0..k-1].
             for (int i = k; i < count; i++)
                 probs[idxs[i]] = 0f;
+
+            return rentedIdxs;
         }
         finally
         {
             MemoryHelpers.ReturnArray(rentedVals);
-            MemoryHelpers.ReturnArray(rentedIdxs);
         }
     }
 
@@ -175,33 +199,48 @@ public static class Sampler
     /// Zeroes tokens outside the nucleus whose cumulative probability exceeds p.
     /// Tokens are sorted descending (via ascending sort then reverse traversal);
     /// we keep until the running sum exceeds p.
+    /// <paramref name="survivors"/> carries the indices top-k already selected,
+    /// so only those k tokens are collected and sorted (O(k log k)). When it is
+    /// empty (no top-k filter ran), all non-zero probabilities are candidates.
     /// No per-call GC allocations — uses ArrayPool.
     /// </summary>
-    private static void ApplyTopP(Span<float> probs, float p)
+    private static void ApplyTopP(Span<float> probs, ReadOnlySpan<int> survivors, float p)
     {
         if (p <= 0f || probs.Length == 0) return;
 
-        int n = probs.Length;
-        float[] rentedVals = MemoryHelpers.RentArray<float>(n);
-        int[] rentedIdxs = MemoryHelpers.RentArray<int>(n);
+        int cap = survivors.IsEmpty ? probs.Length : survivors.Length;
+        float[] rentedVals = MemoryHelpers.RentArray<float>(cap);
+        int[] rentedIdxs = MemoryHelpers.RentArray<int>(cap);
         try
         {
-            Span<float> vals = rentedVals.AsSpan(0, n);
-            Span<int> idxs = rentedIdxs.AsSpan(0, n);
-            int count = 0;
+            Span<float> vals = rentedVals.AsSpan(0, cap);
+            Span<int> idxs = rentedIdxs.AsSpan(0, cap);
+            int count;
 
-            for (int i = 0; i < n; i++)
+            if (!survivors.IsEmpty)
             {
-                float v = probs[i];
-                if (v > 0f) { vals[count] = v; idxs[count] = i; count++; }
+                count = survivors.Length;
+                for (int i = 0; i < count; i++)
+                {
+                    vals[i] = probs[survivors[i]];
+                    idxs[i] = survivors[i];
+                }
+            }
+            else
+            {
+                count = 0;
+                for (int i = 0; i < probs.Length; i++)
+                {
+                    float v = probs[i];
+                    if (v > 0f) { vals[count] = v; idxs[count] = i; count++; }
+                }
             }
 
             if (count == 0) return;
 
-            // Sort ascending by value — O(n log n)
+            // Sort ascending by value, then traverse descending (largest first)
             vals[..count].Sort(idxs[..count]);
 
-            // Traverse descending (largest probability first)
             float cumulative = 0f;
             for (int i = count - 1; i >= 0; i--)
             {

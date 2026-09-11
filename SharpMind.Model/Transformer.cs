@@ -178,8 +178,17 @@ public sealed class Transformer : IDisposable
     /// Forward/ForwardLastLogits call. It remains valid until the next forward call
     /// or disposal. The single-token ForwardLastLogits path stores its normalized
     /// hidden state, matching its previous behavior.
+    /// The snapshot is allocated lazily on first access, so standard/speculative
+    /// decoding (which never reads it) avoids the copy entirely.
     /// </summary>
-    public Tensor<float>? LastCachedHidden => _lastCachedHiddenSnapshot;
+    public Tensor<float>? LastCachedHidden
+    {
+        get
+        {
+            EnsureLastCachedHiddenSnapshot();
+            return _lastCachedHiddenSnapshot;
+        }
+    }
 
     /// <summary>
     /// Copies row <paramref name="positionIndex"/> from the last cached hidden state,
@@ -188,6 +197,7 @@ public sealed class Transformer : IDisposable
     /// </summary>
     public Tensor<float>? GetNormedHiddenRow(int positionIndex, SharpMind.Core.Memory.IWorkspace? workspace = null)
     {
+        EnsureLastCachedHiddenSnapshot();
         if (_lastCachedHiddenSnapshot == null) return null;
         int hiddenDim = _weights.Config.HiddenDim;
         Tensor<float> row;
@@ -335,7 +345,6 @@ public sealed class Transformer : IDisposable
         // 4. Architecture (blocks mutate in place; _cachedHidden may alias fused).
         _cachedEmbedding = fused;
         _cachedHidden = _arch.Forward(_cachedEmbedding, new IKVCache[_arch.NumLayers], positionOffset, workspace);
-        CaptureLastCachedHidden();
 
         if (_weights is TransformerWeightsStreaming sw) sw.CompleteForward();
 
@@ -389,7 +398,6 @@ public sealed class Transformer : IDisposable
         //    Blocks mutate in-place and return the same tensor, so _cachedHidden
         //    may alias _cachedEmbedding. Keep both alive until we exit this method.
         _cachedHidden = _arch.Forward(_cachedEmbedding, caches ?? new IKVCache[_arch.NumLayers], positionOffset, workspace);
-        CaptureLastCachedHidden();
 
         // Streaming: free any remaining loaded layers before the next pass
         if (_weights is TransformerWeightsStreaming sw) sw.CompleteForward();
@@ -445,7 +453,6 @@ public sealed class Transformer : IDisposable
         if (batch == 1 && seqLen == 1)
         {
             _finalNorm.ForwardInPlace(_cachedHidden);
-            CaptureLastCachedHidden();
             using var flatHidden = _cachedHidden.Reshape(batch, hiddenDim);
             return _logitOps.Project(flatHidden, batch, K, N, workspace);
         }
@@ -463,7 +470,6 @@ public sealed class Transformer : IDisposable
             cachedData.Slice(srcOffset, hiddenDim).CopyTo(lastData.Slice(b * hiddenDim, hiddenDim));
         }
         _finalNorm.ForwardInPlace(lastHidden);
-        CaptureLastCachedHidden();
 
         Tensor<float> result = _logitOps.Project(lastHidden, batch, K, N, workspace);
         lastHidden.Dispose();
@@ -487,11 +493,13 @@ public sealed class Transformer : IDisposable
         _lastCachedHiddenSnapshot = null;
     }
 
-    private void CaptureLastCachedHidden()
+    private void EnsureLastCachedHiddenSnapshot()
     {
-        _lastCachedHiddenSnapshot?.Dispose();
-        _lastCachedHiddenSnapshot = new Tensor<float>(_cachedHidden!.Shape);
-        _cachedHidden.Data.CopyTo(_lastCachedHiddenSnapshot.Data);
+        if (_lastCachedHiddenSnapshot is null && _cachedHidden is not null)
+        {
+            _lastCachedHiddenSnapshot = new Tensor<float>(_cachedHidden.Shape);
+            _cachedHidden.Data.CopyTo(_lastCachedHiddenSnapshot.Data);
+        }
     }
 
     /// <summary>Approximate total parameter count.</summary>
