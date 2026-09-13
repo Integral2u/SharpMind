@@ -365,7 +365,7 @@ public class Lfm2ShortConvTests
         var blockWeights = new TransformerWeights.BlockWeights(
             null, null, null, null,
             null, null, null, null,
-            new Tensor<float>(64, 128),  // Wf1
+            new Tensor<float>(64, 256),  // Wf1: fused gate+up, [hidden, 2 * ffnDim]
             new Tensor<float>(128, 64),  // Wf2
             null, null,
             Tensor<float>.Ones(64),      // norm1

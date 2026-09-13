@@ -145,6 +145,13 @@ public sealed class TrainingLinearLayer(string name, int inFeatures, int outFeat
 
     private unsafe Tensor<float> MatMulForward(Tensor<float> input, int batchSize, IWorkspace? workspace = null)
     {
+        // The kernels read exactly InFeatures × OutFeatures weights. A smaller tensor used to be read
+        // past its end — an access violation when the next page was unmapped, garbage when it was not.
+        if (_weight.ElementCount != (long)InFeatures * OutFeatures)
+            throw new InvalidOperationException(
+                $"[{Name}] weight holds {_weight.ElementCount} values but the layer maps {InFeatures} -> {OutFeatures}, " +
+                $"which needs {(long)InFeatures * OutFeatures} ([inFeatures, outFeatures]).");
+
         Tensor<float> output;
         // Local, not a field: MoE calls Forward on one shared expert layer from
         // several Parallel.For threads at once, so a per-instance transpose gets
