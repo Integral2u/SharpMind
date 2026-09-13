@@ -281,6 +281,12 @@ else
 
                 if (name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase) || name.Contains("ffn_up", StringComparison.OrdinalIgnoreCase))
                 {
+                    // Full float loads allocate Wf1 up front. Inference loads (quantized-resident,
+                    // streaming) only need it when gate/up arrive without raw bytes: both loaders store
+                    // a tensor's raw bytes before resolving its float target, and a block holding them
+                    // runs its gated layer from those and never reads the floats.
+                    if (b.Wf1 is null && (b.RawWgate is not null || b.RawWup is not null))
+                        return null;
                     b.Wf1 ??= new Tensor<float>(Config.HiddenDim, 2 * Config.FfnDim);
                     return b.Wf1;
                 }
