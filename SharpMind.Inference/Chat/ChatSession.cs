@@ -1007,6 +1007,31 @@ private void ThrowIfDisposed()
         }
     }
 
+    /// <summary>
+    /// Detects a failed native-JSON tool-call attempt: a complete JSON object
+    /// with a top-level string "name" (or "tool") but no "arguments"/"args"
+    /// block. Small native-format models (Qwen/Mistral/Llama3/Gemma) emit this
+    /// when they reach for a tool but drop the arguments envelope; it must be
+    /// suppressed as tool machinery, not surfaced as a JSON prose answer.
+    /// </summary>
+    private static bool IsFailedNativeCallAttempt(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text) || text[0] != '{')
+            return false;
+        try
+        {
+            if (JsonNode.Parse(text) is not JsonObject obj) return false;
+            var nameNode = obj["name"] ?? obj["tool"];
+            if (nameNode?.GetValueKind() != JsonValueKind.String) return false;
+            if (obj["arguments"] is JsonObject || obj["args"] is JsonObject) return false;
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
     // Agent call tag parsing
     // Format: {{agent:<name>[:temp=<X>][:seed=<Y>]:<query>}}
     // Examples:
@@ -1241,6 +1266,7 @@ private void ThrowIfDisposed()
             // duplicate what the tool itself will show). Set once, then the rest
             // of the turn is suppressed; the tool loop dispatches and regenerates.
             bool dropTurnTail = false;
+            bool suppressedFailedCall = false;
 
             // Seed think-block detection from the rendered prompt, not just the
             // generated stream. Qwen3 and DeepSeek-R1 templates embed <think>\n
@@ -1363,6 +1389,24 @@ private void ThrowIfDisposed()
                                     droppedThrough++;
                             }
                         }
+                        else if ((_toolCallFormat is ToolCallFormat.Qwen
+                                  or ToolCallFormat.Mistral
+                                  or ToolCallFormat.Llama3
+                                  or ToolCallFormat.Gemma)
+                                 && IsFailedNativeCallAttempt(jsonValue))
+                        {
+                            // A bare {"name":...} object with no "arguments" block
+                            // is a failed tool-call attempt from a small
+                            // native-JSON model (the qwen2-0.5B "Troll Troll"
+                            // shape), not a prose answer. Suppress it; the turn
+                            // then regenerates with a correction below.
+                            droppedThrough = valueEnd;
+                            while (droppedThrough < visible.Length
+                                   && (visible[droppedThrough] == '}' || visible[droppedThrough] == ']'
+                                       || char.IsWhiteSpace(visible[droppedThrough])))
+                                droppedThrough++;
+                            suppressedFailedCall = true;
+                        }
                     }
                 }
 
@@ -1401,13 +1445,28 @@ private void ThrowIfDisposed()
             {
                 string held = SanitizeToolMarkup(
                     responseText.Replace(" thinking", "").Replace("</think>", ""));
-                if (held.Length > 0)
+if (held.Length > 0)
                     yield return new ChatStreamEntry
                     {
                         Status = _inThinkBlock ? ChatStatus.Thinking : ChatStatus.Responding,
                         Token = held,
                         IsComplete = false,
                     };
+            }
+
+            // A suppressed failed tool-call attempt — a bare {"name":...} object
+            // with no "arguments" block and nothing else shown — was pure tool
+            // machinery that never became a call. Correct the model and regenerate
+            // so the user receives plain prose instead of an empty turn.
+            if (suppressedFailedCall && shownThrough == 0 && toolCallCount + 1 < MaxToolCallsPerTurn)
+            {
+                _history.Add(new ChatMessage
+                {
+                    Role = ResultRole,
+                    Content = "Your previous reply was discarded: it contained a JSON object with a \"name\" field but no \"arguments\" block, which is not a valid tool call. Do not emit any JSON. Answer the user's request directly in plain prose, as if tools did not exist."
+                });
+                InvalidateHistoryCache();
+                continue;
             }
 
             // Tool call detection. Guarded on RegisteredToolNames.Count > 0 and a known

@@ -150,6 +150,17 @@ public sealed class ToolCallFormatTests
     }
 
     [Fact]
+    public void QwenFormat_PromptDefaultsToProseWhenNoToolMatches()
+    {
+        var builder = BuilderWithNativeTool();
+        builder.CallFormat = ToolCallFormat.Qwen;
+        string prompt = builder.BuildAgentPrompt();
+        Assert.Contains("never emit a JSON object", prompt);
+        Assert.Contains("as if tools did not exist", prompt);
+        Assert.Contains("plain prose", prompt);
+    }
+
+    [Fact]
     public void QwenFormat_ExampleUsesRealRegisteredToolName()
     {
         var builder = BuilderWithNativeTool();

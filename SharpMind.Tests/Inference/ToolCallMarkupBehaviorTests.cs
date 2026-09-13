@@ -282,6 +282,32 @@ public sealed class ToolCallMarkupBehaviorTests
         Assert.Contains(entries, e => e.Status == ChatStatus.Complete);
     }
 
+    /// <summary>
+    /// The observed qwen2-0.5B failure: for a request with no matching tool the
+    /// model replies with a bare {"name":...} object that never becomes a call.
+    /// It must not reach the transcript as prose; the session corrects the model
+    /// and regenerates a plain answer instead.
+    /// </summary>
+    [Fact]
+    public async Task QwenFailedCallShape_NameWithoutArguments_IsNeverShownAndRegenerates()
+    {
+        await using var session = ScriptedSession.Create(
+            BuilderWithNativeTool(),
+            ToolCallFormat.Qwen,
+            """{"name":"Troll Troll","description":"a towering troll"}""",
+            FinalReply);
+
+        var entries = new List<ChatStreamEntry>();
+        await foreach (var e in session.GetResponseStreamAsync("make up a character name for a troll in a story"))
+            entries.Add(e);
+
+        string prose = RespondingText(entries);
+        Assert.DoesNotContain("Troll Troll", prose);
+        Assert.DoesNotContain("description", prose);
+        Assert.Contains(FinalReply, prose);
+        Assert.Contains(entries, e => e.Status == ChatStatus.Complete);
+    }
+
     [Fact]
     public async Task EnvelopeFollowedByProse_ShowsOnlyProse()
     {
