@@ -112,6 +112,31 @@ public sealed class GemmTests
         Assert.Contains("narrower", Assert.Throws<ArgumentException>(() => dev.Gemm(c, a, b, 4, 4, 4, 4, 1, 4, 1, ldc: 3)).Message);
     }
 
+    /// <summary>
+    /// Real CPU-accelerator coverage for the tiled fallback: ILGPU's CPU accelerator caps the
+    /// group size at its working-set thread count (16 here), which used to throw on the fixed 16×16
+    /// group. The tile is now picked from <c>Accelerator.MaxNumThreadsPerGroup</c>, so a preferCpu
+    /// device must compute the same product as the double reference on any machine.
+    /// </summary>
+    [Fact]
+    public void Gemm_OnCpuFallback_MatchesDoubleReference()
+    {
+        using var dev = GpuDevice.Create(preferCpu: true);
+        Assert.True(dev.IsCpuFallback, "preferCpu:true should select ILGPU's CPU accelerator.");
+        const int m = 37, n = 53, k = 29;   // deliberately not multiples of 16
+        var a = GpuTestDevice.Random(m * k, 101); var b = GpuTestDevice.Random(k * n, 102);
+        var want = new float[m * n];
+        for (int i = 0; i < m; i++) for (int j = 0; j < n; j++) { double s = 0; for (int t = 0; t < k; t++) s += (double)a[i * k + t] * b[t * n + j]; want[i * n + j] = (float)s; }
+
+        using var arena = new DeviceArena(dev, 1 << 18);
+        var da = arena.Rent(1, m * k); da.Upload(a);
+        var db = arena.Rent(1, k * n); db.Upload(b);
+        var dc = arena.Rent(m, n);
+        dev.Gemm(dc, da, db, m, n, k, saI: k, saK: 1, sbK: n, sbJ: 1);
+        dev.Synchronize();
+        GpuTestDevice.AssertClose(want, dc.ToArray(), 1e-5, "gemm cpu-fallback");
+    }
+
     /// <summary>An ldc that reaches past the destination must be caught here, not by the driver:
     /// on the cuBLAS path an out-of-bounds C write is memory corruption, not an exception.</summary>
     [Fact]

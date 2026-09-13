@@ -34,7 +34,8 @@ public sealed class GpuDevice : IDisposable
 
     private readonly Context _context;
     private readonly IntPtr _cublas;
-    private readonly Action<KernelConfig, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int, int, int, int, int, float, int> _tiled;
+    private readonly Action<KernelConfig, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int, int, int, int, int, float, int, int> _tiled;
+    private readonly int _gemmTile;
     private bool _disposed;
     private bool _tf32;
 
@@ -94,6 +95,12 @@ public sealed class GpuDevice : IDisposable
         }
     }
 
+    /// <param name="preferCpu">
+    /// Force ILGPU's CPU accelerator. This is a debug/test path, not a supported inference
+    /// backend: it is slower than the CPU engine it would run alongside. The tiled-GEMM fallback
+    /// sizes its group to the accelerator so even a small CPU accelerator works, but nothing else
+    /// is tuned for it.
+    /// </param>
     public static GpuDevice Create(bool preferCpu = false)
     {
         // EnableAlgorithms is REQUIRED on the CUDA backend: XMath's Exp/Log/Sqrt/Tanh
@@ -171,6 +178,7 @@ public sealed class GpuDevice : IDisposable
         // is not reached until the constructor has returned and _tiled/_cublas are in place.
         Kernels = new GpuKernels(this, acc);
         _tiled = GemmKernels.Load(acc);
+        _gemmTile = GemmKernels.PickTile(acc.MaxNumThreadsPerGroup);
         string blas = "tiled16";
         if (acc is CudaAccelerator cuda)
         {
@@ -230,7 +238,7 @@ public sealed class GpuDevice : IDisposable
         }
         else
         {
-            _tiled(GemmKernels.Config(m, n), c.View, a.View, b.View, m, n, k, saI, saK, sbK, sbJ, beta, ldc);
+            _tiled(GemmKernels.Config(m, n, _gemmTile), c.View, a.View, b.View, m, n, k, saI, saK, sbK, sbJ, beta, ldc, _gemmTile);
         }
     }
 
