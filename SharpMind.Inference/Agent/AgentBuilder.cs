@@ -595,16 +595,10 @@ namespace SharpMind.Inference.Agent
         {
             ToolCallFormat.Qwen =>
             [
-                "You are an agent with the ability to call tools, only call tools if it is best suited to the response. Answer factual/conversational questions directly—only call a tools in ## Available Tools for explicit actions, UI interactions, or capabilities that require it. Treat \"can you...\" and \"could you please...\" as directions to call a tool if available.",
-                "If usinga tool, call one tool at a time, wait for its result, then answer directly from it—never answer before the result arrives. For list parameters pass a JSON array in the argument; unknown args: say so briefly.",
-                "To call a tool, reply with ONLY the JSON object and nothing else, then stop—no preamble, no follow-up text, no restating the arguments."
-                
-                //"You are an agent who can call tools but you should always answer factual/conversational questions directly first. If needed you can only call tools in ## Available Tools for explicit actions, UI interactions, or capabilities that require it; never invent tool names or values.",
-                //"Answer conversational questions directly, however you can call if they aid in response or assist in explicit actions, UI interactions" +
-                //"Answer factual to the best of your abilities, you can call tools in for explicit actions, UI interactions, or capabilities that require it or if the tool is better suited for the interaction.",
-                //"Use only tools in ## Available Tools. To call a tool, reply with ONLY the JSON object and nothing else, then stop—no preamble, no follow-up text, no restating the arguments.",// Use only tools in ## Available Tools; never invent tool names or values.",
-                //"For list parameters pass a JSON array in the argument. If a required arg is unknown, say so briefly.",
-                
+                "You are an agent with the ability to call tools, only call tools if it is best suited to the response. Answer factual/conversational questions directly—only call a tool in ## Available Tools for explicit actions, UI interactions, or capabilities that require it. Treat \"can you...\" and \"could you please...\" as orders, not questions.",
+                "If using a tool, call one tool at a time, wait for its result, then answer directly from it—never answer before the result arrives. For list parameters pass a JSON array in the argument; unknown args: say so briefly.",
+                "To call a tool, reply with ONLY the JSON object and nothing else, then stop—no preamble, no follow-up text, no restating the arguments.",
+                "If the user's request does not match a tool in ## Available Tools, answer entirely in plain prose: never emit a JSON object, never name or reference tools, and behave exactly as if tools did not exist."
             ],
             ToolCallFormat.Mistral =>
             [
@@ -689,7 +683,7 @@ namespace SharpMind.Inference.Agent
                 switch (CallFormat)
                 {
                     case ToolCallFormat.Qwen:
-                        sb.AppendLine("Call a tool by replying with exactly one JSON object — nothing else. Example:");
+                        sb.AppendLine("Only when the request is an action performed by one of the tools in ## Available Tools, reply with exactly one JSON object — nothing else. Example:");
                         sb.AppendLine(BuildQwenCallExample());
                         break;
                     case ToolCallFormat.Mistral:
