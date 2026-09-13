@@ -12,6 +12,13 @@ public abstract class InferenceLinearLayer : LinearLayer
 
     public byte[]? RawQuantizedData { get; set; }
     public readonly QuantDType QuantDtype;
+    private readonly Q8_0WideWeights.Cache _wide = new();
+
+    /// <summary>
+    /// Set by <see cref="LinearLayerFactory"/> when the selected kernel is the parallel FMA Q8_0 one,
+    /// which <see cref="Q8_0WideWeights"/> stands in for; serial or lower-tier selections keep their kernel.
+    /// </summary>
+    public bool WideAllowed { get; internal set; }
 
     protected InferenceLinearLayer(string name, int inFeatures, int outFeatures, bool bias, Tensor<float>? weight, Tensor<float>? biasTensor, QuantDType quantDType)
         // Forward reads RawQuantizedData, never the float weight, so a null weight
@@ -168,9 +175,17 @@ public abstract class InferenceLinearLayer : LinearLayer
 
         if (RawQuantizedData is not null)
         {
-            fixed (byte* pRaw = RawQuantizedData)
+            if (WideAllowed && Q8_0WideWeights.Enabled &&
+                _wide.Get(RawQuantizedData, InFeatures, OutFeatures) is { } wide)
             {
-                QuantizedMatMulFn(flat.DataPtr, pRaw, result.DataPtr, m, InFeatures, OutFeatures);
+                wide.MatMul(flat.DataPtr, result.DataPtr, m);
+            }
+            else
+            {
+                fixed (byte* pRaw = RawQuantizedData)
+                {
+                    QuantizedMatMulFn(flat.DataPtr, pRaw, result.DataPtr, m, InFeatures, OutFeatures);
+                }
             }
         }
         else if (QuantDtype == QuantDType.F32 && _weight.ElementCount == (long)InFeatures * OutFeatures)

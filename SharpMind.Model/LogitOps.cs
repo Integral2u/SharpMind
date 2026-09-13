@@ -12,6 +12,10 @@ public abstract class LogitOps(Tensor<float> projectionWeight, byte[]? rawWeight
 
     protected readonly Tensor<float> ProjectionWeight = projectionWeight;
     protected readonly byte[]? RawWeight = rawWeight;
+    private readonly Q8_0WideWeights.Cache _wide = new();
+
+    /// <summary>Set by <see cref="LogitOpsFactory"/> when the selected kernel is the parallel FMA Q8_0 one.</summary>
+    public bool WideAllowed { get; internal set; }
 
     [PuzzleCornerPiece(SharpMindConfig.KeyLogit, true, null,
         "q8_0_serial_fma",    $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulQ8_0_Serial_FMA)}",
@@ -153,7 +157,13 @@ public abstract class LogitOps(Tensor<float> projectionWeight, byte[]? rawWeight
         fixed (float* pInput = input.Data)
         fixed (float* pOutput = result.Data)
         {
-            if (RawWeight != null)
+            if (WideAllowed && Q8_0WideWeights.Enabled && RawWeight != null &&
+                _wide.Get(RawWeight, K, N) is { } wide &&
+                wide.InFeatures == K && wide.OutFeatures == N)
+            {
+                wide.MatMul(pInput, pOutput, M);
+            }
+            else if (RawWeight != null)
             {
                 fixed (byte* pRaw = RawWeight)
                 {
