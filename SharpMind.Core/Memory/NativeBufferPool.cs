@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Numerics;
 using System.Runtime.InteropServices;
 
 namespace SharpMind.Core.Memory;
@@ -9,8 +10,9 @@ public static class NativeBufferPoolConfig
     public static long MaxTotalMemoryMB { get; set; } = 512;
     public static long TotalMemoryUsed => Interlocked.Read(ref _totalMemoryUsed);
     private static long _totalMemoryUsed;
-    internal static void OnAllocate(int byteSize) => Interlocked.Add(ref _totalMemoryUsed, byteSize);
-    internal static void OnFree(int byteSize) => Interlocked.Add(ref _totalMemoryUsed, -byteSize);
+    // long: a 2^29-element float buffer is 2^31 bytes, which wrapped the counter negative as int.
+    internal static void OnAllocate(long byteSize) => Interlocked.Add(ref _totalMemoryUsed, byteSize);
+    internal static void OnFree(long byteSize) => Interlocked.Add(ref _totalMemoryUsed, -byteSize);
 }
 
 public static class NativeBufferPool<T> where T : unmanaged
@@ -52,7 +54,7 @@ public static class NativeBufferPool<T> where T : unmanaged
         }
 
         var newBuffer = new NativeBuffer<T>(bucketSize);
-        NativeBufferPoolConfig.OnAllocate(bucketSize * sizeof(T));
+        NativeBufferPoolConfig.OnAllocate((long)bucketSize * sizeof(T));
         return newBuffer;
     }
 
@@ -61,10 +63,10 @@ public static class NativeBufferPool<T> where T : unmanaged
         if (buffer is null) return;
 
         int bucketSize = buffer.Length;
-        int byteSize = bucketSize * sizeof(T);
+        long byteSize = (long)bucketSize * sizeof(T);
         long maxBytes = NativeBufferPoolConfig.MaxTotalMemoryMB * 1024 * 1024;
 
-        if (bucketSize <= 1024 * 1024)
+        if (bucketSize <= MaxPooledLength)
         {
             var bucket = _buckets.GetOrAdd(bucketSize, _ => new Bucket());
             // Reserve the bucket slot first, then check whether the
@@ -125,7 +127,7 @@ public static class NativeBufferPool<T> where T : unmanaged
             {
                 long byteLen = (long)buf.Length * sizeof(T);
                 buf.Free();
-                NativeBufferPoolConfig.OnFree((int)byteLen);
+                NativeBufferPoolConfig.OnFree(byteLen);
             }
             bucket.Count = 0;
             bucket.Memory = 0;
@@ -133,11 +135,19 @@ public static class NativeBufferPool<T> where T : unmanaged
         _buckets.Clear();
     }
 
+    /// <summary>Largest element count <see cref="Return"/> keeps for reuse; bigger buffers are freed on return.</summary>
+    public const int MaxPooledLength = 1 << 20;
+
+    /// <summary>
+    /// Poolable sizes round up to a power of two so similar requests share a bucket. A buffer above
+    /// <see cref="MaxPooledLength"/> is never kept, so rounding it would only allocate and zero up to
+    /// twice the memory for nothing (431 MB on Qwen3-0.6B's embedding table) — and doubling an int
+    /// past 2^30 overflowed to zero and looped forever. Those sizes are allocated exactly.
+    /// </summary>
     public static int GetBucket(int length)
     {
         if (length <= 0) return 0;
-        int bucket = 1;
-        while (bucket < length) bucket <<= 1;
-        return bucket;
+        if (length > MaxPooledLength) return length;
+        return (int)BitOperations.RoundUpToPowerOf2((uint)length);
     }
 }
