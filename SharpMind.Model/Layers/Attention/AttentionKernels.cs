@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
 using SharpMind.Core;
@@ -320,6 +321,15 @@ public static class AttentionKernels
         }
     }
 
+    /// <summary>
+    /// FMA attention for one head. Scores come eight keys per pass: one query load feeds eight
+    /// accumulators whose key loads fold into the FMA memory operands, so the key strip streams
+    /// eight rows at a time. The softmax runs over the whole row with <see cref="Vector256.Exp"/>
+    /// (the online form's per-key MathF.Exp cost ~1.8 ns an element against ~0.4), and values
+    /// accumulate four rows per pass. softmax(s)_j = exp(s_j - max s) / sum, as before up to rounding.
+    /// Techniques from pulsarforge (MIT, github.com/siris9476/pulsarforge: attn_q8_group,
+    /// dotq8i_x8, axpyq8_x4), here in float.
+    /// </summary>
     public static unsafe void ScaledDotProductFlashFMA(
         float* q, float* k, float* v, float* output,
         int seqLen, int kvLen, int headDim, float scale, bool causal,
@@ -329,91 +339,155 @@ public static class AttentionKernels
             throw new ArgumentOutOfRangeException(nameof(headDim),
                 $"headDim {headDim} exceeds FlashMaxHeadDim {FlashMaxHeadDim}.");
 
-        float* tileScores = stackalloc float[FlashTileSize];
-        int queryBase = causal ? kvLen - seqLen : 0;
-
-        for (int i = 0; i < seqLen; i++)
+        EnsureScoreBuffer(kvLen);
+        fixed (float* scores = t_ScoreScratch!)
         {
-            float* qi = q + (long)i * qStride;
-            int absQPos = queryBase + i;
-            int kvOffset = 0;
-            int effKvLen = causal ? Math.Min(absQPos + 1, kvLen) : kvLen;
-            if (windowSize > 0) { kvOffset = Math.Max(0, absQPos - windowSize + 1); effKvLen -= kvOffset; }
-
-            float mMax = float.NegativeInfinity;
-            float lSum = 0f;
-            float* pO = output + (long)i * oStride;
-            for (int d = 0; d < headDim; d++) pO[d] = 0f;
-
-            for (int start = 0; start < effKvLen; start += FlashTileSize)
+            int queryBase = causal ? kvLen - seqLen : 0;
+            int hd8 = headDim & ~7;
+            var vScale = Vector256.Create(scale);
+            for (int i = 0; i < seqLen; i++)
             {
-                int end = Math.Min(start + FlashTileSize, effKvLen);
-                int tileLen = end - start;
+                float* qi = q + (long)i * qStride;
+                int absQPos = queryBase + i;
+                int kvOffset = 0;
+                int effKvLen = causal ? Math.Min(absQPos + 1, kvLen) : kvLen;
+                if (windowSize > 0) { kvOffset = Math.Max(0, absQPos - windowSize + 1); effKvLen -= kvOffset; }
 
-                float tileMax = float.NegativeInfinity;
-                for (int j = start; j < end; j++)
+                float* pO = output + (long)i * oStride;
+                new Span<float>(pO, headDim).Clear();
+                if (effKvLen <= 0) continue;
+                float* kb = k + (long)kvOffset * headDim;
+                float* vb = v + (long)kvOffset * headDim;
+
+                int j = 0;
+                for (; j + 8 <= effKvLen; j += 8)
+                    DotEightKeys(qi, kb + (long)j * headDim, headDim, scores + j);
+                for (; j < effKvLen; j++)
+                    scores[j] = DotOneKey(qi, kb + (long)j * headDim, headDim);
+
+                float max = float.NegativeInfinity;
+                if (alibiSlope == 0f)
                 {
-                    float* kj = k + (long)(kvOffset + j) * headDim;
-                    var acc = Vector256<float>.Zero;
-                    int d = 0;
-                    for (; d <= headDim - 8; d += 8)
-                        acc = Fma.MultiplyAdd(Vector256.LoadUnsafe(ref qi[d]),
-                                              Vector256.LoadUnsafe(ref kj[d]), acc);
-                    float dot = MathHelpers.HSum256_Avx(acc);
-                    for (; d < headDim; d++) dot += qi[d] * kj[d];
-                    dot = dot * scale - alibiSlope * (absQPos - kvOffset - j);
-                    tileScores[j - start] = dot;
-                    if (dot > tileMax) tileMax = dot;
+                    var vMax = Vector256.Create(float.NegativeInfinity);
+                    for (j = 0; j + 8 <= effKvLen; j += 8)
+                    {
+                        var s = Avx.Multiply(Avx.LoadVector256(scores + j), vScale);
+                        Avx.Store(scores + j, s);
+                        vMax = Avx.Max(vMax, s);
+                    }
+                    var m4 = Sse.Max(vMax.GetLower(), vMax.GetUpper());
+                    m4 = Sse.Max(m4, Sse.MoveHighToLow(m4, m4));
+                    max = MathF.Max(m4.ToScalar(), m4.GetElement(1));
+                    for (; j < effKvLen; j++)
+                    {
+                        scores[j] *= scale;
+                        if (scores[j] > max) max = scores[j];
+                    }
+                }
+                else
+                {
+                    for (j = 0; j < effKvLen; j++)
+                    {
+                        float s = scores[j] * scale - alibiSlope * (absQPos - kvOffset - j);
+                        scores[j] = s;
+                        if (s > max) max = s;
+                    }
                 }
 
-                float newMax = MathF.Max(mMax, tileMax);
-                float scaleOld = MathF.Exp(mMax - newMax);
-                float scaleNew = 0f;
-                for (int t = 0; t < tileLen; t++)
+                var vMaxScore = Vector256.Create(max);
+                var expSum = Vector256<float>.Zero;
+                for (j = 0; j + 8 <= effKvLen; j += 8)
                 {
-                    tileScores[t] = MathF.Exp(tileScores[t] - newMax);
-                    scaleNew += tileScores[t];
+                    var e = Vector256.Exp(Avx.Subtract(Avx.LoadVector256(scores + j), vMaxScore));
+                    Avx.Store(scores + j, e);
+                    expSum = Avx.Add(expSum, e);
                 }
-
-                float newL = scaleOld * lSum + scaleNew;
-                var vScaleOld = Vector256.Create(scaleOld);
-                int d0 = 0;
-                for (; d0 <= headDim - 8; d0 += 8)
-                    Vector256.StoreUnsafe(
-                        Avx.Multiply(Vector256.LoadUnsafe(ref pO[d0]), vScaleOld),
-                        ref pO[d0]);
-                for (; d0 < headDim; d0++)
-                    pO[d0] *= scaleOld;
-                for (int t = 0; t < tileLen; t++)
+                float sum = Vector256.Sum(expSum);
+                for (; j < effKvLen; j++)
                 {
-                    float* vj = v + (long)(kvOffset + start + t) * headDim;
-                    var vSm = Vector256.Create(tileScores[t]);
+                    scores[j] = MathF.Exp(scores[j] - max);
+                    sum += scores[j];
+                }
+                if (!(sum > 0f)) continue;   // NaN scores: leave the row zero rather than spread NaN
+                float inv = 1f / sum;
+
+                for (j = 0; j + 4 <= effKvLen; j += 4)
+                {
+                    float w0 = scores[j] * inv, w1 = scores[j + 1] * inv, w2 = scores[j + 2] * inv, w3 = scores[j + 3] * inv;
+                    float* v0 = vb + (long)j * headDim, v1 = v0 + headDim, v2 = v1 + headDim, v3 = v2 + headDim;
+                    var c0 = Vector256.Create(w0);
+                    var c1 = Vector256.Create(w1);
+                    var c2 = Vector256.Create(w2);
+                    var c3 = Vector256.Create(w3);
                     int d = 0;
-                    for (; d <= headDim - 8; d += 8)
-                        Vector256.StoreUnsafe(
-                            Fma.MultiplyAdd(Vector256.LoadUnsafe(ref vj[d]), vSm,
-                                            Vector256.LoadUnsafe(ref pO[d])),
-                            ref pO[d]);
+                    for (; d < hd8; d += 8)
+                    {
+                        var o = Avx.LoadVector256(pO + d);
+                        o = Fma.MultiplyAdd(Avx.LoadVector256(v0 + d), c0, o);
+                        o = Fma.MultiplyAdd(Avx.LoadVector256(v1 + d), c1, o);
+                        o = Fma.MultiplyAdd(Avx.LoadVector256(v2 + d), c2, o);
+                        o = Fma.MultiplyAdd(Avx.LoadVector256(v3 + d), c3, o);
+                        Avx.Store(pO + d, o);
+                    }
                     for (; d < headDim; d++)
-                        pO[d] += tileScores[t] * vj[d];
+                        pO[d] += w0 * v0[d] + w1 * v1[d] + w2 * v2[d] + w3 * v3[d];
                 }
-                mMax = newMax;
-                lSum = newL;
+                for (; j < effKvLen; j++)
+                {
+                    float w = scores[j] * inv;
+                    float* vj = vb + (long)j * headDim;
+                    var c = Vector256.Create(w);
+                    int d = 0;
+                    for (; d < hd8; d += 8)
+                        Avx.Store(pO + d, Fma.MultiplyAdd(Avx.LoadVector256(vj + d), c, Avx.LoadVector256(pO + d)));
+                    for (; d < headDim; d++)
+                        pO[d] += w * vj[d];
+                }
             }
-
-            if (lSum > 0f)
-            {
-                var vLSum = Vector256.Create(lSum);
-                int d = 0;
-                for (; d <= headDim - 8; d += 8)
-                    Vector256.StoreUnsafe(
-                        Avx.Divide(Vector256.LoadUnsafe(ref pO[d]), vLSum),
-                        ref pO[d]);
-                for (; d < headDim; d++) pO[d] /= lSum;
-            }
-            else
-                for (int d = 0; d < headDim; d++) pO[d] = 0f;
         }
+    }
+
+    /// <summary>Eight query·key dot products; each key load folds into its FMA's memory operand.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static unsafe void DotEightKeys(float* q, float* k0, int headDim, float* out8)
+    {
+        float* k1 = k0 + headDim, k2 = k1 + headDim, k3 = k2 + headDim;
+        float* k4 = k3 + headDim, k5 = k4 + headDim, k6 = k5 + headDim, k7 = k6 + headDim;
+        var a0 = Vector256<float>.Zero; var a1 = a0; var a2 = a0; var a3 = a0;
+        var a4 = a0; var a5 = a0; var a6 = a0; var a7 = a0;
+        int d = 0;
+        for (; d + 8 <= headDim; d += 8)
+        {
+            var vq = Avx.LoadVector256(q + d);
+            a0 = Fma.MultiplyAdd(vq, Avx.LoadVector256(k0 + d), a0);
+            a1 = Fma.MultiplyAdd(vq, Avx.LoadVector256(k1 + d), a1);
+            a2 = Fma.MultiplyAdd(vq, Avx.LoadVector256(k2 + d), a2);
+            a3 = Fma.MultiplyAdd(vq, Avx.LoadVector256(k3 + d), a3);
+            a4 = Fma.MultiplyAdd(vq, Avx.LoadVector256(k4 + d), a4);
+            a5 = Fma.MultiplyAdd(vq, Avx.LoadVector256(k5 + d), a5);
+            a6 = Fma.MultiplyAdd(vq, Avx.LoadVector256(k6 + d), a6);
+            a7 = Fma.MultiplyAdd(vq, Avx.LoadVector256(k7 + d), a7);
+        }
+        out8[0] = Vector256.Sum(a0); out8[1] = Vector256.Sum(a1); out8[2] = Vector256.Sum(a2); out8[3] = Vector256.Sum(a3);
+        out8[4] = Vector256.Sum(a4); out8[5] = Vector256.Sum(a5); out8[6] = Vector256.Sum(a6); out8[7] = Vector256.Sum(a7);
+        for (; d < headDim; d++)
+        {
+            float qd = q[d];
+            out8[0] += qd * k0[d]; out8[1] += qd * k1[d]; out8[2] += qd * k2[d]; out8[3] += qd * k3[d];
+            out8[4] += qd * k4[d]; out8[5] += qd * k5[d]; out8[6] += qd * k6[d]; out8[7] += qd * k7[d];
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static unsafe float DotOneKey(float* q, float* kj, int headDim)
+    {
+        var acc = Vector256<float>.Zero;
+        int d = 0;
+        for (; d + 8 <= headDim; d += 8)
+            acc = Fma.MultiplyAdd(Avx.LoadVector256(q + d), Avx.LoadVector256(kj + d), acc);
+        float dot = Vector256.Sum(acc);
+        for (; d < headDim; d++) dot += q[d] * kj[d];
+        return dot;
     }
 
     public static unsafe void ScaledDotProductFlashScalar(
