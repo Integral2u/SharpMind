@@ -75,4 +75,46 @@ public sealed class NativeBufferPoolTests
             NativeBufferPoolConfig.MaxTotalMemoryMB = savedCap;
         }
     }
+
+    /// <summary>
+    /// Only buffers up to the pool's retention limit are ever reused, so only they gain anything
+    /// from sharing a power-of-two bucket. A larger buffer is freed on return; rounding it up used
+    /// to allocate and zero up to twice the requested memory for nothing — 431 MB of slack on
+    /// Qwen3-0.6B's embedding table alone.
+    /// </summary>
+    [Theory]
+    [InlineData(1, 1)]
+    [InlineData(1_000, 1_024)]
+    [InlineData(1_048_576, 1_048_576)]
+    [InlineData(1_048_577, 1_048_577)]
+    [InlineData(155_582_464, 155_582_464)]
+    public void GetBucket_RoundsPoolableSizes_AndKeepsLargerSizesExact(int length, int expected)
+        => Assert.Equal(expected, NativeBufferPool<float>.GetBucket(length));
+
+    /// <summary>
+    /// Doubling an int from 1 to reach a length above 2^30 overflowed to a negative value, then to
+    /// zero, and looped forever — a hang on any tensor above 1.07 billion elements (a 152k-vocab
+    /// embedding at hidden size 8192).
+    /// </summary>
+    [Fact]
+    public void GetBucket_AboveTwoToThe30_Returns()
+    {
+        int length = (1 << 30) + 1;
+        var call = Task.Run(() => NativeBufferPool<float>.GetBucket(length));
+        Assert.True(call.Wait(TimeSpan.FromSeconds(5)), "GetBucket did not return for a length above 2^30");
+        Assert.Equal(length, call.Result);
+    }
+
+    [Fact]
+    public void Rent_AboveTheRetentionLimit_IsExactlySized_AndNotRetained()
+    {
+        var first = NativeBufferPool<double>.Rent(1_500_001);
+        Assert.Equal(1_500_001, first.Length);
+        first.Dispose();
+
+        // Freed on return rather than pooled: the same request gets a fresh buffer.
+        using var second = NativeBufferPool<double>.Rent(1_500_001);
+        Assert.NotSame(first, second);
+        Assert.Equal(1_500_001, second.Length);
+    }
 }
