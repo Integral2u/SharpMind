@@ -338,6 +338,11 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
         }
         int count = (int)longCount;
 
+        // A block tensor with no float target (a quantized-resident load keeps only its raw bytes)
+        // has nothing to dequantize into, so skip the dequant, as GgufLoader does.
+        var blockFloatTarget = target == null && block != null ? weights.ResolveFloatTarget(entry.Name) : null;
+        if (target == null && blockFloatTarget == null) return;
+
         float[] buffer = MemoryHelpers.RentArray<float>(count);
         try
         {
@@ -354,7 +359,7 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
             }
             else if (block != null)
             {
-                var floatTarget = weights.ResolveFloatTarget(entry.Name);
+                var floatTarget = blockFloatTarget;
                 if (floatTarget != null)
                 {
                     if (entry.Shape.Length == 2)
