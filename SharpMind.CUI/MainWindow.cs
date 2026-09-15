@@ -1,3 +1,4 @@
+using System.Runtime;
 using NStack;
 using SharpMind.CUI.App;
 using SharpMind.Core.Quantization;
@@ -1080,15 +1081,15 @@ public sealed class MainWindow : Window
                 Application.MainLoop.Invoke(() => progressView.SetMessage("Starting session..."));
             }
 
-            // disposeUnderlyingSession defaults to false here regardless of
-            // generator/debug mode — the actual decision is made later, in
-            // CloseSession, once ModelCache.Release knows whether this was the
-            // last session sharing its model. Debug sessions have no
-            // ChatSessionBridge at all (DebugChatBridge doesn't share this
-            // concern, since there's no real Transformer underneath it).
+            // Debug sessions have no ChatSessionBridge at all (DebugChatBridge
+            // doesn't share this concern, since there's no real Transformer
+            // underneath it). Real sessions are always fully disposed on close;
+            // whether the shared Transformer is disposed too is decided in
+            // CloseSession once ModelCache.Release has answered "was this the
+            // last session sharing its model?".
             IChatBridge bridge = result.IsDebugMode
                 ? new DebugChatBridge(result.CuiContext!, gate.BuildCallback(launchOptions, embedded?.ToolNames)) { UserName = launchOptions.UserName }
-                : new ChatSessionBridge(result.Session!, disposeUnderlyingSession: false) { UserName = launchOptions.UserName };
+                : new ChatSessionBridge(result.Session!) { UserName = launchOptions.UserName };
 
             if (bridge is ChatSessionBridge realBridge) realBridge.Start();
 
@@ -1104,6 +1105,7 @@ public sealed class MainWindow : Window
                 Options = launchOptions,
                 Bridge = bridge,
                 View = chatView,
+                LoadedModel = loaded,
                 SourceFilePath = launchOptions.SourceFilePath
             };
             chatView.SessionDisplayName = state.DisplayName;
@@ -1141,26 +1143,26 @@ public sealed class MainWindow : Window
     }
 
     /// <summary>
-    /// Closes one session and removes it from the list. Whether this also
-    /// disposes the underlying model depends entirely on ModelCache's ref
-    /// count — see ChatSessionBridge's DisposeUnderlyingSession doc comment
-    /// for why disposing a ChatSession that shares a Transformer with a
-    /// still-open sibling would corrupt that sibling, and why this decision
-    /// can only be made here, once ModelCache.Release has actually answered
-    /// "was this the last one?".
+    /// Closes one session and removes it from the list. The session's own
+    /// runtime (generator, KV caches, accelerator engine) is always disposed.
+    /// Whether the shared Transformer is disposed too depends entirely on
+    /// ModelCache's ref count: only the last session using a model frees it,
+    /// and only after the bridge has cancelled and awaited the generation
+    /// loop, so a still-open sibling can never race the disposal. The answer
+    /// can only be computed here, once ModelCache.Release has actually
+    /// answered "was this the last one?".
     /// </summary>
     private async void CloseSession(ChatSessionState state)
     {
         bool wasCurrent = _currentSession == state;
         _sessions.Remove(state);
         _activePermissionGates.Remove(state.Id);
+
+        bool wasLastUser = false;
         try
         {
-            bool isRealModelSession = state.Options.Generator != GeneratorStrategy.UIDebug;
-            bool wasLastUser = isRealModelSession && _modelCache.Release(state.Options);
-
-            if (state.Bridge is ChatSessionBridge realBridge)
-                realBridge.DisposeUnderlyingSession = wasLastUser;
+            if (state.Options.Generator != GeneratorStrategy.UIDebug)
+                wasLastUser = _modelCache.Release(state.Options);
 
             await state.Bridge.DisposeAsync();
             state.View.Dispose();
@@ -1171,6 +1173,25 @@ public sealed class MainWindow : Window
         }
         finally
         {
+            // Free the shared Transformer only when this session was its last
+            // user. Done in finally (rather than the try) so an error while
+            // unwinding the session can never strand the model's weight memory.
+            if (wasLastUser && state.LoadedModel is { } lm)
+                lm.Model.Dispose();
+
+            // The raw quantized weight data is managed LOH byte[] — native
+            // tensors drop the working set on dispose, but the LOH segments
+            // that held a model's raw weights stay resident until a compacting
+            // collection. A model unload is exactly the right moment to pay
+            // for that: without it every create/close cycle ratchets process
+            // memory up by ~one model footprint even though nothing is leaking.
+            if (wasLastUser)
+            {
+                GCSettings.LargeObjectHeapCompactionMode = GCLargeObjectHeapCompactionMode.CompactOnce;
+                GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
+                GC.WaitForPendingFinalizers();
+            }
+
             if (wasCurrent)
             {
                 _currentSession = _sessions.Count > 0 ? _sessions[0] : null;

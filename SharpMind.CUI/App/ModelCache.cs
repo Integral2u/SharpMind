@@ -15,12 +15,13 @@ namespace SharpMind.CUI.App;
 /// load/unload state.
 ///
 /// The one constraint that shapes this whole class:
-/// <c>ChatSession</c> does NOT dispose the Transformer it was built on by
-/// default (disposeModel defaults to false), so a session may safely end
-/// while siblings still use the shared model. The model is only disposed
-/// when the last session using it closes — the caller decides that via
-/// <see cref="Release"/>'s ref count and passes the answer on as the
-/// bridge's DisposeUnderlyingSession flag.
+/// <c>ChatSession</c> does NOT dispose the Transformer it was built on
+/// (ChatSession is created with disposeModel=false), so a session may safely
+/// end while siblings still use the shared model. The model is disposed when
+/// the last session using it closes: <see cref="Release"/> answers "was this
+/// the last user?" via ref counting, and the caller (MainWindow.CloseSession)
+/// disposes the Transformer from its chat-session state once that answer is
+/// yes.
 /// </summary>
 public sealed class ModelCache
 {
@@ -53,10 +54,9 @@ public sealed class ModelCache
     /// Called when a chat session built on this model is closing. Decrements
     /// the ref count; if this was the last session using it, removes it from
     /// the cache and returns true so the caller knows it's now safe (and
-    /// necessary) to actually dispose the underlying ChatSession — which
-    /// will, per the constraint above, dispose the Transformer too. If other
-    /// sessions are still using it, returns false: the caller must drop its
-    /// ChatSession reference without disposing it.
+    /// necessary) to dispose the model's Transformer. If other sessions are
+    /// still using it, returns false: the caller disposes only the session's
+    /// own runtime and leaves the shared Transformer alive.
     ///
     /// Streaming mode sessions are never cached — returns true immediately
     /// so the caller always disposes its own session and Transformer.

@@ -52,7 +52,7 @@ public interface IChatBridge : IAsyncDisposable
 /// callback gymnastics, no rewriting ChatSession's loop shape — just a
 /// thread boundary in the one place it's actually needed.
 /// </summary>
-public sealed class ChatSessionBridge(IChatSession session, bool disposeUnderlyingSession = true) : IChatBridge
+public sealed class ChatSessionBridge(IChatSession session) : IChatBridge
 {
     public string UserName { get; set; } = "User";
     private readonly ConcurrentQueue<ChatStreamEntry> _incoming = new();
@@ -69,17 +69,6 @@ public sealed class ChatSessionBridge(IChatSession session, bool disposeUnderlyi
     public ChatArtifact[]? LastArtifacts => _lastArtifacts;
 
     public IChatPromptFormatter? Formatter => session.Formatter;
-
-    /// <summary>
-    /// Whether DisposeAsync should actually dispose the underlying
-    /// ChatSession (and, through it, the shared Transformer) or just unwind
-    /// this bridge's own loop and leave the session object alone. Mutable
-    /// rather than fixed at construction, specifically so the caller can
-    /// decide this right before closing, once ModelCache.Release has
-    /// answered "was this the last session using that model?" — that answer
-    /// usually isn't known yet when the bridge is first created.
-    /// </summary>
-    public bool DisposeUnderlyingSession { get; set; } = disposeUnderlyingSession;
 
     public void Start()
     {
@@ -184,17 +173,14 @@ public sealed class ChatSessionBridge(IChatSession session, bool disposeUnderlyi
             try { await _loopTask; } catch { /* already surfaced via Fault if relevant */ }
         }
 
-        // ChatSession no longer disposes the Transformer it was built on by
-        // default (disposeModel defaults to false), but DisposeUnderlyingSession
-        // here still controls whether the underlying session object is unwound at
-        // all. When a model is shared across multiple named chat sessions (see
-        // ModelCache), only the session that closes last may actually call
-        // DisposeAsync — every earlier one must skip it entirely, or closing one
-        // tab would destroy the model out from under siblings still using it. The
-        // caller (MainWindow) decides this via ref counting and passes the answer
-        // in at construction time.
-        if (DisposeUnderlyingSession)
-            await session.DisposeAsync();
+        // Always unwind the underlying session's own runtime — generator, KV
+        // caches, and any accelerator engine. This is per-session state and
+        // must go even when a sibling session still uses the same shared
+        // model. The shared Transformer is NOT disposed here: ChatSession was
+        // built with disposeModel=false, so ownership stays with ModelCache,
+        // and the caller (MainWindow.CloseSession) disposes it only when
+        // ModelCache.Release reports this session was its last user.
+        await session.DisposeAsync();
 
         _cts.Dispose();
         _inputReady.Dispose();

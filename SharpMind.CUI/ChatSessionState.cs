@@ -18,6 +18,15 @@ public sealed class ChatSessionState
     public required ChatView View { get; init; }
 
     /// <summary>
+    /// The model this session was launched on, when it is one owned by
+    /// <see cref="ModelCache"/> (shared across sessions). Kept so
+    /// <c>CloseSession</c> can dispose the shared Transformer exactly once,
+    /// when <c>ModelCache.Release</c> reports this session was the last user.
+    /// Null for debug sessions, which have no real model.
+    /// </summary>
+    public LoadedModel? LoadedModel { get; init; }
+
+    /// <summary>
     /// Path to the JSON file this session was last saved to / loaded from,
     /// or null when the session has never been persisted. Used by
     /// SaveCurrentSession to decide whether to overwrite in place or offer

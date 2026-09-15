@@ -541,6 +541,12 @@ public sealed class Transformer : IDisposable
         _finalNorm.Dispose();
         _visionEncoder?.Dispose();
         _audioEncoder?.Dispose();
+        // The architecture, norms and embedding table borrow their weight
+        // tensors — the actual owners are the TransformerWeights (embedding,
+        // LM head, every block). Without this the model's weight memory was
+        // only reclaimed by a finalizer-driven GC pass, which a CUI that
+        // loads/unloads models repeatedly can wait a long time for.
+        _weights.Dispose();
     }
 
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, nameof(Transformer));

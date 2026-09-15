@@ -82,6 +82,13 @@ public abstract class TransformerWeights : IDisposable
             FinalNormBias?.Dispose();
             PositionEmbedding?.Dispose();
             foreach (var block in Blocks) block.Dispose();
+            // Drop the raw quantized byte[] references so the GC can reclaim
+            // them the moment the owning graph is unreachable. They are LOH
+            // data (one model's quantized weights can be hundreds of MB to
+            // gigabytes); leaving them referenced until a rare compaction
+            // ratchets process memory by ~one model footprint per unload.
+            RawEmbedding = null;
+            RawLmHead = null;
         }
     }
 
@@ -541,6 +548,15 @@ else
             DisposeDict(WgateExp); DisposeDict(WgateExpBias);
             DisposeDict(WupExp); DisposeDict(WupExpBias);
             DisposeDict(WdownExp); DisposeDict(WdownExpBias);
+            // Null the raw quantized byte[] references too — same rationale as
+            // TransformerWeights.Dispose: these can be a model's entire weight
+            // footprint in LOH data, and leaving the references rooted in the
+            // (now-unreachable) blocks delays reclamation until a compaction.
+            RawWq = null; RawWk = null; RawWv = null; RawWo = null;
+            RawWgate = null; RawWup = null; RawWf1 = null; RawWf2 = null;
+            RawWScIn = null; RawWScOut = null;
+            RawRouter = null;
+            RawWgateExp = null; RawWupExp = null; RawWdownExp = null;
         }
 
         private static void DisposeDict(Dictionary<int, Tensor<float>>? dict)
