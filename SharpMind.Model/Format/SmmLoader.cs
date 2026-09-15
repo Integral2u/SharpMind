@@ -270,11 +270,11 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
         TransformerWeights weights, SmmFileIndex index,
         Stream stream, SmmTensorIndexEntry entry)
     {
-        var (target, block, rawField) = weights.ResolveTarget(entry.Name);
+        // The untied output head keeps only its raw bytes (see GgufLoader.LoadSingleTensor).
+        bool isLmHead = !entry.Name.Contains("blk.") && entry.Name.Contains("output.weight");
+        var (target, block, rawField) = isLmHead ? default : weights.ResolveTarget(entry.Name);
 
-        // Must create LmHeadWeight BEFORE the early-return check below (see
-        // GgufLoader for the rationale).
-        if (!entry.Name.Contains("blk.") && entry.Name.Contains("output.weight") && weights.LmHeadWeight == null)
+        if (isLmHead && !weights.HasLmHead)
         {
             // The input dim is whichever shape entry is not the vocab size — our own
             // exports declare [vocab, in], canonical GGUF-derived files [in, vocab].
@@ -282,11 +282,10 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
             if (entry.Shape.Length > 1 && ggufIn == _config.VocabSize) ggufIn = entry.Shape[1];
             int lmRows = TensorLoadHelper.CheckedInt(_config.VocabSize, "VocabSize for LmHead");
             int lmCols = TensorLoadHelper.CheckedInt(ggufIn, "LmHead input dim");
-            weights.SetLmHead(new Tensor<float>(lmRows, lmCols));
-            (target, block, rawField) = weights.ResolveTarget(entry.Name);
+            weights.SetLazyLmHead(() => DequantizeLmHead(weights, lmRows, lmCols, entry.Shape));
         }
 
-        if (target == null && block == null) return;
+        if (target == null && block == null && !isLmHead) return;
 
         long rawSize = QuantizationOps.GetRawTensorByteCount(entry.Shape, entry.Dtype);
         if (rawSize <= 0) return;
@@ -294,9 +293,9 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
         byte[] rawBytes = ReadTensorBytes(stream, index, entry, rawSize);
 
         // Record tensor metadata and top-level dtypes (consumed by SetWeights later)
-        if (target != null && block == null)
+        if ((isLmHead || target != null) && block == null)
         {
-            if (target == weights.LmHeadWeight) weights.RawLmHeadDtype = entry.Dtype;
+            if (isLmHead) weights.RawLmHeadDtype = entry.Dtype;
             else if (target == weights.EmbeddingWeight) weights.RawEmbeddingDtype = entry.Dtype;
         }
         if (block != null && rawField != null)
@@ -306,7 +305,7 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
         if (block != null && rawField != null)
             SetRawField(block, rawField, rawBytes, entry.Dtype);
 
-        if (target != null && block == null)
+        if ((isLmHead || target != null) && block == null)
         {
             byte[] data = rawBytes;
             if (entry.Shape.Length >= 2)
@@ -324,9 +323,10 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
                 }
             }
 
-            if (target == weights.LmHeadWeight) { weights.RawLmHead = data; weights.RawLmHeadDtype = entry.Dtype; }
+            if (isLmHead) { weights.RawLmHead = data; weights.RawLmHeadDtype = entry.Dtype; }
             else if (target == weights.EmbeddingWeight) { weights.RawEmbedding = data; weights.RawEmbeddingDtype = entry.Dtype; }
         }
+        if (isLmHead) return;
 
         // Dequantize to float (same GGUF transpose semantics as GgufLoader)
         long longCount = TensorLoadHelper.ComputeElementCount(entry.Shape);
@@ -382,6 +382,17 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
         {
             MemoryHelpers.ReturnArray(buffer);
         }
+    }
+
+    /// <summary>Dequantizes the output head from the raw bytes kept at load (see <see cref="TransformerWeights.LmHeadWeight"/>).</summary>
+    private Tensor<float> DequantizeLmHead(TransformerWeights weights, int rows, int cols, int[] fileShape)
+    {
+        byte[] raw = weights.RawLmHead ?? throw new InvalidOperationException("The output head has no raw bytes to dequantize.");
+        var head = new Tensor<float>(rows, cols);
+        head.Data.Clear();
+        using var reader = new BinaryReader(new MemoryStream(raw));
+        ReadTensorInto(reader, weights.RawLmHeadDtype!.Value, fileShape, head.Data);
+        return head;
     }
 
     private void ReadTensorInto(BinaryReader stream, QuantDType dtype, int[] shape, Span<float> destination)

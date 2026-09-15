@@ -256,7 +256,7 @@ public static class ModelFactory
 
         bool gemmaScale = sharpConfig.Activation == ActivationKind.GELU && sharpConfig.Gate == GateKind.GeGLU;
         var (visionEncoder, audioEncoder) = BuildEncoders(weights.Config);
-        var transformer = new Transformer(weights, embedding, arch, finalNorm, weights.LmHeadWeight, qOps, fullMapping, gemmaEmbeddingScale: gemmaScale, visionEncoder: visionEncoder, audioEncoder: audioEncoder);
+        var transformer = new Transformer(weights, embedding, arch, finalNorm, qOps, fullMapping, gemmaEmbeddingScale: gemmaScale, visionEncoder: visionEncoder, audioEncoder: audioEncoder);
 
         // Free pre-allocated (zero-filled) float tensors from BuildBlock.
         // In streaming mode the cyclic load/unload manages raw quantized data;
@@ -299,7 +299,7 @@ public static class ModelFactory
 
         bool gemmaScale = sharpConfig.Activation == ActivationKind.GELU && sharpConfig.Gate == GateKind.GeGLU;
         var (visionEncoder, audioEncoder) = BuildEncoders(weights.Config);
-        return new Transformer(weights, embedding, arch, finalNorm, weights.LmHeadWeight, qOps, fullMapping, gemmaEmbeddingScale: gemmaScale, visionEncoder: visionEncoder, audioEncoder: audioEncoder);
+        return new Transformer(weights, embedding, arch, finalNorm, qOps, fullMapping, gemmaEmbeddingScale: gemmaScale, visionEncoder: visionEncoder, audioEncoder: audioEncoder);
     }
 
     /// <summary>Builds the multimodal encoders declared by the model config (null when absent).</summary>

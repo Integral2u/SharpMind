@@ -329,6 +329,45 @@ public class SmmExportLoadTests : IDisposable
         AssertTensorClose(head, reloaded.LmHeadWeight, 1e-6f, "gguf.output(canonical)");
     }
 
+    [Theory]
+    [InlineData(".smm")]
+    [InlineData(".gguf")]
+    public void UntiedLmHead_IsDequantizedOnFirstFloatAccess(string format)
+    {
+        // The CPU projection reads a loaded head's raw bytes; only float consumers (Medusa, a GPU
+        // head without an on-device kernel, training export) need the float copy, and which
+        // generator runs is not known at load. So loading, building the model and asking for its
+        // dtypes must not dequantize the head, and the first float access must return its values.
+        using var fixture = TrainFixture();
+        int vocab = fixture.Config.VocabSize, hidden = fixture.Config.HiddenDim;
+        var head = new Tensor<float>(vocab, hidden);
+        for (int i = 0; i < head.Data.Length; i++) head.Data[i] = i * 1e-3f;
+        fixture.Weights.SetLmHead(head);
+
+        string path = Path.Combine(_temp.Path, "lazy.smm");
+        SmmTrainingExporter.Export(fixture.Weights, fixture.Tokenizer, path, new SmmWriteOptions { Source = "training" });
+        if (format == ".gguf")
+        {
+            string ggufPath = Path.Combine(_temp.Path, "lazy.gguf");
+            SmmToGufConverter.Convert(path, ggufPath);
+            path = ggufPath;
+        }
+
+        var reloaded = LoadWeightsFrom(path, fixture.Config, fixture.SharpConfig);
+        using var model = ModelFactory.CreateTransformer(reloaded, fixture.SharpConfig); // disposes the weights
+        _ = model.GetUsedQuantizations();
+        Assert.NotNull(reloaded.RawLmHead);
+        Assert.False(LmHeadIsDequantized(reloaded), "the float head was built before anything read it");
+
+        Assert.NotNull(model.LmHead);
+        AssertTensorClose(head, model.LmHead!, 1e-6f, $"{format} lazy output");
+    }
+
+    private static bool LmHeadIsDequantized(TransformerWeights weights) =>
+        typeof(TransformerWeights)
+            .GetField("_lmHead", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+            .GetValue(weights) is Lazy<Tensor<float>> { IsValueCreated: true };
+
     /// <summary>
     /// Swaps the two dims of a 2D tensor's header entry in a GGUF file, leaving the data
     /// untouched. Tensor info layout: u64 name length, name bytes, u32 n_dims, u64 dims[].

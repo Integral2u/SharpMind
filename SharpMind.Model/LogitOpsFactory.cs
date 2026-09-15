@@ -12,7 +12,7 @@ public static class LogitOpsFactory
     private static readonly ConcurrentDictionary<int, Type> _typeCache = [];
 
     public static LogitOps Create(
-        Tensor<float> projectionWeight,
+        Tensor<float>? projectionWeight,
         byte[]? rawWeight,
         QuantDType? rawDtype,
         Dictionary<string, string>? baseMapping)

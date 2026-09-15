@@ -275,12 +275,12 @@ public sealed class GpuInferenceEngineTests : IClassFixture<GpuInferenceEngineTe
         int[] ids = Prompt();
         var (untied, engineCfg) = BuildModelWithHead(9001, w =>
         {
-            var head = DistinctHead();
-            w.SetLmHead(head);
+            using var head = DistinctHead();
             // GGUF-compatible raw bytes + dtype: the engine must take the DequantMatmul branch
-            // (upload the raw head), not the F32 copy.
+            // (upload the raw head), not the F32 copy, which fails the test if anything reads it.
             w.RawLmHead = TensorQuantizer.Quantize(head.Data, [Cfg.VocabSize, Cfg.HiddenDim], QuantDType.Q8_0);
             w.RawLmHeadDtype = QuantDType.Q8_0;
+            w.SetLazyLmHead(() => throw new InvalidOperationException("The F32 copy of a Q8_0 head was read."));
         });
         using var engine = new GpuInferenceEngine(GpuTestDevice.Device, untied, engineCfg, maxCache, maxPrompt);
         using var workspace = WorkspaceFor(untied);
