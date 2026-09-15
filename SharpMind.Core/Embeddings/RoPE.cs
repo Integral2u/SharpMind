@@ -1,5 +1,4 @@
 using SharpMind.Core.Tensors;
-using System.Collections.Concurrent;
 using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
 
@@ -34,7 +33,32 @@ public sealed class RoPE : PositionalEncoder
         float Theta, int RopeDim, int MaxSeqLen, float? ScalingFactor,
         string? ScalingType, int? OriginalContextLength, float? LowFreqFactor, float? HighFreqFactor);
 
-    private static readonly ConcurrentDictionary<TableKey, (float[] cos, float[] sin)> TableCache = [];
+    /// <summary>
+    /// Tables stay cached for this many configurations. A model needs one per distinct RoPE
+    /// configuration (two with per-layer theta), so a reload reuses its tables, while a process
+    /// that loads many configurations does not keep every table it built. The least recently used
+    /// entry is evicted first, so a model's own tables are not evicted while its layers are built;
+    /// RoPE instances that already hold an evicted entry's arrays keep them.
+    /// </summary>
+    internal const int TableCacheCapacity = 4;
+    private static readonly OrderedDictionary<TableKey, (float[] cos, float[] sin)> TableCache = []; // oldest use first
+    private static readonly Lock TableCacheLock = new();
+
+    private static (float[] cos, float[] sin) GetOrAddTables(TableKey key, Func<(float[] cos, float[] sin)> build)
+    {
+        lock (TableCacheLock)
+        {
+            if (TableCache.TryGetValue(key, out var tables))
+                TableCache.Remove(key);
+            else
+            {
+                tables = build();
+                if (TableCache.Count == TableCacheCapacity) TableCache.RemoveAt(0);
+            }
+            TableCache.Add(key, tables);
+            return tables;
+        }
+    }
     private readonly float[] _cosCache; // [MaxSeqLen, HeadDim/2]
     private readonly float[] _sinCache;
     private readonly int     _headDim;
@@ -96,9 +120,9 @@ public sealed class RoPE : PositionalEncoder
         }
         else
         {
-            (_cosCache, _sinCache) = TableCache.GetOrAdd(
+            (_cosCache, _sinCache) = GetOrAddTables(
                 new TableKey(theta, _ropeDim, _maxSeqLen, ropeScalingFactor, ropeScalingType,
-                    ropeOriginalContextLength, lowFreqFactor, highFreqFactor), (b) =>
+                    ropeOriginalContextLength, lowFreqFactor, highFreqFactor), () =>
             {
                 var cos = new float[_maxSeqLen * halfDim];
                 var sin = new float[_maxSeqLen * halfDim];
