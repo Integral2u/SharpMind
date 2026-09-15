@@ -59,14 +59,23 @@ public sealed class AgentPromptSizeTests
         int promptChars = prompt.Length;
         int oldToolsChars = oldToolsJson.Length;
 
+        // The shared prompt sections (role, rules, behavior) set the baseline.
+        // Measure the tool-listing overhead alone so a deliberately richer rules
+        // block (replicated tool-calling guidance) doesn't mask or fake the
+        // compact listing's win.
+        string baseline = new AgentBuilder("Delta") { DisabledTools = [] }.BuildAgentPrompt();
+        int toolOverheadChars = promptChars - baseline.Length;
+
         _output.WriteLine($"agent prompt chars (compact): {promptChars}");
+        _output.WriteLine($"shared prompt chars (no tools): {baseline.Length}");
+        _output.WriteLine($"tool overhead chars (compact): {toolOverheadChars}");
         _output.WriteLine($"tools JSON chars (old indented): {oldToolsChars}");
         _output.WriteLine($"tool count: {builder.ToolDefinitions.Count}");
 
         // The compact one-line listing drops the whitespace/newline overhead of
         // the indented dump; it must always be smaller than that dump.
-        Assert.True(promptChars < oldToolsChars,
-            $"Compact tool listing should be smaller than the old indented dump; got {promptChars} vs {oldToolsChars} chars.");
+        Assert.True(toolOverheadChars < oldToolsChars,
+            $"Compact tool listing should be smaller than the old indented dump; got {toolOverheadChars} vs {oldToolsChars} chars.");
 
         // Absolute growth guard: with the current CUI tool set this sits well
         // under 20k characters (~5 k real-vocab tokens at a 4 chars/token ratio).
