@@ -430,18 +430,7 @@ public sealed class Transformer : IDisposable
     /// </summary>
     public Tensor<float> ForwardLastLogits(Tensor<int> tokenIds, IKVCache[] caches, int positionOffset = 0, Core.Memory.IWorkspace? workspace = null)
     {
-        ThrowIfDisposed();
-        DisposeCache();
-
-        _cachedEmbedding = _embedding.Forward(tokenIds, workspace);
-        if (_gemmaEmbeddingScale)
-            ScaleEmbedding(_cachedEmbedding, _weights.Config.HiddenDim);
-        if (_positionEmbedding is not null)
-            AddPositionEmbeddingInPlace(_cachedEmbedding, positionOffset);
-
-        _cachedHidden = _arch.Forward(_cachedEmbedding, caches, positionOffset, workspace);
-
-        if (_weights is TransformerWeightsStreaming sw) sw.CompleteForward();
+        RunBlocks(tokenIds, caches, positionOffset, workspace);
 
         int batch = tokenIds.Shape.Rows;
         int seqLen = tokenIds.Shape.Cols;
@@ -474,6 +463,33 @@ public sealed class Transformer : IDisposable
         Tensor<float> result = _logitOps.Project(lastHidden, batch, K, N, workspace);
         lastHidden.Dispose();
         return result;
+    }
+
+    /// <summary>
+    /// Runs <paramref name="tokenIds"/> through the embedding and every block, appending their
+    /// keys and values to <paramref name="caches"/>, but skips the final norm and the vocabulary
+    /// projection. For prompt chunks whose logits nobody reads; the chunk that needs logits goes
+    /// through <see cref="ForwardLastLogits"/>.
+    /// </summary>
+    public void ForwardFill(Tensor<int> tokenIds, IKVCache[] caches, int positionOffset = 0, Core.Memory.IWorkspace? workspace = null)
+        => RunBlocks(tokenIds, caches, positionOffset, workspace);
+
+    /// <summary>Embedding and blocks: the body <see cref="ForwardFill"/> and
+    /// <see cref="ForwardLastLogits"/> share.</summary>
+    private void RunBlocks(Tensor<int> tokenIds, IKVCache[] caches, int positionOffset, Core.Memory.IWorkspace? workspace)
+    {
+        ThrowIfDisposed();
+        DisposeCache();
+
+        _cachedEmbedding = _embedding.Forward(tokenIds, workspace);
+        if (_gemmaEmbeddingScale)
+            ScaleEmbedding(_cachedEmbedding, _weights.Config.HiddenDim);
+        if (_positionEmbedding is not null)
+            AddPositionEmbeddingInPlace(_cachedEmbedding, positionOffset);
+
+        _cachedHidden = _arch.Forward(_cachedEmbedding, caches, positionOffset, workspace);
+
+        if (_weights is TransformerWeightsStreaming sw) sw.CompleteForward();
     }
 
     private void DisposeCache()
