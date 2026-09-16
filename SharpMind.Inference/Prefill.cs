@@ -27,15 +27,17 @@ public static class Prefill
     public const int MaxChunkLength = 64;
 
     /// <summary>
-    /// Runs <paramref name="promptIds"/> through <see cref="Transformer.ForwardLastLogits"/>
-    /// in chunks of at most <see cref="MaxChunkLength"/>, accumulating the KV cache.
+    /// Runs <paramref name="promptIds"/> through the model in chunks of at most
+    /// <see cref="MaxChunkLength"/>, accumulating the KV cache.
     /// Returns the logits for the last prompt token, valid until the caller resets
     /// <paramref name="workspace"/>.
     ///
     /// Chunking is numerically identical to a single-shot prefill: each chunk starts
     /// at the current cache length, so positions (learned embeddings, RoPE, KV slots)
-    /// advance exactly as they would for the whole prompt at once. Intermediate
-    /// chunks' logits are discarded; only the final chunk's logits are returned.
+    /// advance exactly as they would for the whole prompt at once. Every chunk but the
+    /// last goes through <see cref="Transformer.ForwardFill"/>, which skips the
+    /// vocabulary projection; only the final chunk goes through
+    /// <see cref="Transformer.ForwardLastLogits"/>.
     ///
     /// When <paramref name="progress"/> is supplied it is invoked once per finished
     /// chunk with the overall fraction of the prompt prefilled so far (in
@@ -55,7 +57,7 @@ public static class Prefill
         if (promptIds.Length <= MaxChunkLength)
         {
             workspace.Reset();
-            return RunChunk(model, caches, promptIds, 0, promptIds.Length, workspace);
+            return RunChunk(model, caches, promptIds, 0, promptIds.Length, project: true, workspace)!;
         }
 
         Tensor<float>? logits = null;
@@ -82,13 +84,14 @@ public static class Prefill
                 if (len > available) len = available;
                 if (len <= 0) break;
 
-                logits?.Dispose();
                 workspace.Reset();
-                logits = RunChunk(model, caches, promptIds, start, len, workspace);
+                bool last = start + MaxChunkLength >= promptIds.Length;
+                logits = RunChunk(model, caches, promptIds, start, len, project: last, workspace);
                 processed += len;
                 progress?.Invoke((double)processed / promptIds.Length);
             }
-            return logits!;
+            // Only the last chunk projects, so a cache that fills up before it leaves no logits.
+            return logits ?? throw new InvalidOperationException("The KV cache has no room left for the rest of the prompt.");
         }
         catch
         {
@@ -97,17 +100,22 @@ public static class Prefill
         }
     }
 
-    private static Tensor<float> RunChunk(
+    private static Tensor<float>? RunChunk(
         Transformer model,
         IKVCache[] caches,
         int[] promptIds,
         int start,
         int len,
+        bool project,
         Core.Memory.IWorkspace workspace)
     {
         using var chunkInput = workspace.Rent<int>([1, len]);
         promptIds.AsSpan(start, len).CopyTo(chunkInput.Data);
-        var result = model.ForwardLastLogits(chunkInput, caches, caches[0].Length, workspace);
-        return result;
+        if (!project)
+        {
+            model.ForwardFill(chunkInput, caches, caches[0].Length, workspace);
+            return null;
+        }
+        return model.ForwardLastLogits(chunkInput, caches, caches[0].Length, workspace);
     }
 }

@@ -1,3 +1,4 @@
+using System.Reflection;
 using SharpMind.Core;
 using SharpMind.Core.Memory;
 using SharpMind.Core.Tensors;
@@ -102,5 +103,76 @@ public sealed class ChunkedPrefillTests
         Assert.Equal(first.Length + second.Length, caches[0].Length);
 
         foreach (var c in caches) c.Dispose();
+    }
+
+    [Fact]
+    public void ForwardFill_LeavesTheSameCacheAsForwardLastLogits()
+    {
+        int[] first = BuildPrompt(Prefill.MaxChunkLength);
+        int[] second = BuildPrompt(Prefill.MaxChunkLength + 9);
+
+        using var model = BuildModel();
+        var refCaches = BuildCaches();
+        var caches = BuildCaches();
+        using var firstInput = Tensor<int>.From(first, 1, first.Length);
+        using var secondInput = Tensor<int>.From(second, 1, second.Length);
+
+        using (var _ = model.ForwardLastLogits(firstInput, refCaches, 0, null)) { }
+        using var expected = model.ForwardLastLogits(secondInput, refCaches, first.Length, null);
+
+        model.ForwardFill(firstInput, caches, 0, null);
+        Assert.Equal(first.Length, caches[0].Length);
+        using var actual = model.ForwardLastLogits(secondInput, caches, first.Length, null);
+
+        // Bit for bit: the fill runs the same blocks, it only skips the head.
+        Assert.Equal(expected.Data.ToArray(), actual.Data.ToArray());
+
+        foreach (var c in refCaches) c.Dispose();
+        foreach (var c in caches) c.Dispose();
+    }
+
+    [Fact]
+    public void ForwardLastLogitsChunked_ProjectsTheHeadForTheLastChunkOnly()
+    {
+        int[] promptIds = BuildPrompt(Prefill.MaxChunkLength * 2 + 37); // three chunks
+
+        using var model = BuildModel();
+        var head = CountingLogitOps.Install(model);
+        var caches = BuildCaches();
+        using var workspace = MemoryHelpers.CreateWorkspace(
+            Workspace.CalculateRequiredSize(Cfg.HiddenDim, Cfg.FfnDim, Cfg.VocabSize, Cfg.NumLayers, Cfg.MaxSeqLen));
+
+        using (var _ = Prefill.ForwardLastLogitsChunked(model, caches, promptIds, workspace)) { }
+
+        Assert.Equal(1, head.Calls);
+        Assert.Equal(promptIds.Length, caches[0].Length);
+
+        foreach (var c in caches) c.Dispose();
+    }
+
+    /// <summary>Counts vocabulary projections by standing in for the model's head and
+    /// delegating every call to the original.</summary>
+    private sealed unsafe class CountingLogitOps(LogitOps inner, Tensor<float> weight, byte[]? raw)
+        : LogitOps(weight, raw)
+    {
+        public int Calls;
+
+        public static CountingLogitOps Install(Transformer model)
+        {
+            const BindingFlags Instance = BindingFlags.NonPublic | BindingFlags.Instance;
+            var field = typeof(Transformer).GetField("_logitOps", Instance)!;
+            var original = (LogitOps)field.GetValue(model)!;
+            var spy = new CountingLogitOps(original,
+                (Tensor<float>)typeof(LogitOps).GetField("ProjectionWeight", Instance)!.GetValue(original)!,
+                (byte[]?)typeof(LogitOps).GetField("RawWeight", Instance)!.GetValue(original));
+            field.SetValue(model, spy);
+            return spy;
+        }
+
+        public override void ProjectFn(float* input, byte* rawWeights, float* output, int M, int K, int N)
+        {
+            Calls++;
+            inner.ProjectFn(input, rawWeights, output, M, K, N);
+        }
     }
 }

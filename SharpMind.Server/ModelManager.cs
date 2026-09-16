@@ -221,7 +221,11 @@ public sealed class ModelManager : IDisposable
                 ws.Reset();
                 using var input = ws.Rent<int>([1, chunk]);
                 for (int i = 0; i < chunk; i++) input.Data[i] = i % cfg.VocabSize;
-                using var _ = loaded.Model.ForwardLastLogits(input, caches, p * chunk, ws);
+                // Fill like a prefill does; the last pass projects so the head's kernel warms too.
+                if (p < Passes - 1)
+                    loaded.Model.ForwardFill(input, caches, p * chunk, ws);
+                else
+                    using (loaded.Model.ForwardLastLogits(input, caches, p * chunk, ws)) { }
             }
         }
         catch (OperationCanceledException) { }
