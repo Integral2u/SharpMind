@@ -1177,7 +1177,13 @@ public sealed class MainWindow : Window
             // user. Done in finally (rather than the try) so an error while
             // unwinding the session can never strand the model's weight memory.
             if (wasLastUser && state.LoadedModel is { } lm)
+            {
                 lm.Model.Dispose();
+                // The Transformer borrows the weights; the owner is the launcher
+                // that created them. Dispose them here, on the last user, so the
+                // tensors and the raw quantized LOH payload are reclaimed.
+                lm.Weights.Dispose();
+            }
 
             // The raw quantized weight data is managed LOH byte[] — native
             // tensors drop the working set on dispose, but the LOH segments

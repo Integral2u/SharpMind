@@ -28,6 +28,12 @@ public sealed class LoadedModel
 {
     public required string ModelPath { get; init; }
     public required Transformer Model { get; init; }
+    /// <summary>
+    /// The model's weight tensors and raw quantized payload, owned by whoever
+    /// loaded them. The <see cref="Model"/> borrows it — the owner disposes it
+    /// (the CUI does when the last session using this model closes).
+    /// </summary>
+    public required TransformerWeights Weights { get; init; }
     public required Tokenizer Tokenizer { get; init; }
     public required ModelMetaData Meta { get; init; }
     public required HardwareTier HardwareTier { get; init; }
@@ -231,6 +237,7 @@ public static class SessionLauncher
             {
                 ModelPath = options.ModelPath,
                 Model = model,
+                Weights = weights,
                 Tokenizer = tokenizer,
                 Meta = meta,
                 HardwareTier = sharpConfig.ResolvedHardware,

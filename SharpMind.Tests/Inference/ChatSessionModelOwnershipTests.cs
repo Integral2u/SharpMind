@@ -113,4 +113,35 @@ public sealed class ChatSessionModelOwnershipTests
         using var input = Tensor<int>.From([1, 2, 3], 1, 3);
         Assert.Throws<ObjectDisposedException>(() => model.Forward(input, null, 0, null));
     }
+
+    /// <summary>
+    /// A Transformer borrows its <see cref="TransformerWeights"/> — the creator owns
+    /// and disposes them. Disposing one transformer must leave the weights intact for
+    /// the next one built on the same instance (the generator/cache builders' sweep in
+    /// <c>BuilderOptions</c> and the sandbox OptionsRunner do exactly this). Regression
+    /// for the CUI unload change that disposed the weights from <c>Transformer.Dispose</c>,
+    /// which tore the shared quantized payload out from under every later transformer.
+    /// </summary>
+    [Fact]
+    public void DisposingOneTransformer_LeavesSharedWeightsUsableByTheNext()
+    {
+        var sharpConfig = SharpMindConfig.Gpt with { Hardware = HardwareTier.Scalar };
+        using var weights = ModelFactory.CreateForTraining(Cfg, sharpConfig);
+        WeightInitializer.InitializeRandomly(weights, 1234);
+
+        using (var first = ModelFactory.CreateTrainingTransformer(weights, sharpConfig))
+        {
+            using var input = Tensor<int>.From([1, 2, 3], 1, 3);
+            using var logits = first.Forward(input, null, 0, null);
+            Assert.Equal(Cfg.VocabSize, logits.Shape[^1]);
+        }
+
+        // A second transformer over the same, caller-owned weights must still forward.
+        using (var second = ModelFactory.CreateTrainingTransformer(weights, sharpConfig))
+        {
+            using var input = Tensor<int>.From([4, 5, 6], 1, 3);
+            using var logits = second.Forward(input, null, 0, null);
+            Assert.Equal(Cfg.VocabSize, logits.Shape[^1]);
+        }
+    }
 }
