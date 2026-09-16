@@ -25,7 +25,6 @@ public sealed class Transformer : IDisposable
 
     // Separate LM head for non-weight-tied models (e.g. LLaMA 2/3).
     // Null means the model is weight-tied — the embedding weight is used instead.
-    private readonly Tensor<float>? _lmHead;
     private readonly QuantizationOps? _qOps;
     private readonly LogitOps _logitOps;
 
@@ -45,7 +44,6 @@ public sealed class Transformer : IDisposable
         EmbeddingTable embedding,
         IArchitecture arch,
         NormLayer finalNorm,
-        Tensor<float>? lmHead = null,
         QuantizationOps? qOps = null,
         Dictionary<string, string>? mapping = null,
         bool gemmaEmbeddingScale = false,
@@ -61,13 +59,15 @@ public sealed class Transformer : IDisposable
         _embedding = embedding;
         _arch = arch;
         _finalNorm = finalNorm;
-        _lmHead = lmHead;
         _qOps = qOps;
         _visionEncoder = visionEncoder;
         _audioEncoder = audioEncoder;
-        var projWeight = _lmHead ?? _embedding.Weight;
-        var rawW = _lmHead != null ? _weights.RawLmHead : _weights.RawEmbedding;
-        var rawDtype = _lmHead != null ? _weights.RawLmHeadDtype : _weights.RawEmbeddingDtype;
+        bool untied = weights.HasLmHead;
+        var rawW = untied ? _weights.RawLmHead : _weights.RawEmbedding;
+        var rawDtype = untied ? _weights.RawLmHeadDtype : _weights.RawEmbeddingDtype;
+        // LogitOps reads the float weight only when there are no raw bytes, so an untied head
+        // with raw bytes is never dequantized here.
+        var projWeight = !untied ? _embedding.Weight : rawW is null ? _weights.LmHeadWeight : null;
 
         _gemmaEmbeddingScale = gemmaEmbeddingScale;
         _positionEmbedding = weights.PositionEmbedding;
@@ -81,7 +81,10 @@ public sealed class Transformer : IDisposable
 
     // Diagnostics accessors
     public NormLayer FinalNorm => _finalNorm;
-    public Tensor<float>? LmHead => _lmHead;
+    /// <summary>The untied output head as floats (dequantized on first access), or null for a tied model.</summary>
+    public Tensor<float>? LmHead => _weights.LmHeadWeight;
+    /// <summary>True when the model has an untied output head; unlike <see cref="LmHead"/> this does not dequantize it.</summary>
+    public bool HasLmHead => _weights.HasLmHead;
     public Tensor<float> EmbeddingWeight => _embedding.Weight;
     public Tensor<float> ForwardEmbedding(Tensor<int> tokenIds) => _embedding.Forward(tokenIds);
 
@@ -231,7 +234,7 @@ public sealed class Transformer : IDisposable
                 _weights.RawEmbedding = rawData;
                 _weights.RawEmbeddingDtype = dtype;
             }
-            else if (_lmHead is not null && target == _weights.LmHeadWeight)
+            else if (_weights.HasLmHead && target == _weights.LmHeadWeight)
             {
                 _weights.RawLmHead = rawData;
                 _weights.RawLmHeadDtype = dtype;

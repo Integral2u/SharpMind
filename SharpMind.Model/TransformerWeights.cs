@@ -13,8 +13,24 @@ public abstract class TransformerWeights : IDisposable
 {
     public ModelConfig Config { get; }
     public Tensor<float> EmbeddingWeight { get; }
-    public Tensor<float>? LmHeadWeight { get; protected set; }
-    public void SetLmHead(Tensor<float> head) => LmHeadWeight = head;
+    // Lazy's default mode is thread-safe: a GPU engine and a Medusa generator can ask at the same time.
+    private Lazy<Tensor<float>>? _lmHead;
+
+    /// <summary>
+    /// The untied output head as floats, or null for a tied model. A head loaded from a file is
+    /// dequantized from <see cref="RawLmHead"/> on first access: the CPU projection reads the raw
+    /// bytes, so only float consumers (Medusa, a GPU head without an on-device kernel, training
+    /// export) pay for this copy, and which of them runs is not known at load.
+    /// </summary>
+    public Tensor<float>? LmHeadWeight => _lmHead?.Value;
+
+    /// <summary>True when the model has its own output head, whether or not its floats exist yet.</summary>
+    public bool HasLmHead => _lmHead is not null;
+
+    public void SetLmHead(Tensor<float> head) => _lmHead = new Lazy<Tensor<float>>(head);
+
+    /// <summary>Registers an output head whose floats <paramref name="dequantize"/> builds on first access.</summary>
+    internal void SetLazyLmHead(Func<Tensor<float>> dequantize) => _lmHead = new Lazy<Tensor<float>>(dequantize);
     public Tensor<float> FinalNormWeight { get; }
     public Tensor<float>? FinalNormBias { get; }
 
@@ -54,7 +70,7 @@ public abstract class TransformerWeights : IDisposable
     {
         Config = config;
         EmbeddingWeight = embedding;
-        LmHeadWeight = lmHead;
+        _lmHead = lmHead is null ? null : new Lazy<Tensor<float>>(lmHead);
         FinalNormWeight = finalNormW;
         FinalNormBias = finalNormB;
         Blocks = blocks;
@@ -77,7 +93,8 @@ public abstract class TransformerWeights : IDisposable
         if (disposing)
         {
             EmbeddingWeight.Dispose();
-            LmHeadWeight?.Dispose();
+            if (_lmHead is { IsValueCreated: true }) _lmHead.Value.Dispose();
+            _lmHead = null;
             FinalNormWeight.Dispose();
             FinalNormBias?.Dispose();
             PositionEmbedding?.Dispose();
@@ -384,7 +401,7 @@ else
     {
         var seen = new HashSet<QuantDType>();
         Add(seen, RawEmbeddingDtype, EmbeddingWeight is not null);
-        Add(seen, RawLmHeadDtype, LmHeadWeight is not null);
+        Add(seen, RawLmHeadDtype, HasLmHead);
         Add(seen, null, PositionEmbedding is not null);
 
         foreach (var block in Blocks)

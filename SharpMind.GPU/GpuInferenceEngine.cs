@@ -157,10 +157,10 @@ public sealed class GpuInferenceEngine : IInferenceEngine
             // Untied models carry a separate output head (output.weight distinct from token_embd.weight,
             // e.g. the larger checkpoints). Mirror the embedding upload so LmHead projects against the
             // head, not the tied embedding: an on-device-dequant head keeps its raw bytes for the
-            // DequantMatmul path, anything else (F32, or a quant with no device kernel like Q8_K whose
-            // F32 copy the loader always materialises) rides the ordinary float buffer. When the head
+            // DequantMatmul path, anything else (F32, or a quant with no device kernel like Q8_K, whose
+            // F32 copy is dequantized on first access) rides the ordinary float buffer. When the head
             // is absent the two fields stay null and LmHead falls back to the weight tie below.
-            if (model.LmHead is not null)
+            if (model.HasLmHead)
             {
                 int V = _cfg.VocabSize, H = _cfg.HiddenDim;
                 var rawHeadDtype = model.RawLmHeadDtype;

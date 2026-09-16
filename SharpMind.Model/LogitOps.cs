@@ -6,11 +6,12 @@ using SharpMind.Core.Tensors;
 
 namespace SharpMind.Model;
 
-public abstract class LogitOps(Tensor<float> projectionWeight, byte[]? rawWeight)
+/// <param name="projectionWeight">The float weight, read only when <paramref name="rawWeight"/> is null.</param>
+public abstract class LogitOps(Tensor<float>? projectionWeight, byte[]? rawWeight)
 {
     private const string QKernels = $"{nameof(SharpMind)}.{nameof(Core)}.{nameof(SharpMind.Core.Quantization)}.{nameof(QuantizationKernels)}";
 
-    protected readonly Tensor<float> ProjectionWeight = projectionWeight;
+    protected readonly Tensor<float>? ProjectionWeight = projectionWeight;
     protected readonly byte[]? RawWeight = rawWeight;
     private readonly Q8_0WideWeights.Cache _wide = new();
 
@@ -172,7 +173,7 @@ public abstract class LogitOps(Tensor<float> projectionWeight, byte[]? rawWeight
             }
             else
             {
-                ProjectFn(pInput, (byte*)ProjectionWeight.DataPtr, pOutput, M, K, N);
+                ProjectFn(pInput, (byte*)ProjectionWeight!.DataPtr, pOutput, M, K, N);
             }
         }
         return result;
