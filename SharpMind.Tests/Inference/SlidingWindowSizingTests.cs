@@ -147,11 +147,17 @@ public sealed class SlidingWindowSizingTests : IClassFixture<SlidingWindowSizing
             prompt[i] = 65 + (i % 60);
 
         var genCfg = new GenerationConfig { MaxNewTokens = 5 };
-        int count = 0;
+        // A randomly-initialized model may argmax onto special tokens, which
+        // decode to empty fragments; count generated tokens via the diagnostic
+        // callback instead of counting streamed text.
+        int generated = 0;
+        gen.OnTokenGenerated += _ => generated++;
         await foreach (var _ in gen.GenerateFromTokensAsync(prompt, generation: genCfg))
-            count++;
+        {
+        }
 
-        Assert.True(count > 0, "Long prompt with small window should complete after mid-loop trim.");
+        Assert.Equal(genCfg.MaxNewTokens, generated);
+        Assert.True(gen.Caches[0].Length > 0, "Prefill trim should leave cached tokens to decode from.");
     }
 
     // ── Trim keep-size clamp ──

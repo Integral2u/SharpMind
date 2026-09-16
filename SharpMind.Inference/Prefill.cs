@@ -64,9 +64,10 @@ public static class Prefill
         try
         {
             int processed = 0;
-            for (int start = 0; start < promptIds.Length; start += MaxChunkLength)
+            int len = 0;
+            for (int start = 0; start < promptIds.Length; start += len)
             {
-                int len = Math.Min(MaxChunkLength, promptIds.Length - start);
+                len = Math.Min(MaxChunkLength, promptIds.Length - start);
 
                 // Sliding-window safety: when the next chunk would overflow
                 // the KV cache, trim to half capacity so there is room to
@@ -85,7 +86,7 @@ public static class Prefill
                 if (len <= 0) break;
 
                 workspace.Reset();
-                bool last = start + MaxChunkLength >= promptIds.Length;
+                bool last = start + len >= promptIds.Length;
                 logits = RunChunk(model, caches, promptIds, start, len, project: last, workspace);
                 processed += len;
                 progress?.Invoke((double)processed / promptIds.Length);

@@ -152,6 +152,43 @@ public sealed class ChunkedPrefillTests
 
     /// <summary>Counts vocabulary projections by standing in for the model's head and
     /// delegating every call to the original.</summary>
+    [Fact]
+    public void ForwardLastLogitsChunked_SlidingWindow_ProcessesEntirePrompt()
+    {
+        // Capacity 100 and a 200-token prompt (the issue's repro): after any trim
+        // the room left is 50, smaller than MaxChunkLength (64), so the loop's
+        // advance must use the tokens actually processed. Using the full chunk
+        // length once dropped tokens 114-127 and 178-191 and the prefill returned
+        // logits for token 95 alongside a 0.75 progress high-water mark.
+        int cacheCapacity = 100;
+        int promptLen = 200;
+        int[] promptIds = BuildPrompt(promptLen);
+
+        using var model = BuildModel();
+
+        var caches = new IKVCache[Cfg.NumLayers];
+        for (int i = 0; i < Cfg.NumLayers; i++)
+            caches[i] = new KVCache(1, Cfg.NumKvHeads, cacheCapacity, Cfg.HeadDim);
+
+        using var workspace = MemoryHelpers.CreateWorkspace(
+            Workspace.CalculateRequiredSize(Cfg.HiddenDim, Cfg.FfnDim, Cfg.VocabSize, Cfg.NumLayers, cacheCapacity));
+
+        var progressReports = new List<double>();
+        using var logits = Prefill.ForwardLastLogitsChunked(
+            model, caches, promptIds, workspace, p => progressReports.Add(p));
+
+        // Every token must have been processed — the last progress report is 1.0.
+        Assert.Equal(1.0, progressReports[^1]);
+
+        // The window holds only its capacity-worth of tokens.
+        Assert.True(caches[0].Length <= cacheCapacity);
+
+        // Logits are for the last prompt token.
+        Assert.Equal(Cfg.VocabSize, logits.Shape[^1]);
+
+        foreach (var c in caches) c.Dispose();
+    }
+
     private sealed unsafe class CountingLogitOps(LogitOps inner, Tensor<float> weight, byte[]? raw)
         : LogitOps(weight, raw)
     {
