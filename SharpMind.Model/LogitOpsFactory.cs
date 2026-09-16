@@ -29,7 +29,7 @@ public static class LogitOpsFactory
             var fallbackType = _typeCache.GetOrAdd(
                 MappingHash.Compute(fallbackMapping),
                 _ => Assembler.Assemble<LogitOps>(fallbackMapping));
-            return (LogitOps)Activator.CreateInstance(fallbackType, projectionWeight, rawWeight)!;
+            return WithCompound((LogitOps)Activator.CreateInstance(fallbackType, projectionWeight, rawWeight)!, compound);
         }
 
         var mapping = new Dictionary<string, string>(baseMapping)
@@ -40,7 +40,13 @@ public static class LogitOpsFactory
         var type = _typeCache.GetOrAdd(
             MappingHash.Compute(mapping),
             _ => Assembler.Assemble<LogitOps>(mapping));
-        return (LogitOps)Activator.CreateInstance(type, projectionWeight, rawWeight)!;
+        return WithCompound((LogitOps)Activator.CreateInstance(type, projectionWeight, rawWeight)!, compound);
+    }
+
+    private static LogitOps WithCompound(LogitOps ops, string compound)
+    {
+        ops.WideAllowed = compound == Layers.LinearLayerFactory.Q8_0WideCompound;
+        return ops;
     }
 
     internal static string GetCompound(QuantDType dtype, Dictionary<string, string>? mapping)

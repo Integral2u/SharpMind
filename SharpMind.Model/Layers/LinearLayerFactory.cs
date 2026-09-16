@@ -27,9 +27,14 @@ public static class LinearLayerFactory
 
         var type = _typeCache.GetOrAdd(MappingHash.Compute(mapping),
             _ => Assembler.Assemble<InferenceLinearLayer>(mapping));
-        return (InferenceLinearLayer)Activator.CreateInstance(type,
+        var layer = (InferenceLinearLayer)Activator.CreateInstance(type,
             name, inFeatures, outFeatures, bias, weight, biasTensor, quantDType)!;
+        layer.WideAllowed = compound == Q8_0WideCompound;
+        return layer;
     }
+
+    /// <summary>The kernel selection <see cref="Q8_0WideWeights"/> stands in for.</summary>
+    internal const string Q8_0WideCompound = "q8_0_parallel_fma";
 
     public static LinearLayer Create(
         string name, int inFeatures, int outFeatures, bool bias,
