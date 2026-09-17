@@ -2,51 +2,48 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [ master ]
   pull_request:
-    branches: [main]
+  workflow_dispatch:
 
 env:
-  DOTNET_VERSION: '10.0.x'
   DOTNET_NOLOGO: true
   DOTNET_CLI_TELEMETRY_OPTOUT: true
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
 
 jobs:
-  build-and-test:
-    name: Build & test (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-
+  test:
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: ${{ env.DOTNET_VERSION }}
+          dotnet-version: '10.0.x'
 
-      - name: Restore
-        run: dotnet restore SharpMind.sln
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', 'Directory.Build.props', 'nuget.config') }}
+          restore-keys: ${{ runner.os }}-nuget-
 
-      - name: Build
-        run: dotnet build SharpMind.sln --configuration Release --no-restore
+      # Build SharpMind.Core first on purpose: SharpMind.Tests.csproj embeds
+      # SharpMind.Core.dll through an Exists() condition that MSBuild evaluates
+      # before the test project is built. On a clean checkout the DLL is absent,
+      # the embedded resource would be skipped, and the PluginAssemblyResolver
+      # tests would fail. The test project is built directly (not via
+      # SharpMind.sln) because the solution also contains Setup .vdproj projects
+      # that the dotnet CLI cannot build.
+      - name: Build SharpMind.Core
+        run: dotnet build SharpMind.Core/SharpMind.Core.csproj -c Release
 
       - name: Test
-        run: >
-          dotnet test SharpMind.sln
-          --configuration Release
-          --no-build
-          --logger "trx;LogFileName=test-results.trx"
-          --collect:"XPlat Code Coverage"
-          --results-directory ./TestResults
+        run: dotnet test SharpMind.Tests/SharpMind.Tests.csproj -c Release --logger "trx;LogFileName=test-results.trx"
 
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-results-${{ matrix.os }}
-          path: ./TestResults
-          retention-days: 14
+          name: test-results
+          path: '**/TestResults/**'

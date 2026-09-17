@@ -5,6 +5,7 @@
 <p align="center"><b>SharpMind. A pure C# / .NET LLM engine — inference and agent tooling in one solution.</b></p>
 
 <p>
+  <a href="https://github.com/Integral2u/SharpMind/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Integral2u/SharpMind/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="status" src="https://img.shields.io/github/v/release/Integral2u/SharpMind?label=status&color=brightgreen">
   <img alt="lang" src="https://img.shields.io/badge/language-C%23%20(.NET%2010)-239120">
   <img alt="deps" src="https://img.shields.io/badge/dependencies-near--zero-blue">
