@@ -261,7 +261,11 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
         foreach (var entry in index.Entries)
         {
             var (target, block, _) = weights.ResolveTarget(entry.Name);
-            if (target != null && block == null)
+            // The untied head must be routed even when ResolveTarget returns a null
+            // target: a streaming load has no LmHeadWeight until LoadSingleTensor
+            // creates it lazily, so target is null for "output.weight" there and the
+            // tensor would otherwise be skipped, silently generating from the embedding.
+            if ((target != null && block == null) || TransformerWeights.IsLmHeadTensorName(entry.Name))
                 LoadSingleTensor(weights, index, stream, entry);
         }
     }
@@ -271,7 +275,7 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
         Stream stream, SmmTensorIndexEntry entry)
     {
         // The untied output head keeps only its raw bytes (see GgufLoader.LoadSingleTensor).
-        bool isLmHead = !entry.Name.Contains("blk.") && entry.Name.Contains("output.weight");
+        bool isLmHead = TransformerWeights.IsLmHeadTensorName(entry.Name);
         var (target, block, rawField) = isLmHead ? default : weights.ResolveTarget(entry.Name);
 
         if (isLmHead && !weights.HasLmHead)

@@ -149,9 +149,11 @@ public abstract class FfnLayer : IDisposable
         {
             case FfnKind.Dense:
                 W1 = LinearLayerFactory.Create("gate_proj", config.HiddenDim, config.FfnDim, true,
-                    weights?.Wf1, weights?.Wf1Bias, weights?.QuantDtypeWup ?? QuantDType.F32, mapping);
+                    weights?.Wf1, weights?.Wf1Bias,
+                    DtypeFromMeta(weights, "RawWup", weights?.QuantDtypeWup ?? QuantDType.F32), mapping);
                 W2 = LinearLayerFactory.Create("down_proj", config.FfnDim, config.HiddenDim, true,
-                    weights?.Wf2, weights?.Wf2Bias, weights?.QuantDtypeWf2 ?? QuantDType.F32, mapping);
+                    weights?.Wf2, weights?.Wf2Bias,
+                    DtypeFromMeta(weights, "RawWf2", weights?.QuantDtypeWf2 ?? QuantDType.F32), mapping);
                 break;
 
             case FfnKind.Gated:
@@ -162,26 +164,46 @@ public abstract class FfnLayer : IDisposable
                 // tensor), so fall back to the up tensor's dtype for WGated.
                 WGated = LinearLayerFactory.Create("wgated_proj", config.HiddenDim, 2 * config.FfnDim, true,
                     weights?.Wf1, weights?.Wf1Bias,
-                    weights?.QuantDtypeWgate ?? weights?.QuantDtypeWup ?? QuantDType.F32, mapping);
+                    DtypeFromMeta(weights, "RawWgate",
+                        DtypeFromMeta(weights, "RawWup",
+                            weights?.QuantDtypeWgate ?? weights?.QuantDtypeWup ?? QuantDType.F32)), mapping);
                 WDown = LinearLayerFactory.Create("down_proj", config.FfnDim, config.HiddenDim, true,
-                    weights?.Wf2, weights?.Wf2Bias, weights?.QuantDtypeWf2 ?? QuantDType.F32, mapping);
+                    weights?.Wf2, weights?.Wf2Bias,
+                    DtypeFromMeta(weights, "RawWf2", weights?.QuantDtypeWf2 ?? QuantDType.F32), mapping);
                 break;
 
             case FfnKind.MoE:
                 Router = LinearLayerFactory.Create("router", config.HiddenDim, config.NumExperts, true,
-                    null, null, weights?.QuantDtypeRouter ?? QuantDType.F32, mapping);
+                    null, null,
+                    DtypeFromMeta(weights, "RawRouter", weights?.QuantDtypeRouter ?? QuantDType.F32), mapping);
                 ExpertGate = [.. Enumerable.Range(0, config.NumExperts).Select(i =>
                     LinearLayerFactory.Create($"expert_{i}_gate_proj", config.HiddenDim, config.FfnDim, true,
-                        null, null, weights?.QuantDtypeWgateExp?.GetValueOrDefault(i) ?? QuantDType.F32, mapping))];
+                        null, null,
+                        DtypeFromMeta(weights, $"RawWgateExp_{i}", weights?.QuantDtypeWgateExp?.GetValueOrDefault(i) ?? QuantDType.F32), mapping))];
                 ExpertUp = [.. Enumerable.Range(0, config.NumExperts).Select(i =>
                     LinearLayerFactory.Create($"expert_{i}_up_proj", config.HiddenDim, config.FfnDim, true,
-                        null, null, weights?.QuantDtypeWupExp?.GetValueOrDefault(i) ?? QuantDType.F32, mapping))];
+                        null, null,
+                        DtypeFromMeta(weights, $"RawWupExp_{i}", weights?.QuantDtypeWupExp?.GetValueOrDefault(i) ?? QuantDType.F32), mapping))];
                 ExpertDown = [.. Enumerable.Range(0, config.NumExperts).Select(i =>
                     LinearLayerFactory.Create($"expert_{i}_down_proj", config.FfnDim, config.HiddenDim, true,
-                        null, null, weights?.QuantDtypeWdownExp?.GetValueOrDefault(i) ?? QuantDType.F32, mapping))];
+                        null, null,
+                        DtypeFromMeta(weights, $"RawWdownExp_{i}", weights?.QuantDtypeWdownExp?.GetValueOrDefault(i) ?? QuantDType.F32), mapping))];
                 break;
         }
     }
+
+    /// <summary>
+    /// Reads a tensor's storage dtype from <see cref="TransformerWeights.BlockWeights.TensorMeta"/>.
+    /// That metadata is populated during <c>InitializeWeights</c>, before the blocks are
+    /// constructed, so a streaming load picks the correct quantized kernel at construction.
+    /// The per-field dtype properties (e.g. <c>QuantDtypeWup</c>) are only filled once a layer
+    /// is actually loaded — too late, because <see cref="LinearLayerFactory.Create"/> bakes the
+    /// kernel into the assembled type and it cannot change afterwards.
+    /// </summary>
+    private static QuantDType DtypeFromMeta(TransformerWeights.BlockWeights? weights, string field, QuantDType fallback)
+        => weights is not null && weights.TensorMeta.TryGetValue(field, out var meta)
+            ? meta.Dtype
+            : fallback;
 
     public void SetWeights(TransformerWeights.BlockWeights weights)
     {

@@ -15,6 +15,9 @@ public abstract class TransformerWeights : IDisposable
     public Tensor<float> EmbeddingWeight { get; }
     // Lazy's default mode is thread-safe: a GPU engine and a Medusa generator can ask at the same time.
     private Lazy<Tensor<float>>? _lmHead;
+    // The factory a lazily loaded head rebuilds itself from, retained so
+    // DisposeMaterializedLmHead can re-arm the lazy instead of leaving a disposed tensor.
+    private Func<Tensor<float>>? _lmHeadFactory;
 
     /// <summary>
     /// The untied output head as floats, or null for a tied model. A head loaded from a file is
@@ -27,10 +30,18 @@ public abstract class TransformerWeights : IDisposable
     /// <summary>True when the model has its own output head, whether or not its floats exist yet.</summary>
     public bool HasLmHead => _lmHead is not null;
 
-    public void SetLmHead(Tensor<float> head) => _lmHead = new Lazy<Tensor<float>>(head);
+    public void SetLmHead(Tensor<float> head)
+    {
+        _lmHeadFactory = null;
+        _lmHead = new Lazy<Tensor<float>>(head);
+    }
 
     /// <summary>Registers an output head whose floats <paramref name="dequantize"/> builds on first access.</summary>
-    internal void SetLazyLmHead(Func<Tensor<float>> dequantize) => _lmHead = new Lazy<Tensor<float>>(dequantize);
+    internal void SetLazyLmHead(Func<Tensor<float>> dequantize)
+    {
+        _lmHeadFactory = dequantize;
+        _lmHead = new Lazy<Tensor<float>>(dequantize);
+    }
     public Tensor<float> FinalNormWeight { get; }
     public Tensor<float>? FinalNormBias { get; }
 
@@ -95,6 +106,7 @@ public abstract class TransformerWeights : IDisposable
             EmbeddingWeight.Dispose();
             if (_lmHead is { IsValueCreated: true }) _lmHead.Value.Dispose();
             _lmHead = null;
+            _lmHeadFactory = null;
             FinalNormWeight.Dispose();
             FinalNormBias?.Dispose();
             PositionEmbedding?.Dispose();
@@ -107,6 +119,37 @@ public abstract class TransformerWeights : IDisposable
             RawEmbedding = null;
             RawLmHead = null;
         }
+    }
+
+    /// <summary>
+    /// True for the untied output-head tensor names (<c>output.weight</c>,
+    /// <c>lm_head.weight</c>) outside a block. Must match the routing in
+    /// <see cref="ResolveTarget"/>; the loaders use it to send the head through
+    /// <c>LoadSingleTensor</c> even when <see cref="LmHeadWeight"/> is still null
+    /// (streaming loads create it lazily on first access).
+    /// </summary>
+    public static bool IsLmHeadTensorName(string name)
+        => name.Equals("output.weight", StringComparison.OrdinalIgnoreCase)
+           || name.Equals("lm_head.weight", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>True when the lazy untied head has already been materialized.</summary>
+    public bool LmHeadIsMaterialized => _lmHead is { IsValueCreated: true };
+
+    /// <summary>
+    /// Frees the float head <em>without</em> materializing it. Accessing
+    /// <see cref="LmHeadWeight"/> would dequantize a Q8_0 head (~544 MB for
+    /// Qwen2.5-1.5B) just to dispose it; callers that only need the raw bytes
+    /// for the quantized projection should use this to release a head a consumer
+    /// already forced, and otherwise leave it un-materialized. A head registered
+    /// through <see cref="SetLazyLmHead"/> is re-armed from its raw bytes, so a
+    /// later <see cref="LmHeadWeight"/> re-materializes it instead of handing out
+    /// the disposed tensor.
+    /// </summary>
+    public void DisposeMaterializedLmHead()
+    {
+        if (_lmHead is not { IsValueCreated: true }) return;
+        _lmHead.Value.Dispose();
+        _lmHead = _lmHeadFactory is null ? _lmHead : new Lazy<Tensor<float>>(_lmHeadFactory);
     }
 
     public (Tensor<float>? target, BlockWeights? block, string? rawField) ResolveTarget(string name)
@@ -583,19 +626,29 @@ else
         }
 
         /// <summary>
-        /// Disposes and nulls all float tensor and raw data references.
-        /// Keeps <see cref="TensorMeta"/> intact for future reloading.
+        /// Releases the large per-layer payloads for streaming (the 2D float
+        /// weights and the raw quantized bytes), keeping the small tensors the
+        /// built layers hold by reference (norms and biases) and
+        /// <see cref="TensorMeta"/> for reloading. <see cref="Dispose"/> frees
+        /// everything on final teardown.
         /// </summary>
         public void ReleaseLayerData()
         {
-            Dispose();
-            Wq = null; Wk = null; Wv = null; Wo = null;
-            WqBias = null; WkBias = null; WvBias = null; WoBias = null;
-            Wf1 = null; Wf2 = null; Wf1Bias = null; Wf2Bias = null;
-            Norm1W = null; Norm1B = null; Norm2W = null; Norm2B = null;
-            QNormW = null; KNormW = null;
-            PostNorm1W = null; PostNorm2W = null;
-            WScIn = null; WScOut = null; WScConv = null;
+            // Free only the large payloads: the 2D float weights and the raw
+            // quantized bytes. Those are what streaming exists to unload.
+            Wq?.Dispose(); Wq = null;
+            Wk?.Dispose(); Wk = null;
+            Wv?.Dispose(); Wv = null;
+            Wo?.Dispose(); Wo = null;
+            Wf1?.Dispose(); Wf1 = null;
+            Wf2?.Dispose(); Wf2 = null;
+            WScIn?.Dispose(); WScIn = null;
+            WScOut?.Dispose(); WScOut = null;
+            WRouter?.Dispose(); WRouter = null;
+            DisposeDict(WgateExp); WgateExp = null;
+            DisposeDict(WupExp); WupExp = null;
+            DisposeDict(WdownExp); WdownExp = null;
+
             RawWq = null; RawWk = null; RawWv = null; RawWo = null;
             RawWgate = null; RawWup = null; RawWf1 = null; RawWf2 = null;
             RawWScIn = null; RawWScOut = null;
@@ -605,10 +658,18 @@ else
             RawWgateExp = null; RawWupExp = null; RawWdownExp = null;
             QuantDtypeWgateExp = null; QuantDtypeWupExp = null; QuantDtypeWdownExp = null;
             RawRouter = null; QuantDtypeRouter = null;
-            WRouter = null; WRouterBias = null;
-            WgateExp = null; WgateExpBias = null;
-            WupExp = null; WupExpBias = null;
-            WdownExp = null; WdownExpBias = null;
+
+            // Deliberately NOT disposed/nulled: the small tensors the built layers
+            // capture by reference for their whole lifetime. NormLayer stores the
+            // norm tensor it was handed at construction and TransformerBlock never
+            // repoints it (it only copies data into it), and LinearLayer stores the
+            // bias tensor directly, so disposing these here left a disposed
+            // NativeBuffer in the forward path and the next forward threw
+            // ObjectDisposedException on the norm's first read. They are also tiny:
+            // Norm1W/Norm1B/Norm2W/Norm2B, QNormW/KNormW, PostNorm1W/PostNorm2W,
+            // WqBias/WkBias/WvBias/WoBias, Wf1Bias/Wf2Bias, WRouterBias, the
+            // per-expert biases and the F32 short-conv kernel (WScConv).
+            // Dispose() still frees them all on final teardown.
         }
     }
 }
@@ -668,6 +729,22 @@ TransformerWeights.BlockWeights[] blocks,
         foreach (var info in meta.Tensors)
         {
             var (target, block, rawField) = ResolveTarget(info.Name);
+
+            // Gemma-style post-attention / post-FFN norms are 1D and carry no raw field,
+            // so they are invisible to the raw-field scan below. BuildBlock creates their
+            // NormLayers only when the tensor already exists, and a streaming load builds
+            // the blocks before any layer data is read: without these the two norms are
+            // silently dropped and Gemma-3 generates garbage. Pre-allocate the tensors so
+            // BuildBlock wires the layers; the per-layer reload fills them in place (they
+            // are kept resident across frees — see ReleaseLayerData).
+            if (block != null)
+            {
+                if (info.Name.Contains("post_attention_norm", StringComparison.OrdinalIgnoreCase))
+                    block.PostNorm1W ??= new Tensor<float>(Config.HiddenDim);
+                else if (info.Name.Contains("post_ffw_norm", StringComparison.OrdinalIgnoreCase))
+                    block.PostNorm2W ??= new Tensor<float>(Config.HiddenDim);
+            }
+
             if (block != null && rawField != null)
             {
                 long rawSize = Core.Quantization.QuantizationOps.GetRawTensorByteCount(info.Shape, info.Dtype);
@@ -712,27 +789,28 @@ TransformerWeights.BlockWeights[] blocks,
     {
         if (layerIndex < 0 || layerIndex >= Blocks.Length) return;
 
+        // Wait for an in-flight preload of THIS layer before inspecting its state.
+        // LoadLayerWeights fills the block one tensor at a time, so checking Wq/RawWq
+        // first can observe a half-filled block (attention bytes present, FFN still
+        // missing) and skip the wait — pushing a partially loaded layer into the
+        // TransformerBlock. Waiting on the task guarantees the whole block finished.
+        lock (_preloadLock)
+        {
+            if (_preloadTask != null && _preloadLayerIndex == layerIndex)
+            {
+                _preloadTask.GetAwaiter().GetResult();
+                _preloadTask = null;
+                _preloadLayerIndex = -1;
+            }
+        }
+
         bool needsPush = false;
 
         // For fused QKV models (e.g. Phi-3), Wq is never set — only RawWq is.
         // Check both so the layer isn't reloaded every forward pass.
         if (Blocks[layerIndex].Wq == null && Blocks[layerIndex].RawWq == null)
         {
-            // Wait for any running preload of this layer
-            lock (_preloadLock)
-            {
-                if (_preloadTask != null && _preloadLayerIndex == layerIndex)
-                {
-                    _preloadTask.GetAwaiter().GetResult();
-                    _preloadTask = null;
-                    _preloadLayerIndex = -1;
-                }
-            }
-
-            if (Blocks[layerIndex].Wq == null && Blocks[layerIndex].RawWq == null)
-            {
-                Loader!.LoadLayerWeights(layerIndex, this);
-            }
+            Loader!.LoadLayerWeights(layerIndex, this);
             needsPush = true;
         }
 

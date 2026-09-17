@@ -173,7 +173,7 @@ public sealed class GpuInferenceEngine : IInferenceEngine
                 else
                 {
                     if (model.LmHead.Shape.Rows != V || model.LmHead.Shape.Cols != H)
-                        throw new NotSupportedException($"GPU inference engine (M0) needs the separate LM head loaded at [{V},{H}]; got [{model.LmHead.Shape.Rows},{model.LmHead.Shape.Cols}] — a streaming model holds only a placeholder there, so use a full load or the CPU path.");
+                        throw new NotSupportedException($"GPU inference engine (M0) needs the separate LM head loaded at [{V},{H}]; got [{model.LmHead.Shape.Rows},{model.LmHead.Shape.Cols}]. A streaming model dequantizes the head from its raw bytes on access, so a mismatch here means the model carries no separate output head at the expected shape.");
                     _lmHead = DeviceBuffer.From(device, model.LmHead); owned.Add(_lmHead);
                 }
             }

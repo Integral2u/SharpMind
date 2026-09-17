@@ -368,6 +368,84 @@ public class SmmExportLoadTests : IDisposable
             .GetField("_lmHead", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
             .GetValue(weights) is Lazy<Tensor<float>> { IsValueCreated: true };
 
+    [Fact]
+    public void DisposeMaterializedLmHead_ReArmsLazyHeadInsteadOfHandingOutDisposed()
+    {
+        // Streaming releases a consumer-materialized head at CreateTransformer. That must
+        // not leave LmHeadWeight returning the disposed tensor (the bug-4 failure mode):
+        // a lazily registered head is rebuilt from its raw bytes on the next access.
+        var config = ModelConfig.Learnable;
+        var embedding = new Tensor<float>(config.VocabSize, config.HiddenDim);
+        var finalNorm = new Tensor<float>(config.HiddenDim);
+        var blocks = new[] { new TransformerWeights.BlockWeights { LayerIndex = 0 } };
+        using var weights = new TransformerWeightsStreaming(
+            config, embedding, null, finalNorm, null, blocks, null!);
+
+        int builds = 0;
+        weights.SetLazyLmHead(() =>
+        {
+            builds++;
+            return new Tensor<float>(config.VocabSize, config.HiddenDim);
+        });
+
+        var first = weights.LmHeadWeight;
+        Assert.NotNull(first);
+        Assert.Equal(1, builds);
+
+        weights.DisposeMaterializedLmHead();
+
+        var second = weights.LmHeadWeight;
+        Assert.True(weights.HasLmHead);
+        Assert.NotNull(second);
+        Assert.NotSame(first, second);
+        Assert.Equal(2, builds);
+    }
+
+    [Theory]
+    [InlineData(".smm")]
+    [InlineData(".gguf")]
+    public void StreamingLoad_UntiedLmHead_IsLoadedAndFeedsLogits(string format)
+    {
+        // #58: LoadMode.Streaming skipped the untied output head. ResolveTarget returns
+        // the LmHeadWeight target for "output.weight", which is null until LoadSingleTensor
+        // creates it lazily — so LoadGlobalTensors saw target == null and skipped the
+        // tensor, leaving HasLmHead false and projecting against the embedding (max
+        // |full − streaming| 8.20 on the issue's repro). The head must be routed by name
+        // so a streaming load keeps its raw bytes and the logits match the full load.
+        using var fixture = TrainFixture();
+        int vocab = fixture.Config.VocabSize, hidden = fixture.Config.HiddenDim;
+        var head = new Tensor<float>(vocab, hidden);
+        for (int i = 0; i < head.Data.Length; i++) head.Data[i] = i * 1e-3f;
+        fixture.Weights.SetLmHead(head);
+
+        string path = Path.Combine(_temp.Path, $"streaming-untied{format}");
+        SmmTrainingExporter.Export(fixture.Weights, fixture.Tokenizer, path, new SmmWriteOptions { Source = "training" });
+        if (format == ".gguf")
+        {
+            string ggufPath = Path.Combine(_temp.Path, "streaming-untied.gguf");
+            SmmToGufConverter.Convert(path, ggufPath);
+            path = ggufPath;
+        }
+
+        var qOps = QuantizationFactory.Create(fixture.SharpConfig.ResolvedHardware);
+        var streaming = ModelFactory.CreateWeights(fixture.Config, fixture.SharpConfig, qOps, path, LoadMode.Streaming);
+        streaming.InitializeWeights();
+        Assert.True(streaming.HasLmHead, "streaming load must recognize the untied head");
+        Assert.NotNull(streaming.RawLmHead);
+
+        using var streamingModel = ModelFactory.CreateTransformer(streaming, fixture.SharpConfig); // owns the weights
+
+        using var full = LoadWeightsFrom(path, fixture.Config, fixture.SharpConfig);
+        using var fullModel = ModelFactory.CreateTransformer(full, fixture.SharpConfig);
+
+        var prompt = fixture.Generator.GenerateTrainingSample().TokenIds;
+        float[] streamingLogits = ComputeLogits(streamingModel, prompt, vocab);
+        float[] fullLogits = ComputeLogits(fullModel, prompt, vocab);
+        for (int i = 0; i < vocab; i++)
+            Assert.True(MathF.Abs(streamingLogits[i] - fullLogits[i]) < 1e-3f,
+                $"streaming logits[{i}] deviate from full load: {streamingLogits[i]} vs {fullLogits[i]}");
+    }
+
     /// <summary>
     /// Swaps the two dims of a 2D tensor's header entry in a GGUF file, leaving the data
     /// untouched. Tensor info layout: u64 name length, name bytes, u32 n_dims, u64 dims[].

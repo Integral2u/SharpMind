@@ -243,14 +243,14 @@ public static class ModelFactory
             };
         }
 
-        // Free float LM head in streaming mode — quantized projection uses RawLmHead
-        // and never accesses the float tensor. Avoiding this ~544 MB allocation
-        // is the single biggest memory reduction after block float weights.
-        if (weights is TransformerWeightsStreaming && weights.LmHeadWeight != null)
-        {
-            weights.LmHeadWeight.Dispose();
-            weights.SetLmHead(new Tensor<float>(1, 1)); // tiny dummy placeholder
-        }
+        // Streaming keeps only the raw head bytes: the quantized projection reads
+        // RawLmHead and never accesses the float tensor. The head is now created
+        // lazily (PR #55), so accessing LmHeadWeight here would dequantize the
+        // whole head (~544 MB for Qwen2.5-1.5B) just to dispose it. Free a copy a
+        // consumer already materialized, and leave an un-materialized one alone â€”
+        // not materializing in the first place is the entire memory win.
+        if (weights is TransformerWeightsStreaming && weights.HasLmHead)
+            weights.DisposeMaterializedLmHead();
 
         var finalNorm = BuildNorm(weights.Config.HiddenDim, sharpConfig, weights.Config.NormEps, weights.FinalNormWeight, weights.FinalNormBias);
 

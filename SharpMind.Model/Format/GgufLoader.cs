@@ -610,7 +610,11 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
         foreach (var info in meta.Tensors)
         {
             var (target, block, _) = weights.ResolveTarget(info.Name);
-            if (target != null && block == null)
+            // The untied head must be routed even when ResolveTarget returns a null
+            // target: a streaming load has no LmHeadWeight until LoadSingleTensor
+            // creates it lazily, so target is null for "output.weight" there and the
+            // tensor would otherwise be skipped, silently generating from the embedding.
+            if ((target != null && block == null) || TransformerWeights.IsLmHeadTensorName(info.Name))
             {
                 LoadSingleTensor(weights, meta, stream, reader, info);
             }
@@ -623,7 +627,7 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
     {
         // The untied output head keeps only its raw bytes here; TransformerWeights.LmHeadWeight
         // dequantizes them on first float access, since the CPU projection reads the raw bytes.
-        bool isLmHead = !info.Name.Contains("blk.") && info.Name.Contains("output.weight");
+        bool isLmHead = TransformerWeights.IsLmHeadTensorName(info.Name);
         var (target, block, rawField) = isLmHead ? default : weights.ResolveTarget(info.Name);
 
         if (isLmHead && !weights.HasLmHead)
