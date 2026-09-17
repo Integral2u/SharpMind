@@ -20,6 +20,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="SharpMind.Model" />
     <InternalsVisibleTo Include="SharpMind.Tests" />
   </ItemGroup>
 

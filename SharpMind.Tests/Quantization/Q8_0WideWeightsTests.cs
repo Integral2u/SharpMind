@@ -156,7 +156,36 @@ public class Q8_0WideWeightsTests
         Assert.NotSame(built[0], rebuilt);
         Assert.Same(raw2, rebuilt!.Source);
 
+        cache.Clear();
+        Assert.False(cache.HasSlot, "Clear must drop the slot so its raw source can be collected");
+
         Assert.Null(new Q8_0WideWeights.Cache().Get(new byte[7 * 34], k, 7));
+    }
+
+    /// <summary>
+    /// Freeing a layer must release the repack and the raw array it roots. Streaming frees and
+    /// reloads a layer every forward, so a cache that outlived the free kept every layer's
+    /// Q8_0 bytes resident at once — a streaming load held more than a full load. The next raw
+    /// install rebuilds the repack on first use.
+    /// </summary>
+    [Fact]
+    public void FreeFloatWeight_ReleasesTheCachedRepackAndItsRawSource()
+    {
+        const int k = 64, n = 16;
+        if (!Q8_0WideWeights.IsSupported(k, n)) return;
+        var mapping = SharpMindConfig.Gpt.ToJigSawMapping(parallel: true);
+        var layer = (InferenceLinearLayer)LinearLayerFactory.Create("wide", k, n, false, null, null, QuantDType.Q8_0, mapping);
+        Assert.True(layer.WideAllowed);
+
+        layer.SetRawWeight(RandomQ8_0(k, n, new Random(9)));
+        using (var input = new Tensor<float>(1, k))
+        using (layer.Forward(input)) { }
+        Assert.True(layer.HasCachedWide, "the first forward must build the repack");
+
+        layer.FreeFloatWeight();
+        Assert.False(layer.HasCachedWide, "freeing the layer must drop the repack and its raw source");
+
+        layer.Dispose();
     }
 
     /// <summary>The wide path stands in for the parallel FMA Q8_0 kernel only: a serial selection keeps its kernel.</summary>

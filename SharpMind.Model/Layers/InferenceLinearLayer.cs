@@ -20,6 +20,9 @@ public abstract class InferenceLinearLayer : LinearLayer
     /// </summary>
     public bool WideAllowed { get; internal set; }
 
+    /// <summary>Whether the repacked wide copy (and its raw source) is currently cached.</summary>
+    internal bool HasCachedWide => _wide.HasSlot;
+
     protected InferenceLinearLayer(string name, int inFeatures, int outFeatures, bool bias, Tensor<float>? weight, Tensor<float>? biasTensor, QuantDType quantDType)
         // Forward reads RawQuantizedData, never the float weight, so a null weight
         // (quantized-resident loading) must not materialise a full F32 copy —
@@ -220,10 +223,22 @@ public abstract class InferenceLinearLayer : LinearLayer
 
     public override void FreeFloatWeight()
     {
+        // Drop the repack and the raw source it roots. Streaming frees and reloads a layer
+        // every forward; without this the freed layer's whole Q8_0 payload (and the ~6%
+        // wider repack) stayed rooted in the cache, so a streaming load ended up holding
+        // every layer's weights at once — more than a full load. The next reload installs
+        // a fresh raw array and rebuilds. See Q8_0WideWeights.Cache.Clear.
+        _wide.Clear();
         if (_ownsWeight)
             _weight.Dispose();
         _weight = new Tensor<float>(InFeatures, 1);
         _ownsWeight = true;
+    }
+
+    protected override void OnDispose()
+    {
+        _wide.Clear();
+        base.OnDispose();
     }
 
     public override void SetRawWeight(byte[]? rawData)

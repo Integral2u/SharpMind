@@ -94,6 +94,22 @@ public sealed unsafe class Q8_0WideWeights
                 return slot.Wide;
             }
         }
+
+        /// <summary>
+        /// Drops the cached repack. The slot roots the raw source array — for a quantized
+        /// layer that array is its whole weight payload — as well as the copy, so a streaming
+        /// layer freeing its bytes must clear this too, or the "free" keeps the tensor alive
+        /// for the lifetime of the layer (and the repack with it).
+        /// </summary>
+        public void Clear()
+        {
+            lock (_lock) _slot = null;
+        }
+
+        internal bool HasSlot
+        {
+            get { lock (_lock) return _slot is not null; }
+        }
     }
 
     private Q8_0WideWeights(byte[] raw, int inFeatures, int outFeatures)
