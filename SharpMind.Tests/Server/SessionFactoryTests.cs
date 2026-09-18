@@ -1,3 +1,4 @@
+using System.Text.Json;
 using SharpMind.Core;
 using SharpMind.Model;
 using SharpMind.Model.Config;
@@ -108,5 +109,69 @@ public class SessionFactoryTests
         var (session, _) = factory.CreateSession(loaded, Request(null, "hello"));
 
         Assert.Equal(ModelConfig.ComputeMaxCacheLength(loaded.Model.Config, null), session.MaxTokens);
+    }
+
+    // ── response_format → grammar ─────────────────────────────────────
+
+    private static JsonElement Element(string json)
+    {
+        using var doc = JsonDocument.Parse(json);
+        return doc.RootElement.Clone();
+    }
+
+    /// <summary>
+    /// response_format {type: json_object} constrains the completion to
+    /// well-formed JSON by installing a GBNF grammar on the session.
+    /// </summary>
+    [Fact]
+    public void CreateSession_JsonObjectResponseFormat_SetsGrammar()
+    {
+        using var loaded = MakeLoadedModel();
+        var factory = new SessionFactory(new SharpMindServerOptions());
+        var request = Request(16, "pick a number");
+        request.ResponseFormat = Element("""{"type":"json_object"}""");
+
+        var (session, _) = factory.CreateSession(loaded, request);
+
+        Assert.NotNull(session.Grammar);
+    }
+
+    [Fact]
+    public void CreateSession_JschSchemaResponseFormat_SetsGrammar()
+    {
+        using var loaded = MakeLoadedModel();
+        var factory = new SessionFactory(new SharpMindServerOptions());
+        var request = Request(16, "describe a person");
+        request.ResponseFormat = Element("""{"type":"json_schema","json_schema":{"schema":{"type":"object","properties":{"name":{"type":"string"}}}}}""");
+
+        var (session, _) = factory.CreateSession(loaded, request);
+
+        Assert.NotNull(session.Grammar);
+    }
+
+    [Fact]
+    public void CreateSession_NoResponseFormat_LeavesGrammarNull()
+    {
+        using var loaded = MakeLoadedModel();
+        var factory = new SessionFactory(new SharpMindServerOptions());
+
+        var (session, _) = factory.CreateSession(loaded, Request(null, "hello"));
+
+        Assert.Null(session.Grammar);
+    }
+
+    /// <summary>
+    /// An unsupported response_format must surface as a schema exception so the
+    /// HTTP layer can answer 400 (rather than failing silently mid-generation).
+    /// </summary>
+    [Fact]
+    public void CreateSession_UnsupportedResponseFormat_Throws()
+    {
+        using var loaded = MakeLoadedModel();
+        var factory = new SessionFactory(new SharpMindServerOptions());
+        var request = Request(16, "hello");
+        request.ResponseFormat = Element("""{"type":"text"}""");
+
+        Assert.Throws<SharpMind.Inference.Grammar.JsonSchemaException>(() => factory.CreateSession(loaded, request));
     }
 }

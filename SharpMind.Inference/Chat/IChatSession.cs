@@ -40,6 +40,14 @@ public interface IChatSession : IAsyncDisposable
     public int RepetitionWindow { get; set; }
     public IReadOnlyList<int>? StopTokenIds { get; set; }
     public IReadOnlyList<string>? StopStrings { get; set; }
+
+    /// <summary>
+    /// Optional GBNF grammar that constrains every generation this session
+    /// performs. When set, the turn's output is forced to match the grammar and
+    /// tool-call capture is disabled (a matching JSON object is the answer, not a
+    /// call). Null or whitespace keeps generation unconstrained.
+    /// </summary>
+    public string? Grammar { get; set; }
     public bool ShowThinking { get; set; }
     public bool EnableThinking { get; set; }
     public string UserName { get; set; }

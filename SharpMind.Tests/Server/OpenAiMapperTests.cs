@@ -1,6 +1,7 @@
 using System.Text.Json;
 using SharpMind.Inference.Chat;
 using SharpMind.Inference.Chat.PromptFormatters;
+using SharpMind.Inference.Grammar;
 using SharpMind.Server.Protocol;
 using SharpMind.Tokenization;
 using SharpMind.Model;
@@ -295,6 +296,159 @@ public class OpenAiMapperTests
         Assert.Equal("STOP", session.StopStrings![0]);
     }
 
+    // ── ResolveGrammar (response_format) ──────────────────────────────
+
+    private static JsonElement Element(string json)
+    {
+        using var doc = JsonDocument.Parse(json);
+        return doc.RootElement.Clone();
+    }
+
+    [Fact]
+    public void ResolveGrammar_NoResponseFormat_ReturnsNull()
+    {
+        Assert.Null(OpenAiMapper.ResolveGrammar(new CreateChatCompletionRequest()));
+    }
+
+    [Fact]
+    public void ResolveGrammar_JsonObject_ReturnsAnyJsonGrammar()
+    {
+        var request = new CreateChatCompletionRequest
+        {
+            ResponseFormat = Element("""{"type":"json_object"}""")
+        };
+
+        var grammar = OpenAiMapper.ResolveGrammar(request);
+
+        Assert.NotNull(grammar);
+        Assert.NotEqual("", grammar);
+        Assert.NotNull(GbnfGrammar.Parse(grammar!)); // must be valid GBNF
+    }
+
+    [Theory]
+    [InlineData("""{"type":"json_object"}""")]
+    [InlineData("""{"type":"json_schema","json_schema":{"name":"person","strict":true,"schema":{"type":"object","properties":{"name":{"type":"string"}}}}}""")]
+    public void ResolveGrammar_RawJsonString_Parses(string responseFormatJson)
+    {
+        var grammar = OpenAiMapper.ResolveGrammar(new CreateChatCompletionRequest
+        {
+            ResponseFormat = responseFormatJson
+        });
+
+        Assert.NotNull(grammar);
+    }
+
+    [Fact]
+    public void ResolveGrammar_JsonSchema_NestedSchema_ReturnsGrammar()
+    {
+        var request = new CreateChatCompletionRequest
+        {
+            ResponseFormat = Element("""{"type":"json_schema","json_schema":{"name":"person","strict":true,"schema":{"type":"object","properties":{"name":{"type":"string"}}}}}""")
+        };
+
+        var grammar = OpenAiMapper.ResolveGrammar(request);
+
+        Assert.NotNull(grammar);
+        Assert.NotNull(GbnfGrammar.Parse(grammar!));
+    }
+
+    [Fact]
+    public void ResolveGrammar_JsonSchema_InlineSchema_ReturnsGrammar()
+    {
+        // Some clients pass the schema directly as json_schema rather than
+        // wrapping it in json_schema.schema.
+        var request = new CreateChatCompletionRequest
+        {
+            ResponseFormat = Element("""{"type":"json_schema","json_schema":{"type":"object","properties":{"x":{"type":"integer","enum":[1,2,3]}}}}""")
+        };
+
+        var grammar = OpenAiMapper.ResolveGrammar(request);
+
+        Assert.NotNull(grammar);
+        Assert.NotNull(GbnfGrammar.Parse(grammar!));
+    }
+
+    [Fact]
+    public void ResolveGrammar_MissingType_Throws()
+    {
+        var request = new CreateChatCompletionRequest
+        {
+            ResponseFormat = Element("""{"schema":{}}""")
+        };
+
+        Assert.Throws<JsonSchemaException>(() => OpenAiMapper.ResolveGrammar(request));
+    }
+
+    [Fact]
+    public void ResolveGrammar_UnsupportedType_Throws()
+    {
+        var request = new CreateChatCompletionRequest
+        {
+            ResponseFormat = Element("""{"type":"text"}""")
+        };
+
+        Assert.Throws<JsonSchemaException>(() => OpenAiMapper.ResolveGrammar(request));
+    }
+
+    [Fact]
+    public void ResolveGrammar_NonObject_Throws()
+    {
+        var request = new CreateChatCompletionRequest
+        {
+            ResponseFormat = Element("""{"type":"json_object"}""").GetProperty("type")
+        };
+
+        Assert.Throws<JsonSchemaException>(() => OpenAiMapper.ResolveGrammar(request));
+    }
+
+    [Fact]
+    public void ResolveGrammar_JsonSchemaWithoutSchemaObject_Throws()
+    {
+        var request = new CreateChatCompletionRequest
+        {
+            ResponseFormat = Element("""{"type":"json_schema"}""")
+        };
+
+        Assert.Throws<JsonSchemaException>(() => OpenAiMapper.ResolveGrammar(request));
+    }
+
+    [Fact]
+    public void ResolveGrammar_UnsupportedKeywordInSchema_Throws()
+    {
+        var request = new CreateChatCompletionRequest
+        {
+            ResponseFormat = Element("""{"type":"json_schema","json_schema":{"schema":{"$ref":"#/$defs/x"}}}""")
+        };
+
+        Assert.Throws<JsonSchemaException>(() => OpenAiMapper.ResolveGrammar(request));
+    }
+
+    // ── ApplyToSession grammar ─────────────────────────────────────────
+
+    [Fact]
+    public void ApplyToSession_SetsGrammarFromResponseFormat()
+    {
+        var session = new FakeTestSession();
+        var request = new CreateChatCompletionRequest
+        {
+            ResponseFormat = Element("""{"type":"json_object"}""")
+        };
+
+        OpenAiMapper.ApplyToSession(request, session);
+
+        Assert.NotNull(session.Grammar);
+    }
+
+    [Fact]
+    public void ApplyToSession_NoResponseFormat_LeavesGrammarNull()
+    {
+        var session = new FakeTestSession();
+
+        OpenAiMapper.ApplyToSession(new CreateChatCompletionRequest(), session);
+
+        Assert.Null(session.Grammar);
+    }
+
     private sealed class FakeTestSession : IChatSession
     {
         public int MaxTokens { get; set; }
@@ -307,6 +461,7 @@ public class OpenAiMapperTests
         public int MaxToolCallsPerTurn { get; set; }
         public IReadOnlyList<int>? StopTokenIds { get; set; }
         public IReadOnlyList<string>? StopStrings { get; set; }
+        public string? Grammar { get; set; }
         public bool ShowThinking { get; set; }
         public bool EnableThinking { get; set; }
         public string UserName { get; set; } = "User";

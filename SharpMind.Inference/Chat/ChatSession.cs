@@ -1,5 +1,6 @@
 using SharpMind.Inference.Agent;
 using SharpMind.Inference.Chat.PromptFormatters;
+using SharpMind.Inference.Grammar;
 using SharpMind.Model;
 using SharpMind.Model.Format;
 using SharpMind.Tokenization;
@@ -358,6 +359,41 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     public IReadOnlyList<int>? StopTokenIds { get; set; }
     /// <summary>Text strings that stop generation when matched in the decoded output.</summary>
     public IReadOnlyList<string>? StopStrings { get; set; }
+    private string? _grammar;
+    /// <summary>
+    /// Optional GBNF grammar constraining every generation this session performs.
+    /// Setting it invalidates any cached compiled grammar.
+    /// </summary>
+    public string? Grammar
+    {
+        get => _grammar;
+        set
+        {
+            _grammar = value;
+            _compiledGrammar = null;
+            _compiledGrammarText = null;
+        }
+    }
+    private GbnfGrammar? _compiledGrammar;
+    private string? _compiledGrammarText;
+
+    /// <summary>
+    /// Builds a constraint for the current <see cref="Grammar"/>, or null when
+    /// none is set. The compiled grammar is cached until the text changes.
+    /// </summary>
+    private IGrammarConstraint? CreateGrammarConstraint()
+    {
+        if (string.IsNullOrWhiteSpace(_grammar))
+            return null;
+        if (_compiledGrammar is null || !string.Equals(_compiledGrammarText, _grammar, StringComparison.Ordinal))
+        {
+            _compiledGrammar = GbnfGrammar.Parse(_grammar);
+            _compiledGrammarText = _grammar;
+        }
+        var stopIds = StopTokenIds ?? _tokenizer.GetEndOfGenerationIds();
+        return _compiledGrammar.CreateConstraint(TokenByteTable.Get(_tokenizer), stopIds);
+    }
+
     public bool ShowThinking { get; set; } = true;
     /// <summary>
     /// Value of the <c>enable_thinking</c> chat-template variable (checked by
@@ -1230,11 +1266,14 @@ private void ThrowIfDisposed()
 
             int[] generatorInput = FeedForPrompt(promptToks);
 
+            var constraint = CreateGrammarConstraint();
+            bool grammarActive = constraint is not null;
             var sampleCfg = new SamplingConfig
             {
                 Temperature = Temperature,
                 TopK = TopK,
                 TopP = TopP,
+                Constraint = constraint,
             };
 
             var genCfg = new GenerationConfig
@@ -1333,7 +1372,7 @@ private void ThrowIfDisposed()
                 // first pass: it might be the fabricated tool-result envelope,
                 // which must not be shown. Once anything real commits (prose, a
                 // non-envelope JSON answer) emission resumes normally.
-                if (shownThrough == 0 && droppedThrough == 0 && visible.Length > 0)
+                if (!grammarActive && shownThrough == 0 && droppedThrough == 0 && visible.Length > 0)
                 {
                     int start = 0;
                     while (start < visible.Length && char.IsWhiteSpace(visible[start])) start++;
@@ -1474,7 +1513,8 @@ if (held.Length > 0)
             // builder with no registered tools, or an unknown model (None) can
             // never enter the tool-call loop, even if the model hallucinates a
             // <tool_call> tag or an envelope.
-            if (_agentBuilder is not null
+            if (!grammarActive
+                && _agentBuilder is not null
                 && _agentBuilder.RegisteredToolNames.Count > 0
                 && _toolCallFormat != ToolCallFormat.None
                 && toolCallCount < MaxToolCallsPerTurn

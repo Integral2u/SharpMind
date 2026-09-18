@@ -1,5 +1,6 @@
 using System.Text.Json;
 using SharpMind.Inference.Chat;
+using SharpMind.Inference.Grammar;
 using SharpMind.Server.Protocol;
 
 namespace SharpMind.Server.Protocol;
@@ -77,6 +78,61 @@ public static class OpenAiMapper
 
         if (request.Stop?.Values is { Count: > 0 } stopValues)
             session.StopStrings = [.. stopValues];
+
+        session.Grammar = ResolveGrammar(request);
+    }
+
+    /// <summary>
+    /// Resolve <paramref name="request"/>.ResponseFormat into a GBNF grammar
+    /// that forces the completion to be well-formed JSON. Returns null when no
+    /// response_format is present. Throws <see cref="JsonSchemaException"/> for
+    /// a malformed or unsupported format so the caller can reply 400.
+    /// </summary>
+    /// <remarks>
+    /// <c>{"type":"json_object"}</c> maps to
+    /// <see cref="JsonSchemaGrammar.AnyJson"/>; <c>{"type":"json_schema"}</c>
+    /// maps to <see cref="JsonSchemaGrammar.FromSchema(JsonElement)"/> using the
+    /// schema under <c>json_schema.schema</c> (OpenAI structured outputs) or the
+    /// <c>json_schema</c> object itself when it is inline.
+    /// </remarks>
+    public static string? ResolveGrammar(CreateChatCompletionRequest request)
+    {
+        if (request.ResponseFormat is null)
+            return null;
+
+        JsonElement format = ToJsonElement(request.ResponseFormat);
+        if (format.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+            return null;
+        if (format.ValueKind != JsonValueKind.Object)
+            throw new JsonSchemaException("'response_format' must be an object");
+
+        string? type = format.TryGetProperty("type", out var typeProp) ? typeProp.GetString() : null;
+        switch (type)
+        {
+            case "json_object":
+                return JsonSchemaGrammar.AnyJson;
+            case "json_schema":
+                if (!format.TryGetProperty("json_schema", out var jsonSchema) || jsonSchema.ValueKind != JsonValueKind.Object)
+                    throw new JsonSchemaException("'response_format' of type 'json_schema' requires a 'json_schema' object");
+                if (jsonSchema.TryGetProperty("schema", out var schema) && schema.ValueKind == JsonValueKind.Object)
+                    return JsonSchemaGrammar.FromSchema(schema);
+                return JsonSchemaGrammar.FromSchema(jsonSchema);
+            case null:
+                throw new JsonSchemaException("'response_format' requires a 'type' of 'json_object' or 'json_schema'");
+            default:
+                throw new JsonSchemaException($"unsupported 'response_format.type' '{type}'");
+        }
+    }
+
+    private static JsonElement ToJsonElement(object value)
+    {
+        if (value is JsonElement element)
+            return element;
+        if (value is JsonDocument document)
+            return document.RootElement.Clone();
+        if (value is string text)
+            return JsonSerializer.Deserialize<JsonElement>(text);
+        return JsonSerializer.SerializeToElement(value);
     }
 
     /// <summary>

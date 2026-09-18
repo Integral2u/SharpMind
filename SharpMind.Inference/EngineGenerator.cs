@@ -70,6 +70,8 @@ public sealed class EngineGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
 
         var sampleCfg = sampling ?? SamplingConfig.Greedy;
         var genCfg = generation ?? GenerationConfig.Default;
+        sampleCfg.Constraint?.Reset();
+        var constraint = sampleCfg.Constraint;
         if (promptIds.Length == 0)
             throw new InvalidOperationException("Prompt produced no token IDs; cannot generate.");
 
@@ -111,14 +113,21 @@ public sealed class EngineGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
             GeneratorDiagnostics.PrintTopLogits(_tokenizer, step, logitsSlice);
 
             int nextId;
-            if (repPenalty != 1.0f)
+            if (repPenalty != 1.0f || constraint is not null)
             {
                 if (_penaltyScratch is null || _penaltyScratch.Length < vocabSize) _penaltyScratch = new float[vocabSize];
                 Span<float> penalized = _penaltyScratch.AsSpan(0, vocabSize);
                 logitsSlice.CopyTo(penalized);                                   // copy out — the next
-                ApplyRepetitionPenalty(penalized, promptIds, _generatedIds,       // DecodeStep call is free
-                    repPenalty, repWindow);                                      // to reuse logits' buffer
+                if (repPenalty != 1.0f)
+                    ApplyRepetitionPenalty(penalized, promptIds, _generatedIds,   // DecodeStep call is free
+                        repPenalty, repWindow);                                  // to reuse logits' buffer
+                if (constraint is not null)
+                {
+                    constraint.Apply(penalized);
+                    if (constraint.IsDead) break;
+                }
                 nextId = Sampler.Sample(penalized, sampleCfg, rng);
+                constraint?.Accept(nextId);
             }
             else
                 nextId = Sampler.Sample(logitsSlice, sampleCfg, rng);            // consumed synchronously, no copy needed

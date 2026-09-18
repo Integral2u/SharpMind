@@ -131,6 +131,7 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
 
         var sampleCfg = sampling   ?? SamplingConfig.Greedy;
         var genCfg    = generation ?? GenerationConfig.Default;
+        sampleCfg.Constraint?.Reset();
 
         if (promptIds.Length == 0)
             throw new InvalidOperationException("Prompt produced no token IDs; cannot generate.");
@@ -191,15 +192,17 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
                 GeneratorDiagnostics.PrintTopLogits(_tokenizer, step, logitsSlice);
 
                 int nextId;
-                if (repPenalty != 1.0f)
+                if (repPenalty != 1.0f || sampleCfg.Constraint is not null)
                 {
                     if (_penaltyScratch is null || _penaltyScratch.Length < vocabSize)
                         _penaltyScratch = new float[vocabSize];
                     Span<float> logits = _penaltyScratch.AsSpan(0, vocabSize);
                     logitsSlice.CopyTo(logits);
-                    ApplyRepetitionPenalty(logits, promptIds, _generatedIds,
-                        repPenalty, repWindow);
-                    nextId = Sampler.Sample(logits, sampleCfg, rng);
+                    if (repPenalty != 1.0f)
+                        ApplyRepetitionPenalty(logits, promptIds, _generatedIds,
+                            repPenalty, repWindow);
+                    if (!SamplingHelpers.TrySampleConstrained(logits, sampleCfg, rng, out nextId))
+                        break;
                 }
                 else
                     nextId = Sampler.Sample(logitsSlice, sampleCfg, rng);

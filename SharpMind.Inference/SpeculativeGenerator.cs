@@ -106,6 +106,9 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
 
         var sampleCfg = sampling ?? SamplingConfig.Greedy;
         var genCfg = generation ?? GenerationConfig.Default;
+        sampleCfg.Constraint?.Reset();
+        var constraint = sampleCfg.Constraint;
+        bool grammarDead = false;
 
         var rateTracker = new TokenRateTracker(windowSize: 10);
         rateTracker.Start();
@@ -158,12 +161,25 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
                         ApplyRepetitionPenalty(curLogits, promptIds, generatedIds,
                             genCfg.RepetitionPenalty, genCfg.RepetitionWindow);
 
+                    // Mask before both samples: a token the grammar forbids must
+                    // never be the greedy correction either.
+                    if (constraint is not null)
+                    {
+                        constraint.Apply(curLogits);
+                        if (constraint.IsDead)
+                        {
+                            grammarDead = true;
+                            break;
+                        }
+                    }
+
                     // greedyChoice and draftToken come from the SAME logits
                     int greedyChoice = Sampler.Sample(curLogits, SamplingConfig.Greedy, rng);
                     int draftToken = Sampler.Sample(curLogits, sampleCfg, rng);
 
                     if (draftToken == greedyChoice)
                     {
+                        constraint?.Accept(draftToken);
                         // Accept draft: forward it to update cache and get next logits
                         _decodeTokenScratch[0] = draftToken;
                         Tensor<float>? prevTensor = logitsTensor;
@@ -225,6 +241,7 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
                         currentPos = _caches[0].Length;
 
                         int correctionToken = greedyChoice;
+                        constraint?.Accept(correctionToken);
                         generatedIds.Add(correctionToken);
                         rateTracker.RecordToken();
                         TimeToFirstToken = rateTracker.TimeToFirstToken;
@@ -262,10 +279,21 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
                 if (generatedIds.Count > 0 && genCfg.StopTokenIds.Contains(generatedIds[^1]))
                     break;
 
+                if (grammarDead)
+                    break;
+
                 if (!roundDone && tokensAccepted == maxDraftTokens)
                 {
                     // All drafts accepted: emit the bonus token (greedy sample from last logits)
-                    int bonusToken = Sampler.Sample(_penaltyScratch.AsSpan(0, vocabSize), SamplingConfig.Greedy, rng);
+                    Span<float> bonusLogits = _penaltyScratch.AsSpan(0, vocabSize);
+                    if (constraint is not null)
+                    {
+                        constraint.Apply(bonusLogits);
+                        if (constraint.IsDead)
+                            break;
+                    }
+                    int bonusToken = Sampler.Sample(bonusLogits, SamplingConfig.Greedy, rng);
+                    constraint?.Accept(bonusToken);
                     generatedIds.Add(bonusToken);
                     rateTracker.RecordToken();
                     TimeToFirstToken = rateTracker.TimeToFirstToken;

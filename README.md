@@ -554,7 +554,6 @@ SharpMind.Extensions.Tools Optional common tools (grep, git, datetime) — plugi
 SharpMind.Server        OpenAI-compatible HTTP server (class library)
 SharpMind.Server.CLI    Server CLI executable + interactive REPL
 SharpMind.Samples       Example programs + training sample data (Shakespeare corpus, checkpoint, job config)
-SharpMind.Benchmarks    Evaluation harness
 SharpMind.Tests         Test suite
 SharpMind.Live          Blazor WebAssembly browser demo — AOT-compiled engine, static-hostable on GitHub Pages
 ```

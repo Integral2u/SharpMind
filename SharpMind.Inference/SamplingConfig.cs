@@ -1,3 +1,5 @@
+using SharpMind.Inference.Grammar;
+
 namespace SharpMind.Inference;
 
 /// <summary>
@@ -38,6 +40,15 @@ public sealed record SamplingConfig
 
     /// <summary>Seed for reproducible sampling. Null = non-deterministic.</summary>
     public int? Seed { get; init; }
+
+    /// <summary>
+    /// Optional grammar constraint. When set, sampling is restricted to tokens
+    /// that keep the decoded output inside the grammar. A constraint carries
+    /// state, so give each generation its own instance (or let it
+    /// <see cref="IGrammarConstraint.Reset"/> itself between runs as the
+    /// generators do).
+    /// </summary>
+    public IGrammarConstraint? Constraint { get; init; }
 
     // Presets
 

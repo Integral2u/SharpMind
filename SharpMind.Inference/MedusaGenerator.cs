@@ -87,6 +87,7 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
     // indices 1..K = Medusa head predictions.  The Predict() call writes directly
     // into slots 1..K.
     private readonly int[] _draftScratch;
+    private float[]? _maskScratch;
     private bool _disposed;
     private readonly bool _addBos;
     private readonly bool _addEos;
@@ -186,6 +187,8 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
 
         var sampleCfg = sampling ?? SamplingConfig.Greedy;
         var genCfg = generation ?? GenerationConfig.Default;
+        sampleCfg.Constraint?.Reset();
+        var constraint = sampleCfg.Constraint;
 
         var rateTracker = new TokenRateTracker(windowSize: 10);
         rateTracker.Start();
@@ -194,6 +197,11 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
         int vocabSize = _model.Config.VocabSize;
         int numHeads = _medusaHeads.NumHeads;
         int draftLen = numHeads + 1; // LM-head greedy + K head predictions
+
+        if (_maskScratch is null || _maskScratch.Length < vocabSize)
+            _maskScratch = new float[vocabSize];
+        float[] mask = _maskScratch;
+        bool grammarDead = false;
 
         // Prefill
         // Process the full prompt (in chunks that fit the workspace; see
@@ -232,7 +240,25 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
 
                 // 1. Greedy sample: the LM head's best guess for the next token.
                 //    This is always the first draft token.
-                int token0 = Sampler.Sample(curLogits, SamplingConfig.Greedy, rng);
+                int token0;
+                if (constraint is not null)
+                {
+                    curLogits.CopyTo(mask.AsSpan(0, vocabSize));
+                    Span<float> t0Logits = mask.AsSpan(0, vocabSize);
+                    constraint.Apply(t0Logits);
+                    if (constraint.IsDead)
+                    {
+                        grammarDead = true;
+                        break;
+                    }
+                    token0 = Sampler.Sample(t0Logits, SamplingConfig.Greedy, rng);
+                    // token_0 is always accepted, so advance the grammar cursor now.
+                    constraint.Accept(token0);
+                }
+                else
+                {
+                    token0 = Sampler.Sample(curLogits, SamplingConfig.Greedy, rng);
+                }
                 _draftScratch[0] = token0;
 
                 // 2. Run the Medusa draft heads.  Each head is a small MLP
@@ -280,13 +306,34 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
                 int accepted = 1;
                 for (int i = 0; i < numHeads; i++)
                 {
-                    int verifGreedy = Sampler.Sample(
-                        verifLogits.Data.Slice(i * vocabSize, vocabSize),
-                        SamplingConfig.Greedy, rng);
-                    if (verifGreedy == _draftScratch[i + 1])
-                        accepted++;
+                    ReadOnlySpan<float> verifSlice =
+                        verifLogits.Data.Slice(i * vocabSize, vocabSize);
+                    int verifGreedy;
+                    if (constraint is not null)
+                    {
+                        verifSlice.CopyTo(mask.AsSpan(0, vocabSize));
+                        Span<float> vLogits = mask.AsSpan(0, vocabSize);
+                        constraint.Apply(vLogits);
+                        if (constraint.IsDead)
+                        {
+                            grammarDead = true;
+                            break;
+                        }
+                        verifGreedy = Sampler.Sample(vLogits, SamplingConfig.Greedy, rng);
+                    }
                     else
+                    {
+                        verifGreedy = Sampler.Sample(verifSlice, SamplingConfig.Greedy, rng);
+                    }
+                    if (verifGreedy == _draftScratch[i + 1])
+                    {
+                        accepted++;
+                        constraint?.Accept(_draftScratch[i + 1]);
+                    }
+                    else
+                    {
                         break;
+                    }
                 }
 
                 // 6. Emit accepted tokens one-by-one (needed for streaming).
@@ -325,6 +372,7 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
                 if (generatedIds.Count > 0 &&
                     genCfg.StopTokenIds.Contains(generatedIds[^1]))
                     break;
+                if (grammarDead) break;
 
                 // 7. Prepare the starting state for the next round.
                 //    Two cases depending on whether all K+1 draft tokens were accepted.
@@ -335,9 +383,24 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
                     // token (draft[K]).  We sample this greedily as the "bonus"
                     // — an un-verified token that we accept optimistically.
                     // (This is the standard speculative-decoding bonus step.)
-                    int bonus = Sampler.Sample(
-                        verifLogits.Data.Slice(numHeads * vocabSize, vocabSize),
-                        SamplingConfig.Greedy, rng);
+                    int bonus;
+                    if (constraint is not null)
+                    {
+                        verifLogits.Data.Slice(numHeads * vocabSize, vocabSize)
+                            .CopyTo(mask.AsSpan(0, vocabSize));
+                        Span<float> bonusLogits = mask.AsSpan(0, vocabSize);
+                        constraint.Apply(bonusLogits);
+                        if (constraint.IsDead)
+                            break;
+                        bonus = Sampler.Sample(bonusLogits, SamplingConfig.Greedy, rng);
+                        constraint.Accept(bonus);
+                    }
+                    else
+                    {
+                        bonus = Sampler.Sample(
+                            verifLogits.Data.Slice(numHeads * vocabSize, vocabSize),
+                            SamplingConfig.Greedy, rng);
+                    }
                     generatedIds.Add(bonus);
                     rateTracker.RecordToken();
                     TimeToFirstToken = rateTracker.TimeToFirstToken;

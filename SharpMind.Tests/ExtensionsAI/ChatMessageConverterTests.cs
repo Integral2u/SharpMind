@@ -133,6 +133,7 @@ public sealed class ChatMessageConverterTests
         public int MaxToolCallsPerTurn { get; set; }
         public IReadOnlyList<int>? StopTokenIds { get; set; }
         public IReadOnlyList<string>? StopStrings { get; set; }
+        public string? Grammar { get; set; }
         public bool ShowThinking { get; set; }
         public bool EnableThinking { get; set; }
         public string UserName { get; set; } = "User";

@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using SharpMind.Inference.Chat;
+using SharpMind.Inference.Grammar;
 using SharpMind.Server.Protocol;
 
 namespace SharpMind.Server;
@@ -291,6 +292,18 @@ public sealed class SharpMindService : IAsyncDisposable
             var info = modelManager.GetModelInfo(request.Model);
             if (info is null)
                 return Results.Json(new { error = new { message = $"Model '{request.Model}' not found", type = "invalid_request_error" } }, statusCode: 404);
+
+            // Validate response_format up front: a malformed or unsupported
+            // format is a client error (400), and resolving it before the
+            // (expensive) model load beats failing after.
+            try
+            {
+                OpenAiMapper.ResolveGrammar(request);
+            }
+            catch (JsonSchemaException ex)
+            {
+                return Results.Json(new { error = new { message = ex.Message, type = "invalid_request_error" } }, statusCode: 400);
+            }
 
             LoadedModel? loaded;
             try

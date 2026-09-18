@@ -1,5 +1,7 @@
+using System.Text;
 using SharpMind.Inference;
 using SharpMind.Inference.Chat;
+using SharpMind.Inference.Grammar;
 using SharpMind.Model;
 using SharpMind.Tokenization;
 using SharpMind.Tokenization.Vocab;
@@ -115,5 +117,27 @@ public sealed class EngineGeneratorTests
         gen.ResetCache();
         Assert.Equal(0, engine.CachedLength);
         Assert.Empty(gen.CacheTokens!);
+    }
+
+    [Fact]
+    public async Task RespectsGrammarConstraint()
+    {
+        // The stub always prefers token 70 ("F"); the grammar must override that
+        // preference and force the only matching output.
+        using var engine = new StubEngine(fixedId: 70);
+        var tokenizer = MakeTokenizer();
+        using var gen = new EngineGenerator<KVCacherBuilder>(engine, tokenizer, addBos: false, addEos: false, numLayers: 2);
+
+        var constraint = GbnfGrammar
+            .Parse("root ::= \"abc\"")
+            .CreateConstraint(TokenByteTable.Get(tokenizer), [tokenizer.EosId]);
+        var sampling = new SamplingConfig { Temperature = 0f, Constraint = constraint };
+
+        var sb = new StringBuilder();
+        await foreach (var f in gen.GenerateFromTokensAsync([65], sampling,
+            new GenerationConfig { MaxNewTokens = 10, Stream = false, StopTokenIds = [tokenizer.EosId] }))
+            sb.Append(f);
+
+        Assert.Equal("abc", sb.ToString());
     }
 }
