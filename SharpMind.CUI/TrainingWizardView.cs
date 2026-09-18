@@ -448,7 +448,7 @@ public sealed class TrainingWizardView : View
         => FieldRow(form, row, label, initial.ToString(), s => int.TryParse(s, out _), set, rows);
 
     private static int FloatRow(View form, int row, string label, float initial, Action<float> set, Dictionary<string, TextField> rows)
-        => FieldRow(form, row, label, initial.ToString("0.#####"),
+        => FieldRow(form, row, label, initial.ToString("0.#####", System.Globalization.CultureInfo.InvariantCulture),
             s => float.TryParse(s, System.Globalization.CultureInfo.InvariantCulture, out _), set, rows);
 
     private static int FieldRow(
@@ -475,6 +475,7 @@ public sealed class TrainingWizardView : View
         _jobPathLabel.Text = string.IsNullOrEmpty(_savedPath) ? "New job (not yet saved)" : $"Saved: {Path.GetFileName(_savedPath)}";
         _nameField.Text = (ustring)(_job.Name ?? "");
         RefreshMap();
+        RefreshHyperRows();
         RefreshSources();
         RefreshStages();
         // keep count field reflects the current KeepRecent
@@ -548,6 +549,46 @@ public sealed class TrainingWizardView : View
         _checkpointDirLabel.Text = $"Checkpoints (derived): {_job.CheckpointDir}";
         RefreshResume();
     }
+
+    /// <summary>
+    /// Re-syncs the training-hyperparameter text fields (Seq len, Batch size,
+    /// Total steps, Learning rate, Warmup steps, Grad clip norm, Label
+    /// smoothing, Checkpoint interval, MoE experts/top-k) from the job, the way
+    /// <see cref="RefreshMap"/> does for the model rows. Without this a loaded
+    /// job kept showing the wizard's construction-time values (e.g. Total steps
+    /// always reverting to the default 200), and typing in a stale field then
+    /// overwrote the loaded value with the stale text.
+    /// </summary>
+    private void RefreshHyperRows()
+    {
+        foreach (var (label, field) in _hyperRows)
+        {
+            if (HyperFieldText(label, _job) is { } text)
+                field.Text = (ustring)text;
+        }
+    }
+
+    /// <summary>
+    /// Display text for a wizard hyperparameter row given the current job, or
+    /// null for an unknown label. Shared between field construction and the
+    /// post-load refresh so a loaded job always shows what it actually holds.
+    /// Float rows use the invariant "0.#####" format so the text stays valid for
+    /// the invariant-culture parse the field's TextChanged handler runs.
+    /// </summary>
+    internal static string? HyperFieldText(string label, TrainJobSettings job) => label switch
+    {
+        "MoE experts:" => job.NumExperts.ToString(),
+        "MoE top-k:" => job.TopKExperts.ToString(),
+        "Seq len:" => job.SeqLen.ToString(),
+        "Batch size:" => job.BatchSize.ToString(),
+        "Total steps:" => job.TotalSteps.ToString(),
+        "Learning rate:" => job.LearningRate.ToString("0.#####", System.Globalization.CultureInfo.InvariantCulture),
+        "Warmup steps:" => job.WarmupSteps.ToString(),
+        "Grad clip norm:" => job.GradClipNorm.ToString("0.#####", System.Globalization.CultureInfo.InvariantCulture),
+        "Label smoothing:" => job.LabelSmoothing.ToString("0.#####", System.Globalization.CultureInfo.InvariantCulture),
+        "Checkpoint interval:" => job.CheckpointInterval.ToString(),
+        _ => null,
+    };
 
     /// <summary>Re-syncs the advanced architecture radios/size fields from the job.</summary>
     private void RefreshAdvancedOptions()

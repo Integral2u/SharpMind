@@ -95,6 +95,11 @@ public sealed class TrainJobSettingsTests
         Assert.Equal(256, loaded.HiddenDim);
         Assert.Equal(6, loaded.NumLayers);
         Assert.Equal(1000, loaded.TotalSteps);
+        Assert.Equal(32, loaded.SeqLen);
+        Assert.Equal(4, loaded.BatchSize);
+        Assert.Equal(2, loaded.GradAccumSteps);
+        Assert.Equal(1e-3f, loaded.LearningRate);
+        Assert.Equal(100, loaded.CheckpointInterval);
         Assert.Equal("Q8_0", loaded.QuantAwareTraining);
         Assert.Equal(2, loaded.KeepRecent);
         Assert.Equal("/tmp/model.smm", loaded.ExportPath);
