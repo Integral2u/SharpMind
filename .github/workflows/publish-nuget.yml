@@ -1,0 +1,104 @@
+name: Publish NuGet Packages
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Git ref to publish from (tag or branch). The version is read from Directory.Build.props at this ref.'
+        required: false
+        default: 'master'
+      run_tests:
+        description: 'Run the full Release test suite before publishing'
+        required: false
+        type: boolean
+        default: true
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', 'Directory.Build.props', 'nuget.config') }}
+          restore-keys: ${{ runner.os }}-nuget-
+
+      # The projects are built directly (not via SharpMind.sln) because the
+      # solution also contains Setup .vdproj projects that the dotnet CLI cannot
+      # build. Build order is the NuGet dependency order so every package is
+      # publishable as soon as its turn to push comes. Building Core first also
+      # satisfies SharpMind.Tests.csproj's Embed existence check, which runs
+      # before the test project itself is built.
+      - name: Build packages (Release)
+        run: |
+          $projects = @('SharpMind.Core','SharpMind.Data','SharpMind.Data.Parquet','SharpMind.Tokenization','SharpMind.Model','SharpMind.Inference','SharpMind.Training','SharpMind.Extensions.Tools','SharpMind.Extensions.AI','SharpMind.Server','SharpMind.GPU')
+          foreach ($id in $projects) {
+            dotnet build "$id/$id.csproj" -c Release --nologo
+            if ($LASTEXITCODE -ne 0) { throw "Build failed: $id" }
+          }
+
+      - name: Test (Release)
+        if: inputs.run_tests
+        run: |
+          dotnet test SharpMind.Tests/SharpMind.Tests.csproj -c Release --nologo
+          if ($LASTEXITCODE -ne 0) { throw "Tests failed" }
+
+      - name: Pack
+        run: |
+          $projects = @('SharpMind.Core','SharpMind.Data','SharpMind.Data.Parquet','SharpMind.Tokenization','SharpMind.Model','SharpMind.Inference','SharpMind.Training','SharpMind.Extensions.Tools','SharpMind.Extensions.AI','SharpMind.Server','SharpMind.GPU')
+          $out = Join-Path $env:GITHUB_WORKSPACE 'nupkg'
+          foreach ($id in $projects) {
+            dotnet pack "$id/$id.csproj" -c Release --no-build --nologo -o $out
+            if ($LASTEXITCODE -ne 0) { throw "Pack failed: $id" }
+          }
+
+      # Acquire the GitHub Actions OIDC token scoped to this repo/workflow
+      # (audience api.nuget.org) registered under Trusted Signing on nuget.org.
+      - name: Get OIDC token
+        id: oidc
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const token = await core.getIDToken('api.nuget.org')
+            core.setOutput('token', token)
+
+      - name: Push to NuGet.org
+        env:
+          NUGET_PUBLISH_TOKEN: ${{ steps.oidc.outputs.token }}
+        run: |
+          [xml]$props = Get-Content -LiteralPath (Join-Path $env:GITHUB_WORKSPACE 'Directory.Build.props')
+          $version = $props.Project.PropertyGroup.Version
+          $projects = @('SharpMind.Core','SharpMind.Data','SharpMind.Data.Parquet','SharpMind.Tokenization','SharpMind.Model','SharpMind.Inference','SharpMind.Training','SharpMind.Extensions.Tools','SharpMind.Extensions.AI','SharpMind.Server','SharpMind.GPU')
+          $source = 'https://api.nuget.org/v3/index.json'
+          foreach ($id in $projects) {
+            $nupkg = Join-Path $env:GITHUB_WORKSPACE "nupkg/$id.$version.nupkg"
+            if (-not (Test-Path -LiteralPath $nupkg)) { throw "Package not produced: $nupkg" }
+            dotnet nuget push $nupkg --api-key $env:NUGET_PUBLISH_TOKEN --source $source --skip-duplicate --nologo
+            if ($LASTEXITCODE -ne 0) { throw "Push failed: $nupkg" }
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- $id.$version" -Encoding utf8
+          }
+
+      - name: Archive packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: SharpMind-nupkgs
+          path: nupkg/*.nupkg
+          if-no-files-found: error
