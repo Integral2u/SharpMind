@@ -14,7 +14,7 @@
 [![NuGet Downloads](https://img.shields.io/nuget/dt/SharpMind.Core.svg)](https://www.nuget.org/packages/SharpMind.Core)
 [![GitHub Sponsor](https://img.shields.io/github/sponsors/Integral2u?label=Sponsor&logo=GitHub)](https://github.com/sponsors/Integral2u)
 [![Last commit](https://img.shields.io/github/last-commit/Integral2u/SharpMind)](https://github.com/Integral2u/SharpMind/commits/master)
-
+[![CodeQL Advanced](https://github.com/Integral2u/SharpMind/actions/workflows/codeql.yml/badge.svg)](https://github.com/Integral2u/SharpMind/actions/workflows/codeql.yml)
 ---
 
 ## What is SharpMind?
@@ -533,7 +533,6 @@ print(response.choices[0].message.content)
 - **`SharpMind.Extensions.AI`** — `IChatClient` adapter for the `Microsoft.Extensions.AI` ecosystem. Wraps any SharpMind `IChatSession` into a standard `IChatClient`, routes MEAI tools through SharpMind's agent loop, and maps chat types bidirectionally — see [IChatClient integration](#ichatclient-integration-microsoftextensionsai).
 - **`SharpMind.Extensions.Tools`** — optional common tools (grep, git, datetime) packaged as a plugin DLL. Auto-discovered from the CUI's `plugins/` folder at runtime — no compile-time dependency required. The CUI build copies it there automatically.
 - **`SharpMind.Server`** — OpenAI-compatible HTTP server. Serves `/v1/chat/completions` (streaming and non-streaming), `/v1/models`, and related endpoints. Models load lazily, cache with ref-counting, and stay resident until explicitly unloaded. Ships as a class library (`SharpMind.Server`) and a CLI executable (`SharpMind.Server.CLI`) with an interactive REPL, permission gating (`--no-files`, `--no-network`), and multi-model management.
-- **`SharpMind.Benchmarks`** — evaluation kernels for measuring model/generator performance.
 
 ---
 
