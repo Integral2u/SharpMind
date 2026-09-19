@@ -30,6 +30,7 @@ It ships as a set of composable libraries plus a terminal chat application (`Sha
 | **Model & session welcome view** | **Runtime options (hardware tier, load mode, sampling)** |
 | ![Welcome screen](<SharpMind.Core/CUI WelcomeScreen.PNG>) | ![Options view](<SharpMind.Core/CUI OptionsView.PNG>) |
 
+Live video example on [YouTube](https://youtu.be/I3FpbZac8Ro)
 ---
 
 ## Why SharpMind
