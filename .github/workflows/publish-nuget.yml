@@ -88,16 +88,22 @@ jobs:
         env:
           NUGET_PUBLISH_TOKEN: ${{ steps.oidc.outputs.token }}
         run: |
-          [xml]$props = Get-Content -LiteralPath (Join-Path $env:GITHUB_WORKSPACE 'Directory.Build.props')
-          $version = $props.Project.PropertyGroup.Version
+          $nupkgDir = Join-Path $env:GITHUB_WORKSPACE 'nupkg'
+          # NuGet normalizes the version in the produced file name (1.0.6.0
+          # becomes 1.0.6), so the produced file is resolved by package id from
+          # the actual file name instead of being reconstructed from a literal
+          # version string.
+          $files = Get-ChildItem -LiteralPath $nupkgDir -Filter '*.nupkg' | ForEach-Object {
+            [PSCustomObject]@{ Id = $_.BaseName -replace '\.\d+(\.\d+)*$', ''; File = $_ }
+          }
           $projects = @('SharpMind.Core','SharpMind.Data','SharpMind.Data.Parquet','SharpMind.Tokenization','SharpMind.Model','SharpMind.Inference','SharpMind.Training','SharpMind.Extensions.Tools','SharpMind.Extensions.AI','SharpMind.Server','SharpMind.GPU')
           $source = 'https://api.nuget.org/v3/index.json'
           foreach ($id in $projects) {
-            $nupkg = Join-Path $env:GITHUB_WORKSPACE "nupkg/$id.$version.nupkg"
-            if (-not (Test-Path -LiteralPath $nupkg)) { throw "Package not produced: $nupkg" }
-            dotnet nuget push $nupkg --api-key $env:NUGET_PUBLISH_TOKEN --source $source --skip-duplicate --nologo
-            if ($LASTEXITCODE -ne 0) { throw "Push failed: $nupkg" }
-            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- $id.$version" -Encoding utf8
+            $match = $files | Where-Object { $_.Id -eq $id } | Select-Object -First 1
+            if ($null -eq $match) { throw "Package not produced for $id in $nupkgDir" }
+            dotnet nuget push $match.File.FullName --api-key $env:NUGET_PUBLISH_TOKEN --source $source --skip-duplicate --nologo
+            if ($LASTEXITCODE -ne 0) { throw "Push failed: $($match.File.FullName)" }
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- $($match.File.BaseName)" -Encoding utf8
           }
 
       - name: Archive packages
