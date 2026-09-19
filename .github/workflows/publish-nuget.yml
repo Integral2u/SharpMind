@@ -70,23 +70,18 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "Pack failed: $id" }
           }
 
-      # Acquire the GitHub Actions OIDC token scoped to this repo/workflow
-      # (audience api.nuget.org) registered under Trusted Signing on nuget.org.
-      # Fetched from the runner's ID-token endpoint directly instead of via a
-      # Node action: actions/github-script ran on the deprecated Node 20 runtime
-      # and was blocked by GitHub.
-      - name: Get OIDC token
-        id: oidc
-        shell: pwsh
-        run: |
-          $uri = "$env:ACTIONS_ID_TOKEN_REQUEST_URL&audience=api.nuget.org"
-          $headers = @{ Authorization = "Bearer $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN" }
-          $token = (Invoke-RestMethod -Uri $uri -Headers $headers).value
-          Add-Content -Path $env:GITHUB_OUTPUT -Value "token=$token"
+      # Exchange the GitHub OIDC token for a short-lived NuGet.org API key via
+      # the Trusted Publishing policy (repo Integral2u/SharpMind, workflow
+      # publish-nuget.yml, package owner Integral2u). The raw OIDC token is not
+      # accepted directly by the push endpoint - it must be swapped for the
+      # temporary key that NuGet/login issues.
+      - name: NuGet login (OIDC -> temp API key)
+        id: login
+        uses: NuGet/login@v1
+        with:
+          user: Integral2u
 
       - name: Push to NuGet.org
-        env:
-          NUGET_PUBLISH_TOKEN: ${{ steps.oidc.outputs.token }}
         run: |
           $nupkgDir = Join-Path $env:GITHUB_WORKSPACE 'nupkg'
           # NuGet normalizes the version in the produced file name (1.0.6.0
@@ -101,7 +96,7 @@ jobs:
           foreach ($id in $projects) {
             $match = $files | Where-Object { $_.Id -eq $id } | Select-Object -First 1
             if ($null -eq $match) { throw "Package not produced for $id in $nupkgDir" }
-            dotnet nuget push $match.File.FullName --api-key $env:NUGET_PUBLISH_TOKEN --source $source --skip-duplicate --nologo
+            dotnet nuget push $match.File.FullName --api-key ${{ steps.login.outputs.NUGET_API_KEY }} --source $source --skip-duplicate --nologo
             if ($LASTEXITCODE -ne 0) { throw "Push failed: $($match.File.FullName)" }
             Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- $($match.File.BaseName)" -Encoding utf8
           }
