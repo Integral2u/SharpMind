@@ -72,13 +72,17 @@ jobs:
 
       # Acquire the GitHub Actions OIDC token scoped to this repo/workflow
       # (audience api.nuget.org) registered under Trusted Signing on nuget.org.
+      # Fetched from the runner's ID-token endpoint directly instead of via a
+      # Node action: actions/github-script ran on the deprecated Node 20 runtime
+      # and was blocked by GitHub.
       - name: Get OIDC token
         id: oidc
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const token = await core.getIDToken('api.nuget.org')
-            core.setOutput('token', token)
+        shell: pwsh
+        run: |
+          $uri = "$env:ACTIONS_ID_TOKEN_REQUEST_URL&audience=api.nuget.org"
+          $headers = @{ Authorization = "Bearer $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN" }
+          $token = (Invoke-RestMethod -Uri $uri -Headers $headers).value
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "token=$token"
 
       - name: Push to NuGet.org
         env:
