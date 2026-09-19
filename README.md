@@ -22,7 +22,7 @@
 SharpMind is an end-to-end LLM stack written entirely in C#, with no dependency on llama.cpp, PyTorch, or any native runtime for its core path. It loads GGUF models, runs quantized CPU inference with modern decoding acceleration (speculative + Medusa-style drafting), and — unusually for a C# inference engine — also includes its own autograd engine so you can fine-tune (LoRA), distill, and prune models in the same process that serves them. LoRA fine-tuning can optionally run on an NVIDIA GPU via a separate accelerator plugin (see [GPU-accelerated training](#gpu-accelerated-training)).
 
 It ships as a set of composable libraries plus a terminal chat application (`SharpMind.CUI`) built on top of them.
-
+Live video example on [YouTube](https://youtu.be/I3FpbZac8Ro)
 | | |
 |---|---|
 | **[Live in-browser demo](https://integral2u.github.io/SharpMind/)** | **Chat / conversation view** |
@@ -30,7 +30,6 @@ It ships as a set of composable libraries plus a terminal chat application (`Sha
 | **Model & session welcome view** | **Runtime options (hardware tier, load mode, sampling)** |
 | ![Welcome screen](<SharpMind.Core/CUI WelcomeScreen.PNG>) | ![Options view](<SharpMind.Core/CUI OptionsView.PNG>) |
 
-Live video example on [YouTube](https://youtu.be/I3FpbZac8Ro)
 ---
 
 ## Why SharpMind
