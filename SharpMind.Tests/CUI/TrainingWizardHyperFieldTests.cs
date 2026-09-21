@@ -34,6 +34,8 @@ public sealed class TrainingWizardHyperFieldTests
     [InlineData("Checkpoint interval:", 50)]
     [InlineData("MoE experts:", 8)]
     [InlineData("MoE top-k:", 2)]
+    [InlineData("Grad accum steps:", 1)]
+    [InlineData("Log interval:", 25)]
     public void IntRows_ShowTheJobValue(string label, int defaultValue)
     {
         var job = new TrainJobSettings();
@@ -47,6 +49,17 @@ public sealed class TrainingWizardHyperFieldTests
     public void FloatRows_UseInvariantDisplayFormat(string label, float value, string expected)
     {
         var job = new TrainJobSettings { LearningRate = value, GradClipNorm = value, LabelSmoothing = value };
+        Assert.Equal(expected, TrainingWizardView.HyperFieldText(label, job));
+    }
+
+    [Theory]
+    [InlineData("Min. learning rate:", 3e-5f, "0.00003")]
+    [InlineData("Weight decay:", 0.1f, "0.1")]
+    [InlineData("SGD momentum:", 0f, "0")]
+    [InlineData("Norm epsilon:", 1e-3f, "0.001")]
+    public void NewFloatRows_UseInvariantDisplayFormat(string label, float value, string expected)
+    {
+        var job = new TrainJobSettings { MinLr = value, WeightDecay = value, SgdMomentum = value, NormEps = value };
         Assert.Equal(expected, TrainingWizardView.HyperFieldText(label, job));
     }
 

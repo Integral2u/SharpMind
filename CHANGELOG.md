@@ -4,6 +4,17 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.6.1]
+
+### Added
+
+- **Training wizard exposes the full training-option set** — the wizard now surfaces the remaining `TrainJobSettings` options the pipeline consumes: a BPE/Char tokenizer choice, Packing/RandomWindow batching, grad-accumulation steps, log interval, minimum learning rate, weight decay, SGD momentum (shown only when Optimizer = SGD), and norm epsilon. Loaded jobs redraw these rows too — they flow through the shared `HyperFieldText` mapping added in 1.0.6.0 — so a loaded job displays what it actually holds.
+
+### Fixed
+
+- **Training wizard saves a loaded job back where it was loaded from** — `TrainingWizardView.SaveJob` always wrote through `TrainJobSettings.DefaultFolder`, ignoring the file the job was loaded from, so "Save job" on a loaded `.smmt` deposited a copy in the default folder and left the source file untouched. Saving now writes back to the exact loaded path (new jobs still go under the default folder).
+- **Training start asks about unsaved changes** — starting training with unsaved edits previously launched the run anyway, dropping them. The wizard now keeps a serialized baseline of the job (compared via a new `TrainJobSettings.ToPayloadJson`) and prompts "Save & start / Discard & start / Cancel" before training begins; cancel or a failed save aborts the start.
+
 ## [1.0.6.0]
 
 ### Added

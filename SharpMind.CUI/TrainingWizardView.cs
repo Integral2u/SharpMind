@@ -60,6 +60,10 @@ public sealed class TrainingWizardView : View
     private bool _updatingAccelerator;
     private readonly TextField _numExpertsField;
     private readonly TextField _topKField;
+    private readonly RadioGroup _tokenizerRadio;
+    private readonly RadioGroup _batchingRadio;
+    private readonly TextField _sgdMomentumField;
+    private string? _baselineJson;
 
     // Backing labels for the preset buttons: "Custom…" first, then each preset's
     // display name (used to resolve the active preset at index+1).
@@ -78,6 +82,8 @@ public sealed class TrainingWizardView : View
 
     private readonly string[] QatLabelsArr = ["F32 (off)", "F16", "Q8", "Q6", "Q5", "Q4", "Q3", "Q2"];
     private readonly string[] KeepLabelsArr = ["All", "Fixed", "None"];
+    private readonly string[] TokenizerLabelsArr = ["BPE", "Char"];
+    private readonly string[] BatchingLabelsArr = ["Packing", "RandomWindow"];
 
     private IList<JobComponent>? SelectedStages
     {
@@ -292,7 +298,12 @@ public sealed class TrainingWizardView : View
         {
             X = 30, Y = row, SelectedItem = IndexOf(OptimizerLabelsArr, _job.Optimizer),
         };
-        _optimizerRadio.SelectedItemChanged += (a) => _job.Optimizer = OptimizerLabelsArr[a.SelectedItem];
+        _optimizerRadio.SelectedItemChanged += (a) =>
+        {
+            _job.Optimizer = OptimizerLabelsArr[a.SelectedItem];
+            if (_sgdMomentumField is not null)
+                _sgdMomentumField.Visible = OptimizerLabelsArr[a.SelectedItem].Equals("SGD", StringComparison.OrdinalIgnoreCase);
+        };
         form.Add(AddLabel("Optimizer:"), _optimizerRadio);
         row += OptimizerLabelsArr.Length + 1;
         row += 1;
@@ -317,6 +328,32 @@ public sealed class TrainingWizardView : View
         row = FloatRow(form, row, "Label smoothing:", _job.LabelSmoothing, v => _job.LabelSmoothing = v, _hyperRows);
         row += 1;
 
+        // --- Advanced training options -----------------
+        _tokenizerRadio = new RadioGroup([.. TokenizerLabelsArr.Select(t => (ustring)t)])
+        {
+            X = 30, Y = row, SelectedItem = _job.UsesCharacterTokenizer ? 1 : 0,
+        };
+        _tokenizerRadio.SelectedItemChanged += (a) => _job.TokenizerKind = a.SelectedItem == 1 ? "Char" : null;
+        form.Add(AddLabel("Tokenizer:"), _tokenizerRadio);
+        row += TokenizerLabelsArr.Length + 1;
+
+        _batchingRadio = new RadioGroup([.. BatchingLabelsArr.Select(b => (ustring)b)])
+        {
+            X = 30, Y = row, SelectedItem = _job.UsesRandomWindowBatching ? 1 : 0,
+        };
+        _batchingRadio.SelectedItemChanged += (a) => _job.BatchingKind = a.SelectedItem == 1 ? "RandomWindow" : null;
+        form.Add(AddLabel("Batching:"), _batchingRadio);
+        row += BatchingLabelsArr.Length + 1;
+
+        row = NumRow(form, row, "Grad accum steps:", _job.GradAccumSteps, v => _job.GradAccumSteps = v, _hyperRows);
+        row = NumRow(form, row, "Log interval:", _job.LogInterval, v => _job.LogInterval = v, _hyperRows);
+        row = FloatRow(form, row, "Min. learning rate:", _job.MinLr, v => _job.MinLr = v, _hyperRows);
+        row = FloatRow(form, row, "Weight decay:", _job.WeightDecay, v => _job.WeightDecay = v, _hyperRows);
+        row = FloatRow(form, row, "SGD momentum:", _job.SgdMomentum, v => _job.SgdMomentum = v, _hyperRows);
+        _sgdMomentumField = _hyperRows["SGD momentum:"];
+        _sgdMomentumField.Visible = OptimizerIsSgd(_job);
+        row = FloatRow(form, row, "Norm epsilon:", _job.NormEps, v => _job.NormEps = v, _hyperRows);
+
         // --- QAT target -----------------------------------
         int qatIndex = QatIndexFor(_job.QuantAwareTraining);
         _qatRadio = new RadioGroup([.. QatLabelsArr.Select(q => (ustring)q)]) { X = 30, Y = row, SelectedItem = qatIndex };
@@ -335,7 +372,7 @@ public sealed class TrainingWizardView : View
         };
         _keepCountField = new TextField((ustring)(_job.KeepRecent > 0 ? _job.KeepRecent : 3).ToString())
         {
-            X = 42, Y = row, Width = 6, Visible = keepIndex == 1
+            X = 42, Y = row + 1, Width = 6, Visible = keepIndex == 1
         };
         _keepModeRadio.SelectedItemChanged += (a) =>
         {
@@ -440,6 +477,7 @@ public sealed class TrainingWizardView : View
 
         _nameField.SetFocus();
         RefreshAll();
+        _baselineJson = _job.ToPayloadJson();
     }
 
     // --- row helpers --------------------------------------------------------
@@ -496,6 +534,8 @@ public sealed class TrainingWizardView : View
         _incrementalCheck.Checked = _job.IncrementalMode;
         RefreshPresetButtons();
         RefreshAdvancedOptions();
+        _tokenizerRadio.SelectedItem = _job.UsesCharacterTokenizer ? 1 : 0;
+        _batchingRadio.SelectedItem = _job.UsesRandomWindowBatching ? 1 : 0;
         _systemPromptField.Text = (ustring)(_job.SystemPromptPath ?? "");
         _skillsFolderField.Text = (ustring)(_job.SkillsFolder ?? "");
         RefreshPlugins();
@@ -587,6 +627,12 @@ public sealed class TrainingWizardView : View
         "Grad clip norm:" => job.GradClipNorm.ToString("0.#####", System.Globalization.CultureInfo.InvariantCulture),
         "Label smoothing:" => job.LabelSmoothing.ToString("0.#####", System.Globalization.CultureInfo.InvariantCulture),
         "Checkpoint interval:" => job.CheckpointInterval.ToString(),
+        "Grad accum steps:" => job.GradAccumSteps.ToString(),
+        "Log interval:" => job.LogInterval.ToString(),
+        "Min. learning rate:" => job.MinLr.ToString("0.#####", System.Globalization.CultureInfo.InvariantCulture),
+        "Weight decay:" => job.WeightDecay.ToString("0.#####", System.Globalization.CultureInfo.InvariantCulture),
+        "SGD momentum:" => job.SgdMomentum.ToString("0.#####", System.Globalization.CultureInfo.InvariantCulture),
+        "Norm epsilon:" => job.NormEps.ToString("0.#####", System.Globalization.CultureInfo.InvariantCulture),
         _ => null,
     };
 
@@ -622,6 +668,11 @@ public sealed class TrainingWizardView : View
         int i = Array.FindIndex(names, n => n.Equals(value, StringComparison.OrdinalIgnoreCase));
         return i < 0 ? 0 : i;
     }
+
+    /// <summary>True when the job explicitly selects the SGD optimizer (momentum applies only then).</summary>
+    private static bool OptimizerIsSgd(TrainJobSettings job) =>
+        !string.IsNullOrWhiteSpace(job.Optimizer)
+        && job.Optimizer.Equals("SGD", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// What <see cref="TrainJobSettings.Accelerator"/> should become after the accelerator
@@ -1148,15 +1199,28 @@ public sealed class TrainingWizardView : View
 
     // --- Save/Load --------------------------------------------------------
 
-    private void SaveJob()
+    private void SaveJob() => TrySaveJob();
+
+    /// <summary>
+    /// Saves the job: a loaded job is written back to exactly the file it came
+    /// from (<see cref="_savedPath"/>); a new job goes under
+    /// <see cref="TrainJobSettings.DefaultFolder"/>. Returns false (after showing
+    /// an error) when the write fails.
+    /// </summary>
+    private bool TrySaveJob()
     {
-        string path = Path.Combine(TrainJobSettings.DefaultFolder, Sanitize(_job.Name) + TrainJobSettings.JobExtension);
+        string path = string.IsNullOrEmpty(_savedPath)
+            ? Path.Combine(TrainJobSettings.DefaultFolder, Sanitize(_job.Name) + TrainJobSettings.JobExtension)
+            : _savedPath;
         if (_job.Save(path, out var error))
         {
             _savedPath = path;
+            _baselineJson = _job.ToPayloadJson();
             _jobPathLabel.Text = $"Saved: {Path.GetFileName(path)}";
+            return true;
         }
-        else ErrorBox.Show("Save job", error ?? "Unknown error", "OK");
+        ErrorBox.Show("Save job", error ?? "Unknown error", "OK");
+        return false;
     }
 
     private void LoadJob()
@@ -1173,6 +1237,7 @@ public sealed class TrainingWizardView : View
         _job = loaded;
         _savedPath = picked;
         RefreshAll();
+        _baselineJson = _job.ToPayloadJson();
         _nameField.SetFocus();
     }
 
@@ -1208,6 +1273,20 @@ public sealed class TrainingWizardView : View
                 ErrorBox.Show("Start training", $"Plugin DLL not found:\n{dll}", "OK");
                 return;
             }
+        }
+
+        // Unsaved edits are surfaced here: "Save & start" persists the job first,
+        // "Discard & start" keeps the in-memory edits for the run, and "Cancel"
+        // aborts back to the wizard.
+        if (_baselineJson != _job.ToPayloadJson())
+        {
+            int choice = MessageBox.Query("Save job", "This job has unsaved changes.\nSave them before starting training?",
+                "Save & start", "Discard & start", "Cancel");
+            if (choice == 0)
+            {
+                if (!TrySaveJob()) return;
+            }
+            else if (choice != 1) return;
         }
 
         // "Continue from…" defers the choice to a checkpoint list shown right

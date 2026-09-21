@@ -340,6 +340,13 @@ public sealed class TrainJobSettings
         }
     }
 
+    /// <summary>
+    /// Serializes just the job payload so the training wizard can detect unsaved
+    /// edits by comparing a baseline snapshot (taken after Load/Save) against
+    /// the live job.
+    /// </summary>
+    public string ToPayloadJson() => JsonSerializer.Serialize(this, Options);
+
     public static List<string> ListSaved()
         => ListSavedIn(DefaultFolder);
 
