@@ -189,6 +189,35 @@ public sealed class ChunkedPrefillTests
         foreach (var c in caches) c.Dispose();
     }
 
+    [Theory]
+    [InlineData(70)] // longer than MaxChunkLength: the chunk loop, which trims
+    [InlineData(20)] // a single chunk: used to skip the capacity check and throw "KVCache overflow"
+    public void ForwardLastLogitsChunked_ContinuedTurnPastCapacity_TrimsWhateverItsLength(int secondTurn)
+    {
+        int cacheCapacity = 100;
+        using var model = BuildModel();
+
+        var caches = new IKVCache[Cfg.NumLayers];
+        for (int i = 0; i < Cfg.NumLayers; i++)
+            caches[i] = new KVCache(1, Cfg.NumKvHeads, cacheCapacity, Cfg.HeadDim);
+
+        using var workspace = MemoryHelpers.CreateWorkspace(
+            Workspace.CalculateRequiredSize(Cfg.HiddenDim, Cfg.FfnDim, Cfg.VocabSize, Cfg.NumLayers, cacheCapacity));
+
+        using (var _ = Prefill.ForwardLastLogitsChunked(model, caches, BuildPrompt(90), workspace)) { }
+        Assert.Equal(90, caches[0].Length);
+
+        var progressReports = new List<double>();
+        using var logits = Prefill.ForwardLastLogitsChunked(
+            model, caches, BuildPrompt(secondTurn), workspace, p => progressReports.Add(p));
+
+        Assert.Equal(1.0, progressReports[^1]);
+        Assert.True(caches[0].Length <= cacheCapacity);
+        Assert.Equal(Cfg.VocabSize, logits.Shape[^1]);
+
+        foreach (var c in caches) c.Dispose();
+    }
+
     private sealed unsafe class CountingLogitOps(LogitOps inner, Tensor<float> weight, byte[]? raw)
         : LogitOps(weight, raw)
     {
