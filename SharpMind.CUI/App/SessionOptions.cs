@@ -68,7 +68,7 @@ public enum CacheStrategy
     Paged,
     /// <summary>Cache entries stored quantized. Less memory, small accuracy cost.</summary>
     Quantized,
-    /// <summary>Key/value rows stored as int8 with one scale per row, attended to by the int8 kernel. About a quarter of Standard's memory.</summary>
+    /// <summary>Keys and values stored as int8 (keys with one scale per 16 values, values with one per row), attended to by the int8 kernel. About a quarter of Standard's memory.</summary>
     Int8
 }
 
