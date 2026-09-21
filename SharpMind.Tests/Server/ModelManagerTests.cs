@@ -68,6 +68,30 @@ public class ModelManagerTests
         }
     }
 
+    /// <summary>
+    /// The folder watcher rescans on every Deleted event, on a thread-pool thread. Deleting the
+    /// models folder raises one event per file and then removes the folder under those scans;
+    /// the scan's DirectoryNotFoundException was unhandled there and took the process down.
+    /// When this regresses the test host crashes rather than the test failing.
+    /// </summary>
+    [Fact]
+    public void ModelManager_SurvivesItsModelsFolderBeingDeleted()
+    {
+        for (int round = 0; round < 10; round++)
+        {
+            var dir = Path.Combine(Path.GetTempPath(), "sharpmind_test_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            for (int i = 0; i < 50; i++)
+                File.WriteAllBytes(Path.Combine(dir, $"model{i}.gguf"), [1, 2, 3]);
+
+            using var manager = new ModelManager(new SharpMindServerOptions { ModelsDir = dir });
+            Directory.Delete(dir, true);
+            Thread.Sleep(100); // let the queued watcher events run while the manager is alive
+
+            Assert.False(Directory.Exists(dir));
+        }
+    }
+
     [Fact]
     public void ModelManager_Unload_ReturnsFalseForMissing()
     {
