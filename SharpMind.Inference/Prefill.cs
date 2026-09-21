@@ -54,7 +54,9 @@ public static class Prefill
         if (promptIds.Length == 0)
             throw new ArgumentException("Prompt produced no token IDs; cannot prefill.", nameof(promptIds));
 
-        if (promptIds.Length <= MaxChunkLength)
+        // A single chunk that fits goes straight through. One that would overflow the
+        // cache takes the loop below, which trims first, like any longer prompt.
+        if (promptIds.Length <= MaxChunkLength && caches[0].Length + promptIds.Length <= caches[0].MaxSeqLen)
         {
             workspace.Reset();
             return RunChunk(model, caches, promptIds, 0, promptIds.Length, project: true, workspace)!;
