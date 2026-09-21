@@ -70,6 +70,11 @@ public static class TokenizerFile
                      .Select(m => JsonValue.Create($"{m.Left} {m.Right}")!)]),
         };
 
+        // SentencePiece models rank merges by per-token score. Persist them
+        // parallel to vocab id order so a save/load keeps merge ordering.
+        if (model.TokenScores is { } scores)
+            obj["scores"] = new JsonArray([.. scores.Select(s => JsonValue.Create(s))]);
+
         return obj.ToJsonString(JsonOpts);
     }
 
@@ -132,7 +137,12 @@ public static class TokenizerFile
         bool charMode = root.TryGetProperty("kind", out var kindEl)
                         && kindEl.GetString() == "char";
 
-        return new BpeModel(vocab, merges, preTokeniser, charMode: charMode);
+        // SentencePiece merge-ranking scores, parallel to vocab id order.
+        IReadOnlyList<float>? scores = null;
+        if (root.TryGetProperty("scores", out var scoresEl))
+            scores = [.. scoresEl.EnumerateArray().Select(e => e.GetSingle())];
+
+        return new BpeModel(vocab, merges, preTokeniser, scores, charMode: charMode);
     }
 
     // Helpers

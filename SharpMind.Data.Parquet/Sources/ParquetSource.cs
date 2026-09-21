@@ -1,13 +1,17 @@
+using System.Globalization;
 using System.Runtime.CompilerServices;
 using Parquet;
-using Parquet.Data;
+using Parquet.Schema;
 using SharpMind.Data.Sources;
 
 namespace SharpMind.Data.Parquet.Sources;
 
 /// <summary>
 /// Streams documents from Parquet files.
-/// Extracts a specific column as the text content.
+/// Extracts a specific column as the text content. Values are read with the
+/// schema-typed <see cref="ParquetRowGroupReader.ReadAsync{T}"/> overloads, so
+/// the CLR buffers always match the column's declared type, then stringified
+/// with the invariant culture ("R" round-trip format for floats).
 /// </summary>
 public sealed class ParquetSource : IDataSource
 {
@@ -51,76 +55,175 @@ public sealed class ParquetSource : IDataSource
             cancellationToken.ThrowIfCancellationRequested();
 
             using var stream = File.OpenRead(path);
-            var reader = await ParquetReader.CreateAsync(stream, null, true, cancellationToken);
-            
+            await using var reader = await ParquetReader.CreateAsync(stream, null, true, cancellationToken);
+
+            DataField[] dataFields = reader.Schema.DataFields;
+            DataField field = dataFields.FirstOrDefault(
+                f => string.Equals(f.Name, _textField, StringComparison.OrdinalIgnoreCase))
+                ?? throw new InvalidOperationException(
+                    $"Parquet file '{path}' has no '{_textField}' column. " +
+                    $"Available columns: {string.Join(", ", dataFields.Select(f => f.Name))}.");
+
             for (int i = 0; i < reader.RowGroupCount; i++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
                 using var rowGroupReader = reader.OpenRowGroupReader(i);
-                var dataFields = reader.Schema.GetDataFields();
+                string[] rows = await ReadColumnToStrings(rowGroupReader, field, cancellationToken);
 
-                // Find the data field schemas by their names
-                var fromField = dataFields.FirstOrDefault(f => f.Name == "from");
-                var valueField = dataFields.FirstOrDefault(f => f.Name == "value");
-                var sourceField = dataFields.FirstOrDefault(f => f.Name == "source");
-
-                int rowCount = (int)rowGroupReader.RowCount;
-
-                // 1. Read "from" column
-                object[]? fromCol = null;
-                if (fromField != null)
+                foreach (string row in rows)
                 {
-                    // Swap string[] for whatever type 'from' is (e.g., int[], long[])
-                    string[] buffer = new string[rowCount];
-                    await rowGroupReader.ReadAsync(fromField, buffer,null, cancellationToken);
-                    fromCol = [.. buffer.Cast<object>()];
-                }
-
-                // 2. Read "value" column
-                object[]? valueCol = null;
-                if (valueField != null)
-                {
-                    // Swap double[] for whatever type 'value' is (e.g., decimal[], float[])
-                    double[] buffer = new double[rowCount];
-                    await rowGroupReader.ReadAsync<double>(valueField, buffer, null, cancellationToken);
-                    valueCol = [.. buffer.Cast<object>()];
-                }
-
-                // 3. Read "source" column
-                object[]? sourceCol = null;
-                if (sourceField != null)
-                {
-                    string[] buffer = new string[rowCount];
-                    await rowGroupReader.ReadAsync(sourceField, buffer, null, cancellationToken);
-                    sourceCol = [.. buffer.Cast<object>()];
-                }
-
-                if (fromCol != null && valueCol != null)
-                {
-                    var froms = (string[])fromCol;
-                    var values = (string[])valueCol;
-
-                    for (int j = 0; j < froms.Length; j++)
-                    {
-                        cancellationToken.ThrowIfCancellationRequested();
-                        yield return $"{froms[j]}: {values[j]}";
-                    }
-                }
-                else if (_textField == "source" && sourceCol != null)
-                {
-                    var sources = (string[])sourceCol;
-                    foreach (var s in sources)
-                    {
-                        cancellationToken.ThrowIfCancellationRequested();
-                        if (!string.IsNullOrWhiteSpace(s))
-                            yield return s;
-                    }
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (!string.IsNullOrWhiteSpace(row))
+                        yield return row;
                 }
             }
-            await reader.DisposeAsync();
         }
     }
+
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
+    /// <summary>
+    /// Reads one column into an array typed by the schema's <see cref="DataField.ClrType"/>
+    /// and stringifies every value. Unsupported column types surface as
+    /// <see cref="NotSupportedException"/>.
+    /// </summary>
+    private static async Task<string[]> ReadColumnToStrings(
+        ParquetRowGroupReader reader, DataField field, CancellationToken ct)
+    {
+        int n = (int)reader.RowCount;
+        Type type = field.ClrType;
+
+        if (type == typeof(string))
+        {
+            var buffer = new string[n];
+            await reader.ReadAsync(field, buffer.AsMemory(), null, ct);
+            return buffer;
+        }
+        if (type == typeof(byte[]))
+        {
+            var buffer = new byte[n][];
+            await reader.ReadAsync(field, buffer.AsMemory(), null, ct);
+            return BufferToStrings(buffer);
+        }
+        if (type == typeof(bool))
+        {
+            var buffer = new bool[n];
+            await reader.ReadAsync(field, buffer.AsMemory(), null, ct);
+            return BufferToStrings(buffer);
+        }
+        if (type == typeof(byte))
+        {
+            var buffer = new byte[n];
+            await reader.ReadAsync(field, buffer.AsMemory(), null, ct);
+            return BufferToStrings(buffer);
+        }
+        if (type == typeof(sbyte))
+        {
+            var buffer = new sbyte[n];
+            await reader.ReadAsync(field, buffer.AsMemory(), null, ct);
+            return BufferToStrings(buffer);
+        }
+        if (type == typeof(short))
+        {
+            var buffer = new short[n];
+            await reader.ReadAsync(field, buffer.AsMemory(), null, ct);
+            return BufferToStrings(buffer);
+        }
+        if (type == typeof(ushort))
+        {
+            var buffer = new ushort[n];
+            await reader.ReadAsync(field, buffer.AsMemory(), null, ct);
+            return BufferToStrings(buffer);
+        }
+        if (type == typeof(int))
+        {
+            var buffer = new int[n];
+            await reader.ReadAsync(field, buffer.AsMemory(), null, ct);
+            return BufferToStrings(buffer);
+        }
+        if (type == typeof(uint))
+        {
+            var buffer = new uint[n];
+            await reader.ReadAsync(field, buffer.AsMemory(), null, ct);
+            return BufferToStrings(buffer);
+        }
+        if (type == typeof(long))
+        {
+            var buffer = new long[n];
+            await reader.ReadAsync(field, buffer.AsMemory(), null, ct);
+            return BufferToStrings(buffer);
+        }
+        if (type == typeof(ulong))
+        {
+            var buffer = new ulong[n];
+            await reader.ReadAsync(field, buffer.AsMemory(), null, ct);
+            return BufferToStrings(buffer);
+        }
+        if (type == typeof(float))
+        {
+            var buffer = new float[n];
+            await reader.ReadAsync(field, buffer.AsMemory(), null, ct);
+            return BufferToStrings(buffer);
+        }
+        if (type == typeof(double))
+        {
+            var buffer = new double[n];
+            await reader.ReadAsync(field, buffer.AsMemory(), null, ct);
+            return BufferToStrings(buffer);
+        }
+        if (type == typeof(decimal))
+        {
+            var buffer = new decimal[n];
+            await reader.ReadAsync(field, buffer.AsMemory(), null, ct);
+            return BufferToStrings(buffer);
+        }
+        if (type == typeof(DateTime))
+        {
+            var buffer = new DateTime[n];
+            await reader.ReadAsync(field, buffer.AsMemory(), null, ct);
+            return BufferToStrings(buffer);
+        }
+        if (type == typeof(DateTimeOffset))
+        {
+            var buffer = new DateTimeOffset[n];
+            await reader.ReadAsync(field, buffer.AsMemory(), null, ct);
+            return BufferToStrings(buffer);
+        }
+        if (type == typeof(TimeSpan))
+        {
+            var buffer = new TimeSpan[n];
+            await reader.ReadAsync(field, buffer.AsMemory(), null, ct);
+            return BufferToStrings(buffer);
+        }
+        if (type == typeof(Guid))
+        {
+            var buffer = new Guid[n];
+            await reader.ReadAsync(field, buffer.AsMemory(), null, ct);
+            return BufferToStrings(buffer);
+        }
+
+        throw new NotSupportedException(
+            $"Parquet column '{field.Name}' has unsupported CLR type '{type}'.");
+    }
+
+    private static string[] BufferToStrings<T>(T[] buffer) where T : notnull
+        => [.. buffer.Select(v => RowToString(v))];
+
+    private static string RowToString(object? value) => value switch
+    {
+        null => "",
+        string s => s,
+        byte[] bytes => Convert.ToBase64String(bytes),
+        float f => f.ToString("R", CultureInfo.InvariantCulture),
+        double d => d.ToString("R", CultureInfo.InvariantCulture),
+        decimal m => m.ToString(CultureInfo.InvariantCulture),
+        DateTime dt => dt.ToString("O", CultureInfo.InvariantCulture),
+        DateTimeOffset dto => dto.ToString("O", CultureInfo.InvariantCulture),
+        TimeSpan ts => ts.ToString("c", CultureInfo.InvariantCulture),
+        Guid g => g.ToString("D", CultureInfo.InvariantCulture),
+        bool b => b ? "true" : "false",
+        IFormattable f => f.ToString(null, CultureInfo.InvariantCulture),
+        _ => value.ToString() ?? ""
+    };
 }

@@ -42,6 +42,12 @@ public sealed class BpeEncoder
     // mode where there's no explicit merges list to rank pairs with.
     private readonly IReadOnlyList<float>? _scores;
 
+    /// <summary>
+    /// Per-vocab-id scores (<c>tokenizer.ggml.scores</c>) used for SentencePiece-style
+    /// merge ranking. Null when the model has no scores.
+    /// </summary>
+    public IReadOnlyList<float>? TokenScores => _scores;
+
     // True for SentencePiece-style vocabularies (original LLaMA/LLaMA-2,
     // Mistral, TinyLlama, etc.) that ship no merges array. These rank
     // candidate merges by token score instead of an explicit rule list.

@@ -32,6 +32,12 @@ public sealed class BpeModel
     public BpeEncoder Encoder { get; }
 
     /// <summary>
+    /// Per-vocab-id scores used for SentencePiece-style merge ranking
+    /// (<c>tokenizer.ggml.scores</c>). Null when the model has no scores.
+    /// </summary>
+    public IReadOnlyList<float>? TokenScores => Encoder.TokenScores;
+
+    /// <summary>
     /// True when this is a character-level tokenizer (each token is one corpus
     /// character) rather than a byte-pair-encoding model. Encodes via a direct
     /// character→id map; there are no merge rules in char mode.

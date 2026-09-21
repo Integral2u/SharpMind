@@ -77,9 +77,9 @@ public static class DtypeOps
         
         if (exp == 0)
         {
-            if (mant == 0) return -0f;
-            // denormal: denormals have effective exponent of -14
-            float result = mant / (float)(1 << 14);
+            if (mant == 0) return sign != 0 ? -0f : 0f;
+            // denormal: mantissa has 10 bits under a -24 exponent scale
+            float result = mant * MathF.Pow(2f, -24f);
             return sign != 0 ? -result : result;
         }
         else if (exp == 31)
@@ -97,24 +97,55 @@ public static class DtypeOps
     
     private static ushort SingleToHalf(float value)
     {
-        if (float.IsNaN(value)) return 0x7E0;
+        if (float.IsNaN(value)) return 0x7E00;
         if (float.IsInfinity(value)) return (ushort)(float.IsPositiveInfinity(value) ? 0x3C00 : 0xFC00);
-        
+
         int bits = BitConverter.SingleToInt32Bits(value);
         int sign = (bits >> 16) & 0x8000;
-        int exp = ((bits >> 23) & 0xFF) - 127 + 15;
-        int mant = (bits >> 13) & 0x3FF;
-        
-        if (exp <= 0)
+        int exp8 = (bits >> 23) & 0xFF;
+        int mant = bits & 0x7FFFFF;
+
+        // Float zero and subnormals are far below the half range entirely
+        // (smallest half subnormal is 2^-24; float subnormals top out near 2^-127).
+        if (exp8 == 0) return (ushort)sign;
+
+        int hExp = exp8 - 127 + 15;                 // exponent field this value would have in half
+        uint significand = 0x800000u | (uint)mant;  // 24-bit significand with implicit leading 1
+
+        if (hExp >= 31)
         {
-            exp = 0;
-        }
-        else if (exp >= 31)
-        {
+            // Overflows the finite half range and rounds to an infinity.
             return (ushort)(sign | 0x7C00);
         }
-        
-        return (ushort)(sign | (exp << 10) | mant);
+
+        if (hExp >= 1)
+        {
+            // Normal half: keep the top 10 mantissa bits, round-half-even on the dropped 13.
+            // (The implicit leading 1 of each format maps to the other's implicit 1.)
+            uint dropped = (uint)mant & 0x1FFF;
+            uint half = (uint)mant >> 13;
+            if (dropped > 0x1000 || (dropped == 0x1000 && (half & 1) != 0)) half++;
+            if (half > 0x3FF) { half = 0; hExp++; }
+            if (hExp >= 31) return (ushort)(sign | 0x7C00);
+            return (ushort)(sign | (hExp << 10) | (int)half);
+        }
+
+        // Subnormal half: rescale the 24-bit significand onto the 2^-24 grid with round-half-even.
+        int shift = 14 - hExp;                      // hExp <= 0; values below 2^-25 round to zero
+        if (shift > 24) return (ushort)sign;
+        uint subDropped = significand & ((1u << shift) - 1);
+        uint subHalf = significand >> shift;
+        if (subDropped > (1u << (shift - 1)) || (subDropped == (1u << (shift - 1)) && (subHalf & 1) != 0))
+            subHalf++;
+        if (subHalf > 0x3FF)
+        {
+            // Rounded up into the smallest normal half (2^-14).
+            subHalf = 0;
+            hExp = 1;
+            return (ushort)(sign | (hExp << 10));
+        }
+        // Subnormal values carry exponent field 0; the value is just the mantissa.
+        return (ushort)(sign | (int)subHalf);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

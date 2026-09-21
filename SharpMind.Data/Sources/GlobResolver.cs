@@ -14,13 +14,15 @@ public static class GlobResolver
         if (!pattern.Contains('*') && !pattern.Contains('?'))
             return File.Exists(pattern) ? [Path.GetFullPath(pattern)] : [];
 
-        string root = GetRoot(pattern);
-        string glob = pattern[root.Length..].TrimStart(
-                                 Path.DirectorySeparatorChar,
-                                 Path.AltDirectorySeparatorChar);
+        int wildcard = pattern.IndexOfAny(['*', '?']);
+        string dir = wildcard > 0 ? Path.GetDirectoryName(pattern[..wildcard]) ?? "" : "";
+        string root = Path.GetFullPath(dir.Length == 0 ? "." : dir);
+        string glob = (dir.Length == 0
+                ? pattern
+                : pattern[dir.Length..]).TrimStart('/', '\\');
         bool recurse = glob.StartsWith("**");
         string filePattern = recurse
-            ? glob[(glob.IndexOf(Path.DirectorySeparatorChar) + 1)..]
+            ? StripRecursionPrefix(glob)
             : glob;
 
         var option = recurse ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
@@ -33,10 +35,11 @@ public static class GlobResolver
     public static string[] ResolveMany(IEnumerable<string> paths)
         => [.. paths.SelectMany(p => Resolve(p)).Distinct().Order()];
 
-    private static string GetRoot(string pattern)
+    // "**" may be followed by either a backslash or a forward slash, so split
+    // with an OS-agnostic separator rather than Path.DirectorySeparatorChar.
+    private static string StripRecursionPrefix(string glob)
     {
-        int wildcard = pattern.IndexOfAny(['*', '?']);
-        string dir = Path.GetDirectoryName(pattern[..wildcard]) ?? ".";
-        return Path.GetFullPath(dir);
+        int sep = glob.IndexOfAny(['/', '\\']);
+        return sep >= 0 ? glob[(sep + 1)..] : "*";
     }
 }
