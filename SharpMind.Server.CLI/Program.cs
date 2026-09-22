@@ -49,6 +49,9 @@ for (int i = 0; i < cliArgs.Length; i++)
             if (int.TryParse(cliArgs[++i], out var maxCacheLen))
                 options.MaxCacheLen = maxCacheLen;
             break;
+        case "--api-key" when i + 1 < cliArgs.Length:
+            options.ApiKey = cliArgs[++i];
+            break;
         case "--help" or "-h":
             if (!serviceMode) PrintUsage();
             return;
@@ -111,6 +114,7 @@ static async Task RunStopAsync(SharpMindServerOptions options)
 {
     var baseUrl = $"http://{options.Host}:{options.Port}";
     using var http = new HttpClient { BaseAddress = new Uri(baseUrl), Timeout = TimeSpan.FromSeconds(5) };
+    ApplyApiKey(http, options);
 
     if (!await IsServerRunning(http))
     {
@@ -133,6 +137,7 @@ static async Task RunClientAsync(SharpMindServerOptions options, List<string> mo
 
     var baseUrl = $"http://{options.Host}:{options.Port}";
     using var http = new HttpClient { BaseAddress = new Uri(baseUrl), Timeout = TimeSpan.FromMinutes(5) };
+    ApplyApiKey(http, options);
 
     // ── Start or connect ────────────────────────────────────────────
     bool weStartedIt = false;
@@ -425,6 +430,7 @@ static async Task SpawnServiceProcessAsync(SharpMindServerOptions options, List<
     if (options.DisableFileIO) args += " --no-files";
     if (options.DisableNetworkIO) args += " --no-network";
     if (options.MaxCacheLen is int maxCacheLen) args += $" --max-cache-len {maxCacheLen}";
+    if (!string.IsNullOrEmpty(options.ApiKey)) args += $" --api-key \"{options.ApiKey}\"";
 
     var psi = new ProcessStartInfo
     {
@@ -538,6 +544,18 @@ static async Task ShutdownServiceAsync(HttpClient http)
         await Task.Delay(250);
         if (!await IsServerRunning(http)) return;
     }
+}
+
+/// <summary>
+/// Attach the configured bearer key to every request the CLI sends, so
+/// /v1/shutdown and DELETE /v1/models/{model} stay reachable through CLI
+/// control while the server enforces the key.
+/// </summary>
+static void ApplyApiKey(HttpClient http, SharpMindServerOptions options)
+{
+    if (!string.IsNullOrEmpty(options.ApiKey))
+        http.DefaultRequestHeaders.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", options.ApiKey);
 }
 
 // ── HTTP helpers ──────────────────────────────────────────────────────
@@ -714,6 +732,9 @@ static void PrintUsage()
       --no-network          Disable network IO for tool calls
       --max-cache-len <n>   Cap KV cache length (tokens). Auto-caps by
                             available memory when not specified
+      --api-key <key>       Require this key (Authorization: Bearer or
+                            X-Api-Key) for shutdown/model-delete endpoints.
+                            Sentinel: also sent by --stop and unload.
       -h, --help            Show this help message
     """);
 }

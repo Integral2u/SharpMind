@@ -222,6 +222,7 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
                 decodedSoFar.Append(fragment);
 
                 bool hitStop = false;
+                int stopAt = int.MaxValue;
                 if (maxStopLen > 0 && decodedSoFar.Length >= maxStopLen && _stopCheckBuf is not null)
                 {
                     int start = decodedSoFar.Length - maxStopLen;
@@ -229,13 +230,24 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
                     ReadOnlySpan<char> tail = _stopCheckBuf;
                     foreach (string stop in stopStrings)
                     {
-                        if (tail.IndexOf(stop.AsSpan()) >= 0)
+                        int idx = tail.IndexOf(stop.AsSpan());
+                        if (idx >= 0)
                         {
                             hitStop = true;
-                            fragment = string.Empty;
-                            break;
+                            if (start + idx < stopAt) stopAt = start + idx;
                         }
                     }
+                }
+
+                if (hitStop)
+                {
+                    // Keep the fragment text that precedes the stop string; the stop
+                    // marker itself may fall mid-fragment (e.g. "Hi END") and that
+                    // whole prefix must not be swallowed with it.
+                    int fragStart = decodedSoFar.Length - fragment.Length;
+                    int keep = Math.Clamp(stopAt - fragStart, 0, fragment.Length);
+                    fragment = keep < fragment.Length ? fragment[..keep] : fragment;
+                    decodedSoFar.Length = fragStart + keep;
                 }
 
                 if (stream && fragment.Length > 0)

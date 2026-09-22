@@ -195,14 +195,18 @@ public sealed class SharpMindService : IAsyncDisposable
     {
         var modelManager = app.Services.GetRequiredService<ModelManager>();
         var sessionFactory = app.Services.GetRequiredService<SessionFactory>();
+        var options = app.Services.GetRequiredService<SharpMindServerOptions>();
 
         app.MapGet("/v1/health", () => Results.Ok(new { status = "ok" }));
 
         // Operational extension (not part of the OpenAI spec). Schedules a
         // graceful stop after the response is written, so in-flight requests
-        // can drain.
-        app.MapPost("/v1/shutdown", () =>
+        // can drain. Gated by API key when one is configured — an unauthenticated
+        // shutdown endpoint on a shared host lets anyone take the server down.
+        app.MapPost("/v1/shutdown", (HttpContext httpContext) =>
         {
+            if (!IsAuthorized(options, httpContext))
+                return Results.Json(new { error = new { message = "Unauthorized", type = "auth_error" } }, statusCode: 401);
             Output.WriteLine("[SharpMind] Shutdown requested.");
             _ = Task.Run(async () =>
             {
@@ -248,11 +252,21 @@ public sealed class SharpMindService : IAsyncDisposable
             return Results.Ok(OpenAiMapper.ToModelInfo(info.ModelId, info.CreatedUnix));
         });
 
-        app.MapDelete("/v1/models/{model}", (string model) =>
+        app.MapDelete("/v1/models/{model}", (string model, HttpContext httpContext) =>
         {
+            if (!IsAuthorized(options, httpContext))
+                return Results.Json(new { error = new { message = "Unauthorized", type = "auth_error" } }, statusCode: 401);
             var unloaded = modelManager.Unload(model);
             if (!unloaded)
-                return Results.Json(new { error = new { message = $"Model '{model}' not found or not loaded", type = "invalid_request_error" } }, statusCode: 404);
+            {
+                // A loaded model that refused to unload is still in use by an
+                // in-flight request, not missing — report that distinctly.
+                var inUse = modelManager.GetLoaded(model) is not null;
+                string message = inUse
+                    ? $"Model '{model}' is in use; unload while no request holds it"
+                    : $"Model '{model}' not found or not loaded";
+                return Results.Json(new { error = new { message, type = inUse ? "resource_in_use" : "invalid_request_error" } }, statusCode: inUse ? 409 : 404);
+            }
             return Results.Ok(new DeleteModelResponse { Id = model, Deleted = true });
         });
 
@@ -268,6 +282,10 @@ public sealed class SharpMindService : IAsyncDisposable
                 var loaded = await modelManager.LoadAsync(model, CreateProgress(), ct);
                 if (loaded is null)
                     return Results.Json(new { error = new { message = $"Failed to load model '{model}'", type = "server_error" } }, statusCode: 500);
+                // LoadAsync holds a reference. Models are KeepAlive, so releasing
+                // leaves it resident-but-idle, which DELETE /v1/models/{model}
+                // can still unload.
+                modelManager.Release(model);
                 return Results.Ok(new { status = "loaded", model });
             }
             catch (OperationCanceledException)
@@ -360,6 +378,17 @@ public sealed class SharpMindService : IAsyncDisposable
                 modelManager.Release(request.Model);
             }
         });
+    }
+
+    private static bool IsAuthorized(SharpMindServerOptions options, HttpContext httpContext)
+    {
+        if (string.IsNullOrEmpty(options.ApiKey)) return true;
+
+        string provided = httpContext.Request.Headers.Authorization.ToString();
+        if (provided.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+            return provided.Length > "Bearer ".Length
+                   && string.Equals(provided["Bearer ".Length..], options.ApiKey, StringComparison.Ordinal);
+        return string.Equals(httpContext.Request.Headers["X-Api-Key"].ToString(), options.ApiKey, StringComparison.Ordinal);
     }
 
     private static async Task<IResult> HandleNonStreamingResponse(

@@ -4,10 +4,24 @@ public class FileSystemTool(string projectRoot)
 {
     private readonly string _projectRoot = Path.GetFullPath(projectRoot);
 
+    private static readonly char[] Separators = [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar];
+
     private string ResolvePath(string relativePath)
     {
         string fullPath = Path.GetFullPath(Path.Combine(_projectRoot, relativePath));
-        if (!fullPath.StartsWith(_projectRoot, StringComparison.OrdinalIgnoreCase))
+        // Requires a separator boundary: comparing with only the raw prefix would
+        // admit sibling directories that merely share the root's name as a prefix
+        // (e.g. a root "C:\x\Proj" would match "C:\x\ProjEvil\..\file").
+        bool inside = fullPath == _projectRoot;
+        if (!inside)
+            foreach (char sep in Separators)
+                if (fullPath.StartsWith(_projectRoot + sep, StringComparison.OrdinalIgnoreCase))
+                {
+                    inside = true;
+                    break;
+                }
+
+        if (!inside)
         {
             throw new UnauthorizedAccessException($"Access denied: Path {relativePath} is outside the project root.");
         }

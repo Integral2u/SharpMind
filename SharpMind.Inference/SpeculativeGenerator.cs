@@ -204,10 +204,23 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
                         decodedSoFar.Append(fragment);
 
                         bool hitStop = false;
+                        int stopAt = int.MaxValue;
                         foreach (string stop in genCfg.StopStrings)
                         {
-                            if (StringBuilderContains(decodedSoFar, stop))
-                            { hitStop = true; fragment = string.Empty; break; }
+                            int idx = StringBuilderIndexOf(decodedSoFar, stop);
+                            if (idx >= 0)
+                            {
+                                hitStop = true;
+                                if (idx < stopAt) stopAt = idx;
+                            }
+                        }
+
+                        if (hitStop)
+                        {
+                            int fragStart = decodedSoFar.Length - fragment.Length;
+                            int keep = Math.Clamp(stopAt - fragStart, 0, fragment.Length);
+                            fragment = keep < fragment.Length ? fragment[..keep] : fragment;
+                            decodedSoFar.Length = fragStart + keep;
                         }
 
                         if (genCfg.Stream && fragment.Length > 0)
@@ -332,10 +345,10 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
         }
     }
 
-    private static bool StringBuilderContains(System.Text.StringBuilder sb, ReadOnlySpan<char> value)
+    private static int StringBuilderIndexOf(System.Text.StringBuilder sb, ReadOnlySpan<char> value)
     {
-        if (value.IsEmpty) return true;
-        if (sb.Length < value.Length) return false;
+        if (value.IsEmpty) return 0;
+        if (sb.Length < value.Length) return -1;
         for (int i = 0; i <= sb.Length - value.Length; i++)
         {
             bool match = true;
@@ -343,9 +356,9 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
             {
                 if (sb[i + j] != value[j]) { match = false; break; }
             }
-            if (match) return true;
+            if (match) return i;
         }
-        return false;
+        return -1;
     }
 
     private static void ApplyRepetitionPenalty(

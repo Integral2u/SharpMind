@@ -1542,7 +1542,7 @@ if (held.Length > 0)
                 // happens to this call before the native agent dispatches it.
                 if (ProcessToolRequest is not null)
                 {
-                    var external = await ProcessToolRequest(toolName, args, ct);
+                    var external = await ProcessToolRequest(toolName, args, linkedCts.Token);
                     switch (external.Outcome)
                     {
                         case ToolRequestOutcome.Handled:
@@ -1581,7 +1581,7 @@ if (held.Length > 0)
                 // Dispatch with IO interception — interceptors gate any actual
                 // file/network access the tool makes through PermissionCallback.
                 // If PermissionCallback is null, interceptors are never activated.
-                var toolResult = await DispatchToolAsync(toolName, toolCall, args, ct);
+                var toolResult = await DispatchToolAsync(toolName, toolCall, args, linkedCts.Token);
 
                 // Feed the result back as a system message for the next generation pass
                 _history.Add(new ChatMessage
@@ -1634,7 +1634,7 @@ if (held.Length > 0)
                                 TokensPerSecond = _generator.TokensPerSecond,
                                 TimeToFirstToken = _generator.TimeToFirstToken
                             }),
-                            ct);
+                            linkedCts.Token);
                     }
                     finally
                     {
@@ -1644,7 +1644,7 @@ if (held.Length > 0)
 
                 var subTask = RunSubAgentAsync();
 
-                await foreach (var entry in subChannel.Reader.ReadAllAsync(ct))
+                await foreach (var entry in subChannel.Reader.ReadAllAsync(linkedCts.Token))
                     yield return entry;
 
                 string agentResult;

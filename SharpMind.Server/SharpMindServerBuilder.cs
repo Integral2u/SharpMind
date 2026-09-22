@@ -48,6 +48,15 @@ public sealed class SharpMindServerOptions
     /// memory. Set via --max-cache-len CLI flag.
     /// </summary>
     public int? MaxCacheLen { get; set; }
+
+    /// <summary>
+    /// Optional bearer/API key. When set, the destructive operational
+    /// endpoints (<c>POST /v1/shutdown</c>, <c>DELETE /v1/models/{model}</c>)
+    /// require it (<c>Authorization: Bearer &lt;key&gt;</c> or
+    /// <c>X-Api-Key: &lt;key&gt;</c>). Leave empty to keep them open.
+    /// Set via --api-key CLI flag.
+    /// </summary>
+    public string ApiKey { get; set; } = "";
 }
 
 /// <summary>

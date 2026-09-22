@@ -61,6 +61,16 @@ public sealed class EngineGeneratorTests
         return Tokenizer.FromGguf([.. tokens], merges: null, tokenTypes: null, bosId: 1, eosId: 2);
     }
 
+    // A byte-level vocab plus one extra multi-char token (id 259), used to
+    // exercise mid-fragment stop-string handling that single-byte tokens cannot.
+    private static Tokenizer MakeTokenizerWithExtraToken(string extra)
+    {
+        var tokens = new List<string> { "[UNK]", "[BOS]", "[EOS]" };
+        for (int b = 0; b < 256; b++) tokens.Add(Vocabulary.ByteTokenString(b));
+        tokens.Add(extra);
+        return Tokenizer.FromGguf([.. tokens], merges: null, tokenTypes: null, bosId: 1, eosId: 2);
+    }
+
     [Fact]
     public async Task HonoursMaxNewTokens()
     {
@@ -117,6 +127,41 @@ public sealed class EngineGeneratorTests
         gen.ResetCache();
         Assert.Equal(0, engine.CachedLength);
         Assert.Empty(gen.CacheTokens!);
+    }
+
+    [Fact]
+    public async Task StopString_MidFragment_KeepsPrecedingText()
+    {
+        // The emitted token decodes to "Hi STOP"; the stop string "STOP" falls
+        // mid-fragment, so the "Hi " prefix must stream and only "STOP" is cut.
+        using var engine = new StubEngine(fixedId: 259);
+        using var gen = new EngineGenerator<KVCacherBuilder>(engine, MakeTokenizerWithExtraToken("Hi STOP"),
+            addBos: false, addEos: false, numLayers: 2);
+
+        var sb = new StringBuilder();
+        await foreach (var f in gen.GenerateFromTokensAsync([65],
+            generation: new GenerationConfig { MaxNewTokens = 5, Stream = true, StopStrings = ["STOP"] }))
+            sb.Append(f);
+
+        Assert.Equal("Hi ", sb.ToString());
+        Assert.Single(gen.CurrentGeneratedIds!);
+    }
+
+    [Fact]
+    public async Task StopString_WholeFragment_SuppressesStopToken()
+    {
+        // The stop string covers the entire fragment, so nothing of it streams.
+        using var engine = new StubEngine(fixedId: 259);
+        using var gen = new EngineGenerator<KVCacherBuilder>(engine, MakeTokenizerWithExtraToken("STOP!"),
+            addBos: false, addEos: false, numLayers: 2);
+
+        var sb = new StringBuilder();
+        await foreach (var f in gen.GenerateFromTokensAsync([65],
+            generation: new GenerationConfig { MaxNewTokens = 5, Stream = true, StopStrings = ["STOP!"] }))
+            sb.Append(f);
+
+        Assert.Equal("", sb.ToString());
+        Assert.Single(gen.CurrentGeneratedIds!);
     }
 
     [Fact]

@@ -353,16 +353,27 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
                     decodedSoFar.Append(fragment);
 
                     ReadOnlySpan<char> decoded = decodedSoFar.ToString().AsSpan();
+                    int stopAt = int.MaxValue;
                     foreach (string stop in genCfg.StopStrings)
                     {
-                        if (decoded.IndexOf(stop.AsSpan()) >= 0)
+                        int idx = decoded.IndexOf(stop.AsSpan());
+                        if (idx >= 0)
                         {
                             stopHit = true;
-                            break;
+                            if (idx < stopAt) stopAt = idx;
                         }
                     }
 
-                    if (genCfg.Stream && fragment.Length > 0 && !stopHit)
+                    if (stopHit)
+                    {
+                        // Keep the fragment text that precedes the stop string.
+                        int fragStart = decodedSoFar.Length - fragment.Length;
+                        int keep = Math.Clamp(stopAt - fragStart, 0, fragment.Length);
+                        fragment = keep < fragment.Length ? fragment[..keep] : fragment;
+                        decodedSoFar.Length = fragStart + keep;
+                    }
+
+                    if (genCfg.Stream && fragment.Length > 0)
                         yield return fragment;
 
                     if (stopHit || genCfg.StopTokenIds.Contains(tid))

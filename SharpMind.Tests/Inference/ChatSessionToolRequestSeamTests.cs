@@ -122,6 +122,45 @@ public sealed class ChatSessionToolRequestSeamTests
     }
 
     [Fact]
+    public async Task Interrupt_CancelsInFlightToolRequest()
+    {
+        var seamEntered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        CancellationToken? seenToken = null;
+
+        await using var session = ScriptedSession.Create(
+            BuilderWithNativeTool(),
+            ToolCall("NativeTool", """{"x":"1"}"""));
+        session.ProcessToolRequest = (toolName, args, token) =>
+        {
+            seenToken = token;
+            seamEntered.TrySetResult(true);
+            // The host is running the tool; the outcome only materialises once
+            // the turn is interrupted, and then it hands the call back.
+            var gate = new TaskCompletionSource<ToolRequestResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+            token.Register(() => gate.TrySetResult(ToolRequestResult.ReturnToCaller()));
+            return gate.Task;
+        };
+
+        var entries = new List<ChatStreamEntry>();
+        var turn = Task.Run(async () =>
+        {
+            await foreach (var e in session.GetResponseStreamAsync("hi")) entries.Add(e);
+        });
+
+        await seamEntered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        session.Interrupt();
+
+        // The token handed to the seam must be cancelled by Interrupt; before the
+        // fix the seam received the outer ct, which _turnCts never cancels, so the
+        // interrupted turn would keep waiting on the tool forever.
+        await turn.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.NotNull(seenToken);
+        Assert.True(seenToken!.Value.IsCancellationRequested);
+        Assert.Contains(entries, e => e.Status == ChatStatus.ToolCall);
+    }
+
+    [Fact]
     public async Task NullSeam_KeepsBuiltInNativeDispatch()
     {
         await using var session = ScriptedSession.Create(

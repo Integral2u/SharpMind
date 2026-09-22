@@ -7,6 +7,22 @@ namespace SharpMind.Inference;
 /// </summary>
 public static class Sampler
 {
+    // A per-thread cache of seeded RNGs. Sampler.Sample accepts an optional
+    // Random so callers can drive one sequence across a whole generation, but
+    // when none is supplied a seeded config must still advance a single stream
+    // rather than re-creating `new Random(seed)` on every draw — which would
+    // pick the same quantile each step.
+    [System.ThreadStatic]
+    private static Dictionary<int, Random>? _seededRngs;
+
+    private static Random SeededRng(int seed)
+    {
+        _seededRngs ??= new Dictionary<int, Random>();
+        if (!_seededRngs.TryGetValue(seed, out var rng))
+            _seededRngs[seed] = rng = new Random(seed);
+        return rng;
+    }
+
     // Entry point
 
     /// <summary>
@@ -50,7 +66,7 @@ public static class Sampler
             Normalise(probs);
 
             return SampleFromProbs(probs, rng ?? (config.Seed.HasValue
-                ? new Random(config.Seed.Value)
+                ? SeededRng(config.Seed.Value)
                 : Random.Shared));
         }
         finally

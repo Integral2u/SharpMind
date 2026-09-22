@@ -50,6 +50,11 @@ public sealed class ModelManager : IDisposable
     private readonly ConcurrentDictionary<string, ModelInfo> _availableModels = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, LoadedModel> _loadedModels = new(StringComparer.OrdinalIgnoreCase);
     private readonly SemaphoreSlim _loadLock = new(1, 1);
+    // Serialises ref-count mutations, dictionary removal and disposal.
+    // Without it, Unload could dispose a model between LoadAsync's
+    // TryGetValue and Interlocked.Increment, handing a disposed Transformer
+    // to an in-flight request (use-after-dispose).
+    private readonly object _refLock = new();
     private FileSystemWatcher? _watcher;
 
     public ModelManager(SharpMindServerOptions options)
@@ -99,10 +104,13 @@ public sealed class ModelManager : IDisposable
     /// </summary>
     public async Task<LoadedModel?> LoadAsync(string modelId, IProgress<string>? progress = null, CancellationToken ct = default)
     {
-        if (_loadedModels.TryGetValue(modelId, out var cached))
+        lock (_refLock)
         {
-            Interlocked.Increment(ref cached.RefCount);
-            return cached;
+            if (_loadedModels.TryGetValue(modelId, out var cached))
+            {
+                cached.RefCount++;
+                return cached;
+            }
         }
 
         if (!_availableModels.TryGetValue(modelId, out var info))
@@ -111,14 +119,25 @@ public sealed class ModelManager : IDisposable
         await _loadLock.WaitAsync(ct);
         try
         {
-            // Double-check after acquiring lock
-            if (_loadedModels.TryGetValue(modelId, out cached))
+            lock (_refLock)
             {
-                Interlocked.Increment(ref cached.RefCount);
-                return cached;
+                if (_loadedModels.TryGetValue(modelId, out var cached))
+                {
+                    cached.RefCount++;
+                    return cached;
+                }
             }
 
-            return await LoadModelCoreAsync(info, progress, ct);
+            var loaded = await LoadModelCoreAsync(info, progress, ct);
+            lock (_refLock)
+            {
+                // Second concurrent load for the same id is serialized by
+                // _loadLock, and Unload can only remove an entry that already
+                // exists, so a fresh build can never collide here.
+                _loadedModels[info.ModelId] = loaded;
+                loaded.RefCount++;
+                return loaded;
+            }
         }
         finally
         {
@@ -132,11 +151,14 @@ public sealed class ModelManager : IDisposable
     /// </summary>
     public void Release(string modelId)
     {
-        if (!_loadedModels.TryGetValue(modelId, out var loaded)) return;
-        if (Interlocked.Decrement(ref loaded.RefCount) <= 0 && !loaded.KeepAlive)
+        lock (_refLock)
         {
-            _loadedModels.TryRemove(modelId, out _);
-            loaded.Dispose();
+            if (!_loadedModels.TryGetValue(modelId, out var loaded)) return;
+            if (--loaded.RefCount <= 0 && !loaded.KeepAlive)
+            {
+                _loadedModels.TryRemove(modelId, out _);
+                loaded.Dispose();
+            }
         }
     }
 
@@ -152,14 +174,23 @@ public sealed class ModelManager : IDisposable
     }
 
     /// <summary>
-    /// Force-unload a model (regardless of ref count).
+    /// Unload a model that nothing is using. A model with an outstanding
+    /// reference count is kept — force-disposing it would hand a disposed
+    /// <see cref="Transformer"/> to the in-flight requests that still hold it.
+    /// Both the ref-count mutations and the removal/dispose happen under
+    /// <see cref="_refLock"/>, so Unload cannot dispose a model between a
+    /// caller's LoadAsync fast-path check and its increment.
     /// </summary>
     public bool Unload(string modelId)
     {
-        if (!_loadedModels.TryRemove(modelId, out var loaded)) return false;
-        loaded.RefCount = 0;
-        loaded.Dispose();
-        return true;
+        lock (_refLock)
+        {
+            if (!_loadedModels.TryGetValue(modelId, out var loaded)) return false;
+            if (loaded.RefCount != 0) return false;
+            _loadedModels.TryRemove(modelId, out _);
+            loaded.Dispose();
+            return true;
+        }
     }
 
     /// <summary>
@@ -169,13 +200,14 @@ public sealed class ModelManager : IDisposable
     {
         var loaded = await LoadAsync(modelId, progress, ct);
         if (loaded is null) return false;
-        // Ref count is already 1 from LoadAsync — that's the preloaded reference
 
-        // No separate opt-in: asking to preload a model is already the choice to
-        // spend startup time so that requests are fast. The warm-up is part of
-        // what "preloaded" should mean.
+        // Warm the model before releasing the hold. LoadModelCoreAsync marks
+        // every model KeepAlive, so dropping to zero leaves it resident and
+        // idle (unloadable via DELETE) instead of evicting it.
         progress?.Report($"Warming up kernels: {modelId}");
         await Task.Run(() => WarmUp(loaded, ct), ct);
+
+        Release(modelId);
         return true;
     }
 
@@ -322,11 +354,10 @@ public sealed class ModelManager : IDisposable
             Model = model,
             Tokenizer = tokenizer,
             Meta = meta,
-            RefCount = 1,
+            RefCount = 0,
             KeepAlive = true
         };
 
-        _loadedModels[info.ModelId] = loaded;
         return loaded;
     }
 
