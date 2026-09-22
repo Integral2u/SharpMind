@@ -69,16 +69,27 @@ public static class ComponentRegistry
     /// <summary>
     /// Finds the first descriptor in <paramref name="registry"/> whose type matches
     /// <paramref name="typeName"/> (assembly-qualified name, full name, or simple name).
+    /// The assembly version in a qualified name is ignored, so a <c>*.smmt</c> job (or
+    /// preset) saved under an earlier build still resolves after an assembly version bump.
     /// Returns null when nothing matches.
     /// </summary>
     public static ComponentDescriptor? Find(string? typeName, IEnumerable<ComponentDescriptor> registry)
     {
         if (string.IsNullOrWhiteSpace(typeName)) return null;
+        var fullSuffix = ',';
         foreach (var d in registry)
         {
             if (d.Type.AssemblyQualifiedName == typeName
                 || d.Type.FullName == typeName
                 || d.Type.Name == typeName)
+                return d;
+
+            // "FullName, Assembly, Version=…, Culture=…, PublicKeyToken=…" from storage —
+            // match the type by its full-name prefix regardless of the version suffix.
+            var fullName = d.Type.FullName;
+            if (fullName is not null
+                && typeName.Length > fullName.Length
+                && typeName.StartsWith(fullName + fullSuffix, StringComparison.Ordinal))
                 return d;
         }
         return null;

@@ -51,6 +51,25 @@ public sealed class ComponentRegistryTests
     }
 
     [Fact]
+    public void Find_Match_BypassesAssemblyVersionSuffix()
+    {
+        var registry = ComponentRegistry.Scan(typeof(ComponentRegistry).Assembly);
+
+        // "SharpMind.Data.Sources.TextFileSource, SharpMind.Data" without a version.
+        Assert.NotNull(ComponentRegistry.Find(typeof(TextFileSource).FullName + ", SharpMind.Data", registry));
+
+        // A qualified name recorded by an earlier build (different assembly version).
+        var stale = string.Join(", ",
+            typeof(TextFileSource).AssemblyQualifiedName!.Split(", ")
+                .Select(p => p.StartsWith("Version=", StringComparison.Ordinal) ? "Version=1.0.6.1" : p));
+        var found = ComponentRegistry.Find(stale, registry);
+
+        Assert.NotNull(found);
+        Assert.Equal(typeof(TextFileSource), found!.Type);
+        Assert.NotEqual(typeof(TextFileSource).AssemblyQualifiedName, stale);
+    }
+
+    [Fact]
     public void Build_CsvSource_ConvertsValuesFromStrings()
     {
         var csv = ComponentRegistry.Find(typeof(CsvDataSource).FullName, ComponentRegistry.Scan(typeof(ComponentRegistry).Assembly));
