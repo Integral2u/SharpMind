@@ -301,14 +301,15 @@ public class SmmExportLoadTests : IDisposable
     }
 
     [Fact]
-    public void GgufLoad_CanonicalLmHeadHeader_ReloadsVerbatim()
+    public void GgufLoad_EitherLmHeadHeaderOrder_ReloadsVerbatim()
     {
-        // Canonical GGUFs (llama.cpp converters) declare output.weight as [hidden, vocab]
-        // while storing exactly the same [vocab, hidden] row-major bytes as the embedding.
-        // The loader used to "correct" that header order with a transpose of the data,
-        // which scrambled every float head. Build a canonical-order file by swapping the
-        // two dims in the header of our own export — the data bytes are identical either
-        // way — and check the head comes back untouched.
+        // Canonical GGUFs (llama.cpp converters, and our own exports) declare output.weight
+        // as [hidden, vocab] while storing exactly the same [vocab, hidden] row-major bytes
+        // as the embedding; our older exports declared [vocab, hidden]. The loader used to
+        // "correct" the header order with a transpose of the data, which scrambled every
+        // float head. The export above covers the canonical order; swap the two dims in the
+        // header to get the older one — the data bytes are identical either way — and check
+        // the head comes back untouched.
         using var fixture = TrainFixture();
         int vocab = fixture.Config.VocabSize, hidden = fixture.Config.HiddenDim;
         Assert.NotEqual(vocab, hidden); // a transpose would be invisible on a square head
@@ -465,6 +466,85 @@ public class SmmExportLoadTests : IDisposable
         BitConverter.GetBytes(d1).CopyTo(file, dimsAt);
         BitConverter.GetBytes(d0).CopyTo(file, dimsAt + 8);
         File.WriteAllBytes(ggufPath, file);
+    }
+
+    [Fact]
+    public void GgufConversion_NoRopeScaling_StaysAbsentInExport()
+    {
+        // A GGUF without <arch>.rope.scaling.type (every stock Qwen) must not come back
+        // out of SMM->GGUF with an EMPTY scaling type: llama.cpp maps "" to
+        // LLAMA_ROPE_SCALING_TYPE_UNSPECIFIED and asserts at load, so our own exports
+        // were unloadable by llama.cpp while SharpMind's loaders never noticed.
+        string ggufPath = Path.Combine(_temp.Path, "tiny.gguf");
+        WriteTinyGguf(ggufPath, 64, BuildGgufTokens(64), "{{- messages }}");
+
+        Assert.Null(GgufLoader.LoadConfig(GgufLoader.LoadMeta(ggufPath))!.RopeScalingType);
+
+        string smmPath = Path.Combine(_temp.Path, "tiny.smm");
+        GgufToSmmConverter.Convert(ggufPath, smmPath);
+        string roundTrip = Path.Combine(_temp.Path, "tiny.roundtrip.gguf");
+        SmmToGufConverter.Convert(smmPath, roundTrip);
+
+        var kv = GgufLoader.LoadMeta(roundTrip).KvPairs;
+        Assert.DoesNotContain(kv, k => k.Key == "gpt2.rope.scaling.type");
+    }
+
+    [Fact]
+    public void GgufConversion_TokenizerModelAndPre_RoundTripForLlamaCpp()
+    {
+        // llama.cpp's vocab loader requires tokenizer.ggml.model ("gpt2" = byte-level BPE)
+        // and uses tokenizer.ggml.pre to pick the pre-tokenizer regex; neither survived
+        // GGUF -> SMM -> GGUF. A dense model must also not come back with expert counts.
+        string ggufPath = Path.Combine(_temp.Path, "tiny.gguf");
+        WriteTinyGguf(ggufPath, 64, BuildGgufTokens(64), "{{- messages }}");
+        string smmPath = Path.Combine(_temp.Path, "tiny.smm");
+        GgufToSmmConverter.Convert(ggufPath, smmPath);
+        string roundTrip = Path.Combine(_temp.Path, "tiny.roundtrip.gguf");
+        SmmToGufConverter.Convert(smmPath, roundTrip);
+
+        var meta = GgufLoader.LoadMeta(roundTrip);
+        Assert.Equal("gpt2", meta.GetString("tokenizer.ggml.model"));
+        Assert.Equal("qwen2", meta.GetString("tokenizer.ggml.pre"));
+        Assert.DoesNotContain(meta.KvPairs, k => k.Key is "gpt2.expert_count" or "gpt2.expert_used_count");
+    }
+
+    [Fact]
+    public void TrainingExport_DeclaresGgufDimOrder_InnermostFirst()
+    {
+        // llama.cpp checks declared dims innermost-first: token_embd/output must be
+        // [hidden, vocab] (data [vocab][hidden] row-major), block weights [in, out].
+        using var fixture = TrainFixture();
+        int vocab = fixture.Config.VocabSize, hidden = fixture.Config.HiddenDim;
+        var head = new Tensor<float>(vocab, hidden);
+        fixture.Weights.SetLmHead(head);
+
+        string smmPath = Path.Combine(_temp.Path, "dims.smm");
+        SmmTrainingExporter.Export(fixture.Weights, fixture.Tokenizer, smmPath, new SmmWriteOptions { Source = "training" });
+        string ggufPath = Path.Combine(_temp.Path, "dims.gguf");
+        SmmToGufConverter.Convert(smmPath, ggufPath);
+
+        var tensors = GgufLoader.LoadMeta(ggufPath).Tensors.ToDictionary(t => t.Name, t => t.Shape);
+        Assert.Equal([hidden, vocab], tensors["token_embd.weight"]);
+        Assert.Equal([hidden, vocab], tensors["output.weight"]);
+        Assert.Equal([hidden, fixture.Weights.Blocks[0].Wq!.Shape.Cols], tensors["blk.0.attn_q.weight"]);
+    }
+
+    [Fact]
+    public void TrainingExport_SkipsAllZeroBiases_KeepsRealOnes()
+    {
+        // Zero biases are allocation artefacts (the source model had none); llama.cpp
+        // counts them as unknown tensors. A bias with any non-zero value must survive.
+        using var fixture = TrainFixture();
+        var b0 = fixture.Weights.Blocks[0];
+        b0.WoBias!.Data.Clear();
+        b0.WqBias!.Data[0] = 0.5f;
+
+        string smmPath = Path.Combine(_temp.Path, "bias.smm");
+        SmmTrainingExporter.Export(fixture.Weights, fixture.Tokenizer, smmPath, new SmmWriteOptions { Source = "training" });
+        var names = SmmLoader.ReadTensorIndex(smmPath).Select(e => e.Name).ToHashSet();
+
+        Assert.Contains("blk.0.attn_q.bias", names);
+        Assert.DoesNotContain("blk.0.attn_output.bias", names);
     }
 
     [Fact]
@@ -989,7 +1069,7 @@ public class SmmExportLoadTests : IDisposable
         w.Write(0x46554747u); // "GGUF"
         w.Write(3u);          // version
         w.Write(3L);          // tensor_count
-        w.Write(11L);         // kv_count
+        w.Write(13L);         // kv_count
 
         void KvString(string key, string value) { WriteGgufString(w, key); w.Write(8u); WriteGgufString(w, value); }
         void KvU32(string key, uint value) { WriteGgufString(w, key); w.Write(4u); w.Write(value); }
@@ -1009,6 +1089,8 @@ public class SmmExportLoadTests : IDisposable
         KvU32("gpt2.context_length", 16);
         KvU32("gpt2.attention.head_count", 4);
         KvU32("gpt2.attention.head_count_kv", 4);
+        KvString("tokenizer.ggml.model", "gpt2");
+        KvString("tokenizer.ggml.pre", "qwen2");
         KvStringArray("tokenizer.ggml.tokens", tokens);
         KvU32("tokenizer.ggml.bos_token_id", 1);
         KvU32("tokenizer.ggml.eos_token_id", 2);
