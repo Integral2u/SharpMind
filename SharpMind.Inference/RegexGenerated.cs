@@ -6,7 +6,9 @@ namespace SharpMind.Inference
     {
         [GeneratedRegex(@"<think>.*?</think>", RegexOptions.Singleline)]
         public static partial Regex ThinkingBlocks { get; }
-        [GeneratedRegex(@"<tool_call>(.*?)</tool_call>", RegexOptions.Singleline)]
+        [GeneratedRegex(@"<think>.*?</think>", RegexOptions.Singleline)]
+        public static partial Regex FunctionBlocks { get; }
+        [GeneratedRegex(@"<function_call>.*?</function_call>", RegexOptions.Singleline)]
         public static partial Regex ToolCallBlocks { get; }
 
         [GeneratedRegex(@",\s*([}\]])")]

@@ -54,7 +54,7 @@ public sealed class ModelManager : IDisposable
     // Without it, Unload could dispose a model between LoadAsync's
     // TryGetValue and Interlocked.Increment, handing a disposed Transformer
     // to an in-flight request (use-after-dispose).
-    private readonly object _refLock = new();
+    private readonly Lock _refLock = new();
     private FileSystemWatcher? _watcher;
 
     public ModelManager(SharpMindServerOptions options)

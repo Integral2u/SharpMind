@@ -32,7 +32,7 @@ namespace SharpMind.Inference.Grammar;
 /// </summary>
 public sealed class TokenByteTable
 {
-    private static readonly ConditionalWeakTable<Tokenizer, TokenByteTable> Cache = new();
+    private static readonly ConditionalWeakTable<Tokenizer, TokenByteTable> Cache = [];
 
     private readonly byte[][] _bytes;
     private readonly bool[] _special;

@@ -14,7 +14,7 @@ namespace SharpMind.Model;
 /// </summary>
 public sealed class ShortConvCache : IKVCache
 {
-    private Tensor<float> _state;
+    private readonly Tensor<float> _state;
     private int _length;
     private bool _disposed;
 

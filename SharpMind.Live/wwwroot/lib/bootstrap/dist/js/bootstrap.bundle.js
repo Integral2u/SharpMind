@@ -315,7 +315,8 @@
    * Constants
    */
 
-  const namespaceRegex = /[^.]*(?=\..*)\.|.*/;
+  const namespace
+  = /[^.]*(?=\..*)\.|.*/;
   const stripNameRegex = /\..*/;
   const stripUidRegex = /::\d+$/;
   const eventRegistry = {}; // Events storage

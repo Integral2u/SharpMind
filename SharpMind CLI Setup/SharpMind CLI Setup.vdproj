@@ -174,7 +174,7 @@
         {
         "Name" = "8:Microsoft Visual Studio"
         "ProductName" = "8:SharpMind CLI"
-        "ProductCode" = "8:{77AE6FB7-E1E0-4899-8281-764F424BB983}"
+        "ProductCode" = "8:{174BBF78-55F3-4F4B-B81B-F9E0FA354CE1}"
         "PackageCode" = "8:{FCAE0191-E80F-405F-96FA-2717968CB185}"
         "UpgradeCode" = "8:{10668C24-5838-4BEA-8252-AC4D8A19A388}"
         "AspNetVersion" = "8:4.0.30319.0"
@@ -182,7 +182,7 @@
         "RemovePreviousVersions" = "11:TRUE"
         "DetectNewerInstalledVersion" = "11:TRUE"
         "InstallAllUsers" = "11:FALSE"
-        "ProductVersion" = "8:1.0.5"
+        "ProductVersion" = "8:1.0.7"
         "Manufacturer" = "8:Integral2u"
         "ARPHELPTELEPHONE" = "8:"
         "ARPHELPLINK" = "8:"

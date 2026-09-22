@@ -17,7 +17,7 @@ public static class Sampler
 
     private static Random SeededRng(int seed)
     {
-        _seededRngs ??= new Dictionary<int, Random>();
+        _seededRngs ??= [];
         if (!_seededRngs.TryGetValue(seed, out var rng))
             _seededRngs[seed] = rng = new Random(seed);
         return rng;

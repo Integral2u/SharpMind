@@ -19,7 +19,7 @@ namespace SharpMind.Inference.Grammar;
 /// </summary>
 internal sealed class TokenTrie
 {
-    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<TokenByteTable, TokenTrie> Cache = new();
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<TokenByteTable, TokenTrie> Cache = [];
 
     /// <summary>Returns the per-table trie, cached so repeated sessions share it.</summary>
     public static TokenTrie Get(TokenByteTable table)

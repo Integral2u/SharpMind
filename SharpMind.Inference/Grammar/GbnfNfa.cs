@@ -60,7 +60,7 @@ internal sealed class GrammarNfa
 
         StartConfigs = [];
         StartCanStop = Expand(
-            [new Config(ruleEntry[startRule], Array.Empty<int>())],
+            [new Config(ruleEntry[startRule], [])],
             StartConfigs,
             new HashSet<Config>(),
             new List<Config>());

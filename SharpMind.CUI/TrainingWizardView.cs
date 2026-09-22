@@ -301,8 +301,7 @@ public sealed class TrainingWizardView : View
         _optimizerRadio.SelectedItemChanged += (a) =>
         {
             _job.Optimizer = OptimizerLabelsArr[a.SelectedItem];
-            if (_sgdMomentumField is not null)
-                _sgdMomentumField.Visible = OptimizerLabelsArr[a.SelectedItem].Equals("SGD", StringComparison.OrdinalIgnoreCase);
+            _sgdMomentumField?.Visible = OptimizerLabelsArr[a.SelectedItem].Equals("SGD", StringComparison.OrdinalIgnoreCase);
         };
         form.Add(AddLabel("Optimizer:"), _optimizerRadio);
         row += OptimizerLabelsArr.Length + 1;

@@ -140,7 +140,7 @@ public static class DtypeOps
         if (subHalf > 0x3FF)
         {
             // Rounded up into the smallest normal half (2^-14).
-            subHalf = 0;
+            //subHalf = 0;
             hExp = 1;
             return (ushort)(sign | (hExp << 10));
         }

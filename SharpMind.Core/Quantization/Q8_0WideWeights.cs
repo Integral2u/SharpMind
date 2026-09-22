@@ -79,7 +79,7 @@ public sealed unsafe class Q8_0WideWeights
             public readonly Q8_0WideWeights? Wide = wide;
         }
 
-        private readonly object _lock = new();
+        private readonly Lock _lock = new();
         private Slot? _slot;
 
         public Q8_0WideWeights? Get(byte[] raw, int inFeatures, int outFeatures)

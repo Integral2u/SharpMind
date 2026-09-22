@@ -81,7 +81,7 @@ public sealed class GrammarConstraint : IGrammarConstraint
                 stops.Add(id);
             }
         }
-        _stopIds = stops.ToArray();
+        _stopIds = [.. stops];
 
         _state = [.. _nfa.StartConfigs];
         _consume = [];

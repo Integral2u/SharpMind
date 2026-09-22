@@ -191,7 +191,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         _seed = seed;
         _disposeModel = disposeModel;
         _toolCallFormat = toolCallFormat ?? ToolCallFormatDetector.Resolve(_meta, _tokenizer);
-        if (_agentBuilder is not null) _agentBuilder.CallFormat = _toolCallFormat;
+        _agentBuilder?.CallFormat = _toolCallFormat;
         MaxAgentDepth = _agentBuilder?.MaxAgentDepth ?? 2;
         _addBos = ModelMetaData.ResolveAddBos(meta, tokenizer.UseSentencePieceMerge);
         _addEos = ModelMetaData.ResolveAddEos(meta);
@@ -884,8 +884,7 @@ private void ThrowIfDisposed()
         int fcOpen = result.IndexOf("<function_call>", StringComparison.Ordinal);
         if (fcOpen >= 0)
         {
-            result = System.Text.RegularExpressions.Regex.Replace(
-                result, "<function_call>.*?</function_call>", string.Empty, System.Text.RegularExpressions.RegexOptions.Singleline);
+            result = RegexGenerated.FunctionBlocks.Replace(result, string.Empty);  //Regex.Replace( result, "<function_call>.*?</function_call>", string.Empty, System.Text.RegularExpressions.RegexOptions.Singleline);
             // Drop a trailing unclosed <function_call span
             int fcRemaining = result.IndexOf("<function_call", StringComparison.Ordinal);
             if (fcRemaining >= 0)
