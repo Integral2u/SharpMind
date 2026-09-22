@@ -391,12 +391,25 @@ public sealed class ModelManager : IDisposable
                 Filter = "*.*",
                 EnableRaisingEvents = true
             };
-            _watcher.Created += (_, _) => ScanDirectory();
-            _watcher.Deleted += (_, _) => ScanDirectory();
+            _watcher.Created += (_, _) => RescanFromWatcher();
+            _watcher.Deleted += (_, _) => RescanFromWatcher();
         }
         catch
         {
             // File watcher not critical — directory is re-scanned on each /v1/models request
         }
+    }
+
+    /// <summary>
+    /// The watcher raises its events on a thread-pool thread, where an exception has no handler
+    /// and ends the process. The folder can vanish between the scan's Exists check and its
+    /// enumeration (deleting the folder raises one Deleted event per file first), so a failed
+    /// rescan is dropped here; the request paths still rescan and still report their errors.
+    /// </summary>
+    private void RescanFromWatcher()
+    {
+        try { ScanDirectory(); }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
     }
 }

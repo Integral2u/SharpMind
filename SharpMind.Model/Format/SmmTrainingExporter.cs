@@ -62,6 +62,14 @@ public static class SmmTrainingExporter
 
     /// <summary>Enumerates the GGUF-layout tensors of a trained weight set.</summary>
     public static IEnumerable<SmmTensorData> EnumerateTensors(TransformerWeights weights, Transformer? model = null)
+        // ponytail: TransformerWeights allocates zero biases for tensors the source model never
+        // had (Qwen has no attn_output/ffn biases). A zero bias is a no-op, but exporting it made
+        // llama.cpp reject every file of ours ("wrong number of tensors"). Tracking provenance
+        // in the loaders would be the real fix; until then an all-zero bias is not written.
+        => EnumerateAllTensors(weights, model)
+            .Where(t => !t.Name.EndsWith(".bias", StringComparison.Ordinal) || t.GetBytes().AsSpan().ContainsAnyExcept((byte)0));
+
+    private static IEnumerable<SmmTensorData> EnumerateAllTensors(TransformerWeights weights, Transformer? model)
     {
         ArgumentNullException.ThrowIfNull(weights);
 
@@ -225,10 +233,15 @@ public static class SmmTrainingExporter
 
         var bytes = new byte[buffer.Length * 4];
         Buffer.BlockCopy(buffer, 0, bytes, 0, bytes.Length);
+        // GGUF/SMM shape order is innermost dim first (ne0). Transposed data is laid out
+        // [out][in] so ne0 = rows (= in); verbatim data is [rows][cols] so ne0 = cols.
+        // Declaring [rows, cols] for verbatim tensors made every export of ours
+        // unloadable by llama.cpp ("token_embd.weight has wrong shape"); our loaders
+        // size the head/embedding by role, so both orders keep loading here.
         return new SmmTensorData
         {
             Name = name,
-            Shape = [rows, outCols],
+            Shape = transpose ? [rows, outCols] : [outCols, rows],
             Dtype = QuantDType.F32,
             GetBytes = () => bytes,
         };

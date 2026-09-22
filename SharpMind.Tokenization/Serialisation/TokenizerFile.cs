@@ -69,6 +69,10 @@ public static class TokenizerFile
                      .OrderBy(m => m.Rank)
                      .Select(m => JsonValue.Create($"{m.Left} {m.Right}")!)]),
         };
+        if (model.GgufPreTokenizer is { Length: > 0 } pre)
+            obj["gguf_pre"] = pre;
+        if (model.GgufTokenizerModel is { Length: > 0 } ggufModel)
+            obj["gguf_model"] = ggufModel;
 
         // SentencePiece models rank merges by per-token score. Persist them
         // parallel to vocab id order so a save/load keeps merge ordering.
@@ -137,12 +141,16 @@ public static class TokenizerFile
         bool charMode = root.TryGetProperty("kind", out var kindEl)
                         && kindEl.GetString() == "char";
 
-        // SentencePiece merge-ranking scores, parallel to vocab id order.
+// SentencePiece merge-ranking scores, parallel to vocab id order.
         IReadOnlyList<float>? scores = null;
         if (root.TryGetProperty("scores", out var scoresEl))
             scores = [.. scoresEl.EnumerateArray().Select(e => e.GetSingle())];
 
-        return new BpeModel(vocab, merges, preTokeniser, scores, charMode: charMode);
+        return new BpeModel(vocab, merges, preTokeniser, scores, charMode: charMode)
+        {
+            GgufPreTokenizer = root.TryGetProperty("gguf_pre", out var preEl) ? preEl.GetString() : null,
+            GgufTokenizerModel = root.TryGetProperty("gguf_model", out var modelEl) ? modelEl.GetString() : null,
+        };
     }
 
     // Helpers

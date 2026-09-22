@@ -61,6 +61,10 @@ public class Tokenizer
     public int PadId => _model.Vocab.PadId;
     public Vocabulary Vocab => _model.Vocab;
     public SpecialTokens Specials => _model.Vocab.Specials;
+    /// <summary>Source GGUF <c>tokenizer.ggml.pre</c>, if known — see <see cref="BpeModel.GgufPreTokenizer"/>.</summary>
+    public string? GgufPreTokenizer { get => _model.GgufPreTokenizer; set => _model.GgufPreTokenizer = value; }
+    /// <summary>Source GGUF <c>tokenizer.ggml.model</c>, if known — see <see cref="BpeModel.GgufTokenizerModel"/>.</summary>
+    public string? GgufTokenizerModel { get => _model.GgufTokenizerModel; set => _model.GgufTokenizerModel = value; }
 
     /// <summary>
     /// Returns all token IDs that should halt generation.
