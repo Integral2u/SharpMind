@@ -185,4 +185,42 @@ public sealed class EngineGeneratorTests
 
         Assert.Equal("abc", sb.ToString());
     }
+
+    [Fact]
+    public async Task RepetitionPenalty_DoesNotAllocatePerDecodeStep()
+    {
+        // Regression: the penalty defaulted on and allocated a fresh HashSet per decode
+        // step (genuine hot-path garbage). It must pool one set per generator and Clear
+        // it. Run the loop twice to warm JIT + lazy scratch buffers, then verify a
+        // penalty-enabled run costs about as much allocation as penalty disabled.
+        using var engine = new StubEngine(fixedId: 70);
+        using var gen = new EngineGenerator<KVCacherBuilder>(engine, MakeTokenizer(), addBos: false, addEos: false, numLayers: 2);
+
+        async Task Run(float penalty, int steps = 24)
+        {
+            await foreach (var _ in gen.GenerateFromTokensAsync([65, 66, 67],
+                generation: new GenerationConfig { MaxNewTokens = steps, Stream = false, RepetitionPenalty = penalty })) { }
+        }
+
+        await Run(1.1f); // warm 1: JIT + lazy scratch (penalty scratch, rep-pen set, stop buf)
+        await Run(1.1f); // warm 2: JIT of any residual paths; sets now pooled at full size
+        await Run(1.0f); // warm 3: the penalty-disabled (direct-sample) branch, so tiers drop too
+
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+
+        long start = GC.GetAllocatedBytesForCurrentThread();
+        await Run(1.1f);
+        long withPenalty = GC.GetAllocatedBytesForCurrentThread() - start;
+
+        start = GC.GetAllocatedBytesForCurrentThread();
+        await Run(1.0f); // penalty disabled skips the whole branch entirely
+        long withoutPenalty = GC.GetAllocatedBytesForCurrentThread() - start;
+
+        // A per-step HashSet would add hundreds of bytes x 24 steps on top of the
+        // (already-warmed) penalty path; pooling keeps the delta to a few KB at most.
+        Assert.True(withPenalty - withoutPenalty < 4096,
+            $"penalty path allocated {withPenalty:N0}B vs {withoutPenalty:N0}B disabled " +
+            $"(delta {withPenalty - withoutPenalty:N0}B) after warmup");
+    }
 }

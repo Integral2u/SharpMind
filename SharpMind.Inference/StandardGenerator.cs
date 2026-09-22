@@ -37,6 +37,8 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
     private readonly int[]       _decodeTokenScratch = new int[1];
     /// <summary>Cached scratch buffer for repetition-penalty copy to avoid <see cref="ArrayPool{T}.Rent"/> per token.</summary>
     private float[]?              _penaltyScratch;
+    /// <summary>Pooled distinct-token tracking for the repetition penalty; cleared each decode step.</summary>
+    private HashSet<int>?         _repSeen;
     /// <summary>Diagnostic: fired for each generated token ID during the generation loop.</summary>
     public Action<int>? OnTokenGenerated;
 
@@ -352,18 +354,20 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
 
     // Repetition penalty
 
-    private static void ApplyRepetitionPenalty(
+    private void ApplyRepetitionPenalty(
         Span<float> logits,
         ReadOnlySpan<int> promptIds,
         List<int> _generatedIds,
         float penalty,
         int window)
     {
-                // Penalize once per DISTINCT token id across the window/context (matching
+        // Penalize once per DISTINCT token id across the window/context (matching
         // HF/llama.cpp), NOT once per occurrence. Scaling per occurrence would raise
         // the penalty to penalty^count for common words, wiping them from the
         // distribution as generation (and context) grows.
-        var seen = new HashSet<int>(Math.Min(promptIds.Length + _generatedIds.Count, 512));
+        _repSeen ??= new HashSet<int>(512);
+        _repSeen.Clear();
+        var seen = _repSeen;
         if (window > 0)
         {
             int promptStart = Math.Max(0, promptIds.Length - window);

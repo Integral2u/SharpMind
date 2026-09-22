@@ -25,6 +25,8 @@ public sealed class EngineGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
     private readonly Random _defaultRng;
     private readonly int[] _decodeTokenScratch = new int[1];
     private float[]? _penaltyScratch;
+    /// <summary>Pooled distinct-token tracking for the repetition penalty; cleared each decode step.</summary>
+    private HashSet<int>? _repSeen;
     private char[]? _stopCheckBuf;
     private List<int>? _generatedIds;
     private List<int>? _cacheTokens;
@@ -220,10 +222,12 @@ public sealed class EngineGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
 
     // Reused verbatim from StandardGenerator<T> — operates on plain float spans and lists,
     // nothing CPU/backend-specific about it.
-    private static void ApplyRepetitionPenalty(Span<float> logits, ReadOnlySpan<int> promptIds,
+    private void ApplyRepetitionPenalty(Span<float> logits, ReadOnlySpan<int> promptIds,
         List<int> generatedIds, float penalty, int window)
     {
-        var seen = new HashSet<int>(Math.Min(promptIds.Length + generatedIds.Count, 512));
+        _repSeen ??= new HashSet<int>(512);
+        _repSeen.Clear();
+        var seen = _repSeen;
         if (window > 0)
         {
             int promptStart = Math.Max(0, promptIds.Length - window);

@@ -18,6 +18,8 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
     private readonly IWorkspace? _workspace;
     private readonly int[] _decodeTokenScratch = new int[1];
     private float[]? _penaltyScratch;
+    /// <summary>Pooled distinct-token tracking for the repetition penalty; cleared each decode step.</summary>
+    private HashSet<int>? _repSeen;
     private bool _disposed;
 
     private const int DefaultMaxDraftTokens = 4;
@@ -361,7 +363,7 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
         return -1;
     }
 
-    private static void ApplyRepetitionPenalty(
+    private void ApplyRepetitionPenalty(
         Span<float> logits,
         int[] promptIds,
         List<int> generatedIds,
@@ -372,7 +374,9 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
         // Once per DISTINCT id across prompt + generated (windowed), matching the
         // StandardGenerator / HF reference. The previous code only scaled negative
         // logits per occurrence, so repeated likely tokens were never suppressed.
-        var seen = new HashSet<int>(Math.Min(promptIds.Length + generatedIds.Count, 512));
+        _repSeen ??= new HashSet<int>(512);
+        _repSeen.Clear();
+        var seen = _repSeen;
         int genStart = Math.Max(0, generatedIds.Count - (window > 0 ? window : generatedIds.Count));
         RepetitionPenalty.Apply(logits, promptIds, penalty, seen);
         RepetitionPenalty.Apply(logits, CollectionsMarshal.AsSpan(generatedIds)[genStart..], penalty, seen);

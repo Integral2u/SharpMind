@@ -52,4 +52,24 @@ public class RepetitionPenaltyTests
         Assert.Equal(4f, logits[2], 4);   // 8/2 once despite appearing in both calls
         Assert.Equal(4f, logits[3], 4);   // 8/2 once
     }
+
+    [Fact]
+    public void ClearedPooledSeenSet_IsEquivalentToAFreshSetPerStep()
+    {
+        // The generators reuse one HashSet per instance and Clear() it at the top of
+        // every decode step. A cleared pool must behave exactly like a freshly
+        // allocated set: a token penalized in a previous step counts again.
+        var pooledLogits = new float[] { 0, 8f, 8f, 8f, 8f };
+        var freshLogits = new float[] { 0, 8f, 8f, 8f, 8f };
+
+        var pooled = new HashSet<int>();
+        RepetitionPenalty.Apply(pooledLogits, [1, 2, 3], 2f, pooled);
+        pooled.Clear();
+        RepetitionPenalty.Apply(pooledLogits, [3, 4, 1], 2f, pooled);
+
+        RepetitionPenalty.Apply(freshLogits, [1, 2, 3], 2f, new HashSet<int>());
+        RepetitionPenalty.Apply(freshLogits, [3, 4, 1], 2f, new HashSet<int>());
+
+        Assert.Equal(freshLogits, pooledLogits);
+    }
 }
