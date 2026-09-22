@@ -439,6 +439,7 @@ public static class SessionLauncher
             CacheStrategy.Standard => typeof(KVCacherBuilder),
             CacheStrategy.Paged => typeof(PagedKVCacherBuilder),
             CacheStrategy.Quantized => typeof(QuantizedKVCacherBuilder),
+            CacheStrategy.Int8 => typeof(Int8KVCacherBuilder),
             _ => throw new ArgumentOutOfRangeException(nameof(options))
         };
 

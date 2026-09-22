@@ -14,7 +14,7 @@ namespace SharpMind.Samples.Examples
     {
         public static async Task RunAsync(string prompt, string ModelPath, string ModelName, int maxTokens = 25, LoadMode loadMode = LoadMode.Full, IChatPromptFormatter? formatter = null)
         {
-            Type[] cacheBuilders = [typeof(QuantizedKVCacherBuilder), typeof(PagedKVCacherBuilder),typeof(KVCacherBuilder)];
+            Type[] cacheBuilders = [typeof(QuantizedKVCacherBuilder), typeof(Int8KVCacherBuilder), typeof(PagedKVCacherBuilder),typeof(KVCacherBuilder)];
             Type[] generatorBuilders = [typeof(StandardGeneratorBuilder<>),typeof(MedusaGeneratorBuilder<>),typeof(SpeculativeGeneratorBuilder<>)];
             string modelPath = string.Empty;
             ModelFormat? fmt = null;

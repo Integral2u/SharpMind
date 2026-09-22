@@ -67,7 +67,9 @@ public enum CacheStrategy
     /// <summary>Block/page-based allocation. Better for many concurrent or growing sequences.</summary>
     Paged,
     /// <summary>Cache entries stored quantized. Less memory, small accuracy cost.</summary>
-    Quantized
+    Quantized,
+    /// <summary>Keys and values stored as int8 (keys with one scale per 16 values, values with one per row), attended to by the int8 kernel. About a quarter of Standard's memory.</summary>
+    Int8
 }
 
 /// <summary>
