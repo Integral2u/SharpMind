@@ -45,7 +45,9 @@ public interface IKVCache : IDisposable
                 WriteFloats(w, data);
                 break;
             case (int pos, byte[] k, byte[] v):
-                w.Write((byte)3);
+                // Q8_0/Q4_0 block rows and int8 rows can be the same size (headDim 64: 2 x 34 = 4 + 64),
+                // so the tag carries the format and RestoreBytes refuses the other one.
+                w.Write(QuantKind == QuantDType.I8 ? (byte)4 : (byte)3);
                 w.Write(pos);
                 w.Write(k.Length);
                 w.Write(k);
@@ -92,7 +94,10 @@ public interface IKVCache : IDisposable
                 break;
             }
             case 3: // QuantizedKVCache: (int, byte[], byte[])
+            case 4: // Int8KVCache: (int, byte[], byte[])
             {
+                if ((tag == 4) != (QuantKind == QuantDType.I8))
+                    throw new InvalidDataException($"KVCache snapshot tag {tag} does not match this {QuantKind} cache.");
                 byte[] k = r.ReadBytes(r.ReadInt32());
                 byte[] v = r.ReadBytes(r.ReadInt32());
                 Restore((pos, k, v));

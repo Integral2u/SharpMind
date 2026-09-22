@@ -55,6 +55,20 @@ namespace SharpMind.Model.Layers.Attention;
         int seqLen, int kvLen, int headDim, float scale, bool causal,
         int qStride, int oStride, float alibiSlope, int windowSize);
 
+    [PuzzleCornerPiece(SharpMindConfig.KeyAttentionI8,
+        SharpMindConfig.ValMhaFlashI8Avx2, NS + "." + nameof(AttentionKernels.ScaledDotProductFlashI8AVX2),
+        SharpMindConfig.ValMhaFlashI8Fma, NS + "." + nameof(AttentionKernels.ScaledDotProductFlashI8FMA),
+        SharpMindConfig.ValMhaFlashI8Scalar, NS + "." + nameof(AttentionKernels.ScaledDotProductFlashI8Scalar),
+        SharpMindConfig.ValGqaFlashI8Avx2, NS + "." + nameof(AttentionKernels.ScaledDotProductFlashI8AVX2),
+        SharpMindConfig.ValGqaFlashI8Fma, NS + "." + nameof(AttentionKernels.ScaledDotProductFlashI8FMA),
+        SharpMindConfig.ValGqaFlashI8Scalar, NS + "." + nameof(AttentionKernels.ScaledDotProductFlashI8Scalar),
+        SharpMindConfig.ValMqaFlashI8Avx2, NS + "." + nameof(AttentionKernels.ScaledDotProductFlashI8AVX2),
+        SharpMindConfig.ValMqaFlashI8Fma, NS + "." + nameof(AttentionKernels.ScaledDotProductFlashI8FMA),
+        SharpMindConfig.ValMqaFlashI8Scalar, NS + "." + nameof(AttentionKernels.ScaledDotProductFlashI8Scalar))]
+    public abstract unsafe void ScaledDotProductI8(float* q, byte* kQuant, byte* vQuant, float* output,
+        int seqLen, int kvLen, int headDim, float scale, bool causal,
+        int qStride, int oStride, float alibiSlope, int windowSize);
+
     private unsafe void ScaledDotProductForQuantized(QuantDType quantKind,
         float* q, byte* kQuant, byte* vQuant, float* output,
         int seqLen, int kvLen, int headDim, float scale, bool causal,
@@ -67,6 +81,9 @@ namespace SharpMind.Model.Layers.Attention;
                 break;
             case QuantDType.Q8_0:
                 ScaledDotProductQ8_0(q, kQuant, vQuant, output, seqLen, kvLen, headDim, scale, causal, qStride, oStride, alibiSlope, windowSize);
+                break;
+            case QuantDType.I8:
+                ScaledDotProductI8(q, kQuant, vQuant, output, seqLen, kvLen, headDim, scale, causal, qStride, oStride, alibiSlope, windowSize);
                 break;
             default:
                 throw new NotSupportedException($"Quantized attention not supported for {quantKind}");

@@ -25,6 +25,9 @@ public class MappingBuilder(HardwareTier hardware = HardwareTier.Auto)
         _mapping[SharpMindConfig.KeyAttentionQ4] = string.IsNullOrEmpty(hw)
             ? $"{config.Attention.ToString().ToLowerInvariant()}flashq4_0scalar"
             : $"{config.Attention.ToString().ToLowerInvariant()}flashq4_0{hw}";
+        _mapping[SharpMindConfig.KeyAttentionI8] = string.IsNullOrEmpty(hw)
+            ? $"{config.Attention.ToString().ToLowerInvariant()}flashi8scalar"
+            : $"{config.Attention.ToString().ToLowerInvariant()}flashi8{hw}";
         _mapping[SharpMindConfig.KeyFfn] = config.Ffn.ToString().ToLowerInvariant();
         _mapping[SharpMindConfig.KeyLinear] = SharpMindConfig.ValLinearAuto;
         _mapping[SharpMindConfig.KeyLogit] = SharpMindConfig.ValLinearAuto;

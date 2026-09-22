@@ -904,6 +904,244 @@ public static class AttentionKernels
         }
     }
 
+    // ── int8 KV cache (flash) ──
+    // Rows are Int8KVCache's: a value row is [float scale][headDim x int8], a key row is
+    // [one float scale per Int8KVCache.KeyBlock values][headDim x int8], so the two step by different
+    // strides. The query row stays in float. A score is
+    // (sum over key blocks of kScale[b] * dot(q, k8) within the block) * scale - ALiBi.
+    // Softmax is the tiled online form of the other flash kernels.
+
+    public static unsafe void ScaledDotProductFlashI8Scalar(
+        float* q, byte* kQuant, byte* vQuant, float* output,
+        int seqLen, int kvLen, int headDim, float scale, bool causal,
+        int qStride, int oStride, float alibiSlope, int windowSize)
+    {
+        if ((uint)headDim > FlashMaxHeadDim)
+            throw new ArgumentOutOfRangeException(nameof(headDim),
+                $"headDim {headDim} exceeds FlashMaxHeadDim {FlashMaxHeadDim}.");
+
+        int keyRowBytes = Int8KVCache.KeyRowBytes(headDim);
+        int valueRowBytes = Int8KVCache.ValueRowBytes(headDim);
+        int keyBlocks = Int8KVCache.KeyBlocks(headDim);
+        float* tileScores = stackalloc float[FlashTileSize];
+        int queryBase = causal ? kvLen - seqLen : 0;
+
+        for (int i = 0; i < seqLen; i++)
+        {
+            float* pO = output + (long)i * oStride;
+            for (int d = 0; d < headDim; d++) pO[d] = 0f;
+            float* qi = q + (long)i * qStride;
+
+            int absQPos = queryBase + i;
+            int kvOffset = 0;
+            int effKvLen = causal ? Math.Min(absQPos + 1, kvLen) : kvLen;
+            if (windowSize > 0) { kvOffset = Math.Max(0, absQPos - windowSize + 1); effKvLen -= kvOffset; }
+
+            float mMax = float.NegativeInfinity;
+            float lSum = 0f;
+            for (int start = 0; start < effKvLen; start += FlashTileSize)
+            {
+                int end = Math.Min(start + FlashTileSize, effKvLen);
+                int tileLen = end - start;
+
+                float tileMax = float.NegativeInfinity;
+                for (int j = start; j < end; j++)
+                {
+                    byte* kRow = kQuant + (long)(kvOffset + j) * keyRowBytes;
+                    float* kScales = (float*)kRow;
+                    sbyte* k8 = (sbyte*)(kRow + keyBlocks * sizeof(float));
+                    float dot = 0f;
+                    for (int b = 0; b < keyBlocks; b++)
+                    {
+                        int blockEnd = Math.Min((b + 1) * Int8KVCache.KeyBlock, headDim);
+                        float blockDot = 0f;
+                        for (int d = b * Int8KVCache.KeyBlock; d < blockEnd; d++) blockDot += qi[d] * k8[d];
+                        dot += blockDot * kScales[b];
+                    }
+                    float score = dot * scale - alibiSlope * (absQPos - kvOffset - j);
+                    tileScores[j - start] = score;
+                    if (score > tileMax) tileMax = score;
+                }
+
+                float newMax = MathF.Max(mMax, tileMax);
+                float scaleOld = MathF.Exp(mMax - newMax);
+                float scaleNew = 0f;
+                for (int t = 0; t < tileLen; t++)
+                {
+                    tileScores[t] = MathF.Exp(tileScores[t] - newMax);
+                    scaleNew += tileScores[t];
+                }
+
+                float newL = scaleOld * lSum + scaleNew;
+                for (int d = 0; d < headDim; d++) pO[d] *= scaleOld;
+
+                for (int t = 0; t < tileLen; t++)
+                {
+                    byte* vRow = vQuant + (long)(kvOffset + start + t) * valueRowBytes;
+                    float w = tileScores[t] * *(float*)vRow;
+                    sbyte* v8 = (sbyte*)(vRow + sizeof(float));
+                    for (int d = 0; d < headDim; d++) pO[d] += w * v8[d];
+                }
+
+                mMax = newMax;
+                lSum = newL;
+            }
+
+            if (lSum > 0f)
+                for (int d = 0; d < headDim; d++) pO[d] /= lSum;
+            else
+                for (int d = 0; d < headDim; d++) pO[d] = 0f;
+        }
+    }
+
+    public static unsafe void ScaledDotProductFlashI8AVX2(
+        float* q, byte* kQuant, byte* vQuant, float* output,
+        int seqLen, int kvLen, int headDim, float scale, bool causal,
+        int qStride, int oStride, float alibiSlope, int windowSize) =>
+        FlashI8Simd(q, kQuant, vQuant, output, seqLen, kvLen, headDim, scale, causal, qStride, oStride, alibiSlope, windowSize, fused: false);
+
+    public static unsafe void ScaledDotProductFlashI8FMA(
+        float* q, byte* kQuant, byte* vQuant, float* output,
+        int seqLen, int kvLen, int headDim, float scale, bool causal,
+        int qStride, int oStride, float alibiSlope, int windowSize) =>
+        FlashI8Simd(q, kQuant, vQuant, output, seqLen, kvLen, headDim, scale, causal, qStride, oStride, alibiSlope, windowSize, fused: true);
+
+    /// <summary>The AVX2 and FMA int8 kernels; they differ only in how values are accumulated.</summary>
+    private static unsafe void FlashI8Simd(
+        float* q, byte* kQuant, byte* vQuant, float* output,
+        int seqLen, int kvLen, int headDim, float scale, bool causal,
+        int qStride, int oStride, float alibiSlope, int windowSize, bool fused)
+    {
+        if ((uint)headDim > FlashMaxHeadDim)
+            throw new ArgumentOutOfRangeException(nameof(headDim),
+                $"headDim {headDim} exceeds FlashMaxHeadDim {FlashMaxHeadDim}.");
+
+        int keyRowBytes = Int8KVCache.KeyRowBytes(headDim);
+        int valueRowBytes = Int8KVCache.ValueRowBytes(headDim);
+        int keyBlocks = Int8KVCache.KeyBlocks(headDim);
+        float* tileScores = stackalloc float[FlashTileSize];
+        int queryBase = causal ? kvLen - seqLen : 0;
+
+        for (int i = 0; i < seqLen; i++)
+        {
+            float* pO = output + (long)i * oStride;
+            for (int d = 0; d < headDim; d++) pO[d] = 0f;
+            float* qi = q + (long)i * qStride;
+
+            int absQPos = queryBase + i;
+            int kvOffset = 0;
+            int effKvLen = causal ? Math.Min(absQPos + 1, kvLen) : kvLen;
+            if (windowSize > 0) { kvOffset = Math.Max(0, absQPos - windowSize + 1); effKvLen -= kvOffset; }
+
+            float mMax = float.NegativeInfinity;
+            float lSum = 0f;
+            for (int start = 0; start < effKvLen; start += FlashTileSize)
+            {
+                int end = Math.Min(start + FlashTileSize, effKvLen);
+                int tileLen = end - start;
+
+                float tileMax = float.NegativeInfinity;
+                for (int j = start; j < end; j++)
+                {
+                    byte* kRow = kQuant + (long)(kvOffset + j) * keyRowBytes;
+                    float dot = DotF32I8BlocksAvx2(qi, (float*)kRow, (sbyte*)(kRow + keyBlocks * sizeof(float)), headDim, fused);
+                    float score = dot * scale - alibiSlope * (absQPos - kvOffset - j);
+                    tileScores[j - start] = score;
+                    if (score > tileMax) tileMax = score;
+                }
+
+                float newMax = MathF.Max(mMax, tileMax);
+                float scaleOld = MathF.Exp(mMax - newMax);
+                float scaleNew = ExpShiftedAvx(tileScores, tileLen, newMax);
+
+                float newL = scaleOld * lSum + scaleNew;
+                if (scaleOld != 1f)
+                    for (int d = 0; d < headDim; d++) pO[d] *= scaleOld;
+
+                for (int t = 0; t < tileLen; t++)
+                {
+                    byte* vRow = vQuant + (long)(kvOffset + start + t) * valueRowBytes;
+                    AddScaledI8Avx2(pO, (sbyte*)(vRow + sizeof(float)), tileScores[t] * *(float*)vRow, headDim, fused);
+                }
+
+                mMax = newMax;
+                lSum = newL;
+            }
+
+            if (lSum > 0f)
+                for (int d = 0; d < headDim; d++) pO[d] /= lSum;
+            else
+                for (int d = 0; d < headDim; d++) pO[d] = 0f;
+        }
+    }
+
+    /// <summary>
+    /// Σ over key blocks of scales[b] * Σ a[i] * b[i] within the block, for a float row against an
+    /// int8 key row. A whole block is two 8-lane widen-and-multiply steps whose sum is scaled and
+    /// added to one vector accumulator, so a key costs one horizontal sum. A short last block is
+    /// scalar, which also keeps every load inside the row.
+    /// </summary>
+    private static unsafe float DotF32I8BlocksAvx2(float* a, float* scales, sbyte* b, int n, bool fused)
+    {
+        int i = 0, block = 0;
+        var acc = Vector256<float>.Zero;
+        for (; i + Int8KVCache.KeyBlock <= n; i += Int8KVCache.KeyBlock, block++)
+        {
+            var b0 = Avx.ConvertToVector256Single(Avx2.ConvertToVector256Int32(b + i));
+            var b1 = Avx.ConvertToVector256Single(Avx2.ConvertToVector256Int32(b + i + 8));
+            var a0 = Avx.LoadVector256(a + i);
+            var a1 = Avx.LoadVector256(a + i + 8);
+            var vs = Vector256.Create(scales[block]);
+            if (fused)
+                acc = Fma.MultiplyAdd(Fma.MultiplyAdd(a1, b1, Avx.Multiply(a0, b0)), vs, acc);
+            else
+                acc = Avx.Add(acc, Avx.Multiply(Avx.Add(Avx.Multiply(a0, b0), Avx.Multiply(a1, b1)), vs));
+        }
+        float dot = Vector256.Sum(acc);
+        if (i < n)
+        {
+            float blockDot = 0f;
+            for (; i < n; i++) blockDot += a[i] * b[i];
+            dot += blockDot * scales[block];
+        }
+        return dot;
+    }
+
+    /// <summary>x[t] = exp(x[t] - shift) in place; returns the sum.</summary>
+    private static unsafe float ExpShiftedAvx(float* x, int n, float shift)
+    {
+        int t = 0;
+        var vShift = Vector256.Create(shift);
+        var vSum = Vector256<float>.Zero;
+        for (; t + 8 <= n; t += 8)
+        {
+            var e = Vector256.Exp(Avx.Subtract(Avx.LoadVector256(x + t), vShift));
+            Avx.Store(x + t, e);
+            vSum = Avx.Add(vSum, e);
+        }
+        float sum = Vector256.Sum(vSum);
+        for (; t < n; t++)
+        {
+            x[t] = MathF.Exp(x[t] - shift);
+            sum += x[t];
+        }
+        return sum;
+    }
+
+    /// <summary>output[d] += w * v[d] for an int8 row.</summary>
+    private static unsafe void AddScaledI8Avx2(float* output, sbyte* v, float w, int n, bool fused)
+    {
+        int d = 0;
+        var vw = Vector256.Create(w);
+        for (; d + 8 <= n; d += 8)
+        {
+            var vv = Avx.ConvertToVector256Single(Avx2.ConvertToVector256Int32(v + d));
+            var old = Avx.LoadVector256(output + d);
+            Avx.Store(output + d, fused ? Fma.MultiplyAdd(vw, vv, old) : Avx.Add(old, Avx.Multiply(vw, vv)));
+        }
+        for (; d < n; d++) output[d] += w * v[d];
+    }
+
     // ── Q4_0 quantized KV cache (flash) ──
 
     public static unsafe void ScaledDotProductFlashQ4_0AVX2(
