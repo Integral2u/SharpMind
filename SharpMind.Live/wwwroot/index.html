@@ -694,7 +694,7 @@
                 </form>
             </div>
             <p class="demo-note">
-                <strong>This is the real engine running in your browser.</strong> The GGUF model is fetched from HuggingFace, loaded into the Blazor virtual filesystem, and runs inference via compiled C# — no server, no native dependencies. First load takes a moment while the ~75 MB model downloads. <a href="https://github.com/Integral2u/SharpMind" target="_blank" rel="noopener">Source on GitHub</a>.
+                <strong>This is the real engine running in your browser.</strong> The GGUF model is fetched from HuggingFace, loaded into the Blazor virtual filesystem, and runs inference via compiled C# — no server, no native dependencies. The first load takes a moment while the ~93 MB model downloads; it's then kept in your browser's cache, so later visits don't re-download it. <a href="https://github.com/Integral2u/SharpMind" target="_blank" rel="noopener">Source on GitHub</a>.
             </p>
         </div>
 
@@ -754,6 +754,38 @@ dotnet run --project SharpMind.Server.CLI -- --models ./models</pre>
        calls into the compiled engine via DotNet.invokeMethodAsync.
        ========================================================================= */
 const MODEL_URL = 'https://huggingface.co/unsloth/SmolLM2-135M-Instruct-GGUF/resolve/main/SmolLM2-135M-Instruct-Q3_K_M.gguf?download=true';
+
+/* Browser-level model cache. The ~93 MB GGUF is fetched once and stored in the
+   Cache Storage API (the browser's persistent cache), so later visits serve it
+   from cache and never hit the network for the model again. Keyed by the URL,
+   so pointing MODEL_URL at a new file naturally re-downloads it. */
+const MODEL_CACHE = 'sharpmind-models-v1';
+
+const SharpMindCache = {
+          async getModelBytes(url) {
+            const cache = await caches.open(MODEL_CACHE);
+            const hit = await cache.match(url);
+            if (!hit) return null;
+            return new Uint8Array(await hit.arrayBuffer());
+          },
+
+          async storeModelBytes(url, etag, bytes) {
+            const cache = await caches.open(MODEL_CACHE);
+            await cache.put(url, new Response(bytes, { headers: {
+              'Content-Type': 'application/octet-stream',
+              'ETag': etag || '',
+              'X-SM-Fetched-At': String(Date.now())
+            }}));
+          },
+
+          async clear(url) {
+            const cache = await caches.open(MODEL_CACHE);
+            if (url) await cache.delete(url);
+            else await caches.delete(MODEL_CACHE);
+          }
+};
+
+window.SharpMindCache = SharpMindCache;
 
 let sharpMindHandshakeResolve;
 let managedHandshakeReceived = false;

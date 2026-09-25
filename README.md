@@ -50,7 +50,7 @@ Live video example on [YouTube](https://youtu.be/I3FpbZac8Ro)
 **[SharpMind.Live](https://integral2u.github.io/SharpMind/)** is the engine running entirely inside your browser tab — no server, no native runtime, no API call leaving the page. It fetches SmolLM2-135M-Instruct (Q3_K_M) from Hugging Face into the Blazor virtual filesystem, then runs inference through the **AOT-compiled** engine (IL →
 WebAssembly via `RunAOTCompilation`, from the same managed C# kernels the desktop CLI uses).
 
-- **Zero backend.** GitHub Pages hosts the static site; the model streams in client-side on first load.
+- **Zero backend.** GitHub Pages hosts the static site; the model streams in client-side on first load and is then served from the browser's own cache on later visits — no re-download.
 - **Live streaming.** Boot, model load, and every generated token stream to the page as they happen — the decode loop yields to the browser between tokens.
 - **What to expect:** GitHub Pages can't set the cross-origin headers WASM threading needs, so the demo runs single-threaded on scalar kernels — roughly 1 token/s on a mid-size laptop. It's the real engine in a tab, not a wrapper.
 
@@ -235,6 +235,19 @@ SharpMind ships three interchangeable generators behind a common `IGenerator<T>`
 **Medusa in more detail**, since it's the more novel of the two: each decoding round, the LM head's own greedy pick becomes `token₀`, and K trained head projections from the *same* hidden state produce `token₁ … token_K`. That draft of length K+1 is run through the model as one batch. Verification then walks the draft left to right — `token₀` is always accepted (it's the model's own choice), and each subsequent token is accepted only if the model's forward pass agrees with the head's guess; the walk stops at the first disagreement. If every token in the draft is accepted, a bonus token is generated for free before the next round starts. On partial acceptance, the KV cache is trimmed back to the last accepted position so generation is bit-for-bit identical to plain greedy decoding — Medusa can only change throughput, never correctness. In the ideal case, with K=3 well-calibrated heads, this gives up to a ~2.5× reduction in forward passes per token; today the heads are randomly initialized and need `MedusaHeads.Calibrate` to be run before that speedup materializes.
 
 Speculative decoding follows the more familiar draft-and-verify pattern with an independent draft model, defaulting to 4 draft tokens per round, and shares the same accept/rollback discipline over the KV cache.
+
+### KV-cache strategies
+
+The attention cache is just as swappable as the generator: sessions build one through an `IKVCacheBuilder`, chosen by `ChatSession<T,C>`'s second type parameter (or by `CacheStrategy` on the CUI's Options screen). SharpMind ships four:
+
+| Cache | Idea | Where |
+|---|---|---|
+| `KVCacherBuilder` (Standard) | Full-precision float32 K/V in one flat pre-allocated buffer. Simplest, most memory per sequence, and the default. | `SharpMind.Model/KVCacherBuilder.cs` |
+| `PagedKVCacherBuilder` | Block/page-based allocation — better for many concurrent or growing sequences than one big contiguous reservation. | `SharpMind.Model/PagedKVCacherBuilder.cs` |
+| `QuantizedKVCacherBuilder` | K/V stored block-quantized (Q8_0 by default, other `QuantDType`s selectable) — far less memory at a small accuracy cost. | `SharpMind.Model/QuantizedKVCacherBuilder.cs` |
+| `Int8KVCacherBuilder` | K and V stored as int8 with symmetric scaling (values: one scale per row; keys: one scale per 16 values, so outlier channels don't spoil the block) and attended to by a dedicated int8 flash-attention kernel (`ScaledDotProductI8`) — about ¼ of Standard's memory. Exposed in the CUI as `CacheStrategy.Int8`; opt-in. | `SharpMind.Model/Int8KVCacherBuilder.cs` |
+
+Like generator builders, a custom `IKVCacheBuilder` is discovered by reflection and appears in the same options as the built-ins — the cache strategy is a plug point, not a fork.
 
 ---
 

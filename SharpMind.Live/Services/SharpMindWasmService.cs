@@ -53,6 +53,70 @@ public static class SharpMindEngine
         }
     }
 
+    /// <summary>
+    /// Gets the model bytes cache-first (Cache Storage API keyed by URL) and falls
+    /// back to a plain download, writing the fetched bytes into the cache. Returns
+    /// null when the cache cannot be consulted.
+    /// </summary>
+    private static async Task<byte[]?> TryReadCachedModelAsync(string modelUrl)
+    {
+        if (_js is null) return null;
+        try
+        {
+            return await _js.InvokeAsync<byte[]?>("SharpMindCache.getModelBytes", modelUrl);
+        }
+        catch
+        {
+            return null; // Cache Storage unavailable (non-secure context, etc.).
+        }
+    }
+
+    private static async Task TryStoreCachedModelAsync(string modelUrl, byte[] bytes, string? etag)
+    {
+        if (_js is null) return;
+        try
+        {
+            await _js.InvokeVoidAsync("SharpMindCache.storeModelBytes", modelUrl, etag ?? "", bytes);
+        }
+        catch
+        {
+            // Caching is best-effort; a full load still proceeds without it.
+        }
+    }
+
+    /// <summary>
+    /// Fetches the model bytes once and caches them: served from the browser cache
+    /// (no network) on later visits, plain download plus cache-write on the first.
+    /// </summary>
+    private static async Task<byte[]> FetchModelBytesAsync(string modelUrl, StringBuilder log)
+    {
+        Log(log, "checking browser model cache…");
+
+        var cached = await TryReadCachedModelAsync(modelUrl);
+        if (cached is { Length: > 0 })
+        {
+            Log(log, $"model found in browser cache ({cached.Length:N0} bytes) — no download.");
+            return cached;
+        }
+
+        Log(log, "downloading model from HuggingFace…");
+
+        string? etag = null;
+        byte[] bytes;
+        using (var http = new HttpClient())
+        using (var resp = await http.GetAsync(modelUrl))
+        {
+            resp.EnsureSuccessStatusCode();
+            etag = resp.Headers.ETag?.ToString();
+            bytes = await resp.Content.ReadAsByteArrayAsync();
+        }
+
+        Log(log, $"downloaded {bytes.Length:N0} bytes.");
+        await TryStoreCachedModelAsync(modelUrl, bytes, etag);
+
+        return bytes;
+    }
+
     private static void StreamTokens(string text)
     {
         if (_js is IJSInProcessRuntime inProc)
@@ -75,10 +139,7 @@ public static class SharpMindEngine
             var dir = Path.GetDirectoryName(modelPath)!;
             Directory.CreateDirectory(dir);
 
-            Log(log, $"fetching {fileName}…");
-
-            using var http = new HttpClient();
-            var bytes = await http.GetByteArrayAsync(modelUrl);
+            var bytes = await FetchModelBytesAsync(modelUrl, log);
             await File.WriteAllBytesAsync(modelPath, bytes);
 
             Log(log, "writing model bytes to Blazor virtual filesystem…");
