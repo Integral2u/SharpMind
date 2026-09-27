@@ -213,7 +213,7 @@ public static class SessionLauncher
                 // bytes, so skip the dequantized F32 copy of every layer.
                 var w = ModelFactory.CreateWeights(modelConfig, sharpConfig, qOps, options.ModelPath, options.LoadMode,
                     quantizedResident: true);
-                w.InitializeWeights(progress);
+                w.InitializeWeights(progress, ct);
                 return w;
             },ct);
         }

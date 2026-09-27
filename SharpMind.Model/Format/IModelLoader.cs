@@ -9,14 +9,14 @@ public interface IModelLoader
     /// to float, and fills the target float tensors. Also populates raw quantized
     /// data and tensor metadata on block weights.
     /// </summary>
-    void LoadAllWeights(TransformerWeights weights, IProgress<float>? progress = null);
+    void LoadAllWeights(TransformerWeights weights, IProgress<float>? progress = null, CancellationToken? cancellationToken = null);
 
     /// <summary>
     /// Loads and dequantizes tensors for a single transformer block layer.
     /// Reads raw quantized data, populates tensor metadata, and dequantizes
     /// to float for the specified layer index.
     /// </summary>
-    void LoadLayerWeights(int layerIndex, TransformerWeights weights);
+    void LoadLayerWeights(int layerIndex, TransformerWeights weights, CancellationToken? cancellationToken = null);
 
     /// <summary>
     /// Loads global (non-block) tensors: embedding weight, final norm weight,
@@ -24,5 +24,5 @@ public interface IModelLoader
     /// in streaming mode; block-level tensors are loaded per-layer by
     /// <see cref="LoadLayerWeights"/>.
     /// </summary>
-    void LoadGlobalTensors(TransformerWeights weights);
+    void LoadGlobalTensors(TransformerWeights weights, CancellationToken? cancellationToken = null);
 }

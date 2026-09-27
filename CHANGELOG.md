@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.8.0]
+
+### Added
+
+- **Weight loading is cancellable end-to-end (`CancellationToken`)** — `TransformerWeights.InitializeWeights` now accepts a `CancellationToken`, threaded from the callers through `IModelLoader` (`LoadAllWeights`, `LoadLayerWeights`, `LoadGlobalTensors`) into both the GGUF and SMM loaders, and observed between every tensor (the same cadence as the load progress), so an interrupted model load aborts instead of grinding through the whole dequantization pass. Previously the CUI/server wrapped the load in `Task.Run(…, ct)`, but the token only took effect *before* the delegate started — a running load was uninterruptible. The CUI chat launcher and the server's `ModelManager` now pass their existing cancellation tokens into `InitializeWeights`, so quitting a load mid-way surfaces as `OperationCanceledException` (CUI shows "Operation cancelled") and the partially-loaded weights are dropped through the normal disposal paths. Streaming mode forwards the token to its global (embedding/final-norm/head) load — the heavy part of streaming init — while per-layer loads during the forward pass stay cooperative with the generation lifecycle. The parameter is optional throughout, so training, samples, and tests are unaffected.
+
 ## [1.0.7.0]
 
 ### Added

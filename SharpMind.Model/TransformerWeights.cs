@@ -91,7 +91,7 @@ public abstract class TransformerWeights : IDisposable
 
     /// <summary>Initialises weights using the stored <see cref="IModelLoader"/>.
     /// Called after construction — must be called exactly once.</summary>
-    public abstract void InitializeWeights(IProgress<float>? progress = null);
+    public abstract void InitializeWeights(IProgress<float>? progress = null, CancellationToken? cancellationToken = null);
 
     public void Dispose()
     {
@@ -685,7 +685,8 @@ TransformerWeights.BlockWeights[] blocks,
     IModelLoader loader,
     Tensor<float>? positionEmbedding = null) : TransformerWeights(config, embedding, lmHead, finalNormW, finalNormB, blocks, loader, positionEmbedding)
 {
-    public override void InitializeWeights(IProgress<float>? progress = null) => Loader!.LoadAllWeights(this, progress);
+    public override void InitializeWeights(IProgress<float>? progress = null, CancellationToken? cancellationToken = null)
+        => Loader!.LoadAllWeights(this, progress, cancellationToken);
 }
 
 /// <summary>
@@ -719,7 +720,7 @@ TransformerWeights.BlockWeights[] blocks,
     /// <see cref="TransformerWeights.GgufMeta"/> and per-block
     /// <see cref="BlockWeights.TensorMeta"/> without loading any weight data.
     /// </summary>
-    public override void InitializeWeights(IProgress<float>? progress = null)
+    public override void InitializeWeights(IProgress<float>? progress = null, CancellationToken? cancellationToken = null)
     {
         var meta = Format.ModelFormatHelpers.LoadMetaForFile(GgufPath!);
         GgufMeta = meta;
@@ -774,7 +775,7 @@ TransformerWeights.BlockWeights[] blocks,
 
         // Load global non-block tensors (embedding, final norm, lm_head).
         // These are not per-layer and must be present before any forward pass.
-        Loader!.LoadGlobalTensors(this);
+        Loader!.LoadGlobalTensors(this, cancellationToken);
 
         // Layer 0 async preload is deferred to CreateTransformer after
         // BlockRefs is set, to avoid racing with BuildBlock reading Blocks[0].

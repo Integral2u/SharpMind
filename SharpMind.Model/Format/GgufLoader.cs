@@ -548,7 +548,7 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
 
     // ── IModelLoader implementation ────────────────────────────────────────
 
-    public void LoadAllWeights(TransformerWeights weights, IProgress<float>? progress = null)
+    public void LoadAllWeights(TransformerWeights weights, IProgress<float>? progress = null, CancellationToken? cancellationToken = null)
     {
         Core.Memory.NativeBufferPool<float>.Clear();
 
@@ -565,6 +565,7 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
 
         foreach (var info in meta.Tensors)
         {
+            cancellationToken?.ThrowIfCancellationRequested();
             progress?.Report((float)loaded / total);
             LoadSingleTensor(weights, meta, stream, reader, info);
             loaded++;
@@ -572,7 +573,7 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
         progress?.Report(1f);
     }
 
-    public void LoadLayerWeights(int layerIndex, TransformerWeights weights)
+    public void LoadLayerWeights(int layerIndex, TransformerWeights weights, CancellationToken? cancellationToken = null)
     {
         var meta = weights.GgufMeta;
         if (meta == null)
@@ -591,6 +592,7 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
 
         foreach (var info in meta.Tensors)
         {
+            cancellationToken?.ThrowIfCancellationRequested();
             var (_, block, _) = weights.ResolveTarget(info.Name);
             if (block == targetBlock)
             {
@@ -599,7 +601,7 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
         }
     }
 
-    public void LoadGlobalTensors(TransformerWeights weights)
+    public void LoadGlobalTensors(TransformerWeights weights, CancellationToken? cancellationToken = null)
     {
         var meta = weights.GgufMeta ?? LoadMeta(_path);
         if (weights.GgufMeta == null)
@@ -614,6 +616,7 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
 
         foreach (var info in meta.Tensors)
         {
+            cancellationToken?.ThrowIfCancellationRequested();
             var (target, block, _) = weights.ResolveTarget(info.Name);
             // The untied head must be routed even when ResolveTarget returns a null
             // target: a streaming load has no LmHeadWeight until LoadSingleTensor

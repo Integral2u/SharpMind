@@ -201,7 +201,7 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
 
     // ── IModelLoader implementation ────────────────────────────────────────
 
-    public void LoadAllWeights(TransformerWeights weights, IProgress<float>? progress = null)
+    public void LoadAllWeights(TransformerWeights weights, IProgress<float>? progress = null, CancellationToken? cancellationToken = null)
     {
         Core.Memory.NativeBufferPool<float>.Clear();
 
@@ -216,6 +216,7 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
         int loaded = 0;
         foreach (var entry in index.Entries)
         {
+            cancellationToken?.ThrowIfCancellationRequested();
             progress?.Report((float)loaded / total);
             LoadSingleTensor(weights, index, stream, entry);
             loaded++;
@@ -223,7 +224,7 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
         progress?.Report(1f);
     }
 
-    public void LoadLayerWeights(int layerIndex, TransformerWeights weights)
+    public void LoadLayerWeights(int layerIndex, TransformerWeights weights, CancellationToken? cancellationToken = null)
     {
         var index = weights.GgufMeta == null ? ReadIndex(_path) : ReadIndex(_path);
         if (weights.GgufMeta == null)
@@ -240,13 +241,14 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
 
         foreach (var entry in index.Entries)
         {
+            cancellationToken?.ThrowIfCancellationRequested();
             var (_, block, _) = weights.ResolveTarget(entry.Name);
             if (block == targetBlock)
                 LoadSingleTensor(weights, index, stream, entry);
         }
     }
 
-    public void LoadGlobalTensors(TransformerWeights weights)
+    public void LoadGlobalTensors(TransformerWeights weights, CancellationToken? cancellationToken = null)
     {
         var index = ReadIndex(_path);
         if (weights.GgufMeta == null)
@@ -260,6 +262,7 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
 
         foreach (var entry in index.Entries)
         {
+            cancellationToken?.ThrowIfCancellationRequested();
             var (target, block, _) = weights.ResolveTarget(entry.Name);
             // The untied head must be routed even when ResolveTarget returns a null
             // target: a streaming load has no LmHeadWeight until LoadSingleTensor

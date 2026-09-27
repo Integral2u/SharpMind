@@ -333,7 +333,7 @@ public sealed class ModelManager : IDisposable
             {
                 var w = ModelFactory.CreateWeights(modelConfig, sharpConfig, qOps, info.FilePath, LoadMode.Full,
                     quantizedResident: true);
-                w.InitializeWeights(weightProgress);
+                w.InitializeWeights(weightProgress, ct);
                 return w;
             }, ct);
         }

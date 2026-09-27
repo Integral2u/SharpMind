@@ -60,11 +60,11 @@ public sealed class StreamingLayerLoadRaceTests
         public readonly ManualResetEventSlim ForwardReleased = new(false);
         public volatile bool ReturnedWhileBlocked;
 
-        public void LoadGlobalTensors(TransformerWeights weights) { }
+        public void LoadGlobalTensors(TransformerWeights weights, CancellationToken? cancellationToken = null) { }
 
-        public void LoadAllWeights(TransformerWeights weights, IProgress<float>? progress = null) { }
+        public void LoadAllWeights(TransformerWeights weights, IProgress<float>? progress = null, CancellationToken? cancellationToken = null) { }
 
-        public void LoadLayerWeights(int layerIndex, TransformerWeights weights)
+        public void LoadLayerWeights(int layerIndex, TransformerWeights weights, CancellationToken? cancellationToken = null)
         {
             var block = weights.Blocks[layerIndex];
             block.RawWq = [0, 0, 0, 0];
