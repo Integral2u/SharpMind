@@ -470,6 +470,207 @@ public static partial class QuantizationKernels
         for (int i = 0; i < n; i++) data[i] = HalfToFloat_F16C(reader.ReadUInt16());
     }
 
+    // ===== BF16 (bfloat16, element-is-own-block) =====
+    //
+    // A BF16 bit pattern is exactly the top 16 bits of the target float, so
+    // widening is a plain left shift by 16 — no sign/magnitude rearrangement or
+    // special-case handling like <see cref="WidenHalf8"/>. Every kernel is a
+    // line-for-line F16 twin with the cheaper widen.
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static float Bf16ToFloat(ushort bits)
+        => BitConverter.Int32BitsToSingle((int)((uint)bits << 16));
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static unsafe Vector256<float> WidenBf168(ushort* p)
+        => Avx2.ShiftLeftLogical(Avx2.ConvertToVector256Int32(Sse2.LoadVector128(p)), 16).AsSingle();
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static unsafe float VecDotBF16_Scalar(float* input, byte* rawWeights, int col, int inFeatures)
+    {
+        ushort* w = (ushort*)rawWeights;
+        double sum = 0;
+        ushort* pW = w + (long)col * inFeatures;
+        for (int i = 0; i < inFeatures; i++)
+            sum += input[i] * Bf16ToFloat(pW[i]);
+        return (float)sum;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static unsafe float VecDotBF16_FMA(float* input, byte* rawWeights, int col, int inFeatures)
+    {
+        ushort* w = (ushort*)rawWeights;
+        ushort* pW = w + (long)col * inFeatures;
+        var vacc0 = Vector256<float>.Zero;
+        var vacc1 = Vector256<float>.Zero;
+        var vacc2 = Vector256<float>.Zero;
+        var vacc3 = Vector256<float>.Zero;
+        int i = 0;
+        for (; i <= inFeatures - 32; i += 32)
+        {
+            vacc0 = Fma.MultiplyAdd(WidenBf168(pW + i), Vector256.LoadUnsafe(ref input[i]), vacc0);
+            vacc1 = Fma.MultiplyAdd(WidenBf168(pW + i + 8), Vector256.LoadUnsafe(ref input[i + 8]), vacc1);
+            vacc2 = Fma.MultiplyAdd(WidenBf168(pW + i + 16), Vector256.LoadUnsafe(ref input[i + 16]), vacc2);
+            vacc3 = Fma.MultiplyAdd(WidenBf168(pW + i + 24), Vector256.LoadUnsafe(ref input[i + 24]), vacc3);
+        }
+        for (; i <= inFeatures - 8; i += 8)
+            vacc0 = Fma.MultiplyAdd(WidenBf168(pW + i), Vector256.LoadUnsafe(ref input[i]), vacc0);
+        float sum = MathHelpers.HSum256_Avx(Avx.Add(Avx.Add(vacc0, vacc1), Avx.Add(vacc2, vacc3)));
+        for (; i < inFeatures; i++)
+            sum += input[i] * Bf16ToFloat(pW[i]);
+        return sum;
+    }
+
+    public static unsafe void QuantizedMatMulBF16_Serial_Scalar(
+        float* input, byte* rawWeights, float* output,
+        int M, int K, int N)
+    {
+        ushort* w = (ushort*)rawWeights;
+        for (int row = 0; row < M; row++)
+        {
+            float* pIn = input + (long)row * K;
+            float* pOut = output + (long)row * N;
+            for (int col = 0; col < N; col++)
+            {
+                float sum = 0;
+                ushort* pW = w + (long)col * K;
+                for (int i = 0; i < K; i++)
+                    sum += pIn[i] * Bf16ToFloat(pW[i]);
+                pOut[col] = sum;
+            }
+        }
+    }
+
+    public static unsafe void QuantizedMatMulBF16_Parallel_Scalar(
+        float* input, byte* rawWeights, float* output,
+        int M, int K, int N)
+    {
+        if (M <= 1)
+        {
+            DecodeParallel(VecDotBF16_Scalar, input, rawWeights, output, K, N);
+        }
+        else
+        {
+            ushort* w = (ushort*)rawWeights;
+            Parallel.For(0, M, row =>
+            {
+                float* pIn = input + (long)row * K;
+                float* pOut = output + (long)row * N;
+                for (int col = 0; col < N; col++)
+                {
+                    float sum = 0;
+                    ushort* pW = w + (long)col * K;
+                    for (int i = 0; i < K; i++)
+                        sum += pIn[i] * Bf16ToFloat(pW[i]);
+                    pOut[col] = sum;
+                }
+            });
+        }
+    }
+
+    public static unsafe void QuantizedMatMulBF16_Serial_FMA(
+        float* input, byte* rawWeights, float* output,
+        int M, int K, int N)
+    {
+        if (M <= 1)
+        {
+            QuantizedMatMul_Serial_Wrapper(VecDotBF16_FMA, input, rawWeights, output, M, K, N);
+            return;
+        }
+        BF16BlockedColumns(input, (ushort*)rawWeights, output, M, K, N, 0, N);
+    }
+
+    public static unsafe void QuantizedMatMulBF16_Parallel_FMA(
+        float* input, byte* rawWeights, float* output,
+        int M, int K, int N)
+    {
+        if (M <= 1)
+        {
+            DecodeParallel(VecDotBF16_FMA, input, rawWeights, output, K, N);
+            return;
+        }
+
+        int target = Math.Max(1, N / Environment.ProcessorCount);
+        int chunkSize = (target + 15) & ~15;
+        int numChunks = (N + chunkSize - 1) / chunkSize;
+
+        long inputAddr = (long)input, weightsAddr = (long)rawWeights, outputAddr = (long)output;
+        Parallel.For(0, numChunks, chunkIdx =>
+        {
+            int colStart = chunkIdx * chunkSize;
+            int colEnd = Math.Min(colStart + chunkSize, N);
+            BF16BlockedColumns((float*)inputAddr, (ushort*)weightsAddr, (float*)outputAddr,
+                M, K, N, colStart, colEnd);
+        });
+    }
+
+    /// <summary>
+    /// The BF16 twin of <see cref="F16BlockedColumns"/>: same row tile / column
+    /// sweep layout, with BF16 widening instead of IEEE-754 half widening.
+    /// </summary>
+    private static unsafe void BF16BlockedColumns(
+        float* input, ushort* w, float* output,
+        int M, int K, int N, int colStart, int colEnd)
+    {
+        for (int rowTile = 0; rowTile < M; rowTile += F16RowTile)
+        {
+            int tileEnd = Math.Min(rowTile + F16RowTile, M);
+
+            for (int col = colStart; col < colEnd; col++)
+            {
+                ushort* pW = w + (long)col * K;
+                int r = rowTile;
+                for (; r + F16RowBlock <= tileEnd; r += F16RowBlock)
+                {
+                    var a0 = Vector256<float>.Zero;
+                    var a1 = Vector256<float>.Zero;
+                    var a2 = Vector256<float>.Zero;
+                    var a3 = Vector256<float>.Zero;
+                    float* i0 = input + (long)(r + 0) * K;
+                    float* i1 = input + (long)(r + 1) * K;
+                    float* i2 = input + (long)(r + 2) * K;
+                    float* i3 = input + (long)(r + 3) * K;
+
+                    int k = 0;
+                    for (; k <= K - 8; k += 8)
+                    {
+                        var vw = WidenBf168(pW + k);
+                        a0 = Fma.MultiplyAdd(vw, Vector256.LoadUnsafe(ref i0[k]), a0);
+                        a1 = Fma.MultiplyAdd(vw, Vector256.LoadUnsafe(ref i1[k]), a1);
+                        a2 = Fma.MultiplyAdd(vw, Vector256.LoadUnsafe(ref i2[k]), a2);
+                        a3 = Fma.MultiplyAdd(vw, Vector256.LoadUnsafe(ref i3[k]), a3);
+                    }
+
+                    float s0 = MathHelpers.HSum256_Avx(a0);
+                    float s1 = MathHelpers.HSum256_Avx(a1);
+                    float s2 = MathHelpers.HSum256_Avx(a2);
+                    float s3 = MathHelpers.HSum256_Avx(a3);
+                    for (; k < K; k++)
+                    {
+                        float wf = Bf16ToFloat(pW[k]);
+                        s0 += i0[k] * wf;
+                        s1 += i1[k] * wf;
+                        s2 += i2[k] * wf;
+                        s3 += i3[k] * wf;
+                    }
+
+                    output[(long)(r + 0) * N + col] = s0;
+                    output[(long)(r + 1) * N + col] = s1;
+                    output[(long)(r + 2) * N + col] = s2;
+                    output[(long)(r + 3) * N + col] = s3;
+                }
+
+                for (; r < tileEnd; r++)
+                    output[(long)r * N + col] = VecDotBF16_FMA(input + (long)r * K, (byte*)w, col, K);
+            }
+        }
+    }
+
+    public static void ReadBF16_Scalar(BinaryReader reader, Span<float> data, int n)
+    {
+        for (int i = 0; i < n; i++) data[i] = Bf16ToFloat(reader.ReadUInt16());
+    }
+
     // ===== I8 (signed byte) =====
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

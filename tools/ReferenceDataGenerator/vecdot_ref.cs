@@ -14,13 +14,14 @@ class Program
     const int QK_K = 256;
 
     // Enum matching SharpMind.QuantDType (exact values)
-    enum QuantDType
+enum QuantDType
     {
         F32 = 0, F16 = 1, Q4_0 = 2, Q4_1 = 3,
         Q5_0 = 6, Q5_1 = 7, Q8_0 = 8, Q8_1 = 9,
         Q2_K = 10, Q3_K = 11, Q4_K = 12, Q5_K = 13, Q6_K = 14, Q8_K = 15,
         I8 = 16, I16 = 17, I32 = 18,
         IQ1_S = 19, IQ4_NL = 20, IQ1_M = 21, TQ1_0 = 22, TQ2_0 = 23,
+        BF16 = 30,
     }
 
     // IQ4_NL non-linear dequant lookup table (matches SharpMind)
@@ -725,13 +726,27 @@ class Program
         return (float)sum;
     }
 
-    static float VecDotF16(ReadOnlySpan<float> input, ReadOnlySpan<byte> rawWeights, int col, int inFeatures)
+static float VecDotF16(ReadOnlySpan<float> input, ReadOnlySpan<byte> rawWeights, int col, int inFeatures)
     {
         double sum = 0;
         int elemOff = col * inFeatures;
         for (int i = 0; i < inFeatures; i++)
         {
             float w = HalfToFloat(BitConverter.ToUInt16(rawWeights.Slice((elemOff + i) * 2, 2)));
+            sum += input[i] * w;
+        }
+        return (float)sum;
+    }
+
+    static float Bf16ToFloat(ushort bits) => BitConverter.Int32BitsToSingle(bits << 16);
+
+    static float VecDotBF16(ReadOnlySpan<float> input, ReadOnlySpan<byte> rawWeights, int col, int inFeatures)
+    {
+        double sum = 0;
+        int elemOff = col * inFeatures;
+        for (int i = 0; i < inFeatures; i++)
+        {
+            float w = Bf16ToFloat(BitConverter.ToUInt16(rawWeights.Slice((elemOff + i) * 2, 2)));
             sum += input[i] * w;
         }
         return (float)sum;
@@ -1294,11 +1309,19 @@ class Program
         return result;
     }
 
-    static float[] ReadF16(ReadOnlySpan<byte> rawWeights, int n)
+static float[] ReadF16(ReadOnlySpan<byte> rawWeights, int n)
     {
         float[] result = new float[n];
         for (int i = 0; i < n; i++)
             result[i] = HalfToFloat(BitConverter.ToUInt16(rawWeights.Slice(i * 2, 2)));
+        return result;
+    }
+
+    static float[] ReadBF16(ReadOnlySpan<byte> rawWeights, int n)
+    {
+        float[] result = new float[n];
+        for (int i = 0; i < n; i++)
+            result[i] = Bf16ToFloat(BitConverter.ToUInt16(rawWeights.Slice(i * 2, 2)));
         return result;
     }
 
@@ -1499,6 +1522,7 @@ static int RunVecDotMode(string inputPath)
             {
                 QuantDType.F32 => VecDotF32(input, weights, col, inFeatures),
                 QuantDType.F16 => VecDotF16(input, weights, col, inFeatures),
+                QuantDType.BF16 => VecDotBF16(input, weights, col, inFeatures),
                 QuantDType.Q4_0 => VecDotQ4_0(input, weights, col, inFeatures),
                 QuantDType.Q4_1 => VecDotQ4_1(input, weights, col, inFeatures),
                 QuantDType.Q5_0 => VecDotQ5_0(input, weights, col, inFeatures),
@@ -1537,8 +1561,9 @@ static int RunVecDotMode(string inputPath)
 
         float[] result = (QuantDType)dtype switch
         {
-            QuantDType.F32 => ReadF32(weights, n),
+QuantDType.F32 => ReadF32(weights, n),
             QuantDType.F16 => ReadF16(weights, n),
+            QuantDType.BF16 => ReadBF16(weights, n),
             QuantDType.Q4_0 => ReadQ4_0(weights, n),
             QuantDType.Q4_1 => ReadQ4_1(weights, n),
             QuantDType.Q5_0 => ReadQ5_0(weights, n),
@@ -1569,8 +1594,9 @@ static int RunVecDotMode(string inputPath)
 
     static int RefQkForType(QuantDType dtype) => dtype switch
     {
-        QuantDType.F32 => 1,
+QuantDType.F32 => 1,
         QuantDType.F16 => 1,
+        QuantDType.BF16 => 1,
         QuantDType.I8 => 1,
         QuantDType.I16 => 1,
         QuantDType.I32 => 1,
@@ -1581,8 +1607,9 @@ static int RunVecDotMode(string inputPath)
 
     static int BlockBytesForType(QuantDType dtype) => dtype switch
     {
-        QuantDType.F32 => 4,
+QuantDType.F32 => 4,
         QuantDType.F16 => 2,
+        QuantDType.BF16 => 2,
         QuantDType.Q4_0 => 18,
         QuantDType.Q4_1 => 20,
         QuantDType.Q5_0 => 22,
@@ -1632,8 +1659,9 @@ static int RunGenerateMode(string[] args)
         {
             float result = (QuantDType)dtype switch
             {
-                QuantDType.F32 => VecDotF32(input, rawWeights, c, inFeatures),
+QuantDType.F32 => VecDotF32(input, rawWeights, c, inFeatures),
                 QuantDType.F16 => VecDotF16(input, rawWeights, c, inFeatures),
+                QuantDType.BF16 => VecDotBF16(input, rawWeights, c, inFeatures),
                 QuantDType.Q4_0 => VecDotQ4_0(input, rawWeights, c, inFeatures),
                 QuantDType.Q4_1 => VecDotQ4_1(input, rawWeights, c, inFeatures),
                 QuantDType.Q5_0 => VecDotQ5_0(input, rawWeights, c, inFeatures),
@@ -1680,6 +1708,7 @@ static int RunGenerateMode(string[] args)
             {
                 QuantDType.F32 => ReadF32(colWeights, n),
                 QuantDType.F16 => ReadF16(colWeights, n),
+                QuantDType.BF16 => ReadBF16(colWeights, n),
                 QuantDType.Q4_0 => ReadQ4_0(colWeights, n),
                 QuantDType.Q4_1 => ReadQ4_1(colWeights, n),
                 QuantDType.Q5_0 => ReadQ5_0(colWeights, n),
@@ -1716,7 +1745,7 @@ static int RunGenerateMode(string[] args)
         int nCols = args.Length > 3 ? int.Parse(args[3]) : 2;
         int seed = args.Length > 4 ? int.Parse(args[4]) : 42;
 
-        int[] dtypes = [0, 1, 2, 3, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 21, 20, 23, 22];
+        int[] dtypes = [0, 1, 2, 3, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 21, 20, 23, 22, 30];
         foreach (var dtype in dtypes)
         {
             int inFeatures = args.Length > 2 ? int.Parse(args[2]) : 4 * RefQkForType((QuantDType)dtype);

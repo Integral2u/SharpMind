@@ -146,7 +146,15 @@ public abstract class LogitOps(Tensor<float>? projectionWeight, byte[]? rawWeigh
         "f16_serial_sse",    $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulF16_Serial_Scalar)}",
         "f16_parallel_sse",  $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulF16_Parallel_Scalar)}",
         "f16_serial_scalar", $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulF16_Serial_Scalar)}",
-        "f16_parallel_scalar",$"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulF16_Parallel_Scalar)}")]
+        "f16_parallel_scalar",$"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulF16_Parallel_Scalar)}",
+        "bf16_serial_fma",    $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulBF16_Serial_FMA)}",
+        "bf16_parallel_fma",  $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulBF16_Parallel_FMA)}",
+        "bf16_serial_avx2",   $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulBF16_Serial_FMA)}",
+        "bf16_parallel_avx2", $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulBF16_Parallel_FMA)}",
+        "bf16_serial_sse",    $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulBF16_Serial_Scalar)}",
+        "bf16_parallel_sse",  $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulBF16_Parallel_Scalar)}",
+        "bf16_serial_scalar", $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulBF16_Serial_Scalar)}",
+        "bf16_parallel_scalar",$"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulBF16_Parallel_Scalar)}")]
     public unsafe abstract void ProjectFn(float* input, byte* rawWeights, float* output, int M, int K, int N);
 
     public unsafe Tensor<float> Project(Tensor<float> input, int M, int K, int N, IWorkspace? workspace = null)

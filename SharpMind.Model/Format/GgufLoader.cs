@@ -213,11 +213,12 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
                 var shape = new int[nDims];
                 for (int j = 0; j < nDims; j++) shape[j] = (int)reader.ReadUInt64();
 
-                var dtype = (QuantDType)reader.ReadUInt32();
+                var dtype = GgufTypeMap.FromGgufId(reader.ReadUInt32(), name);
                 var offset = reader.ReadUInt64();
 
                 meta.Tensors.Add(new TensorInfo { Name = name, Dtype = dtype, Shape = shape, Offset = (long)offset });
             }
+            catch (NotSupportedException) { throw; }
             catch (Exception ex) { SanityChecks.WriteLine($"GgufLoader: tensor metadata read failed: {ex.Message}"); break; }
         }
 

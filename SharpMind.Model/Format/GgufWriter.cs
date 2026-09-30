@@ -141,33 +141,8 @@ public static class GgufWriter
             writeElem(w, v);
     }
 
-    /// <summary>
-    /// Maps a <see cref="QuantDType"/> to its GGUF/ggml type id. The SharpMind
-    /// S/M/L K-quant aliases (100-108) are not real GGML types — their block
-    /// layout is identical to the base type, so they're written as the base id.
-    /// </summary>
-    private static uint ToGgmlType(QuantDType dtype)
-    {
-        uint id = (uint)dtype;
-        if (id >= 100)
-        {
-            var alias = dtype switch
-            {
-                QuantDType.Q2_K_S => QuantDType.Q2_K,
-                QuantDType.Q3_K_S => QuantDType.Q3_K,
-                QuantDType.Q3_K_M => QuantDType.Q3_K,
-                QuantDType.Q3_K_L => QuantDType.Q3_K,
-                QuantDType.Q4_K_S => QuantDType.Q4_K,
-                QuantDType.Q4_K_M => QuantDType.Q4_K,
-                QuantDType.Q5_K_S => QuantDType.Q5_K,
-                QuantDType.Q5_K_M => QuantDType.Q5_K,
-                QuantDType.Q6_K_S => QuantDType.Q6_K,
-                _ => throw new ArgumentException($"Unsupported quant alias: {dtype}"),
-            };
-            id = (uint)alias;
-        }
-        return id;
-    }
+    /// <summary>Maps a <see cref="QuantDType"/> to its canonical GGUF type id (see <see cref="GgufTypeMap"/>).</summary>
+    private static uint ToGgmlType(QuantDType dtype) => GgufTypeMap.ToGgmlType(dtype);
 
     private static long Align(long position, int alignment)
         => (position + alignment - 1) & ~(alignment - 1L);

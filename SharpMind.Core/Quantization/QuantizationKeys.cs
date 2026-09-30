@@ -22,6 +22,7 @@ public static class QuantizationKeys
     public const string KeyVecDotQ8K   = "vecdot_q8k";
     public const string KeyVecDotF32   = "vecdot_f32";
     public const string KeyVecDotF16   = "vecdot_f16";
+    public const string KeyVecDotBF16  = "vecdot_bf16";
     public const string KeyVecDotI8    = "vecdot_i8";
     public const string KeyVecDotI16   = "vecdot_i16";
     public const string KeyVecDotI32   = "vecdot_i32";
@@ -55,6 +56,7 @@ public static class QuantizationKeys
     public const string KeyReadQ8K  = "read_q8k";
     public const string KeyReadF32  = "read_f32";
     public const string KeyReadF16  = "read_f16";
+    public const string KeyReadBF16 = "read_bf16";
     public const string KeyReadI8   = "read_i8";
     public const string KeyReadI16  = "read_i16";
     public const string KeyReadI32  = "read_i32";
@@ -66,6 +68,7 @@ public static class QuantizationKeys
 
     public const string KeyQuantizedMatMulF32 = "qmatmul_f32";
     public const string KeyQuantizedMatMulF16 = "qmatmul_f16";
+    public const string KeyQuantizedMatMulBF16 = "qmatmul_bf16";
     public const string KeyQuantizedMatMulI8  = "qmatmul_i8";
     public const string KeyQuantizedMatMulI16 = "qmatmul_i16";
     public const string KeyQuantizedMatMulI32 = "qmatmul_i32";
