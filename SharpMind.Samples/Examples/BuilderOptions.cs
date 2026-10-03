@@ -108,8 +108,7 @@ namespace SharpMind.Samples.Examples
                 }
             }
             await Console.Out.WriteLineAsync();
-            await Console.Out.WriteLineAsync("Done!");
-            Console.In.ReadLine();
+            await Console.Out.WriteLineAsync("Done!");            
         }
     }
 }
