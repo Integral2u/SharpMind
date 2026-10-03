@@ -75,7 +75,7 @@ public sealed class EngineGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
         sampleCfg.Constraint?.Reset();
         var constraint = sampleCfg.Constraint;
         if (promptIds.Length == 0)
-            throw new InvalidOperationException("Prompt produced no token IDs; cannot generate.");
+            yield break;
 
         var rateTracker = new TokenRateTracker(windowSize: 10);
         rateTracker.Start();
