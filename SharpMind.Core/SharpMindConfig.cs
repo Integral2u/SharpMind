@@ -225,14 +225,39 @@ public sealed record SharpMindConfig
         var (activation, gate, ffn, norm, arch) = architecture?.ToLowerInvariant() switch
         {
             "bert"                                                        => (ActivationKind.GELU,    GateKind.None,   FfnKind.Dense, NormKind.LayerNorm, ArchKind.Encoder),
+            "roberta" or "albert" or "xlm-roberta"                        => (ActivationKind.GELU,    GateKind.None,   FfnKind.Dense, NormKind.LayerNorm, ArchKind.Encoder),
             "gpt2" or "gptj" or "falcon" or "starcoder" or "starcoder2"
                 or "bloom" or "phi" or "phi2"                            => (ActivationKind.GELU,    GateKind.None,   FfnKind.Dense, NormKind.LayerNorm, ArchKind.Decoder),
             "opt"                                                         => (ActivationKind.ReLU,    GateKind.None,   FfnKind.Dense, NormKind.LayerNorm, ArchKind.Decoder),
-            "gemma" or "gemma3" or "gemma-3"                              => (ActivationKind.GELU,    GateKind.GeGLU,  FfnKind.Gated, NormKind.RMSNorm,   ArchKind.Decoder),
+            "gemma" or "gemma2" or "gemma3" or "gemma-3"                  => (ActivationKind.GELU,    GateKind.GeGLU,  FfnKind.Gated, NormKind.RMSNorm,   ArchKind.Decoder),
             "mixtral" or "qwen2moe" or "deepseek2" or "dbrx"            => (ActivationKind.SiLU,    GateKind.SwiGLU, FfnKind.MoE,   NormKind.RMSNorm,   ArchKind.Decoder),
-            "qwen3"                                                       => (ActivationKind.SiLU,    GateKind.SwiGLU, FfnKind.Gated, NormKind.RMSNorm,   ArchKind.Decoder),
-            "mistral" or "mistral3" or "ministral"                        => (ActivationKind.SiLU,    GateKind.SwiGLU, FfnKind.Gated, NormKind.RMSNorm,   ArchKind.Decoder),
-            _                                                              => (ActivationKind.SiLU,    GateKind.SwiGLU, FfnKind.Gated, NormKind.RMSNorm,   ArchKind.Decoder),
+            // Everything below is the same shape: SiLU + SwiGLU + RMSNorm decoder.
+            // phi3 belongs here, not with the GELU/dense phi/phi2: Phi-3 is a gated
+            // model whose ffn_up is the fused [HiddenDim, 2*FfnDim] gate+up matrix.
+            // Listed as dense it built a "gate_proj" of [Hidden, FfnDim] and rejected
+            // the file's twice-as-wide fused tensor as a size mismatch.
+            "qwen2" or "qwen2vl" or "qwen3" or "qwen3moe" or "qwq" or "phi3"
+                or "mistral" or "mistral3" or "ministral" or "mixtral-instruct"
+                or "llama" or "llama2" or "llama3" or "llama4" or "lfm2" or "lfm2moe"
+                or "gemma3e" or "olmo" or "olmo2" or "exaone" or "internlm2"
+                or "glm4" or "deepseek" or "deepseek3" or "minicpm" or "cohere2"
+                or "orion" or "jais" or "stablelm" or "plamo" or "granite"
+                or "nemotron" or "smollm3" or "dots1" or "hunyuan-moe"
+                => (ActivationKind.SiLU, GateKind.SwiGLU, FfnKind.Gated, NormKind.RMSNorm, ArchKind.Decoder),
+            null or ""                                                      => (ActivationKind.SiLU,    GateKind.SwiGLU, FfnKind.Gated, NormKind.RMSNorm,   ArchKind.Decoder),
+            _ when string.IsNullOrWhiteSpace(architecture)                  => (ActivationKind.SiLU,    GateKind.SwiGLU, FfnKind.Gated, NormKind.RMSNorm,   ArchKind.Decoder),
+            // Unknown architectures fall back to the standard decoder preset rather
+            // than throwing. GGUF gains new architecture strings constantly (and
+            // vendors ship variants of their own), and essentially all of them are
+            // SiLU/SwiGLU/RMSNorm decoders, so the fallback is correct in practice —
+            // throwing here simply broke model families that worked before, which is
+            // a far worse failure than an assumed preset. (The loud failure that
+            // matters lives in the type bridge instead — GgufTypeMap rejects an
+            // unimplemented quantization layout by name, because that silently yields
+            // garbage weights, whereas an unrecognised architecture has a safe
+            // default here. ModelFactory additionally rejects the architectures known
+            // not to work, with the reason spelled out.)
+            _                                                              => (ActivationKind.SiLU,    GateKind.SwiGLU, FfnKind.Gated, NormKind.RMSNorm, ArchKind.Decoder),
         };
 
         return new SharpMindConfig

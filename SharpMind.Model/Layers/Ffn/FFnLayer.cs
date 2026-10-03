@@ -97,13 +97,19 @@ public abstract class FfnLayer : IDisposable
     {
         if (name.Contains("bias", StringComparison.OrdinalIgnoreCase)) return false;
 
-        // MoE expert tensors: blk.{L}.ffn_gate.exps.{E}.weight → ExpertGate[E]
-        if (ExpertGate is not null && name.Contains(".exps.", StringComparison.OrdinalIgnoreCase))
+        // MoE expert tensors: blk.{L}.ffn_gate.exps.{E}.weight or fused per-expert names
+        bool isExpertName = ExpertGate is not null && (
+            name.Contains(".exps.", StringComparison.OrdinalIgnoreCase) ||
+            name.Contains("_exps", StringComparison.OrdinalIgnoreCase) ||
+            (name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase) && RegexGenerated.ExpertIndex.IsMatch(name)) ||
+            (name.Contains("ffn_up", StringComparison.OrdinalIgnoreCase) && RegexGenerated.ExpertIndex.IsMatch(name)) ||
+            (name.Contains("ffn_down", StringComparison.OrdinalIgnoreCase) && RegexGenerated.ExpertIndex.IsMatch(name)));
+        if (isExpertName)
         {
             var expMatch = RegexGenerated.ExpertIndex.Match(name);
             if (expMatch.Success && int.TryParse(expMatch.Groups[1].Value, out int expIdx))
             {
-                if (name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase) && expIdx < ExpertGate.Length)
+                if (name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase) && ExpertGate is not null && expIdx < ExpertGate.Length)
                     { ExpertGate[expIdx].SetRawWeight(rawData); return true; }
                 if (name.Contains("ffn_up", StringComparison.OrdinalIgnoreCase) && expIdx < ExpertUp!.Length)
                     { ExpertUp[expIdx].SetRawWeight(rawData); return true; }
@@ -113,11 +119,11 @@ public abstract class FfnLayer : IDisposable
             return false;
         }
 
-        // MoE router (ffn_gate.weight without .exps.)
-        if (Router is not null && name.Contains("gate", StringComparison.OrdinalIgnoreCase))
+        // MoE router (ffn_gate.weight without .exps. or ffn_gate_inp)
+        if (Router is not null && (name.Contains("gate_inp", StringComparison.OrdinalIgnoreCase) || (name.Contains("gate", StringComparison.OrdinalIgnoreCase) && !isExpertName)))
             { Router.SetRawWeight(rawData); return true; }
         if (Router is not null && name.Contains("up", StringComparison.OrdinalIgnoreCase))
-            return false; // Up without .exps. shouldn't appear in MoE models; skip float load
+            return false;
 
         // Gate and up are fused into WGated with separate quantized tensors in GGUF.
         // Force dequantization so LoadWeights can load into the fused float weight.
@@ -133,6 +139,23 @@ public abstract class FfnLayer : IDisposable
     protected readonly LinearLayer[]? ExpertGate;
     protected readonly LinearLayer[]? ExpertUp;
     protected readonly LinearLayer[]? ExpertDown;
+
+    /// <summary>Shared-expert gate/up/down. Null unless <see cref="ModelConfig.HasSharedExpert"/>.</summary>
+    protected readonly LinearLayer? SharedGate;
+    protected readonly LinearLayer? SharedUp;
+    protected readonly LinearLayer? SharedDown;
+
+    /// <summary>Scalar sigmoid gate applied to the shared branch's output. Null when absent.</summary>
+    protected readonly LinearLayer? SharedGateInp;
+
+    /// <summary>Always-on shared expert gate projection. Null for models without one.</summary>
+    public LinearLayer? SharedExpertGateLayer => SharedGate;
+
+    /// <summary>Always-on shared expert down projection. Null for models without one.</summary>
+    public LinearLayer? SharedExpertDownLayer => SharedDown;
+
+    /// <summary>Always-on shared expert up projection. Null for models without one.</summary>
+    public LinearLayer? SharedExpertUpLayer => SharedUp;
 
     protected FfnLayer(ModelConfig config, ActivationOps acts, FfnKind kind, QuantizationOps qOps)
         : this(config, acts, kind, qOps, null, null)
@@ -176,18 +199,41 @@ public abstract class FfnLayer : IDisposable
                 Router = LinearLayerFactory.Create("router", config.HiddenDim, config.NumExperts, true,
                     null, null,
                     DtypeFromMeta(weights, "RawRouter", weights?.QuantDtypeRouter ?? QuantDType.F32), mapping);
+                // Routed experts can be narrower than the block FFN (Qwen1.5-MoE:
+                // experts 1408 wide, shared expert / FfnDim 5632).
+                int expertFfn = config.ResolvedExpertFfnDim;
                 ExpertGate = [.. Enumerable.Range(0, config.NumExperts).Select(i =>
-                    LinearLayerFactory.Create($"expert_{i}_gate_proj", config.HiddenDim, config.FfnDim, true,
+                    LinearLayerFactory.Create($"expert_{i}_gate_proj", config.HiddenDim, expertFfn, true,
                         null, null,
                         DtypeFromMeta(weights, $"RawWgateExp_{i}", weights?.QuantDtypeWgateExp?.GetValueOrDefault(i) ?? QuantDType.F32), mapping))];
                 ExpertUp = [.. Enumerable.Range(0, config.NumExperts).Select(i =>
-                    LinearLayerFactory.Create($"expert_{i}_up_proj", config.HiddenDim, config.FfnDim, true,
+                    LinearLayerFactory.Create($"expert_{i}_up_proj", config.HiddenDim, expertFfn, true,
                         null, null,
                         DtypeFromMeta(weights, $"RawWupExp_{i}", weights?.QuantDtypeWupExp?.GetValueOrDefault(i) ?? QuantDType.F32), mapping))];
                 ExpertDown = [.. Enumerable.Range(0, config.NumExperts).Select(i =>
-                    LinearLayerFactory.Create($"expert_{i}_down_proj", config.FfnDim, config.HiddenDim, true,
+                    LinearLayerFactory.Create($"expert_{i}_down_proj", expertFfn, config.HiddenDim, true,
                         null, null,
                         DtypeFromMeta(weights, $"RawWdownExp_{i}", weights?.QuantDtypeWdownExp?.GetValueOrDefault(i) ?? QuantDType.F32), mapping))];
+
+                // Always-on shared expert. Its width is its own dimension, not the
+                // routed experts'. SharedGateInp is the [1, HiddenDim] sigmoid gate
+                // HF applies to the shared branch's output.
+                if (config.HasSharedExpert)
+                {
+                    int sharedFfn = config.SharedExpertFfnDim;
+                    SharedGate = LinearLayerFactory.Create("shared_expert_gate_proj", config.HiddenDim, sharedFfn, true,
+                        null, null,
+                        DtypeFromMeta(weights, "RawWSharedGate", weights?.QuantDtypeSharedGate ?? QuantDType.F32), mapping);
+                    SharedUp = LinearLayerFactory.Create("shared_expert_up_proj", config.HiddenDim, sharedFfn, true,
+                        null, null,
+                        DtypeFromMeta(weights, "RawWSharedUp", weights?.QuantDtypeSharedUp ?? QuantDType.F32), mapping);
+                    SharedDown = LinearLayerFactory.Create("shared_expert_down_proj", sharedFfn, config.HiddenDim, true,
+                        null, null,
+                        DtypeFromMeta(weights, "RawWSharedDown", weights?.QuantDtypeSharedDown ?? QuantDType.F32), mapping);
+                    SharedGateInp = LinearLayerFactory.Create("shared_expert_gate_inp", config.HiddenDim, 1, false,
+                        null, null,
+                        DtypeFromMeta(weights, "RawWSharedGateInp", QuantDType.F32), mapping);
+                }
                 break;
         }
     }
@@ -276,7 +322,30 @@ public abstract class FfnLayer : IDisposable
                 if (weights.RawWdownExp is not null && weights.RawWdownExp.TryGetValue(expIdx, out var downRaw))
                     ExpertDown![expIdx].SetRawWeight(downRaw);
             }
+
+            SetSharedWeights(weights);
         }
+    }
+
+    /// <summary>
+    /// Pushes the always-on shared-expert tensors (Qwen1.5-MoE <c>*_shexp</c>) into
+    /// their layers. Skipped silently when the model has no shared expert.
+    /// </summary>
+    private void SetSharedWeights(TransformerWeights.BlockWeights weights)
+    {
+        if (SharedGate is null || SharedUp is null || SharedDown is null) return;
+
+        if (weights.WSharedGate is not null) SharedGate.ReplaceWeights(weights.WSharedGate, weights.WSharedGateBias);
+        SharedGate.SetRawWeight(weights.RawWSharedGate);
+
+        if (weights.WSharedUp is not null) SharedUp.ReplaceWeights(weights.WSharedUp, weights.WSharedUpBias);
+        SharedUp.SetRawWeight(weights.RawWSharedUp);
+
+        if (weights.WSharedDown is not null) SharedDown.ReplaceWeights(weights.WSharedDown, weights.WSharedDownBias);
+        SharedDown.SetRawWeight(weights.RawWSharedDown);
+
+        if (SharedGateInp is not null && weights.SharedGateInp is not null)
+            SharedGateInp.ReplaceWeights(weights.SharedGateInp, null);
     }
 
 
@@ -319,6 +388,10 @@ public abstract class FfnLayer : IDisposable
             WDown.FreeFloatWeight();
         }
         Router?.FreeFloatWeight();
+        SharedGate?.FreeFloatWeight();
+        SharedUp?.FreeFloatWeight();
+        SharedDown?.FreeFloatWeight();
+        SharedGateInp?.FreeFloatWeight();
         if (ExpertGate is not null)
             foreach (var l in ExpertGate) l.FreeFloatWeight();
         if (ExpertUp is not null)
@@ -341,6 +414,10 @@ public abstract class FfnLayer : IDisposable
             W1?.Dispose(); W2?.Dispose();
             WGated?.Dispose(); WDown?.Dispose();
             Router?.Dispose();
+            SharedGate?.Dispose();
+            SharedUp?.Dispose();
+            SharedDown?.Dispose();
+            SharedGateInp?.Dispose();
             if (ExpertGate is not null) foreach (var l in ExpertGate) l.Dispose();
             if (ExpertUp is not null) foreach (var l in ExpertUp) l.Dispose();
             if (ExpertDown is not null) foreach (var l in ExpertDown) l.Dispose();
@@ -357,6 +434,10 @@ public abstract class FfnLayer : IDisposable
         if (WGated is not null) foreach (var p in WGated.Parameters()) yield return p;
         if (WDown is not null) foreach (var p in WDown.Parameters()) yield return p;
         if (Router is not null) foreach (var p in Router.Parameters()) yield return p;
+        if (SharedGate is not null) foreach (var p in SharedGate.Parameters()) yield return p;
+        if (SharedUp is not null) foreach (var p in SharedUp.Parameters()) yield return p;
+        if (SharedDown is not null) foreach (var p in SharedDown.Parameters()) yield return p;
+        if (SharedGateInp is not null) foreach (var p in SharedGateInp.Parameters()) yield return p;
         if (ExpertGate is not null) foreach (var l in ExpertGate) foreach (var p in l.Parameters()) yield return p;
         if (ExpertUp is not null) foreach (var l in ExpertUp) foreach (var p in l.Parameters()) yield return p;
         if (ExpertDown is not null) foreach (var l in ExpertDown) foreach (var p in l.Parameters()) yield return p;

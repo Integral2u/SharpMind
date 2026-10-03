@@ -188,7 +188,7 @@ public class SmmQuantizerTests : IDisposable
         var qOps = QuantizationFactory.Create(HardwareTier.Scalar);
         foreach (var entry in entries)
         {
-            long rawSize = QuantizationOps.GetRawTensorByteCount(entry.Shape, entry.Dtype);
+            long rawSize = QuantizationOps.GetFlatTensorByteCount(entry.Shape, entry.Dtype);
             byte[] raw = SmmLoader.ReadTensorBytes(path, entry, rawSize);
             using var ms = new MemoryStream(raw);
             using var reader = new BinaryReader(ms);
@@ -233,7 +233,7 @@ public class SmmQuantizerTests : IDisposable
         var entries = SmmLoader.ReadTensorIndex(path);
         foreach (var entry in entries)
         {
-            long rawSize = QuantizationOps.GetRawTensorByteCount(entry.Shape, entry.Dtype);
+            long rawSize = QuantizationOps.GetFlatTensorByteCount(entry.Shape, entry.Dtype);
             byte[] raw = SmmLoader.ReadTensorBytes(path, entry, rawSize);
             int count = 1;
             foreach (int d in entry.Shape) count *= d;

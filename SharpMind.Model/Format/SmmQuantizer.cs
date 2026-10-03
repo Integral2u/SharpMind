@@ -155,7 +155,8 @@ public static class SmmQuantizer
             progress?.Report((float)i / entries.Count);
 
             var entry = entries[i];
-            long rawSize = QuantizationOps.GetRawTensorByteCount(entry.Shape, entry.Dtype);
+            // SMM stores blocks flat, not row-padded like GGUF.
+            long rawSize = QuantizationOps.GetFlatTensorByteCount(entry.Shape, entry.Dtype);
             if (rawSize <= 0)
                 throw new InvalidDataException($"Tensor '{entry.Name}' has an unsupported dtype: {entry.Dtype}.");
 
@@ -170,7 +171,7 @@ public static class SmmQuantizer
             // actually leaner for this shape (never upscale / re-encode for nothing).
             if (entry.Dtype != target &&
                 (entry.Dtype == QuantDType.F32 ||
-                 QuantizationOps.GetRawTensorByteCount(entry.Shape, target) < rawSize))
+                 QuantizationOps.GetFlatTensorByteCount(entry.Shape, target) < rawSize))
                 (outBytes, outDtype) = QuantizeTensor(raw, entry.Shape, entry.Dtype, target);
 
             writer.Write(outBytes);
@@ -245,7 +246,7 @@ public static class SmmQuantizer
             // K-quant needs 256-divisible flattened length). F16 is always safe —
             // but only if it is still leaner than the source, so we never
             // upscale a tensor that is already smaller than F16 would be.
-            if (QuantizationOps.GetRawTensorByteCount(shape, QuantDType.F16) < raw.Length)
+            if (QuantizationOps.GetFlatTensorByteCount(shape, QuantDType.F16) < raw.Length)
                 return (TensorQuantizer.Quantize(values, shape, QuantDType.F16), QuantDType.F16);
             return (raw, source);
         }

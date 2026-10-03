@@ -88,7 +88,8 @@ public static class FfnKernels
         LinearLayer[] wDown,
         int topK,
         ActivationOps acts,
-        SharpMind.Core.Memory.IWorkspace? workspace = null)
+        SharpMind.Core.Memory.IWorkspace? workspace = null,
+        bool normTopKProb = false)
     {
         int batch = x.ElementCount / x.Shape[^1];
         int hidden = x.Shape[^1];
@@ -120,13 +121,24 @@ public static class FfnKernels
             using var tokenLogits = Tensor<float>.From(logits.RowSpan(t), logits.Shape.Cols);
             int[] topKIdx = ArgTopK(tokenLogits, topK);
 
+            // Only renormalise when the architecture actually does so. llama.cpp skips
+            // this for qwen2moe/olmoe (norm_w = false), leaving the top-k weights as raw
+            // softmax probabilities over all experts, which sum to < 1. Dividing by the
+            // sum regardless — as this used to — amplified the routed branch and produced
+            // gibberish. Clamp to the smallest F16 normal, matching ggml's guard against
+            // a zero divisor.
             float weightSum = 0f;
-            foreach (int expertIdx in topKIdx)
-                weightSum += probs.RowSpan(t)[expertIdx];
+            if (normTopKProb)
+            {
+                foreach (int expertIdx in topKIdx)
+                    weightSum += probs.RowSpan(t)[expertIdx];
+                weightSum = MathF.Max(weightSum, 6.103515625e-5f);
+            }
 
             foreach (int expertIdx in topKIdx)
             {
-                float weight = probs.RowSpan(t)[expertIdx] / weightSum;
+                float weight = normTopKProb ? probs.RowSpan(t)[expertIdx] / weightSum
+                                            : probs.RowSpan(t)[expertIdx];
                 // Gated uses ws for all intermediates — no heap allocs
                 using var expertOut = Gated(tokenInput, wGate[expertIdx],
                                              wUp[expertIdx], wDown[expertIdx], acts, ws);

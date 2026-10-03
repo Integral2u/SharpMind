@@ -217,7 +217,8 @@ public class Q8_0WideWeightsTests
 
     private static byte[] RandomQ8_0(int k, int n, Random rng)
     {
-        var raw = new byte[(int)QuantizationOps.GetRawTensorByteCount([n, k], QuantDType.Q8_0)];
+        // GGUF layout: ne[0] = k is the quantised row, n is the row count.
+        var raw = new byte[(int)QuantizationOps.GetRawTensorByteCount([k, n], QuantDType.Q8_0)];
         rng.NextBytes(raw);
         for (int off = 0; off < raw.Length; off += 34)
         {

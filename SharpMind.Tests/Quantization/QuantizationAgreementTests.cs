@@ -45,15 +45,18 @@ public class QuantizationAgreementTests
     private static int GetBlockBytes(QuantDType dtype)
     {
         int blockSize = GetBlockSize(dtype);
-        // One block is blockSize elements along the LAST axis. The 32-element formats size
-        // themselves from that axis, so [blockSize, 1] asks for blockSize rows of one padded
-        // block each - 32x the real stride, which left SanitizeScaleValues pinning one scale
-        // in every 32 blocks. The 256-element K-quants divide total elements and were unaffected.
-        return (int)QuantizationOps.GetRawTensorByteCount([1, blockSize], dtype);
+        // One row of exactly one block: [blockSize] in GGUF layout is ceil(blockSize /
+        // blockSize) = 1 block over 1 row, which is the real per-block stride. Asking for
+        // [1, blockSize] instead yields blockSize rows of one block each, so
+        // SanitizeScaleValues would pin one scale in every blockSize blocks and leave the
+        // rest as random bytes - which decode to denormal/NaN scales and make the SSE and
+        // Scalar kernels disagree by infinity.
+        return (int)QuantizationOps.GetRawTensorByteCount([blockSize], dtype);
     }
 
     private static byte[] GenerateRawData(QuantDType dtype, int K, int N, int seed)
     {
+        // GGUF layout: ne[0] = K is the quantised row, N is the row count.
         int totalBytes = (int)QuantizationOps.GetRawTensorByteCount([K, N], dtype);
         var data = new byte[totalBytes];
         new Random(seed).NextBytes(data);

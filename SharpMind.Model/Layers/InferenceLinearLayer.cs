@@ -229,12 +229,19 @@ public abstract class InferenceLinearLayer : LinearLayer
         return result;
     }
 
-    public override void FreeFloatWeight()
+public override void FreeFloatWeight()
     {
+        // F32/F16 tensors (e.g. MoE router `ffn_gate_inp`, Qwen shared-expert
+        // `ffn_gate_inp_shexp`) have no raw quantized payload — the float tensor IS the
+        // only copy. Freeing it left the layer holding an InFeatures-sized placeholder,
+        // so the forward pass died with "weightElements=2048, expected=122880".
+        if (RawQuantizedData is null)
+            return;
+
         // Drop the repack and the raw source it roots. Streaming frees and reloads a layer
         // every forward; without this the freed layer's whole Q8_0 payload (and the ~6%
         // wider repack) stayed rooted in the cache, so a streaming load ended up holding
-        // every layer's weights at once — more than a full load. The next reload installs
+        // every layer's weights at once - more than a full load. The next reload installs
         // a fresh raw array and rebuilds. See Q8_0WideWeights.Cache.Clear.
         _wide.Clear();
         if (_ownsWeight)
@@ -258,7 +265,11 @@ public abstract class InferenceLinearLayer : LinearLayer
         // from its config. Forward keeps its own guard as defence in depth.
         if (rawData is not null)
         {
-            long expectedBytes = QuantizationOps.GetRawTensorByteCount([OutFeatures, InFeatures], QuantDtype);
+            // GGUF stores ne[0] (the quantised row, K) first, so the shape is [InFeatures,
+            // OutFeatures]. Passing [OutFeatures, InFeatures] happened to agree while the
+            // byte-count formula ignored which dim was the row, and diverged as soon as
+            // the row length was not block-aligned.
+            long expectedBytes = QuantizationOps.GetRawTensorByteCount([InFeatures, OutFeatures], QuantDtype);
             if (rawData.Length != expectedBytes)
                 throw new NotSupportedException(
                     $"[{Name}] weight shape does not match this architecture: dtype={QuantDtype}, " +

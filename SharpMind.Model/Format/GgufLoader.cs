@@ -327,8 +327,21 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
         long rawTopK = meta.GetLong($"{arch}.expert_used_count", -1);
         int topKExperts = rawTopK > 0 ? (int)rawTopK : 2;
 
+        // Qwen1.5-MoE sizes the routed experts and the shared expert separately:
+        // feed_forward_length (5632) is the SHARED expert, while the routed
+        // experts are expert_feed_forward_length (1408) wide. Falling back to
+        // ffnDim for the experts would size every expert weight guard to 5632,
+        // which the 1408-wide expert planes can never satisfy.
+        long rawExpertFfn = meta.GetLong($"{arch}.expert_feed_forward_length", -1);
+        int expertFfnDim = rawExpertFfn > 0 ? (int)rawExpertFfn : 0;
+        long rawSharedFfn = meta.GetLong($"{arch}.expert_shared_feed_forward_length", -1);
+        int sharedExpertFfnDim = rawSharedFfn > 0 ? (int)rawSharedFfn : 0;
+
         long rawSlidingWindow = meta.GetLong($"{arch}.attention.sliding_window", -1);
         int slidingWindowSize = rawSlidingWindow > 0 ? (int)rawSlidingWindow : 0;
+        PositionalEncoding positionalEncoding = (arch.StartsWith("bert", StringComparison.OrdinalIgnoreCase) || arch.StartsWith("roberta", StringComparison.OrdinalIgnoreCase) || arch.StartsWith("xlnet", StringComparison.OrdinalIgnoreCase))
+            ? PositionalEncoding.NoPE
+            : PositionalEncoding.RoPE;
 
         // Fallback: ministral and mistral3 use sliding-window attention by
         // default. When the GGUF omits the key, assume a 4096-token window
@@ -391,7 +404,10 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
             NormTypeOverride = normTypeOverride,
             NumExperts = expertCount,
             TopKExperts = topKExperts,
+            ExpertFfnDim = expertFfnDim,
+            SharedExpertFfnDim = sharedExpertFfnDim,
             SlidingWindowSize = slidingWindowSize,
+            PositionalEncoding = positionalEncoding,
         };
     }
 
@@ -556,7 +572,7 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
         var meta = LoadMeta(_path);
         weights.GgufMeta = meta;
         weights.GgufPath = _path;
-        weights.IsMoE = meta.Tensors.Any(t => t.Name.Contains(".exps."));
+        weights.IsMoE = TransformerWeights.IsMoEGguf(meta.Tensors);
 
         int total = meta.Tensors.Count;
         int loaded = 0;
@@ -582,7 +598,7 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
             meta = LoadMeta(_path);
             weights.GgufMeta = meta;
             weights.GgufPath = _path;
-            weights.IsMoE = meta.Tensors.Any(t => t.Name.Contains(".exps."));
+            weights.IsMoE = TransformerWeights.IsMoEGguf(meta.Tensors);
         }
 
         var targetBlock = layerIndex < weights.Blocks.Length ? weights.Blocks[layerIndex] : null;
@@ -609,7 +625,7 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
         {
             weights.GgufMeta = meta;
             weights.GgufPath = _path;
-            weights.IsMoE = meta.Tensors.Any(t => t.Name.Contains(".exps."));
+            weights.IsMoE = TransformerWeights.IsMoEGguf(meta.Tensors);
         }
 
         using var stream = WeightStreamFactory.Open(_path, _useSafeIo);
@@ -718,6 +734,64 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
                 SetTensorMeta(block, "RawWq", meta.DataOffset + info.Offset, partSize, info.Dtype);
                 SetTensorMeta(block, "RawWk", meta.DataOffset + info.Offset + partSize, partSize, info.Dtype);
                 SetTensorMeta(block, "RawWv", meta.DataOffset + info.Offset + partSize * 2, partSize, info.Dtype);
+                return;
+            }
+
+            // Fused MoE expert stack. qwen2moe packs all experts of one FFN
+            // projection into a single 3D tensor with no per-expert index in the
+            // name, e.g. "blk.N.ffn_gate_exps.weight" with GGUF shape
+            // [in, out, num_experts] (e.g. [2048, 1408, 60]). GGUF lists dims
+            // fastest-varying first, so the expert axis is the LAST dim and expert
+            // e owns the contiguous byte range [e*plane, (e+1)*plane) — exactly the
+            // [in, out] chunk each InferenceLinearLayer's size guard expects.
+            if (rawField.StartsWith("RawWgateExpFused", StringComparison.Ordinal) ||
+                rawField.StartsWith("RawWupExpFused", StringComparison.Ordinal) ||
+                rawField.StartsWith("RawWdownExpFused", StringComparison.Ordinal))
+            {
+                if (info.Shape.Length != 3)
+                    throw new InvalidDataException(
+                        $"Fused MoE expert tensor '{info.Name}' has rank {info.Shape.Length}; expected a 3D [in, out, experts] tensor.");
+
+                int numExperts = (int)info.Shape[2];
+
+                // Derive the per-expert plane size from the 2D sub-shape rather than
+                // dividing rawSize. QuantizationOps.GetRawTensorByteCount() lays blocks
+                // out along the LAST dim, which only gives the right total when that dim
+                // is a multiple of the block size — true for the 2D tensors models use
+                // (N is typically a multiple of 256) but NOT here, where the last dim is
+                // the 60-expert axis. Asking it for the 3D shape over-counted
+                // (ceil(60/32)=2 blocks per row), and dividing that total by 60 gave a
+                // non-integral plane size. The 2D call is correct because ne[0] and ne[1]
+                // are both block-aligned here.
+                int planeSize = TensorLoadHelper.CheckedInt(
+                    QuantizationOps.GetRawTensorByteCount([(int)info.Shape[0], (int)info.Shape[1]], info.Dtype),
+                    "fused MoE expert plane size");
+
+                long needed = meta.DataOffset + info.Offset + (long)planeSize * numExperts;
+                if (needed > stream.Length)
+                    throw new InvalidDataException(
+                        $"Fused MoE expert tensor '{info.Name}' needs {needed} bytes " +
+                        $"({numExperts} experts x {planeSize}) but the file is only {stream.Length} bytes.");
+
+                // Experts are contiguous planes in the file, so read each one straight
+                // from the stream instead of staging the whole stack first. The fused
+                // buffer was ~97 MB per tensor (down_exps) and, with three such tensors
+                // per layer across 24 layers, that transient LOH churn was enough to
+                // fault during a full load.
+                for (int e = 0; e < numExperts; e++)
+                {
+                    byte[] expert = new byte[planeSize];
+                    stream.ReadExactly(expert);
+
+                    string targetField = rawField switch
+                    {
+                        var f when f.StartsWith("RawWgateExpFused", StringComparison.Ordinal) => $"RawWgateExp_{e}",
+                        var f when f.StartsWith("RawWupExpFused", StringComparison.Ordinal) => $"RawWupExp_{e}",
+                        _ => $"RawWdownExp_{e}",
+                    };
+                    SetRawField(block, targetField, expert, info.Dtype);
+                    SetTensorMeta(block, targetField, meta.DataOffset + info.Offset + (long)e * planeSize, planeSize, info.Dtype);
+                }
                 return;
             }
 

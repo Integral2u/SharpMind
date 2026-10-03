@@ -115,6 +115,58 @@ public sealed record ModelConfig
     /// <summary>Number of experts activated per token (top-k routing).</summary>
     public int TopKExperts { get; init; } = 2;
 
+    /// <summary>
+    /// Whether the top-k router weights are renormalised to sum to 1 before the
+    /// expert outputs are accumulated.
+    /// </summary>
+    /// <remarks>
+    /// This is architecture-dependent and is NOT equivalent to "missing key means
+    /// normalise". llama.cpp hardcodes <c>norm_w = false</c> for qwen2moe
+    /// (src/models/qwen2moe.cpp) and olmoe, so those architectures weight each token's
+    /// experts by their raw softmax probabilities over <em>all</em> experts — the top-k
+    /// weights sum to roughly 0.7-0.9, not 1. Only deepseek2 and exaone-moe read
+    /// <c>expert_weights_norm</c> from metadata. Renormalising qwen2moe inflates the
+    /// routed branch by ~1/0.8 relative to the correctly-gated shared expert and
+    /// degrades generation to noise.
+    /// Defaults to <see langword="false"/>, which matches the architectures verified
+    /// against llama.cpp. Note that Mixtral has no longer any llama.cpp reference
+    /// implementation upstream, so its behaviour cannot be verified this way.
+    /// </remarks>
+    public bool NormTopKProb { get; init; }
+
+    /// <summary>
+    /// Width of a single routed expert's FFN. GGUF key:
+    /// {arch}.expert_feed_forward_length. 0 means "same as <see cref="FfnDim"/>".
+    /// </summary>
+    /// <remarks>
+    /// In Qwen1.5-MoE this is 1408 while <see cref="FfnDim"/> is 5632 — the
+    /// latter is the width of the *shared* expert, not a routed one. Sizing the
+    /// routed experts from <see cref="FfnDim"/> would give every expert a
+    /// weight guard that the file's expert planes cannot satisfy.
+    /// </remarks>
+    public int ExpertFfnDim { get; init; }
+
+    /// <summary>
+    /// Width of the always-on shared expert's FFN, or 0 when the model has no
+    /// shared expert. GGUF key: {arch}.expert_shared_feed_forward_length
+    /// (Qwen1.5-MoE: 5632).
+    /// </summary>
+    public int SharedExpertFfnDim { get; init; }
+
+    /// <summary>Effective routed-expert FFN width, falling back to <see cref="FfnDim"/>.</summary>
+    public int ResolvedExpertFfnDim => ExpertFfnDim > 0 ? ExpertFfnDim : FfnDim;
+
+    /// <summary>
+    /// Effective shared-expert FFN width, falling back to <see cref="FfnDim"/>. Used
+    /// when a model ships *_shexp tensors without
+    /// <c>expert_shared_feed_forward_length</c>, so the shared branch still gets a
+    /// correctly sized matrix instead of a zero-width one.
+    /// </summary>
+    public int ResolvedSharedFfnDim => SharedExpertFfnDim > 0 ? SharedExpertFfnDim : FfnDim;
+
+    /// <summary>True when the model carries an always-on shared expert alongside the routed ones.</summary>
+    public bool HasSharedExpert => SharedExpertFfnDim > 0;
+
     // RoPE
 
     /// <summary>
@@ -293,6 +345,11 @@ public sealed record ModelConfig
         if (NumExperts < TopKExperts)
             throw new InvalidOperationException(
                 $"NumExperts ({NumExperts}) must be >= TopKExperts ({TopKExperts}).");
+        if (ExpertFfnDim is < 0)
+            throw new InvalidOperationException($"ExpertFfnDim must be >= 0 (was {ExpertFfnDim}); 0 means 'same as FfnDim'.");
+        if (SharedExpertFfnDim < 0)
+            throw new InvalidOperationException(
+                $"SharedExpertFfnDim must be >= 0 (was {SharedExpertFfnDim}); 0 means 'no shared expert'.");
         if (HasVision)
         {
             if (VisionImageSize <= 0)

@@ -230,7 +230,7 @@ public sealed class SmmModifierTests : IDisposable
         using var ms = new MemoryStream();
         foreach (var entry in entries)
         {
-            long rawSize = QuantizationOps.GetRawTensorByteCount(entry.Shape, entry.Dtype);
+            long rawSize = QuantizationOps.GetFlatTensorByteCount(entry.Shape, entry.Dtype);
             byte[] bytes = SmmLoader.ReadTensorBytes(path, entry, rawSize);
             ms.Write(BitConverter.GetBytes(entry.Name.Length), 0, 4);
             var name = System.Text.Encoding.UTF8.GetBytes(entry.Name);

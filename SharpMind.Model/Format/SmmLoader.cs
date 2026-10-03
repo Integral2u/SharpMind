@@ -295,7 +295,9 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
 
         if (target == null && block == null && !isLmHead) return;
 
-        long rawSize = QuantizationOps.GetRawTensorByteCount(entry.Shape, entry.Dtype);
+        // SMM packs blocks flat over the flattened buffer (TensorQuantizer), so it must
+        // not use GGUF's per-row padding rule.
+        long rawSize = QuantizationOps.GetFlatTensorByteCount(entry.Shape, entry.Dtype);
         if (rawSize <= 0) return;
 
         byte[] rawBytes = ReadTensorBytes(stream, index, entry, rawSize);

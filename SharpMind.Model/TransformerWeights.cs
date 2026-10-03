@@ -152,6 +152,25 @@ public abstract class TransformerWeights : IDisposable
         _lmHead = _lmHeadFactory is null ? _lmHead : new Lazy<Tensor<float>>(_lmHeadFactory);
     }
 
+    /// <summary>
+    /// Single source of truth for "does this GGUF describe a mixture-of-experts model?"
+    /// </summary>
+    /// <remarks>
+    /// Every caller must use this, not a local subset of the patterns. The
+    /// streaming path once used only <c>".exps."</c>, which misses qwen2moe's
+    /// <c>ffn_gate_exps.weight</c> (no leading dot). That left
+    /// <see cref="IsMoE"/> false there while the layers were still built as MoE
+    /// from the architecture string, so every MoE tensor fell through to the
+    /// dense ffn_gate branch: the router ended up with no weights and the
+    /// forward threw "RawQuantizedData is null and no float fallback available".
+    /// </remarks>
+    public static bool IsMoEGguf(IEnumerable<TensorInfo> tensors) =>
+        tensors.Any(t =>
+            t.Name.Contains(".exps.", StringComparison.OrdinalIgnoreCase) ||
+            t.Name.Contains("_exps", StringComparison.OrdinalIgnoreCase) ||
+            t.Name.Contains("ffn_gate_inp", StringComparison.OrdinalIgnoreCase) ||
+            (t.Name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase) && RegexGenerated.ExpertIndex.IsMatch(t.Name)));
+
     public (Tensor<float>? target, BlockWeights? block, string? rawField) ResolveTarget(string name)
     {
         // The token embedding tensor is exactly "token_embd.weight". Exclude
@@ -210,7 +229,31 @@ public abstract class TransformerWeights : IDisposable
                 if (name.Contains("attn_norm", StringComparison.OrdinalIgnoreCase) || name.Contains("input_layernorm", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
                 if (name.Contains("ffn_norm", StringComparison.OrdinalIgnoreCase) || name.Contains("post_attention_layernorm", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
 
-                if (IsMoE && name.Contains(".exps.", StringComparison.OrdinalIgnoreCase))
+                // MoE shared expert (Qwen1.5-MoE). Matched BEFORE the routed-expert
+                // branch because "ffn_gate_shexp" also contains "ffn_gate" — routing
+                // it as an expert or as the router would bind it to the wrong weight.
+                if (IsMoE && name.Contains("_shexp", StringComparison.OrdinalIgnoreCase))
+                {
+                    // ffn_gate_inp_shexp is the F32 sigmoid gate row; let the float
+                    // path fill SharedGateInp rather than short-circuiting on raw bytes.
+                    if (name.Contains("gate_inp", StringComparison.OrdinalIgnoreCase))
+                        return (null, block, null);
+                    if (name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase))
+                        return (null, block, "RawWSharedGate");
+                    if (name.Contains("ffn_up", StringComparison.OrdinalIgnoreCase))
+                        return (null, block, "RawWSharedUp");
+                    if (name.Contains("ffn_down", StringComparison.OrdinalIgnoreCase))
+                        return (null, block, "RawWSharedDown");
+                    return (null, block, null);
+                }
+
+                bool isMoEExpert = IsMoE && (
+                    name.Contains(".exps.", StringComparison.OrdinalIgnoreCase) ||
+                    name.Contains("_exps", StringComparison.OrdinalIgnoreCase) ||
+                    (name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase) && RegexGenerated.ExpertIndex.IsMatch(name)) ||
+                    (name.Contains("ffn_up", StringComparison.OrdinalIgnoreCase) && RegexGenerated.ExpertIndex.IsMatch(name)) ||
+                    (name.Contains("ffn_down", StringComparison.OrdinalIgnoreCase) && RegexGenerated.ExpertIndex.IsMatch(name)));
+                if (isMoEExpert)
                 {
                     var expMatch = RegexGenerated.ExpertIndex.Match(name);
                     if (expMatch.Success && int.TryParse(expMatch.Groups[1].Value, out int expIdx))
@@ -222,11 +265,27 @@ public abstract class TransformerWeights : IDisposable
                         if (name.Contains("ffn_down", StringComparison.OrdinalIgnoreCase))
                             return (null, block, $"RawWdownExp_{expIdx}");
                     }
+                    // Fused expert stack: "ffn_gate_exps"/"ffn_up_exps"/"ffn_down_exps"
+                    // with no {e} index in the name. The loader splits the 3D tensor.
+                    if (name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase))
+                        return (null, block, "RawWgateExpFused");
+                    if (name.Contains("ffn_up", StringComparison.OrdinalIgnoreCase))
+                        return (null, block, "RawWupExpFused");
+                    if (name.Contains("ffn_down", StringComparison.OrdinalIgnoreCase))
+                        return (null, block, "RawWdownExpFused");
                     return (null, block, null);
                 }
 
-                if (IsMoE && name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase))
-                    return (null, block, "RawRouter");
+                if (IsMoE && name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase)
+                    && !name.Contains("_shexp", StringComparison.OrdinalIgnoreCase))
+                    // Routers are F32 in practice (llama.cpp always writes them unquantized),
+                    // so no raw field is returned: that keeps the loader on the float path,
+                    // which is what fills WRouter. Returning a raw field here made the loader
+                    // store the bytes and return early, leaving the router with no weights —
+                    // "RawQuantizedData is null and no float fallback available" at first
+                    // forward. Without this guard the name fell through to the dense
+                    // ffn_gate branch below and was bound to the gated FFN's RawWgate.
+                    return (null, block, null);
 
                 // LFM2 short-conv (no-attention) block weights. The conv kernel is
                 // always stored F32 so it loads via the float path, not as a raw field.
@@ -266,15 +325,22 @@ public abstract class TransformerWeights : IDisposable
             var b = Blocks[bIdx];
             if (name.Contains("bias", StringComparison.OrdinalIgnoreCase))
             {
-                if (IsMoE && name.Contains(".exps.", StringComparison.OrdinalIgnoreCase))
+                bool isMoEBiasExp = IsMoE && (
+                    name.Contains(".exps.", StringComparison.OrdinalIgnoreCase) ||
+                    name.Contains("_exps", StringComparison.OrdinalIgnoreCase) ||
+                    (name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase) && RegexGenerated.ExpertIndex.IsMatch(name)) ||
+                    (name.Contains("ffn_up", StringComparison.OrdinalIgnoreCase) && RegexGenerated.ExpertIndex.IsMatch(name)) ||
+                    (name.Contains("ffn_down", StringComparison.OrdinalIgnoreCase) && RegexGenerated.ExpertIndex.IsMatch(name)));
+                if (isMoEBiasExp)
                 {
                     var expMatch = RegexGenerated.ExpertIndex.Match(name);
                     if (expMatch.Success && int.TryParse(expMatch.Groups[1].Value, out int expIdx))
                     {
+                        int expFfn = Config.ResolvedExpertFfnDim;
                         if (name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase))
-                            return GetOrAdd(b.WgateExpBias, expIdx, () => new Tensor<float>(Config.FfnDim), v => b.WgateExpBias = v);
+                            return GetOrAdd(b.WgateExpBias, expIdx, () => new Tensor<float>(expFfn), v => b.WgateExpBias = v);
                         if (name.Contains("ffn_up", StringComparison.OrdinalIgnoreCase))
-                            return GetOrAdd(b.WupExpBias, expIdx, () => new Tensor<float>(Config.FfnDim), v => b.WupExpBias = v);
+                            return GetOrAdd(b.WupExpBias, expIdx, () => new Tensor<float>(expFfn), v => b.WupExpBias = v);
                         if (name.Contains("ffn_down", StringComparison.OrdinalIgnoreCase))
                             return GetOrAdd(b.WdownExpBias, expIdx, () => new Tensor<float>(Config.HiddenDim), v => b.WdownExpBias = v);
                     }
@@ -328,22 +394,57 @@ else
                 if (name.Contains("attn_norm", StringComparison.OrdinalIgnoreCase) || name.Contains("input_layernorm", StringComparison.OrdinalIgnoreCase)) return b.Norm1W;
                 if (name.Contains("ffn_norm", StringComparison.OrdinalIgnoreCase) || name.Contains("post_attention_layernorm", StringComparison.OrdinalIgnoreCase)) return b.Norm2W;
 
-                if (IsMoE && name.Contains(".exps.", StringComparison.OrdinalIgnoreCase))
+                // MoE shared expert. "_shexp" is matched on its own, never gated on
+                // HasSharedExpert: if the file carries *_shexp tensors but its metadata
+                // lacks expert_shared_feed_forward_length, letting these fall through
+                // sent them to the router branch below, where ffn_gate_inp_shexp (rank 1,
+                // [HiddenDim]) overwrote the real [HiddenDim, NumExperts] router. The
+                // symptom was the router reporting "weightElements=2048, expected=122880"
+                // at the first forward, and which tensor won depended on file order.
+                if (IsMoE && name.Contains("_shexp", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (name.Contains("gate_inp", StringComparison.OrdinalIgnoreCase))
+                        return b.SharedGateInp ??= new Tensor<float>(Config.HiddenDim);
+                    int sharedFfn = Config.ResolvedSharedFfnDim;
+                    if (name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase))
+                        return b.WSharedGate ??= new Tensor<float>(Config.HiddenDim, sharedFfn);
+                    if (name.Contains("ffn_up", StringComparison.OrdinalIgnoreCase))
+                        return b.WSharedUp ??= new Tensor<float>(Config.HiddenDim, sharedFfn);
+                    if (name.Contains("ffn_down", StringComparison.OrdinalIgnoreCase))
+                        return b.WSharedDown ??= new Tensor<float>(sharedFfn, Config.HiddenDim);
+                    return null;
+                }
+
+                bool isMoEExpW = IsMoE && (
+                    name.Contains(".exps.", StringComparison.OrdinalIgnoreCase) ||
+                    name.Contains("_exps", StringComparison.OrdinalIgnoreCase) ||
+                    (name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase) && RegexGenerated.ExpertIndex.IsMatch(name)) ||
+                    (name.Contains("ffn_up", StringComparison.OrdinalIgnoreCase) && RegexGenerated.ExpertIndex.IsMatch(name)) ||
+                    (name.Contains("ffn_down", StringComparison.OrdinalIgnoreCase) && RegexGenerated.ExpertIndex.IsMatch(name)));
+                if (isMoEExpW)
                 {
                     var expMatch = RegexGenerated.ExpertIndex.Match(name);
                     if (expMatch.Success && int.TryParse(expMatch.Groups[1].Value, out int expIdx))
                     {
+                        // Routed experts use the expert FFN width, which is narrower
+                        // than Config.FfnDim on models that also have a shared expert.
+                        int expFfn = Config.ResolvedExpertFfnDim;
                         if (name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase))
-                            return GetOrAdd(b.WgateExp, expIdx, () => new Tensor<float>(Config.HiddenDim, Config.FfnDim), v => b.WgateExp = v);
+                            return GetOrAdd(b.WgateExp, expIdx, () => new Tensor<float>(Config.HiddenDim, expFfn), v => b.WgateExp = v);
                         if (name.Contains("ffn_up", StringComparison.OrdinalIgnoreCase))
-                            return GetOrAdd(b.WupExp, expIdx, () => new Tensor<float>(Config.HiddenDim, Config.FfnDim), v => b.WupExp = v);
+                            return GetOrAdd(b.WupExp, expIdx, () => new Tensor<float>(Config.HiddenDim, expFfn), v => b.WupExp = v);
                         if (name.Contains("ffn_down", StringComparison.OrdinalIgnoreCase))
-                            return GetOrAdd(b.WdownExp, expIdx, () => new Tensor<float>(Config.FfnDim, Config.HiddenDim), v => b.WdownExp = v);
+                            return GetOrAdd(b.WdownExp, expIdx, () => new Tensor<float>(expFfn, Config.HiddenDim), v => b.WdownExp = v);
                     }
                     return null;
                 }
 
-                if (IsMoE && name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase))
+                // The router. "_shexp" is excluded explicitly: ffn_gate_inp_shexp also
+                // contains "ffn_gate", and WRouter is ??=, so an unfiltered match lets
+                // the shared gate silently replace the real router.
+                if (IsMoE
+                    && name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase)
+                    && !name.Contains("_shexp", StringComparison.OrdinalIgnoreCase))
                     return b.WRouter ??= new Tensor<float>(Config.HiddenDim, Config.NumExperts);
 
                 if (name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase) || name.Contains("ffn_up", StringComparison.OrdinalIgnoreCase))
@@ -421,6 +522,10 @@ else
             case "RawWScIn": block.RawWScIn = data; block.QuantDtypeWScIn = dtype; break;
             case "RawWScOut": block.RawWScOut = data; block.QuantDtypeWScOut = dtype; break;
             case "RawRouter": block.RawRouter = data; block.QuantDtypeRouter = dtype; break;
+            case "RawWSharedGate": block.RawWSharedGate = data; block.QuantDtypeSharedGate = dtype; break;
+            case "RawWSharedUp": block.RawWSharedUp = data; block.QuantDtypeSharedUp = dtype; break;
+            case "RawWSharedDown": block.RawWSharedDown = data; block.QuantDtypeSharedDown = dtype; break;
+            case "RawWSharedGateInp": block.RawWSharedGateInp = data; break;
         }
     }
 
@@ -462,6 +567,9 @@ else
             Add(seen, block.QuantDtypeWScOut, block.WScOut is not null);
             Add(seen, null, block.WScConv is not null);
             Add(seen, block.QuantDtypeRouter, block.RawRouter is not null);
+            Add(seen, block.QuantDtypeSharedGate, block.RawWSharedGate is not null);
+            Add(seen, block.QuantDtypeSharedUp, block.RawWSharedUp is not null);
+            Add(seen, block.QuantDtypeSharedDown, block.RawWSharedDown is not null);
 
             if (block.QuantDtypeWgateExp is { } gateExp)
                 foreach (var (_, d) in gateExp) seen.Add(d);
@@ -558,6 +666,20 @@ else
         public Dictionary<int, Tensor<float>>? WdownExp { get; set; }
         public Dictionary<int, Tensor<float>>? WdownExpBias { get; set; }
 
+        // MoE shared expert (Qwen1.5-MoE "*_shexp" tensors). These run on every
+        // token alongside the top-k routed experts.
+        public byte[]? RawWSharedGate { get; set; }
+        public byte[]? RawWSharedUp { get; set; }
+        public byte[]? RawWSharedDown { get; set; }
+        public byte[]? RawWSharedGateInp { get; set; }
+        public Tensor<float>? WSharedGate { get; set; }
+        public Tensor<float>? WSharedGateBias { get; set; }
+        public Tensor<float>? WSharedUp { get; set; }
+        public Tensor<float>? WSharedUpBias { get; set; }
+        public Tensor<float>? WSharedDown { get; set; }
+        public Tensor<float>? WSharedDownBias { get; set; }
+        public Tensor<float>? SharedGateInp { get; set; }
+
         // Per-tensor quantization dtype
         public QuantDType? QuantDtypeWq { get; set; }
         public QuantDType? QuantDtypeWk { get; set; }
@@ -573,6 +695,9 @@ else
         public Dictionary<int, QuantDType>? QuantDtypeWupExp { get; set; }
         public Dictionary<int, QuantDType>? QuantDtypeWdownExp { get; set; }
         public QuantDType? QuantDtypeRouter { get; set; }
+        public QuantDType? QuantDtypeSharedGate { get; set; }
+        public QuantDType? QuantDtypeSharedUp { get; set; }
+        public QuantDType? QuantDtypeSharedDown { get; set; }
 
         // Tensor metadata (offset, size, dtype) populated by IModelLoader.PreInit
         public Dictionary<string, TensorMeta> TensorMeta { get; } = [];
@@ -608,6 +733,10 @@ else
             DisposeDict(WgateExp); DisposeDict(WgateExpBias);
             DisposeDict(WupExp); DisposeDict(WupExpBias);
             DisposeDict(WdownExp); DisposeDict(WdownExpBias);
+            WSharedGate?.Dispose(); WSharedGateBias?.Dispose();
+            WSharedUp?.Dispose(); WSharedUpBias?.Dispose();
+            WSharedDown?.Dispose(); WSharedDownBias?.Dispose();
+            SharedGateInp?.Dispose();
             // Null the raw quantized byte[] references too — same rationale as
             // TransformerWeights.Dispose: these can be a model's entire weight
             // footprint in LOH data, and leaving the references rooted in the
@@ -617,6 +746,7 @@ else
             RawWScIn = null; RawWScOut = null;
             RawRouter = null;
             RawWgateExp = null; RawWupExp = null; RawWdownExp = null;
+            RawWSharedGate = null; RawWSharedUp = null; RawWSharedDown = null; RawWSharedGateInp = null;
         }
 
         private static void DisposeDict(Dictionary<int, Tensor<float>>? dict)
@@ -658,6 +788,11 @@ else
             RawWgateExp = null; RawWupExp = null; RawWdownExp = null;
             QuantDtypeWgateExp = null; QuantDtypeWupExp = null; QuantDtypeWdownExp = null;
             RawRouter = null; QuantDtypeRouter = null;
+            WSharedGate?.Dispose(); WSharedGate = null;
+            WSharedUp?.Dispose(); WSharedUp = null;
+            WSharedDown?.Dispose(); WSharedDown = null;
+            RawWSharedGate = null; RawWSharedUp = null; RawWSharedDown = null; RawWSharedGateInp = null;
+            QuantDtypeSharedGate = null; QuantDtypeSharedUp = null; QuantDtypeSharedDown = null;
 
             // Deliberately NOT disposed/nulled: the small tensors the built layers
             // capture by reference for their whole lifetime. NormLayer stores the
@@ -724,7 +859,7 @@ TransformerWeights.BlockWeights[] blocks,
     {
         var meta = Format.ModelFormatHelpers.LoadMetaForFile(GgufPath!);
         GgufMeta = meta;
-        IsMoE = meta.Tensors.Any(t => t.Name.Contains(".exps."));
+        IsMoE = IsMoEGguf(meta.Tensors);
 
         // Populate TensorMeta for all blocks (file offsets, sizes, dtypes)
         foreach (var info in meta.Tensors)
@@ -747,27 +882,52 @@ TransformerWeights.BlockWeights[] blocks,
             }
 
             if (block != null && rawField != null)
-            {
-                long rawSize = Core.Quantization.QuantizationOps.GetRawTensorByteCount(info.Shape, info.Dtype);
-                if (rawSize > 0)
                 {
                     if (rawField == "RawWqkv")
                     {
                         // Fused QKV: register individual TensorMeta entries so the
                         // AttentionLayer constructor reads the correct dtype instead
                         // of defaulting to F32.
-                        int partSize = (int)(rawSize / 3);
+                        long qkvSize = Core.Quantization.QuantizationOps.GetRawTensorByteCount(info.Shape, info.Dtype);
+                        int partSize = (int)(qkvSize / 3);
                         long baseOffset = meta.DataOffset + info.Offset;
                         SetTensorMeta(block, "RawWq", baseOffset, partSize, info.Dtype);
                         SetTensorMeta(block, "RawWk", baseOffset + partSize, partSize, info.Dtype);
                         SetTensorMeta(block, "RawWv", baseOffset + partSize * 2, partSize, info.Dtype);
                     }
+                    else if (rawField.EndsWith("ExpFused", StringComparison.Ordinal) && info.Shape.Length == 3)
+                    {
+                        // Fused MoE expert stack: the loader slices this 3D tensor into
+                        // per-expert planes when the layer's bytes are read, but the
+                        // FfnLayer is constructed from TensorMeta BEFORE that happens.
+                        // Without these entries DtypeFromMeta("RawWgateExp_e") misses and
+                        // every expert falls back to F32, so the quantized bytes are then
+                        // rejected as the wrong size at load time.
+                        //
+                        // The plane size must come from the 2D sub-shape: the 3D byte
+                        // count lays blocks along the last dim (the expert axis here),
+                        // which over-counts unless numExperts is a multiple of the block
+                        // size. See the matching note in GgufLoader.
+                        int numExperts = info.Shape[2];
+                        int planeSize = (int)Core.Quantization.QuantizationOps.GetRawTensorByteCount(
+                            [info.Shape[0], info.Shape[1]], info.Dtype);
+                        long baseOffset = meta.DataOffset + info.Offset;
+                        string prefix = rawField switch
+                        {
+                            "RawWgateExpFused" => "RawWgateExp_",
+                            "RawWupExpFused" => "RawWupExp_",
+                            _ => "RawWdownExp_",
+                        };
+                        for (int e = 0; e < numExperts; e++)
+                            SetTensorMeta(block, $"{prefix}{e}", baseOffset + (long)e * planeSize, planeSize, info.Dtype);
+                    }
                     else
                     {
-                        SetTensorMeta(block, rawField, meta.DataOffset + info.Offset, (int)rawSize, info.Dtype);
+                        long rawSize = Core.Quantization.QuantizationOps.GetRawTensorByteCount(info.Shape, info.Dtype);
+                        if (rawSize > 0)
+                            SetTensorMeta(block, rawField, meta.DataOffset + info.Offset, (int)rawSize, info.Dtype);
                     }
                 }
-            }
         }
 
         _pushedLayers.Clear();

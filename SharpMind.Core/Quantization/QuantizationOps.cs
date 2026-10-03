@@ -12,10 +12,68 @@ public abstract class QuantizationOps
     private const string NS  = $"{nameof(SharpMind)}.{nameof(Core)}.{nameof(Quantization)}.{nameof(QuantizationKernels)}";
     private const string MH  = $"{nameof(SharpMind)}.{nameof(Core)}.{nameof(MathHelpers)}";
 
+    /// <summary>
+    /// Byte count for GGUF/ggml-layout tensors. Quant blocks run along the row
+    /// dimension (ne[0], which <c>GgufLoader</c> stores as <c>Shape[0]</c>) and each row is
+    /// padded up to a whole number of blocks, so the total is
+    /// <c>ceil(rowLen / blockSize) * blockBytes * rows</c>.
+    /// </summary>
+    /// <remarks>
+    /// The row length and the remaining dims must be kept distinct. A flat
+    /// <c>ceil(totalElements / blockSize)</c> over-counts whenever the row length is not
+    /// block-aligned, and treating the LAST dim as the row is wrong for any rank &gt; 2
+    /// such as a fused [in, out, experts] MoE stack, whose last dim is the expert axis.
+    /// </remarks>
     public static long GetRawTensorByteCount(int[] shape, QuantDType dtype)
+        => GetByteCount(shape, dtype, rowPadded: true);
+
+    /// <summary>
+    /// Byte count for SMM tensors. SMM is written by <see cref="TensorQuantizer"/>, which
+    /// emits blocks back-to-back over the flattened buffer (<c>values.Length / 32</c>
+    /// blocks) rather than padding each row, so a non-row-multiple dim consumes no
+    /// padding. Only row-independent dtypes (F32/F16/BF16/I8/I16/I32) give the same
+    /// answer either way; every block and K-quant differs when the total is not a
+    /// multiple of the block size.
+    /// </summary>
+    public static long GetFlatTensorByteCount(int[] shape, QuantDType dtype)
+        => GetByteCount(shape, dtype, rowPadded: false);
+
+    private static long GetByteCount(int[] shape, QuantDType dtype, bool rowPadded)
     {
         long totalElements = 1;
         foreach (int d in shape) totalElements *= d;
+
+        if (!rowPadded)
+        {
+            return dtype switch
+            {
+                QuantDType.Q3_K or QuantDType.Q3_K_S or QuantDType.Q3_K_M or QuantDType.Q3_K_L
+                    => ((totalElements + 255) / 256) * 110,
+                QuantDType.Q4_K or QuantDType.Q4_K_S or QuantDType.Q4_K_M
+                    => ((totalElements + 255) / 256) * 144,
+                QuantDType.Q5_K or QuantDType.Q5_K_S or QuantDType.Q5_K_M
+                    => ((totalElements + 255) / 256) * 176,
+                QuantDType.Q6_K or QuantDType.Q6_K_S
+                    => ((totalElements + 255) / 256) * 210,
+                QuantDType.Q2_K or QuantDType.Q2_K_S
+                    => ((totalElements + 255) / 256) * 84,
+                QuantDType.Q8_K
+                    => ((totalElements + 255) / 256) * 292,
+                QuantDType.Q8_0 => GetFlatBlockByteCount(shape, 32, 34),
+                QuantDType.Q8_1 => GetFlatBlockByteCount(shape, 32, 36),
+                QuantDType.Q5_0 => GetFlatBlockByteCount(shape, 32, 22),
+                QuantDType.Q5_1 => GetFlatBlockByteCount(shape, 32, 24),
+                QuantDType.Q4_0 => GetFlatBlockByteCount(shape, 32, 18),
+                QuantDType.IQ4_NL => GetFlatBlockByteCount(shape, 32, 18),
+                QuantDType.Q4_1 => GetFlatBlockByteCount(shape, 32, 20),
+                QuantDType.TQ2_0 => GetFlatBlockByteCount(shape, 256, 66),
+                QuantDType.TQ1_0 => GetFlatBlockByteCount(shape, 256, 54),
+                QuantDType.Q1_0 => GetFlatBlockByteCount(shape, 256, 34),
+                QuantDType.IQ1_S => GetFlatBlockByteCount(shape, 256, 50),
+                QuantDType.IQ1_M => GetFlatBlockByteCount(shape, 256, 56),
+                _ => GetRawTensorByteCount(shape, dtype),
+            };
+        }
 
         return dtype switch
         {
@@ -23,17 +81,17 @@ public abstract class QuantizationOps
             QuantDType.F16 => totalElements * 2,
             QuantDType.BF16 => totalElements * 2,
             QuantDType.Q3_K or QuantDType.Q3_K_S or QuantDType.Q3_K_M or QuantDType.Q3_K_L
-                => ((totalElements + 255) / 256) * 110,
+                => GetBlockQuantByteCount(shape, 256, 110),
             QuantDType.Q4_K or QuantDType.Q4_K_S or QuantDType.Q4_K_M
-                => ((totalElements + 255) / 256) * 144,
+                => GetBlockQuantByteCount(shape, 256, 144),
             QuantDType.Q5_K or QuantDType.Q5_K_S or QuantDType.Q5_K_M
-                => ((totalElements + 255) / 256) * 176,
+                => GetBlockQuantByteCount(shape, 256, 176),
             QuantDType.Q6_K or QuantDType.Q6_K_S
-                => ((totalElements + 255) / 256) * 210,
+                => GetBlockQuantByteCount(shape, 256, 210),
             QuantDType.Q2_K or QuantDType.Q2_K_S
-                => ((totalElements + 255) / 256) * 84,
+                => GetBlockQuantByteCount(shape, 256, 84),
             QuantDType.Q8_K
-                => ((totalElements + 255) / 256) * 292,
+                => GetBlockQuantByteCount(shape, 256, 292),
             QuantDType.Q8_0
                 => GetBlockQuantByteCount(shape, 32, 34),
             QuantDType.Q8_1
@@ -60,17 +118,27 @@ public abstract class QuantizationOps
         };
     }
 
+    /// <summary>
+    /// Row-padded block count for GGUF/ggml layout. See
+    /// <see cref="GetRawTensorByteCount"/> for why the row dim has to be Shape[0].
+    /// </summary>
+    private static long GetFlatBlockByteCount(int[] shape, int blockSize, int blockBytes)
+    {
+        long totalElements = 1;
+        foreach (int d in shape) totalElements *= d;
+        return ((totalElements + blockSize - 1) / blockSize) * blockBytes;
+    }
+
     private static long GetBlockQuantByteCount(int[] shape, int blockSize, int blockBytes)
     {
-        long outerElements = 1;
-        int lastDim = 1;
-        if (shape.Length > 0)
-        {
-            for (int i = 0; i < shape.Length - 1; i++)
-                outerElements *= shape[i];
-            lastDim = shape[^1];
-        }
-        return outerElements * ((lastDim + blockSize - 1) / blockSize) * blockBytes;
+        if (shape.Length == 0) return blockBytes;
+
+        int rowLength = shape[0];
+        long rows = 1;
+        for (int i = 1; i < shape.Length; i++)
+            rows *= shape[i];
+
+        return ((rowLength + blockSize - 1) / blockSize) * (long)blockBytes * rows;
     }
     public void ReadFor(QuantDType dType, BinaryReader reader, Span<float> data, int n)
     {

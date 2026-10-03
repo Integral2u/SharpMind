@@ -112,7 +112,11 @@ public static class SmmQuantPlan
         if (name.Contains("token_embd", StringComparison.OrdinalIgnoreCase))
             return SmmTensorRole.Embedding;
 
-        if (name.Contains(".exps.", StringComparison.OrdinalIgnoreCase))
+        if (name.Contains(".exps.", StringComparison.OrdinalIgnoreCase) ||
+            name.Contains("_exps", StringComparison.OrdinalIgnoreCase) ||
+            (name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase) && RegexGenerated.ExpertIndex.IsMatch(name)) ||
+            (name.Contains("ffn_up", StringComparison.OrdinalIgnoreCase) && RegexGenerated.ExpertIndex.IsMatch(name)) ||
+            (name.Contains("ffn_down", StringComparison.OrdinalIgnoreCase) && RegexGenerated.ExpertIndex.IsMatch(name)))
             return SmmTensorRole.Expert;
 
         if (name.Equals("output.weight", StringComparison.OrdinalIgnoreCase) ||
@@ -253,7 +257,7 @@ public static class SmmQuantPlan
         foreach (var e in entries)
         {
             if (CanReQuantize(e.Dtype) && roleTensors.ContainsKey(roles[e.Name]))
-                fixedCost -= QuantizationOps.GetRawTensorByteCount(e.Shape, e.Dtype);
+                fixedCost -= QuantizationOps.GetFlatTensorByteCount(e.Shape, e.Dtype);
         }
         long dataBudget = budget - fixedCost;
         if (dataBudget < 0)
@@ -269,7 +273,7 @@ public static class SmmQuantPlan
             var dtype = RankedKQuants[Math.Min(r, maxIdx)];
             long total = 0;
             foreach (var e in roleTensors[role])
-                total += QuantizationOps.GetRawTensorByteCount(e.Shape, dtype);
+                total += QuantizationOps.GetFlatTensorByteCount(e.Shape, dtype);
             return total;
         }
 

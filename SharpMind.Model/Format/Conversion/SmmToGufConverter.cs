@@ -242,7 +242,9 @@ public static class SmmToGufConverter
         var tensors = new List<GgufTensor>(entries.Count);
         foreach (var entry in entries)
         {
-            long rawSize = QuantizationOps.GetRawTensorByteCount(entry.Shape, entry.Dtype);
+            // The tensor was packed flat by SMM's writer, so read it with the flat
+            // byte count even though the GGUF header will declare its shape.
+            long rawSize = QuantizationOps.GetFlatTensorByteCount(entry.Shape, entry.Dtype);
             if (rawSize <= 0) continue;
             int ordinal = totalTensors++;
             tensors.Add(new GgufTensor
