@@ -26,7 +26,7 @@ public class KQuantUnpackTests
 {
     public static IEnumerable<object[]> Cases()
     {
-        foreach (var dtype in new[] { QuantDType.Q4_K, QuantDType.Q6_K, QuantDType.Q5_0 })
+        foreach (var dtype in new[] { QuantDType.Q2_K, QuantDType.Q4_K, QuantDType.Q6_K, QuantDType.Q5_0 })
             // 256/512: whole super-blocks. 896, 4864: qwen2 shapes, odd columns
             // start at offset 128. 288/320/384: offsets 32/64/128. 8/20/137:
             // partial blocks and columns off any alignment.
@@ -54,6 +54,7 @@ public class KQuantUnpackTests
         {
             QuantDType.Q4_K => (144, 0, 2),
             QuantDType.Q6_K => (210, 208, -1),
+            QuantDType.Q2_K => (84, 80, 82),
             _ => (22, 0, -1),
         };
         for (int off = 0; off + blockBytes <= raw.Length; off += blockBytes)
@@ -96,6 +97,7 @@ public class KQuantUnpackTests
     {
         QuantDType.Q4_K => ops.VecDotQ4K(pIn, pW, col, k),
         QuantDType.Q6_K => ops.VecDotQ6K(pIn, pW, col, k),
+        QuantDType.Q2_K => ops.VecDotQ2K(pIn, pW, col, k),
         _ => ops.VecDotQ5_0(pIn, pW, col, k),
     };
 }
