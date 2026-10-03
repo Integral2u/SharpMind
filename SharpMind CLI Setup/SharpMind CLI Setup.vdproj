@@ -1,4 +1,4 @@
-"DeployProject"
+﻿"DeployProject"
 {
 "VSVersion" = "3:800"
 "ProjectType" = "8:{978C614F-708E-4E1A-B201-565925725DBA}"
@@ -174,15 +174,15 @@
         {
         "Name" = "8:Microsoft Visual Studio"
         "ProductName" = "8:SharpMind CLI"
-        "ProductCode" = "8:{174BBF78-55F3-4F4B-B81B-F9E0FA354CE1}"
-        "PackageCode" = "8:{FCAE0191-E80F-405F-96FA-2717968CB185}"
+        "ProductCode" = "8:{9BDAB5E7-075E-431D-B2A6-011A76609695}"
+        "PackageCode" = "8:{D391654C-4BB7-407C-A977-6DE820B328A0}"
         "UpgradeCode" = "8:{10668C24-5838-4BEA-8252-AC4D8A19A388}"
         "AspNetVersion" = "8:4.0.30319.0"
         "RestartWWWService" = "11:FALSE"
         "RemovePreviousVersions" = "11:TRUE"
         "DetectNewerInstalledVersion" = "11:TRUE"
         "InstallAllUsers" = "11:FALSE"
-        "ProductVersion" = "8:1.0.7"
+        "ProductVersion" = "8:1.0.8"
         "Manufacturer" = "8:Integral2u"
         "ARPHELPTELEPHONE" = "8:"
         "ARPHELPLINK" = "8:"
@@ -753,3 +753,4 @@
         }
     }
 }
+
