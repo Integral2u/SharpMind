@@ -327,6 +327,13 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
         long rawTopK = meta.GetLong($"{arch}.expert_used_count", -1);
         int topKExperts = rawTopK > 0 ? (int)rawTopK : 2;
 
+        // Read expert_weights_norm if present (deepseek2/exaone-moe). Missing key
+        // means false for qwen2moe/olmoe semantics; keep default false unless explicitly set.
+        bool normTopKProb = false;
+        long rawNormW = meta.GetLong($"{arch}.expert_weights_norm", -2);
+        if (rawNormW >= 0)
+            normTopKProb = rawNormW != 0;
+
         // Qwen1.5-MoE sizes the routed experts and the shared expert separately:
         // feed_forward_length (5632) is the SHARED expert, while the routed
         // experts are expert_feed_forward_length (1408) wide. Falling back to
@@ -407,6 +414,7 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
             ExpertFfnDim = expertFfnDim,
             SharedExpertFfnDim = sharedExpertFfnDim,
             SlidingWindowSize = slidingWindowSize,
+            NormTopKProb = normTopKProb,
             PositionalEncoding = positionalEncoding,
         };
     }
