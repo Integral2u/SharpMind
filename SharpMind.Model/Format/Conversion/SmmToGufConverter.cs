@@ -127,8 +127,12 @@ public static class SmmToGufConverter
         bool isMoE = meta.Tensors.Any(t => t.Name.Contains(".exps."));
         if (isMoE && config.NumExperts > 0)
             kv.Add(new GgufKvPair { Key = $"{arch}.expert_count", Value = (uint)config.NumExperts });
+
         if (isMoE && config.TopKExperts > 0)
             kv.Add(new GgufKvPair { Key = $"{arch}.expert_used_count", Value = (uint)config.TopKExperts });
+
+        if (isMoE && config.NormTopKProb)
+            kv.Add(new GgufKvPair { Key = $"{arch}.expert_weights_norm", Value = (uint)1 });
 
         AddTokenizerKvPairs(kv, meta, tokenizer);
 
