@@ -1,4 +1,4 @@
-﻿using System.Text.RegularExpressions;
+using System.Text.RegularExpressions;
 
 namespace SharpMind.Inference
 {
@@ -6,9 +6,9 @@ namespace SharpMind.Inference
     {
         [GeneratedRegex(@"<think>.*?</think>", RegexOptions.Singleline)]
         public static partial Regex ThinkingBlocks { get; }
-        [GeneratedRegex(@"<think>.*?</think>", RegexOptions.Singleline)]
-        public static partial Regex FunctionBlocks { get; }
         [GeneratedRegex(@"<function_call>.*?</function_call>", RegexOptions.Singleline)]
+        public static partial Regex FunctionBlocks { get; }
+        [GeneratedRegex(@"<tool_call>(.*?)</tool_call>", RegexOptions.Singleline)]
         public static partial Regex ToolCallBlocks { get; }
 
         [GeneratedRegex(@",\s*([}\]])")]

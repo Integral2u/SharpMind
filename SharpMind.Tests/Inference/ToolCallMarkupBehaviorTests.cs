@@ -182,6 +182,56 @@ public sealed class ToolCallMarkupBehaviorTests
     }
 
     /// <summary>
+    /// A complete &lt;tool_call&gt; block whose payload never parses is tool
+    /// machinery, not prose: it must be stripped while the narration before and
+    /// after it survives. Guards the ToolCallBlocks regex used by
+    /// SanitizeToolMarkup — while it was mis-assigned to the function_call
+    /// pattern, the trailing prose was lost with the block.
+    /// </summary>
+    [Fact]
+    public async Task CompleteMalformedToolCallBlock_IsStripped_KeepingInterleavedProse()
+    {
+        await using var session = ScriptedSession.Create(
+            "Before. \u003Ctool_call\u003Eoops not json\u003C/tool_call\u003E After.");
+
+        var entries = new List<ChatStreamEntry>();
+        await foreach (var e in session.GetResponseStreamAsync("hi")) entries.Add(e);
+
+        string prose = RespondingText(entries);
+        Assert.Equal("Before.  After.", prose);
+        Assert.DoesNotContain("tool_call", prose);
+        Assert.DoesNotContain("oops", prose);
+        Assert.Contains(entries, e => e.Status == ChatStatus.Complete);
+    }
+
+    /// <summary>
+    /// Whitespace padding around the JSON inside the tags must not defeat the
+    /// tagged contract: the captured group is trimmed before parsing.
+    /// </summary>
+    [Fact]
+    public async Task PaddedToolCallTagPayload_DispatchesTool()
+    {
+        string? seenName = null;
+        await using var session = ScriptedSession.Create(
+            BuilderWithNativeTool(),
+            ToolCallFormat.Qwen,
+            """<tool_call>   {"name":"NativeTool","arguments":{"x":"5"}}   </tool_call>""",
+            FinalReply);
+        session.ProcessToolRequest = (toolName, args, ct) =>
+        {
+            seenName = toolName;
+            return Task.FromResult(ToolRequestResult.Handled("external result"));
+        };
+
+        var entries = new List<ChatStreamEntry>();
+        await foreach (var e in session.GetResponseStreamAsync("hi")) entries.Add(e);
+
+        Assert.Equal("NativeTool", seenName);
+        Assert.Contains(FinalReply, RespondingText(entries));
+        Assert.DoesNotContain("tool_call", RespondingText(entries));
+    }
+
+    /// <summary>
     /// The user-observed qwen2-0.5B shape: the delta showed a bare
     /// "<tool_call" (no '>') and no closing tag at all. The tool must still
     /// dispatch, and the tag prefix must not leak into the visible prose.
