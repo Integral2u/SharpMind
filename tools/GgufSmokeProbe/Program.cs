@@ -11,12 +11,18 @@ using SharpMind.Tokenization;
 // generative models, that a few greedy tokens come out. Kept intentionally slim.
 //
 //   dotnet run --project tools/GgufSmokeProbe -- meta <file>
-//   dotnet run --project tools/GgufSmokeProbe -- run  <file> ["prompt"] [maxTokens=24]
+//   dotnet run --project tools/GgufSmokeProbe -- run  <file> ["prompt"] [maxTokens=24] [full] [resident] [topk]
 //   dotnet run --project tools/GgufSmokeProbe -- bind <file>
+//   dotnet run --project tools/GgufSmokeProbe -- cmp  <fileA> <fileB> <tensor>
+//
+// `run ... topk` dumps per-step top-5 logits with the decoded text to stderr.
+// That is the cheap way to tell a weight/indexing bug (near-uniform soup from
+// step 0) apart from a cache or sampling bug (sane step 0, decay afterwards)
+// without a reference implementation to diff against.
 
 if (args.Length < 2)
 {
-    Console.Error.WriteLine("usage: meta <file>   |   dump <file> [pattern]   |   bind <file>   |   run <file> [prompt] [maxTokens]");
+    Console.Error.WriteLine("usage: meta <file>   |   dump <file> [pattern]   |   bind <file>   |   fwd <file> [full] [resident]   |   run <file> [prompt] [maxTokens] [full] [resident] [topk]");
     return 2;
 }
 
@@ -42,8 +48,88 @@ if (mode == "load1")
 if (mode == "bind")
     return RunBind(path, args);
 
+if (mode == "cmp")
+    return RunCompare(path, args);
+
 Console.Error.WriteLine($"unknown mode: {mode}");
 return 2;
+
+// `cmp <fileA> <fileB> <tensor>` dequantizes the same tensor out of two GGUF files and
+// reports the Pearson correlation between them. Two quantizations of the same base model
+// are lossy but strongly correlated, so a healthy dequant lands near r ~= 0.85+ regardless
+// of the exact bit budget. A decode that permutes groups, mispairs scale/min nibbles or
+// reads the wrong byte stride collapses r toward 0, which isolates "this format is
+// decoded wrong" from "this file is a bad quant" without needing a reference build.
+
+static int RunCompare(string pathA, string[] args)
+{
+    if (args.Length < 4) { Console.Error.WriteLine("cmp needs <fileA> <fileB> <tensor>"); return 2; }
+    string pathB = Path.GetFullPath(args[2]);
+    string tensorName = args[3];
+    if (!File.Exists(pathB)) { Console.Error.WriteLine($"file not found: {pathB}"); return 1; }
+
+    try
+    {
+        var metaA = GgufLoader.LoadMeta(pathA);
+        var metaB = GgufLoader.LoadMeta(pathB);
+
+        var ta = metaA.Tensors.FirstOrDefault(t => t.Name == tensorName);
+        var tb = metaB.Tensors.FirstOrDefault(t => t.Name == tensorName);
+        if (ta.Name is null || tb.Name is null)
+        {
+            Console.WriteLine($"tensor '{tensorName}' present in A={ta.Name is not null} B={tb.Name is not null}");
+            return 1;
+        }
+        if (!ta.Shape.SequenceEqual(tb.Shape))
+        {
+            Console.WriteLine($"shape mismatch A=[{string.Join(",", ta.Shape)}] B=[{string.Join(",", tb.Shape)}]");
+            return 1;
+        }
+
+        int n = 1;
+        foreach (int d in ta.Shape) n *= d;
+
+        var qOps = QuantizationFactory.Create((GgufLoader.LoadConfig(metaA) ?? throw new InvalidOperationException("no config")).ForModel().ToJigSawMapping());
+        var a = DequantizeTensor(qOps, pathA, metaA, ta, n);
+        var b = DequantizeTensor(qOps, pathB, metaB, tb, n);
+
+        double sumA = 0, sumB = 0;
+        for (int i = 0; i < n; i++) { sumA += a[i]; sumB += b[i]; }
+        double meanA = sumA / n, meanB = sumB / n;
+
+        double cov = 0, varA = 0, varB = 0, sqA = 0, sqB = 0;
+        for (int i = 0; i < n; i++)
+        {
+            double da = a[i] - meanA, db = b[i] - meanB;
+            cov += da * db; varA += da * da; varB += db * db;
+            sqA += a[i] * a[i]; sqB += b[i] * b[i];
+        }
+        double r = cov / Math.Sqrt(varA * varB);
+
+        Console.WriteLine($"{tensorName,-30} [{string.Join(",", ta.Shape)}]={n}  A={ta.Dtype} B={tb.Dtype}");
+        Console.WriteLine($"  pearson r  = {r:F4}");
+        Console.WriteLine($"  rms        A={Math.Sqrt(sqA / n):F6}  B={Math.Sqrt(sqB / n):F6}");
+        Console.WriteLine($"  mean       A={meanA:F6}  B={meanB:F6}");
+        Console.WriteLine("  first 8    A=[" + string.Join(", ", a.Take(8).Select(v => v.ToString("F4"))) + "]");
+        Console.WriteLine("            B=[" + string.Join(", ", b.Take(8).Select(v => v.ToString("F4"))) + "]");
+        return 0;
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"cmp FAILED: {ex.GetType().Name}: {ex.Message}");
+        return 1;
+    }
+}
+
+static float[] DequantizeTensor(QuantizationOps qOps, string path, ModelMetaData meta, TensorInfo t, int n)
+{
+    using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+    using var reader = new BinaryReader(fs);
+    fs.Position = meta.DataOffset + t.Offset;
+    var data = new float[n];
+    qOps.ReadFor(t.Dtype, reader, data, n);
+    return data;
+}
 
 static int RunMeta(string path)
 {
@@ -323,8 +409,16 @@ static async Task<int> RunInferenceAsync(string path, string[] args)
         var sharpConfig = modelConfig.ForModel();
         bool full = args.Any(a => a.Equals("full", StringComparison.OrdinalIgnoreCase));
         bool resident = args.Any(a => a.Equals("resident", StringComparison.OrdinalIgnoreCase));
+        bool topk = args.Any(a => a.Equals("topk", StringComparison.OrdinalIgnoreCase));
+
+        // Per-step top-5 logits go to stderr so they interleave with the token
+        // stream without polluting OUT:. The std/margin figures are what make this
+        // diagnostic rather than just noise: a healthy model gives a peaked
+        // distribution (large margin1), while a corrupted one gives a near-uniform
+        // soup, and the two are distinguishable at step 0 without a reference.
+        GeneratorDiagnostics.DumpTopLogits = topk;
         var mapping = sharpConfig.ToJigSawMapping();
-        Console.WriteLine($"mode={(full ? "Full" : "Streaming")} quantizedResident={resident}");
+        Console.WriteLine($"mode={(full ? "Full" : "Streaming")} quantizedResident={resident} topLogits={topk}");
         using var weights = ModelFactory.CreateWeights(
             modelConfig, sharpConfig, QuantizationFactory.Create(mapping), path,
             full ? LoadMode.Full : LoadMode.Streaming, quantizedResident: resident);
@@ -344,12 +438,19 @@ static async Task<int> RunInferenceAsync(string path, string[] args)
         bool promptSent = false;
         int tokenCount = 0;
         var cts = new CancellationTokenSource();
+        // Wall-clock over generation, so a slow model is visibly slow rather than
+        // indistinguishable from a hung one.
+        var genSw = System.Diagnostics.Stopwatch.StartNew();
 
         // StartChatAsync is an interactive loop: send one user turn, then cancel so
         // the smoke probe stops instead of blocking on a second ReadLine.
         await session.StartChatAsync(Prompt, Response, cts.Token);
+        genSw.Stop();
         Console.WriteLine();
-        Console.WriteLine($"OK  generated successfully ({tokenCount} tokens)");
+        double secs = genSw.Elapsed.TotalSeconds;
+        double tps = tokenCount > 0 ? tokenCount / secs : 0;
+        Console.WriteLine($"OK  generated successfully ({tokenCount} tokens in {secs:F1}s, {tps:F2} tok/s)");
+        GeneratorDiagnostics.DumpTopLogits = false;
         return tokenCount > 0 ? 0 : 4;
 
         ChatMessage Prompt()

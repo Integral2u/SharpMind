@@ -256,6 +256,73 @@ public class QuantizationAgreementTests
         }
     }
 
+    [Theory]
+    [MemberData(nameof(UniqueDtypes))]
+    public unsafe void VecDot_AgreesWithReader(QuantDType dtype)
+    {
+        // Tier parity alone cannot catch a kernel that is uniformly wrong: Scalar, AVX2
+        // and FMA would all agree with each other while every one of them disagrees with
+        // the dequant reader. The reader is the format oracle - it is what the embedding
+        // lookup path and the quantizer round-trip see - so each tier's dot product has to
+        // equal the plain float dot product of the reader's own reconstruction of the very
+        // same row. A wrong-but-consistent kernel (misordered groups, transposed scale
+        // pairs, a shifted byte stride) passes VecDot_AllTiers_Agree and fails here.
+        var tiers = GetAvailableTiers();
+
+        int blockSize = GetBlockSize(dtype);
+        int K = blockSize * 8;
+        int N = blockSize * 4;
+        if (dtype is QuantDType.F32 or QuantDType.F16) { K = 256; N = 128; }
+
+        var rawData = GenerateRawData(dtype, K, N, 42);
+
+        // GGUF layout: row `col` is the K weights starting at byte `col * rowBytes`, which
+        // is exactly how VecDot indexes `col`.
+        var weights = new float[K * N];
+        using (var stream = new MemoryStream(rawData, writable: false))
+        using (var reader = new BinaryReader(stream))
+            CreateSerialOps(HardwareTier.Scalar).ReadFor(dtype, reader, weights, weights.Length);
+
+        var input = new float[K];
+        var rng = new Random(7);
+        for (int i = 0; i < K; i++) input[i] = (float)(rng.NextDouble() * 2 - 1);
+
+        var expected = new float[N];
+        double sqExpected = 0;
+        for (int col = 0; col < N; col++)
+        {
+            double acc = 0;
+            for (int i = 0; i < K; i++) acc += input[i] * weights[col * K + i];
+            expected[col] = (float)acc;
+            sqExpected += acc * acc;
+        }
+        double rms = Math.Sqrt(sqExpected / N);
+        Assert.True(rms > 0, $"[{dtype}] reader produced all-zero weights; fixture is broken.");
+
+        for (int t = 0; t < tiers.Count; t++)
+        {
+            var ops = CreateSerialOps(tiers[t].tier);
+            double worst = 0;
+            int worstCol = -1;
+            for (int col = 0; col < N; col++)
+            {
+                float actual;
+                fixed (float* pIn = input) fixed (byte* pRaw = rawData)
+                    actual = ops.VecDotFor(dtype, pIn, pRaw, col, K);
+
+                double err = Math.Abs(actual - expected[col]);
+                if (err > worst) { worst = err; worstCol = col; }
+            }
+
+            // Tolerance is relative to the spread of the dots themselves, not to each
+            // individual dot: individual columns cancel toward zero, so a per-column
+            // relative bound would be arbitrarily strict for the wrong reason.
+            Assert.True(worst < 1e-3 * rms,
+                $"VecDot [{dtype}] {tiers[t].name} disagrees with the reader. " +
+                $"Worst col {worstCol}: err={worst:G4} against rms={rms:G4}.");
+        }
+    }
+
     private static ushort FloatToHalfB16(float f)
     {
         unsafe
