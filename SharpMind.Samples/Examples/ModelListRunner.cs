@@ -101,7 +101,7 @@ namespace SharpMind.Samples.Examples
                     sw.Restart();
                     // disposeModel:false keeps the model alive so later prompts
                     // reuse it; the outer `using var model` frees it afterwards.
-                    await using var session = new ChatSession<StandardGeneratorBuilder<KVCacherBuilder>, KVCacherBuilder>(model, tokenizer, meta, null, null, null, null, null, null, resolvedFormatter, disposeModel: false)
+                    await using var session = new ChatSession<SpeculativeGeneratorBuilder<Int8KVCacherBuilder>, Int8KVCacherBuilder>(model, tokenizer, meta, null, null, null, null, null, null, resolvedFormatter, disposeModel: false)
                     {
                         MaxTokens = 256,
                         Temperature = knobs.Temperature,
@@ -122,7 +122,7 @@ namespace SharpMind.Samples.Examples
             await Console.Out.WriteLineAsync();
         }
 
-        private static async Task<ChatMessage[]> RunPromptAsync(ChatSession<StandardGeneratorBuilder<KVCacherBuilder>, KVCacherBuilder> session, string prompt, int maxTokens)
+        private static async Task<ChatMessage[]> RunPromptAsync(ChatSession<SpeculativeGeneratorBuilder<Int8KVCacherBuilder>, Int8KVCacherBuilder> session, string prompt, int maxTokens)
         {
             var returnedPrompt = false;
             var tok = 0;
