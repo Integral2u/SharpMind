@@ -141,14 +141,13 @@ public sealed class SessionOptions
     public LoadMode LoadMode { get; set; } = LoadMode.Full;
 
     /// <summary>
-    /// Threads a Full-mode load may fan out over. 1 (default) loads tensors one
-    /// at a time in file order; higher values overlap the per-tensor reads and
-    /// dequantization, partitioned so each thread owns a disjoint set of blocks.
-    /// Costs peak transient memory proportional to the degree. 0 means "let the
-    /// library decide" — the load stays sequential on a single-core host and
-    /// otherwise matches the core count.
+    /// Threads a Full-mode load may fan out over. 0 (default) means one per core,
+    /// overlapping the per-tensor reads and dequantization, partitioned so each
+    /// thread owns a disjoint set of blocks. Higher values cap it; 1 loads tensors
+    /// one at a time in file order. Costs peak transient memory proportional to the
+    /// degree. A single-core host stays sequential whatever this is set to.
     /// </summary>
-    public int MaxParallelLoadDegree { get; set; } = 1;
+    public int MaxParallelLoadDegree { get; set; }
 
     /// <summary>
     /// CPU code-path selection for JigSaw's mapping. Auto (the engine's own

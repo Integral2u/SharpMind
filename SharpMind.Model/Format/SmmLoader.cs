@@ -19,7 +19,7 @@ namespace SharpMind.Model.Format;
 /// The only differences are the container header/index.
 /// </summary>
 public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig config, bool useSafeIo = false,
-    int maxParallelLoadDegree = 1) : IModelLoader
+    int maxParallelLoadDegree = 0) : IModelLoader
 {
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
@@ -33,8 +33,8 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
 
     /// <summary>
     /// How many threads a full (<see cref="LoadMode.Full"/>) load may fan out
-    /// across. 1 — the default — keeps the original single-threaded,
-    /// index-order loop. Mirrors <see cref="GgufLoader.MaxParallelLoadDegree"/>.
+    /// across. 0 — the default — means one per core; 1 restores the original
+    /// single-threaded, index-order loop. Mirrors <see cref="GgufLoader.MaxParallelLoadDegree"/>.
     /// </summary>
     internal readonly int MaxParallelLoadDegree = maxParallelLoadDegree;
 
@@ -221,7 +221,7 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
         int total = index.Entries.Count;
         int loaded = 0;
 
-        // Opt-in fan-out. Off by default: degree 1 keeps the original
+        // Fan out by default (degree 0 = one per core). Degree 1 keeps the original
         // index-order single-threaded loop byte-for-byte.
         int degree = ParallelTensorLoad.ResolveDegree(MaxParallelLoadDegree, total, _useSafeIo);
         if (degree > 0)

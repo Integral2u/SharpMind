@@ -49,12 +49,15 @@ public static class ModelFactory
     /// and format conversion read them back.
     /// </param>
     /// <param name="maxParallelLoadDegree">
-    /// Threads a <see cref="LoadMode.Full"/> load may fan out over. 1 (default)
-    /// loads tensors one at a time in file order. Higher values overlap the
-    /// per-tensor reads and dequantization, partitioned so each thread owns a
-    /// disjoint set of transformer blocks; peak transient memory scales with the
-    /// degree, so it is opt-in. Streaming loads are unaffected (they already
-    /// load one layer at a time).
+    /// Threads a <see cref="LoadMode.Full"/> load may fan out over. 0 (default)
+    /// means one per core; higher values cap it, and 1 restores the original
+    /// single-threaded file-order loop. The default overlaps the per-tensor reads
+    /// and dequantization, partitioned so each thread owns a disjoint set of
+    /// transformer blocks -- about 2x faster to load on a 4-core box, at the cost
+    /// of peak transient memory scaling with the degree. Pass 1 on a memory-
+    /// starved host, or to reproduce sequential behaviour exactly. A single-core
+    /// host and safe I/O (WASM) ignore the request and load sequentially;
+    /// Streaming loads are unaffected (they already load one layer at a time).
     /// </param>
     public static TransformerWeights CreateWeights(
         ModelConfig modelConfig,
@@ -64,7 +67,7 @@ public static class ModelFactory
         LoadMode loadMode = LoadMode.Full,
         bool quantizedResident = false, 
         bool useSafeIo = false,
-        int maxParallelLoadDegree = 1)
+        int maxParallelLoadDegree = 0)
     {
         ArgumentNullException.ThrowIfNull(modelConfig);
         ArgumentNullException.ThrowIfNull(sharpConfig);

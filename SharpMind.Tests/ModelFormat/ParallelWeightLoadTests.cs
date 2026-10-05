@@ -13,7 +13,7 @@ using System.Text.Json.Nodes;
 namespace SharpMind.Tests.ModelFormat;
 
 /// <summary>
-/// Covers the opt-in parallel full-weight load (<c>maxParallelLoadDegree</c>).
+/// Covers the parallel full-weight load (<c>maxParallelLoadDegree</c>).
 ///
 /// The whole feature rests on one claim: fanning the load out across threads
 /// must produce byte-identical weights to the sequential loop. The loaders
@@ -31,21 +31,59 @@ public class ParallelWeightLoadTests : IDisposable
     // ── Degree resolution ───────────────────────────────────────────────────
 
     [Fact]
-    public void DefaultDegree_StaysSequential()
+    public void DefaultDegree_IsAuto()
     {
-        // The loader default must never silently start spawning threads: a caller
-        // that never heard of this option gets exactly the old behaviour.
+        // A caller that never heard of this option gets the fan-out, not the old
+        // sequential loop: the default is "one per core" (0), not 1.
         using var fixture = NewTinyModel();
         string path = Export(fixture, ".smm");
 
         var qOps = QuantizationFactory.Create(fixture.SharpConfig.ResolvedHardware);
         var loader = new GgufLoader(qOps, path, fixture.Config);
-        Assert.Equal(1, loader.MaxParallelLoadDegree);
+        Assert.Equal(0, loader.MaxParallelLoadDegree);
 
         var smm = new SmmLoader(qOps, path, fixture.Config);
-        Assert.Equal(1, smm.MaxParallelLoadDegree);
+        Assert.Equal(0, smm.MaxParallelLoadDegree);
 
+        // ...and 0 actually resolves to a fan-out on a multi-core host, rather
+        // than silently degrading to sequential.
+        int expected = Math.Min(Environment.ProcessorCount, 4096);
+        if (Environment.ProcessorCount > 1)
+            Assert.Equal(expected, ParallelTensorLoad.ResolveDegree(loader.MaxParallelLoadDegree, workItemCount: 4096, safeIo: false));
+    }
+
+    [Fact]
+    public void ExplicitDegreeOne_StaysSequential()
+    {
+        // 1 is the escape hatch and has to keep working, both as an explicit
+        // argument and as a property someone set deliberately.
+        using var fixture = NewTinyModel();
+        string path = Export(fixture, ".smm");
+
+        var qOps = QuantizationFactory.Create(fixture.SharpConfig.ResolvedHardware);
+        var loader = new GgufLoader(qOps, path, fixture.Config, maxParallelLoadDegree: 1);
+        Assert.Equal(1, loader.MaxParallelLoadDegree);
         Assert.Equal(0, ParallelTensorLoad.ResolveDegree(loader.MaxParallelLoadDegree, workItemCount: 4096, safeIo: false));
+
+        var smm = new SmmLoader(qOps, path, fixture.Config, maxParallelLoadDegree: 1);
+        Assert.Equal(1, smm.MaxParallelLoadDegree);
+        Assert.Equal(0, ParallelTensorLoad.ResolveDegree(smm.MaxParallelLoadDegree, workItemCount: 4096, safeIo: false));
+    }
+
+    [Fact]
+    public void ExplicitDegreeFour_FansOut()
+    {
+        // The other escape direction: an explicit N above 1 must still fan out,
+        // so pinning a degree is not silently ignored.
+        using var fixture = NewTinyModel();
+        string path = Export(fixture, ".smm");
+
+        var qOps = QuantizationFactory.Create(fixture.SharpConfig.ResolvedHardware);
+        var loader = new GgufLoader(qOps, path, fixture.Config, maxParallelLoadDegree: 4);
+        Assert.Equal(4, loader.MaxParallelLoadDegree);
+
+        int expected = Math.Min(4, Math.Min(Environment.ProcessorCount, 4096));
+        Assert.Equal(expected, ParallelTensorLoad.ResolveDegree(loader.MaxParallelLoadDegree, workItemCount: 4096, safeIo: false));
     }
 
     [Fact]

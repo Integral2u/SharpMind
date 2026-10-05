@@ -13,7 +13,7 @@ using static SharpMind.Model.TransformerWeights;
 namespace SharpMind.Model.Format;
 
 public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig config, bool useSafeIo = false,
-    int maxParallelLoadDegree = 1) : IModelLoader
+    int maxParallelLoadDegree = 0) : IModelLoader
 {
     private const uint Magic = 0x46554747;
     private readonly QuantizationOps _qOps = qOps ?? throw new ArgumentNullException(nameof(qOps));
@@ -23,8 +23,8 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
 
     /// <summary>
     /// How many threads a full (<see cref="LoadMode.Full"/>) load may fan out
-    /// across. 1 — the default — keeps the original single-threaded,
-    /// index-order loop. See <see cref="LoadAllWeights"/>.
+    /// across. 0 — the default — means one per core; 1 restores the original
+    /// single-threaded, index-order loop. See <see cref="LoadAllWeights"/>.
     /// </summary>
     internal readonly int MaxParallelLoadDegree = maxParallelLoadDegree;
 
@@ -594,7 +594,7 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
         int total = meta.Tensors.Count;
         int loaded = 0;
 
-        // Opt-in fan-out. Off by default: degree 1 keeps the original
+        // Fan out by default (degree 0 = one per core). Degree 1 keeps the original
         // index-order single-threaded loop byte-for-byte.
         int degree = ParallelTensorLoad.ResolveDegree(MaxParallelLoadDegree, total, _useSafeIo);
         if (degree > 0)

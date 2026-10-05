@@ -5,9 +5,10 @@ namespace SharpMind.Model.Format;
 /// <see cref="GgufLoader"/> / <see cref="SmmLoader"/>.
 ///
 /// The parallel path exists because a full load is dominated by per-tensor
-/// seeks + dequantization, both of which are independent per tensor. It is
-/// opt-in (degree 1 = the original sequential loop, byte-for-byte) because
-/// peak transient memory scales with the number of in-flight tensors.
+/// seeks + dequantization, both of which are independent per tensor, so it is
+/// the default (degree 0 = one per core). Degree 1 keeps the original
+/// sequential loop, byte-for-byte, for a memory-starved host or for reproducing
+/// the old ordering exactly; peak transient memory scales with the degree.
 /// </summary>
 internal static class ParallelTensorLoad
 {
@@ -15,9 +16,9 @@ internal static class ParallelTensorLoad
     /// Clamps a caller-requested degree of parallelism to something that can
     /// actually help, or 0 when the load must stay sequential.
     ///
-    /// A <paramref name="requested"/> of 0 means "let the library decide" — one
-    /// worker per core. 1 (the default everywhere) explicitly asks for the
-    /// original sequential loop.
+    /// A <paramref name="requested"/> of 0 — the default — means "let the library
+    /// decide": one worker per core. 1 explicitly asks for the original
+    /// sequential loop.
     ///
     /// Returns 0 (not 1) so callers can branch on a single "no fan-out" test
     /// and keep their original loop verbatim.
