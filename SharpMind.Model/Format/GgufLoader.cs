@@ -12,13 +12,22 @@ using static SharpMind.Model.TransformerWeights;
 
 namespace SharpMind.Model.Format;
 
-public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig config, bool useSafeIo = false) : IModelLoader
+public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig config, bool useSafeIo = false,
+    int maxParallelLoadDegree = 1) : IModelLoader
 {
     private const uint Magic = 0x46554747;
     private readonly QuantizationOps _qOps = qOps ?? throw new ArgumentNullException(nameof(qOps));
     private readonly string _path = File.Exists(path)? path : throw new FileNotFoundException(path);
     private readonly ModelConfig _config = config ?? throw new ArgumentNullException(nameof(config));
     private readonly bool _useSafeIo = useSafeIo;
+
+    /// <summary>
+    /// How many threads a full (<see cref="LoadMode.Full"/>) load may fan out
+    /// across. 1 — the default — keeps the original single-threaded,
+    /// index-order loop. See <see cref="LoadAllWeights"/>.
+    /// </summary>
+    internal readonly int MaxParallelLoadDegree = maxParallelLoadDegree;
+
     private static object ReadValue(BinaryReader reader, uint valType) => valType switch
     {
         0 => reader.ReadByte(),
@@ -585,6 +594,15 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
         int total = meta.Tensors.Count;
         int loaded = 0;
 
+        // Opt-in fan-out. Off by default: degree 1 keeps the original
+        // index-order single-threaded loop byte-for-byte.
+        int degree = ParallelTensorLoad.ResolveDegree(MaxParallelLoadDegree, total, _useSafeIo);
+        if (degree > 0)
+        {
+            LoadAllWeightsParallel(weights, meta, progress, cancellationToken, degree, total);
+            return;
+        }
+
         using var stream = WeightStreamFactory.Open(_path, _useSafeIo);
         using var reader = new BinaryReader(stream);
 
@@ -596,6 +614,103 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
             loaded++;
         }
         progress?.Report(1f);
+    }
+
+    /// <summary>
+    /// Parallel full load. Tensors are partitioned by the block they resolve
+    /// to, so every worker owns a disjoint set of <see cref="TransformerWeights.BlockWeights"/>
+    /// and there is no shared mutable state to lock: each worker's writes land
+    /// in its own blocks' raw fields, tensor-metadata dictionaries and float
+    /// tensors (all plain, non-concurrent collections created with <c>??=</c>,
+    /// which is exactly what would break under two threads on one block).
+    ///
+    /// Tensors that resolve to no block — the embedding, the output head, the
+    /// final norms — instead write single shared fields on
+    /// <paramref name="weights"/>, and the head additionally self-registers
+    /// under a lazy-creation guard. They run together on the calling thread, so
+    /// a model whose vocab dominates pays that tail serially; correctness of
+    /// those few fields is worth more than the extra overlap.
+    ///
+    /// Each worker opens its own file view because <see cref="LoadSingleTensor"/>
+    /// drives the stream by <c>Position</c>, which is mutable per-stream state.
+    /// </summary>
+    private void LoadAllWeightsParallel(
+        TransformerWeights weights, ModelMetaData meta,
+        IProgress<float>? progress, CancellationToken? cancellationToken,
+        int degree, int total)
+    {
+        // Bucket by block identity. ResolveTarget is called once per tensor here
+        // (it was already being called per tensor in the sequential loop, just
+        // inside LoadSingleTensor) so this only moves it earlier.
+        var blockBuckets = new Dictionary<TransformerWeights.BlockWeights, List<TensorInfo>>(ReferenceEqualityComparer.Instance);
+        var nonBlock = new List<TensorInfo>();
+        foreach (var info in meta.Tensors)
+        {
+            var (_, block, _) = weights.ResolveTarget(info.Name);
+            if (block is null) { nonBlock.Add(info); continue; }
+            if (!blockBuckets.TryGetValue(block, out var bucket))
+                blockBuckets[block] = bucket = [];
+            bucket.Add(info);
+        }
+
+        // One work item per block, kept whole: splitting a block across workers
+        // would put two threads in the same raw-field and tensor-meta
+        // dictionaries, which are plain (non-concurrent) collections.
+        var items = new List<List<TensorInfo>>(blockBuckets.Count);
+        foreach (var bucket in blockBuckets.Values) items.Add(bucket);
+
+        int loaded = 0;
+        var reporter = new ParallelTensorLoad.ProgressReporter(progress, total);
+        void ReportProgress() => reporter.ReportLoaded(Interlocked.Increment(ref loaded));
+
+        var options = new ParallelOptions
+        {
+            MaxDegreeOfParallelism = degree,
+            CancellationToken = cancellationToken ?? CancellationToken.None,
+        };
+
+        // Worker bodies own their stream and only touch their own tensors.
+        void RunItems(List<List<TensorInfo>> slice)
+        {
+            if (slice.Count == 0) return;
+            using var stream = WeightStreamFactory.Open(_path, _useSafeIo);
+            using var reader = new BinaryReader(stream);
+            foreach (var bucket in slice)
+                foreach (var info in bucket)
+                {
+                    cancellationToken?.ThrowIfCancellationRequested();
+                    LoadSingleTensor(weights, meta, stream, reader, info);
+                    ReportProgress();
+                }
+        }
+
+        var blockWork = ParallelTensorLoad.PartitionByWeight(items, degree, static bucket =>
+        {
+            long bytes = 0;
+            foreach (var info in bucket)
+                bytes += QuantizationOps.GetRawTensorByteCount(info.Shape, info.Dtype);
+            return bytes;
+        });
+        try
+        {
+            if (blockWork.Count > 0)
+                Parallel.For(0, blockWork.Count, options, i => RunItems(blockWork[i]));
+
+            // Non-block tensors last, on this thread, so progress still reaches 1.
+            if (nonBlock.Count > 0) RunItems([nonBlock]);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (AggregateException ex) when (ex.InnerExceptions.Count == 1 && ex.InnerException is not null)
+        {
+            // Surface the real failure (bad tensor, I/O error) rather than the
+            // Parallel wrapper, matching what the sequential loop would throw.
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex.InnerException).Throw();
+        }
+
+        reporter.ReportComplete();
     }
 
     public void LoadLayerWeights(int layerIndex, TransformerWeights weights, CancellationToken? cancellationToken = null)

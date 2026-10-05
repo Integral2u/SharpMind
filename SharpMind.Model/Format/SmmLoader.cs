@@ -18,7 +18,8 @@ namespace SharpMind.Model.Format;
 /// so a single loader serves both GGUF-converted and training-exported files.
 /// The only differences are the container header/index.
 /// </summary>
-public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig config, bool useSafeIo = false) : IModelLoader
+public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig config, bool useSafeIo = false,
+    int maxParallelLoadDegree = 1) : IModelLoader
 {
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
@@ -29,6 +30,13 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
     private readonly string _path = File.Exists(path) ? path : throw new FileNotFoundException(path);
     private readonly ModelConfig _config = config ?? throw new ArgumentNullException(nameof(config));
     private readonly bool _useSafeIo = useSafeIo;
+
+    /// <summary>
+    /// How many threads a full (<see cref="LoadMode.Full"/>) load may fan out
+    /// across. 1 — the default — keeps the original single-threaded,
+    /// index-order loop. Mirrors <see cref="GgufLoader.MaxParallelLoadDegree"/>.
+    /// </summary>
+    internal readonly int MaxParallelLoadDegree = maxParallelLoadDegree;
 
     // ── Static helpers (metadata / config / tokenizer / plugins) ──────────
 
@@ -210,10 +218,19 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
         weights.GgufPath = _path;
         weights.IsMoE = index.Meta.Tensors.Any(t => t.Name.Contains(".exps."));
 
-        using var stream = WeightStreamFactory.Open(_path, _useSafeIo);
-
         int total = index.Entries.Count;
         int loaded = 0;
+
+        // Opt-in fan-out. Off by default: degree 1 keeps the original
+        // index-order single-threaded loop byte-for-byte.
+        int degree = ParallelTensorLoad.ResolveDegree(MaxParallelLoadDegree, total, _useSafeIo);
+        if (degree > 0)
+        {
+            LoadAllWeightsParallel(weights, index, progress, cancellationToken, degree, total);
+            return;
+        }
+
+        using var stream = WeightStreamFactory.Open(_path, _useSafeIo);
         foreach (var entry in index.Entries)
         {
             cancellationToken?.ThrowIfCancellationRequested();
@@ -222,6 +239,87 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
             loaded++;
         }
         progress?.Report(1f);
+    }
+
+    /// <summary>
+    /// Parallel full load, mirroring <see cref="GgufLoader"/>'s: work is
+    /// partitioned by the block each tensor resolves to so every worker owns a
+    /// disjoint set of <see cref="TransformerWeights.BlockWeights"/> and no
+    /// lock is needed, while the tensors that write shared fields on
+    /// <paramref name="weights"/> (embedding, output head, final norms) stay on
+    /// the calling thread. Each worker opens its own view because
+    /// <see cref="LoadSingleTensor"/> positions the stream per tensor.
+    /// </summary>
+    private void LoadAllWeightsParallel(
+        TransformerWeights weights, SmmFileIndex index,
+        IProgress<float>? progress, CancellationToken? cancellationToken,
+        int degree, int total)
+    {
+        var blockBuckets = new Dictionary<TransformerWeights.BlockWeights, List<SmmTensorIndexEntry>>(ReferenceEqualityComparer.Instance);
+        var nonBlock = new List<SmmTensorIndexEntry>();
+        foreach (var entry in index.Entries)
+        {
+            if (TransformerWeights.IsLmHeadTensorName(entry.Name)) { nonBlock.Add(entry); continue; }
+            var (_, block, _) = weights.ResolveTarget(entry.Name);
+            if (block is null) { nonBlock.Add(entry); continue; }
+            if (!blockBuckets.TryGetValue(block, out var bucket))
+                blockBuckets[block] = bucket = [];
+            bucket.Add(entry);
+        }
+
+        var items = new List<List<SmmTensorIndexEntry>>(blockBuckets.Count);
+        foreach (var bucket in blockBuckets.Values) items.Add(bucket);
+
+        int loaded = 0;
+        var reporter = new ParallelTensorLoad.ProgressReporter(progress, total);
+        void ReportProgress() => reporter.ReportLoaded(Interlocked.Increment(ref loaded));
+
+        var options = new ParallelOptions
+        {
+            MaxDegreeOfParallelism = degree,
+            CancellationToken = cancellationToken ?? CancellationToken.None,
+        };
+
+        void RunItems(List<List<SmmTensorIndexEntry>> slice)
+        {
+            if (slice.Count == 0) return;
+            using var workerStream = WeightStreamFactory.Open(_path, _useSafeIo);
+            foreach (var bucket in slice)
+                foreach (var entry in bucket)
+                {
+                    cancellationToken?.ThrowIfCancellationRequested();
+                    LoadSingleTensor(weights, index, workerStream, entry);
+                    ReportProgress();
+                }
+        }
+
+        // SMM packs blocks flat, so the flat byte count is the on-disk weight
+        // of a tensor here (see LoadSingleTensor).
+        var blockWork = ParallelTensorLoad.PartitionByWeight(items, degree, static bucket =>
+        {
+            long bytes = 0;
+            foreach (var entry in bucket)
+                bytes += QuantizationOps.GetFlatTensorByteCount(entry.Shape, entry.Dtype);
+            return bytes;
+        });
+
+        try
+        {
+            if (blockWork.Count > 0)
+                Parallel.For(0, blockWork.Count, options, i => RunItems(blockWork[i]));
+
+            if (nonBlock.Count > 0) RunItems([nonBlock]);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (AggregateException ex) when (ex.InnerExceptions.Count == 1 && ex.InnerException is not null)
+        {
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex.InnerException).Throw();
+        }
+
+        reporter.ReportComplete();
     }
 
     public void LoadLayerWeights(int layerIndex, TransformerWeights weights, CancellationToken? cancellationToken = null)

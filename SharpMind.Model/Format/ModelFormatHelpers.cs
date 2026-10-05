@@ -47,10 +47,15 @@ namespace SharpMind.Model.Format
         /// System.IO.MemoryMappedFiles throws PlatformNotSupportedException --
         /// to fall back to a plain FileStream instead. See WeightStreamFactory.
         /// </param>
-        public static IModelLoader GetModelLoaderFor(this ModelFormat format, QuantizationOps qOps, string path, ModelConfig config, bool useSafeIo = false) => format switch
+        /// <param name="maxParallelLoadDegree">
+        /// How many threads a full load may fan out over. 1 (default) keeps the
+        /// original sequential tensor loop; see <see cref="ParallelTensorLoad"/>.
+        /// </param>
+        public static IModelLoader GetModelLoaderFor(this ModelFormat format, QuantizationOps qOps, string path, ModelConfig config,
+            bool useSafeIo = false, int maxParallelLoadDegree = 1) => format switch
         {
-            ModelFormat.Gguf => new GgufLoader(qOps, path, config, useSafeIo),
-            ModelFormat.Smm => new SmmLoader(qOps, path, config, useSafeIo),
+            ModelFormat.Gguf => new GgufLoader(qOps, path, config, useSafeIo, maxParallelLoadDegree),
+            ModelFormat.Smm => new SmmLoader(qOps, path, config, useSafeIo, maxParallelLoadDegree),
             _ => throw new ArgumentOutOfRangeException(nameof(format), format, null)
         };
         private readonly static GgufModelFormatMetaHelper ggufModelFormatMetaHelper = new();

@@ -212,7 +212,7 @@ public static class SessionLauncher
                 // Chat only ever runs the quantized forward, which reads the raw
                 // bytes, so skip the dequantized F32 copy of every layer.
                 var w = ModelFactory.CreateWeights(modelConfig, sharpConfig, qOps, options.ModelPath, options.LoadMode,
-                    quantizedResident: true);
+                    quantizedResident: true, maxParallelLoadDegree: options.MaxParallelLoadDegree);
                 w.InitializeWeights(progress, ct);
                 return w;
             },ct);

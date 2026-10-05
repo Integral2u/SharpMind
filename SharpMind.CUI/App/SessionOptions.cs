@@ -141,6 +141,16 @@ public sealed class SessionOptions
     public LoadMode LoadMode { get; set; } = LoadMode.Full;
 
     /// <summary>
+    /// Threads a Full-mode load may fan out over. 1 (default) loads tensors one
+    /// at a time in file order; higher values overlap the per-tensor reads and
+    /// dequantization, partitioned so each thread owns a disjoint set of blocks.
+    /// Costs peak transient memory proportional to the degree. 0 means "let the
+    /// library decide" — the load stays sequential on a single-core host and
+    /// otherwise matches the core count.
+    /// </summary>
+    public int MaxParallelLoadDegree { get; set; } = 1;
+
+    /// <summary>
     /// CPU code-path selection for JigSaw's mapping. Auto (the engine's own
     /// default) genuinely detects FMA/AVX2/SSE3 support at runtime via
     /// System.Runtime.Intrinsics.X86 checks — it isn't a placeholder, it's a
@@ -257,6 +267,7 @@ public sealed class SessionOptions
         target.InferenceAccelerator = InferenceAccelerator;
         target.Formatter = Formatter;
         target.LoadMode = LoadMode;
+        target.MaxParallelLoadDegree = MaxParallelLoadDegree;
         target.HardwareTier = HardwareTier;
         target.UseParallelKernels = UseParallelKernels;
         target.FileAccess = FileAccess;

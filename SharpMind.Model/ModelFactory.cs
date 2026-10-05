@@ -48,6 +48,14 @@ public static class ModelFactory
     /// Leave false when the float tensors are needed after loading — SMM export
     /// and format conversion read them back.
     /// </param>
+    /// <param name="maxParallelLoadDegree">
+    /// Threads a <see cref="LoadMode.Full"/> load may fan out over. 1 (default)
+    /// loads tensors one at a time in file order. Higher values overlap the
+    /// per-tensor reads and dequantization, partitioned so each thread owns a
+    /// disjoint set of transformer blocks; peak transient memory scales with the
+    /// degree, so it is opt-in. Streaming loads are unaffected (they already
+    /// load one layer at a time).
+    /// </param>
     public static TransformerWeights CreateWeights(
         ModelConfig modelConfig,
         SharpMindConfig sharpConfig,
@@ -55,7 +63,8 @@ public static class ModelFactory
         string path,
         LoadMode loadMode = LoadMode.Full,
         bool quantizedResident = false, 
-        bool useSafeIo = false)
+        bool useSafeIo = false,
+        int maxParallelLoadDegree = 1)
     {
         ArgumentNullException.ThrowIfNull(modelConfig);
         ArgumentNullException.ThrowIfNull(sharpConfig);
@@ -78,7 +87,7 @@ public static class ModelFactory
             ? AllocateBlockWeights(modelConfig, sharpConfig)
             : AllocateInferenceBlockWeights(modelConfig);
 
-        var loader = ModelFormatHelpers.GetModelLoaderFor((ModelFormat)fmt, qOps, path, modelConfig, useSafeIo);
+        var loader = ModelFormatHelpers.GetModelLoaderFor((ModelFormat)fmt, qOps, path, modelConfig, useSafeIo, maxParallelLoadDegree);
 
         if (loadMode == LoadMode.Full)
             return new TransformerWeightsFull(modelConfig, embedding, lmHead, finalNormW, finalNormB, blockWeights, loader,

@@ -45,6 +45,9 @@ if (mode == "fwd")
 if (mode == "load1")
     return RunLoadOne(path, args);
 
+if (mode == "benchload")
+    return RunBenchLoad(path, args);
+
 if (mode == "bind")
     return RunBind(path, args);
 
@@ -206,11 +209,21 @@ static int RunForward(string path, string[] args)
 
         var sharpConfig = modelConfig.ForModel();
         var mapping = sharpConfig.ToJigSawMapping();
-        Console.WriteLine($"mode={(full ? "Full" : "Streaming")} quantizedResident={resident} arch={modelConfig.Architecture}");
+        // "par" (or "par=N") fans the load out; without it the load stays
+        // sequential, so the two runs are directly comparable.
+        int parDegree = 1;
+        foreach (string a in args)
+        {
+            if (!a.StartsWith("par", StringComparison.OrdinalIgnoreCase)) continue;
+            parDegree = a.Length > 3 && int.TryParse(a.AsSpan(3), out int n) ? n : 0;
+        }
+        Console.WriteLine($"mode={(full ? "Full" : "Streaming")} quantizedResident={resident} " +
+                          $"parDegree={parDegree} arch={modelConfig.Architecture}");
 
         var weights = ModelFactory.CreateWeights(
             modelConfig, sharpConfig, QuantizationFactory.Create(mapping), path,
-            full ? LoadMode.Full : LoadMode.Streaming, quantizedResident: resident);
+            full ? LoadMode.Full : LoadMode.Streaming, quantizedResident: resident,
+            maxParallelLoadDegree: parDegree);
         var sw = System.Diagnostics.Stopwatch.StartNew();
         weights.InitializeWeights();
         Console.WriteLine($"weights loaded in {sw.Elapsed.TotalSeconds:F1}s");
@@ -285,6 +298,70 @@ static int RunLoadOne(string path, string[] args)
     catch (Exception ex)
     {
         Console.WriteLine($"load FAILED: {ex.GetType().Name}: {ex.Message}");
+        return 1;
+    }
+}
+
+// `benchload <file> [resident] [reps]` times a Full-mode weight load at several
+// degrees of parallelism on the same file, so the fan-out can be measured
+// rather than assumed. Reports median wall time and the resulting throughput;
+// a degree that doesn't help shows up as a flat curve, not a regression.
+static int RunBenchLoad(string path, string[] args)
+{
+    bool resident = args.Any(a => a.Equals("resident", StringComparison.OrdinalIgnoreCase));
+    int reps = 3;
+    foreach (string a in args)
+        if (int.TryParse(a, out int n) && n > 0 && n < 50) reps = n;
+
+    try
+    {
+        var metaHelper = ModelFormatHelpers.GetModelMetaHelperFor(ModelFormat.Gguf);
+        metaHelper.Load(path, null, out var _meta, out var modelConfig, out var _tok);
+        var sharpConfig = modelConfig.ForModel();
+        var mapping = sharpConfig.ToJigSawMapping();
+        var qOps = QuantizationFactory.Create(mapping);
+
+        int cores = Environment.ProcessorCount;
+        long fileBytes = new FileInfo(path).Length;
+        Console.WriteLine($"file={Path.GetFileName(path)} {fileBytes / (1024.0 * 1024.0):F0} MiB " +
+                          $"cores={cores} resident={resident} reps={reps}");
+
+        // "degrees=1,4" restricts the sweep to those degrees (0 = auto);
+        // otherwise the default ladder. Restricting it keeps a cold-cache first
+        // run from being charged for degrees nobody is going to use.
+        var degreesArg = args
+            .FirstOrDefault(a => a.StartsWith("degrees=", StringComparison.OrdinalIgnoreCase))
+            ?[("degrees=".Length)..];
+        int[] degrees = degreesArg is null
+            ? [1, 2, 4, 8, 0]
+            : degreesArg.Split(',', StringSplitOptions.RemoveEmptyEntries)
+                         .Select(int.Parse).ToArray();
+        foreach (int degree in degrees)
+        {
+            var times = new List<double>();
+            for (int r = 0; r < reps; r++)
+            {
+                var weights = ModelFactory.CreateWeights(
+                    modelConfig, sharpConfig, qOps, path,
+                    LoadMode.Full, quantizedResident: resident,
+                    maxParallelLoadDegree: degree);
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                weights.InitializeWeights();
+                sw.Stop();
+                times.Add(sw.Elapsed.TotalSeconds);
+                weights.Dispose();
+            }
+            times.Sort();
+            double median = times[times.Count / 2];
+            string label = degree == 0 ? "auto" : degree.ToString();
+            Console.WriteLine($"  degree={label,-4} median={median,7:F2}s  " +
+                              $"{fileBytes / (1024.0 * 1024.0) / median,7:F1} MiB/s");
+        }
+        return 0;
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"benchload FAILED: {ex.GetType().Name}: {ex.Message}");
         return 1;
     }
 }
@@ -418,10 +495,20 @@ static async Task<int> RunInferenceAsync(string path, string[] args)
         // soup, and the two are distinguishable at step 0 without a reference.
         GeneratorDiagnostics.DumpTopLogits = topk;
         var mapping = sharpConfig.ToJigSawMapping();
-        Console.WriteLine($"mode={(full ? "Full" : "Streaming")} quantizedResident={resident} topLogits={topk}");
+        // "par" (or "par=N") fans the load out; without it the load stays
+        // sequential, so two runs of the same prompt are directly comparable.
+        int parDegree = 1;
+        foreach (string a in args)
+        {
+            if (!a.StartsWith("par", StringComparison.OrdinalIgnoreCase)) continue;
+            parDegree = a.Length > 3 && int.TryParse(a.AsSpan(3), out int pd) ? pd : 0;
+        }
+        Console.WriteLine($"mode={(full ? "Full" : "Streaming")} quantizedResident={resident} " +
+                          $"parDegree={parDegree} topLogits={topk}");
         using var weights = ModelFactory.CreateWeights(
             modelConfig, sharpConfig, QuantizationFactory.Create(mapping), path,
-            full ? LoadMode.Full : LoadMode.Streaming, quantizedResident: resident);
+            full ? LoadMode.Full : LoadMode.Streaming, quantizedResident: resident,
+            maxParallelLoadDegree: parDegree);
         weights.InitializeWeights();
         using var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
 
