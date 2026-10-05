@@ -142,7 +142,7 @@ void Response(ChatStreamEntry entry) => Console.Write(entry.Token);
 |---|---|
 | `metaHelper.Load` | Reads the GGUF file's architecture, hyperparameters, and tokenizer vocab. Pass `null` for the second argument unless the model ships an external tokenizer file. |
 | `modelConfig.ForModel()` | Resolves the config into a hardware-aware mapping (CPU SIMD tier, quant ops). |
-| `ModelFactory.CreateWeights(..., LoadMode.Full)` | Loads and dequantizes all weights into memory up front. Use `LoadMode.Streaming` instead on memory-constrained machines — it loads one layer at a time during inference rather than holding everything resident. |
+| `ModelFactory.CreateWeights(..., LoadMode.Full)` | Loads and dequantizes all weights into memory up front, fanning the reads out across cores by default (see [Parallel full loading](#parallel-full-loading)). Use `LoadMode.Streaming` instead on memory-constrained machines — it loads one layer at a time during inference rather than holding everything resident. |
 | `ModelFactory.CreateTransformer` | Wires the loaded weights into the actual forward-pass graph. |
 | `ChatSession<...>` | Manages conversation history, prompt formatting (auto-detected from the model's chat template), and the generation loop. |
 | `StartChatAsync(Prompt, Response, token)` | Runs the chat loop — `Prompt` supplies the next user message, `Response` receives streamed output tokens as they're generated. |
@@ -151,7 +151,7 @@ void Response(ChatStreamEntry entry) => Console.Write(entry.Token);
 
 - `Temperature = 0.7f`, `TopK = 40`, `TopP = 0.9f` give more natural, varied output than greedy decoding (`Temperature = 0`). Set `Temperature = 0` for deterministic, reproducible output when debugging.
 - `MaxTokens` caps the response length per turn — lower it (e.g. `128`) on slower hardware if you don't need long responses.
-- On memory-constrained machines, prefer `LoadMode.Streaming` over `LoadMode.Full`, and stick to Q4–Q8 quantized models under ~1B–3B params for reasonable throughput.
+- On memory-constrained machines, prefer `LoadMode.Streaming` over `LoadMode.Full`, and stick to Q4–Q8 quantized models under ~1B–3B params for reasonable throughput. If `LoadMode.Full` fits but a parallel load pushes you over, cap the degree (or pass `1`) rather than switching modes — see [Parallel full loading](#parallel-full-loading).
 
 ---
 
@@ -217,6 +217,44 @@ Normally (`LoadMode.Full`) every transformer layer's weights are allocated and l
 5. `CompleteForward` sweeps any remaining resident layers at the end of a pass so memory doesn't creep up across tokens.
 
 The net effect: a model whose full weights don't fit in RAM can still run, trading some throughput for a small, roughly constant memory footprint (current + next layer, rather than all layers). The quantized LM head is also read directly from its raw on-disk bytes in streaming mode rather than materialized as a float tensor, cutting one of the largest single allocations for typical vocab sizes.
+
+---
+
+### Parallel full loading
+
+`LoadMode.Full` is I/O- and dequantization-bound: each tensor is read from a different offset in the file and dequantized independently, so the work parallelizes almost perfectly. Both loaders therefore fan a full load out across threads **by default**:
+
+```csharp
+// One worker per core (the default).
+var weights = ModelFactory.CreateWeights(modelConfig, sharpConfig, qOps, path, LoadMode.Full);
+
+// Cap it, e.g. to leave cores free for something else.
+weights = ModelFactory.CreateWeights(modelConfig, sharpConfig, qOps, path, LoadMode.Full,
+    maxParallelLoadDegree: 2);
+
+// Opt out entirely — the original single-threaded, file-order loop.
+weights = ModelFactory.CreateWeights(modelConfig, sharpConfig, qOps, path, LoadMode.Full,
+    maxParallelLoadDegree: 1);
+```
+
+How `maxParallelLoadDegree` resolves:
+
+| Value | Behaviour |
+|---|---|
+| `0` *(default)* | One worker per core. |
+| `1` | Original sequential loop, tensor by tensor in file order. |
+| `2`+ | That many workers, capped at the core count and at the number of tensors to load. |
+
+Each worker gets its own file stream (the OS spreads the reads across the page cache) and owns a disjoint set of transformer blocks, balanced by on-disk size so one worker never gets a 30x-larger slice than another. The weights produced are byte-identical either way — there is no accuracy or output difference, only wall-clock time.
+
+Notes and limits:
+
+- **Peak transient memory scales with the degree**, since each in-flight tensor is dequantized before being copied into its destination. This is the one real trade-off; on a memory-starved host, lower the degree or pass `1`.
+- `LoadMode.Streaming` is unaffected — it already loads one layer at a time on a background task.
+- A single-core host ignores the request and loads sequentially, as does safe-I/O mode (`useSafeIo: true`, used for WASM).
+- Cancellation and load errors behave as before: cancelling aborts the load, and a failure surfaces as the original exception rather than an `AggregateException`.
+
+Measured on a 4-core host across 14 model/quantization combinations present in both runs, `CreateWeights` (`Create` + `InitializeWeights`) went from **279.61s to 124.72s total — a 2.24x aggregate speedup**, per-model ranging from 1.49x to 3.30x (median ~2.1x). Inference timings are unaffected by this option.
 
 ---
 
