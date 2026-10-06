@@ -171,6 +171,28 @@ public abstract class InferenceLinearLayer : LinearLayer
         "bf16_parallel_scalar", $"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulBF16_Parallel_Scalar)}")]
     public unsafe abstract void QuantizedMatMulFn(float* input, byte* rawWeights, float* output, int M, int K, int N);
 
+    /// <summary>
+    /// Float fallback for layers whose weights stay F32 (MoE routers, and any other
+    /// unquantized tensor). <paramref name="w"/> is [K, N] row-major, so element (i, o)
+    /// lives at w[i * N + o] — the layout <see cref="LoadWeightTransposed"/> produces.
+    /// </summary>
+    private static unsafe void FloatMatMul(float* input, float* w, float* output, int M, int K, int N)
+    {
+        for (int r = 0; r < M; r++)
+        {
+            float* x = input + (long)r * K;
+            float* y = output + (long)r * N;
+            new Span<float>(y, N).Clear();
+            for (int i = 0; i < K; i++)
+            {
+                float xi = x[i];
+                if (xi == 0f) continue;
+                float* wRow = w + (long)i * N;
+                for (int o = 0; o < N; o++) y[o] += xi * wRow[o];
+            }
+        }
+    }
+
     public override unsafe Tensor<float> Forward(Tensor<float> input, IWorkspace? workspace = null)
     {
         ThrowIfDisposed();
@@ -201,9 +223,15 @@ public abstract class InferenceLinearLayer : LinearLayer
         }
         else if (QuantDtype == QuantDType.F32 && _weight.ElementCount == (long)InFeatures * OutFeatures)
         {
+            // An F32 weight must not be handed to a quantized kernel: every
+            // QuantizedMatMulFn reinterprets its input as (fp16 scale, int8 x 32)
+            // blocks, so an F32 router like Qwen2-MoE's ffn_gate_inp came out as
+            // garbage — a near-uniform softmax that routed every token to the wrong
+            // experts. Do the multiply in float instead, using the same
+            // [inFeatures, outFeatures] layout the loader writes (row i, column o).
             fixed (float* pWeight = _weight.Data)
             {
-                QuantizedMatMulFn(flat.DataPtr, (byte*)pWeight, result.DataPtr, m, InFeatures, OutFeatures);
+                FloatMatMul(flat.DataPtr, pWeight, result.DataPtr, m, InFeatures, OutFeatures);
             }
         }
         else

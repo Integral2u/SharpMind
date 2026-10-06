@@ -14,15 +14,23 @@ using SharpMind.Tokenization;
 //   dotnet run --project tools/GgufSmokeProbe -- run  <file> ["prompt"] [maxTokens=24] [full] [resident] [topk]
 //   dotnet run --project tools/GgufSmokeProbe -- bind <file>
 //   dotnet run --project tools/GgufSmokeProbe -- cmp  <fileA> <fileB> <tensor>
+//   dotnet run --project tools/GgufSmokeProbe -- ref  <file> [prompt | @promptfile]
 //
 // `run ... topk` dumps per-step top-5 logits with the decoded text to stderr.
 // That is the cheap way to tell a weight/indexing bug (near-uniform soup from
 // step 0) apart from a cache or sampling bug (sane step 0, decay afterwards)
 // without a reference implementation to diff against.
+//
+// `ref` runs the same forward through Reference/Qwen2MoEReference, which shares
+// no code with SharpMind.Model, and prints its own top-k. When the two disagree
+// the disagreement localises the bug to one of the two; when they agree, both
+// are being compared against llama.cpp next. REF_BLOCKS=n limits it to the first
+// n layers, REF_TRACE=1 prints per-layer magnitudes, REF_DUMP=<file> writes the
+// final hidden state.
 
 if (args.Length < 2)
 {
-    Console.Error.WriteLine("usage: meta <file>   |   dump <file> [pattern]   |   bind <file>   |   fwd <file> [full] [resident]   |   run <file> [prompt] [maxTokens] [full] [resident] [topk]");
+    Console.Error.WriteLine("usage: meta <file>   |   dump <file> [pattern]   |   bind <file>   |   fwd <file> [full] [resident]   |   fwdmulti <file> <promptfile> [single|...]   |   ref <file> [prompt]   |   run <file> [prompt] [maxTokens] [full] [resident] [topk]");
     return 2;
 }
 
@@ -41,6 +49,12 @@ if (mode == "run")
 
 if (mode == "fwd")
     return RunForward(path, args);
+
+if (mode == "fwdmulti")
+    return RunForwardMulti(path, args);
+
+if (mode == "ref")
+    return GgufSmokeProbe.Qwen2MoEReference.Run(path, args);
 
 if (mode == "load1")
     return RunLoadOne(path, args);
@@ -205,12 +219,12 @@ static int RunForward(string path, string[] args)
     try
     {
         var metaHelper = ModelFormatHelpers.GetModelMetaHelperFor(ModelFormat.Gguf);
-        metaHelper.Load(path, null, out var _meta, out var modelConfig, out var _tok);
+        metaHelper.Load(path, null, out var _meta, out var modelConfig, out var tok);
 
         var sharpConfig = modelConfig.ForModel();
         var mapping = sharpConfig.ToJigSawMapping();
         // "par" (or "par=N") fans the load out; without it the load stays
-        // sequential, so the two runs are directly comparable.
+        // sequential, so two runs of the same prompt are directly comparable.
         int parDegree = 1;
         foreach (string a in args)
         {
@@ -244,17 +258,148 @@ static int RunForward(string path, string[] args)
         using var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
         Console.WriteLine($"  after CreateTransformer: WRouter={ShapeOf(weights.Blocks[0].WRouter)}");
 
+        if (b0.WRouter is not null)
+        {
+            float[] rw = b0.WRouter.Data.ToArray();
+            double sum = 0, mx = 0; int zeros = 0;
+            foreach (float v in rw) { sum += Math.Abs(v); if (Math.Abs(v) > mx) mx = Math.Abs(v); if (v == 0f) zeros++; }
+            Console.WriteLine($"  WRouter avg|v|={sum / rw.Length:F6} max|v|={mx:F6} zeros={zeros}/{rw.Length}");
+            Console.WriteLine($"  WRouter first8=[{string.Join(",", rw.Take(8).Select(v => v.ToString("F5")))}]");
+        }
+        void DumpPlanes(string label, Dictionary<int, byte[]>? planes, int take)
+        {
+            if (planes is null) { Console.WriteLine($"  {label}: null"); return; }
+            Console.WriteLine($"  {label}: count={planes.Count} keys={string.Join(",", planes.Keys.OrderBy(k => k).Take(6))}");
+            foreach (int e in planes.Keys.OrderBy(k => k).Take(take))
+            {
+                var arr = planes[e];
+                double sum = 0; int mn = 255, mx = 0; long nz = 0;
+                foreach (byte v in arr) { sum += v; if (v < mn) mn = v; if (v > mx) mx = v; if (v != 0) nz++; }
+                Console.WriteLine($"    exp{e}: len={arr.Length} avg={sum / arr.Length:F4} min={mn} max={mx} nonzero={nz}");
+            }
+        }
+        DumpPlanes("RawWgateExp", b0.RawWgateExp, 3);
+        DumpPlanes("RawWupExp", b0.RawWupExp, 1);
+        DumpPlanes("RawWdownExp", b0.RawWdownExp, 1);
+
+
+        {
+            float[] sg = b0.SharedGateInp.Data.ToArray();
+            double sum = 0, mx = 0;
+            foreach (float v in sg) { sum += Math.Abs(v); if (Math.Abs(v) > mx) mx = Math.Abs(v); }
+            Console.WriteLine($"  SharedGateInp avg|v|={sum / sg.Length:F6} max|v|={mx:F6} zeros={sg.Count(v => v == 0f)}/{sg.Length}");
+        }
+        if (args.Any(a => a.Equals("nofwd", StringComparison.OrdinalIgnoreCase))) return 0;
+
         var ids = new SharpMind.Core.Tensors.Tensor<int>(1, 1);
         ids.Data[0] = 9707; // "Hello"
+
+        // Optional "@file" prompt: run a real multi-token prefill and show what the
+        // model predicts for the final position. This separates a broken forward pass
+        // (wrong top token here) from a broken decode/KV-cache path (right here, wrong
+        // in a real session).
+        string fwdPrompt = args.Length > 2 ? args[2] : "";
+        if (fwdPrompt.Length > 1 && fwdPrompt[0] == '@' && File.Exists(fwdPrompt[1..]))
+            fwdPrompt = File.ReadAllText(fwdPrompt[1..]);
+
+        if (fwdPrompt.Length > 0 && tok is not null)
+        {
+            int[] tids = tok.Encode(fwdPrompt, addBos: false, addEos: false);
+            Console.WriteLine($"  prompt tokens={tids.Length}: {string.Join(",", tids.TakeLast(12))}");
+            ids = new SharpMind.Core.Tensors.Tensor<int>(1, tids.Length);
+            for (int i = 0; i < tids.Length; i++) ids.Data[i] = tids[i];
+        }
+
         sw.Restart();
         var logits = model.ForwardLastLogits(ids, null);
         Console.WriteLine($"forward OK in {sw.Elapsed.TotalSeconds:F1}s, logits[{logits.ElementCount}] " +
             $"first={logits.Data[0]:F4}");
+
+        if (tok is not null && logits.ElementCount > 0)
+        {
+            var order = new int[logits.ElementCount];
+            for (int i = 0; i < order.Length; i++) order[i] = i;
+            float[] arr = logits.Data.ToArray();
+            Array.Sort(order, (a, b) => arr[b].CompareTo(arr[a]));
+            double mean = 0; for (int i = 0; i < arr.Length; i++) mean += arr[i];
+            mean /= arr.Length;
+            double var2 = 0; for (int i = 0; i < arr.Length; i++) var2 += (arr[i] - mean) * (arr[i] - mean);
+            double sd = Math.Sqrt(var2 / arr.Length);
+            Console.WriteLine($"  logits mean={mean:F4} std={sd:F4} top10:");
+            for (int i = 0; i < 10; i++)
+            {
+                int id = order[i];
+                string piece = tok.IdToToken(id).Replace("\n", "\\n");
+                Console.WriteLine($"    {i}: {id} '{piece}' {arr[id]:F4}");
+            }
+            Console.WriteLine($"  margin1={arr[order[0]] - arr[order[1]]:F4}");
+        }
         return 0;
     }
     catch (Exception ex)
     {
         Console.WriteLine($"forward FAILED: {ex.GetType().Name}: {ex.Message}");
+        return 1;
+    }
+}
+
+static int RunForwardMulti(string path, string[] args)
+{
+    bool resident = args.Any(a => a.Equals("resident", StringComparison.OrdinalIgnoreCase));
+    bool addBos = args.Any(a => a.Equals("bos", StringComparison.OrdinalIgnoreCase));
+    try
+    {
+        var metaHelper = ModelFormatHelpers.GetModelMetaHelperFor(ModelFormat.Gguf);
+        metaHelper.Load(path, null, out var _meta, out var modelConfig, out var tok);
+        var sharpConfig = modelConfig.ForModel();
+        var mapping = sharpConfig.ToJigSawMapping();
+        var weights = ModelFactory.CreateWeights(
+            modelConfig, sharpConfig, QuantizationFactory.Create(mapping), path,
+            LoadMode.Full, quantizedResident: resident, maxParallelLoadDegree: 0);
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        weights.InitializeWeights();
+        Console.WriteLine($"loaded in {sw.Elapsed.TotalSeconds:F1}s addBos={addBos}");
+        Console.WriteLine($"DIMS arch={modelConfig.Architecture} hidden={modelConfig.HiddenDim} " +
+            $"headDim={modelConfig.HeadDim} heads={modelConfig.NumHeads} kvHeads={modelConfig.NumKvHeads} " +
+            $"kvGroup={modelConfig.KvGroupSize} qDim={modelConfig.HiddenDim} " +
+            $"keyLength={modelConfig.KeyLength} valueLength={modelConfig.ValueLength} ctx={modelConfig.MaxSeqLen}");
+        using var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
+
+        string listPath = args.Length > 2 ? args[2] : "";
+        if (listPath.StartsWith("@")) listPath = listPath[1..];
+        string[] prompts;
+        if (args.Any(a => a.Equals("single", StringComparison.OrdinalIgnoreCase)))
+        {
+            prompts = new[] { File.ReadAllText(listPath) };
+        }
+        else
+        {
+            prompts = File.ReadAllLines(listPath)
+                .Select(l => l.Replace("\\n", "\n").Trim())
+                .Where(l => l.Length > 0).ToArray();
+        }
+
+        foreach (string p in prompts)
+        {
+            int[] tids = tok.Encode(p, addBos, addEos: false);
+            var ids = new SharpMind.Core.Tensors.Tensor<int>(1, tids.Length);
+            for (int i = 0; i < tids.Length; i++) ids.Data[i] = tids[i];
+            sw.Restart();
+            var logits = model.ForwardLastLogits(ids, null);
+            float[] arr = logits.Data.ToArray();
+            int top = 0;
+            for (int i = 1; i < arr.Length; i++) if (arr[i] > arr[top]) top = i;
+            int second = top == 0 ? 1 : 0;
+            for (int i = 0; i < arr.Length; i++) if (i != top && arr[i] > arr[second]) second = i;
+            Console.WriteLine($"PROMPT\tn={tids.Length}\tids={string.Join(",", tids)}\ttop={top}\t" +
+                $"'{tok.IdToToken(top).Replace("\n", "\\n")}'\tlogit={arr[top]:F4}\t" +
+                $"margin={arr[top] - arr[second]:F4}\t{sw.Elapsed.TotalSeconds:F1}s");
+        }
+        return 0;
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"fwdmulti FAILED: {ex.GetType().Name}: {ex.Message}");
         return 1;
     }
 }
@@ -459,6 +604,14 @@ static async Task<int> RunInferenceAsync(string path, string[] args)
     string prompt = args.Length > 2 ? args[2] : "Hello!";
     int maxTokens = args.Length > 3 && int.TryParse(args[3], out int m) ? m : 24;
 
+    // "@path" reads the prompt from a file, so multi-line few-shot prompts can be
+    // compared byte-for-byte against llama.cpp without fighting shell quoting.
+    if (prompt.Length > 1 && prompt[0] == '@')
+    {
+        string pf = prompt[1..];
+        if (File.Exists(pf)) prompt = File.ReadAllText(pf);
+    }
+
     ModelMetaData meta;
     ModelConfig modelConfig;
     Tokenizer? tokenizer;
@@ -511,6 +664,29 @@ static async Task<int> RunInferenceAsync(string path, string[] args)
             maxParallelLoadDegree: parDegree);
         weights.InitializeWeights();
         using var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
+
+        // "raw" skips the chat template entirely and feeds the prompt straight to the
+        // generator. Base models are frequently shipped with a chat_template they were
+        // never trained for, so a templated run says nothing about the maths. "nobos"
+        // toggles the leading BOS, which is the other thing llama.cpp does by default
+        // and this path historically did not.
+        if (args.Any(a => a.Equals("raw", StringComparison.OrdinalIgnoreCase)))
+        {
+            bool addBos = !args.Any(a => a.Equals("nobos", StringComparison.OrdinalIgnoreCase));
+            var rawBuilder = new StandardGeneratorBuilder<KVCacherBuilder>();
+            var rawGen = rawBuilder.CreateGenerator(model, tokenizer, addBos, addEos: false, caches: null);
+            var rawSample = new SamplingConfig { Temperature = 0f, TopK = 1 };
+            var rawGenCfg = new GenerationConfig { MaxNewTokens = maxTokens, Stream = true };
+            var rawSb = new System.Text.StringBuilder();
+            var rawSw = System.Diagnostics.Stopwatch.StartNew();
+            await foreach (var frag in rawGen.GenerateAsync(prompt, rawSample, rawGenCfg))
+                rawSb.Append(frag);
+            rawSw.Stop();
+            Console.WriteLine($"RAW addBos={addBos}:{rawSb}");
+            Console.WriteLine($"OK  raw generated {rawSb.Length} chars in {rawSw.Elapsed.TotalSeconds:F1}s");
+            GeneratorDiagnostics.DumpTopLogits = false;
+            return rawSb.Length > 0 ? 0 : 4;
+        }
 
         await using var session = new ChatSession<StandardGeneratorBuilder<KVCacherBuilder>, KVCacherBuilder>(model, tokenizer, meta)
         {

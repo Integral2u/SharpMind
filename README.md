@@ -157,7 +157,7 @@ void Response(ChatStreamEntry entry) => Console.Write(entry.Token);
 
 ## Compatibility matrix
 
-Validated across two independent runs against 15 model/architecture/quantization combinations. "Runs clean" means the model loaded, built a transformer, and completed all five benchmark prompts with no exceptions or crashes — it is **not** a quality claim; output coherence varies a lot by model size and quant level, which is expected and not specific to SharpMind.
+Validated across two independent runs against 15 model/architecture/quantization combinations, plus a single-run validation of the Mixture-of-Experts path (marked \* below). "Runs clean" means the model loaded, built a transformer, and completed all five benchmark prompts with no exceptions or crashes — it is **not** a quality claim; output coherence varies a lot by model size and quant level, which is expected and not specific to SharpMind.
 
 | Architecture | Model | Quant | Runs clean (both runs) |
 |---|---|---|---|
@@ -179,8 +179,11 @@ Validated across two independent runs against 15 model/architecture/quantization
 | Ministral 3 (sliding window) | Ministral-3-3B-Instruct-2512 | Q4_K_M | ✅ |
 | Phi-3 | Phi-3-mini-4k-instruct | Q4_K | ✅ |
 | LFM2 (short-conv) | LFM2.5-2.6B-Instruct | Q8_0 | ✅ |
+| Qwen1.5 MoE (60 experts) | Qwen1.5-MoE-A2.7B | Q2_K | ✅ * |
 
-_Tested on: **AMD Ryzen 3 2200U (2C/4T, 2.5GHz base) w/ Radeon Vega Mobile Graphics, 12GB RAM** — a modest mobile/laptop-class chip, not a workstation. Load times and throughput scale heavily with hardware and quant level — as a rough sense of range on this machine, `SmolLM-135M.Q4_K_M` loaded in ~2s, while `qwen2.5-1.5b-instruct-q8_0` (the largest model tested) took ~2 minutes to load and initialize. That everything above ran clean on a 2-core/4-thread laptop CPU is itself a reasonable data point for SharpMind's baseline hardware requirements — run your own copy of the benchmark against your target hardware before relying on these numbers for capacity planning._
+_Tested on: **AMD Ryzen 3 2200U (2C/4T, 2.5GHz base) w/ Radeon Vega Mobile Graphics, 12GB RAM** — a modest mobile/laptop-class chip, not a workstation. Load times and throughput scale heavily with hardware and quant level — as a rough sense of range on this machine, `SmolLM-135M.Q4_K_M` loaded in ~2s, while `qwen2.5-1.5b-instruct-q8_0` took ~2 minutes and `Qwen1.5-MoE-A2.7B-Q2_K` (5.5 GB, the largest model tested) took ~3 minutes to load and initialize. That everything above ran clean on a 2-core/4-thread laptop CPU is itself a reasonable data point for SharpMind's baseline hardware requirements — run your own copy of the benchmark against your target hardware before relying on these numbers for capacity planning._
+
+_* Single-run validation, not part of the two-run set above: the Mixture-of-Experts path is new in 1.0.8.0. It loads and generates without errors, but MoE throughput on a CPU is low (0.1–0.2 tokens/s on the machine above) — every token runs only its top-4 of 60 experts plus the shared expert, so cost tracks FLOPs rather than resident weight size, and the whole 5.5 GB of expert weights is held in memory for the life of the model (`LoadMode.Full`, the default; see [Streaming model loading](#streaming-model-loading-loadmodestreaming))._
 
 ---
 
