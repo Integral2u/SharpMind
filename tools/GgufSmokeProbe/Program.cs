@@ -33,7 +33,7 @@ if (args.Length > 0 && args[0] == "kbench")
 
 if (args.Length < 2)
 {
-    Console.Error.WriteLine("usage: meta <file>   |   dump <file> [pattern]   |   bind <file>   |   fwd <file> [full] [resident]   |   fwdmulti <file> <promptfile> [single|...]   |   ref <file> [prompt]   |   run <file> [prompt] [maxTokens] [full] [resident] [topk] [serialmm]   |   kbench <q2k|q3k|q6k|iq4nl|q8_0|f32> [K] [N] [iters] [fma|avx2|scalar]");
+    Console.Error.WriteLine("usage: meta <file>   |   dump <file> [pattern]   |   bind <file>   |   fwd <file> [full] [resident]   |   fwdmulti <file> <promptfile> [single|...]   |   ref <file> [prompt]   |   run <file> [prompt] [maxTokens] [full] [resident] [topk] [serialmm]   |   kbench <q2k|q3k|q4k|q5k|q6k|q8k|q4_0|q4_1|iq4nl|q5_0|q5_1|q8_0|q8_1|f32> [K] [N] [iters] [fma|avx2|scalar]");
     return 2;
 }
 
@@ -778,9 +778,17 @@ static unsafe int RunKernelBench(string[] args)
     {
         case "q2k": elPerBlock = 256; blockBytes = 84; break;
         case "q3k": elPerBlock = 256; blockBytes = 110; break;
+        case "q4k": elPerBlock = 256; blockBytes = 144; break;
+        case "q5k": elPerBlock = 256; blockBytes = 176; break;
         case "q6k": elPerBlock = 256; blockBytes = 210; break;
+        case "q8k": elPerBlock = 256; blockBytes = 292; break;
+        case "q4_0": elPerBlock = 32; blockBytes = 18; break;
+        case "q4_1": elPerBlock = 32; blockBytes = 20; break;
         case "iq4nl": elPerBlock = 32; blockBytes = 18; break;
+        case "q5_0": elPerBlock = 32; blockBytes = 22; break;
+        case "q5_1": elPerBlock = 32; blockBytes = 24; break;
         case "q8_0": elPerBlock = 32; blockBytes = 34; break;
+        case "q8_1": elPerBlock = 32; blockBytes = 36; break;
         case "f32": elPerBlock = 1; blockBytes = 4; break;
         default:
             Console.Error.WriteLine($"kbench: unknown kind '{kind}'");
@@ -802,9 +810,37 @@ static unsafe int RunKernelBench(string[] args)
         case "q6k_scalar": par = QuantizationKernels.QuantizedMatMulQ6K_Parallel_Scalar; ser = QuantizationKernels.QuantizedMatMulQ6K_Serial_Scalar; break;
         case "iq4nl": par = QuantizationKernels.QuantizedMatMulQ4_NL_Parallel_FMA; ser = QuantizationKernels.QuantizedMatMulQ4_NL_Serial_FMA; break;
         case "iq4nl_avx2": par = QuantizationKernels.QuantizedMatMulQ4_NL_Parallel_AVX2; ser = QuantizationKernels.QuantizedMatMulQ4_NL_Serial_AVX2; break;
+        case "iq4nl_scalar": par = QuantizationKernels.QuantizedMatMulQ4_NL_Parallel_Scalar; ser = QuantizationKernels.QuantizedMatMulQ4_NL_Serial_Scalar; break;
+        case "q4k": par = QuantizationKernels.QuantizedMatMulQ4K_Parallel_FMA; ser = QuantizationKernels.QuantizedMatMulQ4K_Serial_FMA; break;
+        case "q4k_avx2": par = QuantizationKernels.QuantizedMatMulQ4K_Parallel_AVX2; ser = QuantizationKernels.QuantizedMatMulQ4K_Serial_AVX2; break;
+        case "q4k_scalar": par = QuantizationKernels.QuantizedMatMulQ4K_Parallel_Scalar; ser = QuantizationKernels.QuantizedMatMulQ4K_Serial_Scalar; break;
+        case "q5k": par = QuantizationKernels.QuantizedMatMulQ5K_Parallel_FMA; ser = QuantizationKernels.QuantizedMatMulQ5K_Serial_FMA; break;
+        case "q5k_avx2": par = QuantizationKernels.QuantizedMatMulQ5K_Parallel_AVX2; ser = QuantizationKernels.QuantizedMatMulQ5K_Serial_AVX2; break;
+        case "q5k_scalar": par = QuantizationKernels.QuantizedMatMulQ5K_Parallel_Scalar; ser = QuantizationKernels.QuantizedMatMulQ5K_Serial_Scalar; break;
+        case "q4_0": par = QuantizationKernels.QuantizedMatMulQ4_0_Parallel_FMA; ser = QuantizationKernels.QuantizedMatMulQ4_0_Serial_FMA; break;
+        case "q4_0_avx2": par = QuantizationKernels.QuantizedMatMulQ4_0_Parallel_AVX2; ser = QuantizationKernels.QuantizedMatMulQ4_0_Serial_AVX2; break;
+        case "q4_0_scalar": par = QuantizationKernels.QuantizedMatMulQ4_0_Parallel_Scalar; ser = QuantizationKernels.QuantizedMatMulQ4_0_Serial_Scalar; break;
+        case "q4_1": par = QuantizationKernels.QuantizedMatMulQ4_1_Parallel_FMA; ser = QuantizationKernels.QuantizedMatMulQ4_1_Serial_FMA; break;
+        case "q4_1_avx2": par = QuantizationKernels.QuantizedMatMulQ4_1_Parallel_AVX2; ser = QuantizationKernels.QuantizedMatMulQ4_1_Serial_AVX2; break;
+        case "q4_1_scalar": par = QuantizationKernels.QuantizedMatMulQ4_1_Parallel_Scalar; ser = QuantizationKernels.QuantizedMatMulQ4_1_Serial_Scalar; break;
+        case "q5_0": par = QuantizationKernels.QuantizedMatMulQ5_0_Parallel_FMA; ser = QuantizationKernels.QuantizedMatMulQ5_0_Serial_FMA; break;
+        case "q5_0_avx2": par = QuantizationKernels.QuantizedMatMulQ5_0_Parallel_AVX2; ser = QuantizationKernels.QuantizedMatMulQ5_0_Serial_AVX2; break;
+        case "q5_0_scalar": par = QuantizationKernels.QuantizedMatMulQ5_0_Parallel_Scalar; ser = QuantizationKernels.QuantizedMatMulQ5_0_Serial_Scalar; break;
+        case "q5_1": par = QuantizationKernels.QuantizedMatMulQ5_1_Parallel_FMA; ser = QuantizationKernels.QuantizedMatMulQ5_1_Serial_FMA; break;
+        case "q5_1_avx2": par = QuantizationKernels.QuantizedMatMulQ5_1_Parallel_AVX2; ser = QuantizationKernels.QuantizedMatMulQ5_1_Serial_AVX2; break;
+        case "q5_1_scalar": par = QuantizationKernels.QuantizedMatMulQ5_1_Parallel_Scalar; ser = QuantizationKernels.QuantizedMatMulQ5_1_Serial_Scalar; break;
+        case "q8_1": par = QuantizationKernels.QuantizedMatMulQ8_1_Parallel_FMA; ser = QuantizationKernels.QuantizedMatMulQ8_1_Serial_FMA; break;
+        case "q8_1_avx2": par = QuantizationKernels.QuantizedMatMulQ8_1_Parallel_AVX2; ser = QuantizationKernels.QuantizedMatMulQ8_1_Serial_AVX2; break;
+        case "q8_1_scalar": par = QuantizationKernels.QuantizedMatMulQ8_1_Parallel_Scalar; ser = QuantizationKernels.QuantizedMatMulQ8_1_Serial_Scalar; break;
+        case "q8k": par = QuantizationKernels.QuantizedMatMulQ8K_Parallel_FMA; ser = QuantizationKernels.QuantizedMatMulQ8K_Serial_FMA; break;
+        case "q8k_avx2": par = QuantizationKernels.QuantizedMatMulQ8K_Parallel_AVX2; ser = QuantizationKernels.QuantizedMatMulQ8K_Serial_AVX2; break;
+        case "q8k_scalar": par = QuantizationKernels.QuantizedMatMulQ8K_Parallel_Scalar; ser = QuantizationKernels.QuantizedMatMulQ8K_Serial_Scalar; break;
         case "q8_0": par = QuantizationKernels.QuantizedMatMulQ8_0_Parallel_FMA; ser = QuantizationKernels.QuantizedMatMulQ8_0_Serial_FMA; break;
         case "q8_0_avx2": par = QuantizationKernels.QuantizedMatMulQ8_0_Parallel_AVX2; ser = QuantizationKernels.QuantizedMatMulQ8_0_Serial_AVX2; break;
+        case "q8_0_scalar": par = QuantizationKernels.QuantizedMatMulQ8_0_Parallel_Scalar; ser = QuantizationKernels.QuantizedMatMulQ8_0_Serial_Scalar; break;
         case "f32": par = QuantizationKernels.QuantizedMatMulF32_Parallel_FMA; ser = QuantizationKernels.QuantizedMatMulF32_Serial_FMA; break;
+        case "f32_avx2": par = QuantizationKernels.QuantizedMatMulF32_Parallel_FMA; ser = QuantizationKernels.QuantizedMatMulF32_Serial_FMA; break;
+        case "f32_scalar": par = QuantizationKernels.QuantizedMatMulF32_Parallel_Scalar; ser = QuantizationKernels.QuantizedMatMulF32_Serial_Scalar; break;
         default:
             Console.Error.WriteLine($"kbench: unknown variant '{key}'");
             return 2;
