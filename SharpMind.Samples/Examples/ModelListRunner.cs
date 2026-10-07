@@ -49,73 +49,79 @@ namespace SharpMind.Samples.Examples
             var totalTime = Stopwatch.StartNew();
             foreach (var m in Models)
             {
-                Console.ForegroundColor = ConsoleColor.White;
-                string modelPath = string.Empty;
-                ModelFormat? fmt = null;
-                foreach (var mFmt in Enum.GetValues<ModelFormat>())
+                try
                 {
-                    var ext = ModelFormatHelpers.GetExtension(mFmt);
-                    modelPath = Path.Combine(ModelPath, $"{m}{ext}");
-                    if (File.Exists(modelPath))
+                    Console.ForegroundColor = ConsoleColor.White;
+                    string modelPath = string.Empty;
+                    ModelFormat? fmt = null;
+                    foreach (var mFmt in Enum.GetValues<ModelFormat>())
                     {
-                        fmt = mFmt; break;
+                        var ext = ModelFormatHelpers.GetExtension(mFmt);
+                        modelPath = Path.Combine(ModelPath, $"{m}{ext}");
+                        if (File.Exists(modelPath))
+                        {
+                            fmt = mFmt; break;
+                        }
                     }
-                }
-                if (fmt == null) continue;
-                var metaHelper = ModelFormatHelpers.GetModelMetaHelperFor((ModelFormat)fmt);
+                    if (fmt == null) continue;
+                    var metaHelper = ModelFormatHelpers.GetModelMetaHelperFor((ModelFormat)fmt);
 
-                await Console.Out.WriteLineAsync($"Testing {m}");
-                await Console.Out.FlushAsync();
-                metaHelper.Load(modelPath, null, out ModelMetaData meta, out ModelConfig modelConfig, out Tokenizer? tokenizer);
-                if (tokenizer == null)
-                {
-                    await Console.Out.WriteLineAsync($"No Tokenizer Data");
-                    continue;
-                }
-
-                var sharpConfig = modelConfig.ForModel();
-                var mapping = new MappingBuilder(sharpConfig.ResolvedHardware)
-                    .ApplyPreset(sharpConfig)
-                    .ApplyQuantPreset(sharpConfig)
-                    .Build();
-
-                GC.Collect(); GC.WaitForPendingFinalizers();
-                var sw = Stopwatch.StartNew();
-                var qOps = QuantizationFactory.Create(mapping);
-                using var weights = ModelFactory.CreateWeights(modelConfig, sharpConfig, qOps, modelPath, loadMode);
-                weights.InitializeWeights();
-
-                await Console.Out.WriteLineAsync($"ModelFactory.Create + InitializeWeights executed in: {sw.Elapsed.TotalSeconds:F2}s");
-                GC.Collect(); GC.WaitForPendingFinalizers();
-                sw.Restart();
-                using var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
-                await Console.Out.WriteLineAsync($"ModelFactory.CreateTransformer executed in: {sw.Elapsed.TotalSeconds:F2}s");
-
-                // One shared formatter for this model — auto-resolved from the
-                // stored chat template (Jinja/ChatML) when none was supplied.
-                var resolvedFormatter = formatter ?? ChatPromptFormatterFactory.Create(meta, tokenizer);
-
-                // Load once, then test every prompt in its own fresh session.
-                foreach (var prompt in prompts)
-                {
-                    sw.Restart();
-                    // disposeModel:false keeps the model alive so later prompts
-                    // reuse it; the outer `using var model` frees it afterwards.
-                    await using var session = new ChatSession<SpeculativeGeneratorBuilder<Int8KVCacherBuilder>, Int8KVCacherBuilder>(model, tokenizer, meta, null, null, null, null, null, null, resolvedFormatter, disposeModel: false)
+                    await Console.Out.WriteLineAsync($"Testing {m}");
+                    await Console.Out.FlushAsync();
+                    metaHelper.Load(modelPath, null, out ModelMetaData meta, out ModelConfig modelConfig, out Tokenizer? tokenizer);
+                    if (tokenizer == null)
                     {
-                        MaxTokens = 256,
-                        Temperature = knobs.Temperature,
-                        TopK = knobs.TopK,
-                        TopP = knobs.TopP,
-                        RepetitionPenalty = knobs.RepetitionPenalty,
-                    };
-                    session.InitializeChat();
+                        await Console.Out.WriteLineAsync($"No Tokenizer Data");
+                        continue;
+                    }
 
-                    var history = await RunPromptAsync(session, prompt, maxTokens);
+                    var sharpConfig = modelConfig.ForModel();
+                    var mapping = new MappingBuilder(sharpConfig.ResolvedHardware)
+                        .ApplyPreset(sharpConfig)
+                        .ApplyQuantPreset(sharpConfig)
+                        .Build();
 
-                    await Console.Out.WriteLineAsync();
-                    await Console.Out.WriteLineAsync($"Prompt '{prompt}': {history.Length} turns in {sw.Elapsed.TotalSeconds:F2}s  Tokens per second: {session.TokensPerSecond ?? 0:F2}  TTFT: {session.TimeToFirstToken?.ToString("F3") ?? "N/A"}s");
-                    await Console.Out.WriteLineAsync();
+                    GC.Collect(); GC.WaitForPendingFinalizers();
+                    var sw = Stopwatch.StartNew();
+                    var qOps = QuantizationFactory.Create(mapping);
+                    using var weights = ModelFactory.CreateWeights(modelConfig, sharpConfig, qOps, modelPath, loadMode);
+                    weights.InitializeWeights();
+
+                    await Console.Out.WriteLineAsync($"ModelFactory.Create + InitializeWeights executed in: {sw.Elapsed.TotalSeconds:F2}s");
+                    GC.Collect(); GC.WaitForPendingFinalizers();
+                    sw.Restart();
+                    using var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
+                    await Console.Out.WriteLineAsync($"ModelFactory.CreateTransformer executed in: {sw.Elapsed.TotalSeconds:F2}s");
+
+                    // One shared formatter for this model — auto-resolved from the
+                    // stored chat template (Jinja/ChatML) when none was supplied.
+                    var resolvedFormatter = formatter ?? ChatPromptFormatterFactory.Create(meta, tokenizer);
+
+                    // Load once, then test every prompt in its own fresh session.
+                    foreach (var prompt in prompts)
+                    {
+                        sw.Restart();
+                        // disposeModel:false keeps the model alive so later prompts
+                        // reuse it; the outer `using var model` frees it afterwards.
+                        await using var session = new ChatSession<SpeculativeGeneratorBuilder<Int8KVCacherBuilder>, Int8KVCacherBuilder>(model, tokenizer, meta, null, null, null, null, null, null, resolvedFormatter, disposeModel: false)
+                        {
+                            MaxTokens = 256,
+                            Temperature = knobs.Temperature,
+                            TopK = knobs.TopK,
+                            TopP = knobs.TopP,
+                            RepetitionPenalty = knobs.RepetitionPenalty,
+                        };
+                        session.InitializeChat();
+
+                        var history = await RunPromptAsync(session, prompt, maxTokens);
+
+                        await Console.Out.WriteLineAsync();
+                        await Console.Out.WriteLineAsync($"Prompt '{prompt}': {history.Length} turns in {sw.Elapsed.TotalSeconds:F2}s  Tokens per second: {session.TokensPerSecond ?? 0:F2}  TTFT: {session.TimeToFirstToken?.ToString("F3") ?? "N/A"}s");
+                        await Console.Out.WriteLineAsync();
+                    }
+                }catch(Exception e)
+                {
+                    await Console.Out.WriteLineAsync(e.ToString());
                 }
             }
             await Console.Out.WriteLineAsync($"All Models Executed in: {totalTime.Elapsed.TotalSeconds:F2}s");
