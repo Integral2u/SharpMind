@@ -10,6 +10,26 @@ public static partial class QuantizationKernels
     private static readonly float[] kvalues_iq4nl =
         [-127f, -104f, -83f, -65f, -49f, -35f, -22f, -10f, 1f, 13f, 25f, 38f, 53f, 69f, 89f, 113f];
 
+    private static readonly Vector256<float> IQ4NLLo = Vector256.Create(
+        kvalues_iq4nl[0], kvalues_iq4nl[1], kvalues_iq4nl[2], kvalues_iq4nl[3],
+        kvalues_iq4nl[4], kvalues_iq4nl[5], kvalues_iq4nl[6], kvalues_iq4nl[7]);
+    private static readonly Vector256<float> IQ4NLHi = Vector256.Create(
+        kvalues_iq4nl[8], kvalues_iq4nl[9], kvalues_iq4nl[10], kvalues_iq4nl[11],
+        kvalues_iq4nl[12], kvalues_iq4nl[13], kvalues_iq4nl[14], kvalues_iq4nl[15]);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static unsafe Vector256<float> IQ4NLValues8(byte* qs, int i)
+    {
+        var idx = Avx2.ConvertToVector256Int32(qs + (i & 15));
+        idx = (i & 16) != 0
+            ? Avx2.ShiftRightLogical(idx, 4)
+            : Avx2.And(idx, Vector256.Create(0x0F));
+        var lo = Avx2.PermuteVar8x32(IQ4NLLo, idx);
+        var hi = Avx2.PermuteVar8x32(IQ4NLHi, idx);
+        var ge8 = Avx2.CompareGreaterThan(idx, Vector256.Create(7)).AsSingle();
+        return Avx.BlendVariable(lo, hi, ge8);
+    }
+
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static unsafe float VecDotQ4_0_Scalar(float* input, byte* rawWeights, int col, int inFeatures)
@@ -452,6 +472,10 @@ public static partial class QuantizationKernels
         const int BLOCK_BYTES = 18;
         int nBlocks = (inFeatures + QK - 1) / QK;
         double sum = 0;
+        var vacc0 = Vector256<float>.Zero;
+        var vacc1 = Vector256<float>.Zero;
+        var vacc2 = Vector256<float>.Zero;
+        var vacc3 = Vector256<float>.Zero;
         for (int b = 0; b < nBlocks; b++)
         {
             byte* block = rawWeights + (long)col * nBlocks * BLOCK_BYTES + b * BLOCK_BYTES;
@@ -460,57 +484,47 @@ public static partial class QuantizationKernels
             int blockEnd = Math.Min(QK, inFeatures - b * QK);
             float* pIn = input + b * QK;
             var vd = Vector256.Create(d);
-            var vacc0 = Vector256<float>.Zero;
-            var vacc1 = Vector256<float>.Zero;
             int i = 0;
+            // One 32-value block decodes as four independent chains. The block's
+            // horizontal reduce also used to run every 32 elements, which cost as
+            // much as the chains themselves, so the accumulators live outside the
+            // block loop and are summed once.
+            for (; i <= blockEnd - 32; i += 32)
+            {
+                var w0 = IQ4NLValues8(qs, i);
+                var w1 = IQ4NLValues8(qs, i + 8);
+                var w2 = IQ4NLValues8(qs, i + 16);
+                var w3 = IQ4NLValues8(qs, i + 24);
+                var v0 = Avx.Multiply(w0, vd);
+                var v1 = Avx.Multiply(w1, vd);
+                var v2 = Avx.Multiply(w2, vd);
+                var v3 = Avx.Multiply(w3, vd);
+                vacc0 = Avx.Add(vacc0, Avx.Multiply(Vector256.LoadUnsafe(ref pIn[i]), v0));
+                vacc1 = Avx.Add(vacc1, Avx.Multiply(Vector256.LoadUnsafe(ref pIn[i + 8]), v1));
+                vacc2 = Avx.Add(vacc2, Avx.Multiply(Vector256.LoadUnsafe(ref pIn[i + 16]), v2));
+                vacc3 = Avx.Add(vacc3, Avx.Multiply(Vector256.LoadUnsafe(ref pIn[i + 24]), v3));
+            }
             for (; i <= blockEnd - 16; i += 16)
             {
-                int half = QK / 2;
-                var w0 = Avx.Multiply(Vector256.Create(
-                    kvalues_iq4nl[(i < half) ? (qs[i] & 0x0F) : (qs[i - half] >> 4)],
-                    kvalues_iq4nl[(i+1 < half) ? (qs[i+1] & 0x0F) : (qs[i+1 - half] >> 4)],
-                    kvalues_iq4nl[(i+2 < half) ? (qs[i+2] & 0x0F) : (qs[i+2 - half] >> 4)],
-                    kvalues_iq4nl[(i+3 < half) ? (qs[i+3] & 0x0F) : (qs[i+3 - half] >> 4)],
-                    kvalues_iq4nl[(i+4 < half) ? (qs[i+4] & 0x0F) : (qs[i+4 - half] >> 4)],
-                    kvalues_iq4nl[(i+5 < half) ? (qs[i+5] & 0x0F) : (qs[i+5 - half] >> 4)],
-                    kvalues_iq4nl[(i+6 < half) ? (qs[i+6] & 0x0F) : (qs[i+6 - half] >> 4)],
-                    kvalues_iq4nl[(i+7 < half) ? (qs[i+7] & 0x0F) : (qs[i+7 - half] >> 4)]
-                ), vd);
-                var w1 = Avx.Multiply(Vector256.Create(
-                    kvalues_iq4nl[(i+8 < half) ? (qs[i+8] & 0x0F) : (qs[i+8 - half] >> 4)],
-                    kvalues_iq4nl[(i+9 < half) ? (qs[i+9] & 0x0F) : (qs[i+9 - half] >> 4)],
-                    kvalues_iq4nl[(i+10 < half) ? (qs[i+10] & 0x0F) : (qs[i+10 - half] >> 4)],
-                    kvalues_iq4nl[(i+11 < half) ? (qs[i+11] & 0x0F) : (qs[i+11 - half] >> 4)],
-                    kvalues_iq4nl[(i+12 < half) ? (qs[i+12] & 0x0F) : (qs[i+12 - half] >> 4)],
-                    kvalues_iq4nl[(i+13 < half) ? (qs[i+13] & 0x0F) : (qs[i+13 - half] >> 4)],
-                    kvalues_iq4nl[(i+14 < half) ? (qs[i+14] & 0x0F) : (qs[i+14 - half] >> 4)],
-                    kvalues_iq4nl[(i+15 < half) ? (qs[i+15] & 0x0F) : (qs[i+15 - half] >> 4)]
-                ), vd);
-                vacc0 = Avx.Add(vacc0, Avx.Multiply(Vector256.LoadUnsafe(ref pIn[i]), w0));
-                vacc1 = Avx.Add(vacc1, Avx.Multiply(Vector256.LoadUnsafe(ref pIn[i + 8]), w1));
+                var w0 = IQ4NLValues8(qs, i);
+                var w1 = IQ4NLValues8(qs, i + 8);
+                var v0 = Avx.Multiply(w0, vd);
+                var v1 = Avx.Multiply(w1, vd);
+                vacc0 = Avx.Add(vacc0, Avx.Multiply(Vector256.LoadUnsafe(ref pIn[i]), v0));
+                vacc1 = Avx.Add(vacc1, Avx.Multiply(Vector256.LoadUnsafe(ref pIn[i + 8]), v1));
             }
             for (; i <= blockEnd - 8; i += 8)
             {
-                int half = QK / 2;
-                var w = Avx.Multiply(Vector256.Create(
-                    kvalues_iq4nl[(i < half) ? (qs[i] & 0x0F) : (qs[i - half] >> 4)],
-                    kvalues_iq4nl[(i+1 < half) ? (qs[i+1] & 0x0F) : (qs[i+1 - half] >> 4)],
-                    kvalues_iq4nl[(i+2 < half) ? (qs[i+2] & 0x0F) : (qs[i+2 - half] >> 4)],
-                    kvalues_iq4nl[(i+3 < half) ? (qs[i+3] & 0x0F) : (qs[i+3 - half] >> 4)],
-                    kvalues_iq4nl[(i+4 < half) ? (qs[i+4] & 0x0F) : (qs[i+4 - half] >> 4)],
-                    kvalues_iq4nl[(i+5 < half) ? (qs[i+5] & 0x0F) : (qs[i+5 - half] >> 4)],
-                    kvalues_iq4nl[(i+6 < half) ? (qs[i+6] & 0x0F) : (qs[i+6 - half] >> 4)],
-                    kvalues_iq4nl[(i+7 < half) ? (qs[i+7] & 0x0F) : (qs[i+7 - half] >> 4)]
-                ), vd);
+                var w = Avx.Multiply(IQ4NLValues8(qs, i), vd);
                 vacc0 = Avx.Add(vacc0, Avx.Multiply(Vector256.LoadUnsafe(ref pIn[i]), w));
             }
-            sum += MathHelpers.HSum256_Avx(Avx.Add(vacc0, vacc1));
             for (; i < blockEnd; i++)
             {
                 int nib = (i < QK / 2) ? (qs[i] & 0x0F) : (qs[i - QK / 2] >> 4);
                 sum += pIn[i] * (d * kvalues_iq4nl[nib]);
             }
         }
+        sum += MathHelpers.HSum256_Avx(Avx.Add(Avx.Add(vacc0, vacc1), Avx.Add(vacc2, vacc3)));
         return (float)sum;
     }
 
@@ -533,43 +547,14 @@ public static partial class QuantizationKernels
             int i = 0;
             for (; i <= blockEnd - 16; i += 16)
             {
-                int half = QK / 2;
-                var w0 = Avx.Multiply(Vector256.Create(
-                    kvalues_iq4nl[(i < half) ? (qs[i] & 0x0F) : (qs[i - half] >> 4)],
-                    kvalues_iq4nl[(i+1 < half) ? (qs[i+1] & 0x0F) : (qs[i+1 - half] >> 4)],
-                    kvalues_iq4nl[(i+2 < half) ? (qs[i+2] & 0x0F) : (qs[i+2 - half] >> 4)],
-                    kvalues_iq4nl[(i+3 < half) ? (qs[i+3] & 0x0F) : (qs[i+3 - half] >> 4)],
-                    kvalues_iq4nl[(i+4 < half) ? (qs[i+4] & 0x0F) : (qs[i+4 - half] >> 4)],
-                    kvalues_iq4nl[(i+5 < half) ? (qs[i+5] & 0x0F) : (qs[i+5 - half] >> 4)],
-                    kvalues_iq4nl[(i+6 < half) ? (qs[i+6] & 0x0F) : (qs[i+6 - half] >> 4)],
-                    kvalues_iq4nl[(i+7 < half) ? (qs[i+7] & 0x0F) : (qs[i+7 - half] >> 4)]
-                ), vd);
-                var w1 = Avx.Multiply(Vector256.Create(
-                    kvalues_iq4nl[(i+8 < half) ? (qs[i+8] & 0x0F) : (qs[i+8 - half] >> 4)],
-                    kvalues_iq4nl[(i+9 < half) ? (qs[i+9] & 0x0F) : (qs[i+9 - half] >> 4)],
-                    kvalues_iq4nl[(i+10 < half) ? (qs[i+10] & 0x0F) : (qs[i+10 - half] >> 4)],
-                    kvalues_iq4nl[(i+11 < half) ? (qs[i+11] & 0x0F) : (qs[i+11 - half] >> 4)],
-                    kvalues_iq4nl[(i+12 < half) ? (qs[i+12] & 0x0F) : (qs[i+12 - half] >> 4)],
-                    kvalues_iq4nl[(i+13 < half) ? (qs[i+13] & 0x0F) : (qs[i+13 - half] >> 4)],
-                    kvalues_iq4nl[(i+14 < half) ? (qs[i+14] & 0x0F) : (qs[i+14 - half] >> 4)],
-                    kvalues_iq4nl[(i+15 < half) ? (qs[i+15] & 0x0F) : (qs[i+15 - half] >> 4)]
-                ), vd);
+                var w0 = Avx.Multiply(IQ4NLValues8(qs, i), vd);
+                var w1 = Avx.Multiply(IQ4NLValues8(qs, i + 8), vd);
                 vacc0 = Fma.MultiplyAdd(Vector256.LoadUnsafe(ref pIn[i]), w0, vacc0);
                 vacc1 = Fma.MultiplyAdd(Vector256.LoadUnsafe(ref pIn[i + 8]), w1, vacc1);
             }
             for (; i <= blockEnd - 8; i += 8)
             {
-                int half = QK / 2;
-                var w = Avx.Multiply(Vector256.Create(
-                    kvalues_iq4nl[(i < half) ? (qs[i] & 0x0F) : (qs[i - half] >> 4)],
-                    kvalues_iq4nl[(i+1 < half) ? (qs[i+1] & 0x0F) : (qs[i+1 - half] >> 4)],
-                    kvalues_iq4nl[(i+2 < half) ? (qs[i+2] & 0x0F) : (qs[i+2 - half] >> 4)],
-                    kvalues_iq4nl[(i+3 < half) ? (qs[i+3] & 0x0F) : (qs[i+3 - half] >> 4)],
-                    kvalues_iq4nl[(i+4 < half) ? (qs[i+4] & 0x0F) : (qs[i+4 - half] >> 4)],
-                    kvalues_iq4nl[(i+5 < half) ? (qs[i+5] & 0x0F) : (qs[i+5 - half] >> 4)],
-                    kvalues_iq4nl[(i+6 < half) ? (qs[i+6] & 0x0F) : (qs[i+6 - half] >> 4)],
-                    kvalues_iq4nl[(i+7 < half) ? (qs[i+7] & 0x0F) : (qs[i+7 - half] >> 4)]
-                ), vd);
+                var w = Avx.Multiply(IQ4NLValues8(qs, i), vd);
                 vacc0 = Fma.MultiplyAdd(Vector256.LoadUnsafe(ref pIn[i]), w, vacc0);
             }
             for (; i < blockEnd; i++)

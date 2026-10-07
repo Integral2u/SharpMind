@@ -28,9 +28,12 @@ using SharpMind.Tokenization;
 // n layers, REF_TRACE=1 prints per-layer magnitudes, REF_DUMP=<file> writes the
 // final hidden state.
 
+if (args.Length > 0 && args[0] == "kbench")
+    return RunKernelBench(args);
+
 if (args.Length < 2)
 {
-    Console.Error.WriteLine("usage: meta <file>   |   dump <file> [pattern]   |   bind <file>   |   fwd <file> [full] [resident]   |   fwdmulti <file> <promptfile> [single|...]   |   ref <file> [prompt]   |   run <file> [prompt] [maxTokens] [full] [resident] [topk]");
+    Console.Error.WriteLine("usage: meta <file>   |   dump <file> [pattern]   |   bind <file>   |   fwd <file> [full] [resident]   |   fwdmulti <file> <promptfile> [single|...]   |   ref <file> [prompt]   |   run <file> [prompt] [maxTokens] [full] [resident] [topk] [serialmm]   |   kbench <q2k|q3k|q6k|iq4nl|q8_0|f32> [K] [N] [iters] [fma|avx2|scalar]");
     return 2;
 }
 
@@ -647,7 +650,8 @@ static async Task<int> RunInferenceAsync(string path, string[] args)
         // distribution (large margin1), while a corrupted one gives a near-uniform
         // soup, and the two are distinguishable at step 0 without a reference.
         GeneratorDiagnostics.DumpTopLogits = topk;
-        var mapping = sharpConfig.ToJigSawMapping();
+        bool serialMm = args.Any(a => a.Equals("serialmm", StringComparison.OrdinalIgnoreCase));
+        var mapping = sharpConfig.ToJigSawMapping(null, serialMm ? false : null);
         // "par" (or "par=N") fans the load out; without it the load stays
         // sequential, so two runs of the same prompt are directly comparable.
         int parDegree = 1;
@@ -749,5 +753,105 @@ static async Task<int> RunInferenceAsync(string path, string[] args)
     {
         Console.WriteLine($"\nFAILED: {ex.GetType().Name}: {ex.Message}");
         return 1;
+    }
+}
+
+// kbench <kind> [K=2048] [N=1408] [iters=50] [fma|avx2|scalar]
+//
+// Runs one quantized decode matmul (M=1) in isolation on a deliberately
+// non-zero weight buffer and reports the achieved MAC rate. An all-zero buffer
+// would let the FMA take a zero-input path and make the kernel look faster than
+// it is on real weights, so the bytes alternate 0x11/0x22 — half fields that are
+// never 0 or 31, hence never a denormal or a NaN. This separates "the kernel is
+// slow" from "the orchestration around it is slow", which a whole forward pass
+// cannot do because the two are multiplied together.
+static unsafe int RunKernelBench(string[] args)
+{
+    string kind = args.Length > 1 ? args[1].ToLowerInvariant() : "q2k";
+    int K = args.Length > 2 && int.TryParse(args[2], out int kv) ? kv : 2048;
+    int N = args.Length > 3 && int.TryParse(args[3], out int nv) ? nv : 1408;
+    int iters = args.Length > 4 && int.TryParse(args[4], out int iv) ? iv : 50;
+    string variant = args.Length > 5 ? args[5].ToLowerInvariant() : "fma";
+
+    int elPerBlock; int blockBytes;
+    switch (kind)
+    {
+        case "q2k": elPerBlock = 256; blockBytes = 84; break;
+        case "q3k": elPerBlock = 256; blockBytes = 110; break;
+        case "q6k": elPerBlock = 256; blockBytes = 210; break;
+        case "iq4nl": elPerBlock = 32; blockBytes = 18; break;
+        case "q8_0": elPerBlock = 32; blockBytes = 34; break;
+        case "f32": elPerBlock = 1; blockBytes = 4; break;
+        default:
+            Console.Error.WriteLine($"kbench: unknown kind '{kind}'");
+            return 2;
+    }
+
+    string key = variant == "fma" ? kind : $"{kind}_{variant}";
+    QuantizedMatMulFn par; QuantizedMatMulFn ser;
+    switch (key)
+    {
+        case "q2k": par = QuantizationKernels.QuantizedMatMulQ2K_Parallel_FMA; ser = QuantizationKernels.QuantizedMatMulQ2K_Serial_FMA; break;
+        case "q2k_avx2": par = QuantizationKernels.QuantizedMatMulQ2K_Parallel_AVX2; ser = QuantizationKernels.QuantizedMatMulQ2K_Serial_AVX2; break;
+        case "q2k_scalar": par = QuantizationKernels.QuantizedMatMulQ2K_Parallel_Scalar; ser = QuantizationKernels.QuantizedMatMulQ2K_Serial_Scalar; break;
+        case "q3k": par = QuantizationKernels.QuantizedMatMulQ3K_Parallel_FMA; ser = QuantizationKernels.QuantizedMatMulQ3K_Serial_FMA; break;
+        case "q3k_avx2": par = QuantizationKernels.QuantizedMatMulQ3K_Parallel_AVX2; ser = QuantizationKernels.QuantizedMatMulQ3K_Serial_AVX2; break;
+        case "q3k_scalar": par = QuantizationKernels.QuantizedMatMulQ3K_Parallel_Scalar; ser = QuantizationKernels.QuantizedMatMulQ3K_Serial_Scalar; break;
+        case "q6k": par = QuantizationKernels.QuantizedMatMulQ6K_Parallel_FMA; ser = QuantizationKernels.QuantizedMatMulQ6K_Serial_FMA; break;
+        case "q6k_avx2": par = QuantizationKernels.QuantizedMatMulQ6K_Parallel_AVX2; ser = QuantizationKernels.QuantizedMatMulQ6K_Serial_AVX2; break;
+        case "q6k_scalar": par = QuantizationKernels.QuantizedMatMulQ6K_Parallel_Scalar; ser = QuantizationKernels.QuantizedMatMulQ6K_Serial_Scalar; break;
+        case "iq4nl": par = QuantizationKernels.QuantizedMatMulQ4_NL_Parallel_FMA; ser = QuantizationKernels.QuantizedMatMulQ4_NL_Serial_FMA; break;
+        case "iq4nl_avx2": par = QuantizationKernels.QuantizedMatMulQ4_NL_Parallel_AVX2; ser = QuantizationKernels.QuantizedMatMulQ4_NL_Serial_AVX2; break;
+        case "q8_0": par = QuantizationKernels.QuantizedMatMulQ8_0_Parallel_FMA; ser = QuantizationKernels.QuantizedMatMulQ8_0_Serial_FMA; break;
+        case "q8_0_avx2": par = QuantizationKernels.QuantizedMatMulQ8_0_Parallel_AVX2; ser = QuantizationKernels.QuantizedMatMulQ8_0_Serial_AVX2; break;
+        case "f32": par = QuantizationKernels.QuantizedMatMulF32_Parallel_FMA; ser = QuantizationKernels.QuantizedMatMulF32_Serial_FMA; break;
+        default:
+            Console.Error.WriteLine($"kbench: unknown variant '{key}'");
+            return 2;
+    }
+
+    long wBytes = ((long)N * K / elPerBlock) * blockBytes;
+    byte* raw = (byte*)System.Runtime.InteropServices.NativeMemory.AlignedAlloc((nuint)wBytes, 64);
+    float* input = (float*)System.Runtime.InteropServices.NativeMemory.AlignedAlloc((nuint)((long)K * sizeof(float)), 64);
+    float* output = (float*)System.Runtime.InteropServices.NativeMemory.AlignedAlloc((nuint)((long)N * sizeof(float)), 64);
+    try
+    {
+        // Non-zero weights with halves whose exponent field is never 0 or 31:
+        // an all-zero buffer lets the FMA take a zero-input path, which makes the
+        // kernel look faster than it is on real weights.
+        for (long i = 0; i < wBytes; i++) raw[i] = (i & 1) == 0 ? (byte)0x11 : (byte)0x22;
+        for (int i = 0; i < K; i++) input[i] = 1f;
+
+        double macs = (double)K * N;
+        Console.WriteLine($"KIND={key} K={K} N={N} wbytes={wBytes} iters={iters} " +
+                          $"cores={Environment.ProcessorCount}");
+
+        par(input, raw, output, 1, K, N);
+        ser(input, raw, output, 1, K, N);
+        // Tiered JIT promotes a method after ~30 invocations; warming up well past
+        // that keeps the promotion out of the timed window (it otherwise lands
+        // mid-run and makes the two measurements incomparable).
+        for (int i = 0; i < 60; i++) { par(input, raw, output, 1, K, N); ser(input, raw, output, 1, K, N); }
+        GC.Collect(); GC.WaitForPendingFinalizers(); GC.Collect();
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        for (int i = 0; i < iters; i++) par(input, raw, output, 1, K, N);
+        sw.Stop();
+        double tPar = sw.Elapsed.TotalSeconds;
+
+        sw.Restart();
+        for (int i = 0; i < iters; i++) ser(input, raw, output, 1, K, N);
+        sw.Stop();
+        double tSer = sw.Elapsed.TotalSeconds;
+
+        Console.WriteLine($"  par {tPar:F4}s {macs * iters / tPar / 1e9:F3} GMAC/s");
+        Console.WriteLine($"  ser {tSer:F4}s {macs * iters / tSer / 1e9:F3} GMAC/s");
+        return 0;
+    }
+    finally
+    {
+        System.Runtime.InteropServices.NativeMemory.AlignedFree(raw);
+        System.Runtime.InteropServices.NativeMemory.AlignedFree(input);
+        System.Runtime.InteropServices.NativeMemory.AlignedFree(output);
     }
 }

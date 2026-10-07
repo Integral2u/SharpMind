@@ -7,6 +7,31 @@ namespace SharpMind.Core.Quantization;
 
 public static partial class QuantizationKernels
 {
+    // Eight consecutive Q3_K codes for block-relative positions idx..idx+7,
+    // already folded into the -4..3 signed range: the two-bit nibble (packed the
+    // same way as Q2_K, so one widened load per group) plus the high-mask bit
+    // that re-adds 4 when set. Replaces the per-element divide/modulo that used
+    // to fill a stack buffer before every vector multiply.
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static unsafe Vector256<float> Q3KCodes8(byte* qs, byte* hmask, int idx)
+    {
+        var w = Avx2.ConvertToVector256Int32(qs + ((idx >> 7) << 5) + (idx & 31));
+        w = Avx2.And(Avx2.ShiftRightLogical(w, (byte)((((idx >> 5) & 3) << 1))), Vector256.Create(3));
+        var h = Avx2.And(Avx2.ShiftRightLogical(Avx2.ConvertToVector256Int32(hmask + (idx & 31)), (byte)(idx >> 5)), Vector256.Create(1));
+        return Avx.Add(Avx.ConvertToVector256Single(w), Avx.Add(Avx.Multiply(Avx.ConvertToVector256Single(h), Vector256.Create(4f)), Vector256.Create(-4f)));
+    }
+
+    // Same eight codes with the byte addresses and both plane shifts already
+    // resolved by the caller, which holds them constant across a whole 32-value
+    // group so four chains can run without re-deriving them per iteration.
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static unsafe Vector256<float> Q3KCodesAt(byte* q, byte qsh, byte* hm, byte hsh)
+    {
+        var w = Avx2.And(Avx2.ShiftRightLogical(Avx2.ConvertToVector256Int32(q), qsh), Vector256.Create(3));
+        var h = Avx2.And(Avx2.ShiftRightLogical(Avx2.ConvertToVector256Int32(hm), hsh), Vector256.Create(1));
+        return Avx.Add(Avx.ConvertToVector256Single(w), Avx.Add(Avx.Multiply(Avx.ConvertToVector256Single(h), Vector256.Create(4f)), Vector256.Create(-4f)));
+    }
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static unsafe float VecDotQ3K_Scalar(float* input, byte* rawWeights, int col, int inFeatures)
     {
@@ -67,7 +92,6 @@ public static partial class QuantizationKernels
         const uint kmask1 = 0x03030303u;
         const uint kmask2 = 0x0f0f0f0fu;
 
-        float* vvBuf = stackalloc float[8];
         for (int b = 0; b < nBlocks; b++)
         {
             byte* block = rawWeights + (long)(startBlock + b) * BLOCK_BYTES;
@@ -91,19 +115,21 @@ public static partial class QuantizationKernels
             float* pIn = input + b * QK_K - colBlockStart;
 
             int i = curBlockStart;
+            for (; i <= blockEnd - 8 && (i & 7) != 0; i++)
+            {
+                int idx = i;
+                int qsByte = (idx / 128) * 32 + (idx % 32);
+                int qsShift = ((idx % 128) / 32) * 2;
+                int s2 = (qs[qsByte] >> qsShift) & 3;
+                int hBit = (hmask[idx % 32] >> (idx / 32)) & 1;
+                int actual = s2 - (hBit == 0 ? 4 : 0);
+                float val = dAll * (sc8[idx / 16] - 32) * actual;
+                sum += pIn[i] * val;
+            }
             for (; i <= blockEnd - 8; i += 8)
             {
-                for (int sub = 0; sub < 8; sub++)
-                {
-                    int idx = i + sub;
-                    int qsByte = (idx / 128) * 32 + (idx % 32);
-                    int qsShift = ((idx % 128) / 32) * 2;
-                    int s2 = (qs[qsByte] >> qsShift) & 3;
-                    int hBit = (hmask[idx % 32] >> (idx / 32)) & 1;
-                    int actual = s2 - (hBit == 0 ? 4 : 0);
-                    vvBuf[sub] = dAll * (sc8[idx / 16] - 32) * actual;
-                }
-                var vv = Vector256.LoadUnsafe(ref vvBuf[0]);
+                float k = dAll * (sc8[i >> 4] - 32);
+                var vv = Avx.Multiply(Vector256.Create(k), Q3KCodes8(qs, hmask, i));
                 var vi = Vector256.LoadUnsafe(ref pIn[i]);
                 sum += MathHelpers.HSum256_Avx(Avx.Multiply(vi, vv));
             }
@@ -135,8 +161,10 @@ public static partial class QuantizationKernels
         const uint kmask1 = 0x03030303u;
         const uint kmask2 = 0x0f0f0f0fu;
 
-        float* vvBuf = stackalloc float[8];
         var vacc = Vector256<float>.Zero;
+        var vacc1 = Vector256<float>.Zero;
+        var vacc2 = Vector256<float>.Zero;
+        var vacc3 = Vector256<float>.Zero;
         for (int b = 0; b < nBlocks; b++)
         {
             byte* block = rawWeights + (long)(startBlock + b) * BLOCK_BYTES;
@@ -160,19 +188,43 @@ public static partial class QuantizationKernels
             float* pIn = input + b * QK_K - colBlockStart;
 
             int i = curBlockStart;
+            for (; i <= blockEnd - 8 && (i & 7) != 0; i++)
+            {
+                int idx = i;
+                int qsByte = (idx / 128) * 32 + (idx % 32);
+                int qsShift = ((idx % 128) / 32) * 2;
+                int s2 = (qs[qsByte] >> qsShift) & 3;
+                int hBit = (hmask[idx % 32] >> (idx / 32)) & 1;
+                int actual = s2 - (hBit == 0 ? 4 : 0);
+                float val = dAll * (sc8[idx / 16] - 32) * actual;
+                sum += pIn[i] * val;
+            }
+            // A whole 32-value group shares one qs shift, one hmask shift and two
+            // scales, so it decodes as four independent chains. The packed-byte ->
+            // shift -> mask -> convert -> scale -> code-path chain is ~30 cycles
+            // and a single accumulator ran all of them back to back.
+            for (; (i & 31) == 0 && i + 32 <= blockEnd; i += 32)
+            {
+                float k0 = dAll * (sc8[i >> 4] - 32);
+                float k1 = dAll * (sc8[(i + 16) >> 4] - 32);
+                var ks0 = Vector256.Create(k0);
+                var ks1 = Vector256.Create(k1);
+                byte* q = qs + ((i >> 7) << 5) + (i & 31);
+                byte qsh = (byte)(((i >> 5) & 3) << 1);
+                byte hsh = (byte)(i >> 5);
+                var u0 = Avx.Multiply(ks0, Q3KCodesAt(q, qsh, hmask, hsh));
+                var u1 = Avx.Multiply(ks0, Q3KCodesAt(q + 8, qsh, hmask + 8, hsh));
+                var u2 = Avx.Multiply(ks1, Q3KCodesAt(q + 16, qsh, hmask + 16, hsh));
+                var u3 = Avx.Multiply(ks1, Q3KCodesAt(q + 24, qsh, hmask + 24, hsh));
+                vacc = Fma.MultiplyAdd(Vector256.LoadUnsafe(ref pIn[i]), u0, vacc);
+                vacc1 = Fma.MultiplyAdd(Vector256.LoadUnsafe(ref pIn[i + 8]), u1, vacc1);
+                vacc2 = Fma.MultiplyAdd(Vector256.LoadUnsafe(ref pIn[i + 16]), u2, vacc2);
+                vacc3 = Fma.MultiplyAdd(Vector256.LoadUnsafe(ref pIn[i + 24]), u3, vacc3);
+            }
             for (; i <= blockEnd - 8; i += 8)
             {
-                for (int sub = 0; sub < 8; sub++)
-                {
-                    int idx = i + sub;
-                    int qsByte = (idx / 128) * 32 + (idx % 32);
-                    int qsShift = ((idx % 128) / 32) * 2;
-                    int s2 = (qs[qsByte] >> qsShift) & 3;
-                    int hBit = (hmask[idx % 32] >> (idx / 32)) & 1;
-                    int actual = s2 - (hBit == 0 ? 4 : 0);
-                    vvBuf[sub] = dAll * (sc8[idx / 16] - 32) * actual;
-                }
-                var vv = Vector256.LoadUnsafe(ref vvBuf[0]);
+                float k = dAll * (sc8[i >> 4] - 32);
+                var vv = Avx.Multiply(Vector256.Create(k), Q3KCodes8(qs, hmask, i));
                 var vi = Vector256.LoadUnsafe(ref pIn[i]);
                 vacc = Fma.MultiplyAdd(vi, vv, vacc);
             }
@@ -188,7 +240,7 @@ public static partial class QuantizationKernels
                 sum += pIn[i] * val;
             }
         }
-        sum += MathHelpers.HSum256_Avx(vacc);
+        sum += MathHelpers.HSum256_Avx(Avx.Add(Avx.Add(vacc, vacc1), Avx.Add(vacc2, vacc3)));
         return (float)sum;
     }
 
