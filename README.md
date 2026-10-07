@@ -183,7 +183,84 @@ Validated across two independent runs against 15 model/architecture/quantization
 
 _Tested on: **AMD Ryzen 3 2200U (2C/4T, 2.5GHz base) w/ Radeon Vega Mobile Graphics, 12GB RAM** — a modest mobile/laptop-class chip, not a workstation. Load times and throughput scale heavily with hardware and quant level — as a rough sense of range on this machine, `SmolLM-135M.Q4_K_M` loaded in ~2s, while `qwen2.5-1.5b-instruct-q8_0` took ~2 minutes and `Qwen1.5-MoE-A2.7B-Q2_K` (5.5 GB, the largest model tested) took ~3 minutes to load and initialize. That everything above ran clean on a 2-core/4-thread laptop CPU is itself a reasonable data point for SharpMind's baseline hardware requirements — run your own copy of the benchmark against your target hardware before relying on these numbers for capacity planning._
 
-_* Single-run validation, not part of the two-run set above: the Mixture-of-Experts path is new in 1.0.8.0. It loads and generates without errors, but MoE throughput on a CPU is low (0.1–0.2 tokens/s on the machine above) — every token runs only its top-4 of 60 experts plus the shared expert, so cost tracks FLOPs rather than resident weight size, and the whole 5.5 GB of expert weights is held in memory for the life of the model (`LoadMode.Full`, the default; see [Streaming model loading](#streaming-model-loading-loadmodestreaming))._
+_* Single-run validation, not part of the two-run set above: the Mixture-of-Experts path is new in 1.0.8.0. It loads and generates without errors, but MoE throughput on a CPU is low — about **0.4 tokens/s of decode** on the machine above, which is 5.6–6.3× faster than the 0.08 tokens/s it managed before the kernel work in this release (see [Performance](#performance)). Every token still runs only its top-4 of 60 experts plus the shared expert, so cost tracks FLOPs rather than resident weight size, and the whole 5.5 GB of expert weights is held in memory for the life of the model (`LoadMode.Full`, the default; see [Streaming model loading](#streaming-model-loading-loadmodestreaming))._
+
+---
+
+## Performance
+
+All of the numbers in this section come from one machine — the **AMD Ryzen 3 2200U (2C/4T, 2.5 GHz, 12 GB RAM)** named under the compatibility matrix. Treat them as a baseline for that class of hardware, not an absolute; re-run against your own. Model *loading* is covered separately under [Parallel full loading](#parallel-full-loading) (2.24× aggregate speedup over the sequential loader); everything below is about *decode*.
+
+### Quantized decode kernels
+
+Decode is almost entirely quantized matmul, so the vec-dot kernels set the ceiling on tokens/s. `GgufSmokeProbe` has a `kbench` mode that allocates one weight buffer and times a single `M=1` matmul on its own — a whole forward pass multiplies kernel cost by orchestration cost and cannot tell the two apart:
+
+```
+dotnet tools/GgufSmokeProbe/bin/Release/net10.0/GgufSmokeProbe.dll kbench q2k 2048 2048 3000
+```
+
+K = N = 2048, 3000 iterations, one run, host as above:
+
+| Kernel | Serial (GMAC/s) | Parallel (GMAC/s) |
+|---|---|---|
+| `f32` — unpack-free reference | 2.44 | 4.50 |
+| `Q8_0` | 1.89 | 3.97 |
+| `Q6_K` | 1.13 | 2.37 |
+| `Q2_K` | 1.15 | 2.71 |
+| `IQ4_NL` | 1.00 | 2.37 |
+| `Q3_K` | 0.78 | 1.79 |
+
+`f32` is the reference rather than a target: at 4 bytes per MAC it is bandwidth-bound, saturating a single core's share of RAM at ~10 GB/s instead of compute. `Q8_0` reads ~1.06 bytes per MAC and still lands at 78% of that — its unpack is effectively free. The K-quants do real per-block scale and unpack arithmetic, which is where the rest of the gap goes.
+
+**This release made those kernels materially faster.** Q2_K and Q3_K were unpacking one weight at a time through a stack buffer — a divide and a per-element index inside the hot loop — and IQ4_NL was indexing its value table per element; all three now widen a packed group straight from memory, with the byte address and plane shift resolved once by the caller. Once the unpack was out of the way, `DOTNET_JitDisasm` showed the remaining loop was **latency-bound, not instruction-bound**: one accumulator registers a false dependency across the whole unpack → shift → convert → mul → sub → fma chain, so every iteration waits for the last one to retire. Hoisting the loop's pointer arithmetic cut it from 24 instructions to 14 and changed nothing, which is how the real cause was isolated. A 32-value group shares one packed-byte run, one plane shift and two scales, so these kernels now decode it as **four independent chains with four accumulators**, and the `Q8_0`/`IQ4_NL` horizontal reduce moved out of the block loop.
+
+Measured end to end on `Qwen1.5-MoE-A2.7B-Q2_K` — 48 tokens of greedy decoding, byte-identical output to llama.cpp both before and after, across five runs: **627.6s → 99.8–112.7s (median 111.4s), a 5.6–6.3× speedup**, taking the model from 0.08 to 0.43 tok/s.
+
+`kbench` currently covers `f32`, `q8_0`, `q6k`, `q2k`, `q3k` and `iq4nl`. `Q4_K` and `Q5_K` are not in the harness yet — which matters, see [Known gaps](#known-gaps) below.
+
+### Decoding strategy
+
+`qwen2-0.5b-instruct-q8_0`, prompt "what is the capital of america", across all four KV-cache strategies:
+
+| Generator | tok/s | Note |
+|---|---|---|
+| `Standard` | 25.2 – 29.2 | Baseline |
+| `Speculative` | 28.7 – 30.8 | Roughly +10% here; how much more depends on the draft model and the accept rate |
+| `Medusa` | 6.2 – 6.5 | Heads are randomly initialized until `MedusaHeads.Calibrate` runs, so a round pays for K+1 candidates and usually only accepts its first — see [Decoding strategies](#decoding-strategies) |
+
+The KV-cache strategy moves throughput by less than ±10% here — choose it for memory footprint and concurrent sequences, not speed.
+
+### End-to-end throughput
+
+One run, single prompt, `Standard` generator, `LoadMode.Full`:
+
+| Model | Quant | Load (s) | tok/s |
+|---|---|---|---|
+| gemma-3-270m-it | Q8_0 | 2.5 | 42.4 |
+| qwen2-0.5b-instruct | Q8_0 | 4.0 | 29.6 |
+| SmolLM2-135M-Instruct | Q4_K_M | 1.1 | 23.0 |
+| Qwen3-0.6B | Q8_0 | 7.2 | 20.8 |
+| TinyLlama-1.1B-Chat | Q8_0 | 24.2 | 13.2 |
+| Qwen2.5-1.5B-Instruct | Q8_0 | 46.4 | 7.5 |
+| Qwen3-0.6B | Q4_K_M | 7.6 | 5.0 |
+| Ministral-3-3B-Instruct | Q8_0 | 239.1 | 4.6 |
+| Llama-3.2-1B-Instruct | BF16 | 86.9 | 2.6 |
+| Qwen1.5-MoE-A2.7B | Q2_K | 112.7 | 1.2 |
+| Qwen2-0.5B | Q5_1 | 4.1 | 1.1 ‡ |
+| Qwen3-0.6B | Q5_K_M | 8.3 | 0.4 ‡ |
+
+‡ Slow for a known reason, not a typo — see [Known gaps](#known-gaps).
+
+Load time is dominated by dequantizing the file to float, so it scales with file size. Decode throughput scales with quant level far more than with parameter count, and on this host `Q8_0` is consistently the fastest quant to *run* — its unpack is the cheapest — so a smaller quant is currently a *slower* quant here. That is memory traffic losing to unpack cost, which is exactly what [Known gaps](#known-gaps) is about.
+
+### Known gaps
+
+The two ‡ rows above are outliers rather than typos, and the cause is visible in the source:
+
+- `Qwen3-0.6B-Q5_K_M` runs at **0.42 tok/s** where the same model at `Q4_K_M` manages 5.01.
+- `Qwen2-0.5B-Q5_1` runs at **1.10 tok/s** where the same model at `Q6_K` manages 13.75.
+
+`VecDotQ5_0`, `VecDotQ5_1` and `VecDotQ5K` still decode each weight element in scalar code into a stack buffer before the vector multiply — the same shape of problem Q2_K/Q3_K/IQ4_NL just had. `Q3_K_L`, which drops to a fifth of its own siblings `Q3_K_S`/`Q3_K_M` for the same reason, is the clearest signal: the L variant mixes Q5_K tensors into the file. Bringing those three kernels onto the four-chain path, and adding them to `kbench`, is the next piece of kernel work.
 
 ---
 
