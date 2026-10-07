@@ -211,18 +211,18 @@ K = N = 2048, 3000 iterations, one run, host as above, FMA path:
 | `Q5_0` | 1.14 | 2.57 |
 | `Q6_K` | 1.15 | 2.40 |
 | `Q4_K` | 1.19 | 2.37 |
+| `Q5_1` | 1.09 | 2.37 |
 | `IQ4_NL` | 1.02 | 2.17 |
+| `Q5_K` | 0.87 | 1.86 |
 | `Q3_K` | 0.81 | 1.81 |
 | `Q4_0` | 0.50 | 1.19 |
 | `Q4_1` | 0.46 | 1.17 |
-| `Q5_1` | 0.20 | 0.51 ‡ |
-| `Q5_K` | 0.07 | 0.17 ‡ |
-
-‡ Both kernels decode each weight element in scalar code, so their `avx2` and even `scalar` variants land within noise of the `fma` row — `Q5_K` measures 0.167/0.168/0.171 (avx2/fma/scalar) and `Q5_1` measures 0.468/0.511/**0.575**, i.e. the vector entry points are *slower* than the scalar one. See [Known gaps](#known-gaps).
 
 `f32` is the reference rather than a target: at 4 bytes per MAC it is bandwidth-bound, saturating a single core's share of RAM at ~10 GB/s instead of compute. `Q8_0` reads ~1.06 bytes per MAC and still lands near the `f32` row — its unpack is effectively free. `Q8_K`, the fastest measured kernel, is the ceiling a K-quant can hope for; the rest of the table is that ceiling minus unpack arithmetic and unvectorized decoding.
 
 **This release made those kernels materially faster.** Q2_K and Q3_K were unpacking one weight at a time through a stack buffer — a divide and a per-element index inside the hot loop — and IQ4_NL was indexing its value table per element; all three now widen a packed group straight from memory, with the byte address and plane shift resolved once by the caller. Once the unpack was out of the way, `DOTNET_JitDisasm` showed the remaining loop was **latency-bound, not instruction-bound**: one accumulator registers a false dependency across the whole unpack → shift → convert → mul → sub → fma chain, so every iteration waits for the last one to retire. Hoisting the loop's pointer arithmetic cut it from 24 instructions to 14 and changed nothing, which is how the real cause was isolated. A 32-value group shares one packed-byte run, one plane shift and two scales, so these kernels now decode it as **four independent chains with four accumulators**, and `IQ4_NL`'s horizontal reduce moved out of the block loop.
+
+`Q5_1` and `Q5_K` were the last two vec-dots still decoding each weight element in scalar code on every tier, so their `avx2` and `fma` entry points measured within noise of `scalar` — `Q5_K` at 0.167/0.168/0.171 (avx2/fma/scalar), `Q5_1`'s `fma` slower than its own scalar path. Both now take the four-chain route: `Q5_1` reuses `Q5_0`'s packed-code widening and bit chains, and `Q5_K` decodes eight lanes per load with each 32-value group's scale and min shared across four chains (two multiplies per element, so the integer code×scale product stays exact and nothing is rounded differently from the scalar path). kbench: **`Q5_K` 0.17 → 1.86 parallel (11×), `Q5_1` 0.51 → 2.37 (4.6×)**, and at real Qwen shapes (K = 896/4864) both sit beside `Q4_K`/`Q6_K` exactly as the table predicts. End to end with `GgufSmokeProbe run`, greedy, output byte-identical before and after: `Qwen3-0.6B-Q5_K_M` **0.22 → 2.14 tok/s (9.7×)**, `Qwen2-0.5B.Q5_1` **1.18 → 4.91 (4.2×)**, `Qwen2-0.5B.Q3_K_L` **0.34 → 1.90 (5.6×)** — the L variant mixes Q5_K and Q5_1 tensors into the file, which is why it moved with them.
 
 Measured end to end on `Qwen1.5-MoE-A2.7B-Q2_K` — 48 tokens of greedy decoding, byte-identical output to llama.cpp both before and after, across five runs: **627.6s → 99.8–112.7s (median 111.4s), a 5.6–6.3× speedup**, taking the model from 0.08 to 0.43 tok/s.
 
@@ -256,30 +256,21 @@ One run, single prompt, `Standard` generator, `LoadMode.Full`:
 | Ministral-3-3B-Instruct | Q8_0 | 239.1 | 4.6 |
 | Llama-3.2-1B-Instruct | BF16 | 86.9 | 2.6 |
 | Qwen1.5-MoE-A2.7B | Q2_K | 112.7 | 1.2 |
-| Qwen2-0.5B | Q5_1 | 4.1 | 1.1 ‡ |
-| Qwen3-0.6B | Q5_K_M | 8.3 | 0.4 ‡ |
+| Qwen2-0.5B | Q5_1 | 4.1 | 4.9 ‡ |
+| Qwen3-0.6B | Q5_K_M | 8.3 | 2.1 ‡ |
 
-‡ Slow for a known reason, not a typo — see [Known gaps](#known-gaps).
+‡ Re-measured with `GgufSmokeProbe run` after the Q5 kernel fix (prompt `1, 2, 3, 4, 5, 6, 7, 8, 9,`, greedy, `LoadMode.Full` resident): these two rows ran at 1.1 and 0.4 tok/s before the fix, with byte-identical output before and after. The other rows are from the original run. See [Known gaps](#known-gaps).
 
 Load time is dominated by dequantizing the file to float, so it scales with file size. Decode throughput scales with quant level far more than with parameter count, and on this host `Q8_0` is consistently the fastest quant to *run* — its unpack is the cheapest — so a smaller quant is currently a *slower* quant here. That is memory traffic losing to unpack cost, which is exactly what [Known gaps](#known-gaps) is about.
 
 ### Known gaps
 
-The two ‡ rows above are outliers rather than typos, and the cause is visible in the source:
+**Closed this release:** the two ‡ rows above. `VecDotQ5_1` and `VecDotQ5K` decoded every weight element in scalar code on every tier — their vector entry points measured within noise of their own scalar paths — and they now take the same four-chain route as Q2_K/Q3_K/IQ4_NL (see [Quantized decode kernels](#quantized-decode-kernels)). kbench parallel GMAC/s went `Q5_K` 0.17 → 1.86 and `Q5_1` 0.51 → 2.37; end to end, `GgufSmokeProbe run` (greedy, output byte-identical before and after) went `Qwen3-0.6B-Q5_K_M` 0.22 → 2.14 tok/s, `Qwen2-0.5B.Q5_1` 1.18 → 4.91, `Qwen2-0.5B.Q3_K_L` 0.34 → 1.90 — the L variant mixes 24 Q5_K and 48 Q5_1 tensors into the file, which is why it moved with them.
 
-- `Qwen3-0.6B-Q5_K_M` runs at **0.42 tok/s** where the same model at `Q4_K_M` manages 5.01.
-- `Qwen2-0.5B-Q5_1` runs at **1.10 tok/s** where the same model at `Q6_K` manages 13.75.
+Two things are still open:
 
-`VecDotQ5_1` and `VecDotQ5K` decode each weight element in scalar code into a stack buffer before the vector multiply — the same shape of problem Q2_K/Q3_K/IQ4_NL just had. (`VecDotQ5_0` is *not* in this group: it has a vector path.) `kbench` now measures it directly:
-
-| Kernel | scalar (par) | fma (par) | fastest vectorized sibling (par) |
-|---|---|---|---|
-| `Q5_K` | 0.171 | 0.168 | `Q4_K`/`Q6_K` at 2.37/2.40 — **~14×** |
-| `Q5_1` | 0.575 | 0.511 | `Q5_0` at 2.57 — **~4.5×** |
-
-`Q5_K` is flat across all three entry points (0.167–0.171), confirming the vector variants are scalar decode wearing a different name. `Q5_1`'s `fma` variant is *slower than its own scalar path*. End to end: `Qwen3-0.6B-Q5_K_M` runs at **0.42 tok/s** where `Q4_K_M` manages 5.01; `Qwen2-0.5B-Q5_1` at **1.10** where `Q6_K` manages 13.75; `Q3_K_L` drops to 1.48 against `Q3_K_S`'s 8.11 because the L variant mixes Q5_K tensors into the file.
-
-Two more rows in the table above are slower than they should be for a different reason: `Q4_0` and `Q4_1` *are* vectorized but land at 1.19/1.17 — half of `Q4_K`/`Q6_K` — which is why `Qwen3-0.6B-Q4_0` manages 2.63 tok/s against 5.01 for `Q4_K_M`. Bringing Q5_1/Q5_K onto the four-chain path, then profiling why the Q4_0/Q4_1 vector paths underperform, is the next piece of kernel work.
+- **`Q4_0`/`Q4_1` vectorize but land at half of `Q4_K`/`Q6_K`** — 1.19/1.17 against 2.37/2.40 parallel GMAC/s in the table above, which is why `Qwen3-0.6B-Q4_0` measures **1.33 tok/s against 2.86 for `Q4_K_M`** (like-for-like pair, probe). Why those two vector paths underperform is the next piece of kernel work.
+- **Cross-file comparisons have to check the file's tensor mix, not its filename.** `Qwen2-0.5B.Q6_K` is 145×Q8_0 plus 24×Q6_K, so its 10.88 tok/s mostly measures `Q8_0`; the clean pairs are `Qwen3-0.6B-Q5_K_M` vs `Q4_K_M` (identical structure, 2.14 vs 2.86 — matching kbench's 1.86 vs 2.37) and the before/after runs above. `Qwen2-0.5B.Q3_K_L` still trails `Q3_K_S` (1.90 vs 4.33) even though every kernel in its file now measures at parity — including at Qwen2-0.5B's real shapes, K = 896 and 4864, where `q5_1`/`q5k` land beside `q6k`/`q4k`. The deficit is not in the vec-dots; attributing it needs per-stage decode profiling rather than more kernel benchmarks.
 
 ---
 
