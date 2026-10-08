@@ -265,7 +265,7 @@ public abstract class FfnLayer : IDisposable
             if (weights.Wf1 != null) WGated.ReplaceWeights(weights.Wf1, weights.Wf1Bias);
             if (weights.RawWgate != null && weights.RawWup != null)
             {
-                byte[] fused = new byte[weights.RawWgate.Length + weights.RawWup.Length];
+                byte[] fused = weights.AllocateBlockBuffer(weights.RawWgate.Length + weights.RawWup.Length);
                 Buffer.BlockCopy(weights.RawWgate, 0, fused, 0, weights.RawWgate.Length);
                 Buffer.BlockCopy(weights.RawWup, 0, fused, weights.RawWgate.Length, weights.RawWup.Length);
                 WGated.SetRawWeight(fused);

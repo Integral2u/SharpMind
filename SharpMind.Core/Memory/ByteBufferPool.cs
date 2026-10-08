@@ -23,6 +23,8 @@ public sealed class ByteBufferPool
     private readonly Queue<byte[]> _order = new();
     private long _bytes;
     private int _largest = -1;
+    private long _hits;
+    private long _misses;
 
     /// <summary>
     /// Explicit byte budget for retained buffers. Null (default) derives the budget from
@@ -39,14 +41,19 @@ public sealed class ByteBufferPool
             throw new ArgumentOutOfRangeException(nameof(byteCount), "Negative buffer size requested.");
         lock (_lock)
         {
-            if (byteCount > _largest) _largest = byteCount;
+            // An acquired buffer may have been evicted from retention, a size may never be
+            // backed yet, or a concurrent prefetch may have drained this size — track so
+            // steering code can see how well the rotation reuses.
             if (_free.TryGetValue(byteCount, out var set) && set.Count > 0)
             {
+                _hits++;
                 // HashSet iteration order is arbitrary — any buffer of a given size serves.
                 byte[] reusable = set.First();
                 set.Remove(reusable);
                 return reusable;
             }
+            _misses++;
+            if (byteCount > _largest) _largest = byteCount;
             return new byte[byteCount];
         }
     }
@@ -76,6 +83,12 @@ public sealed class ByteBufferPool
 
     /// <summary>Number of distinct free arrays held. For diagnostics/tests.</summary>
     public int RetainedCount => _order.Count;
+
+    /// <summary>Borrows that reused a pre-existing buffer. For diagnostics.</summary>
+    public long Hits => _hits;
+
+    /// <summary>Borrows that allocated a fresh array (pool cold or evicted). For diagnostics.</summary>
+    public long Misses => _misses;
 
     private void Evict()
     {

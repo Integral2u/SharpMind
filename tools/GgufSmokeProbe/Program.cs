@@ -840,6 +840,7 @@ static async Task<int> RunStagesAsync(string path, string[] args)
         var text = new System.Text.StringBuilder();
         long wallStart = 0, wallEnd = 0;
         long gc0 = 0, gc1 = 0, gc2 = 0, allocStart = 0;
+        long _liveStart = 0, _privStart = 0;
         bool windowOpened = false;
         long prevStamp = 0, prevAlloc = 0;
         var perStep = new List<(double Ms, double MiB)>(measure);
@@ -855,6 +856,8 @@ static async Task<int> RunStagesAsync(string path, string[] args)
                 wallStart = System.Diagnostics.Stopwatch.GetTimestamp();
                 gc0 = GC.CollectionCount(0); gc1 = GC.CollectionCount(1); gc2 = GC.CollectionCount(2);
                 allocStart = GC.GetTotalAllocatedBytes();
+                _liveStart = GC.GetTotalMemory(forceFullCollection: false);
+                _privStart = System.Diagnostics.Process.GetCurrentProcess().PrivateMemorySize64;
                 prevStamp = wallStart;
                 prevAlloc = allocStart;
             }
@@ -893,6 +896,18 @@ static async Task<int> RunStagesAsync(string path, string[] args)
 
         Console.WriteLine($"OUT: {text}");
         Console.WriteLine($"--- decode stages: {Path.GetFileName(path)}  prompt=\"{prompt}\"  warmup={warmup}  measure={measure}  greedy ---");
+        // Footprint is the retained state (managed live bytes + committed private memory) at
+        // steady state, NOT the alloc churn printed below. In streaming the pool caps at
+        // (ResidentWindow+2) x the largest layer, so live memory should stay far below full
+        // mode's whole-model weight arrays no matter how many MiB/token it churns. Compare
+        // the start/end deltas: a leak would show as growth across the measured window.
+        var proc = System.Diagnostics.Process.GetCurrentProcess();
+        long liveEnd = GC.GetTotalMemory(forceFullCollection: false);
+        long privEnd = proc.PrivateMemorySize64;
+        long liveStart = 0, privStart = 0;
+        if (allocStart > 0) { liveStart = _liveStart; privStart = _privStart; }
+        Console.WriteLine($"footprint  start live={liveStart / (1024.0 * 1024.0):F0} MiB priv={privStart / (1024.0 * 1024.0):F0} MiB  -> end live={liveEnd / (1024.0 * 1024.0):F0} MiB priv={privEnd / (1024.0 * 1024.0):F0} MiB  (delta {(liveEnd - liveStart) / 1024.0 / 1024.0:F0} MiB live / window)");
+
         Console.WriteLine($"wall {wallMs / 1000.0:F2}s  {steps} decode steps  {tps:F2} tok/s  |  gc gen0={d0} gen1={d1} gen2={d2}  |  alloc {allocMiB:F1} MiB ({allocPerTok:F0} B/tok)");
         if (perStep.Count > 0)
         {
@@ -901,6 +916,8 @@ static async Task<int> RunStagesAsync(string path, string[] args)
             Console.WriteLine($"per-step  ms min/avg/max {msMin:F1}/{msAvg:F1}/{msMax:F1}   alloc MiB min/avg/max {mbMin:F1}/{mbAvg:F1}/{mbMax:F1}");
         }
         Console.WriteLine(DecodeProfiler.Format("decode", wallMs));
+        if (weights is TransformerWeightsStreaming streamWeights)
+            Console.WriteLine($"pool  retained={streamWeights.PoolRetainedBytes / (1024.0 * 1024.0):F1} MiB  hits={streamWeights.PoolHits}  misses={streamWeights.PoolMisses}");
         Console.WriteLine($"note: profiled tok/s is slower than real; measure throughput with `run raw` and the profiler off.");
         return steps > 0 ? 0 : 4;
     }

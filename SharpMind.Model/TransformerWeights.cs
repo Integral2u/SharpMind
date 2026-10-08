@@ -711,6 +711,51 @@ else
         // Tensor metadata (offset, size, dtype) populated by IModelLoader.PreInit
         public Dictionary<string, TensorMeta> TensorMeta { get; } = [];
 
+        /// <summary>Allocates pooled raw buffers on behalf of this block; wired by the
+        /// streaming weights so layer-derived buffers (the fused gate+up FFN payload, MoE
+        /// expert planes) also round-trip through the reuse pool. Null in full-resident mode,
+        /// where weights load once and there is nothing to recycle.</summary>
+        internal Func<int, byte[]>? BufferAllocator { get; set; }
+
+        /// <summary>Raw buffers a layer derived from pooled inputs and registered so
+        /// <see cref="FreeLayer"/> can hand them back to the pool instead of the GC.</summary>
+        private List<byte[]>? _ownedPooled;
+
+        /// <summary>
+        /// Borrows a raw buffer for a layer-derived value (the GatedFfn fused gate+up array).
+        /// When the streaming pool is wired the buffer is registered as owned so
+        /// <see cref="CaptureOwnedBuffers"/> returns it for pooling at unload; otherwise it is
+        /// a plain allocation (full-resident managers load once per run).
+        /// </summary>
+        internal byte[] AllocateBlockBuffer(int size)
+        {
+            if (BufferAllocator is null) return new byte[size];
+            byte[] buf = BufferAllocator(size);
+            _ownedPooled ??= [];
+            _ownedPooled.Add(buf);
+            return buf;
+        }
+
+        /// <summary>Returns the registered layer-derived buffers and detaches them so an
+        /// unload can return them to the pool.</summary>
+        internal List<byte[]>? CaptureOwnedBuffers()
+        {
+            var owned = _ownedPooled;
+            _ownedPooled = null;
+            return owned;
+        }
+
+        /// <summary>Total bytes of raw + derived buffers currently attached to this block.
+        /// Streaming uses it to size the pool budget to the resident working set.</summary>
+        internal long AttachedRawBytes()
+        {
+            long sum = 0;
+            foreach (byte[] b in CaptureRawBuffers()) sum += b.Length;
+            if (_ownedPooled is not null)
+                foreach (byte[] b in _ownedPooled) sum += b.Length;
+            return sum;
+        }
+
         public BlockWeights() { }
 
         /// <summary>
@@ -787,6 +832,7 @@ else
             RawRouter = null;
             RawWgateExp = null; RawWupExp = null; RawWdownExp = null;
             RawWSharedGate = null; RawWSharedUp = null; RawWSharedDown = null; RawWSharedGateInp = null;
+            _ownedPooled = null;
         }
 
         private static void DisposeDict(Dictionary<int, Tensor<float>>? dict)
@@ -871,24 +917,53 @@ TransformerWeights.BlockWeights[] blocks,
 /// behind and asynchronously preloads the layer that far ahead, overlapping I/O with compute.
 /// Each agent in LoadMode.Streaming requires its own instance.
 /// </summary>
-public sealed class TransformerWeightsStreaming(
-    ModelConfig config,
-    Tensor<float> embedding,
-    Tensor<float>? lmHead,
-    Tensor<float> finalNormW,
-    Tensor<float>? finalNormB,
-TransformerWeights.BlockWeights[] blocks,
-    IModelLoader loader,
-    Tensor<float>? positionEmbedding = null) : TransformerWeights(config, embedding, lmHead, finalNormW, finalNormB, blocks, loader, positionEmbedding)
+public sealed class TransformerWeightsStreaming : TransformerWeights
 {
+    public TransformerWeightsStreaming(
+        ModelConfig config,
+        Tensor<float> embedding,
+        Tensor<float>? lmHead,
+        Tensor<float> finalNormW,
+        Tensor<float>? finalNormB,
+        TransformerWeights.BlockWeights[] blocks,
+        IModelLoader loader,
+        Tensor<float>? positionEmbedding = null)
+        : base(config, embedding, lmHead, finalNormW, finalNormB, blocks, loader, positionEmbedding)
+    {
+        // Layer-derived buffers (fused gate+up, MoE expert planes) acquire through the same
+        // pooling, sized by the block allocator, so unloads round-trip everything.
+        foreach (BlockWeights b in blocks)
+            b.BufferAllocator = AllocateRawBuffer;
+    }
     /// <summary>
     /// Layers kept resident on either side of the block loop's current position. 0 would
     /// unload the current layer before its successors finish and is not valid; the default is
     /// the historical stride of one (unload one behind, preload one ahead), so ≈3 layers are
     /// resident at any moment. Larger values keep more layers hot between tokens in exchange
-    /// for memory.
+    /// for memory. The pool retention budget follows it: enough to cover the layers in flight
+    /// plus the layer the loop is loading next, so the hot reload cycle never reallocates.
     /// </summary>
-    public int ResidentWindow { get; set; } = 1;
+    private int _residentWindow = 1;
+    public int ResidentWindow
+    {
+        get => _residentWindow;
+        set
+        {
+            _residentWindow = Math.Max(0, value);
+            UpdatePoolBudget();
+        }
+    }
+
+    internal void UpdatePoolBudget()
+    {
+        if (_peakLayerBytes > 0)
+            _rawBuffers.MaxRetainedBytes = (long)(_residentWindow + 2) * _peakLayerBytes;
+    }
+
+    /// <summary>Largest single-layer raw+derived footprint seen; the pool budget is
+    /// <c>(ResidentWindow + 2) × this</c> so a free and its next acquire never cross an
+    /// eviction in steady state.</summary>
+    private long _peakLayerBytes;
 
     /// <summary>Reference to the TransformerBlock[] so loaded weights can be pushed via SetWeights.</summary>
     internal Layers.TransformerBlock[]? BlockRefs { get; set; }
@@ -915,6 +990,12 @@ TransformerWeights.BlockWeights[] blocks,
 
     /// <summary>Retained bytes currently held by the streaming buffer pool. For diagnostics.</summary>
     public long PoolRetainedBytes => _rawBuffers.RetainedBytes;
+
+    /// <summary>Pool borrows that reused an existing buffer. For diagnostics.</summary>
+    public long PoolHits => _rawBuffers.Hits;
+
+    /// <summary>Pool borrows that allocated a fresh array. For diagnostics.</summary>
+    public long PoolMisses => _rawBuffers.Misses;
 
     // Async preload tracking
     private Task? _preloadTask;
@@ -1054,6 +1135,15 @@ TransformerWeights.BlockWeights[] blocks,
             BlockRefs?[layerIndex]?.SetWeights(Blocks[layerIndex]);
             _pushedLayers.Add(layerIndex);
         }
+
+        // Learn the peak per-layer footprint so the pool budget covers the layers in the
+        // resident window (free N−1 → acquire N+1 never crosses an eviction in steady state).
+        long layerBytes = Blocks[layerIndex].AttachedRawBytes();
+        if (layerBytes > _peakLayerBytes)
+        {
+            _peakLayerBytes = layerBytes;
+            UpdatePoolBudget();
+        }
     }
 
     /// <summary>
@@ -1088,6 +1178,8 @@ TransformerWeights.BlockWeights[] blocks,
 
         // Snapshot the raw quantized buffers before they are cleared so they can be
         // recycled for the next layer that takes this one's place in the resident window.
+        // Include layer-derived buffers (fused gate+up) registered on the block.
+        var owned = Blocks[layerIndex].CaptureOwnedBuffers();
         var rawBuffers = Blocks[layerIndex].CaptureRawBuffers().ToArray();
 
         // Push empty weights into LinearLayers (clears raw data references)
@@ -1102,6 +1194,7 @@ TransformerWeights.BlockWeights[] blocks,
         // Return the layer's raw buffers to the reuse pool (no-op reverse: a fresh load
         // acquires them again, so the hot rotation allocates nothing).
         ReleaseRawBuffers(rawBuffers);
+        if (owned is { Count: > 0 }) ReleaseRawBuffers(owned);
 
         _pushedLayers.Remove(layerIndex);
     }
@@ -1113,12 +1206,32 @@ TransformerWeights.BlockWeights[] blocks,
     /// to reload the whole model serially (measured at ~430 MiB of managed allocation and 3×
     /// wall time per decode step). Instead, warm the next pass by preloading layer 0, which
     /// the next pass's first block consumes. Layers inside <see cref="ResidentWindow"/> of the
-    /// end stay loaded and their blocks skip the reload on the next pass.
+    /// end stay loaded and their blocks skip the reload on the next pass. A small-window loop
+    /// churns LOH-weight buffers each token, and with rare gen2 collections that churn would
+    /// accumulate as live memory (measured +~30 MiB/token at window 1); pace a full collection
+    /// between tokens so the footprint stays bounded — streaming is the low-memory mode and may
+    /// trade speed for it, so a blocking collection here is the right trade.
     /// </summary>
     public void PrepareForNextForward()
     {
+        MaybeCollectGen2();
         PreloadLayerAsync(0);
     }
+
+    private void MaybeCollectGen2()
+    {
+        long now = GC.GetTotalAllocatedBytes();
+        if (now - _lastGen2Check > Gen2CollectionBudget)
+        {
+            _lastGen2Check = now;
+            GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: false);
+        }
+    }
+
+    /// <summary>Allocate-budget between throttled gen2 collections (≈ one layer's worth of
+    /// raw+derived buffers, so a window-1 token boundary triggers at most one).</summary>
+    private const long Gen2CollectionBudget = 16L * 1024 * 1024;
+    private long _lastGen2Check = -1;
 }
 
 
