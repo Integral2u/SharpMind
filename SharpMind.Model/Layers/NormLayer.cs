@@ -43,7 +43,7 @@ public abstract class NormLayer : IDisposable
     {
         ThrowIfDisposed();
         if (x.Shape[^1] != Dim) throw new ArgumentException($"NormLayer expects last dim {Dim}, got {x.Shape[^1]}.");
-        long tNorm = DecodeProfiler.Begin();
+        var tNorm = DecodeProfiler.Begin();
         Tensor<float> result = workspace != null 
             ? workspace.Rent<float>(x.Shape.Dims) 
             : new Tensor<float>(x.Shape);
@@ -62,7 +62,7 @@ public abstract class NormLayer : IDisposable
     {
         ThrowIfDisposed();
         if (x.Shape[^1] != Dim) throw new ArgumentException($"NormLayer expects last dim {Dim}, got {x.Shape[^1]}.");
-        long tNorm = DecodeProfiler.Begin();
+        var tNorm = DecodeProfiler.Begin();
         int rows = x.ElementCount / Dim;
         var weightData = Weight.Data;
         for (int i = 0; i < rows; i++)

@@ -835,6 +835,8 @@ static async Task<int> RunStagesAsync(string path, string[] args)
         long wallStart = 0, wallEnd = 0;
         long gc0 = 0, gc1 = 0, gc2 = 0, allocStart = 0;
         bool windowOpened = false;
+        long prevStamp = 0, prevAlloc = 0;
+        var perStep = new List<(double Ms, double MiB)>(measure);
 
         await foreach (var frag in rawGen.GenerateAsync(prompt, sample, genCfg))
         {
@@ -847,6 +849,17 @@ static async Task<int> RunStagesAsync(string path, string[] args)
                 wallStart = System.Diagnostics.Stopwatch.GetTimestamp();
                 gc0 = GC.CollectionCount(0); gc1 = GC.CollectionCount(1); gc2 = GC.CollectionCount(2);
                 allocStart = GC.GetTotalAllocatedBytes();
+                prevStamp = wallStart;
+                prevAlloc = allocStart;
+            }
+            else if (consumed > warmup)
+            {
+                long now = System.Diagnostics.Stopwatch.GetTimestamp();
+                long nowAlloc = GC.GetTotalAllocatedBytes();
+                perStep.Add(((now - prevStamp) * 1000.0 / System.Diagnostics.Stopwatch.Frequency,
+                             (nowAlloc - prevAlloc) / (1024.0 * 1024.0)));
+                prevStamp = now;
+                prevAlloc = nowAlloc;
             }
             if (consumed > warmup) text.Append(frag);
             if (consumed == warmup + measure)
@@ -875,6 +888,12 @@ static async Task<int> RunStagesAsync(string path, string[] args)
         Console.WriteLine($"OUT: {text}");
         Console.WriteLine($"--- decode stages: {Path.GetFileName(path)}  prompt=\"{prompt}\"  warmup={warmup}  measure={measure}  greedy ---");
         Console.WriteLine($"wall {wallMs / 1000.0:F2}s  {steps} decode steps  {tps:F2} tok/s  |  gc gen0={d0} gen1={d1} gen2={d2}  |  alloc {allocMiB:F1} MiB ({allocPerTok:F0} B/tok)");
+        if (perStep.Count > 0)
+        {
+            double msAvg = perStep.Average(p => p.Ms), msMin = perStep.Min(p => p.Ms), msMax = perStep.Max(p => p.Ms);
+            double mbAvg = perStep.Average(p => p.MiB), mbMin = perStep.Min(p => p.MiB), mbMax = perStep.Max(p => p.MiB);
+            Console.WriteLine($"per-step  ms min/avg/max {msMin:F1}/{msAvg:F1}/{msMax:F1}   alloc MiB min/avg/max {mbMin:F1}/{mbAvg:F1}/{mbMax:F1}");
+        }
         Console.WriteLine(DecodeProfiler.Format("decode", wallMs));
         Console.WriteLine($"note: profiled tok/s is slower than real; measure throughput with `run raw` and the profiler off.");
         return steps > 0 ? 0 : 4;

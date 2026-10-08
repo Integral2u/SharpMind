@@ -436,7 +436,7 @@ public sealed class Transformer : IDisposable
         // One envelope per forward: decode steps land in Forward, multi-token prompt
         // chunks in Prefill, so a profiled window can never mix the two.
         bool decodeStep = tokenIds.Shape.Rows == 1 && tokenIds.Shape.Cols == 1;
-        long tStep = DecodeProfiler.Begin();
+        var tStep = DecodeProfiler.Begin();
         try
         {
             RunBlocks(tokenIds, caches, positionOffset, workspace);
@@ -495,7 +495,7 @@ public sealed class Transformer : IDisposable
         ThrowIfDisposed();
         DisposeCache();
 
-        long tEmbed = DecodeProfiler.Begin();
+        var tEmbed = DecodeProfiler.Begin();
         _cachedEmbedding = _embedding.Forward(tokenIds, workspace);
         if (_gemmaEmbeddingScale)
             ScaleEmbedding(_cachedEmbedding, _weights.Config.HiddenDim);
@@ -503,7 +503,9 @@ public sealed class Transformer : IDisposable
             AddPositionEmbeddingInPlace(_cachedEmbedding, positionOffset);
         DecodeProfiler.Mark(DecodeStage.Embed, tEmbed);
 
+        var tBlocks = DecodeProfiler.Begin();
         _cachedHidden = _arch.Forward(_cachedEmbedding, caches, positionOffset, workspace);
+        DecodeProfiler.Mark(DecodeStage.Blocks, tBlocks);
 
         if (_weights is TransformerWeightsStreaming sw) sw.CompleteForward();
     }

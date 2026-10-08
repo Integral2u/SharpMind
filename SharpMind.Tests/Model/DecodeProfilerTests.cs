@@ -35,11 +35,14 @@ public class DecodeProfilerTests : IDisposable
     public void DisabledByDefault_BeginReturnsZero_NoMarksRecorded()
     {
         Assert.False(DecodeProfiler.Enabled);
-        Assert.Equal(0, DecodeProfiler.Begin());
-        DecodeProfiler.Mark(DecodeStage.Matmul, 123);
+        Assert.True(DecodeProfiler.Begin().IsNoOp);
+        Assert.Equal(0, DecodeProfiler.Begin().Ticks);
+        Assert.Equal(0, DecodeProfiler.Begin().AllocatedBytes);
+        DecodeProfiler.Mark(DecodeStage.Matmul, new DecodeMeasure(123, 0));
         Assert.Empty(DecodeProfiler.Snapshot());
         Assert.Equal(0, DecodeProfiler.Count(DecodeStage.Matmul));
         Assert.Equal(0, DecodeProfiler.TotalMs(DecodeStage.Matmul));
+        Assert.Equal(0, DecodeProfiler.AllocatedBytes(DecodeStage.Matmul));
     }
 
     [Fact]
@@ -63,16 +66,52 @@ public class DecodeProfilerTests : IDisposable
     public void MarksWithZeroBegin_AreIgnoredEvenWhenEnabled()
     {
         DecodeProfiler.Enabled = true;
-        DecodeProfiler.Mark(DecodeStage.Matmul, 0);
+        DecodeProfiler.Mark(DecodeStage.Matmul, default);
         Assert.Equal(0, DecodeProfiler.Count(DecodeStage.Matmul));
+        Assert.Equal(0, DecodeProfiler.AllocatedBytes(DecodeStage.Matmul));
+    }
+
+    [Fact]
+    public void Enabled_AttributesManagedAllocationToTheActiveStage()
+    {
+        DecodeProfiler.Enabled = true;
+        DecodeProfiler.Reset();
+
+        var m = DecodeProfiler.Begin();
+        // Allocation contexts are flushed to the process-wide counter only on segment
+        // boundaries, so a single small array can undercount; push ~1.2MB through the
+        // window to guarantee the counter has been synchronized, then require the count.
+        for (int i = 0; i < 300; i++)
+            _ = new byte[4096];
+        DecodeProfiler.Mark(DecodeStage.Sample, m);
+
+        Assert.Equal(1, DecodeProfiler.Count(DecodeStage.Sample));
+        Assert.True(DecodeProfiler.AllocatedBytes(DecodeStage.Sample) >= 32768,
+            $"expected at least 32768 bytes, got {DecodeProfiler.AllocatedBytes(DecodeStage.Sample)}");
+        Assert.Equal(0, DecodeProfiler.AllocatedBytes(DecodeStage.Scores));
+        Assert.Contains("MiB", DecodeProfiler.Format("decode", 1000));
+    }
+
+    [Fact]
+    public void Disabled_RecordsNoTimeOrAllocation()
+    {
+        DecodeProfiler.Reset();
+        var m = DecodeProfiler.Begin();
+        _ = new byte[1024];
+        DecodeProfiler.Mark(DecodeStage.Embed, m);
+
+        Assert.True(m.IsNoOp);
+        Assert.Equal(0, DecodeProfiler.Count(DecodeStage.Embed));
+        Assert.Equal(0, DecodeProfiler.TotalMs(DecodeStage.Embed));
+        Assert.Equal(0, DecodeProfiler.AllocatedBytes(DecodeStage.Embed));
     }
 
     [Fact]
     public void StagesAccumulateIndependently_WithoutNestingContamination()
     {
         DecodeProfiler.Enabled = true;
-        long tMatmul = DecodeProfiler.Begin();
-        long tScores = DecodeProfiler.Begin(); // nested
+        var tMatmul = DecodeProfiler.Begin();
+        var tScores = DecodeProfiler.Begin(); // nested
         DecodeProfiler.Mark(DecodeStage.Scores, tScores);
         DecodeProfiler.Mark(DecodeStage.Matmul, tMatmul);
 
@@ -84,7 +123,7 @@ public class DecodeProfilerTests : IDisposable
     public void SnapshotOrdersStagesByTotalMsDescending()
     {
         DecodeProfiler.Enabled = true;
-        long tLmHead = DecodeProfiler.Begin();
+        var tLmHead = DecodeProfiler.Begin();
         System.Threading.Thread.Sleep(3);
         DecodeProfiler.Mark(DecodeStage.LmHead, tLmHead);
         DecodeProfiler.Mark(DecodeStage.Scores, DecodeProfiler.Begin());

@@ -159,7 +159,7 @@ public abstract class LogitOps(Tensor<float>? projectionWeight, byte[]? rawWeigh
 
     public unsafe Tensor<float> Project(Tensor<float> input, int M, int K, int N, IWorkspace? workspace = null)
     {
-        long tLmHead = DecodeProfiler.Begin();
+        var tLmHead = DecodeProfiler.Begin();
         var result = workspace != null
             ? workspace.Rent<float>([M, N])
             : new Tensor<float>(M, N);

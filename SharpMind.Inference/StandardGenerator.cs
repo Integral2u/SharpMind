@@ -193,7 +193,7 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
                 ReadOnlySpan<float> logitsSlice = logitsTensor.Data[..vocabSize];
                 GeneratorDiagnostics.PrintTopLogits(_tokenizer, step, logitsSlice);
 
-                long tSample = DecodeProfiler.Begin();
+                var tSample = DecodeProfiler.Begin();
                 int nextId;
                 if (repPenalty != 1.0f || sampleCfg.Constraint is not null)
                 {

@@ -198,7 +198,7 @@ public abstract class InferenceLinearLayer : LinearLayer
         ThrowIfDisposed();
         // The Matmul bucket: every linear projection in the decode step (q/k/v/o, FFN,
         // MoE router and expert weights) runs through here; the lm head does not.
-        long tMatmul = DecodeProfiler.Begin();
+        var tMatmul = DecodeProfiler.Begin();
         bool needReshape = input.Rank > 2;
         int batchSize = input.ElementCount / input.Shape[^1];
         using var flatView = needReshape ? input.Reshape(batchSize, InFeatures) : null;
@@ -209,41 +209,49 @@ public abstract class InferenceLinearLayer : LinearLayer
             ? workspace.Rent<float>([m, OutFeatures])
             : new Tensor<float>(m, OutFeatures);
 
-        if (RawQuantizedData is not null)
+        var tKernel = DecodeProfiler.Begin();
+        try
         {
-            if (WideAllowed && Q8_0WideWeights.Enabled &&
-                _wide.Get(RawQuantizedData, InFeatures, OutFeatures) is { } wide)
+            if (RawQuantizedData is not null)
             {
-                wide.MatMul(flat.DataPtr, result.DataPtr, m);
+                if (WideAllowed && Q8_0WideWeights.Enabled &&
+                    _wide.Get(RawQuantizedData, InFeatures, OutFeatures) is { } wide)
+                {
+                    wide.MatMul(flat.DataPtr, result.DataPtr, m);
+                }
+                else
+                {
+                    fixed (byte* pRaw = RawQuantizedData)
+                    {
+                        QuantizedMatMulFn(flat.DataPtr, pRaw, result.DataPtr, m, InFeatures, OutFeatures);
+                    }
+                }
+            }
+            else if (QuantDtype == QuantDType.F32 && _weight.ElementCount == (long)InFeatures * OutFeatures)
+            {
+                // An F32 weight must not be handed to a quantized kernel: every
+                // QuantizedMatMulFn reinterprets its input as (fp16 scale, int8 x 32)
+                // blocks, so an F32 router like Qwen2-MoE's ffn_gate_inp came out as
+                // garbage — a near-uniform softmax that routed every token to the wrong
+                // experts. Do the multiply in float instead, using the same
+                // [inFeatures, outFeatures] layout the loader writes (row i, column o).
+                fixed (float* pWeight = _weight.Data)
+                {
+                    FloatMatMul(flat.DataPtr, pWeight, result.DataPtr, m, InFeatures, OutFeatures);
+                }
             }
             else
             {
-                fixed (byte* pRaw = RawQuantizedData)
-                {
-                    QuantizedMatMulFn(flat.DataPtr, pRaw, result.DataPtr, m, InFeatures, OutFeatures);
-                }
+                throw new InvalidOperationException(
+                    $"[{Name}] RawQuantizedData is null and no float fallback available " +
+                    $"(dtype={QuantDtype}, weightElements={_weight.ElementCount}, " +
+                    $"expected={(long)InFeatures * OutFeatures}). " +
+                    $"The forward pass cannot proceed without weight data.");
             }
         }
-        else if (QuantDtype == QuantDType.F32 && _weight.ElementCount == (long)InFeatures * OutFeatures)
+        finally
         {
-            // An F32 weight must not be handed to a quantized kernel: every
-            // QuantizedMatMulFn reinterprets its input as (fp16 scale, int8 x 32)
-            // blocks, so an F32 router like Qwen2-MoE's ffn_gate_inp came out as
-            // garbage — a near-uniform softmax that routed every token to the wrong
-            // experts. Do the multiply in float instead, using the same
-            // [inFeatures, outFeatures] layout the loader writes (row i, column o).
-            fixed (float* pWeight = _weight.Data)
-            {
-                FloatMatMul(flat.DataPtr, pWeight, result.DataPtr, m, InFeatures, OutFeatures);
-            }
-        }
-        else
-        {
-            throw new InvalidOperationException(
-                $"[{Name}] RawQuantizedData is null and no float fallback available " +
-                $"(dtype={QuantDtype}, weightElements={_weight.ElementCount}, " +
-                $"expected={(long)InFeatures * OutFeatures}). " +
-                $"The forward pass cannot proceed without weight data.");
+            DecodeProfiler.Mark(DecodeStage.Kernel, tKernel);
         }
 
         if (_bias is not null)
