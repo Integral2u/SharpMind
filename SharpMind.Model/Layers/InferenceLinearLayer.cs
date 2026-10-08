@@ -196,6 +196,9 @@ public abstract class InferenceLinearLayer : LinearLayer
     public override unsafe Tensor<float> Forward(Tensor<float> input, IWorkspace? workspace = null)
     {
         ThrowIfDisposed();
+        // The Matmul bucket: every linear projection in the decode step (q/k/v/o, FFN,
+        // MoE router and expert weights) runs through here; the lm head does not.
+        long tMatmul = DecodeProfiler.Begin();
         bool needReshape = input.Rank > 2;
         int batchSize = input.ElementCount / input.Shape[^1];
         using var flatView = needReshape ? input.Reshape(batchSize, InFeatures) : null;
@@ -252,8 +255,10 @@ public abstract class InferenceLinearLayer : LinearLayer
             outDims[^1] = OutFeatures;
             var reshaped = result.Reshape(outDims);
             result.Dispose();
+            DecodeProfiler.Mark(DecodeStage.Matmul, tMatmul);
             return reshaped;
         }
+        DecodeProfiler.Mark(DecodeStage.Matmul, tMatmul);
         return result;
     }
 

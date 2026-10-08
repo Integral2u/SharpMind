@@ -316,14 +316,18 @@ namespace SharpMind.Model.Layers.Attention;
 
         using var qr = qForAttn.Reshape(batch, seqLen, numH, headDim);
         using var kr = kForAttn.Reshape(batch, seqLen, numKv, headDim);
+        long tRope = DecodeProfiler.Begin();
         PositionalEncoder.ApplyBatched(qr, positionOffset);
         PositionalEncoder.ApplyBatched(kr, positionOffset);
+        DecodeProfiler.Mark(DecodeStage.Rope, tRope);
 
         // Use the (possibly normed) K and V for cache storage
         if (cache != null)
         {
+            long tKv = DecodeProfiler.Begin();
             using var kCache = kNormed?.Reshape(batch, seqLen, kvDim);
             cache.Update(kCache ?? k, v, numKv, headDim);
+            DecodeProfiler.Mark(DecodeStage.Kv, tKv);
         }
 
         Tensor<float> output = workspace != null
@@ -331,6 +335,7 @@ namespace SharpMind.Model.Layers.Attention;
             : new Tensor<float>(batch, seqLen, qDim);
         int effectiveKvLen = cache != null ? cache.Length : seqLen;
 
+        long tScores = DecodeProfiler.Begin();
         {
             int totalHeads = batch * numH;
             int qStride = numH * headDim;
@@ -445,6 +450,7 @@ namespace SharpMind.Model.Layers.Attention;
             allTempK?.Dispose();
             allTempV?.Dispose();
         }
+        DecodeProfiler.Mark(DecodeStage.Scores, tScores);
 
         var projected = Wo.Forward(output, workspace);
         output.Dispose();

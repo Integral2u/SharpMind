@@ -193,6 +193,7 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
                 ReadOnlySpan<float> logitsSlice = logitsTensor.Data[..vocabSize];
                 GeneratorDiagnostics.PrintTopLogits(_tokenizer, step, logitsSlice);
 
+                long tSample = DecodeProfiler.Begin();
                 int nextId;
                 if (repPenalty != 1.0f || sampleCfg.Constraint is not null)
                 {
@@ -222,6 +223,7 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
                 _decodeTokenScratch[0] = nextId;
                 string fragment = _tokenizer.Decode(_decodeTokenScratch.AsSpan(0, 1), skipSpecials: true).Replace("\uFFFD", "");
                 decodedSoFar.Append(fragment);
+                DecodeProfiler.Mark(DecodeStage.Sample, tSample);
 
                 bool hitStop = false;
                 int stopAt = int.MaxValue;

@@ -12,6 +12,7 @@ using SharpMind.Tokenization;
 //
 //   dotnet run --project tools/GgufSmokeProbe -- meta <file>
 //   dotnet run --project tools/GgufSmokeProbe -- run  <file> ["prompt"] [maxTokens=24] [full] [resident] [topk]
+//   dotnet run --project tools/GgufSmokeProbe -- stages <file> ["prompt"] [warmup=16] [measure=48] [full] [resident] [serialmm]
 //   dotnet run --project tools/GgufSmokeProbe -- bind <file>
 //   dotnet run --project tools/GgufSmokeProbe -- cmp  <fileA> <fileB> <tensor>
 //   dotnet run --project tools/GgufSmokeProbe -- ref  <file> [prompt | @promptfile]
@@ -33,7 +34,7 @@ if (args.Length > 0 && args[0] == "kbench")
 
 if (args.Length < 2)
 {
-    Console.Error.WriteLine("usage: meta <file>   |   dump <file> [pattern]   |   bind <file>   |   fwd <file> [full] [resident]   |   fwdmulti <file> <promptfile> [single|...]   |   ref <file> [prompt]   |   run <file> [prompt] [maxTokens] [full] [resident] [topk] [serialmm]   |   kbench <q2k|q3k|q4k|q5k|q6k|q8k|q4_0|q4_1|iq4nl|q5_0|q5_1|q8_0|q8_1|f32> [K] [N] [iters] [fma|avx2|scalar]");
+    Console.Error.WriteLine("usage: meta <file>   |   dump <file> [pattern]   |   bind <file>   |   fwd <file> [full] [resident]   |   fwdmulti <file> <promptfile> [single|...]   |   ref <file> [prompt]   |   run <file> [prompt] [maxTokens] [full] [resident] [topk] [serialmm]   |   stages <file> [prompt] [warmup] [measure] [full] [resident] [serialmm]   |   kbench <q2k|q3k|q4k|q5k|q6k|q8k|q4_0|q4_1|iq4nl|q5_0|q5_1|q8_0|q8_1|f32> [K] [N] [iters] [fma|avx2|scalar]");
     return 2;
 }
 
@@ -49,6 +50,9 @@ if (mode == "dump")
 
 if (mode == "run")
     return await RunInferenceAsync(path, args);
+
+if (mode == "stages")
+    return await RunStagesAsync(path, args);
 
 if (mode == "fwd")
     return RunForward(path, args);
@@ -743,6 +747,137 @@ static async Task<int> RunInferenceAsync(string path, string[] args)
             Console.Write(entry.Token);
             first = false;
         }
+    }
+    catch (NotSupportedException ex)
+    {
+        Console.WriteLine($"\nUNSUPPORTED (loud fail): {ex.Message}");
+        return 3;
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"\nFAILED: {ex.GetType().Name}: {ex.Message}");
+        return 1;
+    }
+}
+
+// stages <file> [prompt] [warmup=16] [measure=48] [full] [resident] [serialmm]
+//
+// Per-stage breakdown of CPU decode, powered by DecodeProfiler (opt-in marks
+// throughout SharpMind.Model and StandardGenerator; a profiled run is slower
+// than a real one). Prefill and JIT promotion land in a warm-up window with the
+// profiler off; the stage table below covers only single-token decode steps.
+//
+// Flow: one greedy raw GenerateAsync over warmup+measure tokens. The profiler is
+// flipped on while the generator is suspended between yields, so the measured
+// window is exactly the decode steps that start after the warm-up fragment — no
+// prefill, no prompt re-prefix, no second generator pass. GC collections and
+// allocated bytes are sampled over the same window and reported per token.
+static async Task<int> RunStagesAsync(string path, string[] args)
+{
+    string prompt = args.Length > 2 ? args[2] : "Hello!";
+    int warmup = args.Length > 3 && int.TryParse(args[3], out int wv) ? wv : 16;
+    int measure = args.Length > 4 && int.TryParse(args[4], out int mv) ? mv : 48;
+    if (warmup < 1 || measure < 1) { Console.Error.WriteLine("stages needs warmup>=1 and measure>=1"); return 2; }
+
+    // "@path" reads the prompt from a file, matching `run`.
+    if (prompt.Length > 1 && prompt[0] == '@')
+    {
+        string pf = prompt[1..];
+        if (File.Exists(pf)) prompt = File.ReadAllText(pf);
+    }
+
+    ModelMetaData meta;
+    ModelConfig modelConfig;
+    Tokenizer? tokenizer;
+    try
+    {
+        var metaHelper = ModelFormatHelpers.GetModelMetaHelperFor(ModelFormat.Gguf);
+        metaHelper.Load(path, null, out meta, out modelConfig, out tokenizer);
+    }
+    catch (NotSupportedException ex)
+    {
+        Console.WriteLine($"UNSUPPORTED (loud fail): {ex.Message}");
+        return 3;
+    }
+
+    if (tokenizer == null)
+    {
+        Console.WriteLine("OK  meta/config loaded; no tokenizer in file (embedding-only model?) -> verification stops here.");
+        return 0;
+    }
+
+    Console.WriteLine($"OK  arch={meta.GetString("general.architecture")} tokenizer={tokenizer.VocabSize} ctx={modelConfig.MaxSeqLen}");
+
+    try
+    {
+        var sharpConfig = modelConfig.ForModel();
+        bool full = args.Any(a => a.Equals("full", StringComparison.OrdinalIgnoreCase));
+        bool resident = args.Any(a => a.Equals("resident", StringComparison.OrdinalIgnoreCase));
+        bool serialMm = args.Any(a => a.Equals("serialmm", StringComparison.OrdinalIgnoreCase));
+        var mapping = sharpConfig.ToJigSawMapping(null, serialMm ? false : null);
+        using var weights = ModelFactory.CreateWeights(
+            modelConfig, sharpConfig, QuantizationFactory.Create(mapping), path,
+            full ? LoadMode.Full : LoadMode.Streaming, quantizedResident: resident);
+        weights.InitializeWeights();
+        using var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
+
+        // Greedy raw generation, no chat template — same path the run mode uses for "raw".
+        var rawBuilder = new StandardGeneratorBuilder<KVCacherBuilder>();
+        var rawGen = rawBuilder.CreateGenerator(model, tokenizer, addBos: true, addEos: false, caches: null);
+        var sample = new SamplingConfig { Temperature = 0f, TopK = 1 };
+        var genCfg = new GenerationConfig { MaxNewTokens = warmup + measure, Stream = true };
+
+        DecodeProfiler.Reset();
+        DecodeProfiler.Enabled = false;
+
+        int consumed = 0;
+        var text = new System.Text.StringBuilder();
+        long wallStart = 0, wallEnd = 0;
+        long gc0 = 0, gc1 = 0, gc2 = 0, allocStart = 0;
+        bool windowOpened = false;
+
+        await foreach (var frag in rawGen.GenerateAsync(prompt, sample, genCfg))
+        {
+            consumed++;
+            if (consumed == warmup)
+            {
+                windowOpened = true;
+                DecodeProfiler.Reset();
+                DecodeProfiler.Enabled = true;
+                wallStart = System.Diagnostics.Stopwatch.GetTimestamp();
+                gc0 = GC.CollectionCount(0); gc1 = GC.CollectionCount(1); gc2 = GC.CollectionCount(2);
+                allocStart = GC.GetTotalAllocatedBytes();
+            }
+            if (consumed > warmup) text.Append(frag);
+            if (consumed == warmup + measure)
+            {
+                DecodeProfiler.Enabled = false;
+                wallEnd = System.Diagnostics.Stopwatch.GetTimestamp();
+                break;
+            }
+        }
+
+        if (!windowOpened)
+        {
+            Console.WriteLine($"generation ended before the {warmup}-token warm-up ({consumed} fragments); nothing to measure.");
+            return 4;
+        }
+        if (wallEnd == 0) wallEnd = System.Diagnostics.Stopwatch.GetTimestamp();
+        DecodeProfiler.Enabled = false;
+
+        double wallMs = (wallEnd - wallStart) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+        long steps = DecodeProfiler.Count(DecodeStage.Forward);
+        double tps = wallMs > 0 ? steps / (wallMs / 1000.0) : 0;
+        long d0 = GC.CollectionCount(0) - gc0, d1 = GC.CollectionCount(1) - gc1, d2 = GC.CollectionCount(2) - gc2;
+        double allocMiB = (GC.GetTotalAllocatedBytes() - allocStart) / (1024.0 * 1024.0);
+        double allocPerTok = steps > 0 ? (GC.GetTotalAllocatedBytes() - allocStart) / (double)steps : 0;
+
+        Console.WriteLine($"OUT: {text}");
+        Console.WriteLine($"--- decode stages: {Path.GetFileName(path)}  prompt=\"{prompt}\"  warmup={warmup}  measure={measure}  greedy ---");
+        Console.WriteLine($"wall {wallMs / 1000.0:F2}s  {steps} decode steps  {tps:F2} tok/s  |  gc gen0={d0} gen1={d1} gen2={d2}  |  alloc {allocMiB:F1} MiB ({allocPerTok:F0} B/tok)");
+        Console.WriteLine(DecodeProfiler.Format("decode", wallMs));
+        Console.WriteLine($"note: profiled tok/s is slower than real; measure throughput with `run raw` and the profiler off.");
+        return steps > 0 ? 0 : 4;
     }
     catch (NotSupportedException ex)
     {

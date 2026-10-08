@@ -23,7 +23,9 @@ public static class FfnKernels
         SharpMind.Core.Memory.IWorkspace? workspace = null)
     {
         using var hidden = w1.Forward(x, workspace);
+        long tAct = DecodeProfiler.Begin();
         using var acted = acts.Activate(hidden, workspace);
+        DecodeProfiler.Mark(DecodeStage.Act, tAct);
         return w2.Forward(acted, workspace);
     }
 
@@ -48,11 +50,13 @@ public static class FfnKernels
             : (hasBatch ? new Tensor<float>(fused.Shape[0], fused.Shape[1], ffnDim) : new Tensor<float>(total, ffnDim));
         using var flat = fused.Reshape(total, 2 * ffnDim);
 
+        long tAct = DecodeProfiler.Begin();
         for (int i = 0; i < total; i++)
         {
             var row = flat.RowSpan(i);
             acts.ApplyGate(row[..ffnDim], row[ffnDim..], gated.RowSpan(i));
         }
+        DecodeProfiler.Mark(DecodeStage.Act, tAct);
 
         return wDown.Forward(gated, workspace);
     }
@@ -72,7 +76,9 @@ public static class FfnKernels
     {
         using var gate = wGate.Forward(x, workspace);
         using var up = wUp.Forward(x, workspace);
+        long tAct = DecodeProfiler.Begin();
         using var gated = acts.GatedActivate(gate, up, workspace);
+        DecodeProfiler.Mark(DecodeStage.Act, tAct);
         return wDown.Forward(gated, workspace);
     }
 
@@ -100,7 +106,9 @@ public static class FfnKernels
         // Router logits: [batch, numExperts]
         using var routerInput = x.Rank > 2 ? x.Reshape(batch, hidden) : null;
         using var logits = router.Forward(routerInput ?? x, workspace);
+        long tRoute = DecodeProfiler.Begin();
         using var probs = SoftmaxOverExperts(logits, workspace);
+        DecodeProfiler.Mark(DecodeStage.Route, tRoute);
 
         // Thread-local bump allocator — one private arena per worker thread,
         // reset at the start of every token, so there is never any contention
@@ -119,6 +127,7 @@ public static class FfnKernels
 
             // Get top-k expert indices
             using var tokenLogits = Tensor<float>.From(logits.RowSpan(t), logits.Shape.Cols);
+            long tRoute = DecodeProfiler.Begin();
             int[] topKIdx = ArgTopK(tokenLogits, topK);
 
             // Only renormalise when the architecture actually does so. llama.cpp skips
@@ -134,6 +143,7 @@ public static class FfnKernels
                     weightSum += probs.RowSpan(t)[expertIdx];
                 weightSum = MathF.Max(weightSum, 6.103515625e-5f);
             }
+            DecodeProfiler.Mark(DecodeStage.Route, tRoute);
 
             foreach (int expertIdx in topKIdx)
             {

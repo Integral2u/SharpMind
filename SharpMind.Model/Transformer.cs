@@ -433,39 +433,50 @@ public sealed class Transformer : IDisposable
     /// </summary>
     public Tensor<float> ForwardLastLogits(Tensor<int> tokenIds, IKVCache[] caches, int positionOffset = 0, Core.Memory.IWorkspace? workspace = null)
     {
-        RunBlocks(tokenIds, caches, positionOffset, workspace);
-
-        int batch = tokenIds.Shape.Rows;
-        int seqLen = tokenIds.Shape.Cols;
-        int hiddenDim = _weights.Config.HiddenDim;
-        int K = hiddenDim;
-        int N = _weights.Config.VocabSize;
-
-        // Single-token decode: normalise in-place, no allocation, no copy
-        if (batch == 1 && seqLen == 1)
+        // One envelope per forward: decode steps land in Forward, multi-token prompt
+        // chunks in Prefill, so a profiled window can never mix the two.
+        bool decodeStep = tokenIds.Shape.Rows == 1 && tokenIds.Shape.Cols == 1;
+        long tStep = DecodeProfiler.Begin();
+        try
         {
-            _finalNorm.ForwardInPlace(_cachedHidden);
-            using var flatHidden = _cachedHidden.Reshape(batch, hiddenDim);
-            return _logitOps.Project(flatHidden, batch, K, N, workspace);
-        }
+            RunBlocks(tokenIds, caches, positionOffset, workspace);
 
-        // Prefill path: extract last token's hidden state, norm in-place
-        Tensor<float> lastHidden = workspace != null 
-            ? workspace.Rent<float>([batch, hiddenDim]) 
-            : new Tensor<float>(batch, hiddenDim);
-        int lastOffset = (seqLen - 1) * hiddenDim;
-        var cachedData = _cachedHidden.Data;
-        var lastData = lastHidden.Data;
-        for (int b = 0; b < batch; b++)
+            int batch = tokenIds.Shape.Rows;
+            int seqLen = tokenIds.Shape.Cols;
+            int hiddenDim = _weights.Config.HiddenDim;
+            int K = hiddenDim;
+            int N = _weights.Config.VocabSize;
+
+            // Single-token decode: normalise in-place, no allocation, no copy
+            if (batch == 1 && seqLen == 1)
+            {
+                _finalNorm.ForwardInPlace(_cachedHidden);
+                using var flatHidden = _cachedHidden.Reshape(batch, hiddenDim);
+                return _logitOps.Project(flatHidden, batch, K, N, workspace);
+            }
+
+            // Prefill path: extract last token's hidden state, norm in-place
+            Tensor<float> lastHidden = workspace != null 
+                ? workspace.Rent<float>([batch, hiddenDim]) 
+                : new Tensor<float>(batch, hiddenDim);
+            int lastOffset = (seqLen - 1) * hiddenDim;
+            var cachedData = _cachedHidden.Data;
+            var lastData = lastHidden.Data;
+            for (int b = 0; b < batch; b++)
+            {
+                int srcOffset = b * seqLen * hiddenDim + lastOffset;
+                cachedData.Slice(srcOffset, hiddenDim).CopyTo(lastData.Slice(b * hiddenDim, hiddenDim));
+            }
+            _finalNorm.ForwardInPlace(lastHidden);
+
+            Tensor<float> result = _logitOps.Project(lastHidden, batch, K, N, workspace);
+            lastHidden.Dispose();
+            return result;
+        }
+        finally
         {
-            int srcOffset = b * seqLen * hiddenDim + lastOffset;
-            cachedData.Slice(srcOffset, hiddenDim).CopyTo(lastData.Slice(b * hiddenDim, hiddenDim));
+            DecodeProfiler.Mark(decodeStep ? DecodeStage.Forward : DecodeStage.Prefill, tStep);
         }
-        _finalNorm.ForwardInPlace(lastHidden);
-
-        Tensor<float> result = _logitOps.Project(lastHidden, batch, K, N, workspace);
-        lastHidden.Dispose();
-        return result;
     }
 
     /// <summary>
@@ -484,11 +495,13 @@ public sealed class Transformer : IDisposable
         ThrowIfDisposed();
         DisposeCache();
 
+        long tEmbed = DecodeProfiler.Begin();
         _cachedEmbedding = _embedding.Forward(tokenIds, workspace);
         if (_gemmaEmbeddingScale)
             ScaleEmbedding(_cachedEmbedding, _weights.Config.HiddenDim);
         if (_positionEmbedding is not null)
             AddPositionEmbeddingInPlace(_cachedEmbedding, positionOffset);
+        DecodeProfiler.Mark(DecodeStage.Embed, tEmbed);
 
         _cachedHidden = _arch.Forward(_cachedEmbedding, caches, positionOffset, workspace);
 
