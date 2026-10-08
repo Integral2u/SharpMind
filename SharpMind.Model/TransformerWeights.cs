@@ -69,6 +69,15 @@ public abstract class TransformerWeights : IDisposable
     // The loader used during InitializeWeights
     protected IModelLoader? Loader { get; }
 
+    /// <summary>
+    /// Allocates the raw quantized buffer a block tensor is read into. The base returns a
+    /// fresh array; <see cref="TransformerWeightsStreaming"/> overrides this with a reused
+    /// <see cref="Core.Memory.ByteBufferPool"/> buffer so the layer rotation stays
+    /// allocation-free. Top-level (embedding/head) tensors keep fresh arrays — they are
+    /// loaded once and never returned. MoE expert residency will extend the same seam.
+    /// </summary>
+    public virtual byte[] AllocateRawBuffer(int byteCount) => new byte[byteCount];
+
     protected TransformerWeights(
         ModelConfig config,
         Tensor<float> embedding,
@@ -704,6 +713,37 @@ else
 
         public BlockWeights() { }
 
+        /// <summary>
+        /// Snapshots every raw quantized byte[] currently attached to this block (attention,
+        /// FFN, short-conv, router, shared expert, per-expert dictionaries). Streaming uses
+        /// this before <see cref="ReleaseLayerData"/> nulls the fields so the arrays can be
+        /// returned to the buffer pool instead of dropped for the GC.
+        /// </summary>
+        public IEnumerable<byte[]> CaptureRawBuffers()
+        {
+            if (RawWq is not null) yield return RawWq;
+            if (RawWk is not null) yield return RawWk;
+            if (RawWv is not null) yield return RawWv;
+            if (RawWo is not null) yield return RawWo;
+            if (RawWgate is not null) yield return RawWgate;
+            if (RawWup is not null) yield return RawWup;
+            if (RawWf1 is not null) yield return RawWf1;
+            if (RawWf2 is not null) yield return RawWf2;
+            if (RawWScIn is not null) yield return RawWScIn;
+            if (RawWScOut is not null) yield return RawWScOut;
+            if (RawRouter is not null) yield return RawRouter;
+            if (RawWSharedGate is not null) yield return RawWSharedGate;
+            if (RawWSharedUp is not null) yield return RawWSharedUp;
+            if (RawWSharedDown is not null) yield return RawWSharedDown;
+            if (RawWSharedGateInp is not null) yield return RawWSharedGateInp;
+            if (RawWgateExp is not null)
+                foreach (var buf in RawWgateExp.Values) if (buf is not null) yield return buf;
+            if (RawWupExp is not null)
+                foreach (var buf in RawWupExp.Values) if (buf is not null) yield return buf;
+            if (RawWdownExp is not null)
+                foreach (var buf in RawWdownExp.Values) if (buf is not null) yield return buf;
+        }
+
         public BlockWeights(
             Tensor<float> wq, Tensor<float> wk, Tensor<float> wv, Tensor<float> wo,
             Tensor<float> wqB, Tensor<float> wkB, Tensor<float> wvB, Tensor<float> woB,
@@ -825,8 +865,10 @@ TransformerWeights.BlockWeights[] blocks,
 }
 
 /// <summary>
-/// Streaming weights — loads and unloads one layer at a time during the forward pass.
-/// Only a small window of layers has float tensors+raw data resident at any moment.
+/// Streaming weights — loads and unloads layers as the forward pass advances, keeping a
+/// small window resident. <paramref name="positionEmbedding"/>-scale memory stays bounded:
+/// as the block loop reaches layer i it unloads the layer <see cref="ResidentWindow"/>
+/// behind and asynchronously preloads the layer that far ahead, overlapping I/O with compute.
 /// Each agent in LoadMode.Streaming requires its own instance.
 /// </summary>
 public sealed class TransformerWeightsStreaming(
@@ -839,8 +881,40 @@ TransformerWeights.BlockWeights[] blocks,
     IModelLoader loader,
     Tensor<float>? positionEmbedding = null) : TransformerWeights(config, embedding, lmHead, finalNormW, finalNormB, blocks, loader, positionEmbedding)
 {
+    /// <summary>
+    /// Layers kept resident on either side of the block loop's current position. 0 would
+    /// unload the current layer before its successors finish and is not valid; the default is
+    /// the historical stride of one (unload one behind, preload one ahead), so ≈3 layers are
+    /// resident at any moment. Larger values keep more layers hot between tokens in exchange
+    /// for memory.
+    /// </summary>
+    public int ResidentWindow { get; set; } = 1;
+
     /// <summary>Reference to the TransformerBlock[] so loaded weights can be pushed via SetWeights.</summary>
     internal Layers.TransformerBlock[]? BlockRefs { get; set; }
+
+    private readonly Core.Memory.ByteBufferPool _rawBuffers = new();
+
+    /// <summary>
+    /// Borrows a raw quantized buffer for a block tensor from the reuse pool (bounded by
+    /// <see cref="ResidentWindow"/>). The pool grows its budget with the largest tensor seen
+    /// times the resident window, so a sliding decode keeps allocations at zero in steady state.
+    /// </summary>
+    public override byte[] AllocateRawBuffer(int byteCount)
+    {
+        _rawBuffers.ResidentLayers = ResidentWindow;
+        return _rawBuffers.Acquire(byteCount);
+    }
+
+    /// <summary>Returns a layer's previously acquired raw buffers to the reuse pool.</summary>
+    private void ReleaseRawBuffers(IEnumerable<byte[]> buffers)
+    {
+        foreach (var buffer in buffers)
+            _rawBuffers.Release(buffer);
+    }
+
+    /// <summary>Retained bytes currently held by the streaming buffer pool. For diagnostics.</summary>
+    public long PoolRetainedBytes => _rawBuffers.RetainedBytes;
 
     // Async preload tracking
     private Task? _preloadTask;
@@ -1012,6 +1086,10 @@ TransformerWeights.BlockWeights[] blocks,
         if (layerIndex < 0 || layerIndex >= Blocks.Length) return;
         if (Blocks[layerIndex].Wq == null && Blocks[layerIndex].RawWq == null) return;
 
+        // Snapshot the raw quantized buffers before they are cleared so they can be
+        // recycled for the next layer that takes this one's place in the resident window.
+        var rawBuffers = Blocks[layerIndex].CaptureRawBuffers().ToArray();
+
         // Push empty weights into LinearLayers (clears raw data references)
         BlockRefs?[layerIndex]?.SetWeights(new BlockWeights());
 
@@ -1021,23 +1099,25 @@ TransformerWeights.BlockWeights[] blocks,
         // Dispose float tensors and null all fields in BlockWeights; keeps TensorMeta
         Blocks[layerIndex].ReleaseLayerData();
 
+        // Return the layer's raw buffers to the reuse pool (no-op reverse: a fresh load
+        // acquires them again, so the hot rotation allocates nothing).
+        ReleaseRawBuffers(rawBuffers);
+
         _pushedLayers.Remove(layerIndex);
     }
 
     /// <summary>
-    /// Cleans up after a forward pass by freeing any remaining loaded layers.
-    /// Called by <see cref="Transformer.Forward"/> after the architecture forward
-    /// completes. Without this, the last layer(s) would remain loaded across
-    /// consecutive forward passes (token generation), gradually consuming memory.
+    /// Called after a forward pass once the block loop has finished. The loop has already
+    /// kept a bounded resident window (layers near the end of the pass plus the preload for
+    /// the next), so all layers must NOT be freed here: freeing everything forced every token
+    /// to reload the whole model serially (measured at ~430 MiB of managed allocation and 3×
+    /// wall time per decode step). Instead, warm the next pass by preloading layer 0, which
+    /// the next pass's first block consumes. Layers inside <see cref="ResidentWindow"/> of the
+    /// end stay loaded and their blocks skip the reload on the next pass.
     /// </summary>
-    public void CompleteForward()
+    public void PrepareForNextForward()
     {
-        // Free any layers that are still loaded (typical: last layer(s) of the pass)
-        for (int i = 0; i < Blocks.Length; i++)
-        {
-            if (Blocks[i].Wq != null || Blocks[i].RawWq != null)
-                FreeLayer(i);
-        }
+        PreloadLayerAsync(0);
     }
 }
 

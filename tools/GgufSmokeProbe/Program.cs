@@ -12,7 +12,7 @@ using SharpMind.Tokenization;
 //
 //   dotnet run --project tools/GgufSmokeProbe -- meta <file>
 //   dotnet run --project tools/GgufSmokeProbe -- run  <file> ["prompt"] [maxTokens=24] [full] [resident] [topk]
-//   dotnet run --project tools/GgufSmokeProbe -- stages <file> ["prompt"] [warmup=16] [measure=48] [full] [resident] [serialmm]
+//   dotnet run --project tools/GgufSmokeProbe -- stages <file> ["prompt"] [warmup=16] [measure=48] [full] [resident] [serialmm] [window N]
 //   dotnet run --project tools/GgufSmokeProbe -- bind <file>
 //   dotnet run --project tools/GgufSmokeProbe -- cmp  <fileA> <fileB> <tensor>
 //   dotnet run --project tools/GgufSmokeProbe -- ref  <file> [prompt | @promptfile]
@@ -814,10 +814,16 @@ static async Task<int> RunStagesAsync(string path, string[] args)
         bool full = args.Any(a => a.Equals("full", StringComparison.OrdinalIgnoreCase));
         bool resident = args.Any(a => a.Equals("resident", StringComparison.OrdinalIgnoreCase));
         bool serialMm = args.Any(a => a.Equals("serialmm", StringComparison.OrdinalIgnoreCase));
+        int window = -1;
+        for (int i = 0; i < args.Length - 1; i++)
+            if (args[i].Equals("window", StringComparison.OrdinalIgnoreCase) && int.TryParse(args[i + 1], out int w))
+                window = w;
         var mapping = sharpConfig.ToJigSawMapping(null, serialMm ? false : null);
         using var weights = ModelFactory.CreateWeights(
             modelConfig, sharpConfig, QuantizationFactory.Create(mapping), path,
             full ? LoadMode.Full : LoadMode.Streaming, quantizedResident: resident);
+        if (!full && window > 0 && weights is TransformerWeightsStreaming sw)
+            sw.ResidentWindow = window;
         weights.InitializeWeights();
         using var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
 

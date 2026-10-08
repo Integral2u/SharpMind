@@ -349,7 +349,7 @@ public sealed class Transformer : IDisposable
         _cachedEmbedding = fused;
         _cachedHidden = _arch.Forward(_cachedEmbedding, new IKVCache[_arch.NumLayers], positionOffset, workspace);
 
-        if (_weights is TransformerWeightsStreaming sw) sw.CompleteForward();
+        if (_weights is TransformerWeightsStreaming sw) sw.PrepareForNextForward();
 
         // 5. Final norm + LM head → [Batch, totalLen, VocabSize]
         _cachedNormed?.Dispose();
@@ -402,8 +402,8 @@ public sealed class Transformer : IDisposable
         //    may alias _cachedEmbedding. Keep both alive until we exit this method.
         _cachedHidden = _arch.Forward(_cachedEmbedding, caches ?? new IKVCache[_arch.NumLayers], positionOffset, workspace);
 
-        // Streaming: free any remaining loaded layers before the next pass
-        if (_weights is TransformerWeightsStreaming sw) sw.CompleteForward();
+        // Streaming: keep the resident window warm for the next pass
+        if (_weights is TransformerWeightsStreaming sw) sw.PrepareForNextForward();
 
         // 3. Final normalisation
         _cachedNormed?.Dispose();
@@ -507,7 +507,7 @@ public sealed class Transformer : IDisposable
         _cachedHidden = _arch.Forward(_cachedEmbedding, caches, positionOffset, workspace);
         DecodeProfiler.Mark(DecodeStage.Blocks, tBlocks);
 
-        if (_weights is TransformerWeightsStreaming sw) sw.CompleteForward();
+        if (_weights is TransformerWeightsStreaming sw) sw.PrepareForNextForward();
     }
 
     private void DisposeCache()

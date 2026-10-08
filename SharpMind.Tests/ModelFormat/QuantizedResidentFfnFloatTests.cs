@@ -184,12 +184,12 @@ public sealed class QuantizedResidentFfnFloatTests : IDisposable
     [MemberData(nameof(ExportDtypes))]
     public void StreamingLoad_SecondForwardAfterLayerFree_MatchesFullLoad(QuantDType dtype)
     {
-        // Streaming frees every layer at the end of a forward (CompleteForward), and
+        // Streaming keeps a resident window across forwards (PrepareForNextForward), and
         // ReleaseLayerData used to dispose and null the block norms too. The built
         // NormLayer captured its tensor at construction and TransformerBlock never
-        // repoints it (it only copies data in), so the second forward reloaded the
-        // layer but reused the disposed norm tensor and threw ObjectDisposedException
-        // on the norm's first read. Run two passes and compare both to the full load.
+        // repoints it (it only copies data in), so a reloaded layer would otherwise
+        // reuse the disposed norm tensor and throw ObjectDisposedException on the
+        // norm's first read. Run two passes and compare both to the full load.
         string path = ExportGatedModel(dtype);
         SmmLoader.Load(path, null, out _, out var config, out _);
         var qOps = QuantizationFactory.Create(Sharp().ResolvedHardware);
@@ -216,8 +216,8 @@ public sealed class QuantizedResidentFfnFloatTests : IDisposable
                     $"{dtype} pass {pass} logit {i}: full={b.Data[i]} streaming={a.Data[i]}");
         }
 
-        // A completed forward frees every layer; the norm tensors the NormLayers
-        // captured must survive that so the next pass can reload into them.
+        // A completed forward keeps its resident window (PrepareForNextForward); the norm
+        // tensors the NormLayers captured must survive that so the next pass can reuse them.
         Assert.All(streamingWeights.Blocks, blk => Assert.NotNull(blk.Norm1W));
         Assert.All(streamingWeights.Blocks, blk => Assert.NotNull(blk.Norm2W));
     }

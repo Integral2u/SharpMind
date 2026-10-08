@@ -409,9 +409,16 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
         if (block != null && rawField != null)
             SetTensorMeta(block, rawField, index.Meta.DataOffset + entry.Offset, TensorLoadHelper.CheckedInt(rawSize, "rawSize"), entry.Dtype);
 
-        // Load raw quantized data
+        // Load raw quantized data. Block-level tensors rent from the streaming buffer pool
+        // (alloc-free on reload); top-level tensors below keep their fresh array since they
+        // are loaded once and never returned.
         if (block != null && rawField != null)
-            SetRawField(block, rawField, rawBytes, entry.Dtype);
+        {
+            byte[] pooled = weights.AllocateRawBuffer(rawBytes.Length);
+            if (rawBytes.Length > 0)
+                Buffer.BlockCopy(rawBytes, 0, pooled, 0, rawBytes.Length);
+            SetRawField(block, rawField, pooled, entry.Dtype);
+        }
 
         if ((isLmHead || target != null) && block == null)
         {

@@ -245,13 +245,14 @@ public static class ModelFactory
                 // Ensure current layer is loaded (wait for async preload if needed)
                 sw.EnsureLayerLoadedSync(layerIndex);
 
-                // Free the layer two steps behind (keep current + next resident)
-                if (layerIndex > 0)
-                    sw.FreeLayer(layerIndex - 1);
+                // Keep a resident window of sw.ResidentWindow layers: unload the layer that
+                // far behind once the loop is past it, and preload the layer that far ahead.
+                if (layerIndex >= sw.ResidentWindow)
+                    sw.FreeLayer(layerIndex - sw.ResidentWindow);
 
                 // Fire async preload for the next layer (overlaps I/O with compute)
-                if (layerIndex + 1 < blocks.Length)
-                    sw.PreloadLayerAsync(layerIndex + 1);
+                if (layerIndex + sw.ResidentWindow < blocks.Length)
+                    sw.PreloadLayerAsync(layerIndex + sw.ResidentWindow);
             };
         }
 

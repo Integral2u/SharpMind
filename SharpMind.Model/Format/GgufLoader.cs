@@ -841,9 +841,9 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
                 stream.ReadExactly(fused);
                 stream.Position -= rawSize;
 
-                byte[] qPart = new byte[partSize];
-                byte[] kPart = new byte[partSize];
-                byte[] vPart = new byte[partSize];
+                byte[] qPart = weights.AllocateRawBuffer(partSize);
+                byte[] kPart = weights.AllocateRawBuffer(partSize);
+                byte[] vPart = weights.AllocateRawBuffer(partSize);
                 Buffer.BlockCopy(fused, 0, qPart, 0, partSize);
                 Buffer.BlockCopy(fused, partSize, kPart, 0, partSize);
                 Buffer.BlockCopy(fused, partSize * 2, vPart, 0, partSize);
@@ -903,7 +903,7 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
                 // fault during a full load.
                 for (int e = 0; e < numExperts; e++)
                 {
-                    byte[] expert = new byte[planeSize];
+                    byte[] expert = weights.AllocateRawBuffer(planeSize);
                     stream.ReadExactly(expert);
 
                     string targetField = rawField switch
@@ -918,7 +918,7 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
                 return;
             }
 
-            byte[] rawData = new byte[rawSize];
+            byte[] rawData = weights.AllocateRawBuffer(checked((int)rawSize));
             stream.ReadExactly(rawData);
             stream.Position -= rawSize;
             SetRawField(block, rawField, rawData, info.Dtype);
