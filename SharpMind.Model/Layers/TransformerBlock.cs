@@ -213,6 +213,15 @@ public abstract class TransformerBlock : IDisposable
         _ffn.FreeFloatWeights();
     }
 
+    /// <summary>Disables the Q8_0 wide repack on this block's projections. Streaming calls
+    /// this once; the repack would otherwise rebuild on every layer reload.</summary>
+    public void SuppressWide()
+    {
+        _attention?.SuppressWide();
+        _shortConv?.SuppressWide();
+        _ffn.SuppressWide();
+    }
+
     public void Dispose()
     {
         Dispose(true);

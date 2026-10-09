@@ -106,6 +106,17 @@ public sealed class Transformer : IDisposable
         }
     }
 
+    /// <summary>Disables the Q8_0 wide repack on all blocks. Streaming calls this after
+    /// construction because the repack would rebuild on every layer reload.</summary>
+    public void SuppressWide()
+    {
+        if (_blocks != null)
+        {
+            foreach (var block in _blocks)
+                block.SuppressWide();
+        }
+    }
+
     /// <summary>Sets an activation hook on all blocks in the model.</summary>
     public void SetActivationHook(IActivationHook? hook)
     {

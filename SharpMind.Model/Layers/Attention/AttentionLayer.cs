@@ -476,6 +476,16 @@ namespace SharpMind.Model.Layers.Attention;
         Wo.FreeFloatWeight();
     }
 
+    /// <summary>Disables the Q8_0 wide repack on every projection (streaming reloads would
+    /// rebuild it per token).</summary>
+    internal void SuppressWide()
+    {
+        if (Wq is InferenceLinearLayer q) q.SuppressWide();
+        if (Wk is InferenceLinearLayer k) k.SuppressWide();
+        if (Wv is InferenceLinearLayer v) v.SuppressWide();
+        if (Wo is InferenceLinearLayer o) o.SuppressWide();
+    }
+
     public void Dispose() { Dispose(true); GC.SuppressFinalize(this); }
     protected virtual void Dispose(bool disposing)
     {

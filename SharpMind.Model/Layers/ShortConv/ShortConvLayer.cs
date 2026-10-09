@@ -199,6 +199,14 @@ public sealed class ShortConvLayer : IDisposable
         _wOut.FreeFloatWeight();
     }
 
+    /// <summary>Disables the Q8_0 wide repack on the projections (streaming reloads would
+    /// rebuild it per token).</summary>
+    internal void SuppressWide()
+    {
+        if (_wIn is InferenceLinearLayer i) i.SuppressWide();
+        if (_wOut is InferenceLinearLayer o) o.SuppressWide();
+    }
+
     public void Dispose()
     {
         Dispose(true);

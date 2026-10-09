@@ -375,6 +375,22 @@ public abstract class FfnLayer : IDisposable
 
     // Parameters & Disposal
 
+    /// <summary>Disables the Q8_0 wide repack on every projection (streaming reloads would
+    /// rebuild it per token). Mirrors <see cref="FreeFloatWeights"/>' enumeration.</summary>
+    internal void SuppressWide()
+    {
+        Suppress(W1); Suppress(W2); Suppress(WGated); Suppress(WDown);
+        Suppress(Router); Suppress(SharedGate); Suppress(SharedUp); Suppress(SharedDown); Suppress(SharedGateInp);
+        if (ExpertGate is not null) foreach (var l in ExpertGate) Suppress(l);
+        if (ExpertUp is not null) foreach (var l in ExpertUp) Suppress(l);
+        if (ExpertDown is not null) foreach (var l in ExpertDown) Suppress(l);
+    }
+
+    private static void Suppress(LinearLayer? layer)
+    {
+        if (layer is InferenceLinearLayer inference) inference.SuppressWide();
+    }
+
     public void FreeFloatWeights()
     {
         if (W1 is not null && W2 is not null)

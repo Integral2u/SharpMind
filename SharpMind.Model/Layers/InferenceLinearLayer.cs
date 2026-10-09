@@ -23,6 +23,18 @@ public abstract class InferenceLinearLayer : LinearLayer
     /// <summary>Whether the repacked wide copy (and its raw source) is currently cached.</summary>
     internal bool HasCachedWide => _wide.HasSlot;
 
+    /// <summary>
+    /// Turns the Q8_0 wide stand-in off for this layer and drops any repack. Streaming reloads
+    /// raw buffers every token; the wide copy is rebuilt per reload (the Cache is keyed on the
+    /// raw array instance) at several MiB of pinned LOH per tensor, so the standard parallel
+    /// kernel is the lower-memory choice there. Full/resident mode builds the copy once.
+    /// </summary>
+    internal void SuppressWide()
+    {
+        WideAllowed = false;
+        _wide.Clear();
+    }
+
     protected InferenceLinearLayer(string name, int inFeatures, int outFeatures, bool bias, Tensor<float>? weight, Tensor<float>? biasTensor, QuantDType quantDType)
         // Forward reads RawQuantizedData, never the float weight, so a null weight
         // (quantized-resident loading) must not materialise a full F32 copy —

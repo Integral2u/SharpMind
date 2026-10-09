@@ -271,6 +271,13 @@ public static class ModelFactory
         var (visionEncoder, audioEncoder) = BuildEncoders(weights.Config);
         var transformer = new Transformer(weights, embedding, arch, finalNorm, qOps, fullMapping, gemmaEmbeddingScale: gemmaScale, visionEncoder: visionEncoder, audioEncoder: audioEncoder);
 
+        // Streaming reloads a layer's raw buffers every token, and the Q8_0 wide repack is
+        // keyed on the raw array instance, so it would rebuild several MiB of pinned LOH per
+        // tensor per reload. Turn it off for streaming; full/resident mode builds the copy
+        // once and keeps it, so it stays enabled there.
+        if (weights is TransformerWeightsStreaming)
+            transformer.SuppressWide();
+
         // Free pre-allocated (zero-filled) float tensors from BuildBlock.
         // In streaming mode the cyclic load/unload manages raw quantized data;
         // the float tensors are never used (quantized forward uses RawQuantizedData).
