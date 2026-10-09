@@ -259,18 +259,9 @@ One run, single prompt, `Standard` generator, `LoadMode.Full`:
 | Qwen2-0.5B | Q5_1 | 4.1 | 4.9 ‡ |
 | Qwen3-0.6B | Q5_K_M | 8.3 | 2.1 ‡ |
 
-‡ Re-measured with `GgufSmokeProbe run` after the Q5 kernel fix (prompt `1, 2, 3, 4, 5, 6, 7, 8, 9,`, greedy, `LoadMode.Full` resident): these two rows ran at 1.1 and 0.4 tok/s before the fix, with byte-identical output before and after. The other rows are from the original run. See [Known gaps](#known-gaps).
+‡ Re-measured with `GgufSmokeProbe run` after the Q5 kernel fix (prompt `1, 2, 3, 4, 5, 6, 7, 8, 9,`, greedy, `LoadMode.Full` resident): these two rows ran at 1.1 and 0.4 tok/s before the fix, with byte-identical output before and after. The other rows are from the original run.
 
-Load time is dominated by dequantizing the file to float, so it scales with file size. Decode throughput scales with quant level far more than with parameter count, and on this host `Q8_0` is consistently the fastest quant to *run* — its unpack is the cheapest — so a smaller quant is currently a *slower* quant here. That is memory traffic losing to unpack cost, which is exactly what [Known gaps](#known-gaps) is about.
-
-### Known gaps
-
-**Closed this release:** the two ‡ rows above. `VecDotQ5_1` and `VecDotQ5K` decoded every weight element in scalar code on every tier — their vector entry points measured within noise of their own scalar paths — and they now take the same four-chain route as Q2_K/Q3_K/IQ4_NL (see [Quantized decode kernels](#quantized-decode-kernels)). kbench parallel GMAC/s went `Q5_K` 0.17 → 1.86 and `Q5_1` 0.51 → 2.37; end to end, `GgufSmokeProbe run` (greedy, output byte-identical before and after) went `Qwen3-0.6B-Q5_K_M` 0.22 → 2.14 tok/s, `Qwen2-0.5B.Q5_1` 1.18 → 4.91, `Qwen2-0.5B.Q3_K_L` 0.34 → 1.90 — the L variant mixes 24 Q5_K and 48 Q5_1 tensors into the file, which is why it moved with them.
-
-Two things are still open:
-
-- **`Q4_0`/`Q4_1` vectorize but land at half of `Q4_K`/`Q6_K`** — 1.19/1.17 against 2.37/2.40 parallel GMAC/s in the table above, which is why `Qwen3-0.6B-Q4_0` measures **1.33 tok/s against 2.86 for `Q4_K_M`** (like-for-like pair, probe). Why those two vector paths underperform is the next piece of kernel work.
-- **Cross-file comparisons have to check the file's tensor mix, not its filename.** `Qwen2-0.5B.Q6_K` is 145×Q8_0 plus 24×Q6_K, so its 10.88 tok/s mostly measures `Q8_0`; the clean pairs are `Qwen3-0.6B-Q5_K_M` vs `Q4_K_M` (identical structure, 2.14 vs 2.86 — matching kbench's 1.86 vs 2.37) and the before/after runs above. `Qwen2-0.5B.Q3_K_L` still trails `Q3_K_S` (1.90 vs 4.33) even though every kernel in its file now measures at parity — including at Qwen2-0.5B's real shapes, K = 896 and 4864, where `q5_1`/`q5k` land beside `q6k`/`q4k`. The deficit is not in the vec-dots; attributing it needs per-stage decode profiling rather than more kernel benchmarks.
+Load time is dominated by dequantizing the file to float, so it scales with file size. Decode throughput scales with quant level far more than with parameter count, and on this host `Q8_0` is consistently the fastest quant to *run* — its unpack is the cheapest — so a smaller quant is currently a *slower* quant here — memory traffic losing to unpack cost.
 
 ---
 
