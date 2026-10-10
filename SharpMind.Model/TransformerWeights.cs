@@ -935,6 +935,28 @@ public sealed class TransformerWeightsStreaming : TransformerWeights
         foreach (BlockWeights b in blocks)
             b.BufferAllocator = AllocateRawBuffer;
     }
+
+    /// <summary>
+    /// Desired number of routed experts to keep pinned resident per MoE layer. 0 (the
+    /// default) disables MoE residency entirely — every expert of a resident layer is loaded
+    /// wholesale, exactly as before. A value &gt; 0 keeps that many most-used experts'
+    /// quantized planes pinned across layer unloads and streams the remaining experts on
+    /// demand per token; the count is clamped down by <see cref="MoEResidencyPlanner"/> to what
+    /// the measured expert working set and the caller's memory budget can hold (evicting if
+    /// memory is tight). The effective value wired for a model is exposed through
+    /// <see cref="EffectiveResidentExperts"/>. Requires a loader with expert slicing and a MoE
+    /// model; otherwise it is ignored.
+    /// </summary>
+    public int DesiredResidentExperts { get; init; }
+
+    /// <summary>Number of routed experts per MoE layer actually kept resident after the
+    /// planner clamped <see cref="DesiredResidentExperts"/> to the memory budget (0 when
+    /// residency is disabled, e.g. dense models or loaders without expert slicing).</summary>
+    public int EffectiveResidentExperts { get; private set; }
+
+    /// <summary>Retained bytes currently held for pinned MoE experts across layer unloads.
+    /// For diagnostics.</summary>
+    public long PinnedExpertBytes { get; private set; }
     /// <summary>
     /// Layers kept resident on either side of the block loop's current position. 0 would
     /// unload the current layer before its successors finish and is not valid; the default is
@@ -997,6 +1019,193 @@ public sealed class TransformerWeightsStreaming : TransformerWeights
     /// <summary>Pool borrows that allocated a fresh array. For diagnostics.</summary>
     public long PoolMisses => _rawBuffers.Misses;
 
+    // ── MoE expert residency ────────────────────────────────────────────────────────────────
+    // When enabled, each MoE layer routes against a resident subset (the most-touched experts
+    // since the layer last loaded) whose quantized planes survive FreeLayer; experts selected
+    // but not resident are loaded on demand for that token and released with the layer. Pinned
+    // bytes live in the per-layer store instead of the buffer pool, so they round-trip across
+    // unloads without competing with the layer rotation.
+    private MoEResidencyLayer[]? _moeLayers;
+
+    private sealed class MoEResidencyLayer
+    {
+        /// <summary>Per-expert route counts; the most-touched become the pinned set.</summary>
+        public int[] Touches = [];
+
+        /// <summary>Experts whose bytes are currently in the block's weight dicts.</summary>
+        public readonly HashSet<int> Resident = [];
+
+        /// <summary>Experts protected across FreeLayer (top <c>EffectiveResidentExperts</c> by touch).</summary>
+        public readonly HashSet<int> Pinned = [];
+
+        /// <summary>Long-lived store holding the pinned experts' planes across layer unloads.</summary>
+        public readonly Dictionary<int, (byte[] gate, byte[] up, byte[] down)> PinStore = [];
+    }
+
+    private sealed class MoEResidencyHost(TransformerWeightsStreaming owner, int layerIndex, MoEResidencyLayer state)
+        : Layers.Ffn.IExpertResidencyHost
+    {
+        public void EnsureExpertsLoaded(ReadOnlySpan<int> expertIndices)
+            => owner.LoadResidentExperts(layerIndex, state, expertIndices);
+    }
+
+    /// <summary>
+    /// Wires the residency engine into the given transformer blocks (called by
+    /// <see cref="ModelFactory"/> after weights initialisation and block construction). Returns
+    /// the effective per-layer expert count wired; 0 means residency stays off. The budget is
+    /// normally derived from <see cref="GC.GetGCMemoryInfo"/> but can be overridden for tests.
+    /// </summary>
+    internal int AttachExpertResidency(Layers.TransformerBlock[] blocks, long? usableBudgetBytes = null)
+    {
+        EffectiveResidentExperts = 0;
+        _moeLayers = null;
+        if (DesiredResidentExperts <= 0) return 0;
+        if (Loader is null || !Loader.SupportsExpertSlicing) return 0;
+        if (Config.NumExperts <= 0 || blocks.Length != Blocks.Length) return 0;
+
+        bool anyMoE = false;
+        for (int i = 0; i < blocks.Length; i++)
+            if (blocks[i].Ffn is Layers.Ffn.MoEFfnLayer) { anyMoE = true; break; }
+        if (!anyMoE) return 0;
+
+        long perExpertBytes = MeasureExpertBytes();
+        if (perExpertBytes <= 0) return 0;
+
+        long budget = usableBudgetBytes ?? UsableMemoryBudget();
+        int budgetAllows = MoEResidencyPlanner.SuggestResidentExperts(budget, perExpertBytes, Config.NumLayers, Config.NumExperts);
+        int effective = Math.Min(DesiredResidentExperts, budgetAllows);
+
+        _moeLayers = new MoEResidencyLayer[blocks.Length];
+        for (int i = 0; i < _moeLayers.Length; i++)
+            _moeLayers[i] = new MoEResidencyLayer { Touches = new int[Config.NumExperts] };
+
+        for (int i = 0; i < blocks.Length; i++)
+            if (blocks[i].Ffn is Layers.Ffn.MoEFfnLayer moe)
+                moe.ExpertResidency = new MoEResidencyHost(this, i, _moeLayers[i]);
+
+        EffectiveResidentExperts = effective;
+        return effective;
+    }
+
+    /// <summary>Bytes one routed expert costs across the three projections of a single MoE
+    /// layer (all layers share the geometry), read from the metadata populated at init.</summary>
+    private long MeasureExpertBytes()
+    {
+        var meta = Blocks[0].TensorMeta;
+        long sum = 0;
+        if (meta.TryGetValue("RawWgateExp_0", out var g)) sum += g.Size;
+        if (meta.TryGetValue("RawWupExp_0", out var u)) sum += u.Size;
+        if (meta.TryGetValue("RawWdownExp_0", out var d)) sum += d.Size;
+        return sum;
+    }
+
+    /// <summary>Managed-heap budget for expert residency: total available memory minus a
+    /// reserve so pinned experts plus the layer window, activations and KV cache never
+    /// overflow it. The planner applies further headroom on top.</summary>
+    private static long UsableMemoryBudget()
+    {
+        long total = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes;
+        if (total <= 0) total = 4L << 30;
+        long reserve = Math.Max(512L << 20, total / 4);
+        return Math.Max(0, total - reserve);
+    }
+
+    /// <summary>Copies the pinned experts' planes back into the layer's weight dicts after a
+    /// fresh load so the follow-up <c>SetWeights</c> pushes them and the forward finds them.</summary>
+    private void RehydratePins(int layerIndex, MoEResidencyLayer state)
+    {
+        if (state.PinStore.Count == 0) return;
+        var block = Blocks[layerIndex];
+        foreach (var (e, bytes) in state.PinStore)
+        {
+            block.RawWgateExp ??= [];
+            block.RawWupExp ??= [];
+            block.RawWdownExp ??= [];
+            block.RawWgateExp[e] = bytes.gate;
+            block.RawWupExp[e] = bytes.up;
+            block.RawWdownExp[e] = bytes.down;
+            state.Resident.Add(e);
+        }
+    }
+
+    /// <summary>Called by the MoE forward with the union of experts its router selected for
+    /// the batch. Loads any non-resident selection on demand, records touches, and refreshes
+    /// the pinned set for the next unload.</summary>
+    private void LoadResidentExperts(int layerIndex, MoEResidencyLayer state, ReadOnlySpan<int> expertIndices)
+    {
+        var block = Blocks[layerIndex];
+        var ffn = BlockRefs?[layerIndex]?.Ffn;
+        if (ffn is null) return;
+
+        var toLoad = new List<int>();
+        foreach (int e in expertIndices)
+        {
+            if (e < 0 || e >= Config.NumExperts) continue;
+            state.Touches[e]++;
+            if (state.Resident.Contains(e)) continue;
+            toLoad.Add(e);
+        }
+
+        if (toLoad.Count > 0 && Loader is not null)
+        {
+            Loader.LoadExpertWeights(layerIndex, toLoad, this);
+            foreach (int e in toLoad)
+            {
+                ffn.SetExpertRawWeight(e,
+                    block.RawWgateExp is not null && block.RawWgateExp.TryGetValue(e, out var g) ? g : null,
+                    block.RawWupExp is not null && block.RawWupExp.TryGetValue(e, out var u) ? u : null,
+                    block.RawWdownExp is not null && block.RawWdownExp.TryGetValue(e, out var d) ? d : null,
+                    block.WgateExpBias is not null && block.WgateExpBias.TryGetValue(e, out var gb) ? gb : null,
+                    block.WupExpBias is not null && block.WupExpBias.TryGetValue(e, out var ub) ? ub : null,
+                    block.WdownExpBias is not null && block.WdownExpBias.TryGetValue(e, out var db) ? db : null);
+                state.Resident.Add(e);
+            }
+        }
+
+        UpdatePins(state);
+    }
+
+    /// <summary>Recomputes the pinned set as the <see cref="EffectiveResidentExperts"/> most
+    /// touched experts (ties broken by index for determinism).</summary>
+    private void UpdatePins(MoEResidencyLayer state)
+    {
+        state.Pinned.Clear();
+        int desired = Math.Min(EffectiveResidentExperts, state.Touches.Length);
+        if (desired <= 0) return;
+
+        Span<(int id, int count)> order = stackalloc (int, int)[state.Touches.Length];
+        for (int i = 0; i < state.Touches.Length; i++) order[i] = (i, state.Touches[i]);
+        order.Sort((a, b) => b.count != a.count ? b.count.CompareTo(a.count) : a.id.CompareTo(b.id));
+        for (int i = 0; i < desired; i++) state.Pinned.Add(order[i].id);
+    }
+
+    /// <summary>Moves the current pinned experts' planes out of the block into the long-lived
+    /// store before <see cref="FreeLayer"/> captures the rest, so they never return to the pool.
+    /// Entries that fell out of the pinned set are released with the layer. Returns the byte
+    /// count retained across this unload.</summary>
+    private long DetachPins(int layerIndex, MoEResidencyLayer state)
+    {
+        var block = Blocks[layerIndex];
+        foreach (int e in state.Resident.ToArray())
+        {
+            if (!state.Pinned.Contains(e)) continue;
+            byte[]? gate = block.RawWgateExp is not null && block.RawWgateExp.Remove(e, out var g) ? g : null;
+            byte[]? up = block.RawWupExp is not null && block.RawWupExp.Remove(e, out var u) ? u : null;
+            byte[]? down = block.RawWdownExp is not null && block.RawWdownExp.Remove(e, out var d) ? d : null;
+            if (gate is null || up is null || down is null) continue;
+            state.PinStore[e] = (gate, up, down);
+            state.Resident.Remove(e);
+        }
+
+        foreach (int e in state.PinStore.Keys.ToArray())
+            if (!state.Pinned.Contains(e))
+                state.PinStore.Remove(e);
+
+        long retained = 0;
+        foreach (var bytes in state.PinStore.Values) retained += bytes.gate.Length + bytes.up.Length + bytes.down.Length;
+        return retained;
+    }
+
     // Async preload tracking
     private Task? _preloadTask;
     private int _preloadLayerIndex = -1;
@@ -1050,31 +1259,19 @@ public sealed class TransformerWeightsStreaming : TransformerWeights
                         SetTensorMeta(block, "RawWk", baseOffset + partSize, partSize, info.Dtype);
                         SetTensorMeta(block, "RawWv", baseOffset + partSize * 2, partSize, info.Dtype);
                     }
-                    else if (rawField.EndsWith("ExpFused", StringComparison.Ordinal) && info.Shape.Length == 3)
+                    else if (Format.FusedExpertLayout.IsFusedField(rawField) && info.Shape.Length == 3)
                     {
                         // Fused MoE expert stack: the loader slices this 3D tensor into
                         // per-expert planes when the layer's bytes are read, but the
                         // FfnLayer is constructed from TensorMeta BEFORE that happens.
                         // Without these entries DtypeFromMeta("RawWgateExp_e") misses and
                         // every expert falls back to F32, so the quantized bytes are then
-                        // rejected as the wrong size at load time.
-                        //
-                        // The plane size must come from the 2D sub-shape: the 3D byte
-                        // count lays blocks along the last dim (the expert axis here),
-                        // which over-counts unless numExperts is a multiple of the block
-                        // size. See the matching note in GgufLoader.
-                        int numExperts = info.Shape[2];
-                        int planeSize = (int)Core.Quantization.QuantizationOps.GetRawTensorByteCount(
-                            [info.Shape[0], info.Shape[1]], info.Dtype);
+                        // rejected as the wrong size at load time. The plane geometry is
+                        // shared with GgufLoader's slicer; see FusedExpertLayout.
+                        var layout = Format.FusedExpertLayout.Create(rawField, info.Shape, info.Dtype);
                         long baseOffset = meta.DataOffset + info.Offset;
-                        string prefix = rawField switch
-                        {
-                            "RawWgateExpFused" => "RawWgateExp_",
-                            "RawWupExpFused" => "RawWupExp_",
-                            _ => "RawWdownExp_",
-                        };
-                        for (int e = 0; e < numExperts; e++)
-                            SetTensorMeta(block, $"{prefix}{e}", baseOffset + (long)e * planeSize, planeSize, info.Dtype);
+                        for (int e = 0; e < layout.NumExperts; e++)
+                            SetTensorMeta(block, $"{layout.FieldPrefix}{e}", baseOffset + layout.OffsetOf(e), layout.PlaneSizeBytes, info.Dtype);
                     }
                     else
                     {
@@ -1126,12 +1323,21 @@ public sealed class TransformerWeightsStreaming : TransformerWeights
         // Check both so the layer isn't reloaded every forward pass.
         if (Blocks[layerIndex].Wq == null && Blocks[layerIndex].RawWq == null)
         {
-            Loader!.LoadLayerWeights(layerIndex, this);
+            // With MoE residency active the load must not re-read every routed expert: the
+            // pinned ones come back from the per-layer store below, the rest load on demand.
+            if (_moeLayers is not null)
+                Loader!.LoadLayerNonExpertWeights(layerIndex, this);
+            else
+                Loader!.LoadLayerWeights(layerIndex, this);
             needsPush = true;
         }
 
         if (needsPush || !_pushedLayers.Contains(layerIndex))
         {
+            // Restore the pinned experts' planes into the dicts before SetWeights pushes them,
+            // so a freshly loaded MoE layer starts with exactly its resident set wired.
+            if (_moeLayers is not null)
+                RehydratePins(layerIndex, _moeLayers[layerIndex]);
             BlockRefs?[layerIndex]?.SetWeights(Blocks[layerIndex]);
             _pushedLayers.Add(layerIndex);
         }
@@ -1160,7 +1366,12 @@ public sealed class TransformerWeightsStreaming : TransformerWeights
         {
             _preloadTask = Task.Run(() =>
             {
-                Loader!.LoadLayerWeights(layerIndex, this);
+                // With MoE residency active the preload skips the routed experts exactly like
+                // the synchronous load; the pinned set is restored at push time.
+                if (_moeLayers is not null)
+                    Loader!.LoadLayerNonExpertWeights(layerIndex, this);
+                else
+                    Loader!.LoadLayerWeights(layerIndex, this);
             });
             _preloadLayerIndex = layerIndex;
         }
@@ -1176,6 +1387,13 @@ public sealed class TransformerWeightsStreaming : TransformerWeights
         if (layerIndex < 0 || layerIndex >= Blocks.Length) return;
         if (Blocks[layerIndex].Wq == null && Blocks[layerIndex].RawWq == null) return;
 
+        // With MoE residency active, move the pinned experts' planes out of the block before
+        // capture so they are NOT returned to the pool but stay in the per-layer store across
+        // this unload. Everything else (including experts that fell out of the pinned set and
+        // one-token on-demand loads) is captured and recycled as before.
+        if (_moeLayers is not null)
+            PinnedExpertBytes = DetachPins(layerIndex, _moeLayers[layerIndex]);
+
         // Snapshot the raw quantized buffers before they are cleared so they can be
         // recycled for the next layer that takes this one's place in the resident window.
         // Include layer-derived buffers (fused gate+up) registered on the block.
@@ -1190,6 +1408,15 @@ public sealed class TransformerWeightsStreaming : TransformerWeights
 
         // Dispose float tensors and null all fields in BlockWeights; keeps TensorMeta
         Blocks[layerIndex].ReleaseLayerData();
+
+        // With residency active, Reset the per-layer resident bookkeeping: dicts are empty now
+        // (pinned planes live in PinStore and reappear on the next load), so no expert counts
+        // as present until RehydratePins or an on-demand load adds it back.
+        if (_moeLayers is not null)
+        {
+            var state = _moeLayers[layerIndex];
+            state.Resident.Clear();
+        }
 
         // Return the layer's raw buffers to the reuse pool (no-op reverse: a fresh load
         // acquires them again, so the hot rotation allocates nothing).

@@ -251,6 +251,26 @@ public abstract class FfnLayer : IDisposable
             ? meta.Dtype
             : fallback;
 
+    /// <summary>
+    /// Pushes raw quantized weights for a single routed expert (streaming MoE residency loads
+    /// selected experts on demand; null clears the projection so an evicted expert's bytes are
+    /// unrooted). Per-expert biases are copied separately because the block's bias tensors are
+    /// released with the layer rather than shared. No-op for dense/gated FFNs or an out-of-range
+    /// index.
+    /// </summary>
+    internal void SetExpertRawWeight(int expertIndex, byte[]? gate, byte[]? up, byte[]? down,
+        Tensor<float>? gateBias = null, Tensor<float>? upBias = null, Tensor<float>? downBias = null)
+    {
+        if (ExpertGate is null || ExpertUp is null || ExpertDown is null) return;
+        if (expertIndex < 0 || expertIndex >= ExpertGate.Length) return;
+        ExpertGate[expertIndex].SetRawWeight(gate);
+        ExpertUp[expertIndex].SetRawWeight(up);
+        ExpertDown[expertIndex].SetRawWeight(down);
+        if (gateBias is not null) ExpertGate[expertIndex].LoadBias(gateBias.Data);
+        if (upBias is not null) ExpertUp[expertIndex].LoadBias(upBias.Data);
+        if (downBias is not null) ExpertDown[expertIndex].LoadBias(downBias.Data);
+    }
+
     public void SetWeights(TransformerWeights.BlockWeights weights)
     {
         if (W1 is not null && W2 is not null)
@@ -305,6 +325,8 @@ public abstract class FfnLayer : IDisposable
                 }
                 if (weights.RawWgateExp is not null && weights.RawWgateExp.TryGetValue(expIdx, out var gateRaw))
                     ExpertGate[expIdx].SetRawWeight(gateRaw);
+                if (weights.WgateExpBias is not null && weights.WgateExpBias.TryGetValue(expIdx, out var gateBias))
+                    ExpertGate[expIdx].LoadBias(gateBias.Data);
 
                 if (weights.WupExp is not null && weights.WupExp.TryGetValue(expIdx, out var upW))
                 {
@@ -313,6 +335,8 @@ public abstract class FfnLayer : IDisposable
                 }
                 if (weights.RawWupExp is not null && weights.RawWupExp.TryGetValue(expIdx, out var upRaw))
                     ExpertUp![expIdx].SetRawWeight(upRaw);
+                if (weights.WupExpBias is not null && weights.WupExpBias.TryGetValue(expIdx, out var upBias))
+                    ExpertUp![expIdx].LoadBias(upBias.Data);
 
                 if (weights.WdownExp is not null && weights.WdownExp.TryGetValue(expIdx, out var downW))
                 {
@@ -321,6 +345,8 @@ public abstract class FfnLayer : IDisposable
                 }
                 if (weights.RawWdownExp is not null && weights.RawWdownExp.TryGetValue(expIdx, out var downRaw))
                     ExpertDown![expIdx].SetRawWeight(downRaw);
+                if (weights.WdownExpBias is not null && weights.WdownExpBias.TryGetValue(expIdx, out var downBias))
+                    ExpertDown![expIdx].LoadBias(downBias.Data);
             }
 
             SetSharedWeights(weights);

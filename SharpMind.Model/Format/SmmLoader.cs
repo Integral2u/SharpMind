@@ -216,7 +216,8 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
         var index = ReadIndex(_path);
         weights.GgufMeta = index.Meta;
         weights.GgufPath = _path;
-        weights.IsMoE = index.Meta.Tensors.Any(t => t.Name.Contains(".exps."));
+        // IsMoEGguf (not ".exps.") so fused 3D expert stacks converted from GGUF are MoE too.
+        weights.IsMoE = TransformerWeights.IsMoEGguf(index.Meta.Tensors);
 
         int total = index.Entries.Count;
         int loaded = 0;
@@ -322,14 +323,74 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
         reporter.ReportComplete();
     }
 
+    public bool SupportsExpertSlicing => true;
+
+    /// <summary>Loads a whole layer (all routed experts included).</summary>
     public void LoadLayerWeights(int layerIndex, TransformerWeights weights, CancellationToken? cancellationToken = null)
+        => LoadLayerTensors(layerIndex, weights, includeExperts: true, expertFilter: null, cancellationToken);
+
+    /// <summary>Loads a layer without the routed-expert planes (streaming MoE residency).</summary>
+    public void LoadLayerNonExpertWeights(int layerIndex, TransformerWeights weights, CancellationToken? cancellationToken = null)
+        => LoadLayerTensors(layerIndex, weights, includeExperts: false, expertFilter: null, cancellationToken);
+
+    /// <summary>Loads only the given routed experts' planes — fused 3D stacks are sliced per
+    /// plane, named ".exps." exports and per-expert bias tensors are whole-tensor reads. Used
+    /// by streaming MoE residency on demand when the router selects an expert that is absent.</summary>
+    public void LoadExpertWeights(int layerIndex, IReadOnlyList<int> expertIndices, TransformerWeights weights, CancellationToken? cancellationToken = null)
+        => LoadLayerTensors(layerIndex, weights, includeExperts: true, expertFilter: new HashSet<int>(expertIndices), cancellationToken);
+
+    /// <summary>True for raw fields that carry routed-expert bytes (fused plane stacks or
+    /// per-expert named tensors). Shared experts, the router, norms and attention are not routed.</summary>
+    private static bool IsRoutedExpertField(string rawField) =>
+        FusedExpertLayout.IsFusedField(rawField) ||
+        rawField.StartsWith("RawWgateExp_", StringComparison.Ordinal) ||
+        rawField.StartsWith("RawWupExp_", StringComparison.Ordinal) ||
+        rawField.StartsWith("RawWdownExp_", StringComparison.Ordinal);
+
+    /// <summary>Parses the expert index out of a per-expert named field ("RawWgateExp_5" → 5),
+    /// or null for fused plane stacks (filtered per plane in LoadSingleTensor).</summary>
+    private static int? ParseExpertIndex(string rawField)
     {
-        var index = weights.GgufMeta == null ? ReadIndex(_path) : ReadIndex(_path);
+        foreach (string prefix in new[] { "RawWgateExp_", "RawWupExp_", "RawWdownExp_" })
+        {
+            if (rawField.StartsWith(prefix, StringComparison.Ordinal) &&
+                int.TryParse(rawField.AsSpan(prefix.Length), out int idx))
+                return idx;
+        }
+        return null;
+    }
+
+    /// <summary>True for tensor names that carry per-expert bytes (named planes or the
+    /// per-expert bias tensors, whose rawField is null). Mirrors FfnLayer.SetRawWeight's
+    /// expert detection so the on-demand residency load recognises both with the same rules.</summary>
+    private static bool IsPerExpertName(string name) =>
+        name.Contains(".exps.", StringComparison.OrdinalIgnoreCase) ||
+        name.Contains("_exps", StringComparison.OrdinalIgnoreCase) ||
+        (name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase) && RegexGenerated.ExpertIndex.IsMatch(name)) ||
+        (name.Contains("ffn_up", StringComparison.OrdinalIgnoreCase) && RegexGenerated.ExpertIndex.IsMatch(name)) ||
+        (name.Contains("ffn_down", StringComparison.OrdinalIgnoreCase) && RegexGenerated.ExpertIndex.IsMatch(name));
+
+    /// <summary>Parses the expert index out of a per-expert tensor name ("blk.0.exps.3.ffn_gate.bias" → 3),
+    /// for tensors with no raw field to index by.</summary>
+    private static int? ParseNameExpertIndex(string name)
+    {
+        var m = RegexGenerated.ExpertIndex.Match(name);
+        if (m.Success && int.TryParse(m.Groups[1].Value, out int idx)) return idx;
+        return null;
+    }
+
+    private void LoadLayerTensors(
+        int layerIndex, TransformerWeights weights, bool includeExperts, IReadOnlySet<int>? expertFilter, CancellationToken? cancellationToken)
+    {
+        var index = ReadIndex(_path);
         if (weights.GgufMeta == null)
         {
             weights.GgufMeta = index.Meta;
             weights.GgufPath = _path;
-            weights.IsMoE = index.Meta.Tensors.Any(t => t.Name.Contains(".exps."));
+            // The ".exps." check alone misses fused 3D stacks ("ffn_gate_exps.weight"),
+            // which a GGUF→SMM conversion carries through verbatim. IsMoEGguf is the same
+            // shape-based test the metadata pass and converters use.
+            weights.IsMoE = TransformerWeights.IsMoEGguf(index.Meta.Tensors);
         }
 
         var targetBlock = layerIndex < weights.Blocks.Length ? weights.Blocks[layerIndex] : null;
@@ -340,9 +401,29 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
         foreach (var entry in index.Entries)
         {
             cancellationToken?.ThrowIfCancellationRequested();
-            var (_, block, _) = weights.ResolveTarget(entry.Name);
-            if (block == targetBlock)
-                LoadSingleTensor(weights, index, stream, entry);
+            var (_, block, rawField) = weights.ResolveTarget(entry.Name);
+            if (block != targetBlock) continue;
+
+            bool isRoutedExpert = rawField != null && IsRoutedExpertField(rawField);
+            if (!includeExperts && isRoutedExpert) continue;          // residency: layer without experts
+            if (expertFilter != null)
+            {
+                // The on-demand pass must also grab the per-expert bias tensors. Those resolve
+                // to float block fields (rawField null, so isRoutedExpert is false) — without
+                // the name check they fall out of the filter and a resident expert runs with a
+                // zeroed bias while an identical full load applies the real one.
+                bool isExpertScoped = isRoutedExpert || IsPerExpertName(entry.Name);
+                if (!isExpertScoped) continue;                        // on-demand: expert tensors only
+                if (!FusedExpertLayout.IsFusedField(rawField ?? string.Empty))
+                {
+                    // Per-expert named tensors are whole-tensor reads: drop the ones not asked for.
+                    // Bias tensors carry no raw field, so index them by their tensor name.
+                    int? idx = ParseExpertIndex(rawField ?? string.Empty) ?? ParseNameExpertIndex(entry.Name);
+                    if (idx.HasValue && !expertFilter.Contains(idx.Value)) continue;
+                }
+            }
+
+            LoadSingleTensor(weights, index, stream, entry, expertFilter);
         }
     }
 
@@ -353,7 +434,8 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
         {
             weights.GgufMeta = index.Meta;
             weights.GgufPath = _path;
-            weights.IsMoE = index.Meta.Tensors.Any(t => t.Name.Contains(".exps."));
+            // IsMoEGguf (not ".exps.") so fused 3D expert stacks converted from GGUF are MoE too.
+            weights.IsMoE = TransformerWeights.IsMoEGguf(index.Meta.Tensors);
         }
 
         using var stream = WeightStreamFactory.Open(_path, _useSafeIo);
@@ -373,7 +455,7 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
 
     private void LoadSingleTensor(
         TransformerWeights weights, SmmFileIndex index,
-        Stream stream, SmmTensorIndexEntry entry)
+        Stream stream, SmmTensorIndexEntry entry, IReadOnlySet<int>? expertFilter = null)
     {
         // The untied output head keeps only its raw bytes (see GgufLoader.LoadSingleTensor).
         bool isLmHead = TransformerWeights.IsLmHeadTensorName(entry.Name);
@@ -397,6 +479,46 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
         // not use GGUF's per-row padding rule.
         long rawSize = QuantizationOps.GetFlatTensorByteCount(entry.Shape, entry.Dtype);
         if (rawSize <= 0) return;
+
+        // Fused MoE expert stack, mirrored from GgufLoader. A GGUF→SMM conversion copies a
+        // qwen2moe-style "ffn_gate_exps.weight" 3D [in, out, experts] tensor verbatim, so its
+        // planes stay contiguous in the .SMM data region too (see FusedExpertLayout). Read
+        // each plane straight from the stream: an on-demand residency load skips the experts
+        // it does not need, and no whole-stack buffer is ever staged. The flat 3D count also
+        // disagrees with a row-padded GGUF conversion's byte count, so never read the stack
+        // as one block.
+        if (block != null && rawField != null && entry.Shape.Length == 3 && FusedExpertLayout.IsFusedField(rawField))
+        {
+            var layout = FusedExpertLayout.Create(rawField, entry.Shape, entry.Dtype);
+
+            long absolute = index.Meta.DataOffset + entry.Offset;
+            long needed = absolute + layout.OffsetOf(layout.NumExperts);
+            if (needed > stream.Length)
+                throw new InvalidDataException(
+                    $"Fused MoE expert tensor '{entry.Name}' needs {needed} bytes " +
+                    $"({layout.NumExperts} experts x {layout.PlaneSizeBytes}) but the file is only {stream.Length} bytes.");
+
+            SetTensorMeta(block, rawField, absolute,
+                TensorLoadHelper.CheckedInt((long)layout.NumExperts * layout.PlaneSizeBytes, "rawSize"), entry.Dtype);
+
+            stream.Position = absolute;
+            for (int e = 0; e < layout.NumExperts; e++)
+            {
+                if (expertFilter is not null && !expertFilter.Contains(e))
+                {
+                    stream.Position += layout.PlaneSizeBytes;
+                    continue;
+                }
+
+                byte[] expert = weights.AllocateRawBuffer(layout.PlaneSizeBytes);
+                stream.ReadExactly(expert);
+
+                string targetField = $"{layout.FieldPrefix}{e}";
+                SetRawField(block, targetField, expert, entry.Dtype);
+                SetTensorMeta(block, targetField, absolute + layout.OffsetOf(e), layout.PlaneSizeBytes, entry.Dtype);
+            }
+            return;
+        }
 
         byte[] rawBytes = ReadTensorBytes(stream, index, entry, rawSize);
 

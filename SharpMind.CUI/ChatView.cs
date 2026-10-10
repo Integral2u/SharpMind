@@ -50,6 +50,7 @@ public sealed class ChatView : View
 
     /// <summary>Which backend is doing inference (e.g. "CPU", "[Cuda] ..., cuBLAS 12.8") — from the resolved engine.</summary>
     private readonly string _engineDescription;
+    private readonly string? _residentExpertsInfo;
 
     private readonly System.Text.StringBuilder _liveResponse = new();
     private readonly System.Text.StringBuilder _liveThinking = new();
@@ -69,7 +70,7 @@ public sealed class ChatView : View
     private float? _lastTokensPerSecond;
     private float? _lastTimeToFirstToken;
 
-    public ChatView(string agentName, SessionOptions options, IChatBridge bridge, CuiToolContext? cuiContext, Action onExit, Action<bool>? onGeneratingChanged = null, string? engineDescription = null)
+    public ChatView(string agentName, SessionOptions options, IChatBridge bridge, CuiToolContext? cuiContext, Action onExit, Action<bool>? onGeneratingChanged = null, string? engineDescription = null, string? residentExpertsInfo = null)
     {
         AgentName = agentName;
         SessionDisplayName = agentName;
@@ -78,6 +79,7 @@ public sealed class ChatView : View
         _onExit = onExit;
         _onGeneratingChanged = onGeneratingChanged;
         _engineDescription = engineDescription ?? "CPU";
+        _residentExpertsInfo = residentExpertsInfo;
 
         int sidebarWidth = 34;
 
@@ -227,7 +229,7 @@ public sealed class ChatView : View
     private static string GetFileNameWithoutExtension(string? path) =>
         string.IsNullOrWhiteSpace(path) ? "(none — UIDebug mode)" : Path.GetFileNameWithoutExtension(path);
 
-    private static string FormatMemory()
+    private string FormatMemory()
     {
         // GC.GetGCMemoryInfo mirrors what CuiTools.UIGetFreeMemory already
         // reports to the model — reusing the same source here means the
@@ -235,7 +237,9 @@ public sealed class ChatView : View
         var info = GC.GetGCMemoryInfo();
         long totalMb = info.TotalAvailableMemoryBytes / (1024 * 1024);
         long usedMb = System.Diagnostics.Process.GetCurrentProcess().WorkingSet64 / (1024 * 1024);
-        return $"Mem: {usedMb}MB used\nFree: {totalMb - usedMb}MB";
+        return _residentExpertsInfo is null
+            ? $"Mem: {usedMb}MB used\nFree: {totalMb - usedMb}MB"
+            : $"Mem: {usedMb}MB used\nFree: {totalMb - usedMb}MB\n{_residentExpertsInfo}";
     }
 
     private void OnInputKeyPress(KeyEventEventArgs args)

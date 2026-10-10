@@ -150,6 +150,17 @@ public sealed class SessionOptions
     public int MaxParallelLoadDegree { get; set; }
 
     /// <summary>
+    /// Streaming MoE expert residency: how many most-used routed experts per layer to keep
+    /// pinned resident across layer unloads while the rest stream on demand every token.
+    /// 0 (the default) disables residency entirely — every expert of a resident streamed layer
+    /// loads wholesale, exactly as before. Values &gt; 0 are clamped by the engine to whatever
+    /// memory can hold (the count that thus ends up wired is reported in the session banner).
+    /// Only meaningful when <see cref="LoadMode"/> is Streaming and the model is MoE; dense
+    /// models and loaders without expert slicing ignore it.
+    /// </summary>
+    public int DesiredResidentExperts { get; set; }
+
+    /// <summary>
     /// CPU code-path selection for JigSaw's mapping. Auto (the engine's own
     /// default) genuinely detects FMA/AVX2/SSE3 support at runtime via
     /// System.Runtime.Intrinsics.X86 checks — it isn't a placeholder, it's a
@@ -267,6 +278,7 @@ public sealed class SessionOptions
         target.Formatter = Formatter;
         target.LoadMode = LoadMode;
         target.MaxParallelLoadDegree = MaxParallelLoadDegree;
+        target.DesiredResidentExperts = DesiredResidentExperts;
         target.HardwareTier = HardwareTier;
         target.UseParallelKernels = UseParallelKernels;
         target.FileAccess = FileAccess;

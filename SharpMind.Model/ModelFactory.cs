@@ -67,7 +67,8 @@ public static class ModelFactory
         LoadMode loadMode = LoadMode.Full,
         bool quantizedResident = false, 
         bool useSafeIo = false,
-        int maxParallelLoadDegree = 0)
+        int maxParallelLoadDegree = 0,
+        int desiredResidentExperts = 0)
     {
         ArgumentNullException.ThrowIfNull(modelConfig);
         ArgumentNullException.ThrowIfNull(sharpConfig);
@@ -97,7 +98,15 @@ public static class ModelFactory
                 positionEmbedding: AllocatePositionEmbedding(modelConfig));
         else
             return new TransformerWeightsStreaming(modelConfig, embedding, lmHead, finalNormW, finalNormB, blockWeights, loader,
-                positionEmbedding: AllocatePositionEmbedding(modelConfig)) { GgufPath = path };
+                positionEmbedding: AllocatePositionEmbedding(modelConfig))
+            {
+                // Streaming MoE expert residency: > 0 pins that many most-used routed experts
+                // per layer across unloads and streams the rest on demand; the streaming weights
+                // clamp it to what memory allows. 0 keeps the existing whole-layer streaming
+                // behaviour. Dense models and loaders without expert slicing ignore it.
+                GgufPath = path,
+                DesiredResidentExperts = Math.Max(0, desiredResidentExperts)
+            };
     }
 
     private static Tensor<float>? AllocatePositionEmbedding(ModelConfig config)
@@ -234,6 +243,11 @@ public static class ModelFactory
         if (weights is TransformerWeightsStreaming sw && arch is DecoderArch da)
         {
             sw.BlockRefs = blocks;
+
+            // Wire MoE expert residency (if configured on the streaming weights) before any
+            // preload fires, so both the synchronous and async loads already know to skip the
+            // routed experts. No-op when disabled or unsupported.
+            sw.AttachExpertResidency(blocks);
 
             // Preload layer 0 in the background after BlockRefs is set,
             // so the first forward pass doesn't wait for synchronous I/O.

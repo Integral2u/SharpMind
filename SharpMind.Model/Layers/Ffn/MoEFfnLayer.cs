@@ -8,9 +8,17 @@ namespace SharpMind.Model.Layers.Ffn;
 
 public sealed class MoEFfnLayer(ModelConfig config, ActivationOps acts, QuantizationOps qOps, TransformerWeights.BlockWeights? weights = null, Dictionary<string, string>? mapping = null) : FfnLayer(config, acts, FfnKind.MoE, qOps, weights, mapping)
 {
+    /// <summary>
+    /// Streaming expert-residency hook, wired by the streaming weights when
+    /// <c>DesiredResidentExperts &gt; 0</c>. The forward precomputes the batch's top-k union,
+    /// loads any of those experts that are not resident, and evaluates them; cold experts are
+    /// streamed per token instead of living in the resident window.
+    /// </summary>
+    internal IExpertResidencyHost? ExpertResidency { get; set; }
+
     public override Tensor<float> ApplyFfn(Tensor<float> x, SharpMind.Core.Memory.IWorkspace? workspace = null)
     {
-        var routed = FfnKernels.MoE(x, Router!, ExpertGate!, ExpertUp!, ExpertDown!, Config.TopKExperts, Acts, workspace, Config.NormTopKProb);
+        var routed = FfnKernels.MoE(x, Router!, ExpertGate!, ExpertUp!, ExpertDown!, Config.TopKExperts, Acts, workspace, Config.NormTopKProb, ExpertResidency);
 
         if (SharedGate is null || SharedUp is null || SharedDown is null)
             return routed;

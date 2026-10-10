@@ -30,6 +30,7 @@ public sealed class OptionsView : View
     private readonly TextField repetitionPenaltyField;
     private readonly TextField maxTokensField;
     private readonly TextField maxContextTokensField;
+    private readonly TextField residentExpertsField;
     private readonly TextField userNameField;
     private readonly RadioGroup generatorRadio;
     private readonly TextField tempField;
@@ -219,6 +220,15 @@ public sealed class OptionsView : View
         _formContent.Add(maxContextTokensField);
         row += 2;
 
+        AddLabel("Cache MoE experts (0 = all):");
+        residentExpertsField = new TextField((ustring)options.DesiredResidentExperts.ToString()) { X = 30, Y = row, Width = 10 };
+        residentExpertsField.TextChanged += (_) =>
+        {
+            _options.DesiredResidentExperts = int.TryParse(residentExpertsField.Text.ToString(), out var v) ? Math.Max(0, v) : 0;
+        };
+        _formContent.Add(residentExpertsField);
+        row += 2;
+
         AddLabel("Agent name:");
         agentNameField = new TextField((ustring)options.AgentName) { X = 30, Y = row, Width = 30 };
         agentNameField.TextChanged += (_) => _options.AgentName = agentNameField.Text.ToString() ?? string.Empty;
@@ -404,6 +414,7 @@ public sealed class OptionsView : View
         repetitionWindowField.Text = (ustring)_options.Generation.RepetitionWindow.ToString("F2");
         maxTokensField.Text = (ustring)_options.Generation.MaxNewTokens.ToString();
         maxContextTokensField.Text = (ustring)(_options.MaxTokens?.ToString() ?? "0");
+        residentExpertsField.Text = (ustring)_options.DesiredResidentExperts.ToString();
         agentNameField.Text = (ustring)_options.AgentName;
         userNameField.Text = (ustring)_options.UserName;
         agentsCheck.Checked = options.AgentsEnabled;

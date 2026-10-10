@@ -1096,7 +1096,15 @@ public sealed class MainWindow : Window
             SaveLastUsedOptions(launchOptions, session?.GetSnapshot());
 
             string displayName = result.IsDebugMode ? $"{launchOptions.AgentName} [DEBUG]" : launchOptions.AgentName;
-            var chatView = new ChatView(displayName, launchOptions, bridge, result.CuiContext, onExit: ShowSessionManager, engineDescription: result.EngineDescription);
+
+            // Streaming MoE residency (active experts pinned per layer) surfaced in the chat
+            // sidebar's diagnostics so the clamped effective count the load actually wired is
+            // visible next to requested count.
+            string? residentExpertsInfo = loaded?.Weights is TransformerWeightsStreaming sw && sw.EffectiveResidentExperts > 0
+                ? $"Resident MoE: {sw.EffectiveResidentExperts}/layer"
+                : null;
+
+            var chatView = new ChatView(displayName, launchOptions, bridge, result.CuiContext, onExit: ShowSessionManager, engineDescription: result.EngineDescription, residentExpertsInfo: residentExpertsInfo);
 
             var state = new ChatSessionState
             {

@@ -79,12 +79,17 @@ public static class FfnKernels
         var tAct = DecodeProfiler.Begin();
         using var gated = acts.GatedActivate(gate, up, workspace);
         DecodeProfiler.Mark(DecodeStage.Act, tAct);
-        return wDown.Forward(gated, workspace);
+        var ret = wDown.Forward(gated, workspace);
+        return ret;
     }
 
     /// <summary>
     /// MoE FFN forward: routes each token to top-k experts, computes their
     /// gated FFN outputs, and combines with softmax-normalised router weights.
+    /// When <paramref name="residency"/> is non-null the per-token selections are
+    /// precomputed as a batch so the hook can load exactly the union of selected
+    /// experts before any expert is evaluated; otherwise the non-resident path is
+    /// identical to before (routing and evaluation stay interleaved per token).
     /// </summary>
     public static Tensor<float> MoE(
         Tensor<float> x,
@@ -95,12 +100,13 @@ public static class FfnKernels
         int topK,
         ActivationOps acts,
         SharpMind.Core.Memory.IWorkspace? workspace = null,
-        bool normTopKProb = false)
+        bool normTopKProb = false,
+        IExpertResidencyHost? residency = null)
     {
         int batch = x.ElementCount / x.Shape[^1];
         int hidden = x.Shape[^1];
-        Tensor<float> result = workspace != null 
-            ? workspace.Rent<float>(x.Shape.Dims) 
+        Tensor<float> result = workspace != null
+            ? workspace.Rent<float>(x.Shape.Dims)
             : new Tensor<float>(x.Shape);
 
         // Router logits: [batch, numExperts]
@@ -109,6 +115,32 @@ public static class FfnKernels
         var tRoute = DecodeProfiler.Begin();
         using var probs = SoftmaxOverExperts(logits, workspace);
         DecodeProfiler.Mark(DecodeStage.Route, tRoute);
+
+        // Residency path: select all tokens up front so the union can be loaded once, then
+        // evaluate. The plain path keeps routing inside ProcessToken (identical to before).
+        int[][]? precomputedTopK = null;
+        float[]? precomputedSums = null;
+        if (residency is not null)
+        {
+            precomputedTopK = new int[batch][];
+            precomputedSums = new float[batch];
+            var union = new HashSet<int>();
+            for (int t = 0; t < batch; t++)
+            {
+                using var tokenLogits = Tensor<float>.From(logits.RowSpan(t), logits.Shape.Cols);
+                int[] topKIdx = ArgTopK(tokenLogits, topK);
+                precomputedTopK[t] = topKIdx;
+                float weightSum = 0f;
+                if (normTopKProb)
+                {
+                    foreach (int expertIdx in topKIdx) weightSum += probs.RowSpan(t)[expertIdx];
+                    weightSum = MathF.Max(weightSum, 6.103515625e-5f);
+                }
+                precomputedSums[t] = weightSum;
+                foreach (int expertIdx in topKIdx) union.Add(expertIdx);
+            }
+            residency.EnsureExpertsLoaded(union.ToArray());
+        }
 
         // Thread-local bump allocator — one private arena per worker thread,
         // reset at the start of every token, so there is never any contention
@@ -125,25 +157,36 @@ public static class FfnKernels
             var tokenOut = ws.Rent<float>([hidden]);
             tokenOut.Data.Clear();
 
-            // Get top-k expert indices
-            using var tokenLogits = Tensor<float>.From(logits.RowSpan(t), logits.Shape.Cols);
-            var tRoute = DecodeProfiler.Begin();
-            int[] topKIdx = ArgTopK(tokenLogits, topK);
-
-            // Only renormalise when the architecture actually does so. llama.cpp skips
-            // this for qwen2moe/olmoe (norm_w = false), leaving the top-k weights as raw
-            // softmax probabilities over all experts, which sum to < 1. Dividing by the
-            // sum regardless — as this used to — amplified the routed branch and produced
-            // gibberish. Clamp to the smallest F16 normal, matching ggml's guard against
-            // a zero divisor.
-            float weightSum = 0f;
-            if (normTopKProb)
+            // Top-k indices and weight sum come from the residency precompute when active.
+            int[] topKIdx;
+            float weightSum;
+            if (precomputedTopK is not null)
             {
-                foreach (int expertIdx in topKIdx)
-                    weightSum += probs.RowSpan(t)[expertIdx];
-                weightSum = MathF.Max(weightSum, 6.103515625e-5f);
+                topKIdx = precomputedTopK[t];
+                weightSum = precomputedSums![t];
             }
-            DecodeProfiler.Mark(DecodeStage.Route, tRoute);
+            else
+            {
+                // Get top-k expert indices
+                using var tokenLogits = Tensor<float>.From(logits.RowSpan(t), logits.Shape.Cols);
+                var tRouteInner = DecodeProfiler.Begin();
+                topKIdx = ArgTopK(tokenLogits, topK);
+
+                // Only renormalise when the architecture actually does so. llama.cpp skips
+                // this for qwen2moe/olmoe (norm_w = false), leaving the top-k weights as raw
+                // softmax probabilities over all experts, which sum to < 1. Dividing by the
+                // sum regardless — as this used to — amplified the routed branch and produced
+                // gibberish. Clamp to the smallest F16 normal, matching ggml's guard against
+                // a zero divisor.
+                weightSum = 0f;
+                if (normTopKProb)
+                {
+                    foreach (int expertIdx in topKIdx)
+                        weightSum += probs.RowSpan(t)[expertIdx];
+                    weightSum = MathF.Max(weightSum, 6.103515625e-5f);
+                }
+                DecodeProfiler.Mark(DecodeStage.Route, tRouteInner);
+            }
 
             foreach (int expertIdx in topKIdx)
             {
