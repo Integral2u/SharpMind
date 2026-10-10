@@ -1,9 +1,9 @@
+using SharpMind.Core.Diagnostics;
+using SharpMind.Core.Memory;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
-using SharpMind.Core.Diagnostics;
-using SharpMind.Core.Memory;
 
 namespace SharpMind.Core.Tensors;
 
@@ -38,7 +38,7 @@ public sealed unsafe class Tensor<T> : IDisposable
 
 
     // constructors
-    
+
     /// <summary>Allocates a new zero-initialised tensor of the given shape.</summary>
     public Tensor(TensorShape shape) : this(shape, MemoryHelpers.RentBuffer<T>(shape.ElementCount), 0, true) { }
 
@@ -69,7 +69,7 @@ public sealed unsafe class Tensor<T> : IDisposable
     /// </summary>
     internal Tensor(TensorShape shape, NativeBuffer<T> buffer, int offset = 0, bool ownsMemory = false)
     {
-        Shape   = shape;
+        Shape = shape;
         _buffer = buffer;
         if (!ownsMemory && _buffer != null)
             _buffer.AddRef();
@@ -80,9 +80,9 @@ public sealed unsafe class Tensor<T> : IDisposable
 
     // properties
 
-    public TensorShape Shape        { get; }
-    public int         Rank         => Shape.Rank;
-    public int         ElementCount => Shape.ElementCount;    
+    public TensorShape Shape { get; }
+    public int Rank => Shape.Rank;
+    public int ElementCount => Shape.ElementCount;
     /// <summary>
     /// Raw pointer to element 0 of this tensor (may be an offset view).
     /// Valid only while the tensor is alive.
@@ -97,7 +97,7 @@ public sealed unsafe class Tensor<T> : IDisposable
     public Span<T> Data
     {
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        get 
+        get
         {
             if (_buffer != null) return _buffer.AsSpan(_offset, ElementCount);
             return new Span<T>(_rawPtr + _offset, ElementCount);
@@ -187,7 +187,7 @@ public sealed unsafe class Tensor<T> : IDisposable
         // This prevents premature Return-to-pool when a view is disposed.
         if (_buffer != null)
             return new Tensor<T>(shape, _buffer, offset, false);
-        
+
         return new Tensor<T>(_rawPtr + offset, shape, false);
     }
 
@@ -206,7 +206,7 @@ public sealed unsafe class Tensor<T> : IDisposable
     /// <summary>Row as a <see cref="Span{T}"/></summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public Span<T> RowSpan(int i) => Data.Slice(i * Shape.Cols, Shape.Cols);
-    
+
     /// <summary>
     /// Returns a view into dimensions [dim1, dim2, ...] starting at the given indices.
     /// For example, given [B,S,H,D], Slice(0,startPos,0,0) returns [S,H,D].
@@ -215,7 +215,7 @@ public sealed unsafe class Tensor<T> : IDisposable
     {
         if (startIndices.Length >= Rank)
             throw new ArgumentException($"Slice requires at most {Rank} indices.");
-        
+
         int offset = 0;
         for (int i = 0; i < startIndices.Length; i++)
         {
@@ -224,13 +224,13 @@ public sealed unsafe class Tensor<T> : IDisposable
                     $"Index {startIndices[i]} is out of range for dimension {i} (size {Shape.Dims[i]}).");
             offset += startIndices[i] * Shape.Strides[i];
         }
-        
+
         int[] newDimsArray = new int[Shape.Rank - startIndices.Length];
         for (int i = 0; i < newDimsArray.Length; i++)
         {
             newDimsArray[i] = Shape.Dims[startIndices.Length + i];
         }
-        
+
         return CreateView(new TensorShape(newDimsArray), _offset + offset, _ownsMemory);
     }
 

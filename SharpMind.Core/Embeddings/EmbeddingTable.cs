@@ -1,6 +1,6 @@
-using System.Runtime.CompilerServices;
 using SharpMind.Core.Tensors;
 using SharpMind.Core.Training;
+using System.Runtime.CompilerServices;
 
 namespace SharpMind.Core.Embeddings;
 
@@ -61,8 +61,8 @@ public sealed class EmbeddingTable : IDisposable
     {
         ThrowIfDisposed();
         int seqLen = tokenIds.Length;
-        Tensor<float> result = workspace != null 
-            ? workspace.Rent<float>([seqLen, EmbeddingDim]) 
+        Tensor<float> result = workspace != null
+            ? workspace.Rent<float>([seqLen, EmbeddingDim])
             : new Tensor<float>(seqLen, EmbeddingDim);
 
         for (int i = 0; i < seqLen; i++)
@@ -93,8 +93,8 @@ public sealed class EmbeddingTable : IDisposable
 
         int batch = tokenIds.Shape.Rows;
         int seqLen = tokenIds.Shape.Cols;
-        Tensor<float> result = workspace != null 
-            ? workspace.Rent<float>([batch, seqLen, EmbeddingDim]) 
+        Tensor<float> result = workspace != null
+            ? workspace.Rent<float>([batch, seqLen, EmbeddingDim])
             : new Tensor<float>(batch, seqLen, EmbeddingDim);
 
         for (int b = 0; b < batch; b++)

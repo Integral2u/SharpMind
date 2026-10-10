@@ -1,6 +1,6 @@
+using SharpMind.Core.Tensors;
 using System.Numerics;
 using System.Runtime.InteropServices;
-using SharpMind.Core.Tensors;
 
 namespace SharpMind.Core.Memory;
 

@@ -1,5 +1,4 @@
 using System.Buffers;
-using System.Numerics;
 using System.Runtime.CompilerServices;
 
 namespace SharpMind.Core.Memory;

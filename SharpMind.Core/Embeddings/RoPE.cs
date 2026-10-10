@@ -61,8 +61,8 @@ public sealed class RoPE : PositionalEncoder
     }
     private readonly float[] _cosCache; // [MaxSeqLen, HeadDim/2]
     private readonly float[] _sinCache;
-    private readonly int     _headDim;
-    private readonly int     _maxSeqLen;
+    private readonly int _headDim;
+    private readonly int _maxSeqLen;
 
     // Construction
 
@@ -95,7 +95,7 @@ public sealed class RoPE : PositionalEncoder
             throw new ArgumentException($"HeadDim must be even, got {headDim}.");
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxSeqLen);
 
-        _headDim   = headDim;
+        _headDim = headDim;
         _maxSeqLen = maxSeqLen;
         _ropeDim = ropeDim ?? headDim;
 
@@ -175,7 +175,7 @@ public sealed class RoPE : PositionalEncoder
 
     // Properties
 
-    public int HeadDim   => _headDim;
+    public int HeadDim => _headDim;
     public int MaxSeqLen => _maxSeqLen;
     public ReadOnlySpan<float> CosTable => _cosCache;
     public ReadOnlySpan<float> SinTable => _sinCache;
@@ -199,9 +199,9 @@ public sealed class RoPE : PositionalEncoder
             throw new ArgumentException(
                 $"RoPE.Apply expects rank-3 [SeqLen, NumHeads, HeadDim], got rank {x.Rank}.");
 
-        int seqLen  = x.Shape[0];
+        int seqLen = x.Shape[0];
         int numHead = x.Shape[1];
-        int dim     = x.Shape[2];
+        int dim = x.Shape[2];
 
         if (dim != _headDim)
             throw new ArgumentException(
@@ -211,11 +211,11 @@ public sealed class RoPE : PositionalEncoder
                 $"Position {positionOffset + seqLen} exceeds MaxSeqLen {_maxSeqLen}.");
 
         int ropePairs = _ropeDim / 2;
-        var data    = x.Data;
+        var data = x.Data;
 
         for (int s = 0; s < seqLen; s++)
         {
-            int pos       = positionOffset + s;
+            int pos = positionOffset + s;
             int cacheBase = pos * ropePairs;
 
             for (int h = 0; h < numHead; h++)
@@ -257,16 +257,16 @@ public sealed class RoPE : PositionalEncoder
                             int pairBase = i + 2 * lane;
                             var vec = Vector128.LoadUnsafe(ref data[offset + 2 * pairBase]);
                             var even = Sse2.Shuffle(vec, vec, 0x88);  // [x0, x2, x0, x2]
-                            var odd  = Sse2.Shuffle(vec, vec, 0xDD);  // [x1, x3, x1, x3]
-                            var cos  = Vector128.Create(
+                            var odd = Sse2.Shuffle(vec, vec, 0xDD);  // [x1, x3, x1, x3]
+                            var cos = Vector128.Create(
                                 _cosCache[cacheBase + pairBase], _cosCache[cacheBase + pairBase + 1],
                                 _cosCache[cacheBase + pairBase], _cosCache[cacheBase + pairBase + 1]);
-                            var sin  = Vector128.Create(
+                            var sin = Vector128.Create(
                                 _sinCache[cacheBase + pairBase], _sinCache[cacheBase + pairBase + 1],
                                 _sinCache[cacheBase + pairBase], _sinCache[cacheBase + pairBase + 1]);
 
                             var outEven = Sse.Subtract(Sse.Multiply(even, cos), Sse.Multiply(odd, sin));
-                            var outOdd  = Sse.Add(Sse.Multiply(odd, cos), Sse.Multiply(even, sin));
+                            var outOdd = Sse.Add(Sse.Multiply(odd, cos), Sse.Multiply(even, sin));
                             // Interleave [p0_even, p0_odd, p1_even, p1_odd] back into dim order
                             Sse2.UnpackLow(outEven, outOdd).StoreUnsafe(ref data[offset + 2 * pairBase]);
                         }
@@ -276,11 +276,11 @@ public sealed class RoPE : PositionalEncoder
                 {
                     float cos = _cosCache[cacheBase + i];
                     float sin = _sinCache[cacheBase + i];
-                    float x0  = data[offset + 2 * i];
-                    float x1  = data[offset + 2 * i + 1];
+                    float x0 = data[offset + 2 * i];
+                    float x1 = data[offset + 2 * i + 1];
 
-                    data[offset + 2 * i]         = x0 * cos - x1 * sin;
-                    data[offset + 2 * i + 1]     = x1 * cos + x0 * sin;
+                    data[offset + 2 * i] = x0 * cos - x1 * sin;
+                    data[offset + 2 * i + 1] = x1 * cos + x0 * sin;
                 }
             }
         }
@@ -329,16 +329,16 @@ public sealed class RoPE : PositionalEncoder
     /// <summary>Backward of <see cref="Apply"/> for a rank-3 [SeqLen, NumHeads, HeadDim] tensor.</summary>
     private void ApplyBackward(Tensor<float> dx, int positionOffset)
     {
-        int seqLen  = dx.Shape[0];
+        int seqLen = dx.Shape[0];
         int numHead = dx.Shape[1];
         //int dim     = dx.Shape[2];
 
         int ropePairs = _ropeDim / 2;
-        var data      = dx.Data;
+        var data = dx.Data;
 
         for (int s = 0; s < seqLen; s++)
         {
-            int pos       = positionOffset + s;
+            int pos = positionOffset + s;
             int cacheBase = pos * ropePairs;
 
             for (int h = 0; h < numHead; h++)
@@ -364,10 +364,10 @@ public sealed class RoPE : PositionalEncoder
                 {
                     float cos = _cosCache[cacheBase + i];
                     float sin = _sinCache[cacheBase + i];
-                    float d0  = data[offset + 2 * i];
-                    float d1  = data[offset + 2 * i + 1];
+                    float d0 = data[offset + 2 * i];
+                    float d1 = data[offset + 2 * i + 1];
 
-                    data[offset + 2 * i]     =  cos * d0 + sin * d1;
+                    data[offset + 2 * i] = cos * d0 + sin * d1;
                     data[offset + 2 * i + 1] = -sin * d0 + cos * d1;
                 }
             }

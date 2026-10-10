@@ -1,6 +1,6 @@
-using System.Runtime.CompilerServices;
 using JigSawDotNet;
 using SharpMind.Core.Tensors;
+using System.Runtime.CompilerServices;
 
 namespace SharpMind.Core.Activations;
 // ActivationOps
@@ -29,9 +29,9 @@ public abstract class ActivationOps
     //Odd but any change should force compile time error
     private const string NS = $"{nameof(SharpMind)}.{nameof(Core)}.{nameof(Activations)}.{nameof(ActivationKernels)}";
 
-    
+
     // Pointwise activation — act type + hw tier combined
-    
+
 
     [PuzzleCornerPiece(SharpMindConfig.KeyPointWise, true, null,
         SharpMindConfig.ValReLUAvx2, $"{NS}.{nameof(ActivationKernels.ReLUAVX2)}",
@@ -45,9 +45,9 @@ public abstract class ActivationOps
         SharpMindConfig.ValSiLUFma, $"{NS}.{nameof(ActivationKernels.SiLUAVX2)}")]
     public abstract void ApplyPointwise(ReadOnlySpan<float> src, Span<float> dst);
 
-    
+
     // Gated activation — gate type + hw tier combined
-    
+
 
     [PuzzleCornerPiece(SharpMindConfig.KeyGate, true, null,
         SharpMindConfig.ValSwiGLU, $"{NS}.{nameof(ActivationKernels.SwiGLUScalar)}",
@@ -61,9 +61,9 @@ public abstract class ActivationOps
         SharpMindConfig.ValNoneFma, $"{NS}.{nameof(ActivationKernels.CopyGate)}")]
     public abstract void ApplyGate(ReadOnlySpan<float> gate, ReadOnlySpan<float> up, Span<float> dst);
 
-    
+
     // Softmax — hw tier only (exp bottleneck makes both paths equivalent)
-    
+
 
     [PuzzleCornerPiece(SharpMindConfig.KeySoftmax, true, null,
         SharpMindConfig.ValScalar, $"{NS}.{nameof(ActivationKernels.SoftmaxRowScalar)}",
@@ -71,9 +71,9 @@ public abstract class ActivationOps
         SharpMindConfig.ValFma, $"{NS}.{nameof(ActivationKernels.SoftmaxRowAVX2)}")]
     public abstract void ApplySoftmaxRow(ReadOnlySpan<float> src, Span<float> dst);
 
-    
+
     // RMSNorm row — hw tier only (pure multiply, AVX2 gives real gain here)
-    
+
 
     [PuzzleCornerPiece(SharpMindConfig.KeyRMSNorm, true, null,
         SharpMindConfig.ValAvx2, $"{NS}.{nameof(ActivationKernels.RMSNormRowAVX2)}",
@@ -85,15 +85,15 @@ public abstract class ActivationOps
         Span<float> dst,
         float rmsInv);
 
-    
+
     // Public Tensor<float> API — identical for every assembled variant
-    
+
 
     /// <summary>Applies the configured pointwise activation to every element.</summary>
     public Tensor<float> Activate(Tensor<float> x, SharpMind.Core.Memory.IWorkspace? workspace = null)
     {
-        Tensor<float> result = workspace != null 
-            ? workspace.Rent<float>(x.Shape.Dims) 
+        Tensor<float> result = workspace != null
+            ? workspace.Rent<float>(x.Shape.Dims)
             : new Tensor<float>(x.Shape);
         ApplyPointwise(x.Data, result.Data);
         return result;
@@ -107,8 +107,8 @@ public abstract class ActivationOps
     public Tensor<float> GatedActivate(Tensor<float> gate, Tensor<float> up, SharpMind.Core.Memory.IWorkspace? workspace = null)
     {
         TensorShape.AssertSameShape(gate.Shape, up.Shape);
-        Tensor<float> result = workspace != null 
-            ? workspace.Rent<float>(gate.Shape.Dims) 
+        Tensor<float> result = workspace != null
+            ? workspace.Rent<float>(gate.Shape.Dims)
             : new Tensor<float>(gate.Shape);
         ApplyGate(gate.Data, up.Data, result.Data);
         return result;

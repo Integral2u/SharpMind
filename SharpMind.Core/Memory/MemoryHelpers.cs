@@ -1,6 +1,4 @@
 using System.Buffers;
-using System.Numerics;
-using SharpMind.Core.Tensors;
 
 namespace SharpMind.Core.Memory;
 

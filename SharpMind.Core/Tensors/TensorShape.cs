@@ -1,6 +1,6 @@
+using SharpMind.Core.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Text;
-using SharpMind.Core.Diagnostics;
 
 namespace SharpMind.Core.Tensors;
 

@@ -1,4 +1,5 @@
 namespace SharpMind.Core.Quantization;
+
 public enum QuantDType : uint
 {
     F32 = 0, F16 = 1, Q4_0 = 2, Q4_1 = 3, Q5_0 = 6, Q5_1 = 7,

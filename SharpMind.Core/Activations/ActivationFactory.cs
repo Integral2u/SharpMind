@@ -1,5 +1,5 @@
-using System.Collections.Concurrent;
 using JigSawDotNet;
+using System.Collections.Concurrent;
 
 namespace SharpMind.Core.Activations;
 

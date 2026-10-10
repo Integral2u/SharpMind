@@ -1,5 +1,3 @@
-using System.Runtime.Intrinsics.X86;
-
 namespace SharpMind.Core;
 
 public sealed record SharpMindConfig
@@ -147,12 +145,12 @@ public sealed record SharpMindConfig
     public const string ValEncoder = "encoder";
 
     public ActivationKind Activation { get; init; } = ActivationKind.GELU;
-    public GateKind       Gate       { get; init; } = GateKind.None;
+    public GateKind Gate { get; init; } = GateKind.None;
     public FfnKind Ffn { get; init; } = FfnKind.Dense;
     public AttentionKind Attention { get; init; } = AttentionKind.MHA;
     public NormKind Norm { get; init; } = NormKind.RMSNorm;
     public ArchKind Arch { get; init; } = ArchKind.Decoder;
-    public HardwareTier   Hardware   { get; init; } = HardwareTier.Auto;
+    public HardwareTier Hardware { get; init; } = HardwareTier.Auto;
     public bool Parallel { get; init; } = true;
     public bool FlashAttention { get; init; } = true;
     public bool UseHooks { get; init; } = false;
@@ -195,7 +193,7 @@ public sealed record SharpMindConfig
         Norm = NormKind.RMSNorm,
         Arch = ArchKind.Decoder,
     };
-   
+
     public HardwareTier ResolvedHardware => Hardware switch
     {
         HardwareTier.Auto => HardwareTierHelpers.DetectBestTier(),
@@ -224,13 +222,13 @@ public sealed record SharpMindConfig
 
         var (activation, gate, ffn, norm, arch) = architecture?.ToLowerInvariant() switch
         {
-            "bert"                                                        => (ActivationKind.GELU,    GateKind.None,   FfnKind.Dense, NormKind.LayerNorm, ArchKind.Encoder),
-            "roberta" or "albert" or "xlm-roberta"                        => (ActivationKind.GELU,    GateKind.None,   FfnKind.Dense, NormKind.LayerNorm, ArchKind.Encoder),
+            "bert" => (ActivationKind.GELU, GateKind.None, FfnKind.Dense, NormKind.LayerNorm, ArchKind.Encoder),
+            "roberta" or "albert" or "xlm-roberta" => (ActivationKind.GELU, GateKind.None, FfnKind.Dense, NormKind.LayerNorm, ArchKind.Encoder),
             "gpt2" or "gptj" or "falcon" or "starcoder" or "starcoder2"
-                or "bloom" or "phi" or "phi2"                            => (ActivationKind.GELU,    GateKind.None,   FfnKind.Dense, NormKind.LayerNorm, ArchKind.Decoder),
-            "opt"                                                         => (ActivationKind.ReLU,    GateKind.None,   FfnKind.Dense, NormKind.LayerNorm, ArchKind.Decoder),
-            "gemma" or "gemma2" or "gemma3" or "gemma-3"                  => (ActivationKind.GELU,    GateKind.GeGLU,  FfnKind.Gated, NormKind.RMSNorm,   ArchKind.Decoder),
-            "mixtral" or "qwen2moe" or "deepseek2" or "dbrx"            => (ActivationKind.SiLU,    GateKind.SwiGLU, FfnKind.MoE,   NormKind.RMSNorm,   ArchKind.Decoder),
+                or "bloom" or "phi" or "phi2" => (ActivationKind.GELU, GateKind.None, FfnKind.Dense, NormKind.LayerNorm, ArchKind.Decoder),
+            "opt" => (ActivationKind.ReLU, GateKind.None, FfnKind.Dense, NormKind.LayerNorm, ArchKind.Decoder),
+            "gemma" or "gemma2" or "gemma3" or "gemma-3" => (ActivationKind.GELU, GateKind.GeGLU, FfnKind.Gated, NormKind.RMSNorm, ArchKind.Decoder),
+            "mixtral" or "qwen2moe" or "deepseek2" or "dbrx" => (ActivationKind.SiLU, GateKind.SwiGLU, FfnKind.MoE, NormKind.RMSNorm, ArchKind.Decoder),
             // Everything below is the same shape: SiLU + SwiGLU + RMSNorm decoder.
             // phi3 belongs here, not with the GELU/dense phi/phi2: Phi-3 is a gated
             // model whose ffn_up is the fused [HiddenDim, 2*FfnDim] gate+up matrix.
@@ -244,8 +242,8 @@ public sealed record SharpMindConfig
                 or "orion" or "jais" or "stablelm" or "plamo" or "granite"
                 or "nemotron" or "smollm3" or "dots1" or "hunyuan-moe"
                 => (ActivationKind.SiLU, GateKind.SwiGLU, FfnKind.Gated, NormKind.RMSNorm, ArchKind.Decoder),
-            null or ""                                                      => (ActivationKind.SiLU,    GateKind.SwiGLU, FfnKind.Gated, NormKind.RMSNorm,   ArchKind.Decoder),
-            _ when string.IsNullOrWhiteSpace(architecture)                  => (ActivationKind.SiLU,    GateKind.SwiGLU, FfnKind.Gated, NormKind.RMSNorm,   ArchKind.Decoder),
+            null or "" => (ActivationKind.SiLU, GateKind.SwiGLU, FfnKind.Gated, NormKind.RMSNorm, ArchKind.Decoder),
+            _ when string.IsNullOrWhiteSpace(architecture) => (ActivationKind.SiLU, GateKind.SwiGLU, FfnKind.Gated, NormKind.RMSNorm, ArchKind.Decoder),
             // Unknown architectures fall back to the standard decoder preset rather
             // than throwing. GGUF gains new architecture strings constantly (and
             // vendors ship variants of their own), and essentially all of them are
@@ -257,7 +255,7 @@ public sealed record SharpMindConfig
             // garbage weights, whereas an unrecognised architecture has a safe
             // default here. ModelFactory additionally rejects the architectures known
             // not to work, with the reason spelled out.)
-            _                                                              => (ActivationKind.SiLU,    GateKind.SwiGLU, FfnKind.Gated, NormKind.RMSNorm, ArchKind.Decoder),
+            _ => (ActivationKind.SiLU, GateKind.SwiGLU, FfnKind.Gated, NormKind.RMSNorm, ArchKind.Decoder),
         };
 
         return new SharpMindConfig

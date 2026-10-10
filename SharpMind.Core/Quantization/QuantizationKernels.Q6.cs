@@ -1,4 +1,3 @@
-using System.IO;
 using System.Runtime.CompilerServices;
 using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
@@ -231,7 +230,7 @@ public static partial class QuantizationKernels
         sum += MathHelpers.HSum256_Avx(Avx.Add(Avx.Add(vacc0, vacc1), Avx.Add(vacc2, vacc3)));
         return (float)sum;
     }
-    
+
     public static unsafe void ReadQ6K_Scalar(BinaryReader reader, Span<float> data, int n)
     {
         const int QK_K = 256;

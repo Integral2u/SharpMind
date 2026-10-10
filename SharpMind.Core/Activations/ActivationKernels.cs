@@ -33,9 +33,9 @@ public static class ActivationKernels
             dst[i] = src[i] < 0f ? 0f : src[i];
     }
 
-    
+
     // GELU  0.5 * x * (1 + tanh(√(2/π) * (x + 0.044715 * x³)))
-    
+
 
     public static unsafe void GELUAVX2(ReadOnlySpan<float> src, Span<float> dst)
     {
@@ -67,9 +67,9 @@ public static class ActivationKernels
             dst[i] = MathEx.Gelu(src[i]);
     }
 
-    
+
     // SiLU  x * sigmoid(x) = x / (1 + exp(-x))
-    
+
 
     public static unsafe void SiLUAVX2(ReadOnlySpan<float> src, Span<float> dst)
     {
@@ -98,9 +98,9 @@ public static class ActivationKernels
         }
     }
 
-    
+
     // SwiGLU  silu(gate) * up
-    
+
 
     public static unsafe void SwiGLUAVX2(ReadOnlySpan<float> gate, ReadOnlySpan<float> up, Span<float> dst)
     {
@@ -131,9 +131,9 @@ public static class ActivationKernels
         }
     }
 
-    
+
     // GeGLU  gelu(gate) * up
-    
+
 
     public static unsafe void GeGLUAVX2(ReadOnlySpan<float> gate, ReadOnlySpan<float> up, Span<float> dst)
     {
@@ -170,9 +170,9 @@ public static class ActivationKernels
     public static void CopyGate(ReadOnlySpan<float> gate, ReadOnlySpan<float> _, Span<float> dst)
         => gate.CopyTo(dst);
 
-    
+
     // Softmax  (numerically stable)
-    
+
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static unsafe void SoftmaxRowAVX2(ReadOnlySpan<float> src, Span<float> dst)
@@ -270,10 +270,10 @@ public static class ActivationKernels
         for (int i = 0; i < dst.Length; i++) dst[i] *= inv;
     }
 
-    
+
     // RMSNorm row  out[i] = src[i] * rmsInv * weight[i]
     // rmsInv is pre-computed by the Tensor-level wrapper — not computed here
-    
+
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static unsafe void RMSNormRowAVX2(

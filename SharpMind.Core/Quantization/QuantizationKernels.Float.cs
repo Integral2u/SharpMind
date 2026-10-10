@@ -1,12 +1,12 @@
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
-using System.Runtime.InteropServices;
 
 namespace SharpMind.Core.Quantization;
 
 public static partial class QuantizationKernels
-{ 
+{
 
     public static unsafe void QuantizedMatMulF32_Serial_Scalar(
         float* input, byte* rawWeights, float* output,

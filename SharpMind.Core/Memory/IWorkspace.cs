@@ -1,5 +1,5 @@
-using System.Numerics;
 using SharpMind.Core.Tensors;
+using System.Numerics;
 
 namespace SharpMind.Core.Memory;
 

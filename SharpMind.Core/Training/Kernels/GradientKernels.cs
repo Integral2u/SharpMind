@@ -1,8 +1,7 @@
+using SharpMind.Core.Tensors;
 using System.Runtime.CompilerServices;
 using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
-using SharpMind.Core.Tensors;
-using SharpMind.Core.Training;
 
 namespace SharpMind.Core.Training.Kernels;
 
@@ -50,20 +49,20 @@ public static unsafe class GradientKernels
     public static Tensor<float> Linear_Scalar(
         Tensor<float> dOutput,   // [B, OutFeatures]
         Tensor<float> input,     // [B, InFeatures]
-        Parameter     weight,    // [OutFeatures, InFeatures]
-        Parameter?    bias = null)
+        Parameter weight,    // [OutFeatures, InFeatures]
+        Parameter? bias = null)
     {
-        int B   = dOutput.Shape.Rows;
+        int B = dOutput.Shape.Rows;
         int Out = dOutput.Shape.Cols;
-        int In  = input.Shape.Cols;
+        int In = input.Shape.Cols;
 
         var dInput = new Tensor<float>(B, In);
 
         var dOutArr = dOutput;
-        var inArr   = input;
-        var wArr    = weight.Data;
-        var dWArr   = weight.Grad;
-        var dInArr  = dInput;
+        var inArr = input;
+        var wArr = weight.Data;
+        var dWArr = weight.Grad;
+        var dInArr = dInput;
 
         // dInput = dOutput @ W   (W is [Out, In])
         // Threads are partitioned over batch rows — each worker writes only its
@@ -119,27 +118,27 @@ public static unsafe class GradientKernels
     public static unsafe Tensor<float> Linear_AVX2(
         Tensor<float> dOutput,   // [B, OutFeatures]
         Tensor<float> input,     // [B, InFeatures]
-        Parameter     weight,    // [OutFeatures, InFeatures]
-        Parameter?    bias = null)
+        Parameter weight,    // [OutFeatures, InFeatures]
+        Parameter? bias = null)
     {
-        int B   = dOutput.Shape.Rows;
+        int B = dOutput.Shape.Rows;
         int Out = dOutput.Shape.Cols;
-        int In  = input.Shape.Cols;
+        int In = input.Shape.Cols;
 
         var dInput = new Tensor<float>(B, In);
 
         fixed (float* pDOut = dOutput.Data, pW = weight.Data.Data, pDIn = dInput.Data)
         {
             long dOutAddr = (long)pDOut;
-            long dInAddr  = (long)pDIn;
-            long wAddr    = (long)pW;
+            long dInAddr = (long)pDIn;
+            long wAddr = (long)pW;
 
             // dInput = dOutput @ W   (W is [Out, In])
             // Threads partition over batch rows — each worker writes its own dInput rows.
             Parallel.For(0, B, _parallel, b =>
             {
                 float* dOutRow = (float*)(dOutAddr + (long)b * Out * 4);
-                float* dInRow  = (float*)(dInAddr + (long)b * In * 4);
+                float* dInRow = (float*)(dInAddr + (long)b * In * 4);
                 for (int o = 0; o < Out; o++)
                 {
                     float dOutVal = dOutRow[o];
@@ -164,8 +163,8 @@ public static unsafe class GradientKernels
         fixed (float* pDOut = dOutput.Data, pIn = input.Data, pDW = weight.Grad.Data)
         {
             long dOutAddr = (long)pDOut;
-            long inAddr   = (long)pIn;
-            long dwAddr   = (long)pDW;
+            long inAddr = (long)pIn;
+            long dwAddr = (long)pDW;
 
             Parallel.For(0, Out, _parallel, o =>
             {
@@ -183,7 +182,7 @@ public static unsafe class GradientKernels
                     for (; i < In; i++)
                         dWRow[i] += dOutOB * inRow[i];
                 }
-});
+            });
         }
 
         // db += sum(dOutput, axis=0)
@@ -210,27 +209,27 @@ public static unsafe class GradientKernels
     public static unsafe Tensor<float> Linear_FMA(
         Tensor<float> dOutput,   // [B, OutFeatures]
         Tensor<float> input,     // [B, InFeatures]
-        Parameter     weight,    // [OutFeatures, InFeatures]
-        Parameter?    bias = null)
+        Parameter weight,    // [OutFeatures, InFeatures]
+        Parameter? bias = null)
     {
-        int B   = dOutput.Shape.Rows;
+        int B = dOutput.Shape.Rows;
         int Out = dOutput.Shape.Cols;
-        int In  = input.Shape.Cols;
+        int In = input.Shape.Cols;
 
         var dInput = new Tensor<float>(B, In);
 
         fixed (float* pDOut = dOutput.Data, pW = weight.Data.Data, pDIn = dInput.Data)
         {
             long dOutAddr = (long)pDOut;
-            long dInAddr  = (long)pDIn;
-            long wAddr    = (long)pW;
+            long dInAddr = (long)pDIn;
+            long wAddr = (long)pW;
 
             // dInput = dOutput @ W   (W is [Out, In])
             // Threads partition over batch rows — each worker writes its own dInput rows.
             Parallel.For(0, B, _parallel, b =>
             {
                 float* dOutRow = (float*)(dOutAddr + (long)b * Out * 4);
-                float* dInRow  = (float*)(dInAddr + (long)b * In * 4);
+                float* dInRow = (float*)(dInAddr + (long)b * In * 4);
                 for (int o = 0; o < Out; o++)
                 {
                     float dOutVal = dOutRow[o];
@@ -252,8 +251,8 @@ public static unsafe class GradientKernels
         fixed (float* pDOut = dOutput.Data, pIn = input.Data, pDW = weight.Grad.Data)
         {
             long dOutAddr = (long)pDOut;
-            long inAddr   = (long)pIn;
-            long dwAddr   = (long)pDW;
+            long inAddr = (long)pIn;
+            long dwAddr = (long)pDW;
 
             Parallel.For(0, Out, _parallel, o =>
             {
@@ -303,22 +302,22 @@ public static unsafe class GradientKernels
     public static Tensor<float> RMSNorm_Scalar(
         Tensor<float> dOutput,  // [T, D]
         Tensor<float> xNorm,    // [T, D]  x * rmsInv (saved from forward)
-        float[]       rmsInv,   // [T]
-        Parameter     weight)   // [D]
+        float[] rmsInv,   // [T]
+        Parameter weight)   // [D]
     {
         int T = dOutput.Shape.Rows;
         int D = dOutput.Shape.Cols;
         var dInput = new Tensor<float>(T, D);
 
-        ReadOnlySpan<float> w     = weight.Data.Data;
-        Span<float>         dw    = weight.Grad.Data;
+        ReadOnlySpan<float> w = weight.Data.Data;
+        Span<float> dw = weight.Grad.Data;
 
         for (int t = 0; t < T; t++)
         {
-            ReadOnlySpan<float> dy   = dOutput.RowSpan(t);
-            ReadOnlySpan<float> xn   = xNorm.RowSpan(t);
-            Span<float>         dxRow = dInput.RowSpan(t);
-            float               ri   = rmsInv[t];
+            ReadOnlySpan<float> dy = dOutput.RowSpan(t);
+            ReadOnlySpan<float> xn = xNorm.RowSpan(t);
+            Span<float> dxRow = dInput.RowSpan(t);
+            float ri = rmsInv[t];
 
             // Accumulate weight gradient: dw += dy * xNorm (summed over batch)
             for (int d = 0; d < D; d++) dw[d] += dy[d] * xn[d];
@@ -345,23 +344,23 @@ public static unsafe class GradientKernels
     public static Tensor<float> LayerNorm_Scalar(
         Tensor<float> dOutput,
         Tensor<float> input,
-        Parameter     weight,
-        Parameter     bias,
-        float         eps = 1e-5f)
+        Parameter weight,
+        Parameter bias,
+        float eps = 1e-5f)
     {
         int T = dOutput.Shape.Rows;
         int D = dOutput.Shape.Cols;
         var dInput = new Tensor<float>(T, D);
 
-        ReadOnlySpan<float> w  = weight.Data.Data;
-        Span<float>         dw = weight.Grad.Data;
-        Span<float>         db = bias.Grad.Data;
+        ReadOnlySpan<float> w = weight.Data.Data;
+        Span<float> dw = weight.Grad.Data;
+        Span<float> db = bias.Grad.Data;
 
         for (int t = 0; t < T; t++)
         {
-            ReadOnlySpan<float> x  = input.RowSpan(t);
+            ReadOnlySpan<float> x = input.RowSpan(t);
             ReadOnlySpan<float> dy = dOutput.RowSpan(t);
-            Span<float>         dx = dInput.RowSpan(t);
+            Span<float> dx = dInput.RowSpan(t);
 
             float mean = 0f;
             foreach (float v in x) mean += v;
@@ -380,10 +379,10 @@ public static unsafe class GradientKernels
             for (int d = 0; d < D; d++)
             {
                 float xhat = (x[d] - mean) * invStd;
-                dw[d]      += dy[d] * xhat;
-                db[d]      += dy[d];
-                dyDotXhat  += dy[d] * w[d] * xhat;
-                dySum      += dy[d] * w[d];
+                dw[d] += dy[d] * xhat;
+                db[d] += dy[d];
+                dyDotXhat += dy[d] * w[d] * xhat;
+                dySum += dy[d] * w[d];
             }
 
             // dL/dx = invStd * (dy*w - (1/D)*(dySum + xhat*dyDotXhat))
@@ -412,14 +411,14 @@ public static unsafe class GradientKernels
             Tensor<float> k,      // [S, HeadDim]
             Tensor<float> v,      // [S, HeadDim]
             Tensor<float> probs,  // [S, S]
-            float         scale)
+            float scale)
     {
         int S = q.Shape.Rows;
         int D = q.Shape.Cols;
 
-        var dQ    = new Tensor<float>(S, D);
-        var dK    = new Tensor<float>(S, D);
-        var dV    = new Tensor<float>(S, D);
+        var dQ = new Tensor<float>(S, D);
+        var dK = new Tensor<float>(S, D);
+        var dV = new Tensor<float>(S, D);
         var dProbs = new Tensor<float>(S, S);
 
         // dV = probs^T @ dOut   [S, D]
@@ -449,9 +448,9 @@ public static unsafe class GradientKernels
         var dScores = new Tensor<float>(S, S);
         for (int i = 0; i < S; i++)
         {
-            ReadOnlySpan<float> pRow  = probs.RowSpan(i);
+            ReadOnlySpan<float> pRow = probs.RowSpan(i);
             ReadOnlySpan<float> dpRow = dProbs.RowSpan(i);
-            Span<float>         dsRow = dScores.RowSpan(i);
+            Span<float> dsRow = dScores.RowSpan(i);
             float dot = 0f;
             for (int j = 0; j < S; j++) dot += pRow[j] * dpRow[j];
             for (int j = 0; j < S; j++) dsRow[j] = pRow[j] * (dpRow[j] - dot);
@@ -489,18 +488,18 @@ public static unsafe class GradientKernels
     /// </summary>
     public static void Embedding_Scalar(
         Tensor<float> dOutput,   // [T, EmbedDim] flat
-        Tensor<int>   tokenIds,  // [T] flat
-        Parameter     weight)    // [VocabSize, EmbedDim]
+        Tensor<int> tokenIds,  // [T] flat
+        Parameter weight)    // [VocabSize, EmbedDim]
     {
-        int T   = dOutput.Shape.Rows;
-        int D   = dOutput.Shape.Cols;
+        int T = dOutput.Shape.Rows;
+        int D = dOutput.Shape.Cols;
         Span<float> dW = weight.Grad.Data;
 
         for (int t = 0; t < T; t++)
         {
             int id = tokenIds[t];
-            ReadOnlySpan<float> dRow  = dOutput.RowSpan(t);
-            Span<float>         dWRow = dW.Slice(id * D, D);
+            ReadOnlySpan<float> dRow = dOutput.RowSpan(t);
+            Span<float> dWRow = dW.Slice(id * D, D);
             for (int d = 0; d < D; d++) dWRow[d] += dRow[d];
         }
     }
@@ -515,7 +514,7 @@ public static unsafe class GradientKernels
         var dInput = new Tensor<float>(dOutput.Shape);
         var src = preAct.Data;
         var dst = dInput.Data;
-        var dy  = dOutput.Data;
+        var dy = dOutput.Data;
 
         for (int i = 0; i < src.Length; i++)
         {
@@ -534,7 +533,7 @@ public static unsafe class GradientKernels
         var dInput = new Tensor<float>(dOutput.Shape);
         var src = preAct.Data;
         var dst = dInput.Data;
-        var dy  = dOutput.Data;
+        var dy = dOutput.Data;
 
         fixed (float* pX = src, pDy = dy, pDst = dst)
         {
@@ -565,7 +564,7 @@ public static unsafe class GradientKernels
         var dInput = new Tensor<float>(dOutput.Shape);
         var src = preAct.Data;
         var dst = dInput.Data;
-        var dy  = dOutput.Data;
+        var dy = dOutput.Data;
 
         for (int i = 0; i < src.Length; i++)
             dst[i] = dy[i] * MathEx.GeluDerivative(src[i]);
@@ -578,7 +577,7 @@ public static unsafe class GradientKernels
         var dInput = new Tensor<float>(dOutput.Shape);
         var src = preAct.Data;
         var dst = dInput.Data;
-        var dy  = dOutput.Data;
+        var dy = dOutput.Data;
 
         fixed (float* pX = src, pDy = dy, pDst = dst)
         {

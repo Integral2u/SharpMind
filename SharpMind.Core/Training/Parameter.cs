@@ -1,5 +1,5 @@
-using System.Runtime.CompilerServices;
 using SharpMind.Core.Tensors;
+using System.Runtime.CompilerServices;
 
 namespace SharpMind.Core.Training;
 

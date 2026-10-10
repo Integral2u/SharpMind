@@ -24,7 +24,7 @@ public class WeatherTool
             double lat = first.GetProperty("latitude").GetDouble();
             double lon = first.GetProperty("longitude").GetDouble();
             string name = first.GetProperty("name").GetString() ?? city;
-            string country = first.TryGetProperty("country", out var c) ? (c.GetString())??string.Empty : string.Empty;
+            string country = first.TryGetProperty("country", out var c) ? (c.GetString()) ?? string.Empty : string.Empty;
 
             // 2. Weather: Lat/Lon -> Current Weather
             var weatherUrl = $"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true";
