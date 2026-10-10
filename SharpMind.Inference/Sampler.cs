@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using SharpMind.Core.Memory;
 
 namespace SharpMind.Inference;
@@ -97,6 +98,7 @@ public static class Sampler
 
     // Softmax
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void Softmax(Span<float> x)
     {
         // Guard: if any input has Infinity/NaN, replace with zeros to prevent cascade

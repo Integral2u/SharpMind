@@ -505,52 +505,6 @@ public static unsafe class GradientKernels
         }
     }
 
-    // Fast transcendental helpers — polynomial approximations
-
-    /// <summary>exp(x) via range-reduced degree-6 polynomial, ≈5 ULP over [-88, 88].</summary>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static Vector256<float> FastExp(Vector256<float> x)
-    {
-        x = Avx.Min(Avx.Max(x, Vector256.Create(-88.0f)), Vector256.Create(88.0f));
-        var z = Avx.Multiply(x, Vector256.Create(1.4426950408889634f));
-        var magic = Vector256.Create(12582912.0f);
-        var nF = Avx.Subtract(Avx.Add(z, magic), magic);
-        var nI = Avx2.ConvertToVector256Int32(nF);
-        var r = Avx.Subtract(z, nF);
-        var u = Avx.Multiply(r, Vector256.Create(0.6931471805599453f));
-
-        // Horner degree-6
-        var p = Avx.Add(Vector256.Create(1.0f),
-            Avx.Multiply(u, Avx.Add(Vector256.Create(1.0f),
-                Avx.Multiply(u, Avx.Add(Vector256.Create(0.5f),
-                    Avx.Multiply(u, Avx.Add(Vector256.Create(1.0f / 6.0f),
-                        Avx.Multiply(u, Avx.Add(Vector256.Create(1.0f / 24.0f),
-                            Avx.Multiply(u, Avx.Add(Vector256.Create(1.0f / 120.0f),
-                                Avx.Multiply(u, Vector256.Create(1.0f / 720.0f))
-                            ))
-                        ))
-                    ))
-                ))
-            ))
-        );
-
-        var expAdj = Avx2.Add(nI, Vector256.Create(127));
-        expAdj = Avx2.Min(Avx2.Max(expAdj, Vector256.Create(0)), Vector256.Create(254));
-        var pow2nBits = Avx2.ShiftLeftLogical(expAdj, 23);
-        return Avx.Multiply(p, Vector256.AsSingle(pow2nBits));
-    }
-
-    /// <summary>tanh(z) = (exp(2z) - 1) / (exp(2z) + 1).</summary>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static Vector256<float> FastTanh(Vector256<float> z)
-    {
-        z = Avx.Min(Avx.Max(z, Vector256.Create(-9.0f)), Vector256.Create(9.0f));
-        var twoZ = Avx.Multiply(z, Vector256.Create(2.0f));
-        var e2z = FastExp(twoZ);
-        var one = Vector256.Create(1.0f);
-        return Avx.Divide(Avx.Subtract(e2z, one), Avx.Add(e2z, one));
-    }
-
     // Activation function backward — SiLU and GELU derivatives
 
     /// <summary>
@@ -590,7 +544,7 @@ public static unsafe class GradientKernels
             {
                 var x = Vector256.LoadUnsafe(ref pX[i]);
                 var d = Vector256.LoadUnsafe(ref pDy[i]);
-                var sig = Avx.Divide(one, Avx.Add(one, FastExp(Avx.Subtract(Vector256<float>.Zero, x))));
+                var sig = Avx.Divide(one, Avx.Add(one, MathEx.FastExp(Avx.Subtract(Vector256<float>.Zero, x))));
                 Vector256.StoreUnsafe(
                     Avx.Multiply(d, Avx.Multiply(sig, Avx.Subtract(Avx.Add(one, x), Avx.Multiply(x, sig)))),
                     ref pDst[i]);
@@ -605,9 +559,6 @@ public static unsafe class GradientKernels
         return dInput;
     }
 
-    private const float SqrtTwoPiInv = 0.7978845608f;
-    private const float GeluCoeff    = 0.044715f;
-
     /// <summary>Scalar tier: GELU backward (tanh approximation derivative).</summary>
     public static Tensor<float> ActivationGELU_Scalar(Tensor<float> dOutput, Tensor<float> preAct)
     {
@@ -617,15 +568,7 @@ public static unsafe class GradientKernels
         var dy  = dOutput.Data;
 
         for (int i = 0; i < src.Length; i++)
-        {
-            float x = src[i];
-            float x3 = x * x * x;
-            float inner = SqrtTwoPiInv * (x + GeluCoeff * x3);
-            float tanh = MathF.Tanh(inner);
-            float dtanh = 1f - tanh * tanh;
-            float dInner = SqrtTwoPiInv * (1f + 3f * GeluCoeff * x * x);
-            dst[i] = dy[i] * (0.5f * (1f + tanh) + 0.5f * x * dtanh * dInner);
-        }
+            dst[i] = dy[i] * MathEx.GeluDerivative(src[i]);
         return dInput;
     }
 
@@ -642,9 +585,9 @@ public static unsafe class GradientKernels
             int i = 0, n = dst.Length;
             var half = Vector256.Create(0.5f);
             var one = Vector256.Create(1.0f);
-            var vSqrt2PiInv = Vector256.Create(0.7978845608f);
-            var vCoeff = Vector256.Create(0.044715f);
-            var v3Coeff = Vector256.Create(3f * 0.044715f);
+            var vSqrt2PiInv = Vector256.Create(MathEx.SqrtTwoPiInv);
+            var vCoeff = Vector256.Create(MathEx.GeluCoeff);
+            var v3Coeff = Vector256.Create(3f * MathEx.GeluCoeff);
 
             for (; i <= n - 8; i += 8)
             {
@@ -652,7 +595,7 @@ public static unsafe class GradientKernels
                 var d = Vector256.LoadUnsafe(ref pDy[i]);
                 var x3 = Avx.Multiply(Avx.Multiply(x, x), x);
                 var inner = Avx.Multiply(vSqrt2PiInv, Avx.Add(x, Avx.Multiply(vCoeff, x3)));
-                var t = FastTanh(inner);
+                var t = MathEx.FastTanh(inner);
                 var dtanh = Avx.Subtract(one, Avx.Multiply(t, t));
                 var dInner = Avx.Multiply(vSqrt2PiInv, Avx.Add(one, Avx.Multiply(v3Coeff, Avx.Multiply(x, x))));
                 var geluGrad = Avx.Add(
@@ -661,15 +604,7 @@ public static unsafe class GradientKernels
                 Vector256.StoreUnsafe(Avx.Multiply(d, geluGrad), ref pDst[i]);
             }
             for (; i < n; i++)
-            {
-                float x = pX[i];
-                float x3 = x * x * x;
-                float inner = SqrtTwoPiInv * (x + GeluCoeff * x3);
-                float tanh = MathF.Tanh(inner);
-                float dtanh = 1f - tanh * tanh;
-                float dInner = SqrtTwoPiInv * (1f + 3f * GeluCoeff * x * x);
-                pDst[i] = pDy[i] * (0.5f * (1f + tanh) + 0.5f * x * dtanh * dInner);
-            }
+                pDst[i] = pDy[i] * MathEx.GeluDerivative(pX[i]);
         }
         return dInput;
     }

@@ -52,13 +52,11 @@ public sealed class MoEFfnLayer(ModelConfig config, ActivationOps acts, Quantiza
 
         var scales = new float[batch];
         for (int t = 0; t < batch; t++)
-            scales[t] = Sigmoid(gateLogit.Data[t]);
+            scales[t] = MathEx.Sigmoid(gateLogit.Data[t]);
 
         AddScaledInPlace(routed, shared.Data, scales);
         return routed;
     }
-
-    private static float Sigmoid(float v) => 1f / (1f + MathF.Exp(-v));
 
     /// <summary>
     /// Adds the shared branch into the routed result in place, scaling each token's

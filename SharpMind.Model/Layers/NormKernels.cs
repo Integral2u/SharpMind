@@ -1,4 +1,5 @@
-﻿using System.Runtime.Intrinsics;
+﻿using System.Runtime.CompilerServices;
+using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
 using SharpMind.Core;
 
@@ -10,6 +11,7 @@ public static class NormKernels
 {
     // RMSNorm row — out[i] = src[i] * rmsInv * weight[i]
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static unsafe void RMSNormRowAVX2(
         ReadOnlySpan<float> src, ReadOnlySpan<float> weight, Span<float> dst, float rmsInv)
     {
@@ -37,6 +39,7 @@ public static class NormKernels
     // The AVX2 path uses direct sum-of-squares; overflow is not possible
     // for inference-range values (|v| < 10⁶).
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static unsafe float RMSNormParamAVX2(ReadOnlySpan<float> row, float eps)
     {
         fixed (float* pRow = row)
@@ -91,6 +94,7 @@ public static class NormKernels
     // LayerNorm row — standard mean/variance normalisation
     // out[i] = (src[i] - mean) / sqrt(var + eps) * weight[i] + bias[i]
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static unsafe void LayerNormRowAVX2(
         ReadOnlySpan<float> src, ReadOnlySpan<float> weight,
         ReadOnlySpan<float> bias, Span<float> dst, float eps)

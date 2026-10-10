@@ -343,13 +343,13 @@ public sealed class BackpropEngine : IDisposable
                     for (; j <= i - 7; j += 8)
                     {
                         var shifted = Avx.Subtract(Vector256.LoadUnsafe(ref pData[pBase + j]), vMax);
-                        var p = ActivationKernels.FastExp(shifted);
+                        var p = MathEx.FastExp(shifted);
                         Vector256.StoreUnsafe(p, ref pData[pBase + j]);
                         sum += MathHelpers.HSum256_Avx(p);
                     }
                     for (; j <= i; j++)
                     {
-                        float p = FastExpScalar(pData[pBase + j] - maxScore);
+                        float p = MathEx.FastExpScalar(pData[pBase + j] - maxScore);
                         pData[pBase + j] = p;
                         sum += p;
                     }
@@ -986,21 +986,6 @@ public sealed class BackpropEngine : IDisposable
         var data = t.Data;
         for (int i = 0; i < data.Length; i++)
             data[i] *= scalar;
-    }
-
-    /// <summary>
-    /// Scalar fast-exp (same degree-6 polynomial as <see cref="ActivationKernels.FastExp"/>),
-    /// used for the softmax tail lanes when AVX2 is unavailable.
-    /// </summary>
-    private static float FastExpScalar(float x)
-    {
-        x = Math.Clamp(x, -88f, 88f);
-        var z = x * 1.4426950408889634f;
-        var n = MathF.Round(z);
-        var r = z - n;
-        var u = r * 0.6931471805599453f;
-        var p = 1f + u * (1f + u * (0.5f + u * ((1f / 6f) + u * ((1f / 24f) + u * ((1f / 120f) + u * (1f / 720f))))));
-        return p * MathF.Pow(2f, n);
     }
 
     private Parameter? TryParam(Tensor<float> tensor)

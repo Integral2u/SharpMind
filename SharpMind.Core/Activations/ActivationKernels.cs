@@ -12,9 +12,6 @@ namespace SharpMind.Core.Activations;
 /// </summary>
 public static class ActivationKernels
 {
-    private const float SqrtTwoPiInv = 0.7978845608f;
-    private const float GeluCoeff    = 0.044715f;
-    
     // ReLU  
 
     public static unsafe void ReLUAVX2(ReadOnlySpan<float> src, Span<float> dst)
@@ -37,63 +34,6 @@ public static class ActivationKernels
     }
 
     
-    // Fast transcendental helpers — polynomial approximations
-    
-
-    /// <summary>exp(x) via range-reduced degree-6 polynomial, ≈5 ULP over [-88, 88].</summary>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static Vector256<float> FastExp(Vector256<float> x)
-    {
-        x = Avx.Min(Avx.Max(x, Vector256.Create(-88.0f)), Vector256.Create(88.0f));
-
-        // exp(x) = 2^(x * log2(e))
-        var z = Avx.Multiply(x, Vector256.Create(1.4426950408889634f));
-
-        // Round z to nearest int via magic-bias trick
-        var magic = Vector256.Create(12582912.0f);
-        var nF = Avx.Subtract(Avx.Add(z, magic), magic);
-        var nI = Avx2.ConvertToVector256Int32(nF);
-
-        // r = z - n  in [-0.5, 0.5]
-        var r = Avx.Subtract(z, nF);
-
-        // u = r * ln(2)  in [-0.35, 0.35]
-        var u = Avx.Multiply(r, Vector256.Create(0.6931471805599453f));
-
-        // exp(u) Horner degree-6 — error << 1 ULP on this domain
-        var p = Avx.Add(Vector256.Create(1.0f),
-            Avx.Multiply(u, Avx.Add(Vector256.Create(1.0f),
-                Avx.Multiply(u, Avx.Add(Vector256.Create(0.5f),
-                    Avx.Multiply(u, Avx.Add(Vector256.Create(1.0f / 6.0f),
-                        Avx.Multiply(u, Avx.Add(Vector256.Create(1.0f / 24.0f),
-                            Avx.Multiply(u, Avx.Add(Vector256.Create(1.0f / 120.0f),
-                                Avx.Multiply(u, Vector256.Create(1.0f / 720.0f))
-                            ))
-                        ))
-                    ))
-                ))
-            ))
-        );
-
-        // Multiply by 2^n: build 2^n as a float, then multiply
-        var expAdj = Avx2.Add(nI, Vector256.Create(127));
-        expAdj = Avx2.Min(Avx2.Max(expAdj, Vector256.Create(0)), Vector256.Create(254));
-        var pow2nBits = Avx2.ShiftLeftLogical(expAdj, 23);
-        return Avx.Multiply(p, Vector256.AsSingle(pow2nBits));
-    }
-
-    /// <summary>tanh(z) = (exp(2z) - 1) / (exp(2z) + 1).</summary>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static Vector256<float> FastTanh(Vector256<float> z)
-    {
-        z = Avx.Min(Avx.Max(z, Vector256.Create(-9.0f)), Vector256.Create(9.0f));
-        var twoZ = Avx.Multiply(z, Vector256.Create(2.0f));
-        var e2z = FastExp(twoZ);
-        var one = Vector256.Create(1.0f);
-        return Avx.Divide(Avx.Subtract(e2z, one), Avx.Add(e2z, one));
-    }
-
-    
     // GELU  0.5 * x * (1 + tanh(√(2/π) * (x + 0.044715 * x³)))
     
 
@@ -103,8 +43,8 @@ public static class ActivationKernels
         {
             int i = 0, n = dst.Length;
             var vHalf = Vector256.Create(0.5f);
-            var vSqrt2PiInv = Vector256.Create(0.7978845608f);
-            var vCoeff = Vector256.Create(0.044715f);
+            var vSqrt2PiInv = Vector256.Create(MathEx.SqrtTwoPiInv);
+            var vCoeff = Vector256.Create(MathEx.GeluCoeff);
             var one = Vector256.Create(1.0f);
 
             for (; i <= n - 8; i += 8)
@@ -112,28 +52,19 @@ public static class ActivationKernels
                 var x = Vector256.LoadUnsafe(ref pS[i]);
                 var x3 = Avx.Multiply(Avx.Multiply(x, x), x);
                 var z = Avx.Multiply(vSqrt2PiInv, Avx.Add(x, Avx.Multiply(vCoeff, x3)));
-                var t = FastTanh(z);
+                var t = MathEx.FastTanh(z);
                 var gelu = Avx.Multiply(vHalf, Avx.Multiply(x, Avx.Add(one, t)));
                 Vector256.StoreUnsafe(gelu, ref pD[i]);
             }
             for (; i < n; i++)
-            {
-                float x = pS[i];
-                float x3 = x * x * x;
-                float z = SqrtTwoPiInv * (x + GeluCoeff * x3);
-                pD[i] = 0.5f * x * (1f + MathF.Tanh(z));
-            }
+                pD[i] = MathEx.Gelu(pS[i]);
         }
     }
 
     public static void GELUScalar(ReadOnlySpan<float> src, Span<float> dst)
     {
         for (int i = 0; i < src.Length; i++)
-        {
-            float x  = src[i];
-            float x3 = x * x * x;
-            dst[i] = 0.5f * x * (1f + MathF.Tanh(SqrtTwoPiInv * (x + GeluCoeff * x3)));
-        }
+            dst[i] = MathEx.Gelu(src[i]);
     }
 
     
@@ -150,7 +81,7 @@ public static class ActivationKernels
             for (; i <= n - 8; i += 8)
             {
                 var x = Vector256.LoadUnsafe(ref pS[i]);
-                var e = FastExp(Avx.Subtract(Vector256<float>.Zero, x));
+                var e = MathEx.FastExp(Avx.Subtract(Vector256<float>.Zero, x));
                 Vector256.StoreUnsafe(Avx.Multiply(x, Avx.Divide(one, Avx.Add(one, e))), ref pD[i]);
             }
             for (; i < n; i++)
@@ -182,7 +113,7 @@ public static class ActivationKernels
             {
                 var g = Vector256.LoadUnsafe(ref pG[i]);
                 var u = Vector256.LoadUnsafe(ref pU[i]);
-                var e = FastExp(Avx.Subtract(Vector256<float>.Zero, g));
+                var e = MathEx.FastExp(Avx.Subtract(Vector256<float>.Zero, g));
                 var sig = Avx.Divide(one, Avx.Add(one, e));
                 Vector256.StoreUnsafe(Avx.Multiply(Avx.Multiply(g, sig), u), ref pD[i]);
             }
@@ -210,8 +141,8 @@ public static class ActivationKernels
         {
             int i = 0, n = dst.Length;
             var vHalf = Vector256.Create(0.5f);
-            var vSqrt2PiInv = Vector256.Create(0.7978845608f);
-            var vCoeff = Vector256.Create(0.044715f);
+            var vSqrt2PiInv = Vector256.Create(MathEx.SqrtTwoPiInv);
+            var vCoeff = Vector256.Create(MathEx.GeluCoeff);
             var one = Vector256.Create(1.0f);
 
             for (; i <= n - 8; i += 8)
@@ -220,30 +151,19 @@ public static class ActivationKernels
                 var u = Vector256.LoadUnsafe(ref pU[i]);
                 var g3 = Avx.Multiply(Avx.Multiply(g, g), g);
                 var z = Avx.Multiply(vSqrt2PiInv, Avx.Add(g, Avx.Multiply(vCoeff, g3)));
-                var t = FastTanh(z);
+                var t = MathEx.FastTanh(z);
                 var geluG = Avx.Multiply(vHalf, Avx.Multiply(g, Avx.Add(one, t)));
                 Vector256.StoreUnsafe(Avx.Multiply(geluG, u), ref pD[i]);
             }
             for (; i < n; i++)
-            {
-                float g = pG[i];
-                float g3 = g * g * g;
-                float z = SqrtTwoPiInv * (g + GeluCoeff * g3);
-                float gelu = 0.5f * g * (1f + MathF.Tanh(z));
-                pD[i] = gelu * pU[i];
-            }
+                pD[i] = MathEx.Gelu(pG[i]) * pU[i];
         }
     }
 
     public static void GeGLUScalar(ReadOnlySpan<float> gate, ReadOnlySpan<float> up, Span<float> dst)
     {
         for (int i = 0; i < dst.Length; i++)
-        {
-            float g  = gate[i];
-            float g3 = g * g * g;
-            float geluG = 0.5f * g * (1f + MathF.Tanh(SqrtTwoPiInv * (g + GeluCoeff * g3)));
-            dst[i] = geluG * up[i];
-        }
+            dst[i] = MathEx.Gelu(gate[i]) * up[i];
     }
 
     // Pass-through for gate=none
@@ -254,6 +174,7 @@ public static class ActivationKernels
     // Softmax  (numerically stable)
     
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static unsafe void SoftmaxRowAVX2(ReadOnlySpan<float> src, Span<float> dst)
     {
         int n = src.Length;
@@ -287,7 +208,7 @@ public static class ActivationKernels
             {
                 var v = Vector256.LoadUnsafe(ref pS[i]);
                 var shifted = Avx.Subtract(v, vMax256);
-                var e = FastExp(shifted);
+                var e = MathEx.FastExp(shifted);
                 Vector256.StoreUnsafe(e, ref pD[i]);
                 vSum = Avx.Add(vSum, e);
             }
@@ -313,6 +234,7 @@ public static class ActivationKernels
         }
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void SoftmaxRowScalar(ReadOnlySpan<float> src, Span<float> dst)
     {
         if (src.Length < 256)
@@ -335,6 +257,7 @@ public static class ActivationKernels
         for (int i = 0; i < n; i++) dst[i] *= inv;
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void SoftmaxRowScalarSmall(ReadOnlySpan<float> src, Span<float> dst)
     {
         float max = src[0];
@@ -352,6 +275,7 @@ public static class ActivationKernels
     // rmsInv is pre-computed by the Tensor-level wrapper — not computed here
     
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static unsafe void RMSNormRowAVX2(
         ReadOnlySpan<float> src, ReadOnlySpan<float> weight, Span<float> dst, float rmsInv)
     {

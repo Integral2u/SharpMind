@@ -1,4 +1,5 @@
-﻿using System.Threading.Tasks;
+﻿using System.Runtime.CompilerServices;
+using System.Threading.Tasks;
 using SharpMind.Core.Activations;
 using SharpMind.Core.Memory;
 using SharpMind.Core.Tensors;
@@ -218,6 +219,7 @@ public static class FfnKernels
         return result;
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static Tensor<float> SoftmaxOverExperts(Tensor<float> logits, SharpMind.Core.Memory.IWorkspace? workspace = null)
     {
         Tensor<float> result = workspace != null 
