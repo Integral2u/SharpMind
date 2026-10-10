@@ -29,6 +29,7 @@ public sealed class SharpMindModelConfig
     public float? RopeThetaSwa { get; set; }
     public int SlidingWindowSize { get; set; }
     public int? SlidingWindowPattern { get; set; }
+    public bool IsHybridSlidingWindow { get; set; }
     
     // Activation settings
     public string Activation { get; set; } = "silu";
@@ -69,6 +70,7 @@ public sealed class SharpMindModelConfig
             RopeThetaSwa = config.RopeThetaSwa,
             SlidingWindowSize = config.SlidingWindowSize,
             SlidingWindowPattern = config.SlidingWindowPattern,
+            IsHybridSlidingWindow = config.IsHybridSlidingWindow,
             Source = source,
         };
     }
@@ -88,6 +90,7 @@ public sealed class SharpMindModelConfig
             RopeThetaSwa = RopeThetaSwa,
             SlidingWindowSize = SlidingWindowSize,
             SlidingWindowPattern = SlidingWindowPattern,
+            IsHybridSlidingWindow = IsHybridSlidingWindow,
         };
     }
 

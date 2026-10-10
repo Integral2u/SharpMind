@@ -27,7 +27,83 @@ public class ModelConfigSwaTests
         RopeThetaSwa = 10_000f,
         SlidingWindowSize = 512,
         SlidingWindowPattern = 6,
+        IsHybridSlidingWindow = true,
     };
+
+    [Fact]
+    public void EffectiveCacheLength_Hybrid_ReturnsMaxSeqLen_NotWindow()
+    {
+        // Regression: a gemma-3-style config collapses every layer to the
+        // sliding window, so positions past the window threw in RoPE even on
+        // the full-attention layers. Hybrid configs keep the full context.
+        var config = Gemma3LikeConfig();
+        Assert.Equal(512, config.SlidingWindowSize);
+        Assert.Equal(config.MaxSeqLen, config.EffectiveInferenceCacheLength);
+    }
+
+    [Fact]
+    public void EffectiveCacheLength_LegacyWindowNoHybridFlag_CapsToWindow()
+    {
+        var config = new ModelConfig
+        {
+            VocabSize = 256,
+            HiddenDim = 128,
+            NumLayers = 4,
+            NumHeads = 4,
+            NumKvHeads = 1,
+            FfnDim = 512,
+            MaxSeqLen = 1024,
+            SlidingWindowSize = 512,
+            SlidingWindowPattern = 6,
+            IsHybridSlidingWindow = false,
+        };
+
+        Assert.Equal(512, config.EffectiveInferenceCacheLength);
+    }
+
+    [Fact]
+    public void Validate_HybridWindow_AcceptsValidConfig()
+    {
+        Gemma3LikeConfig().Validate(); // must not throw
+    }
+
+    [Fact]
+    public void Validate_RejectsHybridWindowWithoutWindow()
+    {
+        var config = new ModelConfig
+        {
+            VocabSize = 256,
+            HiddenDim = 128,
+            NumLayers = 6,
+            NumHeads = 4,
+            NumKvHeads = 1,
+            FfnDim = 512,
+            MaxSeqLen = 1024,
+            SlidingWindowPattern = 6,
+            IsHybridSlidingWindow = true,
+        };
+
+        Assert.Throws<InvalidOperationException>(() => config.Validate());
+    }
+
+    [Fact]
+    public void Validate_RejectsHybridWindowWithoutPattern()
+    {
+        var config = new ModelConfig
+        {
+            VocabSize = 256,
+            HiddenDim = 128,
+            NumLayers = 6,
+            NumHeads = 4,
+            NumKvHeads = 1,
+            FfnDim = 512,
+            MaxSeqLen = 1024,
+            SlidingWindowSize = 512,
+            IsHybridSlidingWindow = true,
+        };
+
+        Assert.Throws<InvalidOperationException>(() => config.Validate());
+    }
 
     [Fact]
     public void IsSwaLayer_Pattern6_MarksFullAttentionAtPeriodBoundary()
@@ -197,6 +273,7 @@ public class ModelConfigSwaTests
         Assert.Equal(10_000f, sharp.RopeThetaSwa);
         Assert.Equal(512, sharp.SlidingWindowSize);
         Assert.Equal(6, sharp.SlidingWindowPattern);
+        Assert.True(sharp.IsHybridSlidingWindow);
 
         var roundTripped = sharp.ToModelConfig();
         Assert.Equal(10_000f, roundTripped.RopeThetaSwa);
@@ -205,6 +282,7 @@ public class ModelConfigSwaTests
         Assert.Equal(1_000_000f, roundTripped.RopeTheta);
         Assert.True(roundTripped.IsSwaLayer(0));
         Assert.False(roundTripped.IsSwaLayer(5));
+        Assert.True(roundTripped.IsHybridSlidingWindow);
     }
 
     [Fact]
@@ -222,6 +300,7 @@ public class ModelConfigSwaTests
             Assert.Equal(10_000f, loaded.RopeThetaSwa);
             Assert.Equal(512, loaded.SlidingWindowSize);
             Assert.Equal(6, loaded.SlidingWindowPattern);
+            Assert.True(loaded.IsHybridSlidingWindow);
         }
         finally
         {

@@ -191,6 +191,25 @@ _* Single-run validation, not part of the two-run set above: the Mixture-of-Expe
 
 All of the numbers in this section come from one machine — the **AMD Ryzen 3 2200U (2C/4T, 2.5 GHz, 12 GB RAM)** named under the compatibility matrix. Treat them as a baseline for that class of hardware, not an absolute; re-run against your own. Model *loading* is covered separately under [Parallel full loading](#parallel-full-loading) (2.24× aggregate speedup over the sequential loader); everything below is about *decode*.
 
+### Cross-engine session comparison (2026-10-10)
+
+Same raw prompt `What is the capital of France?` to every engine — no chat template (llama-server `/completion` and `dotllm run -p` take the prompt raw; SharpMind tokenizes it directly). Greedy (temperature 0), 64 generated tokens, 4 threads, float KV cache, one warmup run discarded, best-of-3, engines interleaved per model on the same host. Load differs per engine by construction: SharpMind = `CreateWeights` + `InitializeWeights` + `CreateTransformer` in a fresh .NET process (cold JIT); llama.cpp = wall time from `llama-server` start to `/health` ok; dotLLM = the `load_ms` its run summary reports. dotLLM supports only Llama/Mistral/Phi/Qwen/DeepSeek architectures and no K-quants below Q4_K, so the gemma-3 and Qwen1.5-MoE cells are n/a.
+
+| Model | Engine | Load (s) | TTFT (s) | Decode (tok/s) |
+|---|---|---|---|---|
+| qwen2-0.5B Q8_0 | SharpMind | 6.2 | 0.29 | 14.56 |
+| | llama.cpp | 3.9 | 0.11 | 14.24 |
+| | dotLLM | 2.0 | 1.36 | 5.74 |
+| Llama-3.2-1B Q8_0 | SharpMind | 32.1 | 1.22 | 3.69 |
+| | llama.cpp | 7.7 | 0.17 | 5.02 |
+| | dotLLM | 3.3 | 2.85 | 3.23 |
+| gemma-3-270m Q8_0 | SharpMind | 3.1 | 0.10 | 18.52 |
+| | llama.cpp | 5.2 | 0.13 | 20.28 |
+| | dotLLM | — | — | — |
+| Qwen1.5-MoE-2.7B Q2_K | SharpMind | 102.4 | 13.44 | 0.61 |
+| | llama.cpp | 21.7 | 0.25 | 3.88 |
+| | dotLLM | — | — | — |
+
 ### Quantized decode kernels
 
 Decode is almost entirely quantized matmul, so the vec-dot kernels set the ceiling on tokens/s. `GgufSmokeProbe` has a `kbench` mode that allocates one weight buffer and times a single `M=1` matmul on its own — a whole forward pass multiplies kernel cost by orchestration cost and cannot tell the two apart:

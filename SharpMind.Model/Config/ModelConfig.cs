@@ -51,13 +51,24 @@ public sealed record ModelConfig
     public int MaxSeqLen { get; init; }
 
     /// <summary>
+    /// True for models that mix sliding-window and full-attention layers
+    /// (gemma-3/4 style). The windowed layers still mask attention to the last
+    /// <see cref="SlidingWindowSize"/> tokens, but the full-attention layers
+    /// attend the whole declared context, so the KV cache and RoPE tables must
+    /// span <see cref="MaxSeqLen"/>, not just the window.
+    /// </summary>
+    public bool IsHybridSlidingWindow { get; init; }
+
+    /// <summary>
     /// Effective context length for KV-cache allocation at inference.
     /// When a sliding window is declared, the cache is sized to the window
-    /// (tokens beyond it are never attended to). Falls back to
+    /// (tokens beyond it are never attended to) — unless the model mixes
+    /// windowed and full-attention layers (see <see cref="IsHybridSlidingWindow"/>),
+    /// in which case the cache spans the full declared context. Falls back to
     /// <see cref="MaxSeqLen"/> for full-context models.
     /// </summary>
     public int EffectiveInferenceCacheLength =>
-        SlidingWindowSize > 0 ? Math.Min(MaxSeqLen, SlidingWindowSize) : MaxSeqLen;
+        SlidingWindowSize > 0 && !IsHybridSlidingWindow ? Math.Min(MaxSeqLen, SlidingWindowSize) : MaxSeqLen;
 
     /// <summary>
     /// Override for head dimension (per-head key/value size).
@@ -342,6 +353,10 @@ public sealed record ModelConfig
             throw new InvalidOperationException($"SlidingWindowPattern must be > 0 (was {period}).");
         if (SlidingWindowPattern is not null && SlidingWindowSize <= 0)
             throw new InvalidOperationException("SlidingWindowPattern requires a SlidingWindowSize > 0.");
+        if (IsHybridSlidingWindow && SlidingWindowSize <= 0)
+            throw new InvalidOperationException("IsHybridSlidingWindow requires a SlidingWindowSize > 0.");
+        if (IsHybridSlidingWindow && (SlidingWindowPattern is null || SlidingWindowPattern <= 0))
+            throw new InvalidOperationException("IsHybridSlidingWindow requires a SlidingWindowPattern > 0.");
         if (NumExperts < TopKExperts)
             throw new InvalidOperationException(
                 $"NumExperts ({NumExperts}) must be >= TopKExperts ({TopKExperts}).");

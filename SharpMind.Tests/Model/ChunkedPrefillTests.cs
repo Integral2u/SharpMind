@@ -218,6 +218,58 @@ public sealed class ChunkedPrefillTests
         foreach (var c in caches) c.Dispose();
     }
 
+    [Fact]
+    public void ForwardLastLogits_HybridSlidingWindow_DecodesPastWindowWithoutRoPeOverflow()
+    {
+        // Regression: a gemma-3-style config (windowed + full-attention layers)
+        // collapsed every layer's RoPE and KV cache to the sliding window, so any
+        // position past the window threw "Position N exceeds MaxSeqLen WINDOW".
+        // Hybrid configs keep RoPE and the cache at MaxSeqLen; only the per-layer
+        // mask is windowed.
+        var cfg = new ModelConfig
+        {
+            VocabSize = 128,
+            HiddenDim = 32,
+            NumLayers = 4,
+            NumHeads = 4,
+            NumKvHeads = 2,
+            FfnDim = 64,
+            MaxSeqLen = 512,
+            SlidingWindowSize = 64,
+            SlidingWindowPattern = 2, // layers 1, 3 are full-attention
+            IsHybridSlidingWindow = true,
+        };
+
+        var sharpConfig = SharpMindConfig.Gpt with { Hardware = HardwareTier.Scalar };
+        var weights = ModelFactory.CreateForTraining(cfg, sharpConfig);
+        WeightInitializer.InitializeRandomly(weights, 1234);
+        using var model = ModelFactory.CreateTrainingTransformer(weights, sharpConfig);
+
+        var caches = new IKVCache[cfg.NumLayers];
+        for (int i = 0; i < cfg.NumLayers; i++)
+            caches[i] = new KVCache(1, cfg.NumKvHeads, cfg.EffectiveInferenceCacheLength, cfg.HeadDim);
+
+        using var workspace = MemoryHelpers.CreateWorkspace(
+            Workspace.CalculateRequiredSize(cfg.HiddenDim, cfg.FfnDim, cfg.VocabSize, cfg.NumLayers, cfg.EffectiveInferenceCacheLength));
+
+        // Prefill past the 64-token window — before the fix RoPE threw at position 65.
+        using (var _ = Prefill.ForwardLastLogitsChunked(model, caches, BuildPrompt(128), workspace)) { }
+        Assert.Equal(128, caches[0].Length);
+
+        // Keep decoding well past the old window cap: single-token steps at
+        // absolute positions 128..227.
+        using var step = Tensor<int>.From(new[] { 3 }, 1, 1);
+        for (int i = 0; i < 100; i++)
+        {
+            using var logits = model.ForwardLastLogits(step, caches, caches[0].Length, null);
+            Assert.Equal(cfg.VocabSize, logits.Shape[^1]);
+        }
+
+        Assert.Equal(228, caches[0].Length);
+
+        foreach (var c in caches) c.Dispose();
+    }
+
     private sealed unsafe class CountingLogitOps(LogitOps inner, Tensor<float> weight, byte[]? raw)
         : LogitOps(weight, raw)
     {

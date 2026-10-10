@@ -419,6 +419,7 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
             ExpertFfnDim = expertFfnDim,
             SharedExpertFfnDim = sharedExpertFfnDim,
             SlidingWindowSize = slidingWindowSize,
+            IsHybridSlidingWindow = slidingWindowSize > 0 && isGemma3Family,
             NormTopKProb = normTopKProb,
             PositionalEncoding = positionalEncoding,
         };
