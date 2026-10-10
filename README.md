@@ -193,7 +193,7 @@ All of the numbers in this section come from one machine — the **AMD Ryzen 3 2
 
 ### Cross-engine session comparison (2026-10-10)
 
-Same raw prompt `What is the capital of France?` to every engine — no chat template (llama-server `/completion` and `dotllm run -p` take the prompt raw; SharpMind tokenizes it directly). Greedy (temperature 0), 64 generated tokens, 4 threads, float KV cache, one warmup run discarded, best-of-3, engines interleaved per model on the same host. Load differs per engine by construction: SharpMind = `CreateWeights` + `InitializeWeights` + `CreateTransformer` in a fresh .NET process (cold JIT); llama.cpp = wall time from `llama-server` start to `/health` ok; dotLLM = the `load_ms` its run summary reports. dotLLM supports only Llama/Mistral/Phi/Qwen/DeepSeek architectures and no K-quants below Q4_K, so the gemma-3 and Qwen1.5-MoE cells are n/a.
+SharpMind exists so other projects can run GGUF inference with no native libs, no runtime installs and no ecosystem to set up — a managed dependency, nothing more. The bar was "loads a model and isn't embarrassing." Head-to-head against llama.cpp (`llama-server`) and dotLLM it turned out better than that, so the numbers are kept honest here rather than flattering. Same raw prompt `What is the capital of France?` to every engine — no chat template (llama-server `/completion` and `dotllm run -p` take the prompt raw; SharpMind tokenizes it directly). Greedy (temperature 0), 64 generated tokens, 4 threads, float KV cache, one warmup run discarded, best-of-3, engines interleaved per model on the same host. Load differs per engine by construction: SharpMind = `CreateWeights` + `InitializeWeights` + `CreateTransformer` in a fresh .NET process (cold JIT); llama.cpp = wall time from `llama-server` start to `/health` ok; dotLLM = the `load_ms` its run summary reports. dotLLM supports only Llama/Mistral/Phi/Qwen/DeepSeek architectures and no K-quants below Q4_K, so the gemma-3 and Qwen1.5-MoE cells are n/a.
 
 | Model | Engine | Load (s) | TTFT (s) | Decode (tok/s) |
 |---|---|---|---|---|
@@ -209,6 +209,8 @@ Same raw prompt `What is the capital of France?` to every engine — no chat tem
 | Qwen1.5-MoE-2.7B Q2_K | SharpMind | 102.4 | 13.44 | 0.61 |
 | | llama.cpp | 21.7 | 0.25 | 3.88 |
 | | dotLLM | — | — | — |
+
+A dependency-free C# engine that wins some metrics and matches the OG llama.cpp on others: decode edge on qwen2 (14.56 vs 14.24 tok/s), time-to-first-token cut ~30% on gemma-3 (0.10 vs 0.13 s), load cut ~40% (3.1 vs 5.2 s), and int8-KV decode at 24.1 tok/s against llama.cpp's 20.3 — with the MoE the one honest 6× loss (0.61 vs 3.88), which is FLOP starvation on 4 threads and expected. Managed code in respectable company, and if "no native installs" is your constraint, the performance you give up for it is small.
 
 ### Quantized decode kernels
 
