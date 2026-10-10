@@ -179,7 +179,7 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
 
     public static ModelMetaData LoadMeta(string path)
     {
-        using var stream = File.OpenRead(path);
+        using var stream = ModelFileIo.OpenRead(path);
         using var reader = new BinaryReader(stream);
 
         var meta = new ModelMetaData();

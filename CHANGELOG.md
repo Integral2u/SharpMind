@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Model loads retry through a transient Windows share/lock, and `TempDirectory` teardown survives an AV scan** — antivirus/indexers on Windows can hold a freshly written .gguf/.smm open for a few milliseconds (usually without `FILE_SHARE_DELETE`), which surfaced as intermittent `The process cannot access the file ... because it is being used by another process` failures in CI — both when a load was opened right after an export (the `StreamingLoad_*` suite) and when a test temp dir was deleted at teardown. Metadata/tensor-data opens (`SmmLoader`, `GgufLoader.LoadMeta`, and `WeightStreamFactory` via `ModelLoaderBase`) now go through `ModelFileIo`, which retries only the two sharing/lock violations (`ERROR_SHARING_VIOLATION`/`ERROR_LOCK_VIOLATION`) for a bounded ~1.9 s before failing — a missing file still throws immediately. `TempDirectory.Dispose` retries its recursive delete the same way and leaves a stray temp dir behind rather than failing the test. Pinned by `ModelFileIoTests` (an exclusive `FileShare.None` handle clears the retry path; a missing file throws without waiting).
+
 ## [1.0.8.0]
 
 ### Added

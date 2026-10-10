@@ -64,7 +64,7 @@ public abstract class ModelLoaderBase(
             return;
         }
 
-        using var stream = WeightStreamFactory.Open(_path, _useSafeIo);
+        using var stream = ModelFileIo.OpenModelStream(_path, _useSafeIo);
         foreach (var info in meta.Tensors)
         {
             cancellationToken?.ThrowIfCancellationRequested();
@@ -135,7 +135,7 @@ public abstract class ModelLoaderBase(
         void RunItems(List<List<TensorInfo>> slice)
         {
             if (slice.Count == 0) return;
-            using var stream = WeightStreamFactory.Open(_path, _useSafeIo);
+            using var stream = ModelFileIo.OpenModelStream(_path, _useSafeIo);
             foreach (var bucket in slice)
                 foreach (var info in bucket)
                 {
@@ -247,7 +247,7 @@ public abstract class ModelLoaderBase(
         var targetBlock = layerIndex < weights.Blocks.Length ? weights.Blocks[layerIndex] : null;
         if (targetBlock == null) return;
 
-        using var stream = WeightStreamFactory.Open(_path, _useSafeIo);
+        using var stream = ModelFileIo.OpenModelStream(_path, _useSafeIo);
 
         foreach (var info in meta.Tensors)
         {
@@ -289,7 +289,7 @@ public abstract class ModelLoaderBase(
             weights.IsMoE = TransformerWeights.IsMoEGguf(meta.Tensors);
         }
 
-        using var stream = WeightStreamFactory.Open(_path, _useSafeIo);
+        using var stream = ModelFileIo.OpenModelStream(_path, _useSafeIo);
 
         foreach (var info in meta.Tensors)
         {

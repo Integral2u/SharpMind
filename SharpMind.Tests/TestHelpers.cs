@@ -21,8 +21,27 @@ internal sealed class TempDirectory : IDisposable
 
     public void Dispose()
     {
-        if (Directory.Exists(Path))
-            Directory.Delete(Path, recursive: true);
+        // Windows AV/indexers can transiently hold a freshly written model file
+        // open without FILE_SHARE_DELETE, which makes Directory.Delete throw
+        // "being used by another process". Retry briefly, then leave any leftover
+        // temp dir behind rather than failing the test for a scanner race.
+        for (int attempt = 0; attempt < 8; attempt++)
+        {
+            try
+            {
+                if (Directory.Exists(Path))
+                    Directory.Delete(Path, recursive: true);
+                return;
+            }
+            catch (IOException) when (attempt < 7)
+            {
+                Thread.Sleep(100 * (attempt + 1));
+            }
+            catch (IOException)
+            {
+                return;
+            }
+        }
     }
 }
 

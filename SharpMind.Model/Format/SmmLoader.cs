@@ -36,7 +36,7 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
 
     public static ModelMetaData LoadMeta(string path)
     {
-        using var stream = File.OpenRead(path);
+        using var stream = ModelFileIo.OpenRead(path);
         using var reader = new BinaryReader(stream);
         return ReadIndex(reader, stream).Meta;
     }
@@ -101,7 +101,7 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
 
     public static List<SmmPluginEntry> LoadPlugins(string path)
     {
-        using var stream = File.OpenRead(path);
+        using var stream = ModelFileIo.OpenRead(path);
         using var reader = new BinaryReader(stream);
         if (reader.ReadUInt32() != SmmConstants.Magic)
             throw new InvalidDataException("Not SMM: " + path);
@@ -137,7 +137,7 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         if (!File.Exists(path)) throw new FileNotFoundException(path);
-        using var stream = File.OpenRead(path);
+        using var stream = ModelFileIo.OpenRead(path);
         using var reader = new BinaryReader(stream);
         return ReadIndex(reader, stream).Entries;
     }
@@ -151,7 +151,7 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         if (!File.Exists(path)) throw new FileNotFoundException(path);
 
-        using var stream = File.OpenRead(path);
+        using var stream = ModelFileIo.OpenRead(path);
 
         // Re-derive the data offset from the header so converters don't need to
         // load the full index twice.
@@ -207,7 +207,7 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
 
     private static SmmFileIndex ReadIndex(string path)
     {
-        using var stream = File.OpenRead(path);
+        using var stream = ModelFileIo.OpenRead(path);
         using var reader = new BinaryReader(stream);
         return ReadIndex(reader, stream);
     }
