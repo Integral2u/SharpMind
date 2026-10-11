@@ -64,13 +64,12 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         : ChatRole.System;
 
     /// <summary>
-    /// Optional callback fired during the warm-up prefill in
-    /// <see cref="InitializeChat"/> with the overall fraction (0..1) of the
-    /// initial prompt prefilled. Lets the loading view surface "Prefilling X%"
-    /// during session startup instead of jumping from 15% to done. Set null to
-    /// suppress.
+    /// Optional callback fired during <see cref="WarmupPrefillAsync"/> with the
+    /// overall fraction (0..1) of the initial prompt prefilled. Lets the loading
+    /// view surface "Prefilling X%" during session startup instead of jumping
+    /// from 15% to done. Set null to suppress.
     /// </summary>
-    internal Action<double>? PrefillProgress { get; set; }
+    public Action<double>? PrefillProgress { get; set; }
     private readonly IKVCache[]? _caches;
     /// <summary>
     /// Optional accelerator-backed inference engine. When present,
@@ -237,13 +236,16 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     /// Prefills the initial prompt (system prompt + tools) into the generator's
     /// KV cache after <see cref="InitializeChat"/> completes. Reports chunked
     /// progress (0..1) via <see cref="PrefillProgress"/> so the loading view
-    /// can surface "Prefilling X%" during startup.
+    /// can surface "Prefilling X%" during startup. Call this before
+    /// <see cref="GetSnapshot"/> so the saved snapshot carries a warmed KV cache
+    /// (otherwise <see cref="ChatSessionSnapshot.KVCache"/> is null and the next
+    /// load must prefill from scratch).
     /// When a <see cref="KVCacheSnapshot"/> was restored via
     /// <see cref="LoadSnapshot"/> and its prompt hash matches the freshly-built
     /// prompt, the prefill is skipped and the cache is restored directly — the
     /// first user turn then extends it incrementally as usual.
     /// </summary>
-    internal async Task WarmupPrefillAsync()
+    public async Task WarmupPrefillAsync()
     {
         EnsureInitialized();
         string prompt = BuildPrompt();
