@@ -52,6 +52,13 @@ public abstract class TransformerWeights : IDisposable
     /// </summary>
     public Tensor<float>? PositionEmbedding { get; }
 
+    /// <summary>
+    /// BERT-family token-type (segment) embeddings [NumTokenTypes, HiddenDim].
+    /// Present only when <see cref="ModelConfig.NumTokenTypes"/> is &gt; 0. A
+    /// single-sequence encode adds row 0 to every token.
+    /// </summary>
+    public Tensor<float>? TokenTypeEmbedding { get; }
+
     // Raw quantized data for non-block tensors (embedding, lm_head)
     public byte[]? RawEmbedding { get; set; }
     public QuantDType? RawEmbeddingDtype { get; set; }
@@ -86,7 +93,8 @@ public abstract class TransformerWeights : IDisposable
         Tensor<float>? finalNormB,
         BlockWeights[] blocks,
         IModelLoader? loader,
-        Tensor<float>? positionEmbedding = null)
+        Tensor<float>? positionEmbedding = null,
+        Tensor<float>? tokenTypeEmbedding = null)
     {
         Config = config;
         EmbeddingWeight = embedding;
@@ -96,6 +104,7 @@ public abstract class TransformerWeights : IDisposable
         Blocks = blocks;
         Loader = loader;
         PositionEmbedding = positionEmbedding;
+        TokenTypeEmbedding = tokenTypeEmbedding;
     }
 
     /// <summary>Initialises weights using the stored <see cref="IModelLoader"/>.
@@ -119,6 +128,7 @@ public abstract class TransformerWeights : IDisposable
             FinalNormWeight.Dispose();
             FinalNormBias?.Dispose();
             PositionEmbedding?.Dispose();
+            TokenTypeEmbedding?.Dispose();
             foreach (var block in Blocks) block.Dispose();
             // Drop the raw quantized byte[] references so the GC can reclaim
             // them the moment the owning graph is unreachable. They are LOH
@@ -194,12 +204,21 @@ public abstract class TransformerWeights : IDisposable
             && !name.Contains("per_layer", StringComparison.OrdinalIgnoreCase))
             return (EmbeddingWeight, null, null);
         if (name.Contains("position_embd", StringComparison.OrdinalIgnoreCase)) return (PositionEmbedding, null, null);
+        // BERT token-type (segment) embeddings. "token_types" never collides with
+        // "token_embd", so it can sit before the token-embedding match above.
+        if (name.Contains("token_types", StringComparison.OrdinalIgnoreCase)) return (TokenTypeEmbedding, null, null);
         // LFM2's output RMSNorm is stored as "token_embd_norm.weight" (the gguf
         // converter maps LLM_TENSOR_OUTPUT_NORM_LFM2 "model.embedding_norm" to
         // that name). Route it to the final norm, NOT the embedding — the strict
         // token_embd match above already excludes it, so it must land here.
-        if (name.Contains("output_norm", StringComparison.OrdinalIgnoreCase)
+        // BERT per-layer post-norms (attn_output_norm / layer_output_norm) contain
+        // "output_norm" but belong to a block, not the global final norm — route
+        // them to the per-layer branch below.
+        bool isBertLayerNorm = name.Contains("attn_output_norm", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("layer_output_norm", StringComparison.OrdinalIgnoreCase);
+        if ((name.Contains("output_norm", StringComparison.OrdinalIgnoreCase)
             || name.Contains("token_embd_norm", StringComparison.OrdinalIgnoreCase))
+            && !isBertLayerNorm)
         {
             if (name.Contains("bias", StringComparison.OrdinalIgnoreCase)) return (FinalNormBias, null, null);
             return (FinalNormWeight, null, null);
@@ -215,6 +234,7 @@ public abstract class TransformerWeights : IDisposable
                 if (name.Contains("attn_q", StringComparison.OrdinalIgnoreCase) || name.Contains("q_proj", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
                 if (name.Contains("attn_k", StringComparison.OrdinalIgnoreCase) || name.Contains("k_proj", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
                 if (name.Contains("attn_v", StringComparison.OrdinalIgnoreCase) || name.Contains("v_proj", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
+                if (name.Contains("attn_output_norm", StringComparison.OrdinalIgnoreCase) || name.Contains("layer_output_norm", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
                 if (name.Contains("attn_output", StringComparison.OrdinalIgnoreCase) || name.Contains("o_proj", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
                 if (name.Contains("attn_norm", StringComparison.OrdinalIgnoreCase) || name.Contains("input_layernorm", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
                 if (name.Contains("ffn_norm", StringComparison.OrdinalIgnoreCase) || name.Contains("post_attention_layernorm", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
@@ -234,6 +254,7 @@ public abstract class TransformerWeights : IDisposable
                 if (name.Contains("attn_q", StringComparison.OrdinalIgnoreCase) || name.Contains("q_proj", StringComparison.OrdinalIgnoreCase)) return (null, block, "RawWq");
                 if (name.Contains("attn_k", StringComparison.OrdinalIgnoreCase) || name.Contains("k_proj", StringComparison.OrdinalIgnoreCase)) return (null, block, "RawWk");
                 if (name.Contains("attn_v", StringComparison.OrdinalIgnoreCase) || name.Contains("v_proj", StringComparison.OrdinalIgnoreCase)) return (null, block, "RawWv");
+                if (name.Contains("attn_output_norm", StringComparison.OrdinalIgnoreCase) || name.Contains("layer_output_norm", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
                 if (name.Contains("attn_output", StringComparison.OrdinalIgnoreCase) || name.Contains("o_proj", StringComparison.OrdinalIgnoreCase)) return (null, block, "RawWo");
                 if (name.Contains("attn_norm", StringComparison.OrdinalIgnoreCase) || name.Contains("input_layernorm", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
                 if (name.Contains("ffn_norm", StringComparison.OrdinalIgnoreCase) || name.Contains("post_attention_layernorm", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
@@ -320,8 +341,12 @@ public abstract class TransformerWeights : IDisposable
             && !name.Contains("token_embd_norm", StringComparison.OrdinalIgnoreCase)
             && !name.Contains("per_layer", StringComparison.OrdinalIgnoreCase)) return EmbeddingWeight;
         if (name.Contains("position_embd", StringComparison.OrdinalIgnoreCase)) return PositionEmbedding;
-        if (name.Contains("output_norm", StringComparison.OrdinalIgnoreCase)
+        if (name.Contains("token_types", StringComparison.OrdinalIgnoreCase)) return TokenTypeEmbedding;
+        bool isBertLayerNorm = name.Contains("attn_output_norm", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("layer_output_norm", StringComparison.OrdinalIgnoreCase);
+        if ((name.Contains("output_norm", StringComparison.OrdinalIgnoreCase)
             || name.Contains("token_embd_norm", StringComparison.OrdinalIgnoreCase))
+            && !isBertLayerNorm)
         {
             if (name.Contains("bias", StringComparison.OrdinalIgnoreCase)) return FinalNormBias;
             return FinalNormWeight;
@@ -360,6 +385,8 @@ public abstract class TransformerWeights : IDisposable
                 if (name.Contains("attn_q", StringComparison.OrdinalIgnoreCase) || name.Contains("q_proj", StringComparison.OrdinalIgnoreCase)) return b.WqBias;
                 if (name.Contains("attn_k", StringComparison.OrdinalIgnoreCase) || name.Contains("k_proj", StringComparison.OrdinalIgnoreCase)) return b.WkBias;
                 if (name.Contains("attn_v", StringComparison.OrdinalIgnoreCase) || name.Contains("v_proj", StringComparison.OrdinalIgnoreCase)) return b.WvBias;
+                if (name.Contains("attn_output_norm", StringComparison.OrdinalIgnoreCase)) return b.Norm1B ??= new Tensor<float>(Config.HiddenDim);
+                if (name.Contains("layer_output_norm", StringComparison.OrdinalIgnoreCase)) return b.Norm2B ??= new Tensor<float>(Config.HiddenDim);
                 if (name.Contains("attn_output", StringComparison.OrdinalIgnoreCase) || name.Contains("o_proj", StringComparison.OrdinalIgnoreCase)) return b.WoBias;
                 if (name.Contains("attn_norm", StringComparison.OrdinalIgnoreCase) || name.Contains("input_layernorm", StringComparison.OrdinalIgnoreCase)) return b.Norm1B;
                 if (name.Contains("ffn_norm", StringComparison.OrdinalIgnoreCase) || name.Contains("post_attention_layernorm", StringComparison.OrdinalIgnoreCase)) return b.Norm2B;
@@ -399,6 +426,8 @@ else
                 if (name.Contains("attn_q", StringComparison.OrdinalIgnoreCase) || name.Contains("q_proj", StringComparison.OrdinalIgnoreCase)) return b.Wq;
                 if (name.Contains("attn_k", StringComparison.OrdinalIgnoreCase) || name.Contains("k_proj", StringComparison.OrdinalIgnoreCase)) return b.Wk;
                 if (name.Contains("attn_v", StringComparison.OrdinalIgnoreCase) || name.Contains("v_proj", StringComparison.OrdinalIgnoreCase)) return b.Wv;
+                if (name.Contains("attn_output_norm", StringComparison.OrdinalIgnoreCase)) return b.Norm1W ??= new Tensor<float>(Config.HiddenDim);
+                if (name.Contains("layer_output_norm", StringComparison.OrdinalIgnoreCase)) return b.Norm2W ??= new Tensor<float>(Config.HiddenDim);
                 if (name.Contains("attn_output", StringComparison.OrdinalIgnoreCase) || name.Contains("o_proj", StringComparison.OrdinalIgnoreCase)) return b.Wo;
                 if (name.Contains("attn_norm", StringComparison.OrdinalIgnoreCase) || name.Contains("input_layernorm", StringComparison.OrdinalIgnoreCase)) return b.Norm1W;
                 if (name.Contains("ffn_norm", StringComparison.OrdinalIgnoreCase) || name.Contains("post_attention_layernorm", StringComparison.OrdinalIgnoreCase)) return b.Norm2W;
@@ -904,7 +933,8 @@ public sealed class TransformerWeightsFull(
     Tensor<float>? finalNormB,
 TransformerWeights.BlockWeights[] blocks,
     IModelLoader loader,
-    Tensor<float>? positionEmbedding = null) : TransformerWeights(config, embedding, lmHead, finalNormW, finalNormB, blocks, loader, positionEmbedding)
+    Tensor<float>? positionEmbedding = null,
+    Tensor<float>? tokenTypeEmbedding = null) : TransformerWeights(config, embedding, lmHead, finalNormW, finalNormB, blocks, loader, positionEmbedding, tokenTypeEmbedding)
 {
     public override void InitializeWeights(IProgress<float>? progress = null, CancellationToken? cancellationToken = null)
         => Loader!.LoadAllWeights(this, progress, cancellationToken);
@@ -927,8 +957,9 @@ public sealed class TransformerWeightsStreaming : TransformerWeights
         Tensor<float>? finalNormB,
         TransformerWeights.BlockWeights[] blocks,
         IModelLoader loader,
-        Tensor<float>? positionEmbedding = null)
-        : base(config, embedding, lmHead, finalNormW, finalNormB, blocks, loader, positionEmbedding)
+        Tensor<float>? positionEmbedding = null,
+        Tensor<float>? tokenTypeEmbedding = null)
+        : base(config, embedding, lmHead, finalNormW, finalNormB, blocks, loader, positionEmbedding, tokenTypeEmbedding)
     {
         // Layer-derived buffers (fused gate+up, MoE expert planes) acquire through the same
         // pooling, sized by the block allocator, so unloads round-trip everything.

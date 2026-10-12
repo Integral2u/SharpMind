@@ -20,6 +20,9 @@ public abstract class TransformerBlock : IDisposable
     protected NormLayer? _postAttnNorm;
     protected NormLayer? _postFfnNorm;
     protected readonly int _layerIdx;
+    // BERT-style post-norm residual placement: no pre-norm; norm1/norm2 are
+    // applied after each residual add instead of to the sublayer input.
+    protected readonly bool _postNormResidual;
     private bool _disposed;
 
     public NormLayer Norm1 => _norm1;
@@ -29,9 +32,10 @@ public abstract class TransformerBlock : IDisposable
     public FfnLayer Ffn => _ffn;
     public NormLayer? PostAttnNorm => _postAttnNorm;
     public NormLayer? PostFfnNorm => _postFfnNorm;
+    public bool PostNormResidual => _postNormResidual;
 
     protected TransformerBlock(int layerIdx, AttentionLayer? attention, FfnLayer ffn, NormLayer norm1, NormLayer norm2,
-        NormLayer? postAttnNorm = null, NormLayer? postFfnNorm = null, ShortConvLayer? shortConv = null)
+        NormLayer? postAttnNorm = null, NormLayer? postFfnNorm = null, ShortConvLayer? shortConv = null, bool postNormResidual = false)
     {
         ArgumentNullException.ThrowIfNull(ffn);
         ArgumentNullException.ThrowIfNull(norm1);
@@ -47,6 +51,7 @@ public abstract class TransformerBlock : IDisposable
         _norm2 = norm2;
         _postAttnNorm = postAttnNorm;
         _postFfnNorm = postFfnNorm;
+        _postNormResidual = postNormResidual;
     }
 
     /// <summary>
@@ -122,6 +127,18 @@ public abstract class TransformerBlock : IDisposable
         if (name.Contains("attn_v", StringComparison.OrdinalIgnoreCase) || name.Contains("v_proj", StringComparison.OrdinalIgnoreCase) || name.Contains("self_attn.v", StringComparison.OrdinalIgnoreCase))
         {
             _attention?.LoadWeights(name, data);
+            return true;
+        }
+        if (name.Contains("attn_output_norm", StringComparison.OrdinalIgnoreCase))
+        {
+            if (name.Contains("bias", StringComparison.OrdinalIgnoreCase)) _norm1.LoadBias(data);
+            else _norm1.LoadWeight(data);
+            return true;
+        }
+        if (name.Contains("layer_output_norm", StringComparison.OrdinalIgnoreCase))
+        {
+            if (name.Contains("bias", StringComparison.OrdinalIgnoreCase)) _norm2.LoadBias(data);
+            else _norm2.LoadWeight(data);
             return true;
         }
         if (name.Contains("attn_output", StringComparison.OrdinalIgnoreCase) || name.Contains("attn_o", StringComparison.OrdinalIgnoreCase) ||
@@ -202,8 +219,12 @@ public abstract class TransformerBlock : IDisposable
         _ffn.SetWeights(weights);
         if (weights.Norm1W != null)
             _norm1.LoadWeight(weights.Norm1W.Data);
+        if (weights.Norm1B != null && _norm1.NormBias != null)
+            _norm1.LoadBias(weights.Norm1B.Data);
         if (weights.Norm2W != null)
             _norm2.LoadWeight(weights.Norm2W.Data);
+        if (weights.Norm2B != null && _norm2.NormBias != null)
+            _norm2.LoadBias(weights.Norm2B.Data);
     }
 
     public void FreeFloatWeights()

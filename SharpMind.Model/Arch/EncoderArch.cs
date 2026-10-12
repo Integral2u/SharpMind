@@ -58,7 +58,9 @@ public sealed class EncoderArch : IArchitecture
 
             // Encoders typically don't use KV caches, but we support the API
             var next = _blocks[i].Forward(current, caches?[i], positionOffset, causal: false, workspace: workspace);
-            if (ownsLast) current.Dispose();
+            // Blocks mutate and return their input, so next aliases current; only
+            // dispose the previous tensor when a block actually produced a new one.
+            if (ownsLast && !ReferenceEquals(next, current)) current.Dispose();
             current = next;
             ownsLast = true;
         }

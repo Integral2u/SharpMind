@@ -35,7 +35,8 @@ public static class ModelFactory
         Tensor<float>? finalNormB = null;
         var blockWeights = AllocateBlockWeights(modelConfig, sharpConfig);
         return new TransformerWeightsFull(modelConfig, embedding, lmHead, finalNormW, finalNormB, blockWeights, null!,
-            positionEmbedding: AllocatePositionEmbedding(modelConfig));
+            positionEmbedding: AllocatePositionEmbedding(modelConfig),
+            tokenTypeEmbedding: AllocateTokenTypeEmbedding(modelConfig));
     }
 
     /// <summary>Creates a <see cref="TransformerWeights"/> instance with a
@@ -89,16 +90,18 @@ public static class ModelFactory
         // real use � SMM export and the conversion round-trip do exactly that.
         var blockWeights = loadMode == LoadMode.Full && !quantizedResident
             ? AllocateBlockWeights(modelConfig, sharpConfig)
-            : AllocateInferenceBlockWeights(modelConfig);
+            : AllocateInferenceBlockWeights(modelConfig, sharpConfig);
 
         var loader = ModelFormatHelpers.GetModelLoaderFor((ModelFormat)fmt, qOps, path, modelConfig, useSafeIo, maxParallelLoadDegree);
 
         if (loadMode == LoadMode.Full)
             return new TransformerWeightsFull(modelConfig, embedding, lmHead, finalNormW, finalNormB, blockWeights, loader,
-                positionEmbedding: AllocatePositionEmbedding(modelConfig));
+                positionEmbedding: AllocatePositionEmbedding(modelConfig),
+                tokenTypeEmbedding: AllocateTokenTypeEmbedding(modelConfig));
         else
             return new TransformerWeightsStreaming(modelConfig, embedding, lmHead, finalNormW, finalNormB, blockWeights, loader,
-                positionEmbedding: AllocatePositionEmbedding(modelConfig))
+                positionEmbedding: AllocatePositionEmbedding(modelConfig),
+                tokenTypeEmbedding: AllocateTokenTypeEmbedding(modelConfig))
             {
                 // Streaming MoE expert residency: > 0 pins that many most-used routed experts
                 // per layer across unloads and streams the rest on demand; the streaming weights
@@ -112,6 +115,11 @@ public static class ModelFactory
     private static Tensor<float>? AllocatePositionEmbedding(ModelConfig config)
         => config.PositionalEncoding == Config.PositionalEncoding.Learned
             ? new Tensor<float>(config.MaxSeqLen, config.HiddenDim)
+            : null;
+
+    private static Tensor<float>? AllocateTokenTypeEmbedding(ModelConfig config)
+        => config.NumTokenTypes > 0
+            ? new Tensor<float>(config.NumTokenTypes, config.HiddenDim)
             : null;
 
     /// <summary>
@@ -157,10 +165,21 @@ public static class ModelFactory
     /// left null so the quantized forward reads the raw bytes directly instead of
     /// a dequantized F32 duplicate.
     /// </summary>
-    private static TransformerWeights.BlockWeights[] AllocateInferenceBlockWeights(ModelConfig config)
+    private static TransformerWeights.BlockWeights[] AllocateInferenceBlockWeights(ModelConfig config, SharpMindConfig sharpConfig)
     {
         int qDim = config.NumHeads * config.HeadDim;
         int kvDim = config.NumKvHeads * config.HeadDim;
+        // LayerNorm carries a bias; allocate placeholder tensors so the loader
+        // fills them and BuildNorm wires them into the NormLayer (BERT-family
+        // attn_output_norm/layer_output_norm biases depend on this). RMSNorm has
+        // no bias, so no tensor is allocated and NormBias stays null.
+        bool layerNorm = sharpConfig.Norm == NormKind.LayerNorm;
+        // Dense FFNs (BERT, GPT-2) carry ffn_up/ffn_down biases. They have no
+        // raw field, so the streaming metadata scan never allocates them and
+        // FfnLayer.SetWeights only applied a bias alongside a float weight —
+        // a streaming load silently dropped them and diverged from the full
+        // load. Allocate placeholders so SetWeights can push the bias alone.
+        bool denseFfn = sharpConfig.Ffn == FfnKind.Dense;
         var blocks = new TransformerWeights.BlockWeights[config.NumLayers];
         for (int i = 0; i < config.NumLayers; i++)
         {
@@ -168,11 +187,15 @@ public static class ModelFactory
             {
                 LayerIndex = i,
                 Norm1W = Tensor<float>.Ones(config.HiddenDim),
+                Norm1B = layerNorm ? new Tensor<float>(config.HiddenDim) : null,
                 Norm2W = Tensor<float>.Ones(config.HiddenDim),
+                Norm2B = layerNorm ? new Tensor<float>(config.HiddenDim) : null,
                 WqBias = new Tensor<float>(qDim),
                 WkBias = new Tensor<float>(kvDim),
                 WvBias = new Tensor<float>(kvDim),
-                WoBias = new Tensor<float>(config.HiddenDim)
+                WoBias = new Tensor<float>(config.HiddenDim),
+                Wf1Bias = denseFfn ? new Tensor<float>(config.FfnDim) : null,
+                Wf2Bias = denseFfn ? new Tensor<float>(config.HiddenDim) : null
             };
         }
         return blocks;
@@ -182,6 +205,7 @@ public static class ModelFactory
     {
         int ffnDim = config.FfnDim;
         int wf1Dim = sharpConfig.Ffn == FfnKind.Gated ? 2 * ffnDim : ffnDim;
+        bool layerNorm = sharpConfig.Norm == NormKind.LayerNorm;
         var blocks = new TransformerWeights.BlockWeights[config.NumLayers];
 
         for (int i = 0; i < config.NumLayers; i++)
@@ -203,9 +227,9 @@ public static class ModelFactory
                 new Tensor<float>(wf1Dim),                            // Wf1B
                 new Tensor<float>(config.HiddenDim),                  // Wf2B
                 Tensor<float>.Ones(config.HiddenDim),                 // Norm1W
-                null,                                                 // Norm1B
+                layerNorm ? new Tensor<float>(config.HiddenDim) : null, // Norm1B
                 Tensor<float>.Ones(config.HiddenDim),                 // Norm2W
-                null,                                                 // Norm2B
+                layerNorm ? new Tensor<float>(config.HiddenDim) : null, // Norm2B
                 null,                                                 // QNormW
                 null,                                                 // KNormW
                 null,                                                 // PostNorm1W
@@ -395,9 +419,10 @@ public static class ModelFactory
         {
             var shortConv = new ShortConvLayer(weights.Config, qOps, blockWeights, layerMapping);
             shortConv.SetWeights(blockWeights);
+            bool shortConvPostNorm = weights.Config.PostNormResidual;
             return useHooks
-                ? new HookedTransformerBlock(layerIdx, null, ffn, norm1, norm2, postAttnNorm, postFfnNorm, shortConv)
-                : new UnhookedTransformerBlock(layerIdx, null, ffn, norm1, norm2, postAttnNorm, postFfnNorm, shortConv);
+                ? new HookedTransformerBlock(layerIdx, null, ffn, norm1, norm2, postAttnNorm, postFfnNorm, shortConv, shortConvPostNorm)
+                : new UnhookedTransformerBlock(layerIdx, null, ffn, norm1, norm2, postAttnNorm, postFfnNorm, shortConv, shortConvPostNorm);
         }
 
         var t = _attnCache.GetOrAdd(MappingHash.Compute(cfg), (h) =>
@@ -408,9 +433,10 @@ public static class ModelFactory
         ArgumentNullException.ThrowIfNull(attn);
         attn.SetWeights(blockWeights);
 
+        bool postNormResidual = weights.Config.PostNormResidual;
         return useHooks
-            ? new HookedTransformerBlock(layerIdx, attn, ffn, norm1, norm2, postAttnNorm, postFfnNorm)
-            : new UnhookedTransformerBlock(layerIdx, attn, ffn, norm1, norm2, postAttnNorm, postFfnNorm);
+            ? new HookedTransformerBlock(layerIdx, attn, ffn, norm1, norm2, postAttnNorm, postFfnNorm, postNormResidual: postNormResidual)
+            : new UnhookedTransformerBlock(layerIdx, attn, ffn, norm1, norm2, postAttnNorm, postFfnNorm, postNormResidual: postNormResidual);
     }
 
     private static FfnLayer BuildFfn(

@@ -7,8 +7,8 @@ using SharpMind.Model.Layers.ShortConv;
 namespace SharpMind.Model.Layers;
 
 public sealed class HookedTransformerBlock(int layerIdx, AttentionLayer? attention, FfnLayer ffn, NormLayer norm1, NormLayer norm2,
-    NormLayer? postAttnNorm = null, NormLayer? postFfnNorm = null, ShortConvLayer? shortConv = null)
-    : TransformerBlock(layerIdx, attention, ffn, norm1, norm2, postAttnNorm, postFfnNorm, shortConv)
+    NormLayer? postAttnNorm = null, NormLayer? postFfnNorm = null, ShortConvLayer? shortConv = null, bool postNormResidual = false)
+    : TransformerBlock(layerIdx, attention, ffn, norm1, norm2, postAttnNorm, postFfnNorm, shortConv, postNormResidual)
 {
     private IActivationHook? _hook;
 
@@ -19,6 +19,24 @@ public sealed class HookedTransformerBlock(int layerIdx, AttentionLayer? attenti
     public override Tensor<float> Forward(Tensor<float> x, IKVCache? cache, int positionOffset = 0, bool causal = true, IWorkspace? workspace = null, int windowSize = 0)
     {
         ThrowIfDisposed();
+
+        if (_postNormResidual)
+        {
+            _hook?.OnPreAttention(_layerIdx, x);
+            var postAttnOut = FirstBranch(x, cache, positionOffset, causal, workspace, windowSize);
+            _hook?.OnPostAttention(_layerIdx, postAttnOut);
+            x.AddInPlace(postAttnOut);
+            postAttnOut.Dispose();
+            _norm1.ForwardInPlace(x);
+
+            var postFfnOut = _ffn.Forward(x, workspace);
+            _hook?.OnPostFFN(_layerIdx, postFfnOut);
+            x.AddInPlace(postFfnOut);
+            postFfnOut.Dispose();
+            _norm2.ForwardInPlace(x);
+
+            return x;
+        }
 
         var normed1 = _norm1.Forward(x, workspace);
         _hook?.OnPreAttention(_layerIdx, normed1);

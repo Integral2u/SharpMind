@@ -7,12 +7,29 @@ using SharpMind.Model.Layers.ShortConv;
 namespace SharpMind.Model.Layers;
 
 public sealed class UnhookedTransformerBlock(int layerIdx, AttentionLayer? attention, FfnLayer ffn, NormLayer norm1, NormLayer norm2,
-    NormLayer? postAttnNorm = null, NormLayer? postFfnNorm = null, ShortConvLayer? shortConv = null)
-    : TransformerBlock(layerIdx, attention, ffn, norm1, norm2, postAttnNorm, postFfnNorm, shortConv)
+    NormLayer? postAttnNorm = null, NormLayer? postFfnNorm = null, ShortConvLayer? shortConv = null, bool postNormResidual = false)
+    : TransformerBlock(layerIdx, attention, ffn, norm1, norm2, postAttnNorm, postFfnNorm, shortConv, postNormResidual)
 {
     public override Tensor<float> Forward(Tensor<float> x, IKVCache? cache, int positionOffset = 0, bool causal = true, IWorkspace? workspace = null, int windowSize = 0)
     {
         ThrowIfDisposed();
+
+        if (_postNormResidual)
+        {
+            // BERT post-norm: no pre-norm; normalise after each residual add, and
+            // the FFN reads the post-attention-normed state.
+            var postAttnOut = FirstBranch(x, cache, positionOffset, causal, workspace, windowSize);
+            x.AddInPlace(postAttnOut);
+            postAttnOut.Dispose();
+            _norm1.ForwardInPlace(x);
+
+            var postFfnOut = _ffn.Forward(x, workspace);
+            x.AddInPlace(postFfnOut);
+            postFfnOut.Dispose();
+            _norm2.ForwardInPlace(x);
+
+            return x;
+        }
 
         var normed1 = _norm1.Forward(x, workspace);
 

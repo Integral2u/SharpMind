@@ -351,9 +351,25 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
 
         long rawSlidingWindow = meta.GetLong($"{arch}.attention.sliding_window", -1);
         int slidingWindowSize = rawSlidingWindow > 0 ? (int)rawSlidingWindow : 0;
-        PositionalEncoding positionalEncoding = (arch.StartsWith("bert", StringComparison.OrdinalIgnoreCase) || arch.StartsWith("roberta", StringComparison.OrdinalIgnoreCase) || arch.StartsWith("xlnet", StringComparison.OrdinalIgnoreCase))
-            ? PositionalEncoding.NoPE
-            : PositionalEncoding.RoPE;
+        // BERT-family encoders use learned absolute position embeddings (a GPT-2
+        // style [context, hidden] table); xlnet uses relative positions and has no
+        // such table. Only xlnet is NoPE.
+        bool isBertFamily = arch.StartsWith("bert", StringComparison.OrdinalIgnoreCase)
+            || arch.StartsWith("roberta", StringComparison.OrdinalIgnoreCase)
+            || arch.StartsWith("albert", StringComparison.OrdinalIgnoreCase)
+            || arch.StartsWith("xlm-roberta", StringComparison.OrdinalIgnoreCase);
+        PositionalEncoding positionalEncoding = isBertFamily
+            ? PositionalEncoding.Learned
+            : arch.StartsWith("xlnet", StringComparison.OrdinalIgnoreCase)
+                ? PositionalEncoding.NoPE
+                : PositionalEncoding.RoPE;
+
+        // BERT token-type (segment) embedding rows and the encoder pooling
+        // strategy. Both are harmless for single-sequence encode when absent.
+        long rawTokenTypes = meta.GetLong("tokenizer.ggml.token_type_count", -1);
+        int numTokenTypes = rawTokenTypes > 0 ? (int)rawTokenTypes : 0;
+        long rawPooling = meta.GetLong($"{arch}.pooling_type", -1);
+        PoolingType pooling = rawPooling >= 0 ? (PoolingType)(int)rawPooling : PoolingType.None;
 
         // Fallback: ministral and mistral3 use sliding-window attention by
         // default. When the GGUF omits the key, assume a 4096-token window
@@ -402,7 +418,8 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
             RopeThetaSwa = ropeThetaSwaValue,
             SlidingWindowPattern = slidingWindowPattern,
             NormEps = meta.GetFloat($"{arch}.attention.layer_norm_rms_epsilon",
-                      meta.GetFloat("rms_norm_eps", 1e-5f)),
+                      meta.GetFloat($"{arch}.attention.layer_norm_epsilon",
+                      meta.GetFloat("rms_norm_eps", 1e-5f))),
             KeyLength = keyLength,
             ValueLength = valueLength,
             HeadDimOverride = headDimOverride,
@@ -422,6 +439,9 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
             IsHybridSlidingWindow = slidingWindowSize > 0 && isGemma3Family,
             NormTopKProb = normTopKProb,
             PositionalEncoding = positionalEncoding,
+            NumTokenTypes = numTokenTypes,
+            Pooling = pooling,
+            PostNormResidual = isBertFamily,
         };
     }
 

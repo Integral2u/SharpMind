@@ -276,13 +276,16 @@ public abstract class FfnLayer : IDisposable
         if (W1 is not null && W2 is not null)
         {
             if (weights.Wf1 != null) W1.ReplaceWeights(weights.Wf1, weights.Wf1Bias);
+            else if (weights.Wf1Bias != null) W1.LoadBias(weights.Wf1Bias.Data);
             if (weights.Wf2 != null) W2.ReplaceWeights(weights.Wf2, weights.Wf2Bias);
+            else if (weights.Wf2Bias != null) W2.LoadBias(weights.Wf2Bias.Data);
             W1.SetRawWeight(weights.RawWup);
             W2.SetRawWeight(weights.RawWf2);
         }
         else if (WGated is not null && WDown is not null)
         {
             if (weights.Wf1 != null) WGated.ReplaceWeights(weights.Wf1, weights.Wf1Bias);
+            else if (weights.Wf1Bias != null) WGated.LoadBias(weights.Wf1Bias.Data);
             if (weights.RawWgate != null && weights.RawWup != null)
             {
                 byte[] fused = weights.AllocateBlockBuffer(weights.RawWgate.Length + weights.RawWup.Length);
@@ -305,6 +308,7 @@ public abstract class FfnLayer : IDisposable
                 WGated.SetRawWeight(null);
             }
             if (weights.Wf2 != null) WDown.ReplaceWeights(weights.Wf2, weights.Wf2Bias);
+            else if (weights.Wf2Bias != null) WDown.LoadBias(weights.Wf2Bias.Data);
             WDown.SetRawWeight(weights.RawWf2);
         }
         else if (Router is not null && ExpertGate is not null)

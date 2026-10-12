@@ -264,6 +264,35 @@ public sealed record ModelConfig
     /// <summary>True when the audio encoder is enabled.</summary>
     public bool HasAudio => AudioMelBins is > 0;
 
+    // Encoder pooling / token types
+
+    /// <summary>
+    /// Encoder sequence-pooling strategy used to collapse the final-normed
+    /// hidden states into one sentence embedding. Read from GGUF
+    /// ({arch}.pooling_type). <see cref="Config.PoolingType.None"/> for models
+    /// that declare none (all decoders).
+    /// </summary>
+    public PoolingType Pooling { get; init; } = PoolingType.None;
+
+    /// <summary>
+    /// Number of token-type (segment) embedding rows
+    /// (tokenizer.ggml.token_type_count). 0 when the model has no token-type
+    /// table. BERT-family models use this for sentence-pair segments; a
+    /// single-sequence encode uses type 0 for every token.
+    /// </summary>
+    public int NumTokenTypes { get; init; }
+
+    /// <summary>True when the model carries a token-type embedding table.</summary>
+    public bool HasTokenTypes => NumTokenTypes > 0;
+
+    /// <summary>
+    /// BERT-style post-norm residual placement: the block applies no pre-norm and
+    /// instead normalises after each residual add
+    /// (<c>x = norm(x + sublayer(x))</c>), with the FFN reading the
+    /// post-attention-normed state. False for the standard pre-norm blocks.
+    /// </summary>
+    public bool PostNormResidual { get; init; }
+
     // Normalisation
 
     /// <summary>Epsilon for RMS / LayerNorm. Qwen2 uses 1e-6; LLaMA 2 uses 1e-5.</summary>

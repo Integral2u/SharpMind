@@ -23,6 +23,11 @@ public sealed class Transformer : IDisposable
     // model config selects PositionalEncoding.Learned.
     private readonly Tensor<float>? _positionEmbedding;
 
+    // BERT-family token-type (segment) embeddings [NumTokenTypes, HiddenDim];
+    // null unless the model carries a token-type table. A single-sequence encode
+    // uses row 0 for every token.
+    private readonly Tensor<float>? _tokenTypeEmbedding;
+
     // Separate LM head for non-weight-tied models (e.g. LLaMA 2/3).
     // Null means the model is weight-tied — the embedding weight is used instead.
     private readonly QuantizationOps? _qOps;
@@ -71,6 +76,7 @@ public sealed class Transformer : IDisposable
 
         _gemmaEmbeddingScale = gemmaEmbeddingScale;
         _positionEmbedding = weights.PositionEmbedding;
+        _tokenTypeEmbedding = weights.TokenTypeEmbedding;
         _logitOps = LogitOpsFactory.Create(projWeight, rawW, rawDtype, mapping);
 
         _blocks = arch.Blocks;
@@ -406,6 +412,8 @@ public sealed class Transformer : IDisposable
             ScaleEmbedding(_cachedEmbedding, _weights.Config.HiddenDim);
         if (_positionEmbedding is not null)
             AddPositionEmbeddingInPlace(_cachedEmbedding, positionOffset);
+        if (_tokenTypeEmbedding is not null)
+            AddTokenTypeEmbeddingInPlace(_cachedEmbedding);
 
         // 2. Architecture (stack of transformer blocks).
         //    Blocks mutate in-place and return the same tensor, so _cachedHidden
@@ -511,6 +519,8 @@ public sealed class Transformer : IDisposable
             ScaleEmbedding(_cachedEmbedding, _weights.Config.HiddenDim);
         if (_positionEmbedding is not null)
             AddPositionEmbeddingInPlace(_cachedEmbedding, positionOffset);
+        if (_tokenTypeEmbedding is not null)
+            AddTokenTypeEmbeddingInPlace(_cachedEmbedding);
         DecodeProfiler.Mark(DecodeStage.Embed, tEmbed);
 
         var tBlocks = DecodeProfiler.Begin();
@@ -617,13 +627,14 @@ public sealed class Transformer : IDisposable
     {
         var pos = _positionEmbedding!;
         int H = _weights.Config.HiddenDim;
-        int S = emb.Shape.Cols;
+        int S = emb.Shape[emb.Shape.Length - 2];
+        int batch = emb.ElementCount / (S * H);
         int maxPos = pos.Shape.Rows;
         var src = pos.Data;
         var dst = emb.Data;
         int embStride = S * H;
 
-        for (int b = 0; b < emb.Shape.Rows; b++)
+        for (int b = 0; b < batch; b++)
         {
             int ptr = b * embStride;
             for (int s = 0; s < S; s++)
@@ -636,5 +647,87 @@ public sealed class Transformer : IDisposable
                 ptr += H;
             }
         }
+    }
+
+    /// <summary>
+    /// Adds the token-type embedding for segment 0 to every token of
+    /// <paramref name="emb"/> in place. A single-sequence encode uses one segment
+    /// (BERT's segment B is only set for sentence pairs), matching the all-zero
+    /// token-type ids the tokenizer emits.
+    /// </summary>
+    private void AddTokenTypeEmbeddingInPlace(Tensor<float> emb)
+    {
+        var type = _tokenTypeEmbedding!;
+        int H = _weights.Config.HiddenDim;
+        var src = type.Data;
+        var dst = emb.Data;
+        for (int i = 0; i < dst.Length; i++)
+            dst[i] += src[i % H];
+    }
+
+    /// <summary>
+    /// Runs the encoder over <paramref name="tokenIds"/> and returns the
+    /// final-normed hidden states [Batch, SeqLen, HiddenDim] without the
+    /// vocabulary projection. The returned tensor is owned by this transformer
+    /// and stays valid until the next forward call or disposal.
+    /// </summary>
+    public Tensor<float> EncodeHidden(Tensor<int> tokenIds, int positionOffset = 0, Core.Memory.IWorkspace? workspace = null)
+    {
+        ThrowIfDisposed();
+        RunBlocks(tokenIds, new IKVCache[_arch.NumLayers], positionOffset, workspace);
+        _cachedNormed?.Dispose();
+        _cachedNormed = _finalNorm.Forward(_cachedHidden!, workspace);
+        return _cachedNormed;
+    }
+
+    /// <summary>
+    /// Encodes <paramref name="tokenIds"/> and pools the final-normed hidden
+    /// states into one sentence embedding per batch row [Batch, HiddenDim].
+    /// <paramref name="pooling"/> defaults to the model's declared strategy
+    /// (falling back to CLS). When <paramref name="normalize"/> is true the
+    /// embeddings are L2-normalised, matching sentence-embedding models such as
+    /// bge. The returned tensor is caller-owned.
+    /// </summary>
+    public Tensor<float> PooledEmbedding(Tensor<int> tokenIds, PoolingType? pooling = null, bool normalize = true, int positionOffset = 0, Core.Memory.IWorkspace? workspace = null)
+    {
+        var hidden = EncodeHidden(tokenIds, positionOffset, workspace);
+        var mode = pooling ?? (Config.Pooling != PoolingType.None ? Config.Pooling : PoolingType.Cls);
+        int batch = hidden.Shape[0];
+        int seqLen = hidden.Shape[1];
+        int H = hidden.Shape[2];
+        var pooled = new Tensor<float>(batch, H);
+        var data = hidden.Data;
+        for (int b = 0; b < batch; b++)
+        {
+            int baseOffset = b * seqLen * H;
+            var dst = pooled.Data.Slice(b * H, H);
+            switch (mode)
+            {
+                case PoolingType.Cls:
+                    data.Slice(baseOffset, H).CopyTo(dst);
+                    break;
+                case PoolingType.Last:
+                    data.Slice(baseOffset + (seqLen - 1) * H, H).CopyTo(dst);
+                    break;
+                default:
+                    dst.Clear();
+                    for (int s = 0; s < seqLen; s++)
+                    {
+                        var row = data.Slice(baseOffset + s * H, H);
+                        for (int h = 0; h < H; h++) dst[h] += row[h];
+                    }
+                    for (int h = 0; h < H; h++) dst[h] /= seqLen;
+                    break;
+            }
+
+            if (normalize)
+            {
+                double sum = 0;
+                for (int h = 0; h < H; h++) sum += (double)dst[h] * dst[h];
+                float inv = sum > 0 ? (float)(1.0 / Math.Sqrt(sum)) : 0f;
+                for (int h = 0; h < H; h++) dst[h] *= inv;
+            }
+        }
+        return pooled;
     }
 }
