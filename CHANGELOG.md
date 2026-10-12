@@ -4,9 +4,11 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.0.9.0]
 
 ### Fixed
+
+- **Encoder models (BERT/bge) load and run in `LoadMode.Streaming` instead of dying at the first forward or producing all-zero logits** — streaming weight loading was gated on `DecoderArch`, so an encoder never received per-layer weights (`[q_proj] RawQuantizedData is null and no float fallback available`). Streaming is now arch-agnostic: `IArchitecture` exposes its `Blocks` and a `BeforeBlock` per-layer hook (both defaulting to no-op so external implementers keep compiling), `EncoderArch` implements them, `Transformer` takes `_blocks` from `arch.Blocks`, and `ModelFactory` wires the load/free/preload callback for any `TransformerWeightsStreaming`. Separately, `AllocateInferenceBlockWeights` (streaming, and `LoadMode.Full` with `quantizedResident`) defaulted `Norm1W`/`Norm2W` to zeros where `AllocateBlockWeights` (full) defaulted them to `Tensor<float>.Ones`. That default is harmless for models that carry `attn_norm`/`ffn_norm` tensors (they overwrite it during load), but BERT/bge has neither, so streaming kept zeros and every block collapsed to zero. The inference allocator now matches the full one (identity norms). Verified on `bge-small-en-v1.5-q8_0`: streaming reproduces the full path's per-block magnitudes and non-zero logits, `Qwen2-0.5B` streaming is unchanged, and 2706 tests stay green.
 
 - **Model loads retry through a transient Windows share/lock, and `TempDirectory` teardown survives an AV scan** — antivirus/indexers on Windows can hold a freshly written .gguf/.smm open for a few milliseconds (usually without `FILE_SHARE_DELETE`), which surfaced as intermittent `The process cannot access the file ... because it is being used by another process` failures in CI — both when a load was opened right after an export (the `StreamingLoad_*` suite) and when a test temp dir was deleted at teardown. Metadata/tensor-data opens (`SmmLoader`, `GgufLoader.LoadMeta`, and `WeightStreamFactory` via `ModelLoaderBase`) now go through `ModelFileIo`, which retries only the two sharing/lock violations (`ERROR_SHARING_VIOLATION`/`ERROR_LOCK_VIOLATION`) for a bounded ~1.9 s before failing — a missing file still throws immediately. `TempDirectory.Dispose` retries its recursive delete the same way and leaves a stray temp dir behind rather than failing the test. Pinned by `ModelFileIoTests` (an exclusive `FileShare.None` handle clears the retry path; a missing file throws without waiting).
 
@@ -317,6 +319,7 @@ Initial release of SharpMind.
 - **JigSaw kernel dispatch** — pluggable hardware-specific kernel variants selected at runtime without `if`/`switch` ladders.
 
 [Unreleased]: https://github.com/Integral2u/SharpMind
+[1.0.9.0]: https://github.com/Integral2u/SharpMind/releases/tag/v1.0.9.0
 [1.0.5.0]: https://github.com/Integral2u/SharpMind/releases/tag/v1.0.5.0
 [1.0.4.0]: https://github.com/Integral2u/SharpMind/releases/tag/v1.0.4.0
 [1.0.3.0]: https://github.com/Integral2u/SharpMind/releases/tag/v1.0.3.0
