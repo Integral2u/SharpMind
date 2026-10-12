@@ -1,5 +1,6 @@
 ﻿using SharpMind.Core.Tensors;
 using SharpMind.Core.Training;
+using SharpMind.Model.Layers;
 
 namespace SharpMind.Model.Arch;
 
@@ -17,4 +18,13 @@ public interface IArchitecture : IDisposable
     public IEnumerable<Parameter> Parameters();
 
     public void Backward(Tensor<float> dOutput);
+
+    /// <summary>The transformer blocks this architecture runs, in order. Streaming
+    /// weight loading pushes per-layer weights through these; the default is empty
+    /// for architectures that do not participate.</summary>
+    public TransformerBlock[] Blocks => [];
+
+    /// <summary>Optional callback invoked before each block during Forward. Streaming
+    /// load mode wires it to load the incoming layer and free the outgoing ones.</summary>
+    public Action<int>? BeforeBlock { get => null; set { } }
 }

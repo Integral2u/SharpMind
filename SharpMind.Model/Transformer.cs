@@ -73,8 +73,7 @@ public sealed class Transformer : IDisposable
         _positionEmbedding = weights.PositionEmbedding;
         _logitOps = LogitOpsFactory.Create(projWeight, rawW, rawDtype, mapping);
 
-        if (arch is DecoderArch decodeArch)
-            _blocks = decodeArch.Blocks;
+        _blocks = arch.Blocks;
     }
 
     public ModelConfig Config => _weights.Config;

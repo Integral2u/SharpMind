@@ -26,6 +26,12 @@ public sealed class EncoderArch : IArchitecture
 
     public int NumLayers => _blocks.Length;
 
+    /// <inheritdoc />
+    public TransformerBlock[] Blocks => _blocks;
+
+    /// <inheritdoc />
+    public Action<int>? BeforeBlock { get; set; }
+
     public IEnumerable<Parameter> Parameters()
     {
         foreach (var block in _blocks)
@@ -38,7 +44,7 @@ public sealed class EncoderArch : IArchitecture
     /// positionOffset is accepted for API compatibility but is typically 0
     /// for encoders since they see the full sequence in one pass.
     /// </summary>
-    public Tensor<float> Forward(Tensor<float> hiddenStates, int positionOffset = 0, SharpMind.Core.Memory.IWorkspace? workspace = null) => Forward(hiddenStates, [], positionOffset, workspace);
+    public Tensor<float> Forward(Tensor<float> hiddenStates, int positionOffset = 0, SharpMind.Core.Memory.IWorkspace? workspace = null) => Forward(hiddenStates, new IKVCache[_blocks.Length], positionOffset, workspace);
 
     public Tensor<float> Forward(Tensor<float> hiddenStates, IKVCache[] caches, int positionOffset = 0, SharpMind.Core.Memory.IWorkspace? workspace = null)
     {
@@ -48,6 +54,8 @@ public sealed class EncoderArch : IArchitecture
 
         for (int i = 0; i < _blocks.Length; i++)
         {
+            BeforeBlock?.Invoke(i);
+
             // Encoders typically don't use KV caches, but we support the API
             var next = _blocks[i].Forward(current, caches?[i], positionOffset, causal: false, workspace: workspace);
             if (ownsLast) current.Dispose();

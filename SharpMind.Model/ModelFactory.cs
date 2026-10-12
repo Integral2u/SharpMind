@@ -167,8 +167,8 @@ public static class ModelFactory
             blocks[i] = new TransformerWeights.BlockWeights
             {
                 LayerIndex = i,
-                Norm1W = new Tensor<float>(config.HiddenDim),
-                Norm2W = new Tensor<float>(config.HiddenDim),
+                Norm1W = Tensor<float>.Ones(config.HiddenDim),
+                Norm2W = Tensor<float>.Ones(config.HiddenDim),
                 WqBias = new Tensor<float>(qDim),
                 WkBias = new Tensor<float>(kvDim),
                 WvBias = new Tensor<float>(kvDim),
@@ -240,7 +240,7 @@ public static class ModelFactory
         };
 
         // Wire up streaming weight loading if applicable
-        if (weights is TransformerWeightsStreaming sw && arch is DecoderArch da)
+        if (weights is TransformerWeightsStreaming sw)
         {
             sw.BlockRefs = blocks;
 
@@ -254,7 +254,7 @@ public static class ModelFactory
             // Pushing into LinearLayers happens later in EnsureLayerLoadedSync.
             sw.PreloadLayerAsync(0);
 
-            da.BeforeBlock = (layerIndex) =>
+            arch.BeforeBlock = (layerIndex) =>
             {
                 // Ensure current layer is loaded (wait for async preload if needed)
                 sw.EnsureLayerLoadedSync(layerIndex);
