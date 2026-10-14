@@ -132,7 +132,7 @@ public sealed class DecoderArch : IArchitecture
         return Forward(hiddenStates, [], positionOffset, workspace);
     }
 
-    public Tensor<float> Forward(Tensor<float> hiddenStates, IKVCache[] caches, int positionOffset = 0, SharpMind.Core.Memory.IWorkspace? workspace = null)
+    public Tensor<float> Forward(Tensor<float> hiddenStates, IKVCache[] caches, int positionOffset = 0, SharpMind.Core.Memory.IWorkspace? workspace = null, Tensor<float>? perLayerInputs = null)
     {
         ThrowIfDisposed();
         
@@ -144,7 +144,13 @@ public sealed class DecoderArch : IArchitecture
 
             int layerWindow = _config?.WindowSizeForLayer(i)
                 ?? (_slidingWindowSize > 0 ? _slidingWindowSize : 0);
-            var next = _blocks[i].Forward(current, caches?[i], positionOffset, causal: true, workspace: workspace, windowSize: layerWindow);
+            // KV-sharing layers (gemma4) read another layer's cache instead of
+            // their own; the source layer keeps the same attention geometry, so
+            // the head dims line up.
+            IKVCache? layerCache = null;
+            if (caches is { Length: > 0 } && i < caches.Length)
+                layerCache = caches[_config is not null ? _config.KvSourceLayer(i) : i];
+            var next = _blocks[i].Forward(current, layerCache, positionOffset, causal: true, workspace: workspace, windowSize: layerWindow, perLayerInputs: perLayerInputs);
             
             if (i > 0 && !ReferenceEquals(current, hiddenStates))
                 current.Dispose();

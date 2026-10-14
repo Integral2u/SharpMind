@@ -222,7 +222,9 @@ public static class AttentionKernels
     // avoid O(kvLen) score buffer. Essential for long-context inference.
 
     private const int FlashTileSize = 64;
-    private const int FlashMaxHeadDim = 256;
+    // The flash kernels tile the KV sequence (stackalloc is FlashTileSize only),
+    // so the head dim is not stack-bound. gemma4 full-attention layers use 512.
+    private const int FlashMaxHeadDim = 512;
 
     public static unsafe void ScaledDotProductFlashAVX2(
         float* q, float* k, float* v, float* output,

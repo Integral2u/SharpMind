@@ -299,7 +299,9 @@ public abstract class ModelLoaderBase(
             // target: a streaming load has no LmHeadWeight until LoadSingleTensor
             // creates it lazily, so target is null for "output.weight" there and the
             // tensor would otherwise be skipped, silently generating from the embedding.
-            if ((target != null && block == null) || TransformerWeights.IsLmHeadTensorName(info.Name))
+            if ((target != null && block == null)
+                || TransformerWeights.IsLmHeadTensorName(info.Name)
+                || TransformerWeights.IsPerLayerTokenEmbeddingName(info.Name))
                 LoadSingleTensor(weights, meta, stream, info);
         }
     }
@@ -312,6 +314,22 @@ public abstract class ModelLoaderBase(
         // dequantizes them on first float access, since the CPU projection reads the raw bytes.
         bool isLmHead = TransformerWeights.IsLmHeadTensorName(info.Name);
         var (target, block, rawField) = isLmHead ? default : weights.ResolveTarget(info.Name);
+
+        // Gemma-4 per-layer token-embedding table: keep the raw quantized bytes and
+        // never dequantize. A float copy of this Q5_K table is ~11 GB, and the PLE
+        // builder reads single rows from it on demand.
+        if (TransformerWeights.IsPerLayerTokenEmbeddingName(info.Name))
+        {
+            long pleSize = RawByteCount(info);
+            long pleOffset = meta.DataOffset + info.Offset;
+            if (pleSize <= 0 || pleOffset >= stream.Length) return;
+            stream.Position = pleOffset;
+            byte[] pleData = new byte[pleSize];
+            stream.ReadExactly(pleData);
+            weights.RawPerLayerTokEmbd = pleData;
+            weights.RawPerLayerTokEmbdDtype = info.Dtype;
+            return;
+        }
 
         if (isLmHead && !weights.HasLmHead)
         {
@@ -443,8 +461,15 @@ public abstract class ModelLoaderBase(
         // tokens are appended past the tensor's own vocab block).
         if ((isLmHead || target != null) && block == null && withinFile)
         {
+            // Only the token-embedding table and the output head are vocab-indexed;
+            // pad those up to _config.VocabSize (extra template tokens are appended
+            // past the tensor's own vocab block). Other top-level tensors (positional
+            // embeddings, PLE model projection, ...) are not vocab-indexed and must be
+            // read verbatim — padding them wasted gigabytes for the PLE projection,
+            // whose first dim (10752) is far below the vocabulary.
+            bool vocabIndexed = isLmHead || ReferenceEquals(target, weights.EmbeddingWeight);
             byte[] data;
-            if (info.Shape.Length >= 2)
+            if (vocabIndexed && info.Shape.Length >= 2)
             {
                 long tensorVocab = Math.Max(info.Shape[0], info.Shape[1]);
                 long paddedVocab = _config.VocabSize;
@@ -500,8 +525,42 @@ public abstract class ModelLoaderBase(
         // float buffer via ArrayPool power-of-2 bucketing on top of the target tensor.
         if (target != null && block == null)
         {
-            target.Data.Clear();
-            ReadTensorFloats(rawData, stream, info.Dtype, info.Shape, target.Data);
+            // A global 2D matmul weight declared in GGUF order [in, out] needs the
+            // same transpose the block F32 path applies below. The position and
+            // token-type tables declare their SharpMind dims reversed relative to
+            // GGUF ([rows, cols] = [GGUF ne1, GGUF ne0]), so a verbatim copy already
+            // lands correctly; only same-order 2D globals are matmul weights.
+            // gemma-4's per_layer_model_proj [n_embd, n_embd_per_layer * n_layer] is
+            // the one such global — without this transpose it is applied as Wᵀ instead
+            // of W, corrupting every block's per-layer input.
+            bool globalMatMulWeight =
+                info.Shape.Length == 2
+                && target.Shape.Rows == info.Shape[0]
+                && target.Shape.Cols == info.Shape[1]
+                && !ReferenceEquals(target, weights.PositionEmbedding)
+                && !ReferenceEquals(target, weights.TokenTypeEmbedding);
+            if (!globalMatMulWeight)
+            {
+                target.Data.Clear();
+                ReadTensorFloats(rawData, stream, info.Dtype, info.Shape, target.Data);
+                return;
+            }
+
+            float[] staged = MemoryHelpers.RentArray<float>(count);
+            try
+            {
+                ReadTensorFloats(rawData, stream, info.Dtype, info.Shape, staged.AsSpan(0, count));
+                int globalIn = info.Shape[0];
+                int globalOut = info.Shape[1];
+                target.Data.Clear();
+                for (int i = 0; i < globalIn; i++)
+                    for (int o = 0; o < globalOut; o++)
+                        target.Data[i * globalOut + o] = staged[o * globalIn + i];
+            }
+            finally
+            {
+                MemoryHelpers.ReturnArray(staged);
+            }
             return;
         }
 

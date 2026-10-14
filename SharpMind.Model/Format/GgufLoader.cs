@@ -308,6 +308,24 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
         // GGUF omits rope.dimension_count — Gemma-3 rotates the full 256-dim
         // head, not headDim/2. Only an explicit key narrows the rotary span.
 
+        // Gemma 3n/4 per-layer geometry. Full-attention and sliding-window layers
+        // use different head dims and rotary spans; trailing layers share the KV
+        // cache of earlier ones; each layer consumes a per-layer token embedding.
+        long rawKeyLenSwa = meta.GetLong($"{arch}.attention.key_length_swa", -1);
+        int? keyLengthSwa = rawKeyLenSwa > 0 ? (int)rawKeyLenSwa : null;
+        long rawValLenSwa = meta.GetLong($"{arch}.attention.value_length_swa", -1);
+        int? valueLengthSwa = rawValLenSwa > 0 ? (int)rawValLenSwa : null;
+        long rawRopeDimSwa = meta.GetLong($"{arch}.rope.dimension_count_swa", -1);
+        int? ropeDimSwa = rawRopeDimSwa > 0 ? (int)rawRopeDimSwa : null;
+        long rawPerLayer = meta.GetLong($"{arch}.embedding_length_per_layer_input", -1);
+        int perLayerEmbdDim = rawPerLayer > 0 ? (int)rawPerLayer : 0;
+        long rawSharedKv = meta.GetLong($"{arch}.attention.shared_kv_layers", -1);
+        int sharedKvLayers = rawSharedKv > 0 ? (int)rawSharedKv : 0;
+        float rawSoftcap = meta.GetFloat($"{arch}.final_logit_softcapping", float.NaN);
+        float finalLogitSoftcap = float.IsNaN(rawSoftcap) ? 0f : rawSoftcap;
+        // Gemma 4 scales attention logits by 1.0 (self.scaling = 1.0), not 1/sqrt(head_dim).
+        float? attentionScale = arch.StartsWith("gemma4", StringComparison.OrdinalIgnoreCase) ? 1.0f : null;
+
         // GetString returns "" for an absent key; keep the config null so the SMM->GGUF
         // converter omits the key (llama.cpp treats an empty scaling type as an error).
         string? ropeScalingType = meta.GetString($"{arch}.rope.scaling.type") is { Length: > 0 } rst ? rst : null;
@@ -422,6 +440,14 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
                       meta.GetFloat("rms_norm_eps", 1e-5f))),
             KeyLength = keyLength,
             ValueLength = valueLength,
+            KeyLengthSwa = keyLengthSwa,
+            ValueLengthSwa = valueLengthSwa,
+            RopeDimSwa = ropeDimSwa,
+            PerLayerEmbdDim = perLayerEmbdDim,
+            SharedKvLayers = sharedKvLayers,
+            AttentionScale = attentionScale,
+            RmsNormValue = arch.StartsWith("gemma4", StringComparison.OrdinalIgnoreCase),
+            FinalLogitSoftcap = finalLogitSoftcap,
             HeadDimOverride = headDimOverride,
             RopeDim = ropeDim,
             RopeScalingType = ropeScalingType,
@@ -523,6 +549,18 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
         // based computation produces correct frequencies and is used instead.
         // float[]? ropeFreqs = LoadPrecomputedRopeFreqs(ggufPath, meta);
         // if (ropeFreqs != null) config = config with { PrecomputedRopeFreqs = ropeFreqs };
+
+        // gemma4 repurposes rope_freqs.weight as per-pair frequency factors
+        // (llama.cpp proportional RoPE): the effective angle is
+        // pos * theta^(-2i/d) / freq_factor[i]. Exporters leave the low bands
+        // at 1.0 and set the high bands to a huge sentinel so they do not
+        // rotate. Only full-attention layers carry them.
+        if (config.Architecture.StartsWith("gemma4", StringComparison.OrdinalIgnoreCase))
+        {
+            float[]? ropeFreqFactors = LoadPrecomputedRopeFreqs(ggufPath, meta);
+            if (ropeFreqFactors != null)
+                config = config with { RopeFreqFactors = ropeFreqFactors };
+        }
 
         // Extend VocabSize to cover the full GGUF token list.
         // Some GGUFs store control/special tokens beyond the embedding tensor

@@ -31,7 +31,8 @@ public sealed class RoPE : PositionalEncoder
     /// </summary>
     private readonly record struct TableKey(
         float Theta, int RopeDim, int MaxSeqLen, float? ScalingFactor,
-        string? ScalingType, int? OriginalContextLength, float? LowFreqFactor, float? HighFreqFactor);
+        string? ScalingType, int? OriginalContextLength, float? LowFreqFactor, float? HighFreqFactor,
+        float[]? FreqFactors);
 
     /// <summary>
     /// Tables stay cached for this many configurations. A model needs one per distinct RoPE
@@ -88,7 +89,7 @@ public sealed class RoPE : PositionalEncoder
     public RoPE(int headDim, int maxSeqLen, float theta = 10_000f,
         int? ropeDim = null, string? ropeScalingType = null, float? ropeScalingFactor = null,
         int? ropeOriginalContextLength = null, float? lowFreqFactor = null, float? highFreqFactor = null,
-        float[]? precomputedFreqs = null, bool neoxStyle = false)
+        float[]? precomputedFreqs = null, bool neoxStyle = false, float[]? freqFactors = null)
     {
         _neoxStyle = neoxStyle;
         if (headDim % 2 != 0)
@@ -122,7 +123,7 @@ public sealed class RoPE : PositionalEncoder
         {
             (_cosCache, _sinCache) = GetOrAddTables(
                 new TableKey(theta, _ropeDim, _maxSeqLen, ropeScalingFactor, ropeScalingType,
-                    ropeOriginalContextLength, lowFreqFactor, highFreqFactor), () =>
+                    ropeOriginalContextLength, lowFreqFactor, highFreqFactor, freqFactors), () =>
             {
                 var cos = new float[_maxSeqLen * halfDim];
                 var sin = new float[_maxSeqLen * halfDim];
@@ -155,6 +156,16 @@ public sealed class RoPE : PositionalEncoder
                             }
                         }
                     }
+                }
+
+                // Per-pair frequency factors (llama.cpp `freq_factors`): the
+                // effective angle is theta / factor, so a factor of 1 leaves the
+                // pair untouched and a very large factor suppresses the rotation.
+                if (freqFactors != null)
+                {
+                    int nf = Math.Min(halfDim, freqFactors.Length);
+                    for (int i = 0; i < nf; i++)
+                        if (freqFactors[i] != 0f) freqs[i] /= freqFactors[i];
                 }
 
                 for (int pos = 0; pos < _maxSeqLen; pos++)

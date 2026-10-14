@@ -227,7 +227,7 @@ public sealed record SharpMindConfig
             "gpt2" or "gptj" or "falcon" or "starcoder" or "starcoder2"
                 or "bloom" or "phi" or "phi2" => (ActivationKind.GELU, GateKind.None, FfnKind.Dense, NormKind.LayerNorm, ArchKind.Decoder),
             "opt" => (ActivationKind.ReLU, GateKind.None, FfnKind.Dense, NormKind.LayerNorm, ArchKind.Decoder),
-            "gemma" or "gemma2" or "gemma3" or "gemma-3" => (ActivationKind.GELU, GateKind.GeGLU, FfnKind.Gated, NormKind.RMSNorm, ArchKind.Decoder),
+            "gemma" or "gemma2" or "gemma3" or "gemma-3" or "gemma4" or "gemma-4" => (ActivationKind.GELU, GateKind.GeGLU, FfnKind.Gated, NormKind.RMSNorm, ArchKind.Decoder),
             "mixtral" or "qwen2moe" or "deepseek2" or "dbrx" => (ActivationKind.SiLU, GateKind.SwiGLU, FfnKind.MoE, NormKind.RMSNorm, ArchKind.Decoder),
             // Everything below is the same shape: SiLU + SwiGLU + RMSNorm decoder.
             // phi3 belongs here, not with the GELU/dense phi/phi2: Phi-3 is a gated

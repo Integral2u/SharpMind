@@ -46,7 +46,7 @@ public sealed class EncoderArch : IArchitecture
     /// </summary>
     public Tensor<float> Forward(Tensor<float> hiddenStates, int positionOffset = 0, SharpMind.Core.Memory.IWorkspace? workspace = null) => Forward(hiddenStates, new IKVCache[_blocks.Length], positionOffset, workspace);
 
-    public Tensor<float> Forward(Tensor<float> hiddenStates, IKVCache[] caches, int positionOffset = 0, SharpMind.Core.Memory.IWorkspace? workspace = null)
+    public Tensor<float> Forward(Tensor<float> hiddenStates, IKVCache[] caches, int positionOffset = 0, SharpMind.Core.Memory.IWorkspace? workspace = null, Tensor<float>? perLayerInputs = null)
     {
         ThrowIfDisposed();
         var current = hiddenStates;
@@ -57,7 +57,7 @@ public sealed class EncoderArch : IArchitecture
             BeforeBlock?.Invoke(i);
 
             // Encoders typically don't use KV caches, but we support the API
-            var next = _blocks[i].Forward(current, caches?[i], positionOffset, causal: false, workspace: workspace);
+            var next = _blocks[i].Forward(current, caches?[i], positionOffset, causal: false, workspace: workspace, windowSize: 0, perLayerInputs: perLayerInputs);
             // Blocks mutate and return their input, so next aliases current; only
             // dispose the previous tensor when a block actually produced a new one.
             if (ownsLast && !ReferenceEquals(next, current)) current.Dispose();

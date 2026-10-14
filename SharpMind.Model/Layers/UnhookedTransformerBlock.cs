@@ -7,10 +7,11 @@ using SharpMind.Model.Layers.ShortConv;
 namespace SharpMind.Model.Layers;
 
 public sealed class UnhookedTransformerBlock(int layerIdx, AttentionLayer? attention, FfnLayer ffn, NormLayer norm1, NormLayer norm2,
-    NormLayer? postAttnNorm = null, NormLayer? postFfnNorm = null, ShortConvLayer? shortConv = null, bool postNormResidual = false)
-    : TransformerBlock(layerIdx, attention, ffn, norm1, norm2, postAttnNorm, postFfnNorm, shortConv, postNormResidual)
+    NormLayer? postAttnNorm = null, NormLayer? postFfnNorm = null, ShortConvLayer? shortConv = null, bool postNormResidual = false,
+    PerLayerEmbedding? perLayer = null, Tensor<float>? outScale = null)
+    : TransformerBlock(layerIdx, attention, ffn, norm1, norm2, postAttnNorm, postFfnNorm, shortConv, postNormResidual, perLayer, outScale)
 {
-    public override Tensor<float> Forward(Tensor<float> x, IKVCache? cache, int positionOffset = 0, bool causal = true, IWorkspace? workspace = null, int windowSize = 0)
+    public override Tensor<float> Forward(Tensor<float> x, IKVCache? cache, int positionOffset, bool causal, IWorkspace? workspace, int windowSize, Tensor<float>? perLayerInputs)
     {
         ThrowIfDisposed();
 
@@ -28,7 +29,7 @@ public sealed class UnhookedTransformerBlock(int layerIdx, AttentionLayer? atten
             postFfnOut.Dispose();
             _norm2.ForwardInPlace(x);
 
-            return x;
+            return ApplyPerLayerTail(x, perLayerInputs, workspace);
         }
 
         var normed1 = _norm1.Forward(x, workspace);
@@ -61,6 +62,6 @@ public sealed class UnhookedTransformerBlock(int layerIdx, AttentionLayer? atten
         x.AddInPlace(ffnOut);
         ffnOut.Dispose();
 
-        return x;
+        return ApplyPerLayerTail(x, perLayerInputs, workspace);
     }
 }

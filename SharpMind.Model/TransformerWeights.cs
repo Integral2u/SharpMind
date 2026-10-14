@@ -65,6 +65,18 @@ public abstract class TransformerWeights : IDisposable
     public byte[]? RawLmHead { get; set; }
     public QuantDType? RawLmHeadDtype { get; set; }
 
+    // Gemma-4 per-layer embeddings (PLE). The per-layer token table is kept as raw
+    // quantized bytes (Q5_K ~1.94 GB for gemma-4-E4B); rows are read on demand and
+    // never expanded to floats (a float copy would be ~11 GB).
+    /// <summary>PLE model projection [HiddenDim, PerLayerTotalDim] as floats.</summary>
+    public Tensor<float>? PerLayerModelProj { get; set; }
+    /// <summary>PLE RMSNorm weight over the per-layer dimension [PerLayerEmbdDim].</summary>
+    public Tensor<float>? PerLayerProjNormW { get; set; }
+    /// <summary>Raw quantized <c>per_layer_token_embd.weight</c> bytes, or null.</summary>
+    public byte[]? RawPerLayerTokEmbd { get; set; }
+    /// <summary>Quantization format of <see cref="RawPerLayerTokEmbd"/>.</summary>
+    public QuantDType? RawPerLayerTokEmbdDtype { get; set; }
+
     // Per-block weights (Attention, FFN, Norms)
     public BlockWeights[] Blocks { get; }
 
@@ -137,6 +149,9 @@ public abstract class TransformerWeights : IDisposable
             // ratchets process memory by ~one model footprint per unload.
             RawEmbedding = null;
             RawLmHead = null;
+            RawPerLayerTokEmbd = null;
+            PerLayerModelProj?.Dispose();
+            PerLayerProjNormW?.Dispose();
         }
     }
 
@@ -150,6 +165,16 @@ public abstract class TransformerWeights : IDisposable
     public static bool IsLmHeadTensorName(string name)
         => name.Equals("output.weight", StringComparison.OrdinalIgnoreCase)
            || name.Equals("lm_head.weight", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// True for the gemma-4 per-layer token-embedding table
+    /// (<c>per_layer_token_embd.weight</c>). It is loaded as raw quantized bytes and
+    /// must never be routed through the generic token-embedding float path (which
+    /// would materialize ~11 GB of floats).
+    /// </summary>
+    public static bool IsPerLayerTokenEmbeddingName(string name)
+        => name.EndsWith(".weight", StringComparison.OrdinalIgnoreCase)
+           && name.Contains("per_layer_token_embd", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>True when the lazy untied head has already been materialized.</summary>
     public bool LmHeadIsMaterialized => _lmHead is { IsValueCreated: true };
@@ -225,6 +250,14 @@ public abstract class TransformerWeights : IDisposable
         }
         if (name.Equals("output.weight", StringComparison.OrdinalIgnoreCase) || name.Equals("lm_head.weight", StringComparison.OrdinalIgnoreCase)) return (LmHeadWeight, null, null);
 
+        // Gemma-4 per-layer-embedding globals. Both are F32 and small; allocating
+        // them here (idempotent ??=) keeps the streaming metadata pass and the
+        // global load agreeing on a non-null target.
+        if (name.Contains("per_layer_model_proj", StringComparison.OrdinalIgnoreCase))
+            return (PerLayerModelProj ??= new Tensor<float>(Config.HiddenDim, Config.PerLayerTotalDim), null, null);
+        if (name.Contains("per_layer_proj_norm", StringComparison.OrdinalIgnoreCase))
+            return (PerLayerProjNormW ??= new Tensor<float>(Config.PerLayerEmbdDim), null, null);
+
         var match = RegexGenerated.LayerIndexDotNDot.Match(name);
         if (match.Success && int.TryParse(match.Groups[1].Value, out int bIdx) && bIdx < Blocks.Length)
         {
@@ -247,6 +280,11 @@ public abstract class TransformerWeights : IDisposable
                 if (name.Contains("post_ffw_norm", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
                 if (name.Contains("attn_q_norm", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
                 if (name.Contains("attn_k_norm", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
+                // Gemma-4 per-layer-embedding block tensors (F32, float path).
+                if (name.Contains("inp_gate", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
+                if (name.Contains(".proj.weight", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
+                if (name.Contains("layer_output_scale", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
+                if (name.Contains("post_norm", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
                 // Fused QKV (e.g. Phi-3: "blk.N.attn_qkv.weight") must be matched
                 // BEFORE the individual attn_q/attn_k/attn_v substring checks,
                 // because "attn_qkv".Contains("attn_q") is true.
@@ -415,13 +453,39 @@ else
                 }
                 if (name.Contains("attn_q_norm", StringComparison.OrdinalIgnoreCase))
                 {
-                    b.QNormW ??= new Tensor<float>(Config.HeadDim);
+                    b.QNormW ??= new Tensor<float>(Config.HeadDimForLayer(bIdx));
                     return b.QNormW;
                 }
                 if (name.Contains("attn_k_norm", StringComparison.OrdinalIgnoreCase))
                 {
-                    b.KNormW ??= new Tensor<float>(Config.HeadDim);
+                    b.KNormW ??= new Tensor<float>(Config.HeadDimForLayer(bIdx));
                     return b.KNormW;
+                }
+                // Gemma-4 per-layer-embedding block tensors. The per-layer norm is a
+                // weighted RMSNorm over the hidden dim; like the gemma post-norms it is
+                // allocated here and kept resident across streaming frees.
+                if (Config.HasPerLayerEmbeddings)
+                {
+                    if (name.Contains("inp_gate", StringComparison.OrdinalIgnoreCase))
+                    {
+                        b.PerLayerInpGate ??= new Tensor<float>(Config.HiddenDim, Config.PerLayerEmbdDim);
+                        return b.PerLayerInpGate;
+                    }
+                    if (name.Contains(".proj.weight", StringComparison.OrdinalIgnoreCase))
+                    {
+                        b.PerLayerProj ??= new Tensor<float>(Config.PerLayerEmbdDim, Config.HiddenDim);
+                        return b.PerLayerProj;
+                    }
+                    if (name.Contains("layer_output_scale", StringComparison.OrdinalIgnoreCase))
+                    {
+                        b.OutScale ??= new Tensor<float>(1);
+                        return b.OutScale;
+                    }
+                    if (name.Contains("post_norm", StringComparison.OrdinalIgnoreCase))
+                    {
+                        b.PerLayerPostNorm ??= new Tensor<float>(Config.HiddenDim);
+                        return b.PerLayerPostNorm;
+                    }
                 }
                 if (name.Contains("attn_q", StringComparison.OrdinalIgnoreCase) || name.Contains("q_proj", StringComparison.OrdinalIgnoreCase)) return b.Wq;
                 if (name.Contains("attn_k", StringComparison.OrdinalIgnoreCase) || name.Contains("k_proj", StringComparison.OrdinalIgnoreCase)) return b.Wk;
@@ -668,6 +732,12 @@ else
         public Tensor<float>? PostNorm1W { get; set; }
         public Tensor<float>? PostNorm2W { get; set; }
 
+        // Gemma-4 per-layer embeddings (PLE) block tensors.
+        public Tensor<float>? PerLayerInpGate { get; set; }   // [HiddenDim, PerLayerEmbdDim]
+        public Tensor<float>? PerLayerProj { get; set; }      // [PerLayerEmbdDim, HiddenDim]
+        public Tensor<float>? PerLayerPostNorm { get; set; }  // [HiddenDim]
+        public Tensor<float>? OutScale { get; set; }          // [1] layer output scale
+
         // LFM2 short-conv (no-attention) float tensors
         public Tensor<float>? WScIn { get; set; }   // [HiddenDim, 3*HiddenDim]
         public Tensor<float>? WScOut { get; set; }  // [HiddenDim, HiddenDim]
@@ -824,7 +894,9 @@ else
             Tensor<float> wf1, Tensor<float> wf2, Tensor<float> wf1B, Tensor<float> wf2B,
             Tensor<float> n1w, Tensor<float>? n1b, Tensor<float> n2w, Tensor<float>? n2b,
             Tensor<float>? qNorm, Tensor<float>? kNorm,
-            Tensor<float>? postNorm1W = null, Tensor<float>? postNorm2W = null)
+            Tensor<float>? postNorm1W = null, Tensor<float>? postNorm2W = null,
+            Tensor<float>? perLayerInpGate = null, Tensor<float>? perLayerProj = null,
+            Tensor<float>? perLayerPostNorm = null, Tensor<float>? outScale = null)
         {
             Wq = wq; Wk = wk; Wv = wv; Wo = wo;
             WqBias = wqB; WkBias = wkB; WvBias = wvB; WoBias = woB;
@@ -832,6 +904,8 @@ else
             Norm1W = n1w; Norm1B = n1b; Norm2W = n2w; Norm2B = n2b;
             QNormW = qNorm; KNormW = kNorm;
             PostNorm1W = postNorm1W; PostNorm2W = postNorm2W;
+            PerLayerInpGate = perLayerInpGate; PerLayerProj = perLayerProj;
+            PerLayerPostNorm = perLayerPostNorm; OutScale = outScale;
         }
 
         public void Dispose()
@@ -842,6 +916,8 @@ else
             Norm1W?.Dispose(); Norm1B?.Dispose(); Norm2W?.Dispose(); Norm2B?.Dispose();
             QNormW?.Dispose(); KNormW?.Dispose();
             PostNorm1W?.Dispose(); PostNorm2W?.Dispose();
+            PerLayerInpGate?.Dispose(); PerLayerProj?.Dispose();
+            PerLayerPostNorm?.Dispose(); OutScale?.Dispose();
             WScIn?.Dispose(); WScOut?.Dispose(); WScConv?.Dispose();
             WRouter?.Dispose(); WRouterBias?.Dispose();
             DisposeDict(WgateExp); DisposeDict(WgateExpBias);

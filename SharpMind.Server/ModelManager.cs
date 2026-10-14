@@ -243,7 +243,7 @@ public sealed class ModelManager : IDisposable
         {
             caches = new IKVCache[cfg.NumLayers];
             for (int i = 0; i < caches.Length; i++)
-                caches[i] = new KVCache(1, cfg.NumKvHeads, chunk * Passes, cfg.HeadDim);
+                caches[i] = new KVCache(1, cfg.NumKvHeads, chunk * Passes, cfg.HeadDimForLayer(i));
 
             using var ws = new Core.Memory.Workspace(Core.Memory.Workspace.CalculateRequiredSize(
                 cfg.HiddenDim, cfg.FfnDim, cfg.VocabSize, cfg.NumLayers, chunk));

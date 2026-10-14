@@ -19,6 +19,9 @@ public sealed class Transformer : IDisposable
     private readonly AudioEncoder? _audioEncoder;
     private bool _disposed;
 
+    // Gemma-4 per-layer-embedding builder; null for every other architecture.
+    private readonly PerLayerInputs? _perLayerInputs;
+
     // Learned positional embeddings [MaxSeqLen, HiddenDim]; null unless the
     // model config selects PositionalEncoding.Learned.
     private readonly Tensor<float>? _positionEmbedding;
@@ -53,7 +56,8 @@ public sealed class Transformer : IDisposable
         Dictionary<string, string>? mapping = null,
         bool gemmaEmbeddingScale = false,
         VisionEncoder? visionEncoder = null,
-        AudioEncoder? audioEncoder = null)
+        AudioEncoder? audioEncoder = null,
+        PerLayerInputs? perLayerInputs = null)
     {
         ArgumentNullException.ThrowIfNull(weights);
         ArgumentNullException.ThrowIfNull(embedding);
@@ -67,6 +71,7 @@ public sealed class Transformer : IDisposable
         _qOps = qOps;
         _visionEncoder = visionEncoder;
         _audioEncoder = audioEncoder;
+        _perLayerInputs = perLayerInputs;
         bool untied = weights.HasLmHead;
         var rawW = untied ? _weights.RawLmHead : _weights.RawEmbedding;
         var rawDtype = untied ? _weights.RawLmHeadDtype : _weights.RawEmbeddingDtype;
@@ -363,7 +368,17 @@ public sealed class Transformer : IDisposable
 
         // 4. Architecture (blocks mutate in place; _cachedHidden may alias fused).
         _cachedEmbedding = fused;
-        _cachedHidden = _arch.Forward(_cachedEmbedding, new IKVCache[_arch.NumLayers], positionOffset, workspace);
+        // Per-layer embeddings are indexed by text token ids, so they only apply to a
+        // text-only pass; a fused image/audio prefix has no token ids.
+        var perLayer = visionLen == 0 && audioLen == 0 ? BuildPerLayerInputs(textTokenIds, workspace) : null;
+        try
+        {
+            _cachedHidden = _arch.Forward(_cachedEmbedding, new IKVCache[_arch.NumLayers], positionOffset, workspace, perLayer);
+        }
+        finally
+        {
+            perLayer?.Dispose();
+        }
 
         if (_weights is TransformerWeightsStreaming sw) sw.PrepareForNextForward();
 
@@ -377,6 +392,7 @@ public sealed class Transformer : IDisposable
         int N = _weights.Config.VocabSize;
 
         var logits = _logitOps.Project(normedFlat, M, K, N, workspace);
+        ApplyFinalLogitSoftcap(logits);
         var result = logits.Reshape(batch, totalLen, N);
         logits.Dispose();
         return result;
@@ -418,7 +434,15 @@ public sealed class Transformer : IDisposable
         // 2. Architecture (stack of transformer blocks).
         //    Blocks mutate in-place and return the same tensor, so _cachedHidden
         //    may alias _cachedEmbedding. Keep both alive until we exit this method.
-        _cachedHidden = _arch.Forward(_cachedEmbedding, caches ?? new IKVCache[_arch.NumLayers], positionOffset, workspace);
+        var perLayer = BuildPerLayerInputs(tokenIds, workspace);
+        try
+        {
+            _cachedHidden = _arch.Forward(_cachedEmbedding, caches ?? new IKVCache[_arch.NumLayers], positionOffset, workspace, perLayer);
+        }
+        finally
+        {
+            perLayer?.Dispose();
+        }
 
         // Streaming: keep the resident window warm for the next pass
         if (_weights is TransformerWeightsStreaming sw) sw.PrepareForNextForward();
@@ -438,6 +462,7 @@ public sealed class Transformer : IDisposable
         int N = _weights.Config.VocabSize;
 
         var logits = _logitOps.Project(normedFlat, M, K, N, workspace);
+        ApplyFinalLogitSoftcap(logits);
         var result = logits.Reshape(batch, seqLen, N);
         logits.Dispose();
         return result;
@@ -470,7 +495,9 @@ public sealed class Transformer : IDisposable
             {
                 _finalNorm.ForwardInPlace(_cachedHidden);
                 using var flatHidden = _cachedHidden.Reshape(batch, hiddenDim);
-                return _logitOps.Project(flatHidden, batch, K, N, workspace);
+                var lastLogits = _logitOps.Project(flatHidden, batch, K, N, workspace);
+                ApplyFinalLogitSoftcap(lastLogits);
+                return lastLogits;
             }
 
             // Prefill path: extract last token's hidden state, norm in-place
@@ -488,6 +515,7 @@ public sealed class Transformer : IDisposable
             _finalNorm.ForwardInPlace(lastHidden);
 
             Tensor<float> result = _logitOps.Project(lastHidden, batch, K, N, workspace);
+            ApplyFinalLogitSoftcap(result);
             lastHidden.Dispose();
             return result;
         }
@@ -524,7 +552,15 @@ public sealed class Transformer : IDisposable
         DecodeProfiler.Mark(DecodeStage.Embed, tEmbed);
 
         var tBlocks = DecodeProfiler.Begin();
-        _cachedHidden = _arch.Forward(_cachedEmbedding, caches, positionOffset, workspace);
+        var perLayer = BuildPerLayerInputs(tokenIds, workspace);
+        try
+        {
+            _cachedHidden = _arch.Forward(_cachedEmbedding, caches, positionOffset, workspace, perLayer);
+        }
+        finally
+        {
+            perLayer?.Dispose();
+        }
         DecodeProfiler.Mark(DecodeStage.Blocks, tBlocks);
 
         if (_weights is TransformerWeightsStreaming sw) sw.PrepareForNextForward();
@@ -595,6 +631,7 @@ public sealed class Transformer : IDisposable
         _finalNorm.Dispose();
         _visionEncoder?.Dispose();
         _audioEncoder?.Dispose();
+        _perLayerInputs?.Dispose();
         // The Transformer borrows its TransformerWeights: CreateTransformer
         // never transfers ownership, so one weights instance can legitimately
         // back several transformers built and disposed over its lifetime (the
@@ -614,6 +651,25 @@ public sealed class Transformer : IDisposable
         var data = embedding.Data;
         for (int i = 0; i < data.Length; i++)
             data[i] *= scale;
+    }
+
+    /// <summary>
+    /// Builds the gemma-4 per-layer input tensor for the current token ids, or null
+    /// when the model has no per-layer embeddings. Requires <see cref="_cachedEmbedding"/>
+    /// to be the (embedding-scaled) input the blocks will consume.
+    /// </summary>
+    private Tensor<float>? BuildPerLayerInputs(Tensor<int> tokenIds, Core.Memory.IWorkspace? workspace)
+        => _perLayerInputs is null ? null : _perLayerInputs.Build(_cachedEmbedding!, tokenIds.Data, workspace);
+
+    /// <summary>Applies gemma-4's final logit soft cap (<c>tanh(x/cap)*cap</c>) in place, when configured.</summary>
+    private void ApplyFinalLogitSoftcap(Tensor<float> logits)
+    {
+        float cap = _weights.Config.FinalLogitSoftcap;
+        if (cap <= 0f) return;
+        float inv = 1f / cap;
+        var d = logits.Data;
+        for (int i = 0; i < d.Length; i++)
+            d[i] = cap * MathF.Tanh(d[i] * inv);
     }
 
     /// <summary>

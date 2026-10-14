@@ -223,6 +223,92 @@ public sealed record ModelConfig
     /// <summary>Pre-computed RoPE frequencies from GGUF (rope_freqs.weight), if present.</summary>
     public float[]? PrecomputedRopeFreqs { get; init; }
 
+    // Gemma 3n / Gemma 4 family
+
+    /// <summary>
+    /// Per-layer embedding dimension (gemma4 <c>{arch}.embedding_length_per_layer_input</c>).
+    /// Each block consumes a distinct slice of a per-layer token-embedding table,
+    /// combined with a projection of the hidden state. 0 = architecture has no
+    /// per-layer embeddings.
+    /// </summary>
+    public int PerLayerEmbdDim { get; init; }
+
+    /// <summary>True when the model carries per-layer input embeddings (gemma4).</summary>
+    public bool HasPerLayerEmbeddings => PerLayerEmbdDim > 0;
+
+    /// <summary>
+    /// Total width of the per-layer token-embedding table's rows
+    /// (<see cref="PerLayerEmbdDim"/> × <see cref="NumLayers"/>). One row of
+    /// <c>per_layer_token_embd.weight</c> holds every layer's slice back to
+    /// back, layer-major.
+    /// </summary>
+    public int PerLayerTotalDim => PerLayerEmbdDim * NumLayers;
+
+    /// <summary>
+    /// Per-head key dimension for sliding-window layers
+    /// (gemma4 <c>{arch}.attention.key_length_swa</c>). Gemma 4 uses a smaller
+    /// head dim (256) on windowed layers than on full-attention layers (512).
+    /// Null falls back to <see cref="KeyLength"/>.
+    /// </summary>
+    public int? KeyLengthSwa { get; init; }
+
+    /// <summary>Per-head value dim for sliding-window layers. Falls back to <see cref="KeyLengthSwa"/>.</summary>
+    public int? ValueLengthSwa { get; init; }
+
+    /// <summary>
+    /// RoPE dimension count for sliding-window layers
+    /// (gemma4 <c>{arch}.rope.dimension_count_swa</c>). Null falls back to
+    /// <see cref="RopeDim"/> then the layer's head dim.
+    /// </summary>
+    public int? RopeDimSwa { get; init; }
+
+    /// <summary>
+    /// Number of trailing layers that reuse the KV cache of earlier layers
+    /// (gemma4 <c>{arch}.attention.shared_kv_layers</c>). 0 = every layer owns
+    /// its own K/V.
+    /// </summary>
+    public int SharedKvLayers { get; init; }
+
+    /// <summary>True when trailing layers share the KV cache of earlier layers.</summary>
+    public bool HasSharedKv => SharedKvLayers > 0;
+
+    /// <summary>Index of the first layer that shares the KV cache; layers at or beyond reuse earlier ones.</summary>
+    public int FirstKvSharedLayer => NumLayers - SharedKvLayers;
+
+    /// <summary>
+    /// Override for the attention logit scale. Null derives
+    /// <c>1 / sqrt(headDim)</c> from the layer's head dim; gemma4 sets it to
+    /// 1.0 (no pre-attention scaling, llama.cpp <c>f_attention_scale</c>).
+    /// </summary>
+    public float? AttentionScale { get; init; }
+
+    /// <summary>
+    /// gemma4 applies an unweighted RMSNorm (llama.cpp
+    /// <c>ggml_rms_norm(v, eps)</c>) to the value vectors before they are
+    /// cached. Unlike the Q/K norms this has no learned weight.
+    /// </summary>
+    public bool RmsNormValue { get; init; }
+
+    /// <summary>
+    /// Per-pair RoPE frequency factors (llama.cpp frequency factors, gemma4
+    /// <c>rope_freqs.weight</c>). The effective rotation angle for pair i is
+    /// <c>pos * theta^(-2i/ropeDim) / RopeFreqFactors[i]</c>; a factor of 1
+    /// leaves the pair unchanged, a very large factor effectively disables the
+    /// rotation (gemma4 uses this for proportional RoPE on full-attention
+    /// layers). Null disables the factor entirely.
+    /// </summary>
+    public float[]? RopeFreqFactors { get; init; }
+
+    /// <summary>
+    /// Final logit soft-capping value (gemma2/3/4
+    /// <c>{arch}.final_logit_softcapping</c>): logits are passed through
+    /// <c>tanh(x / cap) * cap</c> before sampling. 0 = no soft-capping.
+    /// </summary>
+    public float FinalLogitSoftcap { get; init; }
+
+    /// <summary>True when the model soft-caps its final logits (Gemma 2/3/4).</summary>
+    public bool HasFinalLogitSoftcap => FinalLogitSoftcap > 0;
+
     /// <summary>Whether the LM head weight is tied to the embedding weight.</summary>
     public bool? TieWordEmbeddings { get; init; }
 
@@ -312,6 +398,51 @@ public sealed record ModelConfig
 
     /// <summary>Dimension per value head. Falls back to HeadDim.</summary>
     public int ValueDim => ValueLength ?? HeadDim;
+
+    /// <summary>
+    /// Per-head key dimension for the given block. Sliding-window layers of
+    /// gemma4 use <see cref="KeyLengthSwa"/> (256) while full-attention layers
+    /// use <see cref="HeadDim"/> (512). Null SWA override falls back to <see cref="HeadDim"/>.
+    /// </summary>
+    public int HeadDimForLayer(int layerIndex) =>
+        IsSwaLayer(layerIndex) && KeyLengthSwa is { } k ? k : HeadDim;
+
+    /// <summary>Per-head value dimension for the given block (see <see cref="HeadDimForLayer"/>).</summary>
+    public int ValueDimForLayer(int layerIndex) =>
+        IsSwaLayer(layerIndex) && ValueLengthSwa is { } v ? v
+        : IsSwaLayer(layerIndex) && KeyLengthSwa is { } k ? k
+        : ValueDim;
+
+    /// <summary>
+    /// Rotary span for the given block: the SWA override on windowed layers,
+    /// else <see cref="RopeDim"/>, else the layer's head dim (full rotation).
+    /// </summary>
+    public int RopeDimForLayer(int layerIndex) =>
+        IsSwaLayer(layerIndex) && RopeDimSwa is { } r ? r
+        : RopeDim ?? HeadDimForLayer(layerIndex);
+
+    /// <summary>
+    /// True when the given block computes its own K/V. When trailing layers
+    /// share the KV cache (<see cref="HasSharedKv"/>), those layers return false
+    /// and reuse an earlier layer's keys and values during attention.
+    /// </summary>
+    public bool HasOwnKv(int layerIndex) => !HasSharedKv || layerIndex < FirstKvSharedLayer;
+
+    /// <summary>
+    /// Layer whose KV cache a KV-sharing layer reads (gemma4). Shared layers
+    /// reuse the last non-shared layer <em>of the same attention type</em>
+    /// (sliding-window vs full), reproducing vLLM's gemma4 mapping: for the
+    /// E4B checkpoint the shared SWA layers read layer 22 and the shared full
+    /// layers read layer 23. Layers that own their KV return themselves.
+    /// </summary>
+    public int KvSourceLayer(int layerIndex)
+    {
+        if (HasOwnKv(layerIndex)) return layerIndex;
+        bool swa = IsSwaLayer(layerIndex);
+        for (int j = FirstKvSharedLayer - 1; j >= 0; j--)
+            if (HasOwnKv(j) && IsSwaLayer(j) == swa) return j;
+        return FirstKvSharedLayer - 1;
+    }
 
     /// <summary>Number of query heads each KV head serves (GQA group size).</summary>
     public int KvGroupSize => NumHeads / NumKvHeads;

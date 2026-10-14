@@ -74,7 +74,6 @@ public static class ModelFactory
         ArgumentNullException.ThrowIfNull(modelConfig);
         ArgumentNullException.ThrowIfNull(sharpConfig);
         modelConfig.Validate();
-        ThrowIfArchitectureUnsupported(modelConfig.Architecture);
         var fmt = ModelFormatHelpers.GetFormatForExtension(path) ?? throw new FileLoadException($"File type not supported: {path}", path);
         var embedding = new Tensor<float>(modelConfig.VocabSize, modelConfig.HiddenDim);
         Tensor<float>? lmHead = null;
@@ -123,52 +122,12 @@ public static class ModelFactory
             : null;
 
     /// <summary>
-    /// Architectures known NOT to work, with the reason. A denylist rather than an
-    /// allowlist on purpose: only entries actually observed to fail belong here, so
-    /// this can never reject a model that would have loaded.
-    ///
-    /// Without it these fail late and misleadingly � the generic decoder derives
-    /// layer shapes from the config, those shapes disagree with the file, and the
-    /// first matmul reports a byte-count mismatch as if the file were corrupt.
-    /// </summary>
-    private static readonly Dictionary<string, string> UnsupportedArchitectures = new(StringComparer.OrdinalIgnoreCase)
-    {
-        // Verified against gemma-4-{E2B,e4b,26B-A4B}-it-Q4_K_M. The family is
-        // gemma-3n-style and departs from a standard decoder in several ways at
-        // once, so correcting any single one only moves the failure along.
-        ["gemma4"] = "per-layer input embeddings (per_layer_token_embd, inp_gate, proj), "
-                   + "per-layer FFN widths (feed_forward_length is an array), "
-                   + "KV sharing across layers (attention.shared_kv_layers), and "
-                   + "per-layer output scaling",
-        // Same family under the name llama.cpp uses for the 3n conversions.
-        ["gemma3n"] = "per-layer input embeddings, per-layer FFN widths and shared KV layers "
-                    + "(same architecture family as gemma4)",
-    };
-
-    /// <summary>
-    /// Fails a model whose architecture is known not to work, before anything is
-    /// allocated, so the message names the architecture instead of a tensor size.
-    /// </summary>
-    private static void ThrowIfArchitectureUnsupported(string? architecture)
-    {
-        if (string.IsNullOrWhiteSpace(architecture)) return;
-        if (!UnsupportedArchitectures.TryGetValue(architecture, out string? reason)) return;
-
-        throw new NotSupportedException(
-            $"Model architecture '{architecture}' is not supported. It uses {reason}, " +
-            "none of which the decoder implements. The file is fine � SharpMind cannot run it. " +
-            "Loading it anyway would derive the wrong layer shapes and produce garbage.");
-    }
-
-    /// <summary>
     /// Per-block tensors for inference: norms and biases only. The 2D weights are
     /// left null so the quantized forward reads the raw bytes directly instead of
     /// a dequantized F32 duplicate.
     /// </summary>
     private static TransformerWeights.BlockWeights[] AllocateInferenceBlockWeights(ModelConfig config, SharpMindConfig sharpConfig)
     {
-        int qDim = config.NumHeads * config.HeadDim;
-        int kvDim = config.NumKvHeads * config.HeadDim;
         // LayerNorm carries a bias; allocate placeholder tensors so the loader
         // fills them and BuildNorm wires them into the NormLayer (BERT-family
         // attn_output_norm/layer_output_norm biases depend on this). RMSNorm has
@@ -183,6 +142,11 @@ public static class ModelFactory
         var blocks = new TransformerWeights.BlockWeights[config.NumLayers];
         for (int i = 0; i < config.NumLayers; i++)
         {
+            // Attention shapes are per-layer (gemma4 uses 256 on SWA layers and
+            // 512 on full layers), so the bias placeholders must match the layer.
+            int headDim = config.HeadDimForLayer(i);
+            int qDim = config.NumHeads * headDim;
+            int kvDim = config.NumKvHeads * headDim;
             blocks[i] = new TransformerWeights.BlockWeights
             {
                 LayerIndex = i,
@@ -195,7 +159,14 @@ public static class ModelFactory
                 WvBias = new Tensor<float>(kvDim),
                 WoBias = new Tensor<float>(config.HiddenDim),
                 Wf1Bias = denseFfn ? new Tensor<float>(config.FfnDim) : null,
-                Wf2Bias = denseFfn ? new Tensor<float>(config.HiddenDim) : null
+                Wf2Bias = denseFfn ? new Tensor<float>(config.HiddenDim) : null,
+                // Gemma-4 PLE block tensors. Pre-allocate so BuildBlock wires the PLE
+                // layers before any weight data is read; the loader fills these in place
+                // and ReleaseLayerData keeps them resident (like the gemma post-norms).
+                PerLayerInpGate = config.HasPerLayerEmbeddings ? new Tensor<float>(config.HiddenDim, config.PerLayerEmbdDim) : null,
+                PerLayerProj = config.HasPerLayerEmbeddings ? new Tensor<float>(config.PerLayerEmbdDim, config.HiddenDim) : null,
+                PerLayerPostNorm = config.HasPerLayerEmbeddings ? new Tensor<float>(config.HiddenDim) : null,
+                OutScale = config.HasPerLayerEmbeddings ? new Tensor<float>(1) : null
             };
         }
         return blocks;
@@ -210,8 +181,12 @@ public static class ModelFactory
 
         for (int i = 0; i < config.NumLayers; i++)
         {
-            int qDim = config.NumHeads * config.HeadDim;
-            int kvDim = config.NumKvHeads * config.HeadDim;
+            // Attention shapes are per-layer (gemma4: 256 on SWA layers, 512 on
+            // full layers), so a single global head dim mis-sizes the F32 planes
+            // on the full-load path.
+            int headDim = config.HeadDimForLayer(i);
+            int qDim = config.NumHeads * headDim;
+            int kvDim = config.NumKvHeads * headDim;
 
             blocks[i] = new TransformerWeights.BlockWeights(
                 new Tensor<float>(config.HiddenDim, qDim),          // Wq
@@ -233,7 +208,11 @@ public static class ModelFactory
                 null,                                                 // QNormW
                 null,                                                 // KNormW
                 null,                                                 // PostNorm1W
-                null                                                  // PostNorm2W
+                null,                                                 // PostNorm2W
+                config.HasPerLayerEmbeddings ? new Tensor<float>(config.HiddenDim, config.PerLayerEmbdDim) : null, // PerLayerInpGate
+                config.HasPerLayerEmbeddings ? new Tensor<float>(config.PerLayerEmbdDim, config.HiddenDim) : null, // PerLayerProj
+                config.HasPerLayerEmbeddings ? new Tensor<float>(config.HiddenDim) : null,                          // PerLayerPostNorm
+                config.HasPerLayerEmbeddings ? new Tensor<float>(1) : null                                          // OutScale
             )
             {
                 LayerIndex = i,
@@ -306,8 +285,26 @@ public static class ModelFactory
         var finalNorm = BuildNorm(weights.Config.HiddenDim, sharpConfig, weights.Config.NormEps, weights.FinalNormWeight, weights.FinalNormBias);
 
         bool gemmaScale = sharpConfig.Activation == ActivationKind.GELU && sharpConfig.Gate == GateKind.GeGLU;
+
+        // Gemma-4 per-layer-embedding builder. The model projection and its norm are
+        // F32 globals; the token table stays quantized (raw bytes).
+        PerLayerInputs? perLayerInputs = null;
+        if (weights.Config.HasPerLayerEmbeddings
+            && weights.PerLayerModelProj is not null
+            && weights.RawPerLayerTokEmbd is not null
+            && weights.RawPerLayerTokEmbdDtype is { } tokDtype)
+        {
+            var modelProj = LinearLayerFactory.Create(
+                "per_layer_model_proj", weights.Config.HiddenDim, weights.Config.PerLayerTotalDim,
+                false, weights.PerLayerModelProj, null, QuantDType.F32, baseMapping: null);
+            var projNorm = BuildNorm(weights.Config.PerLayerEmbdDim, sharpConfig, weights.Config.NormEps, weights.PerLayerProjNormW, null);
+            perLayerInputs = new PerLayerInputs(
+                modelProj, projNorm, weights.RawPerLayerTokEmbd, tokDtype, qOps,
+                weights.Config.NumLayers, weights.Config.PerLayerEmbdDim, weights.Config.HiddenDim, weights.Config.VocabSize);
+        }
+
         var (visionEncoder, audioEncoder) = BuildEncoders(weights.Config);
-        var transformer = new Transformer(weights, embedding, arch, finalNorm, qOps, fullMapping, gemmaEmbeddingScale: gemmaScale, visionEncoder: visionEncoder, audioEncoder: audioEncoder);
+        var transformer = new Transformer(weights, embedding, arch, finalNorm, qOps, fullMapping, gemmaEmbeddingScale: gemmaScale, visionEncoder: visionEncoder, audioEncoder: audioEncoder, perLayerInputs: perLayerInputs);
 
         // Streaming reloads a layer's raw buffers every token, and the Q8_0 wide repack is
         // keyed on the raw array instance, so it would rebuild several MiB of pinned LOH per
@@ -412,6 +409,22 @@ public static class ModelFactory
         var ffn = BuildFfn(layerIdx, weights, sharpConfig, acts, qOps, layerMapping);
         ffn.SetWeights(blockWeights);
 
+        // Gemma-4 per-layer-embedding tail. The layers are F32, so they are built as
+        // float linear layers (null mapping) whose weights the loader holds by reference
+        // and refills in place across streaming reloads.
+        PerLayerEmbedding? perLayer = null;
+        if (weights.Config.HasPerLayerEmbeddings && blockWeights.PerLayerInpGate is not null && blockWeights.PerLayerProj is not null)
+        {
+            var inpGate = LinearLayerFactory.Create(
+                $"blk.{layerIdx}.inp_gate", weights.Config.HiddenDim, weights.Config.PerLayerEmbdDim,
+                false, blockWeights.PerLayerInpGate, null, QuantDType.F32, baseMapping: null);
+            var proj = LinearLayerFactory.Create(
+                $"blk.{layerIdx}.proj", weights.Config.PerLayerEmbdDim, weights.Config.HiddenDim,
+                false, blockWeights.PerLayerProj, null, QuantDType.F32, baseMapping: null);
+            var perLayerPostNorm = BuildNorm(weights.Config.HiddenDim, sharpConfig, eps, blockWeights.PerLayerPostNorm, null);
+            perLayer = new PerLayerEmbedding(layerIdx, inpGate, proj, perLayerPostNorm);
+        }
+
         // LFM2 short-conv blocks have no attention tensors; the ShortConvLayer
         // replaces the KV-cache branch entirely (its state lives in the
         // per-layer ShortConvCache, never in the KVCache).
@@ -421,8 +434,8 @@ public static class ModelFactory
             shortConv.SetWeights(blockWeights);
             bool shortConvPostNorm = weights.Config.PostNormResidual;
             return useHooks
-                ? new HookedTransformerBlock(layerIdx, null, ffn, norm1, norm2, postAttnNorm, postFfnNorm, shortConv, shortConvPostNorm)
-                : new UnhookedTransformerBlock(layerIdx, null, ffn, norm1, norm2, postAttnNorm, postFfnNorm, shortConv, shortConvPostNorm);
+                ? new HookedTransformerBlock(layerIdx, null, ffn, norm1, norm2, postAttnNorm, postFfnNorm, shortConv, shortConvPostNorm, perLayer, blockWeights.OutScale)
+                : new UnhookedTransformerBlock(layerIdx, null, ffn, norm1, norm2, postAttnNorm, postFfnNorm, shortConv, shortConvPostNorm, perLayer, blockWeights.OutScale);
         }
 
         var t = _attnCache.GetOrAdd(MappingHash.Compute(cfg), (h) =>
@@ -435,8 +448,8 @@ public static class ModelFactory
 
         bool postNormResidual = weights.Config.PostNormResidual;
         return useHooks
-            ? new HookedTransformerBlock(layerIdx, attn, ffn, norm1, norm2, postAttnNorm, postFfnNorm, postNormResidual: postNormResidual)
-            : new UnhookedTransformerBlock(layerIdx, attn, ffn, norm1, norm2, postAttnNorm, postFfnNorm, postNormResidual: postNormResidual);
+            ? new HookedTransformerBlock(layerIdx, attn, ffn, norm1, norm2, postAttnNorm, postFfnNorm, postNormResidual: postNormResidual, perLayer: perLayer, outScale: blockWeights.OutScale)
+            : new UnhookedTransformerBlock(layerIdx, attn, ffn, norm1, norm2, postAttnNorm, postFfnNorm, postNormResidual: postNormResidual, perLayer: perLayer, outScale: blockWeights.OutScale);
     }
 
     private static FfnLayer BuildFfn(

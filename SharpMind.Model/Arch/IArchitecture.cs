@@ -13,7 +13,7 @@ namespace SharpMind.Model.Arch;
 public interface IArchitecture : IDisposable
 {
     public Tensor<float> Forward(Tensor<float> hiddenStates, int positionOffset = 0, SharpMind.Core.Memory.IWorkspace? workspace = null);
-    public Tensor<float> Forward(Tensor<float> hiddenStates, IKVCache[] caches, int positionOffset = 0, SharpMind.Core.Memory.IWorkspace? workspace = null);
+    public Tensor<float> Forward(Tensor<float> hiddenStates, IKVCache[] caches, int positionOffset = 0, SharpMind.Core.Memory.IWorkspace? workspace = null, Tensor<float>? perLayerInputs = null);
     public int NumLayers { get; }
     public IEnumerable<Parameter> Parameters();
 

@@ -15,6 +15,21 @@ namespace SharpMind.Model.Layers.Attention;
 
         protected readonly ModelConfig Config;
 
+        /// <summary>
+        /// Per-head key/value dimension for <em>this</em> layer. Models with a
+        /// hybrid attention geometry (gemma4) use a different head dim on
+        /// sliding-window layers (256) than on full-attention layers (512), so
+        /// the global <see cref="ModelConfig.HeadDim"/> must not be used here.
+        /// </summary>
+        protected readonly int HeadDim;
+
+        /// <summary>
+        /// Index of the owning transformer block. A KV-sharing layer (gemma4)
+        /// reads another layer's cache, so <see cref="Forward"/> uses this to
+        /// decide whether it may write to the cache it was handed.
+        /// </summary>
+        protected readonly int LayerIndex;
+
         public readonly LinearLayer Wq;
         public readonly LinearLayer Wk;
         public readonly LinearLayer Wv;
@@ -22,10 +37,12 @@ namespace SharpMind.Model.Layers.Attention;
         public readonly PositionalEncoder PositionalEncoder;
         private NormLayer? _qNorm;
         private NormLayer? _kNorm;
+        private NormLayer? _vNorm;
         private bool _disposed;
 
         public NormLayer? QNorm => _qNorm;
         public NormLayer? KNorm => _kNorm;
+        public NormLayer? VNorm => _vNorm;
 
     [PuzzleCornerPiece(SharpMindConfig.KeyAttentionQ8,
         SharpMindConfig.ValMhaFlashQ8_0Avx2, NS + "." + nameof(AttentionKernels.ScaledDotProductFlashQ8_0AVX2),
@@ -98,8 +115,11 @@ namespace SharpMind.Model.Layers.Attention;
     protected AttentionLayer(ModelConfig config, TransformerWeights.BlockWeights? weights, Dictionary<string, string>? mapping)
     {
         Config = config;
-        int qDim = config.NumHeads * config.HeadDim;
-        int kvDim = config.NumKvHeads * config.HeadDim;
+        int layerIndex = weights?.LayerIndex ?? 0;
+        LayerIndex = layerIndex;
+        HeadDim = config.HeadDimForLayer(layerIndex);
+        int qDim = config.NumHeads * HeadDim;
+        int kvDim = config.NumKvHeads * HeadDim;
 
         var tm = weights?.TensorMeta;
         if (mapping != null)
@@ -124,22 +144,27 @@ namespace SharpMind.Model.Layers.Attention;
             Wo = LinearLayerFactory.Create("o_proj", qDim, config.HiddenDim, true,
                 weights?.Wo, weights?.WoBias, tm?.GetValueOrDefault("RawWo").Dtype ?? QuantDType.F32);
         }
-        // Per-layer RoPE base: sliding-window models (Gemma-3) use a different
+        // Per-layer RoPE base: sliding-window models (Gemma-3/4) use a different
         // theta for windowed layers (10_000) vs full-attention layers (1_000_000).
-        int layerIndex = weights?.LayerIndex ?? 0;
         PositionalEncoder = config.PositionalEncoding switch
         {
             PositionalEncoding.NoPE => new NoPE(),
             PositionalEncoding.ALiBi => new AlibiEncoder(config.NumHeads),
-            _ => new RoPE(config.HeadDim, config.EffectiveInferenceCacheLength, config.RopeThetaForLayer(layerIndex),
-                 ropeDim: config.RopeDim, ropeScalingType: config.RopeScalingType,
+            _ => new RoPE(HeadDim, config.EffectiveInferenceCacheLength, config.RopeThetaForLayer(layerIndex),
+                 ropeDim: config.RopeDimForLayer(layerIndex), ropeScalingType: config.RopeScalingType,
                  ropeScalingFactor: config.RopeScalingFactor,
                  ropeOriginalContextLength: config.RopeOriginalContextLength,
                  lowFreqFactor: config.RopeLowFreqFactor,
                  highFreqFactor: config.RopeHighFreqFactor,
                  precomputedFreqs: config.PrecomputedRopeFreqs,
-                 neoxStyle: UsesNeoxRope(config.Architecture)),
+                 neoxStyle: UsesNeoxRope(config.Architecture),
+                 freqFactors: config.IsSwaLayer(layerIndex) ? null : config.RopeFreqFactors),
         };
+
+        // gemma4 normalises the value vectors with an unweighted RMSNorm before
+        // they enter the KV cache (llama.cpp ggml_rms_norm on Vcur).
+        if (config.RmsNormValue)
+            _vNorm = new RmsNormLayer(HeadDim, config.NormEps);
     }
 
     /// <summary>
@@ -159,7 +184,7 @@ namespace SharpMind.Model.Layers.Attention;
         return architecture.ToLowerInvariant() switch
         {
             "qwen" or "qwen2" or "qwen2moe" or "qwen3" or "qwen3moe" => true,
-            "gemma" or "gemma2" or "gemma3" => true,
+            "gemma" or "gemma2" or "gemma3" or "gemma3n" or "gemma4" => true,
             "phi2" or "phi3" => true,
             "stablelm" or "gptneox" or "starcoder2" or "olmo2" or "nemotron" or "exaone" => true,
             "lfm2" => true,
@@ -188,12 +213,12 @@ namespace SharpMind.Model.Layers.Attention;
         if (weights.QNormW != null)
         {
             _qNorm?.Dispose();
-            _qNorm = new RmsNormLayer(Config.HeadDim, Config.NormEps, weights.QNormW, null);
+            _qNorm = new RmsNormLayer(HeadDim, Config.NormEps, weights.QNormW, null);
         }
         if (weights.KNormW != null)
         {
             _kNorm?.Dispose();
-            _kNorm = new RmsNormLayer(Config.HeadDim, Config.NormEps, weights.KNormW, null);
+            _kNorm = new RmsNormLayer(HeadDim, Config.NormEps, weights.KNormW, null);
         }
     }
 
@@ -289,15 +314,24 @@ namespace SharpMind.Model.Layers.Attention;
         int hidden = x.Shape[2];
         int numH = Config.NumHeads;
         int numKv = Config.NumKvHeads;
-        int headDim = Config.HeadDim;
+        int headDim = HeadDim;
         int qDim = numH * headDim;
         int kvDim = numKv * headDim;
-        float scale = 1f / MathF.Sqrt(headDim);
+        // gemma4 scales the attention logits by 1.0 (Config.AttentionScale);
+        // every other model uses the usual 1/sqrt(headDim).
+        float scale = Config.AttentionScale ?? 1f / MathF.Sqrt(headDim);
 
         // Individual Q, K, V projections (each uses quantized forward path when available)
         using var q = Wq.Forward(x, workspace);
         using var k = Wk.Forward(x, workspace);
         using var v = Wv.Forward(x, workspace);
+
+        // gemma4 RMS-normalises the value vectors (no learned weight) before they
+        // are cached. Reshape to [batch*seqLen*numKv, headDim] so the norm acts
+        // over headDim, then use the normed tensor everywhere V is consumed.
+        using var vNormInput = _vNorm is null ? null : v.Reshape(batch * seqLen * numKv, headDim);
+        using var vNormed = _vNorm?.Forward(vNormInput!, workspace);
+        var vForAttn = (Tensor<float>?)vNormed ?? v;
 
 
         // Apply per-head Q/K normalization (Qwen3):
@@ -321,12 +355,15 @@ namespace SharpMind.Model.Layers.Attention;
         PositionalEncoder.ApplyBatched(kr, positionOffset);
         DecodeProfiler.Mark(DecodeStage.Rope, tRope);
 
-        // Use the (possibly normed) K and V for cache storage
-        if (cache != null)
+        // Use the (possibly normed) K and V for cache storage. A KV-sharing
+        // layer (gemma4) does not own the cache it was handed — the arch passes
+        // it the source layer's cache so attention can read that layer's keys
+        // and values — so it must not append its own.
+        if (cache != null && Config.HasOwnKv(LayerIndex))
         {
             var tKv = DecodeProfiler.Begin();
             using var kCache = kNormed?.Reshape(batch, seqLen, kvDim);
-            cache.Update(kCache ?? k, v, numKv, headDim);
+            cache.Update(kCache ?? k, vForAttn, numKv, headDim);
             DecodeProfiler.Mark(DecodeStage.Kv, tKv);
         }
 
@@ -402,7 +439,7 @@ namespace SharpMind.Model.Layers.Attention;
                             for (int s = 0; s < effectiveKvLen; s++)
                             {
                                 float* srcK = kr.DataPtr + (long)((b * seqLen + s) * numKv + kvHead) * headDim;
-                                float* srcV = v.DataPtr + (long)(b * seqLen * kvDim + s * kvDim + kvHead * headDim);
+                                float* srcV = vForAttn.DataPtr + (long)(b * seqLen * kvDim + s * kvDim + kvHead * headDim);
                                 Unsafe.CopyBlock(pK + (long)s * headDim, srcK, (uint)(headDim * sizeof(float)));
                                 Unsafe.CopyBlock(pV + (long)s * headDim, srcV, (uint)(headDim * sizeof(float)));
                             }
@@ -494,7 +531,7 @@ namespace SharpMind.Model.Layers.Attention;
         {
             // These are LinearLayers, they will only dispose if they own the weights.
             Wq.Dispose(); Wk.Dispose(); Wv.Dispose(); Wo.Dispose();
-            _qNorm?.Dispose(); _kNorm?.Dispose();
+            _qNorm?.Dispose(); _kNorm?.Dispose(); _vNorm?.Dispose();
         }
         _disposed = true;
     }

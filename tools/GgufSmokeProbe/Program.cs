@@ -290,11 +290,16 @@ static int RunForward(string path, string[] args)
         DumpPlanes("RawWdownExp", b0.RawWdownExp, 1);
 
 
+        if (b0.SharedGateInp is not null)
         {
             float[] sg = b0.SharedGateInp.Data.ToArray();
             double sum = 0, mx = 0;
             foreach (float v in sg) { sum += Math.Abs(v); if (Math.Abs(v) > mx) mx = Math.Abs(v); }
             Console.WriteLine($"  SharedGateInp avg|v|={sum / sg.Length:F6} max|v|={mx:F6} zeros={sg.Count(v => v == 0f)}/{sg.Length}");
+        }
+        else
+        {
+            Console.WriteLine("  SharedGateInp: null (not a shared-expert model)");
         }
         if (args.Any(a => a.Equals("nofwd", StringComparison.OrdinalIgnoreCase))) return 0;
 
@@ -346,6 +351,7 @@ static int RunForward(string path, string[] args)
     catch (Exception ex)
     {
         Console.WriteLine($"forward FAILED: {ex.GetType().Name}: {ex.Message}");
+        Console.WriteLine(ex.StackTrace);
         return 1;
     }
 }
@@ -681,10 +687,19 @@ static async Task<int> RunInferenceAsync(string path, string[] args)
         if (args.Any(a => a.Equals("raw", StringComparison.OrdinalIgnoreCase)))
         {
             bool addBos = !args.Any(a => a.Equals("nobos", StringComparison.OrdinalIgnoreCase));
+            // llama.cpp's server/CLI default repeat_penalty is 1.0, while this
+            // probe's GenerationConfig default is 1.1. "nopenalty" zeroes it so a
+            // greedy run is comparable to llama.cpp token-for-token.
+            bool noPenalty = args.Any(a => a.Equals("nopenalty", StringComparison.OrdinalIgnoreCase));
             var rawBuilder = new StandardGeneratorBuilder<KVCacherBuilder>();
             var rawGen = rawBuilder.CreateGenerator(model, tokenizer, addBos, addEos: false, caches: null);
             var rawSample = new SamplingConfig { Temperature = 0f, TopK = 1 };
-            var rawGenCfg = new GenerationConfig { MaxNewTokens = maxTokens, Stream = true };
+            var rawGenCfg = new GenerationConfig
+            {
+                MaxNewTokens = maxTokens,
+                Stream = true,
+                RepetitionPenalty = noPenalty ? 1.0f : new GenerationConfig().RepetitionPenalty,
+            };
             var rawSb = new System.Text.StringBuilder();
             var rawSw = System.Diagnostics.Stopwatch.StartNew();
             await foreach (var frag in rawGen.GenerateAsync(prompt, rawSample, rawGenCfg))

@@ -20,6 +20,9 @@ public abstract class TransformerBlock : IDisposable
     protected NormLayer? _postAttnNorm;
     protected NormLayer? _postFfnNorm;
     protected readonly int _layerIdx;
+    // Gemma-4 per-layer-embedding tail and layer output scale (null elsewhere).
+    protected readonly PerLayerEmbedding? _perLayer;
+    protected readonly Tensor<float>? _outScale;
     // BERT-style post-norm residual placement: no pre-norm; norm1/norm2 are
     // applied after each residual add instead of to the sublayer input.
     protected readonly bool _postNormResidual;
@@ -35,7 +38,8 @@ public abstract class TransformerBlock : IDisposable
     public bool PostNormResidual => _postNormResidual;
 
     protected TransformerBlock(int layerIdx, AttentionLayer? attention, FfnLayer ffn, NormLayer norm1, NormLayer norm2,
-        NormLayer? postAttnNorm = null, NormLayer? postFfnNorm = null, ShortConvLayer? shortConv = null, bool postNormResidual = false)
+        NormLayer? postAttnNorm = null, NormLayer? postFfnNorm = null, ShortConvLayer? shortConv = null, bool postNormResidual = false,
+        PerLayerEmbedding? perLayer = null, Tensor<float>? outScale = null)
     {
         ArgumentNullException.ThrowIfNull(ffn);
         ArgumentNullException.ThrowIfNull(norm1);
@@ -52,6 +56,8 @@ public abstract class TransformerBlock : IDisposable
         _postAttnNorm = postAttnNorm;
         _postFfnNorm = postFfnNorm;
         _postNormResidual = postNormResidual;
+        _perLayer = perLayer;
+        _outScale = outScale;
     }
 
     /// <summary>
@@ -63,10 +69,26 @@ public abstract class TransformerBlock : IDisposable
             ? _shortConv.Forward(normed, cache, workspace)
             : _attention!.Forward(normed, positionOffset, causal, cache, workspace, windowSize);
 
-    public abstract Tensor<float> Forward(Tensor<float> x, IKVCache? cache, int positionOffset = 0, bool causal = true, IWorkspace? workspace = null, int windowSize = 0);
+    public abstract Tensor<float> Forward(Tensor<float> x, IKVCache? cache, int positionOffset, bool causal, IWorkspace? workspace, int windowSize, Tensor<float>? perLayerInputs);
+
+    public Tensor<float> Forward(Tensor<float> x, IKVCache? cache, int positionOffset = 0, bool causal = true, IWorkspace? workspace = null, int windowSize = 0)
+        => Forward(x, cache, positionOffset, causal, workspace, windowSize, null);
 
     public Tensor<float> Forward(Tensor<float> x, int positionOffset = 0, bool causal = true, IWorkspace? workspace = null, int windowSize = 0)
-        => Forward(x, null, positionOffset, causal, workspace, windowSize);
+        => Forward(x, null, positionOffset, causal, workspace, windowSize, null);
+
+    /// <summary>
+    /// Applies the gemma-4 per-layer-embedding tail (when this block has one) followed
+    /// by the layer output scale. Called at the end of every block forward.
+    /// </summary>
+    protected Tensor<float> ApplyPerLayerTail(Tensor<float> x, Tensor<float>? perLayerInputs, IWorkspace? workspace)
+    {
+        if (_perLayer is not null && perLayerInputs is not null)
+            _perLayer.ApplyInPlace(x, perLayerInputs, workspace);
+        if (_outScale is not null)
+            x.ScaleInPlace(_outScale.Data[0]);
+        return x;
+    }
 
     public virtual void SetActivationHook(IActivationHook? hook) { }
 
@@ -262,6 +284,7 @@ public abstract class TransformerBlock : IDisposable
             _norm2.Dispose();
             _postAttnNorm?.Dispose();
             _postFfnNorm?.Dispose();
+            _perLayer?.Dispose();
         }
     }
 

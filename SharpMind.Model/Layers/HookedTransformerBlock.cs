@@ -7,8 +7,9 @@ using SharpMind.Model.Layers.ShortConv;
 namespace SharpMind.Model.Layers;
 
 public sealed class HookedTransformerBlock(int layerIdx, AttentionLayer? attention, FfnLayer ffn, NormLayer norm1, NormLayer norm2,
-    NormLayer? postAttnNorm = null, NormLayer? postFfnNorm = null, ShortConvLayer? shortConv = null, bool postNormResidual = false)
-    : TransformerBlock(layerIdx, attention, ffn, norm1, norm2, postAttnNorm, postFfnNorm, shortConv, postNormResidual)
+    NormLayer? postAttnNorm = null, NormLayer? postFfnNorm = null, ShortConvLayer? shortConv = null, bool postNormResidual = false,
+    PerLayerEmbedding? perLayer = null, Tensor<float>? outScale = null)
+    : TransformerBlock(layerIdx, attention, ffn, norm1, norm2, postAttnNorm, postFfnNorm, shortConv, postNormResidual, perLayer, outScale)
 {
     private IActivationHook? _hook;
 
@@ -16,7 +17,7 @@ public sealed class HookedTransformerBlock(int layerIdx, AttentionLayer? attenti
 
     public override void SetActivationHook(IActivationHook? hook) => _hook = hook;
 
-    public override Tensor<float> Forward(Tensor<float> x, IKVCache? cache, int positionOffset = 0, bool causal = true, IWorkspace? workspace = null, int windowSize = 0)
+    public override Tensor<float> Forward(Tensor<float> x, IKVCache? cache, int positionOffset, bool causal, IWorkspace? workspace, int windowSize, Tensor<float>? perLayerInputs)
     {
         ThrowIfDisposed();
 
@@ -35,7 +36,7 @@ public sealed class HookedTransformerBlock(int layerIdx, AttentionLayer? attenti
             postFfnOut.Dispose();
             _norm2.ForwardInPlace(x);
 
-            return x;
+            return ApplyPerLayerTail(x, perLayerInputs, workspace);
         }
 
         var normed1 = _norm1.Forward(x, workspace);
@@ -69,6 +70,6 @@ public sealed class HookedTransformerBlock(int layerIdx, AttentionLayer? attenti
         x.AddInPlace(ffnOut);
         ffnOut.Dispose();
 
-        return x;
+        return ApplyPerLayerTail(x, perLayerInputs, workspace);
     }
 }

@@ -30,6 +30,18 @@ public sealed class SharpMindModelConfig
     public int SlidingWindowSize { get; set; }
     public int? SlidingWindowPattern { get; set; }
     public bool IsHybridSlidingWindow { get; set; }
+    public int? KeyLength { get; set; }
+    public int? ValueLength { get; set; }
+    public int? HeadDimOverride { get; set; }
+    public int? RopeDim { get; set; }
+    public int? KeyLengthSwa { get; set; }
+    public int? ValueLengthSwa { get; set; }
+    public int? RopeDimSwa { get; set; }
+    public int PerLayerEmbdDim { get; set; }
+    public int SharedKvLayers { get; set; }
+    public float? AttentionScale { get; set; }
+    public float FinalLogitSoftcap { get; set; }
+    public float NormEps { get; set; } = 1e-5f;
     
     // Activation settings
     public string Activation { get; set; } = "silu";
@@ -71,6 +83,18 @@ public sealed class SharpMindModelConfig
             SlidingWindowSize = config.SlidingWindowSize,
             SlidingWindowPattern = config.SlidingWindowPattern,
             IsHybridSlidingWindow = config.IsHybridSlidingWindow,
+            KeyLength = config.KeyLength,
+            ValueLength = config.ValueLength,
+            HeadDimOverride = config.HeadDimOverride,
+            RopeDim = config.RopeDim,
+            KeyLengthSwa = config.KeyLengthSwa,
+            ValueLengthSwa = config.ValueLengthSwa,
+            RopeDimSwa = config.RopeDimSwa,
+            PerLayerEmbdDim = config.PerLayerEmbdDim,
+            SharedKvLayers = config.SharedKvLayers,
+            AttentionScale = config.AttentionScale,
+            FinalLogitSoftcap = config.FinalLogitSoftcap,
+            NormEps = config.NormEps,
             Source = source,
         };
     }
@@ -91,6 +115,18 @@ public sealed class SharpMindModelConfig
             SlidingWindowSize = SlidingWindowSize,
             SlidingWindowPattern = SlidingWindowPattern,
             IsHybridSlidingWindow = IsHybridSlidingWindow,
+            KeyLength = KeyLength,
+            ValueLength = ValueLength,
+            HeadDimOverride = HeadDimOverride,
+            RopeDim = RopeDim,
+            KeyLengthSwa = KeyLengthSwa,
+            ValueLengthSwa = ValueLengthSwa,
+            RopeDimSwa = RopeDimSwa,
+            PerLayerEmbdDim = PerLayerEmbdDim,
+            SharedKvLayers = SharedKvLayers,
+            AttentionScale = AttentionScale,
+            FinalLogitSoftcap = FinalLogitSoftcap,
+            NormEps = NormEps,
         };
     }
 
