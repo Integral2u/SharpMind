@@ -81,6 +81,7 @@ public sealed class FiniteDifferenceTrainer
 
         int batchSize;
         int seqLen;
+        long tokensSeen = 0;
 
         await foreach (var batch in _batches.WithCancellation(ct))
         {
@@ -94,6 +95,8 @@ public sealed class FiniteDifferenceTrainer
             {
                 batchSize = batch.TokenIds.Shape.Rows;
                 seqLen = batch.TokenIds.Shape.Cols;
+                int batchTokens = batch.RealTokenCount;
+                tokensSeen += batchTokens;
 
                 // Keep the batch's tensors alive for the finite-difference loop.
                 _currentTokens = batch.TokenIds;
@@ -124,6 +127,9 @@ public sealed class FiniteDifferenceTrainer
                         LearningRate = _optimizer.LearningRate,
                         GradNorm = ComputeGradNorm(),
                         StepTime = sw.Elapsed,
+                        TokensThisStep = batchTokens,
+                        TokensSeen = tokensSeen,
+                        TokensPerSecond = batchTokens > 0 ? (float)(batchTokens / sw.Elapsed.TotalSeconds) : 0f,
                     });
                 }
 

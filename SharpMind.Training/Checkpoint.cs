@@ -30,7 +30,8 @@ public static class Checkpoint
         IOptimizer?           optimizer = null,
         int                   step      = 0,
         float                 loss      = float.NaN,
-        string?               note      = null)
+        string?               note      = null,
+        IReadOnlyDictionary<string, string>? extra = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(directory);
         Directory.CreateDirectory(directory);
@@ -76,6 +77,15 @@ public static class Checkpoint
             ["savedUtc"]  = DateTime.UtcNow.ToString("o"),
             ["paramCount"] = paramList.Count,
         };
+
+        if (extra is { Count: > 0 })
+        {
+            var extraNode = new JsonObject();
+            foreach (var (key, value) in extra)
+                extraNode[key] = value;
+            meta["extra"] = extraNode;
+        }
+
         File.WriteAllText(
             Path.Combine(directory, "meta.json"),
             meta.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
@@ -96,6 +106,16 @@ public static class Checkpoint
 
         using var metaDoc = JsonDocument.Parse(File.ReadAllText(metaPath));
         var root = metaDoc.RootElement;
+
+        var extra = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (root.TryGetProperty("extra", out var extraEl) && extraEl.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var prop in extraEl.EnumerateObject())
+                extra[prop.Name] = prop.Value.ValueKind == JsonValueKind.Null
+                                       ? string.Empty
+                                       : prop.Value.ToString();
+        }
+
         return new CheckpointMeta
         {
             Step = root.TryGetProperty("step", out var s) ? s.GetInt32() : 0,
@@ -104,6 +124,7 @@ public static class Checkpoint
             Note = root.TryGetProperty("note", out var n) ? n.GetString() : null,
             SavedUtc = root.TryGetProperty("savedUtc", out var t)
                            ? DateTime.Parse(t.GetString()!) : DateTime.MinValue,
+            Extra = extra,
         };
     }
 

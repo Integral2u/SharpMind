@@ -57,4 +57,13 @@ public sealed record TrainConfig
     /// and gradients flow straight through to the master weight.
     /// </summary>
     public QuantDType? QuantAwareTraining { get; init; }
+
+    /// <summary>
+    /// Evaluate the model every N steps. 0 = never. When greater than 0,
+    /// <see cref="TrainLoop.RunAsync"/> will invoke the optional <c>evaluate</c>
+    /// callback at the configured interval (after the optimizer step, before
+    /// checkpoints) and propagate the resulting validation loss into the
+    /// <see cref="TrainStepResult.ValLoss"/> for that logged step.
+    /// </summary>
+    public int EvalInterval { get; init; }
 }

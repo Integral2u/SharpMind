@@ -87,9 +87,10 @@ public sealed class TrainLoop
     /// </summary>
     public async Task RunAsync(
         Action<TrainStepResult>? onStep            = null,
-        IProgress<float>?        progress           = null,        
+        IProgress<float>?        progress           = null,
         Action<string>?          onCheckpoint       = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        Func<int, EvalResult>?   evaluate           = null)
     {
         int startStep = 0;
 
@@ -102,6 +103,8 @@ public sealed class TrainLoop
         int   step        = startStep;
         int   accumCount  = 0;
         float accumLoss   = 0f;
+        int   stepTokens  = 0;
+        long  tokensSeen  = 0;
 
         try
         {
@@ -117,6 +120,9 @@ public sealed class TrainLoop
                 // Forward pass
                 float batchLoss = ForwardBackward(batch, cancellationToken);
                 accumLoss += batchLoss;
+                int batchTokens = batch.RealTokenCount;
+                stepTokens += batchTokens;
+                tokensSeen += batchTokens;
                 accumCount++;
                 batch.Dispose();
 
@@ -141,15 +147,36 @@ public sealed class TrainLoop
                 progress?.Report((float)step / _config.TotalSteps);
 
                 // Callbacks
+                float? valLoss = null;
+                if (_config.EvalInterval > 0 && evaluate is not null && step % _config.EvalInterval == 0)
+                {
+                    try
+                    {
+                        var evalRes = evaluate(step);
+                        valLoss = evalRes.Loss;
+                    }
+                    catch
+                    {
+                        valLoss = null;
+                    }
+                }
+
                 if (onStep is not null && step % _config.LogInterval == 0)
+                {
                     onStep(new TrainStepResult
                     {
-                        Step         = step,
-                        Loss         = stepLoss,
-                        LearningRate = lr,
-                        GradNorm     = gradNorm,
-                        StepTime     = sw.Elapsed,
+                        Step            = step,
+                        Loss            = stepLoss,
+                        LearningRate    = lr,
+                        GradNorm        = gradNorm,
+                        StepTime        = sw.Elapsed,
+                        TokensThisStep  = stepTokens,
+                        TokensSeen      = tokensSeen,
+                        TokensPerSecond = sw.Elapsed.TotalSeconds > 0 ? (float)(stepTokens / sw.Elapsed.TotalSeconds) : 0f,
+                        ValLoss         = valLoss,
                     });
+                }
+                stepTokens = 0;
 
                 if (_config.CheckpointInterval > 0 && step % _config.CheckpointInterval == 0 && _config.KeepRecent >= 0)
                 {
