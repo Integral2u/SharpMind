@@ -3,6 +3,10 @@
 ###############################################################################
 * text=auto
 
+# Jinja chat-template fixtures are rendered verbatim; they must stay LF so
+# golden-output tests are byte-for-byte identical on every platform.
+*.jinja text eol=lf
+
 ###############################################################################
 # Set default behavior for command prompt diff.
 #

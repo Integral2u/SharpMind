@@ -61,7 +61,6 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
 
         // Convert tool definitions JSON to JinjaDict list for template access.
         var toolsList = JsonToJinjaDictList(toolsJson);
-        bool hasTools = toolsList.Count > 0;
 
         var env = new JinjaEnv();
         env.Set("messages", messages);
@@ -69,33 +68,88 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
         env.Set("eos_token", eosToken);
         env.Set("add_generation_prompt", (object)true);  // always true for inference
         env.Set("enable_thinking", (object)enableThinking);
-        // Only set tools/custom_tools when there are actual tool definitions.
-        // An empty list makes templates think tools ARE present (is not none → true),
-        // which causes Llama-3 to render tool-related system message content
-        // even when no tools were configured.
-        if (hasTools)
-        {
-            env.Set("tools", (object)toolsList);
-            env.Set("custom_tools", (object)toolsList);
-        }
-        env.Set("tools_in_user_message", (object)false); // Llama-3: tool calls not in user message
+        env.Set("preserve_thinking", (object)false);
+        // Always expose tools/custom_tools (empty when none) so templates that
+        // test them see a falsy value rather than an undefined-variable error.
+        env.Set("tools", (object)toolsList);
+        env.Set("custom_tools", (object)toolsList);
+        env.Set("tools_in_user_message", (object)false);
         env.Set("date_string", (object)DateTime.Now.ToString("dd MMM yyyy"));
         env.Set("strftime_now", (object)DateTime.Now.ToString("dd MMM yyyy"));
 
         var errors = new List<string>();
         var tokens = Tokenise(_template);
+        var ctx = new Ctx(tokens, errors);
+        RegisterMacros(tokens, 0, tokens.Count, ctx);
         var sb = new StringBuilder();
-        Execute(tokens, 0, tokens.Count, env, sb, errors);
+        Execute(tokens, 0, tokens.Count, env, sb, ctx);
         LastErrors = errors.Count > 0 ? errors : null;
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Per-render state shared by the token walker and the expression evaluator:
+    /// the flattened token list (macro bodies are re-entered here) and the macro
+    /// table. Threading it explicitly keeps <see cref="Eval(string, JinjaEnv, List{string}?)"/>
+    /// usable on its own (tests call it directly) with an empty context.
+    /// </summary>
+    private sealed class Ctx(List<Token> tokens, List<string> errors)
+    {
+        public List<Token> Tokens { get; } = tokens;
+        public List<string> Errors { get; } = errors;
+        public Dictionary<string, MacroDef> Macros { get; } = new(StringComparer.Ordinal);
+        public JinjaEnv? Root { get; set; }
+    }
+
+    private sealed record MacroParam(string Name, string? DefaultExpr);
+
+    private sealed record MacroDef(string Name, IReadOnlyList<MacroParam> Params, int BodyStart, int BodyEnd);
+
+    /// <summary>
+    /// Pre-scan for <c>{% macro name(params) %} … {% endmacro %}</c> and record each
+    /// body's token span so a call can re-enter it with bound arguments. Macros do
+    /// not nest in the templates seen in practice, but the span is found with a
+    /// depth counter so a nested definition cannot silently swallow the outer body.
+    /// </summary>
+    private static void RegisterMacros(List<Token> tokens, int start, int end, Ctx ctx)
+    {
+        int i = start;
+        while (i < end)
+        {
+            var tok = tokens[i];
+            if (tok.Kind == TKind.Tag && tok.Body.StartsWith("macro ", StringComparison.Ordinal))
+            {
+                var m = RegexGenerated.JinjaMacroDef.Match(tok.Body);
+                if (m.Success)
+                {
+                    int bodyEnd = FindMatchingEnd(tokens, i, end, "macro", "endmacro");
+                    var ps = new List<MacroParam>();
+                    string paramStr = m.Groups[2].Value;
+                    foreach (string raw in SplitTopLevel(paramStr, ','))
+                    {
+                        string p = raw.Trim();
+                        if (p.Length == 0) continue;
+                        int eq2 = p.IndexOf('=');
+                        if (eq2 > 0)
+                            ps.Add(new MacroParam(p[..eq2].Trim(), p[(eq2 + 1)..].Trim()));
+                        else
+                            ps.Add(new MacroParam(p, null));
+                    }
+                    ctx.Macros[m.Groups[1].Value] = new MacroDef(m.Groups[1].Value, ps, i + 1, bodyEnd);
+                }
+                i = (m.Success ? FindMatchingEnd(tokens, i, end, "macro", "endmacro") : i) + 1;
+                continue;
+            }
+            i++;
+        }
     }
 
     // Tokeniser
     // Splits the template into a flat list of Token objects.
 
-    private enum TKind { Text, Output, Tag }
+    public enum TKind { Text, Output, Tag }
 
-    private sealed record Token(TKind Kind, string Body, bool StripLeft, bool StripRight);
+    public sealed record Token(TKind Kind, string Body, bool StripLeft, bool StripRight);
 
     private static List<Token> Tokenise(string src)
     {
@@ -193,7 +247,7 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
 
     private static void Execute(
         List<Token> tokens, int start, int end,
-        JinjaEnv env, StringBuilder sb, List<string> errors)
+        JinjaEnv env, StringBuilder sb, Ctx ctx)
     {
         int i = start;
         while (i < end)
@@ -216,7 +270,7 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
 
             if (tok.Kind == TKind.Output)
             {
-                var val = Eval(tok.Body, env, errors);
+                var val = Eval(tok.Body, env, ctx);
                 if (val != null) sb.Append(Stringify(val));
                 i++;
                 continue;
@@ -227,25 +281,32 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
 
             if (tag.StartsWith("for ", StringComparison.Ordinal))
             {
-                i = ExecuteFor(tokens, i, end, env, sb, errors);
+                i = ExecuteFor(tokens, i, end, env, sb, ctx);
                 continue;
             }
 
             if (tag.StartsWith("if ", StringComparison.Ordinal) || tag == "if")
             {
-                i = ExecuteIf(tokens, i, end, env, sb, errors);
+                i = ExecuteIf(tokens, i, end, env, sb, ctx);
+                continue;
+            }
+
+            // Macro definitions are pre-registered; skip the body entirely so it
+            // does not execute inline at its definition site.
+            if (tag.StartsWith("macro ", StringComparison.Ordinal))
+            {
+                i = FindMatchingEnd(tokens, i, end, "macro", "endmacro") + 1;
                 continue;
             }
 
             if (tag.StartsWith("set ", StringComparison.Ordinal))
             {
-                ExecuteSet(tag, env, errors);
-                i++;
+                i = ExecuteSet(tokens, i, end, env, sb, ctx);
                 continue;
             }
 
             // Unrecognized tag — log error and skip
-            errors.Add($"Unrecognized Jinja tag at token {i}: '{tag}'");
+            ctx.Errors.Add($"Unrecognized Jinja tag at token {i}: '{tag}'");
             i++;
         }
     }
@@ -254,32 +315,41 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
 
     private static int ExecuteFor(
         List<Token> tokens, int forIdx, int end,
-        JinjaEnv env, StringBuilder sb, List<string> errors)
+        JinjaEnv env, StringBuilder sb, Ctx ctx)
     {
-        // Parse "for VAR in EXPR"
-        var m = RegexGenerated.JinjaForVarInExpr.Match(tokens[forIdx].Body);// Regex.Match(tokens[forIdx].Body, @"^for\s+(\w+)\s+in\s+(.+)$");
+        // Parse "for VAR[, VAR...] in EXPR"
+        var m = RegexGenerated.JinjaForVarInExpr.Match(tokens[forIdx].Body);
         if (!m.Success)
         {
-            errors.Add($"JINJA ERROR: failed to parse 'for' tag at token {forIdx}: '{tokens[forIdx].Body}'");
+            ctx.Errors.Add($"JINJA ERROR: failed to parse 'for' tag at token {forIdx}: '{tokens[forIdx].Body}'");
             return forIdx + 1;
         }
 
-        string varName = m.Groups[1].Value;
+        string[] varNames = m.Groups[1].Value.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
         string iterExpr = m.Groups[2].Value.Trim();
-        var iterable = Eval(iterExpr, env, errors);
+        var iterable = Eval(iterExpr, env, ctx);
 
         // Find matching endfor
         int bodyStart = forIdx + 1;
         int bodyEnd = FindMatchingEnd(tokens, forIdx, end, "for", "endfor");
 
-        if (iterable is List<JinjaDict> list)
+        var items = AsIterableList(iterable);
+        if (items is not null)
         {
-            int count = list.Count;
+            int count = items.Count;
             for (int idx = 0; idx < count; idx++)
             {
                 var child = env.Push();
-                var item = list[idx];
-                child.Set(varName, item);
+                object? item = items[idx];
+                if (varNames.Length > 1 && item is List<object?> tuple)
+                {
+                    for (int v = 0; v < varNames.Length; v++)
+                        child.Set(varNames[v], v < tuple.Count ? tuple[v] : null);
+                }
+                else
+                {
+                    child.Set(varNames[0], item);
+                }
 
                 var loop = new JinjaDict
                 {
@@ -290,22 +360,35 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
                 };
                 child.Set("loop", loop);
 
-                Execute(tokens, bodyStart, bodyEnd, child, sb, errors);
+                Execute(tokens, bodyStart, bodyEnd, child, sb, ctx);
             }
         }
-        else
+        else if (iterable is not null)
         {
-            errors.Add($"JINJA ERROR: 'for {varName} in {iterExpr}' — expression is not a list (got {iterable?.GetType().Name ?? "null"})");
+            ctx.Errors.Add($"JINJA ERROR: 'for {m.Groups[1].Value} in {iterExpr}' — expression is not iterable (got {iterable.GetType().Name})");
         }
 
         return bodyEnd + 1; // +1 to skip the endfor token
     }
 
+    /// <summary>
+    /// Normalises any iterable value the engine can hold into a
+    /// <c>List&lt;object?&gt;</c> so a single <c>for</c> path handles messages,
+    /// split() results, ranges and dictsort pairs alike.
+    /// </summary>
+    private static List<object?>? AsIterableList(object? v) => v switch
+    {
+        List<object?> l => l,
+        List<JinjaDict> l => l.Cast<object?>().ToList(),
+        JinjaDict d => d.Cast<object?>().ToList(),
+        _ => null
+    };
+
     // If / elif / else
 
     private static int ExecuteIf(
         List<Token> tokens, int ifIdx, int end,
-        JinjaEnv env, StringBuilder sb, List<string> errors)
+        JinjaEnv env, StringBuilder sb, Ctx ctx)
     {
         // Collect all branches: [(condition_expr, start, end), …]
         // null condition = else branch
@@ -331,9 +414,9 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
                 branches.Add((curCond, branchStart, i));
                 foreach (var (cond, bs, be) in branches)
                 {
-                    if (cond == null || IsTruthy(Eval(cond, env, errors)))
+                    if (cond == null || IsTruthy(Eval(cond, env, ctx)))
                     {
-                        Execute(tokens, bs, be, env, sb, errors);
+                        Execute(tokens, bs, be, env, sb, ctx);
                         break;
                     }
                 }
@@ -362,9 +445,9 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
         branches.Add((curCond, branchStart, end));
         foreach (var (cond, bs, be) in branches)
         {
-            if (cond == null || IsTruthy(Eval(cond, env, errors)))
+            if (cond == null || IsTruthy(Eval(cond, env, ctx)))
             {
-                Execute(tokens, bs, be, env, sb, errors);
+                Execute(tokens, bs, be, env, sb, ctx);
                 break;
             }
         }
@@ -373,8 +456,9 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
 
     // Set
 
-    private static void ExecuteSet(string tag, JinjaEnv env, List<string> errors)
+    private static int ExecuteSet(List<Token> tokens, int tagIdx, int end, JinjaEnv env, StringBuilder sb, Ctx ctx)
     {
+        string tag = tokens[tagIdx].Body;
         // set ns = namespace(field=val, …)
         var nsMatch = RegexGenerated.JinjaSetNsFieldValue.Match(tag);// Regex.Match(tag,@"^set\s+(\w+)\s*=\s*namespace\s*\((.*)?\)\s*$",RegexOptions.Singleline);
         if (nsMatch.Success)
@@ -386,10 +470,10 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
             {
                 string k = kv.Groups[1].Value.Trim();
                 string v = kv.Groups[2].Value.Trim();
-                ns.Set(k, Eval(v, env, errors) ?? (object)"");
+                    ns.Set(k, Eval(v, env, ctx) ?? (object)"");
             }
             env.Set(name, ns);
-            return;
+            return tagIdx + 1;
         }
 
         // set ns.field = expr
@@ -401,12 +485,12 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
             string expr = dotMatch.Groups[3].Value.Trim();
             var target = env.Get(obj);
             if (target is JinjaNamespace jns)
-                jns.Set(field, Eval(expr, env, errors) ?? (object)"");
+                jns.Set(field, Eval(expr, env, ctx) ?? (object)"");
             else if (target is JinjaDict jd)
-                jd[field] = Eval(expr, env, errors) ?? (object)"";
+                jd[field] = Eval(expr, env, ctx) ?? (object)"";
             else
-                errors.Add($"JINJA ERROR: 'set {obj}.{field} = {expr}' — '{obj}' is not a namespace or dict (got {target?.GetType().Name ?? "null"})");
-            return;
+                ctx.Errors.Add($"JINJA ERROR: 'set {obj}.{field} = {expr}' — '{obj}' is not a namespace or dict (got {target?.GetType().Name ?? "null"})");
+            return tagIdx + 1;
         }
 
         // set var = expr
@@ -415,410 +499,285 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
         {
             string name = simple.Groups[1].Value;
             string expr = simple.Groups[2].Value.Trim();
-            env.Set(name, Eval(expr, env, errors) ?? (object)"");
-            return;
+            env.Set(name, Eval(expr, env, ctx) ?? (object)"");
+            return tagIdx + 1;
         }
 
-        errors.Add($"JINJA ERROR: unrecognized 'set' tag syntax: '{tag}'");
+        // Capture block: set name (no =) — executed between tag and endset
+        var capM = Regex.Match(tag, @"^set\s+(\w+)\s*$", RegexOptions.Singleline);
+        if (capM.Success)
+        {
+            string name = capM.Groups[1].Value;
+            int depth = 0;
+            int bodyStart = tagIdx + 1;
+            for (int i = tagIdx + 1; i < end; i++)
+            {
+                if (tokens[i].Kind != TKind.Tag) continue;
+                string t = tokens[i].Body;
+                if (t.StartsWith("for ", StringComparison.Ordinal) ||
+                    t.StartsWith("if ", StringComparison.Ordinal) ||
+                    t.StartsWith("macro ", StringComparison.Ordinal)) { depth++; continue; }
+                if ((t == "endfor" || t == "endif" || t == "endmacro" || t == "endset") && depth > 0) { depth--; continue; }
+                if (depth > 0) continue;
+                if (t == "endset")
+                {
+                    // Execute body into a temp StringBuilder with same env
+                    var msb = new System.Text.StringBuilder();
+                    Execute(tokens, bodyStart, i, env, msb, ctx);
+                    env.Set(name, msb.ToString());
+                    return i + 1;
+                }
+            }
+            // No endset
+            var msb2 = new System.Text.StringBuilder();
+            Execute(tokens, bodyStart, end, env, msb2, ctx);
+            env.Set(name, msb2.ToString());
+            return end;
+        }
+
+        ctx.Errors.Add($"JINJA ERROR: unrecognized 'set' tag syntax: '{tag}'");
+        return tagIdx + 1;
     }
 
     // Expression evaluator
 
+    private static readonly Regex IsTestRe = new(
+        @"^(.+?)\s+is\s+(not\s+)?(defined|none|string|boolean|mapping|sequence|iterable|true|false)$",
+        RegexOptions.Singleline);
+
+    /// <summary>
+    /// Public entry point retained for tests and simple use. Has no template
+    /// token context, so macros/capture are unreachable through it; ordinary
+    /// expressions evaluate identically to the in-template path.
+    /// </summary>
     public static object? Eval(string expr, JinjaEnv env, List<string>? errors = null)
+        => Eval(expr, env, new Ctx([], errors ?? []));
+
+    private static object? Eval(string expr, JinjaEnv env, Ctx ctx)
     {
         expr = expr.Trim();
+        if (expr.Length == 0) return null;
 
         // strip outer parens — only when the outermost ( and ) actually match
-        // (avoid falsely stripping when the top-level expression uses parens
-        //  for grouping sub-expressions, e.g. (A or B) and (C or D))
         if (expr.StartsWith('(') && expr.EndsWith(')') && MatchingOuterParens(expr))
-            return Eval(expr[1..^1], env, errors);
+            return Eval(expr[1..^1], env, ctx);
 
-        // not X is defined
-        if (expr.StartsWith("not ", StringComparison.Ordinal))
-        {
-            var rest = expr[4..].TrimStart();
-            var restM = RegexGenerated.JinjaIsDefined.Match(rest);
-            if (restM.Success)
-            {
-                bool isDef = env.ContainsKey(restM.Groups[1].Value);
-                return (object)!isDef;
-            }
-        }
-
-        // X is defined / X is not defined  (general expression, not just \w+)
-        var isDefinedM = RegexGenerated.JinjaIsDefined.Match(expr);
-        if (isDefinedM.Success)
-        {
-            string target = isDefinedM.Groups[1].Value;
-            // Use env.ContainsKey directly to avoid logging errors for undefined variables.
-            bool isDef = env.ContainsKey(target);
-            return (object)(isDefinedM.Groups[2].Success ? !isDef : isDef);
-        }
-
-        // X is none / X is not none
-        var noneM = RegexGenerated.JinjaXIsNoneNotNone.Match(expr);// Regex.Match(expr, @"^(.+?)\s+is\s+(not\s+)?none$");
-        if (noneM.Success)
-        {
-            var v = Eval(noneM.Groups[1].Value, env, errors);
-            bool isNone = v == null || v is string s && s == "";
-            return (object)(noneM.Groups[2].Success ? !isNone : isNone);
-        }
-
-        // X is true / X is false / X is not true / X is not false
-        var boolM = RegexGenerated.JinjaIsBool.Match(expr);
-        if (boolM.Success)
-        {
-            var v = Eval(boolM.Groups[1].Value, env, errors);
-            bool target = boolM.Groups[3].Value == "true";
-            bool actual = v is bool vb ? vb : IsTruthy(v);
-            bool isMatch = actual == target;
-            return (object)(boolM.Groups[2].Success ? !isMatch : isMatch);
-        }
-
-        // X is string / X is not string
-        var isStringM = RegexGenerated.JinjaIsString.Match(expr);
-        if (isStringM.Success)
-        {
-            var v = Eval(isStringM.Groups[1].Value, env, errors);
-            bool isStr = v is string;
-            return (object)(isStringM.Groups[2].Success ? !isStr : isStr);
-        }
-
-        // X is iterable / X is not iterable
-        var isIterableM = RegexGenerated.JinjaIsIterable.Match(expr);
-        if (isIterableM.Success)
-        {
-            var v = Eval(isIterableM.Groups[1].Value, env, errors);
-            bool isIter = v is string || v is System.Collections.IList || v is System.Collections.ICollection;
-            return (object)(isIterableM.Groups[2].Success ? !isIter : isIter);
-        }
-
-        // not X  /  not(X) (function-call style)
-        if (expr.StartsWith("not ", StringComparison.Ordinal))
-            return (object)!IsTruthy(Eval(expr[4..], env, errors));
-        if (expr.StartsWith("not(", StringComparison.Ordinal))
-        {
-            int depth = 1;
-            for (int i = 4; i < expr.Length; i++)
-            {
-                if (expr[i] == '(') depth++;
-                else if (expr[i] == ')') { depth--; if (depth == 0) return (object)!IsTruthy(Eval(expr[4..i], env, errors)); }
-            }
-        }
-
-        // 'literal' in X  (substring test)
-        var inMatch = RegexGenerated.JinjaLiteralInXSubstr.Match(expr); // Regex.Match(expr, @"^'([^']*)'\s+in\s+(.+)$");
-        if (inMatch.Success)
-        {
-            string needle = inMatch.Groups[1].Value;
-            var hay = Eval(inMatch.Groups[2].Value, env, errors);
-            string hayStr = hay is string hs ? hs : Stringify(hay);
-            return (object)hayStr.Contains(needle, StringComparison.Ordinal);
-        }
-
-        // "literal" in X
-        var inMatch2 = RegexGenerated.JinjaLiteralInX.Match(expr); //Regex.Match(expr, "^\"([^\"]*)\"\\s+in\\s+(.+)$");
-        if (inMatch2.Success)
-        {
-            string needle = inMatch2.Groups[1].Value;
-            var hay = Eval(inMatch2.Groups[2].Value, env, errors);
-            string hayStr = hay is string hs ? hs : Stringify(hay);
-            return (object)hayStr.Contains(needle, StringComparison.Ordinal);
-        }
-
-        // Operator precedence (lowest first, matching Jinja2 / Python):
-        //   or  →  and  →  ==/!=  →  is/in/not  →  +  →  %  →  atom
-        // Each level uses a bracket-aware search so that expressions like
-        // messages[0]['role'] != 'system'  are not split at the wrong point.
-
-        // X or Y
-        int orPos = FindKeywordOutside(expr, "or");
-        if (orPos >= 0)
-        {
-            var lv = Eval(expr[..orPos].TrimEnd(), env, errors);
-            return IsTruthy(lv) ? lv : Eval(expr[(orPos + 2)..].TrimStart(), env, errors);
-        }
-
-        // X and Y
-        int andPos = FindKeywordOutside(expr, "and");
-        if (andPos >= 0)
-            return (object)(
-                IsTruthy(Eval(expr[..andPos].TrimEnd(), env, errors)) &&
-                IsTruthy(Eval(expr[(andPos + 3)..].TrimStart(), env, errors)));
-
-        // X == Y
-        int eqPos = FindOperatorOutsideQuotes(expr, '=', requireDouble: true);
-        if (eqPos >= 0)
-        {
-            var left = Eval(expr[..eqPos].TrimEnd(), env, errors);
-            var right = Eval(expr[(eqPos + 2)..].TrimStart(), env, errors);
-            return (object)(Stringify(left) == Stringify(right));
-        }
-
-        // X != Y
-        int nePos = FindNeqOutside(expr);
-        if (nePos >= 0)
-        {
-            var left = Eval(expr[..nePos].TrimEnd(), env, errors);
-            var right = Eval(expr[(nePos + 2)..].TrimStart(), env, errors);
-            return (object)(Stringify(left) != Stringify(right));
-        }
-
-        // X < Y, X > Y, X <= Y, X >= Y (comparison operators)
-        int cmpPos = FindCmpOutside(expr, out string cmpOp);
-        if (cmpPos >= 0)
-        {
-            var left = Eval(expr[..cmpPos].TrimEnd(), env, errors);
-            var right = Eval(expr[(cmpPos + cmpOp.Length)..].TrimStart(), env, errors);
-            long ln = left is long ll ? ll : left is int ii ? ii : 0;
-            long rn = right is long rl ? rl : right is int ri ? ri : 0;
-            return (object)(cmpOp switch
-            {
-                "<" => ln < rn,
-                ">" => ln > rn,
-                "<=" => ln <= rn,
-                ">=" => ln >= rn,
-                _ => false
-            });
-        }
-
-        // Modulo: expr % expr (outside quotes)
-        int modIdx = FindOperatorOutsideQuotes(expr, '%', requireDouble: false);
-        if (modIdx >= 0)
-        {
-            var left = Eval(expr[..modIdx], env, errors);
-            var right = Eval(expr[(modIdx + 1)..], env, errors);
-            long ln = left is long ll ? ll : left is int ii ? ii : 0;
-            long rn = right is long rl ? rl : right is int ri ? ri : 1;
-            return (object)(rn != 0 ? ln % rn : 0);
-        }
-
-        // String concatenation: expr + expr (outside quotes)
-        int plusIdx = FindOperatorOutsideQuotes(expr, '+', requireDouble: false);
-        if (plusIdx >= 0)
-        {
-            var left = Eval(expr[..plusIdx], env, errors);
-            var right = Eval(expr[(plusIdx + 1)..], env, errors);
-            return (object)(Stringify(left) + Stringify(right));
-        }
-
-        // General subtraction: X - Y (bracket/paren-aware, finds top-level -)
-        int subIdx = FindSubOutside(expr);
-        if (subIdx >= 0)
-        {
-            var lv = Eval(expr[..subIdx].TrimEnd(), env, errors);
-            var rv = Eval(expr[(subIdx + 1)..].TrimStart(), env, errors);
-            long ln = lv is long ll ? ll : lv is int ii ? ii : 0;
-            long rn = rv is long rl ? rl : rv is int ri ? ri : 0;
-            return (object)(ln - rn);
-        }
-
-        // Filter: expr | trim
-        var filterM = RegexGenerated.JinjaExprTrim.Match(expr);
-        if (filterM.Success)
-        {
-            var v = Eval(filterM.Groups[1].Value, env, errors);
-            return (object)(Stringify(v).Trim());
-        }
-
-        // Filter: expr | length
-        var lengthM = RegexGenerated.JinjaExprLength.Match(expr);
-        if (lengthM.Success)
-        {
-            var v = Eval(lengthM.Groups[1].Value, env, errors);
-            return (object)(v switch
-            {
-                List<JinjaDict> list => (long)list.Count,
-                string s => (long)s.Length,
-                _ => 0L
-            });
-        }
-
-        // Filter: expr | tojson  or  expr | tojson(indent=N)
-        var tojsonM = RegexGenerated.JinjaExprToJson.Match(expr);
-        if (tojsonM.Success)
-        {
-            var v = Eval(tojsonM.Groups[1].Value, env, errors);
-            if (v is null) return (object)"null";
-            if (v is string sv) return (object)System.Text.Json.JsonSerializer.Serialize(sv);
-            if (v is bool bv) return (object)(bv ? "true" : "false");
-            if (v is long lv) return (object)lv.ToString();
-            if (v is int iv) return (object)iv.ToString();
-            if (v is JinjaDict dict) return (object)DictToJson(dict);
-            if (v is List<JinjaDict> list) return (object)ListToJson(list);
-            return (object)Stringify(v);
-        }
-
-        // content.split('delim')[-1]  — last segment
-        var splitM = RegexGenerated.JinjaSplitDelim.Match(expr);// Regex.Match(expr,@"^(\w+)\.split\('([^']*)'\)\[(-?\d+)\]$");
-        if (splitM.Success)
-        {
-            var src = Stringify(Eval(splitM.Groups[1].Value, env, errors));
-            string sep = splitM.Groups[2].Value;
-            int idx = int.Parse(splitM.Groups[3].Value);
-            var parts = src.Split(sep);
-            int real = idx < 0 ? parts.Length + idx : idx;
-            return (object)(real >= 0 && real < parts.Length ? parts[real] : "");
-        }
-
-        // String literal (single or double quotes)
-        if ((expr.StartsWith('\'') && expr.EndsWith('\'')) ||
-            (expr.StartsWith('"') && expr.EndsWith('"')))
-        {
-            string lit = expr[1..^1];
-            // Unescape \\n -> newline etc.
-            lit = lit.Replace("\\n", "\n").Replace("\\t", "\t");
-            return (object)lit;
-        }
-
-        // Boolean literals
-        if (expr == "true") return (object)true;
-        if (expr == "false") return (object)false;
-        if (expr == "none" || expr == "None") return null;
-
-        // Integer literal
-        if (long.TryParse(expr, out long lval)) return (object)lval;
-
-        // obj[key] — find the LAST [...] at bracket depth 0 (right-to-left scan).
-        // Must come before the dot-access check so messages[0]['role'] resolves
-        // as (messages[0])['role'] rather than being mis-split by a regex.
-        var (bracketStart, bracketEnd) = FindLastBracketPair(expr);
-        if (bracketStart >= 0)
-        {
-            var obj = Eval(expr[..bracketStart], env, errors);
-            string rawKey = expr[(bracketStart + 1)..bracketEnd];
-
-            // Jinja slice syntax: [start:end], [:end], [start:]
-            int colonIdx = FindColonOutsideQuotes(rawKey);
-            if (colonIdx >= 0)
-            {
-                int? sliceStart = null, sliceEnd = null;
-                if (colonIdx > 0)
-                {
-                    string startExpr = rawKey[..colonIdx].Trim();
-                    if (startExpr.Length > 0)
-                    {
-                        var sv = Eval(startExpr, env, errors);
-                        sliceStart = sv is long l ? (int)l : sv is int i ? i : null;
-                    }
-                }
-                if (colonIdx + 1 < rawKey.Length)
-                {
-                    string endExpr = rawKey[(colonIdx + 1)..].Trim();
-                    if (endExpr.Length > 0)
-                    {
-                        var ev = Eval(endExpr, env, errors);
-                        sliceEnd = ev is long l ? (int)l : ev is int i ? i : null;
-                    }
-                }
-                switch (obj)
-                {
-                    case List<JinjaDict> list:
-                        {
-                            int sIdx = sliceStart ?? 0;
-                            int eIdx = sliceEnd ?? list.Count;
-                            sIdx = sIdx < 0 ? list.Count + sIdx : sIdx;
-                            eIdx = eIdx < 0 ? list.Count + eIdx : eIdx;
-                            sIdx = Math.Clamp(sIdx, 0, list.Count);
-                            eIdx = Math.Clamp(eIdx, 0, list.Count);
-                            return sIdx >= eIdx ? [] : list[sIdx..eIdx];
-                        }
-                    case string s:
-                        {
-                            int sIdx = sliceStart ?? 0;
-                            int eIdx = sliceEnd ?? s.Length;
-                            sIdx = Math.Clamp(sIdx, 0, s.Length);
-                            eIdx = Math.Clamp(eIdx, 0, s.Length);
-                            return sIdx >= eIdx ? "" : s[sIdx..eIdx];
-                        }
-                    default: return null;
-                }
-            }
-
-            var key = Eval(rawKey, env, errors);
-            var idxVal = AccessIndex(obj, key);
-
-            // Handle .field suffix after bracket access, e.g. messages[0].role
-            if (idxVal != null && bracketEnd + 1 < expr.Length && expr[bracketEnd + 1] == '.')
-                return AccessField(idxVal, expr[(bracketEnd + 2)..]);
-
-            return idxVal;
-        }
-
-        // obj.field  (dot access, handles loop.first, ns.field etc.)
-        // Also matches expressions like messages[0].role when no bracket pair
-        // is found (e.g. after recursive Eval consumes the bracket part).
-        var dotM = RegexGenerated.JinjaObjDotField.Match(expr);//  Regex.Match(expr, @"^(\w+)\.(\w+)$");
-        if (dotM.Success)
-        {
-            var obj = env.Get(dotM.Groups[1].Value);
-            string fld = dotM.Groups[2].Value;
-            return AccessField(obj, fld);
-        }
-
-        // arithmetic: index0 +/- N inside bracket is handled by EvalIndex
-        var arithM = RegexGenerated.JinjaPlusMinusN.Match(expr);// Regex.Match(expr, @"^(.+?)\s*([+\-])\s*(\d+)$");
-        if (arithM.Success)
-        {
-            var lv = Eval(arithM.Groups[1].Value, env, errors);
-            long rn = long.Parse(arithM.Groups[3].Value);
-            long ln = lv is long ll ? ll : lv is int ii ? ii : 0;
-            return (object)(arithM.Groups[2].Value == "+" ? ln + rn : ln - rn);
-        }
-
-        // Inline conditional: X if Y else Z / X if Y (lowest precedence)
-        int ifPos = FindIfElseOutside(expr, out int elsePos);
+        // Inline conditional: X if C else Y  (lowest precedence)
+        int ifPos = FindInlineIf(expr, out int elsePos);
         if (ifPos >= 0)
         {
-            var trueVal = Eval(expr[..ifPos].TrimEnd(), env, errors);
+            var trueVal = Eval(expr[..ifPos], env, ctx);
             if (elsePos >= 0)
             {
-                var cond = Eval(expr[(ifPos + 3)..elsePos].Trim(), env, errors);
-                var falseVal = Eval(expr[(elsePos + 5)..].TrimStart(), env, errors);
+                var cond = Eval(expr[(ifPos + 3)..elsePos], env, ctx);
+                var falseVal = Eval(expr[(elsePos + 4)..], env, ctx);
                 return IsTruthy(cond) ? trueVal : falseVal;
+            }
+            var condOnly = Eval(expr[(ifPos + 3)..], env, ctx);
+            return IsTruthy(condOnly) ? trueVal : (object)"";
+        }
+
+        // or / and  (lower precedence than not, so evaluated first)
+        int orPos = FindKeywordOutside(expr, "or");
+        if (orPos >= 0)
+            return (object)(IsTruthy(Eval(expr[..orPos], env, ctx)) ||
+                            IsTruthy(Eval(expr[(orPos + 2)..], env, ctx)));
+
+        int andPos = FindKeywordOutside(expr, "and");
+        if (andPos >= 0)
+            return (object)(IsTruthy(Eval(expr[..andPos], env, ctx)) &&
+                            IsTruthy(Eval(expr[(andPos + 3)..], env, ctx)));
+
+        // leading not (binds tighter than and/or, looser than is-tests)
+        if (expr.StartsWith("not ", StringComparison.Ordinal))
+            return (object)!IsTruthy(Eval(expr[4..], env, ctx));
+
+        // is-tests (full expression ending in a test keyword)
+        var isM = IsTestRe.Match(expr);
+        if (isM.Success)
+        {
+            string subject = isM.Groups[1].Value.Trim();
+            bool neg = isM.Groups[2].Success;
+            string test = isM.Groups[3].Value;
+            object? v;
+            bool r;
+            if (test == "defined")
+            {
+                r = IsPlainWord(subject) ? env.ContainsKey(subject) : Eval(subject, env, ctx) != null;
             }
             else
             {
-                var cond = Eval(expr[(ifPos + 3)..].TrimStart(), env, errors);
-                return IsTruthy(cond) ? trueVal : "";
+                v = Eval(subject, env, ctx);
+                r = test switch
+                {
+                    "none" => v == null || (v is string sn && sn.Length == 0),
+                    "string" => v is string,
+                    "boolean" => v is bool,
+                    "mapping" => v is JinjaDict,
+                    "sequence" => v is string || v is List<object?> || v is List<JinjaDict>,
+                    "iterable" => v is string || v is List<object?> || v is List<JinjaDict> || v is JinjaDict,
+                    "true" => IsTruthy(v),
+                    "false" => !IsTruthy(v),
+                    _ => false
+                };
+            }
+            return (object)(neg ? !r : r);
+        }
+
+        // == / !=
+        int eqPos = FindSeqOutside(expr, "==");
+        if (eqPos >= 0)
+            return (object)(Stringify(Eval(expr[..eqPos], env, ctx)) == Stringify(Eval(expr[(eqPos + 2)..], env, ctx)));
+
+        int neqPos = FindSeqOutside(expr, "!=");
+        if (neqPos >= 0)
+            return (object)(Stringify(Eval(expr[..neqPos], env, ctx)) != Stringify(Eval(expr[(neqPos + 2)..], env, ctx)));
+
+        // in / not in
+        int inPos = FindKeywordOutside(expr, "in");
+        if (inPos >= 0)
+        {
+            string leftRaw = expr[..inPos];
+            string leftTrim = leftRaw.TrimEnd();
+            bool negIn = leftTrim.EndsWith("not", StringComparison.Ordinal);
+            if (negIn) leftRaw = leftTrim[..^3];
+            object? lhs = Eval(leftRaw, env, ctx);
+            object? rhs = Eval(expr[(inPos + 2)..], env, ctx);
+            bool contains = ContainsValue(rhs, lhs);
+            return (object)(negIn ? !contains : contains);
+        }
+
+        // %  >  <  >=  <=
+        int modPos = FindSeqOutside(expr, "%");
+        if (modPos >= 0)
+        {
+            object? a = Eval(expr[..modPos], env, ctx);
+            object? b = Eval(expr[(modPos + 1)..], env, ctx);
+            if (TryLong(a, out long la) && TryLong(b, out long lb) && lb != 0)
+                return (object)(la % lb);
+            return (object)Stringify(a);
+        }
+
+        int gePos = FindSeqOutside(expr, ">=");
+        if (gePos >= 0)
+            return (object)(ToNumber(Eval(expr[..gePos], env, ctx)) >= ToNumber(Eval(expr[(gePos + 2)..], env, ctx)));
+        int lePos = FindSeqOutside(expr, "<=");
+        if (lePos >= 0)
+            return (object)(ToNumber(Eval(expr[..lePos], env, ctx)) <= ToNumber(Eval(expr[(lePos + 2)..], env, ctx)));
+        int gtPos = FindSeqOutside(expr, ">");
+        if (gtPos >= 0)
+            return (object)(ToNumber(Eval(expr[..gtPos], env, ctx)) > ToNumber(Eval(expr[(gtPos + 1)..], env, ctx)));
+        int ltPos = FindSeqOutside(expr, "<");
+        if (ltPos >= 0)
+            return (object)(ToNumber(Eval(expr[..ltPos], env, ctx)) < ToNumber(Eval(expr[(ltPos + 1)..], env, ctx)));
+
+        // +
+        int plusPos = FindSeqOutside(expr, "+");
+        if (plusPos >= 0)
+        {
+            object? a = Eval(expr[..plusPos], env, ctx);
+            object? b = Eval(expr[(plusPos + 1)..], env, ctx);
+            if (TryLong(a, out long la2) && TryLong(b, out long lb2))
+                return (object)(la2 + lb2);
+            return (object)(Stringify(a) + Stringify(b));
+        }
+
+        // - (binary; ignore leading minus)
+        int minusPos = FindSeqOutside(expr, "-");
+        if (minusPos > 0)
+        {
+            object? a = Eval(expr[..minusPos], env, ctx);
+            object? b = Eval(expr[(minusPos + 1)..], env, ctx);
+            if (TryLong(a, out long la3) && TryLong(b, out long lb3))
+                return (object)(la3 - lb3);
+        }
+
+        // filters (a | f | g(args) ...)
+        int pipePos = FindTopLevelPipe(expr);
+        if (pipePos >= 0)
+        {
+            object? val = Eval(expr[..pipePos], env, ctx);
+            string rest = expr[(pipePos + 1)..];
+            foreach (string seg in SplitTopLevel(rest, '|'))
+            {
+                string spec = seg.Trim();
+                if (spec.Length == 0) continue;
+                val = ApplyFilter(spec, val, env, ctx);
+            }
+            return val;
+        }
+
+        // Literals
+        if (expr is "none" or "None") return null;
+        if (expr is "true" or "True") return (object)true;
+        if (expr is "false" or "False") return (object)false;
+
+        // String literal (possibly concatenated already handled by +)
+        if ((expr.StartsWith('\'') && expr.EndsWith('\'')) ||
+            (expr.StartsWith('"') && expr.EndsWith('"')))
+            return UnescapeString(expr[1..^1]);
+
+        if (TryLong(expr, out long intVal)) return (object)intVal;
+
+        // List literal
+        if (expr.StartsWith('[') && expr.EndsWith(']') && MatchingBrackets(expr))
+        {
+            var list = new List<object?>();
+            string inner = expr[1..^1].Trim();
+            if (inner.Length > 0)
+                foreach (string el in SplitTopLevel(inner, ','))
+                    list.Add(Eval(el, env, ctx));
+            return list;
+        }
+
+        // Call: name(args) or obj.method(args)
+        if (expr.EndsWith(')'))
+        {
+            int open = FindMatchingOpenParen(expr);
+            if (open > 0)
+            {
+                string callee = expr[..open].Trim();
+                string argStr = expr[(open + 1)..^1];
+                var rawArgs = SplitTopLevel(argStr, ',')
+                    .Select(a => a.Trim()).Where(a => a.Length > 0).ToList();
+
+                int dot = LastTopLevelDot(callee);
+                if (dot > 0)
+                {
+                    string objExpr = callee[..dot].Trim();
+                    string method = callee[(dot + 1)..].Trim();
+                    object? obj = Eval(objExpr, env, ctx);
+                    var args = rawArgs.Select(a => Eval(a, env, ctx)).ToList();
+                    return InvokeMethod(method, obj, args, ctx);
+                }
+
+                // macro?
+                if (ctx.Macros.TryGetValue(callee, out var def))
+                    return InvokeMacro(def, rawArgs, env, ctx);
+
+                // builtin function
+                return InvokeBuiltin(callee, rawArgs, env, ctx);
             }
         }
 
-        // X else Y  (default operator: if X is truthy return X, else return Y)
-        // Must come after inline conditional so X if Y else Z is already consumed.
+        // Bracket indexing / slicing
+        if (expr.EndsWith(']'))
         {
-            int elseOnlyPos = FindElseOutside(expr);
-            if (elseOnlyPos >= 0)
+            int openB = FindMatchingOpenBracket(expr);
+            if (openB > 0)
             {
-                var left = Eval(expr[..elseOnlyPos].TrimEnd(), env, errors);
-                var right = Eval(expr[(elseOnlyPos + 5)..].TrimStart(), env, errors);
-                return IsTruthy(left) ? left : right;
+                object? obj = Eval(expr[..openB], env, ctx);
+                string idx = expr[(openB + 1)..^1].Trim();
+                return AccessBracket(obj, idx, env, ctx);
             }
         }
 
-        // Builtin function calls: name(arg)
-        var funcM = RegexGenerated.JinjaFuncCall.Match(expr);
-        if (funcM.Success)
+        // dot field access
+        int d = FindTopLevelDot(expr);
+        if (d > 0)
         {
-            string funcName = funcM.Groups[1].Value;
-            string argExpr = funcM.Groups[2].Value;
-            if (funcName == "strftime_now")
-            {
-                // Format string like "%d %b %Y" or empty for default
-                string fmt = argExpr.Trim('"', '\'', ' ');
-                try { return (object)(fmt.Length > 0 ? DateTime.Now.ToString(fmt) : DateTime.Now.ToString("dd MMM yyyy")); }
-                catch { return (object)DateTime.Now.ToString("dd MMM yyyy"); }
-            }
-            if (funcName == "raise_exception")
-            {
-                // Jinja2 built-in: aborts rendering with the given message.
-                // We silently return empty string so the template continues.
-                return (object)"";
-            }
-            _ = argExpr; // suppress unused-variable warning
-            errors?.Add($"JINJA ERROR: unknown function '{funcName}'");
-            return null;
+            object? obj = Eval(expr[..d], env, ctx);
+            return AccessField(obj, expr[(d + 1)..].Trim(), ctx);
         }
 
         // Plain identifier
@@ -826,10 +785,552 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
         if (result is null && !env.ContainsKey(expr))
         {
             string msg = $"JINJA ERROR: variable '{expr}' not found in template env";
-            errors?.Add(msg);
+            ctx.Errors.Add(msg);
             SanityChecks.WriteLine($"JinjaTemplateFormatter: variable '{expr}' not found in template env");
         }
         return result;
+    }
+
+    // Call helpers
+
+    private static object? InvokeBuiltin(string name, List<string> rawArgs, JinjaEnv env, Ctx ctx)
+    {
+        switch (name)
+        {
+            case "range":
+            {
+                var vals = rawArgs.Select(a => (long)ToNumber(Eval(a, env, ctx))).ToList();
+                var list = new List<object?>();
+                if (vals.Count == 1)
+                    for (long i = 0; i < vals[0]; i++) list.Add(i);
+                else if (vals.Count >= 2)
+                    for (long i = vals[0]; i < vals[1]; i++) list.Add(i);
+                return list;
+            }
+            case "strftime_now":
+            {
+                string fmt = rawArgs.Count > 0 ? rawArgs[0].Trim('"', '\'', ' ') : "";
+                try { return (object)(fmt.Length > 0 ? DateTime.Now.ToString(fmt) : DateTime.Now.ToString("dd MMM yyyy")); }
+                catch { return (object)DateTime.Now.ToString("dd MMM yyyy"); }
+            }
+            case "raise_exception":
+                return (object)"";
+            default:
+                ctx.Errors.Add($"JINJA ERROR: unknown function '{name}'");
+                return null;
+        }
+    }
+
+    private static object? InvokeMacro(MacroDef def, List<string> rawArgs, JinjaEnv env, Ctx ctx)
+    {
+        var macEnv = env.Push();
+        var positional = new List<object?>();
+        var named = new Dictionary<string, object?>(StringComparer.Ordinal);
+        foreach (string a in rawArgs)
+        {
+            int eq = FindTopLevelEq(a);
+            if (eq > 0 && IsPlainWord(a[..eq].Trim()))
+                named[a[..eq].Trim()] = Eval(a[(eq + 1)..], env, ctx);
+            else
+                positional.Add(Eval(a, env, ctx));
+        }
+
+        int pi = 0;
+        foreach (var p in def.Params)
+        {
+            object? val;
+            if (named.TryGetValue(p.Name, out var nv)) val = nv;
+            else if (pi < positional.Count) val = positional[pi++];
+            else if (p.DefaultExpr is not null) val = Eval(p.DefaultExpr, macEnv, ctx);
+            else val = null;
+            macEnv.Set(p.Name, val ?? (object)"");
+        }
+
+        var sb = new StringBuilder();
+        Execute(ctx.Tokens, def.BodyStart, def.BodyEnd, macEnv, sb, ctx);
+        return sb.ToString();
+    }
+
+    private static object? InvokeMethod(string method, object? obj, List<object?> args, Ctx ctx)
+    {
+        switch (method)
+        {
+            case "get":
+            {
+                string key = args.Count > 0 ? Stringify(args[0]) : "";
+                object? def = args.Count > 1 ? args[1] : null;
+                if (obj is JinjaDict d && d.TryGetValue(key, out var v)) return v;
+                return def;
+            }
+            case "split":
+            {
+                string s = obj as string ?? Stringify(obj);
+                string sep = args.Count > 0 ? Stringify(args[0]) : " ";
+                return s.Split(sep).Select(x => (object?)x).ToList();
+            }
+            case "strip":
+                return (obj as string ?? Stringify(obj)).Trim();
+            case "startswith":
+                return (object)(obj as string ?? Stringify(obj)).StartsWith(args.Count > 0 ? Stringify(args[0]) : "", StringComparison.Ordinal);
+            case "endswith":
+                return (object)(obj as string ?? Stringify(obj)).EndsWith(args.Count > 0 ? Stringify(args[0]) : "", StringComparison.Ordinal);
+            case "keys":
+                return obj is JinjaDict kd ? kd.Select(kv => (object?)kv.Key).ToList() : new List<object?>();
+            case "values":
+                return obj is JinjaDict vd ? vd.Select(kv => kv.Value).ToList() : new List<object?>();
+            case "items":
+                return obj is JinjaDict id ? id.Select(kv => (object?)new List<object?> { kv.Key, kv.Value }).ToList() : new List<object?>();
+            default:
+                ctx.Errors.Add($"JINJA ERROR: unknown method '{method}'");
+                return null;
+        }
+    }
+
+    private static object? ApplyFilter(string spec, object? val, JinjaEnv env, Ctx ctx)
+    {
+        string name = spec;
+        var rawArgs = new List<string>();
+        int paren = spec.IndexOf('(');
+        if (paren >= 0 && spec.EndsWith(')'))
+        {
+            name = spec[..paren].Trim();
+            string argStr = spec[(paren + 1)..^1];
+            if (argStr.Trim().Length > 0)
+                rawArgs = SplitTopLevel(argStr, ',').Select(a => a.Trim()).Where(a => a.Length > 0).ToList();
+        }
+        name = name.Trim();
+
+        switch (name)
+        {
+            case "trim":
+                return (val as string ?? Stringify(val)).Trim();
+            case "lower":
+                return (val as string ?? Stringify(val)).ToLowerInvariant();
+            case "upper":
+                return (val as string ?? Stringify(val)).ToUpperInvariant();
+            case "string":
+                return Stringify(val);
+            case "length":
+                return val switch
+                {
+                    string s => (object)(long)s.Length,
+                    List<object?> l => (object)(long)l.Count,
+                    List<JinjaDict> l => (object)(long)l.Count,
+                    JinjaDict d => (object)(long)d.Count,
+                    _ => (object)0L
+                };
+            case "list":
+                return val switch
+                {
+                    List<object?> l => l,
+                    List<JinjaDict> l => l.Cast<object?>().ToList(),
+                    JinjaDict d => d.Select(kv => (object?)kv.Key).ToList(),
+                    null => new List<object?>(),
+                    _ => new List<object?> { val }
+                };
+            case "first":
+                var fl = AsIterableList(val);
+                return fl is { Count: > 0 } ? fl[0] : null;
+            case "last":
+                var ll = AsIterableList(val);
+                return ll is { Count: > 0 } ? ll[^1] : null;
+            case "join":
+            {
+                string sep = rawArgs.Count > 0 ? Stringify(Eval(rawArgs[0], env, ctx)) : "";
+                var jl = AsIterableList(val);
+                return jl is null ? Stringify(val) : string.Join(sep, jl.Select(Stringify));
+            }
+            case "default":
+            {
+                bool useDefault = val is null || (val is string ds && ds.Length == 0);
+                if (rawArgs.Count >= 2)
+                {
+                    object? second = Eval(rawArgs[1], env, ctx);
+                    if (IsTruthy(second)) useDefault = val is null;
+                }
+                return useDefault && rawArgs.Count > 0 ? (Eval(rawArgs[0], env, ctx) ?? (object)"") : val;
+            }
+            case "dictsort":
+            {
+                if (val is not JinjaDict dd) return val;
+                return dd.OrderBy(kv => kv.Key, StringComparer.Ordinal)
+                         .Select(kv => (object?)new List<object?> { kv.Key, kv.Value })
+                         .ToList();
+            }
+            case "map":
+            {
+                var ml = AsIterableList(val);
+                if (ml is null) return val;
+                string attr = rawArgs.Count > 0 ? rawArgs[0].Trim().Trim('"', '\'') : "";
+                var outList = new List<object?>();
+                foreach (var el in ml)
+                    outList.Add(attr switch
+                    {
+                        "upper" => (el as string ?? Stringify(el)).ToUpperInvariant(),
+                        "lower" => (el as string ?? Stringify(el)).ToLowerInvariant(),
+                        "trim" => (el as string ?? Stringify(el)).Trim(),
+                        "string" => Stringify(el),
+                        _ => el
+                    });
+                return outList;
+            }
+            case "tojson":
+                return ToJson(val);
+            case "escape" or "e":
+                return Stringify(val);
+            default:
+                ctx.Errors.Add($"JINJA ERROR: unknown filter '{name}'");
+                return val;
+        }
+    }
+
+    // Index / field access
+
+    private static object? AccessBracket(object? obj, string idx, JinjaEnv env, Ctx ctx)
+    {
+        if (idx.Contains(':'))
+        {
+            var parts = idx.Split(':');
+            int? from = parts[0].Trim().Length > 0 ? (int)ToNumber(Eval(parts[0], env, ctx)) : null;
+            int? to = parts.Length > 1 && parts[1].Trim().Length > 0 ? (int)ToNumber(Eval(parts[1], env, ctx)) : null;
+            if (obj is string sSlice)
+            {
+                int start = from ?? 0;
+                int finish = to ?? sSlice.Length;
+                if (start < 0) start += sSlice.Length;
+                if (finish < 0) finish += sSlice.Length;
+                start = Math.Clamp(start, 0, sSlice.Length);
+                finish = Math.Clamp(finish, 0, sSlice.Length);
+                return finish >= start ? sSlice[start..finish] : "";
+            }
+            var sliceList = AsIterableList(obj);
+            if (sliceList is not null)
+            {
+                int start = from ?? 0;
+                int finish = to ?? sliceList.Count;
+                if (start < 0) start += sliceList.Count;
+                if (finish < 0) finish += sliceList.Count;
+                start = Math.Clamp(start, 0, sliceList.Count);
+                finish = Math.Clamp(finish, 0, sliceList.Count);
+                var outl = new List<object?>();
+                for (int i = start; i < finish; i++) outl.Add(sliceList[i]);
+                return outl;
+            }
+            return null;
+        }
+
+        object? key = Eval(idx, env, ctx);
+        if (obj is JinjaDict dict)
+            return dict.TryGetValue(Stringify(key), out var dv) ? dv : null;
+        if (obj is string str)
+        {
+            long i = TryLong(key, out long ki) ? ki : 0;
+            if (i < 0) i += str.Length;
+            return i >= 0 && i < str.Length ? (object)str[(int)i].ToString() : "";
+        }
+        var list = AsIterableList(obj);
+        if (list is not null)
+        {
+            long i = TryLong(key, out long ki2) ? ki2 : 0;
+            if (i < 0) i += list.Count;
+            return i >= 0 && i < list.Count ? list[(int)i] : null;
+        }
+        return null;
+    }
+
+    private static object? AccessField(object? obj, string field, Ctx ctx)
+    {
+        return obj switch
+        {
+            JinjaNamespace ns => ns.Get(field),
+            JinjaDict d when d.TryGetValue(field, out var v) => v,
+            _ => null
+        };
+    }
+
+    private static int FindTopLevelPipe(string s)
+    {
+        bool inS = false, inD = false;
+        int depth = 0;
+        for (int i = 0; i < s.Length; i++)
+        {
+            char c = s[i];
+            if (c == '\'' && !inD) inS = !inS;
+            else if (c == '"' && !inS) inD = !inD;
+            else if (!inS && !inD)
+            {
+                if (c is '(' or '[' or '{') depth++;
+                else if (c is ')' or ']' or '}') depth--;
+                else if (c == '|' && depth == 0 && i + 1 < s.Length && s[i + 1] != '|' && (i == 0 || s[i - 1] != '|'))
+                    return i;
+            }
+        }
+        return -1;
+    }
+
+    private static bool ContainsValue(object? container, object? item)
+    {
+        switch (container)
+        {
+            case string s:
+                return s.Contains(Stringify(item), StringComparison.Ordinal);
+            case List<object?> l:
+                return l.Any(x => Stringify(x) == Stringify(item));
+            case List<JinjaDict> l:
+                return l.Any(x => Stringify(x) == Stringify(item));
+            case JinjaDict d:
+                return d.ContainsKey(Stringify(item));
+            default:
+                return false;
+        }
+    }
+
+    private static List<string> SplitTopLevel(string s, char sep)
+    {
+        var parts = new List<string>();
+        bool inS = false, inD = false;
+        int depth = 0, last = 0;
+        for (int i = 0; i < s.Length; i++)
+        {
+            char c = s[i];
+            if (c == '\'' && !inD) inS = !inS;
+            else if (c == '"' && !inS) inD = !inD;
+            else if (!inS && !inD)
+            {
+                if (c is '(' or '[' or '{') depth++;
+                else if (c is ')' or ']' or '}') depth--;
+                else if (c == sep && depth == 0) { parts.Add(s[last..i]); last = i + 1; }
+            }
+        }
+        parts.Add(s[last..]);
+        return parts;
+    }
+
+    private static int FindMatchingOpenParen(string s)
+    {
+        int depth = 0;
+        bool inS = false, inD = false;
+        for (int i = s.Length - 1; i >= 0; i--)
+        {
+            char c = s[i];
+            if (c == '\'' && !inD) inS = !inS;
+            else if (c == '"' && !inS) inD = !inD;
+            else if (!inS && !inD)
+            {
+                if (c == ')') depth++;
+                else if (c == '(') { depth--; if (depth == 0) return i; }
+            }
+        }
+        return -1;
+    }
+
+    private static int FindMatchingOpenBracket(string s)
+    {
+        int depth = 0;
+        bool inS = false, inD = false;
+        for (int i = s.Length - 1; i >= 0; i--)
+        {
+            char c = s[i];
+            if (c == '\'' && !inD) inS = !inS;
+            else if (c == '"' && !inS) inD = !inD;
+            else if (!inS && !inD)
+            {
+                if (c == ']') depth++;
+                else if (c == '[') { depth--; if (depth == 0) return i; }
+            }
+        }
+        return -1;
+    }
+
+    private static int LastTopLevelDot(string s)
+    {
+        int found = -1, depth = 0;
+        bool inS = false, inD = false;
+        for (int i = 0; i < s.Length; i++)
+        {
+            char c = s[i];
+            if (c == '\'' && !inD) inS = !inS;
+            else if (c == '"' && !inS) inD = !inD;
+            else if (!inS && !inD)
+            {
+                if (c is '(' or '[' or '{') depth++;
+                else if (c is ')' or ']' or '}') depth--;
+                else if (c == '.' && depth == 0) found = i;
+            }
+        }
+        return found;
+    }
+
+    private static bool MatchingBrackets(string s)
+    {
+        int depth = 0;
+        bool inS = false, inD = false;
+        for (int i = 0; i < s.Length; i++)
+        {
+            char c = s[i];
+            if (c == '\'' && !inD) inS = !inS;
+            else if (c == '"' && !inS) inD = !inD;
+            else if (!inS && !inD)
+            {
+                if (c == '[') depth++;
+                else if (c == ']') { depth--; if (depth == 0 && i != s.Length - 1) return false; }
+            }
+        }
+        return depth == 0;
+    }
+
+    private static bool IsPlainWord(string s) => s.All(ch => char.IsLetterOrDigit(ch) || ch == '_');
+
+
+    // Additional scan/value helpers used by the reworked evaluator
+
+    private static int FindSeqOutside(string s, string op)
+    {
+        bool inS = false, inD = false;
+        int depth = 0;
+        for (int i = 0; i + op.Length <= s.Length; i++)
+        {
+            char c = s[i];
+            if (c == '\'' && !inD) { inS = !inS; continue; }
+            if (c == '"' && !inS) { inD = !inD; continue; }
+            if (inS || inD) continue;
+            if (c is '(' or '[' or '{') { depth++; continue; }
+            if (c is ')' or ']' or '}') { depth--; continue; }
+            if (depth != 0) continue;
+            if (string.CompareOrdinal(s, i, op, 0, op.Length) == 0)
+            {
+                if (op == ">" && i + 1 < s.Length && s[i + 1] == '=') continue;
+                if (op == "<" && i + 1 < s.Length && s[i + 1] == '=') continue;
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private static int FindTopLevelDot(string s)
+    {
+        bool inS = false, inD = false;
+        int depth = 0;
+        for (int i = 0; i < s.Length; i++)
+        {
+            char c = s[i];
+            if (c == '\'' && !inD) { inS = !inS; continue; }
+            if (c == '"' && !inS) { inD = !inD; continue; }
+            if (inS || inD) continue;
+            if (c is '(' or '[' or '{') { depth++; continue; }
+            if (c is ')' or ']' or '}') { depth--; continue; }
+            if (depth == 0 && c == '.') return i;
+        }
+        return -1;
+    }
+
+    private static int FindTopLevelEq(string s)
+    {
+        bool inS = false, inD = false;
+        int depth = 0;
+        for (int i = 0; i < s.Length; i++)
+        {
+            char c = s[i];
+            if (c == '\'' && !inD) { inS = !inS; continue; }
+            if (c == '"' && !inS) { inD = !inD; continue; }
+            if (inS || inD) continue;
+            if (c is '(' or '[' or '{') { depth++; continue; }
+            if (c is ')' or ']' or '}') { depth--; continue; }
+            if (depth != 0 || c != '=') continue;
+            char prev = i > 0 ? s[i - 1] : ' ';
+            char next = i + 1 < s.Length ? s[i + 1] : ' ';
+            if (prev is '=' or '!' or '<' or '>' || next is '=') continue;
+            return i;
+        }
+        return -1;
+    }
+
+    /// <summary>
+    /// Finds the top-level <c>if</c> of an inline conditional <c>X if C else Y</c>,
+    /// returning its index and (via <paramref name="elsePos"/>) the index of the
+    /// matching <c>else</c> (or -1). Scans from index 0 so a leading string
+    /// literal cannot desynchronise quote tracking.
+    /// </summary>
+    private static int FindInlineIf(string s, out int elsePos)
+    {
+        elsePos = -1;
+        int ifPos = -1;
+        bool inS = false, inD = false;
+        int depth = 0;
+        for (int i = 0; i < s.Length; i++)
+        {
+            char c = s[i];
+            if (c == '\'' && !inD) { inS = !inS; continue; }
+            if (c == '"' && !inS) { inD = !inD; continue; }
+            if (inS || inD) continue;
+            if (c is '(' or '[' or '{') { depth++; continue; }
+            if (c is ')' or ']' or '}') { depth--; continue; }
+            if (depth != 0) continue;
+
+            bool atWord = c == ' ' && i + 3 < s.Length && s[i + 3] == ' ';
+            if (ifPos < 0 && atWord && s[i + 1] == 'i' && s[i + 2] == 'f')
+            {
+                ifPos = i + 1;
+                i += 2;
+                continue;
+            }
+            if (ifPos >= 0 && c == ' ' && i + 4 < s.Length &&
+                s[i + 1] == 'e' && s[i + 2] == 'l' && s[i + 3] == 's' && s[i + 4] == 'e' &&
+                (i + 5 >= s.Length || s[i + 5] == ' '))
+            {
+                elsePos = i + 1;
+                break;
+            }
+        }
+        return ifPos;
+    }
+
+    private static bool TryLong(object? v, out long r)
+    {
+        switch (v)
+        {
+            case long l: r = l; return true;
+            case int i: r = i; return true;
+            case double d: r = (long)d; return true;
+            case string s when long.TryParse(s.Trim(), out long p): r = p; return true;
+            default: r = 0; return false;
+        }
+    }
+
+    private static double ToNumber(object? v) => v switch
+    {
+        long l => l,
+        int i => i,
+        double d => d,
+        bool b => b ? 1 : 0,
+        string s when double.TryParse(s.Trim(), out double p) => p,
+        _ => 0
+    };
+
+    private static string ToJson(object? v) => ObjectToJsonValue(v);
+
+    private static string UnescapeString(string s)
+    {
+        var sb = new StringBuilder(s.Length);
+        for (int i = 0; i < s.Length; i++)
+        {
+            if (s[i] == '\\' && i + 1 < s.Length)
+            {
+                char n = s[i + 1];
+                switch (n)
+                {
+                    case 'n': sb.Append('\n'); i++; break;
+                    case 't': sb.Append('\t'); i++; break;
+                    case 'r': sb.Append('\r'); i++; break;
+                    case '\\': sb.Append('\\'); i++; break;
+                    case '\'': sb.Append('\''); i++; break;
+                    case '"': sb.Append('"'); i++; break;
+                    default: sb.Append(n); i++; break;
+                }
+            }
+            else sb.Append(s[i]);
+        }
+        return sb.ToString();
     }
 
     // Helpers
@@ -852,163 +1353,6 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
             }
         }
         return end;
-    }
-
-    private static object? AccessIndex(object? obj, object? key)
-    {
-        if (obj is JinjaDict dict)
-        {
-            string k = Stringify(key);
-            return dict.TryGetValue(k, out var v) ? v : null;
-        }
-        if (obj is List<JinjaDict> list)
-        {
-            long idx = key is long l ? l : key is int i ? i : 0;
-            int real = idx < 0 ? list.Count + (int)idx : (int)idx;
-            return (real >= 0 && real < list.Count) ? list[real] : null;
-        }
-        return null;
-    }
-
-    private static int FindColonOutsideQuotes(string s)
-    {
-        bool inSingle = false, inDouble = false;
-        for (int i = 0; i < s.Length; i++)
-        {
-            char c = s[i];
-            if (c == '\'' && !inDouble) inSingle = !inSingle;
-            else if (c == '"' && !inSingle) inDouble = !inDouble;
-            else if (!inSingle && !inDouble && c == ':')
-                return i;
-        }
-        return -1;
-    }
-
-    private static object? AccessField(object? obj, string field)
-    {
-        if (obj is JinjaDict dict)
-            return dict.TryGetValue(field, out var v) ? v : null;
-        if (obj is JinjaNamespace ns)
-            return ns.Get(field);
-        return null;
-    }
-
-    /// <summary>
-    /// Scans right-to-left to find the last <c>[…]</c> pair at bracket depth 0,
-    /// respecting string quotes. Returns <c>(openIdx, closeIdx)</c> where
-    /// <c>closeIdx</c> points to the matching <c>]</c>, which may not be the
-    /// final character (e.g., <c>messages[0].role</c> has trailing <c>.role</c>).
-    /// Returns <c>(-1, -1)</c> when no bracket pair is found.
-    /// </summary>
-    private static (int Open, int Close) FindLastBracketPair(string s)
-    {
-        if (s.Length == 0) return (-1, -1);
-        int closeBracket = s.LastIndexOf(']');
-        if (closeBracket < 0) return (-1, -1);
-        bool inSingle = false, inDouble = false;
-        int depth = 0;
-        for (int i = closeBracket; i >= 0; i--)
-        {
-            char c = s[i];
-            if (c == '\'' && !inDouble) inSingle = !inSingle;
-            else if (c == '"' && !inSingle) inDouble = !inDouble;
-            else if (!inSingle && !inDouble)
-            {
-                if (c == ']') depth++;
-                else if (c == '[')
-                {
-                    depth--;
-                    if (depth == 0) return (i, closeBracket);
-                }
-            }
-        }
-        return (-1, -1);
-    }
-
-
-    /// When <paramref name="requireDouble"/> is true, matches only <c>==</c> (not <c>=</c>
-    /// inside <c>!=</c> or standalone).
-    /// </summary>
-    private static int FindOperatorOutsideQuotes(string s, char op, bool requireDouble = false)
-    {
-        bool inSingle = false, inDouble = false;
-        int depth = 0;
-        for (int i = 0; i < s.Length; i++)
-        {
-            char c = s[i];
-            if (c == '\'' && !inDouble) inSingle = !inSingle;
-            else if (c == '"' && !inSingle) inDouble = !inDouble;
-            else if (!inSingle && !inDouble)
-            {
-                if (c is '(' or '[') depth++;
-                else if (c is ')' or ']') depth--;
-                else if (depth == 0 && c == op)
-                {
-                    if (requireDouble)
-                    {
-                        if (i + 1 < s.Length && s[i + 1] == '=' && (i == 0 || s[i - 1] != '!'))
-                            return i;
-                    }
-                    else
-                    {
-                        return i;
-                    }
-                }
-            }
-        }
-        return -1;
-    }
-
-    /// <summary>
-    /// Finds <c>!=</c> outside string quotes and brackets.
-    /// Returns the index of <c>!</c>, or -1 if not found.
-    /// </summary>
-    private static int FindNeqOutside(string s)
-    {
-        bool inSingle = false, inDouble = false;
-        int depth = 0;
-        for (int i = 0; i < s.Length - 1; i++)
-        {
-            char c = s[i];
-            if (c == '\'' && !inDouble) inSingle = !inSingle;
-            else if (c == '"' && !inSingle) inDouble = !inDouble;
-            else if (!inSingle && !inDouble)
-            {
-                if (c is '(' or '[') depth++;
-                else if (c is ')' or ']') depth--;
-                else if (depth == 0 && c == '!' && s[i + 1] == '=')
-                    return i;
-            }
-        }
-        return -1;
-    }
-
-    /// <summary>
-    /// Finds binary <c>-</c> (subtraction) outside string quotes, parens, and
-    /// brackets. Returns the index of <c>-</c>, or -1 if not found.
-    /// Skips unary negation (at position 0) and <c>--</c> / <c>-=</c>.
-    /// </summary>
-    private static int FindSubOutside(string s)
-    {
-        bool inSingle = false, inDouble = false;
-        int depth = 0;
-        for (int i = 0; i < s.Length; i++)
-        {
-            char c = s[i];
-            if (c == '\'' && !inDouble) inSingle = !inSingle;
-            else if (c == '"' && !inSingle) inDouble = !inDouble;
-            else if (!inSingle && !inDouble)
-            {
-                if (c is '(' or '[') depth++;
-                else if (c is ')' or ']') depth--;
-                else if (depth == 0 && c == '-' && i > 0)
-                {
-                    if (i + 1 < s.Length && (s[i + 1] is '-' or '=')) continue;
-                    return i;
-                }
-            }
-        }
-        return -1;
     }
 
     /// <summary>
@@ -1034,115 +1378,6 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
                          && s[(i + 1)..(i + 1 + kwLen)] == kw
                          && s[i + 1 + kwLen] == ' ')
                     return i + 1; // points at first char of keyword
-            }
-        }
-        return -1;
-    }
-
-    /// <summary>
-    /// Finds <c>if</c> and optionally <c>else</c> in an inline conditional
-    /// expression <c>X if Y else Z</c>, outside string quotes and brackets.
-    /// Returns the position of <c>if</c> (the <c>i</c> in <c>if</c>),
-    /// and sets <paramref name="elsePos"/> to the position of <c>else</c>
-    /// (or -1 if not present).
-    /// </summary>
-    private static int FindIfElseOutside(string s, out int elsePos)
-    {
-        elsePos = -1;
-        bool inSingle = false, inDouble = false;
-        int depth = 0;
-        for (int i = 1; i < s.Length - 3; i++)
-        {
-            char c = s[i];
-            if (c == '\'' && !inDouble) inSingle = !inSingle;
-            else if (c == '"' && !inSingle) inDouble = !inDouble;
-            else if (!inSingle && !inDouble)
-            {
-                if (c is '(' or '[') depth++;
-                else if (c is ')' or ']') depth--;
-                else if (depth == 0 && c == ' ' && s[i - 1] != ' ' && s[i + 1] == 'i' && s[i + 2] == 'f' && s[i + 3] == ' ')
-                {
-                    int ifPos = i + 1;
-                    for (int j = ifPos + 4; j < s.Length - 5; j++)
-                    {
-                        char d = s[j];
-                        if (d == '\'' && !inDouble) inSingle = !inSingle;
-                        else if (d == '"' && !inSingle) inDouble = !inDouble;
-                        else if (!inSingle && !inDouble)
-                        {
-                            if (d is '(' or '[') depth++;
-                            else if (d is ')' or ']') depth--;
-                            else if (depth == 0 && d == ' ' && s[j - 1] != ' ' && s[j + 1] == 'e' && s[j + 2] == 'l' && s[j + 3] == 's' && s[j + 4] == 'e' && s[j + 5] == ' ')
-                            {
-                                elsePos = j + 1;
-                                break;
-                            }
-                        }
-                    }
-                    return ifPos;
-                }
-            }
-        }
-        return -1;
-    }
-
-    /// <summary>
-    /// Finds a comparison operator (<c>&lt;</c>, <c>&gt;</c>, <c>&lt;=</c>, <c>&gt;=</c>)
-    /// outside string quotes and brackets. Returns the index and the matched operator.
-    /// Skips <c>!=</c> (already handled by <see cref="FindNeqOutside"/>).
-    /// </summary>
-    private static int FindCmpOutside(string s, out string op)
-    {
-        op = "";
-        bool inSingle = false, inDouble = false;
-        int depth = 0;
-        for (int i = 0; i < s.Length; i++)
-        {
-            char c = s[i];
-            if (c == '\'' && !inDouble) inSingle = !inSingle;
-            else if (c == '"' && !inSingle) inDouble = !inDouble;
-            else if (!inSingle && !inDouble)
-            {
-                if (c is '(' or '[') depth++;
-                else if (c is ')' or ']') depth--;
-                else if (depth == 0 && (c == '<' || c == '>'))
-                {
-                    // != is handled elsewhere — skip it
-                    if (c == '>' && i > 0 && s[i - 1] == '!') continue;
-                    if (i + 1 < s.Length && s[i + 1] == '=')
-                    {
-                        op = c == '<' ? "<=" : ">=";
-                        return i;
-                    }
-                    op = c == '<' ? "<" : ">";
-                    return i;
-                }
-            }
-        }
-        return -1;
-    }
-
-    /// <summary>
-    /// Finds standalone <c>else</c> (default operator) outside string quotes
-    /// and brackets. Returns the position of <c>else</c> (the <c>e</c>), or -1.
-    /// Must not be after <c>if</c> (that case is already consumed by
-    /// <see cref="FindIfElseOutside"/>).
-    /// </summary>
-    private static int FindElseOutside(string s)
-    {
-        bool inSingle = false, inDouble = false;
-        int depth = 0;
-        for (int i = 1; i < s.Length - 5; i++)
-        {
-            char c = s[i];
-            if (c == '\'' && !inDouble) inSingle = !inSingle;
-            else if (c == '"' && !inSingle) inDouble = !inDouble;
-            else if (!inSingle && !inDouble)
-            {
-                if (c is '(' or '[') depth++;
-                else if (c is ')' or ']') depth--;
-                else if (depth == 0 && c == ' ' && s[i - 1] != ' ' && s[i + 1] == 'e' && s[i + 2] == 'l' && s[i + 3] == 's' && s[i + 4] == 'e' && s[i + 5] == ' ')
-                    return i + 1;
             }
         }
         return -1;

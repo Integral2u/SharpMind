@@ -16,7 +16,7 @@ namespace SharpMind.Inference
 
         [GeneratedRegex(@"<\|[^|]+\|>")]
         public static partial Regex ChatMLTokens { get; }
-        [GeneratedRegex(@"^for\s+(\w+)\s+in\s+(.+)$")]
+        [GeneratedRegex(@"^for\s+([\w\s,]+?)\s+in\s+(.+)$", RegexOptions.Singleline)]
         public static partial Regex JinjaForVarInExpr { get; }
 
         [GeneratedRegex(@"^set\s+(\w+)\s*=\s*namespace\s*\((.*)?\)\s*$", RegexOptions.Singleline)]
@@ -63,5 +63,7 @@ namespace SharpMind.Inference
         public static partial Regex JinjaIsIterable { get; }
         [GeneratedRegex(@"^(\w+)\(([^)]*)\)$")]
         public static partial Regex JinjaFuncCall { get; }
+        [GeneratedRegex(@"^macro\s+(\w+)\s*\((.*)\)\s*$", RegexOptions.Singleline)]
+        public static partial Regex JinjaMacroDef { get; }
     }
 }
