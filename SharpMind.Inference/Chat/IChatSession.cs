@@ -42,6 +42,40 @@ public interface IChatSession : IAsyncDisposable
     public IReadOnlyList<string>? StopStrings { get; set; }
 
     /// <summary>
+    /// Applies the sampling values this session exposes — temperature, top-k and
+    /// top-p — from <paramref name="config"/> in one call. An alternative to
+    /// setting each property individually (for example in an object initializer).
+    /// <paramref name="config"/>'s seed is fixed when the generator is built and
+    /// is not changed here, and min-p is not part of the session-level surface.
+    /// </summary>
+    public void SetSamplingConfig(SamplingConfig config)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        Temperature = config.Temperature;
+        TopK = config.TopK;
+        TopP = config.TopP;
+    }
+
+    /// <summary>
+    /// Applies the generation values this session exposes — max new tokens and
+    /// the repetition penalty/window — from <paramref name="config"/>. Stop
+    /// tokens and strings are applied only when the config supplies them, so an
+    /// otherwise-empty config leaves the session's existing stops (and its EOS
+    /// default) untouched.
+    /// </summary>
+    public void SetGenerationConfig(GenerationConfig config)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        MaxNewTokens = config.MaxNewTokens;
+        RepetitionPenalty = config.RepetitionPenalty;
+        RepetitionWindow = config.RepetitionWindow;
+        if (config.StopTokenIds.Count > 0)
+            StopTokenIds = config.StopTokenIds;
+        if (config.StopStrings.Count > 0)
+            StopStrings = config.StopStrings;
+    }
+
+    /// <summary>
     /// Optional GBNF grammar that constrains every generation this session
     /// performs. When set, the turn's output is forced to match the grammar and
     /// tool-call capture is disabled (a matching JSON object is the answer, not a

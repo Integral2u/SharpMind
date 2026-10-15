@@ -29,6 +29,8 @@ public sealed class SessionOptionsCloneTests
             Cache = CacheStrategy.Paged,
             Formatter = FormatterStrategy.ChatML,
             LoadMode = LoadMode.Streaming,
+            DesiredResidentExperts = 3,
+            ResidentWindow = 4,
             HardwareTier = HardwareTier.AVX2,
             UseParallelKernels = false,
             FileAccess = ToolPermission.Always,
@@ -63,6 +65,8 @@ public sealed class SessionOptionsCloneTests
         Assert.Equal(source.Cache, clone.Cache);
         Assert.Equal(source.Formatter, clone.Formatter);
         Assert.Equal(source.LoadMode, clone.LoadMode);
+        Assert.Equal(3, clone.DesiredResidentExperts);
+        Assert.Equal(4, clone.ResidentWindow);
         Assert.Equal(source.HardwareTier, clone.HardwareTier);
         Assert.Equal(source.UseParallelKernels, clone.UseParallelKernels);
         Assert.Equal(source.FileAccess, clone.FileAccess);

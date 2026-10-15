@@ -161,6 +161,17 @@ public sealed class SessionOptions
     public int DesiredResidentExperts { get; set; }
 
     /// <summary>
+    /// Streaming layer-residency window: how many transformer layers to keep loaded
+    /// on either side of the block loop's current position while weights stream from
+    /// disk. 1 (the default) is the historical stride — one layer unloaded behind,
+    /// one prefetched ahead, so roughly three layers are resident at any moment.
+    /// Larger values keep more layers hot between tokens, trading RAM for throughput;
+    /// 0 unloads the current layer before its successors finish and is not recommended.
+    /// Only meaningful when <see cref="LoadMode"/> is Streaming; a Full load ignores it.
+    /// </summary>
+    public int ResidentWindow { get; set; } = 1;
+
+    /// <summary>
     /// CPU code-path selection for JigSaw's mapping. Auto (the engine's own
     /// default) genuinely detects FMA/AVX2/SSE3 support at runtime via
     /// System.Runtime.Intrinsics.X86 checks — it isn't a placeholder, it's a
@@ -279,6 +290,7 @@ public sealed class SessionOptions
         target.LoadMode = LoadMode;
         target.MaxParallelLoadDegree = MaxParallelLoadDegree;
         target.DesiredResidentExperts = DesiredResidentExperts;
+        target.ResidentWindow = ResidentWindow;
         target.HardwareTier = HardwareTier;
         target.UseParallelKernels = UseParallelKernels;
         target.FileAccess = FileAccess;

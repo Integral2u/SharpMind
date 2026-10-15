@@ -19,7 +19,7 @@ namespace SharpMind.Inference.Agent
             Skills
         }
         public string AgentName { get; init; } = agentName;
-        public SamplingConfig SamplingConfig { get; init; } = samplingConfig ?? new();
+        public SamplingConfig SamplingConfig { get; set; } = samplingConfig ?? new();
         public ToolCallFormat CallFormat { get; set; } = ToolCallFormat.SharpMind;
         public IContextCompactor? Compactor { get; set; }
         public IReadOnlyList<IContextCompactor> PluginCompactors { get; set; } = [];

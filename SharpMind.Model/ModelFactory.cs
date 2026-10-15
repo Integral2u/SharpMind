@@ -69,7 +69,8 @@ public static class ModelFactory
         bool quantizedResident = false, 
         bool useSafeIo = false,
         int maxParallelLoadDegree = 0,
-        int desiredResidentExperts = 0)
+        int desiredResidentExperts = 0,
+        int residentWindow = 1)
     {
         ArgumentNullException.ThrowIfNull(modelConfig);
         ArgumentNullException.ThrowIfNull(sharpConfig);
@@ -107,7 +108,10 @@ public static class ModelFactory
                 // clamp it to what memory allows. 0 keeps the existing whole-layer streaming
                 // behaviour. Dense models and loaders without expert slicing ignore it.
                 GgufPath = path,
-                DesiredResidentExperts = Math.Max(0, desiredResidentExperts)
+                DesiredResidentExperts = Math.Max(0, desiredResidentExperts),
+                // Layers kept resident on either side of the block loop's current position while
+                // streaming; 1 is the historical stride (one behind, one ahead).
+                ResidentWindow = Math.Max(0, residentWindow)
             };
     }
 

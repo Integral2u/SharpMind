@@ -213,7 +213,8 @@ public static class SessionLauncher
                 // bytes, so skip the dequantized F32 copy of every layer.
                 var w = ModelFactory.CreateWeights(modelConfig, sharpConfig, qOps, options.ModelPath, options.LoadMode,
                     quantizedResident: true, maxParallelLoadDegree: options.MaxParallelLoadDegree,
-                    desiredResidentExperts: options.DesiredResidentExperts);
+                    desiredResidentExperts: options.DesiredResidentExperts,
+                    residentWindow: options.ResidentWindow);
                 w.InitializeWeights(progress, ct);
                 return w;
             },ct);
@@ -552,21 +553,15 @@ public static class SessionLauncher
         // Options.MaxTokens opts back into a truncated context window (clamped to
         // [1, EffectiveInferenceCacheLength]) to mimic the pre-restore fast-prefill
         // behavior; when null, the full EffectiveInferenceCacheLength context is used.
-        session.MaxNewTokens = options.Generation.MaxNewTokens;
+        session.SetSamplingConfig(options.Sampling);
+        session.SetGenerationConfig(options.Generation);
         int effectiveCacheLen = ModelConfig.ComputeMaxCacheLength(loaded.Model.Config);
         session.MaxTokens = options.MaxTokens is int maxTokens && maxTokens > 0
             ? Math.Min(maxTokens, effectiveCacheLen)
             : effectiveCacheLen;
-        session.Temperature = options.Sampling.Temperature;
-        session.TopK = options.Sampling.TopK;
-        session.TopP = options.Sampling.TopP;
-        session.RepetitionPenalty = options.Generation.RepetitionPenalty;
-        session.RepetitionWindow = options.Generation.RepetitionWindow;
         session.ShowThinking = options.ShowThinking;
         session.EnableThinking = options.EnableThinking;
         session.UserName = options.UserName;
-        if (options.Generation.StopTokenIds.Count > 0)
-            session.StopTokenIds = options.Generation.StopTokenIds;
 
         return new LaunchResult { Session = session, Agent = agentBuilder, CuiContext = cuiContext, Warnings = warnings, EngineDescription = engine?.Description ?? InferenceEngineResolver.CpuName };
     }

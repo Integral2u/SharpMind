@@ -462,6 +462,39 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     }
 
     /// <summary>
+    /// Applies a <see cref="SamplingConfig"/>'s temperature, top-k and top-p to
+    /// the session, and keeps the agent's declared config in step (when one is
+    /// present) so the personality it bakes into the system prompt matches what
+    /// the session actually samples with. Seed is fixed at generator construction
+    /// and min-p is not surfaced on the session, so neither is changed here.
+    /// </summary>
+    public void SetSamplingConfig(SamplingConfig config)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        Temperature = config.Temperature;
+        TopK = config.TopK;
+        TopP = config.TopP;
+        if (_agentBuilder is AgentBuilder agent)
+            agent.SamplingConfig = config;
+    }
+
+    /// <summary>
+    /// Applies a <see cref="GenerationConfig"/>'s max-new-tokens, repetition
+    /// penalty/window and (when present) stop tokens/strings to the session.
+    /// </summary>
+    public void SetGenerationConfig(GenerationConfig config)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        MaxNewTokens = config.MaxNewTokens;
+        RepetitionPenalty = config.RepetitionPenalty;
+        RepetitionWindow = config.RepetitionWindow;
+        if (config.StopTokenIds.Count > 0)
+            StopTokenIds = config.StopTokenIds;
+        if (config.StopStrings.Count > 0)
+            StopStrings = config.StopStrings;
+    }
+
+    /// <summary>
     /// Test hook: primes the generator's physical KV cache with
     /// <paramref name="prefixToks"/> so tests can drive the incremental-prefill
     /// path with a cache prefix of their choosing instead of relying on a
