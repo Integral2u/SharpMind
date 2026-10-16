@@ -105,6 +105,7 @@ public sealed class TrainLoop
         float accumLoss   = 0f;
         int   stepTokens  = 0;
         long  tokensSeen  = 0;
+        float bestValLoss = float.PositiveInfinity;
 
         try
         {
@@ -158,6 +159,20 @@ public sealed class TrainLoop
                     catch
                     {
                         valLoss = null;
+                    }
+                }
+
+                if (valLoss.HasValue && float.IsFinite(valLoss.Value) && valLoss.Value < bestValLoss)
+                {
+                    bestValLoss = valLoss.Value;
+                    try
+                    {
+                        string bestDir = Path.Combine(_config.CheckpointDir, "best");
+                        Checkpoint.Save(bestDir, _parameters, _optimizer, step, stepLoss, extra: BuildExtra(tokensSeen, valLoss));
+                        onCheckpoint?.Invoke(bestDir);
+                    }
+                    catch
+                    {
                     }
                 }
 
