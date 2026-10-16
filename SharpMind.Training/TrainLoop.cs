@@ -181,7 +181,7 @@ public sealed class TrainLoop
                 if (_config.CheckpointInterval > 0 && step % _config.CheckpointInterval == 0 && _config.KeepRecent >= 0)
                 {
                     string dir = Path.Combine(_config.CheckpointDir, $"step-{step:D07}");
-                    Checkpoint.Save(dir, _parameters, _optimizer, step, stepLoss);
+                    Checkpoint.Save(dir, _parameters, _optimizer, step, stepLoss, extra: BuildExtra(tokensSeen, valLoss));
                     PruneRetained(dir);
                     onCheckpoint?.Invoke(dir);
                 }
@@ -196,7 +196,7 @@ public sealed class TrainLoop
             if (_config.CheckpointInterval > 0)
             {
                 string dir = Path.Combine(_config.CheckpointDir, $"step-{step:D07}");
-                Checkpoint.Save(dir, _parameters, _optimizer, step, note: "interrupted");
+                Checkpoint.Save(dir, _parameters, _optimizer, step, note: "interrupted", extra: BuildExtra(tokensSeen, null));
                 onCheckpoint?.Invoke(dir);
             }
             throw;
@@ -206,7 +206,7 @@ public sealed class TrainLoop
         if (_config.CheckpointInterval > 0)
         {
             string dir = Path.Combine(_config.CheckpointDir, $"step-{step:D07}-final");
-            Checkpoint.Save(dir, _parameters, _optimizer, step, note: "final");
+            Checkpoint.Save(dir, _parameters, _optimizer, step, note: "final", extra: BuildExtra(tokensSeen, null));
             onCheckpoint?.Invoke(dir);
         }
     }
@@ -236,6 +236,15 @@ public sealed class TrainLoop
             catch (IOException) { }
             catch (UnauthorizedAccessException) { }
         }
+    }
+
+    private static Dictionary<string, string> BuildExtra(long tokensSeen, float? valLoss)
+    {
+        var extra = new Dictionary<string, string>(StringComparer.Ordinal);
+        extra["tokensSeen"] = tokensSeen.ToString();
+        if (valLoss is { } vl && float.IsFinite(vl))
+            extra["valLoss"] = vl.ToString("R", System.Globalization.CultureInfo.InvariantCulture);
+        return extra;
     }
 
     private static long ParseStep(string dir)
