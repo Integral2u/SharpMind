@@ -92,26 +92,53 @@ public sealed class TrainLoop
         CancellationToken cancellationToken = default,
         Func<int, EvalResult>?   evaluate           = null)
     {
-        int startStep = 0;
+        int   startStep   = 0;
+        int   skipBatches = 0;
+        long  priorTokens = 0;
+        float bestValLoss = float.PositiveInfinity;
 
         if (_config.ResumeFrom is not null)
         {
             var meta = Checkpoint.Load(_config.ResumeFrom, _parameters, _optimizer);
             startStep = meta.Step;
+
+            // Data cursor: where the interrupted run stopped in the batch stream.
+            // Restoring it means the resumed run trains on what comes NEXT instead
+            // of silently re-training the head of the corpus it has already seen.
+            if (_config.ResumeDataCursor)
+            {
+                skipBatches = ReadExtraInt(meta.Extra, "batchesConsumed");
+                GuardDataSeed(meta.Extra);
+            }
+
+            priorTokens = ReadExtraLong(meta.Extra, "tokensSeen");
+            if (ReadExtraFloat(meta.Extra, "bestValLoss") is { } priorBest && float.IsFinite(priorBest))
+                bestValLoss = priorBest;
         }
 
         int   step        = startStep;
         int   accumCount  = 0;
         float accumLoss   = 0f;
         int   stepTokens  = 0;
-        long  tokensSeen  = 0;
-        float bestValLoss = float.PositiveInfinity;
+        long  tokensSeen  = priorTokens;
+        int   batchesSeen = skipBatches;
+
+        // Captures the live cursor/telemetry so every checkpoint - rolling,
+        // best, interrupted or final - records where the run actually is.
+        Dictionary<string, string> Extra(float? valLoss)
+        {
+            var extra = BuildExtra(tokensSeen, batchesSeen, bestValLoss, valLoss);
+            WriteDataSeed(extra);
+            return extra;
+        }
 
         try
         {
-            await foreach (var batch in _loader.LoadAsync(cancellationToken: cancellationToken))
+            await foreach (var batch in _loader.LoadAsync(
+                skipBatches: skipBatches, cancellationToken: cancellationToken))
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                batchesSeen++;
 
                 // Zero gradients at the start of each accumulation window
                 if (accumCount == 0) _optimizer.ZeroGrad();
@@ -168,7 +195,7 @@ public sealed class TrainLoop
                     try
                     {
                         string bestDir = Path.Combine(_config.CheckpointDir, "best");
-                        Checkpoint.Save(bestDir, _parameters, _optimizer, step, stepLoss, extra: BuildExtra(tokensSeen, valLoss));
+                        Checkpoint.Save(bestDir, _parameters, _optimizer, step, stepLoss, extra: Extra(valLoss));
                         onCheckpoint?.Invoke(bestDir);
                     }
                     catch
@@ -196,7 +223,7 @@ public sealed class TrainLoop
                 if (_config.CheckpointInterval > 0 && step % _config.CheckpointInterval == 0 && _config.KeepRecent >= 0)
                 {
                     string dir = Path.Combine(_config.CheckpointDir, $"step-{step:D07}");
-                    Checkpoint.Save(dir, _parameters, _optimizer, step, stepLoss, extra: BuildExtra(tokensSeen, valLoss));
+                    Checkpoint.Save(dir, _parameters, _optimizer, step, stepLoss, extra: Extra(valLoss));
                     PruneRetained(dir);
                     onCheckpoint?.Invoke(dir);
                 }
@@ -211,7 +238,7 @@ public sealed class TrainLoop
             if (_config.CheckpointInterval > 0)
             {
                 string dir = Path.Combine(_config.CheckpointDir, $"step-{step:D07}");
-                Checkpoint.Save(dir, _parameters, _optimizer, step, note: "interrupted", extra: BuildExtra(tokensSeen, null));
+                Checkpoint.Save(dir, _parameters, _optimizer, step, note: "interrupted", extra: Extra(null));
                 onCheckpoint?.Invoke(dir);
             }
             throw;
@@ -221,7 +248,7 @@ public sealed class TrainLoop
         if (_config.CheckpointInterval > 0)
         {
             string dir = Path.Combine(_config.CheckpointDir, $"step-{step:D07}-final");
-            Checkpoint.Save(dir, _parameters, _optimizer, step, note: "final", extra: BuildExtra(tokensSeen, null));
+            Checkpoint.Save(dir, _parameters, _optimizer, step, note: "final", extra: Extra(null));
             onCheckpoint?.Invoke(dir);
         }
     }
@@ -253,13 +280,80 @@ public sealed class TrainLoop
         }
     }
 
-    private static Dictionary<string, string> BuildExtra(long tokensSeen, float? valLoss)
+    /// <summary>
+    /// Everything an interrupted run carries forward into its next checkpoint.
+    /// <c>batchesConsumed</c> is the data cursor (see
+    /// <see cref="TrainConfig.ResumeDataCursor"/>); <c>tokensSeen</c> and
+    /// <c>bestValLoss</c> keep those figures continuous across resumes; and
+    /// <c>dataSeed</c> records the RNG the cursor was computed against.
+    /// </summary>
+    private static Dictionary<string, string> BuildExtra(
+        long tokensSeen, int batchesConsumed, float bestValLoss, float? valLoss)
     {
-        var extra = new Dictionary<string, string>(StringComparer.Ordinal);
-        extra["tokensSeen"] = tokensSeen.ToString();
+        var extra = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["batchesConsumed"] = batchesConsumed.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["tokensSeen"] = tokensSeen.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        };
         if (valLoss is { } vl && float.IsFinite(vl))
             extra["valLoss"] = vl.ToString("R", System.Globalization.CultureInfo.InvariantCulture);
+        if (float.IsFinite(bestValLoss))
+            extra["bestValLoss"] = bestValLoss.ToString("R", System.Globalization.CultureInfo.InvariantCulture);
         return extra;
+    }
+
+    /// <summary>
+    /// Records the data seed a checkpoint was produced under, when the run
+    /// declares one. Read back by <see cref="GuardDataSeed"/> on resume.
+    /// </summary>
+    private void WriteDataSeed(Dictionary<string, string> extra)
+    {
+        if (_config.DataSeed is { } seed)
+            extra["dataSeed"] = seed.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>
+    /// A resume that skips forward in the batch stream only reproduces the
+    /// original stream when the batcher's RNG starts where it did before. When
+    /// the run declares its data seed, a checkpoint recorded under a different
+    /// one is a silently wrong resume - reject it rather than train on a stream
+    /// that no longer matches the cursor about to be applied.
+    /// </summary>
+    private void GuardDataSeed(IReadOnlyDictionary<string, string> extra)
+    {
+        if (_config.DataSeed is not { } configured) return;
+        if (!extra.TryGetValue("dataSeed", out var recorded)) return;
+        if (!int.TryParse(recorded, System.Globalization.NumberStyles.Integer,
+                System.Globalization.CultureInfo.InvariantCulture, out int recordedSeed))
+            return;
+        if (recordedSeed == configured) return;
+
+        throw new InvalidOperationException(
+            $"Checkpoint under '{_config.ResumeFrom}' records data seed {recordedSeed} but this " +
+            $"run is configured with {configured}: the resume cursor would replay a different " +
+            "data stream than the one it was computed for. Use the recorded seed, or set " +
+            $"{nameof(TrainConfig.DataSeed)} to null to opt out of the check.");
+    }
+
+    private static int ReadExtraInt(IReadOnlyDictionary<string, string> extra, string key)
+    {
+        if (!extra.TryGetValue(key, out var raw) || string.IsNullOrWhiteSpace(raw)) return 0;
+        return int.TryParse(raw, System.Globalization.NumberStyles.Integer,
+            System.Globalization.CultureInfo.InvariantCulture, out int v) ? v : 0;
+    }
+
+    private static long ReadExtraLong(IReadOnlyDictionary<string, string> extra, string key)
+    {
+        if (!extra.TryGetValue(key, out var raw) || string.IsNullOrWhiteSpace(raw)) return 0;
+        return long.TryParse(raw, System.Globalization.NumberStyles.Integer,
+            System.Globalization.CultureInfo.InvariantCulture, out long v) ? v : 0;
+    }
+
+    private static float? ReadExtraFloat(IReadOnlyDictionary<string, string> extra, string key)
+    {
+        if (!extra.TryGetValue(key, out var raw) || string.IsNullOrWhiteSpace(raw)) return null;
+        return float.TryParse(raw, System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out float v) ? v : null;
     }
 
     private static long ParseStep(string dir)

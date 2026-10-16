@@ -318,6 +318,13 @@ public static class TrainRunner
                     CheckpointInterval = job.CheckpointInterval,
                     CheckpointDir = checkpointDir,
                     ResumeFrom = resumeDir,
+                    // An incremental run's stream is the delta only, so the cursor
+                    // recorded by the previous run points into data this run never
+                    // sees - applying it would discard exactly the new files the run
+                    // exists to train on. A plain resume replays the same stream, so
+                    // it picks the cursor up and continues where it stopped.
+                    ResumeDataCursor = !job.IncrementalMode,
+                    DataSeed = Seed,
                     KeepRecent = job.KeepRecent,
                     QuantAwareTraining = qat,
                 });

@@ -49,12 +49,30 @@ public sealed class DataLoader
     /// constructor budget is used; if that is also null, the pipeline is
     /// consumed exactly once and the stream completes when it ends.
     /// </param>
+    /// <param name="skipBatches">
+    /// Batches to discard before the first one is emitted - the data cursor a
+    /// resumed training run uses to pick up where it stopped. Skipped batches
+    /// are pulled from the batcher (so its RNG / packing state advances exactly
+    /// as it did during the interrupted run) but are disposed, not emitted, and
+    /// they also reduce the remaining budget: a resume skips N and emits
+    /// <c>budget - N</c>, so the two runs together stay within the configured
+    /// total rather than overshooting by N.
+    /// </param>
     public async IAsyncEnumerable<TrainingBatch> LoadAsync(
         int? maxBatches = null,
+        int skipBatches = 0,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        int? budget = maxBatches ?? _maxBatches;
-        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(budget ?? 1, 0);
+        int? totalBudget = maxBatches ?? _maxBatches;
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(totalBudget ?? 1, 0);
+
+        int skipRemaining = Math.Max(0, skipBatches);
+        // A skip can legitimately consume the whole budget (a resumed run that
+        // already finished the configured work); budget 0 simply emits nothing.
+        // The negative guard above still rejects a bad configured budget.
+        int? budget = totalBudget is { } total ? Math.Max(0, total - skipRemaining) : null;
+        // Nothing left to emit: no point walking the stream just to discard it.
+        if (budget is 0) skipRemaining = 0;
 
         // Bounded channel provides backpressure: if the GPU is slow, the CPU stops prefetching.
         var channel = Channel.CreateBounded<TrainingBatch>(new BoundedChannelOptions(_prefetchBuffer)
@@ -81,17 +99,34 @@ public sealed class DataLoader
                 {
                     firstPass = false;
                     int passBatches = 0;
+                    int passSkipped = 0;
                     await foreach (var batch in _batcher.BatchAsync(_pipeline.ReadAsync(producerCts.Token), _tokenise, producerCts.Token))
                     {
+                        if (skipRemaining > 0)
+                        {
+                            // Consume - but never emit - the batches an interrupted
+                            // run already trained on. Disposing matters: these hold
+                            // NativeMemory-backed tensors that nothing else will free.
+                            skipRemaining--;
+                            passSkipped++;
+                            batch.Dispose();
+                            continue;
+                        }
                         if (budget is { } remaining && produced >= remaining)
+                        {
+                            batch.Dispose();
                             break;
+                        }
                         await channel.Writer.WriteAsync(batch, producerCts.Token);
                         produced++;
                         passBatches++;
                     }
                     // A pass that yields nothing (empty/filtered corpus) would loop
-                    // forever against a budget — terminate instead.
-                    if (passBatches == 0)
+                    // forever against a budget - terminate instead. A pass that only
+                    // satisfied the resume skip is NOT dead: the next pass must carry
+                    // on emitting, or a skip longer than one pass would end the stream
+                    // early with the budget still unspent.
+                    if (passBatches == 0 && passSkipped == 0)
                         break;
                 }
             }

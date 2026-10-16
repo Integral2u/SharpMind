@@ -39,6 +39,29 @@ public sealed record TrainConfig
     public string? ResumeFrom { get; init; }
 
     /// <summary>
+    /// Apply the checkpoint's data cursor on resume: skip the batches the
+    /// interrupted run already consumed, so the resumed run trains on what comes
+    /// next instead of re-training the head of the corpus it has seen. Defaults
+    /// to true - the correct behaviour whenever the resumed run replays the same
+    /// data stream.
+    ///
+    /// Set false when the stream itself differs from the one the cursor was
+    /// recorded against - an incremental run, which by construction feeds only
+    /// new and changed files, so skipping would throw away the very data the run
+    /// exists to train on.
+    /// </summary>
+    public bool ResumeDataCursor { get; init; } = true;
+
+    /// <summary>
+    /// Seed of the batcher's RNG, when the run declares one. Recorded in every
+    /// checkpoint and checked on resume: a cursor computed under seed A cannot
+    /// replay a stream produced by seed B, so a mismatch fails loudly instead of
+    /// silently training on the wrong data. Null (default) skips both the record
+    /// and the check.
+    /// </summary>
+    public int? DataSeed { get; init; }
+
+    /// <summary>
     /// How many rolling (step-marked) checkpoints to retain. 0 = prune none
     /// (keep every interval checkpoint). N &gt; 0 = keep only the newest N
     /// step checkpoints, deleting the older ones as the run progresses. A
