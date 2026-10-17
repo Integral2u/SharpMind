@@ -64,7 +64,7 @@ public static class ModelSizer
                 MaxSeqLen = 128,
             };
 
-            long paramCount = CalculateParamCount(config);
+            long paramCount = CountParameters(config);
             if (paramCount > budget.MaxTotalParameters) continue;
 
             // Use Task.Run to avoid async warnings and run on background thread
@@ -148,10 +148,15 @@ public static class ModelSizer
         return totalLoss;
     }
 
-    private static long CalculateParamCount(ModelConfig config)
+    /// <summary>
+    /// Rough parameter count for a config (embedding + per-block transformer terms),
+    /// shared with <see cref="TrainingMemoryEstimator"/>.
+    /// </summary>
+    public static long CountParameters(ModelConfig config)
     {
+        ArgumentNullException.ThrowIfNull(config);
         long embedding = (long)config.VocabSize * config.HiddenDim;
-        long block = (long)config.NumLayers * (config.HiddenDim * config.HiddenDim * 12); 
+        long block = (long)config.NumLayers * (config.HiddenDim * config.HiddenDim * 12);
         return embedding + block;
     }
 

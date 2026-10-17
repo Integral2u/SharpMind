@@ -89,6 +89,13 @@ public sealed class Transformer : IDisposable
 
     public ModelConfig Config => _weights.Config;
 
+    /// <summary>
+    /// The structured weight set backing this transformer. Exposed so the training
+    /// side can export (or re-merge) the exact tensors the forward pass reads,
+    /// e.g. after LoRA adapters have been folded back in.
+    /// </summary>
+    public TransformerWeights Weights => _weights;
+
     // Diagnostics accessors
     public NormLayer FinalNorm => _finalNorm;
     /// <summary>The untied output head as floats (dequantized on first access), or null for a tied model.</summary>

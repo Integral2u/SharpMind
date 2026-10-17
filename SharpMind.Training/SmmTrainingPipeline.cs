@@ -35,6 +35,41 @@ public static class SmmTrainingPipeline
     }
 
     /// <summary>
+    /// Loads an .SMM file as a <em>trainable</em> model: float linear layers
+    /// (via <see cref="ModelFactory.CreateTrainingTransformer"/>) populated from the
+    /// file's weights, so a fine-tune (LoRA or full) can start from a shipped
+    /// checkpoint rather than random initialisation. The returned transformer shares
+    /// its tensors with the loaded weight set, which is reachable through the
+    /// transformer's <c>Weights</c> property for export after training.
+    /// </summary>
+    /// <param name="path">Path to the .SMM file.</param>
+    /// <param name="options">Load options, or <see langword="null"/> for the defaults.</param>
+    /// <param name="tokenizer">The tokenizer embedded in the file.</param>
+    /// <param name="config">The model config embedded in the file.</param>
+    public static Transformer LoadForTraining(
+        string path,
+        TrainingLoadOptions? options,
+        out Tokenizer tokenizer,
+        out ModelConfig config)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        options ??= new TrainingLoadOptions();
+
+        SmmLoader.Load(path, null, out _, out config, out var rawTokenizer);
+        tokenizer = rawTokenizer ?? throw new InvalidDataException("SMM file is missing its tokenizer (smm.tokenizer).");
+
+        // Full (not quantized-resident) load so the dequantized float tensors exist;
+        // training reads and writes them directly.
+        var sharpConfig = config.ForModel(options.Hardware);
+        var qOps = QuantizationFactory.Create(sharpConfig.ResolvedHardware);
+        var weights = ModelFactory.CreateWeights(config, sharpConfig, qOps, path, LoadMode.Full);
+        options.Progress?.Report(0f);
+        weights.InitializeWeights(options.Progress);
+        options.Progress?.Report(1f);
+        return ModelFactory.CreateTrainingTransformer(weights, sharpConfig);
+    }
+
+    /// <summary>
     /// Reads the chat template embedded in an .SMM file (meta key
     /// <c>tokenizer.chat_template</c>, the Jinja string used by
     /// <see cref="SharpMind.Inference.Chat.PromptFormatters.JinjaTemplateFormatter"/>).

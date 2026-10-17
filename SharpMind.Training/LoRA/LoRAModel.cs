@@ -1,3 +1,4 @@
+using SharpMind.Core.Tensors;
 using SharpMind.Core.Training;
 using SharpMind.Model;
 using SharpMind.Model.Layers;
@@ -112,8 +113,7 @@ public sealed class LoRAModel : IDisposable
         return baseParams == 0 ? 0 : (double)loraParams / baseParams;
     }
 
-    /// <summary>
-    /// Folds every adapter into its base weight (W += scale·A·B) and detaches
+    /// <summary>Folds every adapter into its base weight (W += scale·A·B) and detaches
     /// it. The model then computes exactly what it computed with the adapters,
     /// as a plain model; export it with the ordinary SMM/GGUF path.
     /// </summary>
@@ -122,6 +122,105 @@ public sealed class LoRAModel : IDisposable
         foreach (var t in _adapted) t.MergeLoRA();
         _adapted.Clear();
         DisposeParameters();
+    }
+
+    /// <summary>
+    /// Persists the attached adapters to <paramref name="path"/>: rank, alpha, the
+    /// target modules, a fingerprint of the base model, and every adapter's A and B.
+    /// The base weights are not written — the file is a few megabytes even for a
+    /// large model. Pair it with <see cref="LoadAdapter"/> to reproduce the tuned
+    /// model, or keep training it. Call before <see cref="Merge"/>.
+    /// </summary>
+    public void SaveAdapter(string path)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        if (_adapted.Count == 0)
+            throw new InvalidOperationException("No LoRA adapters are attached to save (already merged, or none targeted).");
+
+        var specs = new List<LoRAAdapterFile.TensorSpec>(_adapted.Count * 2);
+        var payload = new List<float[]>(_adapted.Count * 2);
+        foreach (var layer in _adapted)
+        {
+            AddTensor(layer.LoRAA!, specs, payload);
+            AddTensor(layer.LoRAB!, specs, payload);
+        }
+
+        var header = new LoRAAdapterFile.Header(
+            Config.Rank, Config.Alpha, Config.TargetModules ?? [], BaseFingerprint(_model), specs.ToArray());
+        LoRAAdapterFile.Write(path, header, payload);
+    }
+
+    /// <summary>
+    /// Attaches the adapters saved by <see cref="SaveAdapter"/> to
+    /// <paramref name="model"/>, rebuilding the <see cref="LoRAModel"/> from the
+    /// stored config. Throws <see cref="InvalidDataException"/> if the file was
+    /// trained against a different base (its fingerprint does not match
+    /// <paramref name="model"/>) or its tensor shapes do not fit.
+    /// </summary>
+    public static LoRAModel LoadAdapter(Transformer model, string path)
+    {
+        ArgumentNullException.ThrowIfNull(model);
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+
+        var (header, payload) = LoRAAdapterFile.Read(path);
+
+        string actual = BaseFingerprint(model);
+        if (!string.Equals(actual, header.BaseFingerprint, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException(
+                $"LoRA adapter at {path} was trained against a different base model " +
+                $"(adapter expects {header.BaseFingerprint}, this model fingerprints as {actual}).");
+
+        var lora = new LoRAModel(model, new LoRAConfig
+        {
+            Rank = header.Rank,
+            Alpha = header.Alpha,
+            TargetModules = header.TargetModules,
+        });
+
+        if (header.Tensors.Length != lora._adapted.Count * 2)
+            throw new InvalidDataException(
+                $"LoRA adapter holds {header.Tensors.Length} tensors but the base exposes " +
+                $"{lora._adapted.Count} adaptable projections for {string.Join(", ", header.TargetModules)}.");
+
+        int index = 0;
+        foreach (var layer in lora._adapted)
+        {
+            index = LoadTensor(layer.LoRAA!, header.Tensors, payload, index);
+            index = LoadTensor(layer.LoRAB!, header.Tensors, payload, index);
+        }
+        return lora;
+    }
+
+    /// <summary>Stable SHA-256 hex fingerprint of the base model's parameters (names + raw floats).</summary>
+    public static string BaseFingerprint(Transformer model)
+    {
+        ArgumentNullException.ThrowIfNull(model);
+        using var hash = System.Security.Cryptography.IncrementalHash.CreateHash(System.Security.Cryptography.HashAlgorithmName.SHA256);
+        Span<byte> length = stackalloc byte[8];
+        foreach (var p in model.Parameters())
+        {
+            hash.AppendData(System.Text.Encoding.UTF8.GetBytes(p.Name));
+            System.Buffers.Binary.BinaryPrimitives.WriteInt64LittleEndian(length, p.Data.ElementCount);
+            hash.AppendData(length);
+            hash.AppendData(System.Runtime.InteropServices.MemoryMarshal.AsBytes(p.Data.Data));
+        }
+        return Convert.ToHexString(hash.GetHashAndReset());
+    }
+
+    private static void AddTensor(Tensor<float> tensor, List<LoRAAdapterFile.TensorSpec> specs, List<float[]> payload)
+    {
+        specs.Add(new LoRAAdapterFile.TensorSpec(tensor.Shape.Rows, tensor.Shape.Cols));
+        payload.Add(tensor.Data.ToArray());
+    }
+
+    private static int LoadTensor(Tensor<float> tensor, LoRAAdapterFile.TensorSpec[] specs, float[][] payload, int index)
+    {
+        var spec = specs[index];
+        if (spec.Rows != tensor.Shape.Rows || spec.Cols != tensor.Shape.Cols)
+            throw new InvalidDataException(
+                $"LoRA adapter tensor {index} has shape {spec.Rows}x{spec.Cols} but the base projection is {tensor.Shape.Rows}x{tensor.Shape.Cols}.");
+        payload[index].AsSpan().CopyTo(tensor.Data);
+        return index + 1;
     }
 
     private void DisposeParameters()
