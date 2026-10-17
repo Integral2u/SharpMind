@@ -24,6 +24,21 @@ public abstract class PipelineNode
         => Pipe(new LambdaStage(name, transform));
 
     /// <summary>
+    /// Appends <paramref name="stage"/> wrapped in a <see cref="CountingStage"/>,
+    /// reporting per-stage in/out/dropped/bytes to <paramref name="sink"/>. The
+    /// document stream is unchanged; this is how a funnel visual gets its data.
+    /// </summary>
+    public PipelineNode Pipe(ICleaningStage stage, IStageCountSink sink, string? name = null)
+        => Pipe(new CountingStage(stage, sink, name));
+
+    /// <summary>
+    /// Appends a counting lambda stage (see
+    /// <see cref="Pipe(ICleaningStage, IStageCountSink, string?)"/>).
+    /// </summary>
+    public PipelineNode Pipe(string name, Func<string, string?> transform, IStageCountSink sink)
+        => Pipe(new CountingStage(new LambdaStage(name, transform), sink, name));
+
+    /// <summary>
     /// Splits the stream: documents matching <paramref name="predicate"/> flow to
     /// the <paramref name="matchBranch"/>; all others flow to the node returned
     /// by this call. Both branches can be piped further and merged later.

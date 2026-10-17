@@ -467,7 +467,27 @@ public static class TrainRunner
             SystemPrompt = systemPrompt,
             Skills = skills,
             Plugins = plugins,
+            Lineage = BuildLineage(job, checksum),
         };
+    }
+
+    /// <summary>
+    /// Provenance stamped onto every .smm this runner exports: which recipe (job)
+    /// produced it, which dataset fingerprint it trained on, when, and with what
+    /// tool version. Parsed back via <see cref="SmmLoader.LoadLineage"/>.
+    /// </summary>
+    private static Dictionary<string, string> BuildLineage(TrainJobSettings job, string? checksum)
+    {
+        var lineage = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["tool"] = typeof(TrainRunner).Assembly.GetName().Version?.ToString() ?? "unknown",
+            ["created"] = DateTime.UtcNow.ToString("O"),
+        };
+        if (!string.IsNullOrWhiteSpace(job.Name) && job.Name != "Untitled")
+            lineage["recipe"] = job.Name;
+        if (!string.IsNullOrWhiteSpace(checksum))
+            lineage["dataset"] = checksum;
+        return lineage;
     }
 
     private static QuantDType? ParseQat(string? raw)

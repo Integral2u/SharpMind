@@ -177,6 +177,17 @@ public static class SmmWriter
             obj["skills"] = new JsonArray([.. options.Skills.Select(s => (JsonNode?)JsonValue.Create(s))]);
         if (!string.IsNullOrWhiteSpace(options.SystemPrompt))
             obj["system_prompt"] = options.SystemPrompt;
+        if (options.Lineage is { Count: > 0 } lineage)
+        {
+            var lineageObj = new JsonObject();
+            foreach (var (key, value) in lineage)
+            {
+                if (!string.IsNullOrEmpty(key) && value is not null)
+                    lineageObj[key] = value;
+            }
+            if (lineageObj.Count > 0)
+                obj["lineage"] = lineageObj;
+        }
         return obj.ToJsonString(JsonOpts);
     }
 

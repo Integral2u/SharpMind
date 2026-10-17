@@ -363,12 +363,80 @@ public sealed class ResumeCursorTests : IDisposable
         Assert.Equal("3", resumed.Extra["batchesConsumed"]);
     }
 
+    // ---- A6: pause semantics ----
+
+    /// <summary>
+    /// A6's done-when: cancelling a run writes an interrupted checkpoint at the
+    /// step it reached, and resuming from it logs step+1 next - the run picks up
+    /// where it stopped rather than replaying the batch it had already trained on
+    /// (the cursor in Extra is what makes that true).
+    /// </summary>
+    [Fact]
+    public async Task Cancel_ThenResume_NextLoggedStepIsStepPlusOne()
+    {
+        string corpus = WriteCorpus(docs: 40);
+        string phase1Dir = Path.Combine(_dir.Path, "p1");
+
+        var cts = new CancellationTokenSource();
+        var steps = new List<int>();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => RunLoopAsync(
+            new TrainConfig
+            {
+                TotalSteps = 10,
+                GradAccumSteps = 1,
+                LogInterval = 1,
+                CheckpointInterval = 1,
+                CheckpointDir = phase1Dir,
+                KeepRecent = 5,
+            },
+            loaderBatches: 20,
+            corpusPath: corpus,
+            cancellationToken: cts.Token,
+            onStep: r =>
+            {
+                steps.Add(r.Step);
+                if (r.Step == 3) cts.Cancel();
+            }));
+
+        Assert.Equal(new[] { 1, 2, 3 }, steps);
+
+        // The cancel overwrote step-0000003 with an interrupted checkpoint that
+        // carries the cursor for the three batches already trained on.
+        var interrupted = Checkpoint.ReadMeta(Path.Combine(phase1Dir, "step-0000003"));
+        Assert.Equal(3, interrupted.Step);
+        Assert.Equal("interrupted", interrupted.Note);
+        Assert.Equal("3", interrupted.Extra["batchesConsumed"]);
+
+        // Resume: the next logged step is 4 (3 + 1), and no batch is replayed.
+        var resumedSteps = new List<int>();
+        await RunLoopAsync(
+            new TrainConfig
+            {
+                TotalSteps = 4,
+                GradAccumSteps = 1,
+                LogInterval = 1,
+                CheckpointInterval = 1,
+                CheckpointDir = Path.Combine(_dir.Path, "p2"),
+                KeepRecent = 5,
+                ResumeFrom = Path.Combine(phase1Dir, "step-0000003"),
+            },
+            loaderBatches: 20,
+            corpusPath: corpus,
+            onStep: r => resumedSteps.Add(r.Step));
+
+        Assert.Equal(new[] { 4 }, resumedSteps);
+        var final = Checkpoint.ReadMeta(Path.Combine(_dir.Path, "p2", "step-0000004-final"));
+        Assert.Equal("4", final.Extra["batchesConsumed"]);
+    }
+
     // ---- harness ----
 
     private async Task RunLoopAsync(
         TrainConfig config,
         int loaderBatches,
-        string? corpusPath = null)
+        string? corpusPath = null,
+        CancellationToken cancellationToken = default,
+        Action<TrainStepResult>? onStep = null)
     {
         var sharpConfig = SharpMindConfig.Gpt with { Hardware = HardwareTier.Scalar };
         var weights = ModelFactory.CreateForTraining(Cfg, sharpConfig);
@@ -388,6 +456,6 @@ public sealed class ResumeCursorTests : IDisposable
             smmConfig: sharpConfig,
             config: config);
 
-        await loop.RunAsync();
+        await loop.RunAsync(onStep: onStep, cancellationToken: cancellationToken);
     }
 }

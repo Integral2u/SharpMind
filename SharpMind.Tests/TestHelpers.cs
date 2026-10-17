@@ -1,6 +1,28 @@
 namespace SharpMind.Tests;
 
 /// <summary>
+/// A trivial in-memory <see cref="SharpMind.Data.Sources.IDataSource"/> for
+/// pipeline tests: yields the supplied documents in order.
+/// </summary>
+internal sealed class InMemorySource(IEnumerable<string> documents) : SharpMind.Data.Sources.IDataSource
+{
+    public long? EstimatedCount => null;
+    public string Description => "in-memory";
+
+    public async IAsyncEnumerable<string> ReadAsync(
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        foreach (var document in documents)
+        {
+            await Task.Yield();
+            yield return document;
+        }
+    }
+
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+}
+
+/// <summary>
 /// Creates temporary files for tests and cleans them up on dispose.
 /// </summary>
 internal sealed class TempDirectory : IDisposable

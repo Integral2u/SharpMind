@@ -99,6 +99,29 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
 
     public static List<string> LoadSkills(string path) => LoadSkillsFromMeta(LoadMeta(path));
 
+    /// <summary>
+    /// Returns the model's lineage block — the free-form provenance map written by
+    /// a producer (base/recipe/dataset/tokenizer fingerprints, tool version,
+    /// created time) — or an empty map when the file carries none.
+    /// </summary>
+    public static Dictionary<string, string> LoadLineageFromMeta(ModelMetaData meta)
+    {
+        string json = meta.GetString(SmmConstants.LineageKey);
+        if (string.IsNullOrWhiteSpace(json)) return [];
+        try
+        {
+            return JsonSerializer.Deserialize<Dictionary<string, string>>(json) ?? [];
+        }
+        catch (Exception ex)
+        {
+            SanityChecks.WriteLine($"SmmLoader: lineage JSON parse failed: {ex.Message}");
+            return [];
+        }
+    }
+
+    /// <summary>Returns the lineage block for the .SMM at <paramref name="path"/>, or an empty map.</summary>
+    public static Dictionary<string, string> LoadLineage(string path) => LoadLineageFromMeta(LoadMeta(path));
+
     public static List<SmmPluginEntry> LoadPlugins(string path)
     {
         using var stream = ModelFileIo.OpenRead(path);
@@ -318,6 +341,9 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
 
             if (root.TryGetProperty("config_json", out var cj) && cj.GetString() is { Length: > 0 } cfgJson)
                 meta.KvPairs.Add(new KvPair { Key = SmmConstants.ConfigKey, Value = cfgJson });
+
+            if (root.TryGetProperty("lineage", out var ln) && ln.ValueKind == JsonValueKind.Object)
+                meta.KvPairs.Add(new KvPair { Key = SmmConstants.LineageKey, Value = ln.GetRawText() });
         }
         catch (Exception ex)
         {

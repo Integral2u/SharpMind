@@ -42,4 +42,37 @@ public static class CleaningPipeline
     /// </summary>
     public static PipelineNode Merge(IEnumerable<PipelineNode> nodes)
         => Merge([.. nodes]);
+
+    /// <summary>
+    /// Merges multiple pipeline nodes by interleaving their documents in
+    /// proportion to the supplied weights - the replay-mixing form of
+    /// <see cref="Merge(PipelineNode[])"/>. Weights are relative (they need not
+    /// sum to one); a weight of zero excludes that node entirely.
+    /// </summary>
+    /// <example>
+    /// <code>
+    /// var mixed = CleaningPipeline.MergeWeighted(
+    ///     (instructions, 3.0),   // 75%
+    ///     (replay, 1.0));        // 25%
+    /// </code>
+    /// </example>
+    public static PipelineNode MergeWeighted(params (PipelineNode Node, double Weight)[] parts)
+    {
+        ArgumentNullException.ThrowIfNull(parts);
+        if (parts.Length < 2)
+            throw new ArgumentException("MergeWeighted requires at least two nodes.", nameof(parts));
+
+        foreach (var (node, weight) in parts)
+        {
+            ArgumentNullException.ThrowIfNull(node);
+            if (double.IsNaN(weight) || double.IsInfinity(weight) || weight < 0)
+                throw new ArgumentOutOfRangeException(nameof(parts), weight,
+                    "Weights must be finite and non-negative.");
+        }
+
+        if (parts.Sum(p => p.Weight) <= 0)
+            throw new ArgumentException("At least one weight must be positive.", nameof(parts));
+
+        return new WeightedMergeNode(parts);
+    }
 }

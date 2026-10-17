@@ -28,6 +28,9 @@ public static class SmmConstants
 
     /// <summary>KvPair key holding the embedded skills (JSON array of markdown strings).</summary>
     public const string SkillsKey = "smm.skills";
+
+    /// <summary>KvPair key holding the model's lineage block (JSON object of provenance strings).</summary>
+    public const string LineageKey = "smm.lineage";
 }
 
 /// <summary>
@@ -115,6 +118,17 @@ public sealed class SmmWriteOptions
     /// chat when this .SMM is opened. Optional.
     /// </summary>
     public string? SystemPrompt { get; init; }
+
+    /// <summary>
+    /// Provenance of the model, emitted as a <c>lineage</c> object in the meta
+    /// JSON and read back via <see cref="SmmLoader.LoadLineageFromMeta"/>. Keys
+    /// are free-form; the conventional ones are <c>base</c>, <c>recipe</c>,
+    /// <c>dataset</c> and <c>tokenizer</c> (each a fingerprint/hash),
+    /// <c>tool</c> (producer version) and <c>created</c> (ISO-8601 timestamp).
+    /// Optional — absent from files that predate it, and from writes that do not
+    /// declare any provenance.
+    /// </summary>
+    public IReadOnlyDictionary<string, string>? Lineage { get; init; }
 }
 
 /// <summary>
