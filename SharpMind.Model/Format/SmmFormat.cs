@@ -31,6 +31,11 @@ public static class SmmConstants
 
     /// <summary>KvPair key holding the model's lineage block (JSON object of provenance strings).</summary>
     public const string LineageKey = "smm.lineage";
+
+    /// <summary>KvPair key holding a client-tuned MoE expert heat profile (JSON object); read
+    /// back via <see cref="SmmLoader.LoadExpertHeatProfileFromMeta"/> and used to pre-warm the
+    /// streaming expert pin set.</summary>
+    public const string ExpertHeatKey = "smm.expert_heat";
 }
 
 /// <summary>
@@ -129,6 +134,14 @@ public sealed class SmmWriteOptions
     /// declare any provenance.
     /// </summary>
     public IReadOnlyDictionary<string, string>? Lineage { get; init; }
+
+    /// <summary>
+    /// Client-tuned MoE expert heat profile, emitted as an <c>expert_heat</c> object in the
+    /// meta JSON and read back via <see cref="SmmLoader.LoadExpertHeatProfileFromMeta"/>.
+    /// Lets a workload's hottest experts travel with the model so a later streaming load can
+    /// pre-warm its pin set. Optional, and only meaningful for MoE models.
+    /// </summary>
+    public ExpertHeatProfile? ExpertHeat { get; init; }
 }
 
 /// <summary>

@@ -148,6 +148,17 @@ public static class TrainRunner
 
             progress.Report(0.05f);
 
+            // Pre-flight QAT validation — fail before the tokenizer and model are
+            // built if the chosen target can't fit the planned dimensions, so the
+            // user sees one clear message instead of a deep run-time exception. The
+            // model vocab is padded to the target's block alignment later (see
+            // TrainingModelOptions.ResolveModelConfig), so only HiddenDim can block.
+            if (TrainingModelOptions.ValidateQat(job.QuantAwareTraining, job.HiddenDim) is { } qatProblem)
+            {
+                Log(qatProblem);
+                return new TrainRunResult { Success = false, Error = qatProblem };
+            }
+
             // 1. Tokenizer — BPE trained on the corpus and cached on disk, or a
             // character-level tokenizer derived from the corpus characters. The
             // vocab must always reflect the FULL corpus, never just the deltas of
@@ -175,6 +186,9 @@ public static class TrainRunner
 
             // 2. Model config.
             var modelConfig = TrainingModelOptions.ResolveModelConfig(job, tokenizer.VocabSize);
+            if (modelConfig.VocabSize != tokenizer.VocabSize)
+                Log($"QAT: padded model vocab {tokenizer.VocabSize} → {modelConfig.VocabSize} "
+                    + $"for {TrainingModelOptions.ParseQat(job.QuantAwareTraining)} block alignment.");
             Log($"Model: H={job.HiddenDim} L={job.NumLayers} heads={job.NumHeads} ffn={job.FfnDim}");
 
             // 3. Data pipeline — clean → tokenise → TrainingBatches. Random-window
@@ -297,7 +311,7 @@ public static class TrainRunner
 
             Directory.CreateDirectory(checkpointDir);
 
-            var qat = ParseQat(job.QuantAwareTraining);
+            var qat = TrainingModelOptions.ParseQat(job.QuantAwareTraining);
             var loop = new TrainLoop(
                 model: model,
                 parameters: parameters,
@@ -488,13 +502,6 @@ public static class TrainRunner
         if (!string.IsNullOrWhiteSpace(checksum))
             lineage["dataset"] = checksum;
         return lineage;
-    }
-
-    private static QuantDType? ParseQat(string? raw)
-    {
-        if (string.IsNullOrWhiteSpace(raw)) return null;
-        if (raw.Equals("F32", StringComparison.OrdinalIgnoreCase)) return null;
-        return Enum.TryParse<QuantDType>(raw, ignoreCase: true, out var q) ? q : null;
     }
 
     private static string Sanitize(string name)

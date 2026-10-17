@@ -188,6 +188,8 @@ public static class SmmWriter
             if (lineageObj.Count > 0)
                 obj["lineage"] = lineageObj;
         }
+        if (options.ExpertHeat is { IsEmpty: false } heat)
+            obj["expert_heat"] = JsonNode.Parse(heat.ToJson());
         return obj.ToJsonString(JsonOpts);
     }
 

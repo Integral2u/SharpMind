@@ -1056,6 +1056,25 @@ public sealed class TransformerWeightsStreaming : TransformerWeights
     /// </summary>
     public int DesiredResidentExperts { get; init; }
 
+    /// <summary>
+    /// (E2) Per-layer expert heat used to pre-warm the pin set: the hottest experts of each
+    /// layer start resident instead of being discovered token by token. Typically captured
+    /// from a previous run's <see cref="GetExpertRouteCounts"/> (see
+    /// <see cref="ExpertHeatProfile.FromRouteCounts"/>) or read from an .SMM's
+    /// <c>smm.expert_heat</c> metadata. The heat also seeds the touch counts, so the pin set
+    /// keeps tracking the profile until live routing overtakes it. Ignored unless
+    /// <see cref="DesiredResidentExperts"/> is &gt; 0.
+    /// </summary>
+    public ExpertHeatProfile? ExpertHeat { get; init; }
+
+    /// <summary>
+    /// (E2) Explicit pin list: <c>InitialPins[layer]</c> names the experts to keep pinned for
+    /// that block (capped to <see cref="EffectiveResidentExperts"/>), taking precedence over
+    /// the profile's choice for that layer. Ignored unless
+    /// <see cref="DesiredResidentExperts"/> is &gt; 0.
+    /// </summary>
+    public IReadOnlyList<int[]>? InitialPins { get; init; }
+
     /// <summary>Number of routed experts per MoE layer actually kept resident after the
     /// planner clamped <see cref="DesiredResidentExperts"/> to the memory budget (0 when
     /// residency is disabled, e.g. dense models or loaders without expert slicing).</summary>
@@ -1064,6 +1083,70 @@ public sealed class TransformerWeightsStreaming : TransformerWeights
     /// <summary>Retained bytes currently held for pinned MoE experts across layer unloads.
     /// For diagnostics.</summary>
     public long PinnedExpertBytes { get; private set; }
+
+    /// <summary>
+    /// (E1) Snapshot of per-layer, per-expert route counts accumulated since load — the
+    /// working-set signal behind pinning, exposed for offline analysis (row = block index,
+    /// column = expert id). Empty when residency is off, and a fresh copy each call so the
+    /// caller cannot alias the live counters. Call <see cref="ResetExpertResidencyStats"/>
+    /// between runs to isolate one run's routing.
+    /// </summary>
+    public int[][] GetExpertRouteCounts()
+    {
+        if (_moeLayers is null) return [];
+        var snapshot = new int[_moeLayers.Length][];
+        for (int i = 0; i < _moeLayers.Length; i++)
+            snapshot[i] = (int[])_moeLayers[i].Touches.Clone();
+        return snapshot;
+    }
+
+    /// <summary>
+    /// (E3) Total routed-expert selections that had to be read on demand because the expert
+    /// was not resident, accumulated since load or the last
+    /// <see cref="ResetExpertResidencyStats"/>. This is the real storage cost of the working
+    /// set; a single-token decode forward contributes its per-layer misses here.
+    /// </summary>
+    public long ExpertMisses => _expertMissesTotal;
+
+    /// <summary>(E3) On-demand expert loads per MoE layer (index = block); a fresh copy.</summary>
+    public long[] GetExpertMissesPerLayer() => (long[])_expertMissesPerLayer.Clone();
+
+    /// <summary>Pinned expert ids per layer (the set protected across the next unload); a
+    /// fresh copy, empty when residency is off.</summary>
+    public int[][] GetPinnedExperts()
+    {
+        if (_moeLayers is null) return [];
+        var snapshot = new int[_moeLayers.Length][];
+        for (int i = 0; i < _moeLayers.Length; i++)
+            snapshot[i] = [.. _moeLayers[i].Pinned];
+        return snapshot;
+    }
+
+    /// <summary>Expert ids currently loaded into each layer's weight dicts; a fresh copy,
+    /// empty when residency is off.</summary>
+    public int[][] GetResidentExperts()
+    {
+        if (_moeLayers is null) return [];
+        var snapshot = new int[_moeLayers.Length][];
+        for (int i = 0; i < _moeLayers.Length; i++)
+            snapshot[i] = [.. _moeLayers[i].Resident];
+        return snapshot;
+    }
+
+    /// <summary>
+    /// Clears the route counts and miss counters so the next run can be measured in isolation.
+    /// The resident and pinned byte sets are left untouched, but the pin <em>selection</em> is
+    /// recomputed from touch counts on the next routing step, so a reset before a pass means
+    /// that pass alone decides what stays pinned.
+    /// </summary>
+    public void ResetExpertResidencyStats()
+    {
+        _expertMissesTotal = 0;
+        if (_expertMissesPerLayer.Length > 0) Array.Clear(_expertMissesPerLayer);
+        if (_moeLayers is null) return;
+        foreach (var layer in _moeLayers)
+            Array.Clear(layer.Touches);
+    }
     /// <summary>
     /// Layers kept resident on either side of the block loop's current position. 0 would
     /// unload the current layer before its successors finish and is not valid; the default is
@@ -1134,10 +1217,18 @@ public sealed class TransformerWeightsStreaming : TransformerWeights
     // unloads without competing with the layer rotation.
     private MoEResidencyLayer[]? _moeLayers;
 
+    /// <summary>Cumulative on-demand expert loads per layer (index = block); E3 read-out.</summary>
+    private long[] _expertMissesPerLayer = [];
+    /// <summary>Cumulative on-demand expert loads across all layers.</summary>
+    private long _expertMissesTotal;
+
     private sealed class MoEResidencyLayer
     {
         /// <summary>Per-expert route counts; the most-touched become the pinned set.</summary>
         public int[] Touches = [];
+
+        /// <summary>Experts seeded from an explicit pin list / heat profile to pin first.</summary>
+        public readonly HashSet<int> SeedPins = [];
 
         /// <summary>Experts whose bytes are currently in the block's weight dicts.</summary>
         public readonly HashSet<int> Resident = [];
@@ -1166,6 +1257,8 @@ public sealed class TransformerWeightsStreaming : TransformerWeights
     {
         EffectiveResidentExperts = 0;
         _moeLayers = null;
+        _expertMissesPerLayer = [];
+        _expertMissesTotal = 0;
         if (DesiredResidentExperts <= 0) return 0;
         if (Loader is null || !Loader.SupportsExpertSlicing) return 0;
         if (Config.NumExperts <= 0 || blocks.Length != Blocks.Length) return 0;
@@ -1183,6 +1276,7 @@ public sealed class TransformerWeightsStreaming : TransformerWeights
         int effective = Math.Min(DesiredResidentExperts, budgetAllows);
 
         _moeLayers = new MoEResidencyLayer[blocks.Length];
+        _expertMissesPerLayer = new long[blocks.Length];
         for (int i = 0; i < _moeLayers.Length; i++)
             _moeLayers[i] = new MoEResidencyLayer { Touches = new int[Config.NumExperts] };
 
@@ -1191,7 +1285,44 @@ public sealed class TransformerWeightsStreaming : TransformerWeights
                 moe.ExpertResidency = new MoEResidencyHost(this, i, _moeLayers[i]);
 
         EffectiveResidentExperts = effective;
+        SeedExpertResidency();
         return effective;
+    }
+
+    /// <summary>
+    /// (E2) Seeds each layer's touch counts from <see cref="ExpertHeat"/> and its
+    /// <see cref="MoEResidencyLayer.SeedPins"/> from <see cref="InitialPins"/> (else the
+    /// profile's hottest experts), so the pin set starts populated instead of empty.
+    /// </summary>
+    private void SeedExpertResidency()
+    {
+        if (_moeLayers is null) return;
+        int effective = EffectiveResidentExperts;
+
+        for (int i = 0; i < _moeLayers.Length; i++)
+        {
+            var state = _moeLayers[i];
+
+            if (ExpertHeat is { } heat && heat.NumExperts > 0)
+            {
+                int n = Math.Min(state.Touches.Length, heat.NumExperts);
+                for (int e = 0; e < n; e++)
+                {
+                    long h = heat.HeatFor(i, e);
+                    if (h > 0) state.Touches[e] += (int)Math.Min(h, int.MaxValue);
+                }
+            }
+
+            int[] seed;
+            if (InitialPins is not null && i < InitialPins.Count && InitialPins[i] is not null)
+                seed = [.. InitialPins[i].Where(e => e >= 0 && e < state.Touches.Length).Take(effective)];
+            else if (ExpertHeat is { } hp)
+                seed = hp.TopExperts(i, effective);
+            else
+                seed = [];
+
+            foreach (int e in seed) state.SeedPins.Add(e);
+        }
     }
 
     /// <summary>Bytes one routed expert costs across the three projections of a single MoE
@@ -1253,6 +1384,23 @@ public sealed class TransformerWeightsStreaming : TransformerWeights
             toLoad.Add(e);
         }
 
+        // (E2) Pre-warm: pull the seeded pinned experts in on the layer's first touch even if
+        // the router did not pick them this batch, so a tuned profile is resident from the
+        // start rather than discovered token by token.
+        foreach (int e in state.SeedPins)
+        {
+            if (e < 0 || e >= Config.NumExperts) continue;
+            if (state.Resident.Contains(e) || toLoad.Contains(e)) continue;
+            toLoad.Add(e);
+        }
+
+        if (toLoad.Count > 0)
+        {
+            // E3: an expert selected but not resident is a miss served from storage.
+            _expertMissesPerLayer[layerIndex] += toLoad.Count;
+            _expertMissesTotal += toLoad.Count;
+        }
+
         if (toLoad.Count > 0 && Loader is not null)
         {
             Loader.LoadExpertWeights(layerIndex, toLoad, this);
@@ -1280,10 +1428,21 @@ public sealed class TransformerWeightsStreaming : TransformerWeights
         int desired = Math.Min(EffectiveResidentExperts, state.Touches.Length);
         if (desired <= 0) return;
 
+        // (E2) The seeded experts (explicit pin list / heat profile) are honored first; the
+        // remaining slots go to the most-touched experts (ties by index). With no seed this is
+        // exactly the historical top-N selection.
+        foreach (int e in state.SeedPins)
+        {
+            if (state.Pinned.Count >= desired) break;
+            if (e >= 0 && e < state.Touches.Length) state.Pinned.Add(e);
+        }
+        if (state.Pinned.Count >= desired) return;
+
         Span<(int id, int count)> order = stackalloc (int, int)[state.Touches.Length];
         for (int i = 0; i < state.Touches.Length; i++) order[i] = (i, state.Touches[i]);
         order.Sort((a, b) => b.count != a.count ? b.count.CompareTo(a.count) : a.id.CompareTo(b.id));
-        for (int i = 0; i < desired; i++) state.Pinned.Add(order[i].id);
+        for (int i = 0; i < order.Length && state.Pinned.Count < desired; i++)
+            state.Pinned.Add(order[i].id);
     }
 
     /// <summary>Moves the current pinned experts' planes out of the block into the long-lived

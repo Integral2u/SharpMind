@@ -70,7 +70,9 @@ public static class ModelFactory
         bool useSafeIo = false,
         int maxParallelLoadDegree = 0,
         int desiredResidentExperts = 0,
-        int residentWindow = 1)
+        int residentWindow = 1,
+        ExpertHeatProfile? expertHeat = null,
+        IReadOnlyList<int[]>? initialPins = null)
     {
         ArgumentNullException.ThrowIfNull(modelConfig);
         ArgumentNullException.ThrowIfNull(sharpConfig);
@@ -109,6 +111,9 @@ public static class ModelFactory
                 // behaviour. Dense models and loaders without expert slicing ignore it.
                 GgufPath = path,
                 DesiredResidentExperts = Math.Max(0, desiredResidentExperts),
+                // E2: optional expert heat / explicit pin list to pre-warm the pin set.
+                ExpertHeat = expertHeat,
+                InitialPins = initialPins,
                 // Layers kept resident on either side of the block loop's current position while
                 // streaming; 1 is the historical stride (one behind, one ahead).
                 ResidentWindow = Math.Max(0, residentWindow)

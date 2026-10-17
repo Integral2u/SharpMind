@@ -207,6 +207,11 @@ public static class SessionLauncher
                 : new Progress<float>(p => status.Report($"Loading weights... {p:P0}"));
 
             var qOps = QuantizationFactory.Create(mapping);
+            // E2: a client-tuned MoE expert heat profile travels in the .SMM meta; when expert
+            // residency is on, hand it to the streaming weights so the pinned set pre-warms.
+            var expertHeat = options.DesiredResidentExperts > 0
+                ? SmmLoader.LoadExpertHeatProfileFromMeta(meta)
+                : null;
             weights = await Task.Run(() =>
             {
                 // Chat only ever runs the quantized forward, which reads the raw
@@ -214,7 +219,8 @@ public static class SessionLauncher
                 var w = ModelFactory.CreateWeights(modelConfig, sharpConfig, qOps, options.ModelPath, options.LoadMode,
                     quantizedResident: true, maxParallelLoadDegree: options.MaxParallelLoadDegree,
                     desiredResidentExperts: options.DesiredResidentExperts,
-                    residentWindow: options.ResidentWindow);
+                    residentWindow: options.ResidentWindow,
+                    expertHeat: expertHeat);
                 w.InitializeWeights(progress, ct);
                 return w;
             },ct);

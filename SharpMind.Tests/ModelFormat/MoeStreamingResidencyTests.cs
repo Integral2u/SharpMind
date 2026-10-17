@@ -1,3 +1,4 @@
+using System.Linq;
 using SharpMind.Core;
 using SharpMind.Core.Activations;
 using SharpMind.Core.Quantization;
@@ -254,6 +255,165 @@ public class MoeStreamingResidencyTests : IDisposable
         using var logits = model.Forward(tokens);
         foreach (float f in logits.Data)
             Assert.True(float.IsFinite(f), "dense streaming forward must stay functional");
+    }
+
+    [Fact]
+    public void Residency_ExposesRouteCountsAndMisses_AndResets()
+    {
+        // E1/E3: after a run the caller reads the per-layer expert route counts and the
+        // on-demand miss total, and can reset them so one run is measured in isolation.
+        using var fixture = NewMoEModel();
+        string path = ExportGguf(fixture);
+        var qOps = QuantizationFactory.Create(fixture.SharpConfig.ResolvedHardware);
+
+        using var weights = ModelFactory.CreateWeights(fixture.Config, fixture.SharpConfig, qOps, path, LoadMode.Streaming,
+            desiredResidentExperts: 2);
+        weights.InitializeWeights();
+        using var model = ModelFactory.CreateTransformer(weights, fixture.SharpConfig);
+        var sw = Assert.IsType<TransformerWeightsStreaming>(weights);
+        Assert.Equal(2, sw.EffectiveResidentExperts);
+
+        // A reset clears the counters; the arrays are still shaped to the model.
+        sw.ResetExpertResidencyStats();
+        Assert.Equal(0, sw.ExpertMisses);
+        int[][] zeroed = sw.GetExpertRouteCounts();
+        Assert.Equal(fixture.Config.NumLayers, zeroed.Length);
+        Assert.All(zeroed, row => Assert.Equal(0, row.Sum()));
+
+        // One single-token decode: each MoE layer routes its top-k experts, none resident yet,
+        // so every selection is a miss and each layer's counts sum to exactly top-k.
+        using var tokens = new Tensor<int>(1, 1);
+        new[] { 5 }.CopyTo(tokens.Data);
+        using var logits = model.Forward(tokens);
+
+        int topK = fixture.Config.TopKExperts;
+        int[][] counts = sw.GetExpertRouteCounts();
+        Assert.Equal(fixture.Config.NumLayers, counts.Length);
+        foreach (int[] row in counts)
+        {
+            Assert.Equal(fixture.Config.NumExperts, row.Length);
+            Assert.Equal(topK, row.Sum());
+        }
+
+        Assert.Equal((long)fixture.Config.NumLayers * topK, sw.ExpertMisses);
+        long[] perLayer = sw.GetExpertMissesPerLayer();
+        Assert.Equal(fixture.Config.NumLayers, perLayer.Length);
+        Assert.Equal(sw.ExpertMisses, perLayer.Sum());
+
+        // Pinned/resident read-outs agree with the effective pin count and the routing.
+        foreach (int[] pinned in sw.GetPinnedExperts())
+            Assert.Equal(sw.EffectiveResidentExperts, pinned.Length);
+        foreach (int[] resident in sw.GetResidentExperts())
+            Assert.True(resident.Length >= topK, "the routed experts should be resident after a forward");
+
+        sw.ResetExpertResidencyStats();
+        Assert.Equal(0, sw.ExpertMisses);
+        Assert.All(sw.GetExpertRouteCounts(), row => Assert.Equal(0, row.Sum()));
+    }
+
+    // ── E2: heat profile / explicit pin list ────────────────────────────────
+
+    [Fact]
+    public void ExpertHeatProfile_SelectsHottestAndRoundTrips()
+    {
+        var profile = ExpertHeatProfile.FromHeat(2, 4, [0, 5, 0, 9, 2, 0, 0, 0]);
+
+        Assert.False(profile.IsEmpty);
+        Assert.Equal(9, profile.HeatFor(0, 3));
+        Assert.Equal(2, profile.HeatFor(1, 0));
+        Assert.Equal(0, profile.HeatFor(9, 9));            // out of range
+        Assert.Equal(new[] { 3, 1 }, profile.TopExperts(0, 2));
+        Assert.Equal(new[] { 0 }, profile.TopExperts(1, 1));
+
+        ExpertHeatProfile fromCounts = ExpertHeatProfile.FromRouteCounts(new[] { new[] { 0, 3, 1, 0 }, new[] { 2, 0, 0, 0 } });
+        Assert.Equal(2, fromCounts.NumLayers);
+        Assert.Equal(4, fromCounts.NumExperts);
+        Assert.Equal(3, fromCounts.HeatFor(0, 1));
+
+        ExpertHeatProfile? back = ExpertHeatProfile.FromJson(profile.ToJson());
+        Assert.NotNull(back);
+        Assert.Equal(profile.NumLayers, back!.NumLayers);
+        Assert.Equal(profile.NumExperts, back.NumExperts);
+        Assert.Equal(profile.HeatFor(0, 3), back.HeatFor(0, 3));
+        Assert.Null(ExpertHeatProfile.FromJson("not json"));
+        Assert.True(ExpertHeatProfile.FromHeat(0, 0, []).IsEmpty);
+    }
+
+    [Fact]
+    public void Residency_PreWarmsPinnedExpertsFromHeatProfile()
+    {
+        // E2: with one pin and expert 3 of every layer the hottest, expert 3 must be resident
+        // and pinned even though the router never selected it in this forward.
+        using var fixture = NewMoEModel();
+        string path = ExportGguf(fixture);
+        var qOps = QuantizationFactory.Create(fixture.SharpConfig.ResolvedHardware);
+
+        var heat = ExpertHeatProfile.FromHeat(fixture.Config.NumLayers, fixture.Config.NumExperts, [0, 0, 0, 99]);
+
+        using var weights = ModelFactory.CreateWeights(fixture.Config, fixture.SharpConfig, qOps, path, LoadMode.Streaming,
+            desiredResidentExperts: 1, expertHeat: heat);
+        weights.InitializeWeights();
+        using var model = ModelFactory.CreateTransformer(weights, fixture.SharpConfig);
+        var sw = Assert.IsType<TransformerWeightsStreaming>(weights);
+        Assert.Equal(1, sw.EffectiveResidentExperts);
+
+        using var tokens = new Tensor<int>(1, 1);
+        new[] { 5 }.CopyTo(tokens.Data);
+        using var logits = model.Forward(tokens);
+
+        Assert.Contains(3, sw.GetPinnedExperts()[0]);
+        Assert.Contains(3, sw.GetResidentExperts()[0]);
+    }
+
+    [Fact]
+    public void Residency_PreWarmsPinnedExpertsFromExplicitList()
+    {
+        // E2: an explicit pin list pins expert 2 without any heat signal.
+        using var fixture = NewMoEModel();
+        string path = ExportGguf(fixture);
+        var qOps = QuantizationFactory.Create(fixture.SharpConfig.ResolvedHardware);
+
+        using var weights = ModelFactory.CreateWeights(fixture.Config, fixture.SharpConfig, qOps, path, LoadMode.Streaming,
+            desiredResidentExperts: 1, initialPins: new[] { new[] { 2 } });
+        weights.InitializeWeights();
+        using var model = ModelFactory.CreateTransformer(weights, fixture.SharpConfig);
+        var sw = Assert.IsType<TransformerWeightsStreaming>(weights);
+
+        using var tokens = new Tensor<int>(1, 1);
+        new[] { 5 }.CopyTo(tokens.Data);
+        using var logits = model.Forward(tokens);
+
+        Assert.Contains(2, sw.GetPinnedExperts()[0]);
+        Assert.Contains(2, sw.GetResidentExperts()[0]);
+    }
+
+    [Fact]
+    public void SmmLoader_ExpertHeat_RoundTripsAndPreWarms()
+    {
+        // E2: a client-tuned heat profile travels in the .SMM meta and pre-warms the pins on
+        // the next streaming load.
+        using var fixture = NewMoEModel();
+        string smm = Path.Combine(_temp.Path, "moe-heat.smm");
+        var heat = ExpertHeatProfile.FromHeat(fixture.Config.NumLayers, fixture.Config.NumExperts, [0, 0, 0, 7]);
+        SmmTrainingExporter.Export(fixture.Weights, fixture.Tokenizer, smm,
+            new SmmWriteOptions { Source = "training", ExpertHeat = heat }, model: fixture.Model);
+
+        ExpertHeatProfile? loaded = SmmLoader.LoadExpertHeatProfile(smm);
+        Assert.NotNull(loaded);
+        Assert.Equal(7, loaded!.HeatFor(0, 3));
+
+        var qOps = QuantizationFactory.Create(fixture.SharpConfig.ResolvedHardware);
+        using var weights = ModelFactory.CreateWeights(fixture.Config, fixture.SharpConfig, qOps, smm, LoadMode.Streaming,
+            desiredResidentExperts: 1, expertHeat: loaded);
+        weights.InitializeWeights();
+        using var model = ModelFactory.CreateTransformer(weights, fixture.SharpConfig);
+        var sw = Assert.IsType<TransformerWeightsStreaming>(weights);
+
+        using var tokens = new Tensor<int>(1, 1);
+        new[] { 5 }.CopyTo(tokens.Data);
+        using var logits = model.Forward(tokens);
+
+        Assert.Contains(3, sw.GetResidentExperts()[0]);
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────────

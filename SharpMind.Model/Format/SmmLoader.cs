@@ -122,6 +122,21 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
     /// <summary>Returns the lineage block for the .SMM at <paramref name="path"/>, or an empty map.</summary>
     public static Dictionary<string, string> LoadLineage(string path) => LoadLineageFromMeta(LoadMeta(path));
 
+    /// <summary>
+    /// Returns the embedded MoE expert heat profile (key <c>smm.expert_heat</c>) so a
+    /// streaming load can pre-warm its pin set, or <see langword="null"/> when the file
+    /// carries none (or is not an MoE model).
+    /// </summary>
+    public static ExpertHeatProfile? LoadExpertHeatProfileFromMeta(ModelMetaData meta)
+    {
+        string json = meta.GetString(SmmConstants.ExpertHeatKey);
+        return string.IsNullOrWhiteSpace(json) ? null : ExpertHeatProfile.FromJson(json);
+    }
+
+    /// <summary>Returns the expert heat profile for the .SMM at <paramref name="path"/>, or null.</summary>
+    public static ExpertHeatProfile? LoadExpertHeatProfile(string path)
+        => LoadExpertHeatProfileFromMeta(LoadMeta(path));
+
     public static List<SmmPluginEntry> LoadPlugins(string path)
     {
         using var stream = ModelFileIo.OpenRead(path);
@@ -344,6 +359,9 @@ public sealed class SmmLoader(QuantizationOps qOps, string path, ModelConfig con
 
             if (root.TryGetProperty("lineage", out var ln) && ln.ValueKind == JsonValueKind.Object)
                 meta.KvPairs.Add(new KvPair { Key = SmmConstants.LineageKey, Value = ln.GetRawText() });
+
+            if (root.TryGetProperty("expert_heat", out var eh) && eh.ValueKind == JsonValueKind.Object)
+                meta.KvPairs.Add(new KvPair { Key = SmmConstants.ExpertHeatKey, Value = eh.GetRawText() });
         }
         catch (Exception ex)
         {

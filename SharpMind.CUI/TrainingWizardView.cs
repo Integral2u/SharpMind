@@ -80,7 +80,6 @@ public sealed class TrainingWizardView : View
     private readonly string[] OptimizerLabelsArr = ["AdamW", "SGD"];
     private readonly string[] AcceleratorLabelsArr;   // "CPU" + every IAcceleratorPlugin.Name found in the plugins folder
 
-    private readonly string[] QatLabelsArr = ["F32 (off)", "F16", "Q8", "Q6", "Q5", "Q4", "Q3", "Q2"];
     private readonly string[] KeepLabelsArr = ["All", "Fixed", "None"];
     private readonly string[] TokenizerLabelsArr = ["BPE", "Char"];
     private readonly string[] BatchingLabelsArr = ["Packing", "RandomWindow"];
@@ -354,12 +353,12 @@ public sealed class TrainingWizardView : View
         row = FloatRow(form, row, "Norm epsilon:", _job.NormEps, v => _job.NormEps = v, _hyperRows);
 
         // --- QAT target -----------------------------------
-        int qatIndex = QatIndexFor(_job.QuantAwareTraining);
-        _qatRadio = new RadioGroup([.. QatLabelsArr.Select(q => (ustring)q)]) { X = 30, Y = row, SelectedItem = qatIndex };
+        int qatIndex = TrainingModelOptions.QatIndexFor(_job.QuantAwareTraining);
+        _qatRadio = new RadioGroup([.. TrainingModelOptions.QatLabels.Select(q => (ustring)q)]) { X = 30, Y = row, SelectedItem = qatIndex };
         _qatRadio.SelectedItemChanged += (a) =>
-            _job.QuantAwareTraining = QatStoredName(a.SelectedItem);
+            _job.QuantAwareTraining = TrainingModelOptions.QatStoredName(a.SelectedItem);
         form.Add(AddLabel("QAT target:"), _qatRadio);
-        row += QatLabelsArr.Length + 1;
+        row += TrainingModelOptions.QatLabels.Length + 1;
 
         // --- Checkpoints + export -------------------------
         row = NumRow(form, row, "Checkpoint interval:", _job.CheckpointInterval, v => _job.CheckpointInterval = v, _hyperRows);
@@ -520,7 +519,7 @@ public sealed class TrainingWizardView : View
         _keepModeRadio.SelectedItem = keepIndex;
         _keepCountField.Visible = keepIndex == 1;
         if (keepIndex == 1) _keepCountField.Text = (ustring)(_job.KeepRecent > 0 ? _job.KeepRecent : 3).ToString();
-        _qatRadio.SelectedItem = QatIndexFor(_job.QuantAwareTraining);
+        _qatRadio.SelectedItem = TrainingModelOptions.QatIndexFor(_job.QuantAwareTraining);
         _updatingAccelerator = true;
         try
         {
@@ -1075,32 +1074,6 @@ public sealed class TrainingWizardView : View
         0 => 0,          // All
         2 => -1,         // None
         _ => int.TryParse(_keepCountField.Text.ToString(), out var n) && n > 0 ? n : 3,
-    };
-
-    private static int QatIndexFor(string? qat) => qat switch
-    {
-        null or "" or "F32" => 0,
-        "F16" => 1,
-        "Q8_K" or "Q8_0" => 2,   // legacy Q8_0 jobs display as Q8_K
-        "Q6_K" => 3,
-        "Q5_K" => 4,
-        "Q4_K" or "Q4_0" => 5,   // legacy Q4_0 jobs display as Q4_K
-        "Q3_K" => 6,
-        "Q2_K" => 7,
-        _ => 0,
-    };
-
-    private static string? QatStoredName(int index) => index switch
-    {
-        0 => null,
-        1 => "F16",
-        2 => "Q8_K",
-        3 => "Q6_K",
-        4 => "Q5_K",
-        5 => "Q4_K",
-        6 => "Q3_K",
-        7 => "Q2_K",
-        _ => null,
     };
 
     // --- Auto-size -----------------------------------------------------------
