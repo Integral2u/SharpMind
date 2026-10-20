@@ -29,16 +29,7 @@ public sealed class AppSettings
         ? SharpMindPaths.Models
         : DefaultModelFolder;
 
-    /// <summary>
-    /// The export folder to prefill into new (non-loaded) training jobs.
-    /// <see cref="LastExportPath"/> wins when recorded, then the default model
-    /// folder, then <c>%USERPROFILE%\SharpMind\Models</c>.
-    /// </summary>
-    public string ResolvedExportFolder => string.IsNullOrWhiteSpace(LastExportPath)
-        ? ResolvedModelFolder
-        : LastExportPath;
-
-    /// <summary>Output path last used for a training export; prefilled into new (non-loaded) jobs.</summary>
+    /// <summary>Output folder last used for a training export.</summary>
     public string? LastExportPath { get; set; }
 
     /// <summary>Which built-in theme to render with. See <see cref="Theme"/>.</summary>

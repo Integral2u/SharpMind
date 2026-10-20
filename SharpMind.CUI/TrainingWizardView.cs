@@ -22,7 +22,6 @@ public sealed class TrainingWizardView : View
     private TrainJobSettings _job;
     private readonly Action<TrainJobSettings> _onStart;
     private readonly Action? _onCancel;
-    private string _savedPath = "";
 
     private readonly Label _jobPathLabel;
     private readonly Label _sourceLabel;
@@ -111,7 +110,7 @@ public sealed class TrainingWizardView : View
             // Legacy names (e.g. stored "cuda" -> "ilgpu") are resolved to the right row via
             // AcceleratorSelector.IndexFor and rewritten to the canonical name on save.
             SharpMind.CUI.App.AcceleratorSelector.LabelNames(settings.PluginsFolder, typeof(SharpMind.Training.ITrainingEngineFactory));
-        _job = job ?? NewJob(settings);
+        _job = job ?? NewJob();
         _onStart = onStart;
         _onCancel = onCancel;
 
@@ -508,7 +507,7 @@ public sealed class TrainingWizardView : View
 
     private void RefreshAll()
     {
-        _jobPathLabel.Text = string.IsNullOrEmpty(_savedPath) ? "New job (not yet saved)" : $"Saved: {Path.GetFileName(_savedPath)}";
+        _jobPathLabel.Text = _job.SourcePath is null ? "New job (not yet saved)" : $"Saved: {Path.GetFileName(_job.SourcePath)}";
         _nameField.Text = (ustring)(_job.Name ?? "");
         RefreshMap();
         RefreshHyperRows();
@@ -1175,18 +1174,17 @@ public sealed class TrainingWizardView : View
 
     /// <summary>
     /// Saves the job: a loaded job is written back to exactly the file it came
-    /// from (<see cref="_savedPath"/>); a new job goes under
+    /// from (<see cref="TrainJobSettings.SourcePath"/>); a new job goes under
     /// <see cref="TrainJobSettings.DefaultFolder"/>. Returns false (after showing
     /// an error) when the write fails.
     /// </summary>
     private bool TrySaveJob()
     {
-        string path = string.IsNullOrEmpty(_savedPath)
-            ? Path.Combine(TrainJobSettings.DefaultFolder, Sanitize(_job.Name) + TrainJobSettings.JobExtension)
-            : _savedPath;
+        string path = _job.SourcePath
+            ?? Path.Combine(TrainJobSettings.DefaultFolder, Sanitize(_job.Name) + TrainJobSettings.JobExtension);
         if (_job.Save(path, out var error))
         {
-            _savedPath = path;
+            _job.SourcePath = path;
             _baselineJson = _job.ToPayloadJson();
             _jobPathLabel.Text = $"Saved: {Path.GetFileName(path)}";
             return true;
@@ -1207,7 +1205,7 @@ public sealed class TrainingWizardView : View
         var loaded = TrainJobSettings.Load(picked, out var err);
         if (loaded is null) { ErrorBox.Show("Load job", err ?? "Not a valid job file.", "OK"); return; }
         _job = loaded;
-        _savedPath = picked;
+        _job.SourcePath = picked;
         RefreshAll();
         _baselineJson = _job.ToPayloadJson();
         _nameField.SetFocus();
@@ -1276,10 +1274,12 @@ public sealed class TrainingWizardView : View
         if (picked is not null) { field.Text = picked; set(picked); }
     }
 
-    private static TrainJobSettings NewJob(AppSettings settings) => new()
+    // ExportPath stays blank on purpose: a blank path defaults beside the job's
+    // .smmt once saved (TrainJobSettings.SourcePath), or under the SharpMind
+    // training folder until then — never to the last-used export folder.
+    private static TrainJobSettings NewJob() => new()
     {
         Name = $"{SharpMind.Inference.Agent.GreekTier.RandomDeity()}-{DateTime.Now:yyyyMMdd-HHmmss}",
-        ExportPath = settings.ResolvedExportFolder,
     };
 
     private static string Sanitize(string name)

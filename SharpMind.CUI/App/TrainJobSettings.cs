@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using SharpMind.Core.Quantization;
 
 namespace SharpMind.CUI.App;
@@ -192,7 +193,9 @@ public sealed class TrainJobSettings
     public int KeepRecent { get; set; } = 3;
 
     /// <summary>Final .smm export path (browseable afterwards). May name a <c>.smm</c>
-    /// file or an output folder; when blank the run defaults it under <see cref="DefaultFolder"/>.</summary>
+    /// file or an output folder; when blank the run defaults it beside the job's
+    /// <c>.smmt</c> file (<see cref="SourcePath"/>), or under <see cref="DefaultFolder"/>
+    /// while the job has not been saved yet.</summary>
     public string? ExportPath { get; set; }
 
     /// <summary>True when <see cref="ExportPath"/> points at a concrete <c>.smm</c> file rather than an output folder.</summary>
@@ -207,36 +210,52 @@ public sealed class TrainJobSettings
     /// The output folder that receives the <c>checkpoints-{Name}</c> subfolder and,
     /// by default, the final <c>.smm</c>. When <see cref="ExportPath"/> names a file
     /// the folder is its parent; otherwise the path itself is the folder.
-    /// Falls back to <see cref="DefaultFolder"/> when no export path is set.
+    /// A blank path defaults to the folder holding the job's <c>.smmt</c>
+    /// (<see cref="SourcePath"/>), falling back to <see cref="DefaultFolder"/>
+    /// for a job not yet saved anywhere.
     /// </summary>
     public string ExportFolder
     {
         get
         {
-            if (string.IsNullOrWhiteSpace(ExportPath)) return DefaultFolder;
+            if (string.IsNullOrWhiteSpace(ExportPath)) return SourcePathFolder ?? DefaultFolder;
             if (IsExportFile(ExportPath)) return Path.GetDirectoryName(ExportPath) ?? DefaultFolder;
             return ExportPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        }
+    }
+
+    /// <summary>Folder holding this job's <c>.smmt</c> file, when it has one.</summary>
+    private string? SourcePathFolder
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(SourcePath)) return null;
+            string dir = Path.GetDirectoryName(SourcePath) ?? "";
+            return dir.Length == 0 ? null : dir;
         }
     }
 
     /// <summary>
     /// Checkpoint directory, always derived from the export path base plus the
     /// job name prefixed with "checkpoints": <c>&lt;ExportFolder&gt;/checkpoints-{Name}</c>.
-    /// Falls back to <see cref="DefaultFolder"/> when no export path is set.
+    /// Follows <see cref="ExportFolder"/>'s default (the job's <c>.smmt</c> folder).
     /// </summary>
     public string CheckpointDir => Path.Combine(ExportFolder, $"checkpoints-{Sanitize(Name)}");
 
     /// <summary>
     /// Resolves <see cref="ExportPath"/> to a concrete writable <c>.smm</c> file:
     /// a folder is used as-is with <c>{Sanitize(Name)}.smm</c> appended, a file path
-    /// is used verbatim, and a blank path defaults under <see cref="DefaultFolder"/>.
+    /// is used verbatim, and a blank path defaults beside the job's <c>.smmt</c>
+    /// file (or under <see cref="DefaultFolder"/> when the job is unsaved).
     /// </summary>
     public string ExportFilePath
     {
         get
         {
             if (string.IsNullOrWhiteSpace(ExportPath))
-                return Path.Combine(DefaultFolder, Sanitize(Name), Sanitize(Name) + ".smm");
+                return SourcePathFolder is { } folder
+                    ? Path.Combine(folder, Sanitize(Name) + ".smm")
+                    : Path.Combine(DefaultFolder, Sanitize(Name), Sanitize(Name) + ".smm");
             return IsExportFile(ExportPath)
                 ? ExportPath
                 : Path.Combine(ExportFolder, Sanitize(Name) + ".smm");
@@ -272,6 +291,16 @@ public sealed class TrainJobSettings
     public List<string> PluginDllPaths { get; set; } = [];
 
     // --- Persistence -------------------------------------------------------
+
+    /// <summary>
+    /// The file this job was loaded from, or last saved to — in-memory only,
+    /// never written into the job file or the dirty-tracking payload, so a
+    /// loaded job keeps saving back to exactly where it came from across
+    /// wizard round-trips. Null for a new job (its first save lands in
+    /// <see cref="DefaultFolder"/>).
+    /// </summary>
+    [JsonIgnore]
+    public string? SourcePath { get; set; }
 
     public static string DefaultFolder => SharpMindPaths.Training;
 

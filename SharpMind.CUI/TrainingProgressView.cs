@@ -74,6 +74,16 @@ public sealed class TrainingProgressView : View
         _interruptButton = new Button("Interrupt") { X = 1, Y = Pos.AnchorEnd(1) };
         _interruptButton.Clicked += () =>
         {
+            // A running job is expensive to lose and this button is reachable by
+            // keyboard, so confirm first. The safe option is listed first, making
+            // it the dialog default: a stray Enter/Space (e.g. while the terminal
+            // sits idle) dismisses the prompt as "keep training" instead of
+            // silently cancelling a multi-hour run.
+            if (MessageBox.Query("Interrupt training",
+                    "Stop this run and return to training options?\nA checkpoint is saved, so it can be resumed later.",
+                    "Keep training", "Interrupt") != 1)
+                return;
+
             _interruptButton.Enabled = false;
             _interruptButton.Text = "Interrupting…";
             Log("Interrupting — finishing current work, saving a checkpoint, then returning to training options…");
@@ -88,7 +98,13 @@ public sealed class TrainingProgressView : View
 
         frame.Add(_statusLabel, _progressLabel, _memoryLabel, _logView, _interruptButton, _browseButton, _cleanButton, _backButton);
         Add(frame);
-        _interruptButton.SetFocus();
+
+        // Focus the (read-only) log, not the Interrupt button. If the destructive
+        // control held focus, any stray Enter/Space while the terminal was idle
+        // would fire it — the exact "returns to the wizard when I'm away" symptom.
+        // Focusing the log also lets the arrow keys scroll it while training runs.
+        _logView.CanFocus = true;
+        _logView.SetFocus();
 
         StartRun();
     }

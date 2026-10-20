@@ -380,10 +380,20 @@ public static class TrainRunner
 
             return new TrainRunResult { Success = true, ExportPath = exportPath, FinalStep = lastStep };
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            Log("Training interrupted.");
+            Log("Training interrupted by request.");
             return new TrainRunResult { Success = false, Error = "cancelled" };
+        }
+        catch (OperationCanceledException ex)
+        {
+            // Reached only when the run's token was NOT cancelled, so this is an
+            // incidental cancellation from an inner API (framework timeout, a
+            // linked token elsewhere), not a user interrupt. Surface it as a
+            // failure with its type so the real cause is visible instead of
+            // silently returning to the wizard as if interrupted.
+            Log($"Training failed: {ex.GetType().Name}: {ex.Message}");
+            return new TrainRunResult { Success = false, Error = $"{ex.GetType().Name}: {ex.Message}" };
         }
         catch (Exception ex)
         {

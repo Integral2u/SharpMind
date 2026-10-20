@@ -180,6 +180,33 @@ public sealed class TrainJobSettingsTests
     }
 
     [Fact]
+    public void ExportDefaults_AnchorBesideJobFile_WhenSourcePathSet()
+    {
+        // A saved/loaded job with no explicit export path outputs next to its
+        // own .smmt file — not the app's shared training folder.
+        var job = new TrainJobSettings { Name = "my-job", SourcePath = @"D:\jobs\my-job.smmt" };
+
+        Assert.Equal(@"D:\jobs", job.ExportFolder);
+        Assert.Equal(Path.Combine(@"D:\jobs", "my-job.smm"), job.ExportFilePath);
+        Assert.Equal(Path.Combine(@"D:\jobs", "checkpoints-my-job"), job.CheckpointDir);
+    }
+
+    [Fact]
+    public void ExportPath_Explicit_WinsOverJobFileFolder()
+    {
+        var job = new TrainJobSettings
+        {
+            Name = "my-job",
+            SourcePath = @"D:\jobs\my-job.smmt",
+            ExportPath = @"E:\models\my-job.smm",
+        };
+
+        Assert.Equal(@"E:\models", job.ExportFolder);
+        Assert.Equal(@"E:\models\my-job.smm", job.ExportFilePath);
+        Assert.Equal(Path.Combine(@"E:\models", "checkpoints-my-job"), job.CheckpointDir);
+    }
+
+    [Fact]
     public void SaveLoad_ResumeFromCheckpointPreserved()
     {
         using var dir = new TempDirectory();
@@ -325,5 +352,35 @@ public sealed class TrainJobSettingsTests
         var loaded = TrainJobSettings.Load(path, out var loadErr);
         Assert.Null(loaded);
         Assert.Contains("newer", loadErr, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Save_SourcePath_IsNotWrittenIntoFile()
+    {
+        using var dir = new TempDirectory();
+        string path = Path.Combine(dir.Path, "srcpath" + TrainJobSettings.JobExtension);
+
+        var job = new TrainJobSettings { Name = "srcpath-job", SourcePath = path };
+        Assert.True(job.Save(path, out var saveErr), saveErr);
+
+        // SourcePath is runtime-only state: it must never leak into the file,
+        // or a saved copy would carry a stale origin that later saves follow.
+        string json = File.ReadAllText(path);
+        Assert.DoesNotContain("SourcePath", json, StringComparison.Ordinal);
+
+        var loaded = TrainJobSettings.Load(path, out var loadErr);
+        Assert.NotNull(loaded);
+        Assert.Null(loaded.SourcePath);
+    }
+
+    [Fact]
+    public void SourcePath_IsNotSerialized_IntoPayloadJson()
+    {
+        // Dirty-tracking compares baseline vs live payload JSON; SourcePath itself
+        // must never appear as a key (the file-side guarantee is covered by
+        // Save_SourcePath_IsNotWrittenIntoFile).
+        var job = new TrainJobSettings { Name = "baseline-job", SourcePath = @"C:\somewhere\else\baseline-job.smmt" };
+
+        Assert.DoesNotContain("SourcePath", job.ToPayloadJson(), StringComparison.Ordinal);
     }
 }
