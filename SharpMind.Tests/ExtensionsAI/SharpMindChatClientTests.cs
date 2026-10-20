@@ -236,6 +236,7 @@ public sealed class SharpMindChatClientTests
 
     private sealed class FakeChatSession : SmIChatSession
     {
+        public Action<double>? PrefillProgress { get; set; }
         private readonly string _responseText;
         private readonly System.Text.Json.Nodes.JsonObject? _toolCall;
         public bool Disposed;

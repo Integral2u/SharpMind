@@ -123,6 +123,7 @@ public sealed class ChatMessageConverterTests
 
     private sealed class FakeChatSession : SmIChatSession
     {
+        public Action<double>? PrefillProgress { get; set; }
         public int MaxTokens { get; set; }
         public int MaxNewTokens { get; set; }
         public float Temperature { get; set; }

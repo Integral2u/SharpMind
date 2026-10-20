@@ -41,6 +41,8 @@ public interface IChatSession : IAsyncDisposable
     public IReadOnlyList<int>? StopTokenIds { get; set; }
     public IReadOnlyList<string>? StopStrings { get; set; }
 
+    public Action<double>? PrefillProgress { get; set; }
+
     /// <summary>
     /// Applies the sampling values this session exposes — temperature, top-k and
     /// top-p — from <paramref name="config"/> in one call. An alternative to
@@ -104,7 +106,7 @@ public interface IChatSession : IAsyncDisposable
     /// the full prompt when the KV cache could not be extended, or just the delta
     /// when the previous turn's cache was verified and extended incrementally.
     /// </summary>
-    internal int LastPrefillTokenCount { get; }
+    public int LastPrefillTokenCount { get; }
     public int MaxToolCallsPerTurn { get; set; }
     public void AddMessage(ChatRole role, string content);
     public void AddMessage(ChatMessage message);

@@ -451,6 +451,7 @@ public class OpenAiMapperTests
 
     private sealed class FakeTestSession : IChatSession
     {
+        public Action<double>? PrefillProgress { get; set; }
         public int MaxTokens { get; set; }
         public int MaxNewTokens { get; set; }
         public float Temperature { get; set; }
