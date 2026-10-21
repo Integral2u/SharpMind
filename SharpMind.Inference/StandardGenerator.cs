@@ -189,10 +189,15 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
             var stream = genCfg.Stream;
             IKVCache cache0 = _caches[0];
             int cachesLen = _caches.Length;
+            int maxPosition = _model.Config.MaxPosition;
 
             for (int step = 0; step < maxNewTokens; step++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+
+                // RoPE has no position past the declared context; stop rather than
+                // throwing once the prompt plus generated tokens fill it.
+                if (_position >= maxPosition) break;
 
                 // Yield once per token when running on a single-threaded host
                 // (e.g. Blazor WASM) so the browser can repaint between forward passes.

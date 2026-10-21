@@ -33,6 +33,13 @@ public interface IInferenceEngine : IDisposable
     /// <summary>Cache capacity in positions. <see cref="CachedLength"/> never exceeds this.</summary>
     int MaxCacheLength { get; }
 
+    /// <summary>
+    /// Highest absolute position the model can represent (one past the last
+    /// usable slot). Defaults to the cache capacity; engines with a declared
+    /// model context can override it when the two differ.
+    /// </summary>
+    int MaxPosition => MaxCacheLength;
+
     /// <summary><see cref="CachedLength"/> == <see cref="MaxCacheLength"/>.</summary>
     bool IsCacheFull { get; }
 

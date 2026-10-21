@@ -109,6 +109,7 @@ public sealed class EngineGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
         for (int step = 0; step < maxNewTokens; step++)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (_engine.Position >= _engine.MaxPosition) break;
             if (StandardGenerator.YieldBetweenTokens) await Task.Yield();
 
             ReadOnlySpan<float> logitsSlice = logits.Span;

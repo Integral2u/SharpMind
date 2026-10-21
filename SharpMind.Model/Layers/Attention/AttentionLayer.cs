@@ -154,7 +154,7 @@ namespace SharpMind.Model.Layers.Attention;
             // sliding-window cache may only retain `EffectiveInferenceCacheLength` rows,
             // but positions keep counting up to the model's declared context, so the
             // table must span MaxSeqLen (it is only a few KB per layer).
-            _ => new RoPE(HeadDim, Math.Max(config.MaxSeqLen, config.EffectiveInferenceCacheLength), config.RopeThetaForLayer(layerIndex),
+            _ => new RoPE(HeadDim, config.MaxPosition, config.RopeThetaForLayer(layerIndex),
                  ropeDim: config.RopeDimForLayer(layerIndex), ropeScalingType: config.RopeScalingType,
                  ropeScalingFactor: config.RopeScalingFactor,
                  ropeOriginalContextLength: config.RopeOriginalContextLength,

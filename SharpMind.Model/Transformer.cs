@@ -351,6 +351,7 @@ public sealed class Transformer : IDisposable
         int visionLen = visionTokens?.Shape[1] ?? 0;
         int audioLen = audioTokens?.Shape[1] ?? 0;
         int totalLen = textLen + visionLen + audioLen;
+        ValidatePositionRange(positionOffset, totalLen);
 
         // 3. Fuse: [vision | audio | text] along the sequence axis.
         //    Owned by _cachedEmbedding (see DisposeCache); do NOT wrap in using.
@@ -428,6 +429,7 @@ public sealed class Transformer : IDisposable
     {
         ThrowIfDisposed();
         DisposeCache();
+        ValidatePositionRange(positionOffset, tokenIds.Shape.Cols);
 
         // 1. Token embeddings → [Batch, SeqLen, HiddenDim]
         _cachedEmbedding = _embedding.Forward(tokenIds, workspace);
@@ -547,6 +549,7 @@ public sealed class Transformer : IDisposable
     {
         ThrowIfDisposed();
         DisposeCache();
+        ValidatePositionRange(positionOffset, tokenIds.Shape.Cols);
 
         var tEmbed = DecodeProfiler.Begin();
         _cachedEmbedding = _embedding.Forward(tokenIds, workspace);
@@ -571,6 +574,18 @@ public sealed class Transformer : IDisposable
         DecodeProfiler.Mark(DecodeStage.Blocks, tBlocks);
 
         if (_weights is TransformerWeightsStreaming sw) sw.PrepareForNextForward();
+    }
+
+    private void ValidatePositionRange(int positionOffset, int seqLen)
+    {
+        int limit = Config.MaxPosition;
+        if (positionOffset < 0 || (long)positionOffset + seqLen > limit)
+        {
+            int last = seqLen > 0 ? positionOffset + seqLen - 1 : positionOffset;
+            throw new InvalidOperationException(
+                $"Sequence positions {positionOffset}..{last} exceed the model's context window of {limit} positions. " +
+                "Reduce the prompt or generated length.");
+        }
     }
 
     private void DisposeCache()

@@ -227,6 +227,7 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
                 : _defaultRng;
 
             _position = posOffset + promptLen;
+            int maxPosition = _model.Config.MaxPosition;
             int[] scratchOne = new int[1];
 
             // Extract the normed hidden state for the last prompt position.
@@ -243,6 +244,10 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
 
                 ReadOnlySpan<float> curLogits = logitsTensor.Data[..vocabSize];
                 GeneratorDiagnostics.PrintTopLogits(_tokenizer, generatedIds.Count, curLogits);
+
+                // Reserve the whole draft batch plus its bonus step; starting a
+                // round that overruns the context would hit RoPE's hard limit.
+                if (_position + draftLen + 1 > maxPosition) break;
 
                 // 1. Greedy sample: the LM head's best guess for the next token.
                 //    This is always the first draft token.

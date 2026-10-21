@@ -71,6 +71,13 @@ public sealed record ModelConfig
         SlidingWindowSize > 0 && !IsHybridSlidingWindow ? Math.Min(MaxSeqLen, SlidingWindowSize) : MaxSeqLen;
 
     /// <summary>
+    /// Highest absolute position the model can represent (one past the last
+    /// usable slot). This is the larger of the declared context and the cache
+    /// capacity, matching the RoPE tables built by the attention layers.
+    /// </summary>
+    public int MaxPosition => Math.Max(MaxSeqLen, EffectiveInferenceCacheLength);
+
+    /// <summary>
     /// Override for head dimension (per-head key/value size).
     /// If null, derived as HiddenDim / NumHeads.
     /// Qwen3 GGUF specifies explicit key_length (e.g. 128).

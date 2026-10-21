@@ -133,6 +133,7 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
                 : _defaultRng;
 
             _position = posOffset + promptLen;
+            int maxPosition = _model.Config.MaxPosition;
 
             while (generatedIds.Count < genCfg.MaxNewTokens)
             {
@@ -142,6 +143,10 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
                 GeneratorDiagnostics.PrintTopLogits(_tokenizer, generatedIds.Count, logitsSlice);
 
                 if (maxDraftTokens < 1) break;
+
+                // A speculative round forwards every draft plus the bonus; stop at
+                // the context boundary instead of starting a round that cannot fit.
+                if (_position + maxDraftTokens + 1 > maxPosition) break;
 
                 // Keep trim at round boundaries: a snapshot taken before the trim restores a
                 // coherent prefix, and the round is guaranteed room for every draft plus the

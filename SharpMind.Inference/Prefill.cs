@@ -65,6 +65,13 @@ public static class Prefill
         // has dropped early rows. Callers that track that position pass it in;
         // otherwise the historical "position == cache length" rule applies.
         int position = startPosition ?? caches[0].Length;
+        int positionLimit = model.Config.MaxPosition;
+        if (position < 0 || (long)position + promptIds.Length > positionLimit)
+        {
+            throw new InvalidOperationException(
+                $"Prompt positions {position}..{position + promptIds.Length - 1} exceed the model's " +
+                $"context window of {positionLimit} positions. Reduce the prompt length.");
+        }
 
         // A single chunk that fits goes straight through. One that would overflow the
         // cache takes the loop below, which trims first, like any longer prompt.

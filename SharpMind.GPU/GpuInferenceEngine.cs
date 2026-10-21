@@ -106,6 +106,7 @@ public sealed class GpuInferenceEngine : IInferenceEngine
 
     public int CachedLength => _cpuCaches[0].Length;
     public int Position => _position;
+    public int MaxPosition => _cfg.MaxPosition;
     public int MaxCacheLength { get; }
     public bool IsCacheFull => CachedLength >= MaxCacheLength;
 
@@ -410,6 +411,10 @@ public sealed class GpuInferenceEngine : IInferenceEngine
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (tokenIds.Length == 0) throw new ArgumentException("tokenIds must not be empty.", nameof(tokenIds));
         ValidateTokenIds(tokenIds);
+        if ((long)_position + tokenIds.Length > MaxPosition)
+            throw new InvalidOperationException(
+                $"Prompt positions {_position}..{_position + tokenIds.Length - 1} exceed the model's " +
+                $"context window of {MaxPosition} positions.");
         cancellationToken.ThrowIfCancellationRequested();
 
         // GPU-accelerate any prefill whose new tokens fit the arena. Fresh (empty-cache) prompt
@@ -720,6 +725,9 @@ public sealed class GpuInferenceEngine : IInferenceEngine
         if ((uint)tokenId >= (uint)_cfg.VocabSize)
             throw new ArgumentOutOfRangeException(nameof(tokenId),
                 $"Token id {tokenId} is outside the vocabulary (0..{_cfg.VocabSize - 1}).");
+        if (_position >= MaxPosition)
+            throw new InvalidOperationException(
+                $"Cannot decode at position {_position}: the model's context window is {MaxPosition} positions.");
 
         if (IsCacheFull)
             return DecodeCpu(tokenId, cancellationToken);
