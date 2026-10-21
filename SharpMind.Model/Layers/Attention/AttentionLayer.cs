@@ -150,7 +150,11 @@ namespace SharpMind.Model.Layers.Attention;
         {
             PositionalEncoding.NoPE => new NoPE(),
             PositionalEncoding.ALiBi => new AlibiEncoder(config.NumHeads),
-            _ => new RoPE(HeadDim, config.EffectiveInferenceCacheLength, config.RopeThetaForLayer(layerIndex),
+            // RoPE positions are absolute conversation positions, not cache slots. A
+            // sliding-window cache may only retain `EffectiveInferenceCacheLength` rows,
+            // but positions keep counting up to the model's declared context, so the
+            // table must span MaxSeqLen (it is only a few KB per layer).
+            _ => new RoPE(HeadDim, Math.Max(config.MaxSeqLen, config.EffectiveInferenceCacheLength), config.RopeThetaForLayer(layerIndex),
                  ropeDim: config.RopeDimForLayer(layerIndex), ropeScalingType: config.RopeScalingType,
                  ropeScalingFactor: config.RopeScalingFactor,
                  ropeOriginalContextLength: config.RopeOriginalContextLength,

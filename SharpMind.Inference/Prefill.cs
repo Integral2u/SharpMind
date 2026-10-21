@@ -43,23 +43,35 @@ public static class Prefill
     /// chunk with the overall fraction of the prompt prefilled so far (in
     /// <c>0..1</c>), on the calling thread. Useful for surfacing "Prefilling NN%"
     /// during the (potentially slow) first turn.
+    ///
+    /// <paramref name="startPosition"/> is the absolute position of the first prompt
+    /// token. Omit it when the cache holds the full conversation prefix; pass the
+    /// tracked position when sliding-window trimming has made cache length diverge
+    /// from the absolute position.
     /// </summary>
     public static Tensor<float> ForwardLastLogitsChunked(
         Transformer model,
         IKVCache[] caches,
         int[] promptIds,
         Core.Memory.IWorkspace workspace,
-        Action<double>? progress = null)
+        Action<double>? progress = null,
+        int? startPosition = null)
     {
         if (promptIds.Length == 0)
             throw new ArgumentException("Prompt produced no token IDs; cannot prefill.", nameof(promptIds));
+
+        // RoPE (and learned positional embeddings) index the absolute conversation
+        // position, which no longer equals cache length once a sliding-window trim
+        // has dropped early rows. Callers that track that position pass it in;
+        // otherwise the historical "position == cache length" rule applies.
+        int position = startPosition ?? caches[0].Length;
 
         // A single chunk that fits goes straight through. One that would overflow the
         // cache takes the loop below, which trims first, like any longer prompt.
         if (promptIds.Length <= MaxChunkLength && caches[0].Length + promptIds.Length <= caches[0].MaxSeqLen)
         {
             workspace.Reset();
-            return RunChunk(model, caches, promptIds, 0, promptIds.Length, project: true, workspace)!;
+            return RunChunk(model, caches, promptIds, 0, promptIds.Length, project: true, workspace, position)!;
         }
 
         Tensor<float>? logits = null;
@@ -89,7 +101,7 @@ public static class Prefill
 
                 workspace.Reset();
                 bool last = start + len >= promptIds.Length;
-                logits = RunChunk(model, caches, promptIds, start, len, project: last, workspace);
+                logits = RunChunk(model, caches, promptIds, start, len, project: last, workspace, position + start);
                 processed += len;
                 progress?.Invoke((double)processed / promptIds.Length);
             }
@@ -110,15 +122,16 @@ public static class Prefill
         int start,
         int len,
         bool project,
-        Core.Memory.IWorkspace workspace)
+        Core.Memory.IWorkspace workspace,
+        int position)
     {
         using var chunkInput = workspace.Rent<int>([1, len]);
         promptIds.AsSpan(start, len).CopyTo(chunkInput.Data);
         if (!project)
         {
-            model.ForwardFill(chunkInput, caches, caches[0].Length, workspace);
+            model.ForwardFill(chunkInput, caches, position, workspace);
             return null;
         }
-        return model.ForwardLastLogits(chunkInput, caches, caches[0].Length, workspace);
+        return model.ForwardLastLogits(chunkInput, caches, position, workspace);
     }
 }

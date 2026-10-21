@@ -83,6 +83,12 @@ public sealed class GpuInferenceEngine : IInferenceEngine
     private int _deviceCacheLength;
 
     /// <summary>
+    /// Absolute position of the next token, used for RoPE. Diverges from
+    /// <see cref="CachedLength"/> after <see cref="TrimToLast"/> drops early rows.
+    /// </summary>
+    private int _position;
+
+    /// <summary>
     /// Host CPU KV caches, one per layer. Each GPU forward appends its new rows here too, so the
     /// host stays a mirror of the device cache: <see cref="CachedLength"/> and the
     /// trim/reset/snapshot/import operations all forward here, and the CPU fallback path (over-long
@@ -99,6 +105,7 @@ public sealed class GpuInferenceEngine : IInferenceEngine
     private bool _disposed;
 
     public int CachedLength => _cpuCaches[0].Length;
+    public int Position => _position;
     public int MaxCacheLength { get; }
     public bool IsCacheFull => CachedLength >= MaxCacheLength;
 
@@ -402,6 +409,7 @@ public sealed class GpuInferenceEngine : IInferenceEngine
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (tokenIds.Length == 0) throw new ArgumentException("tokenIds must not be empty.", nameof(tokenIds));
+        ValidateTokenIds(tokenIds);
         cancellationToken.ThrowIfCancellationRequested();
 
         // GPU-accelerate any prefill whose new tokens fit the arena. Fresh (empty-cache) prompt
@@ -420,6 +428,19 @@ public sealed class GpuInferenceEngine : IInferenceEngine
             return PrefillGpuContinued(tokenIds, onChunkProgress, cancellationToken);
 
         return PrefillCpu(tokenIds, onChunkProgress, cancellationToken);
+    }
+
+    /// <summary>Rejects token IDs outside the model's vocabulary before a device gather
+    /// turns them into out-of-bounds row reads.</summary>
+    private void ValidateTokenIds(ReadOnlySpan<int> tokenIds)
+    {
+        int vocab = _cfg.VocabSize;
+        for (int i = 0; i < tokenIds.Length; i++)
+        {
+            if ((uint)tokenIds[i] >= (uint)vocab)
+                throw new ArgumentOutOfRangeException(nameof(tokenIds),
+                    $"Token id {tokenIds[i]} at index {i} is outside the vocabulary (0..{vocab - 1}).");
+        }
     }
 
     /// <summary>Fills <paramref name="x"/> ([m, H]) with the token embeddings for <paramref name="ids"/>,
@@ -451,6 +472,7 @@ public sealed class GpuInferenceEngine : IInferenceEngine
     private ReadOnlyMemory<float> PrefillGpu(ReadOnlySpan<int> tokenIds, Action<double>? onChunkProgress,
         CancellationToken cancellationToken)
     {
+        int p = _position;
         int m = tokenIds.Length;
         tokenIds.CopyTo(_hostIds);
         _arena.Reset();
@@ -471,12 +493,11 @@ public sealed class GpuInferenceEngine : IInferenceEngine
 
             var q = _arena.Rent(m, nh * D); var kk = _arena.Rent(m, nkv * D); var v = _arena.Rent(m, nkv * D);
             blk.Wq.Forward(q, norm1Out, _arena); blk.Wk.Forward(kk, norm1Out, _arena); blk.Wv.Forward(v, norm1Out, _arena);
-            if (_rope) { k.RopeFwd(q, _cos!.Tensor, _sin!.Tensor, m, nh, D, _ropeDim, _neox); k.RopeFwd(kk, _cos.Tensor, _sin.Tensor, m, nkv, D, _ropeDim, _neox); }
+            if (_rope) { k.RopeFwdPos(q, _cos!.Tensor, _sin!.Tensor, m, p, nh, D, _ropeDim, _neox); k.RopeFwdPos(kk, _cos.Tensor, _sin.Tensor, m, p, nkv, D, _ropeDim, _neox); }
 
-            // Persist post-RoPE K/V at [0, m) on the device cache — the authority the GPU attention
-            // reads. This first prefill uses the same positioned flash attention as decode and
-            // continued prefill (pos0 = 0, qLen = kvLen = m), so the arena needs no materialised
-            // S² probabilities tensor and is sized flash-only by ArenaFloats.
+            // Persist post-RoPE K/V at [0, m): this path only runs with an empty cache
+            // (CachedLength == 0), while p may be non-zero after TrimToLast(0), so the
+            // absolute position is tracked independently of the cache slot.
             k.Copy(_kCache[l].Tensor.Slice(0, m), kk);
             k.Copy(_vCache[l].Tensor.Slice(0, m), v);
 
@@ -485,7 +506,8 @@ public sealed class GpuInferenceEngine : IInferenceEngine
             // This first prefill deliberately stays on the single-kernel AttnFwdKvLen (unlike
             // decode and continued prefill via ForwardAttention): here qLen = kvLen = m, so the
             // launch already has m·numHeads threads and occupancy is not the problem — chunking
-            // would only add a merge launch and duplicate output traffic.
+            // would only add a merge launch and duplicate output traffic. Attention offsets are
+            // cache slots, so pos0 is 0 rather than the absolute p.
             k.AttnFwdKvLen(attnOut, stats, q, _kCache[l].Tensor.Slice(0, m), _vCache[l].Tensor.Slice(0, m),
                 pos0: 0, qLen: m, kvLen: m, numHeads: nh, numKv: nkv, headDim: D);
 
@@ -527,6 +549,7 @@ public sealed class GpuInferenceEngine : IInferenceEngine
             _cpuCaches[l].Update(kTensor, vTensor, nkv, D);
         }
         _deviceCacheLength = m;
+        _position = p + m;
         return _logitsHost;
     }
 
@@ -542,6 +565,7 @@ public sealed class GpuInferenceEngine : IInferenceEngine
         CancellationToken cancellationToken)
     {
         int c = CachedLength;
+        int p = _position;
         int m = tokenIds.Length;
         tokenIds.CopyTo(_hostIds);
         _arena.Reset();
@@ -562,7 +586,7 @@ public sealed class GpuInferenceEngine : IInferenceEngine
 
             var q = _arena.Rent(m, nh * D); var kk = _arena.Rent(m, nkv * D); var v = _arena.Rent(m, nkv * D);
             blk.Wq.Forward(q, norm1Out, _arena); blk.Wk.Forward(kk, norm1Out, _arena); blk.Wv.Forward(v, norm1Out, _arena);
-            if (_rope) { k.RopeFwdPos(q, _cos!.Tensor, _sin!.Tensor, m, c, nh, D, _ropeDim, _neox); k.RopeFwdPos(kk, _cos.Tensor, _sin.Tensor, m, c, nkv, D, _ropeDim, _neox); }
+            if (_rope) { k.RopeFwdPos(q, _cos!.Tensor, _sin!.Tensor, m, p, nh, D, _ropeDim, _neox); k.RopeFwdPos(kk, _cos.Tensor, _sin.Tensor, m, p, nkv, D, _ropeDim, _neox); }
 
             // Append post-RoPE K/V at positions [c, c+m) on the device cache.
             k.Copy(_kCache[l].Tensor.Slice(c, m), kk);
@@ -599,18 +623,22 @@ public sealed class GpuInferenceEngine : IInferenceEngine
         UpdateHostMirror(c, m);
 
         _deviceCacheLength = c + m;
+        _position = p + m;
         return _logitsHost;
     }
 
     /// <summary>CPU prefill for a continued conversation (warm cache) or a prompt beyond the
-    /// arena bound. <see cref="Prefill.ForwardLastLogitsChunked"/> starts at the current cache
-    /// length, so the GPU-materialised prefix is reused, never recomputed.</summary>
+    /// arena bound. <see cref="Prefill.ForwardLastLogitsChunked"/> starts at the tracked
+    /// absolute position, so the GPU-materialised prefix is reused and RoPE stays aligned
+    /// even when a sliding-window trim has shrunk the cache.</summary>
     private ReadOnlyMemory<float> PrefillCpu(ReadOnlySpan<int> tokenIds, Action<double>? onChunkProgress,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         int[] ids = tokenIds.ToArray();
-        using var logits = SharpMind.Inference.Prefill.ForwardLastLogitsChunked(_model, _cpuCaches, ids, _cpuWorkspace, onChunkProgress);
+        using var logits = SharpMind.Inference.Prefill.ForwardLastLogitsChunked(
+            _model, _cpuCaches, ids, _cpuWorkspace, onChunkProgress, startPosition: _position);
+        _position += ids.Length;
         logits.Data[.._cfg.VocabSize].CopyTo(_logitsHost);
         // The CPU pass extended the host caches the device cache can't know about — rewrite the
         // device cache from the host so a later GPU decode/continued-prefill reads the right rows.
@@ -689,6 +717,9 @@ public sealed class GpuInferenceEngine : IInferenceEngine
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
+        if ((uint)tokenId >= (uint)_cfg.VocabSize)
+            throw new ArgumentOutOfRangeException(nameof(tokenId),
+                $"Token id {tokenId} is outside the vocabulary (0..{_cfg.VocabSize - 1}).");
 
         if (IsCacheFull)
             return DecodeCpu(tokenId, cancellationToken);
@@ -703,7 +734,8 @@ public sealed class GpuInferenceEngine : IInferenceEngine
         _cpuWorkspace.Reset();
         using var stepInput = _cpuWorkspace.Rent<int>([1, 1]);
         stepInput.Data[0] = tokenId;
-        using var logits = _model.ForwardLastLogits(stepInput, _cpuCaches, CachedLength, _cpuWorkspace);
+        using var logits = _model.ForwardLastLogits(stepInput, _cpuCaches, _position, _cpuWorkspace);
+        _position++;
         logits.Data[.._cfg.VocabSize].CopyTo(_logitsHost);
         // The CPU decode appended to the host caches only — sync the device cache so a later GPU
         // decode/continued-prefill reads the updated K/V.
@@ -714,6 +746,7 @@ public sealed class GpuInferenceEngine : IInferenceEngine
     private ReadOnlyMemory<float> DecodeGpu(int tokenId, CancellationToken cancellationToken)
     {
         int c = CachedLength;
+        int p = _position;
         _arena.Reset();
         using var ids = _dev.UploadInts([tokenId]);
 
@@ -732,7 +765,7 @@ public sealed class GpuInferenceEngine : IInferenceEngine
 
             var q = _arena.Rent(1, nh * D); var kk = _arena.Rent(1, nkv * D); var v = _arena.Rent(1, nkv * D);
             blk.Wq.Forward(q, norm1Out, _arena); blk.Wk.Forward(kk, norm1Out, _arena); blk.Wv.Forward(v, norm1Out, _arena);
-            if (_rope) { k.RopeFwdPos(q, _cos!.Tensor, _sin!.Tensor, 1, c, nh, D, _ropeDim, _neox); k.RopeFwdPos(kk, _cos.Tensor, _sin.Tensor, 1, c, nkv, D, _ropeDim, _neox); }
+            if (_rope) { k.RopeFwdPos(q, _cos!.Tensor, _sin!.Tensor, 1, p, nh, D, _ropeDim, _neox); k.RopeFwdPos(kk, _cos.Tensor, _sin.Tensor, 1, p, nkv, D, _ropeDim, _neox); }
 
             // Append this token's post-RoPE K/V at position c on the device cache.
             k.Copy(_kCache[l].Tensor.Slice(c, 1), kk);
@@ -766,6 +799,7 @@ public sealed class GpuInferenceEngine : IInferenceEngine
 
         UpdateHostMirror(c, 1);
         _deviceCacheLength = c + 1;
+        _position = p + 1;
         return _logitsHost;
     }
 
@@ -775,6 +809,7 @@ public sealed class GpuInferenceEngine : IInferenceEngine
         foreach (var c in _cpuCaches) c.Truncate(length);
         // Rows [0, length) are unchanged on the device, so only the live length shrinks.
         _deviceCacheLength = length;
+        _position = length;
     }
 
     public void TrimToLast(int keep)
@@ -791,6 +826,7 @@ public sealed class GpuInferenceEngine : IInferenceEngine
     {
         foreach (var c in _cpuCaches) c.Reset();
         _deviceCacheLength = 0;
+        _position = 0;
     }
 
     public KVCacheSnapshot ExportCache(int[] promptTokenIds)
@@ -820,6 +856,7 @@ public sealed class GpuInferenceEngine : IInferenceEngine
         int importedLength = _cpuCaches[0].Length;
         if (importedLength > 0) SyncDeviceCacheFromHost(importedLength);
         else _deviceCacheLength = 0;
+        _position = importedLength;
     }
 
     public void Dispose()

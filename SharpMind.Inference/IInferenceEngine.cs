@@ -23,6 +23,13 @@ public interface IInferenceEngine : IDisposable
     /// <summary>Position count currently resident in the KV cache.</summary>
     int CachedLength { get; }
 
+    /// <summary>
+    /// Absolute position of the next token, for RoPE and positional embeddings.
+    /// Equals <see cref="CachedLength"/> until a sliding-window trim drops early
+    /// rows, after which it keeps counting the conversation.
+    /// </summary>
+    int Position => CachedLength;
+
     /// <summary>Cache capacity in positions. <see cref="CachedLength"/> never exceeds this.</summary>
     int MaxCacheLength { get; }
 
@@ -30,7 +37,7 @@ public interface IInferenceEngine : IDisposable
     bool IsCacheFull { get; }
 
     /// <summary>
-    /// Runs the model over <paramref name="tokenIds"/> starting at <see cref="CachedLength"/>,
+    /// Runs the model over <paramref name="tokenIds"/> starting at <see cref="Position"/>,
     /// writing each position's K/V into the cache, and returns logits for the LAST token
     /// only — matching <c>Prefill.ForwardLastLogitsChunked</c>'s contract, since nothing
     /// needs per-position logits during prefill. <paramref name="onChunkProgress"/> reports
@@ -47,7 +54,7 @@ public interface IInferenceEngine : IDisposable
 
     /// <summary>
     /// Runs one autoregressive step for <paramref name="tokenId"/> at position
-    /// <see cref="CachedLength"/>, appends it to the cache, and returns that position's
+    /// <see cref="Position"/>, appends it to the cache, and returns that position's
     /// logits under the same buffer-reuse contract as <see cref="Prefill"/>.
     /// </summary>
     ReadOnlyMemory<float> DecodeStep(int tokenId, CancellationToken cancellationToken = default);

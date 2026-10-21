@@ -685,6 +685,19 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
             return promptToks;
         }
 
+        // A recurrent cache (short-conv) cannot rewind to an earlier prefix: its
+        // state summarises everything it has seen. Rebuild from scratch instead.
+        // Truncating to the same length is a no-op, so an exact extension is safe.
+        if (keep < cached!.Count)
+        {
+            for (int i = 0; i < _generator.Caches.Count; i++)
+            {
+                if (_generator.Caches[i].SupportsTruncate) continue;
+                _generator.ResetCache();
+                return promptToks;
+            }
+        }
+
         _generator.TruncateCache(keep);
         return promptToks[keep..];
     }

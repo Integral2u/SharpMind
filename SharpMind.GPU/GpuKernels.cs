@@ -392,7 +392,7 @@ internal sealed class GpuKernels
     /// </summary>
     public float CeLossAndGrad(DeviceTensor logits, ArrayView<int> labels, int[] hostLabels, DeviceTensor rowLoss, int ignoreId, float labelSmoothing)
     {
-        CheckCeOperands(logits, labels, hostLabels, rowLoss, labelSmoothing);
+        CheckCeOperands(logits, labels, hostLabels, rowLoss, ignoreId, labelSmoothing);
         int n = 0;
         foreach (int l in hostLabels) if (l != ignoreId) n++;
         float scale = n > 0 ? 1f / n : 0f;
@@ -406,11 +406,18 @@ internal sealed class GpuKernels
         return n > 0 ? (float)(sum / n) : 0f;
     }
 
-    private static void CheckCeOperands(DeviceTensor logits, ArrayView<int> labels, int[] hostLabels, DeviceTensor rowLoss, float labelSmoothing)
+    private static void CheckCeOperands(DeviceTensor logits, ArrayView<int> labels, int[] hostLabels, DeviceTensor rowLoss, int ignoreId, float labelSmoothing)
     {
         if (rowLoss.Rows != logits.Rows || rowLoss.Cols != 1) throw new ArgumentException($"rowLoss must be [{logits.Rows},1], got [{rowLoss.Rows},{rowLoss.Cols}].");
         if (labels.Length != logits.Rows) throw new ArgumentException($"labels length {labels.Length} != logits rows {logits.Rows}.");
         if (hostLabels.Length != logits.Rows) throw new ArgumentException($"hostLabels length {hostLabels.Length} != logits rows {logits.Rows}.");
+        for (int i = 0; i < hostLabels.Length; i++)
+        {
+            int label = hostLabels[i];
+            if (label != ignoreId && (uint)label >= (uint)logits.Cols)
+                throw new ArgumentOutOfRangeException(nameof(hostLabels),
+                    $"Label {label} at row {i} is outside the logits vocabulary (0..{logits.Cols - 1}).");
+        }
         if (labelSmoothing < 0f || labelSmoothing >= 1f) throw new ArgumentException($"labelSmoothing {labelSmoothing} must be in [0,1).");
     }
 

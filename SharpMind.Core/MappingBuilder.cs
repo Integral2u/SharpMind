@@ -34,19 +34,21 @@ public class MappingBuilder(HardwareTier hardware = HardwareTier.Auto)
 
         string trainTier = _hardware switch
         {
-            HardwareTier.Scalar => SharpMindConfig.ValScalar,
             HardwareTier.FMA => SharpMindConfig.ValFma,
-            _ => SharpMindConfig.ValAvx2
+            HardwareTier.AVX2 => SharpMindConfig.ValAvx2,
+            _ => SharpMindConfig.ValScalar
         };
         string gradLinearTier = _hardware switch
         {
-            HardwareTier.Scalar => SharpMindConfig.ValScalar,
             HardwareTier.FMA => SharpMindConfig.ValFma,
-            _ => SharpMindConfig.ValAvx2
+            HardwareTier.AVX2 => SharpMindConfig.ValAvx2,
+            _ => SharpMindConfig.ValScalar
         };
-        string gradActTier = _hardware == HardwareTier.Scalar
-            ? SharpMindConfig.ValScalar
-            : SharpMindConfig.ValAvx2;
+        // Activation/backprop and layer-norm-row kernels only ship AVX2 and
+        // scalar targets; FMA hosts use the AVX2 implementation.
+        string gradActTier = _hardware is HardwareTier.FMA or HardwareTier.AVX2
+            ? SharpMindConfig.ValAvx2
+            : SharpMindConfig.ValScalar;
 
         _mapping[SharpMindConfig.KeyAdamW] = trainTier;
         _mapping[SharpMindConfig.KeyGradNorm] = trainTier;

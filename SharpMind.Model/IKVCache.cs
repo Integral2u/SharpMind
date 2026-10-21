@@ -14,6 +14,13 @@ public interface IKVCache : IDisposable
     public int MaxSeqLen { get; }
     public bool IsFull { get; }
     public bool IsContiguous { get; }
+    /// <summary>
+    /// True when <see cref="Truncate"/> can rebuild the state for a kept prefix.
+    /// Attention KV caches can drop trailing rows; recurrent caches (e.g.
+    /// <see cref="ShortConvCache"/>) cannot rewind their state and must be reset
+    /// or restored from a snapshot instead.
+    /// </summary>
+    public bool SupportsTruncate => true;
     public unsafe float* GetKeyPtr(int batchIdx, int position, int kvHead);
     public unsafe float* GetValuePtr(int batchIdx, int position, int kvHead);
     public object? Snapshot();

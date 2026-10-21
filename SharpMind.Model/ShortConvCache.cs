@@ -74,6 +74,8 @@ public sealed class ShortConvCache : IKVCache
     public int MaxSeqLen { get; }
     public bool IsFull => _length >= MaxSeqLen;
     public bool IsContiguous => false;
+    /// <summary>Retained rows summarise the whole prefix; dropping the tail cannot rewind them.</summary>
+    public bool SupportsTruncate => false;
 
     /// <summary>Applies <paramref name="seqLen"/> newly processed tokens to the position bookkeeping.</summary>
     public void Advance(int seqLen)

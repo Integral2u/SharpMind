@@ -16,6 +16,8 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
     private readonly IKVCache[] _caches;
     private readonly Random _defaultRng;
     private readonly IWorkspace? _workspace;
+    /// <summary>Absolute position of the next token; diverges from cache length after a trim.</summary>
+    private int _position;
     private readonly int[] _decodeTokenScratch = new int[1];
     private float[]? _penaltyScratch;
     /// <summary>Pooled distinct-token tracking for the repetition penalty; cleared each decode step.</summary>
@@ -67,6 +69,7 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
 
     _workspace = MemoryHelpers.CreateWorkspace(Workspace.CalculateRequiredSize(model.Config.HiddenDim, model.Config.FfnDim, model.Config.VocabSize, model.Config.NumLayers, model.Config.MaxSeqLen));
     _defaultRng = seed.HasValue ? new Random(seed.Value) : Random.Shared;
+    _position = _caches[0].Length;
 }
 
     public async IAsyncEnumerable<string> GenerateAsync(
@@ -114,8 +117,9 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
         var rateTracker = new TokenRateTracker(windowSize: 10);
         rateTracker.Start();
 
-        int posOffset = _caches[0].Length;
-        Tensor<float>? logitsTensor = Prefill.ForwardLastLogitsChunked(_model, _caches, promptIds, _workspace!, PrefillProgress);
+        int posOffset = _position;
+        Tensor<float>? logitsTensor = Prefill.ForwardLastLogitsChunked(
+            _model, _caches, promptIds, _workspace!, PrefillProgress, startPosition: posOffset);
 
         try
         {
@@ -128,7 +132,7 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
                 ? new Random(sampleCfg.Seed.Value)
                 : _defaultRng;
 
-            int currentPos = posOffset + promptLen;
+            _position = posOffset + promptLen;
 
             while (generatedIds.Count < genCfg.MaxNewTokens)
             {
@@ -139,8 +143,24 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
 
                 if (maxDraftTokens < 1) break;
 
+                // Keep trim at round boundaries: a snapshot taken before the trim restores a
+                // coherent prefix, and the round is guaranteed room for every draft plus the
+                // bonus token. Trimming mid-round would move rows beneath the snapshots.
+                if (_caches[0].Length + maxDraftTokens + 1 > _caches[0].MaxSeqLen)
+                {
+                    int keep = genCfg is { SlidingWindowSize: > 0 }
+                        ? genCfg.SlidingWindowSize
+                        : _caches[0].MaxSeqLen / 2;
+                    keep = Math.Min(keep, Math.Max(1, _caches[0].MaxSeqLen - maxDraftTokens - 1));
+                    if (keep >= _caches[0].MaxSeqLen)
+                        keep = Math.Max(1, _caches[0].MaxSeqLen / 2);
+                    for (int i = 0; i < _caches.Length; i++)
+                        _caches[i].TrimToLast(keep);
+                }
+
+                int posBefore = _position;
                 object?[]? snapshots = null;
-                if (maxDraftTokens > 1)
+                if (maxDraftTokens > 0)
                 {
                     snapshots = new object?[_caches.Length];
                     for (int i = 0; i < _caches.Length; i++)
@@ -190,8 +210,8 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
                             ? _workspace.Rent<int>([1, 1]) 
                             : Tensor<int>.From(_decodeTokenScratch.AsSpan(0, 1), 1, 1);
                         if (_workspace != null) stepInput.Data[0] = draftToken;
-                        logitsTensor = _model.ForwardLastLogits(stepInput, _caches, currentPos, _workspace);
-                        currentPos++;
+                        logitsTensor = _model.ForwardLastLogits(stepInput, _caches, _position, _workspace);
+                        _position++;
                         prevTensor?.Dispose();
 
                         generatedIds.Add(draftToken);
@@ -232,17 +252,8 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
 
                         logitsTensor.Data[..vocabSize].CopyTo(_penaltyScratch.AsSpan(0, vocabSize));
 
-                        if (_caches[0].IsFull)
-                        {
-                            int keep = genCfg is { SlidingWindowSize: > 0 }
-                                ? genCfg.SlidingWindowSize
-                                : _caches[0].MaxSeqLen / 2;
-                            if (keep >= _caches[0].MaxSeqLen)
-                                keep = Math.Max(1, _caches[0].MaxSeqLen / 2);
-                            for (int i = 0; i < _caches.Length; i++)
-                                _caches[i].TrimToLast(keep);
-                            currentPos = _caches[0].Length;
-                        }
+                        // Trim happens at the next round's boundary, after this round's
+                        // snapshot is no longer needed.
                     }
                     else
                     {
@@ -252,7 +263,20 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
                             for (int i = 0; i < _caches.Length; i++)
                                 _caches[i].Restore(snapshots[i]);
                         }
-                        currentPos = _caches[0].Length;
+                        _position = posBefore;
+
+                        // The restore also discarded this round's accepted tokens, whose KV
+                        // rows are needed by the correction step and the next round. Replay
+                        // them in one batch so short-conv state is rebuilt as well.
+                        if (tokensAccepted > 0)
+                        {
+                            _workspace!.Reset();
+                            using var replayInput = _workspace.Rent<int>([1, tokensAccepted]);
+                            CollectionsMarshal.AsSpan(generatedIds)[^tokensAccepted..]
+                                .CopyTo(replayInput.Data);
+                            _model.ForwardFill(replayInput, _caches, _position, _workspace);
+                            _position += tokensAccepted;
+                        }
 
                         int correctionToken = greedyChoice;
                         constraint?.Accept(correctionToken);
@@ -277,8 +301,8 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
                             ? _workspace.Rent<int>([1, 1]) 
                             : Tensor<int>.From(_decodeTokenScratch.AsSpan(0, 1), 1, 1);
                         if (_workspace != null) corrInput.Data[0] = correctionToken;
-                        logitsTensor = _model.ForwardLastLogits(corrInput, _caches, currentPos, _workspace);
-                        currentPos++;
+                        logitsTensor = _model.ForwardLastLogits(corrInput, _caches, _position, _workspace);
+                        _position++;
                         prevTensor?.Dispose();
                         logitsTensor.Data[..vocabSize].CopyTo(_penaltyScratch.AsSpan(0, vocabSize));
 
@@ -331,8 +355,8 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
                         ? _workspace.Rent<int>([1, 1]) 
                         : Tensor<int>.From(_decodeTokenScratch.AsSpan(0, 1), 1, 1);
                     if (_workspace != null) bonusInput.Data[0] = bonusToken;
-                    logitsTensor = _model.ForwardLastLogits(bonusInput, _caches, currentPos, _workspace);
-                    currentPos++;
+                    logitsTensor = _model.ForwardLastLogits(bonusInput, _caches, _position, _workspace);
+                    _position++;
                     bonusPrev?.Dispose();
                 }
             }
@@ -385,12 +409,14 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
     {
         for (int i = 0; i < _caches.Length; i++)
             _caches[i].Reset();
+        _position = 0;
     }
 
     public void TruncateCache(int length)
     {
         for (int i = 0; i < _caches.Length; i++)
             _caches[i].Truncate(length);
+        _position = length;
     }
 
     public float CacheFillRatio => (float)_caches[0].Length / _caches[0].MaxSeqLen;

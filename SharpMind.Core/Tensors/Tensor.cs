@@ -90,7 +90,7 @@ public sealed unsafe class Tensor<T> : IDisposable
     public T* DataPtr
     {
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        get => _rawPtr;
+        get => _rawPtr + _offset;
     }
 
     /// <summary>Span over all elements in flat (row-major) order.</summary>

@@ -61,6 +61,12 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
     /// or caches that were handed in already holding entries).
     /// </summary>
     private List<int>? _cacheTokens;
+    /// <summary>
+    /// Absolute position of the next token to be fed. Cache length diverges from
+    /// this after a sliding-window trim, so RoPE must use this, not
+    /// <see cref="IKVCache.Length"/>.
+    /// </summary>
+    private int _position;
 
     public StandardGenerator(
         Transformer   model,
@@ -95,6 +101,7 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
         }
 
         _cacheTokens = _caches[0].Length == 0 ? [] : null;
+        _position = _caches[0].Length;
 
         _defaultRng = seed.HasValue ? new Random(seed.Value) : Random.Shared;
         _workspace = MemoryHelpers.CreateWorkspace(Workspace.CalculateRequiredSize(model.Config.HiddenDim,model.Config.FfnDim,model.Config.VocabSize,model.Config.NumLayers, model.Config.MaxSeqLen));
@@ -145,14 +152,16 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
         try
         {
                         // Prefill (chunked so long prompts fit the workspace; see Prefill)
-            int posOffset = _caches[0].Length;
+            int posOffset = _position;
             // Someone else moved the cache under us: stop vouching for it.
-            if (_cacheTokens is not null && _cacheTokens.Count != posOffset) _cacheTokens = null;
+            if (_cacheTokens is not null && _cacheTokens.Count != _caches[0].Length) _cacheTokens = null;
             // Prompt exceeds cache capacity — Prefill will trim mid-loop;
             // invalidate prefix tracking up-front.
-            if (_cacheTokens is not null && posOffset + promptIds.Length > _caches[0].MaxSeqLen)
+            if (_cacheTokens is not null && _caches[0].Length + promptIds.Length > _caches[0].MaxSeqLen)
                 _cacheTokens = null;
-            logitsTensor = Prefill.ForwardLastLogitsChunked(_model, _caches, promptIds, _workspace, PrefillProgress);
+            logitsTensor = Prefill.ForwardLastLogitsChunked(
+                _model, _caches, promptIds, _workspace, PrefillProgress, startPosition: posOffset);
+            _position = posOffset + promptIds.Length;
             _cacheTokens?.AddRange(promptIds);
 
 
@@ -279,7 +288,7 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
 
                 Tensor<float>? prevTensor = logitsTensor;
                 logitsTensor = null;
-                int newPos = _caches[0].Length;
+                int newPos = _position;
 
                 _workspace.Reset();
                 prevTensor.Dispose();
@@ -287,6 +296,7 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
                 _decodeTokenScratch[0] = nextId;
                 stepInput.Data[0] = nextId;
                 logitsTensor = _model.ForwardLastLogits(stepInput, _caches, newPos, _workspace);
+                _position++;
                 _cacheTokens?.Add(nextId);
             }
 
@@ -326,6 +336,7 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
         for (int i = 0; i < _caches.Length; i++)
             _caches[i].Reset();
         _cacheTokens = [];
+        _position = 0;
     }
 
     public IReadOnlyList<int>? CacheTokens => _cacheTokens;
@@ -336,9 +347,14 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
             _caches[i].Truncate(length);
         if (_cacheTokens is not null && _cacheTokens.Count > length)
             _cacheTokens.RemoveRange(length, _cacheTokens.Count - length);
+        _position = length;
     }
 
-    public void SetCacheTokens(IReadOnlyList<int> tokens) => _cacheTokens = [.. tokens];
+    public void SetCacheTokens(IReadOnlyList<int> tokens)
+    {
+        _cacheTokens = [.. tokens];
+        _position = tokens.Count;
+    }
 
     /// <summary>KV-cache fill as a fraction of maximum capacity.</summary>
     public float CacheFillRatio => (float)_caches[0].Length / _caches[0].MaxSeqLen;

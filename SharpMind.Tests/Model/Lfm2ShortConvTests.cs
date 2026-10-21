@@ -282,6 +282,16 @@ public class Lfm2ShortConvTests
     }
 
     [Fact]
+    public void ShortConvCache_DoesNotSupportTruncate()
+    {
+        using var cache = new ShortConvCache(stateRows: 2, channels: 4);
+        Assert.False(cache.SupportsTruncate);
+
+        using IKVCache kv = new KVCache(1, 2, 8, 4);
+        Assert.True(kv.SupportsTruncate);
+    }
+
+    [Fact]
     public void ShortConvCache_SnapshotAndRestore()
     {
         var cache = new ShortConvCache(stateRows: 2, channels: 4);

@@ -69,6 +69,21 @@ public sealed class LossKernelTests
         Assert.Throws<ArgumentException>(() => dev.Kernels.CeLossAndGrad(logits, ids.View, hostLabels, rowLoss, -100, 0f));
     }
 
+    [Theory]
+    [InlineData(-2)]
+    [InlineData(V)]
+    public void CeLossAndGrad_RejectsLabelOutsideVocabulary(int badLabel)
+    {
+        var dev = GpuTestDevice.Device;
+        using var arena = new DeviceArena(dev, 1 << 10);
+        var logits = arena.Rent(T, V);
+        var rowLoss = arena.Rent(T, 1);
+        int[] labels = [0, 1, badLabel, 3, 4, 5];
+        using var ids = dev.UploadInts(labels);
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            dev.Kernels.CeLossAndGrad(logits, ids.View, labels, rowLoss, -100, 0f));
+    }
+
     [Theory] [InlineData(-0.1f)] [InlineData(1f)]
     public void CeLossAndGrad_RejectsInvalidLabelSmoothing(float smoothing)
     {

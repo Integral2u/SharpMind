@@ -42,21 +42,14 @@ public static partial class QuantizationKernels
 
                     int i1 = b * QK_K + nOff + l - colBlockStart;
                     int i2 = b * QK_K + nOff + l + 32 - colBlockStart;
-
-                    if (i2 >= b * QK_K + blockEnd - colBlockStart)
-                    {
-                        if (i1 < b * QK_K + blockEnd - colBlockStart)
-                            sum += input[i1] * (d * psc[is_ + 0] * (q1v - 32));
-                        break;
-                    }
-
                     int i3 = b * QK_K + nOff + l + 64 - colBlockStart;
                     int i4 = b * QK_K + nOff + l + 96 - colBlockStart;
+                    int limit = b * QK_K + blockEnd - colBlockStart;
 
                     sum += input[i1] * (d * psc[is_ + 0] * (q1v - 32));
-                    sum += input[i2] * (d * psc[is_ + 2] * (q2v - 32));
-                    sum += input[i3] * (d * psc[is_ + 4] * (q3v - 32));
-                    sum += input[i4] * (d * psc[is_ + 6] * (q4v - 32));
+                    if (i2 < limit) sum += input[i2] * (d * psc[is_ + 2] * (q2v - 32));
+                    if (i3 < limit) sum += input[i3] * (d * psc[is_ + 4] * (q3v - 32));
+                    if (i4 < limit) sum += input[i4] * (d * psc[is_ + 6] * (q4v - 32));
                 }
             }
         }
@@ -120,14 +113,6 @@ public static partial class QuantizationKernels
 
                     int i1 = nOff + l;
                     int i2 = nOff + l + 32;
-
-                    if (i2 >= blockEnd)
-                    {
-                        if (i1 < blockEnd)
-                            sum += pIn[i1] * (d * psc[is_ + 0] * (q1v - 32));
-                        break;
-                    }
-
                     int i3 = nOff + l + 64;
                     int i4 = nOff + l + 96;
 
@@ -137,9 +122,9 @@ public static partial class QuantizationKernels
                     float v4 = d * psc[is_ + 6] * (q4v - 32);
 
                     sum += pIn[i1] * v1;
-                    sum += pIn[i2] * v2;
-                    sum += pIn[i3] * v3;
-                    sum += pIn[i4] * v4;
+                    if (i2 < blockEnd) sum += pIn[i2] * v2;
+                    if (i3 < blockEnd) sum += pIn[i3] * v3;
+                    if (i4 < blockEnd) sum += pIn[i4] * v4;
                 }
             }
         }
@@ -204,14 +189,6 @@ public static partial class QuantizationKernels
 
                     int i1 = nOff + l;
                     int i2 = nOff + l + 32;
-
-                    if (i2 >= blockEnd)
-                    {
-                        if (i1 < blockEnd)
-                            sum += pIn[i1] * (d * psc[is_ + 0] * (q1v - 32));
-                        break;
-                    }
-
                     int i3 = nOff + l + 64;
                     int i4 = nOff + l + 96;
 
@@ -221,9 +198,9 @@ public static partial class QuantizationKernels
                     float v4 = d * psc[is_ + 6] * (q4v - 32);
 
                     sum += pIn[i1] * v1;
-                    sum += pIn[i2] * v2;
-                    sum += pIn[i3] * v3;
-                    sum += pIn[i4] * v4;
+                    if (i2 < blockEnd) sum += pIn[i2] * v2;
+                    if (i3 < blockEnd) sum += pIn[i3] * v3;
+                    if (i4 < blockEnd) sum += pIn[i4] * v4;
                 }
             }
         }
@@ -268,21 +245,13 @@ public static partial class QuantizationKernels
 
                         int idx1 = nOff + l;
                         int idx2 = nOff + l + 32;
-
-                        if (idx2 >= valid)
-                        {
-                            if (idx1 < valid)
-                                data[blockStart + idx1] = d * scales[scOff + is_ + 0] * (q1 - 32);
-                            break;
-                        }
-
                         int idx3 = nOff + l + 64;
                         int idx4 = nOff + l + 96;
 
                         data[blockStart + idx1] = d * scales[scOff + is_ + 0] * (q1 - 32);
-                        data[blockStart + idx2] = d * scales[scOff + is_ + 2] * (q2 - 32);
-                        data[blockStart + idx3] = d * scales[scOff + is_ + 4] * (q3 - 32);
-                        data[blockStart + idx4] = d * scales[scOff + is_ + 6] * (q4 - 32);
+                        if (idx2 < valid) data[blockStart + idx2] = d * scales[scOff + is_ + 2] * (q2 - 32);
+                        if (idx3 < valid) data[blockStart + idx3] = d * scales[scOff + is_ + 4] * (q3 - 32);
+                        if (idx4 < valid) data[blockStart + idx4] = d * scales[scOff + is_ + 6] * (q4 - 32);
                     }
                 }
             }

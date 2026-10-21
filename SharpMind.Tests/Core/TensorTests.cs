@@ -61,5 +61,25 @@ namespace SharpMind.Tests.Core
             using var t = Tensor<float>.From([1f, 2f, 3f], 3);
             Assert.Equal(3f, t[t.Shape[-1] - 1]);
         }
+
+        [Fact]
+        public unsafe void Slice_DataPtr_PointsAtViewStart()
+        {
+            using var t = Tensor<float>.From([1f, 2f, 3f, 4f, 5f, 6f], 2, 3);
+            using var row = t.Slice(1);
+
+            Assert.Equal(4f, row.DataPtr[0]);
+            Assert.Equal(6f, row.DataPtr[2]);
+        }
+
+        [Fact]
+        public unsafe void Slice_OfSlice_DataPtr_AccumulatesOffsets()
+        {
+            using var t = Tensor<float>.From([1f, 2f, 3f, 4f, 5f, 6f, 7f, 8f], 2, 2, 2);
+            using var batch = t.Slice(1);
+            using var row = batch.Slice(1);
+
+            Assert.Equal(7f, row.DataPtr[0]);
+        }
     }
 }

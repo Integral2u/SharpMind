@@ -26,7 +26,7 @@ public sealed class ShortConvLayer : IDisposable
     private readonly LinearLayer _wIn;    // [HiddenDim, 3*HiddenDim]
     private readonly LinearLayer _wOut;   // [HiddenDim, HiddenDim]
     private Tensor<float> _kernel;        // [l_cache, HiddenDim] — always F32
-    private readonly bool _ownsKernel;
+    private bool _ownsKernel;
     private readonly Tensor<float> _fallbackState; // [1, l_cache-1, HiddenDim] for training / no-cache paths
     private bool _disposed;
 
@@ -115,6 +115,7 @@ public sealed class ShortConvLayer : IDisposable
         {
             if (_ownsKernel) _kernel.Dispose();
             _kernel = weights.WScConv;
+            _ownsKernel = false;
         }
     }
 

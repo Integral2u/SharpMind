@@ -92,6 +92,26 @@ public sealed class GpuInferenceEngineTests : IClassFixture<GpuInferenceEngineTe
     /// <summary>A small, printable-ASCII prompt that decodes cleanly and stays under maxPromptTokens.</summary>
     private static int[] Prompt() => [65, 66, 67, 32, 68, 69]; // "ABC DE"
 
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(256)]
+    public void Prefill_RejectsTokenOutsideVocabulary(int tokenId)
+    {
+        using var engine = BuildEngine();
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => engine.Prefill([tokenId]));
+    }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(256)]
+    public void DecodeStep_RejectsTokenOutsideVocabulary(int tokenId)
+    {
+        using var engine = BuildEngine();
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => engine.DecodeStep(tokenId));
+    }
+
     private static async Task<List<int>> GreedyIds(IGenerator<KVCacherBuilder> gen, int[] prompt, int maxNew)
     {
         // Greedy + no repetition penalty. The generated token ids are read from the interface's

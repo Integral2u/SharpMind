@@ -855,6 +855,26 @@ else
             return sum;
         }
 
+        /// <summary>
+        /// True when this block's large weight payload is resident — raw quantized
+        /// buffers, 2D float weights, or MoE expert planes. Small tensors the built
+        /// layers keep by reference (biases, norms, the F32 short-conv kernel) do not
+        /// count, so short-conv-only layers are unloaded and reloaded like any other.
+        /// </summary>
+        internal bool HasAttachedWeights()
+        {
+            if (AttachedRawBytes() > 0) return true;
+            return Wq is not null || Wk is not null || Wv is not null || Wo is not null
+                || Wf1 is not null || Wf2 is not null
+                || WScIn is not null || WScOut is not null
+                || WRouter is not null
+                || WSharedGate is not null || WSharedUp is not null || WSharedDown is not null
+                || WGateExpHasValues(WgateExp) || WGateExpHasValues(WupExp) || WGateExpHasValues(WdownExp);
+        }
+
+        private static bool WGateExpHasValues(Dictionary<int, Tensor<float>>? dict)
+            => dict is { Count: > 0 };
+
         public BlockWeights() { }
 
         /// <summary>
@@ -1161,7 +1181,7 @@ public sealed class TransformerWeightsStreaming : TransformerWeights
         get => _residentWindow;
         set
         {
-            _residentWindow = Math.Max(0, value);
+            _residentWindow = Math.Max(1, value);
             UpdatePoolBudget();
         }
     }
@@ -1586,8 +1606,8 @@ public sealed class TransformerWeightsStreaming : TransformerWeights
         bool needsPush = false;
 
         // For fused QKV models (e.g. Phi-3), Wq is never set — only RawWq is.
-        // Check both so the layer isn't reloaded every forward pass.
-        if (Blocks[layerIndex].Wq == null && Blocks[layerIndex].RawWq == null)
+        // Short-conv-only layers have neither: their payload is WScIn/WScOut.
+        if (!Blocks[layerIndex].HasAttachedWeights())
         {
             // With MoE residency active the load must not re-read every routed expert: the
             // pinned ones come back from the per-layer store below, the rest load on demand.
@@ -1626,7 +1646,7 @@ public sealed class TransformerWeightsStreaming : TransformerWeights
     public void PreloadLayerAsync(int layerIndex)
     {
         if (layerIndex < 0 || layerIndex >= Blocks.Length) return;
-        if (Blocks[layerIndex].Wq != null || Blocks[layerIndex].RawWq != null) return;
+        if (Blocks[layerIndex].HasAttachedWeights()) return;
 
         lock (_preloadLock)
         {
@@ -1651,7 +1671,7 @@ public sealed class TransformerWeightsStreaming : TransformerWeights
     public void FreeLayer(int layerIndex)
     {
         if (layerIndex < 0 || layerIndex >= Blocks.Length) return;
-        if (Blocks[layerIndex].Wq == null && Blocks[layerIndex].RawWq == null) return;
+        if (!Blocks[layerIndex].HasAttachedWeights()) return;
 
         // With MoE residency active, move the pinned experts' planes out of the block before
         // capture so they are NOT returned to the pool but stay in the per-layer store across

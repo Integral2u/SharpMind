@@ -632,6 +632,66 @@ public class VecDotTests
         }
     }
 
+    [Theory]
+    [InlineData(1)]
+    [InlineData(17)]
+    [InlineData(63)]
+    [InlineData(65)]
+    [InlineData(127)]
+    [InlineData(129)]
+    [InlineData(193)]
+    [InlineData(255)]
+    [InlineData(257)]
+    [InlineData(300)]
+    public unsafe void VecDotQ6K_PartialBlockTail_MatchesManagedReference(int inFeatures)
+    {
+        var rng = new Random(1234 + inFeatures);
+        var input = new float[inFeatures];
+        for (int i = 0; i < inFeatures; i++)
+            input[i] = (float)(rng.NextDouble() * 2 - 1);
+
+        int nBlocks = (inFeatures + 255) / 256;
+        var raw = new byte[nBlocks * 210];
+        rng.NextBytes(raw);
+        for (int b = 0; b < nBlocks; b++)
+        {
+            int off = b * 210;
+            raw[off + 208] = 0x00;
+            raw[off + 209] = 0x3C;
+        }
+
+        float expected = Q6KManagedReferenceDot(input, raw, inFeatures);
+
+        fixed (float* pIn = input)
+        fixed (byte* pW = raw)
+        {
+            foreach (var tier in new[] { HardwareTier.Scalar, HardwareTier.AVX2, HardwareTier.FMA })
+            {
+                if (tier == HardwareTier.AVX2 && !Avx2.IsSupported) continue;
+                if (tier == HardwareTier.FMA && !Fma.IsSupported) continue;
+
+                var qOps = QuantizationFactory.Create(tier);
+                float actual = qOps.VecDotQ6K(pIn, pW, 0, inFeatures);
+                Assert.True(Math.Abs(expected - actual) <= 1e-4f * Math.Max(1f, Math.Abs(expected)),
+                    $"{tier}: expected {expected}, got {actual} for {inFeatures} features");
+            }
+        }
+    }
+
+    private static float Q6KManagedReferenceDot(float[] input, byte[] raw, int inFeatures)
+    {
+        int weightCount = ((inFeatures + 255) / 256) * 256;
+        var weights = new float[weightCount];
+        using var ms = new MemoryStream(raw);
+        using var reader = new BinaryReader(ms);
+        QuantizationKernels.ReadQ6K_Scalar(reader, weights, weightCount);
+
+        double sum = 0;
+        for (int i = 0; i < inFeatures; i++)
+            sum += input[i] * weights[i];
+        return (float)sum;
+    }
+
     private static ushort FloatToHalf(float f)
     {
         unsafe

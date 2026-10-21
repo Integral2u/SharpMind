@@ -75,6 +75,8 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
     private readonly Random _defaultRng;
     private readonly IWorkspace _workspace;
     private readonly MedusaHeads _medusaHeads;
+    /// <summary>Recurrent caches cannot rewind; roll a rejected round back via snapshot + replay.</summary>
+    private readonly bool _replayOnRollback;
 
     // _normedHiddenScratch caches the RMS-normed hidden state that feeds the Medusa heads.
     // It is refilled every round from _cachedHidden (maintained by Transformer) after
@@ -87,6 +89,8 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
     // indices 1..K = Medusa head predictions.  The Predict() call writes directly
     // into slots 1..K.
     private readonly int[] _draftScratch;
+    /// <summary>Absolute position of the next token; diverges from cache length after a trim.</summary>
+    private int _position;
     private float[]? _maskScratch;
     private bool _disposed;
     private readonly bool _addBos;
@@ -144,6 +148,9 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
         _defaultRng = seed.HasValue ? new Random(seed.Value) : Random.Shared;
         _normedHiddenScratch = new float[model.Config.HiddenDim];
         _draftScratch = new int[DefaultNumHeads + 1];
+        _position = _caches[0].Length;
+        foreach (var cache in _caches)
+            if (!cache.SupportsTruncate) { _replayOnRollback = true; break; }
     }
 
     // IGenerator<T> implementation
@@ -206,9 +213,9 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
         // Process the full prompt (in chunks that fit the workspace; see
         // Prefill). After this, the KV cache has promptLen entries and
         // logitsTensor predicts the very next token.
-        int posOffset = _caches[0].Length;
+        int posOffset = _position;
         Tensor<float>? logitsTensor = Prefill.ForwardLastLogitsChunked(
-            _model, _caches, promptIds, _workspace, PrefillProgress);
+            _model, _caches, promptIds, _workspace, PrefillProgress, startPosition: posOffset);
 
         try
         {
@@ -219,7 +226,7 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
                 ? new Random(sampleCfg.Seed.Value)
                 : _defaultRng;
 
-            int currentPos = posOffset + promptLen;
+            _position = posOffset + promptLen;
             int[] scratchOne = new int[1];
 
             // Extract the normed hidden state for the last prompt position.
@@ -271,15 +278,37 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
                         _draftScratch.AsSpan(1, numHeads));
                 }
 
+                // Keep trim at round boundaries so the snapshot and batch forward
+                // never straddle a moved prefix. The round needs draftLen free slots.
+                if (_caches[0].Length + draftLen > _caches[0].MaxSeqLen)
+                {
+                    int keep = genCfg is { SlidingWindowSize: > 0 }
+                        ? genCfg.SlidingWindowSize
+                        : _caches[0].MaxSeqLen / 2;
+                    keep = Math.Min(keep, Math.Max(1, _caches[0].MaxSeqLen - draftLen));
+                    if (keep >= _caches[0].MaxSeqLen)
+                        keep = Math.Max(1, _caches[0].MaxSeqLen / 2);
+                    for (int i = 0; i < _caches.Length; i++)
+                        _caches[i].TrimToLast(keep);
+                }
+
                 // 3. Snapshot cache length before verification so we can trim
                 //    back if some draft tokens are rejected.
                 int cacheLenBefore = _caches[0].Length;
+                int posBefore = _position;
+                object?[]? rollbackSnapshots = null;
+                if (_replayOnRollback && draftLen > 1)
+                {
+                    rollbackSnapshots = new object?[_caches.Length];
+                    for (int i = 0; i < _caches.Length; i++)
+                        rollbackSnapshots[i] = _caches[i].Snapshot();
+                }
 
                 // 4. Batch-forward all K+1 draft tokens.
                 //    Forward(draft) extends the KV cache by K+1 positions and
                 //    returns logits [1, K+1, V].  verif_logits[i] predicts what
                 //    token comes AFTER draft[i], i.e. the token at position
-                //    (currentPos + i + 1).
+                //    (_position + i + 1).
                 Tensor<float> prevLogits = logitsTensor;
                 logitsTensor = null;
                 _workspace.Reset();
@@ -287,7 +316,7 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
                 for (int i = 0; i < draftLen; i++)
                     draftInput.Data[i] = _draftScratch[i];
                 var verifLogits = _model.Forward(
-                    draftInput, _caches, currentPos, _workspace);
+                    draftInput, _caches, _position, _workspace);
                 prevLogits.Dispose();
 
                 // 5. Verify the draft prefix.
@@ -439,10 +468,9 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
                             keep = Math.Max(1, _caches[0].MaxSeqLen / 2);
                         for (int i = 0; i < _caches.Length; i++)
                             _caches[i].TrimToLast(keep);
-                        currentPos = _caches[0].Length;
                     }
 
-                    currentPos += draftLen;
+                    _position += draftLen;
 
                     // The bonus token was sampled but never forwarded through
                     // the model.  We need a clean hidden + KV state for the
@@ -456,9 +484,9 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
                     using var bonusInput = _workspace.Rent<int>([1, 1]);
                     bonusInput.Data[0] = bonus;
                     logitsTensor = _model.ForwardLastLogits(
-                        bonusInput, _caches, currentPos, _workspace);
+                        bonusInput, _caches, _position, _workspace);
                     bonusPrev.Dispose();
-                    currentPos++;
+                    _position++;
 
                     // After single-token ForwardLastLogits, _cachedHidden is
                     // [1, 1, H] and already final-normed (ForwardInPlace).
@@ -475,8 +503,34 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
                     // After Forward(draft), the cache was extended by draftLen
                     // positions; keeping only cacheLenBefore + accepted entries
                     // discards the unverified suffix.
-                    for (int i = 0; i < _caches.Length; i++)
-                        _caches[i].Truncate(cacheLenBefore + accepted);
+                    var nextLogits = new Tensor<float>(1, vocabSize);
+                    verifLogits.Data.Slice(lastAcceptedIdx * vocabSize, vocabSize)
+                        .CopyTo(nextLogits.Data);
+
+                    bool replayed = false;
+                    if (_replayOnRollback && rollbackSnapshots is not null)
+                    {
+                        // Recurrent state cannot be truncated: restore the round-start
+                        // snapshot, then replay the accepted tokens so both KV and
+                        // short-conv state describe the accepted prefix.
+                        for (int i = 0; i < _caches.Length; i++)
+                            _caches[i].Restore(rollbackSnapshots[i]);
+                        _position = posBefore;
+                        if (accepted > 0)
+                        {
+                            _workspace.Reset();
+                            using var replayInput = _workspace.Rent<int>([1, accepted]);
+                            _draftScratch.AsSpan(0, accepted).CopyTo(replayInput.Data);
+                            _model.ForwardFill(replayInput, _caches, _position, _workspace);
+                            _position += accepted;
+                        }
+                        replayed = true;
+                    }
+                    else
+                    {
+                        for (int i = 0; i < _caches.Length; i++)
+                            _caches[i].Truncate(cacheLenBefore + accepted);
+                    }
 
                     // Sliding window check (same as above).
                     if (_caches[0].IsFull)
@@ -488,7 +542,6 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
                             keep = Math.Max(1, _caches[0].MaxSeqLen / 2);
                         for (int i = 0; i < _caches.Length; i++)
                             _caches[i].TrimToLast(keep);
-                        currentPos = _caches[0].Length;
                     }
 
                     // The next round's starting logits come from the last accepted
@@ -498,10 +551,6 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
                     //
                     // We MUST copy the data out of verifLogits (a workspace-rented
                     // tensor) because the workspace will be Reset on the next round.
-                    var nextLogits = new Tensor<float>(1, vocabSize);
-                    verifLogits.Data.Slice(
-                        lastAcceptedIdx * vocabSize, vocabSize)
-                        .CopyTo(nextLogits.Data);
                     logitsTensor = nextLogits;
                     verifLogits.Dispose();
 
@@ -515,9 +564,9 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
                     // was computed with *only* the accepted prefix as context
                     // (causal masking prevents later positions from influencing
                     // earlier ones).  The rejected suffix does NOT pollute it.
-                    RefillNormedHidden(lastAcceptedIdx);
+                    RefillNormedHidden(replayed ? accepted - 1 : lastAcceptedIdx);
 
-                    currentPos += accepted;
+                    _position = posBefore + accepted;
                 }
             }
 
@@ -576,12 +625,14 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
     {
         for (int i = 0; i < _caches.Length; i++)
             _caches[i].Reset();
+        _position = 0;
     }
 
     public void TruncateCache(int length)
     {
         for (int i = 0; i < _caches.Length; i++)
             _caches[i].Truncate(length);
+        _position = length;
     }
 
     public float CacheFillRatio => (float)_caches[0].Length / _caches[0].MaxSeqLen;

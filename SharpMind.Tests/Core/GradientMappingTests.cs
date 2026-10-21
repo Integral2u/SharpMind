@@ -23,6 +23,15 @@ namespace SharpMind.Tests.Core
         }
 
         [Fact]
+        public void SseTier_FallsBackToScalarKernelsWithNoSseTarget()
+        {
+            var mapping = GradientMappingFactory.Create(
+                SharpMindConfig.Llama with { Hardware = HardwareTier.SSE });
+
+            Assert.NotNull(mapping);
+        }
+
+        [Fact]
         public void Linear_ReturnsDInput_AndAccumulatesGradients()
         {
             int B = 2, Out = 3, In = 4;
