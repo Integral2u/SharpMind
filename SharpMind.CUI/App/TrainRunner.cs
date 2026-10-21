@@ -173,8 +173,7 @@ public static class TrainRunner
             }
             else
             {
-                string tokenizerPath = job.TokenizerCachePath
-                    ?? Path.Combine(TrainJobSettings.DefaultFolder, Sanitize(job.Name) + ".tokenizer.json");
+                string tokenizerPath = job.TokenizerFilePath;
                 tokenizer = File.Exists(tokenizerPath)
                     ? TokenizationPipeline.Load(tokenizerPath)
                     : await TokenizationPipeline.TrainAndSaveAsync(

@@ -207,6 +207,38 @@ public sealed class TrainJobSettingsTests
     }
 
     [Fact]
+    public void TokenizerFilePath_AnchorsBesideJobFile_WhenSourcePathSet()
+    {
+        // The trained tokenizer belongs with the job, not in the shared folder.
+        var job = new TrainJobSettings { Name = "my-job", SourcePath = @"D:\jobs\my-job.smmt" };
+
+        Assert.Equal(Path.Combine(@"D:\jobs", "my-job.tokenizer.json"), job.TokenizerFilePath);
+    }
+
+    [Fact]
+    public void TokenizerFilePath_BlankDefaultsUnderDefaultFolder()
+    {
+        var job = new TrainJobSettings { Name = "blank-tok" };
+
+        Assert.Equal(
+            Path.Combine(TrainJobSettings.DefaultFolder, "blank-tok.tokenizer.json"),
+            job.TokenizerFilePath);
+    }
+
+    [Fact]
+    public void TokenizerFilePath_ExplicitCachePath_Wins()
+    {
+        var job = new TrainJobSettings
+        {
+            Name = "my-job",
+            SourcePath = @"D:\jobs\my-job.smmt",
+            TokenizerCachePath = @"E:\tok\custom.json",
+        };
+
+        Assert.Equal(@"E:\tok\custom.json", job.TokenizerFilePath);
+    }
+
+    [Fact]
     public void SaveLoad_ResumeFromCheckpointPreserved()
     {
         using var dir = new TempDirectory();

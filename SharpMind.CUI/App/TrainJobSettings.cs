@@ -262,6 +262,17 @@ public sealed class TrainJobSettings
         }
     }
 
+    /// <summary>
+    /// Resolves where the trained BPE tokenizer is cached: <see cref="TokenizerCachePath"/>
+    /// when set, otherwise a <c>{Name}.tokenizer.json</c> beside the job's <c>.smmt</c>
+    /// file (or under <see cref="DefaultFolder"/> when the job is unsaved), so a job's
+    /// tokenizer sits with its checkpoints and export rather than in the shared folder.
+    /// </summary>
+    public string TokenizerFilePath => TokenizerCachePath
+        ?? (SourcePathFolder is { } folder
+            ? Path.Combine(folder, Sanitize(Name) + ".tokenizer.json")
+            : Path.Combine(DefaultFolder, Sanitize(Name) + ".tokenizer.json"));
+
     /// <summary>Resume from this checkpoint directory; null = auto (see <see cref="StartFresh"/>).</summary>
     public string? ResumeFrom { get; set; }
 
