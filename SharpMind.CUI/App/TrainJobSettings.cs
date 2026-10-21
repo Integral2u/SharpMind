@@ -79,6 +79,14 @@ public sealed class TrainJobSettings
     /// <summary>Where the trained tokenizer is cached on disk. Auto-derived from <see cref="Name"/> if null.</summary>
     public string? TokenizerCachePath { get; set; }
 
+    /// <summary>
+    /// Last vocabulary size recommended by the "Suggest vocab" analysis (advisory
+    /// only; the applied value lives in <see cref="TokenizerVocabSize"/>). Null
+    /// until an analysis has run. Survives job save/load so the wizard can show
+    /// whether the cached tokenizer is still in line with the corpus.
+    /// </summary>
+    public int? SuggestedVocabSize { get; set; }
+
     // --- How: model + hyperparameters ------------------------------------
 
     /// <summary>True when sizing ran ModelSizer; the result is stored in the config fields below.</summary>
@@ -275,6 +283,26 @@ public sealed class TrainJobSettings
 
     /// <summary>Resume from this checkpoint directory; null = auto (see <see cref="StartFresh"/>).</summary>
     public string? ResumeFrom { get; set; }
+
+    /// <summary>
+    /// Warm restart: reuse the weights of this checkpoint as an initialisation,
+    /// starting a fresh schedule (new optimizer, step 0) — as opposed to a strict
+    /// resume. The run's pre-flight arms this automatically when it grows the
+    /// tokenizer (or finds a checkpoint whose vocabulary differs), so a widened
+    /// embedding can reuse the old weights' overlapping rows. Ignored when
+    /// <see cref="StartFresh"/> is true. Null = no warm restart.
+    /// </summary>
+    public string? WarmRestartFrom { get; set; }
+
+    /// <summary>
+    /// The vocabulary size the tokenizer on disk was actually trained with,
+    /// recorded when a run trains or loads it. Lets the wizard (and the run's
+    /// pre-flight) detect that the cached tokenizer no longer matches a
+    /// grown/applied vocab. Null when unknown (e.g. a tokenizer loaded from an
+    /// external file). Distinct from <see cref="TokenizerVocabSize"/> (the target
+    /// passed to the BPE trainer).
+    /// </summary>
+    public int? TrainedTokenizerVocab { get; set; }
 
     /// <summary>
     /// True to train from random weights even when checkpoints exist, ignoring

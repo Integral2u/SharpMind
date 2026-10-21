@@ -36,6 +36,7 @@ public sealed class TrainLoop
     private readonly TrainingOps           _ops;
     private readonly GradientMapping       _mapping;
     private readonly ITrainingEngine       _engine;
+    private readonly int                   _vocabSize;
 
     /// <param name="engine">
     /// The compute engine for forward + backward. Null selects the CPU reference
@@ -70,6 +71,7 @@ public sealed class TrainLoop
         _loss       = loss ?? new CrossEntropyLoss(labelSmoothing: _config.LabelSmoothing);
         _mapping    = mapping ?? GradientMappingFactory.Create(smmConfig ?? new SharpMindConfig());
         _ops        = ops;
+        _vocabSize  = model.Config.VocabSize;
 
         if (_config.QuantAwareTraining is { } qat)
             model.EnableQuantAwareTraining(qat);
@@ -102,6 +104,24 @@ public sealed class TrainLoop
             var meta = Checkpoint.Load(_config.ResumeFrom, _parameters, _optimizer);
             startStep = meta.Step;
 
+            // Vocabulary guard: the weight-tied embedding is shape-bound to the
+            // vocabulary it was built with, so a checkpoint from a different vocab
+            // cannot be resumed as-is. Report that clearly here rather than letting
+            // the binary loader throw a bare shape mismatch naming 'EmbeddingWeight'.
+            if (_config.ExpectedVocabSize > 0
+                && meta.Extra.TryGetValue("vocabSize", out var recordedVocab)
+                && int.TryParse(recordedVocab, System.Globalization.NumberStyles.Integer,
+                       System.Globalization.CultureInfo.InvariantCulture, out int recordedVocabSize)
+                && recordedVocabSize != _config.ExpectedVocabSize)
+            {
+                throw new InvalidOperationException(
+                    $"Checkpoint under '{_config.ResumeFrom}' was trained with vocabulary size " +
+                    $"{recordedVocabSize}, but this run's model is built for {_config.ExpectedVocabSize}. " +
+                    "The embedding table cannot be resumed across a vocabulary change — use a warm " +
+                    $"restart ({nameof(TrainConfig.WarmRestartFrom)}) to reuse these weights and grow the " +
+                    "tokenizer, or start fresh.");
+            }
+
             // Data cursor: where the interrupted run stopped in the batch stream.
             // Restoring it means the resumed run trains on what comes NEXT instead
             // of silently re-training the head of the corpus it has already seen.
@@ -127,7 +147,7 @@ public sealed class TrainLoop
         // best, interrupted or final - records where the run actually is.
         Dictionary<string, string> Extra(float? valLoss)
         {
-            var extra = BuildExtra(tokensSeen, batchesSeen, bestValLoss, valLoss);
+            var extra = BuildExtra(tokensSeen, batchesSeen, bestValLoss, valLoss, _vocabSize);
             WriteDataSeed(extra);
             return extra;
         }
@@ -284,16 +304,20 @@ public sealed class TrainLoop
     /// Everything an interrupted run carries forward into its next checkpoint.
     /// <c>batchesConsumed</c> is the data cursor (see
     /// <see cref="TrainConfig.ResumeDataCursor"/>); <c>tokensSeen</c> and
-    /// <c>bestValLoss</c> keep those figures continuous across resumes; and
-    /// <c>dataSeed</c> records the RNG the cursor was computed against.
+    /// <c>bestValLoss</c> keep those figures continuous across resumes;
+    /// <c>dataSeed</c> records the RNG the cursor was computed against; and
+    /// <c>vocabSize</c> records the embedding width so a strict resume onto a
+    /// different vocabulary fails with a clear message (see
+    /// <see cref="TrainConfig.ExpectedVocabSize"/>).
     /// </summary>
     private static Dictionary<string, string> BuildExtra(
-        long tokensSeen, int batchesConsumed, float bestValLoss, float? valLoss)
+        long tokensSeen, int batchesConsumed, float bestValLoss, float? valLoss, int vocabSize)
     {
         var extra = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["batchesConsumed"] = batchesConsumed.ToString(System.Globalization.CultureInfo.InvariantCulture),
             ["tokensSeen"] = tokensSeen.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["vocabSize"] = vocabSize.ToString(System.Globalization.CultureInfo.InvariantCulture),
         };
         if (valLoss is { } vl && float.IsFinite(vl))
             extra["valLoss"] = vl.ToString("R", System.Globalization.CultureInfo.InvariantCulture);

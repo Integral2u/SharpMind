@@ -1,3 +1,4 @@
+using SharpMind.Core.Tensors;
 using SharpMind.Model;
 
 namespace SharpMind.Training;
@@ -92,6 +93,66 @@ public static class WeightInitializer
     {
         FillNormal(layer.Weight.Data, rng, std);
         if (layer.Bias is { } b) FillNormal(b.Data, rng, std);
+    }
+
+    /// <summary>
+    /// Initialises the token rows appended to a grown embedding table. The first
+    /// <paramref name="existingRows"/> rows are left untouched (they carry the
+    /// reused weights); rows beyond are filled with Gaussian draws scaled to the
+    /// existing rows' standard deviation, so new tokens start in the same region
+    /// of embedding space as the ones the model already learned.
+    /// </summary>
+    /// <param name="embedding">The [VocabSize, HiddenDim] embedding tensor.</param>
+    /// <param name="existingRows">How many leading rows hold reused weights.</param>
+    /// <param name="seed">Random seed for reproducible initialisation.</param>
+    public static void InitializeNewEmbeddingRows(Tensor<float> embedding, int existingRows, int seed)
+    {
+        ArgumentNullException.ThrowIfNull(embedding);
+        if (embedding.Rank != 2) return;
+
+        int rows = embedding.Shape.Rows;
+        int cols = embedding.Shape.Cols;
+        if (existingRows >= rows) return;
+        if (existingRows < 0) existingRows = 0;
+
+        // Estimate the scale of the reused rows (std of a sampled subset, to keep
+        // the cost bounded on large tables), then match it for the new rows.
+        float std = ExistingStd(embedding, existingRows, cols);
+
+        var rng = new Random(seed);
+        var data = embedding.Data;
+        for (int r = existingRows; r < rows; r++)
+            FillNormal(data.Slice(r * cols, cols), rng, std);
+    }
+
+    private static float ExistingStd(Tensor<float> embedding, int existingRows, int cols)
+    {
+        if (existingRows <= 0) return 0.02f;
+
+        // Mean and variance over at most ~4096 rows to bound the work.
+        int sampleRows = Math.Min(existingRows, 4096);
+        int stride = Math.Max(1, existingRows / sampleRows);
+        var data = embedding.Data;
+
+        double sum = 0, sumSq = 0;
+        long n = 0;
+        for (int r = 0; r < existingRows; r += stride)
+        {
+            var row = data.Slice(r * cols, cols);
+            for (int c = 0; c < cols; c++)
+            {
+                double v = row[c];
+                sum += v;
+                sumSq += v * v;
+                n++;
+            }
+        }
+        if (n == 0) return 0.02f;
+        double mean = sum / n;
+        double var = Math.Max(0, sumSq / n - mean * mean);
+        double std = Math.Sqrt(var);
+        // Guard against a degenerate (all-zero) embedding pinning new rows at 0.
+        return std > 1e-9 ? (float)std : 0.02f;
     }
 
     /// <summary>Fills <paramref name="data"/> with independent standard-normal draws scaled by <paramref name="std"/>.</summary>

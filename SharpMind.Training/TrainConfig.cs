@@ -82,6 +82,30 @@ public sealed record TrainConfig
     public QuantDType? QuantAwareTraining { get; init; }
 
     /// <summary>
+    /// The vocabulary size the model being trained was built with. Recorded in
+    /// every checkpoint and checked on <em>strict</em> resume: a checkpoint whose
+    /// embedding was built for a different vocabulary cannot be resumed as-is
+    /// (the weight-tied embedding tensor's shape would not fit). A mismatch fails
+    /// loudly with an actionable message instead of the deep
+    /// <see cref="System.IO.InvalidDataException"/> the binary loader would raise.
+    ///
+    /// Set to 0 (default) to skip the check — the correct choice for a warm
+    /// restart that intentionally widens the embedding (see
+    /// <see cref="WarmRestartFrom"/>) or when the caller does its own resizing.
+    /// </summary>
+    public int ExpectedVocabSize { get; init; }
+
+    /// <summary>
+    /// Warm restart: load the parameters from this checkpoint directory as an
+    /// <em>initialisation</em> rather than a strict resume. Unlike
+    /// <see cref="ResumeFrom"/>, the optimizer state and step counter are NOT
+    /// restored — training restarts at step 0 with a fresh schedule — and the
+    /// embedding table may be a different size than the checkpoint's (the caller
+    /// loads the overlapping rows before the loop runs). Null = no warm restart.
+    /// </summary>
+    public string? WarmRestartFrom { get; init; }
+
+    /// <summary>
     /// Evaluate the model every N steps. 0 = never. When greater than 0,
     /// <see cref="TrainLoop.RunAsync"/> will invoke the optional <c>evaluate</c>
     /// callback at the configured interval (after the optimizer step, before

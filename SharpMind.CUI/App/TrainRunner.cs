@@ -11,6 +11,7 @@ using SharpMind.Model;
 using SharpMind.Model.Config;
 using SharpMind.Model.Format;
 using SharpMind.Tokenization;
+using SharpMind.Tokenization.Serialisation;
 using SharpMind.Training;
 using SharpMind.Training.Loss;
 using SharpMind.Training.Optimizers;
@@ -166,6 +167,7 @@ public static class TrainRunner
             // complete configured sources (a no-op for fresh jobs, where the
             // deltas ARE the whole corpus anyway).
             Tokenizer tokenizer;
+            bool grewTokenizer = false;
             if (job.UsesCharacterTokenizer)
             {
                 tokenizer = await TokenizationPipeline.TrainCharacterAsync(
@@ -174,13 +176,37 @@ public static class TrainRunner
             else
             {
                 string tokenizerPath = job.TokenizerFilePath;
-                tokenizer = File.Exists(tokenizerPath)
+                bool existed = File.Exists(tokenizerPath);
+                tokenizer = existed
                     ? TokenizationPipeline.Load(tokenizerPath)
                     : await TokenizationPipeline.TrainAndSaveAsync(
                         job.IncrementalMode ? FullCorpusComposite(job, components) : compositeSource,
                         tokenizerPath, job.TokenizerVocabSize);
+
+                // A larger Vocab target than the cached tokenizer means growth is
+                // required, so do it automatically rather than making the user press
+                // a button. Grow is append-only: old token IDs are preserved, only
+                // new merges are appended. The widened embedding then forces a warm
+                // restart (handled during resume resolution below).
+                if (existed && job.TokenizerVocabSize > tokenizer.VocabSize)
+                {
+                    int priorVocab = tokenizer.VocabSize;
+                    Log($"Tokenizer: target {job.TokenizerVocabSize} > cached {priorVocab} — growing append-only.");
+                    int grown = await GrowTokenizerAsync(job, pluginsFolder, job.TokenizerVocabSize, Log, cancellationToken);
+                    if (grown > priorVocab)
+                    {
+                        tokenizer = TokenizationPipeline.Load(tokenizerPath);
+                        grewTokenizer = true;
+                        Log($"Tokenizer: grew {priorVocab} → {tokenizer.VocabSize} tokens (old IDs unchanged).");
+                    }
+                    else
+                    {
+                        Log($"Tokenizer: could not grow beyond {priorVocab} (the corpus offers no further merges).");
+                    }
+                }
             }
             Log($"Tokenizer: vocab={tokenizer.VocabSize} ({(job.UsesCharacterTokenizer ? "char" : "bpe")})");
+            job.TrainedTokenizerVocab = tokenizer.VocabSize;
             progress.Report(0.1f);
 
             // 2. Model config.
@@ -218,11 +244,23 @@ public static class TrainRunner
             // the latest weights is the entire point.
             string checkpointDir = job.CheckpointDir;
             string? resumeDir;
+            string? warmRestartDir = null;
             if (job.IncrementalMode)
             {
                 resumeDir = Checkpoint.FindLatest(checkpointDir);
                 if (resumeDir is null)
                     Log("Incremental: no prior checkpoint found — starting from random weights on the new/changed files only.");
+            }
+            else if (!job.StartFresh && !string.IsNullOrWhiteSpace(job.WarmRestartFrom)
+                     && Directory.Exists(job.WarmRestartFrom))
+            {
+                // Warm restart: reuse the weights as an initialisation under a
+                // fresh schedule. Never a strict resume — the embedding may have
+                // been widened by an append-only tokenizer grow, and the optimizer
+                // state is intentionally dropped.
+                resumeDir = null;
+                warmRestartDir = job.WarmRestartFrom;
+                Log($"Warm restart from {Path.GetFileName(warmRestartDir)} — reusing weights, fresh optimizer (step 0).");
             }
             else
             {
@@ -230,6 +268,40 @@ public static class TrainRunner
                     : !string.IsNullOrWhiteSpace(job.ResumeFrom) ? job.ResumeFrom
                     : Checkpoint.FindLatest(checkpointDir);
             }
+
+            // A grown tokenizer widens the embedding, so a strict resume cannot load
+            // a checkpoint built at the old size. Reuse those weights as a warm
+            // restart instead (fresh optimizer, step 0). Deliberately not persisted
+            // to job.WarmRestartFrom: this run writes new checkpoints at the grown
+            // vocab, and later runs should resume those normally.
+            if (grewTokenizer && resumeDir is not null && Directory.Exists(resumeDir))
+            {
+                warmRestartDir = resumeDir;
+                resumeDir = null;
+                job.ResumeFrom = null; // this run writes new-vocab checkpoints; later runs resume those
+                Log($"Warm restart from {Path.GetFileName(warmRestartDir)} — embedding widened, fresh optimizer (step 0).");
+            }
+
+            // Safety net: a checkpoint built for a different vocabulary cannot be
+            // strictly resumed (the embedding shape differs). This happens when a
+            // tokenizer grew on an earlier run that failed before writing a
+            // checkpoint. Reuse those weights as a warm restart instead of failing.
+            if (resumeDir is not null && Directory.Exists(resumeDir))
+            {
+                var meta = Checkpoint.ReadMeta(resumeDir);
+                if (meta.Extra.TryGetValue("vocabSize", out var recordedText)
+                    && int.TryParse(recordedText, System.Globalization.NumberStyles.Integer,
+                           System.Globalization.CultureInfo.InvariantCulture, out int recordedVocab)
+                    && recordedVocab != modelConfig.VocabSize)
+                {
+                    warmRestartDir = resumeDir;
+                    resumeDir = null;
+                    job.ResumeFrom = null; // see the grown-tokenizer case above
+                    Log($"Checkpoint vocab {recordedVocab} ≠ model vocab {modelConfig.VocabSize} "
+                        + "— warm restart instead of strict resume.");
+                }
+            }
+
             if (resumeDir is not null)
             {
                 job.ResumeFrom = resumeDir;
@@ -256,6 +328,28 @@ public static class TrainRunner
             }
             var parameters = model.Parameters().ToList();
             var ops = TrainingOpsFactory.Create(sharpConfig);
+
+            if (warmRestartDir is not null)
+            {
+                int priorVocab = 0;
+                var warmMeta = Checkpoint.LoadForWarmRestart(warmRestartDir, parameters, "EmbeddingTable.weight");
+                if (warmMeta.Extra.TryGetValue("vocabSize", out var rv)
+                    && int.TryParse(rv, System.Globalization.NumberStyles.Integer,
+                           System.Globalization.CultureInfo.InvariantCulture, out int parsed))
+                    priorVocab = parsed;
+
+                // Newly-added token rows start blank; initialise them from the
+                // statistics of the reused rows so growth does not begin from an
+                // out-of-distribution corner of the embedding space.
+                var emb = weights.EmbeddingWeight;
+                if (priorVocab > 0 && emb.Shape.Rows > priorVocab)
+                    WeightInitializer.InitializeNewEmbeddingRows(emb, priorVocab, Seed + 7919);
+
+                Log(priorVocab > 0
+                    ? $"Warm restart: reused weights (checkpoint vocab {priorVocab} → model vocab {modelConfig.VocabSize}); "
+                      + $"{Math.Max(0, modelConfig.VocabSize - priorVocab)} new embedding rows initialised."
+                    : $"Warm restart: reused weights; embedding rows beyond the checkpoint initialised.");
+            }
 
             // Accelerator plugins live in the same folder as data-pipeline plugins.
             // An explicit accelerator that cannot be honoured (no device, unsupported shape) is
@@ -340,6 +434,11 @@ public static class TrainRunner
                     DataSeed = Seed,
                     KeepRecent = job.KeepRecent,
                     QuantAwareTraining = qat,
+                    // Guard a strict resume against a vocabulary change (the model's
+                    // padded vocab is what the checkpoint recorded). Zero during a
+                    // warm restart so the guard is skipped — the whole point there
+                    // is a deliberately widened embedding.
+                    ExpectedVocabSize = warmRestartDir is null ? modelConfig.VocabSize : 0,
                 });
 
             Log(qat is { } q
@@ -419,6 +518,50 @@ public static class TrainRunner
     {
         var all = job.Sources.Select(s => BuildSource(s.Component, registry)).ToList();
         return all.Count == 1 ? all[0] : new CompositeSource(all);
+    }
+
+    /// <summary>
+    /// Builds the job's full corpus source (all sources merged) for a caller
+    /// outside the runner — the wizard's vocabulary analysis and tokenizer-grow
+    /// buttons. Throws when the job has no source or a source can't be resolved.
+    /// </summary>
+    public static IDataSource BuildCorpusSource(TrainJobSettings job, string pluginsFolder)
+    {
+        ArgumentNullException.ThrowIfNull(job);
+        if (job.Sources.Count == 0)
+            throw new InvalidOperationException("No data sources configured for this job.");
+        var registry = ComponentRegistry.ScanFolder(pluginsFolder, out _);
+        return FullCorpusComposite(job, registry);
+    }
+
+    /// <summary>
+    /// Grows the job's cached tokenizer in place, appending only new merge tokens
+    /// up to <paramref name="newTargetVocabSize"/> (see
+    /// <see cref="BpeTrainer.GrowAsync"/>). Existing token IDs are preserved, which
+    /// is what makes the corresponding embedding rows safe to reuse on a warm
+    /// restart. Returns the resulting vocabulary size. Runs over the FULL corpus.
+    /// </summary>
+    public static async Task<int> GrowTokenizerAsync(
+        TrainJobSettings job,
+        string pluginsFolder,
+        int newTargetVocabSize,
+        Action<string>? log = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(job);
+        string path = job.TokenizerFilePath;
+        if (!File.Exists(path))
+            throw new FileNotFoundException(
+                $"No cached tokenizer to grow at '{path}'. Train the tokenizer first.", path);
+
+        var existing = TokenizerFile.Load(path);
+        var source = BuildCorpusSource(job, pluginsFolder);
+        var trainer = new SharpMind.Tokenization.Bpe.BpeTrainer(newTargetVocabSize);
+        var grown = await trainer.GrowAsync(existing, source.ReadAsync(), newTargetVocabSize, cancellationToken);
+        TokenizerFile.Save(grown, path);
+        job.TrainedTokenizerVocab = grown.Vocab.Size;
+        log?.Invoke($"Tokenizer grown: {existing.Vocab.Size} → {grown.Vocab.Size} tokens ({path}).");
+        return grown.Vocab.Size;
     }
 
     /// <summary>Exports a saved checkpoint directory as a testable .smm inside it.</summary>

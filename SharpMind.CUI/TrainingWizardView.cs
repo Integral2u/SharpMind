@@ -62,6 +62,8 @@ public sealed class TrainingWizardView : View
     private readonly RadioGroup _tokenizerRadio;
     private readonly RadioGroup _batchingRadio;
     private readonly TextField _sgdMomentumField;
+    private Button _suggestVocabButton = null!;
+    private Button _suggestScheduleButton = null!;
     private string? _baselineJson;
 
     // Backing labels for the preset buttons: "Custom…" first, then each preset's
@@ -219,6 +221,9 @@ public sealed class TrainingWizardView : View
         row = NumRow(form, row, "FFN dim:", _job.FfnDim, v => _job.FfnDim = v, _modelRows);
         row = NumRow(form, row, "Context (max seq):", _job.MaxSeqLen, v => _job.MaxSeqLen = v, _modelRows);
         row = NumRow(form, row, "Vocab target:", _job.TokenizerVocabSize, v => _job.TokenizerVocabSize = v, _modelRows);
+        _suggestVocabButton = new Button("Suggest vocab…") { X = 44, Y = row - 1 };
+        _suggestVocabButton.Clicked += SuggestVocab;
+        form.Add(_suggestVocabButton);
         row += 1;
 
         // --- Advanced architecture options (override the preset) -------
@@ -319,6 +324,9 @@ public sealed class TrainingWizardView : View
         row = NumRow(form, row, "Seq len:", _job.SeqLen, v => _job.SeqLen = v, _hyperRows);
         row = NumRow(form, row, "Batch size:", _job.BatchSize, v => _job.BatchSize = v, _hyperRows);
         row = NumRow(form, row, "Total steps:", _job.TotalSteps, v => _job.TotalSteps = v, _hyperRows);
+        _suggestScheduleButton = new Button("Suggest steps/LR…") { X = 44, Y = row - 1 };
+        _suggestScheduleButton.Clicked += SuggestSchedule;
+        form.Add(_suggestScheduleButton);
         row = FloatRow(form, row, "Learning rate:", _job.LearningRate, v => _job.LearningRate = v, _hyperRows);
         row = NumRow(form, row, "Warmup steps:", _job.WarmupSteps, v => _job.WarmupSteps = v, _hyperRows);
         row = FloatRow(form, row, "Grad clip norm:", _job.GradClipNorm, v => _job.GradClipNorm = v, _hyperRows);
@@ -536,6 +544,7 @@ public sealed class TrainingWizardView : View
         _systemPromptField.Text = (ustring)(_job.SystemPromptPath ?? "");
         _skillsFolderField.Text = (ustring)(_job.SkillsFolder ?? "");
         RefreshPlugins();
+        RefreshVocabButtons();
     }
 
     private void RefreshPlugins()
@@ -999,6 +1008,209 @@ public sealed class TrainingWizardView : View
         _job.Sources.RemoveAt(i);
         if (_job.Sources.Count > 0) _sourceList.SelectedItem = Math.Min(i, _job.Sources.Count - 1);
         RefreshSources();
+    }
+
+    // --- Vocabulary analysis / tokenizer growth ------------------------------
+
+    /// <summary>
+    /// Runs a full-corpus BPE analysis and offers to apply the smallest worthwhile
+    /// vocabulary. Advisory: applying only sets the job's vocab target, which takes
+    /// effect when the tokenizer is (re)trained or grown.
+    /// </summary>
+    private async void SuggestVocab()
+    {
+        if (_job.Sources.Count == 0)
+        {
+            ErrorBox.Show("Suggest vocab", "Add at least one data source first.", "OK");
+            return;
+        }
+        if (_job.UsesCharacterTokenizer)
+        {
+            ErrorBox.Show("Suggest vocab",
+                "Character tokenizers have no merges to size — their vocabulary is the corpus's distinct characters.", "OK");
+            return;
+        }
+
+        var (suggestion, cancelled, error) = RunBusy("Suggest vocab", "Analysing corpus…",
+            ct => AnalyseVocabAsync(ct));
+
+        if (cancelled) return;
+        if (error is not null) { ErrorBox.Show("Suggest vocab", error, "OK"); return; }
+        if (suggestion is null) return;
+
+        _job.SuggestedVocabSize = suggestion.GrowthWorthwhile ? suggestion.SuggestedVocabSize : null;
+        RefreshVocabButtons();
+
+        string summary = suggestion.GrowthWorthwhile
+            ? $"Suggested vocabulary: {suggestion.SuggestedVocabSize} (currently {suggestion.CurrentVocabSize}).\n\n"
+              + $"Corpus tokens: {suggestion.CorpusTokensNow:N0} → {suggestion.CorpusTokensSuggested:N0}\n"
+              + $"Tokens/word: {suggestion.TokensPerWordNow:F2} → {suggestion.TokensPerWordSuggested:F2}\n\n"
+              + $"Apply as the vocab target? The tokenizer grows automatically on the next training run."
+            : $"No growth needed — the current vocabulary ({suggestion.CurrentVocabSize}) already covers the corpus well.\n\n"
+              + $"Corpus tokens: {suggestion.CorpusTokensNow:N0}  ({suggestion.TokensPerWordNow:F2} tokens/word)\n"
+              + $"Analysed up to {suggestion.MaxProbeVocabSize} tokens.";
+
+        if (suggestion.GrowthWorthwhile)
+        {
+            int choice = MessageBox.Query("Suggest vocab", summary, "Apply", "Close");
+            if (choice == 0)
+                ApplyVocabTarget(suggestion.SuggestedVocabSize);
+        }
+        else
+        {
+            MessageBox.Query("Suggest vocab", summary, "Close");
+        }
+    }
+
+    private Task<SharpMind.Training.VocabSuggestion> AnalyseVocabAsync(CancellationToken ct)
+    {
+        var source = TrainRunner.BuildCorpusSource(_job, _settings.PluginsFolder);
+        int current = CurrentTokenizerVocab() ?? _job.TokenizerVocabSize;
+        return SharpMind.Training.VocabSuggester.SuggestAsync(source, current, cancellationToken: ct);
+    }
+
+    /// <summary>
+    /// Applies a suggested vocabulary size as the job's target. Growth is performed
+    /// automatically by the training run's pre-flight when the target exceeds the
+    /// cached tokenizer, followed by a warm restart from the latest weights.
+    /// </summary>
+    private void ApplyVocabTarget(int size)
+    {
+        _job.TokenizerVocabSize = size;
+        if (_modelRows.TryGetValue("Vocab target:", out var field))
+            field.Text = (ustring)size.ToString();
+        RefreshVocabButtons();
+    }
+
+    /// <summary>
+    /// Suggests a continued-training schedule: with "Continue from latest/…" the
+    /// cosine schedule is absolute, so TotalSteps must be raised for the LR to keep
+    /// annealing; and a fresh-trade-off peak/min pair is proposed.
+    /// </summary>
+    private void SuggestSchedule()
+    {
+        int startStep = 0;
+        if (!_job.StartFresh)
+        {
+            string? dir = _job.ResumeFrom ?? Checkpoint.FindLatest(_job.CheckpointDir);
+            if (dir is not null && Directory.Exists(dir))
+                startStep = Checkpoint.ReadMeta(dir).Step;
+        }
+
+        var dialog = new Dialog("Suggest steps / LR", 66, 11);
+        var info = new Label(startStep > 0
+            ? $"Resuming from step {startStep}. The cosine schedule is absolute, so Total steps\nmust exceed {startStep} for the LR to keep annealing (else it sits at Min LR)."
+            : "Starting fresh — Total steps sets the full cosine schedule from step 0.")
+        { X = 1, Y = 1, Width = Dim.Fill(2) };
+
+        var extraField = new TextField("1000") { X = 30, Y = 4, Width = 14 };
+        dialog.Add(info);
+        dialog.Add(new Label("Additional steps:") { X = 1, Y = 4 }, extraField);
+        dialog.Add(new Label($"Proposed total: {startStep + 1000}") { X = 1, Y = 6, Width = Dim.Fill(2) });
+        var proposeLabel = new Label("");
+        dialog.Add(proposeLabel);
+
+        void Update()
+        {
+            if (!int.TryParse(extraField.Text.ToString(), out int extra) || extra <= 0) extra = 1000;
+            int total = startStep + extra;
+            proposeLabel.Text = $"Proposed total: {total}  |  LR peak {_job.LearningRate:0.#####e0}, min {_job.LearningRate / 10:0.#####e0}";
+        }
+        extraField.TextChanged += (_) => Update();
+        Update();
+
+        var apply = new Button("Apply", true) { X = 1, Y = Pos.AnchorEnd(1) };
+        var close = new Button("Cancel") { X = Pos.Right(apply) + 1, Y = Pos.AnchorEnd(1) };
+        bool ok = false;
+        apply.Clicked += () => { ok = true; Application.RequestStop(); };
+        close.Clicked += () => Application.RequestStop();
+        dialog.Add(apply, close);
+        Application.Run(dialog);
+        if (!ok) return;
+
+        if (!int.TryParse(extraField.Text.ToString(), out int add) || add <= 0) add = 1000;
+        _job.TotalSteps = startStep + add;
+        _job.MinLr = _job.LearningRate / 10f;
+        // A warm restart runs a FRESH schedule, so it does need warmup.
+        RefreshHyperRows();
+    }
+
+    /// <summary>
+    /// Runs <paramref name="work"/> on a background task behind a modal progress
+    /// dialog and returns its result. Returns default when the user cancels; throws
+    /// the work's exception otherwise. <paramref name="onError"/> is called (on the
+    /// UI thread) after the dialog closes; when it returns true the error was shown
+    /// and the caller should return early.
+    /// </summary>
+    private (T? Result, bool Cancelled, string? Error) RunBusy<T>(
+        string title, string initialStatus, Func<CancellationToken, Task<T>> work)
+    {
+        var dialog = new Dialog(title, 70, 7);
+        var statusLabel = new Label(initialStatus) { X = 1, Y = 1, Width = Dim.Fill(2) };
+        var cancelButton = new Button("Cancel") { X = 1, Y = Pos.AnchorEnd(1) };
+        dialog.Add(statusLabel, cancelButton);
+
+        T? result = default;
+        string? error = null;
+        bool done = false;
+        bool cancelled = false;
+
+        var cts = new CancellationTokenSource();
+        cancelButton.Clicked += () => { cancelled = true; cts.Cancel(); };
+
+        _ = Task.Run(async () =>
+        {
+            try { result = await work(cts.Token); }
+            catch (OperationCanceledException) { }
+            catch (Exception ex) { error = ex.Message; }
+            finally { done = true; }
+        });
+
+        object pollToken = null!;
+        bool poll(MainLoop _)
+        {
+            if (done)
+            {
+                Application.MainLoop.RemoveTimeout(pollToken);
+                Application.RequestStop();
+                return false;
+            }
+            return true;
+        }
+        pollToken = Application.MainLoop.AddTimeout(TimeSpan.FromMilliseconds(150), poll);
+        Application.Run(dialog);
+
+        return (result, cancelled, error);
+    }
+
+    /// <summary>Re-enables the vocab-suggestion button per the current job state.</summary>
+    private void RefreshVocabButtons()
+    {
+        bool hasSource = _job.Sources.Count > 0;
+        bool bpe = !_job.UsesCharacterTokenizer;
+        _suggestVocabButton.Enabled = hasSource && bpe;
+    }
+
+    /// <summary>
+    /// The vocabulary size of the tokenizer actually on disk, falling back to the
+    /// size recorded by the last in-process run. The file is authoritative — older
+    /// job files predate <see cref="TrainJobSettings.TrainedTokenizerVocab"/>.
+    /// </summary>
+    private int? CurrentTokenizerVocab()
+    {
+        if (File.Exists(_job.TokenizerFilePath))
+        {
+            try
+            {
+                return SharpMind.Tokenization.Serialisation.TokenizerFile
+                    .Load(_job.TokenizerFilePath).Vocab.Size;
+            }
+            catch (Exception)
+            {
+                // Unreadable cache: fall through to whatever the job recorded.
+            }
+        }
+        return _job.TrainedTokenizerVocab;
     }
 
     private void AddStage()

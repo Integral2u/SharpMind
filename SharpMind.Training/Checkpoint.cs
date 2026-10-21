@@ -256,4 +256,121 @@ public static class Checkpoint
 
         return meta;
     }
+
+    /// <summary>
+    /// Loads a checkpoint into a model for a <em>warm restart</em>: every
+    /// parameter is matched by name and copied as in <see cref="Load"/>, with ONE
+    /// exception — the designated <paramref name="growableParameterName"/> (the
+    /// weight-tied embedding) may be larger in the destination than in the
+    /// checkpoint. In that case the overlapping leading rows are copied verbatim
+    /// and any additional destination rows are left for the caller to initialise.
+    ///
+    /// This is the embedding-growth path: the old token rows keep their values
+    /// (their IDs are unchanged by an append-only tokenizer grow), and only the
+    /// newly added token rows start blank. No optimizer state is restored — a
+    /// warm restart trains from step 0.
+    ///
+    /// Returns the checkpoint metadata (its <c>step</c> identifies where the
+    /// reused weights came from). Throws on a genuine mismatch of any
+    /// non-growable parameter.
+    /// </summary>
+    public static CheckpointMeta LoadForWarmRestart(
+        string directory,
+        IEnumerable<Parameter> parameters,
+        string growableParameterName)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(directory);
+        ArgumentException.ThrowIfNullOrWhiteSpace(growableParameterName);
+        if (!Directory.Exists(directory))
+            throw new DirectoryNotFoundException($"Checkpoint directory not found: {directory}");
+
+        var parametersList = parameters.ToList();
+        var paramIndices = new Dictionary<string, Queue<int>>(StringComparer.Ordinal);
+        for (int i = 0; i < parametersList.Count; i++)
+        {
+            if (!paramIndices.TryGetValue(parametersList[i].Name, out var q))
+            {
+                q = new Queue<int>();
+                paramIndices.Add(parametersList[i].Name, q);
+            }
+            q.Enqueue(i);
+        }
+
+        string modelPath = Path.Combine(directory, "model.bin");
+        if (!File.Exists(modelPath))
+            throw new FileNotFoundException($"model.bin not found in {directory}");
+
+        int copiedEmbeddingRows = 0;
+        using (var modelStream = new FileStream(
+            modelPath, FileMode.Open, FileAccess.Read,
+            FileShare.Read, bufferSize: 1 << 20, useAsync: false))
+        using (var reader = new BinaryReader(modelStream))
+        {
+            int count = reader.ReadInt32();
+            for (int i = 0; i < count; i++)
+            {
+                int nameLen = reader.ReadInt32();
+                string name = System.Text.Encoding.UTF8.GetString(reader.ReadBytes(nameLen));
+                int rank = reader.ReadInt32();
+                int elemCount = 1;
+                var dims = new int[Math.Max(rank, 0)];
+                for (int d = 0; d < rank; d++) { int dim = reader.ReadInt32(); dims[d] = dim; elemCount *= dim; }
+
+                Parameter? param = null;
+                if (paramIndices.TryGetValue(name, out var q) && q.TryDequeue(out int idx))
+                    param = parametersList[idx];
+
+                if (param is not null && name == growableParameterName && rank == 2)
+                {
+                    var dst = param.Data.Data;
+                    int dstRows = param.Data.Shape.Rows;
+                    int dstCols = param.Data.Shape.Cols;
+                    int srcRows = dims[0];
+                    int srcCols = dims[1];
+
+                    if (srcCols != dstCols)
+                        throw new InvalidDataException(
+                            $"Checkpoint embedding '{name}' has {srcCols} columns but the model has {dstCols}.");
+
+                    int copy = Math.Min(srcRows, dstRows);
+                    byte[]? rowBuffer = null;
+                    for (int r = 0; r < copy; r++)
+                    {
+                        int rowBytes = srcCols * sizeof(float);
+                        if (rowBuffer is null) rowBuffer = new byte[rowBytes];
+                        else if (rowBuffer.Length < rowBytes) rowBuffer = new byte[rowBytes];
+                        int read = reader.Read(rowBuffer, 0, rowBytes);
+                        if (read != rowBytes)
+                            throw new InvalidDataException(
+                                $"Unexpected end of checkpoint while reading embedding row {r} of '{name}'.");
+                        MemoryMarshal.Cast<byte, float>(rowBuffer.AsSpan(0, rowBytes))
+                            .CopyTo(dst.Slice(r * dstCols, srcCols));
+                    }
+                    // Skip any source rows the destination cannot hold.
+                    long overflow = (long)(srcRows - copy) * srcCols * sizeof(float);
+                    if (overflow > 0) reader.BaseStream.Seek(overflow, SeekOrigin.Current);
+                    copiedEmbeddingRows = copy;
+                }
+                else if (param is not null)
+                {
+                    var data = param.Data.Data;
+                    if (elemCount != data.Length)
+                        throw new InvalidDataException(
+                            $"Checkpoint tensor '{name}' has {elemCount} elements but the " +
+                            $"model parameter '{param.Name}' has {data.Length}.");
+                    reader.Read(MemoryMarshal.AsBytes(data));
+                }
+                else
+                {
+                    reader.BaseStream.Seek(elemCount * sizeof(float), SeekOrigin.Current);
+                }
+            }
+        }
+
+        if (copiedEmbeddingRows == 0)
+            throw new InvalidDataException(
+                $"Checkpoint '{directory}' has no '{growableParameterName}' tensor to warm-restart from.");
+
+        return ReadMeta(directory);
+    }
 }
