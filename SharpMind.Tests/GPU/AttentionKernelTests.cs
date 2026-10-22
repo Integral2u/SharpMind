@@ -1,4 +1,5 @@
 using SharpMind.GPU;
+using SharpMind.GPU.Kernels;
 using Xunit;
 
 namespace SharpMind.Tests.GPU;
@@ -27,6 +28,53 @@ public sealed class AttentionKernelTests
     }
 
     // dP = dO·Vᵀ ; dS = P∘(dP − rowsum(dP∘P)) ; dQ = scale·dS·K ; dK += scale·dSᵀ·Q ; dV += Pᵀ·dO   (GradientMapping.Attention)
+    /// <summary>
+    /// Positioned flash attention: query row i is cache slot pos0+i and attends
+    /// causally to every slot up to and including its own. This is the decode /
+    /// continued-prefill contract that <c>AttnFwdKvLen</c> implements.
+    /// </summary>
+    private static float[] RefForwardKvLen(float[] q, float[] k, float[] v,
+        int pos0, int qLen, int H, int KV)
+    {
+        float scale = 1f / MathF.Sqrt(D);
+        int qDim = H * D, kvDim = KV * D, grp = H / KV;
+        var o = new float[qLen * qDim];
+        for (int h = 0; h < H; h++)
+        {
+            int kvh = h / grp;
+            for (int i = 0; i < qLen; i++)
+            {
+                int queryPos = pos0 + i;
+                var scores = new float[queryPos + 1];
+                float max = float.NegativeInfinity;
+                for (int j = 0; j <= queryPos; j++)
+                {
+                    float s = 0;
+                    for (int d = 0; d < D; d++)
+                        s += q[i * qDim + h * D + d] * k[j * kvDim + kvh * D + d];
+                    scores[j] = s * scale;
+                    max = MathF.Max(max, scores[j]);
+                }
+
+                float sum = 0;
+                for (int j = 0; j < scores.Length; j++)
+                {
+                    scores[j] = MathF.Exp(scores[j] - max);
+                    sum += scores[j];
+                }
+
+                for (int d = 0; d < D; d++)
+                {
+                    float acc = 0;
+                    for (int j = 0; j < scores.Length; j++)
+                        acc += scores[j] / sum * v[j * kvDim + kvh * D + d];
+                    o[i * qDim + h * D + d] = acc;
+                }
+            }
+        }
+        return o;
+    }
+
     internal static (float[] dq, float[] dk, float[] dv) RefBackward(float[] q, float[] k, float[] v, float[] p, float[] dO, int H, int KV)
     {
         float scale = 1f / MathF.Sqrt(D); int qDim = H * D, kvDim = KV * D, grp = H / KV;
@@ -72,6 +120,38 @@ public sealed class AttentionKernelTests
         GpuTestDevice.AssertClose(wantDq, tdq.ToArray(), 1e-4, "dQ");
         GpuTestDevice.AssertClose(wantDk, tdk.ToArray(), 1e-4, "dK");
         GpuTestDevice.AssertClose(wantDv, tdv.ToArray(), 1e-4, "dV");
+    }
+
+    /// <summary>
+    /// pos0 is a cache-slot offset, not a query index: the first query row must
+    /// attend to the existing prefix before it. This anchors AttnFwdKvLen to a
+    /// CPU oracle; the chunked variant is separately checked against this kernel.
+    /// </summary>
+    [Theory]
+    [InlineData(0, 1, 4, 4)]
+    [InlineData(5, 3, 4, 2)]
+    [InlineData(5, 3, 4, 1)]
+    [InlineData(7, 4, 4, 2)]
+    public void AttnFwdKvLen_MatchesPositionedReference(int pos0, int qLen, int H, int KV)
+    {
+        var dev = GpuTestDevice.Device;
+        int kvLen = pos0 + qLen, qDim = H * D, kvDim = KV * D;
+        var q = GpuTestDevice.Random(qLen * qDim, 101, 1f);
+        var k = GpuTestDevice.Random(kvLen * kvDim, 102, 1f);
+        var v = GpuTestDevice.Random(kvLen * kvDim, 103, 1f);
+        var want = RefForwardKvLen(q, k, v, pos0, qLen, H, KV);
+
+        using var arena = new DeviceArena(dev, 1 << 16);
+        var tq = arena.Rent(qLen, qDim); tq.Upload(q);
+        var tk = arena.Rent(kvLen, kvDim); tk.Upload(k);
+        var tv = arena.Rent(kvLen, kvDim); tv.Upload(v);
+        var o = arena.Rent(qLen, qDim);
+        var stats = arena.Rent(qLen * H, FlashAttentionKernels.StatCols);
+        dev.Kernels.AttnFwdKvLen(o, stats, tq, tk, tv, pos0, qLen, kvLen, H, KV, D);
+        dev.Synchronize();
+
+        GpuTestDevice.AssertClose(want, o.ToArray(), 1e-5,
+            $"pos0={pos0} qLen={qLen} H={H} KV={KV}");
     }
 
     /// <summary>dK/dV are written, not accumulated: pre-existing garbage in the destination must not survive.</summary>

@@ -62,4 +62,30 @@ public sealed class RopeKernelTests
         GpuTestDevice.AssertClose(wantRoundTrip, x.ToArray(), 1e-5, "bwd");
         GpuTestDevice.AssertClose(data, x.ToArray(), 1e-4, "round trip");
     }
+
+    /// <summary>
+    /// RopeFwdPos must rotate row s with table row pos0+s, not row s. Decode after a
+    /// sliding-window trim uses an absolute pos0 that no longer equals the cache slot.
+    /// </summary>
+    [Theory] [InlineData(false)] [InlineData(true)]
+    public void RopeFwdPos_UsesAbsolutePositionOffset(bool neox)
+    {
+        const int offset = 5;
+        var dev = GpuTestDevice.Device;
+        var rope = new RoPE(D, maxSeqLen: 16, theta: 10_000f, neoxStyle: neox);
+        var data = GpuTestDevice.Random(B * S * H * D, 71, 1f);
+
+        using var cpu = Tensor<float>.From(data, B, S, H, D);
+        rope.ApplyBatched(cpu, offset);
+        var want = cpu.Data.ToArray();
+
+        using var arena = new DeviceArena(dev, 1 << 12);
+        var cos = arena.Rent(16, D / 2); cos.Upload(rope.CosTable);
+        var sin = arena.Rent(16, D / 2); sin.Upload(rope.SinTable);
+        var x = arena.Rent(B * S, H * D); x.Upload(data);
+        dev.Kernels.RopeFwdPos(x, cos, sin, S, offset, H, D, rope.RopeDim, neox);
+        dev.Synchronize();
+
+        GpuTestDevice.AssertClose(want, x.ToArray(), 1e-5, $"pos0={offset}");
+    }
 }
