@@ -10,7 +10,7 @@ using SharpMind.Training.Autograd;
 namespace SharpMind.Training;
 
 /// <summary>
-/// The training loop. Connects data → model → loss → backward → optimizer → checkpoint.
+/// The training loop. Connects data â†’ model â†’ loss â†’ backward â†’ optimizer â†’ checkpoint.
 ///
 /// Usage:
 /// <code>
@@ -41,7 +41,7 @@ public sealed class TrainLoop
     /// <param name="engine">
     /// The compute engine for forward + backward. Null selects the CPU reference
     /// engine; an accelerator plugin supplies its own. An engine you pass in remains
-    /// yours to dispose — the loop never disposes it. The default CPU engine (used
+    /// yours to dispose â€” the loop never disposes it. The default CPU engine (used
     /// when this is null) lives with the loop instead.
     /// </param>
     public TrainLoop(
@@ -82,7 +82,7 @@ public sealed class TrainLoop
     /// <summary>
     /// Runs the training loop for <see cref="TrainConfig.TotalSteps"/> steps.
     /// <paramref name="onStep"/> is called after each optimizer step with loss
-    /// and diagnostic info — use for logging, early stopping, or eval triggers.
+    /// and diagnostic info â€” use for logging, early stopping, or eval triggers.
     /// <paramref name="progress"/> reports 0..1 after each optimizer step.
     /// <paramref name="onCheckpoint"/> is called with the full path of each
     /// saved checkpoint directory (rolling and final), after retention pruning.
@@ -94,7 +94,7 @@ public sealed class TrainLoop
         CancellationToken cancellationToken = default,
         Func<int, EvalResult>?   evaluate           = null)
     {
-        int   startStep   = 0;
+        int   startStep   = Math.Max(0, _config.StartStep);
         int   skipBatches = 0;
         long  priorTokens = 0;
         float bestValLoss = float.PositiveInfinity;
@@ -117,7 +117,7 @@ public sealed class TrainLoop
                 throw new InvalidOperationException(
                     $"Checkpoint under '{_config.ResumeFrom}' was trained with vocabulary size " +
                     $"{recordedVocabSize}, but this run's model is built for {_config.ExpectedVocabSize}. " +
-                    "The embedding table cannot be resumed across a vocabulary change — use a warm " +
+                    "The embedding table cannot be resumed across a vocabulary change â€” use a warm " +
                     $"restart ({nameof(TrainConfig.WarmRestartFrom)}) to reuse these weights and grow the " +
                     "tokenizer, or start fresh.");
             }
@@ -400,7 +400,7 @@ public sealed class TrainLoop
 
     private static long ParseStep(string dir)
     {
-        // "…/step-0000123" or "…/step-0000123-final"
+        // "â€¦/step-0000123" or "â€¦/step-0000123-final"
         var name = Path.GetFileName(dir);
         if (!name.StartsWith("step-", StringComparison.Ordinal)) return 0;
         int end = name.IndexOf('-', 5);
@@ -408,7 +408,7 @@ public sealed class TrainLoop
         return long.TryParse(number, out var v) ? v : 0;
     }
 
-    // Forward + backward — delegated to the engine (CPU reference or an accelerator plugin's).
+    // Forward + backward â€” delegated to the engine (CPU reference or an accelerator plugin's).
 
     private float ForwardBackward(TrainingBatch batch, CancellationToken cancellationToken)
         => _engine.ForwardBackward(batch, cancellationToken);

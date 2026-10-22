@@ -45,7 +45,7 @@ public static class QwenConverter
 
         var vocab = new Vocabulary(vocabList, specials);
         var merges = BuildMerges(root);
-        return new BpeModel(vocab, merges, new Gpt2PreTokeniser());
+        return new BpeModel(vocab, merges, new Cl100kPreTokeniser());
     }
 
     private static (string unk, string bos, string eos, string pad, List<string> additional) QwenExtractSpecials(JsonElement root)
@@ -69,9 +69,8 @@ public static class QwenConverter
                 {
                     if (content.Contains("im_start")) bos = content;
                     else if (content.Contains("im_end")) eos = content;
-                    else if (!additional.Contains(content)) additional.Add(content);
-                    
-                    var id = t.TryGetProperty("id", out var idEl) ? idEl.GetInt32() : -1;
+                    else if (content != unk && content != pad && !additional.Contains(content))
+                        additional.Add(content);
                 }
             }
         }

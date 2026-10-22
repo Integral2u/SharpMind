@@ -1,4 +1,6 @@
-﻿using SharpMind.Data.Metadata;
+using System.Security.Cryptography;
+using System.Text;
+using SharpMind.Data.Metadata;
 
 namespace SharpMind.Data.Pipeline.Stages;
 /// <summary>
@@ -9,8 +11,8 @@ namespace SharpMind.Data.Pipeline.Stages;
 [ComponentKind("Deduplicate", "Drops repeats within a rolling window.")]
 public sealed class DeduplicateFilter : ICleaningStage
 {
-    private readonly HashSet<int> _seen;
-    private readonly Queue<int> _window;
+    private readonly HashSet<string> _seen;
+    private readonly Queue<string> _window;
     private readonly int _windowSize;
 
     public DeduplicateFilter(
@@ -18,15 +20,16 @@ public sealed class DeduplicateFilter : ICleaningStage
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(windowSize);
         _windowSize = windowSize;
-        _seen = new HashSet<int>(windowSize);
-        _window = new Queue<int>(windowSize);
+        _seen = new HashSet<string>(windowSize, StringComparer.Ordinal);
+        _window = new Queue<string>(windowSize);
     }
 
     public string Name => $"Deduplicate(window={_windowSize})";
 
     public string? Process(string document)
     {
-        int hash = document.GetHashCode();
+        // GetHashCode is randomly seeded per process and collision-prone; a collision would drop a distinct document.
+        string hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(document)));
         if (!_seen.Add(hash)) return null;
 
         _window.Enqueue(hash);

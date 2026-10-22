@@ -7,6 +7,13 @@ public sealed class SafetyStageTests
     // BlocklistFilter
 
     [Fact]
+    public void Blacklist_EmptyTerms_PassesEverything()
+    {
+        var stage = new BlacklistFilter([]);
+        Assert.Equal("keep this document", stage.Process("keep this document"));
+    }
+
+    [Fact]
     public void Blocklist_DiscardsDocumentContainingTerm()
     {
         var stage = new BlocklistFilter(["badword"]);

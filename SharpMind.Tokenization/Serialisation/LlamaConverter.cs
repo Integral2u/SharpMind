@@ -42,7 +42,32 @@ public static class LlamaConverter
         var vocab = BuildVocab(root, specials);
         var merges = BuildMerges(root);
 
-        return new BpeModel(vocab, merges, new Gpt2PreTokeniser());
+        // Llama 3+ uses the cl100k pattern; Llama 2 is the classic GPT-2 pattern.
+        bool llama3 = UsesCl100k(root);
+        return new BpeModel(vocab, merges, llama3 ? new Cl100kPreTokeniser() : new Gpt2PreTokeniser());
+    }
+
+    private static bool UsesCl100k(JsonElement root)
+    {
+        if (root.TryGetProperty("added_tokens", out var added) && added.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var token in added.EnumerateArray())
+            {
+                if (token.TryGetProperty("content", out var content) &&
+                    content.GetString() is "<|begin_of_text|>" or "<|start_header_id|>")
+                    return true;
+            }
+        }
+
+        if (root.TryGetProperty("model", out var model) &&
+            model.TryGetProperty("vocab", out var vocab) && vocab.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var token in vocab.EnumerateObject())
+                if (token.Name is "<|begin_of_text|>" or "<|start_header_id|>")
+                    return true;
+        }
+
+        return false;
     }
 
     // Helpers

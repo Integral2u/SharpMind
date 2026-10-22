@@ -51,28 +51,21 @@ public sealed class FusechatSource : IDataSource
                 path, FileMode.Open, FileAccess.Read,
                 FileShare.Read, bufferSize: 65_536, useAsync: true);
 
-            // Since Fusechat files are large JSON arrays, we use Utf8JsonReader for efficiency
-            // or just JsonDocument if size allows. The sample was ~1.7M records.
-            // For 1.7M records, we definitely need a streaming approach.
-            
-            using var document = await JsonDocument.ParseAsync(stream, default, cancellationToken).ConfigureAwait(false);
-            JsonElement root = document.RootElement;
-
-            if (root.ValueKind != JsonValueKind.Array)
-                continue;
-
-            foreach (JsonElement entry in root.EnumerateArray())
+            // The documented corpus is a ~1.7M-record root array. Deserialize one
+            // element at a time instead of building the whole JsonDocument.
+            await foreach (JsonElement entry in JsonSerializer
+                .DeserializeAsyncEnumerable<JsonElement>(stream, cancellationToken: cancellationToken)
+                .ConfigureAwait(false))
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                if (entry.ValueKind != JsonValueKind.Object) continue;
 
-                if (entry.TryGetProperty("conversations", out JsonElement conversations) && 
+                if (entry.TryGetProperty("conversations", out JsonElement conversations) &&
                     conversations.ValueKind == JsonValueKind.Array)
                 {
                     string text = FormatConversations(conversations);
                     if (!string.IsNullOrWhiteSpace(text))
-                    {
                         yield return text;
-                    }
                 }
             }
         }

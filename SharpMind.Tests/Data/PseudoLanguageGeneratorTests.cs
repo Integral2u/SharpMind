@@ -193,4 +193,19 @@ public sealed class PseudoLanguageGeneratorTests
             Assert.True(family.Count >= 1);
         }
     }
+
+    [Fact]
+    public void VocabularyBuilder_ImpossibleTarget_ThrowsInsteadOfHanging()
+    {
+        var config = new VocabConfig
+        {
+            VocabSize = 100,
+            RootMorphemes = 6,
+            Affixes = 0,
+            MinWordLength = 50,
+            MaxWordLength = 60,
+        };
+
+        Assert.Throws<InvalidOperationException>(() => new VocabularyBuilder(config).Build());
+    }
 }

@@ -101,7 +101,7 @@ public sealed class TrainLoopEngineTests : IDisposable
 
         await loop.RunAsync(onStep: r => losses.Add(r.Loss));
 
-        Assert.Equal(6, engine.Calls);                         // 3 steps × 2 accumulated batches
+        Assert.Equal(6, engine.Calls);                         // 3 steps Ã— 2 accumulated batches
         Assert.Equal(new[] { 1.5f, 1.5f, 1.5f }, losses);      // mean of the engine's constant loss
         Assert.False(engine.Disposed);                          // caller owns the engine
     }
@@ -137,6 +137,38 @@ public sealed class TrainLoopEngineTests : IDisposable
         // Two microbatches contributed +2 each; the loop must average (sum 4 / 2).
         Assert.Equal(2f, optimizer.UpdatedGradient, precision: 5);
         Assert.Equal(1, optimizer.Step);
+    }
+
+    [Fact]
+    public async Task StartStep_ContinuesTheStepCounterAndSchedule()
+    {
+        var sharpConfig = SharpMindConfig.Gpt with { Hardware = HardwareTier.Scalar };
+        var weights = ModelFactory.CreateForTraining(Cfg, sharpConfig);
+        WeightInitializer.InitializeRandomly(weights, 1234);
+        using var model = ModelFactory.CreateTrainingTransformer(weights, sharpConfig);
+        var engine = new CountingEngine();
+        int lastStep = 0;
+
+        var loop = new TrainLoop(
+            model, model.Parameters(), Loader(),
+            new AdamW(model.Parameters(), lr: 0.01f, weightDecay: 0f),
+            new ConstantScheduler(0.01f),
+            TrainingOpsFactory.Create(sharpConfig),
+            smmConfig: sharpConfig,
+            config: new TrainConfig
+            {
+                TotalSteps = 6,
+                StartStep = 5,
+                GradAccumSteps = 1,
+                LogInterval = 1,
+                CheckpointInterval = 0,
+            },
+            engine: engine);
+
+        await loop.RunAsync(onStep: r => lastStep = r.Step);
+
+        Assert.Equal(1, engine.Calls);
+        Assert.Equal(6, lastStep);
     }
 
     [Fact]

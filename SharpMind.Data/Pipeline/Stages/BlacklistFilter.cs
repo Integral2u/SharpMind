@@ -1,10 +1,10 @@
-﻿using System.Text.RegularExpressions;
+using System.Text.RegularExpressions;
 
 namespace SharpMind.Data.Pipeline.Stages;
 
 public sealed class BlacklistFilter : ICleaningStage
 {
-    private readonly Regex _pattern;
+    private readonly Regex? _pattern;
 
     /// <param name="terms">Words or phrases to blacklist.</param>
     /// <param name="wholeWord">
@@ -14,7 +14,13 @@ public sealed class BlacklistFilter : ICleaningStage
     public BlacklistFilter(IEnumerable<string> terms, bool wholeWord = true, bool caseSensitive = false)
     {
         ArgumentNullException.ThrowIfNull(terms);
-        var escaped = terms.Select(Regex.Escape);
+        var list = terms.Where(t => !string.IsNullOrWhiteSpace(t)).ToArray();
+        if (list.Length == 0)
+        {
+            _pattern = null;
+            return;
+        }
+        var escaped = list.Select(Regex.Escape);
         string pattern = wholeWord
             ? $@"\b(?:{string.Join('|', escaped)})\b"
             : $@"(?:{string.Join('|', escaped)})";
@@ -36,6 +42,6 @@ public sealed class BlacklistFilter : ICleaningStage
     }
 
     public string Name => "BlacklistFilter";
-    public string? Process(string document) => _pattern.IsMatch(document) ? null : document;
+    public string? Process(string document) => _pattern is null || !_pattern.IsMatch(document) ? document : null;
 }
 

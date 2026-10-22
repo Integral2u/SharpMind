@@ -166,13 +166,15 @@ public static class TokenizerFile
     internal static string PreTokeniserName(IPreTokeniser pt) => pt switch
     {
         Gpt2PreTokeniser => "gpt2",
+        Cl100kPreTokeniser => "cl100k",
         WhitespacePreTokeniser => "whitespace",
         _ => pt.GetType().Name.ToLowerInvariant()
     };
 
-    internal static IPreTokeniser ParsePreTokeniserName(string name) => name switch
+    internal static IPreTokeniser ParsePreTokeniserName(string name) => name.ToLowerInvariant() switch
     {
         "gpt2" => new Gpt2PreTokeniser(),
+        "cl100k" or "cl100k_base" or "cl100kpretokeniser" => new Cl100kPreTokeniser(),
         "whitespace" => new WhitespacePreTokeniser(),
         _ => new Gpt2PreTokeniser()
     };

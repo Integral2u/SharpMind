@@ -27,17 +27,12 @@ public class GrepTool
                 ? $"*{extension}"
                 : "*.*";
 
-            var regex = new Regex(pattern, RegexOptions.IgnoreCase | RegexOptions.Compiled);
+            var regex = new Regex(pattern, RegexOptions.IgnoreCase | RegexOptions.Compiled, TimeSpan.FromSeconds(2));
             var results = new List<string>();
             int matchCount = 0;
 
-            foreach (var file in Directory.EnumerateFiles(searchDir, searchPattern, SearchOption.AllDirectories))
+            foreach (var file in EnumerateFilesPruned(searchDir, searchPattern))
             {
-                // Skip binary-looking files and common non-text directories.
-                string fileName = Path.GetFileName(file);
-                if (fileName is ".git" or "node_modules" or "bin" or "obj" or ".vs" or "packages")
-                    continue;
-
                 try
                 {
                     int lineNum = 0;
@@ -76,6 +71,30 @@ public class GrepTool
         catch (Exception ex)
         {
             return $"Error searching: {ex.Message}";
+        }
+    }
+
+    private static readonly HashSet<string> SkippedDirectories =
+        new([".git", "node_modules", "bin", "obj", ".vs", "packages"], StringComparer.OrdinalIgnoreCase);
+
+    private static IEnumerable<string> EnumerateFilesPruned(string root, string searchPattern)
+    {
+        var pending = new Stack<string>();
+        pending.Push(root);
+        while (pending.Count > 0)
+        {
+            string dir = pending.Pop();
+            string[] files;
+            try { files = Directory.GetFiles(dir, searchPattern); }
+            catch { files = []; }
+            foreach (string file in files) yield return file;
+
+            string[] subdirs;
+            try { subdirs = Directory.GetDirectories(dir); }
+            catch { continue; }
+            foreach (string subdir in subdirs)
+                if (!SkippedDirectories.Contains(Path.GetFileName(subdir)))
+                    pending.Push(subdir);
         }
     }
 }

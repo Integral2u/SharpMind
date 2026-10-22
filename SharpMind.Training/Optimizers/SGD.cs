@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using SharpMind.Core.Training;
 
 namespace SharpMind.Training.Optimizers;
@@ -89,6 +90,80 @@ public sealed class SGD : IOptimizer
             for (int i = 0; i < _velocity.Length; i++)
                 for (int j = 0; j < _velocity[i].Length; j++)
                     _velocity[i][j] = reader.ReadSingle();
+        }
+    }
+
+    public void LoadStateForWarmRestart(
+        BinaryReader reader, int step, IReadOnlyList<ParameterLayout> checkpointParameters)
+    {
+        reader.ReadInt32(); // stored step; caller supplies the authoritative value
+        _step = step;
+        _lr = reader.ReadSingle();
+        bool hasVelocity = reader.ReadBoolean();
+
+        var targetIndices = new Dictionary<string, Queue<int>>(StringComparer.Ordinal);
+        for (int i = 0; i < _parameters.Length; i++)
+        {
+            if (!targetIndices.TryGetValue(_parameters[i].Name, out var queue))
+            {
+                queue = new Queue<int>();
+                targetIndices[_parameters[i].Name] = queue;
+            }
+            queue.Enqueue(i);
+        }
+
+        foreach (var source in checkpointParameters)
+        {
+            int sourceCount = checked((int)source.ElementCount);
+            var sourceVelocity = new float[sourceCount];
+            if (hasVelocity)
+                ReadFloats(reader, sourceVelocity, $"SGD velocity for '{source.Name}'");
+
+            if (!hasVelocity || _velocity is null) continue;
+            if (!targetIndices.TryGetValue(source.Name, out var targets) || targets.Count == 0)
+                continue;
+            int targetIndex = targets.Dequeue();
+            var targetVelocity = _velocity[targetIndex];
+            int[] targetShape = _parameters[targetIndex].Data.Shape.Dims.ToArray();
+            int[] sourceShape = source.Shape;
+
+            if (SameShape(sourceShape, targetShape))
+            {
+                sourceVelocity.CopyTo(targetVelocity, 0);
+                continue;
+            }
+            if (sourceShape.Length == 2 && targetShape.Length == 2
+                && sourceShape[1] == targetShape[1]
+                && targetShape[0] > sourceShape[0])
+            {
+                Array.Copy(sourceVelocity, 0, targetVelocity, 0, sourceShape[0] * sourceShape[1]);
+                continue;
+            }
+
+            throw new InvalidDataException(
+                $"Cannot warm-restart optimizer state for '{source.Name}': checkpoint shape " +
+                $"[{string.Join(',', sourceShape)}] does not fit model shape " +
+                $"[{string.Join(',', targetShape)}].");
+        }
+    }
+
+    private static bool SameShape(int[] a, int[] b)
+    {
+        if (a.Length != b.Length) return false;
+        for (int i = 0; i < a.Length; i++)
+            if (a[i] != b[i]) return false;
+        return true;
+    }
+
+    private static void ReadFloats(BinaryReader reader, float[] destination, string what)
+    {
+        try
+        {
+            reader.BaseStream.ReadExactly(MemoryMarshal.AsBytes(destination.AsSpan()));
+        }
+        catch (EndOfStreamException)
+        {
+            throw new InvalidDataException($"Unexpected end of checkpoint while reading {what}.");
         }
     }
 

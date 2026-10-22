@@ -39,6 +39,13 @@ public sealed record TrainConfig
     public string? ResumeFrom { get; init; }
 
     /// <summary>
+    /// First optimizer step when <see cref="ResumeFrom"/> is null. Warm restarts
+    /// use this to continue the step counter and LR schedule from the base
+    /// checkpoint while their optimizer state is loaded separately.
+    /// </summary>
+    public int StartStep { get; init; }
+
+    /// <summary>
     /// Apply the checkpoint's data cursor on resume: skip the batches the
     /// interrupted run already consumed, so the resumed run trains on what comes
     /// next instead of re-training the head of the corpus it has seen. Defaults
@@ -106,12 +113,11 @@ public sealed record TrainConfig
     public int ExpectedVocabSize { get; init; }
 
     /// <summary>
-    /// Warm restart: load the parameters from this checkpoint directory as an
-    /// <em>initialisation</em> rather than a strict resume. Unlike
-    /// <see cref="ResumeFrom"/>, the optimizer state and step counter are NOT
-    /// restored — training restarts at step 0 with a fresh schedule — and the
-    /// embedding table may be a different size than the checkpoint's (the caller
-    /// loads the overlapping rows before the loop runs). Null = no warm restart.
+    /// Warm restart: load the parameters (and, when supplied, migrated optimizer
+    /// state) from this checkpoint directory rather than a strict resume. The
+    /// embedding table may be a different size than the checkpoint's; the caller
+    /// loads the overlapping rows, migrates optimizer moments, and sets
+    /// <see cref="StartStep"/> to continue the schedule. Null = no warm restart.
     /// </summary>
     public string? WarmRestartFrom { get; init; }
 

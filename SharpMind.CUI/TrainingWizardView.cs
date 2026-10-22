@@ -517,6 +517,7 @@ public sealed class TrainingWizardView : View
     {
         _jobPathLabel.Text = _job.SourcePath is null ? "New job (not yet saved)" : $"Saved: {Path.GetFileName(_job.SourcePath)}";
         _nameField.Text = (ustring)(_job.Name ?? "");
+        _exportField.Text = (ustring)(_job.ExportPath ?? "");
         RefreshMap();
         RefreshHyperRows();
         RefreshSources();

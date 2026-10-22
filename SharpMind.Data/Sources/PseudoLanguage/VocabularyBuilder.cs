@@ -25,25 +25,39 @@ public sealed class VocabularyBuilder(VocabConfig config, Random? random = null)
         GenerateDerivedWords();
         AddNegations();
 
-        while (_words.Count < _config.VocabSize)
+        if (_words.Count >= _config.VocabSize) return this;
+        if (_config.Affixes <= 0 || _morphemes.Roots.Count == 0)
+            throw new InvalidOperationException(
+                $"VocabularyBuilder cannot reach {_config.VocabSize} words with Affixes={_config.Affixes}.");
+
+        var suffixes = _morphemes.GetSuffixes().ToList();
+        if (suffixes.Count == 0)
+            throw new InvalidOperationException(
+                $"VocabularyBuilder cannot reach {_config.VocabSize} words: no suffixes are configured.");
+
+        // Random retries can revisit the same root+suffix forever once the finite
+        // word space is exhausted. Bound the attempts so a misconfigured size
+        // fails loudly instead of hanging the build.
+        long maxAttempts = Math.Max(1_000L, (long)_morphemes.Roots.Count * suffixes.Count * 4);
+        long attempts = 0;
+        while (_words.Count < _config.VocabSize && attempts++ < maxAttempts)
         {
             var rootIndex = _random.Next(_morphemes.Roots.Count);
             var root = _morphemes.Roots[rootIndex];
-            var suffixes = _morphemes.GetSuffixes().ToList();
-            var suffix = _config.Affixes > 0 && suffixes.Count > 0
-                ? suffixes[_random.Next(suffixes.Count)]
-                : "";
-            if (!string.IsNullOrEmpty(suffix))
+            var suffix = suffixes[_random.Next(suffixes.Count)];
+            var word = root + suffix;
+            var family = new List<(string, MorphemeCategory)>
             {
-                var word = root + suffix;
-                var family = new List<(string, MorphemeCategory)>
-                {
-                    (root, MorphemeCategory.Root)
-                };
-                _morphemes.TryGetSuffixCategory(suffix, out var cat);
-                AddWord(word, cat, family);
-            }
+                (root, MorphemeCategory.Root)
+            };
+            _morphemes.TryGetSuffixCategory(suffix, out var cat);
+            AddWord(word, cat, family);
         }
+
+        if (_words.Count < _config.VocabSize)
+            throw new InvalidOperationException(
+                $"VocabularyBuilder exhausted {_morphemes.Roots.Count} roots x {suffixes.Count} suffixes " +
+                $"after {attempts} attempts and only produced {_words.Count}/{_config.VocabSize} words.");
 
         return this;
     }

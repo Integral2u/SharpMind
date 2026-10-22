@@ -1,4 +1,6 @@
 using SharpMind.Tokenization;
+using SharpMind.Tokenization.PreTokeniser;
+using SharpMind.Tokenization.Serialisation;
 using Xunit;
 
 namespace SharpMind.Tests.Tokenization;
@@ -61,5 +63,22 @@ public sealed class TokenizerFileRoundTripTests
 
         var reloaded = Tokenizer.FromJson(json);
         Assert.Equal(9, reloaded.VocabSize);
+    }
+
+    [Fact]
+    public void Cl100kPreTokeniser_RoundTripsByName()
+    {
+        var tokenizer = Tokenizer.FromGguf(
+            tokens: Vocab,
+            merges: ["a b", "ab x"],
+            tokenTypes: null,
+            bosId: 1,
+            eosId: 2);
+
+        string json = tokenizer.ToJson()
+            .Replace("\"pre_tokeniser\": \"gpt2\"", "\"pre_tokeniser\": \"cl100k\"");
+        var reloaded = TokenizerFile.FromJson(json);
+
+        Assert.IsType<Cl100kPreTokeniser>(reloaded.PreTokeniser);
     }
 }

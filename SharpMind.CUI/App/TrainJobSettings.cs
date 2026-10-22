@@ -4,7 +4,7 @@ using SharpMind.Core.Quantization;
 
 namespace SharpMind.CUI.App;
 
-/// <summary>A configured training job — the persisted "what &amp; how to train" document.</summary>
+/// <summary>A configured training job â€” the persisted "what &amp; how to train" document.</summary>
 public sealed class TrainJobSettings
 {
     /// <summary>File extension for saved training jobs (<c>*.smmt</c>).</summary>
@@ -33,9 +33,9 @@ public sealed class TrainJobSettings
     public List<JobComponent> GlobalStages { get; set; } = [];
 
     /// <summary>
-    /// Content fingerprints for each configured source (display name → SHA-256),
+    /// Content fingerprints for each configured source (display name â†’ SHA-256),
     /// recorded at the start of a run. Lets a later run detect that the corpus
-    /// changed — invalidating the path-only tokenizer cache — and stamps an
+    /// changed â€” invalidating the path-only tokenizer cache â€” and stamps an
     /// audit fingerprint onto exported models. Unhashable sources (remote) are
     /// absent. Empty for jobs that have never run.
     /// </summary>
@@ -54,7 +54,7 @@ public sealed class TrainJobSettings
     public bool IncrementalMode { get; set; }
 
     /// <summary>
-    /// Per-source per-file content hashes (display name → absolute file path →
+    /// Per-source per-file content hashes (display name â†’ absolute file path â†’
     /// SHA-256), persisted after a successful incremental run. The next run
     /// diffs the current corpus against this map to decide what still needs
     /// training. Persisted on-disk alongside the checkpoints so it survives
@@ -144,7 +144,7 @@ public sealed class TrainJobSettings
     /// <summary>
     /// Accelerator plugin name (<c>IAcceleratorPlugin.Name</c>, case-insensitive)
     /// that supplies the training engine; null/empty/"CPU" = the built-in CPU
-    /// engine. Resolved against the plugins folder at run time — a name that is
+    /// engine. Resolved against the plugins folder at run time â€” a name that is
     /// not found fails the run rather than silently training on the CPU.
     /// </summary>
     public string? Accelerator { get; set; }
@@ -263,7 +263,7 @@ public sealed class TrainJobSettings
             if (string.IsNullOrWhiteSpace(ExportPath))
                 return SourcePathFolder is { } folder
                     ? Path.Combine(folder, Sanitize(Name) + ".smm")
-                    : Path.Combine(DefaultFolder, Sanitize(Name), Sanitize(Name) + ".smm");
+                    : Path.Combine(DefaultFolder, Sanitize(Name) + ".smm");
             return IsExportFile(ExportPath)
                 ? ExportPath
                 : Path.Combine(ExportFolder, Sanitize(Name) + ".smm");
@@ -285,12 +285,12 @@ public sealed class TrainJobSettings
     public string? ResumeFrom { get; set; }
 
     /// <summary>
-    /// Warm restart: reuse the weights of this checkpoint as an initialisation,
-    /// starting a fresh schedule (new optimizer, step 0) — as opposed to a strict
+    /// Warm restart: reuse this checkpoint's weights and migrated optimizer
+    /// state, continuing its step counter/schedule, as opposed to a strict
     /// resume. The run's pre-flight arms this automatically when it grows the
     /// tokenizer (or finds a checkpoint whose vocabulary differs), so a widened
-    /// embedding can reuse the old weights' overlapping rows. Ignored when
-    /// <see cref="StartFresh"/> is true. Null = no warm restart.
+    /// embedding can reuse the old weights' overlapping rows and moments.
+    /// Ignored when <see cref="StartFresh"/> is true. Null = no warm restart.
     /// </summary>
     public string? WarmRestartFrom { get; set; }
 
@@ -332,7 +332,7 @@ public sealed class TrainJobSettings
     // --- Persistence -------------------------------------------------------
 
     /// <summary>
-    /// The file this job was loaded from, or last saved to — in-memory only,
+    /// The file this job was loaded from, or last saved to â€” in-memory only,
     /// never written into the job file or the dirty-tracking payload, so a
     /// loaded job keeps saving back to exactly where it came from across
     /// wizard round-trips. Null for a new job (its first save lands in
@@ -388,7 +388,7 @@ public sealed class TrainJobSettings
 
                 if (version < CurrentFormatVersion)
                 {
-                    // Older wrapped container — the inner job shape is the same
+                    // Older wrapped container â€” the inner job shape is the same
                     // payload type, just deserialize it. (Future migrations hook
                     // in here.)
                 }

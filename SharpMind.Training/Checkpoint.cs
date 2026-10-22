@@ -131,6 +131,72 @@ public static class Checkpoint
         }
     }
 
+    /// <summary>
+    /// Reads one tensor's element count from <c>model.bin</c> without loading any
+    /// weights. Used to recover the vocabulary of older checkpoints whose
+    /// metadata predates the <c>vocabSize</c> field.
+    /// </summary>
+    public static IReadOnlyList<ParameterLayout> ReadTensorLayouts(string directory)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(directory);
+        string modelPath = Path.Combine(directory, "model.bin");
+        if (!File.Exists(modelPath))
+            throw new FileNotFoundException($"model.bin not found in {directory}");
+
+        var layouts = new List<ParameterLayout>();
+        using var stream = new FileStream(
+            modelPath, FileMode.Open, FileAccess.Read, FileShare.Read,
+            bufferSize: 1 << 20, useAsync: false);
+        using var reader = new BinaryReader(stream);
+        int count = reader.ReadInt32();
+        for (int i = 0; i < count; i++)
+        {
+            int nameLen = reader.ReadInt32();
+            string name = System.Text.Encoding.UTF8.GetString(
+                ReadBytesExactly(reader, nameLen, "tensor name"));
+            int rank = reader.ReadInt32();
+            var shape = new int[rank];
+            long elements = 1;
+            for (int d = 0; d < rank; d++)
+            {
+                shape[d] = reader.ReadInt32();
+                elements *= shape[d];
+            }
+            layouts.Add(new ParameterLayout(name, shape));
+            SkipExactly(reader, elements * sizeof(float), $"tensor '{name}'");
+        }
+        return layouts;
+    }
+
+    public static long? ReadTensorElementCount(string directory, string tensorName)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(directory);
+        ArgumentException.ThrowIfNullOrWhiteSpace(tensorName);
+        string modelPath = Path.Combine(directory, "model.bin");
+        if (!File.Exists(modelPath)) return null;
+
+        using var stream = new FileStream(
+            modelPath, FileMode.Open, FileAccess.Read, FileShare.Read,
+            bufferSize: 1 << 20, useAsync: false);
+        using var reader = new BinaryReader(stream);
+        int count = reader.ReadInt32();
+        for (int i = 0; i < count; i++)
+        {
+            int nameLen = reader.ReadInt32();
+            string name = System.Text.Encoding.UTF8.GetString(
+                ReadBytesExactly(reader, nameLen, "tensor name"));
+            int rank = reader.ReadInt32();
+            long elements = 1;
+            for (int d = 0; d < rank; d++) elements *= reader.ReadInt32();
+
+            if (string.Equals(name, tensorName, StringComparison.Ordinal))
+                return elements;
+
+            SkipExactly(reader, elements * sizeof(float), $"tensor '{name}'");
+        }
+        return null;
+    }
+
     // Load
 
     /// <summary>
@@ -308,8 +374,9 @@ public static class Checkpoint
     ///
     /// This is the embedding-growth path: the old token rows keep their values
     /// (their IDs are unchanged by an append-only tokenizer grow), and only the
-    /// newly added token rows start blank. No optimizer state is restored — a
-    /// warm restart trains from step 0.
+    /// newly added token rows start blank. When an optimizer is supplied its
+    /// state is migrated by name/shape: unchanged tensors copy verbatim and a
+    /// grown embedding copies its overlapping rows, leaving new-row moments zero.
     ///
     /// Returns the checkpoint metadata (its <c>step</c> identifies where the
     /// reused weights came from). Throws on a genuine mismatch of any
@@ -318,7 +385,8 @@ public static class Checkpoint
     public static CheckpointMeta LoadForWarmRestart(
         string directory,
         IEnumerable<Parameter> parameters,
-        string growableParameterName)
+        string growableParameterName,
+        IOptimizer? optimizer = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(directory);
         ArgumentException.ThrowIfNullOrWhiteSpace(growableParameterName);
@@ -411,7 +479,19 @@ public static class Checkpoint
             throw new InvalidDataException(
                 $"Checkpoint '{directory}' has no '{growableParameterName}' tensor to warm-restart from.");
 
-        return ReadMeta(directory);
+        var meta = ReadMeta(directory);
+        if (optimizer is not null)
+        {
+            string optPath = Path.Combine(directory, "optimizer.bin");
+            if (File.Exists(optPath))
+            {
+                using var optStream = new FileStream(optPath, FileMode.Open, FileAccess.Read);
+                using var optReader = new BinaryReader(optStream);
+                optimizer.LoadStateForWarmRestart(
+                    optReader, meta.Step, ReadTensorLayouts(directory));
+            }
+        }
+        return meta;
     }
 
     private static byte[] ReadBytesExactly(BinaryReader reader, int count, string what)

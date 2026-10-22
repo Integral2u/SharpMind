@@ -131,6 +131,25 @@ public sealed class CheckpointTests
     }
 
     [Fact]
+    public void ReadTensorElementCount_FindsTensorWithoutLoadingIt()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), "sm-element-count-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            using var data = Tensor<float>.Ones(7, 3);
+            using var param = new Parameter("EmbeddingTable.weight", data);
+            Checkpoint.Save(dir, [param], step: 1);
+
+            Assert.Equal(21L, Checkpoint.ReadTensorElementCount(dir, "EmbeddingTable.weight"));
+            Assert.Null(Checkpoint.ReadTensorElementCount(dir, "missing.weight"));
+        }
+        finally
+        {
+            if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
     public void Load_ThrowsClearError_WhenModelFileIsTruncated()
     {
         string dir = Path.Combine(Path.GetTempPath(), "sm-truncated-" + Guid.NewGuid().ToString("N"));

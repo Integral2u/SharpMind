@@ -171,12 +171,15 @@ public sealed class TrainJobSettingsTests
     }
 
     [Fact]
-    public void ExportFilePath_BlankDefaultsUnderDefaultFolder()
+    public void ExportFilePath_BlankDefaultsBesideTokenizer()
     {
         var job = new TrainJobSettings { Name = "blank-export" };
         Assert.Equal(
-            Path.Combine(TrainJobSettings.DefaultFolder, "blank-export", "blank-export.smm"),
+            Path.Combine(TrainJobSettings.DefaultFolder, "blank-export.smm"),
             job.ExportFilePath);
+        Assert.Equal(
+            Path.Combine(TrainJobSettings.DefaultFolder, "blank-export.tokenizer.json"),
+            job.TokenizerFilePath);
     }
 
     [Fact]

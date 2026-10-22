@@ -261,6 +261,8 @@ public sealed class TrainingProgressView : View
 
         TimeSpan total = _stopwatch.Elapsed;
         _result = result;
+        if (result.Success && result.ExportPath is { } exported)
+            _job.ExportPath = exported;
 
         // The run is over (success, failure, or interrupt) — tell the owner so
         // a brand-new run may be started again instead of being switched back.

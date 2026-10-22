@@ -252,6 +252,8 @@ public static class TrainRunner
             string checkpointDir = job.CheckpointDir;
             string? resumeDir;
             string? warmRestartDir = null;
+            int? warmRestartPriorVocab = null;
+            int warmRestartStartStep = 0;
             if (job.IncrementalMode)
             {
                 resumeDir = Checkpoint.FindLatest(checkpointDir);
@@ -296,15 +298,29 @@ public static class TrainRunner
             if (resumeDir is not null && Directory.Exists(resumeDir))
             {
                 var meta = Checkpoint.ReadMeta(resumeDir);
+                int? recordedVocab = null;
                 if (meta.Extra.TryGetValue("vocabSize", out var recordedText)
                     && int.TryParse(recordedText, System.Globalization.NumberStyles.Integer,
-                           System.Globalization.CultureInfo.InvariantCulture, out int recordedVocab)
-                    && recordedVocab != modelConfig.VocabSize)
+                           System.Globalization.CultureInfo.InvariantCulture, out int parsedVocab))
+                {
+                    recordedVocab = parsedVocab;
+                }
+                else
+                {
+                    // Older checkpoints predate the vocabSize metadata. Recover
+                    // the embedding width from model.bin so they warm-restart too.
+                    long? elements = Checkpoint.ReadTensorElementCount(resumeDir, "EmbeddingTable.weight");
+                    if (elements is > 0 && elements.Value % modelConfig.HiddenDim == 0)
+                        recordedVocab = (int)(elements.Value / modelConfig.HiddenDim);
+                }
+
+                if (recordedVocab is int priorVocab && priorVocab != modelConfig.VocabSize)
                 {
                     warmRestartDir = resumeDir;
+                    warmRestartPriorVocab = priorVocab;
                     resumeDir = null;
                     job.ResumeFrom = null; // see the grown-tokenizer case above
-                    Log($"Checkpoint vocab {recordedVocab} ≠ model vocab {modelConfig.VocabSize} "
+                    Log($"Checkpoint vocab {priorVocab} → model vocab {modelConfig.VocabSize} "
                         + "— warm restart instead of strict resume.");
                 }
             }
@@ -318,7 +334,7 @@ public static class TrainRunner
             }
             else
             {
-                onResume?.Invoke(0);
+                onResume?.Invoke(warmRestartStartStep);
             }
 
             using var weights = ModelFactory.CreateForTraining(modelConfig, sharpConfig);
@@ -335,12 +351,25 @@ public static class TrainRunner
             }
             var parameters = model.Parameters().ToList();
             var ops = TrainingOpsFactory.Create(sharpConfig);
+            using IOptimizer optimizer = TrainingModelOptions.UsesSgd(job)
+                ? new SGD(parameters, lr: job.LearningRate, momentum: job.SgdMomentum, weightDecay: job.WeightDecay)
+                : new AdamW(parameters, ops, lr: job.LearningRate, weightDecay: job.WeightDecay);
 
             if (warmRestartDir is not null)
             {
-                int priorVocab = 0;
-                var warmMeta = Checkpoint.LoadForWarmRestart(warmRestartDir, parameters, "EmbeddingTable.weight");
-                if (warmMeta.Extra.TryGetValue("vocabSize", out var rv)
+                if (warmRestartPriorVocab is null)
+                {
+                    long? elements = Checkpoint.ReadTensorElementCount(warmRestartDir, "EmbeddingTable.weight");
+                    if (elements is > 0 && elements.Value % modelConfig.HiddenDim == 0)
+                        warmRestartPriorVocab = (int)(elements.Value / modelConfig.HiddenDim);
+                }
+
+                int priorVocab = warmRestartPriorVocab ?? 0;
+                var warmMeta = Checkpoint.LoadForWarmRestart(
+                    warmRestartDir, parameters, "EmbeddingTable.weight", optimizer);
+                warmRestartStartStep = warmMeta.Step;
+                if (warmRestartPriorVocab is null
+                    && warmMeta.Extra.TryGetValue("vocabSize", out var rv)
                     && int.TryParse(rv, System.Globalization.NumberStyles.Integer,
                            System.Globalization.CultureInfo.InvariantCulture, out int parsed))
                     priorVocab = parsed;
@@ -401,10 +430,7 @@ public static class TrainRunner
                 Log($"Engine: {engine.Description}");
             }
 
-            // 5. Optimizer + scheduler + loop.
-            using IOptimizer optimizer = TrainingModelOptions.UsesSgd(job)
-                ? new SGD(parameters, lr: job.LearningRate, momentum: job.SgdMomentum, weightDecay: job.WeightDecay)
-                : new AdamW(parameters, ops, lr: job.LearningRate, weightDecay: job.WeightDecay);
+            // 5. Scheduler + loop (the optimizer was created before the warm restart).
             var scheduler = new CosineWithWarmup(
                 maxLr: job.LearningRate, minLr: job.MinLr,
                 warmupSteps: job.WarmupSteps, decaySteps: job.TotalSteps);
@@ -425,6 +451,7 @@ public static class TrainRunner
                 config: new TrainConfig
                 {
                     TotalSteps = job.TotalSteps,
+                    StartStep = warmRestartStartStep,
                     GradAccumSteps = job.GradAccumSteps,
                     GradClipNorm = job.GradClipNorm,
                     LabelSmoothing = job.LabelSmoothing,
@@ -451,9 +478,12 @@ public static class TrainRunner
                     ExpectedVocabSize = warmRestartDir is null ? modelConfig.VocabSize : 0,
                 });
 
+            string stepPlan = warmRestartStartStep > 0
+                ? $"Continuing to step {job.TotalSteps} (from {warmRestartStartStep})"
+                : $"Training {job.TotalSteps} steps";
             Log(qat is { } q
-                ? $"Training {job.TotalSteps} steps with QAT [{q}] — full backprop (loss → gradients → AdamW)…"
-                : $"Training {job.TotalSteps} steps (float32) — full backprop (loss → gradients → AdamW)…");
+                ? $"{stepPlan} with QAT [{q}] — full backprop (loss → gradients → AdamW)…"
+                : $"{stepPlan} (float32) — full backprop (loss → gradients → AdamW)…");
             progress.Report(0.12f);
 
             int lastStep = 0;
@@ -471,6 +501,10 @@ public static class TrainRunner
             string exportPath = job.ExportFilePath;
             Directory.CreateDirectory(Path.GetDirectoryName(exportPath)!);
             SmmTrainingExporter.Export(weights, tokenizer, exportPath, BuildEmbedOptions(job, "training", SourceHasher.Combined(job.Sources)), model: model);
+            // Keep the resolved location on the job (and therefore in the wizard
+            // field when this live job is shown again), matching how the tokenizer
+            // path is anchored to the job rather than a shared folder.
+            job.ExportPath = exportPath;
             progress.Report(1f);
             Log($"Saved: {exportPath} ({new FileInfo(exportPath).Length:N0} bytes)");
 

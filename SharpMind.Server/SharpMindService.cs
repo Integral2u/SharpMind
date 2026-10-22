@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
@@ -134,7 +135,13 @@ public sealed class SharpMindService : IAsyncDisposable
         Output.WriteLine($"[SharpMind] Listening on http://{Options.Host}:{Options.Port}");
 
         _started = true;
-        _ = ((WebApplication)_host).StartAsync(ct);
+        _ = ((WebApplication)_host).StartAsync(ct).ContinueWith(task =>
+        {
+            if (!task.IsFaulted) return;
+            _started = false;
+            Exception error = task.Exception?.GetBaseException() ?? new InvalidOperationException("Server failed to start.");
+            Output.WriteLine($"[SharpMind] Failed to start server: {error.Message}");
+        }, TaskScheduler.Default);
     }
 
     /// <summary>
@@ -387,8 +394,17 @@ public sealed class SharpMindService : IAsyncDisposable
         string provided = httpContext.Request.Headers.Authorization.ToString();
         if (provided.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
             return provided.Length > "Bearer ".Length
-                   && string.Equals(provided["Bearer ".Length..], options.ApiKey, StringComparison.Ordinal);
-        return string.Equals(httpContext.Request.Headers["X-Api-Key"].ToString(), options.ApiKey, StringComparison.Ordinal);
+                   && ConstantTimeEquals(provided["Bearer ".Length..], options.ApiKey);
+        return ConstantTimeEquals(httpContext.Request.Headers["X-Api-Key"].ToString(), options.ApiKey);
+    }
+
+    private static bool ConstantTimeEquals(string provided, string expected)
+    {
+        Span<byte> providedHash = stackalloc byte[32];
+        Span<byte> expectedHash = stackalloc byte[32];
+        SHA256.HashData(Encoding.UTF8.GetBytes(provided), providedHash);
+        SHA256.HashData(Encoding.UTF8.GetBytes(expected), expectedHash);
+        return CryptographicOperations.FixedTimeEquals(providedHash, expectedHash);
     }
 
     private static async Task<IResult> HandleNonStreamingResponse(

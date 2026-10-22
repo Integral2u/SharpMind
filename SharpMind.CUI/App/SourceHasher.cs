@@ -33,7 +33,7 @@ public static class SourceHasher
 
             using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
             foreach (string file in files)
-                hash.AppendData(File.ReadAllBytes(file));
+                AppendFile(hash, file);
             result[source.DisplayName ?? source.Component.TypeName] = Convert.ToHexString(hash.GetHashAndReset());
         }
         return result;
@@ -86,7 +86,7 @@ public static class SourceHasher
             foreach (string file in files)
             {
                 using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-                hash.AppendData(File.ReadAllBytes(file));
+                AppendFile(hash, file);
                 perFile[file] = Convert.ToHexString(hash.GetHashAndReset());
             }
             result[source.DisplayName ?? source.Component.TypeName] = perFile;
@@ -118,6 +118,17 @@ public static class SourceHasher
                 deltas[sourceKey] = [.. delta];
         }
         return deltas;
+    }
+
+    private static void AppendFile(IncrementalHash hash, string file)
+    {
+        using var stream = new FileStream(
+            file, FileMode.Open, FileAccess.Read, FileShare.Read,
+            bufferSize: 81_920, FileOptions.SequentialScan);
+        byte[] buffer = new byte[81_920];
+        int read;
+        while ((read = stream.Read(buffer, 0, buffer.Length)) > 0)
+            hash.AppendData(buffer, 0, read);
     }
 
     /// <summary>Extracts the wizard-supplied "path" constructor arg, if any.</summary>

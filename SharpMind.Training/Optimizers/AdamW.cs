@@ -116,6 +116,88 @@ public sealed class AdamW : IOptimizer
         }
     }
 
+    public void LoadStateForWarmRestart(
+        BinaryReader reader, int step, IReadOnlyList<ParameterLayout> checkpointParameters)
+    {
+        reader.ReadInt32(); // stored step; caller supplies the authoritative value
+        _step = step;
+        _lr = reader.ReadSingle();
+
+        var targetIndices = new Dictionary<string, Queue<int>>(StringComparer.Ordinal);
+        for (int i = 0; i < _parameters.Length; i++)
+        {
+            if (!targetIndices.TryGetValue(_parameters[i].Name, out var queue))
+            {
+                queue = new Queue<int>();
+                targetIndices[_parameters[i].Name] = queue;
+            }
+            queue.Enqueue(i);
+        }
+
+        foreach (var source in checkpointParameters)
+        {
+            int sourceCount = checked((int)source.ElementCount);
+            var sourceM = new float[sourceCount];
+            var sourceV = new float[sourceCount];
+            ReadFloats(reader, sourceM, $"AdamW m for '{source.Name}'");
+            ReadFloats(reader, sourceV, $"AdamW v for '{source.Name}'");
+
+            if (!targetIndices.TryGetValue(source.Name, out var targets) || targets.Count == 0)
+                continue;
+            int targetIndex = targets.Dequeue();
+            var target = _parameters[targetIndex];
+            var targetM = _m[targetIndex];
+            var targetV = _v[targetIndex];
+            int[] targetShape = target.Data.Shape.Dims.ToArray();
+            int[] sourceShape = source.Shape;
+
+            if (SameShape(sourceShape, targetShape))
+            {
+                sourceM.CopyTo(targetM, 0);
+                sourceV.CopyTo(targetV, 0);
+                continue;
+            }
+
+            // Only a grown 2-D embedding is a supported shape change: copy the
+            // overlapping leading rows and leave the new rows at zero moments.
+            if (sourceShape.Length == 2 && targetShape.Length == 2
+                && sourceShape[1] == targetShape[1]
+                && targetShape[0] > sourceShape[0])
+            {
+                int cols = sourceShape[1];
+                int oldRows = sourceShape[0];
+                Array.Copy(sourceM, 0, targetM, 0, oldRows * cols);
+                Array.Copy(sourceV, 0, targetV, 0, oldRows * cols);
+                continue;
+            }
+
+            throw new InvalidDataException(
+                $"Cannot warm-restart optimizer state for '{source.Name}': checkpoint shape " +
+                $"[{string.Join(',', sourceShape)}] does not fit model shape " +
+                $"[{string.Join(',', targetShape)}].");
+        }
+    }
+
+    private static bool SameShape(int[] a, int[] b)
+    {
+        if (a.Length != b.Length) return false;
+        for (int i = 0; i < a.Length; i++)
+            if (a[i] != b[i]) return false;
+        return true;
+    }
+
+    private static void ReadFloats(BinaryReader reader, float[] destination, string what)
+    {
+        try
+        {
+            reader.BaseStream.ReadExactly(MemoryMarshal.AsBytes(destination.AsSpan()));
+        }
+        catch (EndOfStreamException)
+        {
+            throw new InvalidDataException($"Unexpected end of checkpoint while reading {what}.");
+        }
+    }
+
     private bool ShouldDecay(string name)
     {
         foreach (string nd in _noDecayNames)
