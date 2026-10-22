@@ -221,8 +221,16 @@ public static class SessionLauncher
                     desiredResidentExperts: options.DesiredResidentExperts,
                     residentWindow: options.ResidentWindow,
                     expertHeat: expertHeat);
-                w.InitializeWeights(progress, ct);
-                return w;
+                try
+                {
+                    w.InitializeWeights(progress, ct);
+                    return w;
+                }
+                catch
+                {
+                    w.Dispose();
+                    throw;
+                }
             },ct);
         }
         catch (OperationCanceledException)
@@ -237,7 +245,16 @@ public static class SessionLauncher
         
         status?.Report("Creating session...");
         await Task.Yield();
-        var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
+        Transformer model;
+        try
+        {
+            model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
+        }
+        catch
+        {
+            weights.Dispose();
+            throw;
+        }
 
         return new ModelLoadResult
         {

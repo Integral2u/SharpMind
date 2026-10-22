@@ -108,7 +108,7 @@ public static class ModelSizer
         // not yet wired in the training loops, so this measures each config's
         // initial forward loss — enough to rank small vs large configs.
         var sharpConfig = SharpMindConfig.Gpt with { Hardware = HardwareTier.Scalar };
-        var weights = ModelFactory.CreateForTraining(config, sharpConfig);
+        using var weights = ModelFactory.CreateForTraining(config, sharpConfig);
         using var model = ModelFactory.CreateTrainingTransformer(weights, sharpConfig);
 
         var lossFn = new CrossEntropyLoss();

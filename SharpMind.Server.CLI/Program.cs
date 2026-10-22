@@ -31,6 +31,7 @@ for (int i = 0; i < cliArgs.Length; i++)
             options.DisableNetworkIO = true;
             break;
         case "--models" when i + 1 < cliArgs.Length:
+        case "--models-dir" when i + 1 < cliArgs.Length:
             options.ModelsDir = cliArgs[++i];
             break;
         case "--host" when i + 1 < cliArgs.Length:

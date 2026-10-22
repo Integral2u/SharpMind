@@ -29,6 +29,8 @@ public sealed class LoadedModel : IDisposable
     public required string ModelId { get; init; }
     public required string FilePath { get; init; }
     public required Transformer Model { get; init; }
+    /// <summary>The weights the transformer borrows; disposed with the model.</summary>
+    public TransformerWeights? Weights { get; init; }
     public required Tokenizer Tokenizer { get; init; }
     public required ModelMetaData Meta { get; init; }
     public int RefCount;
@@ -37,6 +39,7 @@ public sealed class LoadedModel : IDisposable
     public void Dispose()
     {
         Model.Dispose();
+        Weights?.Dispose();
     }
 }
 
@@ -333,8 +336,16 @@ public sealed class ModelManager : IDisposable
             {
                 var w = ModelFactory.CreateWeights(modelConfig, sharpConfig, qOps, info.FilePath, LoadMode.Full,
                     quantizedResident: true);
-                w.InitializeWeights(weightProgress, ct);
-                return w;
+                try
+                {
+                    w.InitializeWeights(weightProgress, ct);
+                    return w;
+                }
+                catch
+                {
+                    w.Dispose();
+                    throw;
+                }
             }, ct);
         }
         catch (OperationCanceledException) { throw; }
@@ -345,13 +356,23 @@ public sealed class ModelManager : IDisposable
 
         progress?.Report("Creating transformer...");
         await Task.Yield();
-        var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
+        Transformer model;
+        try
+        {
+            model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
+        }
+        catch
+        {
+            weights.Dispose();
+            throw;
+        }
 
         var loaded = new LoadedModel
         {
             ModelId = info.ModelId,
             FilePath = info.FilePath,
             Model = model,
+            Weights = weights,
             Tokenizer = tokenizer,
             Meta = meta,
             RefCount = 0,

@@ -321,7 +321,7 @@ public static class TrainRunner
                 onResume?.Invoke(0);
             }
 
-            var weights = ModelFactory.CreateForTraining(modelConfig, sharpConfig);
+            using var weights = ModelFactory.CreateForTraining(modelConfig, sharpConfig);
             if (resumeDir is null)
             {
                 WeightInitializer.InitializeRandomly(weights, Seed);
@@ -580,7 +580,7 @@ public static class TrainRunner
     {
         try
         {
-            var weights = ModelFactory.CreateForTraining(config, sharpConfig);
+            using var weights = ModelFactory.CreateForTraining(config, sharpConfig);
             using var model = ModelFactory.CreateTrainingTransformer(weights, sharpConfig);
             var parameters = model.Parameters().ToList();
             var meta = Checkpoint.Load(dir, parameters, optimizer: null);

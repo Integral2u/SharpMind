@@ -162,24 +162,39 @@ public static class SharpMindEngine
                 quantizedResident: true,
                 useSafeIo: true);
 
-            weights.InitializeWeights();
+            Transformer? transformer = null;
+            bool transferred = false;
+            try
+            {
+                weights.InitializeWeights();
 
-            Log(log, "hardware tier: <span class=\"warn\">Scalar</span> (WebAssembly has no AVX2/FMA)");
-            Log(log, "threads: <span class=\"warn\">1</span> (GitHub Pages can't set the headers WASM threading needs)");
+                Log(log, "hardware tier: <span class=\"warn\">Scalar</span> (WebAssembly has no AVX2/FMA)");
+                Log(log, "threads: <span class=\"warn\">1</span> (GitHub Pages can't set the headers WASM threading needs)");
 
-            var transformer = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
+                transformer = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
 
-            var session = ChatSessionFactory.CreateChatSession<
-                StandardGeneratorBuilder<KVCacherBuilder>,
-                KVCacherBuilder>(transformer, tokenizer!, meta);
+                var session = ChatSessionFactory.CreateChatSession<
+                    StandardGeneratorBuilder<KVCacherBuilder>,
+                    KVCacherBuilder>(transformer, tokenizer!, meta);
 
-            session.InitializeChat();
+                session.InitializeChat();
 
-            if (_state is not null)
-                await _state.DisposeAsync();
-            _state = new EngineState(transformer, tokenizer!, session);
+                if (_state is not null)
+                    await _state.DisposeAsync();
+                _state = new EngineState(transformer, weights, tokenizer!, session);
+                transferred = true;
 
-            Log(log, "model ready");
+                Log(log, "model ready");
+            }
+            catch
+            {
+                if (!transferred)
+                {
+                    transformer?.Dispose();
+                    weights.Dispose();
+                }
+                throw;
+            }
         }
         catch (Exception ex)
         {
@@ -232,12 +247,14 @@ public static class SharpMindEngine
     private sealed class EngineState : IAsyncDisposable
     {
         public Transformer Transformer { get; }
+        public TransformerWeights Weights { get; }
         public Tokenizer Tokenizer { get; }
         public IChatSession Session { get; }
 
-        public EngineState(Transformer transformer, Tokenizer tokenizer, IChatSession session)
+        public EngineState(Transformer transformer, TransformerWeights weights, Tokenizer tokenizer, IChatSession session)
         {
             Transformer = transformer;
+            Weights = weights;
             Tokenizer = tokenizer;
             Session = session;
         }
@@ -245,6 +262,8 @@ public static class SharpMindEngine
         public async ValueTask DisposeAsync()
         {
             await Session.DisposeAsync();
+            Transformer.Dispose();
+            Weights.Dispose();
         }
     }
 }
