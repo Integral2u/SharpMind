@@ -109,6 +109,9 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
     /// </summary>
     public Action<double>? PrefillProgress { get; set; }
 
+    /// <summary>Invoked once for every token appended to <see cref="CurrentGeneratedIds"/>.</summary>
+    public Action<int>? OnTokenGenerated;
+
     public MedusaGenerator(
         Transformer model,
         Tokenization.Tokenizer tokenizer,
@@ -254,9 +257,14 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
                 ReadOnlySpan<float> curLogits = logitsTensor.Data[..vocabSize];
                 GeneratorDiagnostics.PrintTopLogits(_tokenizer, generatedIds.Count, curLogits);
 
-                // Reserve the whole draft batch plus its bonus step; starting a
-                // round that overruns the context would hit RoPE's hard limit.
-                if (_position + draftLen + 1 > maxPosition) break;
+                // Use the slots that are left: fewer heads when the context tail is
+                // short. A bonus step is only attempted when one more slot remains.
+                int remaining = maxPosition - _position;
+                if (remaining <= 0) break;
+                int roundDrafts = Math.Min(draftLen, remaining);
+                int roundHeads = roundDrafts - 1;
+                bool bonusCanFit = _position + roundDrafts < maxPosition;
+                int cacheSlots = roundDrafts + (bonusCanFit ? 1 : 0);
 
                 // 1. Greedy sample: the LM head's best guess for the next token.
                 //    This is always the first draft token.
@@ -285,21 +293,21 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
                 //    (Linear + SiLU + shared LM-head projection) that predicts
                 //    a token at a different future offset from the *same* normed
                 //    hidden state.  Predictions go into _draftScratch[1..K].
-                if (numHeads > 0)
+                if (roundHeads > 0)
                 {
                     _medusaHeads.Predict(
                         _normedHiddenScratch,
-                        _draftScratch.AsSpan(1, numHeads));
+                        _draftScratch.AsSpan(1, roundHeads));
                 }
 
                 // Keep trim at round boundaries so the snapshot and batch forward
-                // never straddle a moved prefix. The round needs draftLen free slots.
-                if (_caches[0].Length + draftLen > _caches[0].MaxSeqLen)
+                // never straddle a moved prefix. The round needs its slots free.
+                if (_caches[0].Length + cacheSlots > _caches[0].MaxSeqLen)
                 {
                     int keep = genCfg is { SlidingWindowSize: > 0 }
                         ? genCfg.SlidingWindowSize
                         : _caches[0].MaxSeqLen / 2;
-                    keep = Math.Min(keep, Math.Max(1, _caches[0].MaxSeqLen - draftLen));
+                    keep = Math.Min(keep, Math.Max(1, _caches[0].MaxSeqLen - cacheSlots));
                     if (keep >= _caches[0].MaxSeqLen)
                         keep = Math.Max(1, _caches[0].MaxSeqLen / 2);
                     for (int i = 0; i < _caches.Length; i++)
@@ -312,23 +320,21 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
                 int cacheLenBefore = _caches[0].Length;
                 int posBefore = _position;
                 object?[]? rollbackSnapshots = null;
-                if (_replayOnRollback && draftLen > 1)
+                if (_replayOnRollback && roundDrafts > 1)
                 {
                     rollbackSnapshots = new object?[_caches.Length];
                     for (int i = 0; i < _caches.Length; i++)
                         rollbackSnapshots[i] = _caches[i].Snapshot();
                 }
 
-                // 4. Batch-forward all K+1 draft tokens.
-                //    Forward(draft) extends the KV cache by K+1 positions and
-                //    returns logits [1, K+1, V].  verif_logits[i] predicts what
-                //    token comes AFTER draft[i], i.e. the token at position
-                //    (_position + i + 1).
+                // 4. Batch-forward this round's draft tokens.
+                //    Forward(draft) extends the KV cache by roundDrafts positions
+                //    and returns logits [1, roundDrafts, V].
                 Tensor<float> prevLogits = logitsTensor;
                 logitsTensor = null;
                 _workspace.Reset();
-                using var draftInput = _workspace.Rent<int>([1, draftLen]);
-                for (int i = 0; i < draftLen; i++)
+                using var draftInput = _workspace.Rent<int>([1, roundDrafts]);
+                for (int i = 0; i < roundDrafts; i++)
                     draftInput.Data[i] = _draftScratch[i];
                 var verifLogits = _model.Forward(
                     draftInput, _caches, _position, _workspace);
@@ -347,7 +353,7 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
                 //    draft tokens are rejected.  This guarantees that the output is
                 //    *identical* to greedy decoding — Medusa only changes throughput.
                 int accepted = 1;
-                for (int i = 0; i < numHeads; i++)
+                for (int i = 0; i < roundHeads; i++)
                 {
                     ReadOnlySpan<float> verifSlice =
                         verifLogits.Data.Slice(i * vocabSize, vocabSize);
@@ -385,6 +391,7 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
                 {
                     int tid = _draftScratch[i];
                     generatedIds.Add(tid);
+                    OnTokenGenerated?.Invoke(tid);
                     rateTracker.RecordToken();
                     TimeToFirstToken = rateTracker.TimeToFirstToken;
                     TokensPerSecond = rateTracker.RollingTokensPerSecond;
@@ -435,10 +442,17 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
 
                 // 7. Prepare the starting state for the next round.
                 //    Two cases depending on whether all K+1 draft tokens were accepted.
-                if (accepted == draftLen)
+                if (accepted == roundDrafts)
                 {
                     if (_cacheTokens is not null)
-                        for (int i = 0; i < draftLen; i++) _cacheTokens.Add(_draftScratch[i]);
+                        for (int i = 0; i < roundDrafts; i++) _cacheTokens.Add(_draftScratch[i]);
+
+                    // The context tail may have room for the drafts but not the bonus.
+                    if (!bonusCanFit)
+                    {
+                        _position += roundDrafts;
+                        break;
+                    }
 
                     // All accepted: emit the bonus token
                     // verif_logits[K] predicts what comes after the last draft
@@ -448,7 +462,7 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
                     int bonus;
                     if (constraint is not null)
                     {
-                        verifLogits.Data.Slice(numHeads * vocabSize, vocabSize)
+                        verifLogits.Data.Slice(roundHeads * vocabSize, vocabSize)
                             .CopyTo(mask.AsSpan(0, vocabSize));
                         Span<float> bonusLogits = mask.AsSpan(0, vocabSize);
                         constraint.Apply(bonusLogits);
@@ -460,10 +474,11 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
                     else
                     {
                         bonus = Sampler.Sample(
-                            verifLogits.Data.Slice(numHeads * vocabSize, vocabSize),
+                            verifLogits.Data.Slice(roundHeads * vocabSize, vocabSize),
                             SamplingConfig.Greedy, rng);
                     }
                     generatedIds.Add(bonus);
+                    OnTokenGenerated?.Invoke(bonus);
                     rateTracker.RecordToken();
                     TimeToFirstToken = rateTracker.TimeToFirstToken;
                     TokensPerSecond = rateTracker.RollingTokensPerSecond;
@@ -494,7 +509,7 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
                         _cacheTokens = null;
                     }
 
-                    _position += draftLen;
+                    _position += roundDrafts;
 
                     // The bonus token was sampled but never forwarded through
                     // the model.  We need a clean hidden + KV state for the

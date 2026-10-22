@@ -44,8 +44,14 @@ public static class SourceHasher
     /// model's metadata (null when nothing is hashable).
     /// </summary>
     public static string? Combined(IEnumerable<JobSource> sources)
+        => Combined(Compute(sources));
+
+    /// <summary>
+    /// Combined one-line fingerprint from an already-computed per-source map, so
+    /// callers that hashed the sources for another purpose do not read them again.
+    /// </summary>
+    public static string? Combined(IReadOnlyDictionary<string, string?> perSource)
     {
-        var perSource = Compute(sources);
         if (perSource.Count == 0) return null;
 
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);

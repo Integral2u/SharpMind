@@ -39,6 +39,9 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
     /// </summary>
     public Action<double>? PrefillProgress { get; set; }
 
+    /// <summary>Invoked once for every token appended to <see cref="CurrentGeneratedIds"/>.</summary>
+    public Action<int>? OnTokenGenerated;
+
     public SpeculativeGenerator(
         Transformer model,
         Tokenization.Tokenizer tokenizer,
@@ -155,19 +158,23 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
 
                 if (maxDraftTokens < 1) break;
 
-                // A speculative round forwards every draft plus the bonus; stop at
-                // the context boundary instead of starting a round that cannot fit.
-                if (_position + maxDraftTokens + 1 > maxPosition) break;
+                // Use the slots that are left. A full draft count is capped by the
+                // context boundary; the bonus is only forwarded when one slot remains.
+                int remaining = maxPosition - _position;
+                if (remaining <= 0) break;
+                int roundDrafts = Math.Min(maxDraftTokens, remaining);
+                bool bonusCanFit = _position + roundDrafts < maxPosition;
+                int cacheSlots = roundDrafts + (bonusCanFit ? 1 : 0);
 
                 // Keep trim at round boundaries: a snapshot taken before the trim restores a
                 // coherent prefix, and the round is guaranteed room for every draft plus the
                 // bonus token. Trimming mid-round would move rows beneath the snapshots.
-                if (_caches[0].Length + maxDraftTokens + 1 > _caches[0].MaxSeqLen)
+                if (_caches[0].Length + cacheSlots > _caches[0].MaxSeqLen)
                 {
                     int keep = genCfg is { SlidingWindowSize: > 0 }
                         ? genCfg.SlidingWindowSize
                         : _caches[0].MaxSeqLen / 2;
-                    keep = Math.Min(keep, Math.Max(1, _caches[0].MaxSeqLen - maxDraftTokens - 1));
+                    keep = Math.Min(keep, Math.Max(1, _caches[0].MaxSeqLen - cacheSlots));
                     if (keep >= _caches[0].MaxSeqLen)
                         keep = Math.Max(1, _caches[0].MaxSeqLen / 2);
                     for (int i = 0; i < _caches.Length; i++)
@@ -178,7 +185,7 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
 
                 int posBefore = _position;
                 object?[]? snapshots = null;
-                if (maxDraftTokens > 0)
+                if (roundDrafts > 0)
                 {
                     snapshots = new object?[_caches.Length];
                     for (int i = 0; i < _caches.Length; i++)
@@ -192,7 +199,7 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
                 int tokensAccepted = 0;
                 bool roundDone = false;
 
-                for (int di = 0; di < maxDraftTokens && !roundDone && generatedIds.Count < genCfg.MaxNewTokens; di++)
+                for (int di = 0; di < roundDrafts && !roundDone && generatedIds.Count < genCfg.MaxNewTokens; di++)
                 {
                     Span<float> curLogits = _penaltyScratch.AsSpan(0, vocabSize);
 
@@ -234,6 +241,7 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
                         prevTensor?.Dispose();
 
                         generatedIds.Add(draftToken);
+                        OnTokenGenerated?.Invoke(draftToken);
                         rateTracker.RecordToken();
                         TimeToFirstToken = rateTracker.TimeToFirstToken;
                         TokensPerSecond = rateTracker.RollingTokensPerSecond;
@@ -300,6 +308,7 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
                         int correctionToken = greedyChoice;
                         constraint?.Accept(correctionToken);
                         generatedIds.Add(correctionToken);
+                        OnTokenGenerated?.Invoke(correctionToken);
                         rateTracker.RecordToken();
                         TimeToFirstToken = rateTracker.TimeToFirstToken;
                         TokensPerSecond = rateTracker.RollingTokensPerSecond;
@@ -340,8 +349,11 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
                 if (grammarDead)
                     break;
 
-                if (!roundDone && tokensAccepted == maxDraftTokens)
+                if (!roundDone && tokensAccepted == roundDrafts)
                 {
+                    // No room left for a bonus token at the context boundary.
+                    if (_position >= maxPosition) break;
+
                     // All drafts accepted: emit the bonus token (greedy sample from last logits)
                     Span<float> bonusLogits = _penaltyScratch.AsSpan(0, vocabSize);
                     if (constraint is not null)
@@ -353,6 +365,7 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
                     int bonusToken = Sampler.Sample(bonusLogits, SamplingConfig.Greedy, rng);
                     constraint?.Accept(bonusToken);
                     generatedIds.Add(bonusToken);
+                    OnTokenGenerated?.Invoke(bonusToken);
                     rateTracker.RecordToken();
                     TimeToFirstToken = rateTracker.TimeToFirstToken;
                     TokensPerSecond = rateTracker.RollingTokensPerSecond;

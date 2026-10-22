@@ -117,6 +117,27 @@ public sealed class ResumeCursorTests : IDisposable
         Assert.Empty(batches);
     }
 
+    [Fact]
+    public async Task SkipProgress_ReportsMonotonicProgressToTheTotal()
+    {
+        string path = WriteCorpus(docs: 400);
+        var reports = new List<(int Done, int Total)>();
+        var pipeline = CleaningPipeline.From(new TextFileSource(path)).Pipe(new NormaliseWhitespace());
+        var loader = new DataLoader(pipeline, Tokenise,
+            new PackingBatcher(batchSize: 2, maxSeqLen: 16),
+            maxBatches: 260,
+            skipProgress: (done, total) => reports.Add((done, total)));
+
+        var batches = await CollectAsync(loader, maxBatches: 260, skip: 250);
+
+        Assert.Equal(10, batches.Count);
+        Assert.NotEmpty(reports);
+        Assert.Equal(250, reports[^1].Done);
+        Assert.All(reports, r => Assert.Equal(250, r.Total));
+        for (int i = 1; i < reports.Count; i++)
+            Assert.True(reports[i].Done >= reports[i - 1].Done);
+    }
+
     // ---- TrainLoop: recording and applying the cursor ----
 
     [Fact]
@@ -284,6 +305,87 @@ public sealed class ResumeCursorTests : IDisposable
         Assert.Equal(3, resumed.Step);
         // Only the batch this leg trained on: nothing was skipped.
         Assert.Equal("1", resumed.Extra["batchesConsumed"]);
+    }
+
+    [Fact]
+    public async Task Resume_DifferentDataFingerprint_DoesNotSkip()
+    {
+        string corpus = WriteCorpus(docs: 40);
+        string phase1Dir = Path.Combine(_dir.Path, "fp1");
+
+        await RunLoopAsync(
+            new TrainConfig
+            {
+                TotalSteps = 2,
+                GradAccumSteps = 1,
+                CheckpointInterval = 1,
+                CheckpointDir = phase1Dir,
+                KeepRecent = 5,
+                DataFingerprint = "corpus-A",
+            },
+            loaderBatches: 8,
+            corpusPath: corpus);
+
+        string step2 = Path.Combine(phase1Dir, "step-0000002");
+        Assert.Equal("corpus-A", Checkpoint.ReadMeta(step2).Extra["dataFingerprint"]);
+
+        // The corpus changed since that checkpoint, so its batch count no longer
+        // indexes this stream: the resumed leg must start at the head, not replay.
+        await RunLoopAsync(
+            new TrainConfig
+            {
+                TotalSteps = 3,
+                GradAccumSteps = 1,
+                CheckpointInterval = 1,
+                CheckpointDir = Path.Combine(_dir.Path, "fp2"),
+                KeepRecent = 5,
+                ResumeFrom = step2,
+                DataFingerprint = "corpus-B",
+            },
+            loaderBatches: 8,
+            corpusPath: corpus);
+
+        var resumed = Checkpoint.ReadMeta(Path.Combine(_dir.Path, "fp2", "step-0000003-final"));
+        Assert.Equal(3, resumed.Step);
+        Assert.Equal("1", resumed.Extra["batchesConsumed"]);
+        Assert.Equal("corpus-B", resumed.Extra["dataFingerprint"]);
+    }
+
+    [Fact]
+    public async Task Resume_SameDataFingerprint_AppliesCursor()
+    {
+        string corpus = WriteCorpus(docs: 40);
+        string phase1Dir = Path.Combine(_dir.Path, "s1");
+
+        await RunLoopAsync(
+            new TrainConfig
+            {
+                TotalSteps = 2,
+                GradAccumSteps = 1,
+                CheckpointInterval = 1,
+                CheckpointDir = phase1Dir,
+                KeepRecent = 5,
+                DataFingerprint = "corpus-A",
+            },
+            loaderBatches: 8,
+            corpusPath: corpus);
+
+        await RunLoopAsync(
+            new TrainConfig
+            {
+                TotalSteps = 3,
+                GradAccumSteps = 1,
+                CheckpointInterval = 1,
+                CheckpointDir = Path.Combine(_dir.Path, "s2"),
+                KeepRecent = 5,
+                ResumeFrom = Path.Combine(phase1Dir, "step-0000002"),
+                DataFingerprint = "corpus-A",
+            },
+            loaderBatches: 8,
+            corpusPath: corpus);
+
+        var resumed = Checkpoint.ReadMeta(Path.Combine(_dir.Path, "s2", "step-0000003-final"));
+        Assert.Equal("3", resumed.Extra["batchesConsumed"]);
     }
 
     [Fact]

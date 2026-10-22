@@ -79,6 +79,9 @@ public sealed class CheckpointRetentionTests : IDisposable
         var finals = Directory.GetDirectories(ckDir, "*-final")
             .ToList();
         Assert.Equal(2, rolling.Count);             // newest two survive
+        Assert.Equal(
+            ["step-0000008", "step-0000010"],
+            rolling.Select(Path.GetFileName).OrderBy(n => n, System.StringComparer.Ordinal));
         Assert.Single(finals);                       // final always kept
         Assert.Contains(Path.Combine(ckDir, "step-0000010-final"), finals);
     }

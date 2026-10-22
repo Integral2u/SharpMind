@@ -59,7 +59,7 @@ public sealed class GpuTrainLoopTests
     [Fact]
     public async Task GpuLoop_WithAccumulationClipAndCheckpoint_MatchesCpuLoop()
     {
-        const float clipNorm = 1f;
+        const float clipNorm = 0.5f;
         async Task<(List<float> losses, List<float> gradNorms, float[] finalB)> Run(bool gpu, string dir)
         {
             var (model, lora, ps, sc) = GpuBackpropEngineTests.Fixture();
@@ -92,10 +92,11 @@ public sealed class GpuTrainLoopTests
             Assert.True(Directory.Exists(Path.Combine(root, "gpu", "step-0000002")), "checkpoint written");
             // Prove clipping actually engaged, not just configured: GradNorm is the PRE-clip
             // global norm (Gradients.ClipGlobalNorm's own doc comment), so this model/seed must
-            // produce at least one step whose raw gradient norm exceeds clipNorm=1, or the clip
-            // is inert and this fact isn't proving what its name claims. Measured per-step norms:
-            // CPU [1.237, 1.496, 1.368, 0.945], GPU [1.237, 1.496, 1.368, 0.945] — steps 1-3 clip
-            // (norm > 1), step 4 doesn't (0.945 < 1, gradient shrank as training converged).
+            // produce at least one step whose raw gradient norm exceeds clipNorm=0.5, or the clip
+            // is inert and this fact isn't proving what its name claims. Gradients are averaged
+            // across the two accumulation steps first. Measured per-step norms:
+            // CPU [0.618, 0.748, 0.679, 0.483], GPU [0.618, 0.748, 0.679, 0.483] - steps 1-3 clip,
+            // step 4 doesn't (0.483 < 0.5, gradient shrank as training converged).
             Assert.True(cpu.gradNorms.Max() > clipNorm, $"CPU pre-clip norm never exceeded {clipNorm}: {string.Join(",", cpu.gradNorms)}");
             Assert.True(gpu.gradNorms.Max() > clipNorm, $"GPU pre-clip norm never exceeded {clipNorm}: {string.Join(",", gpu.gradNorms)}");
         }
@@ -131,7 +132,7 @@ public sealed class GpuTrainLoopTests
     [Fact]
     public async Task GpuLoop_Resumed_MatchesCpuLoop()
     {
-        const float clipNorm = 1f;
+        const float clipNorm = 0.5f;
         async Task<(float[] finalB, List<float> gradNorms)> Run(TrainConfig cfg, bool gpu)
         {
             var (model, lora, ps, sc) = GpuBackpropEngineTests.Fixture();
@@ -162,9 +163,9 @@ public sealed class GpuTrainLoopTests
             // as expected since both trace the same data/init. Same 1e-4 floor as that test.
             GpuTestDevice.AssertClose(cpu.finalB, resumed.finalB, 1e-4, "resumed final lora_B vs CPU oracle");
             // Same clipping proof as the loop test above, for both legs of the split resume run:
-            // GradNorm is the PRE-clip norm, so each leg needs a step over clipNorm=1 or the clip
-            // never engaged. Measured: phase1 (steps 1-2) [1.237, 1.496], resumed (steps 3-4,
-            // post-checkpoint) [1.368, 0.945] — matches the uninterrupted run's steps 3-4 exactly,
+            // GradNorm is the averaged PRE-clip norm, so each leg needs a step over clipNorm=0.5
+            // or the clip never engaged. Measured: phase1 (steps 1-2) [0.618, 0.748], resumed
+            // (steps 3-4, post-checkpoint) [0.679, 0.483] — matches the uninterrupted steps 3-4,
             // as the [A, B] periodicity predicts (see MakeLoader/GpuLoop_Resumed_MatchesCpuLoop docs).
             Assert.True(phase1.gradNorms.Max() > clipNorm, $"phase-1 pre-clip norm never exceeded {clipNorm}: {string.Join(",", phase1.gradNorms)}");
             Assert.True(resumed.gradNorms.Max() > clipNorm, $"resumed pre-clip norm never exceeded {clipNorm}: {string.Join(",", resumed.gradNorms)}");

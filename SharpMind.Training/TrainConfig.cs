@@ -62,6 +62,16 @@ public sealed record TrainConfig
     public int? DataSeed { get; init; }
 
     /// <summary>
+    /// Identifies the corpus this run trains on (e.g. a hash of the configured
+    /// sources). Recorded in every checkpoint; on resume, a recorded fingerprint
+    /// that differs from this one means the data cursor no longer indexes the same
+    /// stream, so <see cref="TrainLoop"/> restarts at the head instead of replaying
+    /// a stale batch count. Null (default) means "unknown" and keeps the legacy
+    /// behaviour (cursor is applied whenever <see cref="ResumeDataCursor"/> is set).
+    /// </summary>
+    public string? DataFingerprint { get; init; }
+
+    /// <summary>
     /// How many rolling (step-marked) checkpoints to retain. 0 = prune none
     /// (keep every interval checkpoint). N &gt; 0 = keep only the newest N
     /// step checkpoints, deleting the older ones as the run progresses. A

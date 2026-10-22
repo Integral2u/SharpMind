@@ -19,23 +19,24 @@ public sealed class Evaluator(Transformer model, ILoss<int> lossFn)
     /// </summary>
     public (float Loss, float Perplexity) Evaluate(IEnumerable<TrainingBatch> batches)
     {
-        float totalLoss = 0;
-        int count = 0;
+        double weightedLoss = 0;
+        long totalTokens = 0;
 
         foreach (var batch in batches)
         {
             using var logits = _model.Forward(batch.TokenIds);
-            
+
             int batchSize = batch.TokenIds.Shape[0];
             int seqLen = batch.TokenIds.Shape[1];
             using var flatLogits = logits.Reshape(batchSize * seqLen, _model.Config.VocabSize);
             using var flatLabels = batch.Labels.Reshape(batchSize * seqLen);
 
-            totalLoss += _lossFn.Compute(flatLogits, flatLabels);
-            count++;
+            int tokens = batch.RealTokenCount;
+            weightedLoss += _lossFn.Compute(flatLogits, flatLabels) * tokens;
+            totalTokens += tokens;
         }
 
-        float avgLoss = count > 0 ? totalLoss / count : 0;
+        float avgLoss = totalTokens > 0 ? (float)(weightedLoss / totalTokens) : 0f;
         // Perplexity = exp(CrossEntropyLoss)
         float perplexity = MathF.Exp(avgLoss);
 
@@ -54,7 +55,7 @@ public sealed class Evaluator(Transformer model, ILoss<int> lossFn)
         for (int i = 0; i < samples; i++)
         {
             ids[i] = generator.GenerateTrainingSample().TokenIds;
-            progress?.Report((float)i / samples);
+            progress?.Report((float)(i + 1) / samples);
         }
         return NextTokenAccuracy(ids, vocab);
     }

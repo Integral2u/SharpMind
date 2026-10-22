@@ -125,10 +125,19 @@ public sealed class TrainLoop
             // Data cursor: where the interrupted run stopped in the batch stream.
             // Restoring it means the resumed run trains on what comes NEXT instead
             // of silently re-training the head of the corpus it has already seen.
+            // The cursor is only meaningful for the same data: if the checkpoint's
+            // recorded fingerprint differs from this run's corpus, skip nothing
+            // (replaying a stale count would walk far into unrelated batches).
             if (_config.ResumeDataCursor)
             {
-                skipBatches = ReadExtraInt(meta.Extra, "batchesConsumed");
-                GuardDataSeed(meta.Extra);
+                bool sameData = _config.DataFingerprint is null
+                    || !meta.Extra.TryGetValue("dataFingerprint", out var recordedFingerprint)
+                    || string.Equals(recordedFingerprint, _config.DataFingerprint, StringComparison.Ordinal);
+                if (sameData)
+                {
+                    skipBatches = ReadExtraInt(meta.Extra, "batchesConsumed");
+                    GuardDataSeed(meta.Extra);
+                }
             }
 
             priorTokens = ReadExtraLong(meta.Extra, "tokensSeen");
@@ -147,7 +156,8 @@ public sealed class TrainLoop
         // best, interrupted or final - records where the run actually is.
         Dictionary<string, string> Extra(float? valLoss)
         {
-            var extra = BuildExtra(tokensSeen, batchesSeen, bestValLoss, valLoss, _vocabSize);
+            var extra = BuildExtra(tokensSeen, batchesSeen, bestValLoss, valLoss, _vocabSize,
+                _config.DataFingerprint);
             WriteDataSeed(extra);
             return extra;
         }
@@ -179,6 +189,10 @@ public sealed class TrainLoop
 
                 float lr = _scheduler.GetLr(step + 1);
                 _optimizer.LearningRate = lr;
+
+                // Each microbatch contributed a mean gradient; the optimizer step
+                // needs their mean, not their sum, or effective LR is K times too high.
+                Gradients.Scale(_parameters, 1f / accumCount);
 
                 float gradNorm = _config.GradClipNorm > 0f
                     ? Gradients.ClipGlobalNorm(_parameters, _config.GradClipNorm)
@@ -223,7 +237,7 @@ public sealed class TrainLoop
                     }
                 }
 
-                if (onStep is not null && step % _config.LogInterval == 0)
+                if (onStep is not null && _config.LogInterval > 0 && step % _config.LogInterval == 0)
                 {
                     onStep(new TrainStepResult
                     {
@@ -289,10 +303,10 @@ public sealed class TrainLoop
             .Where(d => !string.Equals(d, justSaved, StringComparison.OrdinalIgnoreCase))
             .OrderByDescending(d => ParseStep(d));
 
-        int deleteCount = candidates.Count() - (keep - 1);
-        if (deleteCount <= 0) return;
-
-        foreach (var stale in candidates.Take(deleteCount))
+        // `candidates` is newest-first. Keep the newest `keep - 1` others
+        // (the just-saved directory is already excluded) and delete the rest.
+        int keepOthers = Math.Max(0, keep - 1);
+        foreach (var stale in candidates.Skip(keepOthers))
         {
             try { Directory.Delete(stale, recursive: true); }
             catch (IOException) { }
@@ -305,13 +319,15 @@ public sealed class TrainLoop
     /// <c>batchesConsumed</c> is the data cursor (see
     /// <see cref="TrainConfig.ResumeDataCursor"/>); <c>tokensSeen</c> and
     /// <c>bestValLoss</c> keep those figures continuous across resumes;
-    /// <c>dataSeed</c> records the RNG the cursor was computed against; and
+    /// <c>dataSeed</c> records the RNG the cursor was computed against;
+    /// <c>dataFingerprint</c> records which corpus the cursor indexes; and
     /// <c>vocabSize</c> records the embedding width so a strict resume onto a
     /// different vocabulary fails with a clear message (see
     /// <see cref="TrainConfig.ExpectedVocabSize"/>).
     /// </summary>
     private static Dictionary<string, string> BuildExtra(
-        long tokensSeen, int batchesConsumed, float bestValLoss, float? valLoss, int vocabSize)
+        long tokensSeen, int batchesConsumed, float bestValLoss, float? valLoss, int vocabSize,
+        string? dataFingerprint)
     {
         var extra = new Dictionary<string, string>(StringComparer.Ordinal)
         {
@@ -319,6 +335,8 @@ public sealed class TrainLoop
             ["tokensSeen"] = tokensSeen.ToString(System.Globalization.CultureInfo.InvariantCulture),
             ["vocabSize"] = vocabSize.ToString(System.Globalization.CultureInfo.InvariantCulture),
         };
+        if (dataFingerprint is not null)
+            extra["dataFingerprint"] = dataFingerprint;
         if (valLoss is { } vl && float.IsFinite(vl))
             extra["valLoss"] = vl.ToString("R", System.Globalization.CultureInfo.InvariantCulture);
         if (float.IsFinite(bestValLoss))

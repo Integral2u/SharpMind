@@ -52,7 +52,7 @@ public sealed class ContextLimitTests
         [.. Enumerable.Range(0, Config.NumLayers)
             .Select(_ => (IKVCache)new KVCache(1, Config.NumKvHeads, Config.MaxPosition, Config.HeadDim))];
 
-    private static int[] Prompt() => [100, 101, 102]; // "abc"
+    private static int[] Prompt(int length = 3) => [.. Enumerable.Range(0, length).Select(i => 100 + i)];
 
     private static IGrammarConstraint LettersConstraint(int count)
     {
@@ -63,7 +63,8 @@ public sealed class ContextLimitTests
     private static async Task<string> Generate(
         IGenerator<KVCacherBuilder> generator,
         SamplingConfig sampling,
-        int maxNewTokens)
+        int maxNewTokens,
+        int[]? prompt = null)
     {
         generator.ResetCache();
         var output = new System.Text.StringBuilder();
@@ -75,7 +76,7 @@ public sealed class ContextLimitTests
             Stream = false,
         };
 
-        await foreach (var fragment in generator.GenerateFromTokensAsync(Prompt(), sampling, generation))
+        await foreach (var fragment in generator.GenerateFromTokensAsync(prompt ?? Prompt(), sampling, generation))
             output.Append(fragment);
 
         return output.ToString();
@@ -132,6 +133,36 @@ public sealed class ContextLimitTests
             maxNewTokens: 20);
 
         Assert.InRange(output.Length, 1, Config.MaxPosition - Prompt().Length);
+    }
+
+    [Fact]
+    public async Task SpeculativeGenerator_UsesRemainingContextTail()
+    {
+        using var model = BuildModel();
+        using var generator = new SpeculativeGenerator<KVCacherBuilder>(model, Tokenizer,
+            addBos: false, addEos: false, seed: 1);
+        int[] prompt = Prompt(Config.MaxPosition - 2);
+
+        await Generate(generator,
+            new SamplingConfig { Temperature = 0f, Constraint = LettersConstraint(20) },
+            maxNewTokens: 20, prompt);
+
+        Assert.Equal(Config.MaxPosition - prompt.Length, generator.CurrentGeneratedIds!.Count);
+    }
+
+    [Fact]
+    public async Task MedusaGenerator_UsesRemainingContextTail()
+    {
+        using var model = BuildModel();
+        using var generator = new MedusaGeneratorBuilder<KVCacherBuilder>()
+            .CreateGenerator(model, Tokenizer, addBos: false, addEos: false, caches: null, seed: 1);
+        int[] prompt = Prompt(Config.MaxPosition - 2);
+
+        await Generate(generator,
+            new SamplingConfig { Temperature = 0f, Constraint = LettersConstraint(20) },
+            maxNewTokens: 20, prompt);
+
+        Assert.Equal(Config.MaxPosition - prompt.Length, generator.CurrentGeneratedIds!.Count);
     }
 
     [Fact]

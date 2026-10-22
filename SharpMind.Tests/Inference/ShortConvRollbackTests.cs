@@ -110,12 +110,15 @@ public sealed class ShortConvRollbackTests
         using var model = BuildModel();
         using var generator = new SpeculativeGenerator<KVCacherBuilder>(model, Tokenizer,
             addBos: false, addEos: false, seed: 1);
+        var seen = new List<int>();
+        generator.OnTokenGenerated += seen.Add;
 
         await Generate(generator, Prompt(),
             new SamplingConfig { Temperature = 1f, TopK = 2, Constraint = LettersConstraint() });
 
         int[] generated = generator.CurrentGeneratedIds!.ToArray();
         int[] resident = generator.CacheTokens!.ToArray();
+        Assert.Equal(generated, seen);
         Assert.Equal([.. Prompt(), .. generated], resident);
         Assert.Equal(generator.Caches[0].Length, resident.Length);
     }
@@ -124,14 +127,17 @@ public sealed class ShortConvRollbackTests
     public async Task Medusa_TracksResidentCacheTokens()
     {
         using var model = BuildModel();
-        using var generator = new MedusaGeneratorBuilder<KVCacherBuilder>()
+        using var generator = (MedusaGenerator<KVCacherBuilder>)new MedusaGeneratorBuilder<KVCacherBuilder>()
             .CreateGenerator(model, Tokenizer, addBos: false, addEos: false, caches: null, seed: 1);
+        var seen = new List<int>();
+        generator.OnTokenGenerated += seen.Add;
 
         await Generate(generator, Prompt(),
             new SamplingConfig { Temperature = 0f, Constraint = LettersConstraint() });
 
         int[] generated = generator.CurrentGeneratedIds!.ToArray();
         int[] resident = generator.CacheTokens!.ToArray();
+        Assert.Equal(generated, seen);
         Assert.Equal([.. Prompt(), .. generated], resident);
         Assert.Equal(generator.Caches[0].Length, resident.Length);
     }

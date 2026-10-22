@@ -83,6 +83,21 @@ public static class Gradients
         return dLogits;
     }
 
+    /// <summary>
+    /// Multiplies every parameter's accumulated gradient by <paramref name="scale"/>.
+    /// Used to turn a sum of microbatch mean gradients into their average before
+    /// clipping and the optimizer step.
+    /// </summary>
+    public static void Scale(IReadOnlyList<Parameter> parameters, float scale)
+    {
+        if (scale == 1f) return;
+        foreach (var p in parameters)
+        {
+            var grad = p.Grad.Data;
+            for (int i = 0; i < grad.Length; i++) grad[i] *= scale;
+        }
+    }
+
     // Gradient clipping — L2 norm clipping across all parameters
 
     /// <summary>

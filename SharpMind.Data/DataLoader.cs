@@ -17,13 +17,15 @@ public sealed class DataLoader
     private readonly IBatchStrategy _batcher;
     private readonly int _prefetchBuffer;
     private readonly int? _maxBatches;
+    private readonly Action<int, int>? _skipProgress;
 
     public DataLoader(
         PipelineNode pipeline,
         Func<string, int[]> tokenise,
         IBatchStrategy batcher,
         int prefetchBuffer = 10,
-        int? maxBatches = null)
+        int? maxBatches = null,
+        Action<int, int>? skipProgress = null)
     {
         ArgumentNullException.ThrowIfNull(pipeline);
         ArgumentNullException.ThrowIfNull(tokenise);
@@ -36,6 +38,7 @@ public sealed class DataLoader
         _batcher = batcher;
         _prefetchBuffer = prefetchBuffer;
         _maxBatches = maxBatches;
+        _skipProgress = skipProgress;
     }
 
     /// <summary>
@@ -67,6 +70,7 @@ public sealed class DataLoader
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(totalBudget ?? 1, 0);
 
         int skipRemaining = Math.Max(0, skipBatches);
+        int skipTotal = skipRemaining;
         // A skip can legitimately consume the whole budget (a resumed run that
         // already finished the configured work); budget 0 simply emits nothing.
         // The negative guard above still rejects a bad configured budget.
@@ -110,6 +114,11 @@ public sealed class DataLoader
                             skipRemaining--;
                             passSkipped++;
                             batch.Dispose();
+                            // Replaying a long cursor can take a while and produces no
+                            // steps, so report progress rather than looking hung.
+                            if (_skipProgress is not null
+                                && (skipRemaining % 100 == 0 || skipRemaining == 0))
+                                _skipProgress(skipTotal - skipRemaining, skipTotal);
                             continue;
                         }
                         if (budget is { } remaining && produced >= remaining)

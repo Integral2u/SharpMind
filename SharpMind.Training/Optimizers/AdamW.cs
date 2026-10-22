@@ -37,7 +37,7 @@ public sealed class AdamW : IOptimizer
         _epsilon = epsilon;
         _weightDecay = weightDecay;
         _noDecayNames = new HashSet<string>(
-            noDecayNames ?? ["bias", "norm.weight", "layernorm.weight"],
+            noDecayNames ?? ["bias", "norm.weight", "layernorm.weight", "rmsnorm", "layernorm"],
             StringComparer.OrdinalIgnoreCase);
 
         _m = [.. _parameters.Select(p => new float[p.Data.ElementCount])];

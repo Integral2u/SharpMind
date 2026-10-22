@@ -140,10 +140,15 @@ public static class TrainRunner
             var changed = job.SourceHashes.Count > 0
                 && sourceHashes.Count > 0
                 && !job.SourceHashes.OrderBy(kv => kv.Key).SequenceEqual(sourceHashes.OrderBy(kv => kv.Key));
+            // Compact identity for the corpus this run trains on; stamped into every
+            // checkpoint so a later resume can tell whether its batch cursor still
+            // indexes the same stream (see TrainConfig.DataFingerprint).
+            string? dataFingerprint = SourceHasher.Combined(sourceHashes);
             foreach (var kv in sourceHashes.Where(kv => kv.Value is not null))
                 Log($"Source hash {kv.Key}: {kv.Value![..Math.Min(12, kv.Value == null ? 0 : kv.Value.Length)]}…");
             if (changed)
-                Log("WARNING: training sources changed since the last run — the cached tokenizer may be stale for this corpus.");
+                Log("WARNING: training sources changed since the last run — the cached tokenizer may be stale "
+                    + "for this corpus. The data cursor is reset, so this run starts at the head of the new corpus.");
             if (sourceHashes.Count > 0)
                 job.SourceHashes = sourceHashes;
 
@@ -227,7 +232,9 @@ public static class TrainRunner
                     eosTokenId: tokenizer.EosId,
                     padTokenId: tokenizer.PadId);
             var loader = new DataLoader(pipeline, s => tokenizer.Encode(s), batcher, prefetchBuffer: 4,
-                maxBatches: job.TotalSteps * job.GradAccumSteps);
+                maxBatches: job.TotalSteps * job.GradAccumSteps,
+                skipProgress: (done, total) =>
+                    Log($"Data cursor: replayed {done:N0}/{total:N0} batches…"));
             Log($"Data pipeline: {loader.Describe()}");
 
             // 4. Model — empty float weights, randomised unless resuming.
@@ -429,9 +436,12 @@ public static class TrainRunner
                     // recorded by the previous run points into data this run never
                     // sees - applying it would discard exactly the new files the run
                     // exists to train on. A plain resume replays the same stream, so
-                    // it picks the cursor up and continues where it stopped.
-                    ResumeDataCursor = !job.IncrementalMode,
+                    // it picks the cursor up and continues where it stopped — unless
+                    // the sources changed, in which case the old cursor no longer
+                    // indexes this corpus and replaying it would silently stall.
+                    ResumeDataCursor = !job.IncrementalMode && !changed,
                     DataSeed = Seed,
+                    DataFingerprint = dataFingerprint,
                     KeepRecent = job.KeepRecent,
                     QuantAwareTraining = qat,
                     // Guard a strict resume against a vocabulary change (the model's

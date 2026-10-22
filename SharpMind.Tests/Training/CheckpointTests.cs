@@ -70,6 +70,25 @@ public sealed class CheckpointTests
     }
 
     [Fact]
+    public void FindLatest_ParsesNumericSteps_NotLexicographicNames()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), "sm-latest-numeric-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(dir, "step-9"));
+            Directory.CreateDirectory(Path.Combine(dir, "step-10"));
+
+            // Non-zero-padded names: "step-9" sorts after "step-10" lexically,
+            // so only numeric parsing can pick the real latest step.
+            Assert.Equal(Path.Combine(dir, "step-10"), Checkpoint.FindLatest(dir));
+        }
+        finally
+        {
+            if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
     public void FindLatest_ReturnsNull_WhenMissingOrEmpty()
     {
         string dir = Path.Combine(Path.GetTempPath(), "sm-latest-" + Guid.NewGuid().ToString("N"));
@@ -108,6 +127,69 @@ public sealed class CheckpointTests
         finally
         {
             if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Load_ThrowsClearError_WhenModelFileIsTruncated()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), "sm-truncated-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            using var source = Tensor<float>.From([1f, 2f, 3f, 4f], 4);
+            using var pSource = new Parameter("layer.weight", source);
+            Checkpoint.Save(dir, [pSource]);
+
+            string modelPath = Path.Combine(dir, "model.bin");
+            using (var stream = new FileStream(modelPath, FileMode.Open, FileAccess.Write))
+                stream.SetLength(stream.Length - sizeof(float));
+
+            using var target = Tensor<float>.From([0f, 0f, 0f, 0f], 4);
+            using var pTarget = new Parameter("layer.weight", target);
+
+            var ex = Assert.Throws<InvalidDataException>(() => Checkpoint.Load(dir, [pTarget]));
+            Assert.Contains("Unexpected end of checkpoint", ex.Message);
+            Assert.Contains("layer.weight", ex.Message);
+        }
+        finally
+        {
+            if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Save_Failure_LeavesTheExistingCheckpointIntact()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), "sm-atomic-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            using var original = Tensor<float>.From([1f, 2f, 3f], 3);
+            using var pOriginal = new Parameter("layer.weight", original);
+            Checkpoint.Save(dir, [pOriginal], step: 7);
+            string originalMeta = File.ReadAllText(Path.Combine(dir, "meta.json"));
+
+            using var replacement = Tensor<float>.From([9f, 9f, 9f], 3);
+            using var pReplacement = new Parameter("layer.weight", replacement);
+
+            Assert.Throws<InvalidOperationException>(() =>
+                Checkpoint.Save(dir, Failing(pReplacement)));
+
+            Assert.Equal(originalMeta, File.ReadAllText(Path.Combine(dir, "meta.json")));
+
+            using var restored = Tensor<float>.From([0f, 0f, 0f], 3);
+            using var pRestored = new Parameter("layer.weight", restored);
+            Checkpoint.Load(dir, [pRestored]);
+            Assert.Equal(new[] { 1f, 2f, 3f }, Copy(pRestored));
+        }
+        finally
+        {
+            if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
+        }
+
+        static IEnumerable<Parameter> Failing(Parameter p)
+        {
+            yield return p;
+            throw new InvalidOperationException("simulated write failure");
         }
     }
 

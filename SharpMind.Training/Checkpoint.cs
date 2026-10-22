@@ -18,6 +18,10 @@ namespace SharpMind.Training;
 /// </summary>
 public static class Checkpoint
 {
+    // Checkpoint saves are not hot, and serialising them keeps two writers from
+    // racing the same directory while one is swapping its temp directory in.
+    private static readonly object SaveLock = new();
+
     // Save
 
     /// <summary>
@@ -34,61 +38,97 @@ public static class Checkpoint
         IReadOnlyDictionary<string, string>? extra = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(directory);
-        Directory.CreateDirectory(directory);
-
-        var paramList = parameters.ToList();
-
-        // Model weights
-        string modelPath = Path.Combine(directory, "model.bin");
-        using (var modelStream = new FileStream(
-            modelPath, FileMode.Create, FileAccess.Write,
-            FileShare.None, bufferSize: 1 << 20, useAsync: false))
-        using (var writer = new BinaryWriter(modelStream))
+        lock (SaveLock)
         {
-            // Header: number of parameters
-            writer.Write(paramList.Count);
-            foreach (var p in paramList)
+        string target = Path.GetFullPath(directory);
+        string parent = Path.GetDirectoryName(target)
+            ?? throw new ArgumentException($"Checkpoint directory has no parent: {directory}", nameof(directory));
+        Directory.CreateDirectory(parent);
+
+        string name = Path.GetFileName(target);
+        string temp = Path.Combine(parent, $".{name}.tmp-{Guid.NewGuid():N}");
+
+        try
+        {
+            Directory.CreateDirectory(temp);
+            var paramList = parameters.ToList();
+
+            // Model weights
+            string modelPath = Path.Combine(temp, "model.bin");
+            using (var modelStream = new FileStream(
+                modelPath, FileMode.Create, FileAccess.Write,
+                FileShare.None, bufferSize: 1 << 20, useAsync: false))
+            using (var writer = new BinaryWriter(modelStream))
             {
-                byte[] nameBytes = System.Text.Encoding.UTF8.GetBytes(p.Name);
-                writer.Write(nameBytes.Length);
-                writer.Write(nameBytes);
-                writer.Write(p.Data.Shape.Rank);
-                foreach (int d in p.Data.Shape.Dims) writer.Write(d);
-                var data = p.Data.Data;
-                writer.Write(MemoryMarshal.AsBytes(data));
+                // Header: number of parameters
+                writer.Write(paramList.Count);
+                foreach (var p in paramList)
+                {
+                    byte[] nameBytes = System.Text.Encoding.UTF8.GetBytes(p.Name);
+                    writer.Write(nameBytes.Length);
+                    writer.Write(nameBytes);
+                    writer.Write(p.Data.Shape.Rank);
+                    foreach (int d in p.Data.Shape.Dims) writer.Write(d);
+                    var data = p.Data.Data;
+                    writer.Write(MemoryMarshal.AsBytes(data));
+                }
             }
+
+            // Optimizer state
+            if (optimizer is not null)
+            {
+                string optPath = Path.Combine(temp, "optimizer.bin");
+                using var optStream = new FileStream(optPath, FileMode.Create, FileAccess.Write);
+                using var optWriter = new BinaryWriter(optStream);
+                optimizer.SaveState(optWriter);
+            }
+
+            // Metadata
+            var meta = new JsonObject
+            {
+                ["step"]      = step,
+                ["loss"]      = float.IsNaN(loss) ? null : (JsonNode?)JsonValue.Create(loss),
+                ["note"]      = note,
+                ["savedUtc"]  = DateTime.UtcNow.ToString("o"),
+                ["paramCount"] = paramList.Count,
+            };
+
+            if (extra is { Count: > 0 })
+            {
+                var extraNode = new JsonObject();
+                foreach (var (key, value) in extra)
+                    extraNode[key] = value;
+                meta["extra"] = extraNode;
+            }
+
+            File.WriteAllText(
+                Path.Combine(temp, "meta.json"),
+                meta.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+
+            // Publish the staged files with same-volume renames. Each file is
+            // complete before it becomes visible; meta.json goes last so readers
+            // never see metadata for weights that have not landed yet.
+            Directory.CreateDirectory(target);
+            File.Move(Path.Combine(temp, "model.bin"), Path.Combine(target, "model.bin"), overwrite: true);
+
+            string stagedOptimizer = Path.Combine(temp, "optimizer.bin");
+            string targetOptimizer = Path.Combine(target, "optimizer.bin");
+            if (File.Exists(stagedOptimizer))
+                File.Move(stagedOptimizer, targetOptimizer, overwrite: true);
+            else if (File.Exists(targetOptimizer))
+                File.Delete(targetOptimizer);
+
+            File.Move(Path.Combine(temp, "meta.json"), Path.Combine(target, "meta.json"), overwrite: true);
+            Directory.Delete(temp, recursive: true);
         }
-
-        // Optimizer state
-        if (optimizer is not null)
+        catch
         {
-            string optPath = Path.Combine(directory, "optimizer.bin");
-            using var optStream = new FileStream(optPath, FileMode.Create, FileAccess.Write);
-            using var optWriter = new BinaryWriter(optStream);
-            optimizer.SaveState(optWriter);
+            try { if (Directory.Exists(temp)) Directory.Delete(temp, recursive: true); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+            throw;
         }
-
-        // Metadata
-        var meta = new JsonObject
-        {
-            ["step"]      = step,
-            ["loss"]      = float.IsNaN(loss) ? null : (JsonNode?)JsonValue.Create(loss),
-            ["note"]      = note,
-            ["savedUtc"]  = DateTime.UtcNow.ToString("o"),
-            ["paramCount"] = paramList.Count,
-        };
-
-        if (extra is { Count: > 0 })
-        {
-            var extraNode = new JsonObject();
-            foreach (var (key, value) in extra)
-                extraNode[key] = value;
-            meta["extra"] = extraNode;
         }
-
-        File.WriteAllText(
-            Path.Combine(directory, "meta.json"),
-            meta.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
     }
 
     // Load
@@ -159,7 +199,7 @@ public static class Checkpoint
     private static long ParseStep(string name)
     {
         if (string.IsNullOrWhiteSpace(name)) return 0;
-        if (name.StartsWith("step-", StringComparison.Ordinal) == true) return 0;
+        if (!name.StartsWith("step-", StringComparison.Ordinal)) return 0;
         int end = name.IndexOf('-', 5);
         var number = end < 0 ? name[5..] : name[5..end];
         return long.TryParse(number, out var v) ? v : 0;
@@ -214,7 +254,8 @@ public static class Checkpoint
             for (int i = 0; i < count; i++)
             {
                 int nameLen = reader.ReadInt32();
-                string name = System.Text.Encoding.UTF8.GetString(reader.ReadBytes(nameLen));
+                string name = System.Text.Encoding.UTF8.GetString(
+                    ReadBytesExactly(reader, nameLen, "tensor name"));
                 int rank = reader.ReadInt32();
                 int elemCount = 1;
                 for (int d = 0; d < rank; d++) { int dim = reader.ReadInt32(); elemCount *= dim; }
@@ -230,11 +271,11 @@ public static class Checkpoint
                         throw new InvalidDataException(
                             $"Checkpoint tensor '{name}' has {elemCount} elements but the " +
                             $"model parameter '{param.Name}' has {data.Length}.");
-                    reader.Read(MemoryMarshal.AsBytes(data));
+                    ReadExactly(reader, MemoryMarshal.AsBytes(data), $"tensor '{name}'");
                 }
                 else
                 {
-                    reader.BaseStream.Seek(elemCount * sizeof(float), SeekOrigin.Current);
+                    SkipExactly(reader, (long)elemCount * sizeof(float), $"tensor '{name}'");
                 }
             }
         }
@@ -310,7 +351,8 @@ public static class Checkpoint
             for (int i = 0; i < count; i++)
             {
                 int nameLen = reader.ReadInt32();
-                string name = System.Text.Encoding.UTF8.GetString(reader.ReadBytes(nameLen));
+                string name = System.Text.Encoding.UTF8.GetString(
+                    ReadBytesExactly(reader, nameLen, "tensor name"));
                 int rank = reader.ReadInt32();
                 int elemCount = 1;
                 var dims = new int[Math.Max(rank, 0)];
@@ -339,16 +381,14 @@ public static class Checkpoint
                         int rowBytes = srcCols * sizeof(float);
                         if (rowBuffer is null) rowBuffer = new byte[rowBytes];
                         else if (rowBuffer.Length < rowBytes) rowBuffer = new byte[rowBytes];
-                        int read = reader.Read(rowBuffer, 0, rowBytes);
-                        if (read != rowBytes)
-                            throw new InvalidDataException(
-                                $"Unexpected end of checkpoint while reading embedding row {r} of '{name}'.");
+                        ReadExactly(reader, rowBuffer.AsSpan(0, rowBytes),
+                            $"embedding row {r} of '{name}'");
                         MemoryMarshal.Cast<byte, float>(rowBuffer.AsSpan(0, rowBytes))
                             .CopyTo(dst.Slice(r * dstCols, srcCols));
                     }
                     // Skip any source rows the destination cannot hold.
                     long overflow = (long)(srcRows - copy) * srcCols * sizeof(float);
-                    if (overflow > 0) reader.BaseStream.Seek(overflow, SeekOrigin.Current);
+                    if (overflow > 0) SkipExactly(reader, overflow, $"embedding rows of '{name}'");
                     copiedEmbeddingRows = copy;
                 }
                 else if (param is not null)
@@ -358,11 +398,11 @@ public static class Checkpoint
                         throw new InvalidDataException(
                             $"Checkpoint tensor '{name}' has {elemCount} elements but the " +
                             $"model parameter '{param.Name}' has {data.Length}.");
-                    reader.Read(MemoryMarshal.AsBytes(data));
+                    ReadExactly(reader, MemoryMarshal.AsBytes(data), $"tensor '{name}'");
                 }
                 else
                 {
-                    reader.BaseStream.Seek(elemCount * sizeof(float), SeekOrigin.Current);
+                    SkipExactly(reader, (long)elemCount * sizeof(float), $"tensor '{name}'");
                 }
             }
         }
@@ -372,5 +412,34 @@ public static class Checkpoint
                 $"Checkpoint '{directory}' has no '{growableParameterName}' tensor to warm-restart from.");
 
         return ReadMeta(directory);
+    }
+
+    private static byte[] ReadBytesExactly(BinaryReader reader, int count, string what)
+    {
+        if (count < 0) throw new InvalidDataException($"Invalid {what} length {count}.");
+        byte[] bytes = reader.ReadBytes(count);
+        if (bytes.Length != count)
+            throw new InvalidDataException($"Unexpected end of checkpoint while reading {what}.");
+        return bytes;
+    }
+
+    private static void ReadExactly(BinaryReader reader, Span<byte> destination, string what)
+    {
+        try
+        {
+            reader.BaseStream.ReadExactly(destination);
+        }
+        catch (EndOfStreamException)
+        {
+            throw new InvalidDataException($"Unexpected end of checkpoint while reading {what}.");
+        }
+    }
+
+    private static void SkipExactly(BinaryReader reader, long count, string what)
+    {
+        long remaining = reader.BaseStream.Length - reader.BaseStream.Position;
+        if (count < 0 || count > remaining)
+            throw new InvalidDataException($"Unexpected end of checkpoint while skipping {what}.");
+        reader.BaseStream.Seek(count, SeekOrigin.Current);
     }
 }

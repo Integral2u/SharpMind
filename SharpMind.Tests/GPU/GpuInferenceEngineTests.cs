@@ -146,6 +146,59 @@ public sealed class GpuInferenceEngineTests : IClassFixture<GpuInferenceEngineTe
     }
 
     /// <summary>
+    /// Trimming keeps only the last cache rows, but RoPE must keep counting the
+    /// absolute conversation position. After a trim the query slot and its
+    /// rotation offset diverge; this compares the next GPU decode against an
+    /// independent CPU cache trimmed the same way and forwarded at the same
+    /// absolute startPosition.
+    /// </summary>
+    [Fact]
+    public void DecodeAfterTrim_UsesAbsolutePosition_MatchesCpuOracle()
+    {
+        const int decodeSteps = 10, keep = 8;
+        using var engine = BuildEngine();
+        using var workspace = WorkspaceFor(_model);
+        IKVCache[] cpuCaches = CachesFor(_model, MaxCacheLength);
+        try
+        {
+            int[] prompt = Prompt();
+            float[] gpuPrefill = engine.Prefill(prompt).ToArray();
+            float[] cpuPrefill = LastLogits(_model, cpuCaches, prompt, workspace);
+            Assert.True(MaxAbsDiff(gpuPrefill, cpuPrefill) <= 1e-4f);
+
+            int token = ArgMax(cpuPrefill);
+            for (int step = 0; step < decodeSteps; step++)
+            {
+                var gpu = engine.DecodeStep(token);
+                float[] cpu = LastLogits(_model, cpuCaches, [token], workspace);
+                Assert.True(MaxAbsDiff(gpu.Span, cpu) <= 1e-4f);
+                token = ArgMax(cpu);
+            }
+
+            int position = prompt.Length + decodeSteps;
+            Assert.Equal(position, engine.Position);
+
+            engine.TrimToLast(keep);
+            foreach (var cache in cpuCaches) cache.TrimToLast(keep);
+
+            Assert.Equal(keep, engine.CachedLength);
+            Assert.Equal(position, engine.Position);
+
+            var gpuAfterTrim = engine.DecodeStep(token);
+            using var cpuAfterTrim = Prefill.ForwardLastLogitsChunked(
+                _model, cpuCaches, [token], workspace, startPosition: position);
+
+            Assert.True(MaxAbsDiff(gpuAfterTrim.Span, cpuAfterTrim.Data) <= 1e-4f,
+                $"post-trim decode deviates by {MaxAbsDiff(gpuAfterTrim.Span, cpuAfterTrim.Data):G2}");
+            Assert.Equal(position + 1, engine.Position);
+        }
+        finally
+        {
+            foreach (var cache in cpuCaches) cache.Dispose();
+        }
+    }
+
+    /// <summary>
     /// A second turn with a warm cache must continue from the first turn's decoder state, exactly
     /// like the CPU generator does. The engine's continued prefill runs GPU continued prefill
     /// (PrefillGpuContinued) against the materialised device cache — never recomputing the

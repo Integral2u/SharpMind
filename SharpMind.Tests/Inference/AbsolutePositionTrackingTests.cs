@@ -120,6 +120,104 @@ public sealed class AbsolutePositionTrackingTests
     }
 
     [Fact]
+    public async Task SpeculativeGenerator_ForcedTrim_MatchesGreedyRoundOracle()
+    {
+        var cfg = Config with { SlidingWindowSize = 16 };
+        using var model = BuildModel(cfg);
+        var tokenizer = BuildTokenizer();
+
+        const int maxNewTokens = 18, roundLen = 5, cacheCap = 16, keep = 8;
+        int[] prompt = Prompt(3);
+        int[] expected = ReferenceGreedyRoundTrim(
+            model, cfg, prompt, maxNewTokens, roundLen, cacheCap, keep);
+
+        using var gen = new SpeculativeGenerator<KVCacherBuilder>(model, tokenizer,
+            addBos: false, addEos: false, seed: 1);
+
+        var generation = new GenerationConfig
+        {
+            MaxNewTokens = maxNewTokens,
+            RepetitionPenalty = 1f,
+            SlidingWindowSize = keep,
+            Stream = false,
+        };
+
+        await foreach (var _ in gen.GenerateFromTokensAsync(prompt, SamplingConfig.Greedy, generation))
+        {
+        }
+
+        Assert.Equal(expected, gen.CurrentGeneratedIds);
+        Assert.True(gen.Caches[0].Length < prompt.Length + maxNewTokens,
+            "the forced window should have trimmed the cache");
+    }
+
+    [Fact]
+    public async Task MedusaGenerator_AfterForcedTrim_ContinuesAtAbsolutePosition()
+    {
+        var cfg = Config with { SlidingWindowSize = 16 };
+        using var model = BuildModel(cfg);
+        var tokenizer = BuildTokenizer();
+
+        using var gen = new MedusaGeneratorBuilder<KVCacherBuilder>()
+            .CreateGenerator(model, tokenizer, addBos: false, addEos: false, caches: null, seed: 1);
+
+        int[] prompt = Prompt(3);
+        var generation = new GenerationConfig
+        {
+            MaxNewTokens = 30,
+            RepetitionPenalty = 1f,
+            SlidingWindowSize = 8,
+            Stream = false,
+        };
+
+        await foreach (var _ in gen.GenerateFromTokensAsync(prompt, SamplingConfig.Greedy, generation))
+        {
+        }
+
+        int[] generated = gen.CurrentGeneratedIds!.ToArray();
+        // Every Medusa token is forwarded exactly once, and trims keep a suffix.
+        // CacheTokens is deliberately null after a trim, so reconstruct the
+        // resident suffix from the generated stream and the live cache length.
+        int[] all = [.. prompt, .. generated];
+        int cacheLen = gen.Caches[0].Length;
+        Assert.True(cacheLen < all.Length, "the forced window should have trimmed the cache");
+        int[] resident = all[^cacheLen..];
+
+        int absolutePosition = all.Length;
+        int residentStart = absolutePosition - resident.Length;
+        var cpuCaches = BuildCaches(cfg, cfg.MaxPosition);
+        using var workspace = MemoryHelpers.CreateWorkspace(
+            Workspace.CalculateRequiredSize(cfg.HiddenDim, cfg.FfnDim, cfg.VocabSize, cfg.NumLayers, cfg.MaxSeqLen));
+
+        try
+        {
+            using (Prefill.ForwardLastLogitsChunked(
+                model, cpuCaches, resident, workspace, startPosition: residentStart))
+            {
+            }
+
+            int[] extra = [10];
+            int expected;
+            using (var logits = Prefill.ForwardLastLogitsChunked(
+                model, cpuCaches, extra, workspace, startPosition: absolutePosition))
+            {
+                expected = ArgMax(logits.Data[..cfg.VocabSize].ToArray());
+            }
+
+            await foreach (var _ in gen.GenerateFromTokensAsync(extra, SamplingConfig.Greedy,
+                generation with { MaxNewTokens = 1 }))
+            {
+            }
+
+            Assert.Equal(expected, gen.CurrentGeneratedIds![0]);
+        }
+        finally
+        {
+            foreach (var cache in cpuCaches) cache.Dispose();
+        }
+    }
+
+    [Fact]
     public async Task SpeculativeGenerator_SmallSlidingWindow_CompletesWithoutCacheOverflow()
     {
         var cfg = Config with { SlidingWindowSize = 16 };
@@ -210,6 +308,54 @@ public sealed class AbsolutePositionTrackingTests
                 using var stepLogits = model.ForwardLastLogits(stepInput, caches, position, null);
                 logits = stepLogits.Data[..cfg.VocabSize].ToArray();
                 position++;
+            }
+
+            return [.. ids];
+        }
+        finally
+        {
+            foreach (var c in caches) c.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Greedy oracle with the speculative generator's round-boundary trim:
+    /// every round emits <paramref name="roundLen"/> tokens and trims before
+    /// the first forward if the round would overflow the cache.
+    /// </summary>
+    private static int[] ReferenceGreedyRoundTrim(
+        Transformer model, ModelConfig cfg, int[] prompt, int maxNewTokens,
+        int roundLen, int cacheCap, int keep)
+    {
+        var caches = BuildCaches(cfg, cacheCap);
+        try
+        {
+            using var promptInput = Tensor<int>.From(prompt, 1, prompt.Length);
+            float[] logits;
+            using (var initial = model.ForwardLastLogits(promptInput, caches, 0, null))
+                logits = initial.Data[..cfg.VocabSize].ToArray();
+
+            int position = prompt.Length;
+            var ids = new List<int>(maxNewTokens);
+            while (ids.Count < maxNewTokens)
+            {
+                if (caches[0].Length + roundLen > cacheCap)
+                {
+                    for (int i = 0; i < caches.Length; i++)
+                        caches[i].TrimToLast(keep);
+                }
+
+                for (int step = 0; step < roundLen && ids.Count < maxNewTokens; step++)
+                {
+                    int next = ArgMax(logits);
+                    ids.Add(next);
+                    if (ids.Count == maxNewTokens) break;
+
+                    using var stepInput = Tensor<int>.From([next], 1, 1);
+                    using var stepLogits = model.ForwardLastLogits(stepInput, caches, position, null);
+                    logits = stepLogits.Data[..cfg.VocabSize].ToArray();
+                    position++;
+                }
             }
 
             return [.. ids];
