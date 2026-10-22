@@ -489,5 +489,6 @@ public class OpenAiMapperTests
         public Task<ChatMessage[]> StartChatAsync(Func<Task<string>> prompt, Action<string> response, CancellationToken token = default) => throw new NotSupportedException();
         public Task<ChatMessage[]> StartChatAsync(Func<string> prompt, Action<string> response, CancellationToken token = default) => throw new NotSupportedException();
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        public async Task WarmupPrefillAsync() { }
     }
 }

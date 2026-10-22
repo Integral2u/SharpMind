@@ -165,5 +165,6 @@ public sealed class ChatMessageConverterTests
         public Task<SmChatMessage[]> StartChatAsync(Func<Task<string>> prompt, Action<string> response, CancellationToken token = default) => Task.FromResult(Array.Empty<SmChatMessage>());
         public Task<SmChatMessage[]> StartChatAsync(Func<string> prompt, Action<string> response, CancellationToken token = default) => Task.FromResult(Array.Empty<SmChatMessage>());
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        public async Task WarmupPrefillAsync() { }
     }
 }

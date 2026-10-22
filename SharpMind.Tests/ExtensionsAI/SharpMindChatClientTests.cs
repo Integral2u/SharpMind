@@ -374,5 +374,6 @@ public sealed class SharpMindChatClientTests
             Disposed = true;
             return ValueTask.CompletedTask;
         }
+        public async Task WarmupPrefillAsync() { }
     }
 }

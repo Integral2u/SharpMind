@@ -91,6 +91,10 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
     private readonly int[] _draftScratch;
     /// <summary>Absolute position of the next token; diverges from cache length after a trim.</summary>
     private int _position;
+    /// <summary>Token ids resident in the caches, when the generator can vouch for them.</summary>
+    private List<int>? _cacheTokens;
+    /// <summary>Ids emitted by the current generation.</summary>
+    private List<int>? _generatedIds;
     private float[]? _maskScratch;
     private bool _disposed;
     private readonly bool _addBos;
@@ -149,6 +153,7 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
         _normedHiddenScratch = new float[model.Config.HiddenDim];
         _draftScratch = new int[DefaultNumHeads + 1];
         _position = _caches[0].Length;
+        _cacheTokens = _caches[0].Length == 0 ? [] : null;
         foreach (var cache in _caches)
             if (!cache.SupportsTruncate) { _replayOnRollback = true; break; }
     }
@@ -214,13 +219,17 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
         // Prefill). After this, the KV cache has promptLen entries and
         // logitsTensor predicts the very next token.
         int posOffset = _position;
+        if (_cacheTokens is not null && _cacheTokens.Count != _caches[0].Length) _cacheTokens = null;
+        if (_cacheTokens is not null && _caches[0].Length + promptIds.Length > _caches[0].MaxSeqLen)
+            _cacheTokens = null;
         Tensor<float>? logitsTensor = Prefill.ForwardLastLogitsChunked(
             _model, _caches, promptIds, _workspace, PrefillProgress, startPosition: posOffset);
+        _cacheTokens?.AddRange(promptIds);
 
         try
         {
             int promptLen = promptIds.Length;
-            var generatedIds = new List<int>(genCfg.MaxNewTokens);
+            var generatedIds = _generatedIds = new List<int>(genCfg.MaxNewTokens);
             var decodedSoFar = new System.Text.StringBuilder();
             var rng = sampleCfg.Seed.HasValue
                 ? new Random(sampleCfg.Seed.Value)
@@ -295,6 +304,7 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
                         keep = Math.Max(1, _caches[0].MaxSeqLen / 2);
                     for (int i = 0; i < _caches.Length; i++)
                         _caches[i].TrimToLast(keep);
+                    _cacheTokens = null;
                 }
 
                 // 3. Snapshot cache length before verification so we can trim
@@ -412,16 +422,24 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
                     if (stopHit || genCfg.StopTokenIds.Contains(tid))
                         break;
                 }
-                if (stopHit) break;
+                // A stop can leave the unverified draft suffix in the cache; the
+                // resident ids are no longer a clean prefix, so stop vouching.
+                if (stopHit) { _cacheTokens = null; break; }
                 if (generatedIds.Count > 0 &&
                     genCfg.StopTokenIds.Contains(generatedIds[^1]))
+                {
+                    _cacheTokens = null;
                     break;
-                if (grammarDead) break;
+                }
+                if (grammarDead) { _cacheTokens = null; break; }
 
                 // 7. Prepare the starting state for the next round.
                 //    Two cases depending on whether all K+1 draft tokens were accepted.
                 if (accepted == draftLen)
                 {
+                    if (_cacheTokens is not null)
+                        for (int i = 0; i < draftLen; i++) _cacheTokens.Add(_draftScratch[i]);
+
                     // All accepted: emit the bonus token
                     // verif_logits[K] predicts what comes after the last draft
                     // token (draft[K]).  We sample this greedily as the "bonus"
@@ -473,6 +491,7 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
                             keep = Math.Max(1, _caches[0].MaxSeqLen / 2);
                         for (int i = 0; i < _caches.Length; i++)
                             _caches[i].TrimToLast(keep);
+                        _cacheTokens = null;
                     }
 
                     _position += draftLen;
@@ -492,6 +511,7 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
                         bonusInput, _caches, _position, _workspace);
                     bonusPrev.Dispose();
                     _position++;
+                    _cacheTokens?.Add(bonus);
 
                     // After single-token ForwardLastLogits, _cachedHidden is
                     // [1, 1, H] and already final-normed (ForwardInPlace).
@@ -537,6 +557,9 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
                             _caches[i].Truncate(cacheLenBefore + accepted);
                     }
 
+                    if (_cacheTokens is not null)
+                        for (int i = 0; i < accepted; i++) _cacheTokens.Add(_draftScratch[i]);
+
                     // Sliding window check (same as above).
                     if (_caches[0].IsFull)
                     {
@@ -547,6 +570,7 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
                             keep = Math.Max(1, _caches[0].MaxSeqLen / 2);
                         for (int i = 0; i < _caches.Length; i++)
                             _caches[i].TrimToLast(keep);
+                        _cacheTokens = null;
                     }
 
                     // The next round's starting logits come from the last accepted
@@ -631,13 +655,25 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
         for (int i = 0; i < _caches.Length; i++)
             _caches[i].Reset();
         _position = 0;
+        _cacheTokens = [];
     }
 
     public void TruncateCache(int length)
     {
         for (int i = 0; i < _caches.Length; i++)
             _caches[i].Truncate(length);
+        if (_cacheTokens is not null && _cacheTokens.Count > length)
+            _cacheTokens.RemoveRange(length, _cacheTokens.Count - length);
         _position = length;
+    }
+
+    public IReadOnlyList<int>? CacheTokens => _cacheTokens;
+    public IReadOnlyList<int>? CurrentGeneratedIds => _generatedIds;
+
+    public void SetCacheTokens(IReadOnlyList<int> tokens)
+    {
+        _cacheTokens = [.. tokens];
+        _position = tokens.Count;
     }
 
     public float CacheFillRatio => (float)_caches[0].Length / _caches[0].MaxSeqLen;

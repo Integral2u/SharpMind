@@ -105,6 +105,38 @@ public sealed class ShortConvRollbackTests
     }
 
     [Fact]
+    public async Task Speculative_TracksResidentCacheTokens()
+    {
+        using var model = BuildModel();
+        using var generator = new SpeculativeGenerator<KVCacherBuilder>(model, Tokenizer,
+            addBos: false, addEos: false, seed: 1);
+
+        await Generate(generator, Prompt(),
+            new SamplingConfig { Temperature = 1f, TopK = 2, Constraint = LettersConstraint() });
+
+        int[] generated = generator.CurrentGeneratedIds!.ToArray();
+        int[] resident = generator.CacheTokens!.ToArray();
+        Assert.Equal([.. Prompt(), .. generated], resident);
+        Assert.Equal(generator.Caches[0].Length, resident.Length);
+    }
+
+    [Fact]
+    public async Task Medusa_TracksResidentCacheTokens()
+    {
+        using var model = BuildModel();
+        using var generator = new MedusaGeneratorBuilder<KVCacherBuilder>()
+            .CreateGenerator(model, Tokenizer, addBos: false, addEos: false, caches: null, seed: 1);
+
+        await Generate(generator, Prompt(),
+            new SamplingConfig { Temperature = 0f, Constraint = LettersConstraint() });
+
+        int[] generated = generator.CurrentGeneratedIds!.ToArray();
+        int[] resident = generator.CacheTokens!.ToArray();
+        Assert.Equal([.. Prompt(), .. generated], resident);
+        Assert.Equal(generator.Caches[0].Length, resident.Length);
+    }
+
+    [Fact]
     public async Task MedusaRejection_ReplaysShortConvStateLikeGreedy()
     {
         using var model = BuildModel();
