@@ -1,4 +1,4 @@
-using SharpMind.Core.Quantization;
+﻿using SharpMind.Core.Quantization;
 using SharpMind.Inference;
 using SharpMind.Inference.Chat;
 using SharpMind.Model;
@@ -6,12 +6,15 @@ using SharpMind.Model.Config;
 using SharpMind.Model.Format;
 using SharpMind.Tokenization;
 
-// GgufSmokeProbe — manual Phase-1 smoke tool. No test runner, no CI: it exists
+// GgufSmokeProbe â€” manual Phase-1 smoke tool. No test runner, no CI: it exists
 // to eyeball whether a real downloaded GGUF loads (or fails loudly) and, for
 // generative models, that a few greedy tokens come out. Kept intentionally slim.
 //
 //   dotnet run --project tools/GgufSmokeProbe -- meta <file>
 //   dotnet run --project tools/GgufSmokeProbe -- run  <file> ["prompt"] [maxTokens=24] [full] [resident] [topk]
+//   dotnet run --project tools/GgufSmokeProbe -- bench <file> ["prompt"] [warmup=16] [measure=64] [full] [resident] [serialmm] [nowide] [reps=3] [ids]
+//   dotnet run --project tools/GgufSmokeProbe -- benchab <file> ["prompt"] [warmup=16] [measure=64] [full] [resident]
+//   dotnet run --project tools/GgufSmokeProbe -- widebench [K=896] [N=4864] [iters=200] [chunks=0]
 //   dotnet run --project tools/GgufSmokeProbe -- stages <file> ["prompt"] [warmup=16] [measure=48] [full] [resident] [serialmm] [window N]
 //   dotnet run --project tools/GgufSmokeProbe -- bind <file>
 //   dotnet run --project tools/GgufSmokeProbe -- cmp  <fileA> <fileB> <tensor>
@@ -32,9 +35,12 @@ using SharpMind.Tokenization;
 if (args.Length > 0 && args[0] == "kbench")
     return RunKernelBench(args);
 
+if (args.Length > 0 && args[0] == "widebench")
+    return RunWideKernelBench(args);
+
 if (args.Length < 2)
 {
-    Console.Error.WriteLine("usage: meta <file>   |   dump <file> [pattern]   |   bind <file>   |   fwd <file> [full] [resident]   |   fwdmulti <file> <promptfile> [single|...]   |   ref <file> [prompt]   |   run <file> [prompt] [maxTokens] [full] [resident] [topk] [serialmm]   |   stages <file> [prompt] [warmup] [measure] [full] [resident] [serialmm]   |   kbench <q2k|q3k|q4k|q5k|q6k|q8k|q4_0|q4_1|iq4nl|q5_0|q5_1|q8_0|q8_1|f32> [K] [N] [iters] [fma|avx2|scalar]");
+    Console.Error.WriteLine("usage: meta <file>   |   dump <file> [pattern]   |   bind <file>   |   fwd <file> [full] [resident]   |   fwdmulti <file> <promptfile> [single|...]   |   ref <file> [prompt]   |   run <file> [prompt] [maxTokens] [full] [resident] [topk] [serialmm]   |   bench <file> [prompt] [warmup] [measure] [full] [resident] [serialmm] [nowide] [reps=N] [ids]   |   benchab <file> [prompt] [warmup] [measure] [full] [resident]   |   stages <file> [prompt] [warmup] [measure] [full] [resident] [serialmm]   |   widebench [K] [N] [iters]   |   kbench <q2k|q3k|q4k|q5k|q6k|q8k|q4_0|q4_1|iq4nl|q5_0|q5_1|q8_0|q8_1|f32> [K] [N] [iters] [fma|avx2|scalar]");
     return 2;
 }
 
@@ -50,6 +56,12 @@ if (mode == "dump")
 
 if (mode == "run")
     return await RunInferenceAsync(path, args);
+
+if (mode == "bench")
+    return await RunBenchAsync(path, args);
+
+if (mode == "benchab")
+    return await RunBenchABAsync(path, args);
 
 if (mode == "stages")
     return await RunStagesAsync(path, args);
@@ -261,7 +273,7 @@ static int RunForward(string path, string[] args)
             $"RawWgateExp={b0.RawWgateExp?.Count.ToString() ?? "null"}");
 
         // optimizeMemory:true (the CUI default) frees float weights that have no raw
-        // quantized fallback — this is the call that used to strand the F32 router.
+        // quantized fallback â€” this is the call that used to strand the F32 router.
         using var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
         Console.WriteLine($"  after CreateTransformer: WRouter={ShapeOf(weights.Blocks[0].WRouter)}");
 
@@ -775,6 +787,292 @@ static async Task<int> RunInferenceAsync(string path, string[] args)
     }
 }
 
+// bench <file> [prompt] [warmup=16] [measure=64] [full] [resident] [serialmm] [nowide] [reps=3] [ids]
+//
+// Profiler-off decode throughput. Each repetition gets a fresh KV cache and runs
+// the same greedy raw generation; the reported window starts after `warmup` and
+// covers `measure` tokens, so prefill and first-use JIT are excluded. The median
+// across repetitions is the number to compare before/after a kernel change.
+static async Task<int> RunBenchAsync(string path, string[] args)
+{
+    string prompt = args.Length > 2 ? args[2] : "The capital of France is";
+    int warmup = args.Length > 3 && int.TryParse(args[3], out int wv) ? wv : 16;
+    int measure = args.Length > 4 && int.TryParse(args[4], out int mv) ? mv : 64;
+    if (warmup < 1 || measure < 1) { Console.Error.WriteLine("bench needs warmup>=1 and measure>=1"); return 2; }
+
+    if (prompt.Length > 1 && prompt[0] == '@')
+    {
+        string pf = prompt[1..];
+        if (File.Exists(pf)) prompt = File.ReadAllText(pf);
+    }
+
+    bool full = args.Any(a => a.Equals("full", StringComparison.OrdinalIgnoreCase));
+    bool resident = args.Any(a => a.Equals("resident", StringComparison.OrdinalIgnoreCase));
+    bool serialMm = args.Any(a => a.Equals("serialmm", StringComparison.OrdinalIgnoreCase));
+    bool noWide = args.Any(a => a.Equals("nowide", StringComparison.OrdinalIgnoreCase));
+    bool printIds = args.Any(a => a.Equals("ids", StringComparison.OrdinalIgnoreCase));
+    int reps = 3;
+    int chunkOverride = 0;
+    foreach (string a in args)
+    {
+        if (a.StartsWith("reps=", StringComparison.OrdinalIgnoreCase) &&
+            int.TryParse(a.AsSpan(5), out int r) && r > 0)
+            reps = r;
+        else if (a.StartsWith("chunks=", StringComparison.OrdinalIgnoreCase) &&
+                 int.TryParse(a.AsSpan(7), out int c) && c >= 0)
+            chunkOverride = c;
+    }
+
+    ModelMetaData meta;
+    ModelConfig modelConfig;
+    Tokenizer? tokenizer;
+    try
+    {
+        var metaHelper = ModelFormatHelpers.GetModelMetaHelperFor(ModelFormat.Gguf);
+        metaHelper.Load(path, null, out meta, out modelConfig, out tokenizer);
+    }
+    catch (NotSupportedException ex)
+    {
+        Console.WriteLine($"UNSUPPORTED (loud fail): {ex.Message}");
+        return 3;
+    }
+
+    if (tokenizer == null)
+    {
+        Console.WriteLine("OK  meta/config loaded; no tokenizer in file (embedding-only model?) -> verification stops here.");
+        return 0;
+    }
+
+    Console.WriteLine($"OK  arch={meta.GetString("general.architecture")} tokenizer={tokenizer.VocabSize} ctx={modelConfig.MaxSeqLen}");
+
+    bool oldWide = Q8_0WideWeights.Enabled;
+    int oldChunks = Q8_0WideWeights.ParallelChunkOverride;
+    try
+    {
+        if (noWide) Q8_0WideWeights.Enabled = false;
+        Q8_0WideWeights.ParallelChunkOverride = chunkOverride;
+
+        var sharpConfig = modelConfig.ForModel();
+        var mapping = sharpConfig.ToJigSawMapping(null, serialMm ? false : null);
+        using var weights = ModelFactory.CreateWeights(
+            modelConfig, sharpConfig, QuantizationFactory.Create(mapping), path,
+            full ? LoadMode.Full : LoadMode.Streaming, quantizedResident: resident,
+            maxParallelLoadDegree: 1);
+        weights.InitializeWeights();
+        using var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
+
+        var sample = new SamplingConfig { Temperature = 0f, TopK = 1 };
+        var results = new List<(double Tps, double Ms, long AllocPerToken, int Steps, string Text, int[] Ids)>(reps);
+
+        for (int rep = 0; rep < reps; rep++)
+        {
+            using var gen = new StandardGeneratorBuilder<KVCacherBuilder>()
+                .CreateGenerator(model, tokenizer, addBos: true, addEos: false, caches: null);
+            var genCfg = new GenerationConfig { MaxNewTokens = warmup + measure, Stream = true };
+
+            int consumed = 0;
+            long start = 0, allocStart = 0;
+            int gc0 = 0, gc1 = 0, gc2 = 0;
+            var text = new System.Text.StringBuilder();
+
+            await foreach (var frag in gen.GenerateAsync(prompt, sample, genCfg))
+            {
+                consumed++;
+                if (consumed == warmup)
+                {
+                    start = System.Diagnostics.Stopwatch.GetTimestamp();
+                    allocStart = GC.GetTotalAllocatedBytes();
+                    gc0 = GC.CollectionCount(0); gc1 = GC.CollectionCount(1); gc2 = GC.CollectionCount(2);
+                }
+                else if (consumed > warmup)
+                {
+                    text.Append(frag);
+                }
+
+                if (consumed == warmup + measure) break;
+            }
+
+            long end = System.Diagnostics.Stopwatch.GetTimestamp();
+            if (start == 0)
+            {
+                Console.WriteLine($"BENCH rep={rep} ended before the {warmup}-token warm-up ({consumed} fragments); skipped");
+                continue;
+            }
+
+            int steps = Math.Max(0, consumed - warmup);
+            if (steps == 0) continue;
+            double ms = (end - start) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+            double tps = steps / (ms / 1000.0);
+            long allocPerToken = (GC.GetTotalAllocatedBytes() - allocStart) / steps;
+            int d0 = GC.CollectionCount(0) - gc0, d1 = GC.CollectionCount(1) - gc1, d2 = GC.CollectionCount(2) - gc2;
+            int[] ids = gen.CurrentGeneratedIds is { } all
+                ? all.Skip(warmup).Take(steps).ToArray()
+                : [];
+
+            results.Add((tps, ms, allocPerToken, steps, text.ToString(), ids));
+            Console.WriteLine($"BENCH rep={rep} {tps:F2} tok/s  {ms / steps:F2} ms/tok  {allocPerToken} B/tok  " +
+                              $"gc gen0={d0} gen1={d1} gen2={d2}");
+        }
+
+        if (results.Count == 0)
+        {
+            Console.WriteLine("BENCH no measurable decode steps");
+            return 4;
+        }
+
+        double[] tpsAll = [.. results.Select(r => r.Tps).OrderBy(v => v)];
+        double[] msAll = [.. results.Select(r => r.Ms / r.Steps).OrderBy(v => v)];
+        long[] allocAll = [.. results.Select(r => r.AllocPerToken).OrderBy(v => v)];
+        double medTps = tpsAll[tpsAll.Length / 2];
+        double medMs = msAll[msAll.Length / 2];
+        long medAlloc = allocAll[allocAll.Length / 2];
+
+        Console.WriteLine($"BENCH median {medTps:F2} tok/s  {medMs:F2} ms/tok  {medAlloc} B/tok  " +
+                          $"reps={results.Count} warmup={warmup} measure={measure} " +
+                          $"mode={(full ? "Full" : "Streaming")} resident={resident} " +
+                          $"serialmm={serialMm} nowide={noWide} " +
+                          $"chunks={(chunkOverride == 0 ? "auto" : chunkOverride)} cores={Environment.ProcessorCount}");
+        Console.WriteLine($"OUT: {results[0].Text}");
+        if (printIds)
+            Console.WriteLine($"IDS: {string.Join(',', results[0].Ids)}");
+        return 0;
+    }
+    catch (NotSupportedException ex)
+    {
+        Console.WriteLine($"\nUNSUPPORTED (loud fail): {ex.Message}");
+        return 3;
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"\nFAILED: {ex.GetType().Name}: {ex.Message}");
+        return 1;
+    }
+    finally
+    {
+        Q8_0WideWeights.Enabled = oldWide;
+        Q8_0WideWeights.ParallelChunkOverride = oldChunks;
+    }
+}
+
+// benchab <file> [prompt] [warmup=16] [measure=32] [full] [resident]
+//
+// Full-model A/B under one generator: alternates the wide kernel's pair/single
+// choice and 4/8 chunks token by token, so frequency drift hits every variant
+// equally. `measure` is tokens per variant, not total.
+static async Task<int> RunBenchABAsync(string path, string[] args)
+{
+    string prompt = args.Length > 2 ? args[2] : "The capital of France is";
+    int warmup = args.Length > 3 && int.TryParse(args[3], out int wv) ? wv : 16;
+    int measure = args.Length > 4 && int.TryParse(args[4], out int mv) ? mv : 32;
+    if (warmup < 1 || measure < 1) { Console.Error.WriteLine("benchab needs warmup>=1 and measure>=1"); return 2; }
+
+    bool full = args.Any(a => a.Equals("full", StringComparison.OrdinalIgnoreCase));
+    bool resident = args.Any(a => a.Equals("resident", StringComparison.OrdinalIgnoreCase));
+
+    ModelMetaData meta;
+    ModelConfig modelConfig;
+    Tokenizer? tokenizer;
+    try
+    {
+        var metaHelper = ModelFormatHelpers.GetModelMetaHelperFor(ModelFormat.Gguf);
+        metaHelper.Load(path, null, out meta, out modelConfig, out tokenizer);
+    }
+    catch (NotSupportedException ex)
+    {
+        Console.WriteLine($"UNSUPPORTED (loud fail): {ex.Message}");
+        return 3;
+    }
+    if (tokenizer == null)
+    {
+        Console.WriteLine("OK  meta/config loaded; no tokenizer in file -> verification stops here.");
+        return 0;
+    }
+
+    var variants = new (string Name, bool Pair, int Chunks)[]
+    {
+        ("pair/auto", true, 0), ("single/auto", false, 0),
+        ("pair/8", true, 8), ("single/8", false, 8),
+    };
+    var times = new List<double>[variants.Length];
+    for (int i = 0; i < times.Length; i++) times[i] = new List<double>(measure);
+
+    bool oldPair = Q8_0WideWeights.UsePairKernel;
+    int oldChunks = Q8_0WideWeights.ParallelChunkOverride;
+    try
+    {
+        var sharpConfig = modelConfig.ForModel();
+        using var weights = ModelFactory.CreateWeights(
+            modelConfig, sharpConfig, QuantizationFactory.Create(sharpConfig.ToJigSawMapping(null, null)), path,
+            full ? LoadMode.Full : LoadMode.Streaming, quantizedResident: resident,
+            maxParallelLoadDegree: 1);
+        weights.InitializeWeights();
+        using var model = ModelFactory.CreateTransformer(weights, sharpConfig, sharpConfig.ToJigSawMapping(null, null));
+
+        using var gen = new StandardGeneratorBuilder<KVCacherBuilder>()
+            .CreateGenerator(model, tokenizer, addBos: true, addEos: false, caches: null);
+        var sample = new SamplingConfig { Temperature = 0f, TopK = 1 };
+        int total = warmup + measure * variants.Length;
+        var genCfg = new GenerationConfig { MaxNewTokens = total, Stream = true };
+
+        int consumed = 0, measured = 0, current = 0;
+        long prev = 0;
+        Q8_0WideWeights.UsePairKernel = variants[0].Pair;
+        Q8_0WideWeights.ParallelChunkOverride = variants[0].Chunks;
+
+        await foreach (var _ in gen.GenerateAsync(prompt, sample, genCfg))
+        {
+            consumed++;
+            long now = System.Diagnostics.Stopwatch.GetTimestamp();
+
+            if (consumed == warmup)
+            {
+                prev = now;
+                measured = 0;
+                current = 0;
+                Q8_0WideWeights.UsePairKernel = variants[0].Pair;
+                Q8_0WideWeights.ParallelChunkOverride = variants[0].Chunks;
+            }
+            else if (consumed > warmup)
+            {
+                double ms = (now - prev) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+                times[current].Add(ms);
+                prev = now;
+                measured++;
+
+                current = measured % variants.Length;
+                Q8_0WideWeights.UsePairKernel = variants[current].Pair;
+                Q8_0WideWeights.ParallelChunkOverride = variants[current].Chunks;
+            }
+
+            if (consumed == total) break;
+        }
+
+        Console.WriteLine($"AB {Path.GetFileName(path)} prompt=\"{prompt}\" warmup={warmup} " +
+                          $"mode={(full ? "Full" : "Streaming")} resident={resident} cores={Environment.ProcessorCount}");
+        for (int v = 0; v < variants.Length; v++)
+        {
+            var list = times[v];
+            if (list.Count == 0) { Console.WriteLine($"  {variants[v].Name,-12} no samples"); continue; }
+            double[] sorted = [.. list.OrderBy(x => x)];
+            double median = sorted[sorted.Length / 2];
+            double mean = list.Average();
+            Console.WriteLine($"  {variants[v].Name,-12} n={list.Count,3} median={median:F2} ms/tok  " +
+                              $"mean={mean:F2}  {1000.0 / median:F2} tok/s");
+        }
+        return 0;
+    }
+    catch (NotSupportedException ex)
+    {
+        Console.WriteLine($"\nUNSUPPORTED (loud fail): {ex.Message}");
+        return 3;
+    }
+    finally
+    {
+        Q8_0WideWeights.UsePairKernel = oldPair;
+        Q8_0WideWeights.ParallelChunkOverride = oldChunks;
+    }
+}
+
 // stages <file> [prompt] [warmup=16] [measure=48] [full] [resident] [serialmm]
 //
 // Per-stage breakdown of CPU decode, powered by DecodeProfiler (opt-in marks
@@ -784,7 +1082,7 @@ static async Task<int> RunInferenceAsync(string path, string[] args)
 //
 // Flow: one greedy raw GenerateAsync over warmup+measure tokens. The profiler is
 // flipped on while the generator is suspended between yields, so the measured
-// window is exactly the decode steps that start after the warm-up fragment — no
+// window is exactly the decode steps that start after the warm-up fragment â€” no
 // prefill, no prompt re-prefix, no second generator pass. GC collections and
 // allocated bytes are sampled over the same window and reported per token.
 static async Task<int> RunStagesAsync(string path, string[] args)
@@ -842,7 +1140,7 @@ static async Task<int> RunStagesAsync(string path, string[] args)
         weights.InitializeWeights();
         using var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
 
-        // Greedy raw generation, no chat template — same path the run mode uses for "raw".
+        // Greedy raw generation, no chat template â€” same path the run mode uses for "raw".
         var rawBuilder = new StandardGeneratorBuilder<KVCacherBuilder>();
         var rawGen = rawBuilder.CreateGenerator(model, tokenizer, addBos: true, addEos: false, caches: null);
         var sample = new SamplingConfig { Temperature = 0f, TopK = 1 };
@@ -948,12 +1246,76 @@ static async Task<int> RunStagesAsync(string path, string[] args)
     }
 }
 
+// widebench [K=896] [N=4864] [iters=200]
+//
+// Exercises the production Q8_0 wide decode path (scratch + chunk scheduling)
+// without a model. Short kbench-style runs are dominated by timer noise, so this
+// warms up past tiered-JIT promotion and reports a long-run MAC rate.
+static unsafe int RunWideKernelBench(string[] args)
+{
+    int K = args.Length > 1 && int.TryParse(args[1], out int kv) ? kv : 896;
+    int N = args.Length > 2 && int.TryParse(args[2], out int nv) ? nv : 4864;
+    int iters = args.Length > 3 && int.TryParse(args[3], out int iv) ? iv : 200;
+    int chunks = args.Length > 4 && int.TryParse(args[4], out int cv) ? cv : 0;
+    if (K <= 0 || N <= 0 || iters <= 0 || K % 32 != 0 || chunks < 0)
+    {
+        Console.Error.WriteLine("widebench needs K>0 (multiple of 32), N>0, iters>0, chunks>=0");
+        return 2;
+    }
+
+    if (!Q8_0WideWeights.IsSupported(K, N))
+    {
+        Console.WriteLine($"WIDE unsupported K={K} N={N}");
+        return 3;
+    }
+
+    int rawBlockBytes = 34;
+    long wBytes = (long)N * (K / 32) * rawBlockBytes;
+    if (wBytes > Array.MaxLength) { Console.Error.WriteLine("widebench weights too large"); return 2; }
+
+    byte[] raw = new byte[wBytes];
+    for (long i = 0; i < wBytes; i++)
+        raw[i] = (i & 1) == 0 ? (byte)0x11 : (byte)0x22;
+
+    Q8_0WideWeights.ParallelChunkOverride = chunks;
+    var wide = Q8_0WideWeights.TryCreate(raw, K, N);
+    if (wide is null) { Console.WriteLine($"WIDE could not build K={K} N={N}"); return 3; }
+
+    float* input = (float*)System.Runtime.InteropServices.NativeMemory.AlignedAlloc(
+        (nuint)((long)K * sizeof(float)), 64);
+    float* output = (float*)System.Runtime.InteropServices.NativeMemory.AlignedAlloc(
+        (nuint)((long)N * sizeof(float)), 64);
+    try
+    {
+        for (int i = 0; i < K; i++) input[i] = 1f;
+        for (int i = 0; i < N; i++) output[i] = 0f;
+
+        for (int i = 0; i < 60; i++) wide.MatMul(input, output, 1);
+        GC.Collect(); GC.WaitForPendingFinalizers(); GC.Collect();
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        for (int i = 0; i < iters; i++) wide.MatMul(input, output, 1);
+        sw.Stop();
+
+        double seconds = sw.Elapsed.TotalSeconds;
+        double macs = (double)K * N * iters;
+        Console.WriteLine($"WIDE K={K} N={N} iters={iters} chunks={(chunks == 0 ? "auto" : chunks)} " +
+                          $"cores={Environment.ProcessorCount} {macs / seconds / 1e9:F3} GMAC/s");
+        return 0;
+    }
+    finally
+    {
+        System.Runtime.InteropServices.NativeMemory.AlignedFree(input);
+        System.Runtime.InteropServices.NativeMemory.AlignedFree(output);
+    }
+}
+
 // kbench <kind> [K=2048] [N=1408] [iters=50] [fma|avx2|scalar]
 //
 // Runs one quantized decode matmul (M=1) in isolation on a deliberately
 // non-zero weight buffer and reports the achieved MAC rate. An all-zero buffer
 // would let the FMA take a zero-input path and make the kernel look faster than
-// it is on real weights, so the bytes alternate 0x11/0x22 — half fields that are
+// it is on real weights, so the bytes alternate 0x11/0x22 â€” half fields that are
 // never 0 or 31, hence never a denormal or a NaN. This separates "the kernel is
 // slow" from "the orchestration around it is slow", which a whole forward pass
 // cannot do because the two are multiplied together.
