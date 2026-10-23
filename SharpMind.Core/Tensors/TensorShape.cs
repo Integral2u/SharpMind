@@ -142,6 +142,28 @@ public readonly struct TensorShape : IEquatable<TensorShape>
 
     public int Length => _rank;
 
+    /// <summary>
+    /// Copies up to <paramref name="destination"/>.Length dimensions into caller
+    /// storage. Unlike <see cref="Dims"/>, this does not allocate for ranks 1-4,
+    /// which is the common decode shape.
+    /// </summary>
+    public void CopyDims(Span<int> destination)
+    {
+        int count = Math.Min(_rank, destination.Length);
+        if (count == 0) return;
+
+        if (_dimsOverflow is not null)
+        {
+            _dimsOverflow.AsSpan(0, count).CopyTo(destination);
+            return;
+        }
+
+        destination[0] = _d0;
+        if (count > 1) destination[1] = _d1;
+        if (count > 2) destination[2] = _d2;
+        if (count > 3) destination[3] = _d3;
+    }
+
     public int Rows
     {
         [MethodImpl(MethodImplOptions.AggressiveInlining)]

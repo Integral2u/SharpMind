@@ -32,6 +32,15 @@ public sealed unsafe class Q8_0WideWeights
     private const int BlockBytes = RowsPerGroup * sizeof(float) + QBlock * RowsPerGroup;
     private const long MinParallelWork = 65_536;
 
+    // Vocabulary-sized heads have enough pair groups that the two-group kernel's
+    // extra live registers cost more than the shared activation load saves.
+    private const int LargeOutputThreshold = 32_768;
+
+    // Decode scratch is tiny (one int8 activation row plus one float scale per
+    // block). Keeping it on the stack avoids a pool rent/return on every
+    // projection, which is the hottest path in a token.
+    private const int StackScratchBytes = 8 * 1024;
+
     /// <summary>Below this block maximum the block quantizes to zero: 127 / max|x| must stay finite.</summary>
     private const float MinQuantizableMax = 1e-30f;
 
@@ -40,6 +49,16 @@ public sealed unsafe class Q8_0WideWeights
     /// kernels, for A/B measurement.
     /// </summary>
     public static bool Enabled { get; set; } = true;
+
+    /// <summary>
+    /// Diagnostic A/B knob: 0 uses the production chunk heuristic, a positive
+    /// value caps the number of row-pair chunks. Exists for widebench and the
+    /// model bench mode; production callers leave it at 0.
+    /// </summary>
+    public static int ParallelChunkOverride { get; set; }
+
+    /// <summary>Diagnostic A/B knob for the two-group microkernel; production keeps it on.</summary>
+    public static bool UsePairKernel { get; set; } = true;
 
     private readonly byte[] _data;
     private readonly byte* _p;
@@ -148,7 +167,16 @@ public sealed unsafe class Q8_0WideWeights
     public void MatMul(float* input, float* output, int m)
     {
         int qBytes = checked(m * InFeatures);
-        byte[] scratch = ArrayPool<byte>.Shared.Rent(checked(qBytes + m * _blocks * sizeof(float)));
+        int scratchBytes = checked(qBytes + m * _blocks * sizeof(float));
+
+        if (scratchBytes <= StackScratchBytes)
+        {
+            byte* pScratch = stackalloc byte[scratchBytes];
+            MatMulCore(input, output, m, (sbyte*)pScratch, (float*)(pScratch + qBytes));
+            return;
+        }
+
+        byte[] scratch = ArrayPool<byte>.Shared.Rent(scratchBytes);
         try
         {
             fixed (byte* pScratch = scratch)
@@ -177,18 +205,24 @@ public sealed unsafe class Q8_0WideWeights
         }
 
         int pairs = (_groups + 1) / 2;
-        int chunks = (long)m * n * k < MinParallelWork ? 1 : Math.Min(pairs, Environment.ProcessorCount * 2);
+        bool largeOutput = n >= LargeOutputThreshold;
+        bool usePair = UsePairKernel && !largeOutput;
+        int chunks = ParallelChunkOverride > 0
+            ? Math.Min(pairs, ParallelChunkOverride)
+            : (long)m * n * k < MinParallelWork
+                ? 1
+                : Math.Min(pairs, Environment.ProcessorCount * 2);
         int perChunk = (pairs + chunks - 1) / chunks;
         chunks = (pairs + perChunk - 1) / perChunk;
         if (chunks <= 1)
         {
-            RunPairs(0, pairs, output, aq, ad, m);
+            RunPairs(0, pairs, output, aq, ad, m, usePair);
         }
         else
         {
             long po = (long)output, pq = (long)aq, pd = (long)ad;
             Parallel.For(0, chunks, c =>
-                RunPairs(c * perChunk, Math.Min(pairs, (c + 1) * perChunk), (float*)po, (sbyte*)pq, (float*)pd, m));
+                RunPairs(c * perChunk, Math.Min(pairs, (c + 1) * perChunk), (float*)po, (sbyte*)pq, (float*)pd, m, usePair));
         }
 
         int tailStart = _groups * RowsPerGroup;
@@ -203,7 +237,7 @@ public sealed unsafe class Q8_0WideWeights
         }
     }
 
-    private void RunPairs(int from, int to, float* output, sbyte* aq, float* ad, int m)
+    private void RunPairs(int from, int to, float* output, sbyte* aq, float* ad, int m, bool usePair)
     {
         int n = OutFeatures, k = InFeatures, blocks = _blocks;
         long groupBytes = (long)blocks * BlockBytes;
@@ -217,9 +251,17 @@ public sealed unsafe class Q8_0WideWeights
                 sbyte* q = aq + (long)p * k;
                 float* d = ad + (long)p * blocks;
                 float* o = output + (long)p * n;
-                GroupDot(w0, blocks, q, d, o + g0 * RowsPerGroup);
-                if (both)
-                    GroupDot(w0 + groupBytes, blocks, q, d, o + g1 * RowsPerGroup);
+                if (both && usePair)
+                {
+                    GroupDotPair(w0, w0 + groupBytes, blocks, q, d,
+                        o + g0 * RowsPerGroup, o + g1 * RowsPerGroup);
+                }
+                else
+                {
+                    GroupDot(w0, blocks, q, d, o + g0 * RowsPerGroup);
+                    if (both)
+                        GroupDot(w0 + groupBytes, blocks, q, d, o + g1 * RowsPerGroup);
+                }
             }
         }
     }
@@ -244,6 +286,47 @@ public sealed unsafe class Q8_0WideWeights
             acc = Fma.MultiplyAdd(scale, Avx.ConvertToVector256Single(dot), acc);
         }
         Avx.Store(out8, acc);
+    }
+
+    /// <summary>
+    /// Two row groups against the same activation block. The pair loop already
+    /// keeps sixteen rows cache-hot, but calling <see cref="GroupDot"/> twice
+    /// reloads and re-broadcasts the activation quartet for each group. One
+    /// accumulator per group shares that work while leaving each row's block
+    /// accumulation order unchanged.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void GroupDotPair(byte* w0, byte* w1, int blocks, sbyte* q, float* d,
+        float* out0, float* out1)
+    {
+        var acc0 = Vector256<float>.Zero;
+        var acc1 = Vector256<float>.Zero;
+        var ones = Vector256.Create((short)1);
+        for (int b = 0; b < blocks; b++, w0 += BlockBytes, w1 += BlockBytes, q += QBlock)
+        {
+            var dot0 = Vector256<int>.Zero;
+            var dot1 = Vector256<int>.Zero;
+            sbyte* wq0 = (sbyte*)w0 + 32;
+            sbyte* wq1 = (sbyte*)w1 + 32;
+            for (int t = 0; t < QBlock; t += 4)
+            {
+                var vx = Vector256.Create(Unsafe.ReadUnaligned<int>(q + t)).AsSByte();
+                var vw0 = Avx.LoadVector256(wq0 + t * 8);
+                var vw1 = Avx.LoadVector256(wq1 + t * 8);
+                var pairsum0 = Avx2.MultiplyAddAdjacent(Avx2.Abs(vw0), Avx2.Sign(vx, vw0));
+                var pairsum1 = Avx2.MultiplyAddAdjacent(Avx2.Abs(vw1), Avx2.Sign(vx, vw1));
+                dot0 = Avx2.Add(dot0, Avx2.MultiplyAddAdjacent(pairsum0, ones));
+                dot1 = Avx2.Add(dot1, Avx2.MultiplyAddAdjacent(pairsum1, ones));
+            }
+
+            var vd = Vector256.Create(d[b]);
+            var scale0 = Avx.Multiply(Avx.LoadVector256((float*)w0), vd);
+            var scale1 = Avx.Multiply(Avx.LoadVector256((float*)w1), vd);
+            acc0 = Fma.MultiplyAdd(scale0, Avx.ConvertToVector256Single(dot0), acc0);
+            acc1 = Fma.MultiplyAdd(scale1, Avx.ConvertToVector256Single(dot1), acc1);
+        }
+        Avx.Store(out0, acc0);
+        Avx.Store(out1, acc1);
     }
 
     /// <summary>

@@ -133,8 +133,8 @@ public sealed class ShortConvLayer : IDisposable
         int seq = x.Shape.Rows;
         if (x.Rank == 3)
         {
-            batch = x.Shape.Dims[0];
-            seq = x.Shape.Dims[1];
+            batch = x.Shape[0];
+            seq = x.Shape[1];
         }
         int hidden = _config.HiddenDim;
         int rows = batch * seq;
@@ -153,9 +153,9 @@ public sealed class ShortConvLayer : IDisposable
         if (cache is ShortConvCache sc) sc.Advance(seq);
 
         var state = (cache as ShortConvCache)?.State ?? _fallbackState;
-        if (state.Shape.Dims[0] < batch)
+        if (state.Shape[0] < batch)
             throw new InvalidOperationException(
-                $"ShortConvCache holds {state.Shape.Dims[0]} sequence(s) but this forward sees {batch}.");
+                $"ShortConvCache holds {state.Shape[0]} sequence(s) but this forward sees {batch}.");
 
         using var convOut = RentOrNew(batch, seq, hidden, x.Rank, workspace);
         ShortConvKernels.ApplyConv(bx, state, _kernel, convOut, batch, seq, hidden, KernelRows);

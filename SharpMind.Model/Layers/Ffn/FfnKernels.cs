@@ -106,8 +106,10 @@ public static class FfnKernels
     {
         int batch = x.ElementCount / x.Shape[^1];
         int hidden = x.Shape[^1];
+        Span<int> dims = stackalloc int[x.Rank];
+        x.Shape.CopyDims(dims);
         Tensor<float> result = workspace != null
-            ? workspace.Rent<float>(x.Shape.Dims)
+            ? workspace.Rent<float>(dims)
             : new Tensor<float>(x.Shape);
 
         // Router logits: [batch, numExperts]
@@ -222,8 +224,10 @@ public static class FfnKernels
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static Tensor<float> SoftmaxOverExperts(Tensor<float> logits, SharpMind.Core.Memory.IWorkspace? workspace = null)
     {
-        Tensor<float> result = workspace != null 
-            ? workspace.Rent<float>(logits.Shape.Dims) 
+        Span<int> dims = stackalloc int[logits.Rank];
+        logits.Shape.CopyDims(dims);
+        Tensor<float> result = workspace != null
+            ? workspace.Rent<float>(dims)
             : new Tensor<float>(logits.Shape);
         for (int i = 0; i < logits.Shape.Rows; i++)
         {

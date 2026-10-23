@@ -271,7 +271,7 @@ public abstract class InferenceLinearLayer : LinearLayer
         if (needReshape)
         {
             Span<int> outDims = stackalloc int[input.Rank];
-            input.Shape.Dims[..^1].CopyTo(outDims);
+            input.Shape.CopyDims(outDims[..^1]);
             outDims[^1] = OutFeatures;
             var reshaped = result.Reshape(outDims);
             result.Dispose();

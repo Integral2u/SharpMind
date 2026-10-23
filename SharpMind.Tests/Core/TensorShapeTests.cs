@@ -36,6 +36,22 @@ namespace SharpMind.Tests.Core
             Assert.Equal(3, s[-3]);
         }
 
+        [Fact]
+        public void CopyDims_WritesInlineAndOverflowRanksWithoutAllocating()
+        {
+            Span<int> inline = stackalloc int[4];
+            new TensorShape(2, 3, 4).CopyDims(inline);
+            Assert.Equal([2, 3, 4, 0], inline.ToArray());
+
+            Span<int> partial = stackalloc int[2];
+            new TensorShape(2, 3, 4).CopyDims(partial);
+            Assert.Equal([2, 3], partial.ToArray());
+
+            Span<int> overflow = stackalloc int[5];
+            new TensorShape(2, 3, 4, 5, 6).CopyDims(overflow);
+            Assert.Equal([2, 3, 4, 5, 6], overflow.ToArray());
+        }
+
         [Theory]
         [InlineData(new[] { 2, 3 }, new[] { 6 })]
         [InlineData(new[] { 2, 3 }, new[] { 3, 2 })]

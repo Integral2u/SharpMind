@@ -92,8 +92,10 @@ public abstract class ActivationOps
     /// <summary>Applies the configured pointwise activation to every element.</summary>
     public Tensor<float> Activate(Tensor<float> x, SharpMind.Core.Memory.IWorkspace? workspace = null)
     {
+        Span<int> dims = stackalloc int[x.Rank];
+        x.Shape.CopyDims(dims);
         Tensor<float> result = workspace != null
-            ? workspace.Rent<float>(x.Shape.Dims)
+            ? workspace.Rent<float>(dims)
             : new Tensor<float>(x.Shape);
         ApplyPointwise(x.Data, result.Data);
         return result;
@@ -107,8 +109,10 @@ public abstract class ActivationOps
     public Tensor<float> GatedActivate(Tensor<float> gate, Tensor<float> up, SharpMind.Core.Memory.IWorkspace? workspace = null)
     {
         TensorShape.AssertSameShape(gate.Shape, up.Shape);
+        Span<int> dims = stackalloc int[gate.Rank];
+        gate.Shape.CopyDims(dims);
         Tensor<float> result = workspace != null
-            ? workspace.Rent<float>(gate.Shape.Dims)
+            ? workspace.Rent<float>(dims)
             : new Tensor<float>(gate.Shape);
         ApplyGate(gate.Data, up.Data, result.Data);
         return result;
