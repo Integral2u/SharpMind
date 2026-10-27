@@ -182,7 +182,7 @@ Validated across two independent runs against 15 model/architecture/quantization
 | LFM2 (short-conv) | LFM2.5-2.6B-Instruct | Q8_0 | ✅ |
 | Qwen3.5 (hybrid Gated DeltaNet) | Qwen3.5-0.8B | Q8_0 | ✅ * |
 | Qwen3.5 (hybrid Gated DeltaNet) | Qwen3.5-0.8B | Q4_K_S | ✅ * |
-| Qwen3.5 (MiniCPM-V text backbone) | MiniCPM-V-4_6 | Q8_0 | ✅ * |
+| MiniCPM-V (Qwen3.5 text backbone) | MiniCPM-V-4_6 | Q8_0 | ✅ * |
 | Qwen1.5 MoE (60 experts) | Qwen1.5-MoE-A2.7B | Q2_K | ✅ * |
 
 _Tested on: **AMD Ryzen 3 2200U (2C/4T, 2.5GHz base) w/ Radeon Vega Mobile Graphics, 12GB RAM** — a modest mobile/laptop-class chip, not a workstation. Load times and throughput scale heavily with hardware and quant level — as a rough sense of range on this machine, `SmolLM-135M.Q4_K_M` loaded in ~2s, while `qwen2.5-1.5b-instruct-q8_0` took ~2 minutes and `Qwen1.5-MoE-A2.7B-Q2_K` (5.5 GB, the largest model tested) took ~3 minutes to load and initialize. That everything above ran clean on a 2-core/4-thread laptop CPU is itself a reasonable data point for SharpMind's baseline hardware requirements — run your own copy of the benchmark against your target hardware before relying on these numbers for capacity planning._
