@@ -262,6 +262,23 @@ public abstract class TransformerWeights : IDisposable
         if (match.Success && int.TryParse(match.Groups[1].Value, out int bIdx) && bIdx < Blocks.Length)
         {
             var block = Blocks[bIdx];
+
+            // Qwen3.5 Gated DeltaNet tensors. These must be matched before the
+            // generic attention/FFN branches: "attn_qkv" contains "attn_q", and
+            // "ssm_alpha" contains "ssm_a".
+            if (Config.IsRecurrentLayer(bIdx))
+            {
+                if (name.Contains("ssm_alpha", StringComparison.OrdinalIgnoreCase)) return (null, block, "RawWAlpha");
+                if (name.Contains("ssm_beta", StringComparison.OrdinalIgnoreCase)) return (null, block, "RawWBeta");
+                if (name.Contains("ssm_out", StringComparison.OrdinalIgnoreCase)) return (null, block, "RawWOut");
+                if (name.Contains("ssm_conv1d", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
+                if (name.Contains("ssm_dt", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
+                if (name.Contains("ssm_norm", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
+                if (name.Contains("ssm_a", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
+                if (name.Contains("attn_qkv", StringComparison.OrdinalIgnoreCase)) return (null, block, "RawWqkvFull");
+                if (name.Contains("attn_gate", StringComparison.OrdinalIgnoreCase)) return (null, block, "RawWGate");
+            }
+
             if (name.Contains("bias", StringComparison.OrdinalIgnoreCase))
             {
                 if (name.Contains("attn_q", StringComparison.OrdinalIgnoreCase) || name.Contains("q_proj", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
@@ -395,6 +412,34 @@ public abstract class TransformerWeights : IDisposable
         if (match.Success && int.TryParse(match.Groups[1].Value, out int bIdx) && bIdx < Blocks.Length)
         {
             var b = Blocks[bIdx];
+
+            if (Config.IsRecurrentLayer(bIdx) && !name.Contains("bias", StringComparison.OrdinalIgnoreCase))
+            {
+                // The alpha/beta projections are only 16-wide. Q8_0 matmul
+                // kernels assume block-aligned output rows, so these always go
+                // through the float path (they are a few KB per layer).
+                if (name.Contains("ssm_alpha", StringComparison.OrdinalIgnoreCase))
+                    return b.WAlpha ??= new Tensor<float>(Config.HiddenDim, Config.SsmTimeStepRank);
+                if (name.Contains("ssm_beta", StringComparison.OrdinalIgnoreCase))
+                    return b.WBeta ??= new Tensor<float>(Config.HiddenDim, Config.SsmTimeStepRank);
+                if (name.Contains("ssm_out", StringComparison.OrdinalIgnoreCase)) return b.WOut;
+                if (name.Contains("ssm_conv1d", StringComparison.OrdinalIgnoreCase))
+                    return b.WConv ??= new Tensor<float>(Config.SsmConvKernel, Config.SsmConvDim);
+                if (name.Contains("ssm_dt", StringComparison.OrdinalIgnoreCase))
+                    return b.SsmDt ??= new Tensor<float>(Config.SsmTimeStepRank);
+                if (name.Contains("ssm_norm", StringComparison.OrdinalIgnoreCase))
+                    return b.SsmNorm ??= new Tensor<float>(Config.SsmValueHeadDim);
+                if (name.Contains("ssm_a", StringComparison.OrdinalIgnoreCase))
+                    return b.SsmA ??= new Tensor<float>(Config.SsmTimeStepRank);
+                if (name.Contains("attn_qkv", StringComparison.OrdinalIgnoreCase)) return b.Wqkv;
+                if (name.Contains("attn_gate", StringComparison.OrdinalIgnoreCase)) return b.WGate;
+            }
+
+            // Qwen3.5's post_attention_norm is the pre-FFN norm, not Gemma-3's
+            // post-attention norm applied before the residual add.
+            if (Config.IsQwen35 && name.Contains("post_attention_norm", StringComparison.OrdinalIgnoreCase))
+                return b.Norm2W;
+
             if (name.Contains("bias", StringComparison.OrdinalIgnoreCase))
             {
                 bool isMoEBiasExp = IsMoE && (
@@ -623,6 +668,11 @@ else
             case "RawWf2": block.RawWf2 = data; block.QuantDtypeWf2 = dtype; break;
             case "RawWScIn": block.RawWScIn = data; block.QuantDtypeWScIn = dtype; break;
             case "RawWScOut": block.RawWScOut = data; block.QuantDtypeWScOut = dtype; break;
+            case "RawWqkvFull": block.RawWqkvFull = data; block.QuantDtypeWqkv = dtype; break;
+            case "RawWGate": block.RawWGate = data; block.QuantDtypeWGate = dtype; break;
+            case "RawWAlpha": block.RawWAlpha = data; block.QuantDtypeWAlpha = dtype; break;
+            case "RawWBeta": block.RawWBeta = data; block.QuantDtypeWBeta = dtype; break;
+            case "RawWOut": block.RawWOut = data; block.QuantDtypeWOut = dtype; break;
             case "RawRouter": block.RawRouter = data; block.QuantDtypeRouter = dtype; break;
             case "RawWSharedGate": block.RawWSharedGate = data; block.QuantDtypeSharedGate = dtype; break;
             case "RawWSharedUp": block.RawWSharedUp = data; block.QuantDtypeSharedUp = dtype; break;
@@ -668,6 +718,15 @@ else
             Add(seen, block.QuantDtypeWScIn,  block.WScIn  is not null);
             Add(seen, block.QuantDtypeWScOut, block.WScOut is not null);
             Add(seen, null, block.WScConv is not null);
+            Add(seen, block.QuantDtypeWqkv, block.Wqkv is not null);
+            Add(seen, block.QuantDtypeWGate, block.WGate is not null);
+            Add(seen, block.QuantDtypeWAlpha, block.WAlpha is not null);
+            Add(seen, block.QuantDtypeWBeta, block.WBeta is not null);
+            Add(seen, block.QuantDtypeWOut, block.WOut is not null);
+            Add(seen, null, block.WConv is not null);
+            Add(seen, null, block.SsmA is not null);
+            Add(seen, null, block.SsmDt is not null);
+            Add(seen, null, block.SsmNorm is not null);
             Add(seen, block.QuantDtypeRouter, block.RawRouter is not null);
             Add(seen, block.QuantDtypeSharedGate, block.RawWSharedGate is not null);
             Add(seen, block.QuantDtypeSharedUp, block.RawWSharedUp is not null);
@@ -743,6 +802,17 @@ else
         public Tensor<float>? WScOut { get; set; }  // [HiddenDim, HiddenDim]
         public Tensor<float>? WScConv { get; set; } // [ShortConvCacheLength, HiddenDim] (F32 conv kernel)
 
+        // Qwen3.5 Gated DeltaNet float tensors
+        public Tensor<float>? Wqkv { get; set; }    // [HiddenDim, SsmConvDim]
+        public Tensor<float>? WGate { get; set; }   // [HiddenDim, SsmValueDim]
+        public Tensor<float>? WAlpha { get; set; }  // [HiddenDim, SsmTimeStepRank]
+        public Tensor<float>? WBeta { get; set; }   // [HiddenDim, SsmTimeStepRank]
+        public Tensor<float>? WOut { get; set; }    // [SsmValueDim, HiddenDim]
+        public Tensor<float>? WConv { get; set; }   // [SsmConvKernel, SsmConvDim]
+        public Tensor<float>? SsmA { get; set; }    // [SsmTimeStepRank]
+        public Tensor<float>? SsmDt { get; set; }   // [SsmTimeStepRank]
+        public Tensor<float>? SsmNorm { get; set; } // [SsmValueHeadDim]
+
         // Quantized data (byte arrays)
         public byte[]? RawWq { get; set; }
         public byte[]? RawWk { get; set; }
@@ -756,6 +826,13 @@ else
         // LFM2 short-conv (no-attention) quantized projections
         public byte[]? RawWScIn { get; set; }
         public byte[]? RawWScOut { get; set; }
+
+        // Qwen3.5 Gated DeltaNet quantized projections
+        public byte[]? RawWqkvFull { get; set; }
+        public byte[]? RawWGate { get; set; }
+        public byte[]? RawWAlpha { get; set; }
+        public byte[]? RawWBeta { get; set; }
+        public byte[]? RawWOut { get; set; }
 
         // MoE expert quantized data
         public Dictionary<int, byte[]>? RawWgateExp { get; set; }
@@ -799,6 +876,11 @@ else
         public QuantDType? QuantDtypeWf2 { get; set; }
         public QuantDType? QuantDtypeWScIn { get; set; }
         public QuantDType? QuantDtypeWScOut { get; set; }
+        public QuantDType? QuantDtypeWqkv { get; set; }
+        public QuantDType? QuantDtypeWGate { get; set; }
+        public QuantDType? QuantDtypeWAlpha { get; set; }
+        public QuantDType? QuantDtypeWBeta { get; set; }
+        public QuantDType? QuantDtypeWOut { get; set; }
         public Dictionary<int, QuantDType>? QuantDtypeWgateExp { get; set; }
         public Dictionary<int, QuantDType>? QuantDtypeWupExp { get; set; }
         public Dictionary<int, QuantDType>? QuantDtypeWdownExp { get; set; }
@@ -867,6 +949,7 @@ else
             return Wq is not null || Wk is not null || Wv is not null || Wo is not null
                 || Wf1 is not null || Wf2 is not null
                 || WScIn is not null || WScOut is not null
+                || Wqkv is not null || WGate is not null || WAlpha is not null || WBeta is not null || WOut is not null
                 || WRouter is not null
                 || WSharedGate is not null || WSharedUp is not null || WSharedDown is not null
                 || WGateExpHasValues(WgateExp) || WGateExpHasValues(WupExp) || WGateExpHasValues(WdownExp);
@@ -895,6 +978,11 @@ else
             if (RawWf2 is not null) yield return RawWf2;
             if (RawWScIn is not null) yield return RawWScIn;
             if (RawWScOut is not null) yield return RawWScOut;
+            if (RawWqkvFull is not null) yield return RawWqkvFull;
+            if (RawWGate is not null) yield return RawWGate;
+            if (RawWAlpha is not null) yield return RawWAlpha;
+            if (RawWBeta is not null) yield return RawWBeta;
+            if (RawWOut is not null) yield return RawWOut;
             if (RawRouter is not null) yield return RawRouter;
             if (RawWSharedGate is not null) yield return RawWSharedGate;
             if (RawWSharedUp is not null) yield return RawWSharedUp;
@@ -939,6 +1027,8 @@ else
             PerLayerInpGate?.Dispose(); PerLayerProj?.Dispose();
             PerLayerPostNorm?.Dispose(); OutScale?.Dispose();
             WScIn?.Dispose(); WScOut?.Dispose(); WScConv?.Dispose();
+            Wqkv?.Dispose(); WGate?.Dispose(); WAlpha?.Dispose(); WBeta?.Dispose(); WOut?.Dispose();
+            WConv?.Dispose(); SsmA?.Dispose(); SsmDt?.Dispose(); SsmNorm?.Dispose();
             WRouter?.Dispose(); WRouterBias?.Dispose();
             DisposeDict(WgateExp); DisposeDict(WgateExpBias);
             DisposeDict(WupExp); DisposeDict(WupExpBias);
@@ -954,6 +1044,7 @@ else
             RawWq = null; RawWk = null; RawWv = null; RawWo = null;
             RawWgate = null; RawWup = null; RawWf1 = null; RawWf2 = null;
             RawWScIn = null; RawWScOut = null;
+            RawWqkvFull = null; RawWGate = null; RawWAlpha = null; RawWBeta = null; RawWOut = null;
             RawRouter = null;
             RawWgateExp = null; RawWupExp = null; RawWdownExp = null;
             RawWSharedGate = null; RawWSharedUp = null; RawWSharedDown = null; RawWSharedGateInp = null;
@@ -985,6 +1076,11 @@ else
             Wf2?.Dispose(); Wf2 = null;
             WScIn?.Dispose(); WScIn = null;
             WScOut?.Dispose(); WScOut = null;
+            Wqkv?.Dispose(); Wqkv = null;
+            WGate?.Dispose(); WGate = null;
+            WAlpha?.Dispose(); WAlpha = null;
+            WBeta?.Dispose(); WBeta = null;
+            WOut?.Dispose(); WOut = null;
             WRouter?.Dispose(); WRouter = null;
             DisposeDict(WgateExp); WgateExp = null;
             DisposeDict(WupExp); WupExp = null;
@@ -993,9 +1089,11 @@ else
             RawWq = null; RawWk = null; RawWv = null; RawWo = null;
             RawWgate = null; RawWup = null; RawWf1 = null; RawWf2 = null;
             RawWScIn = null; RawWScOut = null;
+            RawWqkvFull = null; RawWGate = null; RawWAlpha = null; RawWBeta = null; RawWOut = null;
             QuantDtypeWq = null; QuantDtypeWk = null; QuantDtypeWv = null; QuantDtypeWo = null;
             QuantDtypeWgate = null; QuantDtypeWup = null; QuantDtypeWf1 = null; QuantDtypeWf2 = null;
             QuantDtypeWScIn = null; QuantDtypeWScOut = null;
+            QuantDtypeWqkv = null; QuantDtypeWGate = null; QuantDtypeWAlpha = null; QuantDtypeWBeta = null; QuantDtypeWOut = null;
             RawWgateExp = null; RawWupExp = null; RawWdownExp = null;
             QuantDtypeWgateExp = null; QuantDtypeWupExp = null; QuantDtypeWdownExp = null;
             RawRouter = null; QuantDtypeRouter = null;
@@ -1525,7 +1623,10 @@ public sealed class TransformerWeightsStreaming : TransformerWeights
             // are kept resident across frees — see ReleaseLayerData).
             if (block != null)
             {
-                if (info.Name.Contains("post_attention_norm", StringComparison.OrdinalIgnoreCase))
+                // Qwen3.5 reuses post_attention_norm as the pre-FFN norm; it must
+                // land in Norm2W, not Gemma-3's post-attention Norm1.
+                if (info.Name.Contains("post_attention_norm", StringComparison.OrdinalIgnoreCase)
+                    && !Config.IsQwen35)
                     block.PostNorm1W ??= new Tensor<float>(Config.HiddenDim);
                 else if (info.Name.Contains("post_ffw_norm", StringComparison.OrdinalIgnoreCase))
                     block.PostNorm2W ??= new Tensor<float>(Config.HiddenDim);

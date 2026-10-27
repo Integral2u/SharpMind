@@ -1,4 +1,4 @@
-﻿using System.Runtime.CompilerServices;
+using System.Runtime.CompilerServices;
 using JigSawDotNet;
 using SharpMind.Core;
 using SharpMind.Core.Embeddings;
@@ -38,6 +38,7 @@ namespace SharpMind.Model.Layers.Attention;
         private NormLayer? _qNorm;
         private NormLayer? _kNorm;
         private NormLayer? _vNorm;
+        private readonly bool _gatedOutput;
         private bool _disposed;
 
         public NormLayer? QNorm => _qNorm;
@@ -120,11 +121,13 @@ namespace SharpMind.Model.Layers.Attention;
         HeadDim = config.HeadDimForLayer(layerIndex);
         int qDim = config.NumHeads * HeadDim;
         int kvDim = config.NumKvHeads * HeadDim;
+        _gatedOutput = config.GatedAttentionOutput;
+        int qProjDim = _gatedOutput ? 2 * qDim : qDim;
 
         var tm = weights?.TensorMeta;
         if (mapping != null)
         {
-            Wq = LinearLayerFactory.Create("q_proj", config.HiddenDim, qDim, true,
+            Wq = LinearLayerFactory.Create("q_proj", config.HiddenDim, qProjDim, true,
                 weights?.Wq, weights?.WqBias, tm?.GetValueOrDefault("RawWq").Dtype ?? QuantDType.F32, mapping);
             Wk = LinearLayerFactory.Create("k_proj", config.HiddenDim, kvDim, true,
                 weights?.Wk, weights?.WkBias, tm?.GetValueOrDefault("RawWk").Dtype ?? QuantDType.F32, mapping);
@@ -135,7 +138,7 @@ namespace SharpMind.Model.Layers.Attention;
         }
         else
         {
-            Wq = LinearLayerFactory.Create("q_proj", config.HiddenDim, qDim, true,
+            Wq = LinearLayerFactory.Create("q_proj", config.HiddenDim, qProjDim, true,
                 weights?.Wq, weights?.WqBias, tm?.GetValueOrDefault("RawWq").Dtype ?? QuantDType.F32);
             Wk = LinearLayerFactory.Create("k_proj", config.HiddenDim, kvDim, true,
                 weights?.Wk, weights?.WkBias, tm?.GetValueOrDefault("RawWk").Dtype ?? QuantDType.F32);
@@ -187,7 +190,7 @@ namespace SharpMind.Model.Layers.Attention;
 
         return architecture.ToLowerInvariant() switch
         {
-            "qwen" or "qwen2" or "qwen2moe" or "qwen3" or "qwen3moe" => true,
+            "qwen" or "qwen2" or "qwen2moe" or "qwen3" or "qwen35" or "qwen35moe" or "qwen3moe" => true,
             "gemma" or "gemma2" or "gemma3" or "gemma3n" or "gemma4" => true,
             "phi2" or "phi3" => true,
             "stablelm" or "gptneox" or "starcoder2" or "olmo2" or "nemotron" or "exaone" => true,
@@ -224,6 +227,7 @@ namespace SharpMind.Model.Layers.Attention;
             _kNorm?.Dispose();
             _kNorm = new RmsNormLayer(HeadDim, Config.NormEps, weights.KNormW, null);
         }
+
     }
 
     public void LoadWeights(string name, ReadOnlySpan<float> data)
@@ -325,8 +329,19 @@ namespace SharpMind.Model.Layers.Attention;
         // every other model uses the usual 1/sqrt(headDim).
         float scale = Config.AttentionScale ?? 1f / MathF.Sqrt(headDim);
 
-        // Individual Q, K, V projections (each uses quantized forward path when available)
-        using var q = Wq.Forward(x, workspace);
+        // Individual Q, K, V projections (each uses quantized forward path when available).
+        // Qwen3.5's full-attention layers fuse the output gate into the Q projection:
+        // attn_q emits [query | gate] interleaved per head. Split it back into the
+        // query (which goes through Q-norm/RoPE/attention) and the gate (applied by
+        // sigmoid to the attention result before the output projection).
+        using var qProjected = Wq.Forward(x, workspace);
+        using var qSplit = _gatedOutput
+            ? SliceInterleavedHeads(qProjected, batch, seqLen, numH, headDim, offset: 0)
+            : null;
+        using var qGate = _gatedOutput
+            ? SliceInterleavedHeads(qProjected, batch, seqLen, numH, headDim, offset: headDim)
+            : null;
+        Tensor<float> q = qSplit ?? qProjected;
         using var k = Wk.Forward(x, workspace);
         using var v = Wv.Forward(x, workspace);
 
@@ -493,9 +508,49 @@ namespace SharpMind.Model.Layers.Attention;
         }
         DecodeProfiler.Mark(DecodeStage.Scores, tScores);
 
+        if (qGate is not null)
+            ApplySigmoidGateInPlace(output, qGate);
+
         var projected = Wo.Forward(output, workspace);
         output.Dispose();
         return projected;
+    }
+
+    /// <summary>
+    /// Extracts one head-sized slice from an interleaved fused Q projection of shape
+    /// [batch, seq, heads * 2 * headDim] (per head: [query | gate]). The result is a
+    /// contiguous [batch, seq, heads * headDim] tensor.
+    /// </summary>
+    private static Tensor<float> SliceInterleavedHeads(
+        Tensor<float> fused, int batch, int seqLen, int heads, int headDim, int offset)
+    {
+        int dim = heads * headDim;
+        var result = new Tensor<float>(batch, seqLen, dim);
+        var src = fused.Data;
+        var dst = result.Data;
+        int fusedStride = 2 * dim;
+        for (int b = 0; b < batch; b++)
+        {
+            for (int s = 0; s < seqLen; s++)
+            {
+                int srcRow = (b * seqLen + s) * fusedStride;
+                int dstRow = (b * seqLen + s) * dim;
+                for (int h = 0; h < heads; h++)
+                {
+                    src.Slice(srcRow + h * 2 * headDim + offset, headDim)
+                       .CopyTo(dst.Slice(dstRow + h * headDim, headDim));
+                }
+            }
+        }
+        return result;
+    }
+
+    private static void ApplySigmoidGateInPlace(Tensor<float> values, Tensor<float> gate)
+    {
+        var v = values.Data;
+        var g = gate.Data;
+        for (int i = 0; i < v.Length; i++)
+            v[i] *= 1f / (1f + MathF.Exp(-g[i]));
     }
 
 

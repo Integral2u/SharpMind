@@ -10,6 +10,7 @@ using SharpMind.Model.Encoders;
 using SharpMind.Model.Format;
 using SharpMind.Model.Layers;
 using SharpMind.Model.Layers.Attention;
+using SharpMind.Model.Layers.DeltaNet;
 using SharpMind.Model.Layers.Ffn;
 using SharpMind.Model.Layers.ShortConv;
 using System.Collections.Concurrent;
@@ -155,7 +156,9 @@ public static class ModelFactory
             // 512 on full layers), so the bias placeholders must match the layer.
             int headDim = config.HeadDimForLayer(i);
             int qDim = config.NumHeads * headDim;
+            int qProjDim = config.AttentionQProjDimForLayer(i);
             int kvDim = config.NumKvHeads * headDim;
+            bool recurrent = config.IsRecurrentLayer(i);
             blocks[i] = new TransformerWeights.BlockWeights
             {
                 LayerIndex = i,
@@ -163,10 +166,10 @@ public static class ModelFactory
                 Norm1B = layerNorm ? new Tensor<float>(config.HiddenDim) : null,
                 Norm2W = Tensor<float>.Ones(config.HiddenDim),
                 Norm2B = layerNorm ? new Tensor<float>(config.HiddenDim) : null,
-                WqBias = new Tensor<float>(qDim),
-                WkBias = new Tensor<float>(kvDim),
-                WvBias = new Tensor<float>(kvDim),
-                WoBias = new Tensor<float>(config.HiddenDim),
+                WqBias = recurrent ? null : new Tensor<float>(qProjDim),
+                WkBias = recurrent ? null : new Tensor<float>(kvDim),
+                WvBias = recurrent ? null : new Tensor<float>(kvDim),
+                WoBias = recurrent ? null : new Tensor<float>(config.HiddenDim),
                 Wf1Bias = denseFfn ? new Tensor<float>(config.FfnDim) : null,
                 Wf2Bias = denseFfn ? new Tensor<float>(config.HiddenDim) : null,
                 // Gemma-4 PLE block tensors. Pre-allocate so BuildBlock wires the PLE
@@ -175,7 +178,11 @@ public static class ModelFactory
                 PerLayerInpGate = config.HasPerLayerEmbeddings ? new Tensor<float>(config.HiddenDim, config.PerLayerEmbdDim) : null,
                 PerLayerProj = config.HasPerLayerEmbeddings ? new Tensor<float>(config.PerLayerEmbdDim, config.HiddenDim) : null,
                 PerLayerPostNorm = config.HasPerLayerEmbeddings ? new Tensor<float>(config.HiddenDim) : null,
-                OutScale = config.HasPerLayerEmbeddings ? new Tensor<float>(1) : null
+                OutScale = config.HasPerLayerEmbeddings ? new Tensor<float>(1) : null,
+                WConv = recurrent ? new Tensor<float>(config.SsmConvKernel, config.SsmConvDim) : null,
+                SsmA = recurrent ? new Tensor<float>(config.SsmTimeStepRank) : null,
+                SsmDt = recurrent ? new Tensor<float>(config.SsmTimeStepRank) : null,
+                SsmNorm = recurrent ? new Tensor<float>(config.SsmValueHeadDim) : null
             };
         }
         return blocks;
@@ -195,14 +202,17 @@ public static class ModelFactory
             // on the full-load path.
             int headDim = config.HeadDimForLayer(i);
             int qDim = config.NumHeads * headDim;
+            // Recurrent layers never build an AttentionLayer, so their unused
+            // Wq placeholder does not need the doubled gated width.
+            int qProjDim = config.IsRecurrentLayer(i) ? qDim : config.AttentionQProjDimForLayer(i);
             int kvDim = config.NumKvHeads * headDim;
 
-            blocks[i] = new TransformerWeights.BlockWeights(
-                new Tensor<float>(config.HiddenDim, qDim),          // Wq
+            var block = new TransformerWeights.BlockWeights(
+                new Tensor<float>(config.HiddenDim, qProjDim),      // Wq (query + optional gate)
                 new Tensor<float>(config.HiddenDim, kvDim),          // Wk
                 new Tensor<float>(config.HiddenDim, kvDim),          // Wv
                 new Tensor<float>(qDim, config.HiddenDim),           // Wo
-                new Tensor<float>(qDim),                              // WqB
+                new Tensor<float>(qProjDim),                          // WqB
                 new Tensor<float>(kvDim),                            // WkB
                 new Tensor<float>(kvDim),                            // WvB
                 new Tensor<float>(config.HiddenDim),                  // WoB
@@ -226,6 +236,21 @@ public static class ModelFactory
             {
                 LayerIndex = i,
             };
+
+            if (config.IsRecurrentLayer(i))
+            {
+                block.Wqkv = new Tensor<float>(config.HiddenDim, config.SsmConvDim);
+                block.WGate = new Tensor<float>(config.HiddenDim, config.SsmValueDim);
+                block.WAlpha = new Tensor<float>(config.HiddenDim, config.SsmTimeStepRank);
+                block.WBeta = new Tensor<float>(config.HiddenDim, config.SsmTimeStepRank);
+                block.WOut = new Tensor<float>(config.SsmValueDim, config.HiddenDim);
+                block.WConv = new Tensor<float>(config.SsmConvKernel, config.SsmConvDim);
+                block.SsmA = new Tensor<float>(config.SsmTimeStepRank);
+                block.SsmDt = new Tensor<float>(config.SsmTimeStepRank);
+                block.SsmNorm = new Tensor<float>(config.SsmValueHeadDim);
+            }
+
+            blocks[i] = block;
         }
         return blocks;
     }
@@ -445,6 +470,16 @@ public static class ModelFactory
             return useHooks
                 ? new HookedTransformerBlock(layerIdx, null, ffn, norm1, norm2, postAttnNorm, postFfnNorm, shortConv, shortConvPostNorm, perLayer, blockWeights.OutScale)
                 : new UnhookedTransformerBlock(layerIdx, null, ffn, norm1, norm2, postAttnNorm, postFfnNorm, shortConv, shortConvPostNorm, perLayer, blockWeights.OutScale);
+        }
+
+        if (weights.Config.IsRecurrentLayer(layerIdx))
+        {
+            var deltaNet = new DeltaNetLayer(weights.Config, qOps, blockWeights, layerMapping);
+            deltaNet.SetWeights(blockWeights);
+            bool deltaPostNorm = weights.Config.PostNormResidual;
+            return useHooks
+                ? new HookedTransformerBlock(layerIdx, null, ffn, norm1, norm2, postAttnNorm, postFfnNorm, null, deltaPostNorm, perLayer, blockWeights.OutScale, deltaNet)
+                : new UnhookedTransformerBlock(layerIdx, null, ffn, norm1, norm2, postAttnNorm, postFfnNorm, null, deltaPostNorm, perLayer, blockWeights.OutScale, deltaNet);
         }
 
         var t = _attnCache.GetOrAdd(MappingHash.Compute(cfg), (h) =>

@@ -1,6 +1,7 @@
 using SharpMind.Core.Memory;
 using SharpMind.Core.Tensors;
 using SharpMind.Model.Layers.Attention;
+using SharpMind.Model.Layers.DeltaNet;
 using SharpMind.Model.Layers.Ffn;
 using SharpMind.Model.Layers.ShortConv;
 
@@ -8,8 +9,8 @@ namespace SharpMind.Model.Layers;
 
 public sealed class UnhookedTransformerBlock(int layerIdx, AttentionLayer? attention, FfnLayer ffn, NormLayer norm1, NormLayer norm2,
     NormLayer? postAttnNorm = null, NormLayer? postFfnNorm = null, ShortConvLayer? shortConv = null, bool postNormResidual = false,
-    PerLayerEmbedding? perLayer = null, Tensor<float>? outScale = null)
-    : TransformerBlock(layerIdx, attention, ffn, norm1, norm2, postAttnNorm, postFfnNorm, shortConv, postNormResidual, perLayer, outScale)
+    PerLayerEmbedding? perLayer = null, Tensor<float>? outScale = null, DeltaNetLayer? deltaNet = null)
+    : TransformerBlock(layerIdx, attention, ffn, norm1, norm2, postAttnNorm, postFfnNorm, shortConv, postNormResidual, perLayer, outScale, deltaNet)
 {
     public override Tensor<float> Forward(Tensor<float> x, IKVCache? cache, int positionOffset, bool causal, IWorkspace? workspace, int windowSize, Tensor<float>? perLayerInputs)
     {

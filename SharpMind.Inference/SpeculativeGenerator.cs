@@ -71,7 +71,11 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
         for (int i = 0; i < numLayers; i++)
             _caches[i] = model.Config.IsShortConvLayer(i)
                 ? new ShortConvCache(model.Config.ShortConvCacheLength - 1, model.Config.HiddenDim, 1, maxSeqLen)
-                : new T().CreateKVCache(1, numKvHeads, maxSeqLen, model.Config.HeadDimForLayer(i));
+                : model.Config.IsRecurrentLayer(i)
+                    ? new DeltaNetCache(model.Config.SsmConvKernel, model.Config.SsmConvDim,
+                        model.Config.SsmTimeStepRank, model.Config.SsmStateSize,
+                        model.Config.SsmValueHeadDim, 1, maxSeqLen)
+                    : new T().CreateKVCache(1, numKvHeads, maxSeqLen, model.Config.HeadDimForLayer(i));
     }
 
     _workspace = MemoryHelpers.CreateWorkspace(Workspace.CalculateRequiredSize(model.Config.HiddenDim, model.Config.FfnDim, model.Config.VocabSize, model.Config.NumLayers, model.Config.MaxSeqLen));

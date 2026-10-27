@@ -326,6 +326,24 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
         // Gemma 4 scales attention logits by 1.0 (self.scaling = 1.0), not 1/sqrt(head_dim).
         float? attentionScale = arch.StartsWith("gemma4", StringComparison.OrdinalIgnoreCase) ? 1.0f : null;
 
+        // Qwen3.5 hybrid Gated DeltaNet (linear-attention) layers. The metadata
+        // names come straight from llama.cpp's qwen35 loader.
+        bool isQwen35 = arch.StartsWith("qwen35", StringComparison.OrdinalIgnoreCase);
+        long rawSsmConv = meta.GetLong($"{arch}.ssm.conv_kernel", -1);
+        int ssmConvKernel = rawSsmConv > 0 ? (int)rawSsmConv : 0;
+        long rawSsmInner = meta.GetLong($"{arch}.ssm.inner_size", -1);
+        int ssmInnerSize = rawSsmInner > 0 ? (int)rawSsmInner : 0;
+        long rawSsmState = meta.GetLong($"{arch}.ssm.state_size", -1);
+        int ssmStateSize = rawSsmState > 0 ? (int)rawSsmState : 0;
+        long rawSsmRank = meta.GetLong($"{arch}.ssm.time_step_rank", -1);
+        int ssmTimeStepRank = rawSsmRank > 0 ? (int)rawSsmRank : 0;
+        long rawSsmGroups = meta.GetLong($"{arch}.ssm.group_count", -1);
+        int ssmGroupCount = rawSsmGroups > 0 ? (int)rawSsmGroups : 0;
+        long rawFullAttentionInterval = meta.GetLong($"{arch}.full_attention_interval", -1);
+        int? fullAttentionInterval = rawFullAttentionInterval > 0
+            ? (int)rawFullAttentionInterval
+            : ssmInnerSize > 0 ? 4 : null;
+
         // GetString returns "" for an absent key; keep the config null so the SMM->GGUF
         // converter omits the key (llama.cpp treats an empty scaling type as an error).
         string? ropeScalingType = meta.GetString($"{arch}.rope.scaling.type") is { Length: > 0 } rst ? rst : null;
@@ -446,6 +464,13 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
             PerLayerEmbdDim = perLayerEmbdDim,
             SharedKvLayers = sharedKvLayers,
             AttentionScale = attentionScale,
+            SsmConvKernel = ssmConvKernel,
+            SsmInnerSize = ssmInnerSize,
+            SsmStateSize = ssmStateSize,
+            SsmTimeStepRank = ssmTimeStepRank,
+            SsmGroupCount = ssmGroupCount,
+            FullAttentionInterval = fullAttentionInterval,
+            GatedAttentionOutput = isQwen35,
             RmsNormValue = arch.StartsWith("gemma4", StringComparison.OrdinalIgnoreCase),
             FinalLogitSoftcap = finalLogitSoftcap,
             HeadDimOverride = headDimOverride,

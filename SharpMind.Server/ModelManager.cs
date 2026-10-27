@@ -246,7 +246,12 @@ public sealed class ModelManager : IDisposable
         {
             caches = new IKVCache[cfg.NumLayers];
             for (int i = 0; i < caches.Length; i++)
-                caches[i] = new KVCache(1, cfg.NumKvHeads, chunk * Passes, cfg.HeadDimForLayer(i));
+                caches[i] = cfg.IsShortConvLayer(i)
+                    ? new ShortConvCache(cfg.ShortConvCacheLength - 1, cfg.HiddenDim, 1, chunk * Passes)
+                    : cfg.IsRecurrentLayer(i)
+                        ? new DeltaNetCache(cfg.SsmConvKernel, cfg.SsmConvDim, cfg.SsmTimeStepRank,
+                            cfg.SsmStateSize, cfg.SsmValueHeadDim, 1, chunk * Passes)
+                        : new KVCache(1, cfg.NumKvHeads, chunk * Passes, cfg.HeadDimForLayer(i));
 
             using var ws = new Core.Memory.Workspace(Core.Memory.Workspace.CalculateRequiredSize(
                 cfg.HiddenDim, cfg.FfnDim, cfg.VocabSize, cfg.NumLayers, chunk));

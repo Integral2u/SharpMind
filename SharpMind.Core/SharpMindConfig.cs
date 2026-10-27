@@ -234,7 +234,7 @@ public sealed record SharpMindConfig
             // model whose ffn_up is the fused [HiddenDim, 2*FfnDim] gate+up matrix.
             // Listed as dense it built a "gate_proj" of [Hidden, FfnDim] and rejected
             // the file's twice-as-wide fused tensor as a size mismatch.
-            "qwen2" or "qwen2vl" or "qwen3" or "qwen3moe" or "qwq" or "phi3"
+            "qwen2" or "qwen2vl" or "qwen3" or "qwen35" or "qwen3moe" or "qwq" or "phi3"
                 or "mistral" or "mistral3" or "ministral" or "mixtral-instruct"
                 or "llama" or "llama2" or "llama3" or "llama4" or "lfm2" or "lfm2moe"
                 or "gemma3e" or "olmo" or "olmo2" or "exaone" or "internlm2"

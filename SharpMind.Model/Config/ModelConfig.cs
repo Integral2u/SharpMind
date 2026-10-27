@@ -125,6 +125,68 @@ public sealed record ModelConfig
     /// </summary>
     public int ShortConvCacheLength { get; init; } = 3;
 
+    // Qwen3.5 hybrid Gated DeltaNet
+
+    /// <summary>Width of the causal depthwise conv in a Gated DeltaNet layer ({arch}.ssm.conv_kernel). 0 = not a hybrid SSM model.</summary>
+    public int SsmConvKernel { get; init; }
+
+    /// <summary>Value width of a Gated DeltaNet layer ({arch}.ssm.inner_size).</summary>
+    public int SsmInnerSize { get; init; }
+
+    /// <summary>Per-head key/value dimension of a Gated DeltaNet layer ({arch}.ssm.state_size).</summary>
+    public int SsmStateSize { get; init; }
+
+    /// <summary>Number of value heads of a Gated DeltaNet layer ({arch}.ssm.time_step_rank).</summary>
+    public int SsmTimeStepRank { get; init; }
+
+    /// <summary>Number of key/query heads of a Gated DeltaNet layer ({arch}.ssm.group_count).</summary>
+    public int SsmGroupCount { get; init; }
+
+    /// <summary>
+    /// One full-attention layer every N blocks, with the other blocks being Gated
+    /// DeltaNet linear-attention layers ({arch}.full_attention_interval). llama.cpp
+    /// treats block i as linear when <c>(i + 1) % interval != 0</c>.
+    /// </summary>
+    public int? FullAttentionInterval { get; init; }
+
+    /// <summary>True for the Qwen3.5 hybrid Gated DeltaNet + full-attention decoder.</summary>
+    public bool IsQwen35 => Architecture?.StartsWith("qwen35", StringComparison.OrdinalIgnoreCase) == true;
+
+    /// <summary>True when the model carries Qwen3.5 Gated DeltaNet metadata and can build recurrent layers.</summary>
+    public bool HasDeltaNet =>
+        IsQwen35 && SsmConvKernel > 1 && SsmInnerSize > 0 && SsmStateSize > 0 &&
+        SsmTimeStepRank > 0 && SsmGroupCount > 0;
+
+    /// <summary>True when the given block is a Gated DeltaNet (linear-attention) layer.</summary>
+    public bool IsRecurrentLayer(int layerIndex) =>
+        HasDeltaNet && ((layerIndex + 1) % (FullAttentionInterval ?? 4) != 0);
+
+    /// <summary>True when the given block is a full softmax-attention layer.</summary>
+    public bool IsFullAttentionLayer(int layerIndex) => !IsRecurrentLayer(layerIndex);
+
+    /// <summary>Per-head value dimension of a Gated DeltaNet layer.</summary>
+    public int SsmValueHeadDim => SsmTimeStepRank > 0 ? SsmInnerSize / SsmTimeStepRank : 0;
+
+    /// <summary>Total key/query width of a Gated DeltaNet layer.</summary>
+    public int SsmKeyDim => SsmGroupCount * SsmStateSize;
+
+    /// <summary>Total value width of a Gated DeltaNet layer.</summary>
+    public int SsmValueDim => SsmInnerSize;
+
+    /// <summary>Fused Q/K/V projection width of a Gated DeltaNet layer.</summary>
+    public int SsmConvDim => 2 * SsmKeyDim + SsmValueDim;
+
+    /// <summary>
+    /// True when full-attention layers fuse their output gate into the Q projection
+    /// (Qwen3.5: attn_q emits [query | gate] per head, and the attention output is
+    /// multiplied by sigmoid(gate) before the output projection).
+    /// </summary>
+    public bool GatedAttentionOutput { get; init; }
+
+    /// <summary>Width of the Q projection for the given block (doubled by gated attention).</summary>
+    public int AttentionQProjDimForLayer(int layerIndex) =>
+        NumHeads * HeadDimForLayer(layerIndex) * (GatedAttentionOutput ? 2 : 1);
+
     // MoE
 
     /// <summary>Total number of experts. Ignored when FfnKind is not MoE.</summary>
@@ -516,6 +578,17 @@ public sealed record ModelConfig
                 "LayerKvHeads entries must be >= 0 (0 marks a no-attention layer).");
         if (ShortConvCacheLength < 1)
             throw new InvalidOperationException($"ShortConvCacheLength must be >= 1 (was {ShortConvCacheLength}).");
+        if (HasDeltaNet)
+        {
+            if (SsmTimeStepRank <= 0 || SsmInnerSize % SsmTimeStepRank != 0)
+                throw new InvalidOperationException(
+                    $"SsmInnerSize ({SsmInnerSize}) must be divisible by SsmTimeStepRank ({SsmTimeStepRank}).");
+            if (SsmGroupCount <= 0 || SsmTimeStepRank % SsmGroupCount != 0)
+                throw new InvalidOperationException(
+                    $"SsmTimeStepRank ({SsmTimeStepRank}) must be divisible by SsmGroupCount ({SsmGroupCount}).");
+            if (FullAttentionInterval is int fai && fai <= 1)
+                throw new InvalidOperationException($"FullAttentionInterval must be > 1 (was {fai}).");
+        }
         if (SlidingWindowPattern is int period && period <= 0)
             throw new InvalidOperationException($"SlidingWindowPattern must be > 0 (was {period}).");
         if (SlidingWindowPattern is not null && SlidingWindowSize <= 0)

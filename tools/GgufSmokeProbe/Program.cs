@@ -32,6 +32,18 @@ using SharpMind.Tokenization;
 // n layers, REF_TRACE=1 prints per-layer magnitudes, REF_DUMP=<file> writes the
 // final hidden state.
 
+if (args.Length > 0 && args[0] == "gdntest")
+    return GgufSmokeProbe.GdnSelfTest.Run();
+
+if (args.Length > 1 && args[0] == "gdntestreal")
+    return GgufSmokeProbe.GdnSelfTest.RunReal(Path.GetFullPath(args[1]));
+
+if (args.Length > 1 && args[0] == "attntestreal")
+    return GgufSmokeProbe.GdnSelfTest.RunAttentionReal(Path.GetFullPath(args[1]));
+
+if (args.Length > 1 && args[0] == "attnpos")
+    return GgufSmokeProbe.GdnSelfTest.RunAttentionPosition(Path.GetFullPath(args[1]));
+
 if (args.Length > 0 && args[0] == "kbench")
     return RunKernelBench(args);
 
