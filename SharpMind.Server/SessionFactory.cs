@@ -43,8 +43,12 @@ public sealed class SessionFactory(SharpMindServerOptions options)
     /// is returned separately — it must be passed to
     /// <see cref="IChatSession.GetResponseStreamAsync"/> to generate a response.
     /// </summary>
-    public (IChatSession session, string lastUserMessage) CreateSession(LoadedModel loaded, CreateChatCompletionRequest request)
+    public (IChatSession session, string lastUserMessage, bool continueFromHistory) CreateSession(LoadedModel loaded, CreateChatCompletionRequest request)
     {
+        // OpenAI tools are executed by the API client, not the server. Register
+        // them so the model sees their schema, then hand every call back.
+        var agentBuilder = OpenAiMapper.CreateToolAgent(request.Tools);
+
         // Build the session via the standard factory
         var session = ChatSessionFactory.CreateChatSession(
             typeof(StandardGeneratorBuilder<KVCacherBuilder>),
@@ -52,7 +56,7 @@ public sealed class SessionFactory(SharpMindServerOptions options)
             loaded.Model,
             loaded.Tokenizer,
             loaded.Meta,
-            agentBuilder: null,
+            agentBuilder: agentBuilder,
             preProcessor: null,
             postProcessor: null,
             progress: null,
@@ -61,7 +65,17 @@ public sealed class SessionFactory(SharpMindServerOptions options)
             seed: null,
             maxCacheLen: _options.MaxCacheLen);
 
-        // Map OpenAI params → session properties
+        if (agentBuilder is not null)
+        {
+            session.ToolDefinitionsJson = OpenAiMapper.ToolsJson(request.Tools);
+            session.ProcessToolRequest = (_, _, _) => Task.FromResult(ToolRequestResult.ReturnToCaller());
+        }
+
+        // Initialize before replaying history so the agent/tool system prompt is
+        // inserted first rather than appended after the conversation.
+        session.InitializeChat();
+
+        // Map OpenAI params �+' session properties
         OpenAiMapper.ApplyToSession(request, session);
 
         // Set context window.
@@ -86,6 +100,20 @@ public sealed class SessionFactory(SharpMindServerOptions options)
         if (!string.IsNullOrWhiteSpace(systemPrompt))
             session.AddMessage(ChatRole.System, systemPrompt);
 
+        // A trailing tool result (or assistant tool-call turn) means the client
+        // is resuming an existing tool loop: replay the whole history and
+        // generate from it without synthesizing a new user message.
+        bool continueFromHistory = request.Messages.Count > 0
+            && request.Messages[^1].Role is "tool"
+            || request.Messages.LastOrDefault() is AssistantMessage { ToolCalls.Count: > 0 };
+
+        if (continueFromHistory)
+        {
+            foreach (var message in history)
+                session.AddMessage(message);
+            return (session, "", true);
+        }
+
         // Find the last user message index
         int lastUserIdx = -1;
         for (int i = history.Count - 1; i >= 0; i--)
@@ -103,11 +131,11 @@ public sealed class SessionFactory(SharpMindServerOptions options)
             if (i == lastUserIdx)
             {
                 lastUserMessage = history[i].Content ?? "";
-                continue; // skip — GetResponseStreamAsync will add it
+                continue; // skip - GetResponseStreamAsync will add it
             }
             session.AddMessage(history[i]);
         }
 
-        return (session, lastUserMessage);
+        return (session, lastUserMessage, false);
     }
 }

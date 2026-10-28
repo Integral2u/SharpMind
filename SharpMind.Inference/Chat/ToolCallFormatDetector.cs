@@ -19,13 +19,13 @@ public static class ToolCallFormatDetector
     /// session cannot know the model, so tools stay off.</item>
     /// <item>Chat template contains <c>[TOOL_CALLS]</c> →
     /// <see cref="ToolCallFormat.Mistral"/>.</item>
-    /// <item>Chat template contains <c>tool_call</c>/<c>tool_calls</c>
-    /// (but not as part of <c>[TOOL_CALLS]</c>) →
-    /// <see cref="ToolCallFormat.Qwen"/>.</item>
-    /// <item>Chat template contains <c>&lt;|python_tag|&gt;</c> →
+    /// <item>Chat template contains <c>&lt;|python_tag|&gt;</c> �+'
     /// <see cref="ToolCallFormat.Llama3"/>.</item>
-    /// <item>Chat template contains <c>functionCall</c> →
+    /// <item>Chat template contains <c>functionCall</c>/<c>function_call</c> �+'
     /// <see cref="ToolCallFormat.Gemma"/>.</item>
+    /// <item>Chat template contains <c>tool_call</c>/<c>tool_calls</c>
+    /// (but not as part of <c>[TOOL_CALLS]</c>) �+'
+    /// <see cref="ToolCallFormat.Qwen"/>.</item>
     /// <item>Model name/finetune mentions Qwen →
     /// <see cref="ToolCallFormat.Qwen"/>.</item>
     /// <item>Model name/finetune mentions Mistral/Ministral →
@@ -51,15 +51,17 @@ public static class ToolCallFormatDetector
             if (template.Contains("[TOOL_CALLS]", StringComparison.Ordinal))
                 return ToolCallFormat.Mistral;
 
-            if (template.Contains("tool_call", StringComparison.Ordinal)
-                || template.Contains("tool_calls", StringComparison.Ordinal))
-                return ToolCallFormat.Qwen;
-
+            // Llama 3.1+ templates contain both <|python_tag|> and the generic
+            // "tool_calls" variable, so the specific native markers must win.
             if (template.Contains("<|python_tag|>", StringComparison.Ordinal))
                 return ToolCallFormat.Llama3;
             if (template.Contains("functionCall", StringComparison.Ordinal)
                 || template.Contains("function_call", StringComparison.Ordinal))
                 return ToolCallFormat.Gemma;
+
+            if (template.Contains("tool_call", StringComparison.Ordinal)
+                || template.Contains("tool_calls", StringComparison.Ordinal))
+                return ToolCallFormat.Qwen;
         }
 
         string name = meta.GetString("general.name");

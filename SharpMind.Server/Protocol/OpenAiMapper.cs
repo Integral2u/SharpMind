@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
+using SharpMind.Inference.Agent;
 using SharpMind.Inference.Chat;
 using SharpMind.Inference.Grammar;
 using SharpMind.Server.Protocol;
@@ -23,25 +25,94 @@ public static class OpenAiMapper
         foreach (var msg in messages)
         {
             var content = ExtractTextContent(msg.Content);
-            if (string.IsNullOrEmpty(content)) continue;
 
             switch (msg.Role)
             {
                 case "system":
-                    systemParts.Add(content);
+                    if (!string.IsNullOrEmpty(content)) systemParts.Add(content);
                     break;
                 case "user":
-                    history.Add(new ChatMessage { Role = ChatRole.User, Content = content });
+                    if (!string.IsNullOrEmpty(content))
+                        history.Add(new ChatMessage { Role = ChatRole.User, Content = content });
                     break;
                 case "assistant":
-                    history.Add(new ChatMessage { Role = ChatRole.Agent, Content = content });
+                    if (msg is AssistantMessage { ToolCalls: { Count: > 0 } calls })
+                    {
+                        string callText = string.Join("\n", calls.Select(c =>
+                            new JsonObject
+                            {
+                                ["name"] = c.Function.Name,
+                                ["arguments"] = ParseArguments(c.Function.Arguments)
+                            }.ToJsonString()));
+                        string combined = string.IsNullOrEmpty(content) ? callText : content + "\n" + callText;
+                        history.Add(new ChatMessage { Role = ChatRole.Agent, Content = combined });
+                    }
+                    else if (!string.IsNullOrEmpty(content))
+                    {
+                        history.Add(new ChatMessage { Role = ChatRole.Agent, Content = content });
+                    }
                     break;
-                // tool messages ignored — SharpMind tools are CUI-side
+                case "tool":
+                    history.Add(new ChatMessage { Role = ChatRole.Tool, Content = content });
+                    break;
             }
         }
 
         return (string.Join("\n\n", systemParts), history);
     }
+
+    private static JsonNode ParseArguments(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return new JsonObject();
+        try
+        {
+            return JsonNode.Parse(json) ?? new JsonObject();
+        }
+        catch (JsonException)
+        {
+            return new JsonObject();
+        }
+    }
+
+    /// <summary>
+    /// Builds the prompt-side tool registry for an OpenAI request. The server
+    /// never executes client tools: <c>ProcessToolRequest</c> returns each call
+    /// to the HTTP caller, and the execute delegate is a placeholder.
+    /// </summary>
+    public static AgentBuilder? CreateToolAgent(List<object>? tools)
+    {
+        if (tools is not { Count: > 0 }) return null;
+
+        var builder = new AgentBuilder("Server");
+        foreach (var item in tools)
+        {
+            JsonElement element = ToJsonElement(item);
+            if (element.ValueKind != JsonValueKind.Object) continue;
+            if (!element.TryGetProperty("function", out var function)
+                || function.ValueKind != JsonValueKind.Object)
+                continue;
+            if (!function.TryGetProperty("name", out var nameProp)) continue;
+            string? name = nameProp.GetString();
+            if (string.IsNullOrWhiteSpace(name)) continue;
+
+            string description = function.TryGetProperty("description", out var descProp)
+                ? descProp.GetString() ?? "" : "";
+            JsonObject schema = function.TryGetProperty("parameters", out var parameters)
+                ? JsonNode.Parse(parameters.GetRawText()) as JsonObject ?? new JsonObject()
+                : new JsonObject { ["type"] = "object", ["properties"] = new JsonObject() };
+
+            builder.WithTool(name, description, schema, _ => Task.FromResult(""));
+        }
+
+        return builder.ToolDefinitions.Count > 0 ? builder : null;
+    }
+
+    /// <summary>
+    /// Original OpenAI tool definitions as JSON, for native chat templates
+    /// that expect <c>{type:"function", function:{...}}</c> entries.
+    /// </summary>
+    public static string? ToolsJson(List<object>? tools)
+        => tools is { Count: > 0 } ? JsonSerializer.Serialize(tools) : null;
 
     /// <summary>
     /// True when a stream entry carries model output that belongs in the completion.
@@ -143,7 +214,8 @@ public static class OpenAiMapper
         long created,
         string modelId,
         string content,
-        CompletionUsage? usage)
+        CompletionUsage? usage,
+        List<ChatCompletionToolCall>? toolCalls = null)
     {
         return new CreateChatCompletionResponse
         {
@@ -155,11 +227,28 @@ public static class OpenAiMapper
                 new ChatCompletionChoice
                 {
                     Index = 0,
-                    Message = new ChatCompletionResponseMessage { Content = content },
-                    FinishReason = "stop"
+                    Message = new ChatCompletionResponseMessage
+                    {
+                        Content = toolCalls is { Count: > 0 } ? null : content,
+                        ToolCalls = toolCalls is { Count: > 0 } ? toolCalls : null
+                    },
+                    FinishReason = toolCalls is { Count: > 0 } ? "tool_calls" : "stop"
                 }
             ],
             Usage = usage
+        };
+    }
+
+    /// <summary>Maps a session tool call to the OpenAI wire shape.</summary>
+    public static ChatCompletionToolCall ToToolCall(JsonObject call, string id)
+    {
+        string name = call["tool"]?.GetValue<string>() ?? "";
+        string arguments = call["arguments"]?.ToJsonString() ?? "{}";
+        return new ChatCompletionToolCall
+        {
+            Id = id,
+            Type = "function",
+            Function = new ChatCompletionFunctionCall { Name = name, Arguments = arguments }
         };
     }
 
@@ -172,7 +261,8 @@ public static class OpenAiMapper
         string modelId,
         string? content,
         string? finishReason,
-        CompletionUsage? usage)
+        CompletionUsage? usage,
+        List<ChatCompletionToolCall>? toolCalls = null)
     {
         return new CreateChatCompletionStreamResponse
         {
@@ -186,7 +276,8 @@ public static class OpenAiMapper
                     Index = 0,
                     Delta = new ChatCompletionStreamDelta
                     {
-                        Content = content
+                        Content = content,
+                        ToolCalls = toolCalls
                     },
                     FinishReason = finishReason
                 }

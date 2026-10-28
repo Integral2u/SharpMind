@@ -24,6 +24,12 @@ public interface IChatSession : IAsyncDisposable
     /// </summary>
     public Func<string, JsonObject, CancellationToken, Task<ToolRequestResult>>? ProcessToolRequest { get; set; }
 
+    /// <summary>
+    /// JSON array of tool definitions passed to native chat templates. Null
+    /// omits the tools block.
+    /// </summary>
+    public string? ToolDefinitionsJson { get; set; }
+
     /// <summary>Context window the prompt is trimmed to fit, in tokens.</summary>
     public int MaxTokens { get; set; }
 
@@ -126,6 +132,17 @@ public interface IChatSession : IAsyncDisposable
         string userInput,
         ChatArtifact[]? artifacts = null,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// Generates from the current history without appending a user message.
+    /// Server callers use this after replaying an assistant tool call plus its
+    /// tool result, where there is no new user turn. The default implementation
+    /// is unsupported; <see cref="ChatSession{T,K}"/> overrides it.
+    /// </summary>
+    public IAsyncEnumerable<ChatStreamEntry> ContinueResponseAsync(
+        ChatArtifact[]? artifacts = null,
+        CancellationToken ct = default)
+        => throw new NotSupportedException("This IChatSession implementation does not support continuing from history.");
 
     public Task<ChatMessage[]> StartChatAsync(Func<Task<ChatMessage>> prompt, Action<ChatStreamEntry> response, CancellationToken token = default);
     public Task<ChatMessage[]> StartChatAsync(Func<ChatMessage> prompt, Action<ChatStreamEntry> response, CancellationToken token = default);

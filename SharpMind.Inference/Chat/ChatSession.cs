@@ -43,6 +43,8 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     private int _currentDepth;
     private string? _pendingDraft;
     private readonly System.Text.StringBuilder _responseBuffer = new();
+    private readonly StreamingToolMarkupFilter _markupFilter = new();
+    private string _thinkTail = "";
     private bool _inThinkBlock;
     private readonly IPromptPreProcessor? _preProcessor;
     private readonly IPromptPostProcessor? _postProcessor;
@@ -127,6 +129,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     /// </list>
     /// </summary>
     public readonly Func<ToolPermissionContext, Task<ToolPermission>> PermissionCallback;
+    private readonly bool _hasPermissionPolicy;
 
     /// <summary>
     /// Optional external tool-call interceptor. When set, every tool call the
@@ -191,11 +194,14 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         _disposeModel = disposeModel;
         _toolCallFormat = toolCallFormat ?? ToolCallFormatDetector.Resolve(_meta, _tokenizer);
         _agentBuilder?.CallFormat = _toolCallFormat;
+        if (_agentBuilder is not null && ToolDefinitionsJson is null)
+            ToolDefinitionsJson = _agentBuilder.ToolDefinitions.ToJsonString();
         MaxAgentDepth = _agentBuilder?.MaxAgentDepth ?? 2;
         _addBos = ModelMetaData.ResolveAddBos(meta, tokenizer.UseSentencePieceMerge);
         _addEos = ModelMetaData.ResolveAddEos(meta);
         _formatterOverride = formatter;
         _maxCacheLen = maxCacheLen;
+        _hasPermissionPolicy = permissions is not null;
         PermissionCallback = permissions ?? new Func<ToolPermissionContext, Task<ToolPermission>>(async (ctx) => { await Task.CompletedTask; return ToolPermission.Never; });
         _fileSystem = new InterceptingFileSystem();
         _networkHandler = new InterceptingNetworkHandler();
@@ -249,7 +255,17 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     {
         EnsureInitialized();
         string prompt = BuildPrompt();
-        int[] promptToks = _tokenizer.Encode(prompt, _addBos, _addEos);
+        // BuildPrompt already renders the BOS token text when the model wants
+        // one, and real turns encode with addBos:false. Encoding it again here
+        // produced a warmed cache beginning [BOS,BOS,...], which never matched
+        // the first real prompt and forced a full prefill.
+        int[] promptToks = _tokenizer.Encode(prompt, addBos: false, addEos: false);
+        if (promptToks.Length == 0) return;
+
+        // The rendered prompt ends with the assistant generation header, which
+        // the first real turn places after a user message. Warm only the part
+        // that stays identical once a turn is appended; the header never matches.
+        promptToks = StablePromptPrefix(promptToks);
         if (promptToks.Length == 0) return;
 
         // Trim to the model's context window so small-context checkpoints
@@ -303,6 +319,32 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         };
         await foreach (var _ in _generator.GenerateFromTokensAsync(promptToks, warmupCfg, warmupGen)) { }
         _generator.PrefillProgress = p => _prefillProgressQueue.Enqueue(p);
+    }
+
+    /// <summary>
+    /// Leading tokens of <paramref name="promptToks"/> that a real turn will also
+    /// produce. Found by rendering the prompt with a probe user turn appended and
+    /// taking the token-level common prefix, so it holds for any formatter.
+    /// </summary>
+    private int[] StablePromptPrefix(int[] promptToks)
+    {
+        const string probe = "\u0001";
+        _history.Add(new ChatMessage { Role = ChatRole.User, Content = probe });
+        InvalidateHistoryCache();
+        int[] probeToks;
+        try
+        {
+            probeToks = _tokenizer.Encode(BuildPrompt(), addBos: false, addEos: false);
+        }
+        finally
+        {
+            _history.RemoveAt(_history.Count - 1);
+            InvalidateHistoryCache();
+        }
+
+        int n = Math.Min(promptToks.Length, probeToks.Length), i = 0;
+        while (i < n && promptToks[i] == probeToks[i]) i++;
+        return i == promptToks.Length ? promptToks : promptToks[..i];
     }
 
     private void EnsureInitialized()
@@ -525,6 +567,9 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
 
     private string BuildPrompt()
     {
+        if (ToolDefinitionsJson is null && _agentBuilder is not null)
+            ToolDefinitionsJson = _agentBuilder.ToolDefinitions.ToJsonString();
+
         if (_formatter is not null)
             return _formatter.Format(GetPromptHistory(), _tokenizer, _addBos, EnableThinking, ToolDefinitionsJson);
 
@@ -595,11 +640,17 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
             return promptToks;
 
         // Phase 1: importance-scored message-level eviction
-        var candidates = new List<(int Index, double Importance, DateTime Timestamp)>();
-        for (int i = 0; i < _history.Count; i++)
+        var candidates = new List<(ChatMessage Message, double Importance, DateTime Timestamp)>();
+        foreach (var msg in _history)
         {
-            var msg = _history[i];
             if (msg.IsPinned) continue;
+            if (msg.Role == ChatRole.System
+                && !msg.Content.StartsWith("Tool result:", StringComparison.Ordinal))
+            {
+                // System prompts carry the role, rules and tool schema. Evicting
+                // them is why long tool sessions silently stop calling tools.
+                continue;
+            }
             if (msg.Role == ChatRole.System && msg.Metadata?.TryGetValue("type", out var t) == true && t == "resume_draft")
                 continue;
 
@@ -607,7 +658,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
             if (msg.Metadata?.TryGetValue("importance_score", out var s) == true)
                 if (double.TryParse(s, out var metaImportance)) importance = metaImportance;
 
-            candidates.Add((i, importance, msg.Timestamp));
+            candidates.Add((msg, importance, msg.Timestamp));
         }
 
         candidates.Sort(static (a, b) =>
@@ -616,19 +667,13 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
             return cmp != 0 ? cmp : a.Timestamp.CompareTo(b.Timestamp);
         });
 
-        var removed = new HashSet<int>();
-        foreach (var (idx, _, _) in candidates)
+        foreach (var (msg, _, _) in candidates)
         {
             if (promptToks.Length <= contextBudget) break;
-            if (!removed.Add(idx)) continue;
+            int idx = _history.IndexOf(msg);
+            if (idx < 0) continue;
 
-            var surviving = new List<ChatMessage>();
-            for (int i = 0; i < _history.Count; i++)
-                if (!removed.Contains(i))
-                    surviving.Add(_history[i]);
-
-            _history.Clear();
-            _history.AddRange(surviving);
+            _history.RemoveAt(idx);
             InvalidateHistoryCache();
 
             promptToks = _tokenizer.Encode(BuildPrompt(), addBos: false, addEos: false);
@@ -737,6 +782,23 @@ private void ThrowIfDisposed()
         if (session is { Count: > 0 } && formatter is { Count: > 0 })
             return formatter.Concat(session).Distinct().ToList();
         return session ?? formatter ?? [];
+    }
+
+    /// <summary>
+    /// True when the accumulated response ends in a complete native tool call for
+    /// a registered tool. Used to stop decode as soon as the call closes.
+    /// </summary>
+    private bool TryGetCompleteRegisteredToolCall(out JsonObject? call)
+    {
+        call = null;
+        if (_agentBuilder is null) return false;
+        string text = _responseBuffer.ToString().TrimEnd();
+        if (text.Length == 0 || text[^1] != '}') return false;
+        if (!TryParseToolCall(text, _toolCallFormat, out var parsed) || parsed is null) return false;
+        string name = parsed["tool"]?.GetValue<string>() ?? "";
+        if (!_agentBuilder.RegisteredToolNames.Contains(name)) return false;
+        call = parsed;
+        return true;
     }
 
     /// <summary>
@@ -1191,6 +1253,9 @@ private void ThrowIfDisposed()
         {
             MaxNewTokens = MaxNewTokens,
             RepetitionPenalty = RepetitionPenalty,
+            // Sub-agents run on the same conversation budget; leaving this at the
+            // GenerationConfig default (0 = full context) makes each sub-agent
+            // token rescan the whole prompt.
             RepetitionWindow = RepetitionWindow,
             StopTokenIds = StopTokenIds ?? _tokenizer.GetEndOfGenerationIds(),
             StopStrings = MergeStopStrings(_formatter?.DefaultStopStrings, StopStrings),
@@ -1215,6 +1280,14 @@ private void ThrowIfDisposed()
 
     // Tool dispatch with IO interception
 
+    private static string? FirstStringArgument(JsonObject args, params string[] names)
+    {
+        foreach (string name in names)
+            if (args[name] is JsonValue value && value.GetValueKind() == JsonValueKind.String)
+                return value.GetValue<string>();
+        return null;
+    }
+
     /// <summary>
     /// Activates the IO interceptors (if any) around <see cref="IAgentBuilder.CallToolAsync"/>,
     /// gating every file-system or network access through <see cref="PermissionCallback"/>.
@@ -1235,6 +1308,26 @@ private void ThrowIfDisposed()
             };
             var permission = await PermissionCallback(ctx).WaitAsync(ct);
             return permission == ToolPermission.Always;
+        }
+
+        // Built-in tools use System.IO/HttpClient directly rather than the
+        // intercepting abstractions, so gate them before dispatch. Without this
+        // DisableFileIO/DisableNetworkIO were effectively no-ops for the tools
+        // SharpMind ships.
+        if (_hasPermissionPolicy && _agentBuilder is not null)
+        {
+            var category = _agentBuilder.GetToolCategory(toolName);
+            if (category is ToolCategory.File or ToolCategory.Network)
+            {
+                string resource = FirstStringArgument(args, "path", "relativePath", "filePath", "file",
+                    "directory", "dir", "url", "uri") ?? "";
+                if (!await check(toolName, category, resource, args))
+                    return new JsonObject
+                    {
+                        ["status"] = "error",
+                        ["message"] = $"Permission denied: {category.ToString().ToLowerInvariant()} access is disabled for this session."
+                    };
+            }
         }
 
         // Activate interceptors only when we have a callback to wire them to
@@ -1267,6 +1360,30 @@ private void ThrowIfDisposed()
 
         _history.Add(new ChatMessage { Role = ChatRole.User, Content = userInput, Name = _userName, Artifacts = artifacts });
         InvalidateHistoryCache();
+
+        await foreach (var entry in GenerateResponseStreamCoreAsync(artifacts, ct))
+            yield return entry;
+    }
+
+    /// <summary>
+    /// Generates from the history as-is. Used by server-style callers that have
+    /// already replayed the full conversation, including a trailing tool result,
+    /// and must not append a synthetic user turn.
+    /// </summary>
+    public async IAsyncEnumerable<ChatStreamEntry> ContinueResponseAsync(
+        ChatArtifact[]? artifacts = null,
+        [EnumeratorCancellation] CancellationToken ct = default)
+    {
+        await foreach (var entry in GenerateResponseStreamCoreAsync(artifacts, ct))
+            yield return entry;
+    }
+
+    private async IAsyncEnumerable<ChatStreamEntry> GenerateResponseStreamCoreAsync(
+        ChatArtifact[]? artifacts,
+        [EnumeratorCancellation] CancellationToken ct)
+    {
+        ThrowIfDisposed();
+        EnsureInitialized();
 
         // Agentic loop: keep generating until the model produces a plain response
         // rather than a tool call, or until MaxToolCallsPerTurn is reached.
@@ -1336,6 +1453,9 @@ private void ThrowIfDisposed()
 
             // Stream tokens
             _responseBuffer.Clear();
+            _markupFilter.Reset();
+            _thinkTail = "";
+            var visibleBuilder = new System.Text.StringBuilder();
             List<ChatArtifact> responseArtifacts = [];
 
             // Streaming view of the visible text: `shownThrough` is how much has
@@ -1400,26 +1520,34 @@ private void ThrowIfDisposed()
                 // in the assistant prefix). Checking only "contains <think>" here
                 // used to re-arm on the already-closed tag, so every other token
                 // after a think block was flagged as thinking.
-{
-                    string tail = _responseBuffer.ToString();
-                    int lastOpen = tail.LastIndexOf("<think>", StringComparison.Ordinal);
-                    int lastClose = tail.LastIndexOf("</think>", StringComparison.Ordinal);
+                {
+                    string thinkScan = _thinkTail + fragment;
+                    int lastOpen = thinkScan.LastIndexOf("<think>", StringComparison.Ordinal);
+                    int lastClose = thinkScan.LastIndexOf("</think>", StringComparison.Ordinal);
                     if (lastOpen >= 0 || lastClose >= 0)
                         _inThinkBlock = lastOpen > lastClose;
+                    _thinkTail = thinkScan.Length <= 16 ? thinkScan : thinkScan[^16..];
                 }
+
 
 // Strip tag/tool markup from the whole accumulated buffer — never
                 // from the fragment alone — so content split across fragments is
                 // suppressed consistently and stray <tool_call> markup cannot leak
                 // into the UI as prose.
-                string visible = SanitizeToolMarkup(
-                    _responseBuffer.ToString().Replace("<think>", "").Replace("</think>", ""));
+                // Incremental sanitizer: append only the new visible fragment.
+                // The old whole-buffer ToString + Replace + regex pass was O(n^2)
+                // over a long response and dominated host-side time in tool loops.
+                visibleBuilder.Append(_markupFilter.Append(fragment));
+                string? visible = !grammarActive && shownThrough == 0 && droppedThrough == 0
+                    && visibleBuilder.Length > 0
+                    ? visibleBuilder.ToString()
+                    : null;
 
                 // Hold back a response that is still a pure JSON value on the
                 // first pass: it might be the fabricated tool-result envelope,
                 // which must not be shown. Once anything real commits (prose, a
                 // non-envelope JSON answer) emission resumes normally.
-                if (!grammarActive && shownThrough == 0 && droppedThrough == 0 && visible.Length > 0)
+                if (visible is not null)
                 {
                     int start = 0;
                     while (start < visible.Length && char.IsWhiteSpace(visible[start])) start++;
@@ -1496,12 +1624,27 @@ private void ThrowIfDisposed()
                     }
                 }
 
-                if (dropTurnTail) continue;
+                // Native-JSON models often keep decoding after the closing brace
+                // of a tool call. Stop as soon as a complete, registered call is
+                // present instead of paying for up to MaxNewTokens extra tokens.
+                if (_toolCallFormat is ToolCallFormat.Qwen
+                    or ToolCallFormat.Mistral
+                    or ToolCallFormat.Llama3
+                    or ToolCallFormat.Gemma
+                    && !grammarActive
+                    && !_inThinkBlock
+                    && fragment.Contains('}')
+                    && TryGetCompleteRegisteredToolCall(out _))
+                {
+                    dropTurnTail = true;
+                }
+
+                if (dropTurnTail) break;
 
                 int emitStart = Math.Max(shownThrough, droppedThrough);
-                if (emitStart >= visible.Length) continue;
-                string delta = visible[emitStart..];
-                shownThrough = visible.Length;
+                if (emitStart >= visibleBuilder.Length) continue;
+                string delta = visibleBuilder.ToString(emitStart, visibleBuilder.Length - emitStart);
+                shownThrough = visibleBuilder.Length;
 
                 // Always yield the real token content — the UI decides whether to
                 // display vs suppress thinking tokens via ShowThinking.
@@ -1519,6 +1662,7 @@ private void ThrowIfDisposed()
             }
 
             _progress?.Report(1f);
+            visibleBuilder.Append(_markupFilter.Flush());
             var responseText = _responseBuffer.ToString();
 
             // Final call on a response held back as a possible JSON envelope that
@@ -1530,7 +1674,7 @@ private void ThrowIfDisposed()
                 && !LooksLikeFailedToolAttempt(responseText))
             {
                 string held = SanitizeToolMarkup(
-                    responseText.Replace(" thinking", "").Replace("</think>", ""));
+                    responseText.Replace("<think>", "").Replace("</think>", ""));
 if (held.Length > 0)
                     yield return new ChatStreamEntry
                     {

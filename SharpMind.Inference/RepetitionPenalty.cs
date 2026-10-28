@@ -19,11 +19,15 @@ internal static class RepetitionPenalty
         HashSet<int> seen)
     {
         foreach (int id in ids)
-        {
-            if (!seen.Add(id)) continue;
-            if ((uint)id >= (uint)logits.Length) continue;
-            // Positive logits -> divide (suppress); negative -> multiply (suppress via magnitude).
-            logits[id] = logits[id] >= 0f ? logits[id] / penalty : logits[id] * penalty;
-        }
+            ApplyToken(logits, id, penalty, seen);
+    }
+
+    /// <summary>Applies one distinct id at most once through <paramref name="seen"/>.</summary>
+    public static void ApplyToken(Span<float> logits, int id, float penalty, HashSet<int> seen)
+    {
+        if (!seen.Add(id)) return;
+        if ((uint)id >= (uint)logits.Length) return;
+        // Positive logits -> divide (suppress); negative -> multiply (suppress via magnitude).
+        logits[id] = logits[id] >= 0f ? logits[id] / penalty : logits[id] * penalty;
     }
 }

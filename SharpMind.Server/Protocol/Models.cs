@@ -155,7 +155,33 @@ public sealed class ChatCompletionResponseMessage
     public string Role { get; set; } = "assistant";
 
     [JsonPropertyName("content")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Content { get; set; }
+
+    [JsonPropertyName("tool_calls")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<ChatCompletionToolCall>? ToolCalls { get; set; }
+}
+
+public sealed class ChatCompletionToolCall
+{
+    [JsonPropertyName("id")]
+    public string Id { get; set; } = "";
+
+    [JsonPropertyName("type")]
+    public string Type { get; set; } = "function";
+
+    [JsonPropertyName("function")]
+    public ChatCompletionFunctionCall Function { get; set; } = new();
+}
+
+public sealed class ChatCompletionFunctionCall
+{
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = "";
+
+    [JsonPropertyName("arguments")]
+    public string Arguments { get; set; } = "{}";
 }
 
 // ── POST /v1/chat/completions — Streaming chunks ─────────────────────────
@@ -205,6 +231,10 @@ public sealed class ChatCompletionStreamDelta
     [JsonPropertyName("content")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Content { get; set; }
+
+    [JsonPropertyName("tool_calls")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<ChatCompletionToolCall>? ToolCalls { get; set; }
 }
 
 // ── Shared types ─────────────────────────────────────────────────────────
@@ -267,6 +297,9 @@ public sealed class UserMessage : ChatCompletionRequestMessage
 public sealed class AssistantMessage : ChatCompletionRequestMessage
 {
     public override string Role => "assistant";
+
+    [JsonPropertyName("tool_calls")]
+    public List<ChatCompletionToolCall>? ToolCalls { get; set; }
 }
 
 public sealed class ToolMessage : ChatCompletionRequestMessage
@@ -306,6 +339,9 @@ internal sealed class ChatCompletionRequestMessageConverter : JsonConverter<Chat
 
         if (msg is ToolMessage toolMsg && root.TryGetProperty("tool_call_id", out var tcid))
             toolMsg.ToolCallId = tcid.GetString();
+
+        if (msg is AssistantMessage assistantMsg && root.TryGetProperty("tool_calls", out var toolCalls))
+            assistantMsg.ToolCalls = JsonSerializer.Deserialize<List<ChatCompletionToolCall>>(toolCalls.GetRawText(), options);
 
         return msg;
     }

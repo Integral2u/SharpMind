@@ -29,12 +29,36 @@ namespace SharpMind.Inference.Agent
 
         public IReadOnlyList<string> RegisteredToolNames => [.. ToolMethods.Keys, .. _delegateTools.Keys];
 
+        /// <summary>
+        /// Best-effort IO category for a registered tool. Reflection-registered
+        /// built-ins are classified by their declaring type; delegate tools fall
+        /// back to their name. Used to pre-flight permission checks for tools
+        /// (such as the built-in file system tool) that do not use the
+        /// intercepting IO abstractions themselves.
+        /// </summary>
+        public ToolCategory GetToolCategory(string toolName)
+        {
+            if (ToolMethods.TryGetValue(toolName, out var entry))
+            {
+                return entry.Method.DeclaringType?.Name switch
+                {
+                    "FileSystemTool" or "GitTool" or "GrepTool" => ToolCategory.File,
+                    "WeatherTool" => ToolCategory.Network,
+                    _ => ToolCategory.General
+                };
+            }
+
+            // Delegate tools own their IO; they are gated by the intercepting
+            // filesystem/network abstractions instead, not by this pre-flight.
+            return ToolCategory.General;
+        }
+
         // Not currently used in prompt building but available for callers that want to
         // inspect or manipulate sections as keyed lists.
         public Dictionary<AgentSections, List<string>> Sections = [];
         private readonly Dictionary<string, (MethodInfo Method, object Instance)> ToolMethods = [];
         private readonly Dictionary<string, (string Name, string Description, JsonObject Schema, Func<JsonObject, Task<string>> Execute)> _delegateTools = [];
-        public readonly JsonArray ToolDefinitions = [];
+        public JsonArray ToolDefinitions { get; } = [];
 
         public readonly List<string> Behaviors = [];
         public readonly List<string> Skills = [];

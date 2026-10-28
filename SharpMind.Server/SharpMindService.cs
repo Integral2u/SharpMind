@@ -348,9 +348,10 @@ public sealed class SharpMindService : IAsyncDisposable
 
             IChatSession session;
             string lastUserMessage;
+            bool continueFromHistory;
             try
             {
-                (session, lastUserMessage) = sessionFactory.CreateSession(loaded, request);
+                (session, lastUserMessage, continueFromHistory) = sessionFactory.CreateSession(loaded, request);
             }
             catch (Exception ex)
             {
@@ -366,12 +367,12 @@ public sealed class SharpMindService : IAsyncDisposable
             {
                 if (isStreaming)
                 {
-                    await HandleStreamingResponse(httpContext.Response, session, lastUserMessage, loaded, completionId, created, request.StreamOptions, ct);
+                    await HandleStreamingResponse(httpContext.Response, session, lastUserMessage, continueFromHistory, loaded, completionId, created, request.StreamOptions, ct);
                     return Results.Empty;
                 }
                 else
                 {
-                    return await HandleNonStreamingResponse(session, lastUserMessage, loaded, completionId, created, ct);
+                    return await HandleNonStreamingResponse(session, lastUserMessage, continueFromHistory, loaded, completionId, created, ct);
                 }
             }
             finally
@@ -410,18 +411,29 @@ public sealed class SharpMindService : IAsyncDisposable
     private static async Task<IResult> HandleNonStreamingResponse(
         IChatSession session,
         string lastUserMessage,
+        bool continueFromHistory,
         LoadedModel loaded,
         string completionId,
         long created,
         CancellationToken ct)
     {
         var sb = new StringBuilder();
+        var toolCalls = new List<ChatCompletionToolCall>();
         int tokenCount = 0;
 
         try
         {
-            await foreach (var entry in session.GetResponseStreamAsync(lastUserMessage, null, ct))
+            var entries = continueFromHistory
+                ? session.ContinueResponseAsync(null, ct)
+                : session.GetResponseStreamAsync(lastUserMessage, null, ct);
+            await foreach (var entry in entries)
             {
+                if (entry.Status == ChatStatus.ToolCall && entry.ToolCall is not null)
+                {
+                    toolCalls.Add(OpenAiMapper.ToToolCall(entry.ToolCall, $"call_{Guid.NewGuid():N}"));
+                    continue;
+                }
+
                 // Status-only entries carry their status text in Token; appending
                 // every non-empty Token put "Prefilling 50.25%..." in the completion.
                 // The streaming path below filtered these out, this one did not.
@@ -443,7 +455,7 @@ public sealed class SharpMindService : IAsyncDisposable
             TotalTokens = tokenCount
         };
 
-        var response = OpenAiMapper.ToResponse(completionId, created, loaded.ModelId, sb.ToString(), usage);
+        var response = OpenAiMapper.ToResponse(completionId, created, loaded.ModelId, sb.ToString(), usage, toolCalls);
         return Results.Ok(response);
     }
 
@@ -451,6 +463,7 @@ public sealed class SharpMindService : IAsyncDisposable
         HttpResponse httpResponse,
         IChatSession session,
         string lastUserMessage,
+        bool continueFromHistory,
         LoadedModel loaded,
         string completionId,
         long created,
@@ -468,12 +481,26 @@ public sealed class SharpMindService : IAsyncDisposable
         await WriteSSE(writer, roleChunk, options);
 
         int tokenCount = 0;
+        string finishReason = "stop";
 
         try
         {
-            await foreach (var entry in session.GetResponseStreamAsync(lastUserMessage, null, ct))
+            var entries = continueFromHistory
+                ? session.ContinueResponseAsync(null, ct)
+                : session.GetResponseStreamAsync(lastUserMessage, null, ct);
+            await foreach (var entry in entries)
             {
-                // Skip prefill progress and other status-only entries — only
+                if (entry.Status == ChatStatus.ToolCall && entry.ToolCall is not null)
+                {
+                    var call = OpenAiMapper.ToToolCall(entry.ToolCall, $"call_{Guid.NewGuid():N}");
+                    var callChunk = OpenAiMapper.ToStreamChunk(completionId, created, loaded.ModelId,
+                        null, null, null, [call]);
+                    await WriteSSE(writer, callChunk, options);
+                    finishReason = "tool_calls";
+                    continue;
+                }
+
+                // Skip prefill progress and other status-only entries - only
                 // stream actual token content to the client.
                 if (!OpenAiMapper.IsContent(entry)) continue;
 
@@ -484,7 +511,7 @@ public sealed class SharpMindService : IAsyncDisposable
         }
         catch (OperationCanceledException) { }
 
-        var finalChunk = OpenAiMapper.ToStreamChunk(completionId, created, loaded.ModelId, null, "stop", null);
+        var finalChunk = OpenAiMapper.ToStreamChunk(completionId, created, loaded.ModelId, null, finishReason, null);
         await WriteSSE(writer, finalChunk, options);
 
         if (streamOptions?.IncludeUsage == true)

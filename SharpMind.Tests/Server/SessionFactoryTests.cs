@@ -70,7 +70,7 @@ public class SessionFactoryTests
         using var loaded = MakeLoadedModel();
         var factory = new SessionFactory(new SharpMindServerOptions());
 
-        var (session, _) = factory.CreateSession(loaded, Request(maxTokens, "hello"));
+        var (session, _, _) = factory.CreateSession(loaded, Request(maxTokens, "hello"));
 
         int expected = ModelConfig.ComputeMaxCacheLength(loaded.Model.Config, null);
 
@@ -91,7 +91,7 @@ public class SessionFactoryTests
 
         // Byte tokenizer: one token per character.
         string userText = new('x', 400);
-        var (session, lastUserMessage) = factory.CreateSession(loaded, Request(16, userText));
+        var (session, lastUserMessage, _) = factory.CreateSession(loaded, Request(16, userText));
 
         Assert.Equal(userText, lastUserMessage);
         Assert.True(
@@ -106,12 +106,86 @@ public class SessionFactoryTests
         using var loaded = MakeLoadedModel();
         var factory = new SessionFactory(new SharpMindServerOptions());
 
-        var (session, _) = factory.CreateSession(loaded, Request(null, "hello"));
+        var (session, _, _) = factory.CreateSession(loaded, Request(null, "hello"));
 
         Assert.Equal(ModelConfig.ComputeMaxCacheLength(loaded.Model.Config, null), session.MaxTokens);
     }
 
     // ── response_format → grammar ─────────────────────────────────────
+
+    [Fact]
+    public void CreateSession_WithOpenAiTools_RegistersSchemaAndReturnsCallsToClient()
+    {
+        using var loaded = MakeLoadedModel();
+        var factory = new SessionFactory(new SharpMindServerOptions());
+        var request = Request(null, "What is the weather in Paris?");
+        request.Tools =
+        [
+            Element("""
+            {"type":"function","function":{"name":"get_weather","description":"Weather lookup",
+             "parameters":{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}}}
+            """)
+        ];
+
+        var (session, _, continueFromHistory) = factory.CreateSession(loaded, request);
+
+        Assert.False(continueFromHistory);
+        Assert.NotNull(session.ProcessToolRequest);
+        Assert.NotNull(session.ToolDefinitionsJson);
+        Assert.Contains("get_weather", session.ToolDefinitionsJson);
+        Assert.Contains("get_weather", session.GetFormattedPrompt());
+    }
+
+    [Fact]
+    public void ToChatHistory_PreservesAssistantToolCallsAndToolResults()
+    {
+        var messages = new List<ChatCompletionRequestMessage>
+        {
+            new AssistantMessage
+            {
+                Content = null,
+                ToolCalls =
+                [
+                    new ChatCompletionToolCall
+                    {
+                        Id = "call_1",
+                        Function = new ChatCompletionFunctionCall
+                        {
+                            Name = "get_weather",
+                            Arguments = """{"city":"Paris"}"""
+                        }
+                    }
+                ]
+            },
+            new ToolMessage { Content = """{"temp":20}""", ToolCallId = "call_1" }
+        };
+
+        var (_, history) = OpenAiMapper.ToChatHistory(messages);
+
+        Assert.Equal(2, history.Count);
+        Assert.Equal(SharpMind.Inference.Chat.ChatRole.Agent, history[0].Role);
+        Assert.Contains("get_weather", history[0].Content);
+        Assert.Contains("Paris", history[0].Content);
+        Assert.Equal(SharpMind.Inference.Chat.ChatRole.Tool, history[1].Role);
+        Assert.Equal("""{"temp":20}""", history[1].Content);
+    }
+
+    [Fact]
+    public void ToResponse_ToolCalls_UsesToolCallsFinishReason()
+    {
+        var response = OpenAiMapper.ToResponse("id", 1, "model", "ignored", null,
+        [
+            new ChatCompletionToolCall
+            {
+                Id = "call_1",
+                Function = new ChatCompletionFunctionCall { Name = "get_weather", Arguments = """{"city":"Paris"}""" }
+            }
+        ]);
+
+        Assert.Equal("tool_calls", response.Choices[0].FinishReason);
+        Assert.Null(response.Choices[0].Message.Content);
+        Assert.Equal("get_weather", response.Choices[0].Message.ToolCalls![0].Function.Name);
+    }
 
     private static JsonElement Element(string json)
     {
@@ -131,7 +205,7 @@ public class SessionFactoryTests
         var request = Request(16, "pick a number");
         request.ResponseFormat = Element("""{"type":"json_object"}""");
 
-        var (session, _) = factory.CreateSession(loaded, request);
+        var (session, _, _) = factory.CreateSession(loaded, request);
 
         Assert.NotNull(session.Grammar);
     }
@@ -144,7 +218,7 @@ public class SessionFactoryTests
         var request = Request(16, "describe a person");
         request.ResponseFormat = Element("""{"type":"json_schema","json_schema":{"schema":{"type":"object","properties":{"name":{"type":"string"}}}}}""");
 
-        var (session, _) = factory.CreateSession(loaded, request);
+        var (session, _, _) = factory.CreateSession(loaded, request);
 
         Assert.NotNull(session.Grammar);
     }
@@ -155,7 +229,7 @@ public class SessionFactoryTests
         using var loaded = MakeLoadedModel();
         var factory = new SessionFactory(new SharpMindServerOptions());
 
-        var (session, _) = factory.CreateSession(loaded, Request(null, "hello"));
+        var (session, _, _) = factory.CreateSession(loaded, Request(null, "hello"));
 
         Assert.Null(session.Grammar);
     }

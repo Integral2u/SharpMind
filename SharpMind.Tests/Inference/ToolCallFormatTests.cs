@@ -96,6 +96,14 @@ public sealed class ToolCallFormatTests
     }
 
     [Fact]
+    public void Resolve_TemplateWithPythonTagAndToolCalls_IsLlama3()
+    {
+        var meta = Meta(("tokenizer.chat_template",
+            "{% if tools %}{{ tool_calls }}{% endif %}<|python_tag|>{{ call }}"));
+        Assert.Equal(ToolCallFormat.Llama3, ToolCallFormatDetector.Resolve(meta));
+    }
+
+    [Fact]
     public void Resolve_LlamaName_IsLlama3()
     {
         var meta = Meta(("general.name", "Llama-3.2-1B-Instruct"));

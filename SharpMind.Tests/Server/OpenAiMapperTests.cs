@@ -105,7 +105,7 @@ public class OpenAiMapperTests
     }
 
     [Fact]
-    public void ToChatHistory_ToolMessagesIgnored()
+    public void ToChatHistory_ToolMessagesBecomeToolRole()
     {
         var messages = new List<ChatCompletionRequestMessage>
         {
@@ -116,7 +116,9 @@ public class OpenAiMapperTests
 
         var (_, history) = OpenAiMapper.ToChatHistory(messages);
 
-        Assert.Equal(2, history.Count);
+        Assert.Equal(3, history.Count);
+        Assert.Equal(SharpMind.Inference.Chat.ChatRole.Tool, history[1].Role);
+        Assert.Equal("result", history[1].Content);
     }
 
     [Fact]
@@ -467,6 +469,7 @@ public class OpenAiMapperTests
         public bool EnableThinking { get; set; }
         public string UserName { get; set; } = "User";
         public Func<string, System.Text.Json.Nodes.JsonObject, CancellationToken, Task<ToolRequestResult>>? ProcessToolRequest { get; set; }
+        public string? ToolDefinitionsJson { get; set; }
         public float? TokensPerSecond => null;
         public float? TimeToFirstToken => null;
         public Tokenizer Tokenizer => throw new NotSupportedException();

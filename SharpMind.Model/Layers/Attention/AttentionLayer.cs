@@ -336,10 +336,7 @@ namespace SharpMind.Model.Layers.Attention;
         // sigmoid to the attention result before the output projection).
         using var qProjected = Wq.Forward(x, workspace);
         using var qSplit = _gatedOutput
-            ? SliceInterleavedHeads(qProjected, batch, seqLen, numH, headDim, offset: 0)
-            : null;
-        using var qGate = _gatedOutput
-            ? SliceInterleavedHeads(qProjected, batch, seqLen, numH, headDim, offset: headDim)
+            ? SliceInterleavedHeads(qProjected, batch, seqLen, numH, headDim)
             : null;
         Tensor<float> q = qSplit ?? qProjected;
         using var k = Wk.Forward(x, workspace);
@@ -508,8 +505,8 @@ namespace SharpMind.Model.Layers.Attention;
         }
         DecodeProfiler.Mark(DecodeStage.Scores, tScores);
 
-        if (qGate is not null)
-            ApplySigmoidGateInPlace(output, qGate);
+        if (_gatedOutput)
+            ApplyInterleavedSigmoidGateInPlace(output, qProjected, batch, seqLen, numH, headDim);
 
         var projected = Wo.Forward(output, workspace);
         output.Dispose();
@@ -522,7 +519,7 @@ namespace SharpMind.Model.Layers.Attention;
     /// contiguous [batch, seq, heads * headDim] tensor.
     /// </summary>
     private static Tensor<float> SliceInterleavedHeads(
-        Tensor<float> fused, int batch, int seqLen, int heads, int headDim, int offset)
+        Tensor<float> fused, int batch, int seqLen, int heads, int headDim)
     {
         int dim = heads * headDim;
         var result = new Tensor<float>(batch, seqLen, dim);
@@ -537,7 +534,7 @@ namespace SharpMind.Model.Layers.Attention;
                 int dstRow = (b * seqLen + s) * dim;
                 for (int h = 0; h < heads; h++)
                 {
-                    src.Slice(srcRow + h * 2 * headDim + offset, headDim)
+                    src.Slice(srcRow + h * 2 * headDim, headDim)
                        .CopyTo(dst.Slice(dstRow + h * headDim, headDim));
                 }
             }
@@ -545,12 +542,33 @@ namespace SharpMind.Model.Layers.Attention;
         return result;
     }
 
-    private static void ApplySigmoidGateInPlace(Tensor<float> values, Tensor<float> gate)
+    /// <summary>
+    /// Multiplies the contiguous attention output [B, S, heads*headDim] by
+    /// sigmoid of the gate half of the interleaved Q projection, without
+    /// materialising a second gate tensor.
+    /// </summary>
+    private static void ApplyInterleavedSigmoidGateInPlace(
+        Tensor<float> values, Tensor<float> fused, int batch, int seqLen, int heads, int headDim)
     {
         var v = values.Data;
-        var g = gate.Data;
-        for (int i = 0; i < v.Length; i++)
-            v[i] *= 1f / (1f + MathF.Exp(-g[i]));
+        var g = fused.Data;
+        int dim = heads * headDim;
+        int fusedStride = 2 * dim;
+        for (int b = 0; b < batch; b++)
+        {
+            for (int s = 0; s < seqLen; s++)
+            {
+                int srcRow = (b * seqLen + s) * fusedStride + headDim;
+                int dstRow = (b * seqLen + s) * dim;
+                for (int h = 0; h < heads; h++)
+                {
+                    int gateRow = srcRow + h * 2 * headDim;
+                    int outRow = dstRow + h * headDim;
+                    for (int d = 0; d < headDim; d++)
+                        v[outRow + d] *= 1f / (1f + MathF.Exp(-g[gateRow + d]));
+                }
+            }
+        }
     }
 
 
