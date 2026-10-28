@@ -20,14 +20,17 @@ internal static class ModelFileIo
     private const int BaseRetryDelayMs = 50;
 
     /// <summary>Opens the file read-only, retrying a transient share/lock violation.</summary>
-    public static FileStream OpenRead(string path) => Open(Path.GetFullPath(path), () => File.OpenRead(path));
+    /// <param name="sleep">Backoff hook; receives the delay in ms. Tests inject it to make retries deterministic.</param>
+    public static FileStream OpenRead(string path, Action<int>? sleep = null) =>
+        Open(Path.GetFullPath(path), () => File.OpenRead(path), sleep);
 
     /// <summary>Opens the model's tensor-data stream, retrying a transient share/lock violation.</summary>
     public static Stream OpenModelStream(string path, bool useSafeIo) =>
-        Open(Path.GetFullPath(path), () => WeightStreamFactory.Open(path, useSafeIo));
+        Open(Path.GetFullPath(path), () => WeightStreamFactory.Open(path, useSafeIo), null);
 
-    private static T Open<T>(string fullPath, Func<T> open) where T : Stream
+    private static T Open<T>(string fullPath, Func<T> open, Action<int>? sleep) where T : Stream
     {
+        sleep ??= Thread.Sleep;
         for (int attempt = 0; ; attempt++)
         {
             try
@@ -36,7 +39,7 @@ internal static class ModelFileIo
             }
             catch (IOException ex) when (attempt < MaxRetries && IsTransient(ex))
             {
-                Thread.Sleep(BaseRetryDelayMs * (attempt + 1));
+                sleep(BaseRetryDelayMs * (attempt + 1));
             }
             catch (IOException) when (attempt < MaxRetries)
             {

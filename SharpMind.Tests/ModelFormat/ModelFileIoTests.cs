@@ -16,16 +16,20 @@ public sealed class ModelFileIoTests
     {
         using var temp = new TempDirectory();
         string path = temp.Write("model.smm", "hello-model");
-        using var blocker = new DelayedRelease(path, releaseAfterMs: 350);
 
-        var watch = System.Diagnostics.Stopwatch.StartNew();
-        using var stream = ModelFileIo.OpenRead(path);
-        watch.Stop();
+        // Hold an exclusive handle, then release it during the second backoff.
+        // No wall-clock timing: the retry count is exact, so the test cannot
+        // flake under load.
+        using var blocker = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+        int backoffs = 0;
+        using var stream = ModelFileIo.OpenRead(path, sleep: _ =>
+        {
+            if (++backoffs == 2) blocker.Dispose();
+        });
 
         using var reader = new StreamReader(stream);
         Assert.Equal("hello-model", reader.ReadToEnd());
-        Assert.True(watch.ElapsedMilliseconds < 5000,
-            $"retries should reach the file within the budget, took {watch.ElapsedMilliseconds}ms");
+        Assert.Equal(2, backoffs);
     }
 
     [Fact]
@@ -41,25 +45,5 @@ public sealed class ModelFileIoTests
 
         Assert.True(watch.ElapsedMilliseconds < 1000,
             "a missing file must not wait out the retry budget");
-    }
-
-    /// <summary>Holds an exclusive (FileShare.None) handle for <paramref name="releaseAfterMs"/>, then frees it.</summary>
-    private sealed class DelayedRelease : IDisposable
-    {
-        private readonly System.Threading.Timer _timer;
-        private readonly FileStream _stream;
-
-        public DelayedRelease(string path, int releaseAfterMs)
-        {
-            _stream = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
-            _timer = new System.Threading.Timer(
-                _ => _stream.Dispose(), null, releaseAfterMs, System.Threading.Timeout.Infinite);
-        }
-
-        public void Dispose()
-        {
-            _timer.Dispose();
-            _stream.Dispose();
-        }
     }
 }

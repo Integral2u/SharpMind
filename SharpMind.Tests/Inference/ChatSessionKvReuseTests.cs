@@ -114,6 +114,30 @@ public sealed class ChatSessionKvReuseTests
         return ids;
     }
 
+    /// <summary>
+    /// Warmup prefills the system prompt. The first real turn must reuse all of
+    /// it; before the BOS fix the warmed cache began [BOS,BOS,...] and never
+    /// matched, so turn 1 re-prefilled from scratch.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(Formatters))]
+    public async Task FirstTurnAfterWarmup_ReusesTheWarmedSystemPrompt(IChatPromptFormatter formatter)
+    {
+        using var model = BuildModel();
+        var tokenizer = BuildTokenizer();
+        var (session, _) = BuildSession(model, tokenizer, formatter);
+        await using var _ = session;
+
+        await session.WarmupPrefillAsync();
+        var warmed = session.Generator.CacheTokens!.ToArray();
+        Assert.NotEmpty(warmed);
+
+        var reply = await Turn(session, "hello there");
+        var prompt = LastPrompt(session, reply.Count);
+
+        Assert.Equal(warmed.Length, CommonPrefix(warmed, prompt));
+    }
+
     private static int[] Encode(Tokenizer t, string s) => t.Encode(s, addBos: false, addEos: false);
 
     private static int CommonPrefix(IReadOnlyList<int> a, int[] b)
