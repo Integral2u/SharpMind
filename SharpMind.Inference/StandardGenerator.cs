@@ -182,6 +182,11 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
             _generatedDistinct = null;
             _generatedDistinctThrough = 0;
             var decodedSoFar = new System.Text.StringBuilder();
+            // Incremental detokenizer window (see IncrementalDetokenizer).
+            int detokPrefix = 0, detokRead = 0;
+            // True when generation ended on a stop string/token, so held-back text
+            // must not be flushed past it.
+            bool endedOnStop = false;
             var rng = sampleCfg.Seed.HasValue
                 ? new Random(sampleCfg.Seed.Value)
                 : _defaultRng;
@@ -230,7 +235,10 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
                         ApplyRepetitionPenalty(logits, promptIds, _generatedIds,
                             repPenalty, repWindow);
                     if (!SamplingHelpers.TrySampleConstrained(logits, sampleCfg, rng, out nextId))
+                    {
+                        endedOnStop = true;
                         break;
+                    }
                 }
                 else
                     nextId = Sampler.Sample(logitsSlice, sampleCfg, rng);
@@ -243,10 +251,11 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
                 TokensPerSecond = rateTracker.RollingTokensPerSecond;
                 CumulativeTokensPerSecond = rateTracker.CumulativeTokensPerSecond;
 
-                if (stopTokenIds.Contains(nextId)) break;
+                if (stopTokenIds.Contains(nextId)) { endedOnStop = true; break; }
 
                 _decodeTokenScratch[0] = nextId;
-                string fragment = _tokenizer.Decode(_decodeTokenScratch.AsSpan(0, 1), skipSpecials: true).Replace("\uFFFD", "");
+                string fragment = IncrementalDetokenizer.Next(_tokenizer,
+                    CollectionsMarshal.AsSpan(_generatedIds), ref detokPrefix, ref detokRead);
                 decodedSoFar.Append(fragment);
                 DecodeProfiler.Mark(DecodeStage.Sample, tSample);
 
@@ -287,7 +296,7 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
                     yield return fragment;
                 }
 
-                if (hitStop) break;
+                if (hitStop) { endedOnStop = true; break; }
 
                 if (cache0.IsFull)
                 {
@@ -319,6 +328,13 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
 
             if (!genCfg.Stream)
                 yield return _tokenizer.Decode(CollectionsMarshal.AsSpan(_generatedIds), skipSpecials: true).Replace("\uFFFD", "");
+            else if (!endedOnStop)
+            {
+                // Emit any text still held back for an incomplete sequence at the end.
+                string tail = IncrementalDetokenizer.Next(_tokenizer,
+                    CollectionsMarshal.AsSpan(_generatedIds), ref detokPrefix, ref detokRead, final: true);
+                if (tail.Length > 0) yield return tail;
+            }
         }
         finally
         {
