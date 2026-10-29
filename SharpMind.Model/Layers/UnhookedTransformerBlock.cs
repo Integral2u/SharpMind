@@ -35,7 +35,9 @@ public sealed class UnhookedTransformerBlock(int layerIdx, AttentionLayer? atten
 
         var normed1 = _norm1.Forward(x, workspace);
 
+        var tAttn = DecodeProfiler.Begin();
         var attnOut = FirstBranch(normed1, cache, positionOffset, causal, workspace, windowSize);
+        DecodeProfiler.Mark(DecodeStage.AttnBranch, tAttn);
         normed1.Dispose();
 
         if (_postAttnNorm != null)
@@ -45,12 +47,16 @@ public sealed class UnhookedTransformerBlock(int layerIdx, AttentionLayer? atten
             attnOut = postNormed;
         }
 
+        var tRes1 = DecodeProfiler.Begin();
         x.AddInPlace(attnOut);
+        DecodeProfiler.Mark(DecodeStage.Residual, tRes1);
         attnOut.Dispose();
 
         var normed2 = _norm2.Forward(x, workspace);
 
+        var tFfn = DecodeProfiler.Begin();
         var ffnOut = _ffn.Forward(normed2, workspace);
+        DecodeProfiler.Mark(DecodeStage.FfnBranch, tFfn);
         normed2.Dispose();
 
         if (_postFfnNorm != null)
@@ -60,7 +66,9 @@ public sealed class UnhookedTransformerBlock(int layerIdx, AttentionLayer? atten
             ffnOut = postNormed;
         }
 
+        var tRes2 = DecodeProfiler.Begin();
         x.AddInPlace(ffnOut);
+        DecodeProfiler.Mark(DecodeStage.Residual, tRes2);
         ffnOut.Dispose();
 
         return ApplyPerLayerTail(x, perLayerInputs, workspace);

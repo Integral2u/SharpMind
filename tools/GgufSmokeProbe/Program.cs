@@ -1,4 +1,4 @@
-﻿using SharpMind.Core.Quantization;
+using SharpMind.Core.Quantization;
 using SharpMind.Inference;
 using SharpMind.Inference.Chat;
 using SharpMind.Model;
@@ -6,7 +6,7 @@ using SharpMind.Model.Config;
 using SharpMind.Model.Format;
 using SharpMind.Tokenization;
 
-// GgufSmokeProbe â€” manual Phase-1 smoke tool. No test runner, no CI: it exists
+// GgufSmokeProbe — manual Phase-1 smoke tool. No test runner, no CI: it exists
 // to eyeball whether a real downloaded GGUF loads (or fails loudly) and, for
 // generative models, that a few greedy tokens come out. Kept intentionally slim.
 //
@@ -285,7 +285,7 @@ static int RunForward(string path, string[] args)
             $"RawWgateExp={b0.RawWgateExp?.Count.ToString() ?? "null"}");
 
         // optimizeMemory:true (the CUI default) frees float weights that have no raw
-        // quantized fallback â€” this is the call that used to strand the F32 router.
+        // quantized fallback — this is the call that used to strand the F32 router.
         using var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
         Console.WriteLine($"  after CreateTransformer: WRouter={ShapeOf(weights.Blocks[0].WRouter)}");
 
@@ -883,7 +883,7 @@ static async Task<int> RunBenchAsync(string path, string[] args)
             var genCfg = new GenerationConfig { MaxNewTokens = warmup + measure, Stream = true };
 
             int consumed = 0;
-            long start = 0, allocStart = 0;
+            long start = 0, allocStart = 0, mainStart = 0;
             int gc0 = 0, gc1 = 0, gc2 = 0;
             var text = new System.Text.StringBuilder();
 
@@ -1094,7 +1094,7 @@ static async Task<int> RunBenchABAsync(string path, string[] args)
 //
 // Flow: one greedy raw GenerateAsync over warmup+measure tokens. The profiler is
 // flipped on while the generator is suspended between yields, so the measured
-// window is exactly the decode steps that start after the warm-up fragment â€” no
+// window is exactly the decode steps that start after the warm-up fragment — no
 // prefill, no prompt re-prefix, no second generator pass. GC collections and
 // allocated bytes are sampled over the same window and reported per token.
 static async Task<int> RunStagesAsync(string path, string[] args)
@@ -1152,7 +1152,7 @@ static async Task<int> RunStagesAsync(string path, string[] args)
         weights.InitializeWeights();
         using var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
 
-        // Greedy raw generation, no chat template â€” same path the run mode uses for "raw".
+        // Greedy raw generation, no chat template — same path the run mode uses for "raw".
         var rawBuilder = new StandardGeneratorBuilder<KVCacherBuilder>();
         var rawGen = rawBuilder.CreateGenerator(model, tokenizer, addBos: true, addEos: false, caches: null);
         var sample = new SamplingConfig { Temperature = 0f, TopK = 1 };
@@ -1164,7 +1164,7 @@ static async Task<int> RunStagesAsync(string path, string[] args)
         int consumed = 0;
         var text = new System.Text.StringBuilder();
         long wallStart = 0, wallEnd = 0;
-        long gc0 = 0, gc1 = 0, gc2 = 0, allocStart = 0;
+        long gc0 = 0, gc1 = 0, gc2 = 0, allocStart = 0, mainStart = 0;
         long _liveStart = 0, _privStart = 0;
         bool windowOpened = false;
         long prevStamp = 0, prevAlloc = 0;
@@ -1181,6 +1181,7 @@ static async Task<int> RunStagesAsync(string path, string[] args)
                 wallStart = System.Diagnostics.Stopwatch.GetTimestamp();
                 gc0 = GC.CollectionCount(0); gc1 = GC.CollectionCount(1); gc2 = GC.CollectionCount(2);
                 allocStart = GC.GetTotalAllocatedBytes();
+                mainStart = GC.GetAllocatedBytesForCurrentThread();
                 _liveStart = GC.GetTotalMemory(forceFullCollection: false);
                 _privStart = System.Diagnostics.Process.GetCurrentProcess().PrivateMemorySize64;
                 prevStamp = wallStart;
@@ -1234,6 +1235,7 @@ static async Task<int> RunStagesAsync(string path, string[] args)
         Console.WriteLine($"footprint  start live={liveStart / (1024.0 * 1024.0):F0} MiB priv={privStart / (1024.0 * 1024.0):F0} MiB  -> end live={liveEnd / (1024.0 * 1024.0):F0} MiB priv={privEnd / (1024.0 * 1024.0):F0} MiB  (delta {(liveEnd - liveStart) / 1024.0 / 1024.0:F0} MiB live / window)");
 
         Console.WriteLine($"wall {wallMs / 1000.0:F2}s  {steps} decode steps  {tps:F2} tok/s  |  gc gen0={d0} gen1={d1} gen2={d2}  |  alloc {allocMiB:F1} MiB ({allocPerTok:F0} B/tok)");
+        Console.WriteLine($"main-thread alloc {(GC.GetAllocatedBytesForCurrentThread() - mainStart) / (1024.0 * 1024.0):F1} MiB");
         if (perStep.Count > 0)
         {
             double msAvg = perStep.Average(p => p.Ms), msMin = perStep.Min(p => p.Ms), msMax = perStep.Max(p => p.Ms);
@@ -1327,7 +1329,7 @@ static unsafe int RunWideKernelBench(string[] args)
 // Runs one quantized decode matmul (M=1) in isolation on a deliberately
 // non-zero weight buffer and reports the achieved MAC rate. An all-zero buffer
 // would let the FMA take a zero-input path and make the kernel look faster than
-// it is on real weights, so the bytes alternate 0x11/0x22 â€” half fields that are
+// it is on real weights, so the bytes alternate 0x11/0x22 — half fields that are
 // never 0 or 31, hence never a denormal or a NaN. This separates "the kernel is
 // slow" from "the orchestration around it is slow", which a whole forward pass
 // cannot do because the two are multiplied together.

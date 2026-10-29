@@ -1,4 +1,4 @@
-ï»¿using System.Diagnostics;
+using System.Diagnostics;
 using System.Text;
 
 namespace SharpMind.Model;
@@ -8,14 +8,14 @@ public enum DecodeStage
 {
     /// <summary>Whole single-token forward: embedding, every block, final norm, lm head.</summary>
     Forward,
-    /// <summary>Prompt prefill forward (chunks whose seqLen &gt; 1) â€” kept separate so a
+    /// <summary>Prompt prefill forward (chunks whose seqLen &gt; 1) — kept separate so a
     /// profiled window can never silently mix prefill into the decode-step total.</summary>
     Prefill,
     /// <summary>Token embedding lookup plus optional embedding scale / position embedding.</summary>
     Embed,
     /// <summary>Every RMSNorm/LayerNorm row: pre/post block norms, Q/K norms, final norm.</summary>
     Norm,
-    /// <summary><see cref="Layers.InferenceLinearLayer.Forward"/> â€” q/k/v/o, FFN, MoE router and
+    /// <summary><see cref="Layers.InferenceLinearLayer.Forward"/> — q/k/v/o, FFN, MoE router and
     /// expert projections. Excludes the lm head, which is <see cref="LmHead"/>.</summary>
     Matmul,
     /// <summary>The quantized/F32 matmul data path <em>inside</em> one <see cref="Matmul"/>
@@ -23,7 +23,7 @@ public enum DecodeStage
     /// <see cref="Matmul"/> so its ~1.5&nbsp;MiB-of-allocation-per-call behaviour has a bucket
     /// of its own; <see cref="Matmul"/> minus <see cref="Kernel"/> is the per-layer envelope.</summary>
     Kernel,
-    /// <summary><c>Architecture.Forward</c> â€” the per-block loop shared by every forward.
+    /// <summary><c>Architecture.Forward</c> — the per-block loop shared by every forward.
     /// All its visible work (Matmul, Norm, Rope, Kv, Scores, Act) is staged inside; the
     /// difference between <see cref="Blocks"/> and its children is block glue.</summary>
     Blocks,
@@ -41,6 +41,13 @@ public enum DecodeStage
     LmHead,
     /// <summary>Generator-side per-token work: sampling plus detokenizing the chosen id.</summary>
     Sample,
+    /// <summary>Attention (or short-conv / DeltaNet) branch envelope inside one block:
+    /// everything from norm output to branch output, including its matmuls and scores.</summary>
+    AttnBranch,
+    /// <summary>The FFN envelope inside one block: gate/up/down matmuls and activation.</summary>
+    FfnBranch,
+    /// <summary>Residual additions inside one block (x += branch output).</summary>
+    Residual,
 }
 
 /// <summary>One stage's accumulated cost across the profiled window.</summary>
@@ -69,27 +76,27 @@ public readonly struct DecodeMeasure
 }
 
 /// <summary>
-/// Per-stage breakdown of CPU decode â€” wall clock and managed allocation â€” shared by every mark
+/// Per-stage breakdown of CPU decode — wall clock and managed allocation — shared by every mark
 /// site in the model (transformer, layers, FFN kernels) and the generator (sampling).
 ///
 /// <para><b>Opt-in and cheap when off.</b> Each site is a <see cref="Begin"/> snapshot and a
 /// <see cref="Mark"/> call; while <see cref="Enabled"/> is false <see cref="Begin"/> returns a
 /// no-op token without reading the clock or the allocation counter, so the default state costs
-/// one predictable branch per site. A profiled run is slower than a real one â€” take throughput
+/// one predictable branch per site. A profiled run is slower than a real one — take throughput
 /// with the profiler off and the breakdown with it on.</para>
 ///
 /// <para><b>Static and thread-safe.</b> One window at a time, accumulating through
 /// <see cref="Interlocked"/> so marks fired from inside <c>Parallel.For</c> regions (MoE
 /// per-token routing, batched forwards) are counted rather than racing. Nested marks are
 /// independent buckets: a MoE expert's matmul is counted in <see cref="Matmul"/>, not in the
-/// route scope around its selection, and <see cref="Forward"/> envelopes every decode stage â€”
+/// route scope around its selection, and <see cref="Forward"/> envelopes every decode stage —
 /// do not sum a parent with its children.</para>
 ///
 /// <para><b>Allocation attribution.</b> Each Begin/Mark pair contributes the <em>process-wide</em>
 /// managed bytes allocated through its interval (<c>GC.GetTotalAllocatedBytes()</c> delta), so
 /// work done on worker threads by a stage is included. Two caveats: nested scopes overlap exactly
 /// as time does, and marks fired concurrently from inside <c>Parallel.For</c> (MoE routing) can
-/// double-count bytes that fall in overlapping worker windows â€” treat Route's allocation number
+/// double-count bytes that fall in overlapping worker windows — treat Route's allocation number
 /// as approximate, everything else as exact for the mostly-main-thread decode path.</para>
 /// </summary>
 public static class DecodeProfiler
@@ -112,7 +119,7 @@ public static class DecodeProfiler
     /// when profiling is off (which <see cref="Mark"/> then ignores).</summary>
     public static DecodeMeasure Begin() =>
         s_enabled
-            ? new DecodeMeasure(Stopwatch.GetTimestamp(), GC.GetTotalAllocatedBytes())
+            ? new DecodeMeasure(Stopwatch.GetTimestamp(), GC.GetTotalAllocatedBytes(precise: true))
             : default;
 
     /// <summary>Closes the interval opened by <see cref="Begin"/> and charges its elapsed time
@@ -122,7 +129,7 @@ public static class DecodeProfiler
         if (!s_enabled || m.IsNoOp) return;
         int i = (int)stage;
         Interlocked.Add(ref s_ticks[i], Stopwatch.GetTimestamp() - m.Ticks);
-        Interlocked.Add(ref s_allocBytes[i], GC.GetTotalAllocatedBytes() - m.AllocatedBytes);
+        Interlocked.Add(ref s_allocBytes[i], GC.GetTotalAllocatedBytes(precise: true) - m.AllocatedBytes);
         Interlocked.Increment(ref s_counts[i]);
     }
 
@@ -170,7 +177,7 @@ public static class DecodeProfiler
     /// Renders <see cref="Snapshot"/> as a table. Time percentages are of <paramref name="wallMs"/>
     /// when the caller supplies one (so unaccounted host time shows up as a gap), otherwise of the
     /// recorded stages themselves. The MiB column is each stage's managed allocation, which is
-    /// <em>not</em> part of the percentage math â€” bytes don't add up like wall time across nested
+    /// <em>not</em> part of the percentage math — bytes don't add up like wall time across nested
     /// scopes.
     /// </summary>
     public static string Format(string title, double wallMs = 0)
