@@ -51,6 +51,12 @@ public static class ToolCallFormatDetector
             if (template.Contains("[TOOL_CALLS]", StringComparison.Ordinal))
                 return ToolCallFormat.Mistral;
 
+            // Qwen3.5 renders tools as XML <function=...> blocks. Only that
+            // template has this marker, so it must win over the generic Qwen
+            // tool_call check below, which Qwen3.5 also matches.
+            if (template.Contains("<function=", StringComparison.Ordinal))
+                return ToolCallFormat.QwenXml;
+
             // Llama 3.1+ templates contain both <|python_tag|> and the generic
             // "tool_calls" variable, so the specific native markers must win.
             if (template.Contains("<|python_tag|>", StringComparison.Ordinal))

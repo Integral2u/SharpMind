@@ -22,6 +22,11 @@ public enum ToolCallFormat
     /// <c>{"name":...,"arguments":{...}}</c> JSON object with no wrapper.</summary>
     Qwen,
 
+    /// <summary>Qwen3.5's native function-calling shape: an XML block
+    /// <c>&lt;tool_call&gt;&lt;function=NAME&gt;&lt;parameter=KEY&gt;value&lt;/parameter&gt;...&lt;/function&gt;&lt;/tool_call&gt;</c>.
+    /// Chosen when the chat template renders <c>&lt;function=</c>.</summary>
+    QwenXml,
+
     /// <summary>Mistral/Ministral native function-calling: a
     /// <c>[TOOL_CALLS]</c> marker followed by a <c>{"name":...,"arguments":{...}}</c>
     /// JSON object. Tool results use the <c>tool</c> role.</summary>

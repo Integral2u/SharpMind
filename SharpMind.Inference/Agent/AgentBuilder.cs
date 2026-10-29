@@ -427,6 +427,40 @@ namespace SharpMind.Inference.Agent
         }
 
         /// <summary>
+        /// Builds the Qwen3.5 XML call example from the first registered tool:
+        /// one <c>&lt;parameter=...&gt;</c> per argument (up to three).
+        /// </summary>
+        private string BuildQwenXmlCallExample()
+        {
+            var tool = ToolDefinitions.OfType<JsonObject>().FirstOrDefault();
+            string toolName = tool?["name"]?.GetValue<string>() ?? "<tool>";
+            var sb = new StringBuilder();
+            sb.AppendLine("<tool_call>");
+            sb.AppendLine($"<function={toolName}>");
+
+            if (tool?["parameters"] is JsonObject pars && pars["properties"] is JsonObject props)
+            {
+                foreach (var (argName, schema) in props.Take(3))
+                {
+                    string type = ((JsonObject?)schema)?["type"]?.GetValue<string>() ?? "string";
+                    string value = type switch
+                    {
+                        "array" => "[\"...\"]",
+                        "integer" or "number" => "0",
+                        "boolean" => "false",
+                        _ => "..."
+                    };
+                    sb.AppendLine($"<parameter={argName}>");
+                    sb.AppendLine(value);
+                    sb.AppendLine("</parameter>");
+                }
+            }
+
+            sb.Append("</function>\n</tool_call>");
+            return sb.ToString();
+        }
+
+        /// <summary>
         /// Builds the Gemma/functiongemma call example using the first registered
         /// tool. Gemma uses <c>args</c> (not <c>arguments</c>) as the key.
         /// </summary>
@@ -624,6 +658,13 @@ namespace SharpMind.Inference.Agent
                 "To call a tool, reply with ONLY the JSON object and nothing else, then stop—no preamble, no follow-up text, no restating the arguments.",
                 "If the user's request does not match a tool in ## Available Tools, answer entirely in plain prose: never emit a JSON object, never name or reference tools, and behave exactly as if tools did not exist."
             ],
+            ToolCallFormat.QwenXml =>
+            [
+                "You are an agent with the ability to call tools, only call tools if it is best suited to the response. Answer factual and conversational questions directly; only call a tool for an explicit action or a capability that needs it. Treat \"can you...\" and \"could you please...\" as orders, not questions.",
+                "Make at most one tool call per reply. Wait for its result, then answer directly from it; never answer before the result arrives. Pass each argument as its own parameter; list values are JSON arrays. Unknown arguments: say so briefly.",
+                "To call a tool, reply with ONLY the one <tool_call> block shown under ## Tool Call Format, then stop: no preamble, no follow-up text, no restating the arguments. Use only the tool names from your function definitions; never invent names or values, and never write tool names, descriptions or schemas as text.",
+                "If the user's request does not match one of your tools, answer entirely in plain prose: never emit a <tool_call> block, never name or reference tools, and behave exactly as if tools did not exist."
+            ],
             ToolCallFormat.Mistral =>
             [
                 "You are an agent with the ability to call tools, only call tools if it is best suited to the response. Answer factual/conversational questions directly—only call a tool in ## Available Tools for explicit actions, UI interactions, or capabilities that require it. Treat \"can you...\" and \"could you please...\" as orders, not questions.",
@@ -713,6 +754,10 @@ namespace SharpMind.Inference.Agent
                     case ToolCallFormat.Qwen:
                         sb.AppendLine("Only when the request is an action performed by one of the tools in ## Available Tools, reply with exactly one JSON object — nothing else. Example:");
                         sb.AppendLine(BuildQwenCallExample());
+                        break;
+                    case ToolCallFormat.QwenXml:
+                        sb.AppendLine("Only when the request is an action performed by one of your tools, reply with exactly one tool call block - nothing else. Example:");
+                        sb.AppendLine(BuildQwenXmlCallExample());
                         break;
                     case ToolCallFormat.Mistral:
                         sb.AppendLine("Call a tool by replying with [TOOL_CALLS] followed by exactly one JSON object. Example:");

@@ -61,7 +61,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     /// message and they respond as if no result ever arrived. Other formats keep
     /// the legacy system-message framing.
     /// </summary>
-    private ChatRole ResultRole => _toolCallFormat is ToolCallFormat.Qwen or ToolCallFormat.Mistral
+    private ChatRole ResultRole => _toolCallFormat is ToolCallFormat.Qwen or ToolCallFormat.QwenXml or ToolCallFormat.Mistral
         ? ChatRole.Tool
         : ChatRole.System;
 
@@ -793,12 +793,127 @@ private void ThrowIfDisposed()
         call = null;
         if (_agentBuilder is null) return false;
         string text = _responseBuffer.ToString().TrimEnd();
-        if (text.Length == 0 || text[^1] != '}') return false;
-        if (!TryParseToolCall(text, _toolCallFormat, out var parsed) || parsed is null) return false;
+        if (text.Length == 0) return false;
+        // A QwenXml call is complete at its closing tag, with or without the
+        // <tool_call> wrapper the model may omit.
+        bool complete = _toolCallFormat == ToolCallFormat.QwenXml
+            ? text.EndsWith("</tool_call>", StringComparison.Ordinal)
+              || text.EndsWith("</function>", StringComparison.Ordinal)
+            : text[^1] == '}';
+        if (!complete) return false;
+        if (!TryParseCall(text, out var parsed) || parsed is null) return false;
         string name = parsed["tool"]?.GetValue<string>() ?? "";
         if (!_agentBuilder.RegisteredToolNames.Contains(name)) return false;
         call = parsed;
         return true;
+    }
+
+    /// <summary>
+    /// Parses the active format and, for QwenXml, converts string parameters to
+    /// the JSON types the registered tool's schema declares.
+    /// </summary>
+    private bool TryParseCall(string text, out JsonObject? parsed)
+    {
+        if (!TryParseToolCall(text, _toolCallFormat, out parsed) || parsed is null) return false;
+        if (_toolCallFormat == ToolCallFormat.QwenXml)
+            parsed = CoerceXmlCall(parsed);
+        return true;
+    }
+
+    /// <summary>
+    /// Parses <c>&lt;tool_call&gt;&lt;function=NAME&gt;&lt;parameter=KEY&gt;value&lt;/parameter&gt;...&lt;/function&gt;&lt;/tool_call&gt;</c>.
+    /// Tolerates a missing <c>&lt;/function&gt;</c> or <c>&lt;/tool_call&gt;</c> and
+    /// a truncated final parameter, matching the repair the JSON formats get.
+    /// Every argument value is returned as a string.
+    /// </summary>
+    private static bool TryParseXmlFunctionCall(string text, out JsonObject? parsed)
+    {
+        parsed = null;
+        const string fnOpen = "<function=", paramOpen = "<parameter=", paramClose = "</parameter>";
+
+        int fn = text.IndexOf(fnOpen, StringComparison.Ordinal);
+        if (fn < 0) return false;
+        int nameStart = fn + fnOpen.Length;
+        int nameEnd = text.IndexOf('>', nameStart);
+        if (nameEnd < 0) return false;
+        string name = text[nameStart..nameEnd].Trim();
+        if (name.Length == 0) return false;
+
+        int bodyEnd = text.IndexOf("</function>", nameEnd, StringComparison.Ordinal);
+        if (bodyEnd < 0) bodyEnd = text.IndexOf("</tool_call>", nameEnd, StringComparison.Ordinal);
+        if (bodyEnd < 0) bodyEnd = text.Length;
+
+        var args = new JsonObject();
+        int pos = nameEnd + 1;
+        while (pos < bodyEnd)
+        {
+            int p = text.IndexOf(paramOpen, pos, StringComparison.Ordinal);
+            if (p < 0 || p >= bodyEnd) break;
+            int keyStart = p + paramOpen.Length;
+            int keyEnd = text.IndexOf('>', keyStart);
+            if (keyEnd < 0 || keyEnd > bodyEnd) break;
+            string key = text[keyStart..keyEnd].Trim();
+
+            int valStart = keyEnd + 1;
+            int valEnd = text.IndexOf(paramClose, valStart, StringComparison.Ordinal);
+            bool closed = valEnd >= 0 && valEnd <= bodyEnd;
+            if (!closed) valEnd = bodyEnd;
+
+            if (key.Length > 0)
+                args[key] = text[valStart..valEnd].Trim('\r', '\n');
+
+            pos = closed ? valEnd + paramClose.Length : bodyEnd;
+        }
+
+        parsed = new JsonObject { ["tool"] = name, ["arguments"] = args };
+        return true;
+    }
+
+    /// <summary>
+    /// Converts an XML call's string arguments to the schema's declared types:
+    /// integer, number and boolean are parsed; array and object must be JSON;
+    /// anything unparseable, or with no declared type, stays a string.
+    /// </summary>
+    private JsonObject CoerceXmlCall(JsonObject call)
+    {
+        string name = call["tool"]!.GetValue<string>();
+        JsonObject? props = _agentBuilder?.ToolDefinitions
+            .OfType<JsonObject>()
+            .FirstOrDefault(t => t["name"]?.GetValue<string>() == name)?["parameters"]?["properties"] as JsonObject;
+
+        var result = new JsonObject();
+        foreach (var kv in call["arguments"]!.AsObject())
+        {
+            string raw = kv.Value?.GetValue<string>() ?? "";
+            string? type = (props?[kv.Key] as JsonObject)?["type"]?.GetValue<string>();
+            result[kv.Key] = CoerceXmlValue(raw, type);
+        }
+        return new JsonObject { ["tool"] = name, ["arguments"] = result };
+    }
+
+    private static JsonNode CoerceXmlValue(string raw, string? type)
+    {
+        string t = raw.Trim();
+        switch (type)
+        {
+            case "integer" when long.TryParse(t, System.Globalization.NumberStyles.Integer,
+                                              System.Globalization.CultureInfo.InvariantCulture, out long l):
+                return JsonValue.Create(l)!;
+            case "number" when double.TryParse(t, System.Globalization.NumberStyles.Float,
+                                               System.Globalization.CultureInfo.InvariantCulture, out double d):
+                return JsonValue.Create(d)!;
+            case "boolean" when bool.TryParse(t, out bool b):
+                return JsonValue.Create(b)!;
+            case "array" or "object":
+                try
+                {
+                    var node = JsonNode.Parse(t);
+                    if (node is JsonArray or JsonObject) return node!;
+                }
+                catch (JsonException) { }
+                break;
+        }
+        return JsonValue.Create(raw)!;
     }
 
     /// <summary>
@@ -819,6 +934,11 @@ private void ThrowIfDisposed()
         if (format == ToolCallFormat.None) return false;
         var trimmed = text.Trim();
         if (trimmed.Length == 0) return false;
+
+        // Qwen3.5's XML contract. Arguments stay strings here; TryParseCall
+        // converts them to the types the tool's schema declares.
+        if (format == ToolCallFormat.QwenXml)
+            return TryParseXmlFunctionCall(trimmed, out parsed);
 
         // Qwen-instruct's native contract: a raw {"name":...,"arguments":...}
         // object with no wrapper. Look there first; tolerates the tagged wrapper
@@ -1472,6 +1592,7 @@ private void ThrowIfDisposed()
             // duplicate what the tool itself will show). Set once, then the rest
             // of the turn is suppressed; the tool loop dispatches and regenerates.
             bool dropTurnTail = false;
+            bool stopAfterFragment = false;
             bool suppressedFailedCall = false;
 
             // Seed think-block detection from the rendered prompt, not just the
@@ -1628,21 +1749,31 @@ private void ThrowIfDisposed()
                 // of a tool call. Stop as soon as a complete, registered call is
                 // present instead of paying for up to MaxNewTokens extra tokens.
                 if (_toolCallFormat is ToolCallFormat.Qwen
+                    or ToolCallFormat.QwenXml
                     or ToolCallFormat.Mistral
                     or ToolCallFormat.Llama3
                     or ToolCallFormat.Gemma
                     && !grammarActive
                     && !_inThinkBlock
-                    && fragment.Contains('}')
+                    && (fragment.Contains('}') || fragment.Contains('>'))
                     && TryGetCompleteRegisteredToolCall(out _))
                 {
-                    dropTurnTail = true;
+                    // XML calls end at </tool_call>; the markup filter has already
+                    // removed the block, so any visible text is prose before it.
+                    // Emit that prose, then stop. JSON formats keep dropping the
+                    // whole tail, since prose before a raw JSON call may be JSON.
+                    if (_toolCallFormat == ToolCallFormat.QwenXml) stopAfterFragment = true;
+                    else dropTurnTail = true;
                 }
 
                 if (dropTurnTail) break;
 
                 int emitStart = Math.Max(shownThrough, droppedThrough);
-                if (emitStart >= visibleBuilder.Length) continue;
+                if (emitStart >= visibleBuilder.Length)
+                {
+                    if (stopAfterFragment) break;
+                    continue;
+                }
                 string delta = visibleBuilder.ToString(emitStart, visibleBuilder.Length - emitStart);
                 shownThrough = visibleBuilder.Length;
 
@@ -1659,6 +1790,7 @@ private void ThrowIfDisposed()
                     TimeToFirstToken = _generator.TimeToFirstToken,
                     TokenId = tokenId,
                 };
+                if (stopAfterFragment) break;
             }
 
             _progress?.Report(1f);
@@ -1673,8 +1805,9 @@ private void ThrowIfDisposed()
                 && !IsFabricatedToolResultJson(SanitizeToolMarkup(responseText))
                 && !LooksLikeFailedToolAttempt(responseText))
             {
-                string held = SanitizeToolMarkup(
-                    responseText.Replace("<think>", "").Replace("</think>", ""));
+                // Use the incremental filter's output (already markup-free, flushed
+                // above). Sanitising the raw buffer leaked bare XML tool blocks.
+                string held = SanitizeToolMarkup(visibleBuilder.ToString());
 if (held.Length > 0)
                     yield return new ChatStreamEntry
                     {
@@ -1709,7 +1842,7 @@ if (held.Length > 0)
                 && _agentBuilder.RegisteredToolNames.Count > 0
                 && _toolCallFormat != ToolCallFormat.None
                 && toolCallCount < MaxToolCallsPerTurn
-                && TryParseToolCall(responseText, _toolCallFormat, out var toolCall)
+                && TryParseCall(responseText, out var toolCall)
                 && toolCall is not null)
             {
                 var toolName = toolCall["tool"]!.GetValue<string>();

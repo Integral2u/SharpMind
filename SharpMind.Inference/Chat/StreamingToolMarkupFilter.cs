@@ -19,17 +19,23 @@ internal sealed class StreamingToolMarkupFilter
     private const string GemmaMarker = "functionCall";
     private const string ThinkOpen = "<think>";
     private const string ThinkClose = "</think>";
+    // Qwen3.5 XML call block, which may appear without its <tool_call> wrapper.
+    private const string OpenXmlFunction = "<function=";
+    private const string CloseXmlFunction = "</function>";
+    private const string CloseToolCallTag = "</tool_call>";
 
     private static readonly string[] Markers =
     [
         OpenTool, CloseTool, OpenFunction, CloseFunction,
         MistralMarker, PythonTag, PythonTagBare, GemmaMarker,
-        ThinkOpen, ThinkClose
+        ThinkOpen, ThinkClose, OpenXmlFunction
     ];
 
     private readonly StringBuilder _pending = new();
     private bool _inToolCall;
     private bool _inFunctionCall;
+    private bool _inXmlFunction;
+    private bool _awaitToolCallCloser;
     private int _visibleLength;
 
     public void Reset()
@@ -37,6 +43,8 @@ internal sealed class StreamingToolMarkupFilter
         _pending.Clear();
         _inToolCall = false;
         _inFunctionCall = false;
+        _inXmlFunction = false;
+        _awaitToolCallCloser = false;
         _visibleLength = 0;
     }
 
@@ -58,6 +66,28 @@ internal sealed class StreamingToolMarkupFilter
             {
                 if (!ConsumeBlock(CloseFunction, ref _inFunctionCall)) break;
                 continue;
+            }
+            if (_inXmlFunction)
+            {
+                if (!ConsumeBlock(CloseXmlFunction, ref _inXmlFunction)) break;
+                _awaitToolCallCloser = true;
+                continue;
+            }
+            if (_awaitToolCallCloser)
+            {
+                // Resolve the closer once non-whitespace text is available. A
+                // closer split across fragments is still caught because the
+                // flag persists until then.
+                string next = _pending.ToString();
+                int i = 0;
+                while (i < next.Length && char.IsWhiteSpace(next[i])) i++;
+                if (i == next.Length) break;
+                _awaitToolCallCloser = false;
+                if (next.AsSpan(i).StartsWith(CloseToolCallTag, StringComparison.Ordinal))
+                {
+                    _pending.Remove(0, i + CloseToolCallTag.Length);
+                    continue;
+                }
             }
 
             string text = _pending.ToString();
@@ -140,6 +170,11 @@ internal sealed class StreamingToolMarkupFilter
                 Emit(output, CloseFunction);
                 _pending.Remove(0, CloseFunction.Length);
             }
+            else if (text.StartsWith(OpenXmlFunction, StringComparison.Ordinal))
+            {
+                _inXmlFunction = true;
+                _pending.Remove(0, OpenXmlFunction.Length);
+            }
             else
             {
                 // Unreachable: every marker in Markers has a branch above.
@@ -153,7 +188,7 @@ internal sealed class StreamingToolMarkupFilter
     /// <summary>Emits any trailing text that never completed a marker or block.</summary>
     public string Flush()
     {
-        if (_inToolCall || _inFunctionCall)
+        if (_inToolCall || _inFunctionCall || _inXmlFunction)
         {
             _pending.Clear();
             return "";
