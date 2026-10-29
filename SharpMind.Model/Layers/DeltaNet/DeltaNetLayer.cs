@@ -1,3 +1,4 @@
+using System.Numerics;
 using SharpMind.Core.Memory;
 using SharpMind.Core.Quantization;
 using SharpMind.Core.Tensors;
@@ -296,32 +297,31 @@ public sealed class DeltaNetLayer : IDisposable
                     var state = deltaStateData.Slice(
                         deltaStateBase + hv * deltaLayerStride, deltaLayerStride);
 
-                    for (int i = 0; i < state.Length; i++)
-                        state[i] *= decay;
+                    ScaleInPlace(state, decay);
 
+                    // pred[v] = sum_k state[k,v] * key[k]. Reduced with k as the outer
+                    // loop, so each step is a contiguous row over v (vectorisable). Each
+                    // v still adds its k terms in the same order as the column loop it
+                    // replaces. `residual` doubles as the accumulator; it is free here.
+                    residual.AsSpan().Clear();
+                    for (int k = 0; k < keyHeadDim; k++)
+                        MulAddRow(residual, state.Slice(k * valueHeadDim, valueHeadDim), convRow[kBase + k]);
                     for (int v = 0; v < valueHeadDim; v++)
-                    {
-                        float acc = 0f;
-                        for (int k = 0; k < keyHeadDim; k++)
-                            acc += state[k * valueHeadDim + v] * convRow[kBase + k];
-                        residual[v] = (convRow[vBase + v] - acc) * beta;
-                    }
+                        residual[v] = (convRow[vBase + v] - residual[v]) * beta;
 
                     for (int k = 0; k < keyHeadDim; k++)
-                    {
-                        float kv = convRow[kBase + k];
-                        int row = k * valueHeadDim;
-                        for (int v = 0; v < valueHeadDim; v++)
-                            state[row + v] += kv * residual[v];
-                    }
+                        AddScaledRow(state.Slice(k * valueHeadDim, valueHeadDim), residual, convRow[kBase + k]);
+
+                    // out[v] = sum_k state[k,v] * query[k], same row-wise reduction.
+                    residual.AsSpan().Clear();
+                    for (int k = 0; k < keyHeadDim; k++)
+                        MulAddRow(residual, state.Slice(k * valueHeadDim, valueHeadDim), convRow[qBase + k]);
 
                     float sumSq = 0f;
                     int oBase = outRowOffset + hv * valueHeadDim;
                     for (int v = 0; v < valueHeadDim; v++)
                     {
-                        float acc = 0f;
-                        for (int k = 0; k < keyHeadDim; k++)
-                            acc += state[k * valueHeadDim + v] * convRow[qBase + k];
+                        float acc = residual[v];
                         float scaled = acc * qScale;
                         outputData[oBase + v] = scaled;
                         sumSq += scaled * scaled;
@@ -422,4 +422,47 @@ public sealed class DeltaNetLayer : IDisposable
     }
 
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, nameof(DeltaNetLayer));
+
+    // Row helpers for the recurrence. Each element is computed with the same
+    // operations, in the same order, as the scalar loop; the vector path only
+    // changes how many elements are processed per instruction.
+
+    /// <summary>x[i] *= s.</summary>
+    internal static void ScaleInPlace(Span<float> x, float s)
+    {
+        int i = 0;
+        if (Vector.IsHardwareAccelerated)
+        {
+            var sv = new Vector<float>(s);
+            for (; i <= x.Length - Vector<float>.Count; i += Vector<float>.Count)
+                (new Vector<float>(x.Slice(i)) * sv).CopyTo(x.Slice(i));
+        }
+        for (; i < x.Length; i++) x[i] *= s;
+    }
+
+    /// <summary>dst[i] += row[i] * s.</summary>
+    internal static void MulAddRow(Span<float> dst, ReadOnlySpan<float> row, float s)
+    {
+        int i = 0;
+        if (Vector.IsHardwareAccelerated)
+        {
+            var sv = new Vector<float>(s);
+            for (; i <= dst.Length - Vector<float>.Count; i += Vector<float>.Count)
+                (new Vector<float>(dst.Slice(i)) + new Vector<float>(row.Slice(i)) * sv).CopyTo(dst.Slice(i));
+        }
+        for (; i < dst.Length; i++) dst[i] += row[i] * s;
+    }
+
+    /// <summary>dst[i] += s * x[i].</summary>
+    internal static void AddScaledRow(Span<float> dst, ReadOnlySpan<float> x, float s)
+    {
+        int i = 0;
+        if (Vector.IsHardwareAccelerated)
+        {
+            var sv = new Vector<float>(s);
+            for (; i <= dst.Length - Vector<float>.Count; i += Vector<float>.Count)
+                (new Vector<float>(dst.Slice(i)) + sv * new Vector<float>(x.Slice(i))).CopyTo(dst.Slice(i));
+        }
+        for (; i < dst.Length; i++) dst[i] += s * x[i];
+    }
 }
