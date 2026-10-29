@@ -245,7 +245,7 @@ static int RunDump(string path, string[] args)
 
 static int RunForward(string path, string[] args)
 {
-    bool full = args.Any(a => a.Equals("full", StringComparison.OrdinalIgnoreCase));
+    bool full = !args.Any(a => a.Equals("streaming", StringComparison.OrdinalIgnoreCase));
     bool resident = args.Any(a => a.Equals("resident", StringComparison.OrdinalIgnoreCase));
     try
     {
@@ -447,7 +447,7 @@ static int RunLoadOne(string path, string[] args)
     // "full" and "resident" mirror the CUI: ModelCache skips Streaming by default and
     // SessionLauncher always passes quantizedResident: true, which takes a different
     // block-allocation path than the probe's defaults.
-    bool full = args.Any(a => a.Equals("full", StringComparison.OrdinalIgnoreCase));
+    bool full = !args.Any(a => a.Equals("streaming", StringComparison.OrdinalIgnoreCase));
     bool resident = args.Any(a => a.Equals("resident", StringComparison.OrdinalIgnoreCase));
     try
     {
@@ -674,7 +674,7 @@ static async Task<int> RunInferenceAsync(string path, string[] args)
     try
     {
         var sharpConfig = modelConfig.ForModel();
-        bool full = args.Any(a => a.Equals("full", StringComparison.OrdinalIgnoreCase));
+        bool full = !args.Any(a => a.Equals("streaming", StringComparison.OrdinalIgnoreCase));
         bool resident = args.Any(a => a.Equals("resident", StringComparison.OrdinalIgnoreCase));
         bool topk = args.Any(a => a.Equals("topk", StringComparison.OrdinalIgnoreCase));
 
@@ -818,7 +818,7 @@ static async Task<int> RunBenchAsync(string path, string[] args)
         if (File.Exists(pf)) prompt = File.ReadAllText(pf);
     }
 
-    bool full = args.Any(a => a.Equals("full", StringComparison.OrdinalIgnoreCase));
+    bool full = !args.Any(a => a.Equals("streaming", StringComparison.OrdinalIgnoreCase));
     bool resident = args.Any(a => a.Equals("resident", StringComparison.OrdinalIgnoreCase));
     bool serialMm = args.Any(a => a.Equals("serialmm", StringComparison.OrdinalIgnoreCase));
     bool noWide = args.Any(a => a.Equals("nowide", StringComparison.OrdinalIgnoreCase));
@@ -978,7 +978,7 @@ static async Task<int> RunBenchABAsync(string path, string[] args)
     int measure = args.Length > 4 && int.TryParse(args[4], out int mv) ? mv : 32;
     if (warmup < 1 || measure < 1) { Console.Error.WriteLine("benchab needs warmup>=1 and measure>=1"); return 2; }
 
-    bool full = args.Any(a => a.Equals("full", StringComparison.OrdinalIgnoreCase));
+    bool full = !args.Any(a => a.Equals("streaming", StringComparison.OrdinalIgnoreCase));
     bool resident = args.Any(a => a.Equals("resident", StringComparison.OrdinalIgnoreCase));
 
     ModelMetaData meta;
@@ -1136,7 +1136,7 @@ static async Task<int> RunStagesAsync(string path, string[] args)
     try
     {
         var sharpConfig = modelConfig.ForModel();
-        bool full = args.Any(a => a.Equals("full", StringComparison.OrdinalIgnoreCase));
+        bool full = !args.Any(a => a.Equals("streaming", StringComparison.OrdinalIgnoreCase));
         bool resident = args.Any(a => a.Equals("resident", StringComparison.OrdinalIgnoreCase));
         bool serialMm = args.Any(a => a.Equals("serialmm", StringComparison.OrdinalIgnoreCase));
         int window = -1;
