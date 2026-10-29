@@ -684,3 +684,6 @@ FodyWeavers.xsd
 /SandBox/Runs/compat_20260817_164530.txt
 /SandBox/Runs/compat_20260817_165227.txt
 /SandBox/Runs/compat_20260817_165321.txt
+
+# Built by SharpMind.Extensions.Tools (CopyToolsToCuiPlugins target); not source
+SharpMind.CUI/Plugins/SharpMind.Extensions.Tools.dll
