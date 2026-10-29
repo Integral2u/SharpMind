@@ -390,55 +390,91 @@ namespace SharpMind.Model.Layers.Attention;
 
         var tScores = DecodeProfiler.Begin();
         {
-            int totalHeads = batch * numH;
             int qStride = numH * headDim;
             int oStride = qDim;
 
-            // Pre-allocate temporary buffers for non-contiguous caches to avoid race conditions in Parallel.For
+            // Grouped-query schedule: one work unit per (batch, KV head). Its query
+            // heads share that KV head's K/V, so the unit reads (or, for a
+            // non-contiguous cache, copies) K/V once and runs every query head of the
+            // group against it. The old per-query-head schedule re-read and re-copied
+            // the same K/V once per query head. Each head still runs the same kernel
+            // on the same inputs, so the output is bit-identical.
+            // Falls back to one unit per query head when the groups do not tile the heads evenly.
+            int kvGroupSize = Config.KvGroupSize;
+            bool grouped = kvGroupSize > 0 && numKv * kvGroupSize == numH;
+            int totalHeads = batch * numH;
+            int units = grouped ? batch * numKv : totalHeads;
+
+            // Pre-allocate temporary buffers for non-contiguous caches (one slot per unit)
+            // to avoid race conditions in Parallel.For
             Tensor<float>? allTempK = null;
             Tensor<float>? allTempV = null;
             if (cache is not { IsContiguous: true })
             {
                 allTempK = workspace != null
-                    ? workspace.Rent<float>([totalHeads, effectiveKvLen, headDim])
-                    : new Tensor<float>(totalHeads, effectiveKvLen, headDim);
+                    ? workspace.Rent<float>([units, effectiveKvLen, headDim])
+                    : new Tensor<float>(units, effectiveKvLen, headDim);
                 allTempV = workspace != null
-                    ? workspace.Rent<float>([totalHeads, effectiveKvLen, headDim])
-                    : new Tensor<float>(totalHeads, effectiveKvLen, headDim);
+                    ? workspace.Rent<float>([units, effectiveKvLen, headDim])
+                    : new Tensor<float>(units, effectiveKvLen, headDim);
             }
 
-            void DoHead(int bh)
+            void DoUnit(int u)
             {
-                int b = bh / numH;
-                int h = bh % numH;
-                int kvHead = h / Config.KvGroupSize;
-                float alibiSlope = PositionalEncoder is AlibiEncoder alibi ? alibi.Slopes[h] : 0f;
+                int b, kvHead, hFirst, hCount;
+                if (grouped)
+                {
+                    b = u / numKv;
+                    kvHead = u % numKv;
+                    hFirst = kvHead * kvGroupSize;
+                    hCount = kvGroupSize;
+                }
+                else
+                {
+                    b = u / numH;
+                    hFirst = u % numH;
+                    kvHead = hFirst / Config.KvGroupSize;
+                    hCount = 1;
+                }
+
                 unsafe
                 {
-                    if (qr is null) throw new NullReferenceException($"[DoHead bh={bh}] qr is null");
-                    if (output is null) throw new NullReferenceException($"[DoHead bh={bh}] output is null");
-                    float* pQ = qr.DataPtr + (long)(b * seqLen * numH + h) * headDim;
-                    float* pO = output.DataPtr + (long)(b * seqLen * qDim + h * headDim);
+                    if (qr is null) throw new NullReferenceException($"[DoUnit u={u}] qr is null");
+                    if (output is null) throw new NullReferenceException($"[DoUnit u={u}] output is null");
+
+                    // Per-head pointers into the query and output buffers.
+                    float AlibiFor(int h) => PositionalEncoder is AlibiEncoder alibi ? alibi.Slopes[h] : 0f;
 
                     if (cache is { IsQuantized: true })
                     {
-                        ScaledDotProductForQuantized(cache.QuantKind, pQ,
-                            cache.GetQuantizedKeyPtr(b, 0, kvHead),
-                            cache.GetQuantizedValuePtr(b, 0, kvHead),
-                            pO, seqLen, effectiveKvLen, headDim, scale, causal, qStride, oStride, alibiSlope, windowSize);
+                        byte* qK = cache.GetQuantizedKeyPtr(b, 0, kvHead);
+                        byte* qV = cache.GetQuantizedValuePtr(b, 0, kvHead);
+                        for (int h = hFirst; h < hFirst + hCount; h++)
+                        {
+                            float* pQ = qr.DataPtr + (long)(b * seqLen * numH + h) * headDim;
+                            float* pO = output.DataPtr + (long)(b * seqLen * qDim + h * headDim);
+                            ScaledDotProductForQuantized(cache.QuantKind, pQ, qK, qV,
+                                pO, seqLen, effectiveKvLen, headDim, scale, causal, qStride, oStride, AlibiFor(h), windowSize);
+                        }
                     }
                     else if (cache is { IsContiguous: true })
                     {
                         float* pK = cache.GetKeyPtr(b, 0, kvHead);
                         float* pV = cache.GetValuePtr(b, 0, kvHead);
-                        if (pK == null) throw new NullReferenceException($"[DoHead bh={bh}] pK is null (cache type={cache.GetType().Name}, pos={cache.Length}, kvHead={kvHead})");
-                        if (pV == null) throw new NullReferenceException($"[DoHead bh={bh}] pV is null (cache type={cache.GetType().Name}, pos={cache.Length}, kvHead={kvHead})");
-                        ScaledDotProduct(pQ, pK, pV, pO, seqLen, effectiveKvLen, headDim, scale, causal, qStride, oStride, alibiSlope, windowSize);
+                        if (pK == null) throw new NullReferenceException($"[DoUnit u={u}] pK is null (cache type={cache.GetType().Name}, pos={cache.Length}, kvHead={kvHead})");
+                        if (pV == null) throw new NullReferenceException($"[DoUnit u={u}] pV is null (cache type={cache.GetType().Name}, pos={cache.Length}, kvHead={kvHead})");
+                        for (int h = hFirst; h < hFirst + hCount; h++)
+                        {
+                            float* pQ = qr.DataPtr + (long)(b * seqLen * numH + h) * headDim;
+                            float* pO = output.DataPtr + (long)(b * seqLen * qDim + h * headDim);
+                            ScaledDotProduct(pQ, pK, pV, pO, seqLen, effectiveKvLen, headDim, scale, causal, qStride, oStride, AlibiFor(h), windowSize);
+                        }
                     }
                     else
                     {
-                        float* pK = allTempK!.DataPtr + (long)bh * effectiveKvLen * headDim;
-                        float* pV = allTempV!.DataPtr + (long)bh * effectiveKvLen * headDim;
+                        // Copy this unit's K/V once; every query head in the group reuses it.
+                        float* pK = allTempK!.DataPtr + (long)u * effectiveKvLen * headDim;
+                        float* pV = allTempV!.DataPtr + (long)u * effectiveKvLen * headDim;
 
                         if (cache != null)
                         {
@@ -461,7 +497,12 @@ namespace SharpMind.Model.Layers.Attention;
                             }
                         }
 
-                        ScaledDotProduct(pQ, pK, pV, pO, seqLen, effectiveKvLen, headDim, scale, causal, qStride, oStride, alibiSlope, windowSize);
+                        for (int h = hFirst; h < hFirst + hCount; h++)
+                        {
+                            float* pQ = qr.DataPtr + (long)(b * seqLen * numH + h) * headDim;
+                            float* pO = output.DataPtr + (long)(b * seqLen * qDim + h * headDim);
+                            ScaledDotProduct(pQ, pK, pV, pO, seqLen, effectiveKvLen, headDim, scale, causal, qStride, oStride, AlibiFor(h), windowSize);
+                        }
                     }
                 }
             }
@@ -491,13 +532,13 @@ namespace SharpMind.Model.Layers.Attention;
             const long MinWorkForParallelHeads = 65_536;
             long attnWork = (long)totalHeads * seqLen * effectiveKvLen * headDim;
 
-            if (totalHeads > 1 && attnWork >= MinWorkForParallelHeads)
+            if (units > 1 && attnWork >= MinWorkForParallelHeads)
             {
-                Parallel.For(0, totalHeads, DoHead);
+                Parallel.For(0, units, DoUnit);
             }
             else
             {
-                for (int bh = 0; bh < totalHeads; bh++) DoHead(bh);
+                for (int u = 0; u < units; u++) DoUnit(u);
             }
 
             allTempK?.Dispose();
