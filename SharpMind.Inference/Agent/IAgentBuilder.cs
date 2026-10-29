@@ -17,6 +17,8 @@ namespace SharpMind.Inference.Agent
         public JsonArray ToolDefinitions { get; }
         /// <summary>Best-effort IO category for pre-flight permission checks.</summary>
         public ToolCategory GetToolCategory(string toolName);
+        /// <summary>True for a tool whose code is outside the built-in assemblies; see AgentBuilder.</summary>
+        public bool IsExternalTool(string toolName);
         /// <summary>
         /// The tool-calling contract <see cref="BuildAgentPrompt"/> teaches and
         /// the session captures. Set by the session from metadata resolution;

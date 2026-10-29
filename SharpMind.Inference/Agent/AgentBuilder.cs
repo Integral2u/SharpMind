@@ -36,6 +36,18 @@ namespace SharpMind.Inference.Agent
         /// (such as the built-in file system tool) that do not use the
         /// intercepting IO abstractions themselves.
         /// </summary>
+        /// <summary>
+        /// True for a reflection-registered tool whose code lives outside the
+        /// built-in assemblies (SharpMind.Core, SharpMind.CUI). Such code can
+        /// do IO the interceptors never see, so the session must gate it.
+        /// </summary>
+        public bool IsExternalTool(string toolName)
+        {
+            if (!ToolMethods.TryGetValue(toolName, out var entry)) return false;
+            string? assembly = entry.Method.DeclaringType?.Assembly.GetName().Name;
+            return assembly is not ("SharpMind.Core" or "SharpMind.CUI");
+        }
+
         public ToolCategory GetToolCategory(string toolName)
         {
             if (ToolMethods.TryGetValue(toolName, out var entry))

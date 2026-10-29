@@ -1436,6 +1436,18 @@ private void ThrowIfDisposed()
         // SharpMind ships.
         if (_hasPermissionPolicy && _agentBuilder is not null)
         {
+            // Plugin / external tool code can do IO that never passes through the
+            // interceptors, so it is gated as a whole before it runs.
+            if (_agentBuilder.IsExternalTool(toolName))
+            {
+                if (!await check(toolName, ToolCategory.General, toolName, args))
+                    return new JsonObject
+                    {
+                        ["status"] = "error",
+                        ["message"] = $"Permission denied: external tool '{toolName}' is not allowed in this session."
+                    };
+            }
+
             var category = _agentBuilder.GetToolCategory(toolName);
             if (category is ToolCategory.File or ToolCategory.Network)
             {

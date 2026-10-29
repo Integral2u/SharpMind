@@ -103,9 +103,11 @@ public sealed class SessionFactory(SharpMindServerOptions options)
         // A trailing tool result (or assistant tool-call turn) means the client
         // is resuming an existing tool loop: replay the whole history and
         // generate from it without synthesizing a new user message.
-        bool continueFromHistory = request.Messages.Count > 0
-            && request.Messages[^1].Role is "tool"
-            || request.Messages.LastOrDefault() is AssistantMessage { ToolCalls.Count: > 0 };
+        // The last message is either a tool result, or an assistant turn that
+        // carries tool calls (its results may still be pending).
+        var last = request.Messages.LastOrDefault();
+        bool continueFromHistory = last is not null
+            && (last.Role is "tool" || last is AssistantMessage { ToolCalls.Count: > 0 });
 
         if (continueFromHistory)
         {

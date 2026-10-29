@@ -92,8 +92,15 @@ internal static class ScriptedSession
     public static ChatSession<ScriptedGeneratorBuilder, KVCacherBuilder> CreateForMeta(ModelMetaData meta, IAgentBuilder? agentBuilder, params string[] replies)
         => CreateCore(agentBuilder, meta: meta, toolCallFormat: null, replies);
 
+    /// <summary>Session with a permission policy, so the tool-permission gate is active.</summary>
+    public static ChatSession<ScriptedGeneratorBuilder, KVCacherBuilder> CreateGated(
+        IAgentBuilder agentBuilder, ToolCallFormat toolCallFormat,
+        Func<ToolPermissionContext, Task<ToolPermission>> permissions, params string[] replies)
+        => CreateCore(agentBuilder, meta: null, toolCallFormat: toolCallFormat, replies, permissions);
+
     private static ChatSession<ScriptedGeneratorBuilder, KVCacherBuilder> CreateCore(
-        IAgentBuilder? agentBuilder, ModelMetaData? meta, ToolCallFormat? toolCallFormat, params string[] replies)
+        IAgentBuilder? agentBuilder, ModelMetaData? meta, ToolCallFormat? toolCallFormat, string[] replies,
+        Func<ToolPermissionContext, Task<ToolPermission>>? permissions = null)
     {
         var tokens = new List<string>();
         for (int b = 0; b < 256; b++) tokens.Add(Vocabulary.ByteTokenString(b));
@@ -104,7 +111,7 @@ internal static class ScriptedSession
         WeightInitializer.InitializeRandomly(weights, 1234);
         var model = ModelFactory.CreateTrainingTransformer(weights, sharpConfig);
 
-        return new ChatSession<ScriptedGeneratorBuilder, KVCacherBuilder>(model, tokenizer, agentBuilder: agentBuilder, seed: ScriptedGenerator.Register(replies), disposeModel: true, meta: meta, toolCallFormat: toolCallFormat)
+        return new ChatSession<ScriptedGeneratorBuilder, KVCacherBuilder>(model, tokenizer, agentBuilder: agentBuilder, seed: ScriptedGenerator.Register(replies), disposeModel: true, meta: meta, toolCallFormat: toolCallFormat, permissions: permissions)
         {
             MaxTokens = 8192,   // byte tokenizer: one token per character; keep the tool prompt clear of trimming
         };
