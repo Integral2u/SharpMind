@@ -56,12 +56,14 @@ namespace SharpMind.Inference.Agent
         {
             if (ToolMethods.TryGetValue(toolName, out var entry))
             {
-                return entry.Method.DeclaringType?.Name switch
-                {
-                    "FileSystemTool" or "GitTool" or "GrepTool" => ToolCategory.File,
-                    "WeatherTool" => ToolCategory.Network,
-                    _ => ToolCategory.General
-                };
+                // Classified by the marker interfaces the tool classes implement, not by
+                // their type names. A tool that is both file and network is File.
+                var declaring = entry.Method.DeclaringType;
+                if (declaring is not null && typeof(SharpMind.Core.AgentTools.IFileToolService).IsAssignableFrom(declaring))
+                    return ToolCategory.File;
+                if (declaring is not null && typeof(SharpMind.Core.AgentTools.INetworkToolService).IsAssignableFrom(declaring))
+                    return ToolCategory.Network;
+                return ToolCategory.General;
             }
 
             // Delegate tools own their IO; they are gated by the intercepting
@@ -238,7 +240,7 @@ namespace SharpMind.Inference.Agent
 
                     // All parameters must carry [ToolDesc]
                     var missingAnnotations = tool.GetParameters()
-                        .Where(p => p.GetCustomAttribute<ToolDescAttribute>() is null)
+                        .Where(p => !IsRuntimeParameter(p) && p.GetCustomAttribute<ToolDescAttribute>() is null)
                         .Select(p => p.Name)
                         .ToList();
 
@@ -289,6 +291,9 @@ namespace SharpMind.Inference.Agent
 
             foreach (var p in method.GetParameters())
             {
+                // Supplied by the runtime, not the model: never part of the schema.
+                if (IsRuntimeParameter(p)) continue;
+
                 props[p.Name!] = BuildParamSchema(p);
 
                 bool isOptional = p.HasDefaultValue
@@ -309,6 +314,13 @@ namespace SharpMind.Inference.Agent
                 }
             };
         }
+
+        /// <summary>
+        /// A parameter the runtime supplies: a cancellation token. It is excluded from the
+        /// tool schema and from the required-argument check, and bound to the call's token.
+        /// </summary>
+        internal static bool IsRuntimeParameter(ParameterInfo p) =>
+            p.ParameterType == typeof(CancellationToken);
 
         private static JsonObject BuildParamSchema(ParameterInfo param)
         {
@@ -701,7 +713,7 @@ namespace SharpMind.Inference.Agent
         /// string field and an <c>arguments</c> object field — exactly the shape
         /// produced by the agent prompt's Tool Call Format section.
         /// </summary>
-        public async Task<JsonObject> CallToolAsync(JsonObject toolCall)
+        public async Task<JsonObject> CallToolAsync(JsonObject toolCall, CancellationToken cancellationToken = default)
         {
             try
             {
@@ -722,7 +734,7 @@ namespace SharpMind.Inference.Agent
                         $"Unknown tool: '{toolName}'. Valid tools: {string.Join(", ", RegisteredToolNames)}.");
 
                 var reflectionArgs = toolCall["arguments"]?.AsObject() ?? [];
-                var invokeArgs = BindArguments(entry.Method, reflectionArgs, out var ignored);
+                var invokeArgs = BindArguments(entry.Method, reflectionArgs, out var ignored, cancellationToken);
 
                 var raw = entry.Method.Invoke(entry.Instance, invokeArgs)
                     ?? throw new InvalidOperationException("Tool returned null.");
@@ -771,17 +783,24 @@ namespace SharpMind.Inference.Agent
         /// Arguments the method does not declare are returned in <paramref name="ignored"/>.
         /// A value that cannot be coerced fails with the expected type and the tool's parameters.
         /// </summary>
-        internal static object?[] BindArguments(MethodInfo method, JsonObject args, out List<string> ignored)
+        internal static object?[] BindArguments(MethodInfo method, JsonObject args, out List<string> ignored,
+            CancellationToken cancellationToken = default)
         {
             var ctx = new NullabilityInfoContext();
             var @params = method.GetParameters();
             var result = new object?[@params.Length];
-            var declared = new HashSet<string>(@params.Select(p => p.Name!), StringComparer.OrdinalIgnoreCase);
+            var declared = new HashSet<string>(@params.Where(p => !IsRuntimeParameter(p)).Select(p => p.Name!),
+                StringComparer.OrdinalIgnoreCase);
             ignored = args.Select(kv => kv.Key).Where(k => !declared.Contains(k)).ToList();
 
             for (int i = 0; i < @params.Length; i++)
             {
                 var p = @params[i];
+                if (IsRuntimeParameter(p))
+                {
+                    result[i] = cancellationToken;
+                    continue;
+                }
                 var node = FindArgument(args, p.Name!);
 
                 if (node is null)

@@ -8,7 +8,7 @@ namespace SharpMind.Extensions.Tools;
 /// default — the model can inspect history, status, and diffs without
 /// needing shell access.
 /// </summary>
-public class GitTool
+public class GitTool : SharpMind.Core.AgentTools.IFileToolService
 {
     [ToolDesc("Runs a git command in the specified repository directory and returns its output. Supports common read-only commands: status, log, diff, show, blame, branch, remote, tag.")]
     public static string Git(

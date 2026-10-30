@@ -74,7 +74,8 @@ public sealed class FileSystemToolTests
         var tool = new FileSystemTool(fx.Root);
 
         string result = tool.ReadFile("notes.txt");
-        Assert.Equal("hello from the sandbox", result);
+        // ReadFile returns numbered lines (Phase 5); the content is unchanged.
+        Assert.Equal("1 | hello from the sandbox", result);
     }
 
     [Fact]

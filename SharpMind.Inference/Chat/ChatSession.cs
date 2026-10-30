@@ -1576,7 +1576,7 @@ private void ThrowIfDisposed()
 
         try
         {
-            return await _agentBuilder!.CallToolAsync(toolCall);
+            return await _agentBuilder!.CallToolAsync(toolCall, ct);
         }
         finally
         {

@@ -8,7 +8,7 @@ namespace SharpMind.Extensions.Tools;
 /// Returns matching lines with file paths and line numbers — a built-in
 /// alternative to external grep/ripgrep for models that need to search code.
 /// </summary>
-public class GrepTool
+public class GrepTool : SharpMind.Core.AgentTools.IFileToolService
 {
     [ToolDesc("Searches file contents for a pattern and returns matching lines with file paths and line numbers. Supports regex syntax.")]
     public static string Grep(

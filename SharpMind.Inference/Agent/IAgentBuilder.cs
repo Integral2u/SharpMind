@@ -76,7 +76,7 @@ namespace SharpMind.Inference.Agent
         /// A JSON object with at minimum a <c>tool</c> string field and an
         /// <c>arguments</c> object field, as produced by the model.
         /// </param>
-        public Task<JsonObject> CallToolAsync(JsonObject toolCall);
+        public Task<JsonObject> CallToolAsync(JsonObject toolCall, CancellationToken cancellationToken = default);
 
         /// <summary>
         /// Creates and registers a sub-agent that can be called by the model
