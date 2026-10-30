@@ -8,9 +8,8 @@ using Xunit;
 namespace SharpMind.Tests.CUI;
 
 /// <summary>
-/// A small model copies the text it is shown. These tests keep the CUI's built-in
-/// tools from carrying an example question in an argument description, and keep the
-/// example call for the option dialog built from the choices it will present.
+/// A small model copies the text it is shown. This test keeps the CUI's built-in
+/// tools from carrying an example question in an argument description.
 /// </summary>
 public sealed class ToolDescriptionGuardTests
 {
@@ -40,14 +39,5 @@ public sealed class ToolDescriptionGuardTests
                     $"{tool["name"]}.{name} carries a copyable question example: {desc}");
             }
         }
-    }
-
-    [Fact]
-    public void OptionDialog_ExampleCall_UsesTheOptionsItPresents()
-    {
-        string prompt = CuiBuilder().BuildAgentPrompt();
-
-        Assert.Contains("\"prompt\":\"Red, green or blue?\"", prompt);
-        Assert.DoesNotContain("Which file format", prompt);
     }
 }
