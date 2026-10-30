@@ -68,23 +68,29 @@ public sealed class PromptContractTests
     {
         string prompt = Builder(format).BuildAgentPrompt();
 
-        Assert.Equal(1, Count(prompt, "Example call:"));
+        Assert.Equal(1, Count(prompt, "Example with no tool needed:"));
         Assert.Equal(1, Count(prompt, "## Available Tools" + Environment.NewLine));
-        Assert.Equal(1, Count(prompt, "## Tool Call Format"));
-        // The description appears once: in the tool list. The example repeats the
-        // name and arguments, never the description.
-        Assert.Equal(1, Count(prompt, ToolDescription));
+        // Count the section headings, not mentions: a rule may refer to a section by name.
+        Assert.Equal(1, prompt.Split('\n').Count(l => l.StartsWith("## Tool Call Format", StringComparison.Ordinal)));
+        // The description is listed once, in the tool list, and the example call never repeats it.
+        string list = prompt.Split("## Available Tools" + Environment.NewLine)[1];
+        string example = prompt.Split("## Tool Call Format")[1].Split("## Available Tools")[0];
+        Assert.Equal(1, Count(list, ToolDescription));
+        Assert.DoesNotContain(ToolDescription, example);
     }
 
     [Theory]
     [MemberData(nameof(Formats))]
     public void EveryFormat_ExampleUsesRealValues_NotPlaceholders(ToolCallFormat format)
     {
+        // The coaching rules keep their own "..." notation. The example call, which the model
+        // copies, must be filled in with real values.
         string prompt = Builder(format).BuildAgentPrompt();
-        Assert.DoesNotContain("\"...\"", prompt);
+        string example = prompt.Split("Example with no tool needed:")[0].Split("Example:")[^1];
+        Assert.DoesNotContain("\"...\"", example);
         Assert.DoesNotContain("<name>", prompt);
-        Assert.Contains("label", prompt);
-        Assert.Contains("example", prompt);
+        Assert.Contains("label", example);
+        Assert.Contains("example", example);
     }
 
     [Theory]
@@ -125,8 +131,8 @@ public sealed class PromptContractTests
         agent.CallFormat = ToolCallFormat.Qwen;
 
         string prompt = agent.BuildAgentPrompt();
-        Assert.Contains("\"name\":\"Measure\"", prompt.Split("Example call:")[1]);
-        Assert.DoesNotContain("Example call:\n{\"name\":\"Echo", prompt);
+        Assert.Contains("\"name\":\"Measure\"", prompt.Split("Example:")[1]);
+        Assert.DoesNotContain("Example:\n{\"name\":\"Echo", prompt);
     }
 
     [Fact]
@@ -194,15 +200,17 @@ public sealed class PromptContractTests
     }
 
     [Fact]
-    public void SharedRules_AreStatedOnce_AndCoverTheContradictions()
+    public void Rules_AreStatedOnceAndKeepTheCoachingThatWorks()
     {
+        // The per-format rules are the coaching the models were tuned on; these assertions pin
+        // the parts that matter for a call: wait for the result, the order rule, and the
+        // prose fallback that does not reference tools.
         string prompt = Builder(ToolCallFormat.Mistral).BuildAgentPrompt();
 
-        Assert.Equal(1, Count(prompt, "Call at most one tool per reply"));
         Assert.Equal(1, Count(prompt, "\"can you...\""));
-        Assert.Contains("say so in one sentence", prompt);
-        Assert.Contains("ask the user one short question", prompt);
-        Assert.DoesNotContain("as if tools did not exist", prompt);
+        Assert.Contains("wait for its result, then answer directly from it", prompt);
+        Assert.Contains("as orders, not questions", prompt);
+        Assert.Contains("behave exactly as if tools did not exist", prompt);
     }
 
     [Fact]

@@ -153,7 +153,7 @@ public sealed class ToolCallFormatTests
         builder.CallFormat = ToolCallFormat.Qwen;
         string prompt = builder.BuildAgentPrompt();
         Assert.Contains("\"can you...\"", prompt);
-        Assert.Contains("requests to do the thing", prompt);
+        Assert.Contains("as orders, not questions", prompt);
     }
 
     [Fact]
@@ -162,8 +162,7 @@ public sealed class ToolCallFormatTests
         var builder = BuilderWithNativeTool();
         builder.CallFormat = ToolCallFormat.Qwen;
         string prompt = builder.BuildAgentPrompt();
-        Assert.Contains("say so in one sentence", prompt);
-        Assert.DoesNotContain("as if tools did not exist", prompt);
+        Assert.Contains("behave exactly as if tools did not exist", prompt);
     }
 
     [Fact]
@@ -175,7 +174,7 @@ public sealed class ToolCallFormatTests
         Assert.Contains("\"NativeTool\"", prompt);
         Assert.Contains("\"x\":\"example\"", prompt);
         Assert.DoesNotContain("\"...\"", prompt);
-        Assert.Contains("reply with one JSON object", prompt);
+        Assert.Contains("reply with ONLY the JSON object", prompt);
     }
 
     [Fact]
@@ -217,7 +216,7 @@ public sealed class ToolCallFormatTests
         string prompt = builder.BuildAgentPrompt();
         Assert.Contains("\"args\":{", prompt);
         Assert.Contains("NativeTool", prompt);
-        Assert.DoesNotContain("\"arguments\"", prompt);
+        Assert.Contains("using \"args\" and not \"arguments\"", prompt);
     }
 
     // ── Session capture ─────────────────────────────────────────────────────

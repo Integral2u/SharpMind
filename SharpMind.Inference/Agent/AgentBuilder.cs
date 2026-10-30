@@ -999,34 +999,54 @@ namespace SharpMind.Inference.Agent
         // Prompt building
 
         /// <summary>
-        /// Rules every tool-calling format shares, each stated once. Format-specific
-        /// wording lives only in <see cref="ToolCallLine"/>.
+        /// Tool-calling rules for the active format. These are the rule sets that worked for
+        /// the small models: each format has its own wording for how to emit a call, and
+        /// they are kept as they were. Changing them changes model behaviour.
         /// </summary>
-        private static readonly string[] SharedToolRules =
-        [
-            "Use a tool only when the request needs an action or information that a tool in the Available Tools list provides. Otherwise answer directly. Treat \"can you...\" and \"could you...\" as requests to do the thing.",
-            "Call at most one tool per reply. When you call a tool, the reply contains only the call; the result arrives next, and then you answer the user from it.",
-            "If no listed tool fits the request, say so in one sentence and say what you can help with.",
-            "If a required argument is missing or unclear, ask the user one short question instead of calling the tool.",
-            "Copy tool and argument names exactly as listed in the Available Tools list, and never invent values."
-        ];
-
-        /// <summary>The shared tool-calling rules for the system prompt.</summary>
-        private List<string> BuildToolRules() => [.. SharedToolRules];
-
-        /// <summary>The one line that says how to emit a call in the active format.</summary>
-        private string ToolCallLine() => CallFormat switch
+        private List<string> BuildToolRules() => CallFormat switch
         {
+            ToolCallFormat.Qwen =>
+            [
+                "You are an agent with the ability to call tools, only call tools if it is best suited to the response. Answer factual/conversational questions directly—only call a tool in ## Available Tools for explicit actions, UI interactions, or capabilities that require it. Treat \"can you...\" and \"could you please...\" as orders, not questions.",
+                "If using a tool, call one tool at a time, wait for its result, then answer directly from it—never answer before the result arrives. For list parameters pass a JSON array in the argument; unknown args: say so briefly.",
+                "To call a tool, reply with ONLY the JSON object and nothing else, then stop—no preamble, no follow-up text, no restating the arguments.",
+                "If the user's request does not match a tool in ## Available Tools, answer entirely in plain prose: never emit a JSON object, never name or reference tools, and behave exactly as if tools did not exist."
+            ],
             ToolCallFormat.QwenXml =>
-                "To call a tool, reply with exactly one block of this form: <tool_call><function=TOOL><parameter=ARG>VALUE</parameter></function></tool_call>.",
+            [
+                "You are an agent with the ability to call tools, only call tools if it is best suited to the response. Answer factual and conversational questions directly; only call a tool for an explicit action or a capability that needs it. Treat \"can you...\" and \"could you please...\" as orders, not questions.",
+                "Make at most one tool call per reply. Wait for its result, then answer directly from it; never answer before the result arrives. Pass each argument as its own parameter; list values are JSON arrays. Unknown arguments: say so briefly.",
+                "To call a tool, reply with ONLY the one <tool_call> block shown under ## Tool Call Format, then stop: no preamble, no follow-up text, no restating the arguments. Use only the tool names from your function definitions; never invent names or values, and never write tool names, descriptions or schemas as text.",
+                "If the user's request does not match one of your tools, answer entirely in plain prose: never emit a <tool_call> block, never name or reference tools, and behave exactly as if tools did not exist."
+            ],
             ToolCallFormat.Mistral =>
-                "To call a tool, reply with [TOOL_CALLS] followed by one JSON object: {\"name\":\"TOOL\",\"arguments\":{...}}.",
-            ToolCallFormat.Llama3 or ToolCallFormat.Qwen =>
-                "To call a tool, reply with one JSON object: {\"name\":\"TOOL\",\"arguments\":{...}}.",
+            [
+                "You are an agent with the ability to call tools, only call tools if it is best suited to the response. Answer factual/conversational questions directly—only call a tool in ## Available Tools for explicit actions, UI interactions, or capabilities that require it. Treat \"can you...\" and \"could you please...\" as orders, not questions.",
+                "If using a tool, call one tool at a time, wait for its result, then answer directly from it—never answer before the result arrives. For list parameters pass a JSON array in the argument; unknown args: say so briefly.",
+                "To call a tool, reply with ONLY [TOOL_CALLS] followed by exactly one JSON object {\"name\":\"...\",\"arguments\":{...}} and nothing else, then stop—no preamble, no follow-up text, no restating the arguments. Use only tools in ## Available Tools; never invent tool names or values.",
+                "If the user's request does not match a tool in ## Available Tools, answer entirely in plain prose: never emit a JSON object or [TOOL_CALLS], never name or reference tools, and behave exactly as if tools did not exist."
+            ],
+            ToolCallFormat.Llama3 =>
+            [
+                "You are an agent with the ability to call tools, only call tools if it is best suited to the response. Answer factual/conversational questions directly—only call a tool in ## Available Tools for explicit actions, UI interactions, or capabilities that require it. Treat \"can you...\" and \"could you please...\" as orders, not questions.",
+                "If using a tool, call one tool at a time, wait for its result, then answer directly from it—never answer before the result arrives. For list parameters pass a JSON array in the argument; unknown args: say so briefly.",
+                "To call a tool, reply with ONLY exactly one JSON object {\"name\":\"...\",\"arguments\":{...}} and nothing else, then stop—no preamble, no follow-up text, no restating the arguments. Use only tools in ## Available Tools; never invent tool names or values.",
+                "If the user's request does not match a tool in ## Available Tools, answer entirely in plain prose: never emit a JSON object, never name or reference tools, and behave exactly as if tools did not exist."
+            ],
             ToolCallFormat.Gemma =>
-                "To call a tool, reply with one JSON object: {\"name\":\"TOOL\",\"args\":{...}}.",
+            [
+                "You are an agent with the ability to call tools, only call tools if it is best suited to the response. Answer factual/conversational questions directly—only call a tool in ## Available Tools for explicit actions, UI interactions, or capabilities that require it. Treat \"can you...\" and \"could you please...\" as orders, not questions.",
+                "If using a tool, call one tool at a time, wait for its result, then answer directly from it—never answer before the result arrives. For list parameters pass a JSON array in the args field; unknown args: say so briefly.",
+                "To call a tool, reply with ONLY exactly one JSON object {\"name\":\"...\",\"args\":{...}} using \"args\" and not \"arguments\", and nothing else, then stop—no preamble, no follow-up text, no restating the arguments. Use only tools in ## Available Tools; never invent tool names or values.",
+                "If the user's request does not match a tool in ## Available Tools, answer entirely in plain prose: never emit a JSON object, never name or reference tools, and behave exactly as if tools did not exist."
+            ],
             _ =>
-                "To call a tool, reply with one block: <tool_call>{\"name\":\"TOOL\",\"arguments\":{...}}</tool_call>."
+            [
+                "You are an agent with the ability to call tools, only call tools if it is best suited to the response. Answer factual/conversational questions directly—only call a tool in ## Available Tools for explicit actions, UI interactions, or capabilities that require it. Treat \"can you...\" and \"could you please...\" as orders, not questions.",
+                "If using a tool, call one tool at a time, wait for its result, then answer directly from it—never answer before the result arrives. Narrate freely, then place one tool call as exactly one JSON object inside \u003Ctool_call\u003E tags; everything outside the tags is narration—write it in character. For list parameters pass a JSON array in the argument; unknown args: say so briefly. Use only provided tools; never invent names or values.",
+                "To call a tool, place exactly one JSON object inside \u003Ctool_call\u003E tags and then stop; never emit raw JSON outside the tags and no follow-up text after the call—no restating the arguments.",
+                "If the user's request does not match a tool in ## Available Tools, answer entirely in plain prose: never emit a JSON object, never use \u003Ctool_call\u003E tags, never name or reference tools, and behave exactly as if tools did not exist."
+            ]
         };
         /// <summary>
         /// Builds a plain-text system prompt from the current builder state.
@@ -1078,18 +1098,31 @@ namespace SharpMind.Inference.Agent
             {
                 sb.AppendLine();
                 sb.AppendLine("## Tool Call Format");
-                sb.AppendLine(ToolCallLine());
                 var example = ExampleTool();
-                if (example is not null)
+                switch (CallFormat)
                 {
-                    string exampleName = example["name"]?.GetValue<string>() ?? "tool";
-                    sb.AppendLine("Example call:");
-                    sb.AppendLine(BuildExampleCall(example));
-                    // No sample result here: a small model copies whatever result-shaped text it
-                    // sees, and then answers with it instead of calling the tool.
-                    sb.AppendLine("After a call, the next message gives you its result. Only you can write your reply; never write a result yourself.");
-                    sb.AppendLine();
+                    case ToolCallFormat.Qwen:
+                        sb.AppendLine("Only when the request is an action performed by one of the tools in ## Available Tools, reply with exactly one JSON object — nothing else. Example:");
+                        break;
+                    case ToolCallFormat.QwenXml:
+                        sb.AppendLine("Only when the request is an action performed by one of your tools, reply with exactly one tool call block - nothing else. Example:");
+                        break;
+                    case ToolCallFormat.Mistral:
+                        sb.AppendLine("Call a tool by replying with [TOOL_CALLS] followed by exactly one JSON object. Example:");
+                        break;
+                    case ToolCallFormat.Llama3:
+                        sb.AppendLine("Call a tool by replying with exactly one JSON object — nothing else. Example:");
+                        break;
+                    case ToolCallFormat.Gemma:
+                        sb.AppendLine("Call a tool by replying with exactly one JSON object using \"args\" (not \"arguments\"). Example:");
+                        break;
+                    default:
+                        sb.AppendLine("Narrate in prose; to act, place exactly one JSON object inside these tags:");
+                        break;
                 }
+                if (example is not null)
+                    sb.AppendLine(BuildExampleCall(example));
+                sb.AppendLine();
                 sb.AppendLine("Example with no tool needed:");
                 sb.AppendLine("User: hello");
                 sb.AppendLine("Reply: Hi! How can I help you today?");
