@@ -87,6 +87,18 @@ public sealed class PromptContractTests
         Assert.Contains("example", prompt);
     }
 
+    [Theory]
+    [MemberData(nameof(Formats))]
+    public void EveryFormat_PromptHasNoSampleToolResult(ToolCallFormat format)
+    {
+        // A sample result is copied by small models as if the tool had run. The tool-free
+        // example's "Reply:" line is a plain prose example and is not a result.
+        string prompt = Builder(format).BuildAgentPrompt();
+        Assert.DoesNotContain("[Measure result]", prompt);
+        Assert.DoesNotContain("[Measure label=", prompt);
+        Assert.Contains("Example with no tool needed:", prompt);
+    }
+
     [Fact]
     public void SharpMindExample_UsesNameKey()
     {

@@ -1174,6 +1174,39 @@ private void ThrowIfDisposed()
     }
 
     /// <summary>
+    /// True while streamed text begins with "[" and could still become, or already is, a
+    /// fabricated tool-result header. Such text is held rather than shown. Plain bracketed
+    /// prose is held only until its closing bracket and then released, at the end of the turn.
+    /// </summary>
+    private bool HoldsToolResultHeader(string visible)
+    {
+        string trimmed = visible.TrimStart();
+        if (!trimmed.StartsWith('[')) return false;
+        if (trimmed.IndexOf(']') < 0) return true;
+        return IsFabricatedToolResultText(trimmed);
+    }
+
+    /// <summary>
+    /// True when the response opens with a tool-result header, such as
+    /// <c>[GetWeather city=Paris] 21C</c> or <c>[Measure] ok</c>, for a registered tool. Only
+    /// the runtime writes these headers; a model that writes one has invented the result
+    /// instead of calling the tool.
+    /// </summary>
+    private bool IsFabricatedToolResultText(string text)
+    {
+        if (_agentBuilder is null) return false;
+        string trimmed = text.TrimStart();
+        if (!trimmed.StartsWith('[')) return false;
+        int close = trimmed.IndexOf(']');
+        if (close < 2) return false;
+
+        // The header is "[Name" optionally followed by " key=value" pairs, then "]".
+        string head = trimmed[1..close];
+        string name = head.Split(' ', 2)[0];
+        return _agentBuilder.RegisteredToolNames.Any(t => string.Equals(t, name, StringComparison.Ordinal));
+    }
+
+    /// <summary>
     /// True when the response begins with a JSON object shaped like a tool call
     /// (<c>arguments</c> plus a <c>name</c>/<c>tool</c> key) that did not parse
     /// as one — truncated or malformed call machinery a small model emits when
@@ -1806,6 +1839,11 @@ private void ThrowIfDisposed()
                 // non-envelope JSON answer) emission resumes normally.
                 if (visible is not null)
                 {
+                    // A tool-result header in the making is held until it is known to be real
+                    // prose or a fabricated result; see HoldsToolResultHeader.
+                    if (HoldsToolResultHeader(visible))
+                        continue;
+
                     int start = 0;
                     while (start < visible.Length && char.IsWhiteSpace(visible[start])) start++;
                     if (start < visible.Length && (visible[start] == '{' || visible[start] == '['))
@@ -1939,7 +1977,8 @@ private void ThrowIfDisposed()
             // dropped below by the normal-response sanitization.
             if (!dropTurnTail && shownThrough == 0 && droppedThrough == 0 && responseText.Length > 0
                 && !IsFabricatedToolResultJson(SanitizeToolMarkup(responseText))
-                && !LooksLikeFailedToolAttempt(responseText))
+                && !LooksLikeFailedToolAttempt(responseText)
+                && !IsFabricatedToolResultText(responseText))
             {
                 // Use the incremental filter's output (already markup-free, flushed
                 // above). Sanitising the raw buffer leaked bare XML tool blocks.
@@ -1964,6 +2003,26 @@ if (held.Length > 0)
                 {
                     Role = ResultRole,
                     Content = "Your previous reply was discarded: it contained a JSON object with a \"name\" field but no \"arguments\" block, which is not a valid tool call. Do not emit any JSON. Answer the user's request directly in plain prose, as if tools did not exist."
+                });
+                InvalidateHistoryCache();
+                continue;
+            }
+
+            // The model wrote a tool result itself, in the header form the runtime uses. Ask it
+            // to make the real call instead, within the same bounded retries as a malformed call.
+            if (toolsAllowed
+                && !grammarActive
+                && _agentBuilder is not null
+                && _agentBuilder.RegisteredToolNames.Count > 0
+                && IsFabricatedToolResultText(responseText)
+                && malformedRetries < MaxMalformedCallRetries)
+            {
+                malformedRetries++;
+                _history.Add(ChatMessage.Agent(responseText, _agentBuilder?.AgentName));
+                _history.Add(new ChatMessage
+                {
+                    Role = ResultRole,
+                    Content = "That was not a tool result; you cannot write one. If the request needs a tool, make the call in the form shown under ## Tool Call Format. Otherwise answer in plain prose."
                 });
                 InvalidateHistoryCache();
                 continue;
@@ -2262,6 +2321,9 @@ if (held.Length > 0)
             if (IsFabricatedToolResultJson(responseText))
                 responseText = string.Empty;
             if (LooksLikeFailedToolAttempt(responseText))
+                responseText = string.Empty;
+            // A fabricated result that outlived its retries is not shown or stored.
+            if (IsFabricatedToolResultText(responseText))
                 responseText = string.Empty;
             // A turn must never end silently. If the model's output was all machinery
             // (a broken call it could not fix, or a refused call), say so in plain words.

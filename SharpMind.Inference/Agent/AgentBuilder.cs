@@ -607,17 +607,6 @@ namespace SharpMind.Inference.Agent
         private static string ValueText(JsonNode? value) =>
             value is JsonValue jv && jv.TryGetValue<string>(out var s) ? s : value?.ToJsonString() ?? "";
 
-        /// <summary>Sample result text for the prompt's result example.</summary>
-        private static string ExampleResultText(string toolName) =>
-            toolName.Contains("weather", StringComparison.OrdinalIgnoreCase)
-                ? "21C, sunny"
-                : "3 matches: red, green, blue";
-
-        /// <summary>Sample reply, written from the sample result above.</summary>
-        private static string ExampleAnswer(string toolName) =>
-            toolName.Contains("weather", StringComparison.OrdinalIgnoreCase)
-                ? "It is 21C and sunny in Paris."
-                : "The three matches are red, green and blue.";
         // Sub-agent registration
 
         /// <summary>
@@ -1096,9 +1085,9 @@ namespace SharpMind.Inference.Agent
                     string exampleName = example["name"]?.GetValue<string>() ?? "tool";
                     sb.AppendLine("Example call:");
                     sb.AppendLine(BuildExampleCall(example));
-                    sb.AppendLine("The result arrives in this form, and you reply from it:");
-                    sb.AppendLine($"[{exampleName} result] {ExampleResultText(exampleName)}");
-                    sb.AppendLine($"Reply: {ExampleAnswer(exampleName)}");
+                    // No sample result here: a small model copies whatever result-shaped text it
+                    // sees, and then answers with it instead of calling the tool.
+                    sb.AppendLine("After a call, the next message gives you its result. Only you can write your reply; never write a result yourself.");
                     sb.AppendLine();
                 }
                 sb.AppendLine("Example with no tool needed:");

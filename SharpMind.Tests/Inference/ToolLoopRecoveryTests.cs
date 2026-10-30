@@ -96,6 +96,46 @@ public sealed class ToolLoopRecoveryTests
                      SharpMind.Inference.Chat.ChatSession<ScriptedGeneratorBuilder, KVCacherBuilder>.CallKey("T", b));
     }
 
+    // Fabricated results: the model writes a result header itself instead of calling the tool
+
+    [Fact]
+    public async Task FabricatedResultHeader_IsNeverShown_AndTheRealCallRuns()
+    {
+        string[] replies =
+        [
+            "[Measure label=red] ok",          // invented result, not a call
+            Call,                              // the model then makes the real call
+            "Red it is."
+        ];
+        var (reply, dispatches) = await Run(replies);
+
+        Assert.Equal(1, dispatches);
+        Assert.DoesNotContain("[Measure", reply);
+        Assert.Contains("Red it is.", reply);
+    }
+
+    [Fact]
+    public async Task FabricatedResultHeader_RepeatedBeyondRetries_IsNotShown()
+    {
+        const string fake = "[Measure label=red] ok";
+        string[] replies = [fake, fake, fake, "Plain answer."];
+        var (reply, dispatches) = await Run(replies);
+
+        Assert.Equal(0, dispatches);
+        Assert.DoesNotContain("[Measure", reply);
+        Assert.Contains("couldn't complete that request", reply);
+    }
+
+    [Fact]
+    public async Task BracketedProse_IsNotMistakenForAResultHeader()
+    {
+        // "[Note]" is not a registered tool, so it is ordinary text and is shown.
+        var (reply, dispatches) = await Run(["[Note] This is an ordinary answer."]);
+
+        Assert.Equal(0, dispatches);
+        Assert.Contains("[Note] This is an ordinary answer.", reply);
+    }
+
     // (d) malformed calls: bounded corrective retries, never an empty turn
 
     [Fact]
