@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
@@ -28,6 +29,9 @@ namespace SharpMind.Inference.Agent
         public HashSet<string> DisabledTools { get; set; } = [];
 
         public IReadOnlyList<string> RegisteredToolNames => [.. ToolMethods.Keys, .. _delegateTools.Keys];
+
+        /// <summary>Problems found while registering tools (for example overloads), for the host to show or log.</summary>
+        public List<string> RegistrationWarnings { get; } = [];
 
         /// <summary>
         /// Best-effort IO category for a registered tool. Reflection-registered
@@ -223,8 +227,14 @@ namespace SharpMind.Inference.Agent
                     if (tool is null) continue;
                     if (tool.ReturnType == typeof(void)) continue;
                     if (tool.ReturnType == typeof(Task)) continue;
-                    if (ToolMethods.ContainsKey(tool.Name)) continue;
                     if (DisabledTools.Contains(tool.Name)) continue;
+                    if (ToolMethods.ContainsKey(tool.Name))
+                    {
+                        // Overloads cannot be told apart by name, so the second one is refused and
+                        // reported, instead of being dropped without a trace.
+                        RegistrationWarnings.Add($"Tool '{tool.Name}' is declared more than once; only the first overload is registered.");
+                        continue;
+                    }
 
                     // All parameters must carry [ToolDesc]
                     var missingAnnotations = tool.GetParameters()
@@ -307,10 +317,36 @@ namespace SharpMind.Inference.Agent
 
             schema["description"] = desc;
 
+            var range = param.GetCustomAttribute<ToolRangeAttribute>();
+            if (range is not null)
+            {
+                if (range.HasMinimum) schema["minimum"] = JsonValue.Create(range.Minimum);
+                if (range.HasMaximum) schema["maximum"] = JsonValue.Create(range.Maximum);
+            }
+
             if (param.HasDefaultValue && param.DefaultValue is not null)
-                schema["default"] = JsonValue.Create(param.DefaultValue.ToString());
+                schema["default"] = DefaultNode(param.DefaultValue);
 
             return schema;
+        }
+
+        /// <summary>A parameter default as a typed JSON value, not its ToString.</summary>
+        private static JsonNode DefaultNode(object value)
+        {
+            if (value.GetType().IsEnum)
+                return JsonValue.Create(Enum.GetName(value.GetType(), value) ?? value.ToString())!;
+            return value switch
+            {
+                string s => JsonValue.Create(s)!,
+                bool b => JsonValue.Create(b)!,
+                int i => JsonValue.Create(i)!,
+                long l => JsonValue.Create(l)!,
+                short sh => JsonValue.Create((int)sh)!,
+                float f => JsonValue.Create(f)!,
+                double d => JsonValue.Create(d)!,
+                decimal m => JsonValue.Create(m)!,
+                _ => JsonValue.Create(value.ToString())!
+            };
         }
 
         private static JsonObject JsonTypeToSchema(Type type)
@@ -322,16 +358,28 @@ namespace SharpMind.Inference.Agent
 
             if (type == typeof(string)) return Typed("string");
             if (type == typeof(bool)) return Typed("boolean");
+            if (type.IsEnum)
+            {
+                var names = Enum.GetNames(type).Select(n => JsonValue.Create(n)!).ToList();
+                return new JsonObject { ["type"] = "string", ["enum"] = new JsonArray([.. names]) };
+            }
             if (type == typeof(int) || type == typeof(long) || type == typeof(short)) return Typed("integer");
             if (type == typeof(float) || type == typeof(double) || type == typeof(decimal)) return Typed("number");
-            if (type.IsArray || IsGenericList(type)) return Typed("array");
+            if (type.IsArray) return ArraySchema(type.GetElementType()!);
+            if (IsGenericList(type)) return ArraySchema(type.GetGenericArguments()[0]);
 
             return Typed("object");
         }
 
+        private static JsonObject ArraySchema(Type element)
+        {
+            var schema = Typed("array");
+            schema["items"] = JsonTypeToSchema(element);
+            return schema;
+        }
+
         private static bool IsGenericList(Type t) =>
             t.IsGenericType && t.GetGenericTypeDefinition() == typeof(List<>);
-
         private static JsonObject Typed(string type) => new() { ["type"] = type };
 
         /// <summary>
@@ -623,40 +671,71 @@ namespace SharpMind.Inference.Agent
 
                 // Reflection-based tool (added via WithTools(typeof(MyTools)))
                 if (!ToolMethods.TryGetValue(toolName, out var entry))
-                    throw new ArgumentException($"Unknown tool: '{toolName}'.");
+                    throw new ArgumentException(
+                        $"Unknown tool: '{toolName}'. Valid tools: {string.Join(", ", RegisteredToolNames)}.");
 
                 var reflectionArgs = toolCall["arguments"]?.AsObject() ?? [];
-                var invokeArgs = BindArguments(entry.Method, reflectionArgs);
+                var invokeArgs = BindArguments(entry.Method, reflectionArgs, out var ignored);
 
                 var raw = entry.Method.Invoke(entry.Instance, invokeArgs)
                     ?? throw new InvalidOperationException("Tool returned null.");
 
-                var data = raw switch
-                {
-                    Task<string> t => await t,
-                    Task<int> t => (await t).ToString(),
-                    Task<object> t => (await t).ToString()!,
-                    Task t => await t.ContinueWith(_ => ""),
-                    _ => raw.ToString()!
-                };
-
-                return Success(data!);
+                var response = Success(ResultText(await ResolveResultAsync(raw)));
+                if (ignored.Count > 0)
+                    response["notes"] = $"Ignored argument(s) the tool does not declare: {string.Join(", ", ignored)}.";
+                return response;
             }
             catch (TargetInvocationException ex) { return Error(ex.InnerException?.Message ?? ex.Message); }
             catch (Exception ex) { return Error(ex.Message); }
         }
 
+        /// <summary>
+        /// Awaits a tool's return value when it is a Task or ValueTask, with or without
+        /// a result, and yields the result. Any other value is returned unchanged.
+        /// </summary>
+        internal static async Task<object?> ResolveResultAsync(object raw)
+        {
+            var type = raw.GetType();
+            Task? task = raw as Task;
+            bool isValueTask = type == typeof(ValueTask)
+                || (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(ValueTask<>));
+            if (task is null && isValueTask)
+                task = (Task?)type.GetMethod("AsTask")!.Invoke(raw, null);
+            if (task is null)
+                return raw;
 
-        private static object?[] BindArguments(MethodInfo method, JsonObject args)
+            await task.ConfigureAwait(false);
+            return task.GetType().GetProperty("Result")?.GetValue(task);
+        }
+
+        /// <summary>Tool output as text. JSON nodes keep their JSON; numbers use invariant culture.</summary>
+        internal static string ResultText(object? value) => value switch
+        {
+            null => "",
+            string s => s,
+            JsonNode n => n.ToJsonString(),
+            IFormattable f => f.ToString(null, CultureInfo.InvariantCulture),
+            _ => value.ToString() ?? ""
+        };
+
+        /// <summary>
+        /// Binds the model's arguments to the method's parameters. Names match
+        /// case-insensitively and values are coerced leniently (see <see cref="CoerceValue"/>).
+        /// Arguments the method does not declare are returned in <paramref name="ignored"/>.
+        /// A value that cannot be coerced fails with the expected type and the tool's parameters.
+        /// </summary>
+        internal static object?[] BindArguments(MethodInfo method, JsonObject args, out List<string> ignored)
         {
             var ctx = new NullabilityInfoContext();
             var @params = method.GetParameters();
             var result = new object?[@params.Length];
+            var declared = new HashSet<string>(@params.Select(p => p.Name!), StringComparer.OrdinalIgnoreCase);
+            ignored = args.Select(kv => kv.Key).Where(k => !declared.Contains(k)).ToList();
 
             for (int i = 0; i < @params.Length; i++)
             {
                 var p = @params[i];
-                var node = args[p.Name!];
+                var node = FindArgument(args, p.Name!);
 
                 if (node is null)
                 {
@@ -664,32 +743,190 @@ namespace SharpMind.Inference.Agent
                     { result[i] = p.DefaultValue; continue; }
                     if (ctx.Create(p).WriteState == NullabilityState.Nullable)
                     { result[i] = null; continue; }
-                    throw new ArgumentException($"Required argument '{p.Name}' is missing.");
+                    throw new ArgumentException(
+                        $"Required argument '{p.Name}' is missing. Parameters: {DescribeParameters(method)}.");
                 }
 
-                result[i] = CoerceValue(node, p.ParameterType);
+                try
+                {
+                    result[i] = CoerceValue(node, p.ParameterType);
+                }
+                catch (Exception ex) when (ex is ArgumentException or JsonException or FormatException
+                                              or OverflowException or InvalidCastException)
+                {
+                    throw new ArgumentException(
+                        $"Argument '{p.Name}' expects {ExpectedType(p.ParameterType)} but got {Describe(node)}. " +
+                        $"Parameters: {DescribeParameters(method)}.");
+                }
             }
 
             return result;
         }
 
-        private static object? CoerceValue(JsonNode node, Type targetType)
+        /// <summary>The argument with this name, matched case-insensitively. Null-valued arguments count as absent.</summary>
+        private static JsonNode? FindArgument(JsonObject args, string name)
+        {
+            JsonNode? node = args[name];
+            if (node is null)
+            {
+                foreach (var kv in args)
+                {
+                    if (string.Equals(kv.Key, name, StringComparison.OrdinalIgnoreCase))
+                    {
+                        node = kv.Value;
+                        break;
+                    }
+                }
+            }
+            return node is not null && node.GetValueKind() == JsonValueKind.Null ? null : node;
+        }
+
+        /// <summary>
+        /// Converts a JSON value to a parameter type, leniently: numeric and boolean text
+        /// parse ("5" to 5, "true" to true), scalars become text for string parameters
+        /// (123 to "123"), a single value is accepted for a list, and enum names match
+        /// case-insensitively. Anything else throws ArgumentException.
+        /// </summary>
+        internal static object? CoerceValue(JsonNode node, Type targetType)
         {
             targetType = Nullable.GetUnderlyingType(targetType) ?? targetType;
 
-            return targetType switch
-            {
-                _ when targetType == typeof(string) => node.GetValue<string>(),
-                _ when targetType == typeof(int) => node.GetValue<int>(),
-                _ when targetType == typeof(long) => node.GetValue<long>(),
-                _ when targetType == typeof(float) => node.GetValue<float>(),
-                _ when targetType == typeof(double) => node.GetValue<double>(),
-                _ when targetType == typeof(decimal) => node.GetValue<decimal>(),
-                _ when targetType == typeof(bool) => node.GetValue<bool>(),
-                _ => node.Deserialize(targetType)
-            };
+            if (targetType == typeof(string)) return ScalarText(node);
+            if (targetType == typeof(bool)) return ToBool(node);
+            if (targetType.IsEnum) return ToEnum(node, targetType);
+            if (targetType == typeof(int) || targetType == typeof(long) || targetType == typeof(short)
+                || targetType == typeof(float) || targetType == typeof(double) || targetType == typeof(decimal))
+                return ToNumber(node, targetType);
+            if (targetType.IsArray) return ToArray(node, targetType.GetElementType()!);
+            if (IsGenericList(targetType)) return ToList(node, targetType.GetGenericArguments()[0]);
+
+            return node.Deserialize(targetType);
         }
 
+        private static string ScalarText(JsonNode node) => node.GetValueKind() switch
+        {
+            JsonValueKind.String => node.GetValue<string>(),
+            _ => node.ToJsonString()   // numbers, booleans, and JSON objects/arrays keep their text
+        };
+
+        private static bool ToBool(JsonNode node)
+        {
+            switch (node.GetValueKind())
+            {
+                case JsonValueKind.True: return true;
+                case JsonValueKind.False: return false;
+                case JsonValueKind.String when bool.TryParse(node.GetValue<string>().Trim(), out bool b):
+                    return b;
+            }
+            throw new ArgumentException("is not true or false");
+        }
+
+        private static object ToEnum(JsonNode node, Type enumType)
+        {
+            if (node.GetValueKind() == JsonValueKind.String)
+            {
+                string text = node.GetValue<string>().Trim();
+                foreach (string name in Enum.GetNames(enumType))
+                    if (string.Equals(name, text, StringComparison.OrdinalIgnoreCase))
+                        return Enum.Parse(enumType, name);
+            }
+            throw new ArgumentException("is not a known value");
+        }
+
+        private static object ToNumber(JsonNode node, Type targetType)
+        {
+            string text = node.GetValueKind() switch
+            {
+                JsonValueKind.Number => node.ToJsonString(),
+                JsonValueKind.String => node.GetValue<string>().Trim(),
+                _ => throw new ArgumentException("is not a number")
+            };
+
+            if (targetType == typeof(decimal))
+            {
+                if (!decimal.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out decimal dec))
+                    throw new ArgumentException("is not a number");
+                return dec;
+            }
+            if (!double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out double d) || !double.IsFinite(d))
+                throw new ArgumentException("is not a number");
+
+            if (targetType == typeof(double)) return d;
+            if (targetType == typeof(float)) return (float)d;
+            if (d != Math.Truncate(d)) throw new ArgumentException("is not a whole number");
+            if (targetType == typeof(short)) return checked((short)d);
+            if (targetType == typeof(int)) return checked((int)d);
+            return checked((long)d);
+        }
+
+        /// <summary>The elements of a list value. A string holding a JSON array is parsed; a lone value is a one-element list.</summary>
+        private static IEnumerable<JsonNode> Elements(JsonNode node)
+        {
+            if (node is JsonArray arr)
+                return arr.Where(n => n is not null).Select(n => n!);
+
+            if (node.GetValueKind() == JsonValueKind.String && node.GetValue<string>().TrimStart().StartsWith('['))
+            {
+                try
+                {
+                    if (JsonNode.Parse(node.GetValue<string>()) is JsonArray parsed)
+                        return parsed.Where(n => n is not null).Select(n => n!).ToList();
+                }
+                catch (JsonException) { }
+            }
+            return [node];
+        }
+
+        private static object ToArray(JsonNode node, Type element)
+        {
+            var items = Elements(node).Select(n => CoerceValue(n, element)).ToList();
+            var array = Array.CreateInstance(element, items.Count);
+            for (int i = 0; i < items.Count; i++)
+                array.SetValue(items[i], i);
+            return array;
+        }
+
+        private static object ToList(JsonNode node, Type element)
+        {
+            var list = (System.Collections.IList)Activator.CreateInstance(typeof(List<>).MakeGenericType(element))!;
+            foreach (var n in Elements(node))
+                list.Add(CoerceValue(n, element));
+            return list;
+        }
+
+        /// <summary>What a parameter accepts, in words for error messages.</summary>
+        private static string ExpectedType(Type t)
+        {
+            var schema = JsonTypeToSchema(t);
+            string type = schema["type"]?.GetValue<string>() ?? "value";
+            if (schema["enum"] is JsonArray values)
+                return "one of " + string.Join(", ", values.Select(v => v!.GetValue<string>()));
+            if (type == "array" && schema["items"] is JsonObject items)
+                return $"array of {items["type"]?.GetValue<string>() ?? "value"}";
+            return type;
+        }
+
+        private static string DescribeParameters(MethodInfo method)
+        {
+            var ctx = new NullabilityInfoContext();
+            return string.Join(", ", method.GetParameters().Select(p =>
+            {
+                bool required = !p.HasDefaultValue && ctx.Create(p).WriteState != NullabilityState.Nullable;
+                return $"{p.Name} ({ExpectedType(p.ParameterType)}{(required ? ", required" : "")})";
+            }));
+        }
+
+        private static string Describe(JsonNode node)
+        {
+            string text = node.GetValueKind() switch
+            {
+                JsonValueKind.String => "\"" + node.GetValue<string>() + "\"",
+                JsonValueKind.Array => "an array",
+                JsonValueKind.Object => "an object",
+                _ => node.ToJsonString()
+            };
+            return text.Length > 60 ? text[..60] + "..." : text;
+        }
         private static JsonObject Success(string data) => new() { ["status"] = "success", ["data"] = data };
         private static JsonObject Error(string message) => new() { ["status"] = "error", ["message"] = message };
         private static string TemperaturePersonality(float temperature) => temperature switch
