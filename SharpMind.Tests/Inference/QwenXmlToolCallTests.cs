@@ -255,8 +255,8 @@ public sealed class QwenXmlToolCallTests
         // must not reach QwenXml, or the rules contradict the XML example.
         Assert.DoesNotContain("JSON object inside", prompt);
         Assert.DoesNotContain("{\"tool\":", prompt);
-        Assert.Contains("at most one tool call", prompt);
-        Assert.Contains("never write tool names, descriptions or schemas", prompt);
+        Assert.Contains("Call at most one tool per reply", prompt);
+        Assert.Contains("one block of this form: <tool_call><function=TOOL>", prompt);
     }
 
     [Fact]
@@ -275,8 +275,8 @@ public sealed class QwenXmlToolCallTests
         string prompt = agent.BuildAgentPrompt();
 
         Assert.DoesNotContain("<function=", prompt);
-        Assert.DoesNotContain("at most one tool call", prompt);
-        Assert.Contains("reply with ONLY the JSON object", prompt);
+        Assert.Contains("reply with one JSON object", prompt);
+        Assert.DoesNotContain("<tool_call><function=", prompt);
     }
 
     [Fact]

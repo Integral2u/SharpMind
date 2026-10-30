@@ -31,6 +31,9 @@ public sealed class JinjaTemplateFormatter(string template) : IChatPromptFormatt
 {
     private readonly string _template = template;
 
+    /// <summary>Renders tools only when the template references the <c>tools</c> variable.</summary>
+    public bool RendersTools => _template.Contains("tools", StringComparison.Ordinal);
+
     /// <summary>Errors accumulated during the last <see cref="Format"/> call.</summary>
     public IReadOnlyList<string>? LastErrors { get; private set; }
 

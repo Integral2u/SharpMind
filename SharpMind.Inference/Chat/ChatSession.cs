@@ -214,6 +214,10 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
 
         progress?.Report(0f);
         _formatter = _formatterOverride ?? ChatPromptFormatterFactory.Create(_meta, _tokenizer);
+        // A template that renders the tool definitions itself makes the system-prompt
+        // list redundant; formatters that ignore toolsJson keep the full list.
+        if (_agentBuilder is not null)
+            _agentBuilder.ToolListInPrompt = _formatter?.RendersTools != true;
         progress?.Report(0.08f);
 
         progress?.Report(0.10f);

@@ -131,9 +131,8 @@ public sealed class ToolCallFormatTests
     public void SharpMindFormatDefault_StillTeachesTaggedCalls()
     {
         string prompt = BuilderWithNativeTool().BuildAgentPrompt();
-        Assert.Contains("tool_call", prompt);
-        Assert.Contains("\"tool\":", prompt);
-        Assert.Contains("Narrate", prompt);
+        Assert.Contains("<tool_call>{\"name\":\"NativeTool\"", prompt);
+        Assert.DoesNotContain("\"tool\":", prompt);
     }
 
     [Fact]
@@ -153,19 +152,18 @@ public sealed class ToolCallFormatTests
         var builder = BuilderWithNativeTool();
         builder.CallFormat = ToolCallFormat.Qwen;
         string prompt = builder.BuildAgentPrompt();
-        Assert.Contains("can you", prompt);
-        Assert.Contains("as orders, not questions", prompt);
+        Assert.Contains("\"can you...\"", prompt);
+        Assert.Contains("requests to do the thing", prompt);
     }
 
     [Fact]
-    public void QwenFormat_PromptDefaultsToProseWhenNoToolMatches()
+    public void QwenFormat_NoSuitableTool_IsStatedAsAllowedAnswer()
     {
         var builder = BuilderWithNativeTool();
         builder.CallFormat = ToolCallFormat.Qwen;
         string prompt = builder.BuildAgentPrompt();
-        Assert.Contains("never emit a JSON object", prompt);
-        Assert.Contains("as if tools did not exist", prompt);
-        Assert.Contains("plain prose", prompt);
+        Assert.Contains("say so in one sentence", prompt);
+        Assert.DoesNotContain("as if tools did not exist", prompt);
     }
 
     [Fact]
@@ -175,8 +173,9 @@ public sealed class ToolCallFormatTests
         builder.CallFormat = ToolCallFormat.Qwen;
         string prompt = builder.BuildAgentPrompt();
         Assert.Contains("\"NativeTool\"", prompt);
-        Assert.Contains("\"x\":\"...\"", prompt);
-        Assert.Contains("ONLY the JSON object", prompt);
+        Assert.Contains("\"x\":\"example\"", prompt);
+        Assert.DoesNotContain("\"...\"", prompt);
+        Assert.Contains("reply with one JSON object", prompt);
     }
 
     [Fact]
@@ -216,9 +215,9 @@ public sealed class ToolCallFormatTests
         var builder = BuilderWithNativeTool();
         builder.CallFormat = ToolCallFormat.Gemma;
         string prompt = builder.BuildAgentPrompt();
-        Assert.Contains("\"args\"", prompt);
+        Assert.Contains("\"args\":{", prompt);
         Assert.Contains("NativeTool", prompt);
-        Assert.Contains("not \"arguments\"", prompt);
+        Assert.DoesNotContain("\"arguments\"", prompt);
     }
 
     // ── Session capture ─────────────────────────────────────────────────────

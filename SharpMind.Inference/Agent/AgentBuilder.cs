@@ -1,4 +1,4 @@
-﻿using System.Reflection;
+using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -335,177 +335,229 @@ namespace SharpMind.Inference.Agent
         private static JsonObject Typed(string type) => new() { ["type"] = type };
 
         /// <summary>
-        /// Renders the registered tools as a single-line JSON array for the
-        /// system prompt. Every tool's name, argument names/types and required
-        /// list are preserved so the model can still call them; description text
-        /// is shed progressively when the whole list would exceed
-        /// <see cref="CompactToolBudget"/>. The full indented dump once made the
-        /// default CUI tool set dominate the system prompt (~3000 tokens with
-        /// tools, skills and memory), and since the CUI re-prefills the whole
-        /// conversation every turn, a smaller prompt is seconds of prefill saved
-        /// on a slow engine — not just cosmetics.
+        /// Budget for the tool list in the system prompt, in estimated tokens. Over
+        /// budget, the list is re-rendered in shorter tiers rather than cut mid-JSON.
+        /// The CUI re-prefills the whole conversation each turn, so a smaller system
+        /// prompt is seconds saved on a slow engine.
         /// </summary>
-        private const int CompactToolBudget = 4000; // ~1000 tokens of compact JSON
+        public int ToolListTokenBudget { get; set; } = 1000;
 
+        /// <summary>
+        /// When false, the system prompt lists tool names only, because the active
+        /// chat template already renders the full definitions. The session sets this
+        /// from its formatter; it stays true for formatters that do not render tools.
+        /// </summary>
+        public bool ToolListInPrompt { get; set; } = true;
+
+        /// <summary>Rough token estimate for prompt budgeting: about four characters per token.</summary>
+        internal static int EstimateTokens(string text) => (text.Length + 3) / 4;
+
+        /// <summary>
+        /// The tool list for the system prompt. Full definitions when they fit the
+        /// budget; otherwise progressively shorter tiers, and names only as the last
+        /// resort. Every tier is valid JSON, and anything cut is reported after it.
+        /// </summary>
         private string BuildCompactToolList()
         {
+            string argKey = CallFormat == ToolCallFormat.Gemma ? "args" : "arguments";
             string full = ToolDefinitions.ToJsonString();
-            if (full.Length <= CompactToolBudget)
+            if (EstimateTokens(full) <= ToolListTokenBudget)
                 return full;
 
-            // First pass: cap each tool description, drop per-argument
-            // descriptions/defaults, keep name + args (name/type) + required.
-            var reduced = new JsonArray();
-            int detailDropped = 0;
-            foreach (var item in ToolDefinitions)
+            for (int tier = 1; tier <= 3; tier++)
             {
-                var tool = (JsonObject)item!;
-                var copy = new JsonObject { ["name"] = tool["name"]!.DeepClone() };
-
-                if (tool["description"] is JsonValue d && d.GetValue<string>().Length <= 140)
-                    copy["description"] = d.DeepClone();
-                else
-                    detailDropped++;
-
-                if (tool["parameters"] is JsonObject pars
-                    && pars["properties"] is JsonObject props)
-                {
-                    var args = new JsonObject();
-                    foreach (var (name, schema) in props)
-                        args[name] = JsonValue.Create(((JsonObject)schema!)?["type"]?.GetValue<string>() ?? "string");
-                    copy["args"] = args;
-
-                    if (pars["required"] is JsonArray req && req.Count > 0)
-                    {
-                        var names = req.Cast<JsonNode?>()
-                            .Where(r => r is not null)
-                            .Select(r => r!.GetValue<string>())
-                            .ToList();
-                        copy["required"] = new JsonArray([.. names.Select(n => JsonValue.Create(n))]);
-                    }
-                }
-
-                reduced.Add(copy);
+                var list = new JsonArray();
+                foreach (var item in ToolDefinitions.OfType<JsonObject>())
+                    list.Add(CompactTool(item, tier, argKey));
+                string json = list.ToJsonString();
+                if (EstimateTokens(json) <= ToolListTokenBudget)
+                    return json + "\n(Descriptions were shortened to fit the prompt.)";
             }
 
-            string compact = reduced.ToJsonString();
-            if (compact.Length > CompactToolBudget)
+            // Last resort: as many tool names as fit, with the rest reported.
+            var names = ToolDefinitions.OfType<JsonObject>()
+                .Select(t => t["name"]?.GetValue<string>() ?? "?")
+                .ToList();
+            var kept = new List<string>();
+            foreach (var name in names)
             {
-                // Still over budget: drop tool descriptions entirely.
-                foreach (var t in reduced.OfType<JsonObject>())
-                    t.Remove("description");
-                compact = reduced.ToJsonString();
-                detailDropped = ToolDefinitions.Count;
+                if (EstimateTokens(JsonSerializer.Serialize(kept.Append(name))) > ToolListTokenBudget) break;
+                kept.Add(name);
             }
-
-            return detailDropped > 0
-                ? compact + $" …truncated {detailDropped} tool doc(s)"
-                : compact;
+            string nameJson = JsonSerializer.Serialize(kept);
+            return kept.Count < names.Count
+                ? nameJson + $"\n({names.Count - kept.Count} more tool(s) not listed: {string.Join(", ", names.Skip(kept.Count))})"
+                : nameJson;
         }
 
         /// <summary>
-        /// Builds a ready-to-copy example call using the first registered tool,
-        /// so the model sees a real tool name and argument shape it must match
-        /// rather than a placeholder.
+        /// One tool at a compaction tier. Tier 1 keeps a short description and the
+        /// descriptions of required arguments; tier 2 shortens both; tier 3 keeps only
+        /// names, argument names and types. Required names are always kept.
         /// </summary>
-        private string BuildQwenCallExample()
+        private static JsonObject CompactTool(JsonObject tool, int tier, string argKey)
         {
-            var tool = ToolDefinitions.OfType<JsonObject>().FirstOrDefault();
-            if (tool is null)
-                return "{\"name\":\"<tool>\",\"arguments\":{}}";
+            var copy = new JsonObject { ["name"] = JsonValue.Create(tool["name"]?.GetValue<string>() ?? "?") };
+            int maxDesc = tier switch { 1 => 120, 2 => 60, _ => 0 };
+            string desc = tool["description"]?.GetValue<string>() ?? "";
+            if (maxDesc > 0 && desc.Length > 0)
+                copy["description"] = JsonValue.Create(Clip(FirstSentence(desc), maxDesc));
 
-            string toolName = tool["name"]?.GetValue<string>() ?? "<tool>";
-            var args = new JsonObject();
-
-            if (tool["parameters"] is JsonObject pars
-                && pars["properties"] is JsonObject props)
+            if (tool["parameters"] is JsonObject pars && pars["properties"] is JsonObject props)
             {
-                foreach (var (argName, schema) in props.Take(3))
+                var required = RequiredNames(tool);
+                var args = new JsonObject();
+                foreach (var (name, schema) in props)
                 {
-                    string type = ((JsonObject?)schema)?["type"]?.GetValue<string>()
-                                  ?? ((JsonObject?)schema)?["items"]?["type"]?.GetValue<string>()
-                                  ?? "string";
-                    args[argName] = type switch
-                    {
-                        "array" => new JsonArray("...", "..."),
-                        "integer" or "number" => 0,
-                        "boolean" => false,
-                        _ => "..."
-                    };
+                    var s = schema as JsonObject;
+                    string type = s?["type"]?.GetValue<string>() ?? "string";
+                    string? argDesc = s?["description"]?.GetValue<string>();
+                    if (tier == 1 && required.Contains(name) && argDesc is not null)
+                        args[name] = new JsonObject { ["type"] = type, ["description"] = Clip(argDesc, 80) };
+                    else
+                        args[name] = JsonValue.Create(type);
                 }
+                copy[argKey] = args;
+                if (required.Count > 0)
+                    copy["required"] = new JsonArray(required.Select(n => (JsonNode)JsonValue.Create(n)!).ToArray());
             }
+            return copy;
+        }
 
-            return $$"""{"name":"{{toolName}}","arguments":{{args.ToJsonString()}}}""";
+        private static string FirstSentence(string text)
+        {
+            int dot = text.IndexOf(". ", StringComparison.Ordinal);
+            return dot > 0 ? text[..(dot + 1)] : text;
+        }
+
+        private static string Clip(string text, int max) =>
+            text.Length <= max ? text : text[..max].TrimEnd() + "…";
+
+        private static bool IsDemoTool(JsonObject tool) =>
+            (tool["name"]?.GetValue<string>() ?? "").StartsWith("Echo", StringComparison.Ordinal);
+
+        private static List<string> RequiredNames(JsonObject tool)
+        {
+            var names = new List<string>();
+            if (tool["parameters"] is JsonObject pars && pars["required"] is JsonArray req)
+                foreach (var r in req)
+                    if (r?.GetValue<string>() is { } n)
+                        names.Add(n);
+            return names;
         }
 
         /// <summary>
-        /// Builds the Qwen3.5 XML call example from the first registered tool:
-        /// one <c>&lt;parameter=...&gt;</c> per argument (up to three).
+        /// The tool the prompt examples show: the first real (non-demo) tool that has
+        /// required arguments, falling back to the first real tool.
         /// </summary>
-        private string BuildQwenXmlCallExample()
+        private JsonObject? ExampleTool()
         {
-            var tool = ToolDefinitions.OfType<JsonObject>().FirstOrDefault();
-            string toolName = tool?["name"]?.GetValue<string>() ?? "<tool>";
-            var sb = new StringBuilder();
-            sb.AppendLine("<tool_call>");
-            sb.AppendLine($"<function={toolName}>");
+            var tools = ToolDefinitions.OfType<JsonObject>().ToList();
+            var real = tools.Where(t => !IsDemoTool(t)).ToList();
+            if (real.Count == 0) real = tools;
+            return real.FirstOrDefault(t => RequiredNames(t).Count > 0) ?? real.FirstOrDefault();
+        }
 
-            if (tool?["parameters"] is JsonObject pars && pars["properties"] is JsonObject props)
+        /// <summary>The example call for the active format, filled in with realistic values.</summary>
+        private string BuildExampleCall(JsonObject tool)
+        {
+            string name = tool["name"]?.GetValue<string>() ?? "tool";
+            var args = ExampleArguments(tool);
+
+            if (CallFormat == ToolCallFormat.QwenXml)
             {
-                foreach (var (argName, schema) in props.Take(3))
+                var sb = new StringBuilder();
+                sb.AppendLine("<tool_call>");
+                sb.AppendLine($"<function={name}>");
+                foreach (var (key, value) in args)
                 {
-                    string type = ((JsonObject?)schema)?["type"]?.GetValue<string>() ?? "string";
-                    string value = type switch
-                    {
-                        "array" => "[\"...\"]",
-                        "integer" or "number" => "0",
-                        "boolean" => "false",
-                        _ => "..."
-                    };
-                    sb.AppendLine($"<parameter={argName}>");
-                    sb.AppendLine(value);
+                    sb.AppendLine($"<parameter={key}>");
+                    sb.AppendLine(ValueText(value));
                     sb.AppendLine("</parameter>");
                 }
+                sb.Append("</function>\n</tool_call>");
+                return sb.ToString();
             }
 
-            sb.Append("</function>\n</tool_call>");
-            return sb.ToString();
+            string argKey = CallFormat == ToolCallFormat.Gemma ? "args" : "arguments";
+            string json = new JsonObject { ["name"] = name, [argKey] = args }.ToJsonString();
+            return CallFormat switch
+            {
+                ToolCallFormat.Mistral => "[TOOL_CALLS]" + json,
+                ToolCallFormat.SharpMind => "<tool_call>" + json + "</tool_call>",
+                _ => json
+            };
         }
 
         /// <summary>
-        /// Builds the Gemma/functiongemma call example using the first registered
-        /// tool. Gemma uses <c>args</c> (not <c>arguments</c>) as the key.
+        /// Arguments for an example call: every required argument (up to three) and
+        /// at most one optional one, so the example stays short.
         /// </summary>
-        private string BuildGemmaCallExample()
+        private static JsonObject ExampleArguments(JsonObject tool)
         {
-            var tool = ToolDefinitions.OfType<JsonObject>().FirstOrDefault();
-            if (tool is null)
-                return "{\"name\":\"<tool>\",\"args\":{}}";
-
-            string toolName = tool["name"]?.GetValue<string>() ?? "<tool>";
             var args = new JsonObject();
+            if (tool["parameters"] is not JsonObject pars || pars["properties"] is not JsonObject props)
+                return args;
 
-            if (tool["parameters"] is JsonObject pars
-                && pars["properties"] is JsonObject props)
-            {
-                foreach (var (argName, schema) in props.Take(3))
-                {
-                    string type = ((JsonObject?)schema)?["type"]?.GetValue<string>()
-                                  ?? ((JsonObject?)schema)?["items"]?["type"]?.GetValue<string>()
-                                  ?? "string";
-                    args[argName] = type switch
-                    {
-                        "array" => new JsonArray("...", "..."),
-                        "integer" or "number" => 0,
-                        "boolean" => false,
-                        _ => "..."
-                    };
-                }
-            }
-
-            return $$"""{"name":"{{toolName}}","args":{{args.ToJsonString()}}}""";
+            var required = RequiredNames(tool);
+            var chosen = props.Where(p => required.Contains(p.Key)).Take(3)
+                .Concat(props.Where(p => !required.Contains(p.Key)).Take(1))
+                .ToList();
+            foreach (var (name, schema) in chosen)
+                args[name] = SampleValue(name, schema as JsonObject);
+            return args;
         }
 
+        private static JsonNode SampleValue(string name, JsonObject? schema)
+        {
+            if (schema?["enum"] is JsonArray en && en.Count > 0 && en[0] is not null)
+                return en[0]!.DeepClone();
+
+            string type = schema?["type"]?.GetValue<string>() ?? "string";
+            switch (type)
+            {
+                case "integer":
+                    return JsonValue.Create(3)!;
+                case "number":
+                    return JsonValue.Create(2.5)!;
+                case "boolean":
+                    return JsonValue.Create(true)!;
+                case "array":
+                    bool choices = name.Contains("option", StringComparison.OrdinalIgnoreCase)
+                        || name.Contains("choice", StringComparison.OrdinalIgnoreCase);
+                    return choices ? new JsonArray("red", "green", "blue") : new JsonArray(SampleText(name));
+                default:
+                    return JsonValue.Create(SampleText(name))!;
+            }
+        }
+
+        private static string SampleText(string argName)
+        {
+            string n = argName.ToLowerInvariant();
+            if (n.Contains("city") || n.Contains("location") || n.Contains("place")) return "Paris";
+            if (n.Contains("path") || n.Contains("file")) return "notes.txt";
+            if (n.Contains("dir") || n.Contains("folder")) return ".";
+            if (n.Contains("url")) return "https://example.com";
+            if (n.Contains("query") || n.Contains("pattern") || n.Contains("search")) return "meeting";
+            if (n.Contains("content") || n.Contains("text") || n.Contains("message")) return "Hello";
+            if (n.EndsWith("name", StringComparison.Ordinal)) return "Alex";
+            return "example";
+        }
+
+        private static string ValueText(JsonNode? value) =>
+            value is JsonValue jv && jv.TryGetValue<string>(out var s) ? s : value?.ToJsonString() ?? "";
+
+        /// <summary>Sample result text for the prompt's result example.</summary>
+        private static string ExampleResultText(string toolName) =>
+            toolName.Contains("weather", StringComparison.OrdinalIgnoreCase)
+                ? "21C, sunny"
+                : "3 matches: red, green, blue";
+
+        /// <summary>Sample reply, written from the sample result above.</summary>
+        private static string ExampleAnswer(string toolName) =>
+            toolName.Contains("weather", StringComparison.OrdinalIgnoreCase)
+                ? "It is 21C and sunny in Paris."
+                : "The three matches are red, green and blue.";
         // Sub-agent registration
 
         /// <summary>
@@ -655,58 +707,35 @@ namespace SharpMind.Inference.Agent
         // Prompt building
 
         /// <summary>
-        /// The tool-calling instructions for the current <see cref="CallFormat"/>:
-        /// SharpMind teaches narration plus &lt;tool_call&gt; tags; Qwen teaches
-        /// its native raw-JSON function-calling shape; Mistral uses
-        /// [TOOL_CALLS] markers; Llama-3 uses &lt;|python_tag|&gt;;
-        /// Gemma/functiongemma uses functionCall/functionResponse JSON.
+        /// Rules every tool-calling format shares, each stated once. Format-specific
+        /// wording lives only in <see cref="ToolCallLine"/>.
         /// </summary>
-        private List<string> BuildToolRules() => CallFormat switch
-        {
-            ToolCallFormat.Qwen =>
-            [
-                "You are an agent with the ability to call tools, only call tools if it is best suited to the response. Answer factual/conversational questions directly—only call a tool in ## Available Tools for explicit actions, UI interactions, or capabilities that require it. Treat \"can you...\" and \"could you please...\" as orders, not questions.",
-                "If using a tool, call one tool at a time, wait for its result, then answer directly from it—never answer before the result arrives. For list parameters pass a JSON array in the argument; unknown args: say so briefly.",
-                "To call a tool, reply with ONLY the JSON object and nothing else, then stop—no preamble, no follow-up text, no restating the arguments.",
-                "If the user's request does not match a tool in ## Available Tools, answer entirely in plain prose: never emit a JSON object, never name or reference tools, and behave exactly as if tools did not exist."
-            ],
-            ToolCallFormat.QwenXml =>
-            [
-                "You are an agent with the ability to call tools, only call tools if it is best suited to the response. Answer factual and conversational questions directly; only call a tool for an explicit action or a capability that needs it. Treat \"can you...\" and \"could you please...\" as orders, not questions.",
-                "Make at most one tool call per reply. Wait for its result, then answer directly from it; never answer before the result arrives. Pass each argument as its own parameter; list values are JSON arrays. Unknown arguments: say so briefly.",
-                "To call a tool, reply with ONLY the one <tool_call> block shown under ## Tool Call Format, then stop: no preamble, no follow-up text, no restating the arguments. Use only the tool names from your function definitions; never invent names or values, and never write tool names, descriptions or schemas as text.",
-                "If the user's request does not match one of your tools, answer entirely in plain prose: never emit a <tool_call> block, never name or reference tools, and behave exactly as if tools did not exist."
-            ],
-            ToolCallFormat.Mistral =>
-            [
-                "You are an agent with the ability to call tools, only call tools if it is best suited to the response. Answer factual/conversational questions directly—only call a tool in ## Available Tools for explicit actions, UI interactions, or capabilities that require it. Treat \"can you...\" and \"could you please...\" as orders, not questions.",
-                "If using a tool, call one tool at a time, wait for its result, then answer directly from it—never answer before the result arrives. For list parameters pass a JSON array in the argument; unknown args: say so briefly.",
-                "To call a tool, reply with ONLY [TOOL_CALLS] followed by exactly one JSON object {\"name\":\"...\",\"arguments\":{...}} and nothing else, then stop—no preamble, no follow-up text, no restating the arguments. Use only tools in ## Available Tools; never invent tool names or values.",
-                "If the user's request does not match a tool in ## Available Tools, answer entirely in plain prose: never emit a JSON object or [TOOL_CALLS], never name or reference tools, and behave exactly as if tools did not exist."
-            ],
-            ToolCallFormat.Llama3 =>
-            [
-                "You are an agent with the ability to call tools, only call tools if it is best suited to the response. Answer factual/conversational questions directly—only call a tool in ## Available Tools for explicit actions, UI interactions, or capabilities that require it. Treat \"can you...\" and \"could you please...\" as orders, not questions.",
-                "If using a tool, call one tool at a time, wait for its result, then answer directly from it—never answer before the result arrives. For list parameters pass a JSON array in the argument; unknown args: say so briefly.",
-                "To call a tool, reply with ONLY exactly one JSON object {\"name\":\"...\",\"arguments\":{...}} and nothing else, then stop—no preamble, no follow-up text, no restating the arguments. Use only tools in ## Available Tools; never invent tool names or values.",
-                "If the user's request does not match a tool in ## Available Tools, answer entirely in plain prose: never emit a JSON object, never name or reference tools, and behave exactly as if tools did not exist."
-            ],
-            ToolCallFormat.Gemma =>
-            [
-                "You are an agent with the ability to call tools, only call tools if it is best suited to the response. Answer factual/conversational questions directly—only call a tool in ## Available Tools for explicit actions, UI interactions, or capabilities that require it. Treat \"can you...\" and \"could you please...\" as orders, not questions.",
-                "If using a tool, call one tool at a time, wait for its result, then answer directly from it—never answer before the result arrives. For list parameters pass a JSON array in the args field; unknown args: say so briefly.",
-                "To call a tool, reply with ONLY exactly one JSON object {\"name\":\"...\",\"args\":{...}} using \"args\" and not \"arguments\", and nothing else, then stop—no preamble, no follow-up text, no restating the arguments. Use only tools in ## Available Tools; never invent tool names or values.",
-                "If the user's request does not match a tool in ## Available Tools, answer entirely in plain prose: never emit a JSON object, never name or reference tools, and behave exactly as if tools did not exist."
-            ],
-            _ =>
-            [
-                "You are an agent with the ability to call tools, only call tools if it is best suited to the response. Answer factual/conversational questions directly—only call a tool in ## Available Tools for explicit actions, UI interactions, or capabilities that require it. Treat \"can you...\" and \"could you please...\" as orders, not questions.",
-                "If using a tool, call one tool at a time, wait for its result, then answer directly from it—never answer before the result arrives. Narrate freely, then place one tool call as exactly one JSON object inside \u003Ctool_call\u003E tags; everything outside the tags is narration—write it in character. For list parameters pass a JSON array in the argument; unknown args: say so briefly. Use only provided tools; never invent names or values.",
-                "To call a tool, place exactly one JSON object inside \u003Ctool_call\u003E tags and then stop; never emit raw JSON outside the tags and no follow-up text after the call—no restating the arguments.",
-                "If the user's request does not match a tool in ## Available Tools, answer entirely in plain prose: never emit a JSON object, never use \u003Ctool_call\u003E tags, never name or reference tools, and behave exactly as if tools did not exist."
-            ]
-        };
+        private static readonly string[] SharedToolRules =
+        [
+            "Use a tool only when the request needs an action or information that a tool in the Available Tools list provides. Otherwise answer directly. Treat \"can you...\" and \"could you...\" as requests to do the thing.",
+            "Call at most one tool per reply. When you call a tool, the reply contains only the call; the result arrives next, and then you answer the user from it.",
+            "If no listed tool fits the request, say so in one sentence and say what you can help with.",
+            "If a required argument is missing or unclear, ask the user one short question instead of calling the tool.",
+            "Copy tool and argument names exactly as listed in the Available Tools list, and never invent values."
+        ];
 
+        /// <summary>The shared tool-calling rules for the system prompt.</summary>
+        private List<string> BuildToolRules() => [.. SharedToolRules];
+
+        /// <summary>The one line that says how to emit a call in the active format.</summary>
+        private string ToolCallLine() => CallFormat switch
+        {
+            ToolCallFormat.QwenXml =>
+                "To call a tool, reply with exactly one block of this form: <tool_call><function=TOOL><parameter=ARG>VALUE</parameter></function></tool_call>.",
+            ToolCallFormat.Mistral =>
+                "To call a tool, reply with [TOOL_CALLS] followed by one JSON object: {\"name\":\"TOOL\",\"arguments\":{...}}.",
+            ToolCallFormat.Llama3 or ToolCallFormat.Qwen =>
+                "To call a tool, reply with one JSON object: {\"name\":\"TOOL\",\"arguments\":{...}}.",
+            ToolCallFormat.Gemma =>
+                "To call a tool, reply with one JSON object: {\"name\":\"TOOL\",\"args\":{...}}.",
+            _ =>
+                "To call a tool, reply with one block: <tool_call>{\"name\":\"TOOL\",\"arguments\":{...}}</tool_call>."
+        };
         /// <summary>
         /// Builds a plain-text system prompt from the current builder state.
         /// The result is architecture-agnostic markdown; the caller (e.g. ChatSession
@@ -720,15 +749,11 @@ namespace SharpMind.Inference.Agent
         /// </summary>
         public string BuildAgentPrompt()
         {
-            // Collect tool-specific rules separately so we don't mutate Rules on
-            // every call to BuildAgentPrompt() (the original code appended to Rules
-            // directly, causing duplicates on repeated calls). The rules and the
-            // call-format contract below are per-format: with CallFormat.None the
-            // whole Tools section is omitted, so an unknown model is never drifted
-            // towards a call shape it may not know.
-            var toolRules = ToolDefinitions.Count == 0 || CallFormat == ToolCallFormat.None
-                ? []
-                : BuildToolRules();
+            // Tool rules are built per call rather than appended to Rules, so repeated
+            // calls never duplicate them. With CallFormat.None the whole tools section
+            // is omitted, so an unknown model is never drifted towards a call shape.
+            bool hasTools = ToolDefinitions.Count > 0 && CallFormat != ToolCallFormat.None;
+            var toolRules = hasTools ? BuildToolRules() : [];
 
             var sb = new StringBuilder();
 
@@ -756,42 +781,38 @@ namespace SharpMind.Inference.Agent
                     sb.AppendLine(behavior);
             }
 
-            // Tools
-            if (ToolDefinitions.Count > 0 && CallFormat != ToolCallFormat.None)
+            // Tools: one call format, one filled-in example, one tool-free example.
+            if (hasTools)
             {
                 sb.AppendLine();
                 sb.AppendLine("## Tool Call Format");
-                switch (CallFormat)
+                sb.AppendLine(ToolCallLine());
+                var example = ExampleTool();
+                if (example is not null)
                 {
-                    case ToolCallFormat.Qwen:
-                        sb.AppendLine("Only when the request is an action performed by one of the tools in ## Available Tools, reply with exactly one JSON object — nothing else. Example:");
-                        sb.AppendLine(BuildQwenCallExample());
-                        break;
-                    case ToolCallFormat.QwenXml:
-                        sb.AppendLine("Only when the request is an action performed by one of your tools, reply with exactly one tool call block - nothing else. Example:");
-                        sb.AppendLine(BuildQwenXmlCallExample());
-                        break;
-                    case ToolCallFormat.Mistral:
-                        sb.AppendLine("Call a tool by replying with [TOOL_CALLS] followed by exactly one JSON object. Example:");
-                        sb.AppendLine("[TOOL_CALLS]" + BuildQwenCallExample());
-                        break;
-                    case ToolCallFormat.Llama3:
-                        sb.AppendLine("Call a tool by replying with exactly one JSON object — nothing else. Example:");
-                        sb.AppendLine(BuildQwenCallExample());
-                        break;
-                    case ToolCallFormat.Gemma:
-                        sb.AppendLine("Call a tool by replying with exactly one JSON object using \"args\" (not \"arguments\"). Example:");
-                        sb.AppendLine(BuildGemmaCallExample());
-                        break;
-                    default:
-                        sb.AppendLine("Narrate in prose; to act, place exactly one JSON object inside these tags:");
-                        sb.AppendLine("\u003Ctool_call\u003E{\"tool\":\"\u003Cname\u003E\",\"arguments\":{\"...\":\"...\"}}\u003C/tool_call\u003E");
-                        break;
+                    string exampleName = example["name"]?.GetValue<string>() ?? "tool";
+                    sb.AppendLine("Example call:");
+                    sb.AppendLine(BuildExampleCall(example));
+                    sb.AppendLine("The result arrives in this form, and you reply from it:");
+                    sb.AppendLine($"[{exampleName} result] {ExampleResultText(exampleName)}");
+                    sb.AppendLine($"Reply: {ExampleAnswer(exampleName)}");
+                    sb.AppendLine();
                 }
+                sb.AppendLine("Example with no tool needed:");
+                sb.AppendLine("User: hello");
+                sb.AppendLine("Reply: Hi! How can I help you today?");
 
                 sb.AppendLine();
                 sb.AppendLine("## Available Tools");
-                sb.AppendLine(BuildCompactToolList());
+                if (ToolListInPrompt)
+                {
+                    sb.AppendLine(BuildCompactToolList());
+                }
+                else
+                {
+                    var names = ToolDefinitions.OfType<JsonObject>().Select(t => t["name"]?.GetValue<string>() ?? "?");
+                    sb.AppendLine("Names: " + string.Join(", ", names) + ". Their full definitions are provided separately.");
+                }
             }
 
             // Skills

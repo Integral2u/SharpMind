@@ -31,4 +31,11 @@ public interface IChatPromptFormatter
     /// end-of-turn token and are already covered by EOS handling.
     /// </summary>
     IReadOnlyList<string> DefaultStopStrings { get; }
+
+    /// <summary>
+    /// True when <see cref="Format"/> renders the <c>toolsJson</c> definitions
+    /// itself (a chat template with a tools block). The agent prompt then lists
+    /// tool names only, so the schemas are not stated twice.
+    /// </summary>
+    bool RendersTools => false;
 }

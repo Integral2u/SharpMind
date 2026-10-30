@@ -59,6 +59,15 @@ namespace SharpMind.Inference.Agent
         IAgentBuilder WithTool(string name, string description, JsonObject schema, Func<JsonObject, Task<string>> execute);
         /// <summary>Builds the system prompt text for the current agent configuration.</summary>
         public string BuildAgentPrompt();
+
+        /// <summary>Token budget for the tool list in the system prompt (estimated).</summary>
+        public int ToolListTokenBudget { get; set; }
+
+        /// <summary>
+        /// False when the chat template renders the tool definitions itself, so the
+        /// system prompt lists tool names only.
+        /// </summary>
+        public bool ToolListInPrompt { get; set; }
         /// <summary>
         /// Dispatches a tool call described by <paramref name="toolCall"/> and returns
         /// a <c>{ "status": "success"|"error", "data"|"message": "..." }</c> result object.
