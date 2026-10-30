@@ -565,7 +565,36 @@ namespace SharpMind.Inference.Agent
                 .ToList();
             foreach (var (name, schema) in chosen)
                 args[name] = SampleValue(name, schema as JsonObject);
+
+            // A small model copies the example, so the question shown next to a choice
+            // list is the question the list answers, not a placeholder.
+            if (args["options"] is JsonArray choices && choices.Count > 0)
+            {
+                foreach (var key in args.Select(p => p.Key).ToList())
+                {
+                    if (IsQuestionArgument(key) && args[key] is JsonValue)
+                        args[key] = JsonValue.Create(ChoiceQuestion(choices))!;
+                }
+            }
             return args;
+        }
+
+        private static bool IsQuestionArgument(string name)
+        {
+            string n = name.ToLowerInvariant();
+            return n is "prompt" or "question" or "title" or "label";
+        }
+
+        /// <summary>"Red, green or blue?" for a list of choices.</summary>
+        private static string ChoiceQuestion(JsonArray choices)
+        {
+            var words = choices.Select(c => c?.GetValue<string>() ?? "").Where(w => w.Length > 0).ToList();
+            if (words.Count == 0) return "Choose one?";
+            if (words.Count == 1) return words[0] + "?";
+            string last = words[^1];
+            string head = string.Join(", ", words.Take(words.Count - 1));
+            string question = $"{head} or {last}?";
+            return char.ToUpperInvariant(question[0]) + question[1..];
         }
 
         private static JsonNode SampleValue(string name, JsonObject? schema)

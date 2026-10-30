@@ -123,6 +123,29 @@ public sealed class PromptContractTests
     }
 
     [Fact]
+    public void Example_QuestionArgument_IsBuiltFromTheOptions_NotAPlaceholder()
+    {
+        var schema = new JsonObject
+        {
+            ["type"] = "object",
+            ["properties"] = new JsonObject
+            {
+                ["prompt"] = new JsonObject { ["type"] = "string", ["description"] = "A question." },
+                ["options"] = new JsonObject { ["type"] = "array", ["items"] = new JsonObject { ["type"] = "string" } },
+            },
+            ["required"] = new JsonArray(JsonValue.Create("prompt"), JsonValue.Create("options")),
+        };
+        var agent = new AgentBuilder("Test");
+        agent.WithTool("Choose", ToolDescription, schema, args => Task.FromResult("ok"));
+        agent.CallFormat = ToolCallFormat.Qwen;
+
+        string prompt = agent.BuildAgentPrompt();
+
+        Assert.Contains("\"prompt\":\"Red, green or blue?\"", prompt);
+        Assert.DoesNotContain("\"example\"", prompt);
+    }
+
+    [Fact]
     public void Example_PrefersAToolWithRequiredArguments_SkippingEcho()
     {
         var agent = new AgentBuilder("Test");

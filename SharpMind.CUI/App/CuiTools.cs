@@ -20,9 +20,9 @@ namespace SharpMind.CUI.App;
 /// </summary>
 public sealed class CuiTools(CuiToolContext context)
 {
-    [ToolDesc("Shows the person a list of options to choose from, optionally letting them type their own answer instead. Use this whenever you want the person to pick between a small number of concrete choices, rather than asking them to type a free-form reply that you'd then have to interpret. Returns the option text the person selected, or their typed answer.")]
+    [ToolDesc("Shows the person a list of options to choose from, optionally letting them type their own answer instead. Use this whenever you want the person to pick between a small number of concrete choices, rather than asking them to type a free-form reply that you'd then have to interpret. Call it whenever the person asks to be shown, offered, or given a choice between specific options. Returns the option text the person selected, or their typed answer.")]
     public async Task<string> UIShowOptionSelection(
-        [ToolDesc("A short question or instruction shown above the option list, e.g. 'Which file format would you like?'")] string prompt,
+        [ToolDesc("A short question shown above the option list, written from the person's own request and choices. Do not invent a topic or context they did not mention.")] string prompt,
         [ToolDesc("The list of choices to present, each shown as a selectable option. Provide at least one.")] List<string> options,
         [ToolDesc("Whether to also let the person type their own answer instead of picking a listed option. Defaults to false.")] bool allowFreeText = false)
     {
