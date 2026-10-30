@@ -1380,7 +1380,10 @@ private void ThrowIfDisposed()
 
         var genCfg = new GenerationConfig
         {
-            MaxNewTokens = MaxNewTokens,
+            // A sub-agent answers one self-contained task: cap its reply at a
+            // quarter of the parent's budget (never below 64 tokens) so it cannot
+            // run to the full parent limit.
+            MaxNewTokens = Math.Max(64, MaxNewTokens / 4),
             RepetitionPenalty = RepetitionPenalty,
             // Sub-agents run on the same conversation budget; leaving this at the
             // GenerationConfig default (0 = full context) makes each sub-agent
@@ -1393,9 +1396,13 @@ private void ThrowIfDisposed()
 
         var promptToks = _tokenizer.Encode(prompt, addBos: _addBos, addEos: false);
 
+        // TODO(delegation): sub-agents share the parent's generator and KV cache, so
+        // running one resets the parent's cache and the next turn re-prefills the whole
+        // conversation. Running them on a separate sequence needs engine support that
+        // does not exist yet. Until then the cost is paid on every delegation.
+        // A sub-agent is one-shot generation: it has no tool loop of its own, so
+        // MaxAgentDepth limits nested {{agent:...}} calls made by the parent, not tools.
         _generator.ResetCache();
-        // An unrelated prompt on the shared generator: the parent conversation's
-        // cache is gone after this, and the next turn's prefix match rebuilds it.
 
         var sb = new System.Text.StringBuilder();
         await foreach (var fragment in _generator.GenerateFromTokensAsync(promptToks, sampleCfg, genCfg, ct))
@@ -1449,6 +1456,16 @@ private void ThrowIfDisposed()
             parts.Add($"{kv.Key}={value}");
         }
         return parts.Count == 0 ? "" : " " + string.Join(" ", parts);
+    }
+
+    /// <summary>A string argument by name, matched case-insensitively; empty when absent or not text.</summary>
+    private static string ArgumentText(JsonObject args, string name)
+    {
+        foreach (var kv in args)
+            if (string.Equals(kv.Key, name, StringComparison.OrdinalIgnoreCase)
+                && kv.Value is JsonValue v && v.TryGetValue<string>(out var s))
+                return s.Trim();
+        return "";
     }
 
     private static JsonObject Success(string data) => new() { ["status"] = "success", ["data"] = data };
@@ -1966,6 +1983,65 @@ if (held.Length > 0)
                 malformedRetries++;
                 _history.Add(ChatMessage.Agent(responseText, _agentBuilder?.AgentName));
                 _history.Add(new ChatMessage { Role = ResultRole, Content = MalformedCallCorrection() });
+                InvalidateHistoryCache();
+                continue;
+            }
+
+            // Delegation as a tool: delegate(agent, task) runs the named sub-agent, with the
+            // same depth limit and result feedback as the {{agent:...}} text form.
+            if (!grammarActive
+                && _agentBuilder is not null
+                && _agentBuilder.AgentsEnabled
+                && toolsAllowed
+                && TryParseCall(responseText, out var delegateCall)
+                && delegateCall is not null
+                && delegateCall["tool"]?.GetValue<string>() == "delegate")
+            {
+                var delegateArgs = delegateCall["arguments"]!.AsObject();
+                string delegateName = ArgumentText(delegateArgs, "agent");
+                string task = ArgumentText(delegateArgs, "task");
+                _agentBuilder.RegisteredAgents.TryGetValue(delegateName, out var delegateAgent);
+
+                _history.Add(ChatMessage.Agent(responseText, _agentBuilder?.AgentName));
+                InvalidateHistoryCache();
+
+                string delegateResult;
+                if (delegateAgent is null || task.Length == 0)
+                {
+                    delegateResult = FormatToolResult("delegate", delegateArgs, Error(
+                        delegateAgent is null
+                            ? $"Unknown agent '{delegateName}'. Valid agents: {string.Join(", ", _agentBuilder.RegisteredAgents.Keys)}."
+                            : "The task is empty. Pass the complete sub-task in 'task'."));
+                }
+                else if (_currentDepth >= MaxAgentDepth)
+                {
+                    delegateResult = FormatToolResult("delegate", delegateArgs, Error(
+                        $"Maximum agent depth ({MaxAgentDepth}) reached. Cannot delegate further."));
+                }
+                else
+                {
+                    yield return new ChatStreamEntry
+                    {
+                        Status = ChatStatus.Executing,
+                        Token = delegateName,
+                        IsComplete = false,
+                        TokensPerSecond = _generator.TokensPerSecond,
+                        TimeToFirstToken = _generator.TimeToFirstToken
+                    };
+
+                    _currentDepth++;
+                    try
+                    {
+                        var answer = await ExecuteSubAgentAsync(delegateAgent, task, null, null, null, linkedCts.Token);
+                        delegateResult = FormatToolResult("delegate", delegateArgs, Success(answer));
+                    }
+                    finally
+                    {
+                        _currentDepth--;
+                    }
+                }
+
+                _history.Add(new ChatMessage { Role = ResultRole, Content = delegateResult });
                 InvalidateHistoryCache();
                 continue;
             }

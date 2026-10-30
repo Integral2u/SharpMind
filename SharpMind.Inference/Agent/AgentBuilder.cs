@@ -623,6 +623,53 @@ namespace SharpMind.Inference.Agent
         }
 
         /// <summary>
+        /// The one-line purpose the model sees for a sub-agent: its configured
+        /// <see cref="AgentConfig.Purpose"/>, or the start of its system prompt.
+        /// </summary>
+        internal static string AgentPurpose(IAgent agent)
+        {
+            string text = agent.Config.Purpose ?? agent.Config.SystemPrompt;
+            string line = text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).FirstOrDefault() ?? "";
+            return line.Length > 120 ? line[..120] + "..." : line;
+        }
+
+        /// <summary>
+        /// Exposes delegation as an ordinary tool: <c>delegate(agent, task)</c>, with the
+        /// agent names as an enum and a one-line purpose for each. Registered once, after
+        /// agents are created, and only when there is at least one agent.
+        /// </summary>
+        public void RegisterDelegateTool()
+        {
+            if (_agents.Count == 0 || _delegateTools.ContainsKey("delegate")) return;
+
+            var names = _agents.Keys.Select(n => (JsonNode)JsonValue.Create(n)!).ToList();
+            var purposes = _agents.Values.Select(a => $"{a.Name}: {AgentPurpose(a)}");
+            var schema = new JsonObject
+            {
+                ["type"] = "object",
+                ["properties"] = new JsonObject
+                {
+                    ["agent"] = new JsonObject
+                    {
+                        ["type"] = "string",
+                        ["enum"] = new JsonArray([.. names]),
+                        ["description"] = string.Join("; ", purposes)
+                    },
+                    ["task"] = new JsonObject
+                    {
+                        ["type"] = "string",
+                        ["description"] = "The complete sub-task, with all the context the agent needs."
+                    }
+                },
+                ["required"] = new JsonArray("agent", "task")
+            };
+            WithTool("delegate",
+                "Hands a self-contained sub-task to a specialist agent and returns its answer. Use it when a listed agent's purpose matches the task better than you can do it yourself.",
+                schema,
+                _ => Task.FromResult(""));   // dispatched by ChatSession, which owns the sub-agent run
+        }
+
+        /// <summary>
         /// Creates and registers a sub-agent. When <paramref name="config.Name"/> is null,
         /// an auto-name is generated using the Greek tier system
         /// (<c>{Deity}-{Tier}</c> e.g. <c>Athena-Alpha</c>).
@@ -1069,16 +1116,17 @@ namespace SharpMind.Inference.Agent
             {
                 sb.AppendLine();
                 sb.AppendLine("## Delegated Agents");
-                sb.AppendLine("You may delegate sub-tasks to other agents using this format:");
-                sb.AppendLine("""{{agent:<name>[:temp=<temperature>][:seed=<seed>]:<query>}}""");
-                sb.AppendLine();
-                sb.AppendLine("Available agents:");
-                foreach (var agent in _agents.Values)
+                if (hasTools)
                 {
-                    var temp = agent.Config.Temperature.HasValue
-                        ? $" (temp={agent.Config.Temperature.Value:F2})"
-                        : "";
-                    sb.AppendLine($"- {agent.Name}{temp}: {agent.Config.SystemPrompt[..Math.Min(agent.Config.SystemPrompt.Length, 120)]}");
+                    // Delegation is the delegate tool (listed under Available Tools); the
+                    // agents and their purposes are carried by its schema.
+                    sb.AppendLine("To hand a self-contained sub-task to a specialist, call the delegate tool. Its agent argument lists the available agents.");
+                }
+                else
+                {
+                    sb.AppendLine("Available agents:");
+                    foreach (var agent in _agents.Values)
+                        sb.AppendLine($"- {agent.Name}: {AgentPurpose(agent)}");
                 }
                 sb.AppendLine();
                 sb.AppendLine("After delegating, you will receive the result as a tool result. Continue from there.");
