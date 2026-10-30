@@ -367,6 +367,9 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     public Tokenizer Tokenizer => _tokenizer;
     public Transformer Model => _model;
     public IReadOnlyList<ChatMessage> History => _filteredHistoryCache ??= [.. _history.Where(p => p.Role != ChatRole.System)];
+
+    /// <summary>Every message, system messages included. For tests that check what the model was given.</summary>
+    internal IReadOnlyList<ChatMessage> RawHistoryForTests => _history;
     public IChatPromptFormatter? Formatter => _formatter;
 
     public int MaxTokens { get; set; } = 2048;
@@ -756,7 +759,9 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         if (_disposed) return;
         _disposed = true;
         await Task.CompletedTask;
-        _generator.Dispose();
+        // The generator exists only after InitializeChat; a session disposed before that
+        // still has to release the model it was given.
+        _generator?.Dispose();
         if (_disposeModel)
             _model.Dispose();
     }
@@ -1404,6 +1409,85 @@ private void ThrowIfDisposed()
 
     // Tool dispatch with IO interception
 
+    // ── Phase 3: loop recovery and result formatting ─────────────────────
+
+    /// <summary>Corrective retries allowed per turn for a malformed tool-call block.</summary>
+    private const int MaxMalformedCallRetries = 2;
+
+    /// <summary>Largest tool result, in characters, placed in the conversation before truncation.</summary>
+    public int MaxToolResultChars { get; set; } = 16_000;
+
+    /// <summary>
+    /// Formats a tool result for the model: a header naming the tool and its key
+    /// arguments, then the data as plain text. Errors are prefixed so they are not
+    /// mistaken for data. Long output is cut with a note saying how much was dropped.
+    /// </summary>
+    internal string FormatToolResult(string toolName, JsonObject args, JsonObject result)
+    {
+        string status = result["status"]?.GetValue<string>() ?? "success";
+        string body = result["data"]?.GetValue<string>()
+            ?? result["message"]?.GetValue<string>()
+            ?? result.ToJsonString();
+        if (result["notes"] is JsonNode notes)
+            body += "\n(" + notes.GetValue<string>() + ")";
+
+        string header = $"[{toolName}" + KeyArguments(args) + "]";
+        string text = status == "success"
+            ? $"{header} {body}"
+            : $"{header} ERROR: {body}";
+        return Clip(text, MaxToolResultChars);
+    }
+
+    /// <summary>The first few argument values, for the result header, e.g. " city=Paris".</summary>
+    private static string KeyArguments(JsonObject args)
+    {
+        var parts = new List<string>();
+        foreach (var kv in args.Take(3))
+        {
+            string value = kv.Value is JsonValue v && v.TryGetValue<string>(out var s) ? s : kv.Value?.ToJsonString() ?? "";
+            if (value.Length > 40) value = value[..40] + "...";
+            parts.Add($"{kv.Key}={value}");
+        }
+        return parts.Count == 0 ? "" : " " + string.Join(" ", parts);
+    }
+
+    private static JsonObject Success(string data) => new() { ["status"] = "success", ["data"] = data };
+    private static JsonObject Error(string message) => new() { ["status"] = "error", ["message"] = message };
+
+    private static string Clip(string text, int maxChars)
+    {
+        if (text.Length <= maxChars) return text;
+        int dropped = text.Length - maxChars;
+        return text[..maxChars] + $"\n[truncated: {dropped} more chars; ask for a smaller range or use offset/limit]";
+    }
+
+    /// <summary>
+    /// A stable key for a call: tool name plus its arguments in canonical form, so the
+    /// same call written with different spacing or key order is recognised as a repeat.
+    /// </summary>
+    internal static string CallKey(string toolName, JsonObject args)
+    {
+        var sorted = args.OrderBy(kv => kv.Key, StringComparer.Ordinal)
+            .ToDictionary(kv => kv.Key, kv => kv.Value?.ToJsonString() ?? "null", StringComparer.Ordinal);
+        return toolName + "|" + System.Text.Json.JsonSerializer.Serialize(sorted);
+    }
+
+    /// <summary>The corrective message for a tool-call block that did not parse. Shows the real format.</summary>
+    private string MalformedCallCorrection()
+    {
+        string? example = _agentBuilder?.RegisteredToolNames.FirstOrDefault();
+        return "Your last reply contained a tool call that could not be read. Reply again: " +
+               "either answer the user in plain prose, or make exactly one call in the form shown under ## Tool Call Format" +
+               (example is not null ? $" (for example, the {example} tool)." : ".") +
+               " Do not repeat the broken call.";
+    }
+
+    /// <summary>True when the text holds a tool-call opener, closed or not.</summary>
+    internal static bool ContainsToolCallMarkup(string text) =>
+        text.Contains("<tool_call", StringComparison.Ordinal)
+        || text.Contains("<function=", StringComparison.Ordinal)
+        || text.Contains("[TOOL_CALLS]", StringComparison.Ordinal);
+
     private static string? FirstStringArgument(JsonObject args, params string[] names)
     {
         foreach (string name in names)
@@ -1523,8 +1607,27 @@ private void ThrowIfDisposed()
 
         // Agentic loop: keep generating until the model produces a plain response
         // rather than a tool call, or until MaxToolCallsPerTurn is reached.
+        var seenCallKeys = new HashSet<string>(StringComparer.Ordinal);
+        int malformedRetries = 0;
+        bool finalAnswerPass = false;
+        bool finalAnswerRetried = false;
         for (int toolCallCount = 0; ; toolCallCount++)
         {
+            // Budget spent: give the model one turn to answer from the results it has,
+            // with tool detection off, so the user always gets a reply.
+            bool budgetSpent = toolCallCount >= MaxToolCallsPerTurn;
+            if (budgetSpent && !finalAnswerPass)
+            {
+                finalAnswerPass = true;
+                _history.Add(new ChatMessage
+                {
+                    Role = ResultRole,
+                    Content = "You have used all the tool calls allowed for this request. Answer the user now, in plain prose, from the tool results above. Do not call any more tools."
+                });
+                InvalidateHistoryCache();
+            }
+            bool toolsAllowed = !finalAnswerPass;
+
             // Tokenise the *full logical* prompt — what the whole conversation
             // renders to right now. `promptToks` is used for budget checks,
             // compaction, and next turn's bookkeeping.
@@ -1837,13 +1940,32 @@ if (held.Length > 0)
             // with no "arguments" block and nothing else shown — was pure tool
             // machinery that never became a call. Correct the model and regenerate
             // so the user receives plain prose instead of an empty turn.
-            if (suppressedFailedCall && shownThrough == 0 && toolCallCount + 1 < MaxToolCallsPerTurn)
+            if (suppressedFailedCall && shownThrough == 0 && malformedRetries < MaxMalformedCallRetries && toolsAllowed)
             {
+                malformedRetries++;
                 _history.Add(new ChatMessage
                 {
                     Role = ResultRole,
                     Content = "Your previous reply was discarded: it contained a JSON object with a \"name\" field but no \"arguments\" block, which is not a valid tool call. Do not emit any JSON. Answer the user's request directly in plain prose, as if tools did not exist."
                 });
+                InvalidateHistoryCache();
+                continue;
+            }
+
+            // A tool-call block that never parsed (bad JSON, unknown shape) must not become
+            // an empty turn. Show the real format and regenerate, at most twice per turn.
+            if (toolsAllowed
+                && !grammarActive
+                && _agentBuilder is not null
+                && _agentBuilder.RegisteredToolNames.Count > 0
+                && _toolCallFormat != ToolCallFormat.None
+                && ContainsToolCallMarkup(responseText)
+                && !TryParseCall(responseText, out _)
+                && malformedRetries < MaxMalformedCallRetries)
+            {
+                malformedRetries++;
+                _history.Add(ChatMessage.Agent(responseText, _agentBuilder?.AgentName));
+                _history.Add(new ChatMessage { Role = ResultRole, Content = MalformedCallCorrection() });
                 InvalidateHistoryCache();
                 continue;
             }
@@ -1857,12 +1979,27 @@ if (held.Length > 0)
                 && _agentBuilder is not null
                 && _agentBuilder.RegisteredToolNames.Count > 0
                 && _toolCallFormat != ToolCallFormat.None
-                && toolCallCount < MaxToolCallsPerTurn
+                && toolsAllowed
                 && TryParseCall(responseText, out var toolCall)
                 && toolCall is not null)
             {
                 var toolName = toolCall["tool"]!.GetValue<string>();
                 var args = toolCall["arguments"]!.AsObject();
+
+                // The same call again within one turn: the model already has this result.
+                // Tell it so, rather than running the tool a second time.
+                string callKey = CallKey(toolName, args);
+                if (!seenCallKeys.Add(callKey))
+                {
+                    _history.Add(ChatMessage.Agent(responseText, _agentBuilder?.AgentName));
+                    _history.Add(new ChatMessage
+                    {
+                        Role = ResultRole,
+                        Content = $"You already called {toolName} with these arguments and have its result above. Answer the user from that result now; do not call it again."
+                    });
+                    InvalidateHistoryCache();
+                    continue;
+                }
 
                 // Record the model's tool-call turn in history for the formatter
                 _history.Add(ChatMessage.Agent(responseText, _agentBuilder?.AgentName));
@@ -1891,7 +2028,8 @@ if (held.Length > 0)
                             _history.Add(new ChatMessage
                             {
                                 Role = ResultRole,
-                                Content = $"Tool result: {external.Result}"
+                                Content = FormatToolResult(toolName, args,
+                                    Success(external.Result ?? ""))
                             });
                             InvalidateHistoryCache();
                             continue;
@@ -1927,7 +2065,7 @@ if (held.Length > 0)
                 _history.Add(new ChatMessage
                 {
                     Role = ResultRole,
-                    Content = $"Tool result: {toolResult.ToJsonString()}"
+                    Content = FormatToolResult(toolName, args, toolResult)
                 });
                 InvalidateHistoryCache();
                 continue;                   // generate again with enriched history
@@ -1936,7 +2074,7 @@ if (held.Length > 0)
             // Agent call detection ({{agent:...}} format)
             if (_agentBuilder is not null
                 && _agentBuilder.AgentsEnabled
-                && toolCallCount < MaxToolCallsPerTurn
+                && toolsAllowed
                 && _currentDepth < MaxAgentDepth
                 && TryParseAgentTag(responseText, out var agentName, out var agentTemp, out var agentSeed, out var agentQuery)
                 && agentName is not null && agentQuery is not null
@@ -2001,7 +2139,7 @@ if (held.Length > 0)
                 _history.Add(new ChatMessage
                 {
                     Role = ResultRole,
-                    Content = $"Tool result: {agentResult}"
+                    Content = FormatToolResult(agentName, [], Success(agentResult))
                 });
                 InvalidateHistoryCache();
                 continue;                   // generate again with enriched history
@@ -2010,15 +2148,32 @@ if (held.Length > 0)
             // Depth limit reached — inform the model
             if (_agentBuilder is not null
                 && _agentBuilder.AgentsEnabled
-                && toolCallCount < MaxToolCallsPerTurn
+                && toolsAllowed
                 && _currentDepth >= MaxAgentDepth
                 && TryParseAgentTag(responseText, out _, out _, out _, out _))
             {
                 _history.Add(ChatMessage.Agent(responseText, _agentBuilder?.AgentName));
                 _history.Add(new ChatMessage
                 {
-                    Role = ChatRole.System,
-                    Content = $"Tool result: {{\"status\":\"error\",\"message\":\"Maximum agent depth ({MaxAgentDepth}) reached. Cannot delegate further.\"}}"
+                    Role = ResultRole,
+                    Content = FormatToolResult("delegate", [], Error($"Maximum agent depth ({MaxAgentDepth}) reached. Cannot delegate further."))
+                });
+                InvalidateHistoryCache();
+                continue;
+            }
+
+            // The model tried to call a tool after the budget was spent. That call is not run,
+            // and an empty turn would leave the user without a reply, so ask once more for
+            // a plain answer. The retry is bounded by the final-pass flag.
+            if (finalAnswerPass && !finalAnswerRetried && ContainsToolCallMarkup(responseText)
+                || finalAnswerPass && !finalAnswerRetried && TryParseCall(responseText, out _))
+            {
+                finalAnswerRetried = true;
+                _history.Add(ChatMessage.Agent(responseText, _agentBuilder?.AgentName));
+                _history.Add(new ChatMessage
+                {
+                    Role = ResultRole,
+                    Content = "Tool calls are no longer allowed. Answer the user in plain prose now, using only the results above."
                 });
                 InvalidateHistoryCache();
                 continue;
@@ -2032,6 +2187,20 @@ if (held.Length > 0)
                 responseText = string.Empty;
             if (LooksLikeFailedToolAttempt(responseText))
                 responseText = string.Empty;
+            // A turn must never end silently. If the model's output was all machinery
+            // (a broken call it could not fix, or a refused call), say so in plain words.
+            if (responseText.Length == 0 && _responseBuffer.Length > 0 && shownThrough == 0)
+            {
+                responseText = "I couldn't complete that request with the tools available. Could you rephrase it or give me more detail?";
+                yield return new ChatStreamEntry
+                {
+                    Status = ChatStatus.Responding,
+                    Token = responseText,
+                    IsComplete = false,
+                    TokensPerSecond = _generator.TokensPerSecond,
+                    TimeToFirstToken = _generator.TimeToFirstToken,
+                };
+            }
             if (responseText.Length > 0)
             {
                 var agentMsg = ChatMessage.Agent(responseText, _agentBuilder?.AgentName);
