@@ -79,6 +79,7 @@ public sealed class TokenizerFileRoundTripTests
             .Replace("\"pre_tokeniser\": \"gpt2\"", "\"pre_tokeniser\": \"cl100k\"");
         var reloaded = TokenizerFile.FromJson(json);
 
-        Assert.IsType<Cl100kPreTokeniser>(reloaded.PreTokeniser);
+        // A legacy "cl100k" without a stored gguf_pre is plain cl100k (digits in groups of three).
+        Assert.Equal(Cl100kVariant.Cl100k, Assert.IsType<Cl100kPreTokeniser>(reloaded.PreTokeniser).Variant);
     }
 }

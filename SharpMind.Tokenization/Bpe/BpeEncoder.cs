@@ -166,9 +166,17 @@ public sealed class BpeEncoder
             }
             else
             {
+                bool ignoreMerges = _preTokeniser is Cl100kPreTokeniser { IgnoreMerges: true };
                 foreach (string word in _preTokeniser.PreTokenise(segment.Text))
                 {
                     var tokens = ByteTokenise(word);
+                    // llama.cpp ignore_merges (Llama 3): a whole pre-token that is a vocab entry is one
+                    // token. Checked on the byte-mapped form, which is how the vocab stores it.
+                    if (ignoreMerges && tokens.Count > 1 && _vocab.TryGetId(string.Concat(tokens), out int wholeId))
+                    {
+                        ids.Add(wholeId);
+                        continue;
+                    }
                     ApplyMerges(tokens);
                     foreach (string token in tokens)
                         ids.Add(_vocab.GetId(token));
@@ -330,15 +338,19 @@ public sealed class BpeEncoder
             alive[i] = true;
         }
 
-        var queue = new PriorityQueue<int, int>(); // (left slot, rank)
+        // Priority (rank, slot): equal-rank pairs merge leftmost first, like reference BPE.
+        // PriorityQueue does not order equal priorities, so rank alone let a run of spaces
+        // merge from the middle and leave fragments (11 spaces -> 5+2+4 instead of one token).
+        var queue = new PriorityQueue<int, (int Rank, int Slot)>();
         for (int i = 0; i + 1 < n; i++)
         {
             if (_mergeIndex.TryGetValue((parts[i], parts[i + 1]), out var seed))
-                queue.Enqueue(i, seed.Rank);
+                queue.Enqueue(i, (seed.Rank, i));
         }
 
-        while (queue.TryDequeue(out int left, out int rank))
+        while (queue.TryDequeue(out int left, out var key))
         {
+            int rank = key.Rank;
             if (!alive[left]) continue;
             int right = next[left];
             if (right < 0 || !alive[right]) continue;
@@ -354,9 +366,9 @@ public sealed class BpeEncoder
 
             int before = prev[left];
             if (before >= 0 && _mergeIndex.TryGetValue((parts[before], parts[left]), out var leftPair))
-                queue.Enqueue(before, leftPair.Rank);
+                queue.Enqueue(before, (leftPair.Rank, before));
             if (after >= 0 && _mergeIndex.TryGetValue((parts[left], parts[after]), out var rightPair))
-                queue.Enqueue(left, rightPair.Rank);
+                queue.Enqueue(left, (rightPair.Rank, left));
         }
 
         // Slot 0 is never removed (only the right half of a pair is), so the
@@ -432,7 +444,8 @@ public sealed class BpeEncoder
             alive[i] = true;
         }
 
-        var queue = new PriorityQueue<int, float>();
+        // Priority (-score, slot): equal scores merge leftmost first (see ApplyMerges).
+        var queue = new PriorityQueue<int, (float NegScore, int Slot)>();
 
         void TryEnqueue(int left)
         {
@@ -440,13 +453,14 @@ public sealed class BpeEncoder
             int right = next[left];
             if (right < 0 || !alive[right]) return;
             if (_vocab.TryGetId(parts[left] + parts[right], out int id))
-                queue.Enqueue(left, -ScoreOf(id));
+                queue.Enqueue(left, (-ScoreOf(id), left));
         }
 
         for (int i = 0; i < n; i++) TryEnqueue(i);
 
-        while (queue.TryDequeue(out int left, out float priority))
+        while (queue.TryDequeue(out int left, out var key))
         {
+            float priority = key.NegScore;
             if (!alive[left]) continue;
             int right = next[left];
             if (right < 0 || !alive[right]) continue;

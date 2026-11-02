@@ -518,8 +518,8 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
         try
         {
             string arch = meta.GetString("general.architecture") ?? "";
-            var tokenizer = Tokenizer.FromGguf(tokens, merges, types, bosId, eosId, scores, arch);
-            tokenizer.GgufPreTokenizer = meta.GetString("tokenizer.ggml.pre") is { Length: > 0 } pre ? pre : null;
+            string? pre = meta.GetString("tokenizer.ggml.pre") is { Length: > 0 } p ? p : null;
+            var tokenizer = Tokenizer.FromGguf(tokens, merges, types, bosId, eosId, scores, arch, pre);
             tokenizer.GgufTokenizerModel = meta.GetString("tokenizer.ggml.model") is { Length: > 0 } tm ? tm : null;
             return tokenizer;
         }

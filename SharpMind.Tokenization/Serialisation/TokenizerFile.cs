@@ -13,7 +13,9 @@ namespace SharpMind.Tokenization.Serialisation;
 /// <code>
 /// {
 ///   "version": "1.0",
-///   "pre_tokeniser": "gpt2" | "whitespace",
+///   "pre_tokeniser": "gpt2" | "cl100k" | "whitespace",
+///   "cl100k_variant": "cl100k" | "llama3" | "qwen2" | "qwen35",   ← only with "cl100k"
+///   "gguf_pre": "...", "gguf_model": "...",                       ← source GGUF names, when known
 ///   "special_tokens": { "unk": "...", "bos": "...", "eos": "...", "pad": "...",
 ///                       "additional": [...] },
 ///   "vocab": { "token": id, ... },
@@ -69,6 +71,9 @@ public static class TokenizerFile
                      .OrderBy(m => m.Rank)
                      .Select(m => JsonValue.Create($"{m.Left} {m.Right}")!)]),
         };
+        // The variant goes in its own key so "pre_tokeniser" stays "cl100k", which older readers know.
+        if (model.PreTokeniser is Cl100kPreTokeniser cl)
+            obj["cl100k_variant"] = cl.Variant.ToString().ToLowerInvariant();
         if (model.GgufPreTokenizer is { Length: > 0 } pre)
             obj["gguf_pre"] = pre;
         if (model.GgufTokenizerModel is { Length: > 0 } ggufModel)
@@ -131,9 +136,12 @@ public static class TokenizerFile
                          })
                          .ToList();
 
+        string? ggufPre = root.TryGetProperty("gguf_pre", out var preEl) ? preEl.GetString() : null;
+        string? variant = root.TryGetProperty("cl100k_variant", out var varEl) ? varEl.GetString() : null;
         var preTokeniser = ParsePreTokeniserName(
             root.TryGetProperty("pre_tokeniser", out var ptEl)
-                ? ptEl.GetString() ?? "gpt2" : "gpt2");
+                ? ptEl.GetString() ?? "gpt2" : "gpt2",
+            variant, ggufPre);
 
         // Character-level tokenizers are stored with a "kind": "char" marker.
         // They carry a per-character vocab and no merge rules; the encoder
@@ -148,7 +156,7 @@ public static class TokenizerFile
 
         return new BpeModel(vocab, merges, preTokeniser, scores, charMode: charMode)
         {
-            GgufPreTokenizer = root.TryGetProperty("gguf_pre", out var preEl) ? preEl.GetString() : null,
+            GgufPreTokenizer = ggufPre,
             GgufTokenizerModel = root.TryGetProperty("gguf_model", out var modelEl) ? modelEl.GetString() : null,
         };
     }
@@ -171,10 +179,18 @@ public static class TokenizerFile
         _ => pt.GetType().Name.ToLowerInvariant()
     };
 
-    internal static IPreTokeniser ParsePreTokeniserName(string name) => name.ToLowerInvariant() switch
+    /// <param name="variant">The stored <c>cl100k_variant</c>, written since the variants exist.</param>
+    /// <param name="ggufPre">
+    /// The stored source <c>tokenizer.ggml.pre</c>. Older files say only "cl100k" for every
+    /// tiktoken-family model; the GGUF pre name picks the variant for them. Without either, plain
+    /// cl100k: on a Qwen vocab that gives the same ids as Qwen2, because Qwen has no multi-digit tokens.
+    /// </param>
+    internal static IPreTokeniser ParsePreTokeniserName(string name, string? variant = null, string? ggufPre = null) => name.ToLowerInvariant() switch
     {
         "gpt2" => new Gpt2PreTokeniser(),
-        "cl100k" or "cl100k_base" or "cl100kpretokeniser" => new Cl100kPreTokeniser(),
+        "cl100k" or "cl100k_base" or "cl100kpretokeniser" =>
+            Enum.TryParse<Cl100kVariant>(variant, ignoreCase: true, out var v) && Enum.IsDefined(v) ? new Cl100kPreTokeniser(v)
+            : GgufConverter.FromGgufPre(ggufPre) as Cl100kPreTokeniser ?? new Cl100kPreTokeniser(Cl100kVariant.Cl100k),
         "whitespace" => new WhitespacePreTokeniser(),
         _ => new Gpt2PreTokeniser()
     };

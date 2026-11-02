@@ -45,7 +45,7 @@ public static class QwenConverter
 
         var vocab = new Vocabulary(vocabList, specials);
         var merges = BuildMerges(root);
-        return new BpeModel(vocab, merges, new Cl100kPreTokeniser());
+        return new BpeModel(vocab, merges, new Cl100kPreTokeniser(Cl100kVariant.Qwen2));
     }
 
     private static (string unk, string bos, string eos, string pad, List<string> additional) QwenExtractSpecials(JsonElement root)
