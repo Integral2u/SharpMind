@@ -37,6 +37,7 @@ public sealed class LoRAModel : IDisposable
     private readonly Transformer _model;
     private readonly List<TrainingLinearLayer> _adapted = [];
     private List<Parameter>? _parameters;
+    private string? _baseFingerprint;
     private bool _disposed;
 
     public LoRAConfig Config { get; }
@@ -146,9 +147,16 @@ public sealed class LoRAModel : IDisposable
         }
 
         var header = new LoRAAdapterFile.Header(
-            Config.Rank, Config.Alpha, Config.TargetModules ?? [], BaseFingerprint(_model), specs.ToArray());
+            Config.Rank, Config.Alpha, Config.TargetModules ?? [], CachedBaseFingerprint(), specs.ToArray());
         LoRAAdapterFile.Write(path, header, payload);
     }
+
+    /// <summary>
+    /// The base fingerprint is over every frozen weight, so hashing it per
+    /// checkpoint is expensive for a large model. The base cannot change during
+    /// a LoRA run, so compute it once and reuse it for every save.
+    /// </summary>
+    private string CachedBaseFingerprint() => _baseFingerprint ??= BaseFingerprint(_model);
 
     /// <summary>
     /// Attaches the adapters saved by <see cref="SaveAdapter"/> to
