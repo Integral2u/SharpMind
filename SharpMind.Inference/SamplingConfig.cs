@@ -60,4 +60,12 @@ public sealed record SamplingConfig
 
     /// <summary>Creative writing: higher temperature, broad nucleus.</summary>
     public static SamplingConfig Creative => new() { Temperature = 0.9f, TopP = 0.95f, MinP = 0.05f };
+
+    /// <summary>
+    /// Tool-calling agents: greedy decoding. A tool call has one correct shape,
+    /// so sampling only adds malformed JSON and comma-joined choice entries
+    /// without making the agent more useful. The story-writing agents keep
+    /// their creative presets.
+    /// </summary>
+    public static SamplingConfig ToolCalling => new() { Temperature = 0f, TopP = 0.9f };
 }

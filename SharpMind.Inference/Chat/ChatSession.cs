@@ -161,6 +161,12 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     public int MaxToolCallsPerTurn { get; set; } = 10;
     /// <summary>Maximum sub-agent nesting depth. Default 2. Reached when both parent and one sub-agent are active.</summary>
     public int MaxAgentDepth { get; set; }
+    /// <summary>
+    /// Tool-call parsing policy. <see cref="ToolCallRecoveryMode.Lenient"/>
+    /// (the default) runs a structural recovery pass only after the strict
+    /// format parser fails.
+    /// </summary>
+    public ToolCallRecoveryMode ToolCallRecovery { get; set; } = ToolCallRecoveryMode.Lenient;
     public ChatSession(
         Transformer model,
         Tokenizer tokenizer,
@@ -823,11 +829,268 @@ private void ThrowIfDisposed()
     /// </summary>
     private bool TryParseCall(string text, out JsonObject? parsed)
     {
-        if (!TryParseToolCall(text, _toolCallFormat, out parsed) || parsed is null) return false;
-        if (_toolCallFormat == ToolCallFormat.QwenXml)
-            parsed = CoerceXmlCall(parsed);
+        if (TryParseToolCall(text, _toolCallFormat, out parsed) && parsed is not null)
+        {
+            if (_toolCallFormat == ToolCallFormat.QwenXml)
+                parsed = CoerceXmlCall(parsed);
+
+            // A strict parse that names an unregistered tool keeps the old
+            // behaviour (dispatch reports the unknown tool) unless Lenient
+            // recovery can resolve an alias or infer the intended tool.
+            if (ToolCallRecovery == ToolCallRecoveryMode.Strict
+                || IsRegisteredToolName(parsed["tool"]))
+                return true;
+
+            if (TryRecoverToolCall(text, out var recovered) && recovered is not null)
+            {
+                parsed = recovered;
+                return true;
+            }
+            return true;
+        }
+
+        if (ToolCallRecovery == ToolCallRecoveryMode.Lenient
+            && _toolCallFormat != ToolCallFormat.None
+            && _agentBuilder is not null
+            && TryRecoverToolCall(text, out parsed))
+            return true;
+
+        parsed = null;
+        return false;
+    }
+
+    private bool IsRegisteredToolName(JsonNode? nameNode)
+    {
+        if (_agentBuilder is null) return false;
+        if (nameNode is not JsonValue value || !value.TryGetValue<string>(out var name))
+            return false;
+        return _agentBuilder.RegisteredToolNames.Contains(name, StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Structural recovery for a tool call the strict parser could not read.
+    /// Finds a JSON object in prose or a fenced block, normalizes the
+    /// tool/arguments envelope, and resolves or infers a registered tool. It
+    /// never reads a call out of free-form prose and never invents arguments.
+    /// </summary>
+    private bool TryRecoverToolCall(string text, out JsonObject? parsed)
+    {
+        parsed = null;
+        foreach (var candidate in EnumerateJsonCandidates(text))
+        {
+            if (!TryParseJsonObject(candidate, out var source) || source is null)
+            {
+                if (!TryParseLooseJsonObject(candidate, out source) || source is null)
+                    continue;
+            }
+
+            if (!TryNormalizeRecoveredCall(source, out var call) || call is null)
+                continue;
+
+            parsed = call;
+            return true;
+        }
+        return false;
+    }
+
+    private static IEnumerable<string> EnumerateJsonCandidates(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) yield break;
+
+        // Fenced blocks first: ```json { ... } ```
+        int search = 0;
+        while (search < text.Length)
+        {
+            int fence = text.IndexOf("```", search, StringComparison.Ordinal);
+            if (fence < 0) break;
+            int bodyStart = text.IndexOf('\n', fence + 3);
+            if (bodyStart < 0) break;
+            int fenceEnd = text.IndexOf("```", bodyStart + 1, StringComparison.Ordinal);
+            if (fenceEnd < 0) break;
+            var block = text[(bodyStart + 1)..fenceEnd];
+            int brace = block.IndexOf('{');
+            if (brace >= 0)
+            {
+                int end = FindJsonValueEnd(block, brace);
+                if (end > brace) yield return block[brace..end];
+            }
+            search = fenceEnd + 3;
+        }
+
+        // Then every balanced object in the text. Bounded so a long prose
+        // response cannot make recovery quadratic.
+        int seen = 0;
+        for (int i = 0; i < text.Length && seen < 8; i++)
+        {
+            if (text[i] != '{') continue;
+            int end = FindJsonValueEnd(text, i);
+            if (end <= i) continue;
+            yield return text[i..end];
+            seen++;
+            i = end - 1;
+        }
+    }
+
+    /// <summary>
+    /// Parses a JSON object without requiring the tool-call envelope. Used only
+    /// by recovery, which normalizes the envelope afterwards.
+    /// </summary>
+    private static bool TryParseLooseJsonObject(string text, out JsonObject? parsed)
+    {
+        parsed = null;
+        string repaired = RegexGenerated.TrailingCommasBeforeClosingBracketOrBrace.Replace(text, "$1");
+        int openBrace = repaired.Count(c => c == '{');
+        int closeBrace = repaired.Count(c => c == '}');
+        if (closeBrace < openBrace)
+            repaired += new string('}', openBrace - closeBrace);
+        try
+        {
+            parsed = JsonNode.Parse(repaired) as JsonObject;
+            return parsed is not null;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private bool TryNormalizeRecoveredCall(JsonObject source, out JsonObject? call)
+    {
+        call = null;
+        var obj = source;
+
+        // OpenAI-style {"type":"function","function":{...}} envelope.
+        if (obj["function"] is JsonObject function)
+        {
+            var functionArgs = ReadRecoveredArguments(function);
+            var functionName = ReadRecoveredString(function["name"]);
+            if (TryBuildRecoveredCall(functionName, functionArgs, out call))
+                return true;
+        }
+
+        // A wrapper such as {"tool_call": {...}}.
+        if (obj["tool_call"] is JsonObject nested)
+            obj = nested;
+        else if (obj["call"] is JsonObject callNode)
+            obj = callNode;
+
+        var name = ReadRecoveredString(obj["tool"])
+            ?? ReadRecoveredString(obj["name"])
+            ?? ReadRecoveredString(obj["tool_name"])
+            ?? ReadRecoveredString(obj["function_name"]);
+
+        var args = ReadRecoveredArguments(obj);
+        return TryBuildRecoveredCall(name, args, out call);
+    }
+
+    private JsonObject? ReadRecoveredArguments(JsonObject obj)
+    {
+        var node = obj["arguments"] ?? obj["args"] ?? obj["parameters"];
+        if (node is JsonObject args) return args;
+
+        if (node is JsonValue value && value.TryGetValue<string>(out var raw))
+        {
+            var trimmed = raw.Trim();
+            if (trimmed.Length == 0) return null;
+            if (TryParseLooseJsonObject(trimmed, out var parsed) && parsed is not null)
+                return parsed;
+        }
+
+        // Some models put the arguments directly on the call object.
+        var extras = new JsonObject();
+        foreach (var kv in obj)
+        {
+            if (IsRecoveredEnvelopeKey(kv.Key)) continue;
+            extras[kv.Key] = kv.Value?.DeepClone();
+        }
+        return extras.Count > 0 ? extras : null;
+    }
+
+    private static bool IsRecoveredEnvelopeKey(string key)
+        => key is "tool" or "name" or "tool_name" or "function_name" or "function"
+            or "arguments" or "args" or "parameters" or "type" or "id";
+
+    private bool TryBuildRecoveredCall(string? name, JsonObject? args, out JsonObject? call)
+    {
+        call = null;
+        if (args is null) return false;
+
+        var resolved = ResolveRecoveredToolName(name, args);
+        if (resolved is null) return false;
+
+        call = new JsonObject
+        {
+            ["tool"] = resolved,
+            ["arguments"] = args.DeepClone()
+        };
         return true;
     }
+
+    private string? ResolveRecoveredToolName(string? name, JsonObject args)
+    {
+        var names = _agentBuilder!.RegisteredToolNames;
+        if (!string.IsNullOrWhiteSpace(name))
+        {
+            var exact = names.FirstOrDefault(candidate =>
+                string.Equals(candidate, name, StringComparison.OrdinalIgnoreCase));
+            if (exact is not null) return exact;
+
+            var normalized = NormalizeToolName(name);
+            var alias = names.FirstOrDefault(candidate =>
+                string.Equals(NormalizeToolName(candidate), normalized, StringComparison.Ordinal));
+            if (alias is not null) return alias;
+        }
+
+        return InferToolFromArguments(args);
+    }
+
+    private static string NormalizeToolName(string name)
+        => name.Replace("_", string.Empty).Replace("-", string.Empty).Replace(" ", string.Empty).ToLowerInvariant();
+
+    /// <summary>
+    /// Infers a tool only when the argument shape identifies exactly one
+    /// registered tool. A choice payload is the one structural special case:
+    /// it is what <c>present_choices</c> consumes, and leaving the player
+    /// without a control is worse than a recovered call.
+    /// </summary>
+    private string? InferToolFromArguments(JsonObject args)
+    {
+        var names = _agentBuilder!.RegisteredToolNames;
+        var choiceTool = names.FirstOrDefault(candidate =>
+            NormalizeToolName(candidate) == "presentchoices");
+        if (choiceTool is not null
+            && (args.ContainsKey("choices") || args.ContainsKey("options") || args.ContainsKey("ids")
+                || args.ContainsKey("labels") || args.ContainsKey("actionTypes")))
+        {
+            return choiceTool;
+        }
+
+        var matches = new List<string>();
+        foreach (var definition in _agentBuilder.ToolDefinitions.OfType<JsonObject>())
+        {
+            var toolName = definition["name"]?.GetValue<string>();
+            if (string.IsNullOrWhiteSpace(toolName)) continue;
+
+            var schema = definition["parameters"] as JsonObject;
+            var required = schema?["required"] as JsonArray;
+            if (required is null || required.Count == 0) continue;
+
+            bool allRequiredPresent = required.All(item =>
+                item is JsonValue value
+                && value.TryGetValue<string>(out var key)
+                && args.ContainsKey(key));
+            if (allRequiredPresent)
+                matches.Add(toolName);
+        }
+
+        return matches.Count == 1 ? matches[0] : null;
+    }
+
+    private static string? ReadRecoveredString(JsonNode? node)
+        => node is JsonValue value && value.TryGetValue<string>(out var text)
+            && !string.IsNullOrWhiteSpace(text)
+            ? text
+            : null;
 
     /// <summary>
     /// Parses <c>&lt;tool_call&gt;&lt;function=NAME&gt;&lt;parameter=KEY&gt;value&lt;/parameter&gt;...&lt;/function&gt;&lt;/tool_call&gt;</c>.

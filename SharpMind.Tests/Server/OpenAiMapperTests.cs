@@ -470,6 +470,7 @@ public class OpenAiMapperTests
         public string UserName { get; set; } = "User";
         public Func<string, System.Text.Json.Nodes.JsonObject, CancellationToken, Task<ToolRequestResult>>? ProcessToolRequest { get; set; }
         public string? ToolDefinitionsJson { get; set; }
+        public ToolCallRecoveryMode ToolCallRecovery { get; set; }
         public float? TokensPerSecond => null;
         public float? TimeToFirstToken => null;
         public Tokenizer Tokenizer => throw new NotSupportedException();

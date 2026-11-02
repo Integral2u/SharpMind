@@ -1,5 +1,6 @@
 using Microsoft.Extensions.AI;
 using SharpMind.Extensions.AI;
+using SharpMind.Inference.Chat;
 
 namespace SharpMind.Tests.ExtensionsAI;
 
@@ -274,6 +275,7 @@ public sealed class SharpMindChatClientTests
         public string UserName { get; set; } = "User";
         public Func<string, System.Text.Json.Nodes.JsonObject, CancellationToken, Task<SharpMind.Inference.Chat.ToolRequestResult>>? ProcessToolRequest { get; set; }
         public string? ToolDefinitionsJson { get; set; }
+        public ToolCallRecoveryMode ToolCallRecovery { get; set; }
         public float? TokensPerSecond => null;
         public float? TimeToFirstToken => null;
         public SharpMind.Tokenization.Tokenizer Tokenizer => throw new NotSupportedException();

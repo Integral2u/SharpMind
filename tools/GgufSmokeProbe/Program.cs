@@ -1,10 +1,12 @@
 using SharpMind.Core.Quantization;
 using SharpMind.Inference;
+using SharpMind.Inference.Agent;
 using SharpMind.Inference.Chat;
 using SharpMind.Model;
 using SharpMind.Model.Config;
 using SharpMind.Model.Format;
 using SharpMind.Tokenization;
+using System.Text.Json.Nodes;
 
 // GgufSmokeProbe — manual Phase-1 smoke tool. No test runner, no CI: it exists
 // to eyeball whether a real downloaded GGUF loads (or fails loudly) and, for
@@ -19,6 +21,7 @@ using SharpMind.Tokenization;
 //   dotnet run --project tools/GgufSmokeProbe -- bind <file>
 //   dotnet run --project tools/GgufSmokeProbe -- cmp  <fileA> <fileB> <tensor>
 //   dotnet run --project tools/GgufSmokeProbe -- ref  <file> [prompt | @promptfile]
+//   dotnet run --project tools/GgufSmokeProbe -- toolprobe <file> [maxTokens=96] [prompt] [temp=0.4 | temps=0.0,0.2,0.4] [reps=1]
 //
 // `run ... topk` dumps per-step top-5 logits with the decoded text to stderr.
 // That is the cheap way to tell a weight/indexing bug (near-uniform soup from
@@ -65,6 +68,9 @@ if (mode == "meta")
 
 if (mode == "dump")
     return RunDump(path, args);
+
+if (mode == "toolprobe")
+    return await RunToolProbeAsync(path, args);
 
 if (mode == "run")
     return await RunInferenceAsync(path, args);
@@ -177,6 +183,183 @@ static float[] DequantizeTensor(QuantizationOps qOps, string path, ModelMetaData
     var data = new float[n];
     qOps.ReadFor(t.Dtype, reader, data, n);
     return data;
+}
+
+// `toolprobe <file> [maxTokens=96] [prompt] [temp=0.4 | temps=0.0,0.2,0.4] [reps=1]`
+// answers one question cheaply: does
+// this model, through the prompt formatter and the detected tool-call format,
+// emit a call SharpMind can parse? It registers a single present_choices tool,
+// sends one prompt, and prints the resolved format, the raw response, and the
+// parsed call. Nothing here is game-specific.
+static async Task<int> RunToolProbeAsync(string path, string[] args)
+{
+    int maxTokens = 96;
+    string? prompt = null;
+    var temperatures = new List<float> { 0.4f };
+    int reps = 1;
+    int positional = 0;
+    for (int i = 2; i < args.Length; i++)
+    {
+        string a = args[i];
+        if (a.StartsWith("temps=", StringComparison.OrdinalIgnoreCase))
+        {
+            var parsedTemps = a[6..]
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(s => float.TryParse(s, System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out float v) ? v : float.NaN)
+                .Where(v => !float.IsNaN(v))
+                .ToList();
+            if (parsedTemps.Count > 0)
+                temperatures = parsedTemps;
+        }
+        else if (a.StartsWith("temp=", StringComparison.OrdinalIgnoreCase) &&
+            float.TryParse(a[5..], System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out float t))
+        {
+            temperatures = [t];
+        }
+        else if (a.StartsWith("reps=", StringComparison.OrdinalIgnoreCase) &&
+                 int.TryParse(a[5..], out int r) && r > 0)
+        {
+            reps = r;
+        }
+        else if (positional == 0 && int.TryParse(a, out int mt))
+        {
+            maxTokens = mt;
+            positional = 1;
+        }
+        else if (positional <= 1)
+        {
+            prompt = a;
+            positional = 2;
+        }
+    }
+
+    prompt ??= "Present the player's next choices now. Call the present_choices tool "
+               + "with a short prompt and exactly two choices: one story choice and one battle choice.";
+
+    ModelMetaData meta;
+    ModelConfig modelConfig;
+    Tokenizer? tokenizer;
+    try
+    {
+        var metaHelper = ModelFormatHelpers.GetModelMetaHelperFor(ModelFormat.Gguf);
+        metaHelper.Load(path, null, out meta, out modelConfig, out tokenizer);
+    }
+    catch (NotSupportedException ex)
+    {
+        Console.WriteLine($"UNSUPPORTED (loud fail): {ex.Message}");
+        return 3;
+    }
+
+    if (tokenizer is null)
+    {
+        Console.WriteLine("OK  meta/config loaded; no tokenizer in file -> tool probe stops here.");
+        return 0;
+    }
+
+    var format = ToolCallFormatDetector.Resolve(meta, tokenizer);
+    Console.WriteLine($"arch={meta.GetString("general.architecture")} format={format} " +
+                      $"template={(meta.GetChatTemplate() is null ? "none" : "present")} " +
+                      $"temps={string.Join(",", temperatures.Select(t => t.ToString("F2")))} reps={reps}");
+
+    try
+    {
+        var sharpConfig = modelConfig.ForModel();
+        var mapping = sharpConfig.ToJigSawMapping();
+        using var weights = ModelFactory.CreateWeights(
+            modelConfig, sharpConfig, QuantizationFactory.Create(mapping), path,
+            LoadMode.Full, quantizedResident: true, maxParallelLoadDegree: 1);
+        weights.InitializeWeights();
+        using var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
+
+        var agent = new AgentBuilder("Probe").WithTool(
+            "present_choices",
+            "Present the player's next choices.",
+            new JsonObject
+            {
+                ["type"] = "object",
+                ["properties"] = new JsonObject
+                {
+                    ["prompt"] = new JsonObject { ["type"] = "string" },
+                    ["choices"] = new JsonObject
+                    {
+                        ["type"] = "string",
+                        ["description"] = "One choice per line: id|label|actionType|detail, for example 1|Enter the cave|story|You step into the dark"
+                    }
+                },
+                ["required"] = new JsonArray("prompt", "choices")
+            },
+            _ => Task.FromResult("ok"));
+
+        var results = new List<(float Temp, int Passed)>();
+        foreach (float temperature in temperatures)
+        {
+            int passed = 0;
+            for (int rep = 1; rep <= reps; rep++)
+            {
+                Console.WriteLine($"=== temp {temperature:F2} rep {rep}/{reps} ===");
+                string? calledTool = null;
+                JsonObject? calledArgs = null;
+                await using var session = new ChatSession<StandardGeneratorBuilder<KVCacherBuilder>, KVCacherBuilder>(
+                    model, tokenizer, meta, agent)
+                {
+                    MaxTokens = 2048,
+                    MaxNewTokens = maxTokens,
+                    Temperature = temperature,
+                    TopK = 40,
+                    TopP = 0.9f,
+                    MaxToolCallsPerTurn = 3
+                };
+
+                session.ProcessToolRequest = (name, toolArgs, _) =>
+                {
+                    calledTool = name;
+                    calledArgs = toolArgs.DeepClone().AsObject();
+                    return Task.FromResult(ToolRequestResult.ReturnToCaller());
+                };
+
+                session.InitializeChat();
+
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                var text = new System.Text.StringBuilder();
+                await foreach (var entry in session.GetResponseStreamAsync(prompt))
+                {
+                    if (!string.IsNullOrEmpty(entry.Error))
+                        Console.WriteLine($"ERR  {entry.Error}");
+                    if (entry.Status == ChatStatus.Responding && !string.IsNullOrEmpty(entry.Token))
+                        text.Append(entry.Token);
+                }
+                sw.Stop();
+
+                Console.WriteLine($"--- response ({sw.Elapsed.TotalSeconds:F1}s) ---");
+                Console.WriteLine(text.ToString());
+                Console.WriteLine("--- raw agent turn ---");
+                var lastAgent = session.History.LastOrDefault(message => message.Role == ChatRole.Agent);
+                Console.WriteLine(lastAgent?.Content ?? "(none)");
+                Console.WriteLine("--- parsed ---");
+                Console.WriteLine(calledTool is null
+                    ? "tool=none"
+                    : $"tool={calledTool} args={calledArgs?.ToJsonString()}");
+                if (calledTool is not null)
+                    passed++;
+            }
+            results.Add((temperature, passed));
+        }
+
+        Console.WriteLine("--- summary ---");
+        foreach (var (temp, passed) in results)
+            Console.WriteLine($"temp={temp:F2} reps={reps} passed={passed}");
+        int totalPassed = results.Sum(r => r.Passed);
+        int totalRuns = results.Count * reps;
+        return totalPassed == totalRuns ? 0 : totalPassed == 0 ? 4 : 5;
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"toolprobe FAILED: {ex.GetType().Name}: {ex.Message}");
+        Console.WriteLine(ex.StackTrace);
+        return 1;
+    }
 }
 
 static int RunMeta(string path)

@@ -30,6 +30,14 @@ public interface IChatSession : IAsyncDisposable
     /// </summary>
     public string? ToolDefinitionsJson { get; set; }
 
+    /// <summary>
+    /// Tool-call parsing policy for this session. Defaults to
+    /// <see cref="ToolCallRecoveryMode.Lenient"/>; set
+    /// <see cref="ToolCallRecoveryMode.Strict"/> to accept only the model's
+    /// native format.
+    /// </summary>
+    public ToolCallRecoveryMode ToolCallRecovery { get; set; }
+
     /// <summary>Context window the prompt is trimmed to fit, in tokens.</summary>
     public int MaxTokens { get; set; }
 
