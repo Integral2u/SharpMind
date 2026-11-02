@@ -45,6 +45,19 @@ public sealed record GenerationConfig
     /// 0 = keep half the cache (default sliding window behaviour).
     /// </summary>
     public int SlidingWindowSize { get; init; } = 0;
+
+    // Speculative drafting
+
+    /// <summary>
+    /// Prompt-lookup drafting (<see cref="PromptLookupDrafter"/>) in <see cref="StandardGenerator{T}"/>:
+    /// the most tokens guessed from the context per verification pass. 0 = off; capped at
+    /// <see cref="MaxPromptLookupDraft"/>. Output is unchanged; code edits and quoting get faster.
+    /// </summary>
+    public int PromptLookupDraft { get; init; } = 0;
+
+    /// <summary>Upper bound for <see cref="PromptLookupDraft"/>.</summary>
+    public const int MaxPromptLookupDraft = 16;
+
     // Streaming
 
     /// <summary>
