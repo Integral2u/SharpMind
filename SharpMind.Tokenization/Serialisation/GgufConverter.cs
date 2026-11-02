@@ -57,6 +57,8 @@ public static class GgufConverter
     /// <param name="tokenTypes">Per-token type flags (tokenizer.ggml.token_type). Used to find special tokens.</param>
     /// <param name="bosId">BOS token ID (tokenizer.ggml.bos_token_id).</param>
     /// <param name="eosId">EOS token ID (tokenizer.ggml.eos_token_id).</param>
+    /// <param name="architecture">general.architecture; picks the pre-tokeniser when <paramref name="preTokenizer"/> does not.</param>
+    /// <param name="preTokenizer">tokenizer.ggml.pre; picks the pre-tokeniser by llama.cpp's name table.</param>
     public static BpeModel Convert(
         string[]  tokens,
         string[]? merges,
@@ -64,7 +66,8 @@ public static class GgufConverter
         int       bosId,
         int       eosId,
         float[]?  scores = null,
-        string?   architecture = null)
+        string?   architecture = null,
+        string?   preTokenizer = null)
     {
         ArgumentNullException.ThrowIfNull(tokens);
         if (tokens.Length == 0)
@@ -147,32 +150,27 @@ public static class GgufConverter
             }
         }        
 
-        // PreTokeniser
-        // tiktoken-based models (Llama 3+, Qwen 2+/3, DeepSeek, Phi-3/4,
-        // Gemma 2, GPT-4o) use cl100k-style pre-tokenisation with case-
-        // insensitive contraction matching. All other byte-level BPE models
-        // (GPT-2, GPT-Neo, Bloom, Starcoder, Phi-1/2, etc.) use the original
-        // GPT-2 pattern with case-sensitive contractions.
+        // PreTokeniser: chosen as llama.cpp does, see SelectPreTokeniser.
         // Original LLaMA/LLaMA-2/Mistral/TinyLlama GGUFs are SentencePiece-
         // based: they have no merges array at all, and instead rank merges by
         // tokenizer.ggml.scores. mergeList will be empty in that case, and
         // BpeEncoder detects it (via the scores array below) and switches to
         // score-ranked SentencePiece-style merging instead of silently
         // tokenising everything byte-by-byte.
-        IPreTokeniser preTokeniser = SelectPreTokeniser(architecture, merges);
-        return new BpeModel(vocab, mergeList, preTokeniser, scores);
+        IPreTokeniser preTokeniser = SelectPreTokeniser(preTokenizer, architecture, merges);
+        return new BpeModel(vocab, mergeList, preTokeniser, scores) { GgufPreTokenizer = preTokenizer };
     }
 
     /// <summary>
-    /// Selects the correct <see cref="IPreTokeniser"/> based on the model
-    /// architecture string from GGUF metadata (<c>general.architecture</c>).
-    ///
-    /// tiktoken-based models (Llama 3+, Qwen, DeepSeek, Phi-3/4, Gemma 2, DBRX)
-    /// use cl100k-style pattern with case-insensitive contraction matching.
-    /// Everything else uses the classic GPT-2 pattern.
+    /// Selects the pre-tokeniser the way llama.cpp does: by <c>tokenizer.ggml.pre</c> when it names a
+    /// known type, otherwise by <c>general.architecture</c>. SentencePiece vocabularies never call the
+    /// pre-tokeniser, so their routing here does not matter.
     /// </summary>
-    private static IPreTokeniser SelectPreTokeniser(string? architecture, string[]? merges = null)
+    private static IPreTokeniser SelectPreTokeniser(string? preTokenizer, string? architecture, string[]? merges = null)
     {
+        if (FromGgufPre(preTokenizer) is { } known)
+            return known;
+
         if (string.IsNullOrWhiteSpace(architecture))
             return new Gpt2PreTokeniser();
 
@@ -181,20 +179,42 @@ public static class GgufConverter
         // Llama 1/2 uses SentencePiece (no merges array); Llama 3+ uses tiktoken (has merges)
         bool hasMerges = merges is { Length: > 0 };
 
-        // Architectures known to use tiktoken-based vocabularies
-        if ((arch.StartsWith("llama") && hasMerges)  // Llama 3+ (tiktoken)
-            || arch is "qwen2" or "qwen2.5" or "qwen3" or "qwen2moe" or "deepseek2"
-            || arch.Contains("qwen")
-            || arch.Contains("deepseek")
+        if (arch.StartsWith("qwen35"))
+            return new Cl100kPreTokeniser(Cl100kVariant.Qwen35);
+        // Mistral 3 / Ministral use "tekken" (no llama.cpp-verified port here yet); its single-digit
+        // rule makes Qwen2 the closest of the patterns we have.
+        if (arch.Contains("qwen") || arch is "mistral3" or "ministral")
+            return new Cl100kPreTokeniser(Cl100kVariant.Qwen2);
+        if ((arch.StartsWith("llama") && hasMerges) || arch is "lfm2")
+            return new Cl100kPreTokeniser(Cl100kVariant.Llama3);
+        if (arch.Contains("deepseek")
             || arch.StartsWith("phi3") || arch.StartsWith("phi4")
             || arch.StartsWith("gemma2") || arch.StartsWith("gemma3") || arch.StartsWith("gemma-3")
-            || arch is "dbrx"
-            || arch is "mistral3" or "ministral"
-            || arch is "lfm2")
-            return new Cl100kPreTokeniser();
+            || arch is "dbrx")
+            return new Cl100kPreTokeniser(Cl100kVariant.Cl100k);
 
         return new Gpt2PreTokeniser();
     }
+
+    /// <summary>
+    /// Maps a GGUF <c>tokenizer.ggml.pre</c> name to its pre-tokeniser, using llama.cpp's name table
+    /// (<c>llama-vocab.cpp</c>, b8683) for the types SharpMind implements. Null for unknown/absent names.
+    /// </summary>
+    public static IPreTokeniser? FromGgufPre(string? pre) => pre?.ToLowerInvariant() switch
+    {
+        "qwen2" or "deepseek-r1-qwen" or "kormo" or "f2llmv2" or "stablelm2" or "hunyuan" or "solar-open"
+            => new Cl100kPreTokeniser(Cl100kVariant.Qwen2),
+        "qwen35" => new Cl100kPreTokeniser(Cl100kVariant.Qwen35),
+        "llama3" or "llama-v3" or "llama-bpe" or "falcon3" or "falcon-h1" or "pixtral" or "midm-2.0"
+            or "lfm2" or "jina-v5-nano"
+            => new Cl100kPreTokeniser(Cl100kVariant.Llama3),
+        "dbrx" or "smaug-bpe" or "glm4" or "chatglm-bpe" => new Cl100kPreTokeniser(Cl100kVariant.Cl100k),
+        "gpt-2" or "phi-2" or "jina-es" or "jina-de" or "gigachat" or "jina-v2-es" or "jina-v2-de"
+            or "a.x-4.0" or "mellum" or "modern-bert" or "jina-v1-en" or "jina-v2-code" or "roberta-bpe"
+            or "mpt" or "olmo"
+            => new Gpt2PreTokeniser(),
+        _ => null,
+    };
 
     // Helpers
 

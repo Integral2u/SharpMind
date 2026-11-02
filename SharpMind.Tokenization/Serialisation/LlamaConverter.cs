@@ -42,9 +42,10 @@ public static class LlamaConverter
         var vocab = BuildVocab(root, specials);
         var merges = BuildMerges(root);
 
-        // Llama 3+ uses the cl100k pattern; Llama 2 is the classic GPT-2 pattern.
+        // Llama 3+ uses the Llama 3 pre-tokeniser. Llama 2 is SentencePiece: the encoder takes the
+        // score-ranked path and never calls the GPT-2 pre-tokeniser set here.
         bool llama3 = UsesCl100k(root);
-        return new BpeModel(vocab, merges, llama3 ? new Cl100kPreTokeniser() : new Gpt2PreTokeniser());
+        return new BpeModel(vocab, merges, llama3 ? new Cl100kPreTokeniser(Cl100kVariant.Llama3) : new Gpt2PreTokeniser());
     }
 
     private static bool UsesCl100k(JsonElement root)
