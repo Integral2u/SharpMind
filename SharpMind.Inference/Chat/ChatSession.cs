@@ -835,25 +835,33 @@ private void ThrowIfDisposed()
                 parsed = CoerceXmlCall(parsed);
 
             // A strict parse that names an unregistered tool keeps the old
-            // behaviour (dispatch reports the unknown tool) unless Lenient
-            // recovery can resolve an alias or infer the intended tool.
+            // behaviour (dispatch reports the unknown tool) unless recovery can
+            // resolve an alias or infer the intended tool.
             if (ToolCallRecovery == ToolCallRecoveryMode.Strict
                 || IsRegisteredToolName(parsed["tool"]))
+            {
+                parsed = CanonicalizeArguments(parsed);
                 return true;
+            }
 
             if (TryRecoverToolCall(text, out var recovered) && recovered is not null)
             {
-                parsed = recovered;
+                parsed = CanonicalizeArguments(recovered);
                 return true;
             }
+
             return true;
         }
 
-        if (ToolCallRecovery == ToolCallRecoveryMode.Lenient
+        if (ToolCallRecovery != ToolCallRecoveryMode.Strict
             && _toolCallFormat != ToolCallFormat.None
             && _agentBuilder is not null
-            && TryRecoverToolCall(text, out parsed))
+            && TryRecoverToolCall(text, out parsed)
+            && parsed is not null)
+        {
+            parsed = CanonicalizeArguments(parsed);
             return true;
+        }
 
         parsed = null;
         return false;
@@ -866,6 +874,11 @@ private void ThrowIfDisposed()
             return false;
         return _agentBuilder.RegisteredToolNames.Contains(name, StringComparer.OrdinalIgnoreCase);
     }
+
+    private bool IsRegisteredToolName(string? name)
+        => name is not null
+            && _agentBuilder is not null
+            && _agentBuilder.RegisteredToolNames.Contains(name, StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// Structural recovery for a tool call the strict parser could not read.
@@ -1029,61 +1042,336 @@ private void ThrowIfDisposed()
     private string? ResolveRecoveredToolName(string? name, JsonObject args)
     {
         var names = _agentBuilder!.RegisteredToolNames;
+
         if (!string.IsNullOrWhiteSpace(name))
         {
-            var exact = names.FirstOrDefault(candidate =>
-                string.Equals(candidate, name, StringComparison.OrdinalIgnoreCase));
-            if (exact is not null) return exact;
+            var resolved = ResolveRegisteredName(names, name);
+            if (resolved is not null) return resolved;
 
-            var normalized = NormalizeToolName(name);
-            var alias = names.FirstOrDefault(candidate =>
-                string.Equals(NormalizeToolName(candidate), normalized, StringComparison.Ordinal));
-            if (alias is not null) return alias;
+            if (ToolCallRecovery == ToolCallRecoveryMode.Loose)
+            {
+                var fuzzy = ResolveFuzzyToolName(names, name, args);
+                if (fuzzy is not null) return fuzzy;
+            }
         }
 
         return InferToolFromArguments(args);
     }
 
-    private static string NormalizeToolName(string name)
-        => name.Replace("_", string.Empty).Replace("-", string.Empty).Replace(" ", string.Empty).ToLowerInvariant();
+    /// <summary>
+    /// Exact, then case-insensitive, then separator-insensitive. Each stage
+    /// stops at a unique match; two candidates at the same stage are ambiguous
+    /// and stay unresolved rather than the first one being picked.
+    /// </summary>
+    private static string? ResolveRegisteredName(IReadOnlyList<string> names, string requested)
+    {
+        var exact = names.Where(n => string.Equals(n, requested, StringComparison.Ordinal)).ToList();
+        if (exact.Count == 1) return exact[0];
+        if (exact.Count > 1) return null;
+
+        var insensitive = names.Where(n => string.Equals(n, requested, StringComparison.OrdinalIgnoreCase)).ToList();
+        if (insensitive.Count == 1) return insensitive[0];
+        if (insensitive.Count > 1) return null;
+
+        var normalized = ToolIdentifier.Normalize(requested);
+        if (normalized.Length == 0) return null;
+        var alias = names.Where(n => ToolIdentifier.Normalize(n) == normalized).ToList();
+        return alias.Count == 1 ? alias[0] : null;
+    }
+
+    /// <summary>
+    /// Loose-only: the unique closest registered name within the typo
+    /// threshold, provided the call's arguments fit that tool and do not point
+    /// at a filesystem location.
+    /// </summary>
+    private string? ResolveFuzzyToolName(IReadOnlyList<string> names, string requested, JsonObject args)
+    {
+        if (ContainsPathLikeArgument(args)) return null;
+
+        var normalized = ToolIdentifier.Normalize(requested);
+        if (normalized.Length < 4) return null;
+
+        var scored = new List<(string Name, int Distance)>();
+        foreach (var candidate in names)
+        {
+            var candidateNormalized = ToolIdentifier.Normalize(candidate);
+            int distance = ToolIdentifier.Distance(normalized, candidateNormalized);
+            if (!ToolIdentifier.IsWithinFuzzyThreshold(normalized, candidateNormalized, distance))
+                continue;
+            scored.Add((candidate, distance));
+        }
+
+        if (scored.Count == 0) return null;
+        int best = scored.Min(x => x.Distance);
+        var winners = scored.Where(x => x.Distance == best).Select(x => x.Name).ToList();
+        if (winners.Count != 1) return null;
+
+        var winner = winners[0];
+        if (!RequiredArgumentsFit(winner, args)) return null;
+        if (CandidateTakesPathArgument(winner, args)) return null;
+        return winner;
+    }
 
     /// <summary>
     /// Infers a tool only when the argument shape identifies exactly one
-    /// registered tool. A choice payload is the one structural special case:
-    /// it is what <c>present_choices</c> consumes, and leaving the player
-    /// without a control is worse than a recovered call.
+    /// registered tool. The choice payload is checked first: the historical
+    /// <c>present_choices</c> spelling is preferred, then any other registered
+    /// choice-like name or a schema that declares a <c>choices</c> property.
     /// </summary>
     private string? InferToolFromArguments(JsonObject args)
     {
-        var names = _agentBuilder!.RegisteredToolNames;
-        var choiceTool = names.FirstOrDefault(candidate =>
-            NormalizeToolName(candidate) == "presentchoices");
-        if (choiceTool is not null
-            && (args.ContainsKey("choices") || args.ContainsKey("options") || args.ContainsKey("ids")
-                || args.ContainsKey("labels") || args.ContainsKey("actionTypes")))
+        var tools = RegisteredToolDescriptors();
+        if (tools.Count == 0) return null;
+
+        // Inference is a guess, and in Loose a guess must never be aimed at a file.
+        if (ToolCallRecovery == ToolCallRecoveryMode.Loose && ContainsPathLikeArgument(args))
+            return null;
+
+        var keys = args
+            .Select(kv => ToolIdentifier.Normalize(kv.Key))
+            .Where(key => key.Length > 0)
+            .ToHashSet(StringComparer.Ordinal);
+
+        if (ChoicePayloadKeys.Any(keys.Contains))
         {
-            return choiceTool;
+            var present = tools
+                .Where(t => t.NormalizedName == "presentchoices")
+                .Select(t => t.Name)
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+            if (present.Count == 1) return present[0];
+            if (present.Count > 1) return null;
+
+            var choiceLike = tools
+                .Where(t => t.DeclaresChoices
+                    || t.NormalizedName.Contains("choice", StringComparison.Ordinal))
+                .Select(t => t.Name)
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+            if (choiceLike.Count == 1) return choiceLike[0];
+            if (choiceLike.Count > 1) return null;
         }
 
         var matches = new List<string>();
-        foreach (var definition in _agentBuilder.ToolDefinitions.OfType<JsonObject>())
+        foreach (var tool in tools)
         {
-            var toolName = definition["name"]?.GetValue<string>();
-            if (string.IsNullOrWhiteSpace(toolName)) continue;
-
-            var schema = definition["parameters"] as JsonObject;
-            var required = schema?["required"] as JsonArray;
-            if (required is null || required.Count == 0) continue;
-
-            bool allRequiredPresent = required.All(item =>
-                item is JsonValue value
-                && value.TryGetValue<string>(out var key)
-                && args.ContainsKey(key));
-            if (allRequiredPresent)
-                matches.Add(toolName);
+            if (tool.Required.Count == 0) continue;
+            if (tool.Required.All(required =>
+                    keys.Contains(required) || KeyFuzzilyMatches(args, required)))
+            {
+                matches.Add(tool.Name);
+            }
         }
 
-        return matches.Count == 1 ? matches[0] : null;
+        var distinct = matches.Distinct(StringComparer.Ordinal).ToList();
+        return distinct.Count == 1 ? distinct[0] : null;
+    }
+
+    private static readonly string[] ChoicePayloadKeys =
+        ["choices", "options", "ids", "labels", "actiontypes"];
+
+    private readonly record struct ToolDescriptor(
+        string Name,
+        string NormalizedName,
+        IReadOnlySet<string> Required,
+        bool DeclaresChoices);
+
+    private List<ToolDescriptor> RegisteredToolDescriptors()
+    {
+        var descriptors = new List<ToolDescriptor>();
+        var registered = _agentBuilder!.RegisteredToolNames.ToHashSet(StringComparer.Ordinal);
+
+        foreach (var definition in _agentBuilder.ToolDefinitions.OfType<JsonObject>())
+        {
+            var name = definition["name"]?.GetValue<string>();
+            if (string.IsNullOrWhiteSpace(name) || !registered.Contains(name)) continue;
+
+            var required = new HashSet<string>(StringComparer.Ordinal);
+            if (definition["parameters"]?["required"] is JsonArray requiredArray)
+            {
+                foreach (var item in requiredArray)
+                    if (item?.GetValue<string>() is { Length: > 0 } key)
+                        required.Add(ToolIdentifier.Normalize(key));
+            }
+
+            bool declaresChoices = definition["parameters"]?["properties"] is JsonObject properties
+                && properties.Any(p => ToolIdentifier.Normalize(p.Key) == "choices");
+
+            descriptors.Add(new ToolDescriptor(
+                name,
+                ToolIdentifier.Normalize(name),
+                required,
+                declaresChoices));
+        }
+
+        return descriptors;
+    }
+
+    private bool KeyFuzzilyMatches(JsonObject args, string required)
+    {
+        if (ToolCallRecovery != ToolCallRecoveryMode.Loose) return false;
+
+        bool matched = false;
+        foreach (var kv in args)
+        {
+            var key = ToolIdentifier.Normalize(kv.Key);
+            int distance = ToolIdentifier.Distance(required, key);
+            if (!ToolIdentifier.IsWithinFuzzyThreshold(required, key, distance)) continue;
+            if (matched) return false;      // two keys are equally plausible
+            matched = true;
+        }
+        return matched;
+    }
+
+    private static bool ContainsPathLikeArgument(JsonObject args)
+        => ToolIdentifier.ContainsPathLikeArgument(args);
+
+    /// <summary>
+    /// True when the call supplies a non-empty value to a parameter whose name
+    /// marks it as a filesystem location (path, file, directory). The value
+    /// check catches bare filenames that <see cref="ToolIdentifier.LooksLikePath"/>
+    /// cannot identify without the schema.
+    /// </summary>
+    private bool CandidateTakesPathArgument(string toolName, JsonObject args)
+    {
+        var definition = FindToolDefinition(toolName);
+        if (definition is null) return false;
+
+        var declared = DeclaredArgumentNames(definition);
+        foreach (var kv in args)
+        {
+            if (kv.Value is not JsonValue value
+                || !value.TryGetValue<string>(out var text)
+                || text.Length == 0)
+            {
+                continue;
+            }
+
+            var matched = MatchArgumentName(kv.Key, declared, allowFuzzy: true);
+            if (matched is not null && ToolIdentifier.IsPathLikeKey(matched))
+                return true;
+        }
+        return false;
+    }
+
+    private bool RequiredArgumentsFit(string toolName, JsonObject args)
+    {
+        var definition = FindToolDefinition(toolName);
+        if (definition is null || definition["parameters"]?["required"] is not JsonArray required)
+            return true;
+
+        var suppliedKeys = args.Select(kv => kv.Key).ToList();
+        bool allowFuzzy = ToolCallRecovery == ToolCallRecoveryMode.Loose;
+        foreach (var item in required)
+        {
+            if (item?.GetValue<string>() is not { Length: > 0 } key) continue;
+            if (MatchArgumentName(key, suppliedKeys, allowFuzzy) is null)
+                return false;
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// Resolves one supplied argument key to a declared name. Exact,
+    /// case-insensitive and separator-insensitive matches are always used;
+    /// fuzzy matching runs only when <paramref name="allowFuzzy"/> is set and a
+    /// single candidate is within the typo threshold.
+    /// </summary>
+    private static string? MatchArgumentName(string provided, IReadOnlyList<string> declared, bool allowFuzzy)
+    {
+        if (declared.Count == 0) return null;
+
+        var exact = declared.Where(d => string.Equals(d, provided, StringComparison.Ordinal)).ToList();
+        if (exact.Count == 1) return exact[0];
+        if (exact.Count > 1) return null;
+
+        var insensitive = declared.Where(d => string.Equals(d, provided, StringComparison.OrdinalIgnoreCase)).ToList();
+        if (insensitive.Count == 1) return insensitive[0];
+        if (insensitive.Count > 1) return null;
+
+        var normalized = ToolIdentifier.Normalize(provided);
+        if (normalized.Length == 0) return null;
+        var alias = declared.Where(d => ToolIdentifier.Normalize(d) == normalized).ToList();
+        if (alias.Count == 1) return alias[0];
+        if (alias.Count > 1) return null;
+
+        if (!allowFuzzy) return null;
+
+        var scored = new List<(string Name, int Distance)>();
+        foreach (var candidate in declared)
+        {
+            var candidateNormalized = ToolIdentifier.Normalize(candidate);
+            int distance = ToolIdentifier.Distance(normalized, candidateNormalized);
+            if (!ToolIdentifier.IsWithinFuzzyThreshold(normalized, candidateNormalized, distance))
+                continue;
+            scored.Add((candidate, distance));
+        }
+
+        if (scored.Count == 0) return null;
+        int best = scored.Min(x => x.Distance);
+        var winners = scored.Where(x => x.Distance == best).Select(x => x.Name).ToList();
+        return winners.Count == 1 ? winners[0] : null;
+    }
+
+    private static List<string> DeclaredArgumentNames(JsonObject definition)
+    {
+        var names = new List<string>();
+        if (definition["parameters"]?["properties"] is JsonObject properties)
+        {
+            foreach (var kv in properties)
+                if (kv.Key.Length > 0)
+                    names.Add(kv.Key);
+        }
+        return names;
+    }
+
+    private JsonObject? FindToolDefinition(string toolName)
+        => _agentBuilder?.ToolDefinitions
+            .OfType<JsonObject>()
+            .FirstOrDefault(t => string.Equals(
+                t["name"]?.GetValue<string>(), toolName, StringComparison.Ordinal));
+
+    /// <summary>
+    /// Rewrites argument keys to the names the tool declares. Case and
+    /// separator differences are always normalized; near-miss spelling is
+    /// repaired only under <see cref="ToolCallRecoveryMode.Loose"/>. A key is
+    /// never overwritten, and an ambiguous match is left as the model wrote it.
+    /// </summary>
+    private JsonObject CanonicalizeArguments(JsonObject call)
+    {
+        if (call["tool"]?.GetValue<string>() is not { Length: > 0 } toolName) return call;
+        if (!IsRegisteredToolName(toolName)) return call;
+        if (call["arguments"] is not JsonObject args) return call;
+
+        var definition = FindToolDefinition(toolName);
+        if (definition is null) return call;
+
+        var declared = DeclaredArgumentNames(definition);
+        if (declared.Count == 0) return call;
+
+        bool allowFuzzy = ToolCallRecovery == ToolCallRecoveryMode.Loose;
+        var canonical = new JsonObject();
+        foreach (var kv in args)
+        {
+            var target = MatchArgumentName(kv.Key, declared, allowFuzzy);
+            var key = target ?? kv.Key;
+
+            // Never overwrite a value the model already supplied under the
+            // canonical key; keep the original spelling so no argument is lost.
+            if (!string.Equals(key, kv.Key, StringComparison.Ordinal)
+                && (args.ContainsKey(key) || canonical.ContainsKey(key)))
+            {
+                key = kv.Key;
+            }
+
+            if (!canonical.ContainsKey(key))
+                canonical[key] = kv.Value?.DeepClone();
+            else
+                canonical[kv.Key] = kv.Value?.DeepClone();
+        }
+
+        call["arguments"] = canonical;
+        return call;
     }
 
     private static string? ReadRecoveredString(JsonNode? node)
@@ -1157,10 +1445,35 @@ private void ThrowIfDisposed()
         foreach (var kv in call["arguments"]!.AsObject())
         {
             string raw = kv.Value?.GetValue<string>() ?? "";
-            string? type = (props?[kv.Key] as JsonObject)?["type"]?.GetValue<string>();
+            var property = MatchProperty(props, kv.Key);
+            string? type = (property as JsonObject)?["type"]?.GetValue<string>();
             result[kv.Key] = CoerceXmlValue(raw, type);
         }
         return new JsonObject { ["tool"] = name, ["arguments"] = result };
+    }
+
+    /// <summary>
+    /// The declared property for an XML parameter key: exact, then
+    /// case-insensitive, then separator-insensitive when unique.
+    /// </summary>
+    private static JsonNode? MatchProperty(JsonObject? props, string key)
+    {
+        if (props is null) return null;
+        if (props[key] is { } exact) return exact;
+
+        foreach (var kv in props)
+            if (string.Equals(kv.Key, key, StringComparison.OrdinalIgnoreCase))
+                return kv.Value;
+
+        var normalized = ToolIdentifier.Normalize(key);
+        JsonNode? found = null;
+        foreach (var kv in props)
+        {
+            if (ToolIdentifier.Normalize(kv.Key) != normalized) continue;
+            if (found is not null) return null;     // ambiguous
+            found = kv.Value;
+        }
+        return found;
     }
 
     private static JsonNode CoerceXmlValue(string raw, string? type)
@@ -1734,11 +2047,49 @@ private void ThrowIfDisposed()
         if (result["notes"] is JsonNode notes)
             body += "\n(" + notes.GetValue<string>() + ")";
 
+        if (status == "error"
+            && result["code"]?.GetValue<string>() is "unknown_tool" or "invalid_arguments")
+        {
+            var advice = BuildRetryAdvice(toolName, args, result);
+            if (advice.Length > 0)
+                body += "\n" + advice;
+        }
+
         string header = $"[{toolName}" + KeyArguments(args) + "]";
         string text = status == "success"
             ? $"{header} {body}"
             : $"{header} ERROR: {body}";
         return Clip(text, MaxToolResultChars);
+    }
+
+    /// <summary>
+    /// A format-correct example of the call the model should have made, shown
+    /// after a missing/invalid argument or an unknown tool name. The model sees
+    /// this as the tool result and retries within the same turn.
+    /// </summary>
+    private string BuildRetryAdvice(string toolName, JsonObject args, JsonObject result)
+    {
+        string? target = result["suggestedTool"]?.GetValue<string>();
+        bool unknownTool = target is not null;
+        target ??= IsRegisteredToolName(toolName) ? toolName : null;
+        if (target is null) return "";
+
+        var definition = FindToolDefinition(target);
+        if (definition is null) return "";
+
+        var declared = DeclaredArgumentNames(definition);
+        var supplied = new JsonObject();
+        foreach (var kv in args)
+        {
+            var matched = MatchArgumentName(kv.Key, declared, allowFuzzy: false);
+            if (unknownTool && matched is null) continue;
+            if (matched is not null && supplied.ContainsKey(matched)) continue;
+            supplied[matched ?? kv.Key] = kv.Value?.DeepClone();
+        }
+
+        var filled = ToolCallExample.FillRequired(definition, supplied);
+        string example = ToolCallExample.Build(_toolCallFormat, target, filled);
+        return $"Did you mean: {example}";
     }
 
     /// <summary>The first few argument values, for the result header, e.g. " city=Paris".</summary>

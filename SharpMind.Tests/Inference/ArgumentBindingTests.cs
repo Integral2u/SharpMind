@@ -44,6 +44,15 @@ public sealed class BindingProbeTools
 
     [ToolDesc("Default and range.")]
     public string Ranged([ToolDesc("Percent.")][ToolRange(Minimum = 0, Maximum = 100, HasMinimum = true, HasMaximum = true)] int percent = 50) => percent.ToString();
+
+    [ToolDesc("Takes an action type.")]
+    public string Act([ToolDesc("Action type.")] string actionType) => actionType;
+
+    [ToolDesc("Colliding parameter names.")]
+    public string Collide(
+        [ToolDesc("Camel case.")] string actionType,
+        [ToolDesc("Snake case.")] string action_type)
+        => actionType + action_type;
 }
 
 public enum Level { Low, High }
@@ -108,6 +117,29 @@ public sealed class ArgumentBindingTests
     }
 
     [Fact]
+    public void ArgumentNames_MatchAcrossSeparators()
+    {
+        var bound = AgentBuilder.BindArguments(M("Act"), Args("""{"action_type":"battle"}"""), out var ignored);
+        Assert.Equal("battle", bound[0]);
+        Assert.Empty(ignored);
+    }
+
+    [Fact]
+    public void AmbiguousNormalizedArguments_AreNotBound()
+    {
+        var ex = Assert.ThrowsAny<ArgumentException>(() =>
+            AgentBuilder.BindArguments(M("Act"), Args("""{"action_type":"battle","action-type":"shop"}"""), out _));
+        Assert.Contains("Required argument 'actionType' is missing", ex.Message);
+    }
+
+    [Fact]
+    public void DuplicateNormalizedParameterNames_AreWarned()
+    {
+        var builder = (AgentBuilder)new AgentBuilder("Test").WithTools(new BindingProbeTools());
+        Assert.Contains(builder.RegistrationWarnings, warning => warning.Contains("ambiguous"));
+    }
+
+    [Fact]
     public void UnknownExtraArgument_IsIgnoredAndReported()
     {
         var bound = AgentBuilder.BindArguments(M("Count"), Args("""{"count":1,"label":"z","colour":"red"}"""), out var ignored);
@@ -146,7 +178,7 @@ public sealed class ArgumentBindingTests
     [Fact]
     public void FractionalNumber_ForIntParameter_IsRejectedWithTypeInError()
     {
-        var ex = Assert.Throws<ArgumentException>(() =>
+        var ex = Assert.ThrowsAny<ArgumentException>(() =>
             AgentBuilder.BindArguments(M("Count"), Args("""{"count":"2.5","label":"x"}"""), out _));
         Assert.Contains("'count' expects integer but got \"2.5\"", ex.Message);
         Assert.Contains("count (integer, required)", ex.Message);
@@ -173,6 +205,21 @@ public sealed class ArgumentBindingTests
         string message = result["message"]!.GetValue<string>();
         Assert.Contains("Unknown tool: 'Nope'", message);
         Assert.Contains("Valid tools: Count", message);
+    }
+
+    [Fact]
+    public async Task UnknownToolName_SuggestsClosestTool()
+    {
+        var result = await Call("Cont", """{"count":1,"label":"x"}""");
+        Assert.Equal("unknown_tool", result["code"]!.GetValue<string>());
+        Assert.Equal("Count", result["suggestedTool"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task MissingRequiredArgument_IsTaggedForRecoveryAdvice()
+    {
+        var result = await Call("Count", """{"label":"x"}""");
+        Assert.Equal("invalid_arguments", result["code"]!.GetValue<string>());
     }
 
     // ── Schema (item 6) ────────────────────────────────────────────

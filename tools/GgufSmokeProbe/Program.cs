@@ -21,7 +21,7 @@ using System.Text.Json.Nodes;
 //   dotnet run --project tools/GgufSmokeProbe -- bind <file>
 //   dotnet run --project tools/GgufSmokeProbe -- cmp  <fileA> <fileB> <tensor>
 //   dotnet run --project tools/GgufSmokeProbe -- ref  <file> [prompt | @promptfile]
-//   dotnet run --project tools/GgufSmokeProbe -- toolprobe <file> [maxTokens=96] [prompt] [temp=0.4 | temps=0.0,0.2,0.4] [reps=1]
+//   dotnet run --project tools/GgufSmokeProbe -- toolprobe <file> [maxTokens=96] [prompt] [temp=0.4 | temps=0.0,0.2,0.4] [reps=1] [mode=lenient|loose|strict]
 //
 // `run ... topk` dumps per-step top-5 logits with the decoded text to stderr.
 // That is the cheap way to tell a weight/indexing bug (near-uniform soup from
@@ -185,7 +185,7 @@ static float[] DequantizeTensor(QuantizationOps qOps, string path, ModelMetaData
     return data;
 }
 
-// `toolprobe <file> [maxTokens=96] [prompt] [temp=0.4 | temps=0.0,0.2,0.4] [reps=1]`
+// `toolprobe <file> [maxTokens=96] [prompt] [temp=0.4 | temps=0.0,0.2,0.4] [reps=1] [mode=lenient|loose|strict]`
 // answers one question cheaply: does
 // this model, through the prompt formatter and the detected tool-call format,
 // emit a call SharpMind can parse? It registers a single present_choices tool,
@@ -198,6 +198,7 @@ static async Task<int> RunToolProbeAsync(string path, string[] args)
     var temperatures = new List<float> { 0.4f };
     int reps = 1;
     int positional = 0;
+    ToolCallRecoveryMode recovery = ToolCallRecoveryMode.Lenient;
     for (int i = 2; i < args.Length; i++)
     {
         string a = args[i];
@@ -222,6 +223,11 @@ static async Task<int> RunToolProbeAsync(string path, string[] args)
                  int.TryParse(a[5..], out int r) && r > 0)
         {
             reps = r;
+        }
+        else if (a.StartsWith("mode=", StringComparison.OrdinalIgnoreCase) &&
+                 Enum.TryParse<ToolCallRecoveryMode>(a[5..], true, out var parsedRecovery))
+        {
+            recovery = parsedRecovery;
         }
         else if (positional == 0 && int.TryParse(a, out int mt))
         {
@@ -261,7 +267,8 @@ static async Task<int> RunToolProbeAsync(string path, string[] args)
     var format = ToolCallFormatDetector.Resolve(meta, tokenizer);
     Console.WriteLine($"arch={meta.GetString("general.architecture")} format={format} " +
                       $"template={(meta.GetChatTemplate() is null ? "none" : "present")} " +
-                      $"temps={string.Join(",", temperatures.Select(t => t.ToString("F2")))} reps={reps}");
+                      $"temps={string.Join(",", temperatures.Select(t => t.ToString("F2")))} " +
+                      $"mode={recovery} reps={reps}");
 
     try
     {
@@ -309,7 +316,8 @@ static async Task<int> RunToolProbeAsync(string path, string[] args)
                     Temperature = temperature,
                     TopK = 40,
                     TopP = 0.9f,
-                    MaxToolCallsPerTurn = 3
+                    MaxToolCallsPerTurn = 3,
+                    ToolCallRecovery = recovery
                 };
 
                 session.ProcessToolRequest = (name, toolArgs, _) =>

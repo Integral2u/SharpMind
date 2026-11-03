@@ -230,11 +230,15 @@ namespace SharpMind.Inference.Agent
                     if (tool.ReturnType == typeof(void)) continue;
                     if (tool.ReturnType == typeof(Task)) continue;
                     if (DisabledTools.Contains(tool.Name)) continue;
-                    if (ToolMethods.ContainsKey(tool.Name))
+                    if (TryFindConflictingTool(tool.Name, out var existing))
                     {
                         // Overloads cannot be told apart by name, so the second one is refused and
-                        // reported, instead of being dropped without a trace.
-                        RegistrationWarnings.Add($"Tool '{tool.Name}' is declared more than once; only the first overload is registered.");
+                        // reported, instead of being dropped without a trace. Names that differ only
+                        // by case or separators are refused for the same reason: a model cannot
+                        // distinguish them and recovery must never pick one at random.
+                        RegistrationWarnings.Add(string.Equals(existing, tool.Name, StringComparison.Ordinal)
+                            ? $"Tool '{tool.Name}' is declared more than once; only the first overload is registered."
+                            : $"Tool '{tool.Name}' conflicts with registered tool '{existing}' (names differ only by case or separators); only '{existing}' is registered.");
                         continue;
                     }
 
@@ -245,6 +249,17 @@ namespace SharpMind.Inference.Agent
                         .ToList();
 
                     if (missingAnnotations.Count > 0) continue;
+
+                    var duplicateParameters = tool.GetParameters()
+                        .Where(p => !IsRuntimeParameter(p))
+                        .Select(p => p.Name!)
+                        .GroupBy(ToolIdentifier.Normalize)
+                        .FirstOrDefault(group => group.Count() > 1);
+                    if (duplicateParameters is not null)
+                    {
+                        RegistrationWarnings.Add(
+                            $"Tool '{tool.Name}' declares parameters that differ only by case or separators ({string.Join(", ", duplicateParameters)}); argument binding is ambiguous.");
+                    }
 
                     ToolMethods.Add(tool.Name, (tool, toolClass));
                     ToolDefinitions.Add(BuildToolDef(tool));
@@ -264,8 +279,15 @@ namespace SharpMind.Inference.Agent
             ArgumentException.ThrowIfNullOrWhiteSpace(name);
             ArgumentNullException.ThrowIfNull(schema);
             ArgumentNullException.ThrowIfNull(execute);
-            if (ToolMethods.ContainsKey(name) || _delegateTools.ContainsKey(name))
+            if (TryFindConflictingTool(name, out var existing))
+            {
+                if (!string.Equals(existing, name, StringComparison.Ordinal))
+                {
+                    RegistrationWarnings.Add(
+                        $"Tool '{name}' conflicts with registered tool '{existing}' (names differ only by case or separators); only '{existing}' is registered.");
+                }
                 return this;
+            }
             if (DisabledTools.Contains(name))
                 return this;
 
@@ -277,6 +299,29 @@ namespace SharpMind.Inference.Agent
                 ["parameters"] = schema
             });
             return this;
+        }
+
+        /// <summary>
+        /// Finds an already-registered tool whose name is the same, differs only
+        /// by case, or differs only by separators. Such names cannot be told
+        /// apart reliably by a model or by recovery, so the second registration
+        /// is refused and reported.
+        /// </summary>
+        private bool TryFindConflictingTool(string name, out string? existing)
+        {
+            var normalized = ToolIdentifier.Normalize(name);
+            foreach (var candidate in ToolMethods.Keys.Concat(_delegateTools.Keys))
+            {
+                if (string.Equals(candidate, name, StringComparison.OrdinalIgnoreCase)
+                    || ToolIdentifier.Normalize(candidate) == normalized)
+                {
+                    existing = candidate;
+                    return true;
+                }
+            }
+
+            existing = null;
+            return false;
         }
 
         // Tool definition builders
@@ -465,7 +510,7 @@ namespace SharpMind.Inference.Agent
 
             if (tool["parameters"] is JsonObject pars && pars["properties"] is JsonObject props)
             {
-                var required = RequiredNames(tool);
+                var required = ToolCallExample.RequiredNames(tool);
                 var args = new JsonObject();
                 foreach (var (name, schema) in props)
                 {
@@ -496,16 +541,6 @@ namespace SharpMind.Inference.Agent
         private static bool IsDemoTool(JsonObject tool) =>
             (tool["name"]?.GetValue<string>() ?? "").StartsWith("Echo", StringComparison.Ordinal);
 
-        private static List<string> RequiredNames(JsonObject tool)
-        {
-            var names = new List<string>();
-            if (tool["parameters"] is JsonObject pars && pars["required"] is JsonArray req)
-                foreach (var r in req)
-                    if (r?.GetValue<string>() is { } n)
-                        names.Add(n);
-            return names;
-        }
-
         /// <summary>
         /// The tool the prompt examples show: the first real (non-demo) tool that has
         /// required arguments, falling back to the first real tool.
@@ -515,97 +550,15 @@ namespace SharpMind.Inference.Agent
             var tools = ToolDefinitions.OfType<JsonObject>().ToList();
             var real = tools.Where(t => !IsDemoTool(t)).ToList();
             if (real.Count == 0) real = tools;
-            return real.FirstOrDefault(t => RequiredNames(t).Count > 0) ?? real.FirstOrDefault();
+            return real.FirstOrDefault(t => ToolCallExample.RequiredNames(t).Count > 0) ?? real.FirstOrDefault();
         }
 
         /// <summary>The example call for the active format, filled in with realistic values.</summary>
         private string BuildExampleCall(JsonObject tool)
         {
             string name = tool["name"]?.GetValue<string>() ?? "tool";
-            var args = ExampleArguments(tool);
-
-            if (CallFormat == ToolCallFormat.QwenXml)
-            {
-                var sb = new StringBuilder();
-                sb.AppendLine("<tool_call>");
-                sb.AppendLine($"<function={name}>");
-                foreach (var (key, value) in args)
-                {
-                    sb.AppendLine($"<parameter={key}>");
-                    sb.AppendLine(ValueText(value));
-                    sb.AppendLine("</parameter>");
-                }
-                sb.Append("</function>\n</tool_call>");
-                return sb.ToString();
-            }
-
-            string argKey = CallFormat == ToolCallFormat.Gemma ? "args" : "arguments";
-            string json = new JsonObject { ["name"] = name, [argKey] = args }.ToJsonString();
-            return CallFormat switch
-            {
-                ToolCallFormat.Mistral => "[TOOL_CALLS]" + json,
-                ToolCallFormat.SharpMind => "<tool_call>" + json + "</tool_call>",
-                _ => json
-            };
+            return ToolCallExample.Build(CallFormat, name, ToolCallExample.ExampleArguments(tool));
         }
-
-        /// <summary>
-        /// Arguments for an example call: every required argument (up to three) and
-        /// at most one optional one, so the example stays short.
-        /// </summary>
-        private static JsonObject ExampleArguments(JsonObject tool)
-        {
-            var args = new JsonObject();
-            if (tool["parameters"] is not JsonObject pars || pars["properties"] is not JsonObject props)
-                return args;
-
-            var required = RequiredNames(tool);
-            var chosen = props.Where(p => required.Contains(p.Key)).Take(3)
-                .Concat(props.Where(p => !required.Contains(p.Key)).Take(1))
-                .ToList();
-            foreach (var (name, schema) in chosen)
-                args[name] = SampleValue(name, schema as JsonObject);
-            return args;
-        }
-
-        private static JsonNode SampleValue(string name, JsonObject? schema)
-        {
-            if (schema?["enum"] is JsonArray en && en.Count > 0 && en[0] is not null)
-                return en[0]!.DeepClone();
-
-            string type = schema?["type"]?.GetValue<string>() ?? "string";
-            switch (type)
-            {
-                case "integer":
-                    return JsonValue.Create(3)!;
-                case "number":
-                    return JsonValue.Create(2.5)!;
-                case "boolean":
-                    return JsonValue.Create(true)!;
-                case "array":
-                    bool choices = name.Contains("option", StringComparison.OrdinalIgnoreCase)
-                        || name.Contains("choice", StringComparison.OrdinalIgnoreCase);
-                    return choices ? new JsonArray("red", "green", "blue") : new JsonArray(SampleText(name));
-                default:
-                    return JsonValue.Create(SampleText(name))!;
-            }
-        }
-
-        private static string SampleText(string argName)
-        {
-            string n = argName.ToLowerInvariant();
-            if (n.Contains("city") || n.Contains("location") || n.Contains("place")) return "Paris";
-            if (n.Contains("path") || n.Contains("file")) return "notes.txt";
-            if (n.Contains("dir") || n.Contains("folder")) return ".";
-            if (n.Contains("url")) return "https://example.com";
-            if (n.Contains("query") || n.Contains("pattern") || n.Contains("search")) return "meeting";
-            if (n.Contains("content") || n.Contains("text") || n.Contains("message")) return "Hello";
-            if (n.EndsWith("name", StringComparison.Ordinal)) return "Alex";
-            return "example";
-        }
-
-        private static string ValueText(JsonNode? value) =>
-            value is JsonValue jv && jv.TryGetValue<string>(out var s) ? s : value?.ToJsonString() ?? "";
 
         // Sub-agent registration
 
@@ -719,8 +672,12 @@ namespace SharpMind.Inference.Agent
 
                 // Reflection-based tool (added via WithTools(typeof(MyTools)))
                 if (!ToolMethods.TryGetValue(toolName, out var entry))
-                    throw new ArgumentException(
-                        $"Unknown tool: '{toolName}'. Valid tools: {string.Join(", ", RegisteredToolNames)}.");
+                {
+                    return Error(
+                        $"Unknown tool: '{toolName}'. Valid tools: {string.Join(", ", RegisteredToolNames)}.",
+                        "unknown_tool",
+                        ClosestToolName(toolName));
+                }
 
                 var reflectionArgs = toolCall["arguments"]?.AsObject() ?? [];
                 var invokeArgs = BindArguments(entry.Method, reflectionArgs, out var ignored, cancellationToken);
@@ -733,8 +690,35 @@ namespace SharpMind.Inference.Agent
                     response["notes"] = $"Ignored argument(s) the tool does not declare: {string.Join(", ", ignored)}.";
                 return response;
             }
+            catch (ToolBindingException ex) { return Error(ex.Message, "invalid_arguments"); }
             catch (TargetInvocationException ex) { return Error(ex.InnerException?.Message ?? ex.Message); }
             catch (Exception ex) { return Error(ex.Message); }
+        }
+
+        /// <summary>
+        /// The registered tool whose name is the unique closest match to an
+        /// unknown name, for a retry suggestion only. Never used to dispatch.
+        /// </summary>
+        private string? ClosestToolName(string requested)
+        {
+            var normalized = ToolIdentifier.Normalize(requested);
+            if (normalized.Length < 4) return null;
+
+            var scored = RegisteredToolNames
+                .Select(name =>
+                {
+                    var candidate = ToolIdentifier.Normalize(name);
+                    return (Name: name, Distance: ToolIdentifier.Distance(normalized, candidate));
+                })
+                .Where(x => ToolIdentifier.IsWithinFuzzyThreshold(
+                    normalized, ToolIdentifier.Normalize(x.Name), x.Distance))
+                .OrderBy(x => x.Distance)
+                .ToList();
+
+            if (scored.Count == 0) return null;
+            int best = scored[0].Distance;
+            var winners = scored.Where(x => x.Distance == best).Select(x => x.Name).ToList();
+            return winners.Count == 1 ? winners[0] : null;
         }
 
         /// <summary>
@@ -778,9 +762,8 @@ namespace SharpMind.Inference.Agent
             var ctx = new NullabilityInfoContext();
             var @params = method.GetParameters();
             var result = new object?[@params.Length];
-            var declared = new HashSet<string>(@params.Where(p => !IsRuntimeParameter(p)).Select(p => p.Name!),
-                StringComparer.OrdinalIgnoreCase);
-            ignored = args.Select(kv => kv.Key).Where(k => !declared.Contains(k)).ToList();
+            var declaredNames = @params.Where(p => !IsRuntimeParameter(p)).Select(p => p.Name!).ToList();
+            ignored = args.Select(kv => kv.Key).Where(k => !IsBoundKey(k, declaredNames)).ToList();
 
             for (int i = 0; i < @params.Length; i++)
             {
@@ -798,7 +781,7 @@ namespace SharpMind.Inference.Agent
                     { result[i] = p.DefaultValue; continue; }
                     if (ctx.Create(p).WriteState == NullabilityState.Nullable)
                     { result[i] = null; continue; }
-                    throw new ArgumentException(
+                    throw new ToolBindingException(
                         $"Required argument '{p.Name}' is missing. Parameters: {DescribeParameters(method)}.");
                 }
 
@@ -809,7 +792,7 @@ namespace SharpMind.Inference.Agent
                 catch (Exception ex) when (ex is ArgumentException or JsonException or FormatException
                                               or OverflowException or InvalidCastException)
                 {
-                    throw new ArgumentException(
+                    throw new ToolBindingException(
                         $"Argument '{p.Name}' expects {ExpectedType(p.ParameterType)} but got {Describe(node)}. " +
                         $"Parameters: {DescribeParameters(method)}.");
                 }
@@ -818,7 +801,26 @@ namespace SharpMind.Inference.Agent
             return result;
         }
 
-        /// <summary>The argument with this name, matched case-insensitively. Null-valued arguments count as absent.</summary>
+        /// <summary>
+        /// True when a supplied key binds to a declared parameter: exact,
+        /// case-insensitive, or a unique separator-insensitive match.
+        /// </summary>
+        private static bool IsBoundKey(string key, IReadOnlyList<string> declaredNames)
+        {
+            if (declaredNames.Any(d => string.Equals(d, key, StringComparison.OrdinalIgnoreCase)))
+                return true;
+
+            var normalized = ToolIdentifier.Normalize(key);
+            return declaredNames.Count(d => ToolIdentifier.Normalize(d) == normalized) == 1;
+        }
+
+        /// <summary>
+        /// The argument with this name: exact, then case-insensitive, then
+        /// separator-insensitive (<c>action_type</c> matches <c>actionType</c>).
+        /// A normalized match is used only when exactly one supplied key maps to
+        /// it, so duplicate names never bind silently. Null-valued arguments
+        /// count as absent.
+        /// </summary>
         private static JsonNode? FindArgument(JsonObject args, string name)
         {
             JsonNode? node = args[name];
@@ -833,6 +835,26 @@ namespace SharpMind.Inference.Agent
                     }
                 }
             }
+
+            if (node is null)
+            {
+                var normalized = ToolIdentifier.Normalize(name);
+                string? matchedKey = null;
+                bool ambiguous = false;
+                foreach (var kv in args)
+                {
+                    if (ToolIdentifier.Normalize(kv.Key) != normalized) continue;
+                    if (matchedKey is not null)
+                    {
+                        ambiguous = true;
+                        break;
+                    }
+                    matchedKey = kv.Key;
+                }
+                if (!ambiguous && matchedKey is not null)
+                    node = args[matchedKey];
+            }
+
             return node is not null && node.GetValueKind() == JsonValueKind.Null ? null : node;
         }
 
@@ -983,7 +1005,14 @@ namespace SharpMind.Inference.Agent
             return text.Length > 60 ? text[..60] + "..." : text;
         }
         private static JsonObject Success(string data) => new() { ["status"] = "success", ["data"] = data };
-        private static JsonObject Error(string message) => new() { ["status"] = "error", ["message"] = message };
+
+        private static JsonObject Error(string message, string? code = null, string? suggestedTool = null)
+        {
+            var error = new JsonObject { ["status"] = "error", ["message"] = message };
+            if (code is not null) error["code"] = code;
+            if (suggestedTool is not null) error["suggestedTool"] = suggestedTool;
+            return error;
+        }
         private static string TemperaturePersonality(float temperature) => temperature switch
         {
             <= 0.1f => "exacting and strictly literal",
