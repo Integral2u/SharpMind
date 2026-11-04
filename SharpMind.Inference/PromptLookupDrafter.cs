@@ -14,22 +14,31 @@ public sealed class PromptLookupDrafter
     /// <summary>Key lengths tried in order: a longer match is a better predictor than a more recent short one.</summary>
     public const int MaxKey = 4, MinKey = 2;
 
-    /// <summary>Drafting stops for the request once this many tokens were drafted and under 20% were accepted.</summary>
-    public const int GateMinDrafted = 24;
+    /// <summary>
+    /// The gate judges every window of this many drafted tokens on its own: under 20% accepted pauses
+    /// drafting for <see cref="PauseInitial"/> proposals, doubling on each consecutive failed window up to
+    /// <see cref="PauseMax"/>; a passed window resets the pause. Prose pays a few cheap retries; a reply
+    /// that quotes only after an opening sentence of its own still gets drafted.
+    /// </summary>
+    public const int GateMinDrafted = 24, PauseInitial = 32, PauseMax = 1024;
 
     public int Drafted { get; private set; }
     public int Accepted { get; private set; }
 
-    /// <summary>False once the acceptance rate shows drafting does not pay for this request (prose).</summary>
-    public bool Enabled => Drafted < GateMinDrafted || Accepted * 5 >= Drafted;
+    private int _winDrafted, _winAccepted, _pauseLeft, _pause = PauseInitial;
+
+    /// <summary>False while the gate has drafting paused after a window of mostly rejected drafts.</summary>
+    public bool Enabled => _pauseLeft == 0;
 
     /// <summary>
     /// Writes up to <c>draft.Length</c> proposed tokens to follow <paramref name="context"/> and returns
-    /// how many. Zero when disabled, when <paramref name="draft"/> is empty, or when nothing matches.
+    /// how many. Zero while paused (each call counts one proposal of the pause), when
+    /// <paramref name="draft"/> is empty, or when nothing matches.
     /// </summary>
     public int Propose(IReadOnlyList<int> context, Span<int> draft)
     {
-        if (!Enabled || draft.IsEmpty) return 0;
+        if (!Enabled) { _pauseLeft--; return 0; }
+        if (draft.IsEmpty) return 0;
         for (int key = MaxKey; key >= MinKey; key--)
         {
             int m = Search(context, key, draft);
@@ -43,6 +52,16 @@ public sealed class PromptLookupDrafter
     {
         Drafted += drafted;
         Accepted += accepted;
+        _winDrafted += drafted;
+        _winAccepted += accepted;
+        if (_winDrafted < GateMinDrafted) return;
+        if (_winAccepted * 5 < _winDrafted)
+        {
+            _pauseLeft = _pause;
+            _pause = Math.Min(_pause * 2, PauseMax);
+        }
+        else _pause = PauseInitial;
+        _winDrafted = _winAccepted = 0;
     }
 
     // Latest earlier occurrence of the last `key` tokens; copies what followed it. When the match

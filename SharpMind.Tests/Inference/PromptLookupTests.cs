@@ -131,19 +131,59 @@ public sealed class PromptLookupTests
         Assert.Equal(0, drafter.Propose(new[] { 5, 6, 5, 6 }, Span<int>.Empty));
     }
 
-    [Fact]
-    public void Drafter_GateTripsOnlyAfterEnoughDrafts()
+    /// <summary>Proposals returning nothing while the drafter is paused; the context always matches once it is not.</summary>
+    // Counts the proposals the gate refuses before drafting resumes. The context matches itself (5,6 at
+    // the start), so an enabled drafter always proposes; a pause that never ends is reported, not waited for.
+    private static int PausedProposals(PromptLookupDrafter drafter)
     {
-        var drafter = new PromptLookupDrafter();
-        drafter.Record(PromptLookupDrafter.GateMinDrafted - 1, 0);
-        Assert.True(drafter.Enabled);
-        drafter.Record(1, 0);
-        Assert.False(drafter.Enabled);
-        Assert.Equal(0, drafter.Propose(new[] { 5, 6, 7, 5, 6 }, new int[4]));
+        int n = 0;
+        while (drafter.Propose(new[] { 5, 6, 7, 5, 6 }, new int[4]) == 0)
+            Assert.True(++n <= PromptLookupDrafter.PauseMax, "the pause never ended");
+        return n;
+    }
 
-        var good = new PromptLookupDrafter();
-        good.Record(30, 6); // exactly 20%: keeps drafting
-        Assert.True(good.Enabled);
+    [Fact]
+    public void Drafter_GatePausesThenResumes_DoublingThePause_ResettingOnAPassedWindow()
+    {
+        const int W = PromptLookupDrafter.GateMinDrafted, P = PromptLookupDrafter.PauseInitial;
+        var drafter = new PromptLookupDrafter();
+        drafter.Record(W - 1, 0);
+        Assert.True(drafter.Enabled);
+        drafter.Record(1, 0);                       // first failed window
+        Assert.False(drafter.Enabled);
+        Assert.Equal(P, PausedProposals(drafter));
+        drafter.Record(W, 0);                       // second consecutive failure: twice the pause
+        Assert.Equal(2 * P, PausedProposals(drafter));
+        drafter.Record(W, 5);                       // 5/24 passes on the window; 5/72 would not on request totals
+        Assert.True(drafter.Enabled);
+        drafter.Record(W, 0);                       // after a passed window the pause starts over
+        Assert.Equal(P, PausedProposals(drafter));
+        int pause = 0;
+        for (int i = 0; i < 8; i++)                 // doubling is capped
+        {
+            drafter.Record(W, 0);
+            pause = PausedProposals(drafter);
+            Assert.InRange(pause, P, PromptLookupDrafter.PauseMax);
+        }
+        Assert.Equal(PromptLookupDrafter.PauseMax, pause);
+
+        var afterGood = new PromptLookupDrafter();
+        afterGood.Record(W, W);                     // a perfect window does not shield the next one
+        afterGood.Record(W, 0);
+        Assert.False(afterGood.Enabled);
+
+        var exact = new PromptLookupDrafter();
+        exact.Record(30, 6);                        // exactly 20%: keeps drafting
+        Assert.True(exact.Enabled);
+
+        var crossing = new PromptLookupDrafter();
+        crossing.Record(W + 3, 0);                  // a run landing past the threshold is judged whole
+        Assert.False(crossing.Enabled);
+        PausedProposals(crossing);
+        crossing.Record(W - 1, 0);                  // and the next window starts from zero: 23 is not judged
+        Assert.True(crossing.Enabled);
+        crossing.Record(1, 0);                      // 24 is
+        Assert.False(crossing.Enabled);
     }
 
     // ── Output identical to drafting off ──────────────────────────────────
@@ -248,17 +288,23 @@ public sealed class PromptLookupTests
         AssertCacheConsistent(gen, prompt, on.Ids);
     }
 
+    private const string Letters = "abcdefgh";
+
+    /// <summary>Every pair of the eight letters: every step finds a match and drafts.</summary>
+    private static IEnumerable<int> LetterPairs()
+        => Letters.SelectMany(x => Letters.SelectMany(y => new[] { Id(x), Id(y) }));
+
     [Fact]
-    public async Task PoorAcceptance_GateStopsDrafting_SameTokens()
+    public async Task PoorAcceptance_GatePausesAndRetries_SameTokens()
     {
-        // Eight letters, and a prompt holding every pair of them: every step finds a match and drafts.
-        // Sampled hot, the random model picks among the eight almost uniformly, so a drafted letter
-        // holds about one time in eight. The gate must switch drafting off once GateMinDrafted is
-        // reached, and output stays identical (same seed, one draw per token either way).
+        // Sampled hot, the random model picks among the eight letters almost uniformly, so a drafted
+        // letter holds about one time in eight. The first window of GateMinDrafted fails within a few
+        // steps and pauses drafting for PauseInitial proposals; the retry fills a second window, which
+        // fails and pauses for twice as long, past the end of the reply. Output stays identical (same
+        // seed, one draw per token either way).
         using var model = BuildModel();
         using var gen = NewGenerator(model);
-        const string letters = "abcdefgh";
-        int[] prompt = [.. letters.SelectMany(x => letters.SelectMany(y => new[] { Id(x), Id(y) }))];
+        int[] prompt = [.. LetterPairs()];
         var eight = GbnfGrammar.Parse("root ::= " + string.Join(' ', Enumerable.Repeat("[a-h]", 80)));
 
         var off = await Generate(gen, prompt, 0, maxNewTokens: 80, temperature: 2f, seed: 3,
@@ -268,7 +314,32 @@ public sealed class PromptLookupTests
 
         Assert.Equal(off.Ids, on.Ids);
         Assert.True(on.Stats.Accepted * 5 < on.Stats.Drafted, $"acceptance too high for this test: {on.Stats}");
-        Assert.InRange(on.Stats.Drafted, PromptLookupDrafter.GateMinDrafted, PromptLookupDrafter.GateMinDrafted + Draft);
+        const int W = PromptLookupDrafter.GateMinDrafted;
+        Assert.InRange(on.Stats.Drafted, 2 * W, 2 * (W + Draft - 1)); // two windows: the pause ended once, not twice
+    }
+
+    [Fact]
+    public async Task LateStart_ResumesDraftingForTheQuotedPart_SameTokens()
+    {
+        // A reply that opens with 34 unpredictable letters (the gate trips) and then quotes a line
+        // that sits at the end of the prompt. The pause ends a few tokens into the quote; from there
+        // the drafter copies the line and the model accepts it. The gate that stopped for good got
+        // under ten accepted tokens here.
+        const string quote = "|THE QUICK BROWN FOX JUMPS OVER A LAZY DOG. PACK MY BOX WITH FIVE DOZEN LIQUOR JUGS!";
+        using var model = BuildModel(maxSeqLen: 512);
+        using var gen = NewGenerator(model);
+        int[] prompt = [.. LetterPairs(), .. quote.Select(Id)];
+        var grammar = GbnfGrammar.Parse("root ::= " + string.Join(' ', Enumerable.Repeat("[a-h]", 34)) + $" \"{quote}\"");
+        int maxNew = 34 + quote.Length + 1;
+
+        var off = await Generate(gen, prompt, 0, maxNewTokens: maxNew, temperature: 2f, seed: 3,
+                                 constraint: grammar.CreateConstraint(ByteTable, [Tokenizer.EosId]));
+        var on = await Generate(gen, prompt, Draft, maxNewTokens: maxNew, temperature: 2f, seed: 3,
+                                constraint: grammar.CreateConstraint(ByteTable, [Tokenizer.EosId]));
+
+        Assert.Equal(off.Ids, on.Ids);
+        Assert.EndsWith(quote, on.Text);
+        Assert.True(on.Stats.Accepted >= 2 * PromptLookupDrafter.GateMinDrafted, $"drafting did not resume for the quote: {on.Stats}");
     }
 
     [Fact]
