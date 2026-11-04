@@ -4,6 +4,19 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0.0]
+
+### Added
+
+- **Record-aware training batch source** — new `ITrainingBatchSource`; `DataLoader` implements it, and `RecordDataLoader` streams batches from an `IRecordSource` through an `IRecordBatchStrategy` (the SFT batcher) with the same `maxBatches`/`skipBatches` semantics. This makes checkpoint cursors and step budgets work for record-shaped data.
+- **`TrainLoop` record-aware overload** — the loop now accepts any `ITrainingBatchSource`. The existing `DataLoader` constructor is retained unchanged and delegates to the new overload, so no existing call site or binary contract changes.
+- **SFT integration path** — `SftBatcher`, `TokenizedExample`, `ConversationTokenizer`, `DataRecord` and the record adapters can now feed `TrainLoop` through `RecordDataLoader`.
+
+### Notes
+
+- Additive only: no existing public type, method or constructor signature was removed or changed.
+- Pinned by `RecordDataLoaderTests` alongside the existing `ConversationTokenizerTests` and `SftBatcherTests`.
+
 ## [1.0.9.0]
 
 ### Added

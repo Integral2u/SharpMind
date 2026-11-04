@@ -10,7 +10,7 @@ namespace SharpMind.Data;
 /// Connects a <see cref="PipelineNode"/> to a tokeniser and a batch strategy,
 /// and exposes the result as an <see cref="IAsyncEnumerable{TrainingBatch}"/>.
 /// </summary>
-public sealed class DataLoader
+public sealed class DataLoader : ITrainingBatchSource
 {
     private readonly PipelineNode _pipeline;
     private readonly Func<string, int[]> _tokenise;

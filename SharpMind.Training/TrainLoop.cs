@@ -28,7 +28,7 @@ namespace SharpMind.Training;
 public sealed class TrainLoop
 {
     private readonly List<Parameter>       _parameters;
-    private readonly DataLoader            _loader;
+    private readonly ITrainingBatchSource  _loader;
     private readonly IOptimizer            _optimizer;
     private readonly IScheduler            _scheduler;
     private readonly TrainConfig           _config;
@@ -48,6 +48,28 @@ public sealed class TrainLoop
         Transformer           model,
         IEnumerable<Parameter> parameters,
         DataLoader             loader,
+        IOptimizer             optimizer,
+        IScheduler             scheduler,
+        TrainingOps            ops,
+        ILoss<int>?            loss      = null,
+        GradientMapping?       mapping   = null,
+        SharpMindConfig?       smmConfig = null,
+        TrainConfig?           config    = null,
+        ITrainingEngine?       engine    = null)
+        : this(model, parameters, (ITrainingBatchSource)loader, optimizer, scheduler, ops,
+               loss, mapping, smmConfig, config, engine)
+    {
+    }
+
+    /// <summary>
+    /// Creates a loop over any <see cref="ITrainingBatchSource"/>, including the
+    /// record-aware loader used for SFT. The existing <see cref="DataLoader"/>
+    /// overload is retained unchanged and delegates here.
+    /// </summary>
+    public TrainLoop(
+        Transformer           model,
+        IEnumerable<Parameter> parameters,
+        ITrainingBatchSource  loader,
         IOptimizer             optimizer,
         IScheduler             scheduler,
         TrainingOps            ops,
