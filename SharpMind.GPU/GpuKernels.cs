@@ -13,6 +13,8 @@ internal sealed class GpuKernels
     private readonly Action<Index1D, ArrayView<float>, float> _scale;
     private readonly Action<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<int>, int> _gather;
     private readonly Action<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, float> _rmsFwd;
+    private readonly Action<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, float> _layerNormFwd;
+    private readonly Action<Index1D, ArrayView<float>, ArrayView<float>> _geluFwd;
     private readonly Action<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, int> _rmsBwd;
     private readonly Action<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int, int, int, float> _rope;
     private readonly Action<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int, int, int, int, float> _ropePos;
@@ -44,6 +46,8 @@ internal sealed class GpuKernels
         _scale = acc.LoadAutoGroupedStreamKernel<Index1D, ArrayView<float>, float>(ElementwiseKernels.Scale);
         _gather = acc.LoadAutoGroupedStreamKernel<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<int>, int>(ElementwiseKernels.EmbedGather);
         _rmsFwd = acc.LoadAutoGroupedStreamKernel<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, float>(NormKernels.RmsNormFwd);
+        _layerNormFwd = acc.LoadAutoGroupedStreamKernel<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, float>(NormKernels.LayerNormFwd);
+        _geluFwd = acc.LoadAutoGroupedStreamKernel<Index1D, ArrayView<float>, ArrayView<float>>(GateKernels.GeluFwd);
         _rmsBwd = acc.LoadAutoGroupedStreamKernel<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, ArrayView<float>, int>(NormKernels.RmsNormBwd);
         _rope = acc.LoadAutoGroupedStreamKernel<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int, int, int, float>(RopeKernels.Rope);
         _ropePos = acc.LoadAutoGroupedStreamKernel<Index1D, ArrayView<float>, ArrayView<float>, ArrayView<float>, int, int, int, int, int, int, float>(RopeKernels.RopePos);
@@ -121,6 +125,20 @@ internal sealed class GpuKernels
         => DequantGather(x, table, ids, K, QuantDType.Q8_0);
     public void RmsNormFwd(DeviceTensor y, DeviceTensor rInv, DeviceTensor x, DeviceTensor w, float eps) { Same(y, x); CheckNormOperands(x, rInv, w); _rmsFwd(x.Rows, y.View, rInv.View, x.View, w.View, x.Cols, eps); }
     public void RmsNormBwd(DeviceTensor dx, DeviceTensor dy, DeviceTensor x, DeviceTensor rInv, DeviceTensor w) { Same(dx, dy); Same(dx, x); CheckNormOperands(x, rInv, w); _rmsBwd(x.Rows, dx.View, dy.View, x.View, rInv.View, w.View, x.Cols); }
+
+    public void LayerNormFwd(DeviceTensor y, DeviceTensor x, DeviceTensor w, DeviceTensor b, float eps)
+    {
+        Same(y, x);
+        if (w.Length != x.Cols) throw new ArgumentException($"w length {w.Length} != cols {x.Cols}.");
+        if (b.Length != x.Cols) throw new ArgumentException($"b length {b.Length} != cols {x.Cols}.");
+        _layerNormFwd(x.Rows, y.View, x.View, w.View, b.View, x.Cols, eps);
+    }
+
+    public void GeluFwd(DeviceTensor y, DeviceTensor x)
+    {
+        Same(y, x);
+        _geluFwd(x.Rows * x.Cols, y.View, x.View);
+    }
 
     public void RopeFwd(DeviceTensor x, DeviceTensor cos, DeviceTensor sin, int seqLen, int numHeads, int headDim, int ropeDim, bool neox)
     {

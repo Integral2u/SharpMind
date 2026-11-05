@@ -37,6 +37,12 @@ public sealed class GpuInferenceEngineTests : IClassFixture<GpuInferenceEngineTe
         VocabSize = 256, HiddenDim = 64, NumLayers = 2, NumHeads = 4, NumKvHeads = 2, FfnDim = 128, MaxSeqLen = 64,
         Architecture = "qwen2",
     };
+
+    private static ModelConfig GptCfg => new()
+    {
+        VocabSize = 256, HiddenDim = 64, NumLayers = 2, NumHeads = 4, NumKvHeads = 4, FfnDim = 128, MaxSeqLen = 64,
+        Architecture = "gpt2",
+    };
     private const int MaxCacheLength = 64;
 
     private readonly Transformer _model;
@@ -614,9 +620,54 @@ public sealed class GpuInferenceEngineTests : IClassFixture<GpuInferenceEngineTe
             Assert.Contains(needle, ex.Message, StringComparison.OrdinalIgnoreCase);
         }
 
-        Reject(SharpMindConfig.Llama with { Gate = GateKind.None, Ffn = FfnKind.Dense }, "dense");
+        Reject(SharpMindConfig.Llama with { Gate = GateKind.None, Ffn = FfnKind.Dense, Activation = ActivationKind.ReLU }, "dense FFN activation");
         Reject(SharpMindConfig.ForModel(4, 4, "mixtral") with { Ffn = FfnKind.MoE }, "MoE");
-        Reject(SharpMindConfig.Llama with { Norm = NormKind.LayerNorm }, "RMSNorm");
+    }
+
+    /// <summary>GPT-2/BERT-style LayerNorm + dense GELU FFN is now supported on the device.</summary>
+    [Fact]
+    public void ValidateSupported_AcceptsLayerNormAndDenseGeluFfn()
+    {
+        var sc = SharpMindConfig.Gpt with { Hardware = HardwareTier.Scalar };
+        var cfg = GptCfg;
+        var weights = ModelFactory.CreateForTraining(cfg, sc);
+        using var model = ModelFactory.CreateTrainingTransformer(weights, sc);
+
+        GpuInferenceEngine.ValidateSupported(model, sc);   // must not throw
+        Assert.True(GpuInferenceEngine.CheckSupported(
+            new ModelMetaData(), cfg, sc, out string? reason), reason);
+    }
+
+    /// <summary>The device forward for LayerNorm + dense GELU must match the CPU transformer.</summary>
+    [Fact]
+    public void LayerNormDenseGelu_MatchesCpu()
+    {
+        var sc = SharpMindConfig.Gpt with { Hardware = HardwareTier.Scalar };
+        var weights = ModelFactory.CreateForTraining(GptCfg, sc);
+        WeightInitializer.InitializeRandomly(weights, 4242);
+        using var model = ModelFactory.CreateTrainingTransformer(weights, sc);
+        using var engine = new GpuInferenceEngine(
+            GpuTestDevice.Device, model, sc, MaxCacheLength, maxPromptTokens: 32);
+        using var workspace = WorkspaceFor(model);
+        IKVCache[] caches = CachesFor(model, MaxCacheLength);
+        try
+        {
+            int[] prompt = Prompt();
+            float[] gpu = engine.Prefill(prompt).ToArray();
+            float[] cpu = LastLogits(model, caches, prompt, workspace);
+            Assert.True(MaxAbsDiff(gpu, cpu) <= 1e-4f,
+                $"prefill diff {MaxAbsDiff(gpu, cpu):G2}");
+
+            int token = ArgMax(cpu);
+            var gpuNext = engine.DecodeStep(token);
+            float[] cpuNext = LastLogits(model, caches, [token], workspace);
+            Assert.True(MaxAbsDiff(gpuNext.Span, cpuNext) <= 1e-4f,
+                $"decode diff {MaxAbsDiff(gpuNext.Span, cpuNext):G2}");
+        }
+        finally
+        {
+            foreach (IKVCache cache in caches) cache.Dispose();
+        }
     }
 
     /// <summary>The GPU engine does not yet implement the per-head Q/K RMS norm Qwen3-style

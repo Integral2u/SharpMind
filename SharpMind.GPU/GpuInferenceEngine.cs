@@ -44,10 +44,11 @@ namespace SharpMind.GPU;
 /// work, just without GPU acceleration past the cap.
 ///
 /// Model constraints mirror <see cref="GpuBackpropEngine.ValidateSupported"/> minus the
-/// LoRA/trainable-parameter checks, which don't apply here: RMSNorm final norm and block
-/// norms, RoPE or NoPE, gated FFN, no MoE. Quantized GGUF weights run on the device for the
-/// dtypes in <see cref="SupportedDtypes"/>; a block linear in any other quant (e.g. Q8_K) falls
-/// back per-tensor to the host and the rest of the model stays on the device.
+/// LoRA/trainable-parameter checks, which don't apply here: RMSNorm or LayerNorm final/block
+/// norms, RoPE or NoPE, gated (SwiGLU/GeGLU) or dense GELU FFN, no MoE. Quantized GGUF weights
+/// run on the device for the dtypes in <see cref="SupportedDtypes"/>; a block linear in any other
+/// quant (e.g. Q8_K) falls back per-tensor to the host and the rest of the model stays on the
+/// device.
 /// </summary>
 public sealed class GpuInferenceEngine : IInferenceEngine
 {
@@ -55,11 +56,13 @@ public sealed class GpuInferenceEngine : IInferenceEngine
     private readonly Transformer _model;
     private readonly ModelConfig _cfg;
     private readonly bool _gelu, _gemmaScale, _rope, _neox;
+    private readonly bool _layerNorm, _denseFfn;
     private readonly int _ropeDim;
     private readonly int _maxPromptTokens;
     private readonly GpuBlock[] _blocks;
     private readonly DeviceBuffer? _embedding;
     private readonly DeviceBuffer _finalNormW;
+    private readonly DeviceBuffer? _finalNormB;
     private readonly DeviceByteBuffer? _embeddingRaw;
     private readonly QuantDType? _embeddingDtype;
     private readonly DeviceBuffer? _lmHead;
@@ -140,6 +143,8 @@ public sealed class GpuInferenceEngine : IInferenceEngine
         _dev = device; _model = model; _cfg = model.Config; MaxCacheLength = maxCacheLength; _maxPromptTokens = maxPromptTokens;
         _gelu = config.Gate == GateKind.GeGLU;
         _gemmaScale = config.Activation == ActivationKind.GELU && config.Gate == GateKind.GeGLU;
+        _layerNorm = model.FinalNorm is LayerNormLayer;
+        _denseFfn = config.Ffn == FfnKind.Dense;
         int kvDim = _cfg.NumKvHeads * _cfg.HeadDim;
 
         var owned = new List<IDisposable>();
@@ -186,6 +191,10 @@ public sealed class GpuInferenceEngine : IInferenceEngine
                 }
             }
             _finalNormW = DeviceBuffer.From(device, model.FinalNorm.NormWeight); owned.Add(_finalNormW);
+            if (model.FinalNorm.NormBias is { } finalBias)
+            {
+                _finalNormB = DeviceBuffer.From(device, finalBias); owned.Add(_finalNormB);
+            }
             if (model.GetBlock(0)!.Attention.PositionalEncoder is RoPE rope)
             {
                 _rope = true; _neox = rope.NeoxStyle; _ropeDim = rope.RopeDim;
@@ -255,6 +264,52 @@ public sealed class GpuInferenceEngine : IInferenceEngine
             if (ArenaFloats(_cfg, mid, MaxCacheLength) <= budgetFloats) lo = mid; else hi = mid - 1;
         }
         return lo;
+    }
+
+    /// <summary>RMSNorm or LayerNorm on the device, chosen by the model's final norm.</summary>
+    private void NormFwd(
+        GpuKernels k,
+        DeviceTensor y,
+        DeviceTensor rInv,
+        DeviceTensor x,
+        DeviceBuffer weight,
+        DeviceBuffer? bias)
+    {
+        if (_layerNorm)
+        {
+            if (bias is null)
+                throw new InvalidOperationException("LayerNorm needs a bias buffer on the device.");
+            k.LayerNormFwd(y, x, weight.Tensor, bias.Tensor, _cfg.NormEps);
+            return;
+        }
+
+        k.RmsNormFwd(y, rInv, x, weight.Tensor, _cfg.NormEps);
+    }
+
+    /// <summary>Gated (SwiGLU/GeGLU) or dense GELU FFN, then the residual add.</summary>
+    private void FfnFwd(GpuKernels k, GpuBlock block, DeviceTensor normed, DeviceTensor residual, int rows)
+    {
+        int H = _cfg.HiddenDim, F = _cfg.FfnDim;
+        var down = _arena.Rent(rows, H);
+
+        if (block.Dense)
+        {
+            var hidden = _arena.Rent(rows, F);
+            block.W1!.Forward(hidden, normed, _arena);
+            var activated = _arena.Rent(rows, F);
+            k.GeluFwd(activated, hidden);
+            block.W2!.Forward(down, activated, _arena);
+        }
+        else
+        {
+            var fused = _arena.Rent(rows, 2 * F);
+            block.WGated!.Forward(fused, normed, _arena);
+            var activated = _arena.Rent(rows, F);
+            k.GateFwd(activated, fused, _gelu);
+            block.WDown!.Forward(down, activated, _arena);
+        }
+
+        k.AddInPlace(residual, down);
     }
 
     /// <summary>
@@ -342,7 +397,11 @@ public sealed class GpuInferenceEngine : IInferenceEngine
         if (modelConfig.NumLayers <= 0) { reason = Why("a model without blocks"); return false; }
         if (modelConfig.PositionalEncoding is not (PositionalEncoding.RoPE or PositionalEncoding.NoPE)) { reason = Why($"positional encoding {modelConfig.PositionalEncoding}"); return false; }
         if (config.Ffn == FfnKind.MoE) { reason = Why("MoE"); return false; }
-        if (config.Gate == GateKind.None) { reason = Why("dense (ungated) FFN"); return false; }
+        if (config.Ffn == FfnKind.Dense)
+        {
+            if (config.Activation != ActivationKind.GELU) { reason = Why($"dense FFN activation {config.Activation}"); return false; }
+        }
+        else if (config.Gate == GateKind.None) { reason = Why("dense (ungated) FFN"); return false; }
         reason = null;
         return true;
     }
@@ -383,12 +442,16 @@ public sealed class GpuInferenceEngine : IInferenceEngine
         ArgumentNullException.ThrowIfNull(config);
         var c = model.Config;
         static string Why(string s) => $"GPU inference engine (M0) does not support {s}; use CPU inference, which does.";
-        if (model.FinalNorm is not RmsNormLayer) throw new NotSupportedException(Why($"a {model.FinalNorm.GetType().Name} final norm — LayerNorm, only RMSNorm"));
         if (c.PositionalEncoding is not (PositionalEncoding.RoPE or PositionalEncoding.NoPE)) throw new NotSupportedException(Why($"positional encoding {c.PositionalEncoding}"));
         if (config.Ffn == FfnKind.MoE) throw new NotSupportedException(Why("MoE"));
         if (model.QuantAwareTrainingTarget is not null and not Core.Quantization.QuantDType.F32) throw new NotSupportedException(Why("a quantized model — dequantize first (LoadMode.Full)"));
-        if (config.Gate == GateKind.None) throw new NotSupportedException(Why("dense (ungated) FFN"));
+        if (config.Ffn == FfnKind.Dense)
+        {
+            if (config.Activation != ActivationKind.GELU) throw new NotSupportedException(Why($"dense FFN activation {config.Activation}"));
+        }
+        else if (config.Gate == GateKind.None) throw new NotSupportedException(Why("dense (ungated) FFN"));
         if (c.NumLayers <= 0 || model.GetBlock(0) is null) throw new NotSupportedException(Why("a model without blocks"));
+        if (model.FinalNorm is not (RmsNormLayer or LayerNormLayer)) throw new NotSupportedException(Why($"a {model.FinalNorm.GetType().Name} final norm"));
         // Quant dtypes are NOT a gate here: a block linear in a quant with no on-device kernel
         // (Q8_K, or any deferred quant) falls back per-tensor to the host InferenceLinearLayer
         // forward, which runs every quant the CPU transformer runs. The embedding and the tied LM
@@ -400,8 +463,9 @@ public sealed class GpuInferenceEngine : IInferenceEngine
             var b = model.GetBlock(l) ?? throw new NotSupportedException(Why($"a model missing block {l}"));
             if (b.PostAttnNorm is not null || b.PostFfnNorm is not null) throw new NotSupportedException(Why("Gemma post-attention/post-FFN norms"));
             if (b.Attention.QNorm is not null || b.Attention.KNorm is not null) throw new NotSupportedException(Why("per-head Q/K RMS norms"));
-            if (b.Norm1 is not RmsNormLayer || b.Norm2 is not RmsNormLayer) throw new NotSupportedException(Why($"a {b.Norm1.GetType().Name} block norm — LayerNorm, only RMSNorm"));
-            if (b.Ffn is not GatedFfnLayer) throw new NotSupportedException(Why($"FFN kind {b.Ffn.GetType().Name}"));
+            if (b.Norm1 is not (RmsNormLayer or LayerNormLayer) || b.Norm2 is not (RmsNormLayer or LayerNormLayer)) throw new NotSupportedException(Why($"a {b.Norm1.GetType().Name} block norm"));
+            if (b.Ffn is not (GatedFfnLayer or DenseFfnLayer)) throw new NotSupportedException(Why($"FFN kind {b.Ffn.GetType().Name}"));
+            if (b.Ffn is DenseFfnLayer dense && (dense.W1Layer is null || dense.W2Layer is null)) throw new NotSupportedException(Why("a dense FFN without W1/W2"));
         }
     }
 
@@ -494,7 +558,7 @@ public sealed class GpuInferenceEngine : IInferenceEngine
         {
             var blk = _blocks[l];
             var norm1Out = _arena.Rent(m, H); var rInv1 = _arena.Rent(m, 1);
-            k.RmsNormFwd(norm1Out, rInv1, x, blk.Norm1W.Tensor, _cfg.NormEps);
+            NormFwd(k, norm1Out, rInv1, x, blk.Norm1W, blk.Norm1B);
 
             var q = _arena.Rent(m, nh * D); var kk = _arena.Rent(m, nkv * D); var v = _arena.Rent(m, nkv * D);
             blk.Wq.Forward(q, norm1Out, _arena); blk.Wk.Forward(kk, norm1Out, _arena); blk.Wv.Forward(v, norm1Out, _arena);
@@ -520,18 +584,15 @@ public sealed class GpuInferenceEngine : IInferenceEngine
             k.AddInPlace(x, proj);
 
             var norm2Out = _arena.Rent(m, H); var rInv2 = _arena.Rent(m, 1);
-            k.RmsNormFwd(norm2Out, rInv2, x, blk.Norm2W.Tensor, _cfg.NormEps);
-            var fused = _arena.Rent(m, 2 * _cfg.FfnDim); blk.WGated.Forward(fused, norm2Out, _arena);
-            var act = _arena.Rent(m, _cfg.FfnDim); k.GateFwd(act, fused, _gelu);
-            var down = _arena.Rent(m, H); blk.WDown.Forward(down, act, _arena);
-            k.AddInPlace(x, down);
+            NormFwd(k, norm2Out, rInv2, x, blk.Norm2W, blk.Norm2B);
+            FfnFwd(k, blk, norm2Out, x, m);
 
             cancellationToken.ThrowIfCancellationRequested();
             onChunkProgress?.Invoke((double)(l + 1) / _blocks.Length);
         }
 
         var finalNormed = _arena.Rent(m, H); var finalRInv = _arena.Rent(m, 1);
-        k.RmsNormFwd(finalNormed, finalRInv, x, _finalNormW.Tensor, _cfg.NormEps);
+        NormFwd(k, finalNormed, finalRInv, x, _finalNormW, _finalNormB);
         var logits = _arena.Rent(m, _cfg.VocabSize);
         // logits = n·Eᵀ, E [V,H] — same weight-tied LM head as GpuBackpropEngine.Forward.
         LmHead(logits, finalNormed, m);
@@ -587,7 +648,7 @@ public sealed class GpuInferenceEngine : IInferenceEngine
         {
             var blk = _blocks[l];
             var norm1Out = _arena.Rent(m, H); var rInv1 = _arena.Rent(m, 1);
-            k.RmsNormFwd(norm1Out, rInv1, x, blk.Norm1W.Tensor, _cfg.NormEps);
+            NormFwd(k, norm1Out, rInv1, x, blk.Norm1W, blk.Norm1B);
 
             var q = _arena.Rent(m, nh * D); var kk = _arena.Rent(m, nkv * D); var v = _arena.Rent(m, nkv * D);
             blk.Wq.Forward(q, norm1Out, _arena); blk.Wk.Forward(kk, norm1Out, _arena); blk.Wv.Forward(v, norm1Out, _arena);
@@ -605,18 +666,15 @@ public sealed class GpuInferenceEngine : IInferenceEngine
             k.AddInPlace(x, proj);
 
             var norm2Out = _arena.Rent(m, H); var rInv2 = _arena.Rent(m, 1);
-            k.RmsNormFwd(norm2Out, rInv2, x, blk.Norm2W.Tensor, _cfg.NormEps);
-            var fused = _arena.Rent(m, 2 * _cfg.FfnDim); blk.WGated.Forward(fused, norm2Out, _arena);
-            var act = _arena.Rent(m, _cfg.FfnDim); k.GateFwd(act, fused, _gelu);
-            var down = _arena.Rent(m, H); blk.WDown.Forward(down, act, _arena);
-            k.AddInPlace(x, down);
+            NormFwd(k, norm2Out, rInv2, x, blk.Norm2W, blk.Norm2B);
+            FfnFwd(k, blk, norm2Out, x, m);
 
             cancellationToken.ThrowIfCancellationRequested();
             onChunkProgress?.Invoke((double)(l + 1) / _blocks.Length);
         }
 
         var finalNormed = _arena.Rent(m, H); var finalRInv = _arena.Rent(m, 1);
-        k.RmsNormFwd(finalNormed, finalRInv, x, _finalNormW.Tensor, _cfg.NormEps);
+        NormFwd(k, finalNormed, finalRInv, x, _finalNormW, _finalNormB);
         var logits = _arena.Rent(m, _cfg.VocabSize);
         LmHead(logits, finalNormed, m);
         _dev.Synchronize();
@@ -769,7 +827,7 @@ public sealed class GpuInferenceEngine : IInferenceEngine
         {
             var blk = _blocks[l];
             var norm1Out = _arena.Rent(1, H); var rInv1 = _arena.Rent(1, 1);
-            k.RmsNormFwd(norm1Out, rInv1, x, blk.Norm1W.Tensor, _cfg.NormEps);
+            NormFwd(k, norm1Out, rInv1, x, blk.Norm1W, blk.Norm1B);
 
             var q = _arena.Rent(1, nh * D); var kk = _arena.Rent(1, nkv * D); var v = _arena.Rent(1, nkv * D);
             blk.Wq.Forward(q, norm1Out, _arena); blk.Wk.Forward(kk, norm1Out, _arena); blk.Wv.Forward(v, norm1Out, _arena);
@@ -788,17 +846,14 @@ public sealed class GpuInferenceEngine : IInferenceEngine
             k.AddInPlace(x, proj);
 
             var norm2Out = _arena.Rent(1, H); var rInv2 = _arena.Rent(1, 1);
-            k.RmsNormFwd(norm2Out, rInv2, x, blk.Norm2W.Tensor, _cfg.NormEps);
-            var fused = _arena.Rent(1, 2 * _cfg.FfnDim); blk.WGated.Forward(fused, norm2Out, _arena);
-            var act = _arena.Rent(1, _cfg.FfnDim); k.GateFwd(act, fused, _gelu);
-            var down = _arena.Rent(1, H); blk.WDown.Forward(down, act, _arena);
-            k.AddInPlace(x, down);
+            NormFwd(k, norm2Out, rInv2, x, blk.Norm2W, blk.Norm2B);
+            FfnFwd(k, blk, norm2Out, x, 1);
 
             cancellationToken.ThrowIfCancellationRequested();
         }
 
         var finalNormed = _arena.Rent(1, H); var finalRInv = _arena.Rent(1, 1);
-        k.RmsNormFwd(finalNormed, finalRInv, x, _finalNormW.Tensor, _cfg.NormEps);
+        NormFwd(k, finalNormed, finalRInv, x, _finalNormW, _finalNormB);
         var logits = _arena.Rent(1, _cfg.VocabSize);
         LmHead(logits, finalNormed, 1);
         _dev.Synchronize();
@@ -872,7 +927,7 @@ public sealed class GpuInferenceEngine : IInferenceEngine
         if (_disposed) return;
         _disposed = true;
         foreach (var b in _blocks) b.Dispose();
-        _embedding?.Dispose(); _embeddingRaw?.Dispose(); _finalNormW.Dispose(); _lmHead?.Dispose(); _lmHeadRaw?.Dispose(); _cos?.Dispose(); _sin?.Dispose();
+        _embedding?.Dispose(); _embeddingRaw?.Dispose(); _finalNormW.Dispose(); _finalNormB?.Dispose(); _lmHead?.Dispose(); _lmHeadRaw?.Dispose(); _cos?.Dispose(); _sin?.Dispose();
         foreach (var b in _kCache) b.Dispose();
         foreach (var b in _vCache) b.Dispose();
         foreach (var c in _cpuCaches) c.Dispose();

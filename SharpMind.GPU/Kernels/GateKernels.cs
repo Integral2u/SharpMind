@@ -24,6 +24,10 @@ internal static class GateKernels
         act[i] = GateValue(fused[b + d], gelu) * fused[b + f + d];
     }
 
+    /// <summary>Dense FFN pointwise activation: tanh-GELU, matching MathEx.Gelu.</summary>
+    public static void GeluFwd(Index1D i, ArrayView<float> y, ArrayView<float> x)
+        => y[i] = GateValue(x[i], 1);
+
     public static void Bwd(Index1D i, ArrayView<float> dFused, ArrayView<float> dAct, ArrayView<float> fused, int f, int gelu)
     {
         int r = i / f, d = i % f; long b = (long)r * 2 * f;

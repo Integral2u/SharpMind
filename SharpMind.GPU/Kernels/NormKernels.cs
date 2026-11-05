@@ -17,6 +17,19 @@ internal static class NormKernels
         for (int i = 0; i < d; i++) y[b + i] = x[b + i] * rInv * w[i];
     }
 
+    // y = (x − mean)·rInv·w + b, rInv = 1/sqrt(var(x)+eps)  (LayerNormLayer)
+    public static void LayerNormFwd(Index1D row, ArrayView<float> y, ArrayView<float> x, ArrayView<float> w, ArrayView<float> b, int d, float eps)
+    {
+        long offset = (long)(int)row * d;
+        float mean = 0f;
+        for (int i = 0; i < d; i++) mean += x[offset + i];
+        mean /= d;
+        float variance = 0f;
+        for (int i = 0; i < d; i++) { float v = x[offset + i] - mean; variance += v * v; }
+        float rInv = 1f / XMath.Sqrt(variance / d + eps);
+        for (int i = 0; i < d; i++) y[offset + i] = (x[offset + i] - mean) * rInv * w[i] + b[i];
+    }
+
     // g = dy·w ; dx = rInv·(g − xNorm·mean(g·xNorm)), xNorm = x·rInv   (GradientMapping.RMSNorm, frozen w)
     public static void RmsNormBwd(Index1D row, ArrayView<float> dx, ArrayView<float> dy, ArrayView<float> x, ArrayView<float> rInv, ArrayView<float> w, int d)
     {

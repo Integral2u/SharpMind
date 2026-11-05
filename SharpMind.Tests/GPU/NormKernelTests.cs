@@ -30,6 +30,33 @@ public sealed class NormKernelTests
     }
 
     [Fact]
+    public void LayerNormFwd_MatchesRowFormula()
+    {
+        var dev = GpuTestDevice.Device;
+        var x = GpuTestDevice.Random(Rows * D, 6, 1f);
+        var w = GpuTestDevice.Random(D, 7, 1f);
+        var b = GpuTestDevice.Random(D, 8, 1f);
+        var want = new float[Rows * D];
+        for (int r = 0; r < Rows; r++)
+        {
+            double mean = 0; for (int d = 0; d < D; d++) mean += x[r * D + d];
+            mean /= D;
+            double variance = 0; for (int d = 0; d < D; d++) { double v = x[r * D + d] - mean; variance += v * v; }
+            float rInv = 1f / MathF.Sqrt((float)(variance / D) + Eps);
+            for (int d = 0; d < D; d++)
+                want[r * D + d] = (float)((x[r * D + d] - mean) * rInv) * w[d] + b[d];
+        }
+
+        using var arena = new DeviceArena(dev, 1 << 12);
+        var dx = arena.Rent(Rows, D); dx.Upload(x);
+        var dw = arena.Rent(1, D); dw.Upload(w);
+        var db = arena.Rent(1, D); db.Upload(b);
+        var dy = arena.Rent(Rows, D);
+        dev.Kernels.LayerNormFwd(dy, dx, dw, db, Eps); dev.Synchronize();
+        GpuTestDevice.AssertClose(want, dy.ToArray(), 1e-5, "y");
+    }
+
+    [Fact]
     public void RmsNormBwd_MatchesGradientMappingFormula()
     {
         // dx = rInv·(g − xNorm·mean(g·xNorm)), g = dy·w, xNorm = x·rInv   (GradientMapping.RMSNorm, w frozen)
