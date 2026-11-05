@@ -11,6 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Record-aware training batch source** — new `ITrainingBatchSource`; `DataLoader` implements it, and `RecordDataLoader` streams batches from an `IRecordSource` through an `IRecordBatchStrategy` (the SFT batcher) with the same `maxBatches`/`skipBatches` semantics. This makes checkpoint cursors and step budgets work for record-shaped data.
 - **`TrainLoop` record-aware overload** — the loop now accepts any `ITrainingBatchSource`. The existing `DataLoader` constructor is retained unchanged and delegates to the new overload, so no existing call site or binary contract changes.
 - **SFT integration path** — `SftBatcher`, `TokenizedExample`, `ConversationTokenizer`, `DataRecord` and the record adapters can now feed `TrainLoop` through `RecordDataLoader`.
+- **GPU inference: LayerNorm + dense GELU FFN** — `GpuInferenceEngine` now runs GPT-2/BERT-style models (LayerNorm final/block norms plus a dense `W1 → GELU → W2` FFN) on CUDA/OpenCL instead of falling back to the CPU. Adds a LayerNorm forward kernel, a dense-FFN path in `GpuBlock`, a GELU pointwise kernel, and accepts `FfnKind.Dense` with GELU in `CheckSupported`/`ValidateSupported`. RMSNorm/gated inference is unchanged, and GPU **training** still requires RMSNorm + gated FFN. Verified by new kernel/engine tests and a real TinyStories `.smm` on the OpenCL backend (`Inference on ilgpu`); the model/inference suite is 3150 green.
 
 ### Notes
 
