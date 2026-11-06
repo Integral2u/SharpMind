@@ -72,9 +72,10 @@ The terminal `SharpMind.CUI` remains available below for terminal-only workflows
 
 ---
 
-## Install the chat app (Windows)
+## Terminal client (CUI)
 
-The quickest way to try the terminal chat client is the installer, which sets up `SharpMind.CUI`, Start Menu + desktop shortcuts, and the app folder:
+The terminal client remains available for terminal-only workflows. Its installer
+sets up `SharpMind.CUI`, Start Menu + desktop shortcuts, and the app folder:
 
 **[Download SharpMind Console Setup (MSI)](https://github.com/Integral2u/SharpMind/releases/latest/download/SharpMind.Console.Setup.zip)**
 
