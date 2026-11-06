@@ -21,16 +21,16 @@
 
 SharpMind is an end-to-end LLM stack written entirely in C#, with no dependency on llama.cpp, PyTorch, or any native runtime for its core path. It loads GGUF models, runs quantized CPU inference with modern decoding acceleration (speculative + Medusa-style drafting), and — unusually for a C# inference engine — also includes its own autograd engine so you can fine-tune (LoRA) and distill models in the same process that serves them. LoRA fine-tuning can optionally run on an NVIDIA GPU via a separate accelerator plugin (see [GPU-accelerated training](#gpu-accelerated-training)).
 
-It ships as a set of composable libraries plus a terminal chat application (`SharpMind.CUI`) built on top of them.
+It ships as a set of composable libraries plus **SharpMind Studio**, the desktop and web front end intended to replace the terminal client (`SharpMind.CUI`). The CUI remains available for terminal-only workflows.
 
 Live video example on [YouTube](https://youtu.be/I3FpbZac8Ro)
 
 | | |
 |---|---|
-| **[Live in-browser demo](https://integral2u.github.io/SharpMind/)** | **Chat / conversation view** |
-| ![Live in-browser view](<SharpMind.Core/Live OnlineView.PNG>) | ![Chat view](<SharpMind.Core/CUI ChatView.PNG>) |
-| **Model & session welcome view** | **Runtime options (hardware tier, load mode, sampling)** |
-| ![Welcome screen](<SharpMind.Core/CUI WelcomeScreen.PNG>) | ![Options view](<SharpMind.Core/CUI OptionsView.PNG>) |
+| **[Live in-browser demo](https://integral2u.github.io/SharpMind/)** | **Runtime options (hardware tier, load mode, sampling)** |
+| ![Live in-browser view](<SharpMind.Core/Live OnlineView.PNG>) | ![Options view](<SharpMind.Core/CUI OptionsView.PNG>) |
+| **Model & session welcome view** | **[SharpMind Studio](https://integral2u.github.io/SharpMindStudio/)** |
+| ![Welcome screen](<SharpMind.Core/CUI WelcomeScreen.PNG>) | [![SharpMind Studio](<SharpMind.Core/Studio ChatView.png>)](https://integral2u.github.io/SharpMindStudio/) |
 
 ---
 
@@ -53,6 +53,22 @@ WebAssembly via `RunAOTCompilation`, from the same managed C# kernels the deskto
 - **Zero backend.** GitHub Pages hosts the static site; the model streams in client-side on first load and is then served from the browser's own cache on later visits — no re-download.
 - **Live streaming.** Boot, model load, and every generated token stream to the page as they happen — the decode loop yields to the browser between tokens.
 - **What to expect:** GitHub Pages can't set the cross-origin headers WASM threading needs, so the demo runs single-threaded on scalar kernels — roughly 1 token/s on a mid-size laptop. It's the real engine in a tab, not a wrapper.
+
+---
+
+## SharpMind Studio
+
+SharpMind Studio is the new front end for the SharpMind libraries and is intended
+to replace the CUI for everyday use: chat, instruction tuning and LoRA fine-tuning,
+Data Factory, HuggingFace model downloads, Work projects, and local or cloud GPU
+compute hosts.
+
+- **Live site and guides:** <https://integral2u.github.io/SharpMindStudio/>
+- **Download the Windows installer:**
+  <https://github.com/Integral2u/SharpMindStudio/releases/latest/download/SharpMind.Studio.Setup.msi.zip>
+- **Source:** <https://github.com/Integral2u/SharpMindStudio>
+
+The terminal `SharpMind.CUI` remains available below for terminal-only workflows.
 
 ---
 
