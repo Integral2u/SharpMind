@@ -25,7 +25,7 @@ namespace SharpMind.Samples.Training;
 /// <see cref="DataLoader"/>), exports it to
 /// <c>c:\temp\tinyshakespeare.smm</c>, reloads it via
 /// <see cref="SmmTrainingPipeline.LoadForInference"/>, then demonstrates the
-/// full "user prompt â†’ response" story: greedy continuation, temperature
+/// full "user prompt -> response" story: greedy continuation, temperature
 /// sampling, and a <see cref="ChatSession"/> whose formatter is built from
 /// the chat template that lives in the .SMM file itself.
 ///
@@ -74,7 +74,7 @@ public static class SmmRealTextExample
         await Console.Out.WriteLineAsync();
 
         // 2. Model size - pinned to a tiny config so the finite-difference run
-        //    is a bounded baseline. FD costs O(elements Ã— forward) per step, so
+        //    is a bounded baseline. FD costs O(elements x forward) per step, so
         //    each parameter element re-runs the full (vocab-1024) forward; at
         //    H8/L1 this measures ~8.5s/step on this machine. The next step after
         //    backprop is wired is to let ModelSizer.DetermineOptimalConfigAsync
@@ -92,7 +92,7 @@ public static class SmmRealTextExample
         await Console.Out.WriteLineAsync($"Training config: {modelConfig}");
         await Console.Out.WriteLineAsync();
 
-        // 3. Data pipeline - lines â†’ clean â†’ tokenise â†’ packed TrainingBatches.
+        // 3. Data pipeline - lines -> clean -> tokenise -> packed TrainingBatches.
         var pipeline = PipelineNode.From(source)
             .Pipe(new NormaliseWhitespace())
             .Pipe(new MinLengthFilter(8));
@@ -121,7 +121,7 @@ public static class SmmRealTextExample
             LogInterval = LogInterval,
         });
 
-        await Console.Out.WriteLineAsync($"Training {Steps} steps (random-init loss â‰ˆ ln({modelConfig.VocabSize}) = {MathF.Log(modelConfig.VocabSize):F2})...");
+        await Console.Out.WriteLineAsync($"Training {Steps} steps (random-init loss ~ ln({modelConfig.VocabSize}) = {MathF.Log(modelConfig.VocabSize):F2})...");
         await trainer.TrainAsync(
             progress: new Progress<float>(p => Console.Write($"\rTraining: {p,6:P0}")),
             onStep: r => Console.WriteLine($"step {r.Step,3}/{Steps}: loss = {r.Loss:F4}"));
@@ -165,7 +165,7 @@ public static class SmmRealTextExample
 
         // 9a. Greedy continuation (windowed to the model's MaxSeqLen, so the
         //     prompt + generated tokens stay in the RoPE window).
-        await Console.Out.WriteLineAsync("[greedy] 'To be, or not to be' â†’");
+        await Console.Out.WriteLineAsync("[greedy] 'To be, or not to be' ->");
         var prompt = tokenizer.Encode("To be, or not to be");
         int greedySteps = Math.Max(1, Math.Min(GenTokens, reloadedConfig.MaxSeqLen - 1 - prompt.Length));
         var greedyIds = SmmTrainingPipeline.GenerateGreedy(reloaded, prompt, reloadedConfig.VocabSize, steps: greedySteps);
@@ -173,7 +173,7 @@ public static class SmmRealTextExample
         await Console.Out.WriteLineAsync();
 
         // 9b. Temperature-sampled continuation.
-        await Console.Out.WriteLineAsync("[sampled] 'Wherefore art thou Romeo' â†’");
+        await Console.Out.WriteLineAsync("[sampled] 'Wherefore art thou Romeo' ->");
         using var generator = new StandardGenerator<KVCacherBuilder>(
             reloaded, reloadedTokenizer, addBos: false, addEos: false, seed: Seed);
         var sampling = new SamplingConfig { Temperature = 0.7f, TopK = 40, TopP = 0.9f };

@@ -90,7 +90,7 @@ public static class ModelFactory
         // never touches the dequantized F32 duplicates, so for pure inference they
         // cost ~4x the file size for nothing (3.57 GB before a byte was read, on a
         // 0.49 GB model). It is opt-in because reading weights back as floats is a
-        // real use � SMM export and the conversion round-trip do exactly that.
+        // real use - SMM export and the conversion round-trip do exactly that.
         var blockWeights = loadMode == LoadMode.Full && !quantizedResident
             ? AllocateBlockWeights(modelConfig, sharpConfig)
             : AllocateInferenceBlockWeights(modelConfig, sharpConfig);
@@ -145,7 +145,7 @@ public static class ModelFactory
         bool layerNorm = sharpConfig.Norm == NormKind.LayerNorm;
         // Dense FFNs (BERT, GPT-2) carry ffn_up/ffn_down biases. They have no
         // raw field, so the streaming metadata scan never allocates them and
-        // FfnLayer.SetWeights only applied a bias alongside a float weight —
+        // FfnLayer.SetWeights only applied a bias alongside a float weight -
         // a streaming load silently dropped them and diverged from the full
         // load. Allocate placeholders so SetWeights can push the bias alone.
         bool denseFfn = sharpConfig.Ffn == FfnKind.Dense;
@@ -311,7 +311,7 @@ public static class ModelFactory
         // RawLmHead and never accesses the float tensor. The head is now created
         // lazily (PR #55), so accessing LmHeadWeight here would dequantize the
         // whole head (~544 MB for Qwen2.5-1.5B) just to dispose it. Free a copy a
-        // consumer already materialized, and leave an un-materialized one alone —
+        // consumer already materialized, and leave an un-materialized one alone -
         // not materializing in the first place is the entire memory win.
         if (weights is TransformerWeightsStreaming && weights.HasLmHead)
             weights.DisposeMaterializedLmHead();

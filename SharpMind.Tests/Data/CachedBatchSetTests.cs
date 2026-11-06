@@ -13,7 +13,7 @@ namespace SharpMind.Tests.Data;
 
 /// <summary>
 /// B3: a validation set is built once and cached in memory, so evaluation is
-/// fast (no re-tokenisation) and comparable across steps â€” two evaluations over
+/// fast (no re-tokenisation) and comparable across steps - two evaluations over
 /// the cache produce the identical loss for the same weights.
 /// </summary>
 public sealed class CachedBatchSetTests : IDisposable

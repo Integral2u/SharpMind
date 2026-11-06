@@ -7,7 +7,7 @@ namespace SharpMind.Core.Quantization;
 public static partial class QuantizationKernels
 {
 
-    // VecDotQ5_0 � 5-bit block (QK=32)
+    // VecDotQ5_0 - 5-bit block (QK=32)
 
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -131,7 +131,7 @@ public static partial class QuantizationKernels
     }
 
 
-    // VecDotQ5_1 � 5-bit block with min (QK=32)
+    // VecDotQ5_1 - 5-bit block with min (QK=32)
 
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -255,7 +255,7 @@ public static partial class QuantizationKernels
     }
 
 
-    // VecDotQ5K � K-quant 5-bit block (QK=256)
+    // VecDotQ5K - K-quant 5-bit block (QK=256)
 
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -274,7 +274,7 @@ public static partial class QuantizationKernels
     // One 8-value chunk of a Q5_K block starting at i, i.e. eight q5 codes as
     // floats. qs and qh are addressed from i: the low/high nibble plane is
     // (i >> 5) & 1, every element of the chunk takes its high bit from the same
-    // qh byte-plane shifted by i >> 5, and idx32/group64 depend on i alone — so
+    // qh byte-plane shifted by i >> 5, and idx32/group64 depend on i alone - so
     // a chunk the caller keeps inside one 32-value group (i a multiple of 8,
     // groups are 32) never re-derives any of that per element.
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -350,7 +350,7 @@ public static partial class QuantizationKernels
             for (; i < blockEnd && (i & 7) != 0; i++)
                 sum += pIn[i] * Q5KValueScalar(qs, qh, scales, d, min, i);
             // A whole 32-value group shares one scale pair, one qh shift and one
-            // nibble plane, so it decodes as four independent chains — the same
+            // nibble plane, so it decodes as four independent chains - the same
             // latency-bound single-accumulator problem Q2_K/Q3_K had.
             for (; i <= blockEnd - 8 && (i & 31) != 0; i += 8)
             {
@@ -458,7 +458,7 @@ public static partial class QuantizationKernels
     }
 
 
-    // ReadQ5 � dequantize from BinaryReader into Span<float>
+    // ReadQ5 - dequantize from BinaryReader into Span<float>
 
 
     public static void ReadQ5_1_Scalar(BinaryReader reader, Span<float> data, int n)
@@ -551,7 +551,7 @@ public static partial class QuantizationKernels
     }
 
 
-    // QuantizedMatMul � VecDot-based serial/parallel fallbacks
+    // QuantizedMatMul - VecDot-based serial/parallel fallbacks
 
 
     public static unsafe void QuantizedMatMulQ5_0_Serial_Scalar(

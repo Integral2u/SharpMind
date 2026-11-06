@@ -101,7 +101,7 @@ public sealed class TrainLoopEngineTests : IDisposable
 
         await loop.RunAsync(onStep: r => losses.Add(r.Loss));
 
-        Assert.Equal(6, engine.Calls);                         // 3 steps Ã— 2 accumulated batches
+        Assert.Equal(6, engine.Calls);                         // 3 steps x 2 accumulated batches
         Assert.Equal(new[] { 1.5f, 1.5f, 1.5f }, losses);      // mean of the engine's constant loss
         Assert.False(engine.Disposed);                          // caller owns the engine
     }

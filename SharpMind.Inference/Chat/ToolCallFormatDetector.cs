@@ -12,29 +12,29 @@ namespace SharpMind.Inference.Chat;
 public static class ToolCallFormatDetector
 {
     /// <summary>
-    /// Resolution order, highest confidence first — same shape as
+    /// Resolution order, highest confidence first - same shape as
     /// <c>ChatPromptFormatterFactory.Create</c>:
     /// <list type="number">
-    /// <item>No metadata at all → <see cref="ToolCallFormat.None"/>. The
+    /// <item>No metadata at all -> <see cref="ToolCallFormat.None"/>. The
     /// session cannot know the model, so tools stay off.</item>
-    /// <item>Chat template contains <c>[TOOL_CALLS]</c> →
+    /// <item>Chat template contains <c>[TOOL_CALLS]</c> ->
     /// <see cref="ToolCallFormat.Mistral"/>.</item>
-    /// <item>Chat template contains <c>&lt;|python_tag|&gt;</c> �+'
+    /// <item>Chat template contains <c>&lt;|python_tag|&gt;</c> ->
     /// <see cref="ToolCallFormat.Llama3"/>.</item>
-    /// <item>Chat template contains <c>functionCall</c>/<c>function_call</c> �+'
+    /// <item>Chat template contains <c>functionCall</c>/<c>function_call</c> ->
     /// <see cref="ToolCallFormat.Gemma"/>.</item>
     /// <item>Chat template contains <c>tool_call</c>/<c>tool_calls</c>
-    /// (but not as part of <c>[TOOL_CALLS]</c>) �+'
+    /// (but not as part of <c>[TOOL_CALLS]</c>) ->
     /// <see cref="ToolCallFormat.Qwen"/>.</item>
-    /// <item>Model name/finetune mentions Qwen →
+    /// <item>Model name/finetune mentions Qwen ->
     /// <see cref="ToolCallFormat.Qwen"/>.</item>
-    /// <item>Model name/finetune mentions Mistral/Ministral →
+    /// <item>Model name/finetune mentions Mistral/Ministral ->
     /// <see cref="ToolCallFormat.Mistral"/>.</item>
-    /// <item>Model name/finetune mentions Llama →
+    /// <item>Model name/finetune mentions Llama ->
     /// <see cref="ToolCallFormat.Llama3"/>.</item>
-    /// <item>Model name/finetune mentions Gemma/FunctionGemma →
+    /// <item>Model name/finetune mentions Gemma/FunctionGemma ->
     /// <see cref="ToolCallFormat.Gemma"/>.</item>
-    /// <item>Anything else → <see cref="ToolCallFormat.SharpMind"/>, the native
+    /// <item>Anything else -> <see cref="ToolCallFormat.SharpMind"/>, the native
     /// tagged contract SharpMind trains its own models on.</item>
     /// </list>
     /// </summary>
@@ -45,7 +45,7 @@ public static class ToolCallFormatDetector
         string? template = meta.GetChatTemplate();
         if (template is not null)
         {
-            // Mistral uses [TOOL_CALLS] — check before the generic tool_call
+            // Mistral uses [TOOL_CALLS] - check before the generic tool_call
             // substring since a Mistral template may also contain "tool_call"
             // as part of other variable names.
             if (template.Contains("[TOOL_CALLS]", StringComparison.Ordinal))
