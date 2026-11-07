@@ -7,6 +7,12 @@
 # golden-output tests are byte-for-byte identical on every platform.
 *.jinja text eol=lf
 
+# llama.cpp tokenizer fixtures (SharpMind.Tests/DataRef/llama-vocab): the inputs test "\n" handling
+# byte for byte, so they must never be converted to CRLF.
+*.inp text eol=lf
+*.out text eol=lf
+*.gguf binary
+
 ###############################################################################
 # Set default behavior for command prompt diff.
 #

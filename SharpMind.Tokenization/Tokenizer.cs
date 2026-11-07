@@ -169,8 +169,9 @@ public class Tokenizer
     /// <param name="tokenTypes">Per-token type flags (tokenizer.ggml.token_type). May be null.</param>
     /// <param name="bosId">BOS token ID (tokenizer.ggml.bos_token_id).</param>
     /// <param name="eosId">EOS token ID (tokenizer.ggml.eos_token_id).</param>
-    /// <param name="architecture">Model architecture string (general.architecture). Used to select the correct pre-tokeniser (cl100k vs GPT-2).</param>
-    public static Tokenizer FromGguf(string[] tokens, string[]? merges, int[]? tokenTypes, int bosId, int eosId, float[]? scores = null, string? architecture = null) => new(GgufConverter.Convert(tokens, merges, tokenTypes, bosId, eosId, scores, architecture));
+    /// <param name="architecture">Model architecture string (general.architecture). Picks the pre-tokeniser when <paramref name="preTokenizer"/> does not.</param>
+    /// <param name="preTokenizer">tokenizer.ggml.pre. Picks the pre-tokeniser by llama.cpp's name table.</param>
+    public static Tokenizer FromGguf(string[] tokens, string[]? merges, int[]? tokenTypes, int bosId, int eosId, float[]? scores = null, string? architecture = null, string? preTokenizer = null) => new(GgufConverter.Convert(tokens, merges, tokenTypes, bosId, eosId, scores, architecture, preTokenizer));
 
     /// <summary>
     /// Loads a GPT-2 tokenizer from its two native files.
