@@ -22,7 +22,7 @@ namespace SharpMind.Samples.Training;
 /// Restores a training checkpoint and re-exports it to a .SMM without retraining.
 ///
 /// After a long run diverges late in the schedule (e.g. tinyshakespeare-backprop
-/// at 3,000 steps: gradient norm exploded 5 â†’ 235k from step 1,600 onward and
+/// at 3,000 steps: gradient norm exploded 5 -> 235k from step 1,600 onward and
 /// the exported final state scored eval ppl 1435.8), the last <em>healthy</em>
 /// state is preserved in a periodic checkpoint. This example loads such a
 /// checkpoint back into a freshly built model and writes a clean .SMM, so a
@@ -97,7 +97,7 @@ public static class SmmCheckpointRestoreExample
         using var model = ModelFactory.CreateTrainingTransformer(weights, sharpConfig);
         var parameters = model.Parameters().ToList();
 
-        // 4. Load the healthy checkpoint into the parameters (in-place â†’ into weights).
+        // 4. Load the healthy checkpoint into the parameters (in-place -> into weights).
         string checkpointPath = Path.Combine(CheckpointDir, RestoreStep);
         var meta = Checkpoint.Load(checkpointPath, parameters);
         await Console.Out.WriteLineAsync($"Loaded checkpoint: {checkpointPath}");
@@ -150,14 +150,14 @@ public static class SmmCheckpointRestoreExample
         await Console.Out.WriteLineAsync($"Reloaded tokenizer vocab size: {reloadedTokenizer.VocabSize}");
         await Console.Out.WriteLineAsync();
 
-        await Console.Out.WriteLineAsync("[greedy] 'To be, or not to be' â†’");
+        await Console.Out.WriteLineAsync("[greedy] 'To be, or not to be' ->");
         var prompt = tokenizer.Encode("To be, or not to be");
         int greedySteps = Math.Max(1, Math.Min(GenTokens, reloadedConfig.MaxSeqLen - 1 - prompt.Length));
         var greedyIds = SmmTrainingPipeline.GenerateGreedy(reloaded, prompt, reloadedConfig.VocabSize, steps: greedySteps);
         await Console.Out.WriteLineAsync("  " + reloadedTokenizer.Decode([.. greedyIds]));
         await Console.Out.WriteLineAsync();
 
-        await Console.Out.WriteLineAsync("[sampled] 'Wherefore art thou Romeo' â†’");
+        await Console.Out.WriteLineAsync("[sampled] 'Wherefore art thou Romeo' ->");
         using var generator = new StandardGenerator<KVCacherBuilder>(
             reloaded, reloadedTokenizer, addBos: false, addEos: false, seed: Seed);
         var sampling = new SamplingConfig { Temperature = 0.7f, TopK = 40, TopP = 0.9f };

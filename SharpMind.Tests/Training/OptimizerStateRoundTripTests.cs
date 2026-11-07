@@ -7,7 +7,7 @@ namespace SharpMind.Tests.Training;
 /// <summary>
 /// Regression tests for optimizer state serialization. AdamW and SGD previously
 /// wrote the step counter before the learning rate but loaded the first float
-/// straight into LR, so any SaveStateâ†’LoadState round trip shifted the whole
+/// straight into LR, so any SaveState->LoadState round trip shifted the whole
 /// stream by four bytes and corrupted _lr and the moment vectors.
 /// </summary>
 public sealed class OptimizerStateRoundTripTests
