@@ -39,6 +39,10 @@ public sealed class PreTokeniserSelectionTests
         Assert.False(new Cl100kPreTokeniser(Cl100kVariant.Qwen35).IgnoreMerges);
     }
 
+    [Fact]
+    public void ParameterlessConstructor_DefaultsToCl100k()
+        => Assert.Equal(Cl100kVariant.Cl100k, new Cl100kPreTokeniser().Variant);
+
     // ── Selection: tokenizer.ggml.pre first, then general.architecture ─────
 
     [Theory]
@@ -51,12 +55,15 @@ public sealed class PreTokeniserSelectionTests
     [InlineData("llama", "hunyuan", "qwen2")]
     [InlineData("llama", "chatglm-bpe", "cl100k")]
     [InlineData("llama", "olmo", "gpt2")]
+    // LFM3 GGUFs carry tokenizer.ggml.pre = lfm2; the pre name is what keeps them off GPT-2.
+    [InlineData("lfm3", "lfm2", "llama3")]
     // Absent or unknown pre name: architecture fallback.
     [InlineData("qwen35moe", null, "qwen35")]
     [InlineData("qwen3", null, "qwen2")]
     [InlineData("qwen2", "not-a-real-pre", "qwen2")]
     [InlineData("llama", null, "llama3")]
     [InlineData("lfm2", null, "llama3")]
+    [InlineData("lfm3", null, "llama3")]
     [InlineData("mistral3", "tekken", "qwen2")]
     [InlineData("dbrx", null, "cl100k")]
     [InlineData("deepseek2", null, "cl100k")]

@@ -185,7 +185,9 @@ public static class GgufConverter
         // rule makes Qwen2 the closest of the patterns we have.
         if (arch.Contains("qwen") || arch is "mistral3" or "ministral")
             return new Cl100kPreTokeniser(Cl100kVariant.Qwen2);
-        if ((arch.StartsWith("llama") && hasMerges) || arch is "lfm2")
+        // LFM2/2.5/3 declare tokenizer.ggml.pre = lfm2; keep the architecture fallback for GGUFs
+        // that omit it. SentencePiece vocabularies never call the pre-tokeniser, so LFM1 is harmless here.
+        if ((arch.StartsWith("llama") && hasMerges) || arch.StartsWith("lfm"))
             return new Cl100kPreTokeniser(Cl100kVariant.Llama3);
         if (arch.Contains("deepseek")
             || arch.StartsWith("phi3") || arch.StartsWith("phi4")

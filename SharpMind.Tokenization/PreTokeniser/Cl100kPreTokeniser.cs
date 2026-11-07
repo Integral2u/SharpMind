@@ -21,6 +21,9 @@ public enum Cl100kVariant
 /// </summary>
 public sealed class Cl100kPreTokeniser(Cl100kVariant variant) : IPreTokeniser
 {
+    /// <summary>Plain cl100k. Kept so existing callers that used the parameterless constructor still compile.</summary>
+    public Cl100kPreTokeniser() : this(Cl100kVariant.Cl100k) { }
+
     public Cl100kVariant Variant { get; } = variant;
 
     /// <summary>llama.cpp's <c>ignore_merges</c>, set for the LLAMA3 pre type only.</summary>

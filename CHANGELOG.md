@@ -15,6 +15,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **`DataRecord.GroupId`** - stable source-document identity for grouped
   train/validation/exam splits.
 - **Per-layer operator output** in `GgufSmokeProbe meta`.
+- **llama.cpp tokenizer parity** - the pre-tokeniser is chosen from
+  `tokenizer.ggml.pre` (with the architecture as fallback) using llama.cpp's
+  tiktoken variants for Qwen2/Qwen3, Qwen3.5, Llama 3 `ignore_merges` and
+  cl100k, and both merge loops now break ties leftmost-first. Token ids match
+  llama.cpp on its own qwen2, llama-bpe, gpt-2 and phi-3 fixtures.
 
 ### Changed
 
@@ -23,6 +28,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- Equal-rank BPE and equal-score SentencePiece merges no longer split runs of
+  spaces or punctuation out of order.
+- LFM2/LFM3 GGUFs (`tokenizer.ggml.pre = lfm2`) are no longer tokenised with
+  the GPT-2 pattern.
+- Existing `.smm` tokenizers that store `gguf_pre` migrate to the correct
+  variant; ones converted from `tokenizer.json` before this change need a
+  re-conversion to gain llama.cpp-identical ids.
 - Remaining mojibake in source comments and samples.
 - UTF-8 text is accepted as ASCII punctuation throughout the tree.
 
