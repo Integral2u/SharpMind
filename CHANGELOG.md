@@ -15,6 +15,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **`DataRecord.GroupId`** - stable source-document identity for grouped
   train/validation/exam splits.
 - **Per-layer operator output** in `GgufSmokeProbe meta`.
+- **Audio primitives** - arbitrary-size FFT (Bluestein), RIFF/WAVE read and write for
+  PCM and float, linear resampling, and the LFM3-Audio 128-bin Slaney log-mel
+  frontend (16 kHz, 25 ms window, 10 ms hop, affine normalization).
 - **llama.cpp tokenizer parity** - the pre-tokeniser is chosen from
   `tokenizer.ggml.pre` (with the architecture as fallback) using llama.cpp's
   tiktoken variants for Qwen2/Qwen3, Qwen3.5, Llama 3 `ignore_merges` and
