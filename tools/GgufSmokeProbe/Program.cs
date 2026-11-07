@@ -1,4 +1,5 @@
 using SharpMind.Core.Quantization;
+using SharpMind.Core.Tensors;
 using SharpMind.Inference;
 using SharpMind.Inference.Agent;
 using SharpMind.Inference.Chat;
@@ -59,6 +60,9 @@ if (args.Length < 2)
     return 2;
 }
 
+if (args.Length > 0 && args[0] == "mel-sine")
+    return RunMelSine(args);
+
 string mode = args[0];
 string path = Path.GetFullPath(args[1]);
 if (!File.Exists(path)) { Console.Error.WriteLine($"file not found: {path}"); return 1; }
@@ -111,8 +115,339 @@ if (mode == "tensor")
 if (mode == "audio-encoder")
     return RunAudioEncoder(path, args);
 
+if (mode == "asr")
+    return await RunAsrAsync(path, args);
+
+if (mode == "embed-check")
+    return await RunEmbedCheckAsync(path, args);
+
+if (mode == "audio-compare")
+    return RunAudioCompare(path, args);
+
+if (mode == "asr-sweep")
+    return await RunAsrSweepAsync(path, args);
+
 Console.Error.WriteLine($"unknown mode: {mode}");
 return 2;
+
+// `asr-sweep <backbone> <mmproj> <wav> [language] [lengths]` loads the model once and
+// decodes the same audio prefix at several audio-token lengths, to find a length cutoff.
+static async Task<int> RunAsrSweepAsync(string backbonePath, string[] args)
+{
+    await Task.CompletedTask;
+    if (args.Length < 4) { Console.Error.WriteLine("usage: asr-sweep <backbone> <mmproj> <wav> [language] [lengths]"); return 2; }
+    string mmprojPath = Path.GetFullPath(args[2]);
+    string wavPath = Path.GetFullPath(args[3]);
+    string language = args.Length > 4 ? args[4] : "English";
+    int[] lengths = args.Length > 5
+        ? [.. args[5].Split(',', StringSplitOptions.RemoveEmptyEntries).Select(int.Parse)]
+        : [50, 90, 138];
+
+    var metaHelper = ModelFormatHelpers.GetModelMetaHelperFor(ModelFormat.Gguf);
+    metaHelper.Load(backbonePath, null, out _, out var config, out var tokenizer);
+    if (tokenizer is null) { Console.Error.WriteLine("no tokenizer"); return 3; }
+
+    string prefix = $"<|im_start|>system\nPerform ASR in {language}.<|im_end|>\n<|im_start|>user\n";
+    string suffix = "<|im_end|>\n<|im_start|>assistant\n";
+    int[] prefixIds = tokenizer.Encode(prefix, addBos: true, addEos: false);
+    int[] suffixIds = tokenizer.Encode(suffix, addBos: false, addEos: false);
+    int audioId = 125031;
+
+    float[] samples = SharpMind.Model.Audio.WavFile.ReadMono(wavPath, 16000);
+    float[,] mel = SharpMind.Model.Audio.LogMelSpectrogram.Compute(samples);
+    using var reader = new GgufTensorReader(mmprojPath);
+    using var encoder = new SharpMind.Model.Audio.Lfm3AudioEncoder(reader);
+    float[,] audio = encoder.Encode(mel);
+    int audioCount = audio.GetLength(0);
+    Console.WriteLine($"audio tokens={audioCount}");
+
+    var sharpConfig = config.ForModel();
+    var mapping = sharpConfig.ToJigSawMapping();
+    using var weights = ModelFactory.CreateWeights(
+        config, sharpConfig, QuantizationFactory.Create(mapping), backbonePath,
+        LoadMode.Full, quantizedResident: false, maxParallelLoadDegree: 1);
+    weights.InitializeWeights();
+    using var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
+    int hidden = config.HiddenDim;
+
+    foreach (int requested in lengths)
+    {
+        int count = Math.Min(requested, audioCount);
+        var ids = new List<int>(prefixIds.Length + count + suffixIds.Length);
+        ids.AddRange(prefixIds);
+        for (int i = 0; i < count; i++) ids.Add(audioId);
+        ids.AddRange(suffixIds);
+
+        var idTensor = new Tensor<int>(1, ids.Count);
+        for (int i = 0; i < ids.Count; i++) idTensor.Data[i] = ids[i];
+        Tensor<float> embeddings = model.ForwardEmbedding(idTensor);
+        idTensor.Dispose();
+        int start = prefixIds.Length;
+        for (int t = 0; t < count; t++)
+            for (int d = 0; d < hidden; d++)
+                embeddings.Data[(start + t) * hidden + d] = audio[t, d];
+
+        var caches = CreateCaches(config, Math.Max(2048, ids.Count + 8));
+        Tensor<float> logits = model.ForwardLastLogitsEmbedding(embeddings, caches, 0);
+        int position = ids.Count;
+        var generated = new List<int>();
+        int next = ArgMax(logits.Data[..config.VocabSize]);
+        logits.Dispose();
+        for (int i = 0; i < 4 && next != tokenizer.EosId; i++)
+        {
+            generated.Add(next);
+            var token = new Tensor<int>(1, 1);
+            token.Data[0] = next;
+            logits = model.ForwardLastLogits(token, caches, position++);
+            token.Dispose();
+            next = ArgMax(logits.Data[..config.VocabSize]);
+            logits.Dispose();
+        }
+        Console.WriteLine($"audioTokens={count} prompt={ids.Count} text='{tokenizer.Decode(generated.ToArray())}'");
+    }
+    return 0;
+}
+
+// `audio-compare <mmproj> <short.wav> <long.wav>` encodes both clips and compares the
+// overlapping tokens. A length-dependent encoder bug shows up as a large difference even
+// though the audio prefix is identical.
+static int RunAudioCompare(string path, string[] args)
+{
+    if (args.Length < 4) { Console.Error.WriteLine("usage: audio-compare <mmproj> <short.wav> <long.wav>"); return 2; }
+    using var reader = new SharpMind.Model.Format.GgufTensorReader(path);
+    using var encoder = new SharpMind.Model.Audio.Lfm3AudioEncoder(reader);
+
+    float[,] EncodeClip(string wav)
+    {
+        float[] samples = SharpMind.Model.Audio.WavFile.ReadMono(wav, 16000);
+        float[,] mel = SharpMind.Model.Audio.LogMelSpectrogram.Compute(samples);
+        return encoder.Encode(mel);
+    }
+
+    float[,] shortEmb = EncodeClip(Path.GetFullPath(args[2]));
+    float[,] longEmb = EncodeClip(Path.GetFullPath(args[3]));
+    int tokens = Math.Min(shortEmb.GetLength(0), longEmb.GetLength(0));
+    int dim = shortEmb.GetLength(1);
+    double sumDiff = 0, sumShort = 0, sumLong = 0;
+    float maxDiff = 0;
+    for (int t = 0; t < tokens; t++)
+    {
+        for (int d = 0; d < dim; d++)
+        {
+            double diff = Math.Abs(shortEmb[t, d] - longEmb[t, d]);
+            sumDiff += diff * diff;
+            sumShort += shortEmb[t, d] * shortEmb[t, d];
+            sumLong += longEmb[t, d] * longEmb[t, d];
+            if (diff > maxDiff) maxDiff = (float)diff;
+        }
+    }
+
+    Console.WriteLine(
+        $"short={shortEmb.GetLength(0)} long={longEmb.GetLength(0)} shared={tokens} " +
+        $"rmsDiff={Math.Sqrt(sumDiff / Math.Max(1, (long)tokens * dim)):G6} " +
+        $"maxDiff={maxDiff:G6} shortRms={Math.Sqrt(sumShort / Math.Max(1, (long)tokens * dim)):G6} " +
+        $"longRms={Math.Sqrt(sumLong / Math.Max(1, (long)tokens * dim)):G6}");
+    return 0;
+}
+
+// `embed-check <model> ["prompt"]` runs the same prompt through the token-id path and the
+// precomputed-embedding path. They must produce the same next-token logits; this isolates
+// the embedding forward from the audio encoder.
+static async Task<int> RunEmbedCheckAsync(string path, string[] args)
+{
+    await Task.CompletedTask;
+    string prompt = args.Length > 2 ? args[2] : "What is 2+2? Answer briefly.";
+
+    var metaHelper = ModelFormatHelpers.GetModelMetaHelperFor(ModelFormat.Gguf);
+    metaHelper.Load(path, null, out _, out var config, out var tokenizer);
+    if (tokenizer is null) { Console.Error.WriteLine("no tokenizer"); return 3; }
+
+    var sharpConfig = config.ForModel();
+    var mapping = sharpConfig.ToJigSawMapping();
+    using var weights = ModelFactory.CreateWeights(
+        config, sharpConfig, QuantizationFactory.Create(mapping), path,
+        LoadMode.Full, quantizedResident: false, maxParallelLoadDegree: 1);
+    weights.InitializeWeights();
+    using var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
+
+    int[] ids = tokenizer.Encode(prompt, addBos: true, addEos: false);
+    var idTensor = new Tensor<int>(1, ids.Length);
+    for (int i = 0; i < ids.Length; i++) idTensor.Data[i] = ids[i];
+
+    int maxSeq = ids.Length + 8;
+    Tensor<float> direct = model.ForwardLastLogits(idTensor, CreateCaches(config, Math.Max(2048, maxSeq)), 0);
+    Tensor<float> embeddings = model.ForwardEmbedding(idTensor);
+    Tensor<float> viaEmbeds = model.ForwardLastLogitsEmbedding(embeddings, CreateCaches(config, Math.Max(2048, maxSeq)), 0);
+    idTensor.Dispose();
+
+    int vocab = config.VocabSize;
+    int bestDirect = ArgMax(direct.Data[..vocab]);
+    int bestEmbeds = ArgMax(viaEmbeds.Data[..vocab]);
+    float maxDiff = 0;
+    for (int i = 0; i < vocab; i++)
+        maxDiff = Math.Max(maxDiff, Math.Abs(direct.Data[i] - viaEmbeds.Data[i]));
+
+    Console.WriteLine($"ids={ids.Length} directArgMax={bestDirect} embedArgMax={bestEmbeds} maxDiff={maxDiff:G6}");
+    Console.WriteLine($"direct='{tokenizer.Decode([bestDirect])}' embed='{tokenizer.Decode([bestEmbeds])}'");
+    direct.Dispose();
+    viaEmbeds.Dispose();
+    return bestDirect == bestEmbeds && maxDiff < 1e-3f ? 0 : 4;
+}
+
+static IKVCache[] CreateCaches(ModelConfig config, int maxSeq)
+{
+    var cacheBuilder = new KVCacherBuilder();
+    var caches = new IKVCache[config.NumLayers];
+    for (int layer = 0; layer < config.NumLayers; layer++)
+    {
+        caches[layer] = config.IsShortConvLayer(layer)
+            ? new ShortConvCache(config.ShortConvCacheLength - 1, config.HiddenDim, 1, maxSeq)
+            : config.IsRecurrentLayer(layer)
+                ? new DeltaNetCache(config.SsmConvKernel, config.SsmConvDim, config.SsmTimeStepRank,
+                    config.SsmStateSize, config.SsmValueHeadDim, 1, maxSeq)
+                : cacheBuilder.CreateKVCache(1, config.NumKvHeads, maxSeq, config.HeadDimForLayer(layer));
+    }
+    return caches;
+}
+
+// `mel-sine` prints the LFM3-Audio log-mel for a 440 Hz sine, matching the synthetic
+// input llama-mtmd-debug uses for `-p preproc --audio 440 -n 16000`.
+static int RunMelSine(string[] args)
+{
+    int samples = args.Length > 1 && int.TryParse(args[1], out int n) ? n : 16000;
+    int frequency = args.Length > 2 && int.TryParse(args[2], out int f) ? f : 440;
+    var waveform = new float[samples];
+    for (int i = 0; i < samples; i++)
+        waveform[i] = (float)Math.Sin(2 * Math.PI * frequency * i / 16000.0);
+
+    float[,] mel = SharpMind.Model.Audio.LogMelSpectrogram.Compute(waveform);
+    Console.WriteLine($"samples={samples} frames={mel.GetLength(0)} mel={mel.GetLength(1)}");
+    foreach (int m in new[] { 0, 10, 18, 20, 25, 64, 100, 127 })
+        Console.WriteLine($"mel[0][m={m}][t=50] = {mel[50, m]:F6}");
+    return 0;
+}
+
+// `asr <backbone.gguf> <mmproj.gguf> <wav> [language] [maxTokens]` runs the native
+// LFM3-Audio speech-to-text path: encode the WAV, place the audio embeddings at the
+// <|audio|> position, and decode greedily.
+static async Task<int> RunAsrAsync(string backbonePath, string[] args)
+{
+    await Task.CompletedTask;
+    if (args.Length < 4)
+    {
+        Console.Error.WriteLine("usage: asr <backbone.gguf> <mmproj.gguf> <audio.wav> [language] [maxTokens]");
+        return 2;
+    }
+
+    string mmprojPath = Path.GetFullPath(args[2]);
+    string wavPath = Path.GetFullPath(args[3]);
+    string language = args.Length > 4 ? args[4] : "English";
+    int maxTokens = args.Length > 5 && int.TryParse(args[5], out int parsed) ? parsed : 96;
+    if (!File.Exists(mmprojPath)) { Console.Error.WriteLine($"file not found: {mmprojPath}"); return 1; }
+    if (!File.Exists(wavPath)) { Console.Error.WriteLine($"file not found: {wavPath}"); return 1; }
+
+    var metaHelper = ModelFormatHelpers.GetModelMetaHelperFor(ModelFormat.Gguf);
+    metaHelper.Load(backbonePath, null, out var meta, out var config, out var tokenizer);
+    if (tokenizer is null) { Console.Error.WriteLine("no tokenizer in the backbone"); return 3; }
+
+    string prefix = $"<|im_start|>system\nPerform ASR in {language}.<|im_end|>\n<|im_start|>user\n";
+    string suffix = "<|im_end|>\n<|im_start|>assistant\n";
+    int[] prefixIds = tokenizer.Encode(prefix, addBos: true, addEos: false);
+    int[] suffixIds = tokenizer.Encode(suffix, addBos: false, addEos: false);
+    int audioId = 125031;
+    try
+    {
+        int id = tokenizer.TokenToId("<|audio|>");
+        if (id >= 0) audioId = id;
+    }
+    catch
+    {
+        // Fall back to the LFM3-Audio config value.
+    }
+
+    float[] samples = SharpMind.Model.Audio.WavFile.ReadMono(wavPath, 16000);
+    float[,] mel = SharpMind.Model.Audio.LogMelSpectrogram.Compute(samples);
+    using var reader = new GgufTensorReader(mmprojPath);
+    using var encoder = new SharpMind.Model.Audio.Lfm3AudioEncoder(reader);
+    var encodeWatch = System.Diagnostics.Stopwatch.StartNew();
+    float[,] audio = encoder.Encode(mel);
+    encodeWatch.Stop();
+    int audioCount = audio.GetLength(0);
+
+    var ids = new List<int>(prefixIds.Length + audioCount + suffixIds.Length);
+    ids.AddRange(prefixIds);
+    for (int i = 0; i < audioCount; i++) ids.Add(audioId);
+    ids.AddRange(suffixIds);
+    Console.WriteLine(
+        $"audio {samples.Length / 16000.0:F2}s mel={mel.GetLength(0)} tokens={audioCount} " +
+        $"encode={encodeWatch.Elapsed.TotalSeconds:F1}s prompt={ids.Count} audioId={audioId} " +
+        $"prefix={prefixIds.Length} suffix={suffixIds.Length}");
+    Console.WriteLine($"prefix='{tokenizer.Decode(prefixIds)}' suffix='{tokenizer.Decode(suffixIds)}'");
+
+    var sharpConfig = config.ForModel();
+    var mapping = sharpConfig.ToJigSawMapping();
+    using var weights = ModelFactory.CreateWeights(
+        config, sharpConfig, QuantizationFactory.Create(mapping), backbonePath,
+        LoadMode.Full, quantizedResident: false, maxParallelLoadDegree: 1);
+    weights.InitializeWeights();
+    using var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
+
+    var idTensor = new Tensor<int>(1, ids.Count);
+    for (int i = 0; i < ids.Count; i++) idTensor.Data[i] = ids[i];
+    Tensor<float> embeddings = model.ForwardEmbedding(idTensor);
+    idTensor.Dispose();
+
+    int hidden = embeddings.Shape[2];
+    int audioStart = prefixIds.Length;
+    var embeddingData = embeddings.Data;
+    for (int t = 0; t < audioCount; t++)
+        for (int d = 0; d < hidden; d++)
+            embeddingData[(audioStart + t) * hidden + d] = audio[t, d];
+
+    var cacheBuilder = new KVCacherBuilder();
+    int maxSeq = ids.Count + maxTokens + 8;
+    var caches = new IKVCache[config.NumLayers];
+    for (int layer = 0; layer < config.NumLayers; layer++)
+    {
+        caches[layer] = config.IsShortConvLayer(layer)
+            ? new ShortConvCache(config.ShortConvCacheLength - 1, config.HiddenDim, 1, maxSeq)
+            : config.IsRecurrentLayer(layer)
+                ? new DeltaNetCache(config.SsmConvKernel, config.SsmConvDim, config.SsmTimeStepRank,
+                    config.SsmStateSize, config.SsmValueHeadDim, 1, maxSeq)
+                : cacheBuilder.CreateKVCache(1, config.NumKvHeads, maxSeq, config.HeadDimForLayer(layer));
+    }
+
+    var decodeWatch = System.Diagnostics.Stopwatch.StartNew();
+    Tensor<float> logits = model.ForwardLastLogitsEmbedding(embeddings, caches, 0);
+    int position = ids.Count;
+    var generated = new List<int>();
+    int next = ArgMax(logits.Data[..config.VocabSize]);
+    logits.Dispose();
+
+    while (generated.Count < maxTokens && next != tokenizer.EosId)
+    {
+        generated.Add(next);
+        var token = new Tensor<int>(1, 1);
+        token.Data[0] = next;
+        logits = model.ForwardLastLogits(token, caches, position++);
+        token.Dispose();
+        next = ArgMax(logits.Data[..config.VocabSize]);
+        logits.Dispose();
+    }
+    decodeWatch.Stop();
+
+    string transcript = tokenizer.Decode(generated.ToArray());
+    Console.WriteLine($"ASR ({generated.Count} tokens, {decodeWatch.Elapsed.TotalSeconds:F1}s): {transcript}");
+    return 0;
+}
+
+static int ArgMax(ReadOnlySpan<float> values)
+{
+    int best = 0;
+    for (int i = 1; i < values.Length; i++)
+        if (values[i] > values[best]) best = i;
+    return best;
+}
 
 // `audio-encoder <mmproj> <wav>` runs the native LFM3-Audio speech encoder and prints the
 // embedding shape and value statistics. This validates the encoder path before the ASR
@@ -157,6 +492,16 @@ static int RunAudioEncoder(string path, string[] args)
         $"tokens={embeddings.GetLength(0)} dim={embeddings.GetLength(1)} " +
         $"min={min:G6} max={max:G6} mean={(count == 0 ? 0 : sum / count):G6} " +
         $"nonfinite={bad} time={watch.Elapsed.TotalSeconds:F1}s");
+
+    int tokens = embeddings.GetLength(0);
+    foreach (int t in new[] { 0, tokens / 8, tokens / 4, tokens / 2, 3 * tokens / 4, tokens - 1 })
+    {
+        if (t < 0 || t >= tokens) continue;
+        double norm = 0;
+        for (int d = 0; d < embeddings.GetLength(1); d++)
+            norm += embeddings[t, d] * embeddings[t, d];
+        Console.WriteLine($"token[{t}] norm={Math.Sqrt(norm):G6}");
+    }
     return 0;
 }
 
@@ -487,7 +832,7 @@ static int RunMeta(string path)
             {
                 string kind = config.IsShortConvLayer(i) ? "conv"
                     : config.IsSwaLayer(i) ? "swa" : "global";
-                Console.WriteLine($"    layer {i:00}: {kind}");
+                Console.WriteLine($"    layer {i:00}: {kind} window={config.WindowSizeForLayer(i)}");
             }
         }
 

@@ -374,29 +374,30 @@ public sealed class Lfm3AudioEncoder : IDisposable
                     float sum = bias[o];
                     if (depthwise)
                     {
-                        for (int kh = 0; kh < 3; kh++)
+                        for (int kt = 0; kt < 3; kt++)
                         {
-                            int sourceT = t * 2 + kh - 1;
+                            int sourceT = t * 2 + kt - 1;
                             if ((uint)sourceT >= (uint)inT) continue;
-                            for (int kw = 0; kw < 3; kw++)
+                            for (int kf = 0; kf < 3; kf++)
                             {
-                                int sourceF = f * 2 + kw - 1;
+                                int sourceF = f * 2 + kf - 1;
                                 if ((uint)sourceF >= (uint)inF) continue;
-                                sum += input[(sourceT * inF + sourceF) * inC + o] * weight[kw + 3 * kh + 9 * o];
+                                // GGUF stores conv2d kernels as [kW, kH, in, out]; kW is time.
+                                sum += input[(sourceT * inF + sourceF) * inC + o] * weight[kt + 3 * kf + 9 * o];
                             }
                         }
                     }
                     else
                     {
-                        for (int kh = 0; kh < 3; kh++)
+                        for (int kt = 0; kt < 3; kt++)
                         {
-                            int sourceT = t * 2 + kh - 1;
+                            int sourceT = t * 2 + kt - 1;
                             if ((uint)sourceT >= (uint)inT) continue;
-                            for (int kw = 0; kw < 3; kw++)
+                            for (int kf = 0; kf < 3; kf++)
                             {
-                                int sourceF = f * 2 + kw - 1;
+                                int sourceF = f * 2 + kf - 1;
                                 if ((uint)sourceF >= (uint)inF) continue;
-                                sum += input[(sourceT * inF + sourceF) * inC] * weight[kw + 3 * kh + 9 * o];
+                                sum += input[(sourceT * inF + sourceF) * inC] * weight[kt + 3 * kf + 9 * o];
                             }
                         }
                     }

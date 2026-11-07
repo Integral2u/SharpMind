@@ -24,6 +24,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   17-layer causal LFM2 stack with NEOX RoPE (theta 1e6, 32-frame window),
   RMSNorm, SwiGLU and the LayerNorm/GELU projector to 2048. The
   `GgufSmokeProbe audio-encoder` mode runs it on a WAV.
+- **Multimodal embedding forward** - `Transformer.ForwardLastLogitsEmbedding`
+  runs the decoder over precomputed embeddings, so audio rows can replace the
+  `<|audio|>` placeholder. The probe's `asr` mode decodes a WAV end to end.
+  Short clips transcribe correctly; long clips currently start near the end of
+  the audio and need a chunked or long-context fix.
 - **llama.cpp tokenizer parity** - the pre-tokeniser is chosen from
   `tokenizer.ggml.pre` (with the architecture as fallback) using llama.cpp's
   tiktoken variants for Qwen2/Qwen3, Qwen3.5, Llama 3 `ignore_merges` and
