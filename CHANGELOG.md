@@ -20,6 +20,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   frontend (16 kHz, 25 ms window, 10 ms hop, affine normalization).
 - **GGUF tensor reader** - dequantizes individual F32/F16/BF16/Q8_0 tensors to
   float32 for multimodal components, plus a `tensor` mode in `GgufSmokeProbe`.
+- **LFM3-Audio encoder** - native `mmproj` path: stride-2 conv downsampler,
+  17-layer causal LFM2 stack with NEOX RoPE (theta 1e6, 32-frame window),
+  RMSNorm, SwiGLU and the LayerNorm/GELU projector to 2048. The
+  `GgufSmokeProbe audio-encoder` mode runs it on a WAV.
 - **llama.cpp tokenizer parity** - the pre-tokeniser is chosen from
   `tokenizer.ggml.pre` (with the architecture as fallback) using llama.cpp's
   tiktoken variants for Qwen2/Qwen3, Qwen3.5, Llama 3 `ignore_merges` and

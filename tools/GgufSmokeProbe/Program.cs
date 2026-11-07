@@ -108,8 +108,57 @@ if (mode == "cmp")
 if (mode == "tensor")
     return RunTensorStats(path, args);
 
+if (mode == "audio-encoder")
+    return RunAudioEncoder(path, args);
+
 Console.Error.WriteLine($"unknown mode: {mode}");
 return 2;
+
+// `audio-encoder <mmproj> <wav>` runs the native LFM3-Audio speech encoder and prints the
+// embedding shape and value statistics. This validates the encoder path before the ASR
+// prompt wiring lands.
+static int RunAudioEncoder(string path, string[] args)
+{
+    if (args.Length < 3)
+    {
+        Console.Error.WriteLine("usage: audio-encoder <mmproj.gguf> <audio.wav>");
+        return 2;
+    }
+
+    string wav = Path.GetFullPath(args[2]);
+    if (!File.Exists(wav)) { Console.Error.WriteLine($"file not found: {wav}"); return 1; }
+
+    float[] samples = SharpMind.Model.Audio.WavFile.ReadMono(wav, 16000);
+    float[,] mel = SharpMind.Model.Audio.LogMelSpectrogram.Compute(samples);
+    Console.WriteLine($"audio {samples.Length / 16000.0:F2}s samples={samples.Length} mel={mel.GetLength(0)}x{mel.GetLength(1)}");
+
+    using var reader = new SharpMind.Model.Format.GgufTensorReader(path);
+    using var encoder = new SharpMind.Model.Audio.Lfm3AudioEncoder(reader);
+    var watch = System.Diagnostics.Stopwatch.StartNew();
+    float[,] embeddings = encoder.Encode(mel);
+    watch.Stop();
+
+    double sum = 0;
+    float min = float.PositiveInfinity, max = float.NegativeInfinity;
+    int bad = 0;
+    for (int t = 0; t < embeddings.GetLength(0); t++)
+    {
+        for (int d = 0; d < embeddings.GetLength(1); d++)
+        {
+            float value = embeddings[t, d];
+            if (!float.IsFinite(value)) { bad++; continue; }
+            if (value < min) min = value;
+            if (value > max) max = value;
+            sum += value;
+        }
+    }
+    long count = (long)embeddings.GetLength(0) * embeddings.GetLength(1);
+    Console.WriteLine(
+        $"tokens={embeddings.GetLength(0)} dim={embeddings.GetLength(1)} " +
+        $"min={min:G6} max={max:G6} mean={(count == 0 ? 0 : sum / count):G6} " +
+        $"nonfinite={bad} time={watch.Elapsed.TotalSeconds:F1}s");
+    return 0;
+}
 
 // `tensor <file> [name...]` prints dtype, shape and value statistics. With no names it
 // lists the first few tensors, which is enough to inventory an mmproj or codec file.
