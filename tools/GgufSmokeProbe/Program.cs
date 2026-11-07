@@ -127,8 +127,89 @@ if (mode == "audio-compare")
 if (mode == "asr-sweep")
     return await RunAsrSweepAsync(path, args);
 
+if (mode == "asr-ablate")
+    return await RunAsrAblateAsync(path, args);
+
 Console.Error.WriteLine($"unknown mode: {mode}");
 return 2;
+
+// `asr-ablate <backbone> <mmproj> <wav>` runs the full 11 s prompt, then zeroes
+// the first or the last half of the audio embeddings. If the output does not change,
+// those tokens were not contributing to the first generated word.
+static async Task<int> RunAsrAblateAsync(string backbonePath, string[] args)
+{
+    await Task.CompletedTask;
+    if (args.Length < 4) { Console.Error.WriteLine("usage: asr-ablate <backbone> <mmproj> <wav>"); return 2; }
+    string mmprojPath = Path.GetFullPath(args[2]);
+    string wavPath = Path.GetFullPath(args[3]);
+
+    var metaHelper = ModelFormatHelpers.GetModelMetaHelperFor(ModelFormat.Gguf);
+    metaHelper.Load(backbonePath, null, out _, out var config, out var tokenizer);
+    if (tokenizer is null) { Console.Error.WriteLine("no tokenizer"); return 3; }
+
+    string prefix = "<|im_start|>system\nPerform ASR in English.<|im_end|>\n<|im_start|>user\n";
+    string suffix = "<|im_end|>\n<|im_start|>assistant\n";
+    int[] prefixIds = tokenizer.Encode(prefix, addBos: true, addEos: false);
+    int[] suffixIds = tokenizer.Encode(suffix, addBos: false, addEos: false);
+    const int audioId = 125031;
+
+    float[] samples = SharpMind.Model.Audio.WavFile.ReadMono(wavPath, 16000);
+    float[,] mel = SharpMind.Model.Audio.LogMelSpectrogram.Compute(samples);
+    using var reader = new GgufTensorReader(mmprojPath);
+    using var encoder = new SharpMind.Model.Audio.Lfm3AudioEncoder(reader);
+    float[,] audio = encoder.Encode(mel);
+    int audioCount = audio.GetLength(0);
+
+    var sharpConfig = config.ForModel();
+    var mapping = sharpConfig.ToJigSawMapping();
+    using var weights = ModelFactory.CreateWeights(
+        config, sharpConfig, QuantizationFactory.Create(mapping), backbonePath,
+        LoadMode.Full, quantizedResident: false, maxParallelLoadDegree: 1);
+    weights.InitializeWeights();
+    using var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
+    int hidden = config.HiddenDim;
+
+    var ids = new List<int>(prefixIds.Length + audioCount + suffixIds.Length);
+    ids.AddRange(prefixIds);
+    for (int i = 0; i < audioCount; i++) ids.Add(audioId);
+    ids.AddRange(suffixIds);
+
+    foreach (string variant in new[] { "full", "zerofirst", "zerolast" })
+    {
+        var idTensor = new Tensor<int>(1, ids.Count);
+        for (int i = 0; i < ids.Count; i++) idTensor.Data[i] = ids[i];
+        Tensor<float> embeddings = model.ForwardEmbedding(idTensor);
+        idTensor.Dispose();
+        int start = prefixIds.Length;
+        for (int t = 0; t < audioCount; t++)
+        {
+            bool zero = variant == "zerofirst" ? t < audioCount / 2
+                : variant == "zerolast" ? t >= audioCount / 2
+                : false;
+            for (int d = 0; d < hidden; d++)
+                embeddings.Data[(start + t) * hidden + d] = zero ? 0 : audio[t, d];
+        }
+
+        var caches = CreateCaches(config, 2048);
+        Tensor<float> logits = model.ForwardLastLogitsEmbedding(embeddings, caches, 0);
+        int position = ids.Count;
+        var generated = new List<int>();
+        int next = ArgMax(logits.Data[..config.VocabSize]);
+        logits.Dispose();
+        for (int i = 0; i < 4 && next != tokenizer.EosId; i++)
+        {
+            generated.Add(next);
+            var token = new Tensor<int>(1, 1);
+            token.Data[0] = next;
+            logits = model.ForwardLastLogits(token, caches, position++);
+            token.Dispose();
+            next = ArgMax(logits.Data[..config.VocabSize]);
+            logits.Dispose();
+        }
+        Console.WriteLine($"{variant,-10} text='{tokenizer.Decode(generated.ToArray())}'");
+    }
+    return 0;
+}
 
 // `asr-sweep <backbone> <mmproj> <wav> [language] [lengths]` loads the model once and
 // decodes the same audio prefix at several audio-token lengths, to find a length cutoff.
