@@ -29,7 +29,9 @@ public sealed class SharpMindModelConfig
     public float? RopeThetaSwa { get; set; }
     public int SlidingWindowSize { get; set; }
     public int? SlidingWindowPattern { get; set; }
+    public bool[]? SwaLayers { get; set; }
     public bool IsHybridSlidingWindow { get; set; }
+    public bool HeadGatedAttention { get; set; }
     public int? KeyLength { get; set; }
     public int? ValueLength { get; set; }
     public int? HeadDimOverride { get; set; }
@@ -82,7 +84,9 @@ public sealed class SharpMindModelConfig
             RopeThetaSwa = config.RopeThetaSwa,
             SlidingWindowSize = config.SlidingWindowSize,
             SlidingWindowPattern = config.SlidingWindowPattern,
+            SwaLayers = config.SwaLayers,
             IsHybridSlidingWindow = config.IsHybridSlidingWindow,
+            HeadGatedAttention = config.HeadGatedAttention,
             KeyLength = config.KeyLength,
             ValueLength = config.ValueLength,
             HeadDimOverride = config.HeadDimOverride,
@@ -114,7 +118,9 @@ public sealed class SharpMindModelConfig
             RopeThetaSwa = RopeThetaSwa,
             SlidingWindowSize = SlidingWindowSize,
             SlidingWindowPattern = SlidingWindowPattern,
+            SwaLayers = SwaLayers,
             IsHybridSlidingWindow = IsHybridSlidingWindow,
+            HeadGatedAttention = HeadGatedAttention,
             KeyLength = KeyLength,
             ValueLength = ValueLength,
             HeadDimOverride = HeadDimOverride,

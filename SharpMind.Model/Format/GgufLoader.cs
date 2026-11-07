@@ -100,6 +100,13 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
                         arr[i] = reader.ReadInt32();
                     return arr;
                 }
+            case 7: // Bool
+                {
+                    var arr = new bool[len];
+                    for (int i = 0; i < len; i++)
+                        arr[i] = reader.ReadBoolean();
+                    return arr;
+                }
             case 4: // UInt32
                 {
                     var arr = new uint[len];
@@ -176,6 +183,9 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
 
     public static float[]? GetFloatArray(ModelMetaData meta, string key)
         => meta.KvPairs.FirstOrDefault(p => p.Key == key).Value as float[];
+
+    public static bool[]? GetBoolArray(ModelMetaData meta, string key)
+        => meta.KvPairs.FirstOrDefault(p => p.Key == key).Value as bool[];
 
     public static ModelMetaData LoadMeta(string path)
     {
@@ -438,6 +448,13 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
                 ropeThetaSwaValue = 10_000f;
         }
 
+        // LFM3 stores an explicit bool array (one entry per block) instead of a
+        // period: true = sliding-window, false = global attention. The array is
+        // independent of the conv/attn split, which comes from head_count_kv.
+        bool[]? swaLayers = GetBoolArray(meta, $"{arch}.attention.sliding_window_pattern");
+        if (swaLayers is { Length: > 0 } && swaLayers.Length != numLayers)
+            swaLayers = null;
+
         return new ModelConfig
         {
             Architecture = arch,
@@ -452,7 +469,6 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
             MaxSeqLen = maxSeqLen,
             RopeTheta = ropeTheta,
             RopeThetaSwa = ropeThetaSwaValue,
-            SlidingWindowPattern = slidingWindowPattern,
             NormEps = meta.GetFloat($"{arch}.attention.layer_norm_rms_epsilon",
                       meta.GetFloat($"{arch}.attention.layer_norm_epsilon",
                       meta.GetFloat("rms_norm_eps", 1e-5f))),
@@ -471,6 +487,7 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
             SsmGroupCount = ssmGroupCount,
             FullAttentionInterval = fullAttentionInterval,
             GatedAttentionOutput = isQwen35,
+            HeadGatedAttention = arch.StartsWith("lfm3", StringComparison.OrdinalIgnoreCase),
             RmsNormValue = arch.StartsWith("gemma4", StringComparison.OrdinalIgnoreCase),
             FinalLogitSoftcap = finalLogitSoftcap,
             HeadDimOverride = headDimOverride,
@@ -487,7 +504,10 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
             ExpertFfnDim = expertFfnDim,
             SharedExpertFfnDim = sharedExpertFfnDim,
             SlidingWindowSize = slidingWindowSize,
-            IsHybridSlidingWindow = slidingWindowSize > 0 && isGemma3Family,
+            SlidingWindowPattern = slidingWindowPattern,
+            SwaLayers = swaLayers,
+            IsHybridSlidingWindow = slidingWindowSize > 0
+                && (isGemma3Family || swaLayers is { Length: > 0 }),
             NormTopKProb = normTopKProb,
             PositionalEncoding = positionalEncoding,
             NumTokenTypes = numTokenTypes,

@@ -236,7 +236,7 @@ public sealed record SharpMindConfig
             // the file's twice-as-wide fused tensor as a size mismatch.
             "qwen2" or "qwen2vl" or "qwen3" or "qwen35" or "qwen3moe" or "qwq" or "phi3"
                 or "mistral" or "mistral3" or "ministral" or "mixtral-instruct"
-                or "llama" or "llama2" or "llama3" or "llama4" or "lfm2" or "lfm2moe"
+                or "llama" or "llama2" or "llama3" or "llama4" or "lfm2" or "lfm2moe" or "lfm3"
                 or "gemma3e" or "olmo" or "olmo2" or "exaone" or "internlm2"
                 or "glm4" or "deepseek" or "deepseek3" or "minicpm" or "cohere2"
                 or "orion" or "jais" or "stablelm" or "plamo" or "granite"

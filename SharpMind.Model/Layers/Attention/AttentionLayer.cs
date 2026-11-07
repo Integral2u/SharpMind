@@ -39,6 +39,7 @@ namespace SharpMind.Model.Layers.Attention;
         private NormLayer? _kNorm;
         private NormLayer? _vNorm;
         private readonly bool _gatedOutput;
+        private readonly LinearLayer? _headGate;
         private bool _disposed;
 
         public NormLayer? QNorm => _qNorm;
@@ -147,6 +148,15 @@ namespace SharpMind.Model.Layers.Attention;
             Wo = LinearLayerFactory.Create("o_proj", qDim, config.HiddenDim, true,
                 weights?.Wo, weights?.WoBias, tm?.GetValueOrDefault("RawWo").Dtype ?? QuantDType.F32);
         }
+        if (config.HeadGatedAttention)
+        {
+            _headGate = mapping != null
+                ? LinearLayerFactory.Create("attn_gate", config.HiddenDim, config.NumHeads, false,
+                    weights?.AttnGate, null, tm?.GetValueOrDefault("RawWGate").Dtype ?? QuantDType.F32, mapping)
+                : LinearLayerFactory.Create("attn_gate", config.HiddenDim, config.NumHeads, false,
+                    weights?.AttnGate, null, tm?.GetValueOrDefault("RawWGate").Dtype ?? QuantDType.F32);
+        }
+
         // Per-layer RoPE base: sliding-window models (Gemma-3/4) use a different
         // theta for windowed layers (10_000) vs full-attention layers (1_000_000).
         PositionalEncoder = config.PositionalEncoding switch
@@ -549,9 +559,43 @@ namespace SharpMind.Model.Layers.Attention;
         if (_gatedOutput)
             ApplyInterleavedSigmoidGateInPlace(output, qProjected, batch, seqLen, numH, headDim);
 
+        if (_headGate is not null)
+        {
+            using var gate = _headGate.Forward(x, workspace);
+            ApplyHeadGateInPlace(output, gate, batch, seqLen, numH, headDim);
+        }
+
         var projected = Wo.Forward(output, workspace);
         output.Dispose();
         return projected;
+    }
+
+    /// <summary>Applies LFM3's per-head sigmoid gate to the attention output.</summary>
+    private static void ApplyHeadGateInPlace(
+        Tensor<float> output,
+        Tensor<float> gate,
+        int batch,
+        int seqLen,
+        int heads,
+        int headDim)
+    {
+        int dim = heads * headDim;
+        var o = output.Data;
+        var g = gate.Data;
+        for (int b = 0; b < batch; b++)
+        {
+            for (int s = 0; s < seqLen; s++)
+            {
+                int row = b * seqLen + s;
+                for (int h = 0; h < heads; h++)
+                {
+                    float sigmoid = 1f / (1f + MathF.Exp(-g[row * heads + h]));
+                    int start = row * dim + h * headDim;
+                    for (int d = 0; d < headDim; d++)
+                        o[start + d] *= sigmoid;
+                }
+            }
+        }
     }
 
     /// <summary>
@@ -649,6 +693,7 @@ namespace SharpMind.Model.Layers.Attention;
         {
             // These are LinearLayers, they will only dispose if they own the weights.
             Wq.Dispose(); Wk.Dispose(); Wv.Dispose(); Wo.Dispose();
+            _headGate?.Dispose();
             _qNorm?.Dispose(); _kNorm?.Dispose(); _vNorm?.Dispose();
         }
         _disposed = true;

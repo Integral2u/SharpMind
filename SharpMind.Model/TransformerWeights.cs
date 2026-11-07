@@ -432,7 +432,11 @@ public abstract class TransformerWeights : IDisposable
                 if (name.Contains("ssm_a", StringComparison.OrdinalIgnoreCase))
                     return b.SsmA ??= new Tensor<float>(Config.SsmTimeStepRank);
                 if (name.Contains("attn_qkv", StringComparison.OrdinalIgnoreCase)) return b.Wqkv;
-                if (name.Contains("attn_gate", StringComparison.OrdinalIgnoreCase)) return b.WGate;
+                if (name.Contains("attn_gate", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!Config.HeadGatedAttention) return b.WGate;
+                    return b.AttnGate ??= new Tensor<float>(Config.HiddenDim, Config.NumHeads);
+                }
             }
 
             // Qwen3.5's post_attention_norm is the pre-FFN norm, not Gemma-3's
@@ -805,6 +809,7 @@ else
         // Qwen3.5 Gated DeltaNet float tensors
         public Tensor<float>? Wqkv { get; set; }    // [HiddenDim, SsmConvDim]
         public Tensor<float>? WGate { get; set; }   // [HiddenDim, SsmValueDim]
+        public Tensor<float>? AttnGate { get; set; } // LFM3 per-head gate [HiddenDim, NumHeads]
         public Tensor<float>? WAlpha { get; set; }  // [HiddenDim, SsmTimeStepRank]
         public Tensor<float>? WBeta { get; set; }   // [HiddenDim, SsmTimeStepRank]
         public Tensor<float>? WOut { get; set; }    // [SsmValueDim, HiddenDim]
@@ -1028,6 +1033,7 @@ else
             PerLayerPostNorm?.Dispose(); OutScale?.Dispose();
             WScIn?.Dispose(); WScOut?.Dispose(); WScConv?.Dispose();
             Wqkv?.Dispose(); WGate?.Dispose(); WAlpha?.Dispose(); WBeta?.Dispose(); WOut?.Dispose();
+        AttnGate?.Dispose();
             WConv?.Dispose(); SsmA?.Dispose(); SsmDt?.Dispose(); SsmNorm?.Dispose();
             WRouter?.Dispose(); WRouterBias?.Dispose();
             DisposeDict(WgateExp); DisposeDict(WgateExpBias);

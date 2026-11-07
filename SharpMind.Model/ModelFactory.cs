@@ -250,6 +250,11 @@ public static class ModelFactory
                 block.SsmNorm = new Tensor<float>(config.SsmValueHeadDim);
             }
 
+            if (config.HeadGatedAttention)
+            {
+                block.AttnGate = new Tensor<float>(config.HiddenDim, config.NumHeads);
+            }
+
             blocks[i] = block;
         }
         return blocks;

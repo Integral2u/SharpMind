@@ -118,6 +118,24 @@ public class ModelConfigSwaTests
     }
 
     [Fact]
+    public void IsSwaLayer_ExplicitMaskOverridesPattern()
+    {
+        var config = new ModelConfig
+        {
+            NumLayers = 6,
+            SlidingWindowSize = 256,
+            IsHybridSlidingWindow = true,
+            SwaLayers = [false, false, false, false, true, false],
+        };
+
+        Assert.False(config.IsSwaLayer(0));
+        Assert.True(config.IsSwaLayer(4));
+        Assert.False(config.IsSwaLayer(5));
+        Assert.Equal(256, config.WindowSizeForLayer(4));
+        Assert.Equal(0, config.WindowSizeForLayer(5));
+    }
+
+    [Fact]
     public void RopeThetaForLayer_DenseUsesBase_SwaUsesSwaBase()
     {
         var config = Gemma3LikeConfig();

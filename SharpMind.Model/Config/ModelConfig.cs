@@ -104,6 +104,14 @@ public sealed record ModelConfig
     public int? SlidingWindowPattern { get; init; }
 
     /// <summary>
+    /// Explicit per-layer sliding-window mask from GGUF
+    /// (<c>{arch}.attention.sliding_window_pattern</c> as a bool array, used by
+    /// LFM3's tri-hybrid stack). Null means the scalar pattern or the legacy
+    /// "all windowed layers" rule applies.
+    /// </summary>
+    public bool[]? SwaLayers { get; init; }
+
+    /// <summary>
     /// Explicit head_dim from GGUF ({arch}.head_dim).
     /// Some models (Gemma 2, DeepSeek V2) specify head_dim directly
     /// rather than deriving it from HiddenDim / NumHeads.
@@ -516,7 +524,16 @@ public sealed record ModelConfig
     /// <summary>Number of query heads each KV head serves (GQA group size).</summary>
     public int KvGroupSize => NumHeads / NumKvHeads;
 
-    /// <summary>True when the given block is a no-attention (short-conv) layer.</summary>
+    /// <summary>
+    /// LFM3 applies a separate sigmoid gate per attention head
+    /// (<c>attn_gate</c>, [hidden, heads]). Distinct from
+    /// <see cref="GatedAttentionOutput"/>, which is Qwen3.5's gate fused into Q.
+    /// </summary>
+    public bool HeadGatedAttention { get; init; }
+
+    /// <summary>
+    /// True when the given block is a no-attention (short-conv) layer.
+    /// </summary>
     public bool IsShortConvLayer(int layerIndex) =>
         LayerKvHeads != null &&
         (uint)layerIndex < (uint)LayerKvHeads.Length &&
@@ -529,6 +546,13 @@ public sealed record ModelConfig
     /// </summary>
     public bool IsSwaLayer(int layerIndex)
     {
+        if (SwaLayers is { Length: > 0 } mask)
+        {
+            if ((uint)layerIndex < (uint)mask.Length)
+                return mask[layerIndex] && SlidingWindowSize > 0;
+            return false;
+        }
+
         if (SlidingWindowSize <= 0) return false;
         int period = SlidingWindowPattern ?? 0;
         if (period <= 0) return true;
@@ -593,10 +617,15 @@ public sealed record ModelConfig
             throw new InvalidOperationException($"SlidingWindowPattern must be > 0 (was {period}).");
         if (SlidingWindowPattern is not null && SlidingWindowSize <= 0)
             throw new InvalidOperationException("SlidingWindowPattern requires a SlidingWindowSize > 0.");
+        if (SwaLayers is { } mask && mask.Length != NumLayers)
+            throw new InvalidOperationException(
+                $"SwaLayers length ({mask.Length}) must match NumLayers ({NumLayers}).");
         if (IsHybridSlidingWindow && SlidingWindowSize <= 0)
             throw new InvalidOperationException("IsHybridSlidingWindow requires a SlidingWindowSize > 0.");
-        if (IsHybridSlidingWindow && (SlidingWindowPattern is null || SlidingWindowPattern <= 0))
-            throw new InvalidOperationException("IsHybridSlidingWindow requires a SlidingWindowPattern > 0.");
+        if (IsHybridSlidingWindow && (SlidingWindowPattern is null || SlidingWindowPattern <= 0)
+            && SwaLayers is not { Length: > 0 })
+            throw new InvalidOperationException(
+                "IsHybridSlidingWindow requires a SlidingWindowPattern or SwaLayers.");
         if (NumExperts < TopKExperts)
             throw new InvalidOperationException(
                 $"NumExperts ({NumExperts}) must be >= TopKExperts ({TopKExperts}).");
