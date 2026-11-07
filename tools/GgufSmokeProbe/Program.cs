@@ -384,6 +384,28 @@ static int RunMeta(string path)
         }
         var anyBf16 = meta.Tensors.Any(t => t.Dtype == QuantDType.BF16);
         Console.WriteLine(anyBf16 ? "    -> contains BF16 tensors (functional BF16 kernels must be selected)" : "");
+
+        var config = GgufLoader.LoadConfig(meta);
+        if (config is not null)
+        {
+            int conv = 0, swa = 0, global = 0;
+            for (int i = 0; i < config.NumLayers; i++)
+            {
+                if (config.IsShortConvLayer(i)) conv++;
+                else if (config.IsSwaLayer(i)) swa++;
+                else global++;
+            }
+
+            Console.WriteLine($"Config: {config.Architecture} layers={config.NumLayers} "
+                + $"conv={conv} swa={swa} global={global} window={config.SlidingWindowSize}");
+            for (int i = 0; i < config.NumLayers; i++)
+            {
+                string kind = config.IsShortConvLayer(i) ? "conv"
+                    : config.IsSwaLayer(i) ? "swa" : "global";
+                Console.WriteLine($"    layer {i:00}: {kind}");
+            }
+        }
+
         return 0;
     }
     catch (NotSupportedException ex)
