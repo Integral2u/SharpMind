@@ -33,4 +33,11 @@ public sealed record DataRecord
 
     /// <summary>Where the record came from (file, dataset, URI), for lineage and diagnostics.</summary>
     public string? Source { get; init; }
+
+    /// <summary>
+    /// Stable identity of the source document this record was derived from.
+    /// Data Factory variants and other rewrites share it, so a held-out split
+    /// keeps the whole group on one side. Null for records without provenance.
+    /// </summary>
+    public string? GroupId { get; init; }
 }
