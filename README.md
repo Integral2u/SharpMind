@@ -197,6 +197,7 @@ Validated across two independent runs against 15 model/architecture/quantization
 | Ministral 3 (sliding window) | Ministral-3-3B-Instruct-2512 | Q4_K_M | ✅ |
 | Phi-3 | Phi-3-mini-4k-instruct | Q4_K | ✅ |
 | LFM2 (short-conv) | LFM2.5-2.6B-Instruct | Q8_0 | ✅ |
+| LFM3 (tri-hybrid) | LFM3-1.7B | Q8_0 | ✅ * |
 | Qwen3.5 (hybrid Gated DeltaNet) | Qwen3.5-0.8B | Q8_0 | ✅ * |
 | Qwen3.5 (hybrid Gated DeltaNet) | Qwen3.5-0.8B | Q4_K_S | ✅ * |
 | MiniCPM-V (Qwen3.5 text backbone) | MiniCPM-V-4_6 | Q8_0 | ✅ * |
@@ -205,6 +206,17 @@ Validated across two independent runs against 15 model/architecture/quantization
 _Tested on: **AMD Ryzen 3 2200U (2C/4T, 2.5GHz base) w/ Radeon Vega Mobile Graphics, 12GB RAM** — a modest mobile/laptop-class chip, not a workstation. Load times and throughput scale heavily with hardware and quant level — as a rough sense of range on this machine, `SmolLM-135M.Q4_K_M` loaded in ~2s, while `qwen2.5-1.5b-instruct-q8_0` took ~2 minutes and `Qwen1.5-MoE-A2.7B-Q2_K` (5.5 GB, the largest model tested) took ~3 minutes to load and initialize. That everything above ran clean on a 2-core/4-thread laptop CPU is itself a reasonable data point for SharpMind's baseline hardware requirements — run your own copy of the benchmark against your target hardware before relying on these numbers for capacity planning._
 
 _* Single-run validations, not part of the two-run set above: the Mixture-of-Experts path is new in 1.0.8.0, and the Qwen3.5/MiniCPM-V text-backbone rows are smoke checks added in 1.0.9.0. It loads and generates without errors, but MoE throughput on a CPU is low — about **0.4 tokens/s of decode** on the machine above, which is 5.6–6.3× faster than the 0.08 tokens/s it managed before the kernel work in this release (see [Performance](#performance)). Every token still runs only its top-4 of 60 experts plus the shared expert, so cost tracks FLOPs rather than resident weight size, and the whole 5.5 GB of expert weights is held in memory for the life of the model (`LoadMode.Full`, the default; see [Streaming model loading](#streaming-model-loading-loadmodestreaming))._
+
+_* LFM3-1.7B was added in 1.1.1.0 as a single-run text smoke check. The tri-hybrid layer map now resolves as **13 short-conv / 5 sliding-window / 6 global** blocks and the per-head `attn_gate` is applied. Chat-template quality validation is still pending. The **VL**, **Audio** and **Omni** variants are not supported yet; they need their vision encoder/projector or audio codec. The LFM3-Audio GGUF contains the text backbone plus ASR/TTS chat templates, not the audio encoder/codec. Nemotron `asr` checkpoints use an encoder-decoder audio frontend and are also not supported yet._
+
+### Multimodal and speech status
+
+| Capability | Status | Notes |
+|---|---|---|
+| Text chat | Yes | LFM3 text backbone loads in 1.1.1.0. |
+| Image input / VL | Not yet | Needs the LFM3 vision encoder and projector. |
+| Audio input / ASR | Not yet | Needs an audio encoder/frontend; Nemotron `asr` is a separate architecture. |
+| Speech output / TTS | Not yet | Needs the LFM3 audio codec (LiquidCodec). |
 
 ---
 

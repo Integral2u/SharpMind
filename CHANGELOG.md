@@ -4,6 +4,28 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.1.0] - 2026-11-08
+
+### Added
+
+- **LFM3 tri-hybrid support** - parse the bool sliding-window array, retain
+  per-layer conv/SWA/global types in `ModelConfig`, and apply the separate
+  per-head `attn_gate` sigmoid. LFM3-1.7B reports the expected 13 conv /
+  5 SWA / 6 global layers and loads for text smoke tests.
+- **`DataRecord.GroupId`** - stable source-document identity for grouped
+  train/validation/exam splits.
+- **Per-layer operator output** in `GgufSmokeProbe meta`.
+
+### Changed
+
+- Version bumped to **1.1.1.0**.
+- Added the encoding CI guard and `CONTRIBUTING.md`.
+
+### Fixed
+
+- Remaining mojibake in source comments and samples.
+- UTF-8 text is accepted as ASCII punctuation throughout the tree.
+
 ## [1.1.0.0]
 
 ### Added
