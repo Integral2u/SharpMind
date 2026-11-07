@@ -18,6 +18,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Audio primitives** - arbitrary-size FFT (Bluestein), RIFF/WAVE read and write for
   PCM and float, linear resampling, and the LFM3-Audio 128-bin Slaney log-mel
   frontend (16 kHz, 25 ms window, 10 ms hop, affine normalization).
+- **GGUF tensor reader** - dequantizes individual F32/F16/BF16/Q8_0 tensors to
+  float32 for multimodal components, plus a `tensor` mode in `GgufSmokeProbe`.
 - **llama.cpp tokenizer parity** - the pre-tokeniser is chosen from
   `tokenizer.ggml.pre` (with the architecture as fallback) using llama.cpp's
   tiktoken variants for Qwen2/Qwen3, Qwen3.5, Llama 3 `ignore_merges` and

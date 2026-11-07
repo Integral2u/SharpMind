@@ -105,8 +105,44 @@ if (mode == "bind")
 if (mode == "cmp")
     return RunCompare(path, args);
 
+if (mode == "tensor")
+    return RunTensorStats(path, args);
+
 Console.Error.WriteLine($"unknown mode: {mode}");
 return 2;
+
+// `tensor <file> [name...]` prints dtype, shape and value statistics. With no names it
+// lists the first few tensors, which is enough to inventory an mmproj or codec file.
+static int RunTensorStats(string path, string[] args)
+{
+    using var reader = new SharpMind.Model.Format.GgufTensorReader(path);
+    string[] names = args.Length > 2 ? args[2..] : [.. reader.TensorNames.Take(8)];
+    foreach (string name in names)
+    {
+        if (!reader.TryGetInfo(name, out SharpMind.Model.Format.TensorInfo info))
+        {
+            Console.WriteLine($"missing {name}");
+            continue;
+        }
+
+        float[] data = reader.ReadFloat32(name);
+        float min = float.PositiveInfinity, max = float.NegativeInfinity;
+        double sum = 0;
+        int bad = 0;
+        foreach (float value in data)
+        {
+            if (!float.IsFinite(value)) { bad++; continue; }
+            if (value < min) min = value;
+            if (value > max) max = value;
+            sum += value;
+        }
+        double mean = data.Length == 0 ? 0 : sum / data.Length;
+        Console.WriteLine(
+            $"{name} {info.Dtype} [{string.Join(",", info.Shape)}] " +
+            $"n={data.Length} min={min:G6} max={max:G6} mean={mean:G6} nonfinite={bad}");
+    }
+    return 0;
+}
 
 // `cmp <fileA> <fileB> <tensor>` dequantizes the same tensor out of two GGUF files and
 // reports the Pearson correlation between them. Two quantizations of the same base model
