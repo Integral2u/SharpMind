@@ -207,13 +207,13 @@ _Tested on: **AMD Ryzen 3 2200U (2C/4T, 2.5GHz base) w/ Radeon Vega Mobile Graph
 
 _* Single-run validations, not part of the two-run set above: the Mixture-of-Experts path is new in 1.0.8.0, and the Qwen3.5/MiniCPM-V text-backbone rows are smoke checks added in 1.0.9.0. It loads and generates without errors, but MoE throughput on a CPU is low — about **0.4 tokens/s of decode** on the machine above, which is 5.6–6.3× faster than the 0.08 tokens/s it managed before the kernel work in this release (see [Performance](#performance)). Every token still runs only its top-4 of 60 experts plus the shared expert, so cost tracks FLOPs rather than resident weight size, and the whole 5.5 GB of expert weights is held in memory for the life of the model (`LoadMode.Full`, the default; see [Streaming model loading](#streaming-model-loading-loadmodestreaming))._
 
-_* LFM3-1.7B was added in 1.1.1.0 as a single-run text smoke check. The tri-hybrid layer map now resolves as **13 short-conv / 5 sliding-window / 6 global** blocks and the per-head `attn_gate` is applied. Chat-template quality validation is still pending. The **VL**, **Audio** and **Omni** variants are not supported yet; they need their vision encoder/projector or audio codec. The LFM3-Audio GGUF contains the text backbone plus ASR/TTS chat templates, not the audio encoder/codec. Nemotron `asr` checkpoints use an encoder-decoder audio frontend and are also not supported yet._
+_* LFM3-1.7B was added in 1.1.1.0 as a single-run text smoke check. The tri-hybrid layer map now resolves as **13 short-conv / 5 sliding-window / 6 global** blocks and the per-head `attn_gate` is applied. A templated smoke run now answers a simple arithmetic prompt coherently (2+2 -> 4); broader quality evaluation is still pending. The **VL**, **Audio** and **Omni** variants are not supported yet; they need their vision encoder/projector or audio codec. The main LFM3-Audio GGUF is the text backbone plus ASR/TTS templates; the audio encoder and codec live in the separate `mmproj` file and are not wired into SharpMind yet. Nemotron `asr` checkpoints use an encoder-decoder audio frontend and are also not supported yet._
 
 ### Multimodal and speech status
 
 | Capability | Status | Notes |
 |---|---|---|
-| Text chat | Yes | LFM3 text backbone loads in 1.1.1.0. |
+| Text chat | Yes | LFM3 text backbone loads and a templated smoke run is coherent. |
 | Image input / VL | Not yet | Needs the LFM3 vision encoder and projector. |
 | Audio input / ASR | Not yet | Needs an audio encoder/frontend; Nemotron `asr` is a separate architecture. |
 | Speech output / TTS | Not yet | Needs the LFM3 audio codec (LiquidCodec). |

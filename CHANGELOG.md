@@ -36,7 +36,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Equal-rank BPE and equal-score SentencePiece merges no longer split runs of
   spaces or punctuation out of order.
 - LFM2/LFM3 GGUFs (`tokenizer.ggml.pre = lfm2`) are no longer tokenised with
-  the GPT-2 pattern.
+  the GPT-2 pattern. LFM3-1.7B now answers a templated `2+2` prompt with `4`.
 - Existing `.smm` tokenizers that store `gguf_pre` migrate to the correct
   variant; ones converted from `tokenizer.json` before this change need a
   re-conversion to gain llama.cpp-identical ids.
