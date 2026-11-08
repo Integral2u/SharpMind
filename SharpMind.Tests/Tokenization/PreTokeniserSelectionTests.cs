@@ -55,6 +55,11 @@ public sealed class PreTokeniserSelectionTests
     [InlineData("llama", "hunyuan", "qwen2")]
     [InlineData("llama", "chatglm-bpe", "cl100k")]
     [InlineData("llama", "olmo", "gpt2")]
+    // DeepSeek GGUFs say architecture llama; only the pre name reaches their regex lists.
+    [InlineData("llama", "deepseek-llm", "deepseek-llm")]
+    [InlineData("llama", "deepseek-coder", "deepseek-coder")]
+    [InlineData("deepseek2", "deepseek-v3", "deepseek-v3")]
+    [InlineData("llama", "hunyuan-dense", "deepseek-v3")]
     // LFM3 GGUFs carry tokenizer.ggml.pre = lfm2; the pre name is what keeps them off GPT-2.
     [InlineData("lfm3", "lfm2", "llama3")]
     // Absent or unknown pre name: architecture fallback.
@@ -81,6 +86,7 @@ public sealed class PreTokeniserSelectionTests
     {
         Gpt2PreTokeniser => "gpt2",
         Cl100kPreTokeniser c => c.Variant.ToString().ToLowerInvariant(),
+        SequentialRegexPreTokeniser s => s.Name,
         _ => pt.GetType().Name,
     };
 
@@ -132,6 +138,106 @@ public sealed class PreTokeniserSelectionTests
 
         var reloaded = TokenizerFile.FromJson(obj.ToJsonString());
         Assert.Equal(expected, Assert.IsType<Cl100kPreTokeniser>(reloaded.PreTokeniser).Variant);
+    }
+
+    [Theory]
+    [InlineData("deepseek-llm")]
+    [InlineData("deepseek-coder")]
+    [InlineData("deepseek-v3")]
+    public void TokenizerFile_RoundTripsSequentialByName(string pre)
+    {
+        var model = GgufConverter.Convert(ByteVocab(), ["a b"], null, -1, -1, preTokenizer: pre);
+        model.GgufPreTokenizer = null; // the pre_tokeniser name alone must carry it
+        string json = TokenizerFile.ToJson(model);
+        Assert.Contains($"\"pre_tokeniser\": \"{pre}\"", json);
+
+        Assert.Equal(pre, Assert.IsType<SequentialRegexPreTokeniser>(TokenizerFile.FromJson(json).PreTokeniser).Name);
+    }
+
+    [Theory]
+    // Written before SharpMind knew the DeepSeek pre names: the architecture fallback (llama + merges) was
+    // recorded as cl100k/llama3, before the variants existed as plain cl100k. The stored GGUF pre name wins.
+    [InlineData("llama3")]
+    [InlineData(null)]
+    public void TokenizerFile_LegacyCl100kFile_UsesStoredDeepSeekPreName(string? variant)
+    {
+        var model = GgufConverter.Convert(ByteVocab(), ["a b"], null, -1, -1, architecture: "llama");
+        model.GgufPreTokenizer = "deepseek-llm";
+        var obj = System.Text.Json.Nodes.JsonNode.Parse(TokenizerFile.ToJson(model))!.AsObject();
+        Assert.Equal("cl100k", (string?)obj["pre_tokeniser"]);
+        if (variant is null) obj.Remove("cl100k_variant"); else obj["cl100k_variant"] = variant;
+
+        var reloaded = TokenizerFile.FromJson(obj.ToJsonString());
+        Assert.Same(SequentialRegexPreTokeniser.DeepSeekLlm, reloaded.PreTokeniser);
+    }
+
+    // ── SentencePiece or byte-level: tokenizer.ggml.model first, the ▁ token otherwise ──────
+
+    private const string DeepSeekBos = "<｜begin▁of▁sentence｜>";
+
+    [Fact]
+    public void ByteLevelVocab_WithMetaspaceOnlyInsideASpecialToken_StaysByteLevel()
+    {
+        // DeepSeek: the only ▁ in the vocab sits inside <｜begin▁of▁sentence｜>. No tokenizer.ggml.model given.
+        var tokens = ByteVocab().Concat([DeepSeekBos]).ToArray();
+        var tok = Tokenizer.FromGguf(tokens, ["a b"], tokenTypes: ControlLast(tokens.Length), bosId: 256, eosId: 256, architecture: "llama");
+
+        Assert.False(tok.UseSentencePieceMerge);
+        Assert.Equal([Array.IndexOf(tokens, Vocabulary.ByteTokenString(' '))], tok.Encode(" ", addBos: false, addEos: false));
+    }
+
+    [Theory]
+    [InlineData("gpt2", false)]
+    [InlineData("llama", true)]
+    [InlineData(null, true)]   // no model name: the standalone ▁ token decides
+    [InlineData("bert", true)] // a model name SharpMind does not map: as null
+    public void TokenizerModel_DecidesSentencePieceMode(string? tokenizerModel, bool sentencePiece)
+    {
+        var tokens = ByteVocab().Concat(["▁"]).ToArray();
+        var tok = Tokenizer.FromGguf(tokens, ["a b"], null, -1, -1, architecture: "llama", tokenizerModel: tokenizerModel);
+
+        Assert.Equal(sentencePiece, tok.UseSentencePieceMerge);
+        Assert.Equal(tokenizerModel, tok.GgufTokenizerModel);
+
+        // The saved file carries the decision too (this vocab has a standalone ▁, so the fallback would say true).
+        var reloaded = Tokenizer.FromJson(tok.ToJson());
+        Assert.Equal(sentencePiece, reloaded.UseSentencePieceMerge);
+        Assert.Equal(tokenizerModel, reloaded.GgufTokenizerModel);
+    }
+
+    [Fact]
+    public void TokenizerModel_Llama_EncodesAsSentencePiece_EvenWithAMergeList()
+    {
+        // Same vocab and scores as SentencePiece_EqualScorePairs_MergeLeftmostFirst, plus a GPT-2-style merge
+        // list: "llama" keeps the score-ranked path and its ids.
+        string[] tokens = ["<unk>", "<s>", "</s>", "▁", "a", "aa"];
+        float[] scores = [0f, 0f, 0f, 0f, 0f, 1f];
+        var tok = Tokenizer.FromGguf(tokens, ["a a"], null, 1, 2, scores, tokenizerModel: "llama");
+
+        Assert.Equal([3, 5, 4], tok.Encode("aaa", addBos: false, addEos: false));
+    }
+
+    [Theory]
+    [InlineData(true)]  // written by this version: gguf_model is in the file
+    [InlineData(false)] // written before gguf_model existed: the ▁-free vocab decides
+    public void TokenizerFile_ReloadsDeepSeekVocabByteLevel(bool keepGgufModel)
+    {
+        var tokens = ByteVocab().Concat([DeepSeekBos]).ToArray();
+        var tok = Tokenizer.FromGguf(tokens, ["a b"], ControlLast(tokens.Length), 256, 256, architecture: "llama", tokenizerModel: "gpt2");
+        var obj = System.Text.Json.Nodes.JsonNode.Parse(tok.ToJson())!.AsObject();
+        Assert.Equal("gpt2", (string?)obj["gguf_model"]);
+        if (!keepGgufModel) obj.Remove("gguf_model");
+
+        var reloaded = Tokenizer.FromJson(obj.ToJsonString());
+        Assert.False(reloaded.UseSentencePieceMerge);
+        Assert.Equal(tok.Encode(" a", addBos: false, addEos: false), reloaded.Encode(" a", addBos: false, addEos: false));
+    }
+
+    private static int[] ControlLast(int count)
+    {
+        var types = Enumerable.Repeat(1, count).ToArray();
+        types[^1] = 3; // CONTROL
+        return types;
     }
 
     // ── HF tokenizer.json converters ───────────────────────────────────────

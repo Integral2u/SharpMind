@@ -12,7 +12,7 @@ namespace SharpMind.Inference.Grammar;
 /// A constrained decoder models the byte stream the model produces, so it
 /// needs the exact bytes each token writes. Rendering mirrors how the
 /// tokenizer's own decode presents a token as text:
-///   - SentencePiece vocabularies (any token contains ▁ U+2581): the text is
+///   - SentencePiece vocabularies (<see cref="Tokenizer.UseSentencePieceMerge"/>): the text is
 ///     UTF-8 with ▁ replaced by a space — the same word-boundary marker
 ///     mapping the encoder applies. Every token takes this path when the
 ///     vocab is SentencePiece-style, so accented pieces are never mistaken
@@ -65,7 +65,7 @@ public sealed class TokenByteTable
         _special = new bool[size];
 
         var specials = new HashSet<string>(tokenizer.Specials.All, StringComparer.Ordinal);
-        bool spMode = AnyMetaspace(tokenizer);
+        bool spMode = tokenizer.UseSentencePieceMerge;
 
         for (int id = 0; id < size; id++)
         {
@@ -74,19 +74,6 @@ public sealed class TokenByteTable
             _special[id] = isSpecial;
             _bytes[id] = isSpecial ? [] : ToBytes(token, spMode);
         }
-    }
-
-    /// <summary>
-    /// True when any vocab token contains the SentencePiece metaspace marker ▁,
-    /// identifying SentencePiece-style vocabularies (same detection the BPE
-    /// encoder uses to pick its merge strategy).
-    /// </summary>
-    private static bool AnyMetaspace(Tokenizer tokenizer)
-    {
-        foreach (string token in tokenizer.Vocab.AllTokens)
-            if (token.Contains('\u2581'))
-                return true;
-        return false;
     }
 
     private static byte[] ToBytes(string token, bool spMode)

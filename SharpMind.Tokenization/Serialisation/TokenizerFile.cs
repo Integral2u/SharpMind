@@ -13,7 +13,7 @@ namespace SharpMind.Tokenization.Serialisation;
 /// <code>
 /// {
 ///   "version": "1.0",
-///   "pre_tokeniser": "gpt2" | "cl100k" | "whitespace",
+///   "pre_tokeniser": "gpt2" | "cl100k" | "whitespace" | a GGUF pre name with its own regex list ("deepseek-llm", ...),
 ///   "cl100k_variant": "cl100k" | "llama3" | "qwen2" | "qwen35",   ← only with "cl100k"
 ///   "gguf_pre": "...", "gguf_model": "...",                       ← source GGUF names, when known
 ///   "special_tokens": { "unk": "...", "bos": "...", "eos": "...", "pad": "...",
@@ -154,10 +154,12 @@ public static class TokenizerFile
         if (root.TryGetProperty("scores", out var scoresEl))
             scores = [.. scoresEl.EnumerateArray().Select(e => e.GetSingle())];
 
-        return new BpeModel(vocab, merges, preTokeniser, scores, charMode: charMode)
+        string? ggufModel = root.TryGetProperty("gguf_model", out var modelEl) ? modelEl.GetString() : null;
+        return new BpeModel(vocab, merges, preTokeniser, scores, charMode: charMode,
+                            sentencePiece: GgufConverter.SentencePieceFromModel(ggufModel))
         {
             GgufPreTokenizer = ggufPre,
-            GgufTokenizerModel = root.TryGetProperty("gguf_model", out var modelEl) ? modelEl.GetString() : null,
+            GgufTokenizerModel = ggufModel,
         };
     }
 
@@ -176,6 +178,7 @@ public static class TokenizerFile
         Gpt2PreTokeniser => "gpt2",
         Cl100kPreTokeniser => "cl100k",
         WhitespacePreTokeniser => "whitespace",
+        SequentialRegexPreTokeniser s => s.Name,
         _ => pt.GetType().Name.ToLowerInvariant()
     };
 
@@ -184,14 +187,22 @@ public static class TokenizerFile
     /// The stored source <c>tokenizer.ggml.pre</c>. Older files say only "cl100k" for every
     /// tiktoken-family model; the GGUF pre name picks the variant for them. Without either, plain
     /// cl100k: on a Qwen vocab that gives the same ids as Qwen2, because Qwen has no multi-digit tokens.
+    /// A GGUF pre name with its own regex list (DeepSeek) wins over any stored cl100k name: files written
+    /// before SharpMind knew those names recorded the architecture fallback.
     /// </param>
-    internal static IPreTokeniser ParsePreTokeniserName(string name, string? variant = null, string? ggufPre = null) => name.ToLowerInvariant() switch
+    internal static IPreTokeniser ParsePreTokeniserName(string name, string? variant = null, string? ggufPre = null)
     {
-        "gpt2" => new Gpt2PreTokeniser(),
-        "cl100k" or "cl100k_base" or "cl100kpretokeniser" =>
-            Enum.TryParse<Cl100kVariant>(variant, ignoreCase: true, out var v) && Enum.IsDefined(v) ? new Cl100kPreTokeniser(v)
-            : GgufConverter.FromGgufPre(ggufPre) as Cl100kPreTokeniser ?? new Cl100kPreTokeniser(Cl100kVariant.Cl100k),
-        "whitespace" => new WhitespacePreTokeniser(),
-        _ => new Gpt2PreTokeniser()
-    };
+        if (GgufConverter.FromGgufPre(ggufPre) is SequentialRegexPreTokeniser fromPre)
+            return fromPre;
+        return name.ToLowerInvariant() switch
+        {
+            "gpt2" => new Gpt2PreTokeniser(),
+            "cl100k" or "cl100k_base" or "cl100kpretokeniser" =>
+                Enum.TryParse<Cl100kVariant>(variant, ignoreCase: true, out var v) && Enum.IsDefined(v) ? new Cl100kPreTokeniser(v)
+                : GgufConverter.FromGgufPre(ggufPre) as Cl100kPreTokeniser ?? new Cl100kPreTokeniser(Cl100kVariant.Cl100k),
+            "whitespace" => new WhitespacePreTokeniser(),
+            var sequential when GgufConverter.FromGgufPre(sequential) is SequentialRegexPreTokeniser byName => byName,
+            _ => new Gpt2PreTokeniser()
+        };
+    }
 }

@@ -59,6 +59,7 @@ public static class GgufConverter
     /// <param name="eosId">EOS token ID (tokenizer.ggml.eos_token_id).</param>
     /// <param name="architecture">general.architecture; picks the pre-tokeniser when <paramref name="preTokenizer"/> does not.</param>
     /// <param name="preTokenizer">tokenizer.ggml.pre; picks the pre-tokeniser by llama.cpp's name table.</param>
+    /// <param name="tokenizerModel">tokenizer.ggml.model: "gpt2" is byte-level BPE, "llama" SentencePiece; other or null leaves the encoder's own detection.</param>
     public static BpeModel Convert(
         string[]  tokens,
         string[]? merges,
@@ -67,7 +68,8 @@ public static class GgufConverter
         int       eosId,
         float[]?  scores = null,
         string?   architecture = null,
-        string?   preTokenizer = null)
+        string?   preTokenizer = null,
+        string?   tokenizerModel = null)
     {
         ArgumentNullException.ThrowIfNull(tokens);
         if (tokens.Length == 0)
@@ -158,8 +160,23 @@ public static class GgufConverter
         // score-ranked SentencePiece-style merging instead of silently
         // tokenising everything byte-by-byte.
         IPreTokeniser preTokeniser = SelectPreTokeniser(preTokenizer, architecture, merges);
-        return new BpeModel(vocab, mergeList, preTokeniser, scores) { GgufPreTokenizer = preTokenizer };
+        return new BpeModel(vocab, mergeList, preTokeniser, scores, sentencePiece: SentencePieceFromModel(tokenizerModel))
+        {
+            GgufPreTokenizer = preTokenizer,
+            GgufTokenizerModel = tokenizerModel,
+        };
     }
+
+    /// <summary>
+    /// What <c>tokenizer.ggml.model</c> says about the encoding: "llama" is SentencePiece, "gpt2" byte-level
+    /// BPE; the other llama.cpp values (bert, t5, rwkv, ...) and null decide nothing.
+    /// </summary>
+    internal static bool? SentencePieceFromModel(string? tokenizerModel) => tokenizerModel?.ToLowerInvariant() switch
+    {
+        "gpt2" => false,
+        "llama" => true,
+        _ => null,
+    };
 
     /// <summary>
     /// Selects the pre-tokeniser the way llama.cpp does: by <c>tokenizer.ggml.pre</c> when it names a
@@ -211,6 +228,9 @@ public static class GgufConverter
             or "lfm2" or "jina-v5-nano"
             => new Cl100kPreTokeniser(Cl100kVariant.Llama3),
         "dbrx" or "smaug-bpe" or "glm4" or "chatglm-bpe" => new Cl100kPreTokeniser(Cl100kVariant.Cl100k),
+        "deepseek-llm" => SequentialRegexPreTokeniser.DeepSeekLlm,
+        "deepseek-coder" => SequentialRegexPreTokeniser.DeepSeekCoder,
+        "deepseek-v3" or "hunyuan-dense" or "joyai-llm" => SequentialRegexPreTokeniser.DeepSeek3,
         "gpt-2" or "phi-2" or "jina-es" or "jina-de" or "gigachat" or "jina-v2-es" or "jina-v2-de"
             or "a.x-4.0" or "mellum" or "modern-bert" or "jina-v1-en" or "jina-v2-code" or "roberta-bpe"
             or "mpt" or "olmo"

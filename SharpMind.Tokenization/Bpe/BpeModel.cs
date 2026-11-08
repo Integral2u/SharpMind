@@ -17,13 +17,14 @@ public sealed class BpeModel
         List<MergeRule> merges,
         IPreTokeniser preTokeniser,
         IReadOnlyList<float>? tokenScores = null,
-        bool charMode = false)
+        bool charMode = false,
+        bool? sentencePiece = null)
     {
         Vocab = vocab;
         Merges = merges.AsReadOnly();
         PreTokeniser = preTokeniser;
         IsCharMode = charMode;
-        Encoder = new BpeEncoder(vocab, Merges, preTokeniser, tokenScores, charMode);
+        Encoder = new BpeEncoder(vocab, Merges, preTokeniser, tokenScores, charMode, sentencePiece);
     }
 
     public Vocabulary Vocab { get; }
