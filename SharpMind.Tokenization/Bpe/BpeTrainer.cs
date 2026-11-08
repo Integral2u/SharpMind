@@ -1,4 +1,5 @@
 ﻿using System.Collections.Concurrent;
+using SharpMind.Tokenization.Serialisation;
 using SharpMind.Tokenization.PreTokeniser;
 using SharpMind.Tokenization.Vocab;
 
@@ -51,6 +52,12 @@ public sealed class BpeTrainer
     /// size. This is what makes it safe to expand a checkpoint's embedding table
     /// (old rows keep their meaning, only new rows are added).
     ///
+    /// The corpus is split with <paramref name="existing"/>'s own pre-tokeniser, not this trainer's:
+    /// new merges are only useful on the words the grown tokenizer will see at encode time. The
+    /// GGUF names (<see cref="BpeModel.GgufPreTokenizer"/>, <see cref="BpeModel.GgufTokenizerModel"/>)
+    /// carry over. A SentencePiece model (by <c>tokenizer.ggml.model</c>, by scores or by a standalone ▁
+    /// token: its merges are ranked by score) cannot be grown this way and throws.
+    ///
     /// Returns the grown model, or the original when no growth is possible
     /// (already at/above the target, or no merge clears <c>minFrequency</c>).
     /// </summary>
@@ -65,8 +72,13 @@ public sealed class BpeTrainer
         if (existing.IsCharMode)
             throw new InvalidOperationException(
                 "Cannot grow a character-level tokenizer — it has no merge rules.");
+        bool? sentencePiece = GgufConverter.SentencePieceFromModel(existing.GgufTokenizerModel);
+        if (sentencePiece == true
+            || (sentencePiece is null && (existing.TokenScores is not null || existing.Vocab.Contains("\u2581"))))
+            throw new InvalidOperationException(
+                "Cannot grow a SentencePiece tokenizer: its merges are ranked by score, and appended merges have none.");
 
-        var wordFreqs = await CountWordsAsync(documents, cancellationToken);
+        var wordFreqs = await CountWordsAsync(documents, cancellationToken, existing.PreTokeniser);
 
         // Start from an exact copy of the existing vocabulary. Its layout (specials,
         // optional byte tokens, then learned merges) is preserved verbatim, so every
@@ -117,7 +129,11 @@ public sealed class BpeTrainer
             ApplyMergeParallel(wordTokens, left, right, merged);
         }
 
-        return new BpeModel(vocab, merges, existing.PreTokeniser);
+        return new BpeModel(vocab, merges, existing.PreTokeniser, sentencePiece: sentencePiece)
+        {
+            GgufPreTokenizer = existing.GgufPreTokenizer,
+            GgufTokenizerModel = existing.GgufTokenizerModel,
+        };
     }
 
     /// <summary>
@@ -216,12 +232,13 @@ public sealed class BpeTrainer
 
     private async Task<Dictionary<string, int>> CountWordsAsync(
         IAsyncEnumerable<string> documents,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IPreTokeniser? preTokeniser = null)
     {
         var counts = new Dictionary<string, int>(StringComparer.Ordinal);
         await foreach (string doc in documents.WithCancellation(cancellationToken))
         {
-            foreach (string word in _preTokeniser.PreTokenise(doc))
+            foreach (string word in (preTokeniser ?? _preTokeniser).PreTokenise(doc))
             {
                 counts[word] = counts.GetValueOrDefault(word) + 1;
             }
