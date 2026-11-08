@@ -58,6 +58,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   reports the next-token cross-entropy delta. It is model-agnostic and works for
   both hooked and unhooked block builds; `GgufSmokeProbe layer-importance` runs
   it from the CLI.
+- **Activation map** - `ActivationMapAnalyzer` runs one prompt through the generic
+  `IActivationHook` and records the attention and feed-forward branch RMS per
+  layer and token. `GgufSmokeProbe activation-map` prints a log-scaled grid; the
+  Studio visualizer renders the same map as a heatmap.
 - **Skip-layer surgery** - `Transformer.SetSkipLayers` skips selected blocks while
   the residual stream passes through, and `LayerImportanceAnalyzer` can append a
   surgery curve: it ranks the layers by ablation delta, skips the least

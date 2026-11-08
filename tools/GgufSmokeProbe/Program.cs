@@ -154,6 +154,9 @@ if (mode == "vl")
 if (mode == "quant-compare")
     return await RunQuantCompareAsync(path, args);
 
+if (mode == "activation-map")
+    return await RunActivationMapAsync(path, args);
+
 Console.Error.WriteLine($"unknown mode: {mode}");
 return 2;
 
@@ -284,6 +287,60 @@ static async Task<int> RunAsrFilesAsync(string backbonePath, string[] args)
         Console.WriteLine($"{Path.GetFileName(wav)} ({watch.Elapsed.TotalSeconds:F1}s): {transcript}");
     }
     return 0;
+}
+
+// `activation-map <model> [prompt] [maxTokens=64]` prints the layers x tokens branch RMS.
+static async Task<int> RunActivationMapAsync(string path, string[] args)
+{
+    await Task.CompletedTask;
+    string prompt = args.Length > 2
+        ? args[2]
+        : "The quick brown fox jumps over the lazy dog.";
+    int maxTokens = args.Length > 3 && int.TryParse(args[3], out int mt) ? mt : 64;
+
+    var metaHelper = ModelFormatHelpers.GetModelMetaHelperFor(ModelFormat.Gguf);
+    metaHelper.Load(path, null, out _, out var config, out var tokenizer);
+    if (tokenizer is null) { Console.Error.WriteLine("no tokenizer"); return 3; }
+
+    var sharpConfig = config.ForModel();
+    var mapping = sharpConfig.ToJigSawMapping();
+    using var weights = ModelFactory.CreateWeights(
+        config, sharpConfig, QuantizationFactory.Create(mapping), path,
+        LoadMode.Full, quantizedResident: false, maxParallelLoadDegree: 1);
+    weights.InitializeWeights();
+    using var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
+
+    int[] ids = tokenizer.Encode(prompt, addBos: true, addEos: false);
+    var watch = System.Diagnostics.Stopwatch.StartNew();
+    SharpMind.Model.Analysis.ActivationMap map =
+        SharpMind.Model.Analysis.ActivationMapAnalyzer.Capture(model, ids, maxTokens);
+    watch.Stop();
+
+    Console.WriteLine($"ACTIVATION-MAP ({watch.Elapsed.TotalSeconds:F1}s): layers={map.Layers} tokens={map.Tokens} " +
+                      $"attentionMax={map.MaxAttention:F3} ffnMax={map.MaxFeedForward:F3}");
+    PrintMap("attention", map.AttentionRms, map.Layers, map.Tokens, map.MaxAttention);
+    PrintMap("ffn", map.FeedForwardRms, map.Layers, map.Tokens, map.MaxFeedForward);
+    return 0;
+
+    static void PrintMap(string name, float[] values, int layers, int tokens, float max)
+    {
+        const string ramp = " .:-=+*#%@";
+        double maxLog = Math.Log10(1 + max);
+        Console.WriteLine($"{name} (log scale):");
+        for (int layer = 0; layer < layers; layer++)
+        {
+            var line = new System.Text.StringBuilder(tokens);
+            for (int token = 0; token < tokens; token++)
+            {
+                float value = values[layer * tokens + token];
+                int index = maxLog <= 1e-9
+                    ? 0
+                    : (int)Math.Clamp(Math.Log10(1 + value) / maxLog * (ramp.Length - 1), 0, ramp.Length - 1);
+                line.Append(ramp[index]);
+            }
+            Console.WriteLine($"{layer,3} {line}");
+        }
+    }
 }
 
 // `quant-compare <reference> <candidate> [filter] [maxTensors]` compares two quantizations
