@@ -143,6 +143,13 @@ public sealed class Transformer : IDisposable
     }
 
     /// <summary>Sets an activation hook on all blocks in the model.</summary>
+    /// <summary>
+    /// Skips the given transformer blocks during every subsequent forward. The residual
+    /// stream passes through unchanged, so a pre-norm model with the block skipped loses
+    /// exactly that block's contribution. Pass null to restore all layers.
+    /// </summary>
+    public void SetSkipLayers(IReadOnlySet<int>? layers) => _arch.SkipLayers = layers;
+
     public void SetActivationHook(IActivationHook? hook)
     {
         if (_blocks is null) return;

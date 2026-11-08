@@ -21,6 +21,9 @@ public sealed record LayerImportance(
     double AblatedLoss,
     double DeltaLoss);
 
+/// <summary>Loss after skipping the N least important layers.</summary>
+public sealed record SurgeryStep(int[] Layers, double Loss, double DeltaLoss);
+
 /// <summary>Result of one layer-importance run.</summary>
 public sealed class LayerImportanceReport
 {
@@ -28,6 +31,9 @@ public sealed class LayerImportanceReport
     public required int Tokens { get; init; }
     public required LayerAblation Mode { get; init; }
     public required IReadOnlyList<LayerImportance> Layers { get; init; }
+
+    /// <summary>Skip-layer preview, ordered from one skipped layer upward.</summary>
+    public IReadOnlyList<SurgeryStep> Surgery { get; init; } = [];
 
     /// <summary>The layer whose ablation hurt the loss least, a natural surgery candidate.</summary>
     public LayerImportance? LeastImportant =>
@@ -64,6 +70,7 @@ public sealed class LayerImportanceAnalyzer
         LayerAblation mode = LayerAblation.Both,
         IReadOnlyList<int>? layers = null,
         int maxTokens = 128,
+        int maxSkipLayers = 0,
         Action<int, int>? progress = null,
         CancellationToken cancellationToken = default)
     {
@@ -103,6 +110,27 @@ public sealed class LayerImportanceAnalyzer
             progress?.Invoke(index + 1, selected.Length);
         }
 
+        var surgery = new List<SurgeryStep>();
+        if (maxSkipLayers > 0 && results.Count > 0)
+        {
+            int[] ranking = [.. results.OrderBy(layer => layer.DeltaLoss).Select(layer => layer.Layer)];
+            int limit = Math.Min(maxSkipLayers, ranking.Length);
+            try
+            {
+                for (int k = 1; k <= limit; k++)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    _model.SetSkipLayers(ranking[..k].ToHashSet());
+                    double loss = ComputeLoss(ids, null, cancellationToken);
+                    surgery.Add(new SurgeryStep(ranking[..k], loss, loss - baseline));
+                }
+            }
+            finally
+            {
+                _model.SetSkipLayers(null);
+            }
+        }
+
         results.Sort((a, b) => a.Layer.CompareTo(b.Layer));
         return new LayerImportanceReport
         {
@@ -110,6 +138,7 @@ public sealed class LayerImportanceAnalyzer
             Tokens = count - 1,
             Mode = mode,
             Layers = results,
+            Surgery = surgery,
         };
     }
 

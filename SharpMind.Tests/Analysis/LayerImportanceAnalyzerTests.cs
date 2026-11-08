@@ -71,6 +71,24 @@ public sealed class LayerImportanceAnalyzerTests
     }
 
     [Fact]
+    public void Analyze_ProducesASurgeryCurveWhenRequested()
+    {
+        using var model = BuildTinyModel();
+        var analyzer = new LayerImportanceAnalyzer(model);
+        int[] ids = [1, 7, 13, 29, 3, 11];
+
+        LayerImportanceReport report = analyzer.Analyze(
+            ids, LayerAblation.Both, maxTokens: ids.Length, maxSkipLayers: 2);
+
+        Assert.Equal(2, report.Surgery.Count);
+        Assert.Single(report.Surgery[0].Layers);
+        Assert.Equal(2, report.Surgery[1].Layers.Length);
+        Assert.True(double.IsFinite(report.Surgery[0].Loss));
+        Assert.Equal(
+            report.Surgery[0].Layers.Length, report.Surgery[0].Layers.Distinct().Count());
+    }
+
+    [Fact]
     public void Analyze_RejectsASequenceTooShortToPredictAToken()
     {
         using var model = BuildTinyModel();

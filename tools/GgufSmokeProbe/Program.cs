@@ -388,8 +388,9 @@ static float[] LoadImageChw(string path, int maxSide, out int height, out int wi
     return chw;
 }
 
-// `layer-importance <model> [prompt] [both|attn|ffn] [maxTokens=128]` runs the model-agnostic
-// layer lab: a baseline loss, then one ablated pass per layer.
+// `layer-importance <model> [prompt] [both|attn|ffn] [maxTokens=128] [maxSkip=0]` runs the
+// model-agnostic layer lab: a baseline loss, one ablated pass per layer, and optionally the
+// skip-layer surgery curve.
 static async Task<int> RunLayerImportanceAsync(string path, string[] args)
 {
     await Task.CompletedTask;
@@ -398,6 +399,7 @@ static async Task<int> RunLayerImportanceAsync(string path, string[] args)
         : "The quick brown fox jumps over the lazy dog. Layer importance shows which transformer blocks matter most.";
     string modeText = args.Length > 3 ? args[3] : "both";
     int maxTokens = args.Length > 4 && int.TryParse(args[4], out int mt) ? mt : 128;
+    int maxSkip = args.Length > 5 && int.TryParse(args[5], out int ms) ? ms : 0;
     SharpMind.Model.Analysis.LayerAblation mode = modeText.ToLowerInvariant() switch
     {
         "attn" or "attention" => SharpMind.Model.Analysis.LayerAblation.Attention,
@@ -421,7 +423,7 @@ static async Task<int> RunLayerImportanceAsync(string path, string[] args)
     var analyzer = new SharpMind.Model.Analysis.LayerImportanceAnalyzer(model);
     var watch = System.Diagnostics.Stopwatch.StartNew();
     SharpMind.Model.Analysis.LayerImportanceReport report = analyzer.Analyze(
-        ids, mode, maxTokens: maxTokens,
+        ids, mode, maxTokens: maxTokens, maxSkipLayers: maxSkip,
         progress: (done, total) => Console.Write($"\rlayer {done}/{total}"));
     Console.WriteLine($"\nbaseline loss={report.BaselineLoss:F4} tokens={report.Tokens} mode={report.Mode} ({watch.Elapsed.TotalSeconds:F1}s)");
     Console.WriteLine("layer  attnRMS   ffnRMS   ablated   delta");
@@ -431,6 +433,12 @@ static async Task<int> RunLayerImportanceAsync(string path, string[] args)
         Console.WriteLine($"least important: layer {least.Layer} (delta {least.DeltaLoss:+0.0000;-0.0000;0})");
     if (report.MostImportant is { } most)
         Console.WriteLine($"most important:  layer {most.Layer} (delta {most.DeltaLoss:+0.0000;-0.0000;0})");
+    if (report.Surgery.Count > 0)
+    {
+        Console.WriteLine("surgery  layers                              loss     delta");
+        foreach (SharpMind.Model.Analysis.SurgeryStep step in report.Surgery)
+            Console.WriteLine($"{step.Layers.Length,7}  {string.Join(",", step.Layers),-32} {step.Loss,10:F4} {step.DeltaLoss,+8:F4}");
+    }
     return 0;
 }
 

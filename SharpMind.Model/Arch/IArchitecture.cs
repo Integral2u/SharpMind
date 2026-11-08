@@ -27,4 +27,10 @@ public interface IArchitecture : IDisposable
     /// <summary>Optional callback invoked before each block during Forward. Streaming
     /// load mode wires it to load the incoming layer and free the outgoing ones.</summary>
     public Action<int>? BeforeBlock { get => null; set { } }
+
+    /// <summary>
+    /// Optional layer indices that are skipped entirely during Forward. The residual
+    /// stream passes through unchanged, which is the runtime half of layer surgery.
+    /// </summary>
+    public IReadOnlySet<int>? SkipLayers { get => null; set { } }
 }

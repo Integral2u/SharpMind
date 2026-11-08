@@ -58,6 +58,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   reports the next-token cross-entropy delta. It is model-agnostic and works for
   both hooked and unhooked block builds; `GgufSmokeProbe layer-importance` runs
   it from the CLI.
+- **Skip-layer surgery** - `Transformer.SetSkipLayers` skips selected blocks while
+  the residual stream passes through, and `LayerImportanceAnalyzer` can append a
+  surgery curve: it ranks the layers by ablation delta, skips the least
+  important prefixes and re-measures the calibration loss. The
+  `layer-importance` probe mode prints the curve. A pruned model export is the
+  next step.
 - **Quantization comparison** - `QuantizationAnalyzer` dequantizes a reference
   and a candidate GGUF tensor by tensor and reports relative L2, cosine and the
   worst tensors, so a smaller file can be judged on evidence. It handles the
