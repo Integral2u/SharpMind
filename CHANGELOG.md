@@ -77,6 +77,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   worst tensors, so a smaller file can be judged on evidence. It handles the
   llama.cpp mixed quant recipes through the same kernels and needs no forward
   pass; `GgufSmokeProbe quant-compare` runs it from the CLI.
+  `LayerImportanceAnalyzer.MeasureLoss` and `GgufSmokeProbe quant-loss` add the
+  forward side: the same calibration text measured sequentially on both files,
+  so they never have to be resident together.
 - **Native LFM3-VL vision** - `Lfm3VlVisionEncoder` reads the vision `mmproj`
   (linear patchifier, fourteen pre-norm blocks alternating gated depthwise 2D
   convolution and bidirectional grouped-query attention with axial 2D RoPE, and

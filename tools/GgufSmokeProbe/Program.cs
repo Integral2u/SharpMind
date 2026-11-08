@@ -154,6 +154,9 @@ if (mode == "vl")
 if (mode == "quant-compare")
     return await RunQuantCompareAsync(path, args);
 
+if (mode == "quant-loss")
+    return await RunQuantLossAsync(path, args);
+
 if (mode == "activation-map")
     return await RunActivationMapAsync(path, args);
 
@@ -290,6 +293,45 @@ static async Task<int> RunAsrFilesAsync(string backbonePath, string[] args)
         Console.WriteLine($"{Path.GetFileName(wav)} ({watch.Elapsed.TotalSeconds:F1}s): {transcript}");
     }
     return 0;
+}
+
+// `quant-loss <reference> <candidate> [prompt] [maxTokens=128]` measures the next-token
+// cross-entropy of both files on the same calibration text (sequentially, one model at a time).
+static async Task<int> RunQuantLossAsync(string referencePath, string[] args)
+{
+    await Task.CompletedTask;
+    if (args.Length < 3) { Console.Error.WriteLine("usage: quant-loss <reference.gguf> <candidate.gguf> [prompt] [maxTokens]"); return 2; }
+    string candidatePath = Path.GetFullPath(args[2]);
+    string prompt = args.Length > 3
+        ? args[3]
+        : "The quick brown fox jumps over the lazy dog. A quantization should preserve the next-token distribution.";
+    int maxTokens = args.Length > 4 && int.TryParse(args[4], out int mt) ? mt : 128;
+
+    (double referenceLoss, int tokens) = Measure(referencePath, prompt, maxTokens);
+    (double candidateLoss, _) = Measure(candidatePath, prompt, maxTokens);
+    Console.WriteLine($"QUANT-LOSS tokens={tokens} reference={referenceLoss:F4} candidate={candidateLoss:F4} " +
+                      $"delta={candidateLoss - referenceLoss:+0.0000;-0.0000;0} " +
+                      $"ppl {Math.Exp(referenceLoss):F2} -> {Math.Exp(candidateLoss):F2}");
+    return 0;
+
+    static (double Loss, int Tokens) Measure(string path, string prompt, int maxTokens)
+    {
+        var metaHelper = ModelFormatHelpers.GetModelMetaHelperFor(ModelFormat.Gguf);
+        metaHelper.Load(path, null, out _, out var config, out var tokenizer);
+        if (tokenizer is null) throw new InvalidOperationException("no tokenizer");
+        int[] ids = tokenizer.Encode(prompt, addBos: true, addEos: false);
+
+        var sharpConfig = config.ForModel();
+        var mapping = sharpConfig.ToJigSawMapping();
+        using var weights = ModelFactory.CreateWeights(
+            config, sharpConfig, QuantizationFactory.Create(mapping), path,
+            LoadMode.Full, quantizedResident: false, maxParallelLoadDegree: 1);
+        weights.InitializeWeights();
+        using var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
+        var analyzer = new SharpMind.Model.Analysis.LayerImportanceAnalyzer(model);
+        double loss = analyzer.MeasureLoss(ids, maxTokens);
+        return (loss, Math.Min(ids.Length, maxTokens) - 1);
+    }
 }
 
 // `latent <model> [prompt] [maxTokens=64]` projects the prompt hidden states to 2D with

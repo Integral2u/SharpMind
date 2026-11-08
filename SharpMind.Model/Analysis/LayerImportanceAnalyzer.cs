@@ -142,6 +142,33 @@ public sealed class LayerImportanceAnalyzer
         };
     }
 
+    /// <summary>
+    /// Measures the next-token cross-entropy of a calibration sequence with every layer
+    /// active. Useful for comparing two weights files without running the full lab.
+    /// </summary>
+    public double MeasureLoss(
+        ReadOnlySpan<int> tokenIds,
+        int maxTokens = 128,
+        CancellationToken cancellationToken = default)
+    {
+        if (tokenIds.Length < 2)
+            throw new ArgumentException("The calibration sequence needs at least two tokens.", nameof(tokenIds));
+        if (maxTokens < 2) throw new ArgumentOutOfRangeException(nameof(maxTokens));
+
+        int count = Math.Min(tokenIds.Length, maxTokens);
+        var ids = new int[count];
+        tokenIds[..count].CopyTo(ids);
+        _model.SetSkipLayers(null);
+        try
+        {
+            return ComputeLoss(ids, null, cancellationToken);
+        }
+        finally
+        {
+            _model.SetSkipLayers(null);
+        }
+    }
+
     private double ComputeLoss(int[] ids, IActivationHook? hook, CancellationToken cancellationToken)
     {
         _model.SetActivationHook(hook);
