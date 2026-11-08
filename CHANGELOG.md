@@ -52,6 +52,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   sampled frame, and `asr-runtime` transcribes the result, so the TTS loop can
   be checked without the UI. The "Draw me a cat." round trip returns the same
   sentence through the native encoder.
+- **Layer importance lab** - `LayerImportanceAnalyzer` uses the generic
+  `IActivationHook` surface to record each block's attention and feed-forward
+  activation RMS, then ablates one branch or the whole block per layer and
+  reports the next-token cross-entropy delta. It is model-agnostic and works for
+  both hooked and unhooked block builds; `GgufSmokeProbe layer-importance` runs
+  it from the CLI.
 - **llama.cpp tokenizer parity** - the pre-tokeniser is chosen from
   `tokenizer.ggml.pre` (with the architecture as fallback) using llama.cpp's
   tiktoken variants for Qwen2/Qwen3, Qwen3.5, Llama 3 `ignore_merges` and

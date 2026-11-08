@@ -145,6 +145,9 @@ if (mode == "tts-logits")
 if (mode == "asr-files")
     return await RunAsrFilesAsync(path, args);
 
+if (mode == "layer-importance")
+    return await RunLayerImportanceAsync(path, args);
+
 Console.Error.WriteLine($"unknown mode: {mode}");
 return 2;
 
@@ -274,6 +277,52 @@ static async Task<int> RunAsrFilesAsync(string backbonePath, string[] args)
         string transcript = runtime.TranscribeWav(Path.GetFullPath(wav), "English", 64);
         Console.WriteLine($"{Path.GetFileName(wav)} ({watch.Elapsed.TotalSeconds:F1}s): {transcript}");
     }
+    return 0;
+}
+
+// `layer-importance <model> [prompt] [both|attn|ffn] [maxTokens=128]` runs the model-agnostic
+// layer lab: a baseline loss, then one ablated pass per layer.
+static async Task<int> RunLayerImportanceAsync(string path, string[] args)
+{
+    await Task.CompletedTask;
+    string prompt = args.Length > 2
+        ? args[2]
+        : "The quick brown fox jumps over the lazy dog. Layer importance shows which transformer blocks matter most.";
+    string modeText = args.Length > 3 ? args[3] : "both";
+    int maxTokens = args.Length > 4 && int.TryParse(args[4], out int mt) ? mt : 128;
+    SharpMind.Model.Analysis.LayerAblation mode = modeText.ToLowerInvariant() switch
+    {
+        "attn" or "attention" => SharpMind.Model.Analysis.LayerAblation.Attention,
+        "ffn" or "feedforward" => SharpMind.Model.Analysis.LayerAblation.FeedForward,
+        _ => SharpMind.Model.Analysis.LayerAblation.Both,
+    };
+
+    var metaHelper = ModelFormatHelpers.GetModelMetaHelperFor(ModelFormat.Gguf);
+    metaHelper.Load(path, null, out _, out var config, out var tokenizer);
+    if (tokenizer is null) { Console.Error.WriteLine("no tokenizer"); return 3; }
+
+    var sharpConfig = config.ForModel();
+    var mapping = sharpConfig.ToJigSawMapping();
+    using var weights = ModelFactory.CreateWeights(
+        config, sharpConfig, QuantizationFactory.Create(mapping), path,
+        LoadMode.Full, quantizedResident: false, maxParallelLoadDegree: 1);
+    weights.InitializeWeights();
+    using var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
+
+    int[] ids = tokenizer.Encode(prompt, addBos: true, addEos: false);
+    var analyzer = new SharpMind.Model.Analysis.LayerImportanceAnalyzer(model);
+    var watch = System.Diagnostics.Stopwatch.StartNew();
+    SharpMind.Model.Analysis.LayerImportanceReport report = analyzer.Analyze(
+        ids, mode, maxTokens: maxTokens,
+        progress: (done, total) => Console.Write($"\rlayer {done}/{total}"));
+    Console.WriteLine($"\nbaseline loss={report.BaselineLoss:F4} tokens={report.Tokens} mode={report.Mode} ({watch.Elapsed.TotalSeconds:F1}s)");
+    Console.WriteLine("layer  attnRMS   ffnRMS   ablated   delta");
+    foreach (SharpMind.Model.Analysis.LayerImportance layer in report.Layers)
+        Console.WriteLine($"{layer.Layer,5}  {layer.AttentionRms,7:F3}  {layer.FeedForwardRms,7:F3}  {layer.AblatedLoss,8:F4}  {layer.DeltaLoss,+8:F4}");
+    if (report.LeastImportant is { } least)
+        Console.WriteLine($"least important: layer {least.Layer} (delta {least.DeltaLoss:+0.0000;-0.0000;0})");
+    if (report.MostImportant is { } most)
+        Console.WriteLine($"most important:  layer {most.Layer} (delta {most.DeltaLoss:+0.0000;-0.0000;0})");
     return 0;
 }
 
