@@ -70,8 +70,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   the residual stream passes through, and `LayerImportanceAnalyzer` can append a
   surgery curve: it ranks the layers by ablation delta, skips the least
   important prefixes and re-measures the calibration loss. The
-  `layer-importance` probe mode prints the curve. A pruned model export is the
-  next step.
+  `layer-importance` probe mode prints the curve. `ModelSurgeryExporter` turns a
+  chosen row into a real pruned GGUF: the selected block tensors are dropped, the
+  rest are renumbered, per-layer metadata arrays are filtered and
+  `{arch}.block_count` is updated, so the file loads as an ordinary smaller
+  model. `GgufSmokeProbe prune` runs the export from the CLI.
 - **Quantization comparison** - `QuantizationAnalyzer` dequantizes a reference
   and a candidate GGUF tensor by tensor and reports relative L2, cosine and the
   worst tensors, so a smaller file can be judged on evidence. It handles the

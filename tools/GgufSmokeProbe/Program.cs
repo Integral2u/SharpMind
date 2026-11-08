@@ -163,6 +163,9 @@ if (mode == "activation-map")
 if (mode == "latent")
     return await RunLatentAsync(path, args);
 
+if (mode == "prune")
+    return await RunPruneAsync(path, args);
+
 Console.Error.WriteLine($"unknown mode: {mode}");
 return 2;
 
@@ -292,6 +295,25 @@ static async Task<int> RunAsrFilesAsync(string backbonePath, string[] args)
         string transcript = runtime.TranscribeWav(Path.GetFullPath(wav), "English", 64);
         Console.WriteLine($"{Path.GetFileName(wav)} ({watch.Elapsed.TotalSeconds:F1}s): {transcript}");
     }
+    return 0;
+}
+
+// `prune <source> <dest> <layer,layer...>` writes a GGUF with the selected blocks removed.
+static async Task<int> RunPruneAsync(string sourcePath, string[] args)
+{
+    await Task.CompletedTask;
+    if (args.Length < 4) { Console.Error.WriteLine("usage: prune <source.gguf> <dest.gguf> <layer,layer...>"); return 2; }
+    string destination = Path.GetFullPath(args[2]);
+    var layers = args[3].Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        .Select(int.Parse).ToHashSet();
+
+    var watch = System.Diagnostics.Stopwatch.StartNew();
+    SharpMind.Model.Analysis.SurgeryExportResult result =
+        SharpMind.Model.Analysis.ModelSurgeryExporter.ExportPruned(
+            sourcePath, destination, layers,
+            progress: (done, total) => Console.Write($"\rtensor {done}/{total}"));
+    Console.WriteLine($"\nPRUNE ({watch.Elapsed.TotalSeconds:F1}s): {result.OriginalLayers} -> {result.KeptLayers} layers, " +
+                      $"removed {result.RemovedLayers}, {result.Tensors} tensors, {result.Bytes / (1024.0 * 1024.0):F1} MB -> {result.Path}");
     return 0;
 }
 
