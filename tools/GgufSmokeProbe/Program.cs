@@ -157,6 +157,9 @@ if (mode == "quant-compare")
 if (mode == "activation-map")
     return await RunActivationMapAsync(path, args);
 
+if (mode == "latent")
+    return await RunLatentAsync(path, args);
+
 Console.Error.WriteLine($"unknown mode: {mode}");
 return 2;
 
@@ -286,6 +289,42 @@ static async Task<int> RunAsrFilesAsync(string backbonePath, string[] args)
         string transcript = runtime.TranscribeWav(Path.GetFullPath(wav), "English", 64);
         Console.WriteLine($"{Path.GetFileName(wav)} ({watch.Elapsed.TotalSeconds:F1}s): {transcript}");
     }
+    return 0;
+}
+
+// `latent <model> [prompt] [maxTokens=64]` projects the prompt hidden states to 2D with
+// classical MDS (dual PCA) and prints the points.
+static async Task<int> RunLatentAsync(string path, string[] args)
+{
+    await Task.CompletedTask;
+    string prompt = args.Length > 2
+        ? args[2]
+        : "The quick brown fox jumps over the lazy dog.";
+    int maxTokens = args.Length > 3 && int.TryParse(args[3], out int mt) ? mt : 64;
+
+    var metaHelper = ModelFormatHelpers.GetModelMetaHelperFor(ModelFormat.Gguf);
+    metaHelper.Load(path, null, out _, out var config, out var tokenizer);
+    if (tokenizer is null) { Console.Error.WriteLine("no tokenizer"); return 3; }
+
+    var sharpConfig = config.ForModel();
+    var mapping = sharpConfig.ToJigSawMapping();
+    using var weights = ModelFactory.CreateWeights(
+        config, sharpConfig, QuantizationFactory.Create(mapping), path,
+        LoadMode.Full, quantizedResident: false, maxParallelLoadDegree: 1);
+    weights.InitializeWeights();
+    using var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
+
+    int[] ids = tokenizer.Encode(prompt, addBos: true, addEos: false);
+    var watch = System.Diagnostics.Stopwatch.StartNew();
+    SharpMind.Model.Analysis.LatentSpaceMap map =
+        SharpMind.Model.Analysis.LatentSpaceAnalyzer.Capture(
+            model, ids, id => tokenizer.Decode([id]), maxTokens);
+    watch.Stop();
+
+    Console.WriteLine($"LATENT ({watch.Elapsed.TotalSeconds:F1}s): tokens={map.Tokens} dim={map.Dimensions} " +
+                      $"explained={map.ExplainedVariance:F3}");
+    foreach (SharpMind.Model.Analysis.LatentPoint point in map.Points)
+        Console.WriteLine($"{point.X,9:F4} {point.Y,9:F4}  {point.TokenId,7}  {point.Text}");
     return 0;
 }
 

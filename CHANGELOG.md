@@ -58,6 +58,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   reports the next-token cross-entropy delta. It is model-agnostic and works for
   both hooked and unhooked block builds; `GgufSmokeProbe layer-importance` runs
   it from the CLI.
+- **Latent projection** - `LatentSpaceAnalyzer` projects one prompt's final
+  hidden states to two dimensions with classical MDS (the dual of PCA), so a
+  2048-wide model never allocates a d x d covariance. `GgufSmokeProbe latent`
+  prints the points; the Studio latent lab draws the scatter.
 - **Activation map** - `ActivationMapAnalyzer` runs one prompt through the generic
   `IActivationHook` and records the attention and feed-forward branch RMS per
   layer and token. `GgufSmokeProbe activation-map` prints a log-scaled grid; the
