@@ -150,11 +150,15 @@ namespace SharpMind.Model.Layers.Attention;
         }
         if (config.HeadGatedAttention)
         {
+            // The loader fills this tensor; allocate it even when the call site
+            // (streaming inference) did not pre-allocate the block plane.
+            if (weights is not null)
+                weights.AttnGate ??= new Tensor<float>(config.HiddenDim, config.NumHeads);
             _headGate = mapping != null
                 ? LinearLayerFactory.Create("attn_gate", config.HiddenDim, config.NumHeads, false,
-                    weights?.AttnGate, null, tm?.GetValueOrDefault("RawWGate").Dtype ?? QuantDType.F32, mapping)
+                    weights?.AttnGate, null, QuantDType.F32, mapping)
                 : LinearLayerFactory.Create("attn_gate", config.HiddenDim, config.NumHeads, false,
-                    weights?.AttnGate, null, tm?.GetValueOrDefault("RawWGate").Dtype ?? QuantDType.F32);
+                    weights?.AttnGate, null, QuantDType.F32);
         }
 
         // Per-layer RoPE base: sliding-window models (Gemma-3/4) use a different
@@ -253,6 +257,11 @@ namespace SharpMind.Model.Layers.Attention;
         if (name.Contains("attn_k_norm", StringComparison.OrdinalIgnoreCase))
         {
             _kNorm?.LoadWeight(data);
+            return;
+        }
+        if (name.Contains("attn_gate", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!isBias) _headGate?.LoadWeightTransposed(data);
             return;
         }
         if (name.Contains("attn_q", StringComparison.OrdinalIgnoreCase) || name.Contains("q_proj", StringComparison.OrdinalIgnoreCase))

@@ -30,6 +30,13 @@ public static class WavFile
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         using var stream = File.OpenRead(path);
+        return Read(stream);
+    }
+
+    /// <summary>Reads a WAV stream and returns the mono mix at its original sample rate.</summary>
+    public static WavData Read(Stream stream)
+    {
+        ArgumentNullException.ThrowIfNull(stream);
         using var reader = new BinaryReader(stream, Encoding.ASCII, leaveOpen: true);
 
         if (new string(reader.ReadChars(4)) != "RIFF")
@@ -113,6 +120,14 @@ public static class WavFile
     public static float[] ReadMono(string path, int? targetSampleRate = null)
     {
         WavData data = Read(path);
+        if (targetSampleRate is not { } target || target == data.SampleRate) return data.Samples;
+        return Resample(data.Samples, data.SampleRate, target);
+    }
+
+    /// <summary>Reads a WAV stream as mono, optionally resampling to <paramref name="targetSampleRate"/>.</summary>
+    public static float[] ReadMono(Stream stream, int? targetSampleRate = null)
+    {
+        WavData data = Read(stream);
         if (targetSampleRate is not { } target || target == data.SampleRate) return data.Samples;
         return Resample(data.Samples, data.SampleRate, target);
     }

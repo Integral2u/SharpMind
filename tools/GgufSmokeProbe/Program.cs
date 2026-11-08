@@ -130,8 +130,40 @@ if (mode == "asr-sweep")
 if (mode == "asr-ablate")
     return await RunAsrAblateAsync(path, args);
 
+if (mode == "asr-runtime")
+    return await RunAsrRuntimeAsync(path, args);
+
 Console.Error.WriteLine($"unknown mode: {mode}");
 return 2;
+
+// `asr-runtime <backbone> <mmproj> <wav>` exercises the same Lfm3AudioRuntime the
+// Studio chat service uses.
+static async Task<int> RunAsrRuntimeAsync(string backbonePath, string[] args)
+{
+    await Task.CompletedTask;
+    if (args.Length < 4) { Console.Error.WriteLine("usage: asr-runtime <backbone.gguf> <mmproj.gguf> <wav>"); return 2; }
+    string mmprojPath = Path.GetFullPath(args[2]);
+    string wavPath = Path.GetFullPath(args[3]);
+
+    var metaHelper = ModelFormatHelpers.GetModelMetaHelperFor(ModelFormat.Gguf);
+    metaHelper.Load(backbonePath, null, out _, out var config, out var tokenizer);
+    if (tokenizer is null) { Console.Error.WriteLine("no tokenizer"); return 3; }
+
+    var sharpConfig = config.ForModel();
+    var mapping = sharpConfig.ToJigSawMapping();
+    using var weights = ModelFactory.CreateWeights(
+        config, sharpConfig, QuantizationFactory.Create(mapping), backbonePath,
+        LoadMode.Full, quantizedResident: false, maxParallelLoadDegree: 1);
+    weights.InitializeWeights();
+    using var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
+    using var runtime = new SharpMind.Model.Audio.Lfm3AudioRuntime(model, tokenizer, config, mmprojPath);
+
+    var watch = System.Diagnostics.Stopwatch.StartNew();
+    string transcript = runtime.TranscribeWav(wavPath, "English", 32);
+    watch.Stop();
+    Console.WriteLine($"ASR-RUNTIME ({watch.Elapsed.TotalSeconds:F1}s): {transcript}");
+    return 0;
+}
 
 // `asr-ablate <backbone> <mmproj> <wav>` runs the full 11 s prompt, then zeroes
 // the first or the last half of the audio embeddings. If the output does not change,

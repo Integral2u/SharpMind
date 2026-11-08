@@ -182,7 +182,11 @@ public static class ModelFactory
                 WConv = recurrent ? new Tensor<float>(config.SsmConvKernel, config.SsmConvDim) : null,
                 SsmA = recurrent ? new Tensor<float>(config.SsmTimeStepRank) : null,
                 SsmDt = recurrent ? new Tensor<float>(config.SsmTimeStepRank) : null,
-                SsmNorm = recurrent ? new Tensor<float>(config.SsmValueHeadDim) : null
+                SsmNorm = recurrent ? new Tensor<float>(config.SsmValueHeadDim) : null,
+                // LFM3 per-head attention gate: a 2D float tensor that the loader fills.
+                // Streaming used to leave this null, so the gate layer fell back to a
+                // one-column placeholder and the first forward threw.
+                AttnGate = config.HeadGatedAttention ? new Tensor<float>(config.HiddenDim, config.NumHeads) : null
             };
         }
         return blocks;

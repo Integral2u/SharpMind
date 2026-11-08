@@ -29,6 +29,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   `<|audio|>` placeholder. The probe's `asr` mode decodes a WAV end to end.
   Short clips transcribe correctly; long clips currently start near the end of
   the audio and need a chunked or long-context fix.
+- **`Lfm3AudioRuntime`** - the reusable speech-to-text path used by Studio:
+  finds the `mmproj` next to a backbone, encodes 16 kHz audio and decodes a
+  transcript. WAV reading now also accepts a stream.
 - **llama.cpp tokenizer parity** - the pre-tokeniser is chosen from
   `tokenizer.ggml.pre` (with the architecture as fallback) using llama.cpp's
   tiktoken variants for Qwen2/Qwen3, Qwen3.5, Llama 3 `ignore_merges` and
@@ -42,6 +45,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- LFM3 per-head `attn_gate` weights now load in every mode. Streaming and
+  quantized-resident loads allocated a one-column placeholder instead of the
+  `[hidden, heads]` gate, so the first forward threw
+  "RawQuantizedData is null and no float fallback available".
+- Selecting an `asr` encoder-decoder model (Nemotron ASR) or a `clip` `mmproj`
+  as a chat model now fails with a clear message instead of a loader error.
 - Equal-rank BPE and equal-score SentencePiece merges no longer split runs of
   spaces or punctuation out of order.
 - LFM2/LFM3 GGUFs (`tokenizer.ggml.pre = lfm2`) are no longer tokenised with
