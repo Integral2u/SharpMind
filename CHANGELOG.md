@@ -58,6 +58,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   reports the next-token cross-entropy delta. It is model-agnostic and works for
   both hooked and unhooked block builds; `GgufSmokeProbe layer-importance` runs
   it from the CLI.
+- **Native LFM3-VL vision** - `Lfm3VlVisionEncoder` reads the vision `mmproj`
+  (linear patchifier, fourteen pre-norm blocks alternating gated depthwise 2D
+  convolution and bidirectional grouped-query attention with axial 2D RoPE, and
+  the 2x2 merge projector). `Lfm3VlRuntime` scatters the projected features into
+  the expanded `<|image|>` placeholders and runs the ordinary LFM3 decoder;
+  `GgufSmokeProbe vl` captions an image end to end.
 - **llama.cpp tokenizer parity** - the pre-tokeniser is chosen from
   `tokenizer.ggml.pre` (with the architecture as fallback) using llama.cpp's
   tiktoken variants for Qwen2/Qwen3, Qwen3.5, Llama 3 `ignore_merges` and

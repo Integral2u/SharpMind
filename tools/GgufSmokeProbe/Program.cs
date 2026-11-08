@@ -148,6 +148,9 @@ if (mode == "asr-files")
 if (mode == "layer-importance")
     return await RunLayerImportanceAsync(path, args);
 
+if (mode == "vl")
+    return await RunVlAsync(path, args);
+
 Console.Error.WriteLine($"unknown mode: {mode}");
 return 2;
 
@@ -278,6 +281,83 @@ static async Task<int> RunAsrFilesAsync(string backbonePath, string[] args)
         Console.WriteLine($"{Path.GetFileName(wav)} ({watch.Elapsed.TotalSeconds:F1}s): {transcript}");
     }
     return 0;
+}
+
+// `vl <backbone> <mmproj> <image> [prompt] [maxTokens=128]` runs the native LFM3-VL image path.
+static async Task<int> RunVlAsync(string backbonePath, string[] args)
+{
+    await Task.CompletedTask;
+    if (args.Length < 4) { Console.Error.WriteLine("usage: vl <backbone.gguf> <mmproj.gguf> <image> [prompt] [maxTokens]"); return 2; }
+    string mmprojPath = Path.GetFullPath(args[2]);
+    string imagePath = Path.GetFullPath(args[3]);
+    string prompt = args.Length > 4 ? args[4] : "Describe this image in one sentence.";
+    int maxTokens = args.Length > 5 && int.TryParse(args[5], out int mt) ? mt : 128;
+
+    var metaHelper = ModelFormatHelpers.GetModelMetaHelperFor(ModelFormat.Gguf);
+    metaHelper.Load(backbonePath, null, out _, out var config, out var tokenizer);
+    if (tokenizer is null) { Console.Error.WriteLine("no tokenizer"); return 3; }
+
+    float[] chw = LoadImageChw(imagePath, 512, out int height, out int width);
+    Console.WriteLine($"image {width}x{height}, {SharpMind.Model.Vision.Lfm3VlRuntime.ImageTokens(height, width)} vision tokens");
+
+    var sharpConfig = config.ForModel();
+    var mapping = sharpConfig.ToJigSawMapping();
+    using var weights = ModelFactory.CreateWeights(
+        config, sharpConfig, QuantizationFactory.Create(mapping), backbonePath,
+        LoadMode.Full, quantizedResident: false, maxParallelLoadDegree: 1);
+    weights.InitializeWeights();
+    using var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
+    using var runtime = new SharpMind.Model.Vision.Lfm3VlRuntime(model, tokenizer, config, mmprojPath);
+
+    var watch = System.Diagnostics.Stopwatch.StartNew();
+    string answer = runtime.Describe(chw, height, width, prompt, maxTokens);
+    Console.WriteLine($"VL ({watch.Elapsed.TotalSeconds:F1}s): {answer}");
+    return 0;
+}
+
+// Loads an image, resizes it to a multiple of 32 with the long side capped, and returns CHW 0..1.
+static float[] LoadImageChw(string path, int maxSide, out int height, out int width)
+{
+    using var source = new System.Drawing.Bitmap(path);
+    double scale = Math.Min(1.0, (double)maxSide / Math.Max(source.Width, source.Height));
+    width = Math.Max(32, (int)Math.Round(source.Width * scale / 32.0) * 32);
+    height = Math.Max(32, (int)Math.Round(source.Height * scale / 32.0) * 32);
+    using var bitmap = new System.Drawing.Bitmap(width, height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+    using (var graphics = System.Drawing.Graphics.FromImage(bitmap))
+    {
+        graphics.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+        graphics.DrawImage(source, 0, 0, width, height);
+    }
+
+    var chw = new float[3 * height * width];
+    var data = bitmap.LockBits(
+        new System.Drawing.Rectangle(0, 0, width, height),
+        System.Drawing.Imaging.ImageLockMode.ReadOnly,
+        System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+    try
+    {
+        unsafe
+        {
+            for (int y = 0; y < height; y++)
+            {
+                byte* row = (byte*)data.Scan0 + y * data.Stride;
+                for (int x = 0; x < width; x++)
+                {
+                    float r = (row[x * 4 + 2] / 255f - 0.5f) / 0.5f;
+                    float g = (row[x * 4 + 1] / 255f - 0.5f) / 0.5f;
+                    float b = (row[x * 4 + 0] / 255f - 0.5f) / 0.5f;
+                    chw[y * width + x] = r;
+                    chw[height * width + y * width + x] = g;
+                    chw[2 * height * width + y * width + x] = b;
+                }
+            }
+        }
+    }
+    finally
+    {
+        bitmap.UnlockBits(data);
+    }
+    return chw;
 }
 
 // `layer-importance <model> [prompt] [both|attn|ffn] [maxTokens=128]` runs the model-agnostic

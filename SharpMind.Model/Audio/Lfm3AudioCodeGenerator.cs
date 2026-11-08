@@ -243,6 +243,29 @@ public sealed class Lfm3AudioCodeGenerator : IDisposable
             y[o] = Dot(x, w.Slice(inDim * o, inDim));
     }
 
+    /// <summary>
+    /// Batched float matmul: <paramref name="x"/> is <c>[rows, inDim]</c> and
+    /// <paramref name="y"/> is <c>[rows, outDim]</c>. Rows are independent, so the work
+    /// fans out across the cores without one parallel region per token.
+    /// </summary>
+    internal static void MatMulBatch(float[] x, float[] weight, int inDim, int outDim, float[] y, int rows)
+    {
+        if (rows >= 4)
+        {
+            Parallel.For(0, rows, r =>
+            {
+                int xOffset = r * inDim;
+                int yOffset = r * outDim;
+                for (int o = 0; o < outDim; o++)
+                    y[yOffset + o] = Dot(x.AsSpan(xOffset, inDim), weight.AsSpan(o * inDim, inDim));
+            });
+            return;
+        }
+
+        for (int r = 0; r < rows; r++)
+            MatMul(x.AsSpan(r * inDim, inDim), weight, inDim, outDim, y.AsSpan(r * outDim, outDim));
+    }
+
     /// <summary>Hardware-accelerated dot product; the audio components are small enough to run in float.</summary>
     private static float Dot(ReadOnlySpan<float> a, ReadOnlySpan<float> b)
     {
