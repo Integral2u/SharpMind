@@ -73,6 +73,14 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
     /// </summary>
     private int _position;
 
+    /// <summary>Prompt-lookup logits rows of the pending run, [(draft + 1) x vocab]; allocated on first use.</summary>
+    private float[]? _runRows;
+    /// <summary>Prompt-lookup draft tokens of the pending run.</summary>
+    private int[]? _runDraft;
+
+    /// <summary>Prompt-lookup drafting counts for the last generation (all zero when it was off).</summary>
+    public PromptLookupStats PromptLookupStats { get; private set; }
+
     public StandardGenerator(
         Transformer   model,
         Tokenization.Tokenizer tokenizer,
@@ -158,12 +166,28 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
         rateTracker.Start();
 
         Tensor<float>? logitsTensor = null;
+
+        // Prompt-lookup drafting (see PromptLookupDrafter). A "run" is one batched forward over
+        // [token, d1..dm]: it leaves m+1 logits rows and m unverified draft rows in the caches. Each
+        // later step samples from row `runNext` exactly as it would sample from a fresh forward; a
+        // token equal to the draft already in the cache needs no forward, the first different one
+        // truncates the unverified rows away. Recurrent caches cannot be truncated: no drafting.
+        int lookupMax = Math.Clamp(genCfg.PromptLookupDraft, 0, GenerationConfig.MaxPromptLookupDraft);
+        if (lookupMax > 0 && _caches.Any(c => !c.SupportsTruncate)) lookupMax = 0;
+        PromptLookupDrafter? drafter = lookupMax > 0 ? new PromptLookupDrafter() : null;
+        List<int>? lookupContext = null;
+        int runLen = 0, runNext = 0, runCacheLen = 0, runPos = 0, lookupForwards = 0;
+        PromptLookupStats = default;
         try
         {
                         // Prefill (chunked so long prompts fit the workspace; see Prefill)
             int posOffset = _position;
             // Someone else moved the cache under us: stop vouching for it.
             if (_cacheTokens is not null && _cacheTokens.Count != _caches[0].Length) _cacheTokens = null;
+            // The drafter searches earlier turns too: take the vouched cache contents before the
+            // capacity check below may stop vouching for them.
+            if (drafter is not null)
+                lookupContext = _cacheTokens is not null ? [.. _cacheTokens, .. promptIds] : [.. promptIds];
             // Prompt exceeds cache capacity — Prefill will trim mid-loop;
             // invalidate prefix tracking up-front.
             if (_cacheTokens is not null && _caches[0].Length + promptIds.Length > _caches[0].MaxSeqLen)
@@ -172,6 +196,12 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
                 _model, _caches, promptIds, _workspace, PrefillProgress, startPosition: posOffset);
             _position = posOffset + promptIds.Length;
             _cacheTokens?.AddRange(promptIds);
+            if (drafter is not null)
+            {
+                int rows = (lookupMax + 1) * logitsTensor.Shape[1];
+                if (_runRows is null || _runRows.Length < rows) _runRows = new float[rows];
+                if (_runDraft is null || _runDraft.Length < lookupMax) _runDraft = new int[lookupMax];
+            }
 
 
             int vocabSize = logitsTensor.Shape[1];
@@ -220,7 +250,9 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
                 // (e.g. Blazor WASM) so the browser can repaint between forward passes.
                 if (StandardGenerator.YieldBetweenTokens) await Task.Yield();
 
-                ReadOnlySpan<float> logitsSlice = logitsTensor.Data[..vocabSize];
+                ReadOnlySpan<float> logitsSlice = runLen > 0
+                    ? _runRows.AsSpan(runNext * vocabSize, vocabSize)
+                    : logitsTensor!.Data[..vocabSize];
                 GeneratorDiagnostics.PrintTopLogits(_tokenizer, step, logitsSlice);
 
                 var tSample = DecodeProfiler.Begin();
@@ -244,6 +276,7 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
                     nextId = Sampler.Sample(logitsSlice, sampleCfg, rng);
 
                 _generatedIds.Add(nextId);
+                lookupContext?.Add(nextId);
                 OnTokenGenerated?.Invoke(nextId);
 
                 rateTracker.RecordToken();
@@ -312,18 +345,64 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
                     _cacheTokens = null;
                 }
 
+                if (runLen > 0)
+                {
+                    // The draft already in the cache: no forward, the next row is ready.
+                    if (runNext < runLen && nextId == _runDraft![runNext])
+                    {
+                        runNext++;
+                        _position++;
+                        continue;
+                    }
+                    // A different token drops the unverified rows; after the last row the run
+                    // simply ends (every draft held, nextId is the extra token).
+                    if (runNext < runLen)
+                        RollBackRun(runCacheLen + 1 + runNext, runPos + 1 + runNext);
+                    drafter!.Record(runLen, runNext);
+                    runLen = 0;
+                }
+
                 Tensor<float>? prevTensor = logitsTensor;
                 logitsTensor = null;
                 int newPos = _position;
 
                 _workspace.Reset();
-                prevTensor.Dispose();
-                using var stepInput = _workspace.Rent<int>([1, 1]);
+                prevTensor?.Dispose();
                 _decodeTokenScratch[0] = nextId;
-                stepInput.Data[0] = nextId;
-                logitsTensor = _model.ForwardLastLogits(stepInput, _caches, newPos, _workspace);
+
+                // Drafts must fit before the context end, before the cache is full (so no
+                // sliding-window trim can land inside a run) and within the tokens still allowed.
+                int m = 0;
+                if (drafter is not null)
+                {
+                    int room = Math.Min(Math.Min(lookupMax, maxNewTokens - 1 - step),
+                                        Math.Min(maxPosition - newPos - 1, cache0.MaxSeqLen - cache0.Length - 2));
+                    if (room > 0) m = drafter.Propose(lookupContext!, _runDraft.AsSpan(0, room));
+                    lookupForwards++;
+                }
+
+                if (m == 0)
+                {
+                    using var stepInput = _workspace.Rent<int>([1, 1]);
+                    stepInput.Data[0] = nextId;
+                    logitsTensor = _model.ForwardLastLogits(stepInput, _caches, newPos, _workspace);
+                    _cacheTokens?.Add(nextId);
+                }
+                else
+                {
+                    runCacheLen = cache0.Length;
+                    runPos = newPos;
+                    using var runInput = _workspace.Rent<int>([1, 1 + m]);
+                    runInput.Data[0] = nextId;
+                    _runDraft.AsSpan(0, m).CopyTo(runInput.Data[1..]);
+                    using (var allLogits = _model.Forward(runInput, _caches, newPos, _workspace))
+                        allLogits.Data[..((1 + m) * vocabSize)].CopyTo(_runRows);
+                    runLen = m;
+                    runNext = 0;
+                    _cacheTokens?.Add(nextId);
+                    _cacheTokens?.AddRange(_runDraft.AsSpan(0, m));
+                }
                 _position++;
-                _cacheTokens?.Add(nextId);
             }
 
             if (!genCfg.Stream)
@@ -338,8 +417,28 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
         }
         finally
         {
+            // Left inside a run (stop, token limit, a consumer that stopped reading, cancellation):
+            // keep only the verified rows, so the next turn's prefix reuse sees what was emitted.
+            if (runLen > 0)
+            {
+                if (runNext < runLen)
+                    RollBackRun(runCacheLen + 1 + runNext, runPos + 1 + runNext);
+                drafter!.Record(runLen, runNext);
+            }
+            if (drafter is not null)
+                PromptLookupStats = new PromptLookupStats(lookupForwards, drafter.Drafted, drafter.Accepted);
             logitsTensor?.Dispose();
         }
+    }
+
+    /// <summary>Drops the unverified draft rows of a prompt-lookup run.</summary>
+    private void RollBackRun(int keepLen, int position)
+    {
+        for (int i = 0; i < _caches.Length; i++)
+            _caches[i].Truncate(keepLen);
+        if (_cacheTokens is not null && _cacheTokens.Count > keepLen)
+            _cacheTokens.RemoveRange(keepLen, _cacheTokens.Count - keepLen);
+        _position = position;
     }
 
     
