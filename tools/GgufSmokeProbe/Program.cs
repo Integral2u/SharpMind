@@ -151,6 +151,9 @@ if (mode == "layer-importance")
 if (mode == "vl")
     return await RunVlAsync(path, args);
 
+if (mode == "quant-compare")
+    return await RunQuantCompareAsync(path, args);
+
 Console.Error.WriteLine($"unknown mode: {mode}");
 return 2;
 
@@ -280,6 +283,31 @@ static async Task<int> RunAsrFilesAsync(string backbonePath, string[] args)
         string transcript = runtime.TranscribeWav(Path.GetFullPath(wav), "English", 64);
         Console.WriteLine($"{Path.GetFileName(wav)} ({watch.Elapsed.TotalSeconds:F1}s): {transcript}");
     }
+    return 0;
+}
+
+// `quant-compare <reference> <candidate> [filter] [maxTensors]` compares two quantizations
+// tensor by tensor (relative L2, cosine) without a forward pass.
+static async Task<int> RunQuantCompareAsync(string referencePath, string[] args)
+{
+    await Task.CompletedTask;
+    if (args.Length < 3) { Console.Error.WriteLine("usage: quant-compare <reference.gguf> <candidate.gguf> [filter] [maxTensors]"); return 2; }
+    string candidatePath = Path.GetFullPath(args[2]);
+    string? filter = args.Length > 3 && !int.TryParse(args[3], out _) ? args[3] : null;
+    int maxTensors = args.Length > 3 && int.TryParse(args[^1], out int mt) ? mt : 0;
+
+    var watch = System.Diagnostics.Stopwatch.StartNew();
+    SharpMind.Model.Analysis.QuantizationComparisonReport report =
+        SharpMind.Model.Analysis.QuantizationAnalyzer.Compare(
+            referencePath, candidatePath, filter, maxTensors,
+            progress: (done, total) => Console.Write($"\rtensor {done}/{total}"));
+    Console.WriteLine($"\n{Path.GetFileName(referencePath)} -> {Path.GetFileName(candidatePath)} ({watch.Elapsed.TotalSeconds:F1}s)");
+    Console.WriteLine($"compared={report.Compared} skipped={report.Skipped} elements={report.Elements} " +
+                      $"globalRelL2={report.GlobalRelativeL2:F6} meanCosine={report.MeanCosine:F6}");
+    Console.WriteLine("tensor                         ref/cand        relL2     cosine    maxAbs");
+    foreach (SharpMind.Model.Analysis.TensorQuantizationError tensor in report.Worst(20))
+        Console.WriteLine($"{tensor.Name,-30} {tensor.ReferenceDtype}/{tensor.CandidateDtype,-6} " +
+                          $"{tensor.RelativeL2,10:F6} {tensor.Cosine,10:F6} {tensor.MaxAbsError,10:F5}");
     return 0;
 }
 

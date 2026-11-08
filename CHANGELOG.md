@@ -58,6 +58,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   reports the next-token cross-entropy delta. It is model-agnostic and works for
   both hooked and unhooked block builds; `GgufSmokeProbe layer-importance` runs
   it from the CLI.
+- **Quantization comparison** - `QuantizationAnalyzer` dequantizes a reference
+  and a candidate GGUF tensor by tensor and reports relative L2, cosine and the
+  worst tensors, so a smaller file can be judged on evidence. It handles the
+  llama.cpp mixed quant recipes through the same kernels and needs no forward
+  pass; `GgufSmokeProbe quant-compare` runs it from the CLI.
 - **Native LFM3-VL vision** - `Lfm3VlVisionEncoder` reads the vision `mmproj`
   (linear patchifier, fourteen pre-norm blocks alternating gated depthwise 2D
   convolution and bidirectional grouped-query attention with axial 2D RoPE, and
