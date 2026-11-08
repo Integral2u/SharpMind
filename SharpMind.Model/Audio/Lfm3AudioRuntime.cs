@@ -60,7 +60,7 @@ public sealed class Lfm3AudioRuntime : IDisposable
     public int ChunkSeconds { get; init; } = 4;
 
     /// <summary>Seconds of overlap between transcription windows.</summary>
-    public int OverlapSeconds { get; init; } = 1;
+    public int OverlapSeconds { get; init; } = 2;
 
     /// <summary>True when the projector exposes the LFM3-Audio encoder tensors.</summary>
     public static bool IsAudioProjector(string path)
@@ -211,7 +211,93 @@ public sealed class Lfm3AudioRuntime : IDisposable
             if (merged.Length > 0) merged.Append(' ');
             merged.Append(word);
         }
-        return merged.ToString();
+
+        string text = JoinLowercaseContinuations(merged.ToString());
+        return DeduplicateSentences(text);
+    }
+
+    /// <summary>
+    /// "ask. not what" is one sentence split by a window boundary, not two: when a
+    /// terminator is followed by a lowercase word, keep the boundary as a space.
+    /// </summary>
+    private static string JoinLowercaseContinuations(string text)
+    {
+        var result = new StringBuilder(text.Length);
+        for (int i = 0; i < text.Length; i++)
+        {
+            char c = text[i];
+            if (c is '.' or '!' or '?' && i + 2 < text.Length && text[i + 1] == ' ' && char.IsLower(text[i + 2]))
+            {
+                result.Append(' ');
+                i++; // skip the space after the terminator
+                continue;
+            }
+            result.Append(c);
+        }
+        return result.ToString();
+    }
+
+    /// <summary>
+    /// Overlapping windows often transcribe the same sentence twice, once truncated and
+    /// once complete. Keep the longer sentence and drop the contained copy.
+    /// </summary>
+    private static string DeduplicateSentences(string text)
+    {
+        var sentences = new List<string>();
+        int start = 0;
+        for (int i = 0; i < text.Length; i++)
+        {
+            if (text[i] is not ('.' or '!' or '?')) continue;
+            AddSentence(sentences, text[start..(i + 1)]);
+            start = i + 1;
+        }
+        if (start < text.Length) AddSentence(sentences, text[start..]);
+        return string.Join(' ', sentences);
+    }
+
+    private static void AddSentence(List<string> sentences, string raw)
+    {
+        string sentence = raw.Trim();
+        if (sentence.Length == 0) return;
+        List<string> words = NormalizedWords(sentence);
+        if (words.Count == 0) return;
+        if (sentences.Count == 0)
+        {
+            sentences.Add(sentence);
+            return;
+        }
+
+        List<string> previous = NormalizedWords(sentences[^1]);
+        if (ContainsWords(words, previous))
+        {
+            // The new sentence repeats and extends the previous one; keep the longer.
+            sentences[^1] = sentence;
+            return;
+        }
+        if (ContainsWords(previous, words)) return; // already covered
+        sentences.Add(sentence);
+    }
+
+    private static List<string> NormalizedWords(string text) =>
+        [.. text.Split(' ', StringSplitOptions.RemoveEmptyEntries).Select(NormalizeWord)];
+
+    private static bool ContainsWords(List<string> haystack, List<string> needle)
+    {
+        if (needle.Count == 0) return false;
+        for (int start = 0; start + needle.Count <= haystack.Count; start++)
+        {
+            bool match = true;
+            for (int i = 0; i < needle.Count; i++)
+            {
+                if (!string.Equals(haystack[start + i], needle[i], StringComparison.OrdinalIgnoreCase))
+                {
+                    match = false;
+                    break;
+                }
+            }
+            if (match) return true;
+        }
+        return false;
     }
 
     private static string NormalizeWord(string word)

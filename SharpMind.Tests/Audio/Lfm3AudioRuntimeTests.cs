@@ -51,6 +51,23 @@ public sealed class Lfm3AudioRuntimeTests
     }
 
     [Fact]
+    public void Merge_JoinsLowercaseContinuations_AndDropsTheRepeatedSecondSentence()
+    {
+        string text = Lfm3AudioRuntime.MergeTranscripts(
+        [
+            "And so, my fellow Americans, ask.",
+            "not what your country can do for you.",
+            "What you can do for your country.",
+            "Ask what you can do for your country."
+        ]);
+
+        Assert.Equal(
+            "And so, my fellow Americans, ask not what your country can do for you. " +
+            "Ask what you can do for your country.",
+            text);
+    }
+
+    [Fact]
     public void Merge_EmptyInput_IsEmpty()
     {
         Assert.Equal("", Lfm3AudioRuntime.MergeTranscripts([]));

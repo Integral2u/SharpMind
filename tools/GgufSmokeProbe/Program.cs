@@ -156,7 +156,13 @@ static async Task<int> RunAsrRuntimeAsync(string backbonePath, string[] args)
         LoadMode.Full, quantizedResident: false, maxParallelLoadDegree: 1);
     weights.InitializeWeights();
     using var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
-    using var runtime = new SharpMind.Model.Audio.Lfm3AudioRuntime(model, tokenizer, config, mmprojPath);
+    int chunkSeconds = args.Length > 4 && int.TryParse(args[4], out int cs) ? cs : 4;
+    int overlapSeconds = args.Length > 5 && int.TryParse(args[5], out int os) ? os : 2;
+    using var runtime = new SharpMind.Model.Audio.Lfm3AudioRuntime(model, tokenizer, config, mmprojPath)
+    {
+        ChunkSeconds = chunkSeconds,
+        OverlapSeconds = overlapSeconds,
+    };
 
     var watch = System.Diagnostics.Stopwatch.StartNew();
     string transcript = runtime.TranscribeWav(wavPath, "English", 32);
