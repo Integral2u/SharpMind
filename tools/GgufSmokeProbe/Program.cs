@@ -112,6 +112,9 @@ if (mode == "cmp")
 if (mode == "tensor")
     return RunTensorStats(path, args);
 
+if (mode == "values")
+    return RunTensorValues(path, args);
+
 if (mode == "audio-encoder")
     return RunAudioEncoder(path, args);
 
@@ -132,6 +135,15 @@ if (mode == "asr-ablate")
 
 if (mode == "asr-runtime")
     return await RunAsrRuntimeAsync(path, args);
+
+if (mode == "tts-runtime")
+    return await RunTtsRuntimeAsync(path, args);
+
+if (mode == "tts-logits")
+    return await RunTtsLogitsAsync(path, args);
+
+if (mode == "asr-files")
+    return await RunAsrFilesAsync(path, args);
 
 Console.Error.WriteLine($"unknown mode: {mode}");
 return 2;
@@ -168,6 +180,125 @@ static async Task<int> RunAsrRuntimeAsync(string backbonePath, string[] args)
     string transcript = runtime.TranscribeWav(wavPath, "English", 32);
     watch.Stop();
     Console.WriteLine($"ASR-RUNTIME ({watch.Elapsed.TotalSeconds:F1}s): {transcript}");
+    return 0;
+}
+
+// `tts-runtime <backbone> <mmproj> <text> <out.wav> [language] [voice]` exercises the native
+// text-to-speech loop: MaskGIT depth decoder -> LiquidCodec -> 24 kHz WAV.
+static async Task<int> RunTtsRuntimeAsync(string backbonePath, string[] args)
+{
+    await Task.CompletedTask;
+    if (args.Length < 5)
+    {
+        Console.Error.WriteLine("usage: tts-runtime <backbone.gguf> <mmproj.gguf> <text> <out.wav> [language] [voice] [maxFrames] [seed] [temperature] [topK]");
+        return 2;
+    }
+
+    string mmprojPath = Path.GetFullPath(args[2]);
+    string text = args[3];
+    string wavPath = Path.GetFullPath(args[4]);
+    string language = args.Length > 5 ? args[5] : "American English";
+    string voice = args.Length > 6 ? args[6] : "female";
+    int maxFrames = args.Length > 7 && int.TryParse(args[7], out int mf) ? mf : 256;
+    int? seed = args.Length > 8 && int.TryParse(args[8], out int sd) ? sd : null;
+    float temperature = args.Length > 9 && float.TryParse(args[9], out float tp) ? tp : 1.0f;
+    int topK = args.Length > 10 && int.TryParse(args[10], out int tk) ? tk : 128;
+
+    var metaHelper = ModelFormatHelpers.GetModelMetaHelperFor(ModelFormat.Gguf);
+    metaHelper.Load(backbonePath, null, out _, out var config, out var tokenizer);
+    if (tokenizer is null) { Console.Error.WriteLine("no tokenizer"); return 3; }
+
+    var sharpConfig = config.ForModel();
+    var mapping = sharpConfig.ToJigSawMapping();
+    using var weights = ModelFactory.CreateWeights(
+        config, sharpConfig, QuantizationFactory.Create(mapping), backbonePath,
+        LoadMode.Full, quantizedResident: false, maxParallelLoadDegree: 1);
+    weights.InitializeWeights();
+    using var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
+    var frameWatch = System.Diagnostics.Stopwatch.StartNew();
+    using var runtime = new SharpMind.Model.Audio.Lfm3TtsRuntime(model, tokenizer, config, mmprojPath)
+    {
+        Language = language,
+        Voice = voice,
+        MaxFrames = maxFrames,
+        Seed = seed,
+        Temperature = temperature,
+        TopK = topK,
+        FrameSampled = (index, codes) => Console.WriteLine(
+            $"frame {index,3} ({frameWatch.Elapsed.TotalSeconds,6:F1}s): {string.Join(",", codes)}"),
+        EndOfSpeech = (index, codes) => Console.WriteLine(
+            $"EOS at frame {index} ({frameWatch.Elapsed.TotalSeconds:F1}s): {string.Join(",", codes)}"),
+    };
+
+    var watch = System.Diagnostics.Stopwatch.StartNew();
+    float[] audio = runtime.Synthesize(text);
+    watch.Stop();
+    if (audio.Length == 0)
+    {
+        Console.WriteLine($"TTS-RUNTIME: no audio ({watch.Elapsed.TotalSeconds:F1}s)");
+        return 4;
+    }
+
+    SharpMind.Model.Audio.WavFile.Write(wavPath, audio, SharpMind.Model.Audio.Lfm3TtsRuntime.SampleRate);
+    double seconds = (double)audio.Length / SharpMind.Model.Audio.Lfm3TtsRuntime.SampleRate;
+    Console.WriteLine(
+        $"TTS-RUNTIME ({watch.Elapsed.TotalSeconds:F1}s): {seconds:F2}s, " +
+        $"{audio.Length} samples, {audio.Length / 1920} frames -> {wavPath}");
+    return 0;
+}
+
+// `asr-files <backbone> <mmproj> <wav>...` transcribes several WAVs with one loaded model.
+static async Task<int> RunAsrFilesAsync(string backbonePath, string[] args)
+{
+    await Task.CompletedTask;
+    if (args.Length < 4) { Console.Error.WriteLine("usage: asr-files <backbone.gguf> <mmproj.gguf> <wav>..."); return 2; }
+    string mmprojPath = Path.GetFullPath(args[2]);
+    string[] wavs = args[3..];
+
+    var metaHelper = ModelFormatHelpers.GetModelMetaHelperFor(ModelFormat.Gguf);
+    metaHelper.Load(backbonePath, null, out _, out var config, out var tokenizer);
+    if (tokenizer is null) { Console.Error.WriteLine("no tokenizer"); return 3; }
+
+    var sharpConfig = config.ForModel();
+    var mapping = sharpConfig.ToJigSawMapping();
+    using var weights = ModelFactory.CreateWeights(
+        config, sharpConfig, QuantizationFactory.Create(mapping), backbonePath,
+        LoadMode.Full, quantizedResident: false, maxParallelLoadDegree: 1);
+    weights.InitializeWeights();
+    using var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
+    using var runtime = new SharpMind.Model.Audio.Lfm3AudioRuntime(model, tokenizer, config, mmprojPath);
+
+    foreach (string wav in wavs)
+    {
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        string transcript = runtime.TranscribeWav(Path.GetFullPath(wav), "English", 64);
+        Console.WriteLine($"{Path.GetFileName(wav)} ({watch.Elapsed.TotalSeconds:F1}s): {transcript}");
+    }
+    return 0;
+}
+
+// `tts-logits <backbone> <mmproj> <text>` prints the hidden state and the first depth pass,
+// which tells a flat distribution (broken weights/hidden) from a sampling bug.
+static async Task<int> RunTtsLogitsAsync(string backbonePath, string[] args)
+{
+    await Task.CompletedTask;
+    if (args.Length < 4) { Console.Error.WriteLine("usage: tts-logits <backbone.gguf> <mmproj.gguf> <text>"); return 2; }
+    string mmprojPath = Path.GetFullPath(args[2]);
+    string text = args[3];
+
+    var metaHelper = ModelFormatHelpers.GetModelMetaHelperFor(ModelFormat.Gguf);
+    metaHelper.Load(backbonePath, null, out _, out var config, out var tokenizer);
+    if (tokenizer is null) { Console.Error.WriteLine("no tokenizer"); return 3; }
+
+    var sharpConfig = config.ForModel();
+    var mapping = sharpConfig.ToJigSawMapping();
+    using var weights = ModelFactory.CreateWeights(
+        config, sharpConfig, QuantizationFactory.Create(mapping), backbonePath,
+        LoadMode.Full, quantizedResident: false, maxParallelLoadDegree: 1);
+    weights.InitializeWeights();
+    using var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
+    using var runtime = new SharpMind.Model.Audio.Lfm3TtsRuntime(model, tokenizer, config, mmprojPath);
+    Console.Write(runtime.DescribeFirstFrame(text));
     return 0;
 }
 
@@ -626,6 +757,25 @@ static int RunAudioEncoder(string path, string[] args)
 
 // `tensor <file> [name...]` prints dtype, shape and value statistics. With no names it
 // lists the first few tensors, which is enough to inventory an mmproj or codec file.
+// `values <file> <tensor> [count]` prints the first values, for checking a table's layout.
+static int RunTensorValues(string path, string[] args)
+{
+    if (args.Length < 3) { Console.Error.WriteLine("values needs <file> <tensor> [count]"); return 2; }
+    string name = args[2];
+    int count = args.Length > 3 && int.TryParse(args[3], out int c) ? c : 16;
+    using var reader = new SharpMind.Model.Format.GgufTensorReader(path);
+    if (!reader.TryGetInfo(name, out SharpMind.Model.Format.TensorInfo info))
+    {
+        Console.WriteLine($"missing {name}");
+        return 1;
+    }
+    float[] data = reader.ReadFloat32(name);
+    Console.WriteLine($"{name} {info.Dtype} [{string.Join(",", info.Shape)}]");
+    for (int i = 0; i < Math.Min(count, data.Length); i++)
+        Console.WriteLine($"[{i}] = {data[i]:G6}");
+    return 0;
+}
+
 static int RunTensorStats(string path, string[] args)
 {
     using var reader = new SharpMind.Model.Format.GgufTensorReader(path);

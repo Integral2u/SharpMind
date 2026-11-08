@@ -41,6 +41,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   seconds in four-second windows with a two-second overlap, joins lowercase
   continuations and drops repeated boundary sentences. Short clips stay
   single-shot.
+- **Native LFM3-Audio TTS** - `Lfm3TtsRuntime` prefills the `<|audio_start|>`
+  prompt, samples one 80 ms frame per backbone step with the three-layer MaskGIT
+  depth decoder (`[4,4,4]`, temperature 1.0, top-k 128, repetition penalty 1.1),
+  feeds each frame embedding back into the backbone and decodes the codes with
+  the LiquidCodec decoder and inverse STFT to 24 kHz WAV. The depth decoder and
+  codec load from the same `mmproj`; no sidecar process is involved. The
+  checkpoint's trained voice is female, so the runtime defaults to it.
+- **`GgufSmokeProbe tts-runtime`** - synthesizes text to WAV and prints every
+  sampled frame, and `asr-runtime` transcribes the result, so the TTS loop can
+  be checked without the UI. The "Draw me a cat." round trip returns the same
+  sentence through the native encoder.
 - **llama.cpp tokenizer parity** - the pre-tokeniser is chosen from
   `tokenizer.ggml.pre` (with the architecture as fallback) using llama.cpp's
   tiktoken variants for Qwen2/Qwen3, Qwen3.5, Llama 3 `ignore_merges` and
