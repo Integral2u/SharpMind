@@ -64,6 +64,41 @@ public sealed class Lfm3VlRuntime : IDisposable
     /// <summary>True when the projector carries the LFM3-VL vision tower.</summary>
     public static bool IsVisionProjector(string path) => Lfm3VlVisionEncoder.IsVisionProjector(path);
 
+    /// <summary>
+    /// Finds a vision projector next to a backbone. It looks in the backbone's folder and in
+    /// sibling folders whose name starts with the backbone stem.
+    /// </summary>
+    public static string? FindProjector(string backbonePath)
+    {
+        string? directory = Path.GetDirectoryName(backbonePath);
+        if (string.IsNullOrEmpty(directory) || !Directory.Exists(directory)) return null;
+
+        string stem = Path.GetFileNameWithoutExtension(backbonePath);
+        foreach (string suffix in new[] { "-Q8_0", "-Q4_K_M", "-Q4_0", "-F16", "-BF16", "-Q6_K", "-Q5_K_M" })
+        {
+            if (stem.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+            {
+                stem = stem[..^suffix.Length];
+                break;
+            }
+        }
+
+        var candidates = new List<string>();
+        candidates.AddRange(Directory.EnumerateFiles(directory, "mmproj-*.gguf", SearchOption.TopDirectoryOnly));
+        foreach (string child in Directory.EnumerateDirectories(directory))
+        {
+            if (!Path.GetFileName(child).StartsWith(stem, StringComparison.OrdinalIgnoreCase)) continue;
+            candidates.AddRange(Directory.EnumerateFiles(child, "mmproj-*.gguf", SearchOption.TopDirectoryOnly));
+        }
+        if (candidates.Count == 0)
+            candidates.AddRange(Directory.EnumerateFiles(directory, "mmproj-*.gguf", SearchOption.AllDirectories));
+
+        return candidates
+            .Where(IsVisionProjector)
+            .OrderByDescending(path => Path.GetFileName(path).Contains(stem, StringComparison.OrdinalIgnoreCase))
+            .FirstOrDefault();
+    }
+
     /// <summary>Number of merged text-space tokens one image produces.</summary>
     public static int ImageTokens(int height, int width) =>
         (height / Lfm3VlVisionEncoder.PatchSize) * (width / Lfm3VlVisionEncoder.PatchSize) /
