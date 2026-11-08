@@ -2678,12 +2678,13 @@ if (held.Length > 0)
                 && delegateCall is not null
                 && delegateCall["tool"]?.GetValue<string>() == "delegate")
             {
+                IAgentBuilder agentBuilder = _agentBuilder!;
                 var delegateArgs = delegateCall["arguments"]!.AsObject();
                 string delegateName = ArgumentText(delegateArgs, "agent");
                 string task = ArgumentText(delegateArgs, "task");
-                _agentBuilder.RegisteredAgents.TryGetValue(delegateName, out var delegateAgent);
+                agentBuilder.RegisteredAgents.TryGetValue(delegateName, out var delegateAgent);
 
-                _history.Add(ChatMessage.Agent(responseText, _agentBuilder?.AgentName));
+                _history.Add(ChatMessage.Agent(responseText, agentBuilder.AgentName));
                 InvalidateHistoryCache();
 
                 string delegateResult;
@@ -2691,7 +2692,7 @@ if (held.Length > 0)
                 {
                     delegateResult = FormatToolResult("delegate", delegateArgs, Error(
                         delegateAgent is null
-                            ? $"Unknown agent '{delegateName}'. Valid agents: {string.Join(", ", _agentBuilder.RegisteredAgents.Keys)}."
+                            ? $"Unknown agent '{delegateName}'. Valid agents: {string.Join(", ", agentBuilder.RegisteredAgents.Keys)}."
                             : "The task is empty. Pass the complete sub-task in 'task'."));
                 }
                 else if (_currentDepth >= MaxAgentDepth)
