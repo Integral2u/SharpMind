@@ -38,7 +38,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   so output is token-identical; a pause gate keeps prose from paying for failed
   guesses. The CUI exposes it; ShortConv and DeltaNet caches disable it.
 - **Long-audio ASR** - `Lfm3AudioRuntime` transcribes recordings longer than four
-  seconds in overlapping windows and merges the boundary words. Short clips stay
+  seconds in four-second windows with a two-second overlap, joins lowercase
+  continuations and drops repeated boundary sentences. Short clips stay
   single-shot.
 - **llama.cpp tokenizer parity** - the pre-tokeniser is chosen from
   `tokenizer.ggml.pre` (with the architecture as fallback) using llama.cpp's
