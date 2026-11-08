@@ -1,3 +1,4 @@
+using System.Text;
 using SharpMind.Core.Tensors;
 using SharpMind.Model.Config;
 using SharpMind.Model.Format;
@@ -50,6 +51,16 @@ public sealed class Lfm3AudioRuntime : IDisposable
         _ownsModel = ownsModel;
         _audioTokenId = ResolveAudioTokenId(tokenizer);
     }
+
+    /// <summary>
+    /// Seconds per transcription window. Audio longer than this is transcribed in overlapping
+    /// windows (the text decoder is recency-biased on long single-shot prompts). Short clips use
+    /// one window.
+    /// </summary>
+    public int ChunkSeconds { get; init; } = 4;
+
+    /// <summary>Seconds of overlap between transcription windows.</summary>
+    public int OverlapSeconds { get; init; } = 1;
 
     /// <summary>True when the projector exposes the LFM3-Audio encoder tensors.</summary>
     public static bool IsAudioProjector(string path)
@@ -134,7 +145,88 @@ public sealed class Lfm3AudioRuntime : IDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (samples.Length == 0) return "";
+        if (ChunkSeconds <= 0) throw new InvalidOperationException("ChunkSeconds must be positive.");
+        if (OverlapSeconds < 0 || OverlapSeconds >= ChunkSeconds)
+            throw new InvalidOperationException("OverlapSeconds must be between 0 and ChunkSeconds.");
 
+        const int rate = 16_000;
+        int window = ChunkSeconds * rate;
+        if (samples.Length <= window)
+            return TranscribeWindow(samples, language, maxNewTokens, cancellationToken);
+
+        int hop = (ChunkSeconds - OverlapSeconds) * rate;
+        var parts = new List<string>();
+        for (int start = 0; start < samples.Length; start += hop)
+        {
+            int count = Math.Min(window, samples.Length - start);
+            // A sub-250 ms tail is covered by the overlap of the previous window.
+            if (count < rate / 4) break;
+            parts.Add(TranscribeWindow(samples.Slice(start, count), language, maxNewTokens, cancellationToken));
+            if (start + count >= samples.Length) break;
+        }
+
+        return MergeTranscripts(parts);
+    }
+
+    /// <summary>
+    /// Joins window transcripts, dropping the longest word overlap between the accumulated text
+    /// and the next part so a one-second overlap does not repeat the boundary words.
+    /// </summary>
+    public static string MergeTranscripts(IReadOnlyList<string> parts)
+    {
+        var merged = new StringBuilder();
+        var current = new List<string>();
+        foreach (string raw in parts)
+        {
+            string[] words = raw.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (words.Length == 0) continue;
+            if (current.Count == 0)
+            {
+                current.AddRange(words);
+                continue;
+            }
+
+            int max = Math.Min(12, Math.Min(current.Count, words.Length));
+            int overlap = 0;
+            for (int n = max; n >= 1; n--)
+            {
+                bool match = true;
+                for (int i = 0; i < n; i++)
+                {
+                    if (!string.Equals(NormalizeWord(current[current.Count - n + i]), NormalizeWord(words[i]),
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        match = false;
+                        break;
+                    }
+                }
+                if (match) { overlap = n; break; }
+            }
+
+            for (int i = overlap; i < words.Length; i++) current.Add(words[i]);
+        }
+
+        foreach (string word in current)
+        {
+            if (merged.Length > 0) merged.Append(' ');
+            merged.Append(word);
+        }
+        return merged.ToString();
+    }
+
+    private static string NormalizeWord(string word)
+    {
+        int end = word.Length;
+        while (end > 0 && word[end - 1] is '.' or ',' or ';' or ':' or '!' or '?') end--;
+        return word[..end];
+    }
+
+    private string TranscribeWindow(
+        ReadOnlySpan<float> samples,
+        string language,
+        int maxNewTokens,
+        CancellationToken cancellationToken)
+    {
         float[,] mel = LogMelSpectrogram.Compute(samples);
         float[,] audio = _encoder.Encode(mel);
         int audioCount = audio.GetLength(0);

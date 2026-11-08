@@ -37,6 +37,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   earlier context and verifies them in one batched forward with cache rollback,
   so output is token-identical; a pause gate keeps prose from paying for failed
   guesses. The CUI exposes it; ShortConv and DeltaNet caches disable it.
+- **Long-audio ASR** - `Lfm3AudioRuntime` transcribes recordings longer than four
+  seconds in overlapping windows and merges the boundary words. Short clips stay
+  single-shot.
 - **llama.cpp tokenizer parity** - the pre-tokeniser is chosen from
   `tokenizer.ggml.pre` (with the architecture as fallback) using llama.cpp's
   tiktoken variants for Qwen2/Qwen3, Qwen3.5, Llama 3 `ignore_merges` and

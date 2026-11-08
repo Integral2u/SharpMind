@@ -52,6 +52,12 @@ public interface IChatSession : IAsyncDisposable
     public float TopP { get; set; }
     public float RepetitionPenalty { get; set; }
     public int RepetitionWindow { get; set; }
+    /// <summary>Prompt-lookup drafting cap for replies; 0 = off. See <see cref="GenerationConfig.PromptLookupDraft"/>.</summary>
+    public int PromptLookupDraft
+    {
+        get => 0;
+        set { }
+    }
     public IReadOnlyList<int>? StopTokenIds { get; set; }
     public IReadOnlyList<string>? StopStrings { get; set; }
 
@@ -85,6 +91,7 @@ public interface IChatSession : IAsyncDisposable
         MaxNewTokens = config.MaxNewTokens;
         RepetitionPenalty = config.RepetitionPenalty;
         RepetitionWindow = config.RepetitionWindow;
+        PromptLookupDraft = config.PromptLookupDraft;
         if (config.StopTokenIds.Count > 0)
             StopTokenIds = config.StopTokenIds;
         if (config.StopStrings.Count > 0)
