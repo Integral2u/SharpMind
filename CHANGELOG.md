@@ -32,6 +32,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **`Lfm3AudioRuntime`** - the reusable speech-to-text path used by Studio:
   finds the `mmproj` next to a backbone, encodes 16 kHz audio and decodes a
   transcript. WAV reading now also accepts a stream.
+- **Prompt-lookup drafting** - opt-in `GenerationConfig.PromptLookupDraft`
+  (0 off, capped at 16) in `StandardGenerator`. It drafts tokens that repeat
+  earlier context and verifies them in one batched forward with cache rollback,
+  so output is token-identical; a pause gate keeps prose from paying for failed
+  guesses. The CUI exposes it; ShortConv and DeltaNet caches disable it.
 - **llama.cpp tokenizer parity** - the pre-tokeniser is chosen from
   `tokenizer.ggml.pre` (with the architecture as fallback) using llama.cpp's
   tiktoken variants for Qwen2/Qwen3, Qwen3.5, Llama 3 `ignore_merges` and
