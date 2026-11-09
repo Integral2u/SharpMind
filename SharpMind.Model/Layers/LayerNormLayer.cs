@@ -2,11 +2,15 @@
 
 namespace SharpMind.Model.Layers;
 
-public sealed class LayerNormLayer(int dim, float eps = 1e-5f, Tensor<float>? weight = null, Tensor<float>? bias = null) : NormLayer(dim, true, eps, weight, bias)
+public sealed class LayerNormLayer(int dim, float eps = 1e-5f, Tensor<float>? weight = null, Tensor<float>? bias = null, NormOps? ops = null) : NormLayer(dim, true, eps, weight, bias)
 {
+    // Resolved once per instance from the owning model's hardware tier (ModelFactory passes
+    // it); a process-wide default would let another model's build change this layer's kernel.
+    private readonly NormOps _ops = ops ?? NormOps.Default;
+
     public override void ApplyRow(ReadOnlySpan<float> src, ReadOnlySpan<float> weight, Span<float> dst, float scalarParam)
     {
-        NormOps.Default.ApplyLayerNormRow(src, weight, Bias!.Data, dst, Eps);
+        _ops.ApplyLayerNormRow(src, weight, Bias!.Data, dst, Eps);
     }
 
     protected override float ComputeScalarParam(ReadOnlySpan<float> row)

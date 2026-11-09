@@ -272,11 +272,11 @@ public static class ModelFactory
         var fullMapping = mapping ?? sharpConfig.ToJigSawMapping();
         var acts = ActivationFactory.Create(sharpConfig, fullMapping);
         var qOps = QuantizationFactory.Create(fullMapping);
-        NormOpsFactory.SetDefault(sharpConfig);
+        var normOps = NormOpsFactory.Create(sharpConfig, mapping);
 
         var embedding = new EmbeddingTable(weights.Config.VocabSize, weights.Config.HiddenDim, weights.EmbeddingWeight, false);
         var blocks = Enumerable.Range(0, weights.Config.NumLayers)
-            .Select(i => BuildBlock(i, weights, sharpConfig, mapping, acts, qOps, sharpConfig.UseHooks)).ToArray();
+            .Select(i => BuildBlock(i, weights, sharpConfig, mapping, acts, qOps, normOps, sharpConfig.UseHooks)).ToArray();
 
         IArchitecture arch = sharpConfig.Arch switch
         {
@@ -325,7 +325,7 @@ public static class ModelFactory
         if (weights is TransformerWeightsStreaming && weights.HasLmHead)
             weights.DisposeMaterializedLmHead();
 
-        var finalNorm = BuildNorm(weights.Config.HiddenDim, sharpConfig, weights.Config.NormEps, weights.FinalNormWeight, weights.FinalNormBias);
+        var finalNorm = BuildNorm(weights.Config.HiddenDim, sharpConfig, normOps, weights.Config.NormEps, weights.FinalNormWeight, weights.FinalNormBias);
 
         bool gemmaScale = sharpConfig.Activation == ActivationKind.GELU && sharpConfig.Gate == GateKind.GeGLU;
 
@@ -340,7 +340,7 @@ public static class ModelFactory
             var modelProj = LinearLayerFactory.Create(
                 "per_layer_model_proj", weights.Config.HiddenDim, weights.Config.PerLayerTotalDim,
                 false, weights.PerLayerModelProj, null, QuantDType.F32, baseMapping: null);
-            var projNorm = BuildNorm(weights.Config.PerLayerEmbdDim, sharpConfig, weights.Config.NormEps, weights.PerLayerProjNormW, null);
+            var projNorm = BuildNorm(weights.Config.PerLayerEmbdDim, sharpConfig, normOps, weights.Config.NormEps, weights.PerLayerProjNormW, null);
             perLayerInputs = new PerLayerInputs(
                 modelProj, projNorm, weights.RawPerLayerTokEmbd, tokDtype, qOps,
                 weights.Config.NumLayers, weights.Config.PerLayerEmbdDim, weights.Config.HiddenDim, weights.Config.VocabSize);
@@ -380,11 +380,11 @@ public static class ModelFactory
         var fullMapping = sharpConfig.ToJigSawMapping();
         var acts = ActivationFactory.Create(sharpConfig, fullMapping);
         var qOps = QuantizationFactory.Create(fullMapping);
-        NormOpsFactory.SetDefault(sharpConfig);
+        var normOps = NormOpsFactory.Create(fullMapping);
 
         var embedding = new EmbeddingTable(weights.Config.VocabSize, weights.Config.HiddenDim, weights.EmbeddingWeight, false);
         var blocks = Enumerable.Range(0, weights.Config.NumLayers)
-            .Select(i => BuildBlock(i, weights, sharpConfig, null, acts, qOps, useHooks: false, floatLayers: true)).ToArray();
+            .Select(i => BuildBlock(i, weights, sharpConfig, null, acts, qOps, normOps, useHooks: false, floatLayers: true)).ToArray();
 
         IArchitecture arch = sharpConfig.Arch switch
         {
@@ -393,7 +393,7 @@ public static class ModelFactory
             _ => throw new NotSupportedException($"Unknown ArchKind: {sharpConfig.Arch}")
         };
 
-        var finalNorm = BuildNorm(weights.Config.HiddenDim, sharpConfig, weights.Config.NormEps, weights.FinalNormWeight, weights.FinalNormBias);
+        var finalNorm = BuildNorm(weights.Config.HiddenDim, sharpConfig, normOps, weights.Config.NormEps, weights.FinalNormWeight, weights.FinalNormBias);
 
         bool gemmaScale = sharpConfig.Activation == ActivationKind.GELU && sharpConfig.Gate == GateKind.GeGLU;
         var (visionEncoder, audioEncoder) = BuildEncoders(weights.Config);
@@ -415,6 +415,7 @@ public static class ModelFactory
         Dictionary<string, string>? overrides,
         ActivationOps acts,
         QuantizationOps qOps,
+        NormOps normOps,
         bool useHooks = false,
         bool floatLayers = false)
     {
@@ -438,16 +439,16 @@ public static class ModelFactory
 
         // Norm tensors may be null in streaming/Cached mode. When null,
         // NormLayer creates and owns a placeholder Ones tensor internally.
-        var norm1 = BuildNorm(weights.Config.HiddenDim, sharpConfig, eps, blockWeights.Norm1W, blockWeights.Norm1B);
-        var norm2 = BuildNorm(weights.Config.HiddenDim, sharpConfig, eps, blockWeights.Norm2W, blockWeights.Norm2B);
+        var norm1 = BuildNorm(weights.Config.HiddenDim, sharpConfig, normOps, eps, blockWeights.Norm1W, blockWeights.Norm1B);
+        var norm2 = BuildNorm(weights.Config.HiddenDim, sharpConfig, normOps, eps, blockWeights.Norm2W, blockWeights.Norm2B);
 
         // Post-attention and post-FFN norms (Gemma-3)
         NormLayer? postAttnNorm = null;
         NormLayer? postFfnNorm = null;
         if (blockWeights.PostNorm1W != null)
-            postAttnNorm = BuildNorm(weights.Config.HiddenDim, sharpConfig, eps, blockWeights.PostNorm1W, null);
+            postAttnNorm = BuildNorm(weights.Config.HiddenDim, sharpConfig, normOps, eps, blockWeights.PostNorm1W, null);
         if (blockWeights.PostNorm2W != null)
-            postFfnNorm = BuildNorm(weights.Config.HiddenDim, sharpConfig, eps, blockWeights.PostNorm2W, null);
+            postFfnNorm = BuildNorm(weights.Config.HiddenDim, sharpConfig, normOps, eps, blockWeights.PostNorm2W, null);
 
         var ffn = BuildFfn(layerIdx, weights, sharpConfig, acts, qOps, layerMapping);
         ffn.SetWeights(blockWeights);
@@ -464,7 +465,7 @@ public static class ModelFactory
             var proj = LinearLayerFactory.Create(
                 $"blk.{layerIdx}.proj", weights.Config.PerLayerEmbdDim, weights.Config.HiddenDim,
                 false, blockWeights.PerLayerProj, null, QuantDType.F32, baseMapping: null);
-            var perLayerPostNorm = BuildNorm(weights.Config.HiddenDim, sharpConfig, eps, blockWeights.PerLayerPostNorm, null);
+            var perLayerPostNorm = BuildNorm(weights.Config.HiddenDim, sharpConfig, normOps, eps, blockWeights.PerLayerPostNorm, null);
             perLayer = new PerLayerEmbedding(layerIdx, inpGate, proj, perLayerPostNorm);
         }
 
@@ -523,10 +524,10 @@ public static class ModelFactory
         };
     }
 
-    private static NormLayer BuildNorm(int dim, SharpMindConfig sharpConfig, float eps, Tensor<float>? w, Tensor<float>? b) => sharpConfig.Norm switch
+    private static NormLayer BuildNorm(int dim, SharpMindConfig sharpConfig, NormOps normOps, float eps, Tensor<float>? w, Tensor<float>? b) => sharpConfig.Norm switch
     {
         NormKind.RMSNorm => new RmsNormLayer(dim, eps, w, b),
-        NormKind.LayerNorm => new LayerNormLayer(dim, eps, w, b),
+        NormKind.LayerNorm => new LayerNormLayer(dim, eps, w, b, normOps),
         _ => throw new NotSupportedException($"Unknown NormKind: {sharpConfig.Norm}")
     };
 }
