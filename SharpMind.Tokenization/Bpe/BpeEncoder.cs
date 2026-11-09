@@ -107,7 +107,7 @@ public sealed class BpeEncoder
         // space at all. Merges being absent is not enough (TinyLlama ships a merge list in SentencePiece
         // format), and a ▁ inside an added token proves nothing (DeepSeek's byte-level vocabs spell
         // their specials <｜begin▁of▁sentence｜>).
-        UseSentencePieceMerge = sentencePiece ?? vocab.Contains("\u2581");
+        UseSentencePieceMerge = sentencePiece ?? (merges.Count == 0 || vocab.Contains("\u2581"));
         //Duplicate setting but removes warning
         RebuildSpecialsCache(out _specialsSortedByLength, out _specialsSet, out _specialsFirstChars);
     }

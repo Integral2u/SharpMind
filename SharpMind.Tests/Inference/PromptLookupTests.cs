@@ -30,7 +30,7 @@ public sealed class PromptLookupTests
     {
         var tokens = new List<string> { "[UNK]", "[BOS]", "[EOS]" };
         for (int b = 0; b < 256; b++) tokens.Add(Vocabulary.ByteTokenString(b));
-        return Tokenizer.FromGguf([.. tokens], merges: null, tokenTypes: null, bosId: 1, eosId: 2);
+        return Tokenizer.FromGguf([.. tokens], merges: null, tokenTypes: null, bosId: 1, eosId: 2, tokenizerModel: "gpt2");
     }
 
     private static Transformer BuildModel(int maxSeqLen = 256, string? architecture = null)
