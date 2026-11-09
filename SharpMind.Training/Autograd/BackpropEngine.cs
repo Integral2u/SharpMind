@@ -125,7 +125,7 @@ public sealed class BackpropEngine : IDisposable
             var block = _model.GetBlock(l) ?? throw new InvalidOperationException($"Missing block {l}.");
             var bc = new BlockContext();
             ctx.Blocks.Add(bc);
-            x = ForwardBlock(x, block, bc);
+            x = ForwardBlock(x, block, bc, l);
         }
 
         cancellationToken.ThrowIfCancellationRequested();
@@ -230,7 +230,8 @@ public sealed class BackpropEngine : IDisposable
 
     // ── Forward ─────────────────────────────────────────────────────────────
 
-    private Tensor<float> ForwardBlock(Tensor<float> x, TransformerBlock block, BlockContext bc)
+    private Tensor<float> ForwardBlock(
+        Tensor<float> x, TransformerBlock block, BlockContext bc, int layerIndex)
     {
         if (block.PostAttnNorm is not null || block.PostFfnNorm is not null)
             throw new NotSupportedException("Backprop does not support Gemma-3 post-attention/post-FFN norms yet.");
@@ -239,7 +240,7 @@ public sealed class BackpropEngine : IDisposable
         bc.Norm1Out = norm1Out;
         bc.Norm1State = norm1State;
 
-        var attnProj = ForwardAttention(norm1Out, block.Attention, bc);
+        var attnProj = ForwardAttention(norm1Out, block.Attention, bc, layerIndex);
         x.AddInPlace(attnProj);
 
         var (norm2Out, norm2State) = block.Norm2.ForwardWithState(x);
@@ -252,12 +253,14 @@ public sealed class BackpropEngine : IDisposable
         return x;
     }
 
-    private unsafe Tensor<float> ForwardAttention(Tensor<float> norm1Out, AttentionLayer attn, BlockContext bc)
+    private unsafe Tensor<float> ForwardAttention(
+        Tensor<float> norm1Out, AttentionLayer attn, BlockContext bc, int layerIndex)
     {
         var cfg = _model.Config;
         int B = norm1Out.Shape[0], S = norm1Out.Shape[1];
         int numH = cfg.NumHeads, numKv = cfg.NumKvHeads, D = cfg.HeadDim;
         int qDim = numH * D, kvDim = numKv * D;
+        int window = cfg.WindowSizeForLayer(layerIndex);
         float scale = 1f / MathF.Sqrt(D);
 
         var q = attn.Wq.Forward(norm1Out); // [B,S,qDim]
@@ -301,10 +304,12 @@ public sealed class BackpropEngine : IDisposable
 
             for (int i = 0; i < S; i++)
             {
-                // scores = q_i · k_j * scale, causal over j <= i
+                // scores = q_i · k_j * scale, causal over j <= i and, on a
+                // sliding layer, only the current window.
+                int first = window > 0 ? Math.Max(0, i - window + 1) : 0;
                 float maxScore = float.NegativeInfinity;
                 int qBaseRow = ((b * S + i) * numH + h) * D;
-                for (int j = 0; j <= i; j++)
+                for (int j = first; j <= i; j++)
                 {
                     int qBase = qBaseRow;
                     int kBase = ((b * S + j) * numKv + kvHead) * D;
@@ -333,12 +338,12 @@ public sealed class BackpropEngine : IDisposable
                     if (s > maxScore) maxScore = s;
                 }
 
-                // softmax over j <= i
+                // softmax over the visible window
                 float sum = 0f;
                 int pBase = ((b * numH + h) * S + i) * S;
                 if (useSimd)
                 {
-                    int j = 0;
+                    int j = first;
                     var vMax = Vector256.Create(maxScore);
                     for (; j <= i - 7; j += 8)
                     {
@@ -356,7 +361,7 @@ public sealed class BackpropEngine : IDisposable
                 }
                 else
                 {
-                    for (int j = 0; j <= i; j++)
+                    for (int j = first; j <= i; j++)
                     {
                         float p = MathF.Exp(pData[pBase + j] - maxScore);
                         pData[pBase + j] = p;
@@ -366,7 +371,7 @@ public sealed class BackpropEngine : IDisposable
                 float inv = 1f / sum;
                 if (useSimd)
                 {
-                    int j0 = 0;
+                    int j0 = first;
                     var vInv = Vector256.Create(inv);
                     for (; j0 <= i - 7; j0 += 8)
                     {
@@ -378,7 +383,7 @@ public sealed class BackpropEngine : IDisposable
                 }
                 else
                 {
-                    for (int j0 = 0; j0 <= i; j0++)
+                    for (int j0 = first; j0 <= i; j0++)
                         pData[pBase + j0] *= inv;
                 }
 
@@ -387,7 +392,7 @@ public sealed class BackpropEngine : IDisposable
                 for (int d = 0; d < D; d++)
                 {
                     float acc = 0f;
-                    for (int j = 0; j <= i; j++)
+                    for (int j = first; j <= i; j++)
                         acc += pData[((b * numH + h) * S + i) * S + j] * vData[((b * S + j) * numKv + kvHead) * D + d];
                     oData[oBase + d] = acc;
                 }
