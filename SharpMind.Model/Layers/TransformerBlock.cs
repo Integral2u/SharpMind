@@ -135,6 +135,11 @@ public abstract class TransformerBlock : IDisposable
             _deltaNet.LoadWeights(name, data);
             return true;
         }
+        if (_attention is not null && name.Contains("attn_gate", StringComparison.OrdinalIgnoreCase))
+        {
+            _attention.LoadWeights(name, data);
+            return true;
+        }
         // Short-conv tensors must be checked before the generic attn_out_proj
         // / out_proj matches below (llama names shortconv.out_proj).
         if (name.Contains("shortconv", StringComparison.OrdinalIgnoreCase) ||

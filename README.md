@@ -27,8 +27,8 @@ Live video example on [YouTube](https://youtu.be/I3FpbZac8Ro)
 
 | | |
 |---|---|
-| **[Live in-browser demo](https://integral2u.github.io/SharpMind/)** | **Runtime options (hardware tier, load mode, sampling)** |
-| ![Live in-browser view](<SharpMind.Core/Live OnlineView.PNG>) | ![Options view](<SharpMind.Core/CUI OptionsView.PNG>) |
+| **[Live in-browser demo](https://integral2u.github.io/SharpMind/)** | **CUI Chat View** |
+| ![Live in-browser view](<SharpMind.Core/Live OnlineView.PNG>) | ![Options view](<SharpMind.Core/CUI ChatView.PNG>) |
 | **Model & session welcome view** | **[SharpMind Studio](https://integral2u.github.io/SharpMindStudio/)** |
 | ![Welcome screen](<SharpMind.Core/CUI WelcomeScreen.PNG>) | [![SharpMind Studio](<SharpMind.Core/Studio ChatView.png>)](https://integral2u.github.io/SharpMindStudio/) |
 

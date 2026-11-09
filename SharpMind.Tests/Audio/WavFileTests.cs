@@ -54,6 +54,30 @@ public sealed class WavFileTests
     }
 
     [Fact]
+    public void Stream_ReadsTheSameAudio()
+    {
+        string path = TempPath();
+        try
+        {
+            float[] samples = [0.1f, -0.2f, 0.3f, -0.4f];
+            WavFile.Write(path, samples, 16000);
+            using var stream = new MemoryStream(File.ReadAllBytes(path));
+
+            WavData data = WavFile.Read(stream);
+
+            Assert.Equal(16000, data.SampleRate);
+            Assert.Equal(1, data.Channels);
+            Assert.Equal(samples.Length, data.Samples.Length);
+            for (int i = 0; i < samples.Length; i++)
+                Assert.InRange((double)Math.Abs(data.Samples[i] - samples[i]), 0, 1.0 / 32767 + 1e-6);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
     public void Stereo_IsDownmixedByMean()
     {
         string path = TempPath();

@@ -42,7 +42,15 @@ public sealed class Transformer : IDisposable
     private Tensor<float>? _cachedEmbedding;
     private Tensor<float>? _cachedHidden;
     private Tensor<float>? _cachedNormed;
+    private Tensor<float>? _lastNormed;
     private Tensor<float>? _lastCachedHiddenSnapshot;
+
+    /// <summary>
+    /// The last single-token hidden state after the final norm. Valid only until the
+    /// next forward call; used by the LFM3-Audio depth decoder to turn a sampled
+    /// <c>audio_out</c> token into a speech frame.
+    /// </summary>
+    public Tensor<float>? LastNormed => _lastNormed;
 
     /// <summary>Active quantization-aware training target, or null when disabled.</summary>
     public QuantDType? QuantAwareTrainingTarget { get; private set; }
@@ -135,6 +143,13 @@ public sealed class Transformer : IDisposable
     }
 
     /// <summary>Sets an activation hook on all blocks in the model.</summary>
+    /// <summary>
+    /// Skips the given transformer blocks during every subsequent forward. The residual
+    /// stream passes through unchanged, so a pre-norm model with the block skipped loses
+    /// exactly that block's contribution. Pass null to restore all layers.
+    /// </summary>
+    public void SetSkipLayers(IReadOnlySet<int>? layers) => _arch.SkipLayers = layers;
+
     public void SetActivationHook(IActivationHook? hook)
     {
         if (_blocks is null) return;
@@ -479,6 +494,113 @@ public sealed class Transformer : IDisposable
 
 
     /// <summary>
+    /// Inference fast path over precomputed token embeddings, for example audio rows placed
+    /// at an <c>&lt;|audio|&gt;</c> placeholder. The transformer takes ownership of
+    /// <paramref name="embeddings"/> and disposes it on the next forward call.
+    /// Input: [Batch, SeqLen, HiddenDim]; output: logits [Batch, VocabSize] for the last position.
+    /// </summary>
+    public Tensor<float> ForwardLastLogitsEmbedding(
+        Tensor<float> embeddings,
+        IKVCache[] caches,
+        int positionOffset = 0,
+        Core.Memory.IWorkspace? workspace = null)
+    {
+        ArgumentNullException.ThrowIfNull(embeddings);
+        int batch = embeddings.Shape[0];
+        int seqLen = embeddings.Shape[1];
+        bool decodeStep = batch == 1 && seqLen == 1;
+        var tStep = DecodeProfiler.Begin();
+        try
+        {
+            RunBlocksFromEmbedding(embeddings, caches, positionOffset, workspace);
+
+            int hiddenDim = _weights.Config.HiddenDim;
+            int K = hiddenDim;
+            int N = _weights.Config.VocabSize;
+
+            if (batch == 1 && seqLen == 1)
+            {
+                _finalNorm.ForwardInPlace(_cachedHidden);
+                _lastNormed = _cachedHidden;
+                using var flatHidden = _cachedHidden.Reshape(batch, hiddenDim);
+                var lastLogits = _logitOps.Project(flatHidden, batch, K, N, workspace);
+                ApplyFinalLogitSoftcap(lastLogits);
+                return lastLogits;
+            }
+
+            Tensor<float> lastHidden = workspace != null
+                ? workspace.Rent<float>([batch, hiddenDim])
+                : new Tensor<float>(batch, hiddenDim);
+            int lastOffset = (seqLen - 1) * hiddenDim;
+            var cachedData = _cachedHidden.Data;
+            var lastData = lastHidden.Data;
+            for (int b = 0; b < batch; b++)
+            {
+                int srcOffset = b * seqLen * hiddenDim + lastOffset;
+                cachedData.Slice(srcOffset, hiddenDim).CopyTo(lastData.Slice(b * hiddenDim, hiddenDim));
+            }
+            _finalNorm.ForwardInPlace(lastHidden);
+
+            Tensor<float> result = _logitOps.Project(lastHidden, batch, K, N, workspace);
+            ApplyFinalLogitSoftcap(result);
+            lastHidden.Dispose();
+            return result;
+        }
+        finally
+        {
+            DecodeProfiler.Mark(decodeStep ? DecodeStage.Forward : DecodeStage.Prefill, tStep);
+        }
+    }
+
+    /// <summary>
+    /// Runs a prompt through the blocks and returns the final norm of the last position.
+    /// The caller owns the returned tensor. Used by the LFM3-Audio TTS diagnostics.
+    /// </summary>
+    public Tensor<float> ForwardLastNormedEmbedding(
+        Tensor<float> embeddings,
+        IKVCache[] caches,
+        int positionOffset = 0,
+        Core.Memory.IWorkspace? workspace = null)
+    {
+        ArgumentNullException.ThrowIfNull(embeddings);
+        RunBlocksFromEmbedding(embeddings, caches, positionOffset, workspace);
+
+        int batch = embeddings.Shape[0];
+        int seqLen = embeddings.Shape[1];
+        int hiddenDim = _weights.Config.HiddenDim;
+        var last = new Tensor<float>(batch, hiddenDim);
+        int lastOffset = (seqLen - 1) * hiddenDim;
+        for (int b = 0; b < batch; b++)
+            _cachedHidden.Data.Slice(b * seqLen * hiddenDim + lastOffset, hiddenDim)
+                .CopyTo(last.Data.Slice(b * hiddenDim, hiddenDim));
+        _finalNorm.ForwardInPlace(last);
+        return last;
+    }
+
+    /// <summary>Blocks only, with the token embedding supplied by the caller.</summary>
+    private void RunBlocksFromEmbedding(
+        Tensor<float> embeddings,
+        IKVCache[] caches,
+        int positionOffset,
+        Core.Memory.IWorkspace? workspace)
+    {
+        ThrowIfDisposed();
+        DisposeCache();
+        ValidatePositionRange(positionOffset, embeddings.Shape[1]);
+
+        _cachedEmbedding = embeddings;
+        if (_positionEmbedding is not null)
+            AddPositionEmbeddingInPlace(_cachedEmbedding, positionOffset);
+        if (_tokenTypeEmbedding is not null)
+            AddTokenTypeEmbeddingInPlace(_cachedEmbedding);
+
+        _cachedHidden = _arch.Forward(_cachedEmbedding, caches, positionOffset, workspace, null);
+
+        if (_weights is TransformerWeightsStreaming sw) sw.PrepareForNextForward();
+    }
+
+
+    /// <summary>
     /// Inference fast path that returns logits only for the final token in each batch row.
     /// Input:  token IDs [Batch, SeqLen]
     /// Output: logits    [Batch, VocabSize]
@@ -503,6 +625,7 @@ public sealed class Transformer : IDisposable
             if (batch == 1 && seqLen == 1)
             {
                 _finalNorm.ForwardInPlace(_cachedHidden);
+                _lastNormed = _cachedHidden;
                 using var flatHidden = _cachedHidden.Reshape(batch, hiddenDim);
                 var lastLogits = _logitOps.Project(flatHidden, batch, K, N, workspace);
                 ApplyFinalLogitSoftcap(lastLogits);
@@ -601,6 +724,7 @@ public sealed class Transformer : IDisposable
         _cachedEmbedding = null;
         _cachedHidden = null;
         _cachedNormed = null;
+        _lastNormed = null;
         _lastCachedHiddenSnapshot?.Dispose();
         _lastCachedHiddenSnapshot = null;
     }

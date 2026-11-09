@@ -54,6 +54,9 @@ public sealed class DecoderArch : IArchitecture
     /// loaded and the previous layer's weights are freed.</summary>
     public Action<int>? BeforeBlock { get; set; }
 
+    /// <summary>Layer indices skipped entirely; the residual stream passes through.</summary>
+    public IReadOnlySet<int>? SkipLayers { get; set; }
+
     public IEnumerable<Parameter> Parameters()
     {
         foreach (var block in _blocks)
@@ -140,6 +143,8 @@ public sealed class DecoderArch : IArchitecture
         
         for (int i = 0; i < _blocks.Length; i++)
         {
+            if (SkipLayers?.Contains(i) == true) continue;
+
             BeforeBlock?.Invoke(i);
 
             int layerWindow = _config?.WindowSizeForLayer(i)

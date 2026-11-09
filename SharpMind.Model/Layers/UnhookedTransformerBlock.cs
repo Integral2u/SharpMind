@@ -12,6 +12,10 @@ public sealed class UnhookedTransformerBlock(int layerIdx, AttentionLayer? atten
     PerLayerEmbedding? perLayer = null, Tensor<float>? outScale = null, DeltaNetLayer? deltaNet = null)
     : TransformerBlock(layerIdx, attention, ffn, norm1, norm2, postAttnNorm, postFfnNorm, shortConv, postNormResidual, perLayer, outScale, deltaNet)
 {
+    private IActivationHook? _hook;
+
+    public override void SetActivationHook(IActivationHook? hook) => _hook = hook;
+
     public override Tensor<float> Forward(Tensor<float> x, IKVCache? cache, int positionOffset, bool causal, IWorkspace? workspace, int windowSize, Tensor<float>? perLayerInputs)
     {
         ThrowIfDisposed();
@@ -20,12 +24,15 @@ public sealed class UnhookedTransformerBlock(int layerIdx, AttentionLayer? atten
         {
             // BERT post-norm: no pre-norm; normalise after each residual add, and
             // the FFN reads the post-attention-normed state.
+            _hook?.OnPreAttention(_layerIdx, x);
             var postAttnOut = FirstBranch(x, cache, positionOffset, causal, workspace, windowSize);
+            _hook?.OnPostAttention(_layerIdx, postAttnOut);
             x.AddInPlace(postAttnOut);
             postAttnOut.Dispose();
             _norm1.ForwardInPlace(x);
 
             var postFfnOut = _ffn.Forward(x, workspace);
+            _hook?.OnPostFFN(_layerIdx, postFfnOut);
             x.AddInPlace(postFfnOut);
             postFfnOut.Dispose();
             _norm2.ForwardInPlace(x);
@@ -34,6 +41,7 @@ public sealed class UnhookedTransformerBlock(int layerIdx, AttentionLayer? atten
         }
 
         var normed1 = _norm1.Forward(x, workspace);
+        _hook?.OnPreAttention(_layerIdx, normed1);
 
         var tAttn = DecodeProfiler.Begin();
         var attnOut = FirstBranch(normed1, cache, positionOffset, causal, workspace, windowSize);
@@ -47,6 +55,7 @@ public sealed class UnhookedTransformerBlock(int layerIdx, AttentionLayer? atten
             attnOut = postNormed;
         }
 
+        _hook?.OnPostAttention(_layerIdx, attnOut);
         var tRes1 = DecodeProfiler.Begin();
         x.AddInPlace(attnOut);
         DecodeProfiler.Mark(DecodeStage.Residual, tRes1);
@@ -66,6 +75,7 @@ public sealed class UnhookedTransformerBlock(int layerIdx, AttentionLayer? atten
             ffnOut = postNormed;
         }
 
+        _hook?.OnPostFFN(_layerIdx, ffnOut);
         var tRes2 = DecodeProfiler.Begin();
         x.AddInPlace(ffnOut);
         DecodeProfiler.Mark(DecodeStage.Residual, tRes2);

@@ -12,6 +12,18 @@ public abstract class InferenceLinearLayer : LinearLayer
 
     public byte[]? RawQuantizedData { get; set; }
     public readonly QuantDType QuantDtype;
+
+    /// <summary>
+    /// Input row length the kernels should use. This is <see cref="LinearLayer.InFeatures"/>
+    /// except for a row-padded K-quant/block tensor whose row length is not block-aligned;
+    /// the forward pads each input row to this length so the existing flat kernels read the
+    /// GGUF row-padded blocks correctly.
+    /// </summary>
+    public int PaddedInFeatures { get; }
+
+    /// <summary>True when the raw weight buffer is GGUF row-padded rather than flat.</summary>
+    public bool RowPaddedKQuant { get; private set; }
+
     private readonly Q8_0WideWeights.Cache _wide = new();
 
     /// <summary>
@@ -42,6 +54,8 @@ public abstract class InferenceLinearLayer : LinearLayer
         : base(name, inFeatures, outFeatures, bias, weight, biasTensor, allocateFullWeight: false)
     {
         QuantDtype = quantDType;
+        int block = QuantizationOps.GetBlockSize(quantDType);
+        PaddedInFeatures = block <= 1 ? inFeatures : (inFeatures + block - 1) / block * block;
     }
 
     [PuzzleCornerPiece(SharpMindConfig.KeyLinear, true, null,
@@ -226,10 +240,39 @@ public abstract class InferenceLinearLayer : LinearLayer
         {
             if (RawQuantizedData is not null)
             {
-                if (WideAllowed && Q8_0WideWeights.Enabled &&
+                if (!RowPaddedKQuant && WideAllowed && Q8_0WideWeights.Enabled &&
                     _wide.Get(RawQuantizedData, InFeatures, OutFeatures) is { } wide)
                 {
                     wide.MatMul(flat.DataPtr, result.DataPtr, m);
+                }
+                else if (RowPaddedKQuant)
+                {
+                    // A GGUF K-quant row is padded up to a whole block. The flat kernels
+                    // index blocks as col * K / blockSize, so feed them the padded K and a
+                    // matching zero-padded input row: the extra products are zero and the
+                    // block offsets line up with the file layout.
+                    Tensor<float> padded = workspace != null
+                        ? workspace.Rent<float>([m, PaddedInFeatures])
+                        : new Tensor<float>(m, PaddedInFeatures);
+                    try
+                    {
+                        for (int row = 0; row < m; row++)
+                        {
+                            Span<float> destination = padded.RowSpan(row);
+                            flat.RowSpan(row).CopyTo(destination);
+                            destination[InFeatures..].Clear();
+                        }
+
+                        fixed (byte* pRaw = RawQuantizedData)
+                        {
+                            QuantizedMatMulFn(
+                                padded.DataPtr, pRaw, result.DataPtr, m, PaddedInFeatures, OutFeatures);
+                        }
+                    }
+                    finally
+                    {
+                        if (workspace is null) padded.Dispose();
+                    }
                 }
                 else
                 {
@@ -323,14 +366,20 @@ public override void FreeFloatWeight()
             // byte-count formula ignored which dim was the row, and diverged as soon as
             // the row length was not block-aligned.
             long expectedBytes = QuantizationOps.GetRawTensorByteCount([InFeatures, OutFeatures], QuantDtype);
-            if (rawData.Length != expectedBytes)
+            long flatBytes = QuantizationOps.GetFlatTensorByteCount([InFeatures, OutFeatures], QuantDtype);
+            if (rawData.Length != expectedBytes && rawData.Length != flatBytes)
                 throw new NotSupportedException(
                     $"[{Name}] weight shape does not match this architecture: dtype={QuantDtype}, " +
-                    $"K={InFeatures}, N={OutFeatures} expects {expectedBytes} bytes but the model " +
-                    $"provides {rawData.Length}. The file's tensor is " +
-                    $"{(expectedBytes % rawData.Length == 0 ? $"1/{expectedBytes / rawData.Length} of" : "not")} " +
-                    "the expected size, so the layer dimensions derived from the model config are wrong " +
-                    "for this architecture. Loading it would produce garbage or read past the buffer.");
+                    $"K={InFeatures}, N={OutFeatures} expects {expectedBytes} bytes (row-padded) or " +
+                    $"{flatBytes} bytes (flat) but the model provides {rawData.Length}. The file's " +
+                    "tensor size does not match the layer dimensions derived from the model config, " +
+                    "so loading it would produce garbage or read past the buffer.");
+
+            RowPaddedKQuant = expectedBytes > flatBytes && rawData.Length == expectedBytes;
+        }
+        else
+        {
+            RowPaddedKQuant = false;
         }
 
         RawQuantizedData = rawData;

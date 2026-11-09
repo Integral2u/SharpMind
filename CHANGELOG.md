@@ -24,6 +24,87 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   17-layer causal LFM2 stack with NEOX RoPE (theta 1e6, 32-frame window),
   RMSNorm, SwiGLU and the LayerNorm/GELU projector to 2048. The
   `GgufSmokeProbe audio-encoder` mode runs it on a WAV.
+- **Multimodal embedding forward** - `Transformer.ForwardLastLogitsEmbedding`
+  runs the decoder over precomputed embeddings, so audio rows can replace the
+  `<|audio|>` placeholder. The probe's `asr` mode decodes a WAV end to end.
+  Short clips transcribe correctly; long clips currently start near the end of
+  the audio and need a chunked or long-context fix.
+- **`Lfm3AudioRuntime`** - the reusable speech-to-text path used by Studio:
+  finds the `mmproj` next to a backbone, encodes 16 kHz audio and decodes a
+  transcript. WAV reading now also accepts a stream.
+- **Prompt-lookup drafting** - opt-in `GenerationConfig.PromptLookupDraft`
+  (0 off, capped at 16) in `StandardGenerator`. It drafts tokens that repeat
+  earlier context and verifies them in one batched forward with cache rollback,
+  so output is token-identical; a pause gate keeps prose from paying for failed
+  guesses. The CUI exposes it; ShortConv and DeltaNet caches disable it.
+- **Long-audio ASR** - `Lfm3AudioRuntime` transcribes recordings longer than four
+  seconds in four-second windows with a two-second overlap, joins lowercase
+  continuations and drops repeated boundary sentences. Short clips stay
+  single-shot.
+- **Native LFM3-Audio TTS** - `Lfm3TtsRuntime` prefills the `<|audio_start|>`
+  prompt, samples one 80 ms frame per backbone step with the three-layer MaskGIT
+  depth decoder (`[4,4,4]`, temperature 1.0, top-k 128, repetition penalty 1.1),
+  feeds each frame embedding back into the backbone and decodes the codes with
+  the LiquidCodec decoder and inverse STFT to 24 kHz WAV. The depth decoder and
+  codec load from the same `mmproj`; no sidecar process is involved. The
+  checkpoint's trained voice is female, so the runtime defaults to it.
+- **`GgufSmokeProbe tts-runtime`** - synthesizes text to WAV and prints every
+  sampled frame, and `asr-runtime` transcribes the result, so the TTS loop can
+  be checked without the UI. The "Draw me a cat." round trip returns the same
+  sentence through the native encoder.
+- **Layer importance lab** - `LayerImportanceAnalyzer` uses the generic
+  `IActivationHook` surface to record each block's attention and feed-forward
+  activation RMS, then ablates one branch or the whole block per layer and
+  reports the next-token cross-entropy delta. It is model-agnostic and works for
+  both hooked and unhooked block builds; `GgufSmokeProbe layer-importance` runs
+  it from the CLI.
+- **Latent projection** - `LatentSpaceAnalyzer` projects one prompt's final
+  hidden states to two dimensions with classical MDS (the dual of PCA), so a
+  2048-wide model never allocates a d x d covariance. `GgufSmokeProbe latent`
+  prints the points; the Studio latent lab draws the scatter.
+- **Activation map** - `ActivationMapAnalyzer` runs one prompt through the generic
+  `IActivationHook` and records the attention and feed-forward branch RMS per
+  layer and token. `GgufSmokeProbe activation-map` prints a log-scaled grid; the
+  Studio visualizer renders the same map as a heatmap.
+- **Skip-layer surgery** - `Transformer.SetSkipLayers` skips selected blocks while
+  the residual stream passes through, and `LayerImportanceAnalyzer` can append a
+  surgery curve: it ranks the layers by ablation delta, skips the least
+  important prefixes and re-measures the calibration loss. The
+  `layer-importance` probe mode prints the curve. `ModelSurgeryExporter` turns a
+  chosen row into a real pruned GGUF: the selected block tensors are dropped, the
+  rest are renumbered, per-layer metadata arrays are filtered and
+  `{arch}.block_count` is updated, so the file loads as an ordinary smaller
+  model. `GgufSmokeProbe prune` runs the export from the CLI.
+- **Quantization comparison** - `QuantizationAnalyzer` dequantizes a reference
+  and a candidate GGUF tensor by tensor and reports relative L2, cosine and the
+  worst tensors, so a smaller file can be judged on evidence. It handles the
+  llama.cpp mixed quant recipes through the same kernels and needs no forward
+  pass; `GgufSmokeProbe quant-compare` runs it from the CLI. The report also
+  checks whether both files are the same model (architecture, tensor names and
+  shapes), so a pruned or fine-tuned file is not mistaken for a quantization.
+  `LayerImportanceAnalyzer.MeasureLoss` and `GgufSmokeProbe quant-loss` add the
+  forward side: the same calibration text measured sequentially on both files,
+  so they never have to be resident together.
+- **GGUF quantization** - `GgufQuantizer` re-encodes a GGUF without loading the
+  model. It reads each row through the engine's dequantizers and writes fixed
+  targets (Q2_K-Q8_K, Q8_0, Q4_0, F16), per-role plans (embedding/LM head can
+  stay finer) or a byte budget that picks the coarsest fitting K-quant.
+  `GgufQuantizer.CompatibleTarget` writes K-quants row-padded even when a row is
+  not 256-aligned; the loader and kernels now handle that layout, so the output
+  is a normal Q4_K model rather than a Q8_0 fallback. `GgufSmokeProbe quantize`
+  runs all three modes.
+- **Row-padded K-quant inference** - GGUF K-quant tensors whose row length is not
+  256-aligned (for example Qwen2-0.5B's 896-wide hidden state) are now read
+  correctly. `InferenceLinearLayer` and `LogitOps` pad each input row to the
+  block boundary and pass the padded K to the existing kernels, and
+  `ModelLoaderBase`/`GgufTensorReader` dequantize row by row. Validated on
+  Qwen2-0.5B Q8_0 -> Q4_K: 169 Q4_K tensors, loss `4.1791 -> 4.9034`.
+- **Native LFM3-VL vision** - `Lfm3VlVisionEncoder` reads the vision `mmproj`
+  (linear patchifier, fourteen pre-norm blocks alternating gated depthwise 2D
+  convolution and bidirectional grouped-query attention with axial 2D RoPE, and
+  the 2x2 merge projector). `Lfm3VlRuntime` scatters the projected features into
+  the expanded `<|image|>` placeholders and runs the ordinary LFM3 decoder;
+  `GgufSmokeProbe vl` captions an image end to end.
 - **llama.cpp tokenizer parity** - the pre-tokeniser is chosen from
   `tokenizer.ggml.pre` (with the architecture as fallback) using llama.cpp's
   tiktoken variants for Qwen2/Qwen3, Qwen3.5, Llama 3 `ignore_merges` and
@@ -37,6 +118,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- LFM3 per-head `attn_gate` weights now load in every mode. Streaming and
+  quantized-resident loads allocated a one-column placeholder instead of the
+  `[hidden, heads]` gate, so the first forward threw
+  "RawQuantizedData is null and no float fallback available".
+- Selecting an `asr` encoder-decoder model (Nemotron ASR) or a `clip` `mmproj`
+  as a chat model now fails with a clear message instead of a loader error.
 - Equal-rank BPE and equal-score SentencePiece merges no longer split runs of
   spaces or punctuation out of order.
 - LFM2/LFM3 GGUFs (`tokenizer.ggml.pre = lfm2`) are no longer tokenised with

@@ -30,6 +30,13 @@ public static class WavFile
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         using var stream = File.OpenRead(path);
+        return Read(stream);
+    }
+
+    /// <summary>Reads a WAV stream and returns the mono mix at its original sample rate.</summary>
+    public static WavData Read(Stream stream)
+    {
+        ArgumentNullException.ThrowIfNull(stream);
         using var reader = new BinaryReader(stream, Encoding.ASCII, leaveOpen: true);
 
         if (new string(reader.ReadChars(4)) != "RIFF")
@@ -117,6 +124,14 @@ public static class WavFile
         return Resample(data.Samples, data.SampleRate, target);
     }
 
+    /// <summary>Reads a WAV stream as mono, optionally resampling to <paramref name="targetSampleRate"/>.</summary>
+    public static float[] ReadMono(Stream stream, int? targetSampleRate = null)
+    {
+        WavData data = Read(stream);
+        if (targetSampleRate is not { } target || target == data.SampleRate) return data.Samples;
+        return Resample(data.Samples, data.SampleRate, target);
+    }
+
     /// <summary>
     /// Writes mono (or interleaved multichannel) samples. Values outside [-1, 1] are clamped
     /// for PCM16 and preserved for Float32.
@@ -129,6 +144,19 @@ public static class WavFile
         WavSampleFormat format = WavSampleFormat.Pcm16)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        using var stream = File.Create(path);
+        Write(stream, samples, sampleRate, channels, format);
+    }
+
+    /// <summary>Writes a WAV to an arbitrary stream, which lets callers build artifacts in memory.</summary>
+    public static void Write(
+        Stream stream,
+        ReadOnlySpan<float> samples,
+        int sampleRate,
+        int channels = 1,
+        WavSampleFormat format = WavSampleFormat.Pcm16)
+    {
+        ArgumentNullException.ThrowIfNull(stream);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(sampleRate);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(channels);
         if (samples.Length % channels != 0)
@@ -139,8 +167,7 @@ public static class WavFile
         int bytesPerSample = bitsPerSample / 8;
         int dataSize = samples.Length * bytesPerSample;
 
-        using var stream = File.Create(path);
-        using var writer = new BinaryWriter(stream, Encoding.ASCII, leaveOpen: false);
+        using var writer = new BinaryWriter(stream, Encoding.ASCII, leaveOpen: true);
         writer.Write(Encoding.ASCII.GetBytes("RIFF"));
         writer.Write(36 + dataSize);
         writer.Write(Encoding.ASCII.GetBytes("WAVE"));

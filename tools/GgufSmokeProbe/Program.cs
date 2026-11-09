@@ -1,4 +1,5 @@
 using SharpMind.Core.Quantization;
+using SharpMind.Core.Tensors;
 using SharpMind.Inference;
 using SharpMind.Inference.Agent;
 using SharpMind.Inference.Chat;
@@ -59,6 +60,9 @@ if (args.Length < 2)
     return 2;
 }
 
+if (args.Length > 0 && args[0] == "mel-sine")
+    return RunMelSine(args);
+
 string mode = args[0];
 string path = Path.GetFullPath(args[1]);
 if (!File.Exists(path)) { Console.Error.WriteLine($"file not found: {path}"); return 1; }
@@ -108,11 +112,989 @@ if (mode == "cmp")
 if (mode == "tensor")
     return RunTensorStats(path, args);
 
+if (mode == "values")
+    return RunTensorValues(path, args);
+
 if (mode == "audio-encoder")
     return RunAudioEncoder(path, args);
 
+if (mode == "asr")
+    return await RunAsrAsync(path, args);
+
+if (mode == "embed-check")
+    return await RunEmbedCheckAsync(path, args);
+
+if (mode == "audio-compare")
+    return RunAudioCompare(path, args);
+
+if (mode == "asr-sweep")
+    return await RunAsrSweepAsync(path, args);
+
+if (mode == "asr-ablate")
+    return await RunAsrAblateAsync(path, args);
+
+if (mode == "asr-runtime")
+    return await RunAsrRuntimeAsync(path, args);
+
+if (mode == "tts-runtime")
+    return await RunTtsRuntimeAsync(path, args);
+
+if (mode == "tts-logits")
+    return await RunTtsLogitsAsync(path, args);
+
+if (mode == "asr-files")
+    return await RunAsrFilesAsync(path, args);
+
+if (mode == "layer-importance")
+    return await RunLayerImportanceAsync(path, args);
+
+if (mode == "vl")
+    return await RunVlAsync(path, args);
+
+if (mode == "quantize")
+    return await RunQuantizeAsync(path, args);
+
+if (mode == "quant-compare")
+    return await RunQuantCompareAsync(path, args);
+
+if (mode == "quant-loss")
+    return await RunQuantLossAsync(path, args);
+
+if (mode == "activation-map")
+    return await RunActivationMapAsync(path, args);
+
+if (mode == "latent")
+    return await RunLatentAsync(path, args);
+
+if (mode == "prune")
+    return await RunPruneAsync(path, args);
+
 Console.Error.WriteLine($"unknown mode: {mode}");
 return 2;
+
+// `asr-runtime <backbone> <mmproj> <wav>` exercises the same Lfm3AudioRuntime the
+// Studio chat service uses.
+static async Task<int> RunAsrRuntimeAsync(string backbonePath, string[] args)
+{
+    await Task.CompletedTask;
+    if (args.Length < 4) { Console.Error.WriteLine("usage: asr-runtime <backbone.gguf> <mmproj.gguf> <wav>"); return 2; }
+    string mmprojPath = Path.GetFullPath(args[2]);
+    string wavPath = Path.GetFullPath(args[3]);
+
+    var metaHelper = ModelFormatHelpers.GetModelMetaHelperFor(ModelFormat.Gguf);
+    metaHelper.Load(backbonePath, null, out _, out var config, out var tokenizer);
+    if (tokenizer is null) { Console.Error.WriteLine("no tokenizer"); return 3; }
+
+    var sharpConfig = config.ForModel();
+    var mapping = sharpConfig.ToJigSawMapping();
+    using var weights = ModelFactory.CreateWeights(
+        config, sharpConfig, QuantizationFactory.Create(mapping), backbonePath,
+        LoadMode.Full, quantizedResident: false, maxParallelLoadDegree: 1);
+    weights.InitializeWeights();
+    using var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
+    int chunkSeconds = args.Length > 4 && int.TryParse(args[4], out int cs) ? cs : 4;
+    int overlapSeconds = args.Length > 5 && int.TryParse(args[5], out int os) ? os : 2;
+    using var runtime = new SharpMind.Model.Audio.Lfm3AudioRuntime(model, tokenizer, config, mmprojPath)
+    {
+        ChunkSeconds = chunkSeconds,
+        OverlapSeconds = overlapSeconds,
+    };
+
+    var watch = System.Diagnostics.Stopwatch.StartNew();
+    string transcript = runtime.TranscribeWav(wavPath, "English", 32);
+    watch.Stop();
+    Console.WriteLine($"ASR-RUNTIME ({watch.Elapsed.TotalSeconds:F1}s): {transcript}");
+    return 0;
+}
+
+// `tts-runtime <backbone> <mmproj> <text> <out.wav> [language] [voice]` exercises the native
+// text-to-speech loop: MaskGIT depth decoder -> LiquidCodec -> 24 kHz WAV.
+static async Task<int> RunTtsRuntimeAsync(string backbonePath, string[] args)
+{
+    await Task.CompletedTask;
+    if (args.Length < 5)
+    {
+        Console.Error.WriteLine("usage: tts-runtime <backbone.gguf> <mmproj.gguf> <text> <out.wav> [language] [voice] [maxFrames] [seed] [temperature] [topK]");
+        return 2;
+    }
+
+    string mmprojPath = Path.GetFullPath(args[2]);
+    string text = args[3];
+    string wavPath = Path.GetFullPath(args[4]);
+    string language = args.Length > 5 ? args[5] : "American English";
+    string voice = args.Length > 6 ? args[6] : "female";
+    int maxFrames = args.Length > 7 && int.TryParse(args[7], out int mf) ? mf : 256;
+    int? seed = args.Length > 8 && int.TryParse(args[8], out int sd) ? sd : null;
+    float temperature = args.Length > 9 && float.TryParse(args[9], out float tp) ? tp : 1.0f;
+    int topK = args.Length > 10 && int.TryParse(args[10], out int tk) ? tk : 128;
+
+    var metaHelper = ModelFormatHelpers.GetModelMetaHelperFor(ModelFormat.Gguf);
+    metaHelper.Load(backbonePath, null, out _, out var config, out var tokenizer);
+    if (tokenizer is null) { Console.Error.WriteLine("no tokenizer"); return 3; }
+
+    var sharpConfig = config.ForModel();
+    var mapping = sharpConfig.ToJigSawMapping();
+    using var weights = ModelFactory.CreateWeights(
+        config, sharpConfig, QuantizationFactory.Create(mapping), backbonePath,
+        LoadMode.Full, quantizedResident: false, maxParallelLoadDegree: 1);
+    weights.InitializeWeights();
+    using var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
+    var frameWatch = System.Diagnostics.Stopwatch.StartNew();
+    using var runtime = new SharpMind.Model.Audio.Lfm3TtsRuntime(model, tokenizer, config, mmprojPath)
+    {
+        Language = language,
+        Voice = voice,
+        MaxFrames = maxFrames,
+        Seed = seed,
+        Temperature = temperature,
+        TopK = topK,
+        FrameSampled = (index, codes) => Console.WriteLine(
+            $"frame {index,3} ({frameWatch.Elapsed.TotalSeconds,6:F1}s): {string.Join(",", codes)}"),
+        EndOfSpeech = (index, codes) => Console.WriteLine(
+            $"EOS at frame {index} ({frameWatch.Elapsed.TotalSeconds:F1}s): {string.Join(",", codes)}"),
+    };
+
+    var watch = System.Diagnostics.Stopwatch.StartNew();
+    float[] audio = runtime.Synthesize(text);
+    watch.Stop();
+    if (audio.Length == 0)
+    {
+        Console.WriteLine($"TTS-RUNTIME: no audio ({watch.Elapsed.TotalSeconds:F1}s)");
+        return 4;
+    }
+
+    SharpMind.Model.Audio.WavFile.Write(wavPath, audio, SharpMind.Model.Audio.Lfm3TtsRuntime.SampleRate);
+    double seconds = (double)audio.Length / SharpMind.Model.Audio.Lfm3TtsRuntime.SampleRate;
+    Console.WriteLine(
+        $"TTS-RUNTIME ({watch.Elapsed.TotalSeconds:F1}s): {seconds:F2}s, " +
+        $"{audio.Length} samples, {audio.Length / 1920} frames -> {wavPath}");
+    return 0;
+}
+
+// `asr-files <backbone> <mmproj> <wav>...` transcribes several WAVs with one loaded model.
+static async Task<int> RunAsrFilesAsync(string backbonePath, string[] args)
+{
+    await Task.CompletedTask;
+    if (args.Length < 4) { Console.Error.WriteLine("usage: asr-files <backbone.gguf> <mmproj.gguf> <wav>..."); return 2; }
+    string mmprojPath = Path.GetFullPath(args[2]);
+    string[] wavs = args[3..];
+
+    var metaHelper = ModelFormatHelpers.GetModelMetaHelperFor(ModelFormat.Gguf);
+    metaHelper.Load(backbonePath, null, out _, out var config, out var tokenizer);
+    if (tokenizer is null) { Console.Error.WriteLine("no tokenizer"); return 3; }
+
+    var sharpConfig = config.ForModel();
+    var mapping = sharpConfig.ToJigSawMapping();
+    using var weights = ModelFactory.CreateWeights(
+        config, sharpConfig, QuantizationFactory.Create(mapping), backbonePath,
+        LoadMode.Full, quantizedResident: false, maxParallelLoadDegree: 1);
+    weights.InitializeWeights();
+    using var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
+    using var runtime = new SharpMind.Model.Audio.Lfm3AudioRuntime(model, tokenizer, config, mmprojPath);
+
+    foreach (string wav in wavs)
+    {
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        string transcript = runtime.TranscribeWav(Path.GetFullPath(wav), "English", 64);
+        Console.WriteLine($"{Path.GetFileName(wav)} ({watch.Elapsed.TotalSeconds:F1}s): {transcript}");
+    }
+    return 0;
+}
+
+// `prune <source> <dest> <layer,layer...>` writes a GGUF with the selected blocks removed.
+static async Task<int> RunPruneAsync(string sourcePath, string[] args)
+{
+    await Task.CompletedTask;
+    if (args.Length < 4) { Console.Error.WriteLine("usage: prune <source.gguf> <dest.gguf> <layer,layer...>"); return 2; }
+    string destination = Path.GetFullPath(args[2]);
+    var layers = args[3].Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        .Select(int.Parse).ToHashSet();
+
+    var watch = System.Diagnostics.Stopwatch.StartNew();
+    SharpMind.Model.Analysis.SurgeryExportResult result =
+        SharpMind.Model.Analysis.ModelSurgeryExporter.ExportPruned(
+            sourcePath, destination, layers,
+            progress: (done, total) => Console.Write($"\rtensor {done}/{total}"));
+    Console.WriteLine($"\nPRUNE ({watch.Elapsed.TotalSeconds:F1}s): {result.OriginalLayers} -> {result.KeptLayers} layers, " +
+                      $"removed {result.RemovedLayers}, {result.Tensors} tensors, {result.Bytes / (1024.0 * 1024.0):F1} MB -> {result.Path}");
+    return 0;
+}
+
+// `quant-loss <reference> <candidate> [prompt] [maxTokens=128]` measures the next-token
+// cross-entropy of both files on the same calibration text (sequentially, one model at a time).
+static async Task<int> RunQuantLossAsync(string referencePath, string[] args)
+{
+    await Task.CompletedTask;
+    if (args.Length < 3) { Console.Error.WriteLine("usage: quant-loss <reference.gguf> <candidate.gguf> [prompt] [maxTokens]"); return 2; }
+    string candidatePath = Path.GetFullPath(args[2]);
+    string prompt = args.Length > 3
+        ? args[3]
+        : "The quick brown fox jumps over the lazy dog. A quantization should preserve the next-token distribution.";
+    int maxTokens = args.Length > 4 && int.TryParse(args[4], out int mt) ? mt : 128;
+
+    (double referenceLoss, int tokens) = Measure(referencePath, prompt, maxTokens);
+    (double candidateLoss, _) = Measure(candidatePath, prompt, maxTokens);
+    Console.WriteLine($"QUANT-LOSS tokens={tokens} reference={referenceLoss:F4} candidate={candidateLoss:F4} " +
+                      $"delta={candidateLoss - referenceLoss:+0.0000;-0.0000;0} " +
+                      $"ppl {Math.Exp(referenceLoss):F2} -> {Math.Exp(candidateLoss):F2}");
+    return 0;
+
+    static (double Loss, int Tokens) Measure(string path, string prompt, int maxTokens)
+    {
+        var metaHelper = ModelFormatHelpers.GetModelMetaHelperFor(ModelFormat.Gguf);
+        metaHelper.Load(path, null, out _, out var config, out var tokenizer);
+        if (tokenizer is null) throw new InvalidOperationException("no tokenizer");
+        int[] ids = tokenizer.Encode(prompt, addBos: true, addEos: false);
+
+        var sharpConfig = config.ForModel();
+        var mapping = sharpConfig.ToJigSawMapping();
+        using var weights = ModelFactory.CreateWeights(
+            config, sharpConfig, QuantizationFactory.Create(mapping), path,
+            LoadMode.Full, quantizedResident: false, maxParallelLoadDegree: 1);
+        weights.InitializeWeights();
+        using var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
+        var analyzer = new SharpMind.Model.Analysis.LayerImportanceAnalyzer(model);
+        double loss = analyzer.MeasureLoss(ids, maxTokens);
+        return (loss, Math.Min(ids.Length, maxTokens) - 1);
+    }
+}
+
+// `latent <model> [prompt] [maxTokens=64]` projects the prompt hidden states to 2D with
+// classical MDS (dual PCA) and prints the points.
+static async Task<int> RunLatentAsync(string path, string[] args)
+{
+    await Task.CompletedTask;
+    string prompt = args.Length > 2
+        ? args[2]
+        : "The quick brown fox jumps over the lazy dog.";
+    int maxTokens = args.Length > 3 && int.TryParse(args[3], out int mt) ? mt : 64;
+
+    var metaHelper = ModelFormatHelpers.GetModelMetaHelperFor(ModelFormat.Gguf);
+    metaHelper.Load(path, null, out _, out var config, out var tokenizer);
+    if (tokenizer is null) { Console.Error.WriteLine("no tokenizer"); return 3; }
+
+    var sharpConfig = config.ForModel();
+    var mapping = sharpConfig.ToJigSawMapping();
+    using var weights = ModelFactory.CreateWeights(
+        config, sharpConfig, QuantizationFactory.Create(mapping), path,
+        LoadMode.Full, quantizedResident: false, maxParallelLoadDegree: 1);
+    weights.InitializeWeights();
+    using var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
+
+    int[] ids = tokenizer.Encode(prompt, addBos: true, addEos: false);
+    var watch = System.Diagnostics.Stopwatch.StartNew();
+    SharpMind.Model.Analysis.LatentSpaceMap map =
+        SharpMind.Model.Analysis.LatentSpaceAnalyzer.Capture(
+            model, ids, id => tokenizer.Decode([id]), maxTokens);
+    watch.Stop();
+
+    Console.WriteLine($"LATENT ({watch.Elapsed.TotalSeconds:F1}s): tokens={map.Tokens} dim={map.Dimensions} " +
+                      $"explained={map.ExplainedVariance:F3}");
+    foreach (SharpMind.Model.Analysis.LatentPoint point in map.Points)
+        Console.WriteLine($"{point.X,9:F4} {point.Y,9:F4}  {point.TokenId,7}  {point.Text}");
+    return 0;
+}
+
+// `activation-map <model> [prompt] [maxTokens=64]` prints the layers x tokens branch RMS.
+static async Task<int> RunActivationMapAsync(string path, string[] args)
+{
+    await Task.CompletedTask;
+    string prompt = args.Length > 2
+        ? args[2]
+        : "The quick brown fox jumps over the lazy dog.";
+    int maxTokens = args.Length > 3 && int.TryParse(args[3], out int mt) ? mt : 64;
+
+    var metaHelper = ModelFormatHelpers.GetModelMetaHelperFor(ModelFormat.Gguf);
+    metaHelper.Load(path, null, out _, out var config, out var tokenizer);
+    if (tokenizer is null) { Console.Error.WriteLine("no tokenizer"); return 3; }
+
+    var sharpConfig = config.ForModel();
+    var mapping = sharpConfig.ToJigSawMapping();
+    using var weights = ModelFactory.CreateWeights(
+        config, sharpConfig, QuantizationFactory.Create(mapping), path,
+        LoadMode.Full, quantizedResident: false, maxParallelLoadDegree: 1);
+    weights.InitializeWeights();
+    using var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
+
+    int[] ids = tokenizer.Encode(prompt, addBos: true, addEos: false);
+    var watch = System.Diagnostics.Stopwatch.StartNew();
+    SharpMind.Model.Analysis.ActivationMap map =
+        SharpMind.Model.Analysis.ActivationMapAnalyzer.Capture(model, ids, maxTokens);
+    watch.Stop();
+
+    Console.WriteLine($"ACTIVATION-MAP ({watch.Elapsed.TotalSeconds:F1}s): layers={map.Layers} tokens={map.Tokens} " +
+                      $"attentionMax={map.MaxAttention:F3} ffnMax={map.MaxFeedForward:F3}");
+    PrintMap("attention", map.AttentionRms, map.Layers, map.Tokens, map.MaxAttention);
+    PrintMap("ffn", map.FeedForwardRms, map.Layers, map.Tokens, map.MaxFeedForward);
+    return 0;
+
+    static void PrintMap(string name, float[] values, int layers, int tokens, float max)
+    {
+        const string ramp = " .:-=+*#%@";
+        double maxLog = Math.Log10(1 + max);
+        Console.WriteLine($"{name} (log scale):");
+        for (int layer = 0; layer < layers; layer++)
+        {
+            var line = new System.Text.StringBuilder(tokens);
+            for (int token = 0; token < tokens; token++)
+            {
+                float value = values[layer * tokens + token];
+                int index = maxLog <= 1e-9
+                    ? 0
+                    : (int)Math.Clamp(Math.Log10(1 + value) / maxLog * (ramp.Length - 1), 0, ramp.Length - 1);
+                line.Append(ramp[index]);
+            }
+            Console.WriteLine($"{layer,3} {line}");
+        }
+    }
+}
+
+// `quantize <source> <dest> <target> [budgetMB]` re-encodes a GGUF. Targets:
+// q2k/q3k/q4k/q5k/q6k/q8k, q8_0/q4_0, f16, or blend (emb/head Q8_K, rest Q4_K).
+// A budget (MB) switches to variable quantization: the coarsest K-quant that fits.
+static async Task<int> RunQuantizeAsync(string sourcePath, string[] args)
+{
+    await Task.CompletedTask;
+    if (args.Length < 4)
+    {
+        Console.Error.WriteLine("usage: quantize <source.gguf> <dest.gguf> <q2k|q3k|q4k|q5k|q6k|q8k|q8_0|q4_0|f16|blend> [budgetMB]");
+        return 2;
+    }
+    string destination = Path.GetFullPath(args[2]);
+    string targetText = args[3].Trim().ToLowerInvariant();
+    QuantDType target = targetText switch
+    {
+        "q2k" => QuantDType.Q2_K,
+        "q3k" => QuantDType.Q3_K,
+        "q4k" => QuantDType.Q4_K,
+        "q5k" => QuantDType.Q5_K,
+        "q6k" => QuantDType.Q6_K,
+        "q8k" => QuantDType.Q8_K,
+        "q8_0" => QuantDType.Q8_0,
+        "q4_0" => QuantDType.Q4_0,
+        "f16" => QuantDType.F16,
+        "blend" => QuantDType.Q4_K,
+        _ => throw new ArgumentException($"unknown quantization target '{args[3]}'"),
+    };
+    long? budget = args.Length > 4 && long.TryParse(args[4], out long mb) && mb > 0
+        ? mb * 1024L * 1024L
+        : null;
+
+    SharpMind.Model.Format.GgufQuantOptions options = targetText == "blend"
+        ? new SharpMind.Model.Format.GgufQuantOptions
+        {
+            DefaultLevel = QuantDType.Q4_K,
+            RoleLevels = new Dictionary<SharpMind.Model.Format.SmmTensorRole, QuantDType>
+            {
+                [SharpMind.Model.Format.SmmTensorRole.Embedding] = QuantDType.Q8_K,
+                [SharpMind.Model.Format.SmmTensorRole.LmHead] = QuantDType.Q8_K,
+            },
+            TargetBytes = budget,
+            Floor = QuantDType.Q4_K,
+        }
+        : new SharpMind.Model.Format.GgufQuantOptions
+        {
+            DefaultLevel = target,
+            TargetBytes = budget,
+            Floor = target is QuantDType.Q2_K or QuantDType.Q3_K or QuantDType.Q4_K
+                or QuantDType.Q5_K or QuantDType.Q6_K or QuantDType.Q8_K
+                ? target
+                : QuantDType.Q4_K,
+        };
+
+    var watch = System.Diagnostics.Stopwatch.StartNew();
+    SharpMind.Model.Format.GgufQuantizeResult result = SharpMind.Model.Format.GgufQuantizer.Quantize(
+        sourcePath, destination, options,
+        progress: (done, total) => Console.Write($"\rtensor {done}/{total}"));
+    watch.Stop();
+    double ratio = 100.0 * result.Bytes / Math.Max(1, result.SourceBytes);
+    string dtypes = string.Join(", ", result.Counts.OrderBy(pair => pair.Key)
+        .Select(pair => $"{pair.Key}:{pair.Value}"));
+    Console.WriteLine($"\nQUANTIZE ({watch.Elapsed.TotalSeconds:F1}s): {result.Tensors} tensors, " +
+                      $"{result.Requantized} requantized, {result.Copied} copied, " +
+                      $"{result.SourceBytes / (1024.0 * 1024.0):F1} MB -> " +
+                      $"{result.Bytes / (1024.0 * 1024.0):F1} MB ({ratio:F1}%)");
+    Console.WriteLine($"dtypes: {dtypes} -> {result.Path}");
+    return 0;
+}
+
+// `quant-compare <reference> <candidate> [filter] [maxTensors]` compares two quantizations
+// tensor by tensor (relative L2, cosine) without a forward pass.
+static async Task<int> RunQuantCompareAsync(string referencePath, string[] args)
+{
+    await Task.CompletedTask;
+    if (args.Length < 3) { Console.Error.WriteLine("usage: quant-compare <reference.gguf> <candidate.gguf> [filter] [maxTensors]"); return 2; }
+    string candidatePath = Path.GetFullPath(args[2]);
+    string? filter = args.Length > 3 && !int.TryParse(args[3], out _) ? args[3] : null;
+    int maxTensors = args.Length > 3 && int.TryParse(args[^1], out int mt) ? mt : 0;
+
+    var watch = System.Diagnostics.Stopwatch.StartNew();
+    SharpMind.Model.Analysis.QuantizationComparisonReport report =
+        SharpMind.Model.Analysis.QuantizationAnalyzer.Compare(
+            referencePath, candidatePath, filter, maxTensors,
+            progress: (done, total) => Console.Write($"\rtensor {done}/{total}"));
+    Console.WriteLine($"\n{Path.GetFileName(referencePath)} -> {Path.GetFileName(candidatePath)} ({watch.Elapsed.TotalSeconds:F1}s)");
+    Console.WriteLine($"compared={report.Compared} skipped={report.Skipped} elements={report.Elements} " +
+                      $"globalRelL2={report.GlobalRelativeL2:F6} meanCosine={report.MeanCosine:F6}");
+    Console.WriteLine("tensor                         ref/cand        relL2     cosine    maxAbs");
+    foreach (SharpMind.Model.Analysis.TensorQuantizationError tensor in report.Worst(20))
+        Console.WriteLine($"{tensor.Name,-30} {tensor.ReferenceDtype}/{tensor.CandidateDtype,-6} " +
+                          $"{tensor.RelativeL2,10:F6} {tensor.Cosine,10:F6} {tensor.MaxAbsError,10:F5}");
+    return 0;
+}
+
+// `vl <backbone> <mmproj> <image> [prompt] [maxTokens=128]` runs the native LFM3-VL image path.
+static async Task<int> RunVlAsync(string backbonePath, string[] args)
+{
+    await Task.CompletedTask;
+    if (args.Length < 4) { Console.Error.WriteLine("usage: vl <backbone.gguf> <mmproj.gguf> <image> [prompt] [maxTokens]"); return 2; }
+    string mmprojPath = Path.GetFullPath(args[2]);
+    string imagePath = Path.GetFullPath(args[3]);
+    string prompt = args.Length > 4 ? args[4] : "Describe this image in one sentence.";
+    int maxTokens = args.Length > 5 && int.TryParse(args[5], out int mt) ? mt : 128;
+
+    var metaHelper = ModelFormatHelpers.GetModelMetaHelperFor(ModelFormat.Gguf);
+    metaHelper.Load(backbonePath, null, out _, out var config, out var tokenizer);
+    if (tokenizer is null) { Console.Error.WriteLine("no tokenizer"); return 3; }
+
+    float[] chw = LoadImageChw(imagePath, 512, out int height, out int width);
+    Console.WriteLine($"image {width}x{height}, {SharpMind.Model.Vision.Lfm3VlRuntime.ImageTokens(height, width)} vision tokens");
+
+    var sharpConfig = config.ForModel();
+    var mapping = sharpConfig.ToJigSawMapping();
+    using var weights = ModelFactory.CreateWeights(
+        config, sharpConfig, QuantizationFactory.Create(mapping), backbonePath,
+        LoadMode.Full, quantizedResident: false, maxParallelLoadDegree: 1);
+    weights.InitializeWeights();
+    using var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
+    using var runtime = new SharpMind.Model.Vision.Lfm3VlRuntime(model, tokenizer, config, mmprojPath);
+
+    var watch = System.Diagnostics.Stopwatch.StartNew();
+    string answer = runtime.Describe(chw, height, width, prompt, maxTokens);
+    Console.WriteLine($"VL ({watch.Elapsed.TotalSeconds:F1}s): {answer}");
+    return 0;
+}
+
+// Loads an image, resizes it to a multiple of 32 with the long side capped, and returns CHW 0..1.
+static float[] LoadImageChw(string path, int maxSide, out int height, out int width)
+{
+    using var source = new System.Drawing.Bitmap(path);
+    double scale = Math.Min(1.0, (double)maxSide / Math.Max(source.Width, source.Height));
+    width = Math.Max(32, (int)Math.Round(source.Width * scale / 32.0) * 32);
+    height = Math.Max(32, (int)Math.Round(source.Height * scale / 32.0) * 32);
+    using var bitmap = new System.Drawing.Bitmap(width, height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+    using (var graphics = System.Drawing.Graphics.FromImage(bitmap))
+    {
+        graphics.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+        graphics.DrawImage(source, 0, 0, width, height);
+    }
+
+    var chw = new float[3 * height * width];
+    var data = bitmap.LockBits(
+        new System.Drawing.Rectangle(0, 0, width, height),
+        System.Drawing.Imaging.ImageLockMode.ReadOnly,
+        System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+    try
+    {
+        unsafe
+        {
+            for (int y = 0; y < height; y++)
+            {
+                byte* row = (byte*)data.Scan0 + y * data.Stride;
+                for (int x = 0; x < width; x++)
+                {
+                    float r = (row[x * 4 + 2] / 255f - 0.5f) / 0.5f;
+                    float g = (row[x * 4 + 1] / 255f - 0.5f) / 0.5f;
+                    float b = (row[x * 4 + 0] / 255f - 0.5f) / 0.5f;
+                    chw[y * width + x] = r;
+                    chw[height * width + y * width + x] = g;
+                    chw[2 * height * width + y * width + x] = b;
+                }
+            }
+        }
+    }
+    finally
+    {
+        bitmap.UnlockBits(data);
+    }
+    return chw;
+}
+
+// `layer-importance <model> [prompt] [both|attn|ffn] [maxTokens=128] [maxSkip=0]` runs the
+// model-agnostic layer lab: a baseline loss, one ablated pass per layer, and optionally the
+// skip-layer surgery curve.
+static async Task<int> RunLayerImportanceAsync(string path, string[] args)
+{
+    await Task.CompletedTask;
+    string prompt = args.Length > 2
+        ? args[2]
+        : "The quick brown fox jumps over the lazy dog. Layer importance shows which transformer blocks matter most.";
+    string modeText = args.Length > 3 ? args[3] : "both";
+    int maxTokens = args.Length > 4 && int.TryParse(args[4], out int mt) ? mt : 128;
+    int maxSkip = args.Length > 5 && int.TryParse(args[5], out int ms) ? ms : 0;
+    SharpMind.Model.Analysis.LayerAblation mode = modeText.ToLowerInvariant() switch
+    {
+        "attn" or "attention" => SharpMind.Model.Analysis.LayerAblation.Attention,
+        "ffn" or "feedforward" => SharpMind.Model.Analysis.LayerAblation.FeedForward,
+        _ => SharpMind.Model.Analysis.LayerAblation.Both,
+    };
+
+    var metaHelper = ModelFormatHelpers.GetModelMetaHelperFor(ModelFormat.Gguf);
+    metaHelper.Load(path, null, out _, out var config, out var tokenizer);
+    if (tokenizer is null) { Console.Error.WriteLine("no tokenizer"); return 3; }
+
+    var sharpConfig = config.ForModel();
+    var mapping = sharpConfig.ToJigSawMapping();
+    using var weights = ModelFactory.CreateWeights(
+        config, sharpConfig, QuantizationFactory.Create(mapping), path,
+        LoadMode.Full, quantizedResident: false, maxParallelLoadDegree: 1);
+    weights.InitializeWeights();
+    using var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
+
+    int[] ids = tokenizer.Encode(prompt, addBos: true, addEos: false);
+    var analyzer = new SharpMind.Model.Analysis.LayerImportanceAnalyzer(model);
+    var watch = System.Diagnostics.Stopwatch.StartNew();
+    SharpMind.Model.Analysis.LayerImportanceReport report = analyzer.Analyze(
+        ids, mode, maxTokens: maxTokens, maxSkipLayers: maxSkip,
+        progress: (done, total) => Console.Write($"\rlayer {done}/{total}"));
+    Console.WriteLine($"\nbaseline loss={report.BaselineLoss:F4} tokens={report.Tokens} mode={report.Mode} ({watch.Elapsed.TotalSeconds:F1}s)");
+    Console.WriteLine("layer  attnRMS   ffnRMS   ablated   delta");
+    foreach (SharpMind.Model.Analysis.LayerImportance layer in report.Layers)
+        Console.WriteLine($"{layer.Layer,5}  {layer.AttentionRms,7:F3}  {layer.FeedForwardRms,7:F3}  {layer.AblatedLoss,8:F4}  {layer.DeltaLoss,+8:F4}");
+    if (report.LeastImportant is { } least)
+        Console.WriteLine($"least important: layer {least.Layer} (delta {least.DeltaLoss:+0.0000;-0.0000;0})");
+    if (report.MostImportant is { } most)
+        Console.WriteLine($"most important:  layer {most.Layer} (delta {most.DeltaLoss:+0.0000;-0.0000;0})");
+    if (report.Surgery.Count > 0)
+    {
+        Console.WriteLine("surgery  layers                              loss     delta");
+        foreach (SharpMind.Model.Analysis.SurgeryStep step in report.Surgery)
+            Console.WriteLine($"{step.Layers.Length,7}  {string.Join(",", step.Layers),-32} {step.Loss,10:F4} {step.DeltaLoss,+8:F4}");
+    }
+    return 0;
+}
+
+// `tts-logits <backbone> <mmproj> <text>` prints the hidden state and the first depth pass,
+// which tells a flat distribution (broken weights/hidden) from a sampling bug.
+static async Task<int> RunTtsLogitsAsync(string backbonePath, string[] args)
+{
+    await Task.CompletedTask;
+    if (args.Length < 4) { Console.Error.WriteLine("usage: tts-logits <backbone.gguf> <mmproj.gguf> <text>"); return 2; }
+    string mmprojPath = Path.GetFullPath(args[2]);
+    string text = args[3];
+
+    var metaHelper = ModelFormatHelpers.GetModelMetaHelperFor(ModelFormat.Gguf);
+    metaHelper.Load(backbonePath, null, out _, out var config, out var tokenizer);
+    if (tokenizer is null) { Console.Error.WriteLine("no tokenizer"); return 3; }
+
+    var sharpConfig = config.ForModel();
+    var mapping = sharpConfig.ToJigSawMapping();
+    using var weights = ModelFactory.CreateWeights(
+        config, sharpConfig, QuantizationFactory.Create(mapping), backbonePath,
+        LoadMode.Full, quantizedResident: false, maxParallelLoadDegree: 1);
+    weights.InitializeWeights();
+    using var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
+    using var runtime = new SharpMind.Model.Audio.Lfm3TtsRuntime(model, tokenizer, config, mmprojPath);
+    Console.Write(runtime.DescribeFirstFrame(text));
+    return 0;
+}
+
+// `asr-ablate <backbone> <mmproj> <wav>` runs the full 11 s prompt, then zeroes
+// the first or the last half of the audio embeddings. If the output does not change,
+// those tokens were not contributing to the first generated word.
+static async Task<int> RunAsrAblateAsync(string backbonePath, string[] args)
+{
+    await Task.CompletedTask;
+    if (args.Length < 4) { Console.Error.WriteLine("usage: asr-ablate <backbone> <mmproj> <wav>"); return 2; }
+    string mmprojPath = Path.GetFullPath(args[2]);
+    string wavPath = Path.GetFullPath(args[3]);
+
+    var metaHelper = ModelFormatHelpers.GetModelMetaHelperFor(ModelFormat.Gguf);
+    metaHelper.Load(backbonePath, null, out _, out var config, out var tokenizer);
+    if (tokenizer is null) { Console.Error.WriteLine("no tokenizer"); return 3; }
+
+    string prefix = "<|im_start|>system\nPerform ASR in English.<|im_end|>\n<|im_start|>user\n";
+    string suffix = "<|im_end|>\n<|im_start|>assistant\n";
+    int[] prefixIds = tokenizer.Encode(prefix, addBos: true, addEos: false);
+    int[] suffixIds = tokenizer.Encode(suffix, addBos: false, addEos: false);
+    const int audioId = 125031;
+
+    float[] samples = SharpMind.Model.Audio.WavFile.ReadMono(wavPath, 16000);
+    float[,] mel = SharpMind.Model.Audio.LogMelSpectrogram.Compute(samples);
+    using var reader = new GgufTensorReader(mmprojPath);
+    using var encoder = new SharpMind.Model.Audio.Lfm3AudioEncoder(reader);
+    float[,] audio = encoder.Encode(mel);
+    int audioCount = audio.GetLength(0);
+
+    var sharpConfig = config.ForModel();
+    var mapping = sharpConfig.ToJigSawMapping();
+    using var weights = ModelFactory.CreateWeights(
+        config, sharpConfig, QuantizationFactory.Create(mapping), backbonePath,
+        LoadMode.Full, quantizedResident: false, maxParallelLoadDegree: 1);
+    weights.InitializeWeights();
+    using var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
+    int hidden = config.HiddenDim;
+
+    var ids = new List<int>(prefixIds.Length + audioCount + suffixIds.Length);
+    ids.AddRange(prefixIds);
+    for (int i = 0; i < audioCount; i++) ids.Add(audioId);
+    ids.AddRange(suffixIds);
+
+    foreach (string variant in new[] { "full", "zerofirst", "zerolast" })
+    {
+        var idTensor = new Tensor<int>(1, ids.Count);
+        for (int i = 0; i < ids.Count; i++) idTensor.Data[i] = ids[i];
+        Tensor<float> embeddings = model.ForwardEmbedding(idTensor);
+        idTensor.Dispose();
+        int start = prefixIds.Length;
+        for (int t = 0; t < audioCount; t++)
+        {
+            bool zero = variant == "zerofirst" ? t < audioCount / 2
+                : variant == "zerolast" ? t >= audioCount / 2
+                : false;
+            for (int d = 0; d < hidden; d++)
+                embeddings.Data[(start + t) * hidden + d] = zero ? 0 : audio[t, d];
+        }
+
+        var caches = CreateCaches(config, 2048);
+        Tensor<float> logits = model.ForwardLastLogitsEmbedding(embeddings, caches, 0);
+        int position = ids.Count;
+        var generated = new List<int>();
+        int next = ArgMax(logits.Data[..config.VocabSize]);
+        logits.Dispose();
+        for (int i = 0; i < 4 && next != tokenizer.EosId; i++)
+        {
+            generated.Add(next);
+            var token = new Tensor<int>(1, 1);
+            token.Data[0] = next;
+            logits = model.ForwardLastLogits(token, caches, position++);
+            token.Dispose();
+            next = ArgMax(logits.Data[..config.VocabSize]);
+            logits.Dispose();
+        }
+        Console.WriteLine($"{variant,-10} text='{tokenizer.Decode(generated.ToArray())}'");
+    }
+    return 0;
+}
+
+// `asr-sweep <backbone> <mmproj> <wav> [language] [lengths]` loads the model once and
+// decodes the same audio prefix at several audio-token lengths, to find a length cutoff.
+static async Task<int> RunAsrSweepAsync(string backbonePath, string[] args)
+{
+    await Task.CompletedTask;
+    if (args.Length < 4) { Console.Error.WriteLine("usage: asr-sweep <backbone> <mmproj> <wav> [language] [lengths]"); return 2; }
+    string mmprojPath = Path.GetFullPath(args[2]);
+    string wavPath = Path.GetFullPath(args[3]);
+    string language = args.Length > 4 ? args[4] : "English";
+    int[] lengths = args.Length > 5
+        ? [.. args[5].Split(',', StringSplitOptions.RemoveEmptyEntries).Select(int.Parse)]
+        : [50, 90, 138];
+
+    var metaHelper = ModelFormatHelpers.GetModelMetaHelperFor(ModelFormat.Gguf);
+    metaHelper.Load(backbonePath, null, out _, out var config, out var tokenizer);
+    if (tokenizer is null) { Console.Error.WriteLine("no tokenizer"); return 3; }
+
+    string prefix = $"<|im_start|>system\nPerform ASR in {language}.<|im_end|>\n<|im_start|>user\n";
+    string suffix = "<|im_end|>\n<|im_start|>assistant\n";
+    int[] prefixIds = tokenizer.Encode(prefix, addBos: true, addEos: false);
+    int[] suffixIds = tokenizer.Encode(suffix, addBos: false, addEos: false);
+    int audioId = 125031;
+
+    float[] samples = SharpMind.Model.Audio.WavFile.ReadMono(wavPath, 16000);
+    float[,] mel = SharpMind.Model.Audio.LogMelSpectrogram.Compute(samples);
+    using var reader = new GgufTensorReader(mmprojPath);
+    using var encoder = new SharpMind.Model.Audio.Lfm3AudioEncoder(reader);
+    float[,] audio = encoder.Encode(mel);
+    int audioCount = audio.GetLength(0);
+    Console.WriteLine($"audio tokens={audioCount}");
+
+    var sharpConfig = config.ForModel();
+    var mapping = sharpConfig.ToJigSawMapping();
+    using var weights = ModelFactory.CreateWeights(
+        config, sharpConfig, QuantizationFactory.Create(mapping), backbonePath,
+        LoadMode.Full, quantizedResident: false, maxParallelLoadDegree: 1);
+    weights.InitializeWeights();
+    using var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
+    int hidden = config.HiddenDim;
+
+    foreach (int requested in lengths)
+    {
+        int count = Math.Min(requested, audioCount);
+        var ids = new List<int>(prefixIds.Length + count + suffixIds.Length);
+        ids.AddRange(prefixIds);
+        for (int i = 0; i < count; i++) ids.Add(audioId);
+        ids.AddRange(suffixIds);
+
+        var idTensor = new Tensor<int>(1, ids.Count);
+        for (int i = 0; i < ids.Count; i++) idTensor.Data[i] = ids[i];
+        Tensor<float> embeddings = model.ForwardEmbedding(idTensor);
+        idTensor.Dispose();
+        int start = prefixIds.Length;
+        for (int t = 0; t < count; t++)
+            for (int d = 0; d < hidden; d++)
+                embeddings.Data[(start + t) * hidden + d] = audio[t, d];
+
+        var caches = CreateCaches(config, Math.Max(2048, ids.Count + 8));
+        Tensor<float> logits = model.ForwardLastLogitsEmbedding(embeddings, caches, 0);
+        int position = ids.Count;
+        var generated = new List<int>();
+        int next = ArgMax(logits.Data[..config.VocabSize]);
+        logits.Dispose();
+        for (int i = 0; i < 4 && next != tokenizer.EosId; i++)
+        {
+            generated.Add(next);
+            var token = new Tensor<int>(1, 1);
+            token.Data[0] = next;
+            logits = model.ForwardLastLogits(token, caches, position++);
+            token.Dispose();
+            next = ArgMax(logits.Data[..config.VocabSize]);
+            logits.Dispose();
+        }
+        Console.WriteLine($"audioTokens={count} prompt={ids.Count} text='{tokenizer.Decode(generated.ToArray())}'");
+    }
+    return 0;
+}
+
+// `audio-compare <mmproj> <short.wav> <long.wav>` encodes both clips and compares the
+// overlapping tokens. A length-dependent encoder bug shows up as a large difference even
+// though the audio prefix is identical.
+static int RunAudioCompare(string path, string[] args)
+{
+    if (args.Length < 4) { Console.Error.WriteLine("usage: audio-compare <mmproj> <short.wav> <long.wav>"); return 2; }
+    using var reader = new SharpMind.Model.Format.GgufTensorReader(path);
+    using var encoder = new SharpMind.Model.Audio.Lfm3AudioEncoder(reader);
+
+    float[,] EncodeClip(string wav)
+    {
+        float[] samples = SharpMind.Model.Audio.WavFile.ReadMono(wav, 16000);
+        float[,] mel = SharpMind.Model.Audio.LogMelSpectrogram.Compute(samples);
+        return encoder.Encode(mel);
+    }
+
+    float[,] shortEmb = EncodeClip(Path.GetFullPath(args[2]));
+    float[,] longEmb = EncodeClip(Path.GetFullPath(args[3]));
+    int tokens = Math.Min(shortEmb.GetLength(0), longEmb.GetLength(0));
+    int dim = shortEmb.GetLength(1);
+    double sumDiff = 0, sumShort = 0, sumLong = 0;
+    float maxDiff = 0;
+    for (int t = 0; t < tokens; t++)
+    {
+        for (int d = 0; d < dim; d++)
+        {
+            double diff = Math.Abs(shortEmb[t, d] - longEmb[t, d]);
+            sumDiff += diff * diff;
+            sumShort += shortEmb[t, d] * shortEmb[t, d];
+            sumLong += longEmb[t, d] * longEmb[t, d];
+            if (diff > maxDiff) maxDiff = (float)diff;
+        }
+    }
+
+    Console.WriteLine(
+        $"short={shortEmb.GetLength(0)} long={longEmb.GetLength(0)} shared={tokens} " +
+        $"rmsDiff={Math.Sqrt(sumDiff / Math.Max(1, (long)tokens * dim)):G6} " +
+        $"maxDiff={maxDiff:G6} shortRms={Math.Sqrt(sumShort / Math.Max(1, (long)tokens * dim)):G6} " +
+        $"longRms={Math.Sqrt(sumLong / Math.Max(1, (long)tokens * dim)):G6}");
+    return 0;
+}
+
+// `embed-check <model> ["prompt"]` runs the same prompt through the token-id path and the
+// precomputed-embedding path. They must produce the same next-token logits; this isolates
+// the embedding forward from the audio encoder.
+static async Task<int> RunEmbedCheckAsync(string path, string[] args)
+{
+    await Task.CompletedTask;
+    string prompt = args.Length > 2 ? args[2] : "What is 2+2? Answer briefly.";
+
+    var metaHelper = ModelFormatHelpers.GetModelMetaHelperFor(ModelFormat.Gguf);
+    metaHelper.Load(path, null, out _, out var config, out var tokenizer);
+    if (tokenizer is null) { Console.Error.WriteLine("no tokenizer"); return 3; }
+
+    var sharpConfig = config.ForModel();
+    var mapping = sharpConfig.ToJigSawMapping();
+    using var weights = ModelFactory.CreateWeights(
+        config, sharpConfig, QuantizationFactory.Create(mapping), path,
+        LoadMode.Full, quantizedResident: false, maxParallelLoadDegree: 1);
+    weights.InitializeWeights();
+    using var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
+
+    int[] ids = tokenizer.Encode(prompt, addBos: true, addEos: false);
+    var idTensor = new Tensor<int>(1, ids.Length);
+    for (int i = 0; i < ids.Length; i++) idTensor.Data[i] = ids[i];
+
+    int maxSeq = ids.Length + 8;
+    Tensor<float> direct = model.ForwardLastLogits(idTensor, CreateCaches(config, Math.Max(2048, maxSeq)), 0);
+    Tensor<float> embeddings = model.ForwardEmbedding(idTensor);
+    Tensor<float> viaEmbeds = model.ForwardLastLogitsEmbedding(embeddings, CreateCaches(config, Math.Max(2048, maxSeq)), 0);
+    idTensor.Dispose();
+
+    int vocab = config.VocabSize;
+    int bestDirect = ArgMax(direct.Data[..vocab]);
+    int bestEmbeds = ArgMax(viaEmbeds.Data[..vocab]);
+    float maxDiff = 0;
+    for (int i = 0; i < vocab; i++)
+        maxDiff = Math.Max(maxDiff, Math.Abs(direct.Data[i] - viaEmbeds.Data[i]));
+
+    Console.WriteLine($"ids={ids.Length} directArgMax={bestDirect} embedArgMax={bestEmbeds} maxDiff={maxDiff:G6}");
+    Console.WriteLine($"direct='{tokenizer.Decode([bestDirect])}' embed='{tokenizer.Decode([bestEmbeds])}'");
+    direct.Dispose();
+    viaEmbeds.Dispose();
+    return bestDirect == bestEmbeds && maxDiff < 1e-3f ? 0 : 4;
+}
+
+static IKVCache[] CreateCaches(ModelConfig config, int maxSeq)
+{
+    var cacheBuilder = new KVCacherBuilder();
+    var caches = new IKVCache[config.NumLayers];
+    for (int layer = 0; layer < config.NumLayers; layer++)
+    {
+        caches[layer] = config.IsShortConvLayer(layer)
+            ? new ShortConvCache(config.ShortConvCacheLength - 1, config.HiddenDim, 1, maxSeq)
+            : config.IsRecurrentLayer(layer)
+                ? new DeltaNetCache(config.SsmConvKernel, config.SsmConvDim, config.SsmTimeStepRank,
+                    config.SsmStateSize, config.SsmValueHeadDim, 1, maxSeq)
+                : cacheBuilder.CreateKVCache(1, config.NumKvHeads, maxSeq, config.HeadDimForLayer(layer));
+    }
+    return caches;
+}
+
+// `mel-sine` prints the LFM3-Audio log-mel for a 440 Hz sine, matching the synthetic
+// input llama-mtmd-debug uses for `-p preproc --audio 440 -n 16000`.
+static int RunMelSine(string[] args)
+{
+    int samples = args.Length > 1 && int.TryParse(args[1], out int n) ? n : 16000;
+    int frequency = args.Length > 2 && int.TryParse(args[2], out int f) ? f : 440;
+    var waveform = new float[samples];
+    for (int i = 0; i < samples; i++)
+        waveform[i] = (float)Math.Sin(2 * Math.PI * frequency * i / 16000.0);
+
+    float[,] mel = SharpMind.Model.Audio.LogMelSpectrogram.Compute(waveform);
+    Console.WriteLine($"samples={samples} frames={mel.GetLength(0)} mel={mel.GetLength(1)}");
+    foreach (int m in new[] { 0, 10, 18, 20, 25, 64, 100, 127 })
+        Console.WriteLine($"mel[0][m={m}][t=50] = {mel[50, m]:F6}");
+    return 0;
+}
+
+// `asr <backbone.gguf> <mmproj.gguf> <wav> [language] [maxTokens]` runs the native
+// LFM3-Audio speech-to-text path: encode the WAV, place the audio embeddings at the
+// <|audio|> position, and decode greedily.
+static async Task<int> RunAsrAsync(string backbonePath, string[] args)
+{
+    await Task.CompletedTask;
+    if (args.Length < 4)
+    {
+        Console.Error.WriteLine("usage: asr <backbone.gguf> <mmproj.gguf> <audio.wav> [language] [maxTokens]");
+        return 2;
+    }
+
+    string mmprojPath = Path.GetFullPath(args[2]);
+    string wavPath = Path.GetFullPath(args[3]);
+    string language = args.Length > 4 ? args[4] : "English";
+    int maxTokens = args.Length > 5 && int.TryParse(args[5], out int parsed) ? parsed : 96;
+    if (!File.Exists(mmprojPath)) { Console.Error.WriteLine($"file not found: {mmprojPath}"); return 1; }
+    if (!File.Exists(wavPath)) { Console.Error.WriteLine($"file not found: {wavPath}"); return 1; }
+
+    var metaHelper = ModelFormatHelpers.GetModelMetaHelperFor(ModelFormat.Gguf);
+    metaHelper.Load(backbonePath, null, out var meta, out var config, out var tokenizer);
+    if (tokenizer is null) { Console.Error.WriteLine("no tokenizer in the backbone"); return 3; }
+
+    string prefix = $"<|im_start|>system\nPerform ASR in {language}.<|im_end|>\n<|im_start|>user\n";
+    string suffix = "<|im_end|>\n<|im_start|>assistant\n";
+    int[] prefixIds = tokenizer.Encode(prefix, addBos: true, addEos: false);
+    int[] suffixIds = tokenizer.Encode(suffix, addBos: false, addEos: false);
+    int audioId = 125031;
+    try
+    {
+        int id = tokenizer.TokenToId("<|audio|>");
+        if (id >= 0) audioId = id;
+    }
+    catch
+    {
+        // Fall back to the LFM3-Audio config value.
+    }
+
+    float[] samples = SharpMind.Model.Audio.WavFile.ReadMono(wavPath, 16000);
+    float[,] mel = SharpMind.Model.Audio.LogMelSpectrogram.Compute(samples);
+    using var reader = new GgufTensorReader(mmprojPath);
+    using var encoder = new SharpMind.Model.Audio.Lfm3AudioEncoder(reader);
+    var encodeWatch = System.Diagnostics.Stopwatch.StartNew();
+    float[,] audio = encoder.Encode(mel);
+    encodeWatch.Stop();
+    int audioCount = audio.GetLength(0);
+
+    var ids = new List<int>(prefixIds.Length + audioCount + suffixIds.Length);
+    ids.AddRange(prefixIds);
+    for (int i = 0; i < audioCount; i++) ids.Add(audioId);
+    ids.AddRange(suffixIds);
+    Console.WriteLine(
+        $"audio {samples.Length / 16000.0:F2}s mel={mel.GetLength(0)} tokens={audioCount} " +
+        $"encode={encodeWatch.Elapsed.TotalSeconds:F1}s prompt={ids.Count} audioId={audioId} " +
+        $"prefix={prefixIds.Length} suffix={suffixIds.Length}");
+    Console.WriteLine($"prefix='{tokenizer.Decode(prefixIds)}' suffix='{tokenizer.Decode(suffixIds)}'");
+
+    var sharpConfig = config.ForModel();
+    var mapping = sharpConfig.ToJigSawMapping();
+    using var weights = ModelFactory.CreateWeights(
+        config, sharpConfig, QuantizationFactory.Create(mapping), backbonePath,
+        LoadMode.Full, quantizedResident: false, maxParallelLoadDegree: 1);
+    weights.InitializeWeights();
+    using var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
+
+    var idTensor = new Tensor<int>(1, ids.Count);
+    for (int i = 0; i < ids.Count; i++) idTensor.Data[i] = ids[i];
+    Tensor<float> embeddings = model.ForwardEmbedding(idTensor);
+    idTensor.Dispose();
+
+    int hidden = embeddings.Shape[2];
+    int audioStart = prefixIds.Length;
+    var embeddingData = embeddings.Data;
+    for (int t = 0; t < audioCount; t++)
+        for (int d = 0; d < hidden; d++)
+            embeddingData[(audioStart + t) * hidden + d] = audio[t, d];
+
+    var cacheBuilder = new KVCacherBuilder();
+    int maxSeq = ids.Count + maxTokens + 8;
+    var caches = new IKVCache[config.NumLayers];
+    for (int layer = 0; layer < config.NumLayers; layer++)
+    {
+        caches[layer] = config.IsShortConvLayer(layer)
+            ? new ShortConvCache(config.ShortConvCacheLength - 1, config.HiddenDim, 1, maxSeq)
+            : config.IsRecurrentLayer(layer)
+                ? new DeltaNetCache(config.SsmConvKernel, config.SsmConvDim, config.SsmTimeStepRank,
+                    config.SsmStateSize, config.SsmValueHeadDim, 1, maxSeq)
+                : cacheBuilder.CreateKVCache(1, config.NumKvHeads, maxSeq, config.HeadDimForLayer(layer));
+    }
+
+    var decodeWatch = System.Diagnostics.Stopwatch.StartNew();
+    Tensor<float> logits = model.ForwardLastLogitsEmbedding(embeddings, caches, 0);
+    int position = ids.Count;
+    var generated = new List<int>();
+    int next = ArgMax(logits.Data[..config.VocabSize]);
+    logits.Dispose();
+
+    while (generated.Count < maxTokens && next != tokenizer.EosId)
+    {
+        generated.Add(next);
+        var token = new Tensor<int>(1, 1);
+        token.Data[0] = next;
+        logits = model.ForwardLastLogits(token, caches, position++);
+        token.Dispose();
+        next = ArgMax(logits.Data[..config.VocabSize]);
+        logits.Dispose();
+    }
+    decodeWatch.Stop();
+
+    string transcript = tokenizer.Decode(generated.ToArray());
+    Console.WriteLine($"ASR ({generated.Count} tokens, {decodeWatch.Elapsed.TotalSeconds:F1}s): {transcript}");
+    return 0;
+}
+
+static int ArgMax(ReadOnlySpan<float> values)
+{
+    int best = 0;
+    for (int i = 1; i < values.Length; i++)
+        if (values[i] > values[best]) best = i;
+    return best;
+}
 
 // `audio-encoder <mmproj> <wav>` runs the native LFM3-Audio speech encoder and prints the
 // embedding shape and value statistics. This validates the encoder path before the ASR
@@ -157,11 +1139,40 @@ static int RunAudioEncoder(string path, string[] args)
         $"tokens={embeddings.GetLength(0)} dim={embeddings.GetLength(1)} " +
         $"min={min:G6} max={max:G6} mean={(count == 0 ? 0 : sum / count):G6} " +
         $"nonfinite={bad} time={watch.Elapsed.TotalSeconds:F1}s");
+
+    int tokens = embeddings.GetLength(0);
+    foreach (int t in new[] { 0, tokens / 8, tokens / 4, tokens / 2, 3 * tokens / 4, tokens - 1 })
+    {
+        if (t < 0 || t >= tokens) continue;
+        double norm = 0;
+        for (int d = 0; d < embeddings.GetLength(1); d++)
+            norm += embeddings[t, d] * embeddings[t, d];
+        Console.WriteLine($"token[{t}] norm={Math.Sqrt(norm):G6}");
+    }
     return 0;
 }
 
 // `tensor <file> [name...]` prints dtype, shape and value statistics. With no names it
 // lists the first few tensors, which is enough to inventory an mmproj or codec file.
+// `values <file> <tensor> [count]` prints the first values, for checking a table's layout.
+static int RunTensorValues(string path, string[] args)
+{
+    if (args.Length < 3) { Console.Error.WriteLine("values needs <file> <tensor> [count]"); return 2; }
+    string name = args[2];
+    int count = args.Length > 3 && int.TryParse(args[3], out int c) ? c : 16;
+    using var reader = new SharpMind.Model.Format.GgufTensorReader(path);
+    if (!reader.TryGetInfo(name, out SharpMind.Model.Format.TensorInfo info))
+    {
+        Console.WriteLine($"missing {name}");
+        return 1;
+    }
+    float[] data = reader.ReadFloat32(name);
+    Console.WriteLine($"{name} {info.Dtype} [{string.Join(",", info.Shape)}]");
+    for (int i = 0; i < Math.Min(count, data.Length); i++)
+        Console.WriteLine($"[{i}] = {data[i]:G6}");
+    return 0;
+}
+
 static int RunTensorStats(string path, string[] args)
 {
     using var reader = new SharpMind.Model.Format.GgufTensorReader(path);
@@ -487,7 +1498,7 @@ static int RunMeta(string path)
             {
                 string kind = config.IsShortConvLayer(i) ? "conv"
                     : config.IsSwaLayer(i) ? "swa" : "global";
-                Console.WriteLine($"    layer {i:00}: {kind}");
+                Console.WriteLine($"    layer {i:00}: {kind} window={config.WindowSizeForLayer(i)}");
             }
         }
 
