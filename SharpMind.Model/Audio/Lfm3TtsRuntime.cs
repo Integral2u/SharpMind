@@ -95,10 +95,10 @@ public sealed class Lfm3TtsRuntime : IDisposable
     public int? Seed { get; set; }
 
     /// <summary>Optional per-frame hook: (frame index, twelve codes).</summary>
-    public Action<int, int[]>? FrameSampled { get; init; }
+    public Action<int, int[]>? FrameSampled { get; set; }
 
     /// <summary>Optional hook invoked when a frame contains the end-of-audio code.</summary>
-    public Action<int, int[]>? EndOfSpeech { get; init; }
+    public Action<int, int[]>? EndOfSpeech { get; set; }
 
     /// <summary>True when the projector carries the depth decoder and the LiquidCodec weights.</summary>
     public static bool IsTtsProjector(string path)
