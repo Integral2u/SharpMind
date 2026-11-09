@@ -42,6 +42,13 @@ public abstract class ModelLoaderBase(
     protected virtual long RawByteCount(TensorInfo info)
         => QuantizationOps.GetRawTensorByteCount(info.Shape, info.Dtype);
 
+    /// <summary>
+    /// True when each row of a quantized tensor is padded up to its block boundary.
+    /// GGUF does this; SMM packs blocks flat, so its dequantizer must read the
+    /// whole buffer in one pass even when a row length is not block-aligned.
+    /// </summary>
+    protected virtual bool RawRowsArePadded => false;
+
     public void LoadAllWeights(TransformerWeights weights, IProgress<float>? progress = null, CancellationToken? cancellationToken = null)
     {
         Core.Memory.NativeBufferPool<float>.Clear();
@@ -651,7 +658,7 @@ public abstract class ModelLoaderBase(
 
         int rowLength = shape.Length == 0 ? count : shape[0];
         int block = QuantizationOps.GetBlockSize(dtype);
-        if (block > 1 && rowLength % block != 0)
+        if (RawRowsArePadded && block > 1 && rowLength % block != 0)
         {
             // GGUF stores row-padded blocks. ReadFor consumes ceil(rowLength/block)
             // blocks and writes only rowLength values, so advancing row by row keeps

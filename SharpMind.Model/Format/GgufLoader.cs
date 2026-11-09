@@ -24,6 +24,8 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
 
     protected override ModelMetaData LoadIndex() => LoadMeta(_path);
 
+    protected override bool RawRowsArePadded => true;
+
     private static object ReadValue(BinaryReader reader, uint valType) => valType switch
     {
         0 => reader.ReadByte(),
