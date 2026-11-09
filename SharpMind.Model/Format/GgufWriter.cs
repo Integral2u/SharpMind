@@ -124,6 +124,7 @@ public static class GgufWriter
             case double v: w.Write(12u); w.Write(v); break;
             case string v: w.Write(8u); WriteString(w, v); break;
             case string[] v: WriteArray(w, 8u, v, WriteString); break;
+            case bool[] v: WriteArray(w, 7u, v, (x, e) => x.Write(e)); break;
             case float[] v: WriteArray(w, 6u, v, (x, e) => x.Write(e)); break;
             case int[] v: WriteArray(w, 5u, v, (x, e) => x.Write(e)); break;
             case uint[] v: WriteArray(w, 4u, v, (x, e) => x.Write(e)); break;

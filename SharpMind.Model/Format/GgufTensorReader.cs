@@ -1,4 +1,4 @@
-using System.Buffers.Binary;
+using SharpMind.Core;
 using SharpMind.Core.Quantization;
 using SharpMind.Core.Tensors;
 
@@ -12,8 +12,7 @@ namespace SharpMind.Model.Format;
 /// </summary>
 public sealed class GgufTensorReader : IDisposable
 {
-    private const int Q8BlockElements = 32;
-    private const int Q8BlockBytes = 34;
+    private static readonly QuantizationOps Ops = QuantizationFactory.Create(HardwareTier.Scalar);
 
     private readonly ModelMetaData _meta;
     private readonly Dictionary<string, TensorInfo> _tensors;
@@ -48,7 +47,7 @@ public sealed class GgufTensorReader : IDisposable
         var raw = new byte[byteCount];
         _stream.Position = _meta.DataOffset + info.Offset;
         _stream.ReadExactly(raw);
-        return Dequantize(raw, info.Dtype, count, name);
+        return Dequantize(raw, info.Shape, info.Dtype, count);
     }
 
     /// <summary>Reads a tensor and reshapes it to its GGUF dimensions (ne[0] first).</summary>
@@ -82,54 +81,28 @@ public sealed class GgufTensorReader : IDisposable
         return (int)count;
     }
 
-    private static float[] Dequantize(byte[] raw, QuantDType dtype, int count, string name)
+    private static float[] Dequantize(byte[] raw, int[] shape, QuantDType dtype, int count)
     {
         var result = new float[count];
-        switch (dtype)
+        using var stream = new MemoryStream(raw, writable: false);
+        using var reader = new BinaryReader(stream);
+
+        int rowLength = shape.Length == 0 ? count : shape[0];
+        int block = QuantizationOps.GetBlockSize(dtype);
+        if (block > 1 && rowLength % block != 0)
         {
-            case QuantDType.F32:
-                RequireSize(raw, count * 4, name);
-                for (int i = 0; i < count; i++)
-                    result[i] = BinaryPrimitives.ReadSingleLittleEndian(raw.AsSpan(i * 4));
-                return result;
-
-            case QuantDType.F16:
-                RequireSize(raw, count * 2, name);
-                for (int i = 0; i < count; i++)
-                    result[i] = (float)BinaryPrimitives.ReadHalfLittleEndian(raw.AsSpan(i * 2));
-                return result;
-
-            case QuantDType.BF16:
-                RequireSize(raw, count * 2, name);
-                for (int i = 0; i < count; i++)
-                {
-                    ushort bits = BinaryPrimitives.ReadUInt16LittleEndian(raw.AsSpan(i * 2));
-                    result[i] = BitConverter.Int32BitsToSingle(bits << 16);
-                }
-                return result;
-
-            case QuantDType.Q8_0:
-                int blocks = (count + Q8BlockElements - 1) / Q8BlockElements;
-                RequireSize(raw, blocks * Q8BlockBytes, name);
-                for (int block = 0; block < blocks; block++)
-                {
-                    int offset = block * Q8BlockBytes;
-                    float scale = (float)BinaryPrimitives.ReadHalfLittleEndian(raw.AsSpan(offset));
-                    int start = block * Q8BlockElements;
-                    int end = Math.Min(start + Q8BlockElements, count);
-                    for (int i = start; i < end; i++)
-                        result[i] = (sbyte)raw[offset + 2 + (i - start)] * scale;
-                }
-                return result;
-
-            default:
-                throw new NotSupportedException($"Tensor '{name}' uses unsupported dtype {dtype}.");
+            int rows = count / rowLength;
+            for (int row = 0; row < rows; row++)
+            {
+                Ops.ReadFor(
+                    dtype, reader,
+                    result.AsSpan(row * rowLength, rowLength),
+                    rowLength);
+            }
+            return result;
         }
-    }
 
-    private static void RequireSize(byte[] raw, int expected, string name)
-    {
-        if (raw.Length < expected)
-            throw new InvalidDataException($"Tensor '{name}' is {raw.Length} bytes, expected {expected}.");
+        Ops.ReadFor(dtype, reader, result, count);
+        return result;
     }
 }

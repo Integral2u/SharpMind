@@ -249,6 +249,15 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
         string arch = meta.GetString("general.architecture");
         if (string.IsNullOrWhiteSpace(arch)) return null;
 
+        if (arch.Equals("asr", StringComparison.OrdinalIgnoreCase))
+            throw new NotSupportedException(
+                "This file uses the 'asr' encoder-decoder architecture (for example Nemotron ASR). " +
+                "SharpMind runs decoder-only text models; its audio encoder/decoder frontend is not implemented yet.");
+        if (arch.Equals("clip", StringComparison.OrdinalIgnoreCase))
+            throw new NotSupportedException(
+                "This file is a multimodal projector (mmproj), not a chat model. " +
+                "Select the backbone GGUF instead and pair the projector with it.");
+
         int vocabSize = 32000, hiddenDim = 1536, numLayers = 28;
         int numHeads = 12, numKvHeads = 12, ffnDim = 6144, maxSeqLen = 2048;
 
@@ -586,7 +595,9 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
         out Tokenizer? tokenizer)
     {
         meta = LoadMeta(ggufPath);
-        config = LoadConfig(meta)!;
+        config = LoadConfig(meta)
+            ?? throw new InvalidDataException(
+                $"The GGUF file '{ggufPath}' has no readable architecture configuration.");
 
         // Disabled: GGUF-exported rope_freqs.weight is often all-1.0 (bug),
         // causing all RoPE pairs to rotate by angle = pos (wrong). Theta-
@@ -599,7 +610,7 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
         // pos * theta^(-2i/d) / freq_factor[i]. Exporters leave the low bands
         // at 1.0 and set the high bands to a huge sentinel so they do not
         // rotate. Only full-attention layers carry them.
-        if (config.Architecture.StartsWith("gemma4", StringComparison.OrdinalIgnoreCase))
+        if (config.Architecture?.StartsWith("gemma4", StringComparison.OrdinalIgnoreCase) == true)
         {
             float[]? ropeFreqFactors = LoadPrecomputedRopeFreqs(ggufPath, meta);
             if (ropeFreqFactors != null)

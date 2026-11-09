@@ -25,6 +25,9 @@ public sealed class OptionsView : View
     private readonly RadioGroup formatterRadio;
     private readonly RadioGroup hwRadio;
     private readonly CheckBox parallelCheck;
+    private readonly CheckBox promptLookupCheck;
+    /// <summary>Draft length when the box is ticked: 6 measured best on Qwen 0.6B-7B code edits.</summary>
+    private const int PromptLookupDraftWhenOn = 6;
     private readonly TextField topKField;
     private readonly TextField topPField;
     private readonly TextField repetitionPenaltyField;
@@ -207,6 +210,21 @@ public sealed class OptionsView : View
                 _options.Generation = _options.Generation with { MaxNewTokens = v };
         };
         _formContent.Add(maxTokensField);
+        row++;
+
+        promptLookupCheck = new CheckBox("Prompt lookup drafting (faster code edits and quoting, same output)",
+            options.Generation.PromptLookupDraft > 0) { X = 1, Y = row };
+        promptLookupCheck.Toggled += (_) =>
+        {
+            // Toggled also fires on programmatic refreshes: only write a real change, so a draft
+            // length set in the options file survives.
+            if (promptLookupCheck.Checked != _options.Generation.PromptLookupDraft > 0)
+                _options.Generation = _options.Generation with
+                {
+                    PromptLookupDraft = promptLookupCheck.Checked ? PromptLookupDraftWhenOn : 0,
+                };
+        };
+        _formContent.Add(promptLookupCheck);
         row++;
 
         AddLabel("Max context tokens (0 = full):");
@@ -423,6 +441,7 @@ public sealed class OptionsView : View
         repetitionPenaltyField.Text = (ustring)_options.Generation.RepetitionPenalty.ToString("F2");
         repetitionWindowField.Text = (ustring)_options.Generation.RepetitionWindow.ToString("F2");
         maxTokensField.Text = (ustring)_options.Generation.MaxNewTokens.ToString();
+        promptLookupCheck.Checked = _options.Generation.PromptLookupDraft > 0;
         maxContextTokensField.Text = (ustring)(_options.MaxTokens?.ToString() ?? "0");
         residentExpertsField.Text = (ustring)_options.DesiredResidentExperts.ToString();
         residentWindowField.Text = (ustring)_options.ResidentWindow.ToString();

@@ -412,6 +412,12 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     /// Setting it to 0 turns the window off, while setting it too high can slow down generation or penalize words needed for structural coherence.
     /// </summary>
     public int RepetitionWindow { get; set; } = 32;
+    /// <summary>
+    /// Prompt-lookup drafting for replies (see <see cref="GenerationConfig.PromptLookupDraft"/>):
+    /// max tokens guessed from the conversation per verification pass, 0 = off. Sub-agent and
+    /// summary generations do not use it.
+    /// </summary>
+    public int PromptLookupDraft { get; set; }
     /// <summary>Token IDs that stop generation. Defaults to EOS if not set.</summary>
     public IReadOnlyList<int>? StopTokenIds { get; set; }
     /// <summary>Text strings that stop generation when matched in the decoded output.</summary>
@@ -543,6 +549,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         MaxNewTokens = config.MaxNewTokens;
         RepetitionPenalty = config.RepetitionPenalty;
         RepetitionWindow = config.RepetitionWindow;
+        PromptLookupDraft = config.PromptLookupDraft;
         if (config.StopTokenIds.Count > 0)
             StopTokenIds = config.StopTokenIds;
         if (config.StopStrings.Count > 0)
@@ -2351,6 +2358,7 @@ private void ThrowIfDisposed()
                 StopTokenIds = StopTokenIds ?? _tokenizer.GetEndOfGenerationIds(),
                 StopStrings = MergeStopStrings(_formatter?.DefaultStopStrings, StopStrings),
                 SlidingWindowSize = 0,
+                PromptLookupDraft = PromptLookupDraft,
                 Stream = true,
             };
 
@@ -2670,12 +2678,13 @@ if (held.Length > 0)
                 && delegateCall is not null
                 && delegateCall["tool"]?.GetValue<string>() == "delegate")
             {
+                IAgentBuilder agentBuilder = _agentBuilder!;
                 var delegateArgs = delegateCall["arguments"]!.AsObject();
                 string delegateName = ArgumentText(delegateArgs, "agent");
                 string task = ArgumentText(delegateArgs, "task");
-                _agentBuilder.RegisteredAgents.TryGetValue(delegateName, out var delegateAgent);
+                agentBuilder.RegisteredAgents.TryGetValue(delegateName, out var delegateAgent);
 
-                _history.Add(ChatMessage.Agent(responseText, _agentBuilder?.AgentName));
+                _history.Add(ChatMessage.Agent(responseText, agentBuilder.AgentName));
                 InvalidateHistoryCache();
 
                 string delegateResult;
@@ -2683,7 +2692,7 @@ if (held.Length > 0)
                 {
                     delegateResult = FormatToolResult("delegate", delegateArgs, Error(
                         delegateAgent is null
-                            ? $"Unknown agent '{delegateName}'. Valid agents: {string.Join(", ", _agentBuilder.RegisteredAgents.Keys)}."
+                            ? $"Unknown agent '{delegateName}'. Valid agents: {string.Join(", ", agentBuilder.RegisteredAgents.Keys)}."
                             : "The task is empty. Pass the complete sub-task in 'task'."));
                 }
                 else if (_currentDepth >= MaxAgentDepth)
