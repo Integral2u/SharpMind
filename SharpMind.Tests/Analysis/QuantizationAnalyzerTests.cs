@@ -31,6 +31,39 @@ public sealed class QuantizationAnalyzerTests
         Assert.Equal("w", tensor.Name);
         Assert.Equal("F32", tensor.ReferenceDtype);
         Assert.Equal("F16", tensor.CandidateDtype);
+        Assert.True(report.SameModel);
+        Assert.Null(report.CompatibilityNote);
+    }
+
+    [Fact]
+    public void Compare_FlagsDifferentShapesAsIncompatible()
+    {
+        using var temp = new TempDirectory();
+        string reference = Path.Combine(temp.Path, "reference.gguf");
+        string candidate = Path.Combine(temp.Path, "candidate.gguf");
+        WriteGguf(reference, [1, 2, 3, 4], QuantDType.F32, shape: [2, 2]);
+        WriteGguf(candidate, [1, 2, 3, 4], QuantDType.F16, shape: [4]);
+
+        QuantizationComparisonReport report = QuantizationAnalyzer.Compare(reference, candidate);
+
+        Assert.False(report.SameModel);
+        Assert.NotNull(report.CompatibilityNote);
+        Assert.Equal(["w"], report.MismatchedTensors);
+    }
+
+    [Fact]
+    public void Compare_FlagsDifferentArchitecturesAsIncompatible()
+    {
+        using var temp = new TempDirectory();
+        string reference = Path.Combine(temp.Path, "reference.gguf");
+        string candidate = Path.Combine(temp.Path, "candidate.gguf");
+        WriteGguf(reference, [1, 2, 3, 4], QuantDType.F32, architecture: "qwen2", shape: [2, 2]);
+        WriteGguf(candidate, [1, 2, 3, 4], QuantDType.F16, architecture: "llama", shape: [2, 2]);
+
+        QuantizationComparisonReport report = QuantizationAnalyzer.Compare(reference, candidate);
+
+        Assert.False(report.SameModel);
+        Assert.Contains("architecture", report.CompatibilityNote, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -46,9 +79,12 @@ public sealed class QuantizationAnalyzerTests
 
         Assert.Equal(0, report.Compared);
         Assert.Equal(1, report.Skipped);
+        Assert.False(report.SameModel);
     }
 
-    private static void WriteGguf(string path, float[] values, QuantDType dtype, string name = "w")
+    private static void WriteGguf(
+        string path, float[] values, QuantDType dtype,
+        string name = "w", int[]? shape = null, string architecture = "qwen2")
     {
         byte[] bytes;
         if (dtype == QuantDType.F32)
@@ -70,7 +106,7 @@ public sealed class QuantizationAnalyzerTests
 
         GgufWriter.Write(
             path,
-            [new GgufKvPair { Key = "general.architecture", Value = "qwen2" }],
-            [new GgufTensor { Name = name, Shape = [4, 4], Dtype = dtype, GetBytes = () => bytes }]);
+            [new GgufKvPair { Key = "general.architecture", Value = architecture }],
+            [new GgufTensor { Name = name, Shape = shape ?? [4, 4], Dtype = dtype, GetBytes = () => bytes }]);
     }
 }

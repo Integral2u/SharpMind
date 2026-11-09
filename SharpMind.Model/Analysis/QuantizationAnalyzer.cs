@@ -26,10 +26,30 @@ public sealed class QuantizationComparisonReport
     public required double MeanCosine { get; init; }
     public required IReadOnlyList<TensorQuantizationError> Tensors { get; init; }
 
+    /// <summary>
+    /// True when both files describe the same architecture and every tensor has the
+    /// same name and shape, which is what a quantization comparison needs. A pruned,
+    /// fine-tuned or different model is not a valid quantization pair even though the
+    /// tensor metrics still compute.
+    /// </summary>
+    public bool SameModel { get; init; }
+
+    /// <summary>Why the pair is not the same model, or null when it is.</summary>
+    public string? CompatibilityNote { get; init; }
+
+    /// <summary>Tensor names that are missing, extra or reshaped between the two files.</summary>
+    public IReadOnlyList<string> MismatchedTensors { get; init; } = [];
+
     /// <summary>The tensors that lost the most relative precision, worst first.</summary>
     public IReadOnlyList<TensorQuantizationError> Worst(int count) =>
         [.. Tensors.Take(Math.Clamp(count, 1, Tensors.Count))];
 }
+
+/// <summary>Whether two GGUF files are the same model at different quantizations.</summary>
+public sealed record QuantizationCompatibility(
+    bool SameModel,
+    string? Note,
+    IReadOnlyList<string> MismatchedTensors);
 
 /// <summary>
 /// Compares a reference GGUF with a quantized variant tensor by tensor. It dequantizes
@@ -39,6 +59,22 @@ public sealed class QuantizationComparisonReport
 /// </summary>
 public static class QuantizationAnalyzer
 {
+    /// <summary>
+    /// Checks that two files have the same architecture and the same tensor names and
+    /// shapes, which is required for a meaningful quantization comparison.
+    /// </summary>
+    public static QuantizationCompatibility CheckModelCompatibility(
+        string referencePath, string candidatePath)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(referencePath);
+        ArgumentException.ThrowIfNullOrWhiteSpace(candidatePath);
+        if (!File.Exists(referencePath)) throw new FileNotFoundException("Reference model not found.", referencePath);
+        if (!File.Exists(candidatePath)) throw new FileNotFoundException("Candidate model not found.", candidatePath);
+        var (same, note, mismatched) = CheckCompatibility(
+            GgufLoader.LoadMeta(referencePath), GgufLoader.LoadMeta(candidatePath));
+        return new QuantizationCompatibility(same, note, mismatched);
+    }
+
     public static QuantizationComparisonReport Compare(
         string referencePath,
         string candidatePath,
@@ -54,6 +90,8 @@ public static class QuantizationAnalyzer
 
         ModelMetaData referenceMeta = GgufLoader.LoadMeta(referencePath);
         ModelMetaData candidateMeta = GgufLoader.LoadMeta(candidatePath);
+        (bool sameModel, string? compatibilityNote, IReadOnlyList<string> mismatched) =
+            CheckCompatibility(referenceMeta, candidateMeta);
         ModelConfig config = GgufLoader.LoadConfig(referenceMeta)
             ?? throw new InvalidOperationException("The reference model has no readable config.");
         QuantizationOps qOps = QuantizationFactory.Create(config.ForModel().ToJigSawMapping());
@@ -136,7 +174,50 @@ public static class QuantizationAnalyzer
             GlobalRelativeL2 = referenceSquares > 1e-20 ? Math.Sqrt(errorSquares / referenceSquares) : 0,
             MeanCosine = results.Count == 0 ? 0 : cosineSum / results.Count,
             Tensors = results,
+            SameModel = sameModel,
+            CompatibilityNote = compatibilityNote,
+            MismatchedTensors = mismatched,
         };
+    }
+
+    private static (bool Same, string? Note, IReadOnlyList<string> Mismatched) CheckCompatibility(
+        ModelMetaData reference, ModelMetaData candidate)
+    {
+        string? referenceArch = reference.GetString("general.architecture");
+        string? candidateArch = candidate.GetString("general.architecture");
+        if (!string.Equals(referenceArch, candidateArch, StringComparison.OrdinalIgnoreCase))
+        {
+            return (false,
+                $"Different architectures: {referenceArch ?? "unknown"} vs {candidateArch ?? "unknown"}.",
+                []);
+        }
+
+        var referenceByName = reference.Tensors.ToDictionary(tensor => tensor.Name, StringComparer.Ordinal);
+        var candidateByName = candidate.Tensors.ToDictionary(tensor => tensor.Name, StringComparer.Ordinal);
+        var mismatched = new List<string>();
+        foreach (TensorInfo tensor in reference.Tensors)
+        {
+            if (!candidateByName.TryGetValue(tensor.Name, out TensorInfo other) ||
+                !tensor.Shape.SequenceEqual(other.Shape))
+            {
+                mismatched.Add(tensor.Name);
+            }
+        }
+        foreach (TensorInfo tensor in candidate.Tensors)
+        {
+            if (!referenceByName.ContainsKey(tensor.Name)) mismatched.Add(tensor.Name);
+        }
+
+        if (mismatched.Count > 0)
+        {
+            string names = string.Join(", ", mismatched.Take(6));
+            if (mismatched.Count > 6) names += ", ...";
+            return (false,
+                $"{mismatched.Count} tensor(s) are missing, extra or reshaped: {names}.",
+                mismatched);
+        }
+
+        return (true, null, []);
     }
 
     private static float[] Read(

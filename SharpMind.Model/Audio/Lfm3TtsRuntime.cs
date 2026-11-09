@@ -68,31 +68,31 @@ public sealed class Lfm3TtsRuntime : IDisposable
     }
 
     /// <summary>Upper bound on generated speech frames (one frame is 80 ms).</summary>
-    public int MaxFrames { get; init; } = 256;
+    public int MaxFrames { get; set; } = 256;
 
     /// <summary>Language phrase used in the system prompt, for example "American English".</summary>
-    public string Language { get; init; } = "American English";
+    public string Language { get; set; } = "American English";
 
     /// <summary>
     /// Voice phrase used in the system prompt: "male" or "female". The checkpoint's TTS
     /// template defaults to "female"; other voices are not equally well covered.
     /// </summary>
-    public string Voice { get; init; } = "female";
+    public string Voice { get; set; } = "female";
 
     /// <summary>Depth-decoder sampling temperature (the checkpoint uses 1.0).</summary>
-    public float Temperature { get; init; } = 1.0f;
+    public float Temperature { get; set; } = 1.0f;
 
     /// <summary>Depth-decoder top-k (the checkpoint uses 128).</summary>
-    public int TopK { get; init; } = 128;
+    public int TopK { get; set; } = 128;
 
     /// <summary>Per-codebook repetition penalty (the checkpoint uses 1.1).</summary>
-    public float RepetitionPenalty { get; init; } = 1.1f;
+    public float RepetitionPenalty { get; set; } = 1.1f;
 
     /// <summary>Frames of code history covered by the repetition penalty (4096 in the checkpoint).</summary>
-    public int RepetitionWindow { get; init; } = 4096;
+    public int RepetitionWindow { get; set; } = 4096;
 
     /// <summary>Sampling seed; null picks a time-based seed.</summary>
-    public int? Seed { get; init; }
+    public int? Seed { get; set; }
 
     /// <summary>Optional per-frame hook: (frame index, twelve codes).</summary>
     public Action<int, int[]>? FrameSampled { get; init; }

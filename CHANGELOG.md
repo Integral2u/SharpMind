@@ -79,10 +79,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   and a candidate GGUF tensor by tensor and reports relative L2, cosine and the
   worst tensors, so a smaller file can be judged on evidence. It handles the
   llama.cpp mixed quant recipes through the same kernels and needs no forward
-  pass; `GgufSmokeProbe quant-compare` runs it from the CLI.
+  pass; `GgufSmokeProbe quant-compare` runs it from the CLI. The report also
+  checks whether both files are the same model (architecture, tensor names and
+  shapes), so a pruned or fine-tuned file is not mistaken for a quantization.
   `LayerImportanceAnalyzer.MeasureLoss` and `GgufSmokeProbe quant-loss` add the
   forward side: the same calibration text measured sequentially on both files,
   so they never have to be resident together.
+- **GGUF quantization** - `GgufQuantizer` re-encodes a GGUF without loading the
+  model. It reads each row through the engine's dequantizers and writes fixed
+  targets (Q2_K-Q8_K, Q8_0, Q4_0, F16), per-role plans (embedding/LM head can
+  stay finer) or a byte budget that picks the coarsest fitting K-quant.
+  `GgufQuantizer.CompatibleTarget` falls back to Q8_0/F16 when a K-quant row is
+  not 256-aligned, so the output stays loadable. `GgufSmokeProbe quantize` runs
+  all three modes.
 - **Native LFM3-VL vision** - `Lfm3VlVisionEncoder` reads the vision `mmproj`
   (linear patchifier, fourteen pre-norm blocks alternating gated depthwise 2D
   convolution and bidirectional grouped-query attention with axial 2D RoPE, and

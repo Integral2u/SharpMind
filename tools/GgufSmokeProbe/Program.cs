@@ -151,6 +151,9 @@ if (mode == "layer-importance")
 if (mode == "vl")
     return await RunVlAsync(path, args);
 
+if (mode == "quantize")
+    return await RunQuantizeAsync(path, args);
+
 if (mode == "quant-compare")
     return await RunQuantCompareAsync(path, args);
 
@@ -444,6 +447,75 @@ static async Task<int> RunActivationMapAsync(string path, string[] args)
             Console.WriteLine($"{layer,3} {line}");
         }
     }
+}
+
+// `quantize <source> <dest> <target> [budgetMB]` re-encodes a GGUF. Targets:
+// q2k/q3k/q4k/q5k/q6k/q8k, q8_0/q4_0, f16, or blend (emb/head Q8_K, rest Q4_K).
+// A budget (MB) switches to variable quantization: the coarsest K-quant that fits.
+static async Task<int> RunQuantizeAsync(string sourcePath, string[] args)
+{
+    await Task.CompletedTask;
+    if (args.Length < 4)
+    {
+        Console.Error.WriteLine("usage: quantize <source.gguf> <dest.gguf> <q2k|q3k|q4k|q5k|q6k|q8k|q8_0|q4_0|f16|blend> [budgetMB]");
+        return 2;
+    }
+    string destination = Path.GetFullPath(args[2]);
+    string targetText = args[3].Trim().ToLowerInvariant();
+    QuantDType target = targetText switch
+    {
+        "q2k" => QuantDType.Q2_K,
+        "q3k" => QuantDType.Q3_K,
+        "q4k" => QuantDType.Q4_K,
+        "q5k" => QuantDType.Q5_K,
+        "q6k" => QuantDType.Q6_K,
+        "q8k" => QuantDType.Q8_K,
+        "q8_0" => QuantDType.Q8_0,
+        "q4_0" => QuantDType.Q4_0,
+        "f16" => QuantDType.F16,
+        "blend" => QuantDType.Q4_K,
+        _ => throw new ArgumentException($"unknown quantization target '{args[3]}'"),
+    };
+    long? budget = args.Length > 4 && long.TryParse(args[4], out long mb) && mb > 0
+        ? mb * 1024L * 1024L
+        : null;
+
+    SharpMind.Model.Format.GgufQuantOptions options = targetText == "blend"
+        ? new SharpMind.Model.Format.GgufQuantOptions
+        {
+            DefaultLevel = QuantDType.Q4_K,
+            RoleLevels = new Dictionary<SharpMind.Model.Format.SmmTensorRole, QuantDType>
+            {
+                [SharpMind.Model.Format.SmmTensorRole.Embedding] = QuantDType.Q8_K,
+                [SharpMind.Model.Format.SmmTensorRole.LmHead] = QuantDType.Q8_K,
+            },
+            TargetBytes = budget,
+            Floor = QuantDType.Q4_K,
+        }
+        : new SharpMind.Model.Format.GgufQuantOptions
+        {
+            DefaultLevel = target,
+            TargetBytes = budget,
+            Floor = target is QuantDType.Q2_K or QuantDType.Q3_K or QuantDType.Q4_K
+                or QuantDType.Q5_K or QuantDType.Q6_K or QuantDType.Q8_K
+                ? target
+                : QuantDType.Q4_K,
+        };
+
+    var watch = System.Diagnostics.Stopwatch.StartNew();
+    SharpMind.Model.Format.GgufQuantizeResult result = SharpMind.Model.Format.GgufQuantizer.Quantize(
+        sourcePath, destination, options,
+        progress: (done, total) => Console.Write($"\rtensor {done}/{total}"));
+    watch.Stop();
+    double ratio = 100.0 * result.Bytes / Math.Max(1, result.SourceBytes);
+    string dtypes = string.Join(", ", result.Counts.OrderBy(pair => pair.Key)
+        .Select(pair => $"{pair.Key}:{pair.Value}"));
+    Console.WriteLine($"\nQUANTIZE ({watch.Elapsed.TotalSeconds:F1}s): {result.Tensors} tensors, " +
+                      $"{result.Requantized} requantized, {result.Copied} copied, " +
+                      $"{result.SourceBytes / (1024.0 * 1024.0):F1} MB -> " +
+                      $"{result.Bytes / (1024.0 * 1024.0):F1} MB ({ratio:F1}%)");
+    Console.WriteLine($"dtypes: {dtypes} -> {result.Path}");
+    return 0;
 }
 
 // `quant-compare <reference> <candidate> [filter] [maxTensors]` compares two quantizations
