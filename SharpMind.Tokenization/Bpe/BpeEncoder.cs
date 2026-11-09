@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using SharpMind.Tokenization.PreTokeniser;
 using SharpMind.Tokenization.Vocab;
 
@@ -89,7 +89,8 @@ public sealed class BpeEncoder
         IReadOnlyList<MergeRule> merges,
         IPreTokeniser preTokeniser,
         IReadOnlyList<float>? tokenScores = null,
-        bool charMode = false)
+        bool charMode = false,
+        bool? sentencePiece = null)
     {
         _vocab = vocab;
         _preTokeniser = preTokeniser;
@@ -100,31 +101,19 @@ public sealed class BpeEncoder
         IsCharMode = charMode;
 
         _scores = tokenScores;
-        // SentencePiece-style vocabularies ship no usable byte-level merges
-        // (or none at all) and mark word boundaries with ▁ (U+2581). Byte-level
-        // BPE vocabularies (GPT-2, tiktoken) use the GPT-2 byte map instead.
-        // TinyLlama's GGUF carries a merge list in SentencePiece format, so we
-        // must detect the ▁ marker rather than relying on merges being absent.
-        UseSentencePieceMerge = merges.Count == 0 || VocabContainsMetaspace(vocab);
+        // Byte-level BPE (GPT-2 byte map; GPT-2, tiktoken) or SentencePiece (▁ marks a word boundary)?
+        // A GGUF says which in tokenizer.ggml.model ("gpt2" / "llama"), passed in as sentencePiece.
+        // Without it the standalone ▁ token decides: the SentencePiece path needs it to encode a
+        // space at all. Merges being absent is not enough (TinyLlama ships a merge list in SentencePiece
+        // format), and a ▁ inside an added token proves nothing (DeepSeek's byte-level vocabs spell
+        // their specials <｜begin▁of▁sentence｜>).
+        UseSentencePieceMerge = sentencePiece ?? (merges.Count == 0 || vocab.Contains("\u2581"));
         //Duplicate setting but removes warning
         RebuildSpecialsCache(out _specialsSortedByLength, out _specialsSet, out _specialsFirstChars);
     }
 
     /// <summary>Refreshes the sorted specials cache after adding new special tokens.</summary>
     internal void RefreshSpecials() => RebuildSpecialsCache(out _, out _, out _);
-
-    /// <summary>
-    /// True if the vocab uses the SentencePiece metaspace marker ▁ (U+2581)
-    /// to represent word boundaries — i.e. it is SentencePiece-style rather
-    /// than GPT-2/tiktoken byte-level BPE.
-    /// </summary>
-    private static bool VocabContainsMetaspace(Vocabulary vocab)
-    {
-        if (vocab.Contains("\u2581")) return true;
-        foreach (string token in vocab.AllTokens)
-            if (token.Contains('\u2581')) return true;
-        return false;
-    }
 
     private void RebuildSpecialsCache(out string[] specials, out HashSet<string> specialSet, out HashSet<char> specialsFirstChars)
     {

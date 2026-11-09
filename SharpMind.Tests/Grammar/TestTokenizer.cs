@@ -13,7 +13,7 @@ internal static class TestTokenizer
 {
     public static readonly string[] Tokens = BuildTokens();
     public static readonly Tokenizer Instance = Tokenizer.FromGguf(
-        tokens: Tokens, merges: null, tokenTypes: null, bosId: 1, eosId: 2);
+        tokens: Tokens, merges: null, tokenTypes: null, bosId: 1, eosId: 2, tokenizerModel: "gpt2");
     public static readonly TokenByteTable ByteTable = TokenByteTable.Build(Instance);
 
     public static int EosId => Instance.EosId;

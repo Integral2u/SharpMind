@@ -17,7 +17,7 @@ public sealed class LlamaCppVocabParityTests
 
     public static IEnumerable<object[]> Cases()
     {
-        foreach (var vocab in new[] { "qwen2", "llama-bpe", "gpt-2", "phi-3" })
+        foreach (var vocab in new[] { "qwen2", "llama-bpe", "gpt-2", "phi-3", "deepseek-coder", "deepseek-llm" })
         {
             // .inp ends with a trailing separator, so it splits into one more chunk than .out has lines.
             int count = File.ReadAllLines(Path.Combine(Dir, $"ggml-vocab-{vocab}.gguf.out")).Length;
@@ -47,6 +47,8 @@ public sealed class LlamaCppVocabParityTests
     [InlineData("llama-bpe", "llama-bpe")]
     [InlineData("gpt-2", "gpt-2")]
     [InlineData("phi-3", "default")]
+    [InlineData("deepseek-coder", "deepseek-coder")]
+    [InlineData("deepseek-llm", "deepseek-llm")]
     public void Loader_PassesTokenizerGgmlPre(string vocab, string pre)
         // The fixtures' architectures would pick the same patterns on their own, so this is what
         // proves GgufLoader hands tokenizer.ggml.pre to the tokenizer at all.

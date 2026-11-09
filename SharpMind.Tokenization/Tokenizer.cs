@@ -160,8 +160,8 @@ public class Tokenizer
     ///
     /// Supports both GPT-2 byte-level BPE (Qwen, Llama-3, Phi) and
     /// SentencePiece-based (LLaMA, LLaMA-2, Mistral, TinyLlama) models.
-    /// The correct encoding path is selected automatically based on whether
-    /// <c>tokenizer.ggml.merges</c> and <c>tokenizer.ggml.scores</c> are present.
+    /// <paramref name="tokenizerModel"/> picks the encoding path; without it the vocab decides
+    /// (a standalone ▁ token means SentencePiece).
     /// </summary>
     /// <param name="tokens">Vocab strings in ID order (tokenizer.ggml.tokens).</param>
     /// <param name="merges">Merge rules as "left right" strings (tokenizer.ggml.merges).</param>
@@ -171,7 +171,8 @@ public class Tokenizer
     /// <param name="eosId">EOS token ID (tokenizer.ggml.eos_token_id).</param>
     /// <param name="architecture">Model architecture string (general.architecture). Picks the pre-tokeniser when <paramref name="preTokenizer"/> does not.</param>
     /// <param name="preTokenizer">tokenizer.ggml.pre. Picks the pre-tokeniser by llama.cpp's name table.</param>
-    public static Tokenizer FromGguf(string[] tokens, string[]? merges, int[]? tokenTypes, int bosId, int eosId, float[]? scores = null, string? architecture = null, string? preTokenizer = null) => new(GgufConverter.Convert(tokens, merges, tokenTypes, bosId, eosId, scores, architecture, preTokenizer));
+    /// <param name="tokenizerModel">tokenizer.ggml.model: "gpt2" (byte-level BPE) or "llama" (SentencePiece).</param>
+    public static Tokenizer FromGguf(string[] tokens, string[]? merges, int[]? tokenTypes, int bosId, int eosId, float[]? scores = null, string? architecture = null, string? preTokenizer = null, string? tokenizerModel = null) => new(GgufConverter.Convert(tokens, merges, tokenTypes, bosId, eosId, scores, architecture, preTokenizer, tokenizerModel));
 
     /// <summary>
     /// Loads a GPT-2 tokenizer from its two native files.

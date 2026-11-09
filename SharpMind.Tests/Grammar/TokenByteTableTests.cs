@@ -24,7 +24,7 @@ public sealed class TokenByteTableTests
 
     private static readonly string[] Gpt2Tokens = BuildGpt2Tokens();
     private static readonly Tokenizer Gpt2 = Tokenizer.FromGguf(
-        tokens: Gpt2Tokens, merges: null, tokenTypes: null, bosId: 1, eosId: 2);
+        tokens: Gpt2Tokens, merges: null, tokenTypes: null, bosId: 1, eosId: 2, tokenizerModel: "gpt2");
 
     private static string[] BuildGpt2Tokens()
     {
@@ -106,6 +106,19 @@ public sealed class TokenByteTableTests
 
         AssertBytes(table, Sp.TokenToId("\u2581"), 0x20);
         AssertBytes(table, Sp.TokenToId("\u2581Hello"), 0x20, 0x48, 0x65, 0x6C, 0x6C, 0x6F);
+    }
+
+    [Fact]
+    public void ByteLevelVocab_WithMetaspaceInsideASpecial_StaysByteLevel()
+    {
+        // DeepSeek spells its specials with U+2581 inside a byte-level vocab. The table follows the
+        // encoder's mode, not its own scan for the marker.
+        const string bos = "<\uFF5Cbegin\u2581of\u2581sentence\uFF5C>";
+        var tok = Tokenizer.FromGguf(tokens: [.. Gpt2Tokens, bos], merges: null, tokenTypes: null,
+                                     bosId: 1, eosId: 2, tokenizerModel: "gpt2");
+        var table = TokenByteTable.Build(tok);
+
+        AssertBytes(table, tok.TokenToId(Vocabulary.ByteTokenString(0x20) + "Hello"), 0x20, 0x48, 0x65, 0x6C, 0x6C, 0x6F);
     }
 
     [Fact]
