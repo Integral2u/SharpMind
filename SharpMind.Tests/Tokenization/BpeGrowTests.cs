@@ -3,6 +3,7 @@ using SharpMind.Tokenization;
 using SharpMind.Tokenization.Bpe;
 using SharpMind.Tokenization.PreTokeniser;
 using SharpMind.Tokenization.Serialisation;
+using SharpMind.Tokenization.Vocab;
 using Xunit;
 
 namespace SharpMind.Tests.Tokenization;
@@ -114,5 +115,69 @@ public sealed class BpeGrowTests
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
             () => trainer.GrowAsync(charModel, Docs("abc"), 300));
         Assert.Contains("character", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Grow_SegmentsWithTheGrownTokenizersPreTokeniser_NotTheTrainers()
+    {
+        // The whitespace-split tokenizer sees "x-y" as one word; the default trainer's GPT-2 split sees
+        // "x", "-", "y" and " x". The merges must come from the segmentation the grown tokenizer will
+        // produce at encode time: "-y" then "x-y", never "Ġx".
+        var original = await new BpeTrainer(targetVocabSize: 262, minFrequency: 1, preTokeniser: new WhitespacePreTokeniser())
+            .TrainAsync(Docs("the quick brown fox"));
+        int target = original.Vocab.Size + 2;
+
+        var grown = await new BpeTrainer(target).GrowAsync(original, Docs("x-y x-y x-y x-y"), target);
+
+        var learned = grown.Vocab.AllTokens.Skip(original.Vocab.Size).ToArray();
+        Assert.Equal(["-y", "x-y"], learned);
+        Assert.DoesNotContain(Vocabulary.ByteTokenString(0x20) + "x", learned);
+        Assert.Same(original.PreTokeniser, grown.PreTokeniser);
+    }
+
+    [Fact]
+    public async Task Grow_KeepsTheGgufNames()
+    {
+        var original = await Trainer(280).TrainAsync(Docs("the quick brown fox"));
+        original.GgufPreTokenizer = "qwen2";
+        original.GgufTokenizerModel = "gpt2";
+
+        var grown = await Trainer(300).GrowAsync(original, Docs("alpha beta gamma alpha beta"), 300);
+
+        Assert.Equal("qwen2", grown.GgufPreTokenizer);
+        Assert.Equal("gpt2", grown.GgufTokenizerModel);
+        Assert.False(grown.Encoder.UseSentencePieceMerge);
+        Assert.Equal("qwen2", TokenizerFile.FromJson(TokenizerFile.ToJson(grown)).GgufPreTokenizer);
+    }
+
+    [Fact]
+    public async Task Grow_ByteLevelOriginalWithoutMerges_EncodesWithTheNewMerges()
+    {
+        // 260 = specials + 256 byte tokens: nothing learned, which the encoder's heuristic reads as
+        // SentencePiece. Once grown the model has merges and must use them.
+        var original = await new BpeTrainer(targetVocabSize: 260).TrainAsync(Docs("a"));
+        Assert.Empty(original.Merges);
+
+        var grown = await new BpeTrainer(261).GrowAsync(original, Docs("ab ab"), 261);
+
+        Assert.True(grown.Vocab.Contains("ab"));
+        Assert.Equal([grown.Vocab.GetId("ab")], new Tokenizer(grown).Encode("ab", addBos: false, addEos: false));
+    }
+
+    [Theory]
+    [InlineData(true, "llama")]   // a SentencePiece GGUF: scores and the model name
+    [InlineData(false, "llama")]  // the model name alone
+    [InlineData(false, null)]     // neither: the standalone ▁ token decides
+    public async Task Grow_Throws_OnSentencePieceTokenizer(bool withScores, string? ggufModel)
+    {
+        // Score-ranked merges cannot be continued by appending rank-ordered ones.
+        var sp = TokenizerFile.FromJson(Tokenizer.FromGguf(
+            tokens: ["<unk>", "<s>", "</s>", "\u2581", "a", "b", "\u2581a"], merges: null, tokenTypes: null,
+            bosId: 1, eosId: 2, scores: withScores ? [0f, 0f, 0f, 0f, 0f, 0f, -1f] : null, tokenizerModel: ggufModel).ToJson());
+        Assert.True(sp.Encoder.UseSentencePieceMerge);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => new BpeTrainer(300).GrowAsync(sp, Docs("ab ab"), 300));
+        Assert.Contains("SentencePiece", ex.Message);
     }
 }
