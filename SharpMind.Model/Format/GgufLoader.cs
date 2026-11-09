@@ -596,7 +596,9 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
         out Tokenizer? tokenizer)
     {
         meta = LoadMeta(ggufPath);
-        config = LoadConfig(meta)!;
+        config = LoadConfig(meta)
+            ?? throw new InvalidDataException(
+                $"The GGUF file '{ggufPath}' has no readable architecture configuration.");
 
         // Disabled: GGUF-exported rope_freqs.weight is often all-1.0 (bug),
         // causing all RoPE pairs to rotate by angle = pos (wrong). Theta-
@@ -609,7 +611,7 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
         // pos * theta^(-2i/d) / freq_factor[i]. Exporters leave the low bands
         // at 1.0 and set the high bands to a huge sentinel so they do not
         // rotate. Only full-attention layers carry them.
-        if (config.Architecture.StartsWith("gemma4", StringComparison.OrdinalIgnoreCase))
+        if (config.Architecture?.StartsWith("gemma4", StringComparison.OrdinalIgnoreCase) == true)
         {
             float[]? ropeFreqFactors = LoadPrecomputedRopeFreqs(ggufPath, meta);
             if (ropeFreqFactors != null)
