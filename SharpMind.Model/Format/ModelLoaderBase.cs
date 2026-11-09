@@ -648,6 +648,25 @@ public abstract class ModelLoaderBase(
         int count = TensorLoadHelper.ComputeElementCountChecked(shape);
         if (destination.Length < count)
             throw new ArgumentException($"Destination buffer too small: {destination.Length} < {count}");
+
+        int rowLength = shape.Length == 0 ? count : shape[0];
+        int block = QuantizationOps.GetBlockSize(dtype);
+        if (block > 1 && rowLength % block != 0)
+        {
+            // GGUF stores row-padded blocks. ReadFor consumes ceil(rowLength/block)
+            // blocks and writes only rowLength values, so advancing row by row keeps
+            // the reader aligned with the file instead of treating the padding as data.
+            int rows = count / rowLength;
+            for (int row = 0; row < rows; row++)
+            {
+                _qOps.ReadFor(
+                    dtype, stream,
+                    destination.Slice(row * rowLength, rowLength),
+                    rowLength);
+            }
+            return;
+        }
+
         _qOps.ReadFor(dtype, stream, destination, count);
     }
 }

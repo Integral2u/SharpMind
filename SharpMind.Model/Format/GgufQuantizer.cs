@@ -213,40 +213,23 @@ public static class GgufQuantizer
         info.Shape.Length == 0 ? 1 : info.Shape[0];
 
     /// <summary>
-    /// SharpMind's K-quant kernels index raw blocks flat, so a 256-block format is only
-    /// safe when the row length is a multiple of 256. A row that is merely 32-aligned can
-    /// still use Q8_0/Q4_0; anything else falls back to F16. This keeps the exported file
-    /// loadable instead of writing an invalid layout.
+    /// Returns a target the encoder can actually produce. K-quants and 32-block formats
+    /// handle unaligned rows by padding each row to a whole block, which the loader now
+    /// understands, so no coarser fallback is needed for shape reasons.
     /// </summary>
     public static QuantDType CompatibleTarget(TensorInfo info, QuantDType target)
     {
-        int rowLength = RowLength(info);
-        int block = BlockSize(target);
-        if (block == 256 && rowLength % 256 != 0)
-            return rowLength % 32 == 0 ? QuantDType.Q8_0 : QuantDType.F16;
-        if (block == 32 && rowLength % 32 != 0)
-            return QuantDType.F16;
-        return target;
+        _ = info;
+        return TensorQuantizer.IsSupportedTarget(target) ? target : QuantDType.F16;
     }
 
     private static int PaddedRowLength(TensorInfo info, QuantDType target)
     {
         int rowLength = RowLength(info);
-        int block = BlockSize(target);
+        int block = QuantizationOps.GetBlockSize(target);
         if (block <= 1) return rowLength;
         return (rowLength + block - 1) / block * block;
     }
-
-    private static int BlockSize(QuantDType dtype) => dtype switch
-    {
-        QuantDType.Q8_0 or QuantDType.Q4_0 => 32,
-        QuantDType.Q2_K or QuantDType.Q2_K_S
-            or QuantDType.Q3_K or QuantDType.Q3_K_S or QuantDType.Q3_K_M or QuantDType.Q3_K_L
-            or QuantDType.Q4_K or QuantDType.Q4_K_S or QuantDType.Q4_K_M
-            or QuantDType.Q5_K or QuantDType.Q5_K_S or QuantDType.Q5_K_M
-            or QuantDType.Q6_K or QuantDType.Q6_K_S or QuantDType.Q8_K => 256,
-        _ => 1,
-    };
 
     private static long ElementCount(int[] shape)
     {

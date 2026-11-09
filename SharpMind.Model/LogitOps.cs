@@ -157,6 +157,9 @@ public abstract class LogitOps(Tensor<float>? projectionWeight, byte[]? rawWeigh
         "bf16_parallel_scalar",$"{QKernels}.{nameof(QuantizationKernels.QuantizedMatMulBF16_Parallel_Scalar)}")]
     public unsafe abstract void ProjectFn(float* input, byte* rawWeights, float* output, int M, int K, int N);
 
+    /// <summary>Quantization format of <see cref="RawWeight"/>, set by the factory.</summary>
+    public QuantDType? RawDtype { get; internal set; }
+
     public unsafe Tensor<float> Project(Tensor<float> input, int M, int K, int N, IWorkspace? workspace = null)
     {
         var tLmHead = DecodeProfiler.Begin();
@@ -164,27 +167,71 @@ public abstract class LogitOps(Tensor<float>? projectionWeight, byte[]? rawWeigh
             ? workspace.Rent<float>([M, N])
             : new Tensor<float>(M, N);
 
-        fixed (float* pInput = input.Data)
-        fixed (float* pOutput = result.Data)
+        int paddedK = K;
+        Tensor<float>? padded = null;
+        if (RawWeight is not null && RawDtype is { } dtype)
         {
-            if (WideAllowed && Q8_0WideWeights.Enabled && RawWeight != null &&
-                _wide.Get(RawWeight, K, N) is { } wide &&
-                wide.InFeatures == K && wide.OutFeatures == N)
+            int block = QuantizationOps.GetBlockSize(dtype);
+            int candidate = block <= 1 ? K : (K + block - 1) / block * block;
+            long rowPaddedBytes = QuantizationOps.GetRawTensorByteCount([K, N], dtype);
+            long flatBytes = QuantizationOps.GetFlatTensorByteCount([K, N], dtype);
+            if (candidate > K && rowPaddedBytes > flatBytes && RawWeight.Length >= rowPaddedBytes)
             {
-                wide.MatMul(pInput, pOutput, M);
-            }
-            else if (RawWeight != null)
-            {
-                fixed (byte* pRaw = RawWeight)
+                paddedK = candidate;
+                padded = workspace != null
+                    ? workspace.Rent<float>([M, paddedK])
+                    : new Tensor<float>(M, paddedK);
+                for (int row = 0; row < M; row++)
                 {
-                    ProjectFn(pInput, pRaw, pOutput, M, K, N);
+                    Span<float> destination = padded.RowSpan(row);
+                    input.RowSpan(row).CopyTo(destination);
+                    destination[K..].Clear();
                 }
             }
-            else
+        }
+
+        try
+        {
+            fixed (float* pOutput = result.Data)
             {
-                ProjectFn(pInput, (byte*)ProjectionWeight!.DataPtr, pOutput, M, K, N);
+                if (padded is not null)
+                {
+                    fixed (float* pInput = padded.Data)
+                    fixed (byte* pRaw = RawWeight!)
+                    {
+                        ProjectFn(pInput, pRaw, pOutput, M, paddedK, N);
+                    }
+                }
+                else
+                {
+                    fixed (float* pInput = input.Data)
+                    {
+                        if (WideAllowed && Q8_0WideWeights.Enabled && RawWeight != null &&
+                            _wide.Get(RawWeight, K, N) is { } wide &&
+                            wide.InFeatures == K && wide.OutFeatures == N)
+                        {
+                            wide.MatMul(pInput, pOutput, M);
+                        }
+                        else if (RawWeight != null)
+                        {
+                            fixed (byte* pRaw = RawWeight)
+                            {
+                                ProjectFn(pInput, pRaw, pOutput, M, K, N);
+                            }
+                        }
+                        else
+                        {
+                            ProjectFn(pInput, (byte*)ProjectionWeight!.DataPtr, pOutput, M, K, N);
+                        }
+                    }
+                }
             }
         }
+        finally
+        {
+            if (padded is not null && workspace is null) padded.Dispose();
+        }
+
         DecodeProfiler.Mark(DecodeStage.LmHead, tLmHead);
         return result;
     }

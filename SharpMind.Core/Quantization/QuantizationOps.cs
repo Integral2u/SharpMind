@@ -26,6 +26,25 @@ public abstract class QuantizationOps
         => GetByteCount(shape, dtype, rowPadded: true);
 
     /// <summary>
+    /// Elements covered by one quantization block: 256 for the K-quants and the
+    /// 256-element ternary/importance formats, 32 for the legacy block formats,
+    /// and 1 for F32/F16/BF16 and the integer raw types.
+    /// </summary>
+    public static int GetBlockSize(QuantDType dtype) => dtype switch
+    {
+        QuantDType.Q4_0 or QuantDType.Q4_1 or QuantDType.Q5_0 or QuantDType.Q5_1
+            or QuantDType.Q8_0 or QuantDType.Q8_1 or QuantDType.IQ4_NL => 32,
+        QuantDType.Q2_K or QuantDType.Q2_K_S
+            or QuantDType.Q3_K or QuantDType.Q3_K_S or QuantDType.Q3_K_M or QuantDType.Q3_K_L
+            or QuantDType.Q4_K or QuantDType.Q4_K_S or QuantDType.Q4_K_M
+            or QuantDType.Q5_K or QuantDType.Q5_K_S or QuantDType.Q5_K_M
+            or QuantDType.Q6_K or QuantDType.Q6_K_S or QuantDType.Q8_K
+            or QuantDType.TQ2_0 or QuantDType.TQ1_0 or QuantDType.Q1_0
+            or QuantDType.IQ1_S or QuantDType.IQ1_M => 256,
+        _ => 1,
+    };
+
+    /// <summary>
     /// Byte count for SMM tensors. SMM is written by <see cref="TensorQuantizer"/>, which
     /// emits blocks back-to-back over the flattened buffer (<c>values.Length / 32</c>
     /// blocks) rather than padding each row, so a non-row-multiple dim consumes no

@@ -235,7 +235,23 @@ public static class QuantizationAnalyzer
         using var memory = new MemoryStream(raw, 0, (int)byteCount, writable: false);
         using var reader = new BinaryReader(memory);
         var data = new float[count];
-        qOps.ReadFor(info.Dtype, reader, data, count);
+        int rowLength = info.Shape.Length == 0 ? count : info.Shape[0];
+        int block = QuantizationOps.GetBlockSize(info.Dtype);
+        if (block > 1 && rowLength % block != 0)
+        {
+            int rows = count / rowLength;
+            for (int row = 0; row < rows; row++)
+            {
+                qOps.ReadFor(
+                    info.Dtype, reader,
+                    data.AsSpan(row * rowLength, rowLength),
+                    rowLength);
+            }
+        }
+        else
+        {
+            qOps.ReadFor(info.Dtype, reader, data, count);
+        }
         return data;
     }
 

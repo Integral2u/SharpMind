@@ -89,9 +89,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   model. It reads each row through the engine's dequantizers and writes fixed
   targets (Q2_K-Q8_K, Q8_0, Q4_0, F16), per-role plans (embedding/LM head can
   stay finer) or a byte budget that picks the coarsest fitting K-quant.
-  `GgufQuantizer.CompatibleTarget` falls back to Q8_0/F16 when a K-quant row is
-  not 256-aligned, so the output stays loadable. `GgufSmokeProbe quantize` runs
-  all three modes.
+  `GgufQuantizer.CompatibleTarget` writes K-quants row-padded even when a row is
+  not 256-aligned; the loader and kernels now handle that layout, so the output
+  is a normal Q4_K model rather than a Q8_0 fallback. `GgufSmokeProbe quantize`
+  runs all three modes.
+- **Row-padded K-quant inference** - GGUF K-quant tensors whose row length is not
+  256-aligned (for example Qwen2-0.5B's 896-wide hidden state) are now read
+  correctly. `InferenceLinearLayer` and `LogitOps` pad each input row to the
+  block boundary and pass the padded K to the existing kernels, and
+  `ModelLoaderBase`/`GgufTensorReader` dequantize row by row. Validated on
+  Qwen2-0.5B Q8_0 -> Q4_K: 169 Q4_K tensors, loss `4.1791 -> 4.9034`.
 - **Native LFM3-VL vision** - `Lfm3VlVisionEncoder` reads the vision `mmproj`
   (linear patchifier, fourteen pre-norm blocks alternating gated depthwise 2D
   convolution and bidirectional grouped-query attention with axial 2D RoPE, and

@@ -46,12 +46,12 @@ public sealed class GgufQuantizerTests
     }
 
     [Fact]
-    public void QuantizeFixed_FallsBackFromKQuantOnUnalignedRows()
+    public void QuantizeFixed_WritesRowPaddedKQuantForUnalignedRows()
     {
         using var temp = new TempDirectory();
         string source = Path.Combine(temp.Path, "source.gguf");
         string destination = Path.Combine(temp.Path, "q4k.gguf");
-        WriteSynthetic(
+        float[] attention = WriteSynthetic(
             source,
             ("blk.0.attn_q.weight", [64, 4]),
             ("blk.0.ffn_down.weight", [256, 2]),
@@ -60,9 +60,11 @@ public sealed class GgufQuantizerTests
         GgufQuantizer.Quantize(source, destination, QuantDType.Q4_K);
 
         ModelMetaData meta = GgufLoader.LoadMeta(destination);
-        Assert.Equal(QuantDType.Q8_0, Dtype(meta, "blk.0.attn_q.weight"));
+        Assert.Equal(QuantDType.Q4_K, Dtype(meta, "blk.0.attn_q.weight"));
         Assert.Equal(QuantDType.Q4_K, Dtype(meta, "blk.0.ffn_down.weight"));
         Assert.Equal(QuantDType.F16, Dtype(meta, "blk.0.attn_norm.weight"));
+        using var reader = new GgufTensorReader(destination);
+        AssertClose(attention, reader.ReadFloat32("blk.0.attn_q.weight"), 0.15f);
     }
 
     [Fact]
