@@ -153,7 +153,8 @@ public sealed class GpuInferenceEngine : IInferenceEngine
             _blocks = new GpuBlock[_cfg.NumLayers];
             for (int l = 0; l < _cfg.NumLayers; l++) { _blocks[l] = new GpuBlock(device, model.GetBlock(l)!, static _ => null); owned.Add(_blocks[l]); }
             var rawEmbDtype = model.RawEmbeddingDtype;
-            bool blockQuantEmb = rawEmbDtype is { } ed && IsOnDeviceDequant(ed);
+            bool blockQuantEmb = rawEmbDtype is { } ed && IsOnDeviceDequant(ed) &&
+                !NeedsHostDequant(_cfg.HiddenDim, ed);
             _embedding = blockQuantEmb
                 ? null
                 : DeviceBuffer.From(device, model.EmbeddingWeight);
@@ -177,7 +178,8 @@ public sealed class GpuInferenceEngine : IInferenceEngine
             {
                 int V = _cfg.VocabSize, H = _cfg.HiddenDim;
                 var rawHeadDtype = model.RawLmHeadDtype;
-                if (rawHeadDtype is { } hd && IsOnDeviceDequant(hd))
+                if (rawHeadDtype is { } hd && IsOnDeviceDequant(hd) &&
+                    !NeedsHostDequant(H, hd))
                 {
                     if (model.RawLmHead is null) throw new InvalidOperationException($"Model reports a {hd} LM head but carries no raw bytes.");
                     _lmHeadDtype = hd;
@@ -365,15 +367,38 @@ public sealed class GpuInferenceEngine : IInferenceEngine
     internal static bool IsOnDeviceDequant(QuantDType q)
         => q is not QuantDType.F32 && SupportedDtypes.Contains(q);
 
+    /// <summary>
+    /// True when a GGUF row is padded to a block boundary, so the flat on-device
+    /// K-quant kernels would mis-index it. Those tensors use the host layer, which
+    /// pads the input row instead.
+    /// </summary>
+    private static bool NeedsHostDequant(int rowLength, QuantDType dtype)
+    {
+        int block = QuantizationOps.GetBlockSize(dtype);
+        return block == 256 && rowLength % block != 0;
+    }
+
     /// <summary>The quant dtypes in <paramref name="meta"/> that have no on-device kernel, i.e. the
     /// per-tensor CPU fallback set <see cref="DescribeCpuFallback(ModelMetaData, ModelConfig, SharpMindConfig)"/>
     /// reports. Consults the tensors directly so block linears can be told apart from the embedding
     /// and the LM head (which always run on the device via the loader's F32 copies / device dequant).
+    /// A row-padded K-quant is included because the device kernels read a flat block stream.</summary>
     private static IEnumerable<QuantDType> CpuFallbackDtypes(ModelMetaData meta)
     {
+        var fallback = new HashSet<QuantDType>();
         foreach (var dtype in meta.GetUsedQuantizations())
             if (!SupportedDtypes.Contains(dtype))
-                yield return dtype;
+                fallback.Add(dtype);
+
+        foreach (var tensor in meta.Tensors)
+        {
+            if (!IsOnDeviceDequant(tensor.Dtype)) continue;
+            if (tensor.Shape.Length == 0) continue;
+            if (NeedsHostDequant(tensor.Shape[0], tensor.Dtype))
+                fallback.Add(tensor.Dtype);
+        }
+
+        return fallback;
     }
 
     /// <summary>

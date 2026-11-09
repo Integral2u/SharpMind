@@ -58,7 +58,7 @@ internal sealed class GpuLinear : IDisposable
             // just on the host for that tensor.
             if (layer is InferenceLinearLayer inf && inf.RawQuantizedData is not null)
             {
-                if (IsOnDeviceDequant(inf.QuantDtype))
+                if (IsOnDeviceDequant(inf.QuantDtype) && !inf.RowPaddedKQuant)
                 {
                     _quant = inf.QuantDtype;
                     _rawW = new DeviceByteBuffer(device.Accelerator, inf.RawQuantizedData); owned.Add(_rawW);
