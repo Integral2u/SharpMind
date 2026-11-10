@@ -278,13 +278,7 @@ public sealed record SharpMindConfig
             .ApplyQuantPreset(config)
             .Build();
         if (overrides != null)
-        {
-            foreach (var m in overrides)
-            {
-                if (cfg.TryGetValue(m.Key, out _)) cfg[m.Key] = m.Value;
-                else cfg.Add(m.Key, m.Value);
-            }
-        }
+            foreach (var m in overrides) cfg[m.Key] = m.Value;
         return cfg;
     }
 }

@@ -16,12 +16,7 @@ public static class NormOpsFactory
     /// norm key is always seeded from the config first.
     /// </summary>
     public static NormOps Create(SharpMindConfig config, Dictionary<string, string>? overrides)
-    {
-        var cfg = config.ToJigSawMapping();
-        if (overrides != null)
-            foreach (var m in overrides) cfg[m.Key] = m.Value;
-        return Create(cfg);
-    }
+        => Create(config.ToJigSawMapping(overrides));
 
     public static NormOps Create(Dictionary<string, string> mapping)
         => _opsCache.GetOrAdd(MappingHash.Compute(mapping), _ => Assembler.CreateInstance<NormOps>(mapping));
