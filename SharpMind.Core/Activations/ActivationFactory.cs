@@ -63,18 +63,7 @@ public static class ActivationFactory
     }
 
     public static ActivationOps Create(SharpMindConfig config, Dictionary<string, string>? overrides)
-    {
-        var cfg = config.ToJigSawMapping();
-        if (overrides != null)
-        {
-            foreach (var m in overrides)
-            {
-                if (cfg.TryGetValue(m.Key, out string? value)) cfg[m.Key] = value;
-                else cfg.Add(m.Key, m.Value);
-            }
-        }
-        return Create(cfg);
-    }
+        => Create(config.ToJigSawMapping(overrides));
 
     public static ActivationOps Create(Dictionary<string, string> mappings)
     {

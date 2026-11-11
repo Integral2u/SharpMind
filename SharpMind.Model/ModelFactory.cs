@@ -419,15 +419,7 @@ public static class ModelFactory
         bool useHooks = false,
         bool floatLayers = false)
     {
-        var cfg = sharpConfig.ToJigSawMapping();
-        if (overrides != null)
-        {
-            foreach (var m in overrides)
-            {
-                if (cfg.TryGetValue(m.Key, out string? value)) cfg[m.Key] = value;
-                else cfg.Add(m.Key, m.Value);
-            }
-        }
+        var cfg = sharpConfig.ToJigSawMapping(overrides);
         // The assembled type still resolves attention/FFN kernels from cfg. When
         // floatLayers is set (training), the layer constructors receive a null
         // mapping so they build float TrainingLinearLayers (forward/backward);

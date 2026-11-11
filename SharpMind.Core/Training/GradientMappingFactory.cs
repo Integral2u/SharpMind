@@ -29,18 +29,7 @@ public static class GradientMappingFactory
     /// per-key overrides (e.g. GPU-pinned kernels) on top of the resolved mapping.
     /// </summary>
     public static GradientMapping Create(SharpMindConfig config, Dictionary<string, string>? overrides)
-    {
-        var cfg = config.ToJigSawMapping();
-        if (overrides != null)
-        {
-            foreach (var m in overrides)
-            {
-                if (cfg.TryGetValue(m.Key, out string? value)) cfg[m.Key] = value;
-                else cfg.Add(m.Key, m.Value);
-            }
-        }
-        return Create(cfg);
-    }
+        => Create(config.ToJigSawMapping(overrides));
 
     /// <summary>Assembles a <see cref="GradientMapping"/> from an explicit mapping.</summary>
     public static GradientMapping Create(Dictionary<string, string> mappings)
