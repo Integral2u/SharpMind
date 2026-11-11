@@ -4,6 +4,17 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.2.0] - 2026-11-11
+
+### Changed
+
+- **Mapping overrides now replace preset values** - `ActivationFactory`,
+  `GradientMappingFactory`, `ModelFactory.BuildBlock` and `NormOpsFactory`
+  apply caller overrides on top of the config mapping through
+  `SharpMindConfig.ToJigSawMapping(overrides)`. This restores the CUI's
+  `UseParallelKernels` option and any caller-selected kernel tier.
+- Version bumped to **1.1.2.0**.
+
 ## [1.1.1.0] - 2026-11-08
 
 ### Added
