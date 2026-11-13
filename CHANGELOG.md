@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [1.1.2.0] - 2026-11-11
 
+### Added
+
+- **Delegation keeps the parent cache** - one-shot sub-agents run on a
+  dedicated, prompt-bounded generator, so a `delegate` call no longer resets
+  the parent conversation's KV cache and the next turn extends it instead of
+  re-prefilling. Engine-backed sessions export the parent cache before the
+  sub-agent and restore it in a `finally`.
+
 ### Changed
 
 - **Mapping overrides now replace preset values** - `ActivationFactory`,

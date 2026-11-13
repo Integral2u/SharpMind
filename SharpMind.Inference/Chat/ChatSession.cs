@@ -93,6 +93,13 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
 
     private readonly int? _seed;
     private readonly int? _maxCacheLen;
+    /// <summary>
+    /// Dedicated generator and cache for one-shot sub-agent delegation. Keeping
+    /// it separate means a sub-agent run never resets the parent conversation's
+    /// KV cache. Created lazily and bounded to the sub-agent prompt.
+    /// </summary>
+    private IGenerator<K>? _subAgentGenerator;
+    private int _subAgentCacheLen;
     private string _userName = "User";
     private CancellationTokenSource? _turnCts;
     /// <summary>
@@ -370,6 +377,9 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
             return _generator!;
         }
     }
+
+    /// <summary>Test hook: the dedicated sub-agent generator, once delegation ran.</summary>
+    internal IGenerator<K>? SubAgentGeneratorForTests => _subAgentGenerator;
     public Tokenizer Tokenizer => _tokenizer;
     public Transformer Model => _model;
     public IReadOnlyList<ChatMessage> History => _filteredHistoryCache ??= [.. _history.Where(p => p.Role != ChatRole.System)];
@@ -774,6 +784,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         await Task.CompletedTask;
         // The generator exists only after InitializeChat; a session disposed before that
         // still has to release the model it was given.
+        _subAgentGenerator?.Dispose();
         _generator?.Dispose();
         if (_disposeModel)
             _model.Dispose();
@@ -2012,22 +2023,115 @@ private void ThrowIfDisposed()
 
         var promptToks = _tokenizer.Encode(prompt, addBos: _addBos, addEos: false);
 
-        // TODO(delegation): sub-agents share the parent's generator and KV cache, so
-        // running one resets the parent's cache and the next turn re-prefills the whole
-        // conversation. Running them on a separate sequence needs engine support that
-        // does not exist yet. Until then the cost is paid on every delegation.
         // A sub-agent is one-shot generation: it has no tool loop of its own, so
         // MaxAgentDepth limits nested {{agent:...}} calls made by the parent, not tools.
-        _generator.ResetCache();
-
+        // It runs on its own cache so the parent conversation stays warm.
         var sb = new System.Text.StringBuilder();
-        await foreach (var fragment in _generator.GenerateFromTokensAsync(promptToks, sampleCfg, genCfg, ct))
+        if (_hasEngine)
         {
-            sb.Append(fragment);
-            onSubFragment?.Invoke(fragment);
+            await GenerateSubAgentOnEngineAsync(
+                promptToks, sampleCfg, genCfg, sb, onSubFragment, ct);
+        }
+        else
+        {
+            IGenerator<K> generator = SubAgentGenerator(promptToks.Length, genCfg.MaxNewTokens);
+            // Each delegation is a fresh one-shot task; do not let the previous
+            // sub-agent context leak into this one.
+            generator.ResetCache();
+            await foreach (var fragment in generator.GenerateFromTokensAsync(promptToks, sampleCfg, genCfg, ct))
+            {
+                sb.Append(fragment);
+                onSubFragment?.Invoke(fragment);
+            }
         }
 
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// The CPU/local sub-agent generator: its own caches, bounded to the prompt
+    /// so delegation cannot evict the parent conversation. Recreated only when a
+    /// later task needs more room.
+    /// </summary>
+    private IGenerator<K> SubAgentGenerator(int promptTokens, int maxNewTokens)
+    {
+        int wanted = Math.Max(2048, promptTokens + maxNewTokens + 64);
+        if (_maxCacheLen is { } cap)
+            wanted = Math.Min(wanted, cap);
+
+        if (_subAgentGenerator is null || _subAgentCacheLen < wanted)
+        {
+            _subAgentGenerator?.Dispose();
+            _subAgentGenerator = new T().CreateGenerator(
+                _model, _tokenizer, _addBos, _addEos, caches: null, _seed, wanted);
+            _subAgentCacheLen = wanted;
+        }
+
+        return _subAgentGenerator;
+    }
+
+    /// <summary>
+    /// Engine-backed sessions own one cache. Export the parent cache, run the
+    /// one-shot sub-agent, then restore it so the next parent turn continues
+    /// instead of re-prefilling the conversation. An engine that cannot export
+    /// falls back to a reset, which was the old behaviour.
+    /// </summary>
+    private async Task GenerateSubAgentOnEngineAsync(
+        int[] promptToks,
+        SamplingConfig sampleCfg,
+        GenerationConfig genCfg,
+        System.Text.StringBuilder sb,
+        Action<string>? onSubFragment,
+        CancellationToken ct)
+    {
+        int[] parentTokens = _generator.CacheTokens?.ToArray() ?? [];
+        await PreserveParentCacheAsync(_generator, _engine!, parentTokens, async () =>
+        {
+            _generator.ResetCache();
+            await foreach (var fragment in _generator.GenerateFromTokensAsync(promptToks, sampleCfg, genCfg, ct))
+            {
+                sb.Append(fragment);
+                onSubFragment?.Invoke(fragment);
+            }
+        });
+    }
+
+    /// <summary>
+    /// Runs <paramref name="action"/> against a generator whose engine owns one
+    /// cache, then restores the parent cache. Exposed to tests so the
+    /// export/import contract is checked without a full model.
+    /// </summary>
+    internal static async Task PreserveParentCacheAsync(
+        IGenerator<K> generator,
+        IInferenceEngine engine,
+        IReadOnlyList<int> parentTokens,
+        Func<Task> action)
+    {
+        KVCacheSnapshot? snapshot = null;
+        if (parentTokens.Count > 0)
+        {
+            try
+            {
+                snapshot = engine.ExportCache([.. parentTokens]);
+            }
+            catch
+            {
+                snapshot = null;
+            }
+        }
+
+        try
+        {
+            await action();
+        }
+        finally
+        {
+            if (snapshot is not null)
+            {
+                engine.ImportCache(snapshot);
+                generator.SetCacheTokens(parentTokens);
+            }
+        }
     }
 
     // Tool dispatch with IO interception

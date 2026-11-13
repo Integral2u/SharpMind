@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using SharpMind.Inference;
 using SharpMind.Inference.Agent;
 using SharpMind.Inference.Chat;
 using SharpMind.Model;
@@ -138,5 +139,161 @@ public sealed class DelegationTests
 
         var reply = await Reply(session);
         Assert.Contains("Done.", reply);
+    }
+
+    [Fact]
+    public async Task Delegation_UsesASeparateGenerator_AndDoesNotResetTheParent()
+    {
+        await using var session = ScriptedSession.Create(AgentWithReviewer(), ToolCallFormat.SharpMind,
+            DelegateCall("Reviewer", "Check this loop."),
+            "Found one bug: off-by-one.",
+            "The reviewer found an off-by-one bug.");
+
+        var parent = Assert.IsType<ScriptedGenerator>(session.Generator);
+        int parentResetsAtStart = parent.ResetCalls;
+
+        var reply = await Reply(session);
+
+        Assert.Contains("off-by-one", reply);
+        var sub = Assert.IsType<ScriptedGenerator>(session.SubAgentGeneratorForTests);
+        Assert.NotSame(parent, sub);
+        Assert.Equal(1, sub.ResetCalls);
+
+        // Two parent model calls (the delegate call and the final answer). The
+        // old shared-cache path added a third reset when the sub-agent ran.
+        Assert.Equal(parentResetsAtStart + 2, parent.ResetCalls);
+    }
+
+    [Fact]
+    public async Task TwoDelegations_ReuseOneSubAgentGenerator()
+    {
+        await using var session = ScriptedSession.Create(AgentWithReviewer(), ToolCallFormat.SharpMind,
+            DelegateCall("Reviewer", "First task."),
+            "First answer.",
+            DelegateCall("Reviewer", "Second task."),
+            "Second answer.",
+            "Both done.");
+
+        var reply = await Reply(session);
+
+        Assert.Contains("Both done.", reply);
+        var sub = Assert.IsType<ScriptedGenerator>(session.SubAgentGeneratorForTests);
+        // One instance, reset before each one-shot task.
+        Assert.Equal(2, sub.ResetCalls);
+    }
+
+    [Fact]
+    public async Task EnginePath_ExportsAndRestoresTheParentCache()
+    {
+        var generator = new CacheTrackingGenerator();
+        var engine = new FakeInferenceEngine();
+        int[] tokens = [11, 12, 13];
+
+        await ChatSession<ScriptedGeneratorBuilder, KVCacherBuilder>.PreserveParentCacheAsync(
+            generator,
+            engine,
+            tokens,
+            () =>
+            {
+                generator.ResetCache();
+                return Task.CompletedTask;
+            });
+
+        Assert.Equal(1, engine.ExportCalls);
+        Assert.Equal(1, engine.ImportCalls);
+        Assert.Equal(tokens, generator.CacheTokens);
+    }
+
+    [Fact]
+    public async Task EnginePath_RestoresTheParentCacheWhenTheSubAgentThrows()
+    {
+        var generator = new CacheTrackingGenerator();
+        var engine = new FakeInferenceEngine();
+        int[] tokens = [21, 22];
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            ChatSession<ScriptedGeneratorBuilder, KVCacherBuilder>.PreserveParentCacheAsync(
+                generator,
+                engine,
+                tokens,
+                () =>
+                {
+                    generator.ResetCache();
+                    throw new InvalidOperationException("sub-agent failed");
+                }));
+
+        Assert.Equal(1, engine.ImportCalls);
+        Assert.Equal(tokens, generator.CacheTokens);
+    }
+
+    private sealed class CacheTrackingGenerator : IGenerator<KVCacherBuilder>
+    {
+        public string Name => "tracking";
+        public Action<double>? PrefillProgress { get; set; }
+        public float CacheFillRatio => 0;
+        public float? TokensPerSecond => null;
+        public float? CumulativeTokensPerSecond => null;
+        public float? TimeToFirstToken => null;
+        public IReadOnlyList<IKVCache> Caches => [];
+        public IReadOnlyList<int>? CacheTokens { get; private set; }
+
+        public void ResetCache() => CacheTokens = [];
+        public void SetCacheTokens(IReadOnlyList<int> tokens) => CacheTokens = [.. tokens];
+        public void Dispose() { }
+
+        public IAsyncEnumerable<string> GenerateAsync(
+            string prompt,
+            SamplingConfig? sampling = null,
+            GenerationConfig? generation = null,
+            CancellationToken cancellationToken = default) => EmptyAsync();
+
+        public IAsyncEnumerable<string> GenerateFromTokensAsync(
+            int[] promptIds,
+            SamplingConfig? sampling = null,
+            GenerationConfig? generation = null,
+            CancellationToken cancellationToken = default) => EmptyAsync();
+
+        private static async IAsyncEnumerable<string> EmptyAsync()
+        {
+            await Task.CompletedTask;
+            yield break;
+        }
+    }
+
+    private sealed class FakeInferenceEngine : IInferenceEngine
+    {
+        public string Description => "fake";
+        public int CachedLength => 0;
+        public int MaxCacheLength => 1024;
+        public bool IsCacheFull => false;
+        public int ExportCalls { get; private set; }
+        public int ImportCalls { get; private set; }
+
+        public ReadOnlyMemory<float> Prefill(
+            ReadOnlySpan<int> tokenIds,
+            Action<double>? onChunkProgress = null,
+            CancellationToken cancellationToken = default) => new float[2];
+
+        public ReadOnlyMemory<float> DecodeStep(
+            int tokenId,
+            CancellationToken cancellationToken = default) => new float[2];
+
+        public void TruncateCache(int length) { }
+        public void TrimToLast(int keep) { }
+        public void ResetCache() { }
+
+        public KVCacheSnapshot ExportCache(int[] promptTokenIds)
+        {
+            ExportCalls++;
+            return new KVCacheSnapshot
+            {
+                PromptHash = KVCacheSnapshot.HashPromptTokens(promptTokenIds),
+                PromptTokenCount = promptTokenIds.Length,
+                Layers = [],
+            };
+        }
+
+        public void ImportCache(KVCacheSnapshot snapshot) => ImportCalls++;
+        public void Dispose() { }
     }
 }

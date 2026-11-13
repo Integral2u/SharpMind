@@ -43,7 +43,8 @@ internal sealed class ScriptedGenerator : IGenerator<KVCacherBuilder>
     public float? CumulativeTokensPerSecond => null;
     public float? TimeToFirstToken => null;
     public IReadOnlyList<IKVCache> Caches => [];
-    public void ResetCache() { }
+    public int ResetCalls { get; private set; }
+    public void ResetCache() => ResetCalls++;
     public void Dispose() { }
 
     public IAsyncEnumerable<string> GenerateAsync(string prompt, SamplingConfig? sampling = null, GenerationConfig? generation = null, CancellationToken cancellationToken = default)
