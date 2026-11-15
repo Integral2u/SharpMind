@@ -13,7 +13,15 @@ env:
 
 jobs:
   test:
-    runs-on: windows-latest
+    # Keep the suite green on Linux as well as Windows. The engine is
+    # cross-platform by design; running both keeps path, file-sharing and
+    # console assumptions honest, and is the prerequisite for adding an
+    # arm64 runner.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ windows-latest, ubuntu-latest ]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
@@ -25,8 +33,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.nuget/packages
-          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', 'Directory.Build.props', 'nuget.config') }}
-          restore-keys: ${{ runner.os }}-nuget-
+          key: ${{ runner.os }}-${{ runner.arch }}-nuget-${{ hashFiles('**/*.csproj', 'Directory.Build.props', 'nuget.config') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-nuget-
 
       # Build SharpMind.Core first on purpose: SharpMind.Tests.csproj embeds
       # SharpMind.Core.dll through an Exists() condition that MSBuild evaluates
@@ -45,5 +54,5 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-results
+          name: test-results-${{ matrix.os }}
           path: '**/TestResults/**'

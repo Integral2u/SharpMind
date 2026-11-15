@@ -139,7 +139,7 @@ public sealed class SourceHasherTests
                     {
                         DisplayName = "multi",
                         TypeName = "SharpMind.Data.Sources.TextFileSource, SharpMind.Data",
-                        Args = new Dictionary<string, string> { ["path"] = dir.Path + "\\*.txt" },
+                        Args = new Dictionary<string, string> { ["path"] = Path.Combine(dir.Path, "*.txt") },
                     },
                 },
             },

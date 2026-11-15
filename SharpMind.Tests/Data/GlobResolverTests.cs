@@ -13,13 +13,17 @@ public sealed class GlobResolverTests : IDisposable
     [Fact]
     public void RecursiveDoubleStar_Backslash_ReturnsAllFiles()
     {
+        // Path.Combine supplies the platform separator, so this asserts the
+        // separator GlobResolver has to handle on the host OS: backslashes on
+        // Windows, forward slashes on Unix (where '\' is a legal file-name
+        // character and deliberately not a separator).
         Directory.CreateDirectory(Path.Combine(_dir.Path, "sub"));
         _dir.Write("a.txt", "x");
-        _dir.Write("sub\\b.txt", "x");
+        _dir.Write(Path.Combine("sub", "b.txt"), "x");
 
         var files = GlobResolver.Resolve(Path.Combine(_dir.Path, "**", "*.txt"));
 
-        Assert.Equal(Expected(["a.txt", "sub\\b.txt"]), files);
+        Assert.Equal(Expected(["a.txt", Path.Combine("sub", "b.txt")]), files);
     }
 
     [Fact]
@@ -27,12 +31,12 @@ public sealed class GlobResolverTests : IDisposable
     {
         Directory.CreateDirectory(Path.Combine(_dir.Path, "sub"));
         _dir.Write("a.txt", "x");
-        _dir.Write("sub\\b.txt", "x");
+        _dir.Write(Path.Combine("sub", "b.txt"), "x");
 
         string pattern = Root.Replace('\\', '/') + "/**/*.txt";
         var files = GlobResolver.Resolve(pattern);
 
-        Assert.Equal(Expected(["a.txt", "sub\\b.txt"]), files);
+        Assert.Equal(Expected(["a.txt", Path.Combine("sub", "b.txt")]), files);
     }
 
     [Fact]
@@ -40,7 +44,7 @@ public sealed class GlobResolverTests : IDisposable
     {
         Directory.CreateDirectory(Path.Combine(_dir.Path, "sub"));
         _dir.Write("a.txt", "x");
-        _dir.Write("sub\\b.txt", "x");
+        _dir.Write(Path.Combine("sub", "b.txt"), "x");
 
         var files = GlobResolver.Resolve(Path.Combine(_dir.Path, "*.txt"));
 
@@ -52,14 +56,14 @@ public sealed class GlobResolverTests : IDisposable
     {
         Directory.CreateDirectory(Path.Combine(_dir.Path, "sub"));
         _dir.Write("a.txt", "x");
-        _dir.Write("sub\\b.txt", "x");
+        _dir.Write(Path.Combine("sub", "b.txt"), "x");
 
         string previous = Directory.GetCurrentDirectory();
         try
         {
             Directory.SetCurrentDirectory(Root);
             var files = GlobResolver.Resolve("**/*.txt");
-            Assert.Equal(Expected(["a.txt", "sub\\b.txt"]), files);
+            Assert.Equal(Expected(["a.txt", Path.Combine("sub", "b.txt")]), files);
         }
         finally
         {
@@ -84,11 +88,11 @@ public sealed class GlobResolverTests : IDisposable
     {
         Directory.CreateDirectory(Path.Combine(_dir.Path, "sub"));
         _dir.Write("a.txt", "x");
-        _dir.Write("sub\\b.txt", "x");
+        _dir.Write(Path.Combine("sub", "b.txt"), "x");
 
         var files = GlobResolver.Resolve(Path.Combine(_dir.Path, "**"));
 
-        Assert.Equal(Expected(["a.txt", "sub\\b.txt"]), files);
+        Assert.Equal(Expected(["a.txt", Path.Combine("sub", "b.txt")]), files);
     }
 
     [Fact]
@@ -119,12 +123,12 @@ public sealed class GlobResolverTests : IDisposable
     {
         _dir.Write("a.txt", "x");
         Directory.CreateDirectory(Path.Combine(_dir.Path, "sub"));
-        _dir.Write("sub\\b.txt", "x");
+        _dir.Write(Path.Combine("sub", "b.txt"), "x");
 
         string pattern1 = Path.Combine(_dir.Path, "**", "*.txt");
         var files = GlobResolver.ResolveMany([pattern1, pattern1, Path.Combine(_dir.Path, "a.txt")]);
 
-        Assert.Equal(Expected(["a.txt", "sub\\b.txt"]), files);
+        Assert.Equal(Expected(["a.txt", Path.Combine("sub", "b.txt")]), files);
     }
 
     private string[] Expected(IEnumerable<string> relative)

@@ -4,6 +4,28 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Linux coverage in CI** - the `CI` workflow now runs the full test suite on
+  `ubuntu-latest` alongside `windows-latest`, with per-OS/arch NuGet cache keys
+  and per-OS test-result artifact names. The suite is now green on Linux, which
+  is the prerequisite for adding an arm64 runner.
+
+### Fixed
+
+- **`PermissionPathPolicy` case sensitivity follows the platform** - root
+  containment now compares ordinally on Unix and case-insensitively on Windows,
+  as documented, instead of always ignoring case. On a case-sensitive file
+  system the old behavior over-permitted: `/home/u/Models` counted as inside
+  `/home/u/models`.
+- **Model loads retry a Unix sharing conflict** - `ModelFileIo.OpenRead` only
+  treated the Windows sharing/lock codes (32/33) as transient. Unix emulates
+  `FileShare` with `flock()`, so a second opener gets `EWOULDBLOCK` instead and
+  the retry never ran. Both errnos are now recognized, so the antivirus/indexer
+  tolerance Windows already had also applies on Linux and macOS.
+
 ## [1.1.2.0] - 2026-11-11
 
 ### Added

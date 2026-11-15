@@ -68,7 +68,7 @@ public sealed class IncrementalTests
                     {
                         DisplayName = "Text",
                         TypeName = typeof(TextFileSource).AssemblyQualifiedName!,
-                        Args = new Dictionary<string, string> { ["path"] = dir.Path + "\\*.txt" },
+                        Args = new Dictionary<string, string> { ["path"] = Path.Combine(dir.Path, "*.txt") },
                     },
                 },
             },
@@ -88,7 +88,7 @@ public sealed class IncrementalTests
         using var dir = new TempDirectory();
         dir.Write("a.txt", "one\n");
         dir.Write("b.txt", "two\n");
-        var job = JobWithTextSources(dir.Path + "\\*.txt");
+        var job = JobWithTextSources(Path.Combine(dir.Path, "*.txt"));
 
         var plan = IncrementalPlanner.Build(job, Registry, _ => { });
 
@@ -105,7 +105,7 @@ public sealed class IncrementalTests
         string a = dir.Write("a.txt", "one\n");
 
         // Hash the file as it stands, then record it as already-trained.
-        var job = JobWithTextSources(dir.Path + "\\*.txt");
+        var job = JobWithTextSources(Path.Combine(dir.Path, "*.txt"));
         var current = SourceHasher.ComputeFileHashes(job.Sources);
         job.SourceFileHashes = current;
 
@@ -123,7 +123,7 @@ public sealed class IncrementalTests
         dir.Write("unchanged.txt", "untouched line\n");
         dir.Write("changed.txt", "original line\n");
 
-        var job = JobWithTextSources(dir.Path + "\\*.txt");
+        var job = JobWithTextSources(Path.Combine(dir.Path, "*.txt"));
         var current = SourceHasher.ComputeFileHashes(job.Sources);
         job.SourceFileHashes = current;
 
@@ -170,7 +170,7 @@ public sealed class IncrementalTests
                         TypeName = typeof(TextFileSource).AssemblyQualifiedName!,
                         Args = new Dictionary<string, string>
                         {
-                            ["path"] = dir.Path + "\\*.txt",
+                            ["path"] = Path.Combine(dir.Path, "*.txt"),
                             ["mode"] = "FilePerDoc",
                         },
                     },

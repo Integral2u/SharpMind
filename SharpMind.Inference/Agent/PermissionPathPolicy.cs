@@ -9,6 +9,14 @@ namespace SharpMind.Inference.Agent;
 public static class PermissionPathPolicy
 {
     /// <summary>
+    /// Windows file systems are case-insensitive, so a differently-cased child is
+    /// still inside its root. Unix file systems are case-sensitive, so treating
+    /// <c>/home/u/Models</c> as inside <c>/home/u/models</c> would over-permit.
+    /// </summary>
+    private static readonly StringComparison PathComparison =
+        OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+
+    /// <summary>
     /// Normalizes a path to its canonical absolute form, or returns <see langword="null"/>
     /// when the path is empty or cannot be resolved.
     /// </summary>
@@ -42,8 +50,8 @@ public static class PermissionPathPolicy
             if (r is null) continue;
             r = r.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
 
-            if (string.Equals(normalized, r, StringComparison.OrdinalIgnoreCase)) return true;
-            if (normalized.StartsWith(r + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) return true;
+            if (string.Equals(normalized, r, PathComparison)) return true;
+            if (normalized.StartsWith(r + Path.DirectorySeparatorChar, PathComparison)) return true;
         }
         return false;
     }

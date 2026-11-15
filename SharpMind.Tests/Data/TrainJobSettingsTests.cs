@@ -1,6 +1,8 @@
 using SharpMind.CUI.App;
 
-namespace SharpMind.Tests.Data;/// <summary>
+namespace SharpMind.Tests.Data;
+
+/// <summary>
 /// Verifies <see cref="TrainJobSettings"/> JSON persistence: a full job with
 /// multiple sources (each with per-source stages), global stages, QAT, keep
 /// recent, export path, resume, and that the checkpoint directory is always
@@ -8,6 +10,15 @@ namespace SharpMind.Tests.Data;/// <summary>
 /// </summary>
 public sealed class TrainJobSettingsTests
 {
+    /// <summary>
+    /// Builds a fixture path under the temp directory. Windows-style literals
+    /// such as <c>C:\models\x.smm</c> are not rooted on Unix, where
+    /// <see cref="Path.GetDirectoryName(string)"/> then returns an empty string
+    /// and the derived-path expectations no longer hold.
+    /// </summary>
+    private static string P(params string[] parts) =>
+        Path.Combine([Path.GetTempPath(), .. parts]);
+
     [Fact]
     public void SaveLoad_RoundTripsFullJob()
     {
@@ -128,8 +139,8 @@ public sealed class TrainJobSettingsTests
     [Fact]
     public void CheckpointDir_IsDerivedFromExportPath()
     {
-        var job = new TrainJobSettings { Name = "my-job", ExportPath = @"C:\models\my-job.smm" };
-        Assert.Equal(@"C:\models\checkpoints-my-job", job.CheckpointDir);
+        var job = new TrainJobSettings { Name = "my-job", ExportPath = P("models", "my-job.smm") };
+        Assert.Equal(P("models", "checkpoints-my-job"), job.CheckpointDir);
     }
 
 [Fact]
@@ -142,16 +153,16 @@ public sealed class TrainJobSettingsTests
     [Fact]
     public void CheckpointDir_TreatsFolderExportPathAsBase()
     {
-        var job = new TrainJobSettings { Name = "my-job", ExportPath = @"C:\temp" };
-        Assert.Equal(@"C:\temp\checkpoints-my-job", job.CheckpointDir);
-        Assert.Equal(@"C:\temp\my-job.smm", job.ExportFilePath);
+        var job = new TrainJobSettings { Name = "my-job", ExportPath = P("temp") };
+        Assert.Equal(P("temp", "checkpoints-my-job"), job.CheckpointDir);
+        Assert.Equal(P("temp", "my-job.smm"), job.ExportFilePath);
     }
 
     [Fact]
     public void ExportFilePath_FileExportUsedVerbatim()
     {
-        var job = new TrainJobSettings { Name = "my-job", ExportPath = @"C:\models\my-job.smm" };
-        Assert.Equal(@"C:\models\my-job.smm", job.ExportFilePath);
+        var job = new TrainJobSettings { Name = "my-job", ExportPath = P("models", "my-job.smm") };
+        Assert.Equal(P("models", "my-job.smm"), job.ExportFilePath);
     }
 
     [Fact]
@@ -187,11 +198,11 @@ public sealed class TrainJobSettingsTests
     {
         // A saved/loaded job with no explicit export path outputs next to its
         // own .smmt file — not the app's shared training folder.
-        var job = new TrainJobSettings { Name = "my-job", SourcePath = @"D:\jobs\my-job.smmt" };
+        var job = new TrainJobSettings { Name = "my-job", SourcePath = P("jobs", "my-job.smmt") };
 
-        Assert.Equal(@"D:\jobs", job.ExportFolder);
-        Assert.Equal(Path.Combine(@"D:\jobs", "my-job.smm"), job.ExportFilePath);
-        Assert.Equal(Path.Combine(@"D:\jobs", "checkpoints-my-job"), job.CheckpointDir);
+        Assert.Equal(P("jobs"), job.ExportFolder);
+        Assert.Equal(P("jobs", "my-job.smm"), job.ExportFilePath);
+        Assert.Equal(P("jobs", "checkpoints-my-job"), job.CheckpointDir);
     }
 
     [Fact]
@@ -200,22 +211,22 @@ public sealed class TrainJobSettingsTests
         var job = new TrainJobSettings
         {
             Name = "my-job",
-            SourcePath = @"D:\jobs\my-job.smmt",
-            ExportPath = @"E:\models\my-job.smm",
+            SourcePath = P("jobs", "my-job.smmt"),
+            ExportPath = P("exports", "my-job.smm"),
         };
 
-        Assert.Equal(@"E:\models", job.ExportFolder);
-        Assert.Equal(@"E:\models\my-job.smm", job.ExportFilePath);
-        Assert.Equal(Path.Combine(@"E:\models", "checkpoints-my-job"), job.CheckpointDir);
+        Assert.Equal(P("exports"), job.ExportFolder);
+        Assert.Equal(P("exports", "my-job.smm"), job.ExportFilePath);
+        Assert.Equal(P("exports", "checkpoints-my-job"), job.CheckpointDir);
     }
 
     [Fact]
     public void TokenizerFilePath_AnchorsBesideJobFile_WhenSourcePathSet()
     {
         // The trained tokenizer belongs with the job, not in the shared folder.
-        var job = new TrainJobSettings { Name = "my-job", SourcePath = @"D:\jobs\my-job.smmt" };
+        var job = new TrainJobSettings { Name = "my-job", SourcePath = P("jobs", "my-job.smmt") };
 
-        Assert.Equal(Path.Combine(@"D:\jobs", "my-job.tokenizer.json"), job.TokenizerFilePath);
+        Assert.Equal(P("jobs", "my-job.tokenizer.json"), job.TokenizerFilePath);
     }
 
     [Fact]
@@ -234,11 +245,11 @@ public sealed class TrainJobSettingsTests
         var job = new TrainJobSettings
         {
             Name = "my-job",
-            SourcePath = @"D:\jobs\my-job.smmt",
-            TokenizerCachePath = @"E:\tok\custom.json",
+            SourcePath = P("jobs", "my-job.smmt"),
+            TokenizerCachePath = P("tok", "custom.json"),
         };
 
-        Assert.Equal(@"E:\tok\custom.json", job.TokenizerFilePath);
+        Assert.Equal(P("tok", "custom.json"), job.TokenizerFilePath);
     }
 
     [Fact]
@@ -332,17 +343,17 @@ public sealed class TrainJobSettingsTests
         var job = new TrainJobSettings
         {
             Name = "embed-job",
-            SystemPromptPath = @"C:\prompts\assistant.md",
-            SkillsFolder = @"C:\skills",
-            PluginDllPaths = ["C:\\tools\\Weather.dll", "C:\\tools\\Calculator.dll"],
+            SystemPromptPath = P("prompts", "assistant.md"),
+            SkillsFolder = P("skills"),
+            PluginDllPaths = [P("tools", "Weather.dll"), P("tools", "Calculator.dll")],
         };
         Assert.True(job.Save(path, out var saveErr), saveErr);
 
         var loaded = TrainJobSettings.Load(path, out var loadErr);
         Assert.NotNull(loaded);
-        Assert.Equal(@"C:\prompts\assistant.md", loaded.SystemPromptPath);
-        Assert.Equal(@"C:\skills", loaded.SkillsFolder);
-        Assert.Equal(["C:\\tools\\Weather.dll", "C:\\tools\\Calculator.dll"], loaded.PluginDllPaths);
+        Assert.Equal(P("prompts", "assistant.md"), loaded.SystemPromptPath);
+        Assert.Equal(P("skills"), loaded.SkillsFolder);
+        Assert.Equal([P("tools", "Weather.dll"), P("tools", "Calculator.dll")], loaded.PluginDllPaths);
     }
 
     [Fact]
@@ -414,7 +425,7 @@ public sealed class TrainJobSettingsTests
         // Dirty-tracking compares baseline vs live payload JSON; SourcePath itself
         // must never appear as a key (the file-side guarantee is covered by
         // Save_SourcePath_IsNotWrittenIntoFile).
-        var job = new TrainJobSettings { Name = "baseline-job", SourcePath = @"C:\somewhere\else\baseline-job.smmt" };
+        var job = new TrainJobSettings { Name = "baseline-job", SourcePath = P("somewhere", "else", "baseline-job.smmt") };
 
         Assert.DoesNotContain("SourcePath", job.ToPayloadJson(), StringComparison.Ordinal);
     }

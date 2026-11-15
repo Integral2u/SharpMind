@@ -7,9 +7,9 @@ namespace SharpMind.Model.Format;
 /// and indexers on Windows can briefly hold a freshly written .gguf/.smm
 /// open with an exclusive handle; a load triggered right after an export
 /// (or a second model opened from the same path while the first is
-/// streaming) must not fail the whole app for that. Retries only the two
-/// Windows "someone else has this file" errors — a genuine missing file
-/// or a read fault still throws immediately.
+/// streaming) must not fail the whole app for that. Retries only the
+/// "someone else has this file" errors — a genuine missing file or a read
+/// fault still throws immediately.
 /// </summary>
 internal static class ModelFileIo
 {
@@ -17,6 +17,14 @@ internal static class ModelFileIo
 
     private const int ErrorSharingViolation = 32;
     private const int ErrorLockViolation = 33;
+
+    // Unix emulates FileShare with flock(), so a conflicting second opener
+    // fails with EWOULDBLOCK rather than the Windows sharing codes. .NET puts
+    // the raw errno in the low HRESULT word on those platforms.
+    private const int EwouldBlockLinux = 11;
+
+    private const int EwouldBlockMacOs = 35;
+
     private const int BaseRetryDelayMs = 50;
 
     /// <summary>Opens the file read-only, retrying a transient share/lock violation.</summary>
@@ -56,6 +64,8 @@ internal static class ModelFileIo
     private static bool IsTransient(IOException ex)
     {
         int code = Marshal.GetHRForException(ex) & 0xFFFF;
-        return code == ErrorSharingViolation || code == ErrorLockViolation;
+        return OperatingSystem.IsWindows()
+            ? code == ErrorSharingViolation || code == ErrorLockViolation
+            : code == EwouldBlockLinux || code == EwouldBlockMacOs;
     }
 }
