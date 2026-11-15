@@ -4,10 +4,31 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.1.2.0] - 2026-11-15
 
 ### Added
 
+- **Arm64 CI runner and `HardwareTier.Arm64`** - the test matrix also runs on
+  `ubuntu-24.04-arm` (Neoverse N2), so the engine is now exercised on AdvSimd
+  hardware. The new tier is detected after AVX2 and before SSE; it started as a
+  no-op that resolved every quant key to its `_scalar` target, and Q8_0 was the
+  first kernel on it, followed by Q4_K and Q6_K. `Arm64` is appended to the enum
+  (`= 5`) rather than inserted, because saved sessions and presets persist the
+  tier as a number.
+- **Q8_0 vec-dot and matmul on Arm64 NEON** - the first Arm64 NEON kernels, so
+  Q8_0 decode no longer resolves to scalar on NEON hardware. Eight int8 weights
+  are widened to two `Vector128<float>` (sbyte -> short -> int -> float) and
+  accumulated four lanes at a time, with the block scale folded into the widened
+  weights and a scalar tail for the last, possibly short block. Serial matmul is
+  a row loop of vec-dots - there is no blocked prefill microkernel yet - and
+  parallel decode splits columns through the same `DecodeParallel` heuristic as
+  the FMA and AVX2 variants. Quant keys without a NEON target still resolve to
+  scalar on Arm64: JigSaw treats an unregistered option as an error rather than
+  falling back, so `MappingBuilder` switches keys over one at a time, and
+  `HardwareTierTests` pins the current set. Correctness is covered by
+  `Q8BlockTailTests` (which includes the Arm64 tier, so the partial-block tails
+  are exercised) plus the agreement tests, which run every Q8_0 op against the
+  scalar reference on the ARM runner.
 - **Q4_K and Q6_K vec-dot and matmul on Arm64 NEON** - the two formats a real
   `Q4_K_M`/`Q5_K_M` file is made of, so a typical GGUF now runs NEON on Arm64
   instead of falling back to scalar. Q4_K decodes the 4-bit codes eight at a time
@@ -20,41 +41,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   first sub-block starts off a 32-value boundary. `KQuantUnpackTests` now runs on
   the Arm64 tier too, so the odd column offsets (K = 8, 137, 288, 320, 384, 896,
   4864) are compared against scalar on the ARM runner.
-- **Q8_0 vec-dot and matmul on Arm64 NEON** - the first kernels behind
-  `HardwareTier.Arm64`, so Q8_0 decode no longer resolves to scalar on NEON
-  hardware. Eight int8 weights are widened to two `Vector128<float>`
-  (sbyte -> short -> int -> float) and accumulated four lanes at a time, with the
-  block scale folded into the widened weights and a scalar tail for the last,
-  possibly short block. Serial matmul is a row loop of vec-dots - there is no
-  blocked prefill microkernel yet - and parallel decode splits columns through
-  the same `DecodeParallel` heuristic as the FMA and AVX2 variants. Every other
-  quant key still resolves to scalar on Arm64: JigSaw treats an unregistered
-  option as an error rather than falling back, so `MappingBuilder` switches keys
-  over one at a time, and `HardwareTierTests` pins the current set. Correctness
-  is covered by `Q8BlockTailTests` (which now includes the Arm64 tier, so the
-  partial-block tails are exercised) plus the existing agreement tests, which
-  run every Q8_0 op against the scalar reference on the ARM runner.
-- **A manual `Bench` workflow** - `workflow_dispatch` runs `kbench` on
-  `ubuntu-latest` (`fma`/`avx2`/`scalar`) and `ubuntu-24.04-arm`
-  (`arm64`/`scalar`) with identical shapes and writes the table to the run
-  summary. Hosted runners are different CPUs, so the useful reading is the
-  vector-over-scalar ratio within one runner, which is how a NEON kernel will be
-  compared against the AVX2 ladder.
-
 - **Linux coverage in CI** - the `CI` workflow now runs the full test suite on
   `ubuntu-latest` alongside `windows-latest`, with per-OS/arch NuGet cache keys
   and per-OS test-result artifact names. The suite is now green on Linux, which
   is the prerequisite for adding an arm64 runner.
-- **Arm64 CI runner and `HardwareTier.Arm64`** - the test matrix also runs on
-  `ubuntu-24.04-arm` (Neoverse N2), so the engine is now exercised on AdvSimd
-  hardware. The new tier is detected after AVX2 and before SSE; it started as a
-  no-op that resolved every quant key to its `_scalar` target, and the Q8_0
-  kernels above are the first real targets behind it. `Arm64` is appended to the
-  enum (`= 5`) rather than inserted, because saved sessions and presets persist
-  the tier as a number.
+- **A manual `Bench` workflow** - `workflow_dispatch` runs `kbench` on
+  `ubuntu-latest` (`fma`/`avx2`/`scalar`) and `ubuntu-24.04-arm`
+  (`arm64`/`scalar`) with identical shapes and writes the table to the run
+  summary. Hosted runners are different CPUs, so the useful reading is the
+  vector-over-scalar ratio within one runner, which is how a NEON kernel is
+  compared against the AVX2 ladder.
+- **Delegation keeps the parent cache** - one-shot sub-agents run on a
+  dedicated, prompt-bounded generator, so a `delegate` call no longer resets
+  the parent conversation's KV cache and the next turn extends it instead of
+  re-prefilling. Engine-backed sessions export the parent cache before the
+  sub-agent and restore it in a `finally`.
 
 ### Changed
 
+- **Mapping overrides now replace preset values** - `ActivationFactory`,
+  `GradientMappingFactory`, `ModelFactory.BuildBlock` and `NormOpsFactory`
+  apply caller overrides on top of the config mapping through
+  `SharpMindConfig.ToJigSawMapping(overrides)`. This restores the CUI's
+  `UseParallelKernels` option and any caller-selected kernel tier.
 - **A forced hardware tier this CPU cannot run now fails with a clear message** -
   `HardwareTierHelpers.EnsureUsable` rejects it in `MappingBuilder`, so an Arm64
   preset opened on x86 (or an AVX2 preset on Arm64) raises
@@ -62,6 +71,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   instead of faulting in the first kernel. The options screen only offers tiers
   the host actually supports, and a preset that names another architecture's
   tier opens as `Auto`.
+- Version bumped to **1.1.2.0**.
 
 ### Fixed
 
@@ -81,25 +91,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   `FileShare` with `flock()`, so a second opener gets `EWOULDBLOCK` instead and
   the retry never ran. Both errnos are now recognized, so the antivirus/indexer
   tolerance Windows already had also applies on Linux and macOS.
-
-## [1.1.2.0] - 2026-11-11
-
-### Added
-
-- **Delegation keeps the parent cache** - one-shot sub-agents run on a
-  dedicated, prompt-bounded generator, so a `delegate` call no longer resets
-  the parent conversation's KV cache and the next turn extends it instead of
-  re-prefilling. Engine-backed sessions export the parent cache before the
-  sub-agent and restore it in a `finally`.
-
-### Changed
-
-- **Mapping overrides now replace preset values** - `ActivationFactory`,
-  `GradientMappingFactory`, `ModelFactory.BuildBlock` and `NormOpsFactory`
-  apply caller overrides on top of the config mapping through
-  `SharpMindConfig.ToJigSawMapping(overrides)`. This restores the CUI's
-  `UseParallelKernels` option and any caller-selected kernel tier.
-- Version bumped to **1.1.2.0**.
 
 ## [1.1.1.0] - 2026-11-08
 
