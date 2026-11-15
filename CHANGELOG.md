@@ -12,6 +12,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   `ubuntu-latest` alongside `windows-latest`, with per-OS/arch NuGet cache keys
   and per-OS test-result artifact names. The suite is now green on Linux, which
   is the prerequisite for adding an arm64 runner.
+- **Arm64 CI runner and `HardwareTier.Arm64`** - the test matrix also runs on
+  `ubuntu-24.04-arm` (Neoverse N2), so the engine is now exercised on AdvSimd
+  hardware. The new tier is detected after AVX2 and before SSE and currently
+  resolves every quant key to its `_scalar` target, so kernel selection is
+  unchanged by this release; it is the seam for the NEON kernels to come.
+  `Arm64` is appended to the enum (`= 5`) rather than inserted, because saved
+  sessions and presets persist the tier as a number.
+
+### Changed
+
+- **A forced hardware tier this CPU cannot run now fails with a clear message** -
+  `HardwareTierHelpers.EnsureUsable` rejects it in `MappingBuilder`, so an Arm64
+  preset opened on x86 (or an AVX2 preset on Arm64) raises
+  `PlatformNotSupportedException` naming the tier and the process architecture
+  instead of faulting in the first kernel. The options screen only offers tiers
+  the host actually supports, and a preset that names another architecture's
+  tier opens as `Auto`.
 
 ### Fixed
 

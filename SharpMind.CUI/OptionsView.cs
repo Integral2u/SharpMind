@@ -39,6 +39,23 @@ public sealed class OptionsView : View
     private readonly RadioGroup generatorRadio;
     private readonly TextField tempField;
     private readonly TextField repetitionWindowField;
+
+    /// <summary>
+    /// Tiers this CPU can actually run, best first. The radio index is a plain
+    /// array index, so the list comes from <see cref="HardwareTierHelpers"/>
+    /// rather than offering an Arm64 choice on x86 (or an AVX2 choice on an
+    /// SSE-only host) that would fail at launch.
+    /// </summary>
+    private static readonly HardwareTier[] SelectableTiers =
+        [.. HardwareTierHelpers.SelectableTiers];
+
+    /// <summary>Radio index for <paramref name="tier"/>, falling back to Auto when this CPU lacks it.</summary>
+    private static int TierIndex(HardwareTier tier)
+    {
+        int index = Array.IndexOf(SelectableTiers, tier);
+        return index >= 0 ? index : Array.IndexOf(SelectableTiers, HardwareTier.Auto);
+    }
+
     private readonly TextField agentNameField;
     private readonly CheckBox agentsCheck;
     private readonly CheckBox enableThinkingCheck;
@@ -61,6 +78,12 @@ public sealed class OptionsView : View
         _options = options;
         _settings = settings;
         _embedded = SessionLauncher.LoadEmbeddedPlugins(options.ModelPath);
+        // A preset authored on the other architecture can name a tier this CPU
+        // cannot run. Falling back to Auto keeps the radio honest about what a
+        // launch would do; an explicitly forced tier is still rejected by
+        // MappingBuilder with a message naming the tier and the architecture.
+        if (!HardwareTierHelpers.IsSupported(options.HardwareTier))
+            options.HardwareTier = HardwareTier.Auto;
         // ScrollView's own Width/Height become the visible viewport; formContent
         // is sized to its full (taller-than-the-window) extent and set as
         // ScrollView.ContentSize. Several Terminal.Gui v1 GitHub issues report
@@ -145,10 +168,17 @@ public sealed class OptionsView : View
         row += Enum.GetValues<FormatterStrategy>().Length + 1;
 
         AddLabel("Hardware tier:");
-        hwRadio = new RadioGroup([.. Enum.GetNames<HardwareTier>().Select(p => (ustring)p)]) { X = 30, Y = row, SelectedItem = (int)options.HardwareTier };
-        hwRadio.SelectedItemChanged += (args) => _options.HardwareTier = (HardwareTier)args.SelectedItem;
+        hwRadio = new RadioGroup([.. SelectableTiers.Select(t => (ustring)t.ToString())])
+        {
+            X = 30, Y = row, SelectedItem = TierIndex(options.HardwareTier)
+        };
+        hwRadio.SelectedItemChanged += (args) =>
+        {
+            if (args.SelectedItem >= 0 && args.SelectedItem < SelectableTiers.Length)
+                _options.HardwareTier = SelectableTiers[args.SelectedItem];
+        };
         _formContent.Add(hwRadio);
-        row += Enum.GetValues<HardwareTier>().Length + 1;
+        row += SelectableTiers.Length + 1;
         
         parallelCheck = new CheckBox("Use parallel kernels (faster on multi-core CPU)", options.UseParallelKernels) { X = 1, Y = row };
         parallelCheck.Toggled += (_) => _options.UseParallelKernels = parallelCheck.Checked;
@@ -433,7 +463,7 @@ public sealed class OptionsView : View
         _updatingAccelerator = false;
         loadModeRadio.SelectedItem = (int)options.LoadMode;
         formatterRadio.SelectedItem = (int)options.Formatter;
-        hwRadio.SelectedItem = (int)options.HardwareTier;
+        hwRadio.SelectedItem = TierIndex(options.HardwareTier);
         parallelCheck.Checked = options.UseParallelKernels;
         tempField.Text = (ustring)_options.Sampling.Temperature.ToString("F2");
         topKField.Text = (ustring)_options.Sampling.TopK.ToString("F2");

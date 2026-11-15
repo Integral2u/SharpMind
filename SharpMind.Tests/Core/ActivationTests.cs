@@ -250,9 +250,13 @@ namespace SharpMind.Tests.Core
         [Fact]
         public void Factory_DifferentConfigValues_ReturnDifferentInstances()
         {
-            var scalar = ActivationFactory.Create(SharpMindConfig.Llama with { Hardware = HardwareTier.Scalar });
-            var avx2 = ActivationFactory.Create(SharpMindConfig.Llama with { Hardware = HardwareTier.AVX2 });
-            Assert.NotSame(scalar, avx2);
+            // Two configs that both run everywhere: the hardware axis cannot be
+            // used here, because AVX2 is not a real tier on Arm64 (forcing it is
+            // rejected) and Arm64 currently resolves to the same scalar targets as
+            // Scalar, which would legitimately hand back the same instance.
+            var silu = ActivationFactory.Create(SharpMindConfig.Llama with { Hardware = HardwareTier.Scalar });
+            var gelu = ActivationFactory.Create(SharpMindConfig.Gpt with { Hardware = HardwareTier.Scalar });
+            Assert.NotSame(silu, gelu);
         }
 
         [Fact]

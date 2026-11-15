@@ -14,13 +14,15 @@ env:
 jobs:
   test:
     # Keep the suite green on Linux as well as Windows. The engine is
-    # cross-platform by design; running both keeps path, file-sharing and
-    # console assumptions honest, and is the prerequisite for adding an
-    # arm64 runner.
+    # cross-platform by design; running Linux x64 keeps path, file-sharing and
+    # console assumptions honest, and the arm64 runner is the permanent
+    # correctness gate for the NEON hardware tier (Neoverse N2, AdvSimd).
+    # Hosted arm64 runners are free for public repositories, so this costs
+    # nothing but wall-clock time.
     strategy:
       fail-fast: false
       matrix:
-        os: [ windows-latest, ubuntu-latest ]
+        os: [ windows-latest, ubuntu-latest, ubuntu-24.04-arm ]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

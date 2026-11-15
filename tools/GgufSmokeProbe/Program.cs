@@ -56,7 +56,7 @@ if (args.Length > 0 && args[0] == "widebench")
 
 if (args.Length < 2)
 {
-    Console.Error.WriteLine("usage: meta <file>   |   dump <file> [pattern]   |   bind <file>   |   fwd <file> [full] [resident]   |   fwdmulti <file> <promptfile> [single|...]   |   ref <file> [prompt]   |   run <file> [prompt] [maxTokens] [full] [resident] [topk] [serialmm]   |   bench <file> [prompt] [warmup] [measure] [full] [resident] [serialmm] [nowide] [reps=N] [ids]   |   benchab <file> [prompt] [warmup] [measure] [full] [resident]   |   stages <file> [prompt] [warmup] [measure] [full] [resident] [serialmm]   |   widebench [K] [N] [iters]   |   kbench <q2k|q3k|q4k|q5k|q6k|q8k|q4_0|q4_1|iq4nl|q5_0|q5_1|q8_0|q8_1|f32> [K] [N] [iters] [fma|avx2|scalar]");
+    Console.Error.WriteLine("usage: meta <file>   |   dump <file> [pattern]   |   bind <file>   |   fwd <file> [full] [resident]   |   fwdmulti <file> <promptfile> [single|...]   |   ref <file> [prompt]   |   run <file> [prompt] [maxTokens] [full] [resident] [topk] [serialmm]   |   bench <file> [prompt] [warmup] [measure] [full] [resident] [serialmm] [nowide] [reps=N] [ids]   |   benchab <file> [prompt] [warmup] [measure] [full] [resident]   |   stages <file> [prompt] [warmup] [measure] [full] [resident] [serialmm]   |   widebench [K] [N] [iters]   |   kbench <q2k|q3k|q4k|q5k|q6k|q8k|q4_0|q4_1|iq4nl|q5_0|q5_1|q8_0|q8_1|f32> [K] [N] [iters] [fma|avx2|scalar|arm64]");
     return 2;
 }
 
@@ -2633,7 +2633,7 @@ static unsafe int RunWideKernelBench(string[] args)
     }
 }
 
-// kbench <kind> [K=2048] [N=1408] [iters=50] [fma|avx2|scalar]
+// kbench <kind> [K=2048] [N=1408] [iters=50] [fma|avx2|scalar|arm64]
 //
 // Runs one quantized decode matmul (M=1) in isolation on a deliberately
 // non-zero weight buffer and reports the achieved MAC rate. An all-zero buffer
@@ -2649,6 +2649,12 @@ static unsafe int RunKernelBench(string[] args)
     int N = args.Length > 3 && int.TryParse(args[3], out int nv) ? nv : 1408;
     int iters = args.Length > 4 && int.TryParse(args[4], out int iv) ? iv : 50;
     string variant = args.Length > 5 ? args[5].ToLowerInvariant() : "fma";
+
+    // Arm64 has no dedicated kernels yet, so HardwareTier.Arm64 resolves to the
+    // scalar targets. Mapping the variant keeps `kbench ... arm64` usable as the
+    // A/B seam: today it reports the scalar row, and it starts reporting real
+    // NEON numbers as kernels land without changing the harness.
+    if (variant == "arm64") variant = "scalar";
 
     int elPerBlock; int blockBytes;
     switch (kind)

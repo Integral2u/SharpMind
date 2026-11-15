@@ -1,3 +1,4 @@
+using System.Runtime.Intrinsics.Arm;
 using System.Runtime.Intrinsics.X86;
 using SharpMind.Core;
 using SharpMind.Core.Quantization;
@@ -36,6 +37,7 @@ public class QuantizationAgreementTests
     private static List<(string name, HardwareTier tier)> GetAvailableTiers()
     {
         var tiers = new List<(string, HardwareTier)> { ("Scalar", HardwareTier.Scalar) };
+        if (AdvSimd.Arm64.IsSupported) tiers.Add(("Arm64", HardwareTier.Arm64));
         if (Sse.IsSupported) tiers.Add(("SSE", HardwareTier.SSE));
         if (Avx2.IsSupported) tiers.Add(("AVX2", HardwareTier.AVX2));
         if (Fma.IsSupported) tiers.Add(("FMA", HardwareTier.FMA));

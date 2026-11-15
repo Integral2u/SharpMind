@@ -3,7 +3,6 @@ using SharpMind.Core;
 using SharpMind.CUI.App;
 using SharpMind.Inference.Chat;
 using Terminal.Gui;
-using System.Runtime.Intrinsics.X86;
 using System.Text;
 
 namespace SharpMind.CUI;
@@ -121,12 +120,11 @@ public sealed class ChatView : View
         _statusLabel = new Label("Ready") { X = 0, Y = 0, Width = Dim.Fill() };
         _agentLabel = new Label(agentName) { X = 0, Y = 2, Width = Dim.Fill() };
 
-        var resolvedHw = options.HardwareTier switch
-        {
-            HardwareTier.Auto => Fma.IsSupported ? "FMA" : Avx2.IsSupported ? "AVX2" : Sse3.IsSupported ? "SSE" : "Scalar",
-            _ => options.HardwareTier.ToString()
-        };
-        string hwDisplay = resolvedHw;
+        // DetectBestTier is the single source of truth for what the host runs, so
+        // an Arm64 session reports Arm64 instead of a third copy of the x86 ladder.
+        string hwDisplay = (options.HardwareTier == HardwareTier.Auto
+            ? HardwareTierHelpers.DetectBestTier()
+            : options.HardwareTier).ToString();
 
         string formatterDisplay = SanitizeFormatterName(bridge.Formatter is { } fmt
             ? fmt.GetType().Name
