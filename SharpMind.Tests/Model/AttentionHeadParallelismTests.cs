@@ -17,6 +17,24 @@ namespace SharpMind.Tests.Model;
 /// </summary>
 public class AttentionHeadParallelismTests
 {
+    /// <summary>
+    /// The production kernel on x86 is the FMA one, but it is x86-only and the
+    /// head-loop isolation under test does not depend on which flash kernel runs.
+    /// Arm64 therefore exercises the scalar kernel rather than throwing out of
+    /// <c>Avx.LoadVector256</c>.
+    /// </summary>
+    private static unsafe void Flash(
+        float* q, float* k, float* v, float* output, int seqLen, int kvLen, int headDim,
+        float scale, bool causal, int qStride, int oStride, float alibiSlope, int windowSize)
+    {
+        if (System.Runtime.Intrinsics.X86.Avx2.IsSupported && System.Runtime.Intrinsics.X86.Fma.IsSupported)
+            AttentionKernels.ScaledDotProductFlashFMA(q, k, v, output, seqLen, kvLen, headDim,
+                scale, causal, qStride, oStride, alibiSlope, windowSize);
+        else
+            AttentionKernels.ScaledDotProductFlashScalar(q, k, v, output, seqLen, kvLen, headDim,
+                scale, causal, qStride, oStride, alibiSlope, windowSize);
+    }
+
     [Theory]
     [InlineData(14, 2, 1, 1691)]    // Qwen2-0.5B decode: GQA, 7 query heads per KV head
     [InlineData(14, 2, 128, 1691)]  // ...and one prefill chunk
@@ -46,7 +64,7 @@ public class AttentionHeadParallelismTests
             float* fq = pQ, fk = pK, fv = pV;
 
             void Head(int h, float* outBase) =>
-                AttentionKernels.ScaledDotProductFlashFMA(
+                Flash(
                     fq + (long)h * headDim,
                     fk + (long)(h / kvGroup) * kvLen * headDim,
                     fv + (long)(h / kvGroup) * kvLen * headDim,
@@ -91,7 +109,7 @@ public class AttentionHeadParallelismTests
         {
             float* fq = pQ, fk = pK, fv = pV, fo = pOut;
             Parallel.For(0, numHeads, h =>
-                AttentionKernels.ScaledDotProductFlashFMA(
+                Flash(
                     fq + (long)h * headDim,
                     fk + (long)(h / kvGroup) * kvLen * headDim,
                     fv + (long)(h / kvGroup) * kvLen * headDim,
