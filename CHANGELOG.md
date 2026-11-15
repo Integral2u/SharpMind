@@ -65,6 +65,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- **`gemma3n`, `qwen35moe` and `llama4` resolve to their real presets** - `gemma3n`
+  fell through to the SiLU/SwiGLU fallback although, like `gemma2`/`gemma3`, it is
+  a GELU/GeGLU model; the two routed-expert families resolved to `FfnKind.Gated`,
+  and `FfnKind` is what tells `ModelFactory` which FFN layer to build, so a MoE
+  file was assembled as a dense gated FFN and could not bind its expert tensors.
+  `UnsupportedArchitectureTests` pins all three.
 - **`PermissionPathPolicy` case sensitivity follows the platform** - root
   containment now compares ordinally on Unix and case-insensitively on Windows,
   as documented, instead of always ignoring case. On a case-sensitive file
