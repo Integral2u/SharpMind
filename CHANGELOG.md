@@ -8,6 +8,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- **Q8_0 vec-dot and matmul on Arm64 NEON** - the first kernels behind
+  `HardwareTier.Arm64`, so Q8_0 decode no longer resolves to scalar on NEON
+  hardware. Eight int8 weights are widened to two `Vector128<float>`
+  (sbyte -> short -> int -> float) and accumulated four lanes at a time, with the
+  block scale folded into the widened weights and a scalar tail for the last,
+  possibly short block. Serial matmul is a row loop of vec-dots - there is no
+  blocked prefill microkernel yet - and parallel decode splits columns through
+  the same `DecodeParallel` heuristic as the FMA and AVX2 variants. Every other
+  quant key still resolves to scalar on Arm64: JigSaw treats an unregistered
+  option as an error rather than falling back, so `MappingBuilder` switches keys
+  over one at a time, and `HardwareTierTests` pins the current set. Correctness
+  is covered by `Q8BlockTailTests` (which now includes the Arm64 tier, so the
+  partial-block tails are exercised) plus the existing agreement tests, which
+  run every Q8_0 op against the scalar reference on the ARM runner.
 - **A manual `Bench` workflow** - `workflow_dispatch` runs `kbench` on
   `ubuntu-latest` (`fma`/`avx2`/`scalar`) and `ubuntu-24.04-arm`
   (`arm64`/`scalar`) with identical shapes and writes the table to the run
@@ -21,11 +35,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   is the prerequisite for adding an arm64 runner.
 - **Arm64 CI runner and `HardwareTier.Arm64`** - the test matrix also runs on
   `ubuntu-24.04-arm` (Neoverse N2), so the engine is now exercised on AdvSimd
-  hardware. The new tier is detected after AVX2 and before SSE and currently
-  resolves every quant key to its `_scalar` target, so kernel selection is
-  unchanged by this release; it is the seam for the NEON kernels to come.
-  `Arm64` is appended to the enum (`= 5`) rather than inserted, because saved
-  sessions and presets persist the tier as a number.
+  hardware. The new tier is detected after AVX2 and before SSE; it started as a
+  no-op that resolved every quant key to its `_scalar` target, and the Q8_0
+  kernels above are the first real targets behind it. `Arm64` is appended to the
+  enum (`= 5`) rather than inserted, because saved sessions and presets persist
+  the tier as a number.
 
 ### Changed
 

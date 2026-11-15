@@ -290,6 +290,7 @@ public abstract class QuantizationOps
     [PuzzleCornerPiece(QuantizationKeys.KeyVecDotQ8_0, true, null,
         "q8_0_fma", $"{NS}.{nameof(QuantizationKernels.VecDotQ8_0_FMA)}",
         "q8_0_avx2", $"{NS}.{nameof(QuantizationKernels.VecDotQ8_0_AVX2)}",
+        "q8_0_arm64", $"{NS}.{nameof(QuantizationKernels.VecDotQ8_0_Arm64)}",
         "q8_0_sse", $"{NS}.{nameof(QuantizationKernels.VecDotQ8_0_SSE)}",
         "q8_0_scalar", $"{NS}.{nameof(QuantizationKernels.VecDotQ8_0_Scalar)}")]
     public abstract unsafe float VecDotQ8_0(float* input, byte* rawWeights, int col, int inFeatures);
@@ -299,6 +300,8 @@ public abstract class QuantizationOps
         "qmatmul_q8_0_parallel_fma", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ8_0_Parallel_FMA)}",
         "qmatmul_q8_0_serial_avx2", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ8_0_Serial_AVX2)}",
         "qmatmul_q8_0_parallel_avx2", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ8_0_Parallel_AVX2)}",
+        "qmatmul_q8_0_serial_arm64", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ8_0_Serial_Arm64)}",
+        "qmatmul_q8_0_parallel_arm64", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ8_0_Parallel_Arm64)}",
         "qmatmul_q8_0_serial_sse", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ8_0_Serial_Scalar)}",
         "qmatmul_q8_0_parallel_sse", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ8_0_Parallel_Scalar)}",
         "qmatmul_q8_0_serial_scalar", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ8_0_Serial_Scalar)}",

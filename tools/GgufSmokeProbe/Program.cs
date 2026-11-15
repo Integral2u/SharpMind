@@ -2650,11 +2650,10 @@ static unsafe int RunKernelBench(string[] args)
     int iters = args.Length > 4 && int.TryParse(args[4], out int iv) ? iv : 50;
     string variant = args.Length > 5 ? args[5].ToLowerInvariant() : "fma";
 
-    // Arm64 has no dedicated kernels yet, so HardwareTier.Arm64 resolves to the
-    // scalar targets. Mapping the variant keeps `kbench ... arm64` usable as the
-    // A/B seam: today it reports the scalar row, and it starts reporting real
-    // NEON numbers as kernels land without changing the harness.
-    if (variant == "arm64") variant = "scalar";
+    // Only Q8_0 has NEON targets so far; every other kind still resolves to the
+    // scalar kernels on Arm64. Mapping those keeps `kbench ... arm64` usable for
+    // any kind and reports the NEON row as soon as a kind grows one.
+    if (variant == "arm64" && kind != "q8_0") variant = "scalar";
 
     int elPerBlock; int blockBytes;
     switch (kind)
@@ -2720,6 +2719,7 @@ static unsafe int RunKernelBench(string[] args)
         case "q8k_scalar": par = QuantizationKernels.QuantizedMatMulQ8K_Parallel_Scalar; ser = QuantizationKernels.QuantizedMatMulQ8K_Serial_Scalar; break;
         case "q8_0": par = QuantizationKernels.QuantizedMatMulQ8_0_Parallel_FMA; ser = QuantizationKernels.QuantizedMatMulQ8_0_Serial_FMA; break;
         case "q8_0_avx2": par = QuantizationKernels.QuantizedMatMulQ8_0_Parallel_AVX2; ser = QuantizationKernels.QuantizedMatMulQ8_0_Serial_AVX2; break;
+        case "q8_0_arm64": par = QuantizationKernels.QuantizedMatMulQ8_0_Parallel_Arm64; ser = QuantizationKernels.QuantizedMatMulQ8_0_Serial_Arm64; break;
         case "q8_0_scalar": par = QuantizationKernels.QuantizedMatMulQ8_0_Parallel_Scalar; ser = QuantizationKernels.QuantizedMatMulQ8_0_Serial_Scalar; break;
         case "f32": par = QuantizationKernels.QuantizedMatMulF32_Parallel_FMA; ser = QuantizationKernels.QuantizedMatMulF32_Serial_FMA; break;
         case "f32_avx2": par = QuantizationKernels.QuantizedMatMulF32_Parallel_FMA; ser = QuantizationKernels.QuantizedMatMulF32_Serial_FMA; break;
