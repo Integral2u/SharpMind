@@ -25,6 +25,10 @@ namespace SharpMind.Tests.Core
         [Fact]
         public void SseTier_FallsBackToScalarKernelsWithNoSseTarget()
         {
+            // SSE does not exist on Arm64, and forcing a tier the CPU cannot run
+            // is now rejected, so this path is x86-only by definition.
+            if (!System.Runtime.Intrinsics.X86.Sse.IsSupported) return;
+
             var mapping = GradientMappingFactory.Create(
                 SharpMindConfig.Llama with { Hardware = HardwareTier.SSE });
 

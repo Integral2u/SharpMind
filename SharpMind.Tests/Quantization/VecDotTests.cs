@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Runtime.Intrinsics.Arm;
 using System.Runtime.Intrinsics.X86;
 using SharpMind.Core.Quantization;
 using Xunit;
@@ -15,6 +16,11 @@ public class VecDotTests
     public static IEnumerable<object[]> AllQuantizationOps()
     {
         yield return new object[] { QuantizationFactory.Create(HardwareTier.Scalar) };
+        // Arm64 currently resolves to the scalar targets, so this is the guard
+        // that the tier assembles at all on a NEON host - and the seam that will
+        // start exercising real kernels as they land.
+        if (AdvSimd.Arm64.IsSupported)
+            yield return new object[] { QuantizationFactory.Create(HardwareTier.Arm64) };
         if (Sse.IsSupported)
         {
             yield return new object[] { QuantizationFactory.Create(HardwareTier.SSE) };
@@ -405,6 +411,10 @@ public class VecDotTests
         foreach (var tier in Enum.GetValues<HardwareTier>())
         {
             if (tier == HardwareTier.Scalar) continue;
+            // Arm64 and the x86 tiers are mutually exclusive, so creating ops for
+            // the other architecture's tier is a clean PlatformNotSupportedException
+            // rather than a comparison that could ever run.
+            if (!HardwareTierHelpers.IsSupported(tier)) continue;
             var q = QuantizationFactory.Create(tier);
             fixed (float* pIn = input) fixed (byte* pW = rawWeights)
                 Assert.Equal(expected, q.VecDotQ4_0(pIn, pW, 0, IN_FEATURES), 4);

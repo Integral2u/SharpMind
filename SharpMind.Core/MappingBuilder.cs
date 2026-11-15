@@ -3,7 +3,17 @@ namespace SharpMind.Core;
 public class MappingBuilder(HardwareTier hardware = HardwareTier.Auto)
 {
     private readonly Dictionary<string, string> _mapping = [];
-    private readonly HardwareTier _hardware = hardware == HardwareTier.Auto ? HardwareTierHelpers.DetectBestTier() : hardware;
+    private readonly HardwareTier _hardware = ResolveTier(hardware);
+
+    /// <summary>
+    /// Resolves <see cref="HardwareTier.Auto"/> and rejects a tier this CPU
+    /// cannot run. Every mapping in the engine is built through here, so this is
+    /// the single choke point that keeps a forced tier from reaching a kernel
+    /// it would fault in.
+    /// </summary>
+    private static HardwareTier ResolveTier(HardwareTier hardware) =>
+        HardwareTierHelpers.EnsureUsable(
+            hardware == HardwareTier.Auto ? HardwareTierHelpers.DetectBestTier() : hardware);
 
     public MappingBuilder ApplyPreset(SharpMindConfig config)
     {
