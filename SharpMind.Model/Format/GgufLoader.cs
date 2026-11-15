@@ -512,6 +512,10 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
             NormTypeOverride = normTypeOverride,
             NumExperts = expertCount,
             TopKExperts = topKExperts,
+            // Routed experts are a property of the file, not of the arch string:
+            // the tensor directory is the authority, and the preset table is only
+            // a hint (see ModelFactory.ResolveFfnKind).
+            HasRoutedExperts = TransformerWeights.IsMoEGguf(meta.Tensors),
             ExpertFfnDim = expertFfnDim,
             SharedExpertFfnDim = sharedExpertFfnDim,
             SlidingWindowSize = slidingWindowSize,
