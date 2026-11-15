@@ -111,7 +111,7 @@ public class HardwareTierTests
     }
 
     [Fact]
-    public void Arm64_UsesNeonForQ8_0AndScalarForEverythingElse()
+    public void Arm64_UsesNeonForTheKernelsThatExistAndScalarElsewhere()
     {
         if (!AdvSimd.Arm64.IsSupported) return;
 
@@ -122,14 +122,22 @@ public class HardwareTierTests
         var arm = new MappingBuilder(HardwareTier.Arm64).ApplyQuantPreset().Build();
         var scalar = new MappingBuilder(HardwareTier.Scalar).ApplyQuantPreset().Build();
 
+        Assert.Equal("q4k_arm64", arm["vecdot_q4k"]);
+        Assert.Equal("q6k_arm64", arm["vecdot_q6k"]);
         Assert.Equal("q8_0_arm64", arm["vecdot_q8_0"]);
+        Assert.Equal("qmatmul_q4k_parallel_arm64", arm["qmatmul_q4k"]);
+        Assert.Equal("qmatmul_q6k_parallel_arm64", arm["qmatmul_q6k"]);
         Assert.Equal("qmatmul_q8_0_parallel_arm64", arm["qmatmul_q8_0"]);
 
         string[] differing =
             [.. arm.Where(kv => scalar[kv.Key] != kv.Value)
                    .Select(kv => kv.Key)
                    .OrderBy(key => key, StringComparer.Ordinal)];
-        Assert.Equal(new[] { "qmatmul_q8_0", "vecdot_q8_0" }, differing);
+        Assert.Equal(new[]
+        {
+            "qmatmul_q4k", "qmatmul_q6k", "qmatmul_q8_0",
+            "vecdot_q4k", "vecdot_q6k", "vecdot_q8_0",
+        }, differing);
 
         // ...and the mapping assembles, which is the part JigSaw rejects when an
         // option is unregistered rather than falling back to the key's default.
