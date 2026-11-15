@@ -8,6 +8,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- **A manual `Bench` workflow** - `workflow_dispatch` runs `kbench` on
+  `ubuntu-latest` (`fma`/`avx2`/`scalar`) and `ubuntu-24.04-arm`
+  (`arm64`/`scalar`) with identical shapes and writes the table to the run
+  summary. Hosted runners are different CPUs, so the useful reading is the
+  vector-over-scalar ratio within one runner, which is how a NEON kernel will be
+  compared against the AVX2 ladder.
+
 - **Linux coverage in CI** - the `CI` workflow now runs the full test suite on
   `ubuntu-latest` alongside `windows-latest`, with per-OS/arch NuGet cache keys
   and per-OS test-result artifact names. The suite is now green on Linux, which

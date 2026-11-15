@@ -1,0 +1,80 @@
+name: Bench
+
+# Manual, dispatch-only: this is the yardstick for kernel work, not a gate.
+# Hosted runners are different CPUs, so the numbers that matter are ratios
+# within one runner (avx2/scalar on x64, arm64/scalar on Arm64), not absolute
+# GMAC/s across them.
+on:
+  workflow_dispatch:
+    inputs:
+      kinds:
+        description: 'Space-separated kbench kinds'
+        required: false
+        default: 'q8_0 q4k q6k f32'
+      k:
+        description: 'Inner dimension (K)'
+        required: false
+        default: '2048'
+      n:
+        description: 'Row count (N)'
+        required: false
+        default: '1408'
+      iters:
+        description: 'Iterations per entry point'
+        required: false
+        default: '200'
+
+permissions:
+  contents: read
+
+jobs:
+  kbench:
+    name: kbench (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # x64: the tier ladder this work is judged against.
+          - os: ubuntu-latest
+            variants: 'fma avx2 scalar'
+          # Arm64: arm64 is the tier users get; scalar is the same kernels today,
+          # so the pair also shows the Arm64 mapping is still a no-op.
+          - os: ubuntu-24.04-arm
+            variants: 'arm64 scalar'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build kbench
+        run: dotnet build tools/GgufSmokeProbe/GgufSmokeProbe.csproj -c Release
+
+      - name: Run kbench
+        shell: bash
+        env:
+          KINDS: ${{ inputs.kinds }}
+          K: ${{ inputs.k }}
+          N: ${{ inputs.n }}
+          ITERS: ${{ inputs.iters }}
+          VARIANTS: ${{ matrix.variants }}
+          RUNNER_OS_NAME: ${{ matrix.os }}
+        run: |
+          set -euo pipefail
+          dll=tools/GgufSmokeProbe/bin/Release/net10.0/GgufSmokeProbe.dll
+          echo "### kbench on ${RUNNER_OS_NAME} ($(uname -m), $(nproc) cores)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| kind | variant | parallel GMAC/s | serial GMAC/s |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| --- | --- | --- | --- |" >> "$GITHUB_STEP_SUMMARY"
+          for kind in $KINDS; do
+            for variant in $VARIANTS; do
+              out=$(dotnet "$dll" kbench "$kind" "$K" "$N" "$ITERS" "$variant")
+              echo "$out"
+              par=$(printf '%s\n' "$out" | sed -n 's/^  par .* \([0-9.]*\) GMAC\/s$/\1/p')
+              ser=$(printf '%s\n' "$out" | sed -n 's/^  ser .* \([0-9.]*\) GMAC\/s$/\1/p')
+              echo "| $kind | $variant | $par | $ser |" >> "$GITHUB_STEP_SUMMARY"
+            done
+          done
