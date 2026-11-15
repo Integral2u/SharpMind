@@ -227,8 +227,12 @@ public sealed record SharpMindConfig
             "gpt2" or "gptj" or "falcon" or "starcoder" or "starcoder2"
                 or "bloom" or "phi" or "phi2" => (ActivationKind.GELU, GateKind.None, FfnKind.Dense, NormKind.LayerNorm, ArchKind.Decoder),
             "opt" => (ActivationKind.ReLU, GateKind.None, FfnKind.Dense, NormKind.LayerNorm, ArchKind.Decoder),
-            "gemma" or "gemma2" or "gemma3" or "gemma-3" or "gemma4" or "gemma-4" => (ActivationKind.GELU, GateKind.GeGLU, FfnKind.Gated, NormKind.RMSNorm, ArchKind.Decoder),
-            "mixtral" or "qwen2moe" or "deepseek2" or "dbrx" => (ActivationKind.SiLU, GateKind.SwiGLU, FfnKind.MoE, NormKind.RMSNorm, ArchKind.Decoder),
+            // FfnKind decides which layer ModelFactory builds (Dense/Gated/MoE), so
+            // a routed-expert family listed with the dense or gated preset fails to
+            // bind its tensors. gemma3n belongs with the Gemma line, not the
+            // SiLU/SwiGLU fallback: like gemma2/3 it is a GeGLU model.
+            "gemma" or "gemma2" or "gemma3" or "gemma-3" or "gemma3n" or "gemma4" or "gemma-4" => (ActivationKind.GELU, GateKind.GeGLU, FfnKind.Gated, NormKind.RMSNorm, ArchKind.Decoder),
+            "mixtral" or "qwen2moe" or "qwen35moe" or "llama4" or "deepseek2" or "dbrx" => (ActivationKind.SiLU, GateKind.SwiGLU, FfnKind.MoE, NormKind.RMSNorm, ArchKind.Decoder),
             // Everything below is the same shape: SiLU + SwiGLU + RMSNorm decoder.
             // phi3 belongs here, not with the GELU/dense phi/phi2: Phi-3 is a gated
             // model whose ffn_up is the fused [HiddenDim, 2*FfnDim] gate+up matrix.
@@ -236,7 +240,7 @@ public sealed record SharpMindConfig
             // the file's twice-as-wide fused tensor as a size mismatch.
             "qwen2" or "qwen2vl" or "qwen3" or "qwen35" or "qwen3moe" or "qwq" or "phi3"
                 or "mistral" or "mistral3" or "ministral" or "mixtral-instruct"
-                or "llama" or "llama2" or "llama3" or "llama4" or "lfm2" or "lfm2moe" or "lfm3"
+                or "llama" or "llama2" or "llama3" or "lfm2" or "lfm2moe" or "lfm3"
                 or "gemma3e" or "olmo" or "olmo2" or "exaone" or "internlm2"
                 or "glm4" or "deepseek" or "deepseek3" or "minicpm" or "cohere2"
                 or "orion" or "jais" or "stablelm" or "plamo" or "granite"
