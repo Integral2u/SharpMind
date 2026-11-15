@@ -39,7 +39,7 @@ Live video example on [YouTube](https://youtu.be/I3FpbZac8Ro)
 - **No native runtime required.** Tensor math, quantization kernels, and the training loop are all managed C#. Inference runs entirely on the CPU; GPU acceleration (via ILGPU/cuBLAS) is opt-in, training-only, and lives in its own assembly loaded as a plugin — the CPU path never needs it.
 - **Runs models bigger than your RAM.** A disk-streaming load mode pages transformer layers in and out during the forward pass instead of holding the whole model resident (details below).
 - **Modern decoding, not just greedy/top-p.** Both classic speculative decoding and Medusa-style multi-head speculative decoding are implemented from scratch, with careful KV-cache rollback on rejection.
-- **A genuinely pluggable kernel system.** Hardware-specific kernel variants (scalar/SSE/AVX2/FMA, plus an Arm64 tier that currently resolves to the scalar targets) are wired up at runtime through a small internal dispatch layer [JigSawDotNet](https://github.com/Integral2u/JigSawDotNet) rather than hand-written `if`/`switch` ladders - adding a new backend means adding an assembly, not editing the core.
+- **A genuinely pluggable kernel system.** Hardware-specific kernel variants (scalar/SSE/AVX2/FMA, plus Arm64 NEON for Q8_0 so far) are wired up at runtime through a small internal dispatch layer [JigSawDotNet](https://github.com/Integral2u/JigSawDotNet) rather than hand-written `if`/`switch` ladders - adding a new backend means adding an assembly, not editing the core.
 - **Agent tooling included.** Tool-calling, permission gating (`Never` / `Ask` / `Always`), and sub-agent orchestration ship in `SharpMind.Inference.Agent`.
 - **Inference *and* training in one codebase.** Most C# "LLM" libraries are thin bindings around llama.cpp and only run models. SharpMind can load a GGUF checkpoint, chat with it, or train a model from scratch. LoRA fine-tuning and distillation are also present in the training stack but are still experimental — see [Training](#training-experimental).
 
@@ -280,7 +280,7 @@ K = N = 2048, 3000 iterations, one run, host as above, FMA path:
 
 Measured end to end on `Qwen1.5-MoE-A2.7B-Q2_K` — 48 tokens of greedy decoding, byte-identical output to llama.cpp both before and after, across five runs: **627.6s → 99.8–112.7s (median 111.4s), a 5.6–6.3× speedup**, taking the model from 0.08 to 0.43 tok/s.
 
-`kbench` covers every vec-dot above - `kbench <kind> [K] [N] [iters] [fma|avx2|scalar|arm64]` with the kinds listed in the usage line - so any new kernel can be ranked against this table the same way. (`arm64` currently selects the scalar kernels, so it measures the baseline the NEON kernels will be compared against.)
+`kbench` covers every vec-dot above - `kbench <kind> [K] [N] [iters] [fma|avx2|scalar|arm64]` with the kinds listed in the usage line - so any new kernel can be ranked against this table the same way. (`arm64` selects the NEON kernels where they exist - Q8_0 so far - and the scalar kernels for every kind that does not have one yet, which is the baseline the next NEON kernel will be compared against.)
 
 The same harness is dispatchable on both CI architectures: the manual `Bench` workflow runs it on `ubuntu-latest` (`fma`/`avx2`/`scalar`) and `ubuntu-24.04-arm` (`arm64`/`scalar`) with identical shapes and records the table in the run summary. Hosted runners are different CPUs, so compare ratios within a runner - AVX2 over scalar on x64, NEON over scalar on Arm64 - rather than absolute GMAC/s between them.
 
@@ -428,7 +428,7 @@ Like generator builders, a custom `IKVCacheBuilder` is discovered by reflection 
 
 ### Quantization
 
-Full GGUF-style quant coverage - Q2_K through Q8_0/Q8_1/Q8_K, plus the classic block types (Q4_0/Q4_1/Q5_0/Q5_1) and several 1-bit/ternary formats (IQ1_S, IQ1_M, TQ1_0, TQ2_0) - each with scalar, SSE, AVX2, and FMA kernel variants. On Arm64 a `HardwareTier.Arm64` tier is detected (AdvSimd) and currently resolves every quant key to its scalar target; that is the seam the NEON kernels are being added behind. (No GPU variants - inference is CPU-only; see [GPU-accelerated training](#gpu-accelerated-training) for where the GPU is used.)
+Full GGUF-style quant coverage - Q2_K through Q8_0/Q8_1/Q8_K, plus the classic block types (Q4_0/Q4_1/Q5_0/Q5_1) and several 1-bit/ternary formats (IQ1_S, IQ1_M, TQ1_0, TQ2_0) - each with scalar, SSE, AVX2, and FMA kernel variants. On Arm64 a `HardwareTier.Arm64` tier is detected (AdvSimd); Q8_0 has NEON vec-dot and matmul kernels, and every other quant key still resolves to its scalar target until its NEON kernel lands. (No GPU variants - inference is CPU-only; see [GPU-accelerated training](#gpu-accelerated-training) for where the GPU is used.)
 
 ---
 

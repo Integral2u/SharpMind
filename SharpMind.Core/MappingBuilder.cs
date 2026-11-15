@@ -165,6 +165,16 @@ public class MappingBuilder(HardwareTier hardware = HardwareTier.Auto)
         _mapping["getscalemink4_scale"] = $"getscalemink4_scale{hwSuffix}";
         _mapping["getscalemink4_min"] = $"getscalemink4_min{hwSuffix}";
 
+        // Arm64 NEON kernels land one key at a time. JigSaw treats an option that
+        // is not registered as an error rather than falling back to the key's
+        // default, so every key without a NEON target must keep the scalar suffix
+        // and is switched over here as its kernel lands. Q8_0 is the first.
+        if (_hardware == HardwareTier.Arm64)
+        {
+            _mapping["vecdot_q8_0"] = "q8_0_arm64";
+            _mapping["qmatmul_q8_0"] = $"qmatmul_q8_0_{(parallel ? "parallel" : "serial")}_arm64";
+        }
+
         return this;
     }
 
@@ -190,6 +200,8 @@ public class MappingBuilder(HardwareTier hardware = HardwareTier.Auto)
         HardwareTier.FMA => "_fma",
         HardwareTier.AVX2 => "_avx2",
         HardwareTier.SSE => "_sse",
+        // Arm64 has one NEON target so far, which ApplyQuantPreset overrides per
+        // key; everything else in this tier still runs the scalar kernels.
         _ => "_scalar"
     };
 

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Runtime.Intrinsics.Arm;
 using System.Runtime.Intrinsics.X86;
 using SharpMind.Core;
 using SharpMind.Core.Quantization;
@@ -35,7 +36,11 @@ public class Q8BlockTailTests
     [MemberData(nameof(Cases))]
     public unsafe void VectorisedTiersAgreeWithScalar(QuantDType dtype, int inFeatures)
     {
-        if (!Avx2.IsSupported || !Fma.IsSupported) return;
+        var tiers = new List<(string Name, QuantizationOps Ops)>();
+        if (Avx2.IsSupported) tiers.Add(("avx2", QuantizationFactory.Create(HardwareTier.AVX2)));
+        if (Avx2.IsSupported && Fma.IsSupported) tiers.Add(("fma", QuantizationFactory.Create(HardwareTier.FMA)));
+        if (AdvSimd.Arm64.IsSupported) tiers.Add(("arm64", QuantizationFactory.Create(HardwareTier.Arm64)));
+        if (tiers.Count == 0) return;
 
         const int nCols = 3;
         const int Poison = 64;   // elements of deliberately loud padding
@@ -65,33 +70,25 @@ public class Q8BlockTailTests
         for (int i = inFeatures; i < input.Length; i++) input[i] = 1e6f;
 
         var scalar = QuantizationFactory.Create(HardwareTier.Scalar);
-        var avx2 = QuantizationFactory.Create(HardwareTier.AVX2);
-        var fma = QuantizationFactory.Create(HardwareTier.FMA);
+
+        float Dot(QuantizationOps ops, float* pIn, byte* pW, int col) => dtype == QuantDType.Q8_0
+            ? ops.VecDotQ8_0(pIn, pW, col, inFeatures)
+            : ops.VecDotQ8_1(pIn, pW, col, inFeatures);
 
         fixed (float* pIn = input)
         fixed (byte* pW = raw)
         {
             for (int c = 0; c < nCols; c++)
             {
-                float expected, gotAvx2, gotFma;
-                if (dtype == QuantDType.Q8_0)
-                {
-                    expected = scalar.VecDotQ8_0(pIn, pW, c, inFeatures);
-                    gotAvx2 = avx2.VecDotQ8_0(pIn, pW, c, inFeatures);
-                    gotFma = fma.VecDotQ8_0(pIn, pW, c, inFeatures);
-                }
-                else
-                {
-                    expected = scalar.VecDotQ8_1(pIn, pW, c, inFeatures);
-                    gotAvx2 = avx2.VecDotQ8_1(pIn, pW, c, inFeatures);
-                    gotFma = fma.VecDotQ8_1(pIn, pW, c, inFeatures);
-                }
-
+                float expected = Dot(scalar, pIn, pW, c);
                 float tol = 1e-4f * Math.Max(1f, Math.Abs(expected));
-                Assert.True(Math.Abs(expected - gotAvx2) <= tol,
-                    $"{dtype} K={inFeatures} col={c}: scalar={expected}, avx2={gotAvx2}");
-                Assert.True(Math.Abs(expected - gotFma) <= tol,
-                    $"{dtype} K={inFeatures} col={c}: scalar={expected}, fma={gotFma}");
+
+                foreach ((string name, QuantizationOps ops) in tiers)
+                {
+                    float got = Dot(ops, pIn, pW, c);
+                    Assert.True(Math.Abs(expected - got) <= tol,
+                        $"{dtype} K={inFeatures} col={c}: scalar={expected}, {name}={got}");
+                }
             }
         }
     }

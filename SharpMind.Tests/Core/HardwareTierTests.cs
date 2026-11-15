@@ -111,19 +111,29 @@ public class HardwareTierTests
     }
 
     [Fact]
-    public void Arm64_BuildsTheSameTargetsAsScalar_UntilNeonKernelsLand()
+    public void Arm64_UsesNeonForQ8_0AndScalarForEverythingElse()
     {
         if (!AdvSimd.Arm64.IsSupported) return;
 
-        // The whole point of the first Arm64 change is that it is a no-op: every
-        // quant key resolves to its scalar target, so nothing can fail to
-        // assemble. When NEON kernels start being registered per key this test is
-        // the place that records the change deliberately.
+        // The deliberate tripwire for NEON coverage: the only keys that differ
+        // from Scalar are the ones with an Arm64 kernel. Switching a key that has
+        // no registered target fails to assemble, so this list has to grow with
+        // each kernel in both places.
         var arm = new MappingBuilder(HardwareTier.Arm64).ApplyQuantPreset().Build();
         var scalar = new MappingBuilder(HardwareTier.Scalar).ApplyQuantPreset().Build();
 
-        Assert.Equal(Describe(scalar), Describe(arm));
-        Assert.All(arm.Values, value => Assert.Contains("scalar", value));
+        Assert.Equal("q8_0_arm64", arm["vecdot_q8_0"]);
+        Assert.Equal("qmatmul_q8_0_parallel_arm64", arm["qmatmul_q8_0"]);
+
+        string[] differing =
+            [.. arm.Where(kv => scalar[kv.Key] != kv.Value)
+                   .Select(kv => kv.Key)
+                   .OrderBy(key => key, StringComparer.Ordinal)];
+        Assert.Equal(new[] { "qmatmul_q8_0", "vecdot_q8_0" }, differing);
+
+        // ...and the mapping assembles, which is the part JigSaw rejects when an
+        // option is unregistered rather than falling back to the key's default.
+        Assert.NotNull(QuantizationFactory.Create(HardwareTier.Arm64));
     }
 
     [Fact]
@@ -135,7 +145,4 @@ public class HardwareTierTests
         // operations on Arm64 - slower than the plain kernel, not faster.
         Assert.False(Q8_0WideWeights.IsSupported(inFeatures: 256, outFeatures: 256));
     }
-
-    private static string[] Describe(Dictionary<string, string> mapping) =>
-        [.. mapping.OrderBy(kv => kv.Key, StringComparer.Ordinal).Select(kv => $"{kv.Key}={kv.Value}")];
 }
