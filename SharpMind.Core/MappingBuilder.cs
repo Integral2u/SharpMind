@@ -171,8 +171,14 @@ public class MappingBuilder(HardwareTier hardware = HardwareTier.Auto)
         // and is switched over here as its kernel lands. Q8_0 is the first.
         if (_hardware == HardwareTier.Arm64)
         {
+            _mapping["vecdot_q4k"] = "q4k_arm64";
+            _mapping["vecdot_q6k"] = "q6k_arm64";
             _mapping["vecdot_q8_0"] = "q8_0_arm64";
-            _mapping["qmatmul_q8_0"] = $"qmatmul_q8_0_{(parallel ? "parallel" : "serial")}_arm64";
+
+            string qmmMode = parallel ? "parallel" : "serial";
+            _mapping["qmatmul_q4k"] = $"qmatmul_q4k_{qmmMode}_arm64";
+            _mapping["qmatmul_q6k"] = $"qmatmul_q6k_{qmmMode}_arm64";
+            _mapping["qmatmul_q8_0"] = $"qmatmul_q8_0_{qmmMode}_arm64";
         }
 
         return this;

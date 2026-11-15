@@ -8,6 +8,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- **Q4_K and Q6_K vec-dot and matmul on Arm64 NEON** - the two formats a real
+  `Q4_K_M`/`Q5_K_M` file is made of, so a typical GGUF now runs NEON on Arm64
+  instead of falling back to scalar. Q4_K decodes the 4-bit codes eight at a time
+  from the contiguous 32-byte run of each 32-value sub-block (low nibbles for the
+  first half of a 64-value chunk, high for the second) with the 6-bit scale and
+  min folded in as `scale*d_super*v - min*d_min`; Q6_K runs the four interleaved
+  32-value streams of each 128-value half - low nibbles of `ql` plus two bits of
+  `qh` at offsets 0, 2, 4 and 6 - so one `qh` load feeds all four. Both keep the
+  scalar tail for the last, possibly partial sub-block and for columns whose
+  first sub-block starts off a 32-value boundary. `KQuantUnpackTests` now runs on
+  the Arm64 tier too, so the odd column offsets (K = 8, 137, 288, 320, 384, 896,
+  4864) are compared against scalar on the ARM runner.
 - **Q8_0 vec-dot and matmul on Arm64 NEON** - the first kernels behind
   `HardwareTier.Arm64`, so Q8_0 decode no longer resolves to scalar on NEON
   hardware. Eight int8 weights are widened to two `Vector128<float>`
