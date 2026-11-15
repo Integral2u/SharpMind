@@ -7,7 +7,8 @@ namespace SharpMind.Tests.ModelFormat;
 /// antivirus or indexer short-term exclusive handle on a freshly written
 /// .gguf/.smm). These tests pin that behavior — without the retry, opening
 /// a file another handle owns is a hard IOException, which is what showed
-/// up as a flaky CI failure on Windows agents.
+/// up as a flaky CI failure on Windows agents. Unix emulates FileShare with
+/// flock(), so the same conflict is reachable there and must retry as well.
 /// </summary>
 public sealed class ModelFileIoTests
 {
