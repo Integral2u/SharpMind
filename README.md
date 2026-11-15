@@ -282,6 +282,8 @@ Measured end to end on `Qwen1.5-MoE-A2.7B-Q2_K` — 48 tokens of greedy decoding
 
 `kbench` covers every vec-dot above - `kbench <kind> [K] [N] [iters] [fma|avx2|scalar|arm64]` with the kinds listed in the usage line - so any new kernel can be ranked against this table the same way. (`arm64` currently selects the scalar kernels, so it measures the baseline the NEON kernels will be compared against.)
 
+The same harness is dispatchable on both CI architectures: the manual `Bench` workflow runs it on `ubuntu-latest` (`fma`/`avx2`/`scalar`) and `ubuntu-24.04-arm` (`arm64`/`scalar`) with identical shapes and records the table in the run summary. Hosted runners are different CPUs, so compare ratios within a runner - AVX2 over scalar on x64, NEON over scalar on Arm64 - rather than absolute GMAC/s between them.
+
 ### Decoding strategy
 
 `qwen2-0.5b-instruct-q8_0`, prompt "what is the capital of america", across all four KV-cache strategies:
