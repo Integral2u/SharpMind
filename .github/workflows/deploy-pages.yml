@@ -11,6 +11,13 @@ on:
       - 'SharpMind.Tokenization/**'
       - 'SharpMind.Data/**'
       - '.github/workflows/deploy-pages.yml'
+  # A change to this workflow is a change to the only thing that publishes the
+  # site, so build it on the PR. The deploy job is skipped for pull requests: it
+  # would publish the PR's output over the live site.
+  pull_request:
+    paths:
+      - '.github/workflows/deploy-pages.yml'
+      - 'SharpMind.Live/**'
   workflow_dispatch:
 
 permissions:
@@ -32,8 +39,16 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
+      # The hosted runner's default SDK is now 11.0.x, and `dotnet publish` picks
+      # the highest SDK on the machine even when setup-dotnet added an older one to
+      # PATH. For a net10.0 wasm target that means the SDK 11 workload id, not the
+      # bare `wasm-tools` (which installs for the SDK doing the install). Pinning
+      # alone did not help: the build still ran on 11.0.100 and failed with
+      # NETSDK1147 "wasm-tools-net10" missing.
       - name: Install wasm-tools workload
-        run: dotnet workload install wasm-tools
+        run: |
+          dotnet --list-sdks
+          dotnet workload install wasm-tools-net10
 
       - name: Publish (AOT)
         run: dotnet publish SharpMind.Live/SharpMind.Live.csproj -c Release -o publish_out
@@ -44,6 +59,7 @@ jobs:
 
   deploy:
     needs: build
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
