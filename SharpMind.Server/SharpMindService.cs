@@ -204,6 +204,7 @@ public sealed class SharpMindService : IAsyncDisposable
         var sessionFactory = app.Services.GetRequiredService<SessionFactory>();
         var options = app.Services.GetRequiredService<SharpMindServerOptions>();
         var gate = app.Services.GetRequiredService<GenerationGate>();
+        var prefixCache = app.Services.GetRequiredService<PrefixCache>();
 
         // Capacity is part of health: a server that is queueing is up, but a
         // caller deciding whether to send work wants to know.
@@ -378,7 +379,7 @@ public sealed class SharpMindService : IAsyncDisposable
             bool continueFromHistory;
             try
             {
-                (session, lastUserMessage, continueFromHistory) = sessionFactory.CreateSession(loaded, request);
+                (session, lastUserMessage, continueFromHistory) = await sessionFactory.CreateSessionAsync(loaded, request);
             }
             catch (Exception ex)
             {
@@ -404,6 +405,11 @@ public sealed class SharpMindService : IAsyncDisposable
             }
             finally
             {
+                // Keep this turn's KV for the next turn of the same conversation.
+                // Taken before Dispose: a disposed session cannot snapshot.
+                if (prefixCache.Enabled)
+                    prefixCache.Put(request.Model, session.GetSnapshot());
+
                 // The session owns its generator, KV caches and a native-memory
                 // workspace (≥100 MiB, no finalizer). Only the model reference was
                 // released here, so every completion leaked its workspace for good.

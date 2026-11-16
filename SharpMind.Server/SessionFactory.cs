@@ -12,9 +12,10 @@ namespace SharpMind.Server;
 /// completion request. Each request gets its own session (the KV-cache is
 /// rebuilt from the conversation history).
 /// </summary>
-public sealed class SessionFactory(SharpMindServerOptions options)
+public sealed class SessionFactory(SharpMindServerOptions options, PrefixCache prefixCache)
 {
     private readonly SharpMindServerOptions _options = options;
+    private readonly PrefixCache _prefixCache = prefixCache;
 
     /// <summary>
     /// Build the permission callback from current options. Returns null when
@@ -43,7 +44,8 @@ public sealed class SessionFactory(SharpMindServerOptions options)
     /// is returned separately - it must be passed to
     /// <see cref="IChatSession.GetResponseStreamAsync"/> to generate a response.
     /// </summary>
-    public (IChatSession session, string lastUserMessage, bool continueFromHistory) CreateSession(LoadedModel loaded, CreateChatCompletionRequest request)
+    public async Task<(IChatSession session, string lastUserMessage, bool continueFromHistory)> CreateSessionAsync(
+        LoadedModel loaded, CreateChatCompletionRequest request)
     {
         // OpenAI tools are executed by the API client, not the server. Register
         // them so the model sees their schema, then hand every call back.
@@ -97,9 +99,6 @@ public sealed class SessionFactory(SharpMindServerOptions options)
         // internally).
         var (systemPrompt, history) = OpenAiMapper.ToChatHistory(request.Messages);
 
-        if (!string.IsNullOrWhiteSpace(systemPrompt))
-            session.AddMessage(ChatRole.System, systemPrompt);
-
         // A trailing tool result (or assistant tool-call turn) means the client
         // is resuming an existing tool loop: replay the whole history and
         // generate from it without synthesizing a new user message.
@@ -109,35 +108,48 @@ public sealed class SessionFactory(SharpMindServerOptions options)
         bool continueFromHistory = last is not null
             && (last.Role is "tool" || last is AssistantMessage { ToolCalls.Count: > 0 });
 
-        if (continueFromHistory)
-        {
-            foreach (var message in history)
-                session.AddMessage(message);
-            return (session, "", true);
-        }
-
-        // Find the last user message index
         int lastUserIdx = -1;
-        for (int i = history.Count - 1; i >= 0; i--)
+        if (!continueFromHistory)
         {
-            if (history[i].Role == ChatRole.User)
+            for (int i = history.Count - 1; i >= 0; i--)
             {
-                lastUserIdx = i;
-                break;
+                if (history[i].Role == ChatRole.User)
+                {
+                    lastUserIdx = i;
+                    break;
+                }
             }
         }
 
-        string lastUserMessage = "";
+        string lastUserMessage = lastUserIdx >= 0 ? history[lastUserIdx].Content ?? "" : "";
+
+        var replay = new List<ChatMessage>(history.Count);
         for (int i = 0; i < history.Count; i++)
+            if (i != lastUserIdx)
+                replay.Add(history[i]);
+
+        // Restore a cached prefix when this request extends one. LoadSnapshot
+        // replaces the history (and skips system messages), so the system prompt is
+        // re-added afterwards; WarmupPrefillAsync then imports the KV and prefills
+        // only what the snapshot did not already cover.
+        var cached = _prefixCache.Take(loaded.ModelId, replay);
+        int start = 0;
+        if (cached is not null)
         {
-            if (i == lastUserIdx)
-            {
-                lastUserMessage = history[i].Content ?? "";
-                continue; // skip - GetResponseStreamAsync will add it
-            }
-            session.AddMessage(history[i]);
+            session.LoadSnapshot(cached.Snapshot);
+            start = cached.History.Length;
+            if (!string.IsNullOrWhiteSpace(systemPrompt))
+                session.AddMessage(ChatRole.System, systemPrompt);
+            await session.WarmupPrefillAsync();
+        }
+        else if (!string.IsNullOrWhiteSpace(systemPrompt))
+        {
+            session.AddMessage(ChatRole.System, systemPrompt);
         }
 
-        return (session, lastUserMessage, false);
+        for (int i = start; i < replay.Count; i++)
+            session.AddMessage(replay[i]);
+
+        return (session, lastUserMessage, continueFromHistory);
     }
 }

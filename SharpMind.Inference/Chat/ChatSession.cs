@@ -309,11 +309,17 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
                 string currentHash = KVCacheSnapshot.HashPromptTokens(promptToks);
                 bool exact = string.Equals(currentHash, cached.PromptHash, StringComparison.OrdinalIgnoreCase);
 
-                // The exact case is the saved-session resume path. The prefix case is
-                // what a multi-turn conversation needs: its prompt grows every turn, so
-                // the whole-prompt hash can never match again, and without this the
-                // entire history is prefilled again on every request.
-                if (exact || cached.IsPrefixOf(promptToks))
+                // Reuse the longest shared prefix, not just an exact match or a
+                // snapshot that is already a full prefix: the cache of a finished
+                // turn ends at the generated tokens, whose last id is not part of
+                // how the next prompt renders the same history (stop/EOS). Taking
+                // the common prefix and truncating to it is what makes reuse
+                // possible at all; an exact match is just the common case of it.
+                int common = cached.PromptTokens is { Length: > 0 } cachedTokens
+                    ? CommonPrefixLength(cachedTokens, promptToks)
+                    : exact ? promptToks.Length : 0;
+
+                if (common > 0 && (exact || common >= MinimumPrefixReuseTokens))
                 {
                     _generator!.ResetCache();
                     if (_hasEngine && _engine is not null)
@@ -325,25 +331,21 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
                             ac[i].RestoreBytes(cached.Layers[i]);
                     }
 
-                    int[] cachedTokens = exact ? promptToks : cached.PromptTokens!;
-                    // SetCacheTokens also moves the generator's position to the end of
-                    // the restored range, so the suffix prefills at the right offset.
-                    _generator.SetCacheTokens(cachedTokens);
+                    // The restored state may be longer than the shared prefix; cut
+                    // it back and move the position there so the suffix prefills at
+                    // the right offset.
+                    _generator.TruncateCache(common);
+                    _generator.SetCacheTokens(promptToks[..common]);
                     _pendingKvCacheSnapshot = null;
 
-                    if (exact)
-                    {
-                        PrefillProgress?.Invoke(1.0);
-                        return;
-                    }
-
-                    promptToks = promptToks[cachedTokens.Length..];
-                    restoredPrefix = true;
+                    promptToks = promptToks[common..];
                     if (promptToks.Length == 0)
                     {
                         PrefillProgress?.Invoke(1.0);
                         return;
                     }
+
+                    restoredPrefix = true;
                 }
             }
 
@@ -361,6 +363,20 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         };
         await foreach (var _ in _generator.GenerateFromTokensAsync(promptToks, warmupCfg, warmupGen)) { }
         _generator.PrefillProgress = p => _prefillProgressQueue.Enqueue(p);
+    }
+
+    /// <summary>
+    /// How much of a restored cache must line up before importing it is worth the
+    /// copy. Below this the import costs more than the prefill it saves, and a
+    /// token or two of overlap is usually a shared header, not conversation.
+    /// </summary>
+    private const int MinimumPrefixReuseTokens = 16;
+
+    private static int CommonPrefixLength(ReadOnlySpan<int> a, ReadOnlySpan<int> b)
+    {
+        int n = Math.Min(a.Length, b.Length), i = 0;
+        while (i < n && a[i] == b[i]) i++;
+        return i;
     }
 
     /// <summary>
