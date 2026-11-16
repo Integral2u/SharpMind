@@ -48,6 +48,7 @@ public static class QuantizationKeys
     public const string KeyReadQ5_1 = "read_q5_1";
     public const string KeyReadQ8_1 = "read_q8_1";
     public const string KeyReadQ4_NL = "read_q4_nl";
+    public const string KeyReadMXFP4 = "read_mxfp4";
     public const string KeyReadQ2K = "read_q2k";
     public const string KeyReadQ3K = "read_q3k";
     public const string KeyReadQ4K = "read_q4k";

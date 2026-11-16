@@ -141,6 +141,7 @@ public class MappingBuilder(HardwareTier hardware = HardwareTier.Auto)
         _mapping["read_q5_1"] = "read_q5_1_scalar";
         _mapping["read_q8_1"] = "read_q8_1_scalar";
         _mapping["read_q4_nl"] = "read_q4_nl_scalar";
+        _mapping["read_mxfp4"] = "read_mxfp4_scalar";
         _mapping["read_q2k"] = "read_q2k_scalar";
         _mapping["read_q3k"] = "read_q3k_scalar";
         _mapping["read_q4k"] = "read_q4k_scalar";
