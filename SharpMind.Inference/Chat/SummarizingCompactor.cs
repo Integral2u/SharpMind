@@ -26,7 +26,9 @@ public sealed class SummarizingCompactor : IContextCompactor
         // the prompt; only older turns are summarized.
         int lastUserIndex = context.History.FindLastIndex(
             message => message.Role == ChatRole.User);
-        int summarizeBefore = lastUserIndex >= 0 ? lastUserIndex : context.History.Count;
+        int summarizeBefore = lastUserIndex >= 0
+            ? lastUserIndex
+            : Math.Max(0, context.History.Count - 1);
 
         // Collect older, non-pinned, non-ignored messages. Every System message
         // is instructions, not conversation, so all of them stay.
