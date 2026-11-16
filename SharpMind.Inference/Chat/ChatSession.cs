@@ -3212,6 +3212,7 @@ if (held.Length > 0)
                 {
                     PromptHash = KVCacheSnapshot.HashPromptTokens([.. cacheTokens]),
                     PromptTokenCount = cacheTokens.Count,
+                    PromptTokens = [.. cacheTokens],
                     Layers = layers
                 };
         }

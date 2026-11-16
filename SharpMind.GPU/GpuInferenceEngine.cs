@@ -927,6 +927,7 @@ public sealed class GpuInferenceEngine : IInferenceEngine
         {
             PromptHash = KVCacheSnapshot.HashPromptTokens(promptTokenIds),
             PromptTokenCount = promptTokenIds.Length,
+            PromptTokens = promptTokenIds,
             Layers = layers,
         };
     }

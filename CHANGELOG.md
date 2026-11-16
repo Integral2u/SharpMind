@@ -41,6 +41,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   first sub-block starts off a 32-value boundary. `KQuantUnpackTests` now runs on
   the Arm64 tier too, so the odd column offsets (K = 8, 137, 288, 320, 384, 896,
   4864) are compared against scalar on the ARM runner.
+- **KV snapshots record the prompt tokens they hold** - `KVCacheSnapshot` gained
+  `PromptTokens` and `IsPrefixOf`. Its `PromptHash` can only prove an exact
+  prompt match, which is why a multi-turn chat never reused its cache: every turn
+  grows the prompt, so the hash stops matching and the whole conversation is
+  prefilled again. Storing the tokens lets a session verify that a prompt starts
+  with what the cache holds. Saved sessions written before this still load; they
+  simply cannot be used as a prefix.
 - **Server admission control: a concurrency cap and a bounded queue** - the
   OpenAI endpoint admits `--max-concurrent` generations (default 1: decode already
   uses every core, and each admitted request owns a KV cache and a native
