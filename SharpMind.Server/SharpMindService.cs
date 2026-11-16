@@ -203,8 +203,18 @@ public sealed class SharpMindService : IAsyncDisposable
         var modelManager = app.Services.GetRequiredService<ModelManager>();
         var sessionFactory = app.Services.GetRequiredService<SessionFactory>();
         var options = app.Services.GetRequiredService<SharpMindServerOptions>();
+        var gate = app.Services.GetRequiredService<GenerationGate>();
 
-        app.MapGet("/v1/health", () => Results.Ok(new { status = "ok" }));
+        // Capacity is part of health: a server that is queueing is up, but a
+        // caller deciding whether to send work wants to know.
+        app.MapGet("/v1/health", () => Results.Ok(new
+        {
+            status = "ok",
+            generating = gate.Active,
+            queued = gate.Queued,
+            maxGenerating = gate.MaxConcurrent,
+            maxQueued = gate.MaxQueued,
+        }));
 
         // Operational extension (not part of the OpenAI spec). Schedules a
         // graceful stop after the response is written, so in-flight requests
@@ -329,6 +339,23 @@ public sealed class SharpMindService : IAsyncDisposable
             {
                 return Results.Json(new { error = new { message = ex.Message, type = "invalid_request_error" } }, statusCode: 400);
             }
+
+            // Admission control before the model load: an overloaded server must
+            // not start loads it cannot serve. A request past the cap waits in
+            // line; past the queue it is refused now rather than timing out.
+            // The lease is released when the HTTP response is disposed, which for
+            // a streamed completion is when the last chunk has been written.
+            GenerationGate.Lease lease;
+            try
+            {
+                lease = await gate.EnterAsync(ct);
+            }
+            catch (GenerationQueueFullException ex)
+            {
+                httpContext.Response.Headers.RetryAfter = "1";
+                return Results.Json(new { error = new { message = ex.Message, type = "rate_limit_error" } }, statusCode: 429);
+            }
+            httpContext.Response.RegisterForDispose(lease);
 
             LoadedModel? loaded;
             try
