@@ -116,6 +116,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   `FileShare` with `flock()`, so a second opener gets `EWOULDBLOCK` instead and
   the retry never ran. Both errnos are now recognized, so the antivirus/indexer
   tolerance Windows already had also applies on Linux and macOS.
+- **`SummarizingCompactor` keeps system prompts and the current turn** - every
+  System message is now excluded from the summary and preserved, not just the
+  first one. Only messages before the latest user message are summarized, so the
+  active question, its tool calls and their results are never marked ignored.
+  Pinned messages and the pinned summary keep their existing behavior.
 
 ## [1.1.1.0] - 2026-11-08
 

@@ -21,21 +21,30 @@ public sealed class SummarizingCompactor : IContextCompactor
     {
         if (context.SummarizeAsync is null) return false;
 
-        // Collect non-pinned, non-ignored messages eligible for summarization.
-        // Preserve the first System message (agent instructions) and pinned messages.
+        // The active turn starts at the latest user message. Everything after it
+        // (the current question, its tool calls and their results) must stay in
+        // the prompt; only older turns are summarized.
+        int lastUserIndex = context.History.FindLastIndex(
+            message => message.Role == ChatRole.User);
+        int summarizeBefore = lastUserIndex >= 0 ? lastUserIndex : context.History.Count;
+
+        // Collect older, non-pinned, non-ignored messages. Every System message
+        // is instructions, not conversation, so all of them stay.
         var toSummarize = new List<ChatMessage>();
-        int firstSystemIdx = -1;
+        int lastSystemIndex = -1;
         for (int i = 0; i < context.History.Count; i++)
         {
-            var msg = context.History[i];
-            if (msg.Ignore) continue;
-            if (msg.IsPinned) continue;
-            if (msg.Role == ChatRole.System && firstSystemIdx == -1)
+            ChatMessage message = context.History[i];
+            if (message.Role == ChatRole.System)
             {
-                firstSystemIdx = i;
+                lastSystemIndex = i;
                 continue;
             }
-            toSummarize.Add(msg);
+
+            if (i >= summarizeBefore) continue;
+            if (message.Ignore) continue;
+            if (message.IsPinned) continue;
+            toSummarize.Add(message);
         }
 
         if (toSummarize.Count == 0) return false;
@@ -67,8 +76,11 @@ public sealed class SummarizingCompactor : IContextCompactor
         foreach (var msg in toSummarize)
             msg.Ignore = true;
 
-        // Insert the summary as a System message right after the first System message (or at the start)
-        int insertAt = firstSystemIdx >= 0 ? firstSystemIdx + 1 : 0;
+        // Insert the summary after the last system message, but never after the
+        // current turn's first message.
+        int insertAt = lastSystemIndex >= 0
+            ? Math.Min(lastSystemIndex + 1, summarizeBefore)
+            : 0;
         context.History.Insert(insertAt, new ChatMessage
         {
             Role = ChatRole.System,
