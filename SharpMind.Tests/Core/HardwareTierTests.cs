@@ -126,10 +126,12 @@ public class HardwareTierTests
         Assert.Equal("q6k_arm64", arm["vecdot_q6k"]);
         Assert.Equal("q8_0_arm64", arm["vecdot_q8_0"]);
         Assert.Equal("mxfp4_arm64", arm["vecdot_mxfp4"]);
+        Assert.Equal("iq4_xs_arm64", arm["vecdot_iq4_xs"]);
         Assert.Equal("qmatmul_q4k_parallel_arm64", arm["qmatmul_q4k"]);
         Assert.Equal("qmatmul_q6k_parallel_arm64", arm["qmatmul_q6k"]);
         Assert.Equal("qmatmul_q8_0_parallel_arm64", arm["qmatmul_q8_0"]);
         Assert.Equal("qmatmul_mxfp4_parallel_arm64", arm["qmatmul_mxfp4"]);
+        Assert.Equal("qmatmul_iq4_xs_parallel_arm64", arm["qmatmul_iq4_xs"]);
 
         string[] differing =
             [.. arm.Where(kv => scalar[kv.Key] != kv.Value)
@@ -137,8 +139,8 @@ public class HardwareTierTests
                    .OrderBy(key => key, StringComparer.Ordinal)];
         Assert.Equal(new[]
         {
-            "qmatmul_mxfp4", "qmatmul_q4k", "qmatmul_q6k", "qmatmul_q8_0",
-            "vecdot_mxfp4", "vecdot_q4k", "vecdot_q6k", "vecdot_q8_0",
+            "qmatmul_iq4_xs", "qmatmul_mxfp4", "qmatmul_q4k", "qmatmul_q6k", "qmatmul_q8_0",
+            "vecdot_iq4_xs", "vecdot_mxfp4", "vecdot_q4k", "vecdot_q6k", "vecdot_q8_0",
         }, differing);
 
         // ...and the mapping assembles, which is the part JigSaw rejects when an

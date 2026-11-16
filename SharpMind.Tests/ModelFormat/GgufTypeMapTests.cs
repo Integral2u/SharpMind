@@ -36,6 +36,7 @@ public class GgufTypeMapTests
         (15, QuantDType.Q8_K),
         (19, QuantDType.IQ1_S),
         (20, QuantDType.IQ4_NL),
+        (23, QuantDType.IQ4_XS),
         (24, QuantDType.I8),
         (25, QuantDType.I16),
         (26, QuantDType.I32),
@@ -55,7 +56,6 @@ public class GgufTypeMapTests
         18, // IQ3_XXS
         21, // IQ3_S
         22, // IQ2_S
-        23, // IQ4_XS
         27, // I64
         28, // F64
         31, // Q4_0_4_4
@@ -141,6 +141,7 @@ public class GgufTypeMapTests
     [InlineData(QuantDType.Q8_0)]
     [InlineData(QuantDType.Q4_K_M)]
     [InlineData(QuantDType.MXFP4)]
+    [InlineData(QuantDType.IQ4_XS)]
     public void GgufWriter_ToGgufLoader_RoundTripsDtype(QuantDType dtype)
     {
         // A synthetic GGUF (no physical model involved) written by GgufWriter must

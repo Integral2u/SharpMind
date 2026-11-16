@@ -546,4 +546,131 @@ public static partial class QuantizationKernels
             });
         }
     }
+
+    /// <summary>
+    /// The sixteen <c>iq4nl</c> codebook values as signed bytes. Every one fits
+    /// in int8, so a NEON byte table lookup (TBL) can stand in for the float
+    /// gather AVX2 does with two permutes, and the result widens to float.
+    /// </summary>
+    /// <remarks>
+    /// Built in the static constructor rather than a field initializer: the
+    /// codebook array lives in another partial file, and field initializers
+    /// across partials run in an order the language does not pin down.
+    /// </remarks>
+    private static readonly Vector128<byte> IQ4NLTable;
+
+    static QuantizationKernels()
+    {
+        Span<byte> table = stackalloc byte[16];
+        for (int i = 0; i < 16; i++) table[i] = unchecked((byte)(sbyte)kvalues_iq4nl[i]);
+        IQ4NLTable = Vector128.Create(table);
+    }
+
+    /// <summary>
+    /// Eight consecutive IQ4_XS/IQ4_NL nibbles as floats: the low half of the
+    /// 16-byte run for elements 0..15 of a 32-value sub-block, the high half for
+    /// 16..31, so a four-lane group either masks or shifts all eight.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static unsafe (Vector128<float> Lo, Vector128<float> Hi) IQ4NlNibbles8ToFloat(byte* qs, int i)
+    {
+        Vector64<byte> raw = AdvSimd.LoadVector64(qs + (i & 15));
+        Vector128<byte> v = Vector128.Create(raw, Vector64<byte>.Zero);
+        v = (i & 16) == 0
+            ? AdvSimd.And(v, Vector128.Create((byte)0x0F))
+            : AdvSimd.ShiftRightLogical(v, (byte)4);
+        Vector64<byte> codes = AdvSimd.VectorTableLookup(IQ4NLTable, v.GetLower());
+        Vector128<short> shorts = AdvSimd.SignExtendWideningLower(codes.AsSByte());
+        return (AdvSimd.ConvertToSingle(AdvSimd.SignExtendWideningLower(shorts.GetLower()).AsInt32()),
+                AdvSimd.ConvertToSingle(AdvSimd.SignExtendWideningUpper(shorts).AsInt32()));
+    }
+
+    /// <summary>
+    /// IQ4_XS vec-dot on Arm64 NEON: eight 32-value sub-blocks per 136-byte
+    /// super-block, each with its own 6-bit scale, decoded eight values at a
+    /// time through the int8 codebook table. The sub-block tail stays scalar.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static unsafe float VecDotIQ4_XS_Arm64(float* input, byte* rawWeights, int col, int inFeatures)
+    {
+        const int BLOCK_BYTES = 136;
+        int nBlocks = (inFeatures + QK_K - 1) / QK_K;
+        double sum = 0;
+        var vacc0 = Vector128<float>.Zero;
+        var vacc1 = Vector128<float>.Zero;
+
+        for (int b = 0; b < nBlocks; b++)
+        {
+            byte* block = rawWeights + (long)col * nBlocks * BLOCK_BYTES + b * BLOCK_BYTES;
+            float d = HalfToFloat_Scalar(*(ushort*)block);
+            ushort scalesH = *(ushort*)(block + 2);
+            byte* scalesL = block + 4;
+            byte* qs = block + 8;
+            int blockEnd = Math.Min(QK_K, inFeatures - b * QK_K);
+            float* pIn = input + b * QK_K;
+
+            for (int ib = 0; ib < QK_K / IQ4XS_SubBlockValues; ib++)
+            {
+                int basePos = ib * IQ4XS_SubBlockValues;
+                if (basePos >= blockEnd) break;
+
+                float dl = d * (IQ4XSScale(ib, scalesH, scalesL) - 32);
+                byte* qsSub = qs + ib * 16;
+                int subEnd = Math.Min(IQ4XS_SubBlockValues, blockEnd - basePos);
+                float* pSub = pIn + basePos;
+                var vd = Vector128.Create(dl);
+                int i = 0;
+                for (; i <= subEnd - 8; i += 8)
+                {
+                    var (w0, w1) = IQ4NlNibbles8ToFloat(qsSub, i);
+                    vacc0 = AdvSimd.Add(vacc0, AdvSimd.Multiply(
+                        AdvSimd.LoadVector128(pSub + i), AdvSimd.Multiply(w0, vd)));
+                    vacc1 = AdvSimd.Add(vacc1, AdvSimd.Multiply(
+                        AdvSimd.LoadVector128(pSub + i + 4), AdvSimd.Multiply(w1, vd)));
+                }
+                for (; i < subEnd; i++)
+                {
+                    int nib = (i < 16) ? (qsSub[i] & 0x0F) : (qsSub[i - 16] >> 4);
+                    sum += pSub[i] * (dl * kvalues_iq4nl[nib]);
+                }
+            }
+        }
+
+        return (float)sum + Vector128.Sum(AdvSimd.Add(vacc0, vacc1));
+    }
+
+    /// <summary>Serial IQ4_XS matmul: one vec-dot per column, rows in order.</summary>
+    public static unsafe void QuantizedMatMulIQ4_XS_Serial_Arm64(
+        float* input, byte* rawWeights, float* output,
+        int M, int K, int N)
+    {
+        for (int row = 0; row < M; row++)
+        {
+            float* pInRow = input + (long)row * K;
+            float* pOutRow = output + (long)row * N;
+            for (int col = 0; col < N; col++)
+                pOutRow[col] = VecDotIQ4_XS_Arm64(pInRow, rawWeights, col, K);
+        }
+    }
+
+    /// <summary>Parallel IQ4_XS matmul: columns for decode, rows for prefill.</summary>
+    public static unsafe void QuantizedMatMulIQ4_XS_Parallel_Arm64(
+        float* input, byte* rawWeights, float* output,
+        int M, int K, int N)
+    {
+        if (M <= 1)
+        {
+            DecodeParallel(VecDotIQ4_XS_Arm64, input, rawWeights, output, K, N);
+        }
+        else
+        {
+            Parallel.For(0, M, row =>
+            {
+                float* pInRow = input + (long)row * K;
+                float* pOutRow = output + (long)row * N;
+                for (int col = 0; col < N; col++)
+                    pOutRow[col] = VecDotIQ4_XS_Arm64(pInRow, rawWeights, col, K);
+            });
+        }
+    }
 }

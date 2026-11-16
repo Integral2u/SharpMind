@@ -56,7 +56,7 @@ if (args.Length > 0 && args[0] == "widebench")
 
 if (args.Length < 2)
 {
-    Console.Error.WriteLine("usage: meta <file>   |   dump <file> [pattern]   |   bind <file>   |   fwd <file> [full] [resident]   |   fwdmulti <file> <promptfile> [single|...]   |   ref <file> [prompt]   |   run <file> [prompt] [maxTokens] [full] [resident] [topk] [serialmm]   |   bench <file> [prompt] [warmup] [measure] [full] [resident] [serialmm] [nowide] [reps=N] [ids]   |   benchab <file> [prompt] [warmup] [measure] [full] [resident]   |   stages <file> [prompt] [warmup] [measure] [full] [resident] [serialmm]   |   widebench [K] [N] [iters]   |   kbench <q2k|q3k|q4k|q5k|q6k|q8k|q4_0|q4_1|iq4nl|mxfp4|q5_0|q5_1|q8_0|q8_1|f32> [K] [N] [iters] [fma|avx2|scalar|arm64]");
+    Console.Error.WriteLine("usage: meta <file>   |   dump <file> [pattern]   |   bind <file>   |   fwd <file> [full] [resident]   |   fwdmulti <file> <promptfile> [single|...]   |   ref <file> [prompt]   |   run <file> [prompt] [maxTokens] [full] [resident] [topk] [serialmm]   |   bench <file> [prompt] [warmup] [measure] [full] [resident] [serialmm] [nowide] [reps=N] [ids]   |   benchab <file> [prompt] [warmup] [measure] [full] [resident]   |   stages <file> [prompt] [warmup] [measure] [full] [resident] [serialmm]   |   widebench [K] [N] [iters]   |   kbench <q2k|q3k|q4k|q5k|q6k|q8k|q4_0|q4_1|iq4nl|mxfp4|iq4xs|q5_0|q5_1|q8_0|q8_1|f32> [K] [N] [iters] [fma|avx2|scalar|arm64]");
     return 2;
 }
 
@@ -2653,7 +2653,7 @@ static unsafe int RunKernelBench(string[] args)
     // Q4_K, Q6_K and Q8_0 have NEON targets; every other kind still resolves to
     // the scalar kernels on Arm64. Mapping those keeps `kbench ... arm64` usable
     // for any kind and reports the NEON row as soon as a kind grows one.
-    if (variant == "arm64" && kind is not ("q4k" or "q6k" or "q8_0" or "mxfp4")) variant = "scalar";
+    if (variant == "arm64" && kind is not ("q4k" or "q6k" or "q8_0" or "mxfp4" or "iq4xs")) variant = "scalar";
 
     int elPerBlock; int blockBytes;
     switch (kind)
@@ -2667,6 +2667,7 @@ static unsafe int RunKernelBench(string[] args)
         case "q4_0": elPerBlock = 32; blockBytes = 18; break;
         case "q4_1": elPerBlock = 32; blockBytes = 20; break;
         case "iq4nl": elPerBlock = 32; blockBytes = 18; break;
+        case "iq4xs": elPerBlock = 256; blockBytes = 136; break;
         case "mxfp4": elPerBlock = 32; blockBytes = 17; break;
         case "q5_0": elPerBlock = 32; blockBytes = 22; break;
         case "q5_1": elPerBlock = 32; blockBytes = 24; break;
@@ -2698,6 +2699,10 @@ static unsafe int RunKernelBench(string[] args)
         case "mxfp4_avx2": par = QuantizationKernels.QuantizedMatMulMXFP4_Parallel_AVX2; ser = QuantizationKernels.QuantizedMatMulMXFP4_Serial_AVX2; break;
         case "mxfp4_arm64": par = QuantizationKernels.QuantizedMatMulMXFP4_Parallel_Arm64; ser = QuantizationKernels.QuantizedMatMulMXFP4_Serial_Arm64; break;
         case "mxfp4_scalar": par = QuantizationKernels.QuantizedMatMulMXFP4_Parallel_Scalar; ser = QuantizationKernels.QuantizedMatMulMXFP4_Serial_Scalar; break;
+        case "iq4xs": par = QuantizationKernels.QuantizedMatMulIQ4_XS_Parallel_FMA; ser = QuantizationKernels.QuantizedMatMulIQ4_XS_Serial_FMA; break;
+        case "iq4xs_avx2": par = QuantizationKernels.QuantizedMatMulIQ4_XS_Parallel_AVX2; ser = QuantizationKernels.QuantizedMatMulIQ4_XS_Serial_AVX2; break;
+        case "iq4xs_arm64": par = QuantizationKernels.QuantizedMatMulIQ4_XS_Parallel_Arm64; ser = QuantizationKernels.QuantizedMatMulIQ4_XS_Serial_Arm64; break;
+        case "iq4xs_scalar": par = QuantizationKernels.QuantizedMatMulIQ4_XS_Parallel_Scalar; ser = QuantizationKernels.QuantizedMatMulIQ4_XS_Serial_Scalar; break;
         case "q4k": par = QuantizationKernels.QuantizedMatMulQ4K_Parallel_FMA; ser = QuantizationKernels.QuantizedMatMulQ4K_Serial_FMA; break;
         case "q4k_avx2": par = QuantizationKernels.QuantizedMatMulQ4K_Parallel_AVX2; ser = QuantizationKernels.QuantizedMatMulQ4K_Serial_AVX2; break;
         case "q4k_scalar": par = QuantizationKernels.QuantizedMatMulQ4K_Parallel_Scalar; ser = QuantizationKernels.QuantizedMatMulQ4K_Serial_Scalar; break;

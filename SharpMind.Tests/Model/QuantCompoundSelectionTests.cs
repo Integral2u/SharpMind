@@ -28,7 +28,7 @@ public class QuantCompoundSelectionTests
         QuantDType.Q5_0, QuantDType.Q5_1,
         QuantDType.Q2_K, QuantDType.Q3_K, QuantDType.Q4_K_M, QuantDType.Q5_K_M,
         QuantDType.Q6_K, QuantDType.Q8_K,
-        QuantDType.IQ4_NL, QuantDType.MXFP4, QuantDType.Q1_0, QuantDType.TQ2_0,
+        QuantDType.IQ4_NL, QuantDType.MXFP4, QuantDType.IQ4_XS, QuantDType.Q1_0, QuantDType.TQ2_0,
     ];
 
     private static PuzzleCornerPiece LinearTable() =>
@@ -45,13 +45,14 @@ public class QuantCompoundSelectionTests
         // Splice in what the Arm64 preset produces for the dtypes that have a
         // NEON matmul, without needing Arm64 hardware to ask.
         var mapping = ScalarMapping();
-        foreach (string prefix in new[] { "q4k", "q6k", "q8_0", "mxfp4" })
+        foreach (string prefix in new[] { "q4k", "q6k", "q8_0", "mxfp4", "iq4_xs" })
             mapping[$"qmatmul_{prefix}"] = $"qmatmul_{prefix}_parallel_arm64";
 
         Assert.Equal("q4k_parallel_arm64", QuantHelper.GetCompound(QuantDType.Q4_K_M, mapping));
         Assert.Equal("q6k_parallel_arm64", QuantHelper.GetCompound(QuantDType.Q6_K, mapping));
         Assert.Equal("q8_0_parallel_arm64", QuantHelper.GetCompound(QuantDType.Q8_0, mapping));
         Assert.Equal("mxfp4_parallel_arm64", QuantHelper.GetCompound(QuantDType.MXFP4, mapping));
+        Assert.Equal("iq4_xs_parallel_arm64", QuantHelper.GetCompound(QuantDType.IQ4_XS, mapping));
 
         // A dtype with no NEON kernel must fall back to the tier's scalar target
         // rather than inventing an `_arm64` name that is not registered.

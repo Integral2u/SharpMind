@@ -19,6 +19,7 @@ public class QuantizationAgreementTests
         yield return new object[] { QuantDType.Q5_1 };
         yield return new object[] { QuantDType.IQ4_NL };
         yield return new object[] { QuantDType.MXFP4 };
+        yield return new object[] { QuantDType.IQ4_XS };
         yield return new object[] { QuantDType.Q2_K };
         yield return new object[] { QuantDType.Q3_K };
         yield return new object[] { QuantDType.Q4_K };
@@ -89,6 +90,11 @@ public class QuantizationAgreementTests
                     // E8M0 has no mantissa or sign, so every byte but the
                     // reserved 255 is a finite power of two; one byte of 2^0.
                     data[off + 0] = 0x7F;
+                    break;
+                case QuantDType.IQ4_XS:
+                    // 136-byte block: super-scale first. The 6-bit sub-block
+                    // scales are already finite over the whole random range.
+                    data[off + 0] = 0x00; data[off + 1] = 0x3C;
                     break;
                 case QuantDType.Q8_1:
                 case QuantDType.Q4_1:
