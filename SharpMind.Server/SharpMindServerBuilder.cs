@@ -50,6 +50,23 @@ public sealed class SharpMindServerOptions
     public int? MaxCacheLen { get; set; }
 
     /// <summary>
+    /// How many chat completions may generate at the same time. Decoding is not
+    /// free concurrency: each admitted request owns a KV cache and a native
+    /// workspace, and the CPU kernels already use every core, so the default is
+    /// one. Raise it only when the model is small enough that decode leaves
+    /// cores idle.
+    /// </summary>
+    public int MaxConcurrentGenerations { get; set; } = 1;
+
+    /// <summary>
+    /// How many arrival requests may wait behind the concurrency cap. Beyond
+    /// this the server answers 429 instead of parking the caller, so overload
+    /// fails fast rather than becoming a timeout for everyone. Zero means
+    /// "reject as soon as the cap is busy".
+    /// </summary>
+    public int MaxQueuedGenerations { get; set; } = 32;
+
+    /// <summary>
     /// Optional bearer/API key. When set, the destructive operational
     /// endpoints (<c>POST /v1/shutdown</c>, <c>DELETE /v1/models/{model}</c>)
     /// require it (<c>Authorization: Bearer &lt;key&gt;</c> or
@@ -86,6 +103,8 @@ public static class SharpMindServerExtensions
         services.AddSingleton(options);
         services.AddSingleton<ModelManager>();
         services.AddSingleton<SessionFactory>();
+        services.AddSingleton(_ => new GenerationGate(
+            options.MaxConcurrentGenerations, options.MaxQueuedGenerations));
         return services;
     }
 }

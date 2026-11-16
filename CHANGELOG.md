@@ -41,6 +41,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   first sub-block starts off a 32-value boundary. `KQuantUnpackTests` now runs on
   the Arm64 tier too, so the odd column offsets (K = 8, 137, 288, 320, 384, 896,
   4864) are compared against scalar on the ARM runner.
+- **Server admission control: a concurrency cap and a bounded queue** - the
+  OpenAI endpoint admits `--max-concurrent` generations (default 1: decode already
+  uses every core, and each admitted request owns a KV cache and a native
+  workspace) and lets `--max-queued` wait behind them (default 32). Beyond that
+  the server answers 429 with `Retry-After` immediately instead of parking the
+  caller until it times out, and `/v1/health` reports `generating`/`queued`
+  against the caps. The gate is taken before the model load, so an overloaded
+  server does not start loads it cannot serve; a queued request keeps its place
+  until its turn or its cancellation, and a cancelled waiter releases its place.
 - **Linux coverage in CI** - the `CI` workflow now runs the full test suite on
   `ubuntu-latest` alongside `windows-latest`, with per-OS/arch NuGet cache keys
   and per-OS test-result artifact names. The suite is now green on Linux, which

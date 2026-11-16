@@ -50,6 +50,14 @@ for (int i = 0; i < cliArgs.Length; i++)
             if (int.TryParse(cliArgs[++i], out var maxCacheLen))
                 options.MaxCacheLen = maxCacheLen;
             break;
+        case "--max-concurrent" when i + 1 < cliArgs.Length:
+            if (int.TryParse(cliArgs[++i], out var maxConcurrent) && maxConcurrent > 0)
+                options.MaxConcurrentGenerations = maxConcurrent;
+            break;
+        case "--max-queued" when i + 1 < cliArgs.Length:
+            if (int.TryParse(cliArgs[++i], out var maxQueued) && maxQueued >= 0)
+                options.MaxQueuedGenerations = maxQueued;
+            break;
         case "--api-key" when i + 1 < cliArgs.Length:
             options.ApiKey = cliArgs[++i];
             break;
@@ -431,6 +439,7 @@ static async Task SpawnServiceProcessAsync(SharpMindServerOptions options, List<
     if (options.DisableFileIO) args += " --no-files";
     if (options.DisableNetworkIO) args += " --no-network";
     if (options.MaxCacheLen is int maxCacheLen) args += $" --max-cache-len {maxCacheLen}";
+    args += $" --max-concurrent {options.MaxConcurrentGenerations} --max-queued {options.MaxQueuedGenerations}";
     if (!string.IsNullOrEmpty(options.ApiKey)) args += $" --api-key \"{options.ApiKey}\"";
 
     var psi = new ProcessStartInfo
@@ -733,6 +742,10 @@ static void PrintUsage()
       --no-network          Disable network IO for tool calls
       --max-cache-len <n>   Cap KV cache length (tokens). Auto-caps by
                             available memory when not specified
+      --max-concurrent <n>  Chat completions allowed to generate at once
+                            (default 1; decoding already uses every core)
+      --max-queued <n>      Requests allowed to wait behind that cap before
+                            the server answers 429 (default 32)
       --api-key <key>       Require this key (Authorization: Bearer or
                             X-Api-Key) for shutdown/model-delete endpoints.
                             Sentinel: also sent by --stop and unload.
