@@ -7,6 +7,8 @@ namespace SharpMind.Inference.Chat;
 /// </summary>
 public sealed class SummarizingCompactor : IContextCompactor
 {
+    private const string SummaryPrefix = "Summary of earlier conversation:";
+
     public string Name { get; init; } = "Summarize";
     /// <summary>Fraction of MaxTokens at which compaction is triggered (default 0.7).</summary>
     public float Threshold { get; init; } = 0.7f;
@@ -31,15 +33,20 @@ public sealed class SummarizingCompactor : IContextCompactor
             : Math.Max(0, context.History.Count - 1);
 
         // Collect older, non-pinned, non-ignored messages. Every System message
-        // is instructions, not conversation, so all of them stay.
+        // is instructions, not conversation, so all of them stay. A previous
+        // summary is merged into the new one instead of accumulating.
         var toSummarize = new List<ChatMessage>();
+        var priorSummaries = new List<ChatMessage>();
         int lastSystemIndex = -1;
         for (int i = 0; i < context.History.Count; i++)
         {
             ChatMessage message = context.History[i];
             if (message.Role == ChatRole.System)
             {
-                lastSystemIndex = i;
+                if (message.Content.StartsWith(SummaryPrefix, StringComparison.Ordinal))
+                    priorSummaries.Add(message);
+                else
+                    lastSystemIndex = i;
                 continue;
             }
 
@@ -51,10 +58,19 @@ public sealed class SummarizingCompactor : IContextCompactor
 
         if (toSummarize.Count == 0) return false;
 
-        // Build a summarization prompt from the eligible messages
+        // Build a summarization prompt from the previous summary and the newly
+        // eligible messages.
         var sb = new System.Text.StringBuilder();
         sb.AppendLine("Summarize the following conversation concisely. Preserve all facts, instructions, deadlines, and context needed to continue naturally. Omit pleasantries and redundant meta-commentary.");
         sb.AppendLine();
+        if (priorSummaries.Count > 0)
+        {
+            sb.AppendLine("Earlier summary to fold in:");
+            foreach (ChatMessage prior in priorSummaries)
+                sb.AppendLine(prior.Content[SummaryPrefix.Length..].Trim());
+            sb.AppendLine();
+        }
+
         foreach (var msg in toSummarize)
         {
             string role = msg.Role switch
@@ -74,19 +90,24 @@ public sealed class SummarizingCompactor : IContextCompactor
 
         string summary = await context.SummarizeAsync(sb.ToString());
 
-        // Mark original messages as ignored
+        // Mark original messages as ignored.
         foreach (var msg in toSummarize)
             msg.Ignore = true;
 
-        // Insert the summary after the last system message, but never after the
-        // current turn's first message.
-        int insertAt = lastSystemIndex >= 0
-            ? Math.Min(lastSystemIndex + 1, summarizeBefore)
-            : 0;
+        // Replace an earlier summary in place, or insert after the last real
+        // system prompt, but never after the current turn's first message.
+        int insertAt = priorSummaries.Count > 0
+            ? context.History.IndexOf(priorSummaries[0])
+            : lastSystemIndex >= 0
+                ? Math.Min(lastSystemIndex + 1, summarizeBefore)
+                : 0;
+        foreach (ChatMessage prior in priorSummaries)
+            context.History.Remove(prior);
+        insertAt = Math.Clamp(insertAt, 0, context.History.Count);
         context.History.Insert(insertAt, new ChatMessage
         {
             Role = ChatRole.System,
-            Content = $"Summary of earlier conversation: {summary}",
+            Content = $"{SummaryPrefix} {summary}",
             IsPinned = true
         });
 

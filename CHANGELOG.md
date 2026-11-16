@@ -120,7 +120,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   System message is now excluded from the summary and preserved, not just the
   first one. Only messages before the latest user message are summarized, so the
   active question, its tool calls and their results are never marked ignored.
-  Pinned messages and the pinned summary keep their existing behavior.
+  A previous summary is folded into the new one instead of accumulating another
+  pinned system message. Pinned messages keep their existing behavior.
 
 ## [1.1.1.0] - 2026-11-08
 
