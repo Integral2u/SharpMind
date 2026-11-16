@@ -486,6 +486,8 @@ public class OpenAiMapperTests
         public void Interrupt() { }
         public void InitializeChat(IProgress<float>? progress = null) { }
         public ChatSessionSnapshot GetSnapshot() => new() { History = [] };
+        public void RestorePrefix(ChatSessionSnapshot snapshot, IReadOnlyList<ChatMessage> history) => throw new NotSupportedException();
+
         public void LoadSnapshot(ChatSessionSnapshot snapshot) { }
         public IAsyncEnumerable<ChatStreamEntry> GetResponseStreamAsync(string userInput, ChatArtifact[]? artifacts = null, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<ChatMessage[]> StartChatAsync(Func<Task<ChatMessage>> prompt, Action<ChatStreamEntry> response, CancellationToken token = default) => throw new NotSupportedException();

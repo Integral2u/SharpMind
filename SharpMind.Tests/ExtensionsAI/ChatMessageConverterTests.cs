@@ -157,6 +157,7 @@ public sealed class ChatMessageConverterTests
         public void Interrupt() { }
         public void InitializeChat(IProgress<float>? progress = null) { }
         public SmChatSessionSnapshot GetSnapshot() => new() { History = [] };
+        public void RestorePrefix(SmChatSessionSnapshot snapshot, IReadOnlyList<SmChatMessage> history) => throw new NotSupportedException();
         public void LoadSnapshot(SmChatSessionSnapshot snapshot) { }
         public async IAsyncEnumerable<SmChatStreamEntry> GetResponseStreamAsync(string userInput, SmChatArtifact[]? artifacts = null, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
         {
