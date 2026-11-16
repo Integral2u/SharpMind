@@ -56,7 +56,7 @@ if (args.Length > 0 && args[0] == "widebench")
 
 if (args.Length < 2)
 {
-    Console.Error.WriteLine("usage: meta <file>   |   dump <file> [pattern]   |   bind <file>   |   fwd <file> [full] [resident]   |   fwdmulti <file> <promptfile> [single|...]   |   ref <file> [prompt]   |   run <file> [prompt] [maxTokens] [full] [resident] [topk] [serialmm]   |   bench <file> [prompt] [warmup] [measure] [full] [resident] [serialmm] [nowide] [reps=N] [ids]   |   benchab <file> [prompt] [warmup] [measure] [full] [resident]   |   stages <file> [prompt] [warmup] [measure] [full] [resident] [serialmm]   |   widebench [K] [N] [iters]   |   kbench <q2k|q3k|q4k|q5k|q6k|q8k|q4_0|q4_1|iq4nl|mxfp4|iq4xs|q5_0|q5_1|q8_0|q8_1|f32> [K] [N] [iters] [fma|avx2|scalar|arm64]");
+    Console.Error.WriteLine("usage: meta <file>   |   dump <file> [pattern]   |   bind <file>   |   fwd <file> [full] [resident]   |   fwdmulti <file> <promptfile> [single|...]   |   ref <file> [prompt]   |   run <file> [prompt] [maxTokens] [full] [resident] [topk] [serialmm]   |   bench <file> [prompt] [warmup] [measure] [full] [resident] [serialmm] [nowide] [reps=N] [ids]   |   benchab <file> [prompt] [warmup] [measure] [full] [resident]   |   stages <file> [prompt] [warmup] [measure] [full] [resident] [serialmm]   |   widebench [K] [N] [iters]   |   kbench <q2k|q3k|q4k|q5k|q6k|q8k|q4_0|q4_1|iq4nl|mxfp4|iq4xs|iq2xxs|iq2xs|iq3xxs|iq2s|iq3s|q5_0|q5_1|q8_0|q8_1|f32> [K] [N] [iters] [fma|avx2|scalar|arm64]");
     return 2;
 }
 
@@ -2668,6 +2668,11 @@ static unsafe int RunKernelBench(string[] args)
         case "q4_1": elPerBlock = 32; blockBytes = 20; break;
         case "iq4nl": elPerBlock = 32; blockBytes = 18; break;
         case "iq4xs": elPerBlock = 256; blockBytes = 136; break;
+        case "iq2xxs": elPerBlock = 256; blockBytes = 66; break;
+        case "iq2xs": elPerBlock = 256; blockBytes = 74; break;
+        case "iq3xxs": elPerBlock = 256; blockBytes = 98; break;
+        case "iq2s": elPerBlock = 256; blockBytes = 82; break;
+        case "iq3s": elPerBlock = 256; blockBytes = 110; break;
         case "mxfp4": elPerBlock = 32; blockBytes = 17; break;
         case "q5_0": elPerBlock = 32; blockBytes = 22; break;
         case "q5_1": elPerBlock = 32; blockBytes = 24; break;
@@ -2703,6 +2708,16 @@ static unsafe int RunKernelBench(string[] args)
         case "iq4xs_avx2": par = QuantizationKernels.QuantizedMatMulIQ4_XS_Parallel_AVX2; ser = QuantizationKernels.QuantizedMatMulIQ4_XS_Serial_AVX2; break;
         case "iq4xs_arm64": par = QuantizationKernels.QuantizedMatMulIQ4_XS_Parallel_Arm64; ser = QuantizationKernels.QuantizedMatMulIQ4_XS_Serial_Arm64; break;
         case "iq4xs_scalar": par = QuantizationKernels.QuantizedMatMulIQ4_XS_Parallel_Scalar; ser = QuantizationKernels.QuantizedMatMulIQ4_XS_Serial_Scalar; break;
+        case "iq2xxs": par = QuantizationKernels.QuantizedMatMulIQ2_XXS_Parallel_Scalar; ser = QuantizationKernels.QuantizedMatMulIQ2_XXS_Serial_Scalar; break;
+        case "iq2xxs_scalar": par = QuantizationKernels.QuantizedMatMulIQ2_XXS_Parallel_Scalar; ser = QuantizationKernels.QuantizedMatMulIQ2_XXS_Serial_Scalar; break;
+        case "iq2xs": par = QuantizationKernels.QuantizedMatMulIQ2_XS_Parallel_Scalar; ser = QuantizationKernels.QuantizedMatMulIQ2_XS_Serial_Scalar; break;
+        case "iq2xs_scalar": par = QuantizationKernels.QuantizedMatMulIQ2_XS_Parallel_Scalar; ser = QuantizationKernels.QuantizedMatMulIQ2_XS_Serial_Scalar; break;
+        case "iq3xxs": par = QuantizationKernels.QuantizedMatMulIQ3_XXS_Parallel_Scalar; ser = QuantizationKernels.QuantizedMatMulIQ3_XXS_Serial_Scalar; break;
+        case "iq3xxs_scalar": par = QuantizationKernels.QuantizedMatMulIQ3_XXS_Parallel_Scalar; ser = QuantizationKernels.QuantizedMatMulIQ3_XXS_Serial_Scalar; break;
+        case "iq2s": par = QuantizationKernels.QuantizedMatMulIQ2_S_Parallel_Scalar; ser = QuantizationKernels.QuantizedMatMulIQ2_S_Serial_Scalar; break;
+        case "iq2s_scalar": par = QuantizationKernels.QuantizedMatMulIQ2_S_Parallel_Scalar; ser = QuantizationKernels.QuantizedMatMulIQ2_S_Serial_Scalar; break;
+        case "iq3s": par = QuantizationKernels.QuantizedMatMulIQ3_S_Parallel_Scalar; ser = QuantizationKernels.QuantizedMatMulIQ3_S_Serial_Scalar; break;
+        case "iq3s_scalar": par = QuantizationKernels.QuantizedMatMulIQ3_S_Parallel_Scalar; ser = QuantizationKernels.QuantizedMatMulIQ3_S_Serial_Scalar; break;
         case "q4k": par = QuantizationKernels.QuantizedMatMulQ4K_Parallel_FMA; ser = QuantizationKernels.QuantizedMatMulQ4K_Serial_FMA; break;
         case "q4k_avx2": par = QuantizationKernels.QuantizedMatMulQ4K_Parallel_AVX2; ser = QuantizationKernels.QuantizedMatMulQ4K_Serial_AVX2; break;
         case "q4k_scalar": par = QuantizationKernels.QuantizedMatMulQ4K_Parallel_Scalar; ser = QuantizationKernels.QuantizedMatMulQ4K_Serial_Scalar; break;

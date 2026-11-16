@@ -7,9 +7,10 @@ namespace SharpMind.Model.Format;
 /// SharpMind's internal <see cref="QuantDType"/>.
 ///
 /// The internal enum is a convenience index, not the GGUF wire format: several
-/// members (I8=16, I16=17, I32=18, IQ1_M=21, TQ1_0=22, TQ2_0=23, IQ4_XS=43)
-/// deliberately differ from the canonical <c>ggml_type</c> values, and BF16 was
-/// absent entirely. Casting a raw GGUF id to <see cref="QuantDType"/> decoded real IQ2/
+/// members (I8=16, I16=17, I32=18, IQ1_M=21, TQ1_0=22, TQ2_0=23, IQ4_XS=43,
+/// IQ2_XXS=44, IQ2_XS=45, IQ3_XXS=46, IQ2_S=47, IQ3_S=48) deliberately differ
+/// from the canonical <c>ggml_type</c> values, and BF16 was absent entirely. Casting a raw GGUF id
+/// to <see cref="QuantDType"/> decoded real IQ2/
 /// IQ3 tensors as raw integer types (silent garbage), and mis-mapped the rest.
 /// All GGUF reads and writes must go through this map so the canonical ids are
 /// stable and unsupported-but-real types fail loudly instead of mis-decoding.
@@ -33,8 +34,13 @@ public static class GgufTypeMap
         [13] = QuantDType.Q5_K,
         [14] = QuantDType.Q6_K,
         [15] = QuantDType.Q8_K,
+        [16] = QuantDType.IQ2_XXS,
+        [17] = QuantDType.IQ2_XS,
+        [18] = QuantDType.IQ3_XXS,
         [19] = QuantDType.IQ1_S,
         [20] = QuantDType.IQ4_NL,
+        [21] = QuantDType.IQ3_S,
+        [22] = QuantDType.IQ2_S,
         [23] = QuantDType.IQ4_XS,
         [24] = QuantDType.I8,
         [25] = QuantDType.I16,

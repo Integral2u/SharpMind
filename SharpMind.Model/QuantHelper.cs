@@ -6,9 +6,9 @@ public static class QuantHelper
 {
     /// <summary>
     /// Kernel-name prefix for a dtype. Every dtype a GGUF file can carry a
-    /// linear layer in must have its own prefix: falling back to "f32" (as an
-    /// unlisted IQ1_S/TQ1_0 layer used to) hands those raw block bytes to the
-    /// float kernel, which decodes them as garbage instead of quantized weights.
+    /// linear layer in must have its own prefix: falling back to "f32" hands
+    /// those raw block bytes to the float kernel, which decodes them as garbage
+    /// instead of quantized weights.
     /// </summary>
     public static string DtypeToCompound(QuantDType dtype) => dtype switch
     {
@@ -27,19 +27,18 @@ public static class QuantHelper
         QuantDType.IQ4_NL => "q4_nl",
         QuantDType.MXFP4 => "mxfp4",
         QuantDType.IQ4_XS => "iq4_xs",
+        QuantDType.IQ2_XXS => "iq2_xxs",
+        QuantDType.IQ2_XS => "iq2_xs",
+        QuantDType.IQ3_XXS => "iq3_xxs",
+        QuantDType.IQ2_S => "iq2_s",
+        QuantDType.IQ3_S => "iq3_s",
+        QuantDType.IQ1_S => "iq1_s",
+        QuantDType.IQ1_M => "iq1_m",
         QuantDType.Q1_0 => "q1_0",
+        QuantDType.TQ1_0 => "tq1_0",
         QuantDType.TQ2_0 => "tq2_0",
         QuantDType.F16 => "f16",
         QuantDType.BF16 => "bf16",
-        // IQ1_S, IQ1_M and TQ1_0 have decode kernels but no linear-layer
-        // compound, so a file made of them used to fall through to "f32" and run
-        // its raw block bytes through the float kernel. Refuse it instead of
-        // emitting garbage; a message beats a fluent answer built on noise.
-        QuantDType.IQ1_S or QuantDType.IQ1_M or QuantDType.TQ1_0 =>
-            throw new NotSupportedException(
-                $"{dtype} weights are not wired to a linear-layer kernel. SharpMind can decode " +
-                "these tensors but has no matmul target for them yet; convert the model to " +
-                "Q8_0, Q4_K_M or MXFP4."),
         _ => "f32"
     };
 

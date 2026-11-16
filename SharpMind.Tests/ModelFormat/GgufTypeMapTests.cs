@@ -34,8 +34,13 @@ public class GgufTypeMapTests
         (13, QuantDType.Q5_K),
         (14, QuantDType.Q6_K),
         (15, QuantDType.Q8_K),
+        (16, QuantDType.IQ2_XXS),
+        (17, QuantDType.IQ2_XS),
+        (18, QuantDType.IQ3_XXS),
         (19, QuantDType.IQ1_S),
         (20, QuantDType.IQ4_NL),
+        (21, QuantDType.IQ3_S),
+        (22, QuantDType.IQ2_S),
         (23, QuantDType.IQ4_XS),
         (24, QuantDType.I8),
         (25, QuantDType.I16),
@@ -51,11 +56,6 @@ public class GgufTypeMapTests
     /// <summary>Real <c>ggml_type</c> ids SharpMind intentionally does not implement — these must not silently mis-decode.</summary>
     public static IEnumerable<object[]> UnsupportedIds() => new uint[]
     {
-        16, // IQ2_XXS
-        17, // IQ2_XS
-        18, // IQ3_XXS
-        21, // IQ3_S
-        22, // IQ2_S
         27, // I64
         28, // F64
         31, // Q4_0_4_4
@@ -142,6 +142,9 @@ public class GgufTypeMapTests
     [InlineData(QuantDType.Q4_K_M)]
     [InlineData(QuantDType.MXFP4)]
     [InlineData(QuantDType.IQ4_XS)]
+    [InlineData(QuantDType.IQ2_XXS)]
+    [InlineData(QuantDType.IQ2_XS)]
+    [InlineData(QuantDType.IQ3_XXS)]
     public void GgufWriter_ToGgufLoader_RoundTripsDtype(QuantDType dtype)
     {
         // A synthetic GGUF (no physical model involved) written by GgufWriter must
@@ -173,8 +176,8 @@ public class GgufTypeMapTests
     }
 
     [Theory]
-    [InlineData(16u, "IQ2_XXS")]
-    [InlineData(18u, "IQ3_XXS")]
+    [InlineData(31u, "Q4_0_4_4")]
+    [InlineData(36u, "IQ4_NL_4_4")]
     public void GgufLoadMeta_UnsupportedTensorTypeFailsLoudly(uint ggmlId, string expectedName)
     {
         // Hand-crafted GGUF v3 header with a single tensor of an unsupported type.

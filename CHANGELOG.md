@@ -37,6 +37,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   (every value fits in int8) instead of the two permutes AVX2 needs, then widens
   to float. `kbench iq4xs` on the same 4-core host, best of three: scalar 0.66,
   AVX2 1.53, FMA 1.56 GMAC/s (2.4x over scalar).
+- **The grid formats: IQ2_XXS, IQ2_XS, IQ3_XXS, IQ2_S and IQ3_S** (GGML ids 16,
+  17, 18, 22 and 21) - the 2- and 3-bit lattice formats Unsloth's "UD" quants
+  are built from. A 256-value super-block is eight 32-value sub-blocks of four
+  grid lookups (IQ2) or eight half-width ones (IQ3), one packed scale nibble and
+  four 7-bit sign patterns; the S variants add a byte of high index bits and
+  move the signs into their own array. All five decode, vec-dot and matmul
+  (scalar kernels: the grid lookup is a gather, so there is no vector form yet).
+  The codebooks are generated from ggml's `ggml-common.h` tables rather than
+  typed in - 256x8, 512x8, 1024x8, 256x4 and 512x4 bytes - and the layouts are
+  pinned by hand-computed fixtures for the scale nibble, the sign table and the
+  `qh` high bits.
+- **The grid formats are wired into the layer dispatch, as are IQ1_S, IQ1_M and
+  TQ1_0** - `QuantHelper.DtypeToCompound` used to fall through to `"f32"` for
+  any dtype it did not list, so a linear layer holding one of those raw block
+  formats ran its bytes through `QuantizedMatMulF32`: fluent garbage rather
+  than an error. Every GGUF weight dtype now has its own compound, and
+  `kbench` grew `iq2xxs`, `iq2xs`, `iq3xxs`, `iq2s` and `iq3s`. On the same
+  4-core host, best of three at K=2048/N=1408: 0.43, 0.45, 0.48, 0.40 and
+  0.42 GMAC/s - about a third of IQ4_XS's FMA rate, which is what
+  `ggml_vec_dot_iq2_xxs_q8_K` exists for and this port does not have yet.
 
 - **Arm64 CI runner and `HardwareTier.Arm64`** - the test matrix also runs on
   `ubuntu-24.04-arm` (Neoverse N2), so the engine is now exercised on AdvSimd
@@ -166,10 +186,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **IQ1_S, IQ1_M and TQ1_0 tensors no longer decode through the F32 kernel** -
   `QuantHelper.DtypeToCompound` fell back to `"f32"` for any dtype it did not
   list, so a linear layer holding one of those raw block formats ran its bytes
-  through `QuantizedMatMulF32` and produced fluent garbage. There is no matmul
-  target for them to switch to yet, so the lookup now raises
-  `NotSupportedException` naming the dtype; `TQ2_0` has FMA/AVX2 kernels and is
-  wired instead.
+  through `QuantizedMatMulF32` and produced fluent garbage. Each now has its own
+  compound wired to the scalar kernel it already had, and
+  `LinearDispatchMatchesTheQuantizationOpsTable` pins that a layer and the
+  standalone ops path always name the same implementation.
+- **Q4_0, Q4_1, IQ4_NL and Q8_K now use their FMA/SSE kernel in a real model** -
+  the linear-layer and LM-head dispatch tables still pointed `q4_0_*_fma`,
+  `q4_1_*_fma` and `q4_nl_*_fma` at the AVX2 kernels and `q8k_*_sse` at the
+  scalar one, so those projections ran a tier behind the hardware on every FMA
+  host. `kbench iq4nl 2048 1408` measures the gap the tables were giving away:
+  1.45 GMAC/s through the AVX2 kernel against 1.62 through the FMA one (best of
+  three, same 4-core host).
 
 ## [1.1.1.0] - 2026-11-08
 
