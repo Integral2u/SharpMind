@@ -128,27 +128,24 @@ public sealed class SessionFactory(SharpMindServerOptions options, PrefixCache p
             if (i != lastUserIdx)
                 replay.Add(history[i]);
 
-        // Restore a cached prefix when this request extends one. LoadSnapshot
-        // replaces the history (and skips system messages), so the system prompt is
-        // re-added afterwards; WarmupPrefillAsync then imports the KV and prefills
-        // only what the snapshot did not already cover.
+        var desired = new List<ChatMessage>(replay.Count + 1);
+        if (!string.IsNullOrWhiteSpace(systemPrompt))
+            desired.Add(new ChatMessage { Role = ChatRole.System, Content = systemPrompt });
+        desired.AddRange(replay);
+
+        // Restore a cached prefix when this request extends one, then warm up: the
+        // session imports the KV the snapshot covers and prefills only the rest.
         var cached = _prefixCache.Take(loaded.ModelId, replay);
-        int start = 0;
         if (cached is not null)
         {
-            session.LoadSnapshot(cached.Snapshot);
-            start = cached.History.Length;
-            if (!string.IsNullOrWhiteSpace(systemPrompt))
-                session.AddMessage(ChatRole.System, systemPrompt);
+            session.RestorePrefix(cached.Snapshot, desired);
             await session.WarmupPrefillAsync();
         }
-        else if (!string.IsNullOrWhiteSpace(systemPrompt))
+        else
         {
-            session.AddMessage(ChatRole.System, systemPrompt);
+            foreach (var message in desired)
+                session.AddMessage(message);
         }
-
-        for (int i = start; i < replay.Count; i++)
-            session.AddMessage(replay[i]);
 
         return (session, lastUserMessage, continueFromHistory);
     }

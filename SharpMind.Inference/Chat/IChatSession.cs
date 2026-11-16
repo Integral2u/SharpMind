@@ -137,6 +137,7 @@ public interface IChatSession : IAsyncDisposable
     public void Interrupt();
     public void InitializeChat(IProgress<float>? progress = null);
     public ChatSessionSnapshot GetSnapshot();
+    public void RestorePrefix(ChatSessionSnapshot snapshot, IReadOnlyList<ChatMessage> history);
     public void LoadSnapshot(ChatSessionSnapshot snapshot);
 
     /// <summary>

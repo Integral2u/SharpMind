@@ -3265,6 +3265,35 @@ if (held.Length > 0)
         };
     }
 
+    public void RestorePrefix(ChatSessionSnapshot snapshot, IReadOnlyList<ChatMessage> history)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(snapshot);
+        ArgumentNullException.ThrowIfNull(history);
+
+        // Unlike LoadSnapshot, the caller owns the message order here (system
+        // prompt included): a request's history is replayed verbatim so the prompt
+        // it renders is the same shape the cached tokens were produced from.
+        // Re-adding the system prompt after a LoadSnapshot put it *after* the
+        // restored turns, which broke the token prefix and silently disabled reuse.
+        _history.Clear();
+        _pendingDraft = snapshot.PendingDraft;
+
+        if (_agentBuilder != null)
+        {
+            foreach (string prompt in _agentBuilder.AdditionalSystemPrompts)
+                _history.Add(new ChatMessage { Role = ChatRole.System, Content = prompt });
+            _history.Add(new ChatMessage { Role = ChatRole.System, Content = _agentBuilder.BuildAgentPrompt() });
+        }
+
+        foreach (var message in history)
+            _history.Add(message);
+
+        InvalidateHistoryCache();
+        _generator.ResetCache();
+        _pendingKvCacheSnapshot = snapshot.KVCache;
+    }
+
     public void LoadSnapshot(ChatSessionSnapshot snapshot)
     {
         ThrowIfDisposed();
