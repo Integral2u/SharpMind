@@ -296,36 +296,61 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
             promptToks = trimmed;
         }
 
-        // Fast path: if a cached KV-cache snapshot was loaded and the prompt
-        // tokens hash matches, restore the cache directly — no prefill needed.
+        // Import a restored snapshot instead of re-prefilling what it already holds.
+        bool restoredPrefix = false;
         if (_pendingKvCacheSnapshot is { } cached)
         {
-            string currentHash = KVCacheSnapshot.HashPromptTokens(promptToks);
             bool shapeMatches = _hasEngine
                 ? cached.Layers.Count == _model.Config.NumLayers
                 : cached.Layers.Count == (ActiveCaches?.Length ?? 0);
-            if (string.Equals(currentHash, cached.PromptHash, StringComparison.OrdinalIgnoreCase)
-                && shapeMatches)
+
+            if (shapeMatches)
             {
-                PrefillProgress?.Invoke(1.0);
-                _generator!.ResetCache();
-                if (_hasEngine && _engine is not null)
-                    _engine.ImportCache(cached);
-                else
+                string currentHash = KVCacheSnapshot.HashPromptTokens(promptToks);
+                bool exact = string.Equals(currentHash, cached.PromptHash, StringComparison.OrdinalIgnoreCase);
+
+                // The exact case is the saved-session resume path. The prefix case is
+                // what a multi-turn conversation needs: its prompt grows every turn, so
+                // the whole-prompt hash can never match again, and without this the
+                // entire history is prefilled again on every request.
+                if (exact || cached.IsPrefixOf(promptToks))
                 {
-                    var ac = ActiveCaches!;
-                    for (int i = 0; i < ac.Length && i < cached.Layers.Count; i++)
-                        ac[i].RestoreBytes(cached.Layers[i]);
+                    _generator!.ResetCache();
+                    if (_hasEngine && _engine is not null)
+                        _engine.ImportCache(cached);
+                    else
+                    {
+                        var ac = ActiveCaches!;
+                        for (int i = 0; i < ac.Length && i < cached.Layers.Count; i++)
+                            ac[i].RestoreBytes(cached.Layers[i]);
+                    }
+
+                    int[] cachedTokens = exact ? promptToks : cached.PromptTokens!;
+                    // SetCacheTokens also moves the generator's position to the end of
+                    // the restored range, so the suffix prefills at the right offset.
+                    _generator.SetCacheTokens(cachedTokens);
+                    _pendingKvCacheSnapshot = null;
+
+                    if (exact)
+                    {
+                        PrefillProgress?.Invoke(1.0);
+                        return;
+                    }
+
+                    promptToks = promptToks[cachedTokens.Length..];
+                    restoredPrefix = true;
+                    if (promptToks.Length == 0)
+                    {
+                        PrefillProgress?.Invoke(1.0);
+                        return;
+                    }
                 }
-                _generator!.SetCacheTokens(promptToks);
-                _pendingKvCacheSnapshot = null;
-                return;
             }
-            // Hash mismatch — fall through to full prefill.
+
             _pendingKvCacheSnapshot = null;
         }
 
-        _generator!.ResetCache();
+        if (!restoredPrefix) _generator!.ResetCache();
         var warmupCfg = new SamplingConfig { Temperature = 0, TopK = 1 };
         var warmupGen = new GenerationConfig { MaxNewTokens = 0, Stream = false };
         _prefillProgressQueue.Clear();
