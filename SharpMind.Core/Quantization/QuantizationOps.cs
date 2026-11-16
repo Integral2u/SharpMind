@@ -33,7 +33,8 @@ public abstract class QuantizationOps
     public static int GetBlockSize(QuantDType dtype) => dtype switch
     {
         QuantDType.Q4_0 or QuantDType.Q4_1 or QuantDType.Q5_0 or QuantDType.Q5_1
-            or QuantDType.Q8_0 or QuantDType.Q8_1 or QuantDType.IQ4_NL => 32,
+            or QuantDType.Q8_0 or QuantDType.Q8_1 or QuantDType.IQ4_NL
+            or QuantDType.MXFP4 => 32,
         QuantDType.Q2_K or QuantDType.Q2_K_S
             or QuantDType.Q3_K or QuantDType.Q3_K_S or QuantDType.Q3_K_M or QuantDType.Q3_K_L
             or QuantDType.Q4_K or QuantDType.Q4_K_S or QuantDType.Q4_K_M
@@ -82,6 +83,7 @@ public abstract class QuantizationOps
                 QuantDType.Q5_1 => GetFlatBlockByteCount(shape, 32, 24),
                 QuantDType.Q4_0 => GetFlatBlockByteCount(shape, 32, 18),
                 QuantDType.IQ4_NL => GetFlatBlockByteCount(shape, 32, 18),
+                QuantDType.MXFP4 => GetFlatBlockByteCount(shape, 32, 17),
                 QuantDType.Q4_1 => GetFlatBlockByteCount(shape, 32, 20),
                 QuantDType.TQ2_0 => GetFlatBlockByteCount(shape, 256, 66),
                 QuantDType.TQ1_0 => GetFlatBlockByteCount(shape, 256, 54),
@@ -121,6 +123,8 @@ public abstract class QuantizationOps
                 => GetBlockQuantByteCount(shape, 32, 18),
             QuantDType.IQ4_NL
                 => GetBlockQuantByteCount(shape, 32, 18),
+            QuantDType.MXFP4
+                => GetBlockQuantByteCount(shape, 32, 17),
             QuantDType.Q4_1
                 => GetBlockQuantByteCount(shape, 32, 20),
             QuantDType.I8 => totalElements * 1,
@@ -171,6 +175,7 @@ public abstract class QuantizationOps
             case QuantDType.Q8_0: ReadQ8_0(reader, data, n); break;
             case QuantDType.Q8_1: ReadQ8_1(reader, data, n); break;
             case QuantDType.IQ4_NL: ReadQ4_NL(reader, data, n); break;
+            case QuantDType.MXFP4: ReadMXFP4(reader, data, n); break;
             case QuantDType.Q2_K:
             case QuantDType.Q2_K_S: ReadQ2K(reader, data, n); break;
             case QuantDType.Q3_K:
@@ -211,6 +216,7 @@ public abstract class QuantizationOps
         QuantDType.Q8_0 => VecDotQ8_0,
         QuantDType.Q8_1 => VecDotQ8_1,
         QuantDType.IQ4_NL => VecDotQ4_NL,
+        QuantDType.MXFP4 => VecDotMXFP4,
         QuantDType.Q2_K or QuantDType.Q2_K_S => VecDotQ2K,
         QuantDType.Q3_K or QuantDType.Q3_K_S or QuantDType.Q3_K_M or QuantDType.Q3_K_L => VecDotQ3K,
         QuantDType.Q4_K or QuantDType.Q4_K_S or QuantDType.Q4_K_M => VecDotQ4K,
@@ -242,6 +248,7 @@ public abstract class QuantizationOps
         QuantDType.Q8_0 => QuantizedMatMulQ8_0,
         QuantDType.Q8_1 => QuantizedMatMulQ8_1,
         QuantDType.IQ4_NL => QuantizedMatMulQ4_NL,
+        QuantDType.MXFP4 => QuantizedMatMulMXFP4,
         QuantDType.Q2_K or QuantDType.Q2_K_S => QuantizedMatMulQ2K,
         QuantDType.Q3_K or QuantDType.Q3_K_S or QuantDType.Q3_K_M or QuantDType.Q3_K_L => QuantizedMatMulQ3K,
         QuantDType.Q4_K or QuantDType.Q4_K_S or QuantDType.Q4_K_M => QuantizedMatMulQ4K,
@@ -390,6 +397,14 @@ public abstract class QuantizationOps
         "q4_nl_sse", $"{NS}.{nameof(QuantizationKernels.VecDotQ4_NL_Scalar)}",
         "q4_nl_scalar", $"{NS}.{nameof(QuantizationKernels.VecDotQ4_NL_Scalar)}")]
     public abstract unsafe float VecDotQ4_NL(float* input, byte* rawWeights, int col, int inFeatures);
+
+    [PuzzleCornerPiece(QuantizationKeys.KeyVecDotMXFP4, true, null,
+        "mxfp4_fma", $"{NS}.{nameof(QuantizationKernels.VecDotMXFP4_FMA)}",
+        "mxfp4_avx2", $"{NS}.{nameof(QuantizationKernels.VecDotMXFP4_AVX2)}",
+        "mxfp4_arm64", $"{NS}.{nameof(QuantizationKernels.VecDotMXFP4_Arm64)}",
+        "mxfp4_sse", $"{NS}.{nameof(QuantizationKernels.VecDotMXFP4_Scalar)}",
+        "mxfp4_scalar", $"{NS}.{nameof(QuantizationKernels.VecDotMXFP4_Scalar)}")]
+    public abstract unsafe float VecDotMXFP4(float* input, byte* rawWeights, int col, int inFeatures);
 
     [PuzzleCornerPiece(QuantizationKeys.KeyVecDotQ8_1, true, null,
         "q8_1_fma", $"{NS}.{nameof(QuantizationKernels.VecDotQ8_1_FMA)}",
@@ -579,6 +594,19 @@ public abstract class QuantizationOps
         "qmatmul_q4_nl_parallel_scalar", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulQ4_NL_Parallel_Scalar)}")]
     public abstract unsafe void QuantizedMatMulQ4_NL(float* input, byte* rawWeights, float* output, int M, int K, int N);
 
+    [PuzzleCornerPiece(QuantizationKeys.KeyQuantizedMatMulMXFP4, true, null,
+        "qmatmul_mxfp4_serial_fma", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulMXFP4_Serial_FMA)}",
+        "qmatmul_mxfp4_parallel_fma", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulMXFP4_Parallel_FMA)}",
+        "qmatmul_mxfp4_serial_avx2", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulMXFP4_Serial_AVX2)}",
+        "qmatmul_mxfp4_parallel_avx2", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulMXFP4_Parallel_AVX2)}",
+        "qmatmul_mxfp4_serial_arm64", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulMXFP4_Serial_Arm64)}",
+        "qmatmul_mxfp4_parallel_arm64", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulMXFP4_Parallel_Arm64)}",
+        "qmatmul_mxfp4_serial_sse", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulMXFP4_Serial_Scalar)}",
+        "qmatmul_mxfp4_parallel_sse", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulMXFP4_Parallel_Scalar)}",
+        "qmatmul_mxfp4_serial_scalar", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulMXFP4_Serial_Scalar)}",
+        "qmatmul_mxfp4_parallel_scalar", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulMXFP4_Parallel_Scalar)}")]
+    public abstract unsafe void QuantizedMatMulMXFP4(float* input, byte* rawWeights, float* output, int M, int K, int N);
+
     [PuzzleCornerPiece(QuantizationKeys.KeyQuantizedMatMulF32, true, null,
         "qmatmul_f32_serial_fma", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulF32_Serial_FMA)}",
         "qmatmul_f32_parallel_fma", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulF32_Parallel_FMA)}",
@@ -748,6 +776,13 @@ public abstract class QuantizationOps
         "read_q4_nl_sse", $"{NS}.{nameof(QuantizationKernels.ReadQ4_NL_Scalar)}",
         "read_q4_nl_scalar", $"{NS}.{nameof(QuantizationKernels.ReadQ4_NL_Scalar)}")]
     public abstract void ReadQ4_NL(BinaryReader reader, Span<float> data, int n);
+
+    [PuzzleCornerPiece(QuantizationKeys.KeyReadMXFP4, true, null,
+        "read_mxfp4_fma", $"{NS}.{nameof(QuantizationKernels.ReadMXFP4_Scalar)}",
+        "read_mxfp4_avx2", $"{NS}.{nameof(QuantizationKernels.ReadMXFP4_Scalar)}",
+        "read_mxfp4_sse", $"{NS}.{nameof(QuantizationKernels.ReadMXFP4_Scalar)}",
+        "read_mxfp4_scalar", $"{NS}.{nameof(QuantizationKernels.ReadMXFP4_Scalar)}")]
+    public abstract void ReadMXFP4(BinaryReader reader, Span<float> data, int n);
 
     [PuzzleCornerPiece(QuantizationKeys.KeyReadQ2K, true, null,
         "read_q2k_fma", $"{NS}.{nameof(QuantizationKernels.ReadQ2K_Scalar)}",

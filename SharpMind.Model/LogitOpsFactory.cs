@@ -3,7 +3,6 @@ using SharpMind.Core;
 using SharpMind.Core.Quantization;
 using SharpMind.Core.Tensors;
 using System.Collections.Concurrent;
-using System.Runtime.Intrinsics.X86;
 
 namespace SharpMind.Model;
 
@@ -55,29 +54,5 @@ public static class LogitOpsFactory
     }
 
     internal static string GetCompound(QuantDType dtype, Dictionary<string, string>? mapping)
-    {
-        string prefix = QuantHelper.DtypeToCompound(dtype);
-        string? qmmSuffix = mapping != null ? ExtractQmmSuffix(mapping) : null;
-        if (qmmSuffix == null)
-        {
-            string hw = Fma.IsSupported ? "fma" :
-                        Avx2.IsSupported ? "avx2" :
-                        Sse3.IsSupported ? "sse" : "scalar";
-            qmmSuffix = $"_serial_{hw}";
-        }
-        return $"{prefix}{qmmSuffix}";
-    }
-
-    private static string? ExtractQmmSuffix(Dictionary<string, string> mapping)
-    {
-        string? qmmVal = mapping.GetValueOrDefault("qmatmul_f32");
-        if (qmmVal == null) return null;
-
-        int serialIdx = qmmVal.IndexOf("_serial_", StringComparison.Ordinal);
-        int parallelIdx = qmmVal.IndexOf("_parallel_", StringComparison.Ordinal);
-        int idx = serialIdx >= 0 ? serialIdx : parallelIdx;
-        if (idx < 0) return null;
-
-        return qmmVal.AsSpan(idx).ToString();
-    }
+        => QuantHelper.GetCompound(dtype, mapping);
 }

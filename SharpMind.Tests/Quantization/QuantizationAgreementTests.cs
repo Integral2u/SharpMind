@@ -18,6 +18,7 @@ public class QuantizationAgreementTests
         yield return new object[] { QuantDType.Q5_0 };
         yield return new object[] { QuantDType.Q5_1 };
         yield return new object[] { QuantDType.IQ4_NL };
+        yield return new object[] { QuantDType.MXFP4 };
         yield return new object[] { QuantDType.Q2_K };
         yield return new object[] { QuantDType.Q3_K };
         yield return new object[] { QuantDType.Q4_K };
@@ -30,7 +31,8 @@ public class QuantizationAgreementTests
     {
         QuantDType.F32 or QuantDType.F16 => 1,
         QuantDType.Q8_0 or QuantDType.Q8_1 or QuantDType.Q4_0 or QuantDType.Q4_1
-            or QuantDType.Q5_0 or QuantDType.Q5_1 or QuantDType.IQ4_NL => 32,
+            or QuantDType.Q5_0 or QuantDType.Q5_1 or QuantDType.IQ4_NL
+            or QuantDType.MXFP4 => 32,
         _ => 256
     };
 
@@ -82,6 +84,11 @@ public class QuantizationAgreementTests
                 case QuantDType.Q5_0:
                 case QuantDType.IQ4_NL:
                     data[off + 0] = 0x00; data[off + 1] = 0x3C;
+                    break;
+                case QuantDType.MXFP4:
+                    // E8M0 has no mantissa or sign, so every byte but the
+                    // reserved 255 is a finite power of two; one byte of 2^0.
+                    data[off + 0] = 0x7F;
                     break;
                 case QuantDType.Q8_1:
                 case QuantDType.Q4_1:

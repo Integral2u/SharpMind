@@ -148,6 +148,20 @@ public static partial class QuantizationKernels
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static ushort FloatToHalf_F16C(float f) => BitConverter.HalfToUInt16Bits((Half)f);
 
+    /// <summary>
+    /// E8M0 exponent to float: <c>2^(e - 127)</c>. The OCP MX scale byte has no
+    /// mantissa and no sign, so this is a bit shift plus the two special cases:
+    /// 255 is NaN, and 0 is <c>2^-127</c> — a float subnormal whose bit pattern is
+    /// 0x00400000, not zero.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static unsafe float E8M0ToFloat_Scalar(byte e)
+    {
+        if (e == 255) return float.NaN;
+        uint bits = e == 0 ? 0x00400000u : (uint)e << 23;
+        return *(float*)&bits;
+    }
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static unsafe ushort FloatToHalf_Scalar(float f)
     {

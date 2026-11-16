@@ -430,4 +430,120 @@ public static partial class QuantizationKernels
             });
         }
     }
+
+    /// <summary>
+    /// One E2M1 nibble lane pair as floats, built as float bits rather than
+    /// looked up. A nibble is <c>s eem</c>, and every codebook value is exact in
+    /// float: <c>e &gt; 0</c> is <c>2^(e-1) * (1 + m/2)</c>, which is the normal
+    /// float <c>(e + 126) &lt;&lt; 23 | m &lt;&lt; 22</c>; <c>e == 0</c> is the
+    /// subnormal pair {0, 0.5}. The only special case is that 0.5, whose bit
+    /// pattern (0x3F000000) is selected by <c>m</c> when <c>e</c> is zero.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static Vector128<float> E2M1ToFloat(Vector128<uint> n)
+    {
+        Vector128<uint> e = (AdvSimd.ShiftRightLogical(n, (byte)1)) & Vector128.Create(3u);
+        Vector128<uint> m = n & Vector128.Create(1u);
+
+        Vector128<uint> sign = AdvSimd.ShiftLeftLogical(n & Vector128.Create(8u), (byte)28);
+        Vector128<uint> normal = AdvSimd.ShiftLeftLogical(AdvSimd.Add(e, Vector128.Create(126u)), (byte)23)
+            | AdvSimd.ShiftLeftLogical(m, (byte)22);
+        Vector128<uint> sub = AdvSimd.CompareEqual(m, Vector128.Create(1u)) & Vector128.Create(0x3F000000u);
+
+        Vector128<uint> bits = sign | Vector128.ConditionalSelect(
+            AdvSimd.CompareEqual(e, Vector128<uint>.Zero), sub, normal);
+        return bits.AsSingle();
+    }
+
+    /// <summary>
+    /// Eight consecutive MXFP4 nibbles as two float vectors. Elements 0..15 of a
+    /// block are the low nibbles of its sixteen bytes and 16..31 the high
+    /// nibbles, so an eight-value group either masks or shifts all eight.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static unsafe (Vector128<float> Lo, Vector128<float> Hi) MXFP4Nibbles8ToFloat(byte* qs, int i)
+    {
+        Vector128<ushort> v = Load8BytesToU16(qs + (i & 15));
+        v = (i & 16) == 0
+            ? AdvSimd.And(v, Vector128.Create((ushort)0x0F))
+            : AdvSimd.ShiftRightLogical(v, (byte)4);
+        return (E2M1ToFloat(AdvSimd.ZeroExtendWideningLower(v.GetLower())),
+                E2M1ToFloat(AdvSimd.ZeroExtendWideningUpper(v)));
+    }
+
+    /// <summary>
+    /// MXFP4 vec-dot on Arm64 NEON: eight nibbles decode to floats as integer
+    /// bit patterns, the E8M0 scale is broadcast once per block, and the block
+    /// tail stays scalar because the last block of a row can be shorter than 32.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static unsafe float VecDotMXFP4_Arm64(float* input, byte* rawWeights, int col, int inFeatures)
+    {
+        const int BLOCK_BYTES = 17;
+        int nBlocks = (inFeatures + QK - 1) / QK;
+        double sum = 0;
+        var vacc0 = Vector128<float>.Zero;
+        var vacc1 = Vector128<float>.Zero;
+
+        for (int b = 0; b < nBlocks; b++)
+        {
+            byte* block = rawWeights + (long)col * nBlocks * BLOCK_BYTES + b * BLOCK_BYTES;
+            float d = E8M0ToFloat_Scalar(block[0]);
+            byte* qs = block + 1;
+            int blockEnd = Math.Min(QK, inFeatures - b * QK);
+            float* pIn = input + b * QK;
+            var vd = Vector128.Create(d);
+            int i = 0;
+            for (; i <= blockEnd - 8; i += 8)
+            {
+                var (w0, w1) = MXFP4Nibbles8ToFloat(qs, i);
+                vacc0 = AdvSimd.Add(vacc0, AdvSimd.Multiply(
+                    AdvSimd.LoadVector128(pIn + i), AdvSimd.Multiply(w0, vd)));
+                vacc1 = AdvSimd.Add(vacc1, AdvSimd.Multiply(
+                    AdvSimd.LoadVector128(pIn + i + 4), AdvSimd.Multiply(w1, vd)));
+            }
+            for (; i < blockEnd; i++)
+            {
+                int nib = (i < QK / 2) ? (qs[i] & 0x0F) : (qs[i - QK / 2] >> 4);
+                sum += pIn[i] * (d * kvalues_mxfp4[nib]);
+            }
+        }
+
+        return (float)sum + Vector128.Sum(AdvSimd.Add(vacc0, vacc1));
+    }
+
+    /// <summary>Serial MXFP4 matmul: one vec-dot per column, rows in order.</summary>
+    public static unsafe void QuantizedMatMulMXFP4_Serial_Arm64(
+        float* input, byte* rawWeights, float* output,
+        int M, int K, int N)
+    {
+        for (int row = 0; row < M; row++)
+        {
+            float* pInRow = input + (long)row * K;
+            float* pOutRow = output + (long)row * N;
+            for (int col = 0; col < N; col++)
+                pOutRow[col] = VecDotMXFP4_Arm64(pInRow, rawWeights, col, K);
+        }
+    }
+
+    /// <summary>Parallel MXFP4 matmul: columns for decode, rows for prefill.</summary>
+    public static unsafe void QuantizedMatMulMXFP4_Parallel_Arm64(
+        float* input, byte* rawWeights, float* output,
+        int M, int K, int N)
+    {
+        if (M <= 1)
+        {
+            DecodeParallel(VecDotMXFP4_Arm64, input, rawWeights, output, K, N);
+        }
+        else
+        {
+            Parallel.For(0, M, row =>
+            {
+                float* pInRow = input + (long)row * K;
+                float* pOutRow = output + (long)row * N;
+                for (int col = 0; col < N; col++)
+                    pOutRow[col] = VecDotMXFP4_Arm64(pInRow, rawWeights, col, K);
+            });
+        }
+    }
 }

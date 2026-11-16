@@ -42,6 +42,7 @@ public static class GgufTypeMap
         [30] = QuantDType.BF16,
         [34] = QuantDType.TQ1_0,
         [35] = QuantDType.TQ2_0,
+        [39] = QuantDType.MXFP4,
         [41] = QuantDType.Q1_0,
     };
 
@@ -68,7 +69,7 @@ public static class GgufTypeMap
     /// <summary>
     /// Maps a canonical GGUF type id to an internal <see cref="QuantDType"/>.
     /// Throws <see cref="NotSupportedException"/> for real GGML types SharpMind
-    /// does not implement (e.g. IQ2_XXS, MXFP4) and for unknown ids, so a
+    /// does not implement (e.g. IQ2_XXS, NVFP4) and for unknown ids, so a
     /// mismatched dtype can never silently produce garbage weights.
     /// </summary>
     public static QuantDType FromGgufId(uint id, string? tensorName = null)

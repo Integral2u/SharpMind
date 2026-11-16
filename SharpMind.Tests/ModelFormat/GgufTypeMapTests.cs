@@ -43,6 +43,7 @@ public class GgufTypeMapTests
         (30, QuantDType.BF16),
         (34, QuantDType.TQ1_0),
         (35, QuantDType.TQ2_0),
+        (39, QuantDType.MXFP4),
         (41, QuantDType.Q1_0),
     }.Select(p => new object[] { p.Item1, p.Item2 });
 
@@ -63,7 +64,6 @@ public class GgufTypeMapTests
         36, // IQ4_NL_4_4
         37, // IQ4_NL_4_8
         38, // IQ4_NL_8_8
-        39, // MXFP4
         40, // NVFP4
     }.Select(id => new object[] { id });
 
@@ -140,6 +140,7 @@ public class GgufTypeMapTests
     [InlineData(QuantDType.BF16)]
     [InlineData(QuantDType.Q8_0)]
     [InlineData(QuantDType.Q4_K_M)]
+    [InlineData(QuantDType.MXFP4)]
     public void GgufWriter_ToGgufLoader_RoundTripsDtype(QuantDType dtype)
     {
         // A synthetic GGUF (no physical model involved) written by GgufWriter must
@@ -173,7 +174,6 @@ public class GgufTypeMapTests
     [Theory]
     [InlineData(16u, "IQ2_XXS")]
     [InlineData(18u, "IQ3_XXS")]
-    [InlineData(39u, "MXFP4")]
     public void GgufLoadMeta_UnsupportedTensorTypeFailsLoudly(uint ggmlId, string expectedName)
     {
         // Hand-crafted GGUF v3 header with a single tensor of an unsupported type.
