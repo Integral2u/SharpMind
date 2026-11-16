@@ -260,6 +260,23 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
                 "This file is a multimodal projector (mmproj), not a chat model. " +
                 "Select the backbone GGUF instead and pair the projector with it.");
 
+        // Multi-head Latent Attention (DeepSeek V2/V3, Kimi, GLM's MLA variants)
+        // fuses the projections into q_a/q_b and kv_a/kv_b. Those names contain
+        // the plain "attn_q"/"attn_k" substrings the attention layer unpacks by,
+        // so such a file would load with its sub-projections written into the
+        // wrong weights and answer from garbage. Refuse it by tensor, not by
+        // architecture name, until MLA has a real implementation.
+        string? mlaTensor = meta.Tensors
+            .Select(t => t.Name)
+            .FirstOrDefault(n => n.EndsWith(".attn_kv_a_mqa.weight", StringComparison.Ordinal));
+        if (mlaTensor != null)
+            throw new NotSupportedException(
+                $"Tensor '{mlaTensor}' makes this a Multi-head Latent Attention (MLA) model: its " +
+                "attention weights are projected through attn_q_a/attn_q_b and attn_kv_a_mqa/attn_kv_b, " +
+                "which SharpMind does not implement yet. Loading it as plain attention would produce " +
+                "garbage; convert the model to a standard-attention architecture (or run a dense " +
+                "distill such as DeepSeek-R1-Distill) and try again.");
+
         int vocabSize = 32000, hiddenDim = 1536, numLayers = 28;
         int numHeads = 12, numKvHeads = 12, ffnDim = 6144, maxSeqLen = 2048;
 
