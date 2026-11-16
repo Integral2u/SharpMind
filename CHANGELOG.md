@@ -8,6 +8,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- **MXFP4 decode (GGML type 39)** - the OCP micro-scaling format gpt-oss ships:
+  32 values in 17 bytes, one E8M0 exponent and sixteen E2M1 nibble pairs, with
+  nibble `j` holding element `j` in its low half and element `j + 16` in its
+  high half. `QuantDType.MXFP4` and the block size/byte-count helpers land with
+  the reader, so an MXFP4 file loads and dequantizes instead of throwing at the
+  type map, and `ReadMXFP4_Scalar` decodes E8M0 as `2^(e - 127)` with the
+  reserved 255 as NaN. Encoding to MXFP4 is deliberately absent: the nibbles need
+  a grid search, and `TensorQuantizer`'s allowlist is unchanged.
+- **MXFP4 vec-dot and matmul on x86 and Arm64** - scalar, AVX2 and FMA kernels
+  built like the IQ4_NL ones (two eight-lane permutes plus a blend stand in for
+  the nibble gather, the E8M0 scale broadcast once per block), plus a NEON
+  kernel that builds the E2M1 float from its bit pattern rather than looking it
+  up, with the sub-8-value tail scalar. `kbench mxfp4` reports the row on all
+  three ladders: on a 4-core AVX2 host, best of three at K=2048/N=1408, FMA 1.63
+  and AVX2 1.62 GMAC/s against scalar 0.63 (2.6x) - level with IQ4_NL's 1.78 and
+  behind Q8_0's 3.04, matching the 4.25-vs-8.5 bits per weight. The Arm64 row is
+  measured through the manual Bench workflow.
+- **`kbench` gains `mxfp4`** - and the kind pins every block's E8M0 byte to 2^0
+  after the generic fill: the 0x11/0x22 pattern in the scale byte is 2^-110,
+  which makes every product subnormal and measures the CPU's denormal handling
+  rather than the kernel.
+
 - **Arm64 CI runner and `HardwareTier.Arm64`** - the test matrix also runs on
   `ubuntu-24.04-arm` (Neoverse N2), so the engine is now exercised on AdvSimd
   hardware. The new tier is detected after AVX2 and before SSE; it started as a
@@ -96,6 +118,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   covers families whose preset is simply missing. The override is one-way: an
   architecture listed as MoE without expert tensors still fails loudly on the
   missing tensors instead of quietly building a dense FFN.
+- **A linear layer's kernel suffix follows the mapping's tier, not the host
+  ISA** - `QuantHelper.GetCompound` used to pick `_fma`/`_avx2`/`_sse`/`_scalar`
+  by asking `Fma.IsSupported` and friends. Every one of those is false on Arm64,
+  so every quantized linear layer and LM head selected the `_scalar` kernel:
+  the NEON Q4_K/Q6_K/Q8_0 matmuls from 1.1.2.0 were reachable from `kbench`
+  alone and a real model decoded on the single-threaded scalar path. The suffix
+  now comes out of the mapping's own `qmatmul_<dtype>` entry, which is where the
+  tier decision already lives, and the layer dispatch tables grew the `_arm64`
+  rows that makes reachable. `QuantCompoundSelectionTests` pins the mapping as
+  the source of truth and checks that every dtype/tier/parallelism combination
+  resolves to a registered kernel.
 - Version bumped to **1.1.2.0**.
 
 ### Fixed
@@ -122,6 +155,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   active question, its tool calls and their results are never marked ignored.
   A previous summary is folded into the new one instead of accumulating another
   pinned system message. Pinned messages keep their existing behavior.
+- **IQ1_S, IQ1_M and TQ1_0 tensors no longer decode through the F32 kernel** -
+  `QuantHelper.DtypeToCompound` fell back to `"f32"` for any dtype it did not
+  list, so a linear layer holding one of those raw block formats ran its bytes
+  through `QuantizedMatMulF32` and produced fluent garbage. There is no matmul
+  target for them to switch to yet, so the lookup now raises
+  `NotSupportedException` naming the dtype; `TQ2_0` has FMA/AVX2 kernels and is
+  wired instead.
 
 ## [1.1.1.0] - 2026-11-08
 

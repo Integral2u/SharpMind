@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using SharpMind.Core;
 using SharpMind.Core.Quantization;
 
@@ -120,5 +122,123 @@ public class MXFPTests
     {
         Assert.Equal(expected, QuantizationOps.GetRawTensorByteCount([row, rows], QuantDType.MXFP4));
         Assert.Equal(32, QuantizationOps.GetBlockSize(QuantDType.MXFP4));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(7)]
+    [InlineData(8)]
+    [InlineData(9)]
+    [InlineData(15)]
+    public void E2M1BitFormula_MatchesTheCodebook(byte nibble)
+    {
+        // The NEON kernel decodes a nibble by building float bits instead of
+        // looking one up: e > 0 is the normal float (e + 126) << 23 | m << 22,
+        // e == 0 is {0, 0.5}, and bit 3 is the sign. ARM CI is the only place the
+        // kernel itself runs, so the formula is checked here in scalar first.
+        uint e = (uint)((nibble >> 1) & 3);
+        uint m = (uint)(nibble & 1);
+        uint bits = e == 0
+            ? m * 0x3F000000u
+            : ((e + 126) << 23) | (m << 22);
+        bits |= (uint)(nibble & 8) << 28;
+
+        float[] codebook = [0f, 0.5f, 1f, 1.5f, 2f, 3f, 4f, 6f,
+                            -0f, -0.5f, -1f, -1.5f, -2f, -3f, -4f, -6f];
+        Assert.Equal(codebook[nibble], BitConverter.UInt32BitsToSingle(bits));
+    }
+
+    private static List<(string Name, HardwareTier Tier)> Tiers()
+    {
+        var tiers = new List<(string, HardwareTier)> { ("Scalar", HardwareTier.Scalar) };
+        if (System.Runtime.Intrinsics.Arm.AdvSimd.Arm64.IsSupported) tiers.Add(("Arm64", HardwareTier.Arm64));
+        if (System.Runtime.Intrinsics.X86.Sse.IsSupported) tiers.Add(("SSE", HardwareTier.SSE));
+        if (System.Runtime.Intrinsics.X86.Avx2.IsSupported) tiers.Add(("AVX2", HardwareTier.AVX2));
+        if (System.Runtime.Intrinsics.X86.Fma.IsSupported) tiers.Add(("FMA", HardwareTier.FMA));
+        return tiers;
+    }
+
+    /// <summary>
+    /// The dot product has to consume the same half-split the reader does. A
+    /// kernel that swapped the halves, or read the scale as fp16, still returns
+    /// a plausible number, so the expected value is fixed by hand: the first
+    /// sixteen bytes hold low nibbles 0..7 twice and high nibbles 8..15 twice,
+    /// i.e. the positive codebook in the first half of the block and the
+    /// negative one in the second. A unit input on either half therefore sums to
+    /// exactly ±36.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(AllTiers))]
+    public unsafe void VecDot_HandComputedBlock(string _, HardwareTier tier)
+    {
+        var raw = new byte[17];
+        raw[0] = One;
+        for (int j = 0; j < 16; j++)
+        {
+            int pos = j & 7;
+            raw[1 + j] = (byte)(pos | ((pos + 8) << 4));
+        }
+
+        var low = new float[32];
+        var high = new float[32];
+        for (int i = 0; i < 16; i++) low[i] = 1f;
+        for (int i = 16; i < 32; i++) high[i] = 1f;
+
+        var ops = QuantizationFactory.Create(tier);
+        fixed (byte* pW = raw)
+        {
+            fixed (float* pIn = low)
+                Assert.Equal(36f, ops.VecDotMXFP4(pIn, pW, 0, 32), 5);
+            fixed (float* pIn = high)
+                Assert.Equal(-36f, ops.VecDotMXFP4(pIn, pW, 0, 32), 5);
+        }
+
+        // ...and the scale multiplies it: E8M0 128 is 2^1.
+        raw[0] = 128;
+        fixed (byte* pW = raw) fixed (float* pIn = low)
+            Assert.Equal(72f, ops.VecDotMXFP4(pIn, pW, 0, 32), 5);
+    }
+
+    public static IEnumerable<object[]> AllTiers()
+        => Tiers().Select(t => new object[] { t.Name, t.Tier });
+
+    /// <summary>
+    /// A row whose last block is shorter than 32 values: the reader decodes the
+    /// whole block, the kernels must stop at <c>inFeatures</c> and must not
+    /// stride the next row's blocks off by the tail.
+    /// </summary>
+    [Theory]
+    [InlineData(20)]
+    [InlineData(33)]
+    [InlineData(37)]
+    [InlineData(65)]
+    public unsafe void VecDot_PartialTail_MatchesReader(int inFeatures)
+    {
+        int nBlocks = (inFeatures + 31) / 32;
+        var raw = new byte[nBlocks * 17];
+        new Random(inFeatures).NextBytes(raw);
+        for (int b = 0; b < nBlocks; b++) raw[b * 17] = One;
+
+        var weights = new float[nBlocks * 32];
+        using (var reader = new BinaryReader(new MemoryStream(raw, writable: false)))
+            Ops().ReadFor(QuantDType.MXFP4, reader, weights, weights.Length);
+
+        var input = new float[inFeatures];
+        var rng = new Random(11);
+        for (int i = 0; i < inFeatures; i++) input[i] = (float)(rng.NextDouble() * 2 - 1);
+
+        double expected = 0;
+        for (int i = 0; i < inFeatures; i++) expected += input[i] * weights[i];
+
+        foreach (var (name, tier) in Tiers())
+        {
+            var ops = QuantizationFactory.Create(tier);
+            float actual;
+            fixed (float* pIn = input) fixed (byte* pW = raw)
+                actual = ops.VecDotMXFP4(pIn, pW, 0, inFeatures);
+            Assert.True(Math.Abs(actual - expected) <= 1e-4 * Math.Max(1, Math.Abs(expected)),
+                $"{name}: expected {expected}, got {actual} for {inFeatures} features");
+        }
     }
 }

@@ -97,6 +97,7 @@ public class MappingBuilder(HardwareTier hardware = HardwareTier.Auto)
         _mapping["vecdot_q2k"] = $"q2k{hwSuffix}";
         _mapping["vecdot_q8k"] = $"q8k{hwSuffix}";
         _mapping["vecdot_q4_nl"] = $"q4_nl{hwSuffix}";
+        _mapping["vecdot_mxfp4"] = $"mxfp4{hwSuffix}";
         _mapping["vecdot_f32"] = $"f32{hwSuffix}";
         _mapping["vecdot_f16"] = $"f16{hwSuffix}";
         _mapping["vecdot_bf16"] = $"bf16{hwSuffix}";
@@ -122,6 +123,7 @@ public class MappingBuilder(HardwareTier hardware = HardwareTier.Auto)
         _mapping["qmatmul_q8_1"] = $"qmatmul_q8_1{qmmSuffix}";
         _mapping["qmatmul_q5_1"] = $"qmatmul_q5_1{qmmSuffix}";
         _mapping["qmatmul_q4_nl"] = $"qmatmul_q4_nl{qmmSuffix}";
+        _mapping["qmatmul_mxfp4"] = $"qmatmul_mxfp4{qmmSuffix}";
         _mapping["qmatmul_f32"] = $"qmatmul_f32{qmmSuffix}";
         _mapping["qmatmul_f16"] = $"qmatmul_f16{qmmSuffix}";
         _mapping["qmatmul_bf16"] = $"qmatmul_bf16{qmmSuffix}";
@@ -175,11 +177,13 @@ public class MappingBuilder(HardwareTier hardware = HardwareTier.Auto)
             _mapping["vecdot_q4k"] = "q4k_arm64";
             _mapping["vecdot_q6k"] = "q6k_arm64";
             _mapping["vecdot_q8_0"] = "q8_0_arm64";
+            _mapping["vecdot_mxfp4"] = "mxfp4_arm64";
 
             string qmmMode = parallel ? "parallel" : "serial";
             _mapping["qmatmul_q4k"] = $"qmatmul_q4k_{qmmMode}_arm64";
             _mapping["qmatmul_q6k"] = $"qmatmul_q6k_{qmmMode}_arm64";
             _mapping["qmatmul_q8_0"] = $"qmatmul_q8_0_{qmmMode}_arm64";
+            _mapping["qmatmul_mxfp4"] = $"qmatmul_mxfp4_{qmmMode}_arm64";
         }
 
         return this;
