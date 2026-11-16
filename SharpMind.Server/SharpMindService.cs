@@ -215,6 +215,15 @@ public sealed class SharpMindService : IAsyncDisposable
             queued = gate.Queued,
             maxGenerating = gate.MaxConcurrent,
             maxQueued = gate.MaxQueued,
+            prefixCache = new
+            {
+                enabled = prefixCache.Enabled,
+                entries = prefixCache.Count,
+                bytes = prefixCache.Bytes,
+                hits = prefixCache.Hits,
+                misses = prefixCache.Misses,
+                reusedTokens = prefixCache.ReusedTokens,
+            },
         }));
 
         // Operational extension (not part of the OpenAI spec). Schedules a
