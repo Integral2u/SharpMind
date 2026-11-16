@@ -200,6 +200,16 @@ public sealed record ModelConfig
     /// <summary>Total number of experts. Ignored when FfnKind is not MoE.</summary>
     public int NumExperts { get; init; } = 8;
 
+    /// <summary>
+    /// True when the file carries routed-expert tensors, i.e. it is MoE. Derived
+    /// from the tensor directory (<c>TransformerWeights.IsMoEGguf</c>), not from
+    /// the architecture string: that table is a preset hint, and families do get
+    /// listed as dense while the file is routed (or the preset is simply wrong).
+    /// <see cref="ModelFactory.ResolveFfnKind"/> turns this into the FFN kind the
+    /// builder actually uses.
+    /// </summary>
+    public bool HasRoutedExperts { get; init; }
+
     /// <summary>Number of experts activated per token (top-k routing).</summary>
     public int TopKExperts { get; init; } = 2;
 

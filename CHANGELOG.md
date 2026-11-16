@@ -71,6 +71,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   instead of faulting in the first kernel. The options screen only offers tiers
   the host actually supports, and a preset that names another architecture's
   tier opens as `Auto`.
+- **The FFN kind follows the file, not the architecture string** -
+  `ModelConfig.HasRoutedExperts` is set by `GgufLoader` from the tensor directory
+  through the detector the streaming loaders already use
+  (`TransformerWeights.IsMoEGguf`), and `ModelFactory.ResolveFfnKind` lifts a
+  dense or gated preset to MoE when the file carries routed experts. That is what
+  made an arch-preset mistake a load failure rather than a cosmetic one, and it
+  covers families whose preset is simply missing. The override is one-way: an
+  architecture listed as MoE without expert tensors still fails loudly on the
+  missing tensors instead of quietly building a dense FFN.
 - Version bumped to **1.1.2.0**.
 
 ### Fixed

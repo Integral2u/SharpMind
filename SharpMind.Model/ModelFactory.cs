@@ -21,6 +21,20 @@ public static class ModelFactory
 {
     private static readonly ConcurrentDictionary<int, Type> _attnCache = [];
 
+    /// <summary>
+    /// The architecture preset is a hint; the file decides. A model that carries
+    /// routed-expert tensors is built as MoE even when its architecture string is
+    /// listed as dense or gated, which is the failure this exists to prevent:
+    /// <c>FfnKind</c> selects the layer type, so a gated layer for a routed file
+    /// cannot bind the expert planes and the error surfaces far from the table.
+    /// The reverse is deliberately not overridden - an architecture listed as MoE
+    /// without expert tensors keeps the MoE preset and fails loudly on the missing
+    /// tensors, rather than silently building a dense FFN that runs with wrong
+    /// weights.
+    /// </summary>
+    public static FfnKind ResolveFfnKind(ModelConfig modelConfig, FfnKind preset) =>
+        modelConfig.HasRoutedExperts && preset != FfnKind.MoE ? FfnKind.MoE : preset;
+
     /// <summary>Creates empty trainable weights (no GGUF loader). All float tensors
     /// are allocated and will be populated by training. Does NOT call
     /// <see cref="TransformerWeights.InitializeWeights"/>.</summary>
@@ -29,6 +43,9 @@ public static class ModelFactory
         ArgumentNullException.ThrowIfNull(modelConfig);
         ArgumentNullException.ThrowIfNull(sharpConfig);
         modelConfig.Validate();
+
+        // The file's tensor directory decides MoE, not the arch preset.
+        sharpConfig = sharpConfig with { Ffn = ResolveFfnKind(modelConfig, sharpConfig.Ffn) };
 
         var embedding = new Tensor<float>(modelConfig.VocabSize, modelConfig.HiddenDim);
         Tensor<float>? lmHead = null;
@@ -78,6 +95,10 @@ public static class ModelFactory
         ArgumentNullException.ThrowIfNull(modelConfig);
         ArgumentNullException.ThrowIfNull(sharpConfig);
         modelConfig.Validate();
+
+        // The file's tensor directory decides MoE, not the arch preset.
+        sharpConfig = sharpConfig with { Ffn = ResolveFfnKind(modelConfig, sharpConfig.Ffn) };
+
         var fmt = ModelFormatHelpers.GetFormatForExtension(path) ?? throw new FileLoadException($"File type not supported: {path}", path);
         var embedding = new Tensor<float>(modelConfig.VocabSize, modelConfig.HiddenDim);
         Tensor<float>? lmHead = null;
@@ -268,6 +289,10 @@ public static class ModelFactory
     {
         ArgumentNullException.ThrowIfNull(weights);
         ArgumentNullException.ThrowIfNull(sharpConfig);
+
+        // Same reconciliation as the loaders: a transformer built from routed
+        // weights gets MoE layers even if the caller's preset says otherwise.
+        sharpConfig = sharpConfig with { Ffn = ResolveFfnKind(weights.Config, sharpConfig.Ffn) };
 
         var fullMapping = mapping ?? sharpConfig.ToJigSawMapping();
         var acts = ActivationFactory.Create(sharpConfig, fullMapping);
