@@ -58,6 +58,10 @@ for (int i = 0; i < cliArgs.Length; i++)
             if (int.TryParse(cliArgs[++i], out var maxQueued) && maxQueued >= 0)
                 options.MaxQueuedGenerations = maxQueued;
             break;
+        case "--prefix-cache-mb" when i + 1 < cliArgs.Length:
+            if (int.TryParse(cliArgs[++i], out var prefixCacheMb) && prefixCacheMb >= 0)
+                options.PrefixCacheMB = prefixCacheMb;
+            break;
         case "--api-key" when i + 1 < cliArgs.Length:
             options.ApiKey = cliArgs[++i];
             break;
@@ -440,6 +444,7 @@ static async Task SpawnServiceProcessAsync(SharpMindServerOptions options, List<
     if (options.DisableNetworkIO) args += " --no-network";
     if (options.MaxCacheLen is int maxCacheLen) args += $" --max-cache-len {maxCacheLen}";
     args += $" --max-concurrent {options.MaxConcurrentGenerations} --max-queued {options.MaxQueuedGenerations}";
+    if (options.PrefixCacheMB > 0) args += $" --prefix-cache-mb {options.PrefixCacheMB}";
     if (!string.IsNullOrEmpty(options.ApiKey)) args += $" --api-key \"{options.ApiKey}\"";
 
     var psi = new ProcessStartInfo
@@ -746,6 +751,9 @@ static void PrintUsage()
                             (default 1; decoding already uses every core)
       --max-queued <n>      Requests allowed to wait behind that cap before
                             the server answers 429 (default 32)
+      --prefix-cache-mb <n> Keep up to n MB of finished-request KV so the next
+                            turn of a conversation prefills only what is new
+                            (default 0 = off)
       --api-key <key>       Require this key (Authorization: Bearer or
                             X-Api-Key) for shutdown/model-delete endpoints.
                             Sentinel: also sent by --stop and unload.

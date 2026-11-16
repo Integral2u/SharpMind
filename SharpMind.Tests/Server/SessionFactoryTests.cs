@@ -65,12 +65,12 @@ public class SessionFactoryTests
     [InlineData(1)]
     [InlineData(16)]
     [InlineData(256)]
-    public void CreateSession_KeepsFullContextWindow_RegardlessOfMaxTokens(int maxTokens)
+    public async Task CreateSession_KeepsFullContextWindow_RegardlessOfMaxTokens(int maxTokens)
     {
         using var loaded = MakeLoadedModel();
-        var factory = new SessionFactory(new SharpMindServerOptions());
+        var factory = new SessionFactory(new SharpMindServerOptions(), new PrefixCache(0));
 
-        var (session, _, _) = factory.CreateSession(loaded, Request(maxTokens, "hello"));
+        var (session, _, _) = await factory.CreateSessionAsync(loaded, Request(maxTokens, "hello"));
 
         int expected = ModelConfig.ComputeMaxCacheLength(loaded.Model.Config, null);
 
@@ -84,14 +84,14 @@ public class SessionFactoryTests
     /// discarded entirely.
     /// </summary>
     [Fact]
-    public void CreateSession_LeavesRoomForTheActualPrompt()
+    public async Task CreateSession_LeavesRoomForTheActualPrompt()
     {
         using var loaded = MakeLoadedModel();
-        var factory = new SessionFactory(new SharpMindServerOptions());
+        var factory = new SessionFactory(new SharpMindServerOptions(), new PrefixCache(0));
 
         // Byte tokenizer: one token per character.
         string userText = new('x', 400);
-        var (session, lastUserMessage, _) = factory.CreateSession(loaded, Request(16, userText));
+        var (session, lastUserMessage, _) = await factory.CreateSessionAsync(loaded, Request(16, userText));
 
         Assert.Equal(userText, lastUserMessage);
         Assert.True(
@@ -101,12 +101,12 @@ public class SessionFactoryTests
 
     /// <summary>Omitting max_tokens must not change the context window either.</summary>
     [Fact]
-    public void CreateSession_WithoutMaxTokens_UsesCacheLength()
+    public async Task CreateSession_WithoutMaxTokens_UsesCacheLength()
     {
         using var loaded = MakeLoadedModel();
-        var factory = new SessionFactory(new SharpMindServerOptions());
+        var factory = new SessionFactory(new SharpMindServerOptions(), new PrefixCache(0));
 
-        var (session, _, _) = factory.CreateSession(loaded, Request(null, "hello"));
+        var (session, _, _) = await factory.CreateSessionAsync(loaded, Request(null, "hello"));
 
         Assert.Equal(ModelConfig.ComputeMaxCacheLength(loaded.Model.Config, null), session.MaxTokens);
     }
@@ -114,10 +114,10 @@ public class SessionFactoryTests
     // ── response_format → grammar ─────────────────────────────────────
 
     [Fact]
-    public void CreateSession_WithOpenAiTools_RegistersSchemaAndReturnsCallsToClient()
+    public async Task CreateSession_WithOpenAiTools_RegistersSchemaAndReturnsCallsToClient()
     {
         using var loaded = MakeLoadedModel();
-        var factory = new SessionFactory(new SharpMindServerOptions());
+        var factory = new SessionFactory(new SharpMindServerOptions(), new PrefixCache(0));
         var request = Request(null, "What is the weather in Paris?");
         request.Tools =
         [
@@ -127,7 +127,7 @@ public class SessionFactoryTests
             """)
         ];
 
-        var (session, _, continueFromHistory) = factory.CreateSession(loaded, request);
+        var (session, _, continueFromHistory) = await factory.CreateSessionAsync(loaded, request);
 
         Assert.False(continueFromHistory);
         Assert.NotNull(session.ProcessToolRequest);
@@ -198,38 +198,38 @@ public class SessionFactoryTests
     /// well-formed JSON by installing a GBNF grammar on the session.
     /// </summary>
     [Fact]
-    public void CreateSession_JsonObjectResponseFormat_SetsGrammar()
+    public async Task CreateSession_JsonObjectResponseFormat_SetsGrammar()
     {
         using var loaded = MakeLoadedModel();
-        var factory = new SessionFactory(new SharpMindServerOptions());
+        var factory = new SessionFactory(new SharpMindServerOptions(), new PrefixCache(0));
         var request = Request(16, "pick a number");
         request.ResponseFormat = Element("""{"type":"json_object"}""");
 
-        var (session, _, _) = factory.CreateSession(loaded, request);
+        var (session, _, _) = await factory.CreateSessionAsync(loaded, request);
 
         Assert.NotNull(session.Grammar);
     }
 
     [Fact]
-    public void CreateSession_JschSchemaResponseFormat_SetsGrammar()
+    public async Task CreateSession_JschSchemaResponseFormat_SetsGrammar()
     {
         using var loaded = MakeLoadedModel();
-        var factory = new SessionFactory(new SharpMindServerOptions());
+        var factory = new SessionFactory(new SharpMindServerOptions(), new PrefixCache(0));
         var request = Request(16, "describe a person");
         request.ResponseFormat = Element("""{"type":"json_schema","json_schema":{"schema":{"type":"object","properties":{"name":{"type":"string"}}}}}""");
 
-        var (session, _, _) = factory.CreateSession(loaded, request);
+        var (session, _, _) = await factory.CreateSessionAsync(loaded, request);
 
         Assert.NotNull(session.Grammar);
     }
 
     [Fact]
-    public void CreateSession_NoResponseFormat_LeavesGrammarNull()
+    public async Task CreateSession_NoResponseFormat_LeavesGrammarNull()
     {
         using var loaded = MakeLoadedModel();
-        var factory = new SessionFactory(new SharpMindServerOptions());
+        var factory = new SessionFactory(new SharpMindServerOptions(), new PrefixCache(0));
 
-        var (session, _, _) = factory.CreateSession(loaded, Request(null, "hello"));
+        var (session, _, _) = await factory.CreateSessionAsync(loaded, Request(null, "hello"));
 
         Assert.Null(session.Grammar);
     }
@@ -239,13 +239,13 @@ public class SessionFactoryTests
     /// HTTP layer can answer 400 (rather than failing silently mid-generation).
     /// </summary>
     [Fact]
-    public void CreateSession_UnsupportedResponseFormat_Throws()
+    public async Task CreateSession_UnsupportedResponseFormat_Throws()
     {
         using var loaded = MakeLoadedModel();
-        var factory = new SessionFactory(new SharpMindServerOptions());
+        var factory = new SessionFactory(new SharpMindServerOptions(), new PrefixCache(0));
         var request = Request(16, "hello");
         request.ResponseFormat = Element("""{"type":"text"}""");
 
-        Assert.Throws<SharpMind.Inference.Grammar.JsonSchemaException>(() => factory.CreateSession(loaded, request));
+        await Assert.ThrowsAsync<SharpMind.Inference.Grammar.JsonSchemaException>(() => factory.CreateSessionAsync(loaded, request));
     }
 }

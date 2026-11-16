@@ -296,36 +296,63 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
             promptToks = trimmed;
         }
 
-        // Fast path: if a cached KV-cache snapshot was loaded and the prompt
-        // tokens hash matches, restore the cache directly — no prefill needed.
+        // Import a restored snapshot instead of re-prefilling what it already holds.
+        bool restoredPrefix = false;
         if (_pendingKvCacheSnapshot is { } cached)
         {
-            string currentHash = KVCacheSnapshot.HashPromptTokens(promptToks);
             bool shapeMatches = _hasEngine
                 ? cached.Layers.Count == _model.Config.NumLayers
                 : cached.Layers.Count == (ActiveCaches?.Length ?? 0);
-            if (string.Equals(currentHash, cached.PromptHash, StringComparison.OrdinalIgnoreCase)
-                && shapeMatches)
+
+            if (shapeMatches)
             {
-                PrefillProgress?.Invoke(1.0);
-                _generator!.ResetCache();
-                if (_hasEngine && _engine is not null)
-                    _engine.ImportCache(cached);
-                else
+                string currentHash = KVCacheSnapshot.HashPromptTokens(promptToks);
+                bool exact = string.Equals(currentHash, cached.PromptHash, StringComparison.OrdinalIgnoreCase);
+
+                // Reuse the longest shared prefix, not just an exact match or a
+                // snapshot that is already a full prefix: the cache of a finished
+                // turn ends at the generated tokens, whose last id is not part of
+                // how the next prompt renders the same history (stop/EOS). Taking
+                // the common prefix and truncating to it is what makes reuse
+                // possible at all; an exact match is just the common case of it.
+                int common = cached.PromptTokens is { Length: > 0 } cachedTokens
+                    ? CommonPrefixLength(cachedTokens, promptToks)
+                    : exact ? promptToks.Length : 0;
+
+                if (common > 0 && (exact || common >= MinimumPrefixReuseTokens))
                 {
-                    var ac = ActiveCaches!;
-                    for (int i = 0; i < ac.Length && i < cached.Layers.Count; i++)
-                        ac[i].RestoreBytes(cached.Layers[i]);
+                    _generator!.ResetCache();
+                    if (_hasEngine && _engine is not null)
+                        _engine.ImportCache(cached);
+                    else
+                    {
+                        var ac = ActiveCaches!;
+                        for (int i = 0; i < ac.Length && i < cached.Layers.Count; i++)
+                            ac[i].RestoreBytes(cached.Layers[i]);
+                    }
+
+                    // The restored state may be longer than the shared prefix; cut
+                    // it back and move the position there so the suffix prefills at
+                    // the right offset.
+                    _generator.TruncateCache(common);
+                    _generator.SetCacheTokens(promptToks[..common]);
+                    _pendingKvCacheSnapshot = null;
+
+                    promptToks = promptToks[common..];
+                    if (promptToks.Length == 0)
+                    {
+                        PrefillProgress?.Invoke(1.0);
+                        return;
+                    }
+
+                    restoredPrefix = true;
                 }
-                _generator!.SetCacheTokens(promptToks);
-                _pendingKvCacheSnapshot = null;
-                return;
             }
-            // Hash mismatch — fall through to full prefill.
+
             _pendingKvCacheSnapshot = null;
         }
 
-        _generator!.ResetCache();
+        if (!restoredPrefix) _generator!.ResetCache();
         var warmupCfg = new SamplingConfig { Temperature = 0, TopK = 1 };
         var warmupGen = new GenerationConfig { MaxNewTokens = 0, Stream = false };
         _prefillProgressQueue.Clear();
@@ -336,6 +363,20 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         };
         await foreach (var _ in _generator.GenerateFromTokensAsync(promptToks, warmupCfg, warmupGen)) { }
         _generator.PrefillProgress = p => _prefillProgressQueue.Enqueue(p);
+    }
+
+    /// <summary>
+    /// How much of a restored cache must line up before importing it is worth the
+    /// copy. Below this the import costs more than the prefill it saves, and a
+    /// token or two of overlap is usually a shared header, not conversation.
+    /// </summary>
+    private const int MinimumPrefixReuseTokens = 16;
+
+    private static int CommonPrefixLength(ReadOnlySpan<int> a, ReadOnlySpan<int> b)
+    {
+        int n = Math.Min(a.Length, b.Length), i = 0;
+        while (i < n && a[i] == b[i]) i++;
+        return i;
     }
 
     /// <summary>
@@ -3222,6 +3263,35 @@ if (held.Length > 0)
             PendingDraft = _pendingDraft,
             KVCache = kvCache
         };
+    }
+
+    public void RestorePrefix(ChatSessionSnapshot snapshot, IReadOnlyList<ChatMessage> history)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(snapshot);
+        ArgumentNullException.ThrowIfNull(history);
+
+        // Unlike LoadSnapshot, the caller owns the message order here (system
+        // prompt included): a request's history is replayed verbatim so the prompt
+        // it renders is the same shape the cached tokens were produced from.
+        // Re-adding the system prompt after a LoadSnapshot put it *after* the
+        // restored turns, which broke the token prefix and silently disabled reuse.
+        _history.Clear();
+        _pendingDraft = snapshot.PendingDraft;
+
+        if (_agentBuilder != null)
+        {
+            foreach (string prompt in _agentBuilder.AdditionalSystemPrompts)
+                _history.Add(new ChatMessage { Role = ChatRole.System, Content = prompt });
+            _history.Add(new ChatMessage { Role = ChatRole.System, Content = _agentBuilder.BuildAgentPrompt() });
+        }
+
+        foreach (var message in history)
+            _history.Add(message);
+
+        InvalidateHistoryCache();
+        _generator.ResetCache();
+        _pendingKvCacheSnapshot = snapshot.KVCache;
     }
 
     public void LoadSnapshot(ChatSessionSnapshot snapshot)

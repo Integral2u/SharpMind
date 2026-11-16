@@ -67,6 +67,15 @@ public sealed class SharpMindServerOptions
     public int MaxQueuedGenerations { get; set; } = 32;
 
     /// <summary>
+    /// Budget in MB for the cross-request KV prefix cache: 0 disables it. A chat
+    /// request restates its whole history, so this keeps a finished request's KV
+    /// and hands it to the next request whose history extends it. Budgeted in
+    /// bytes of KV rather than entries, because one long conversation can dwarf a
+    /// hundred short ones.
+    /// </summary>
+    public int PrefixCacheMB { get; set; }
+
+    /// <summary>
     /// Optional bearer/API key. When set, the destructive operational
     /// endpoints (<c>POST /v1/shutdown</c>, <c>DELETE /v1/models/{model}</c>)
     /// require it (<c>Authorization: Bearer &lt;key&gt;</c> or
@@ -102,6 +111,7 @@ public static class SharpMindServerExtensions
     {
         services.AddSingleton(options);
         services.AddSingleton<ModelManager>();
+        services.AddSingleton(_ => new PrefixCache(options.PrefixCacheMB * 1024L * 1024L));
         services.AddSingleton<SessionFactory>();
         services.AddSingleton(_ => new GenerationGate(
             options.MaxConcurrentGenerations, options.MaxQueuedGenerations));
