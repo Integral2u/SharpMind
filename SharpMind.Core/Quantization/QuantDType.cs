@@ -11,6 +11,11 @@ public enum QuantDType : uint
     IQ4_NL = 20, // 4-bit non-linear (block_iq4_nl: d[2]+qs[16]=18B, 32 el)
     MXFP4 = 39, // 4-bit E2M1 + E8M0 per 32 (block_mxfp4: e[1]+qs[16]=17B, 32 el). Decode only.
     IQ4_XS = 43, // 4-bit non-linear, 256-block (block_iq4_xs: d[2]+sh[2]+sl[4]+qs[128]=136B). Decode only.
+    IQ2_XXS = 44, // 2-bit grid, 256-block (block_iq2_xxs: d[2]+qs[64]=66B). Decode only.
+    IQ2_XS = 45, // 2-bit grid + 4-bit scales (block_iq2_xs: d[2]+qs[64]+scales[8]=74B). Decode only.
+    IQ3_XXS = 46, // 3-bit grid, 256-block (block_iq3_xxs: d[2]+qs[64]+signs[32]=98B). Decode only.
+    IQ2_S = 47, // 2-bit grid + qh + signs (block_iq2_s: d[2]+qs[64]+qh[8]+scales[8]=82B). Decode only.
+    IQ3_S = 48, // 3-bit grid + qh + signs (block_iq3_s: d[2]+qs[64]+qh[8]+signs[32]+scales[4]=110B). Decode only.
     IQ1_M = 21, // 1-bit importance medium (block_iq1_m: d[2]+qh[24]+qs[32]=56B, 256 el)
     TQ1_0 = 22, // ternary 1.6875bpw (block_tq1_0: qs0[32]+qs1[16]+qh[4]+d[2]=54B, 256 el)
     TQ2_0 = 23, // ternary 2bpw (block_tq2_0: qs[64]+d[2]=66B, 256 el)

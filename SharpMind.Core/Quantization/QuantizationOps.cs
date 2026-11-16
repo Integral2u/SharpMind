@@ -41,7 +41,9 @@ public abstract class QuantizationOps
             or QuantDType.Q5_K or QuantDType.Q5_K_S or QuantDType.Q5_K_M
             or QuantDType.Q6_K or QuantDType.Q6_K_S or QuantDType.Q8_K
             or QuantDType.TQ2_0 or QuantDType.TQ1_0 or QuantDType.Q1_0
-            or QuantDType.IQ1_S or QuantDType.IQ1_M or QuantDType.IQ4_XS => 256,
+            or QuantDType.IQ1_S or QuantDType.IQ1_M or QuantDType.IQ4_XS
+            or QuantDType.IQ2_XXS or QuantDType.IQ2_XS or QuantDType.IQ3_XXS
+            or QuantDType.IQ2_S or QuantDType.IQ3_S => 256,
         _ => 1,
     };
 
@@ -91,6 +93,11 @@ public abstract class QuantizationOps
                 QuantDType.IQ1_S => GetFlatBlockByteCount(shape, 256, 50),
                 QuantDType.IQ1_M => GetFlatBlockByteCount(shape, 256, 56),
                 QuantDType.IQ4_XS => GetFlatBlockByteCount(shape, 256, 136),
+                QuantDType.IQ2_XXS => GetFlatBlockByteCount(shape, 256, 66),
+                QuantDType.IQ2_XS => GetFlatBlockByteCount(shape, 256, 74),
+                QuantDType.IQ3_XXS => GetFlatBlockByteCount(shape, 256, 98),
+                QuantDType.IQ2_S => GetFlatBlockByteCount(shape, 256, 82),
+                QuantDType.IQ3_S => GetFlatBlockByteCount(shape, 256, 110),
                 _ => GetRawTensorByteCount(shape, dtype),
             };
         }
@@ -137,6 +144,11 @@ public abstract class QuantizationOps
             QuantDType.IQ1_S => GetBlockQuantByteCount(shape, 256, 50),
             QuantDType.IQ1_M => GetBlockQuantByteCount(shape, 256, 56),
             QuantDType.IQ4_XS => GetBlockQuantByteCount(shape, 256, 136),
+            QuantDType.IQ2_XXS => GetBlockQuantByteCount(shape, 256, 66),
+            QuantDType.IQ2_XS => GetBlockQuantByteCount(shape, 256, 74),
+            QuantDType.IQ3_XXS => GetBlockQuantByteCount(shape, 256, 98),
+            QuantDType.IQ2_S => GetBlockQuantByteCount(shape, 256, 82),
+            QuantDType.IQ3_S => GetBlockQuantByteCount(shape, 256, 110),
             _ => throw new ArgumentOutOfRangeException(nameof(dtype), dtype, null)
         };
     }
@@ -179,6 +191,11 @@ public abstract class QuantizationOps
             case QuantDType.IQ4_NL: ReadQ4_NL(reader, data, n); break;
             case QuantDType.MXFP4: ReadMXFP4(reader, data, n); break;
             case QuantDType.IQ4_XS: ReadIQ4_XS(reader, data, n); break;
+            case QuantDType.IQ2_XXS: ReadIQ2_XXS(reader, data, n); break;
+            case QuantDType.IQ2_XS: ReadIQ2_XS(reader, data, n); break;
+            case QuantDType.IQ3_XXS: ReadIQ3_XXS(reader, data, n); break;
+            case QuantDType.IQ2_S: ReadIQ2_S(reader, data, n); break;
+            case QuantDType.IQ3_S: ReadIQ3_S(reader, data, n); break;
             case QuantDType.Q2_K:
             case QuantDType.Q2_K_S: ReadQ2K(reader, data, n); break;
             case QuantDType.Q3_K:
@@ -221,6 +238,11 @@ public abstract class QuantizationOps
         QuantDType.IQ4_NL => VecDotQ4_NL,
         QuantDType.MXFP4 => VecDotMXFP4,
         QuantDType.IQ4_XS => VecDotIQ4_XS,
+        QuantDType.IQ2_XXS => VecDotIQ2_XXS,
+        QuantDType.IQ2_XS => VecDotIQ2_XS,
+        QuantDType.IQ3_XXS => VecDotIQ3_XXS,
+        QuantDType.IQ2_S => VecDotIQ2_S,
+        QuantDType.IQ3_S => VecDotIQ3_S,
         QuantDType.Q2_K or QuantDType.Q2_K_S => VecDotQ2K,
         QuantDType.Q3_K or QuantDType.Q3_K_S or QuantDType.Q3_K_M or QuantDType.Q3_K_L => VecDotQ3K,
         QuantDType.Q4_K or QuantDType.Q4_K_S or QuantDType.Q4_K_M => VecDotQ4K,
@@ -254,6 +276,11 @@ public abstract class QuantizationOps
         QuantDType.IQ4_NL => QuantizedMatMulQ4_NL,
         QuantDType.MXFP4 => QuantizedMatMulMXFP4,
         QuantDType.IQ4_XS => QuantizedMatMulIQ4_XS,
+        QuantDType.IQ2_XXS => QuantizedMatMulIQ2_XXS,
+        QuantDType.IQ2_XS => QuantizedMatMulIQ2_XS,
+        QuantDType.IQ3_XXS => QuantizedMatMulIQ3_XXS,
+        QuantDType.IQ2_S => QuantizedMatMulIQ2_S,
+        QuantDType.IQ3_S => QuantizedMatMulIQ3_S,
         QuantDType.Q2_K or QuantDType.Q2_K_S => QuantizedMatMulQ2K,
         QuantDType.Q3_K or QuantDType.Q3_K_S or QuantDType.Q3_K_M or QuantDType.Q3_K_L => QuantizedMatMulQ3K,
         QuantDType.Q4_K or QuantDType.Q4_K_S or QuantDType.Q4_K_M => QuantizedMatMulQ4K,
@@ -418,6 +445,41 @@ public abstract class QuantizationOps
         "iq4_xs_sse", $"{NS}.{nameof(QuantizationKernels.VecDotIQ4_XS_Scalar)}",
         "iq4_xs_scalar", $"{NS}.{nameof(QuantizationKernels.VecDotIQ4_XS_Scalar)}")]
     public abstract unsafe float VecDotIQ4_XS(float* input, byte* rawWeights, int col, int inFeatures);
+
+    [PuzzleCornerPiece(QuantizationKeys.KeyVecDotIQ2_XXS, true, null,
+        "iq2_xxs_fma", $"{NS}.{nameof(QuantizationKernels.VecDotIQ2_XXS_Scalar)}",
+        "iq2_xxs_avx2", $"{NS}.{nameof(QuantizationKernels.VecDotIQ2_XXS_Scalar)}",
+        "iq2_xxs_sse", $"{NS}.{nameof(QuantizationKernels.VecDotIQ2_XXS_Scalar)}",
+        "iq2_xxs_scalar", $"{NS}.{nameof(QuantizationKernels.VecDotIQ2_XXS_Scalar)}")]
+    public abstract unsafe float VecDotIQ2_XXS(float* input, byte* rawWeights, int col, int inFeatures);
+
+    [PuzzleCornerPiece(QuantizationKeys.KeyVecDotIQ2_XS, true, null,
+        "iq2_xs_fma", $"{NS}.{nameof(QuantizationKernels.VecDotIQ2_XS_Scalar)}",
+        "iq2_xs_avx2", $"{NS}.{nameof(QuantizationKernels.VecDotIQ2_XS_Scalar)}",
+        "iq2_xs_sse", $"{NS}.{nameof(QuantizationKernels.VecDotIQ2_XS_Scalar)}",
+        "iq2_xs_scalar", $"{NS}.{nameof(QuantizationKernels.VecDotIQ2_XS_Scalar)}")]
+    public abstract unsafe float VecDotIQ2_XS(float* input, byte* rawWeights, int col, int inFeatures);
+
+    [PuzzleCornerPiece(QuantizationKeys.KeyVecDotIQ3_XXS, true, null,
+        "iq3_xxs_fma", $"{NS}.{nameof(QuantizationKernels.VecDotIQ3_XXS_Scalar)}",
+        "iq3_xxs_avx2", $"{NS}.{nameof(QuantizationKernels.VecDotIQ3_XXS_Scalar)}",
+        "iq3_xxs_sse", $"{NS}.{nameof(QuantizationKernels.VecDotIQ3_XXS_Scalar)}",
+        "iq3_xxs_scalar", $"{NS}.{nameof(QuantizationKernels.VecDotIQ3_XXS_Scalar)}")]
+    public abstract unsafe float VecDotIQ3_XXS(float* input, byte* rawWeights, int col, int inFeatures);
+
+    [PuzzleCornerPiece(QuantizationKeys.KeyVecDotIQ2_S, true, null,
+        "iq2_s_fma", $"{NS}.{nameof(QuantizationKernels.VecDotIQ2_S_Scalar)}",
+        "iq2_s_avx2", $"{NS}.{nameof(QuantizationKernels.VecDotIQ2_S_Scalar)}",
+        "iq2_s_sse", $"{NS}.{nameof(QuantizationKernels.VecDotIQ2_S_Scalar)}",
+        "iq2_s_scalar", $"{NS}.{nameof(QuantizationKernels.VecDotIQ2_S_Scalar)}")]
+    public abstract unsafe float VecDotIQ2_S(float* input, byte* rawWeights, int col, int inFeatures);
+
+    [PuzzleCornerPiece(QuantizationKeys.KeyVecDotIQ3_S, true, null,
+        "iq3_s_fma", $"{NS}.{nameof(QuantizationKernels.VecDotIQ3_S_Scalar)}",
+        "iq3_s_avx2", $"{NS}.{nameof(QuantizationKernels.VecDotIQ3_S_Scalar)}",
+        "iq3_s_sse", $"{NS}.{nameof(QuantizationKernels.VecDotIQ3_S_Scalar)}",
+        "iq3_s_scalar", $"{NS}.{nameof(QuantizationKernels.VecDotIQ3_S_Scalar)}")]
+    public abstract unsafe float VecDotIQ3_S(float* input, byte* rawWeights, int col, int inFeatures);
 
     [PuzzleCornerPiece(QuantizationKeys.KeyVecDotQ8_1, true, null,
         "q8_1_fma", $"{NS}.{nameof(QuantizationKernels.VecDotQ8_1_FMA)}",
@@ -633,6 +695,61 @@ public abstract class QuantizationOps
         "qmatmul_iq4_xs_parallel_scalar", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulIQ4_XS_Parallel_Scalar)}")]
     public abstract unsafe void QuantizedMatMulIQ4_XS(float* input, byte* rawWeights, float* output, int M, int K, int N);
 
+    [PuzzleCornerPiece(QuantizationKeys.KeyQuantizedMatMulIQ2_XXS, true, null,
+        "qmatmul_iq2_xxs_serial_fma", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulIQ2_XXS_Serial_Scalar)}",
+        "qmatmul_iq2_xxs_parallel_fma", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulIQ2_XXS_Parallel_Scalar)}",
+        "qmatmul_iq2_xxs_serial_avx2", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulIQ2_XXS_Serial_Scalar)}",
+        "qmatmul_iq2_xxs_parallel_avx2", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulIQ2_XXS_Parallel_Scalar)}",
+        "qmatmul_iq2_xxs_serial_sse", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulIQ2_XXS_Serial_Scalar)}",
+        "qmatmul_iq2_xxs_parallel_sse", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulIQ2_XXS_Parallel_Scalar)}",
+        "qmatmul_iq2_xxs_serial_scalar", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulIQ2_XXS_Serial_Scalar)}",
+        "qmatmul_iq2_xxs_parallel_scalar", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulIQ2_XXS_Parallel_Scalar)}")]
+    public abstract unsafe void QuantizedMatMulIQ2_XXS(float* input, byte* rawWeights, float* output, int M, int K, int N);
+
+    [PuzzleCornerPiece(QuantizationKeys.KeyQuantizedMatMulIQ2_XS, true, null,
+        "qmatmul_iq2_xs_serial_fma", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulIQ2_XS_Serial_Scalar)}",
+        "qmatmul_iq2_xs_parallel_fma", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulIQ2_XS_Parallel_Scalar)}",
+        "qmatmul_iq2_xs_serial_avx2", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulIQ2_XS_Serial_Scalar)}",
+        "qmatmul_iq2_xs_parallel_avx2", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulIQ2_XS_Parallel_Scalar)}",
+        "qmatmul_iq2_xs_serial_sse", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulIQ2_XS_Serial_Scalar)}",
+        "qmatmul_iq2_xs_parallel_sse", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulIQ2_XS_Parallel_Scalar)}",
+        "qmatmul_iq2_xs_serial_scalar", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulIQ2_XS_Serial_Scalar)}",
+        "qmatmul_iq2_xs_parallel_scalar", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulIQ2_XS_Parallel_Scalar)}")]
+    public abstract unsafe void QuantizedMatMulIQ2_XS(float* input, byte* rawWeights, float* output, int M, int K, int N);
+
+    [PuzzleCornerPiece(QuantizationKeys.KeyQuantizedMatMulIQ3_XXS, true, null,
+        "qmatmul_iq3_xxs_serial_fma", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulIQ3_XXS_Serial_Scalar)}",
+        "qmatmul_iq3_xxs_parallel_fma", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulIQ3_XXS_Parallel_Scalar)}",
+        "qmatmul_iq3_xxs_serial_avx2", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulIQ3_XXS_Serial_Scalar)}",
+        "qmatmul_iq3_xxs_parallel_avx2", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulIQ3_XXS_Parallel_Scalar)}",
+        "qmatmul_iq3_xxs_serial_sse", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulIQ3_XXS_Serial_Scalar)}",
+        "qmatmul_iq3_xxs_parallel_sse", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulIQ3_XXS_Parallel_Scalar)}",
+        "qmatmul_iq3_xxs_serial_scalar", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulIQ3_XXS_Serial_Scalar)}",
+        "qmatmul_iq3_xxs_parallel_scalar", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulIQ3_XXS_Parallel_Scalar)}")]
+    public abstract unsafe void QuantizedMatMulIQ3_XXS(float* input, byte* rawWeights, float* output, int M, int K, int N);
+
+    [PuzzleCornerPiece(QuantizationKeys.KeyQuantizedMatMulIQ2_S, true, null,
+        "qmatmul_iq2_s_serial_fma", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulIQ2_S_Serial_Scalar)}",
+        "qmatmul_iq2_s_parallel_fma", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulIQ2_S_Parallel_Scalar)}",
+        "qmatmul_iq2_s_serial_avx2", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulIQ2_S_Serial_Scalar)}",
+        "qmatmul_iq2_s_parallel_avx2", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulIQ2_S_Parallel_Scalar)}",
+        "qmatmul_iq2_s_serial_sse", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulIQ2_S_Serial_Scalar)}",
+        "qmatmul_iq2_s_parallel_sse", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulIQ2_S_Parallel_Scalar)}",
+        "qmatmul_iq2_s_serial_scalar", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulIQ2_S_Serial_Scalar)}",
+        "qmatmul_iq2_s_parallel_scalar", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulIQ2_S_Parallel_Scalar)}")]
+    public abstract unsafe void QuantizedMatMulIQ2_S(float* input, byte* rawWeights, float* output, int M, int K, int N);
+
+    [PuzzleCornerPiece(QuantizationKeys.KeyQuantizedMatMulIQ3_S, true, null,
+        "qmatmul_iq3_s_serial_fma", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulIQ3_S_Serial_Scalar)}",
+        "qmatmul_iq3_s_parallel_fma", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulIQ3_S_Parallel_Scalar)}",
+        "qmatmul_iq3_s_serial_avx2", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulIQ3_S_Serial_Scalar)}",
+        "qmatmul_iq3_s_parallel_avx2", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulIQ3_S_Parallel_Scalar)}",
+        "qmatmul_iq3_s_serial_sse", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulIQ3_S_Serial_Scalar)}",
+        "qmatmul_iq3_s_parallel_sse", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulIQ3_S_Parallel_Scalar)}",
+        "qmatmul_iq3_s_serial_scalar", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulIQ3_S_Serial_Scalar)}",
+        "qmatmul_iq3_s_parallel_scalar", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulIQ3_S_Parallel_Scalar)}")]
+    public abstract unsafe void QuantizedMatMulIQ3_S(float* input, byte* rawWeights, float* output, int M, int K, int N);
+
     [PuzzleCornerPiece(QuantizationKeys.KeyQuantizedMatMulF32, true, null,
         "qmatmul_f32_serial_fma", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulF32_Serial_FMA)}",
         "qmatmul_f32_parallel_fma", $"{NS}.{nameof(QuantizationKernels.QuantizedMatMulF32_Parallel_FMA)}",
@@ -816,6 +933,41 @@ public abstract class QuantizationOps
         "read_iq4_xs_sse", $"{NS}.{nameof(QuantizationKernels.ReadIQ4_XS_Scalar)}",
         "read_iq4_xs_scalar", $"{NS}.{nameof(QuantizationKernels.ReadIQ4_XS_Scalar)}")]
     public abstract void ReadIQ4_XS(BinaryReader reader, Span<float> data, int n);
+
+    [PuzzleCornerPiece(QuantizationKeys.KeyReadIQ2_XXS, true, null,
+        "read_iq2_xxs_fma", $"{NS}.{nameof(QuantizationKernels.ReadIQ2_XXS_Scalar)}",
+        "read_iq2_xxs_avx2", $"{NS}.{nameof(QuantizationKernels.ReadIQ2_XXS_Scalar)}",
+        "read_iq2_xxs_sse", $"{NS}.{nameof(QuantizationKernels.ReadIQ2_XXS_Scalar)}",
+        "read_iq2_xxs_scalar", $"{NS}.{nameof(QuantizationKernels.ReadIQ2_XXS_Scalar)}")]
+    public abstract void ReadIQ2_XXS(BinaryReader reader, Span<float> data, int n);
+
+    [PuzzleCornerPiece(QuantizationKeys.KeyReadIQ2_XS, true, null,
+        "read_iq2_xs_fma", $"{NS}.{nameof(QuantizationKernels.ReadIQ2_XS_Scalar)}",
+        "read_iq2_xs_avx2", $"{NS}.{nameof(QuantizationKernels.ReadIQ2_XS_Scalar)}",
+        "read_iq2_xs_sse", $"{NS}.{nameof(QuantizationKernels.ReadIQ2_XS_Scalar)}",
+        "read_iq2_xs_scalar", $"{NS}.{nameof(QuantizationKernels.ReadIQ2_XS_Scalar)}")]
+    public abstract void ReadIQ2_XS(BinaryReader reader, Span<float> data, int n);
+
+    [PuzzleCornerPiece(QuantizationKeys.KeyReadIQ3_XXS, true, null,
+        "read_iq3_xxs_fma", $"{NS}.{nameof(QuantizationKernels.ReadIQ3_XXS_Scalar)}",
+        "read_iq3_xxs_avx2", $"{NS}.{nameof(QuantizationKernels.ReadIQ3_XXS_Scalar)}",
+        "read_iq3_xxs_sse", $"{NS}.{nameof(QuantizationKernels.ReadIQ3_XXS_Scalar)}",
+        "read_iq3_xxs_scalar", $"{NS}.{nameof(QuantizationKernels.ReadIQ3_XXS_Scalar)}")]
+    public abstract void ReadIQ3_XXS(BinaryReader reader, Span<float> data, int n);
+
+    [PuzzleCornerPiece(QuantizationKeys.KeyReadIQ2_S, true, null,
+        "read_iq2_s_fma", $"{NS}.{nameof(QuantizationKernels.ReadIQ2_S_Scalar)}",
+        "read_iq2_s_avx2", $"{NS}.{nameof(QuantizationKernels.ReadIQ2_S_Scalar)}",
+        "read_iq2_s_sse", $"{NS}.{nameof(QuantizationKernels.ReadIQ2_S_Scalar)}",
+        "read_iq2_s_scalar", $"{NS}.{nameof(QuantizationKernels.ReadIQ2_S_Scalar)}")]
+    public abstract void ReadIQ2_S(BinaryReader reader, Span<float> data, int n);
+
+    [PuzzleCornerPiece(QuantizationKeys.KeyReadIQ3_S, true, null,
+        "read_iq3_s_fma", $"{NS}.{nameof(QuantizationKernels.ReadIQ3_S_Scalar)}",
+        "read_iq3_s_avx2", $"{NS}.{nameof(QuantizationKernels.ReadIQ3_S_Scalar)}",
+        "read_iq3_s_sse", $"{NS}.{nameof(QuantizationKernels.ReadIQ3_S_Scalar)}",
+        "read_iq3_s_scalar", $"{NS}.{nameof(QuantizationKernels.ReadIQ3_S_Scalar)}")]
+    public abstract void ReadIQ3_S(BinaryReader reader, Span<float> data, int n);
 
     [PuzzleCornerPiece(QuantizationKeys.KeyReadQ2K, true, null,
         "read_q2k_fma", $"{NS}.{nameof(QuantizationKernels.ReadQ2K_Scalar)}",

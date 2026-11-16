@@ -1,6 +1,6 @@
 namespace SharpMind.Core.Quantization;
 
-internal static class QuantizationGrids
+internal static partial class QuantizationGrids
 {
     private static sbyte[]? _iq1sGrid;
 

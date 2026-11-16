@@ -28,7 +28,11 @@ public class QuantCompoundSelectionTests
         QuantDType.Q5_0, QuantDType.Q5_1,
         QuantDType.Q2_K, QuantDType.Q3_K, QuantDType.Q4_K_M, QuantDType.Q5_K_M,
         QuantDType.Q6_K, QuantDType.Q8_K,
-        QuantDType.IQ4_NL, QuantDType.MXFP4, QuantDType.IQ4_XS, QuantDType.Q1_0, QuantDType.TQ2_0,
+        QuantDType.IQ4_NL, QuantDType.MXFP4, QuantDType.IQ4_XS,
+        QuantDType.IQ2_XXS, QuantDType.IQ2_XS, QuantDType.IQ3_XXS,
+        QuantDType.IQ2_S, QuantDType.IQ3_S,
+        QuantDType.IQ1_S, QuantDType.IQ1_M, QuantDType.Q1_0,
+        QuantDType.TQ1_0, QuantDType.TQ2_0,
     ];
 
     private static PuzzleCornerPiece LinearTable() =>
@@ -104,11 +108,19 @@ public class QuantCompoundSelectionTests
     [InlineData(QuantDType.IQ1_S)]
     [InlineData(QuantDType.IQ1_M)]
     [InlineData(QuantDType.TQ1_0)]
-    public void DecodeOnlyDtypes_FailLoudlyInsteadOfUsingTheFloatKernel(QuantDType dtype)
+    [InlineData(QuantDType.IQ2_XXS)]
+    [InlineData(QuantDType.IQ2_XS)]
+    [InlineData(QuantDType.IQ3_XXS)]
+    [InlineData(QuantDType.IQ2_S)]
+    [InlineData(QuantDType.IQ3_S)]
+    public void GridDtypes_ResolveToTheirScalarKernel(QuantDType dtype)
     {
-        var ex = Assert.Throws<NotSupportedException>(
-            () => QuantHelper.GetCompound(dtype, ScalarMapping()));
-        Assert.Contains(dtype.ToString(), ex.Message);
-        Assert.Contains("no matmul target", ex.Message);
+        // No vector kernel exists for the grid formats yet; what matters is that
+        // they name their own kernel instead of borrowing F32's, and that the
+        // name is the one QuantizationOps registers.
+        string compound = QuantHelper.GetCompound(dtype, ScalarMapping());
+        Assert.StartsWith(QuantHelper.DtypeToCompound(dtype) + "_", compound);
+        Assert.EndsWith("_scalar", compound);
+        Assert.DoesNotContain("f32", compound);
     }
 }

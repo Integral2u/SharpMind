@@ -13,6 +13,11 @@ public static class QuantizationKeys
     public const string KeyVecDotQ4_NL = "vecdot_q4_nl";
     public const string KeyVecDotMXFP4 = "vecdot_mxfp4";
     public const string KeyVecDotIQ4_XS = "vecdot_iq4_xs";
+    public const string KeyVecDotIQ2_XXS = "vecdot_iq2_xxs";
+    public const string KeyVecDotIQ2_XS = "vecdot_iq2_xs";
+    public const string KeyVecDotIQ3_XXS = "vecdot_iq3_xxs";
+    public const string KeyVecDotIQ2_S = "vecdot_iq2_s";
+    public const string KeyVecDotIQ3_S = "vecdot_iq3_s";
     public const string KeyVecDotQ4_0 = "vecdot_q4_0";
     public const string KeyQuantizedMatMulQ4_0 = "qmatmul_q4_0";
     public const string KeyVecDotQ4_1 = "vecdot_q4_1";
@@ -44,6 +49,11 @@ public static class QuantizationKeys
     public const string KeyQuantizedMatMulQ4_NL = "qmatmul_q4_nl";
     public const string KeyQuantizedMatMulMXFP4 = "qmatmul_mxfp4";
     public const string KeyQuantizedMatMulIQ4_XS = "qmatmul_iq4_xs";
+    public const string KeyQuantizedMatMulIQ2_XXS = "qmatmul_iq2_xxs";
+    public const string KeyQuantizedMatMulIQ2_XS = "qmatmul_iq2_xs";
+    public const string KeyQuantizedMatMulIQ3_XXS = "qmatmul_iq3_xxs";
+    public const string KeyQuantizedMatMulIQ2_S = "qmatmul_iq2_s";
+    public const string KeyQuantizedMatMulIQ3_S = "qmatmul_iq3_s";
 
     public const string KeyReadQ8_0 = "read_q8_0";
     public const string KeyReadQ4_0 = "read_q4_0";
@@ -54,6 +64,11 @@ public static class QuantizationKeys
     public const string KeyReadQ4_NL = "read_q4_nl";
     public const string KeyReadMXFP4 = "read_mxfp4";
     public const string KeyReadIQ4_XS = "read_iq4_xs";
+    public const string KeyReadIQ2_XXS = "read_iq2_xxs";
+    public const string KeyReadIQ2_XS = "read_iq2_xs";
+    public const string KeyReadIQ3_XXS = "read_iq3_xxs";
+    public const string KeyReadIQ2_S = "read_iq2_s";
+    public const string KeyReadIQ3_S = "read_iq3_s";
     public const string KeyReadQ2K = "read_q2k";
     public const string KeyReadQ3K = "read_q3k";
     public const string KeyReadQ4K = "read_q4k";
