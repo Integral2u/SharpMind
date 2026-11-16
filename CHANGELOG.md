@@ -29,6 +29,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   after the generic fill: the 0x11/0x22 pattern in the scale byte is 2^-110,
   which makes every product subnormal and measures the CPU's denormal handling
   rather than the kernel.
+- **IQ4_XS decode (GGML type 23)** - 256 values in 136 bytes: an fp16
+  super-scale, eight 6-bit sub-block scales split across a 16-bit high half and
+  four low-nibble bytes, and 128 nibble bytes that index the same `iq4nl`
+  codebook the 32-value IQ4_NL block uses. Read, vec-dot and matmul for scalar,
+  AVX2, FMA and Arm64; the NEON kernel looks the codebook up with a byte table
+  (every value fits in int8) instead of the two permutes AVX2 needs, then widens
+  to float. `kbench iq4xs` on the same 4-core host, best of three: scalar 0.66,
+  AVX2 1.53, FMA 1.56 GMAC/s (2.4x over scalar).
 
 - **Arm64 CI runner and `HardwareTier.Arm64`** - the test matrix also runs on
   `ubuntu-24.04-arm` (Neoverse N2), so the engine is now exercised on AdvSimd

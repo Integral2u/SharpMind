@@ -26,6 +26,7 @@ public static class QuantHelper
         QuantDType.Q8_K => "q8k",
         QuantDType.IQ4_NL => "q4_nl",
         QuantDType.MXFP4 => "mxfp4",
+        QuantDType.IQ4_XS => "iq4_xs",
         QuantDType.Q1_0 => "q1_0",
         QuantDType.TQ2_0 => "tq2_0",
         QuantDType.F16 => "f16",
