@@ -141,6 +141,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- **An MLA file is refused instead of loaded as plain attention** - DeepSeek
+  V2/V3, Kimi and the MLA GLM variants store attention as
+  `attn_q_a`/`attn_q_b`/`attn_kv_a_mqa`/`attn_kv_b`, and every one of those names
+  contains the plain `attn_q`/`attn_k` substring the attention layer unpacks
+  weights by. Such a file therefore loaded "successfully" with its
+  sub-projections written into the wrong tensors and answered from garbage.
+  `GgufLoader.LoadConfig` now names the offending tensor and says MLA is not
+  implemented. The check is by tensor, not by architecture name, so it cannot be
+  bypassed by a new arch string and no real architecture is denylisted.
 - **`gemma3n`, `qwen35moe` and `llama4` resolve to their real presets** - `gemma3n`
   fell through to the SiLU/SwiGLU fallback although, like `gemma2`/`gemma3`, it is
   a GELU/GeGLU model; the two routed-expert families resolved to `FfnKind.Gated`,
