@@ -431,6 +431,25 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
         if (rawNormW >= 0)
             normTopKProb = rawNormW != 0;
 
+        // expert_gating_func: 1 = softmax, 2 = sigmoid (DeepSeek V3 / Moonlight).
+        // llama.cpp treats the absent key as softmax for DeepSeek V2/V2.5; any
+        // other value is a gating function this engine does not implement, and
+        // silently falling back to softmax would route every token wrong.
+        MoEGatingFunc expertGating = MoEGatingFunc.Softmax;
+        long rawGating = meta.GetLong($"{arch}.expert_gating_func", 0);
+        if (rawGating is 0 or (long)MoEGatingFunc.Softmax)
+            expertGating = MoEGatingFunc.Softmax;
+        else if (rawGating == (long)MoEGatingFunc.Sigmoid)
+            expertGating = MoEGatingFunc.Sigmoid;
+        else
+            throw new NotSupportedException(
+                $"{arch}.expert_gating_func = {rawGating} is not implemented; supported values are " +
+                $"{nameof(MoEGatingFunc.Softmax)} (1) and {nameof(MoEGatingFunc.Sigmoid)} (2).");
+
+        // DeepSeek V3 scales the routed branch after renormalising (Moonlight:
+        // 2.446). llama.cpp ignores 0 and 1.
+        float expertWeightsScale = (float)meta.GetFloat($"{arch}.expert_weights_scale", 0f);
+
         // Qwen1.5-MoE sizes the routed experts and the shared expert separately:
         // feed_forward_length (5632) is the SHARED expert, while the routed
         // experts are expert_feed_forward_length (1408) wide. Falling back to
@@ -564,6 +583,12 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
             HasRoutedExperts = TransformerWeights.IsMoEGguf(meta.Tensors),
             ExpertFfnDim = expertFfnDim,
             SharedExpertFfnDim = sharedExpertFfnDim,
+            HasSharedExpertGate = meta.Tensors.Any(t =>
+                t.Name.Contains("gate_inp_shexp", StringComparison.OrdinalIgnoreCase)),
+            HasRouterBias = meta.Tensors.Any(t =>
+                t.Name.Contains("exp_probs_b", StringComparison.OrdinalIgnoreCase)),
+            ExpertGating = expertGating,
+            ExpertWeightsScale = expertWeightsScale,
             SlidingWindowSize = slidingWindowSize,
             SlidingWindowPattern = slidingWindowPattern,
             SwaLayers = swaLayers,

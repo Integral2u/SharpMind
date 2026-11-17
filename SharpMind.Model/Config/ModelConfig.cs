@@ -233,6 +233,27 @@ public sealed record ModelConfig
     public bool NormTopKProb { get; init; }
 
     /// <summary>
+    /// How the router logits become expert probabilities. GGUF key:
+    /// {arch}.expert_gating_func (1 = softmax, 2 = sigmoid); absent means
+    /// softmax, which is llama.cpp's default for DeepSeek V2 and V2.5 files.
+    /// </summary>
+    public MoEGatingFunc ExpertGating { get; init; } = MoEGatingFunc.Softmax;
+
+    /// <summary>
+    /// Multiplier applied to the routed experts' combined weight after
+    /// renormalisation. GGUF key: {arch}.expert_weights_scale (DeepSeek V2
+    /// writes 1, Moonlight 2.446). llama.cpp skips both 0 and 1.
+    /// </summary>
+    public float ExpertWeightsScale { get; init; }
+
+    /// <summary>
+    /// True when the file carries a per-expert router selection bias
+    /// (<c>ffn_exp_probs_b</c>, DeepSeek V3). It shifts which experts are
+    /// selected only — the weights come from the unbiased probabilities.
+    /// </summary>
+    public bool HasRouterBias { get; init; }
+
+    /// <summary>
     /// Width of a single routed expert's FFN. GGUF key:
     /// {arch}.expert_feed_forward_length. 0 means "same as <see cref="FfnDim"/>".
     /// </summary>
@@ -334,6 +355,14 @@ public sealed record ModelConfig
     /// 10944-wide tensor into a 64-wide one.
     /// </summary>
     public int LeadingDenseLayers { get; init; }
+
+    /// <summary>
+    /// True when the file carries a sigmoid gate on the shared expert
+    /// (<c>ffn_gate_inp_shexp</c>, Qwen1.5-MoE). DeepSeek's shared experts are
+    /// added ungated, and inventing a gate layer for them multiplies the branch
+    /// by sigmoid(0) = 0.5.
+    /// </summary>
+    public bool HasSharedExpertGate { get; init; }
 
     /// <summary>True when this block's FFN is dense despite the file being MoE.</summary>
     public bool IsDenseFfnLayer(int layerIndex) => layerIndex < LeadingDenseLayers;

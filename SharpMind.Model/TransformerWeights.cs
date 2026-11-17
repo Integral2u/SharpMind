@@ -285,6 +285,11 @@ public abstract class TransformerWeights : IDisposable
 
             if (name.Contains("bias", StringComparison.OrdinalIgnoreCase))
             {
+                // DeepSeek V3's router selection bias (ffn_exp_probs_b) is F32 and
+                // float-only. It still has to be matched to the block: the loader
+                // only consults ResolveFloatTarget when ResolveTarget hands back a
+                // block, so an unmatched name left the bias silently all zeros.
+                if (moeLayer && name.Contains("exp_probs_b", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
                 if (name.Contains("attn_q", StringComparison.OrdinalIgnoreCase) || name.Contains("q_proj", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
                 if (name.Contains("attn_k", StringComparison.OrdinalIgnoreCase) || name.Contains("k_proj", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
                 if (name.Contains("attn_v", StringComparison.OrdinalIgnoreCase) || name.Contains("v_proj", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
@@ -484,6 +489,10 @@ public abstract class TransformerWeights : IDisposable
                     return null;
                 }
                 if (moeLayer && name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase))
+                    return b.WRouterBias ??= new Tensor<float>(Config.NumExperts);
+                // DeepSeek V3's router selection bias: one float per expert, added
+                // to the probabilities for the top-k choice only.
+                if (moeLayer && name.Contains("exp_probs_b", StringComparison.OrdinalIgnoreCase))
                     return b.WRouterBias ??= new Tensor<float>(Config.NumExperts);
                 if (name.Contains("attn_q", StringComparison.OrdinalIgnoreCase) || name.Contains("q_proj", StringComparison.OrdinalIgnoreCase)) return b.WqBias;
                 if (name.Contains("attn_k", StringComparison.OrdinalIgnoreCase) || name.Contains("k_proj", StringComparison.OrdinalIgnoreCase)) return b.WkBias;

@@ -13,12 +13,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   `yarn_log_multiplier = 0.0707`, and without it every rotary angle is wrong:
   the model stays fluent but cannot use position at all. `RoPE` now blends the
   interpolated and extrapolated angle per frequency across the correction band
-  (ggml's `rope_yarn` / `ggml_rope_yarn_corr_dims`) and folds llama.cpp's
-  `mscale` attention factor into the cos/sin tables, which is where llama.cpp
-  puts it too. `YarnRopeTests` rebuilds ggml's loop verbatim and matches the
-  tables to 1e-5, pins that the extrapolated band is untouched, and that the
-  interpolated band is compressed by exactly 1/factor. This is a prerequisite
-  for MLA: `DeepSeek-V2-Lite` was readable but not runnable without it.
+  (ggml's `rope_yarn` / `ggml_rope_yarn_corr_dims`) and folds the YaRN attention
+  factor into the cos/sin tables. That factor is the `get_mscale(f, mscale) /
+  get_mscale(f, mscale_all)` ratio and nothing else: llama.cpp divides by
+  `1 + 0.1 ln f` and ggml's `rope_yarn` multiplies it straight back, so the
+  tables carry the plain ratio (1 for DeepSeek-V2, where both mscale values are
+  0.707). The `mscale²` temperature of the YaRN paper lives in MLA's `kq_scale`
+  pre-scale instead, exactly as llama.cpp's deepseek2 graph applies it.
+  `YarnRopeTests` rebuilds ggml's loop verbatim and matches the tables to 1e-5,
+  pins that the extrapolated band is untouched, and that the interpolated band
+  is compressed by exactly 1/factor. This is a prerequisite for MLA:
+  `DeepSeek-V2-Lite` was readable but not runnable without it.
 
 - **MXFP4 decode (GGML type 39)** - the OCP micro-scaling format gpt-oss ships:
   32 values in 17 bytes, one E8M0 exponent and sixteen E2M1 nibble pairs, with
@@ -134,7 +139,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   the parent conversation's KV cache and the next turn extends it instead of
   re-prefilling. Engine-backed sessions export the parent cache before the
   sub-agent and restore it in a `finally`.
-- **Multi-head Latent Attention (DeepSeek V2/V3, Kimi, Moonlight)** - MLA keeps
+- **Multi-head Latent Attention (DeepSeek V2/V3, Moonlight)** - MLA keeps
   one compressed latent per token instead of a key and a value per head: 576
   floats per position per layer against 2 × 16 heads × 192/128 for the expanded
   form. `AttentionLayer` gains an MLA forward that projects `q` directly (both
@@ -147,7 +152,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   512-dot per cached position instead of expanding 4096 values from it — the
   difference between ~65k and ~2M multiply-adds per layer per token.
   `MlaAttentionTests` pins the two forms against each other and against a
-  pointer-free reference implementation.
+  pointer-free reference implementation. Verified end to end: `DeepSeek-V2-Lite`
+  (27 layers, 64 experts, YaRN 40) reproduces a float reference over the whole
+  12-token prompt `User: The capital of France is\n\nAssistant:` to the last
+  printed digit (Paris 33.71, According 30.17, The 29.93, There 29.53, You
+  29.47), and llama.cpp's own top-5 ordering for the same prompt — its logits
+  differ by up to 1.1 on the runner-ups because it multiplies a Q2_K file's
+  weights by activations requantised to q8_K, which the reference does not.
+- **DeepSeek V3 routing knobs** - `{arch}.expert_gating_func` (1 = softmax,
+  2 = sigmoid), `{arch}.expert_weights_scale` (Moonlight 2.446) and the
+  `ffn_exp_probs_b` selection bias. All three are metadata-only: a missed key
+  does not crash, it routes every token by the V2 rule and quietly answers
+  wrong. The order matches llama.cpp's `build_moe_ffn` — gate, gating function,
+  top-k on `probs + bias`, weight from the *unbiased* probability, renormalise
+  (`expert_weights_norm`), then scale. `MoeGatingTests` pins each step, and an
+  unrecognised `expert_gating_func` now fails loudly instead of falling back to
+  softmax. Validated on `Moonlight-16B-A3B-Instruct-Q4_K_M`, whose top-5 (327,
+  318, 220, 16, 46207) matches llama.cpp exactly in order — the fifth entry only
+  appears once the selection bias is loaded.
 - **A dense leading block in a routed file** - DeepSeek V2/V3 keep block 0 as an
   ordinary SwiGLU FFN and route every later block
   (`{arch}.leading_dense_block_count`). The loader assumed "MoE file ⇒ every
@@ -198,15 +220,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
-- **An MLA file is refused instead of loaded as plain attention** - DeepSeek
-  V2/V3, Kimi and the MLA GLM variants store attention as
+- **An MLA file no longer loads as plain attention** - DeepSeek V2/V3, Kimi and
+  the MLA GLM variants store attention as
   `attn_q_a`/`attn_q_b`/`attn_kv_a_mqa`/`attn_kv_b`, and every one of those names
   contains the plain `attn_q`/`attn_k` substring the attention layer unpacks
   weights by. Such a file therefore loaded "successfully" with its
-  sub-projections written into the wrong tensors and answered from garbage.
-  `GgufLoader.LoadConfig` now names the offending tensor and says MLA is not
-  implemented. The check is by tensor, not by architecture name, so it cannot be
-  bypassed by a new arch string and no real architecture is denylisted.
+  sub-projections written into the wrong tensors and answered from garbage. The
+  loader now binds the supported MLA geometry (`attn_kv_a_mqa`, `attn_kv_a_norm`
+  and a fused `attn_kv_b`, which is what the V2-Lite/Moonlight files carry) and
+  names the offending tensor for the two layouts it cannot bind: the split
+  `attn_k_b`/`attn_v_b` pair and a `q_lora_rank` model's
+  `attn_q_a`/`attn_q_b`. The check is by tensor, not by architecture name, so no
+  real architecture is denylisted.
+- **An ungated shared expert was halved** - `FfnLayer` created a
+  `shared_expert_gate_inp` layer for every model with a shared expert, but only
+  Qwen1.5-MoE stores one. DeepSeek's shared experts are added at full strength,
+  and its file has no such tensor, so the placeholder's all-zero row gave
+  `sigmoid(0) = 0.5`: every one of the 26 MoE layers contributed half of its
+  shared branch. The layer is now created only when the file carries
+  `gate_inp_shexp` (`ModelConfig.HasSharedExpertGate`).
+- **YaRN's rope tables lost 27% of every rotated dimension** - the tables
+  divided by `1 + 0.1 ln f`, undoing ggml's matching multiply inside
+  `rope_yarn`, so each rope dimension entered the score at `0.7305² = 0.53` of
+  its weight against the non-rotary dimensions. At one token this is invisible
+  (a single key softmaxes to 1 however it is scored); from a handful of
+  positions on it corrupts the answer, which is why every short prompt looked
+  fine and `User: The capital of France is\n\nAssistant:` produced "The capital
+  of France is a collection of" instead of "Paris". `YarnRopeTests` now computes
+  the factor the way llama.cpp builds it — context ratio, then the
+  `1/(1 + 0.1 ln f)` cancellation, then ggml's multiply back — instead of
+  reproducing the single-sided version.
 - **`gemma3n`, `qwen35moe` and `llama4` resolve to their real presets** - `gemma3n`
   fell through to the SiLU/SwiGLU fallback although, like `gemma2`/`gemma3`, it is
   a GELU/GeGLU model; the two routed-expert families resolved to `FfnKind.Gated`,

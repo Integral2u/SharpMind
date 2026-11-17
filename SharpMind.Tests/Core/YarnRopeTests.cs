@@ -36,8 +36,13 @@ public class YarnRopeTests
         float factor = Factor;
         float freqScale = 1f / factor;
         static float MS(float scale, float m) => scale <= 1f ? 1f : 0.1f * m * MathF.Log(scale) + 1f;
+        // llama-context.cpp: the ratio, then the 1/(1 + 0.1 ln f) cancellation...
         float mscale = MS(factor, LogMultiplier) / MS(factor, LogMultiplier);
         mscale *= 1f / (1f + 0.1f * MathF.Log(factor));
+        // ...which ggml's rope_yarn undoes whenever ext_factor != 0
+        // (mscale *= 1 + 0.1 ln(1/freq_scale)). The tables therefore carry the
+        // plain ratio; MLA pre-scales kq_scale by the mscale² instead.
+        mscale *= 1f + 0.1f * MathF.Log(1f / freqScale);
 
         int halfDim = RopeDim / 2;
         float thetaScale = MathF.Pow(Theta, -2f / RopeDim);
@@ -86,8 +91,9 @@ public class YarnRopeTests
     [Fact]
     public void YarnCompressesEveryAngle_ExceptTheExtrapolatedBand()
     {
-        // Pair 0 sits in the extrapolated band, so its angle is untouched and
-        // only the mscale compensation shows; the low-frequency pairs are
+        // Pair 0 sits in the extrapolated band, so its angle is untouched: the
+        // table is the plain rotation times the YaRN ratio (1 for DeepSeek-V2,
+        // where mscale == mscale_all_dim). The low-frequency pairs are
         // compressed, which is the whole point of YaRN.
         const int maxSeqLen = 2;
         var yarn = new RoPE(RopeDim, maxSeqLen, Theta, ropeDim: RopeDim, ropeScalingType: "yarn",
@@ -95,6 +101,7 @@ public class YarnRopeTests
             yarnLogMultiplier: LogMultiplier);
         var plain = new RoPE(RopeDim, maxSeqLen, Theta, ropeDim: RopeDim);
         float mscale = RoPE.YarnMscale(Factor, LogMultiplier);
+        Assert.Equal(1f, mscale, 6);
 
         // pos 1, pair 0: ramp == 1 -> the plain rotation, times mscale.
         Assert.Equal(plain.CosTable[32] * mscale, yarn.CosTable[32], 6);

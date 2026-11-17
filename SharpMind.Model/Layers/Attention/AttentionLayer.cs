@@ -770,24 +770,24 @@ namespace SharpMind.Model.Layers.Attention;
         float scale = Config.AttentionScale ?? 1f / MathF.Sqrt(nope + rope);
 
         // llama.cpp pre-scales MLA's kq_scale by mscale², where
-        //   attn_org = attn_factor * (1 + 0.1 ln factor) = 1 for DeepSeek-V2
+        //   attn_org = attn_factor * (1 + 0.1 ln factor)
         //   mscale   = attn_org * (1 + 0.1 * yarn_log_multiplier * ln factor)
-        // (llama-model/deepseek2.cpp, [TAG_DEEPSEEK2_YARN_LOG_MUL_FIX]). The rope
-        // tables already carry attn_factor, so without this the logits come out
-        // 1/mscale² too flat — 5% at factor 40, enough to change the answer.
+        // (llama-model/deepseek2.cpp, [TAG_DEEPSEEK2_YARN_LOG_MUL_FIX]). The GGUF
+        // stores yarn_log_multiplier already divided by 0.1 (0.0707 = 0.1 x
+        // DeepSeek's 0.707) and llama.cpp's 0.1 above puts it back, so the
+        // product is plain `logMul * ln factor`: 1.2608 at factor 40, not the
+        // 1.0261 the literal formula suggests. The rope tables themselves are
+        // plain cos/sin (RoPE.YarnMscale cancels llama's yarn_attn_factor the
+        // same way ggml's rope_yarn does), so this pre-scale is the only place
+        // the mscale² temperature is applied.
         if (Config.RopeScalingFactor is { } yarnFactor && yarnFactor > 1f
             && Config.RopeYarnLogMultiplier is { } logMul && logMul > 0f)
         {
-            float mscale = 1f + 0.1f * logMul * MathF.Log(yarnFactor);
+            float mscale = 1f + logMul * MathF.Log(yarnFactor);
             scale *= mscale * mscale;
         }
 
         var tProj = DecodeProfiler.Begin();
-        if (Environment.GetEnvironmentVariable("SM_TRACE_MLA") is { Length: > 0 })
-            Console.Error.WriteLine(
-                $"mla[attn]: x=[{batch},{seqLen},{x.Shape[^1]}] Wq={Wq.Weight.ElementCount} " +
-                $"Wk={Wk.Weight.ElementCount} Wv={Wv.Weight.ElementCount} " +
-                $"kvLora={kvLora} nope={nope} rope={rope} vDim={vDim} cache={(cache?.GetType().Name ?? "none")}");
         using var qProj = Wq.Forward(x, workspace);   // [B,S,heads x (nope|rope)]
         using var kvA = Wk.Forward(x, workspace);     // [B,S,latentDim]
         DecodeProfiler.Mark(DecodeStage.Kernel, tProj);
