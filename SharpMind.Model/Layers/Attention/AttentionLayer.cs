@@ -42,6 +42,25 @@ namespace SharpMind.Model.Layers.Attention;
         private readonly LinearLayer? _headGate;
         private bool _disposed;
 
+    // Multi-head Latent Attention (DeepSeek V2/V3, Moonlight).
+    //
+    // MLA has no per-head key or value projection. It keeps the plain Q slot for
+    // the query and reuses the K/V slots for its two projections, because
+    // nothing else reads them for such a model:
+    //   Wk = attn_kv_a_mqa  [hidden  -> kvLoraRank + rope]      (compresses)
+    //   Wv = attn_kv_b      [kvLora  -> heads x (nope | v)]    (expands)
+    //   _kvANorm            RMSNorm over the latent
+    //   _mlaRope            a ropeDim-wide rotary encoder applied to the rope
+    //                       slice only (q_rope per head, k_rope once per token)
+    // The projections stay float exactly as q/k/v already do, so the float
+    // dequant plumbing is shared and the absorbed decode can read kv_b directly.
+    private NormLayer? _kvANorm;
+    private readonly PositionalEncoder? _mlaRope;
+    private readonly int _kvLoraRank;
+    private readonly int _mlaNopeDim;
+    private readonly int _mlaRopeDim;
+    private readonly int _mlaVDim;
+
         public NormLayer? QNorm => _qNorm;
         public NormLayer? KNorm => _kNorm;
         public NormLayer? VNorm => _vNorm;
@@ -125,27 +144,33 @@ namespace SharpMind.Model.Layers.Attention;
         _gatedOutput = config.GatedAttentionOutput;
         int qProjDim = _gatedOutput ? 2 * qDim : qDim;
 
+        // MLA reuses the K/V slots for its two projections (see the field block).
+        int kvProjOut = config.IsMla ? config.KvLoraRank + config.MlaRopeHeadDim : kvDim;
+        int vProjIn = config.IsMla ? config.KvLoraRank : config.HiddenDim;
+        int vProjOut = config.IsMla ? config.NumHeads * (config.MlaNopeHeadDim + config.ValueDim) : kvDim;
+        int oProjIn = config.IsMla ? config.NumHeads * config.ValueDim : qDim;
+
         var tm = weights?.TensorMeta;
         if (mapping != null)
         {
             Wq = LinearLayerFactory.Create("q_proj", config.HiddenDim, qProjDim, true,
                 weights?.Wq, weights?.WqBias, tm?.GetValueOrDefault("RawWq").Dtype ?? QuantDType.F32, mapping);
-            Wk = LinearLayerFactory.Create("k_proj", config.HiddenDim, kvDim, true,
-                weights?.Wk, weights?.WkBias, tm?.GetValueOrDefault("RawWk").Dtype ?? QuantDType.F32, mapping);
-            Wv = LinearLayerFactory.Create("v_proj", config.HiddenDim, kvDim, true,
-                weights?.Wv, weights?.WvBias, tm?.GetValueOrDefault("RawWv").Dtype ?? QuantDType.F32, mapping);
-            Wo = LinearLayerFactory.Create("o_proj", qDim, config.HiddenDim, true,
+            Wk = LinearLayerFactory.Create("k_proj", config.HiddenDim, kvProjOut, !Config.IsMla,
+                weights?.Wk, Config.IsMla ? null : weights?.WkBias, tm?.GetValueOrDefault("RawWk").Dtype ?? QuantDType.F32, mapping);
+            Wv = LinearLayerFactory.Create("v_proj", vProjIn, vProjOut, !Config.IsMla,
+                weights?.Wv, Config.IsMla ? null : weights?.WvBias, tm?.GetValueOrDefault("RawWv").Dtype ?? QuantDType.F32, mapping);
+            Wo = LinearLayerFactory.Create("o_proj", oProjIn, config.HiddenDim, true,
                 weights?.Wo, weights?.WoBias, tm?.GetValueOrDefault("RawWo").Dtype ?? QuantDType.F32, mapping);
         }
         else
         {
             Wq = LinearLayerFactory.Create("q_proj", config.HiddenDim, qProjDim, true,
                 weights?.Wq, weights?.WqBias, tm?.GetValueOrDefault("RawWq").Dtype ?? QuantDType.F32);
-            Wk = LinearLayerFactory.Create("k_proj", config.HiddenDim, kvDim, true,
-                weights?.Wk, weights?.WkBias, tm?.GetValueOrDefault("RawWk").Dtype ?? QuantDType.F32);
-            Wv = LinearLayerFactory.Create("v_proj", config.HiddenDim, kvDim, true,
-                weights?.Wv, weights?.WvBias, tm?.GetValueOrDefault("RawWv").Dtype ?? QuantDType.F32);
-            Wo = LinearLayerFactory.Create("o_proj", qDim, config.HiddenDim, true,
+            Wk = LinearLayerFactory.Create("k_proj", config.HiddenDim, kvProjOut, !Config.IsMla,
+                weights?.Wk, Config.IsMla ? null : weights?.WkBias, tm?.GetValueOrDefault("RawWk").Dtype ?? QuantDType.F32);
+            Wv = LinearLayerFactory.Create("v_proj", vProjIn, vProjOut, !Config.IsMla,
+                weights?.Wv, Config.IsMla ? null : weights?.WvBias, tm?.GetValueOrDefault("RawWv").Dtype ?? QuantDType.F32);
+            Wo = LinearLayerFactory.Create("o_proj", oProjIn, config.HiddenDim, true,
                 weights?.Wo, weights?.WoBias, tm?.GetValueOrDefault("RawWo").Dtype ?? QuantDType.F32);
         }
         if (config.HeadGatedAttention)
@@ -187,6 +212,27 @@ namespace SharpMind.Model.Layers.Attention;
         // they enter the KV cache (llama.cpp ggml_rms_norm on Vcur).
         if (config.RmsNormValue)
             _vNorm = new RmsNormLayer(HeadDim, config.NormEps);
+
+        if (config.IsMla)
+        {
+            _kvLoraRank = config.KvLoraRank;
+            _mlaRopeDim = config.MlaRopeHeadDim;
+            _mlaNopeDim = config.MlaNopeHeadDim;
+            _mlaVDim = config.ValueDim;
+            _kvANorm = new RmsNormLayer(_kvLoraRank, config.NormEps, weights?.KvANormW, null);
+
+            // The rope slice is its own encoder: MLA rotates only the 64-wide
+            // tail of a 192-wide head, and a 64-wide encoder applied to that
+            // slice is exactly ggml's ggml_rope_ext(n_dims = 64).
+            _mlaRope = new RoPE(_mlaRopeDim, config.MaxPosition, config.RopeThetaForLayer(layerIndex),
+                ropeDim: _mlaRopeDim, ropeScalingType: config.RopeScalingType,
+                ropeScalingFactor: config.RopeScalingFactor,
+                ropeOriginalContextLength: config.RopeOriginalContextLength,
+                lowFreqFactor: config.RopeLowFreqFactor,
+                highFreqFactor: config.RopeHighFreqFactor,
+                neoxStyle: UsesNeoxRope(config.Architecture),
+                yarnLogMultiplier: config.RopeYarnLogMultiplier);
+        }
     }
 
     /// <summary>
@@ -196,7 +242,7 @@ namespace SharpMind.Model.Layers.Attention;
     /// pairing reproduces HF's rotate_half; the architectures below are NOT
     /// permuted at conversion and need true NeoX (d, d + ropeDim/2) pairing.
     /// Getting this wrong leaves the model locally fluent but unable to use
-    /// position — it repeats and cannot recall facts from earlier tokens.
+    /// position - it repeats and cannot recall facts from earlier tokens.
     /// Unknown architectures keep the previous adjacent behaviour.
     /// </summary>
     public static bool UsesNeoxRope(string? architecture)
@@ -220,15 +266,15 @@ namespace SharpMind.Model.Layers.Attention;
         if (weights.Wq != null) Wq.ReplaceWeights(weights.Wq, weights.WqBias);
         else if (weights.WqBias != null) Wq.ReplaceBias(weights.WqBias);
         Wq.SetRawWeight(weights.RawWq);
-        if (weights.Wk != null) Wk.ReplaceWeights(weights.Wk, weights.WkBias);
-        else if (weights.WkBias != null) Wk.ReplaceBias(weights.WkBias);
+        if (weights.Wk != null) Wk.ReplaceWeights(weights.Wk, Config.IsMla ? null : weights.WkBias);
+        else if (!Config.IsMla && weights.WkBias != null) Wk.ReplaceBias(weights.WkBias);
         Wk.SetRawWeight(weights.RawWk);
-        if (weights.Wv != null) Wv.ReplaceWeights(weights.Wv, weights.WvBias);
-        else if (weights.WvBias != null) Wv.ReplaceBias(weights.WvBias);
+        if (weights.Wv != null) Wv.ReplaceWeights(weights.Wv, Config.IsMla ? null : weights.WvBias);
+        else if (!Config.IsMla && weights.WvBias != null) Wv.ReplaceBias(weights.WvBias);
         Wv.SetRawWeight(weights.RawWv);
 
-        if (weights.Wo != null) Wo.ReplaceWeights(weights.Wo, weights.WoBias);
-        else if (weights.WoBias != null) Wo.ReplaceBias(weights.WoBias);
+        if (weights.Wo != null) Wo.ReplaceWeights(weights.Wo, Config.IsMla ? null : weights.WoBias);
+        else if (!Config.IsMla && weights.WoBias != null) Wo.ReplaceBias(weights.WoBias);
         Wo.SetRawWeight(weights.RawWo);
 
         // Per-head Q/K normalization (Qwen3)
@@ -241,6 +287,14 @@ namespace SharpMind.Model.Layers.Attention;
         {
             _kNorm?.Dispose();
             _kNorm = new RmsNormLayer(HeadDim, Config.NormEps, weights.KNormW, null);
+        }
+
+        // MLA's latent norm (attn_kv_a_norm). Like the per-head Q/K norms it is
+        // always float and lives on the layer, not in the projection.
+        if (weights.KvANormW != null)
+        {
+            _kvANorm?.Dispose();
+            _kvANorm = new RmsNormLayer(_kvLoraRank, Config.NormEps, weights.KvANormW, null);
         }
 
     }
@@ -258,6 +312,23 @@ namespace SharpMind.Model.Layers.Attention;
         if (name.Contains("attn_k_norm", StringComparison.OrdinalIgnoreCase))
         {
             _kNorm?.LoadWeight(data);
+            return;
+        }
+        // MLA's three tensors, before the plain attn_k branch: attn_kv_a_mqa and
+        // attn_kv_b both contain "attn_k".
+        if (name.Contains("attn_kv_a_norm", StringComparison.OrdinalIgnoreCase))
+        {
+            _kvANorm?.LoadWeight(data);
+            return;
+        }
+        if (name.Contains("attn_kv_a_mqa", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!isBias) Wk.LoadWeightTransposed(data);
+            return;
+        }
+        if (name.Contains("attn_kv_b", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!isBias) Wv.LoadWeightTransposed(data);
             return;
         }
         if (name.Contains("attn_gate", StringComparison.OrdinalIgnoreCase))
@@ -293,7 +364,13 @@ namespace SharpMind.Model.Layers.Attention;
         bool isBias = weightName.EndsWith(".bias", StringComparison.OrdinalIgnoreCase);
         if (isBias) return false;
 
-        // Q/K norm is always loaded as float — skip quantized path
+        // MLA projections are read as floats (the absorbed decode needs kv_b as a
+        // matrix), same rule as Q/K/V below.
+        if (weightName.Contains("attn_kv_a", StringComparison.OrdinalIgnoreCase) ||
+            weightName.Contains("attn_kv_b", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        // Q/K norm is always loaded as float - skip quantized path
         if (weightName.Contains("attn_q_norm", StringComparison.OrdinalIgnoreCase) ||
             weightName.Contains("attn_k_norm", StringComparison.OrdinalIgnoreCase))
             return false;
@@ -337,6 +414,8 @@ namespace SharpMind.Model.Layers.Attention;
     public Tensor<float> Forward( Tensor<float> x, int positionOffset = 0, bool causal = true, IKVCache? cache = null, Core.Memory.IWorkspace? workspace = null, int windowSize = 0)
     {
         ThrowIfDisposed();
+        if (Config.IsMla)
+            return ForwardMla(x, positionOffset, causal, cache, workspace);
         int batch = x.Shape[0];
         int seqLen = x.Shape[1];
         int hidden = x.Shape[2];
@@ -392,9 +471,9 @@ namespace SharpMind.Model.Layers.Attention;
         DecodeProfiler.Mark(DecodeStage.Rope, tRope);
 
         // Use the (possibly normed) K and V for cache storage. A KV-sharing
-        // layer (gemma4) does not own the cache it was handed — the arch passes
+        // layer (gemma4) does not own the cache it was handed - the arch passes
         // it the source layer's cache so attention can read that layer's keys
-        // and values — so it must not append its own.
+        // and values - so it must not append its own.
         if (cache != null && Config.HasOwnKv(LayerIndex))
         {
             var tKv = DecodeProfiler.Begin();
@@ -530,7 +609,7 @@ namespace SharpMind.Model.Layers.Attention;
             // Parallelise on total work, not head count.
             //
             // The old guard was `totalHeads <= 16`, which kept every model with
-            // 16 or fewer heads single-threaded — precisely the common case.
+            // 16 or fewer heads single-threaded - precisely the common case.
             // Qwen2-0.5B has 14, so its attention ran on one core of sixteen
             // while the projections around it used all of them. Head count says
             // nothing about cost: 14 heads over a 1691-entry cache is 24x the
@@ -667,6 +746,201 @@ namespace SharpMind.Model.Layers.Attention;
     }
 
 
+    /// <summary>
+    /// Multi-head Latent Attention forward.
+    ///
+    /// <para>Per token: <c>q = Wq(x)</c> splits into per-head nope and rope
+    /// slices; <c>kv_a = Wk(x)</c> splits into the 512-wide latent and a
+    /// 64-wide shared rope key; the latent is RMS-normalised, the rope slices
+    /// rotate, and the latent (normed, with its rope key appended) is what the
+    /// cache stores. Keys and values are rebuilt from that latent only for
+    /// prefill - decode absorbs <c>kv_b</c> into the query instead and never
+    /// materialises a per-head key or value at all.</para>
+    /// </summary>
+    private unsafe Tensor<float> ForwardMla(Tensor<float> x, int positionOffset, bool causal, IKVCache? cache, Core.Memory.IWorkspace? workspace)
+    {
+        int batch = x.Shape[0];
+        int seqLen = x.Shape[1];
+        int heads = Config.NumHeads;
+        int nope = _mlaNopeDim;
+        int rope = _mlaRopeDim;
+        int vDim = _mlaVDim;
+        int kvLora = _kvLoraRank;
+        int latentDim = kvLora + rope;
+        float scale = Config.AttentionScale ?? 1f / MathF.Sqrt(nope + rope);
+
+        // llama.cpp pre-scales MLA's kq_scale by mscale², where
+        //   attn_org = attn_factor * (1 + 0.1 ln factor) = 1 for DeepSeek-V2
+        //   mscale   = attn_org * (1 + 0.1 * yarn_log_multiplier * ln factor)
+        // (llama-model/deepseek2.cpp, [TAG_DEEPSEEK2_YARN_LOG_MUL_FIX]). The rope
+        // tables already carry attn_factor, so without this the logits come out
+        // 1/mscale² too flat — 5% at factor 40, enough to change the answer.
+        if (Config.RopeScalingFactor is { } yarnFactor && yarnFactor > 1f
+            && Config.RopeYarnLogMultiplier is { } logMul && logMul > 0f)
+        {
+            float mscale = 1f + 0.1f * logMul * MathF.Log(yarnFactor);
+            scale *= mscale * mscale;
+        }
+
+        var tProj = DecodeProfiler.Begin();
+        if (Environment.GetEnvironmentVariable("SM_TRACE_MLA") is { Length: > 0 })
+            Console.Error.WriteLine(
+                $"mla[attn]: x=[{batch},{seqLen},{x.Shape[^1]}] Wq={Wq.Weight.ElementCount} " +
+                $"Wk={Wk.Weight.ElementCount} Wv={Wv.Weight.ElementCount} " +
+                $"kvLora={kvLora} nope={nope} rope={rope} vDim={vDim} cache={(cache?.GetType().Name ?? "none")}");
+        using var qProj = Wq.Forward(x, workspace);   // [B,S,heads x (nope|rope)]
+        using var kvA = Wk.Forward(x, workspace);     // [B,S,latentDim]
+        DecodeProfiler.Mark(DecodeStage.Kernel, tProj);
+
+        using var cKv = new Tensor<float>(batch, seqLen, kvLora);
+        using var kRope = new Tensor<float>(batch, seqLen, rope);
+        using var qNope = new Tensor<float>(batch, seqLen, heads, nope);
+        using var qRope = new Tensor<float>(batch, seqLen, heads, rope);
+
+        int qkDim = nope + rope;
+        for (int b = 0; b < batch; b++)
+        {
+            for (int s = 0; s < seqLen; s++)
+            {
+                float* qRow = qProj.DataPtr + ((long)b * seqLen + s) * (heads * qkDim);
+                float* kvRow = kvA.DataPtr + ((long)b * seqLen + s) * latentDim;
+                float* cRow = cKv.DataPtr + ((long)b * seqLen + s) * kvLora;
+                float* kRRow = kRope.DataPtr + ((long)b * seqLen + s) * rope;
+
+                Buffer.MemoryCopy(kvRow, cRow, (long)kvLora * sizeof(float), (long)kvLora * sizeof(float));
+                Buffer.MemoryCopy(kvRow + kvLora, kRRow, (long)rope * sizeof(float), (long)rope * sizeof(float));
+
+                for (int h = 0; h < heads; h++)
+                {
+                    float* qh = qRow + (long)h * qkDim;
+                    float* nRow = qNope.DataPtr + (((long)b * seqLen + s) * heads + h) * nope;
+                    float* rRow = qRope.DataPtr + (((long)b * seqLen + s) * heads + h) * rope;
+                    Buffer.MemoryCopy(qh, nRow, (long)nope * sizeof(float), (long)nope * sizeof(float));
+                    Buffer.MemoryCopy(qh + nope, rRow, (long)rope * sizeof(float), (long)rope * sizeof(float));
+                }
+            }
+        }
+
+        var tNorm = DecodeProfiler.Begin();
+        using var cKvNorm = _kvANorm!.Forward(cKv, workspace);
+        DecodeProfiler.Mark(DecodeStage.Norm, tNorm);
+
+        var tRope = DecodeProfiler.Begin();
+        using (var kRopeView = kRope.Reshape(batch, seqLen, 1, rope))
+            _mlaRope!.ApplyBatched(kRopeView, positionOffset);
+        _mlaRope.ApplyBatched(qRope, positionOffset);
+        DecodeProfiler.Mark(DecodeStage.Rope, tRope);
+
+        // Cache the latent: normed 512-wide part followed by the rotated 64-wide
+        // shared rope key. Nothing else is stored per position.
+        using var latent = new Tensor<float>(batch, seqLen, latentDim);
+        for (int b = 0; b < batch; b++)
+        {
+            for (int s = 0; s < seqLen; s++)
+            {
+                float* dst = latent.DataPtr + ((long)b * seqLen + s) * latentDim;
+                float* cRow = cKvNorm.DataPtr + ((long)b * seqLen + s) * kvLora;
+                float* kRRow = kRope.DataPtr + ((long)b * seqLen + s) * rope;
+                Buffer.MemoryCopy(cRow, dst, (long)kvLora * sizeof(float), (long)kvLora * sizeof(float));
+                Buffer.MemoryCopy(kRRow, dst + kvLora, (long)rope * sizeof(float), (long)rope * sizeof(float));
+            }
+        }
+
+        if (cache != null && Config.HasOwnKv(LayerIndex))
+            cache.Update(latent, latent, 1, latentDim);
+
+        // Every position the queries may attend to, as latents: the cache when
+        // one exists (it now includes this batch), otherwise this batch.
+        int rows = cache?.Length ?? seqLen;
+        bool ownLatents = cache is not MlaKvCache || rows == seqLen;
+        using var latentsAll = ownLatents ? null : new Tensor<float>(batch, rows, latentDim);
+        float* latentsPtr;
+        if (ownLatents)
+        {
+            latentsPtr = latent.DataPtr;
+        }
+        else
+        {
+            var mlaCache = (MlaKvCache)cache!;
+            for (int b = 0; b < batch; b++)
+            {
+                Buffer.MemoryCopy(
+                    mlaCache.GetKeyPtr(b, 0, 0),
+                    latentsAll!.DataPtr + (long)b * rows * latentDim,
+                    (long)rows * latentDim * sizeof(float),
+                    (long)rows * latentDim * sizeof(float));
+            }
+            latentsPtr = latentsAll!.DataPtr;
+        }
+
+        using var output = new Tensor<float>(batch, seqLen, heads * vDim);
+        var sw = System.Buffers.ArrayPool<float>.Shared;
+        float[] probs = sw.Rent(rows + 8);
+        float[] qAbs = sw.Rent(kvLora);
+        float[] outLatent = sw.Rent(kvLora);
+        try
+        {
+            fixed (float* probsPtr = probs)
+            fixed (float* qAbsPtr = qAbs)
+            fixed (float* outLatentPtr = outLatent)
+            {
+                float* w = Wv.Weight.DataPtr;
+
+                if (seqLen == 1)
+                {
+                    // Decode: absorb kv_b into the query. One 512-dot per cached
+                    // position instead of expanding 4096 values from it.
+                    for (int b = 0; b < batch; b++)
+                    {
+                        MlaAttention.Decode(
+                            qNope.DataPtr + (long)b * heads * nope,
+                            qRope.DataPtr + (long)b * heads * rope,
+                            qAbsPtr,
+                            latentsPtr + (long)b * rows * latentDim, rows, w,
+                            kvLora, heads, nope, vDim, rope, scale,
+                            probsPtr, outLatentPtr,
+                            output.DataPtr + (long)b * heads * vDim);
+                    }
+                }
+                else
+                {
+                    // Prefill: expand once per cached position and share it across
+                    // the query rows.
+                    using var kv = new Tensor<float>(batch, rows, heads * (nope + vDim));
+                    for (int b = 0; b < batch; b++)
+                    {
+                        MlaAttention.Expand(
+                            latentsPtr + (long)b * rows * latentDim, rows, w,
+                            kvLora, heads, nope, vDim, rope,
+                            kv.DataPtr + (long)b * rows * heads * (nope + vDim));
+
+                        MlaAttention.Prefill(
+                            qNope.DataPtr + (long)b * seqLen * heads * nope,
+                            qRope.DataPtr + (long)b * seqLen * heads * rope,
+                            seqLen,
+                            latentsPtr + (long)b * rows * latentDim,
+                            kv.DataPtr + (long)b * rows * heads * (nope + vDim),
+                            rows, kvLora, heads, nope, vDim, rope, scale,
+                            probsPtr,
+                            output.DataPtr + (long)b * seqLen * heads * vDim);
+                    }
+                }
+            }
+        }
+        finally
+        {
+            sw.Return(probs);
+            sw.Return(qAbs);
+            sw.Return(outLatent);
+        }
+
+        var tOut = DecodeProfiler.Begin();
+        var result = Wo.Forward(output, workspace);
+        DecodeProfiler.Mark(DecodeStage.Kernel, tOut);
+        return result;
+    }
+
+
     public IEnumerable<Parameter> Parameters()
     {
         foreach (var p in Wq.Parameters()) yield return p;
@@ -675,6 +949,7 @@ namespace SharpMind.Model.Layers.Attention;
         foreach (var p in Wo.Parameters()) yield return p;
         if (_qNorm != null) foreach (var p in _qNorm.Parameters()) yield return p;
         if (_kNorm != null) foreach (var p in _kNorm.Parameters()) yield return p;
+        if (_kvANorm != null) foreach (var p in _kvANorm.Parameters()) yield return p;
     }
 
     public void FreeFloatWeights()
@@ -705,6 +980,7 @@ namespace SharpMind.Model.Layers.Attention;
             Wq.Dispose(); Wk.Dispose(); Wv.Dispose(); Wo.Dispose();
             _headGate?.Dispose();
             _qNorm?.Dispose(); _kNorm?.Dispose(); _vNorm?.Dispose();
+            _kvANorm?.Dispose();
         }
         _disposed = true;
     }

@@ -134,6 +134,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   the parent conversation's KV cache and the next turn extends it instead of
   re-prefilling. Engine-backed sessions export the parent cache before the
   sub-agent and restore it in a `finally`.
+- **Multi-head Latent Attention (DeepSeek V2/V3, Kimi, Moonlight)** - MLA keeps
+  one compressed latent per token instead of a key and a value per head: 576
+  floats per position per layer against 2 × 16 heads × 192/128 for the expanded
+  form. `AttentionLayer` gains an MLA forward that projects `q` directly (both
+  local files are the V2-Lite geometry, with no `q_lora_rank`), compresses
+  through `attn_kv_a_mqa` → `attn_kv_a_norm` → the 512-wide latent plus its
+  64-wide shared rope key, rotates only that 64-wide slice with a dedicated
+  YaRN encoder, and caches the latent in a new `MlaKvCache`. Prefill expands the
+  latent through the fused `attn_kv_b` once per position and shares it across
+  the query rows; decode absorbs `attn_kv_b` into the query, so a step costs one
+  512-dot per cached position instead of expanding 4096 values from it — the
+  difference between ~65k and ~2M multiply-adds per layer per token.
+  `MlaAttentionTests` pins the two forms against each other and against a
+  pointer-free reference implementation.
+- **A dense leading block in a routed file** - DeepSeek V2/V3 keep block 0 as an
+  ordinary SwiGLU FFN and route every later block
+  (`{arch}.leading_dense_block_count`). The loader assumed "MoE file ⇒ every
+  `ffn_gate` is the router", so block 0's 10944-wide gate was dequantized into
+  the 64-wide router and the load died with an IndexOutOfRangeException.
+  `ModelConfig.IsDenseFfnLayer` routes those blocks to the dense path.
+- **Shared experts counted from the file** - DeepSeek writes
+  `expert_shared_count` and converts the shared experts *fused* (`ffn_gate_shexp`
+  is [hidden, 2816] for V2-Lite's two 1408-wide experts). `SharedExpertFfnDim`
+  is now derived as `expert_shared_count × expert_feed_forward_length`, so the
+  existing single-shared-expert FFN runs them without a second layer.
 
 ### Changed
 

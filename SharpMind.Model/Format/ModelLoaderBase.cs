@@ -72,9 +72,12 @@ public abstract class ModelLoaderBase(
         }
 
         using var stream = ModelFileIo.OpenModelStream(_path, _useSafeIo);
+        bool traceLoad = Environment.GetEnvironmentVariable("SM_TRACE_LOAD") is { Length: > 0 };
         foreach (var info in meta.Tensors)
         {
             cancellationToken?.ThrowIfCancellationRequested();
+            if (traceLoad)
+                Console.Error.WriteLine($"load: {info.Name} {info.Dtype} [{string.Join(",", info.Shape)}]");
             progress?.Report((float)loaded / total);
             LoadSingleTensor(weights, meta, stream, info);
             loaded++;

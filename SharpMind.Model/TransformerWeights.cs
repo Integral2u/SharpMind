@@ -262,6 +262,10 @@ public abstract class TransformerWeights : IDisposable
         if (match.Success && int.TryParse(match.Groups[1].Value, out int bIdx) && bIdx < Blocks.Length)
         {
             var block = Blocks[bIdx];
+            // A leading dense block in a routed file has no router and no expert
+            // planes: its ffn_* tensors are the ordinary gated FFN. Every MoE
+            // branch below keys off this, not off IsMoE alone.
+            bool moeLayer = IsMoE && !Config.IsDenseFfnLayer(bIdx);
 
             // Qwen3.5 Gated DeltaNet tensors. These must be matched before the
             // generic attention/FFN branches: "attn_qkv" contains "attn_q", and
@@ -306,6 +310,14 @@ public abstract class TransformerWeights : IDisposable
                 // BEFORE the individual attn_q/attn_k/attn_v substring checks,
                 // because "attn_qkv".Contains("attn_q") is true.
                 if (name.Contains("attn_qkv", StringComparison.OrdinalIgnoreCase)) return (null, block, "RawWqkv");
+                // MLA's three tensors, also before attn_k/attn_v: attn_kv_a_mqa and
+                // attn_kv_b both contain "attn_k". They are always float (the
+                // absorbed decode reads kv_b as a matrix), so no raw field.
+                if (name.Contains("attn_kv_a_norm", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
+                // kv_a quantises like any other projection; kv_b must stay float
+                // because the absorbed decode reads it as a matrix.
+                if (name.Contains("attn_kv_a_mqa", StringComparison.OrdinalIgnoreCase)) return (null, block, "RawWk");
+                if (name.Contains("attn_kv_b", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
                 if (name.Contains("attn_q", StringComparison.OrdinalIgnoreCase) || name.Contains("q_proj", StringComparison.OrdinalIgnoreCase)) return (null, block, "RawWq");
                 if (name.Contains("attn_k", StringComparison.OrdinalIgnoreCase) || name.Contains("k_proj", StringComparison.OrdinalIgnoreCase)) return (null, block, "RawWk");
                 if (name.Contains("attn_v", StringComparison.OrdinalIgnoreCase) || name.Contains("v_proj", StringComparison.OrdinalIgnoreCase)) return (null, block, "RawWv");
@@ -317,7 +329,7 @@ public abstract class TransformerWeights : IDisposable
                 // MoE shared expert (Qwen1.5-MoE). Matched BEFORE the routed-expert
                 // branch because "ffn_gate_shexp" also contains "ffn_gate" — routing
                 // it as an expert or as the router would bind it to the wrong weight.
-                if (IsMoE && name.Contains("_shexp", StringComparison.OrdinalIgnoreCase))
+                if (moeLayer && name.Contains("_shexp", StringComparison.OrdinalIgnoreCase))
                 {
                     // ffn_gate_inp_shexp is the F32 sigmoid gate row; let the float
                     // path fill SharedGateInp rather than short-circuiting on raw bytes.
@@ -332,7 +344,7 @@ public abstract class TransformerWeights : IDisposable
                     return (null, block, null);
                 }
 
-                bool isMoEExpert = IsMoE && (
+                bool isMoEExpert = moeLayer && (
                     name.Contains(".exps.", StringComparison.OrdinalIgnoreCase) ||
                     name.Contains("_exps", StringComparison.OrdinalIgnoreCase) ||
                     (name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase) && RegexGenerated.ExpertIndex.IsMatch(name)) ||
@@ -361,7 +373,7 @@ public abstract class TransformerWeights : IDisposable
                     return (null, block, null);
                 }
 
-                if (IsMoE && name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase)
+                if (moeLayer && name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase)
                     && !name.Contains("_shexp", StringComparison.OrdinalIgnoreCase))
                     // Routers are F32 in practice (llama.cpp always writes them unquantized),
                     // so no raw field is returned: that keeps the loader on the float path,
@@ -412,6 +424,10 @@ public abstract class TransformerWeights : IDisposable
         if (match.Success && int.TryParse(match.Groups[1].Value, out int bIdx) && bIdx < Blocks.Length)
         {
             var b = Blocks[bIdx];
+            // A leading dense block in a routed file has no router and no expert
+            // planes: its ffn_* tensors are the ordinary gated FFN. Every MoE
+            // branch below keys off this, not off IsMoE alone.
+            bool moeLayer = IsMoE && !Config.IsDenseFfnLayer(bIdx);
 
             if (Config.IsRecurrentLayer(bIdx) && !name.Contains("bias", StringComparison.OrdinalIgnoreCase))
             {
@@ -446,7 +462,7 @@ public abstract class TransformerWeights : IDisposable
 
             if (name.Contains("bias", StringComparison.OrdinalIgnoreCase))
             {
-                bool isMoEBiasExp = IsMoE && (
+                bool isMoEBiasExp = moeLayer && (
                     name.Contains(".exps.", StringComparison.OrdinalIgnoreCase) ||
                     name.Contains("_exps", StringComparison.OrdinalIgnoreCase) ||
                     (name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase) && RegexGenerated.ExpertIndex.IsMatch(name)) ||
@@ -467,7 +483,7 @@ public abstract class TransformerWeights : IDisposable
                     }
                     return null;
                 }
-                if (IsMoE && name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase))
+                if (moeLayer && name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase))
                     return b.WRouterBias ??= new Tensor<float>(Config.NumExperts);
                 if (name.Contains("attn_q", StringComparison.OrdinalIgnoreCase) || name.Contains("q_proj", StringComparison.OrdinalIgnoreCase)) return b.WqBias;
                 if (name.Contains("attn_k", StringComparison.OrdinalIgnoreCase) || name.Contains("k_proj", StringComparison.OrdinalIgnoreCase)) return b.WkBias;
@@ -536,6 +552,16 @@ else
                         return b.PerLayerPostNorm;
                     }
                 }
+                // MLA: kv_a compresses into the K slot, kv_b expands into the V
+                // slot, and the latent norm is its own vector. Matched before the
+                // attn_k/attn_v substring checks, which both names would hit.
+                if (name.Contains("attn_kv_a_norm", StringComparison.OrdinalIgnoreCase))
+                {
+                    b.KvANormW ??= new Tensor<float>(Config.KvLoraRank);
+                    return b.KvANormW;
+                }
+                if (name.Contains("attn_kv_a_mqa", StringComparison.OrdinalIgnoreCase)) return b.Wk;
+                if (name.Contains("attn_kv_b", StringComparison.OrdinalIgnoreCase)) return b.Wv;
                 if (name.Contains("attn_q", StringComparison.OrdinalIgnoreCase) || name.Contains("q_proj", StringComparison.OrdinalIgnoreCase)) return b.Wq;
                 if (name.Contains("attn_k", StringComparison.OrdinalIgnoreCase) || name.Contains("k_proj", StringComparison.OrdinalIgnoreCase)) return b.Wk;
                 if (name.Contains("attn_v", StringComparison.OrdinalIgnoreCase) || name.Contains("v_proj", StringComparison.OrdinalIgnoreCase)) return b.Wv;
@@ -552,7 +578,7 @@ else
                 // [HiddenDim]) overwrote the real [HiddenDim, NumExperts] router. The
                 // symptom was the router reporting "weightElements=2048, expected=122880"
                 // at the first forward, and which tensor won depended on file order.
-                if (IsMoE && name.Contains("_shexp", StringComparison.OrdinalIgnoreCase))
+                if (moeLayer && name.Contains("_shexp", StringComparison.OrdinalIgnoreCase))
                 {
                     if (name.Contains("gate_inp", StringComparison.OrdinalIgnoreCase))
                         return b.SharedGateInp ??= new Tensor<float>(Config.HiddenDim);
@@ -566,7 +592,7 @@ else
                     return null;
                 }
 
-                bool isMoEExpW = IsMoE && (
+                bool isMoEExpW = moeLayer && (
                     name.Contains(".exps.", StringComparison.OrdinalIgnoreCase) ||
                     name.Contains("_exps", StringComparison.OrdinalIgnoreCase) ||
                     (name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase) && RegexGenerated.ExpertIndex.IsMatch(name)) ||
@@ -593,7 +619,7 @@ else
                 // The router. "_shexp" is excluded explicitly: ffn_gate_inp_shexp also
                 // contains "ffn_gate", and WRouter is ??=, so an unfiltered match lets
                 // the shared gate silently replace the real router.
-                if (IsMoE
+                if (moeLayer
                     && name.Contains("ffn_gate", StringComparison.OrdinalIgnoreCase)
                     && !name.Contains("_shexp", StringComparison.OrdinalIgnoreCase))
                     return b.WRouter ??= new Tensor<float>(Config.HiddenDim, Config.NumExperts);
@@ -790,6 +816,13 @@ else
         // Per-head Q/K normalization (Qwen3)
         public Tensor<float>? QNormW { get; set; }
         public Tensor<float>? KNormW { get; set; }
+
+        /// <summary>
+        /// MLA's latent norm (attn_kv_a_norm), [KvLoraRank]. Set only for
+        /// Multi-head Latent Attention models; the projections themselves ride
+        /// in <see cref="Wk"/> (kv_a) and <see cref="Wv"/> (kv_b).
+        /// </summary>
+        public Tensor<float>? KvANormW { get; set; }
 
         // Post-attention and post-FFN norms (Gemma-3)
         public Tensor<float>? PostNorm1W { get; set; }
