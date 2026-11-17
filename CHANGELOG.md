@@ -8,6 +8,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- **YaRN rotary scaling** - DeepSeek-V2/V3 write
+  `{FAMILY}.rope.scaling.type = yarn` with `factor = 40` and
+  `yarn_log_multiplier = 0.0707`, and without it every rotary angle is wrong:
+  the model stays fluent but cannot use position at all. `RoPE` now blends the
+  interpolated and extrapolated angle per frequency across the correction band
+  (ggml's `rope_yarn` / `ggml_rope_yarn_corr_dims`) and folds llama.cpp's
+  `mscale` attention factor into the cos/sin tables, which is where llama.cpp
+  puts it too. `YarnRopeTests` rebuilds ggml's loop verbatim and matches the
+  tables to 1e-5, pins that the extrapolated band is untouched, and that the
+  interpolated band is compressed by exactly 1/factor. This is a prerequisite
+  for MLA: `DeepSeek-V2-Lite` was readable but not runnable without it.
+
 - **MXFP4 decode (GGML type 39)** - the OCP micro-scaling format gpt-oss ships:
   32 values in 17 bytes, one E8M0 exponent and sixteen E2M1 nibble pairs, with
   nibble `j` holding element `j` in its low half and element `j + 16` in its

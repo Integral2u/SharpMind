@@ -378,6 +378,9 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
         float highFreq = meta.GetFloat($"{arch}.rope.scaling.high_freq_factor", float.NaN);
         float? ropeHighFreqFactor = float.IsNaN(highFreq) ? null : highFreq;
 
+        float yarnLogMul = meta.GetFloat($"{arch}.rope.scaling.yarn_log_multiplier", float.NaN);
+        float? ropeYarnLogMultiplier = float.IsNaN(yarnLogMul) ? null : yarnLogMul;
+
         long rawTie = meta.GetLong($"{arch}.tie_word_embeddings", -1);
         bool? tieWordEmbeddings = rawTie >= 0 ? (rawTie != 0) : null;
 
@@ -508,6 +511,7 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
             RopeOriginalContextLength = ropeOriginalContextLength,
             RopeLowFreqFactor = ropeLowFreqFactor,
             RopeHighFreqFactor = ropeHighFreqFactor,
+            RopeYarnLogMultiplier = ropeYarnLogMultiplier,
             TieWordEmbeddings = tieWordEmbeddings,
             NormTypeOverride = normTypeOverride,
             NumExperts = expertCount,

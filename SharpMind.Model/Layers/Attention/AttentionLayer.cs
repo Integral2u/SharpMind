@@ -177,6 +177,7 @@ namespace SharpMind.Model.Layers.Attention;
                  ropeOriginalContextLength: config.RopeOriginalContextLength,
                  lowFreqFactor: config.RopeLowFreqFactor,
                  highFreqFactor: config.RopeHighFreqFactor,
+                 yarnLogMultiplier: config.RopeYarnLogMultiplier,
                  precomputedFreqs: config.PrecomputedRopeFreqs,
                  neoxStyle: UsesNeoxRope(config.Architecture),
                  freqFactors: config.IsSwaLayer(layerIndex) ? null : config.RopeFreqFactors),
