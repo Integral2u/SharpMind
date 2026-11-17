@@ -32,7 +32,7 @@ public sealed class RoPE : PositionalEncoder
     private readonly record struct TableKey(
         float Theta, int RopeDim, int MaxSeqLen, float? ScalingFactor,
         string? ScalingType, int? OriginalContextLength, float? LowFreqFactor, float? HighFreqFactor,
-        float[]? FreqFactors);
+        float[]? FreqFactors, float YarnLogMultiplier, float YarnBetaFast, float YarnBetaSlow);
 
     /// <summary>
     /// Tables stay cached for this many configurations. A model needs one per distinct RoPE
@@ -86,12 +86,70 @@ public sealed class RoPE : PositionalEncoder
     /// </summary>
     private readonly bool _neoxStyle;
 
+    /// <summary>YaRN knobs straight from the GGUF ({arch}.rope.scaling.yarn_log_multiplier).</summary>
+    private readonly float _yarnLogMultiplier;
+    private readonly float _yarnBetaFast;
+    private readonly float _yarnBetaSlow;
+
+    private static bool IsYarn(string? scalingType) =>
+        string.Equals(scalingType, "yarn", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The YaRN attention factor llama.cpp applies to the rope tables
+    /// (llama-context.cpp, "when YARN is applied with yarn_ext_factor != 0"):
+    /// <c>get_mscale(f, mscale) / get_mscale(f, mscale_all) / (1 + 0.1 ln f)</c>,
+    /// with <c>get_mscale(s, m) = 0.1 m ln s + 1</c> for s &gt; 1. DeepSeek-V2
+    /// writes <c>mscale = mscale_all_dim = 0.0707</c>, which makes the ratio 1.
+    /// </summary>
+    internal static float YarnMscale(float factor, float logMultiplier)
+    {
+        static float GetMscale(float scale, float mscale) =>
+            scale <= 1f ? 1f : 0.1f * mscale * MathF.Log(scale) + 1f;
+
+        float mscaleAll = logMultiplier == 0f ? 1f : logMultiplier;
+        // llama.cpp's [TAG_DEEPSEEK2_YARN_LOG_MUL_FIX]: DeepSeek-V2's 0.707 is
+        // both mscale and mscale_all_dim, so the ratio collapses to 1.
+        float mscale = logMultiplier != 0f && logMultiplier != 1f ? logMultiplier : 1f;
+
+        float attn = logMultiplier == 0f
+            ? GetMscale(factor, 1f)
+            : GetMscale(factor, mscale) / GetMscale(factor, mscaleAll);
+        return attn * (1f / (1f + 0.1f * MathF.Log(factor)));
+    }
+
+    /// <summary>
+    /// YaRN's correction band, in pairs: the first index still extrapolated and
+    /// the last one fully interpolated (ggml_rope_yarn_corr_dims).
+    /// </summary>
+    private static (float Low, float High) YarnCorrDims(
+        int ropeDim, int originalContext, float theta, float betaFast, float betaSlow)
+    {
+        static float CorrDim(int nDims, int nCtxOrig, float nRot, float base_) =>
+            nDims * MathF.Log(nCtxOrig / (nRot * 2f * MathF.PI)) / (2f * MathF.Log(base_));
+
+        float low = MathF.Floor(CorrDim(ropeDim, originalContext, betaFast, theta));
+        float high = MathF.Ceiling(CorrDim(ropeDim, originalContext, betaSlow, theta));
+        return (low, high);
+    }
+
+    /// <summary>
+    /// Uniform scale multiplied into every cos/sin entry. YaRN scales the
+    /// rotated vector by an "attention factor" (mscale); llama.cpp bakes it into
+    /// the same tables, so folding it here keeps the two bit-comparable.
+    /// </summary>
+    private readonly float _mscale;
+
     public RoPE(int headDim, int maxSeqLen, float theta = 10_000f,
         int? ropeDim = null, string? ropeScalingType = null, float? ropeScalingFactor = null,
         int? ropeOriginalContextLength = null, float? lowFreqFactor = null, float? highFreqFactor = null,
-        float[]? precomputedFreqs = null, bool neoxStyle = false, float[]? freqFactors = null)
+        float[]? precomputedFreqs = null, bool neoxStyle = false, float[]? freqFactors = null,
+        float? yarnLogMultiplier = null, float yarnBetaFast = 32f, float yarnBetaSlow = 1f)
     {
         _neoxStyle = neoxStyle;
+        _yarnLogMultiplier = yarnLogMultiplier ?? 0f;
+        _yarnBetaFast = yarnBetaFast;
+        _yarnBetaSlow = yarnBetaSlow;
+        _mscale = IsYarn(ropeScalingType) ? YarnMscale(ropeScalingFactor ?? 1f, _yarnLogMultiplier) : 1f;
         if (headDim % 2 != 0)
             throw new ArgumentException($"HeadDim must be even, got {headDim}.");
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxSeqLen);
@@ -112,8 +170,8 @@ public sealed class RoPE : PositionalEncoder
                 for (int i = 0; i < halfDim; i++)
                 {
                     float angle = pos * precomputedFreqs[i];
-                    cos[cacheBase + i] = MathF.Cos(angle);
-                    sin[cacheBase + i] = MathF.Sin(angle);
+                    cos[cacheBase + i] = MathF.Cos(angle) * _mscale;
+                    sin[cacheBase + i] = MathF.Sin(angle) * _mscale;
                 }
             }
             _cosCache = cos;
@@ -123,7 +181,8 @@ public sealed class RoPE : PositionalEncoder
         {
             (_cosCache, _sinCache) = GetOrAddTables(
                 new TableKey(theta, _ropeDim, _maxSeqLen, ropeScalingFactor, ropeScalingType,
-                    ropeOriginalContextLength, lowFreqFactor, highFreqFactor, freqFactors), () =>
+                    ropeOriginalContextLength, lowFreqFactor, highFreqFactor, freqFactors,
+                    _yarnLogMultiplier, _yarnBetaFast, _yarnBetaSlow), () =>
             {
                 var cos = new float[_maxSeqLen * halfDim];
                 var sin = new float[_maxSeqLen * halfDim];
@@ -134,6 +193,25 @@ public sealed class RoPE : PositionalEncoder
                 float scaleFactor = ropeScalingFactor ?? 1f;
                 bool linearScaling = string.Equals(ropeScalingType, "linear", StringComparison.OrdinalIgnoreCase);
                 bool isLlama3 = string.Equals(ropeScalingType, "llama3", StringComparison.OrdinalIgnoreCase);
+
+                if (IsYarn(ropeScalingType))
+                {
+                    // YaRN (Peng et al. 2023), gemm-for-gemm with ggml's
+                    // rope_yarn: a per-dimension blend between the interpolated
+                    // frequency (freq_scale = 1/factor) and the extrapolated one,
+                    // with a ramp across the correction band. Both ends are
+                    // position-linear, so the blend folds into freqs[].
+                    int origCtx = ropeOriginalContextLength is > 0 ? ropeOriginalContextLength.Value : 4096;
+                    (float low, float high) = YarnCorrDims(_ropeDim, origCtx, theta, _yarnBetaFast, _yarnBetaSlow);
+                    float freqScale = 1f / scaleFactor;
+                    for (int i = 0; i < halfDim; i++)
+                    {
+                        int i0 = 2 * i;
+                        float y = (i0 / 2f - low) / MathF.Max(0.001f, high - low);
+                        float ramp = 1f - MathF.Min(1f, MathF.Max(0f, y));
+                        freqs[i] *= freqScale * (1f - ramp) + ramp;
+                    }
+                }
 
                 if (isLlama3 && ropeOriginalContextLength.HasValue && ropeOriginalContextLength.Value > 0
                     && lowFreqFactor.HasValue && highFreqFactor.HasValue)
@@ -175,8 +253,8 @@ public sealed class RoPE : PositionalEncoder
                     {
                         float scaledPos = linearScaling ? (pos / scaleFactor) : pos;
                         float angle = scaledPos * freqs[i];
-                        cos[cacheBase + i] = MathF.Cos(angle);
-                        sin[cacheBase + i] = MathF.Sin(angle);
+                        cos[cacheBase + i] = MathF.Cos(angle) * _mscale;
+                        sin[cacheBase + i] = MathF.Sin(angle) * _mscale;
                     }
                 }
                 return (cos, sin);

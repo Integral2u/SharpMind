@@ -307,6 +307,13 @@ public sealed record ModelConfig
     /// <summary>NTK-by-parts high frequency factor (llama3 scaling).</summary>
     public float? RopeHighFreqFactor { get; init; }
 
+    /// <summary>
+    /// YaRN's <c>yarn_log_multiplier</c> ({arch}.rope.scaling.yarn_log_multiplier),
+    /// which DeepSeek-V2 writes as <c>mscale = mscale_all_dim = 0.0707</c>. Only
+    /// meaningful when <see cref="RopeScalingType"/> is "yarn".
+    /// </summary>
+    public float? RopeYarnLogMultiplier { get; init; }
+
     /// <summary>Pre-computed RoPE frequencies from GGUF (rope_freqs.weight), if present.</summary>
     public float[]? PrecomputedRopeFreqs { get; init; }
 
