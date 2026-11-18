@@ -11,6 +11,15 @@ namespace SharpMind.Model.Layers.Ffn;
 
 public static class FfnKernels
 {
+    /// <summary>
+    /// A/B switch for the grouped expert path. At batch &gt; 1, tokens routed to
+    /// the same expert are gathered so each expert runs one matmul; with the
+    /// switch off the layer falls back to the per-token loop (one GEMV per
+    /// selected expert). Both compute the same thing — only the weight-read
+    /// pattern differs — so this exists to measure the change on one machine.
+    /// </summary>
+    public static bool GroupExperts { get; set; } = true;
+
     /// <summary>Thread-local bump allocator for MoE per-token intermediates.</summary>
     private static readonly ThreadLocal<Workspace> t_MoEWorkspace = new(() => new Workspace(1 << 20));
     /// <summary>
@@ -130,6 +139,39 @@ public static class FfnKernels
         var selectionProbs = selection ?? probs;
         DecodeProfiler.Mark(DecodeStage.Route, tRoute);
 
+        // Grouped path: several tokens per expert is the only case where a batch
+        // can amortise an expert's weights. Each expert then runs one matmul for
+        // all rows routed to it instead of one GEMV per token.
+        if (batch > 1 && GroupExperts)
+        {
+            var topIdxAll = new int[batch][];
+            var weightSumAll = new float[batch];
+            Parallel.For(0, batch, t =>
+            {
+                using var tokenLogits = Tensor<float>.From(selectionProbs.RowSpan(t), selectionProbs.Shape.Cols);
+                int[] topKIdx = ArgTopK(tokenLogits, topK);
+                topIdxAll[t] = topKIdx;
+                float sum = 0f;
+                if (normTopKProb)
+                {
+                    foreach (int expertIdx in topKIdx) sum += probs.RowSpan(t)[expertIdx];
+                    sum = MathF.Max(sum, 6.103515625e-5f);
+                }
+                weightSumAll[t] = sum;
+            });
+
+            if (residency is not null)
+            {
+                var union = new HashSet<int>();
+                foreach (int[] topKIdx in topIdxAll)
+                    foreach (int expertIdx in topKIdx) union.Add(expertIdx);
+                residency.EnsureExpertsLoaded(union.ToArray());
+            }
+
+            return MoEByExpert(x, result, probs, topIdxAll, weightSumAll, wGate, wUp, wDown,
+                acts, normTopKProb, weightScale, hidden, batch);
+        }
+
         // Residency path: select all tokens up front so the union can be loaded once, then
         // evaluate. The plain path keeps routing inside ProcessToken (identical to before).
         int[][]? precomputedTopK = null;
@@ -232,6 +274,105 @@ public static class FfnKernels
         else
         {
             System.Threading.Tasks.Parallel.For(0, batch, ProcessToken);
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Evaluates the routed experts in groups: every token routed to expert
+    /// <c>e</c> contributes a row to one <c>[m, hidden]</c> matmul through that
+    /// expert's weights. At batch 1 each expert sees one row and this is a GEMV,
+    /// exactly as before; at batch 8 an expert typically sees several rows and
+    /// its weights are read once instead of once per token.
+    ///
+    /// Rows are gathered into a contiguous input block and expert outputs into a
+    /// matching block, then the weighted sum is accumulated per token in top-k
+    /// order — the same accumulation the per-token path performs, so switching
+    /// paths only changes rounding, not semantics.
+    /// </summary>
+    private static Tensor<float> MoEByExpert(
+        Tensor<float> x,
+        Tensor<float> result,
+        Tensor<float> probs,
+        int[][] topIdxAll,
+        float[] weightSumAll,
+        LinearLayer[] wGate,
+        LinearLayer[] wUp,
+        LinearLayer[] wDown,
+        ActivationOps acts,
+        bool normTopKProb,
+        float weightScale,
+        int hidden,
+        int batch)
+    {
+        int experts = wGate.Length;
+        int assignments = 0;
+        foreach (int[] idx in topIdxAll) assignments += idx.Length;
+
+        var counts = new int[experts];
+        foreach (int[] idx in topIdxAll)
+            foreach (int e in idx) counts[e]++;
+
+        var offsets = new int[experts + 1];
+        for (int e = 0; e < experts; e++) offsets[e + 1] = offsets[e] + counts[e];
+
+        var cursor = new int[experts];
+        Array.Copy(offsets, cursor, experts);
+
+        var tokenOf = new int[assignments];
+        var weightOf = new float[assignments];
+        var slotOfToken = new int[batch][];
+
+        float scaleW = weightScale is > 0f and not 1f ? weightScale : 1f;
+        for (int t = 0; t < batch; t++)
+        {
+            var row = probs.RowSpan(t);
+            float inv = normTopKProb ? 1f / weightSumAll[t] : 1f;
+            int k = topIdxAll[t].Length;
+            var slots = new int[k];
+            for (int j = 0; j < k; j++)
+            {
+                int e = topIdxAll[t][j];
+                int a = cursor[e]++;
+                tokenOf[a] = t;
+                weightOf[a] = row[e] * inv * scaleW;
+                slots[j] = a;
+            }
+            slotOfToken[t] = slots;
+        }
+
+        using var gathered = new Tensor<float>(assignments, hidden);
+        using var expertOutputs = new Tensor<float>(assignments, hidden);
+        for (int a = 0; a < assignments; a++)
+            x.Data.Slice(tokenOf[a] * hidden, hidden).CopyTo(gathered.Data.Slice(a * hidden, hidden));
+
+        Parallel.For(0, experts, e =>
+        {
+            int m = counts[e];
+            if (m == 0) return;
+            int start = offsets[e];
+
+            using var input = new Tensor<float>(m, hidden);
+            gathered.Data.Slice(start * hidden, m * hidden).CopyTo(input.Data);
+
+            using var produced = Gated(input, wGate[e], wUp[e], wDown[e], acts);
+            produced.Data.CopyTo(expertOutputs.Data.Slice(start * hidden, m * hidden));
+        });
+
+        var outputData = expertOutputs.Data;
+        var resultData = result.Data;
+        resultData.Clear();
+        for (int t = 0; t < batch; t++)
+        {
+            var dst = resultData.Slice(t * hidden, hidden);
+            foreach (int a in slotOfToken[t])
+            {
+                float w = weightOf[a];
+                var src = outputData.Slice(a * hidden, hidden);
+                for (int i = 0; i < hidden; i++)
+                    dst[i] += src[i] * w;
+            }
         }
 
         return result;
