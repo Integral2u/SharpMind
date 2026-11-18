@@ -96,6 +96,9 @@ if (mode == "batchbench")
 if (mode == "mtpcheck")
     return await RunMtpCheckAsync(path, args);
 
+if (mode == "rowcheck")
+    return await RunRowCheckAsync(path, args);
+
 if (mode == "fwd")
     return RunForward(path, args);
 
@@ -2032,6 +2035,7 @@ static async Task<int> RunInferenceAsync(string path, string[] args)
             // probe's GenerationConfig default is 1.1. "nopenalty" zeroes it so a
             // greedy run is comparable to llama.cpp token-for-token.
             bool noPenalty = args.Any(a => a.Equals("nopenalty", StringComparison.OrdinalIgnoreCase));
+            bool mtpMode = args.Any(a => a.Equals("mtp", StringComparison.OrdinalIgnoreCase));
             var rawBuilder = new StandardGeneratorBuilder<KVCacherBuilder>();
             var rawGen = rawBuilder.CreateGenerator(model, tokenizer, addBos, addEos: false, caches: null);
             var rawSample = new SamplingConfig { Temperature = 0f, TopK = 1 };
@@ -2040,13 +2044,18 @@ static async Task<int> RunInferenceAsync(string path, string[] args)
                 MaxNewTokens = maxTokens,
                 Stream = true,
                 RepetitionPenalty = noPenalty ? 1.0f : new GenerationConfig().RepetitionPenalty,
+                MtpDraft = mtpMode,
             };
             var rawSb = new System.Text.StringBuilder();
             var rawSw = System.Diagnostics.Stopwatch.StartNew();
             await foreach (var frag in rawGen.GenerateAsync(prompt, rawSample, rawGenCfg))
                 rawSb.Append(frag);
             rawSw.Stop();
-            Console.WriteLine($"RAW addBos={addBos}:{rawSb}");
+            Console.WriteLine($"RAW addBos={addBos} mtp={mtpMode}:{rawSb}");
+            if (rawGen.CurrentGeneratedIds is { Count: > 0 } generated)
+                Console.WriteLine($"IDS {string.Join(',', generated)}");
+            if (rawGen is StandardGenerator<KVCacherBuilder> std)
+                Console.WriteLine($"MTP drafts {std.MtpStats.Drafted} accepted {std.MtpStats.Accepted}");
             Console.WriteLine($"OK  raw generated {rawSb.Length} chars in {rawSw.Elapsed.TotalSeconds:F1}s");
             GeneratorDiagnostics.DumpTopLogits = false;
             return rawSb.Length > 0 ? 0 : 4;
@@ -2289,6 +2298,78 @@ static async Task<int> RunMtpCheckAsync(string path, string[] args)
         t.Data[0] = id;
         return t;
     }
+}
+
+// rowcheck <file> ["prompt"] [draftToken=7]
+//
+// Does a two-token forward reproduce the one-token forward's first-row logits?
+// Speculative verification depends on it: the draft row must not change the row
+// that samples the real token.
+static async Task<int> RunRowCheckAsync(string path, string[] args)
+{
+    await Task.CompletedTask;
+    string prompt = args.Length > 2 ? args[2] : "The capital of France is";
+    int draft = args.Length > 3 && int.TryParse(args[3], out int d) ? d : 7;
+
+    ModelFormatHelpers.GetModelMetaHelperFor(ModelFormat.Gguf).Load(path, null, out _, out var modelConfig, out var tokenizer);
+    if (tokenizer is null) return 3;
+    var sharpConfig = modelConfig.ForModel();
+    var mapping = sharpConfig.ToJigSawMapping();
+    using var weights = ModelFactory.CreateWeights(modelConfig, sharpConfig, QuantizationFactory.Create(mapping), path,
+        LoadMode.Full, quantizedResident: false, maxParallelLoadDegree: 1);
+    weights.InitializeWeights();
+    using var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
+
+    int[] promptIds = tokenizer.Encode(prompt, addBos: true, addEos: false);
+    int p = promptIds.Length;
+    int next = 11751 % modelConfig.VocabSize;
+
+    IKVCache[] Caches()
+    {
+        var c = new IKVCache[modelConfig.NumLayers];
+        for (int i = 0; i < c.Length; i++)
+            c[i] = modelConfig.IsShortConvLayer(i)
+                ? new ShortConvCache(modelConfig.ShortConvCacheLength - 1, modelConfig.HiddenDim, 1, 64)
+                : modelConfig.IsRecurrentLayer(i)
+                    ? new DeltaNetCache(modelConfig.SsmConvKernel, modelConfig.SsmConvDim,
+                        modelConfig.SsmTimeStepRank, modelConfig.SsmStateSize, modelConfig.SsmValueHeadDim, 1, 64)
+                    : new KVCache(1, modelConfig.NumKvHeads, 64, modelConfig.HeadDimForLayer(i));
+        return c;
+    }
+
+    using var one = new Tensor<int>(1, p);
+    for (int i = 0; i < p; i++) one.Data[i] = promptIds[i];
+
+    var a = Caches();
+    using (var _ = model.ForwardLastLogits(one, a, 0, null)) { }
+    using var nextTensor = new Tensor<int>(1, 1);
+    nextTensor.Data[0] = next;
+    using var single = model.ForwardLastLogits(nextTensor, a, p, null);
+
+    var b = Caches();
+    using (var _ = model.ForwardLastLogits(one, b, 0, null)) { }
+    using var pair = new Tensor<int>(1, 2);
+    pair.Data[0] = next;
+    pair.Data[1] = draft;
+    using var both = model.Forward(pair, b, p, null);
+
+    var l1 = single.Data[..modelConfig.VocabSize].ToArray();
+    var l2 = both.Data[..modelConfig.VocabSize].ToArray();
+    float maxDiff = 0;
+    for (int i = 0; i < l1.Length; i++) maxDiff = MathF.Max(maxDiff, MathF.Abs(l1[i] - l2[i]));
+
+    float[] Top(float[] v)
+    {
+        var idx = Enumerable.Range(0, v.Length).OrderByDescending(i => v[i]).Take(5).ToArray();
+        return [.. idx.Select(i => (float)i)];
+    }
+
+    Console.WriteLine($"rowcheck: one-token max={l1.Max():F3} top={string.Join(',', Top(l1))}");
+    Console.WriteLine($"rowcheck: two-token max={l2.Max():F3} top={string.Join(',', Top(l2))}");
+    Console.WriteLine($"rowcheck: max abs diff {maxDiff:F6}");
+    foreach (var c in a) c.Dispose();
+    foreach (var c in b) c.Dispose();
+    return 0;
 }
 
 // bench <file> [prompt] [warmup=16] [measure=64] [full] [resident] [serialmm] [nowide] [reps=3] [ids]

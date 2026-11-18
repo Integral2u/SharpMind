@@ -76,6 +76,22 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
     /// <summary>Prompt-lookup drafting counts for the last generation (all zero when it was off).</summary>
     public PromptLookupStats PromptLookupStats { get; private set; }
 
+    /// <summary>MTP drafts proposed/accepted in the last generation (zero when it was off).</summary>
+    public (int Drafted, int Accepted) MtpStats { get; private set; }
+
+    // ── MTP (NextN) drafting ────────────────────────────────────────────────
+    // One token of lookahead from the model's draft head. The head's cache only
+    // ever holds tokens that were actually fed to the trunk (it is written for
+    // the token being extended), so a rejected draft rewinds the trunk only.
+    private IKVCache? _mtpCache;
+    private float[]?  _mtpHidden;        // h of the last fed token
+    private float[]?  _mtpHiddenRow1;    // h of the run's second row while a draft is in flight
+    private Tensor<float>? _mtpHiddenTensor;
+    private bool _mtpReady;              // _mtpHidden belongs to the token before the next one
+    private bool _mtpDirty;              // drafted before its trunk forward completed
+    private bool _mtpDrafting;
+    private int _mtpDrafted, _mtpAccepted;
+
     public StandardGenerator(
         Transformer   model,
         Tokenization.Tokenizer tokenizer,
@@ -172,6 +188,27 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
         // truncates the unverified rows away. Recurrent caches cannot be truncated: no drafting.
         int lookupMax = Math.Clamp(genCfg.PromptLookupDraft, 0, GenerationConfig.MaxPromptLookupDraft);
         if (lookupMax > 0 && _caches.Any(c => !c.SupportsTruncate)) lookupMax = 0;
+
+        // MTP drafting needs the head. Models with recurrent layers are handled by
+        // snapshotting their state around each draft run and replaying the verified
+        // token on rejection (a rejected draft cannot rewind a recurrence). It also
+        // takes precedence over prompt lookup (one draft per step either way).
+        bool mtp = genCfg.MtpDraft && _model.Mtp is not null;
+        // A rejected draft must be forgotten by the trunk. Recurrent caches
+        // (short-conv / DeltaNet) cannot rewind, so those models stay on the plain
+        // path until the snapshot-and-replay round is ported from
+        // SpeculativeGenerator.
+        if (mtp && _caches.Any(c => !c.SupportsTruncate)) mtp = false;
+        if (mtp)
+        {
+            lookupMax = 0;
+            EnsureMtpCache();
+            ResetMtpState();
+            _mtpDrafted = 0;
+            _mtpAccepted = 0;
+            MtpStats = default;
+        }
+
         PromptLookupDrafter? drafter = lookupMax > 0 ? new PromptLookupDrafter() : null;
         List<int>? lookupContext = null;
         int runLen = 0, runNext = 0, runCacheLen = 0, runPos = 0, lookupForwards = 0;
@@ -199,6 +236,13 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
                 int rows = (lookupMax + 1) * logitsTensor.Shape[1];
                 if (_runRows is null || _runRows.Length < rows) _runRows = new float[rows];
                 if (_runDraft is null || _runDraft.Length < lookupMax) _runDraft = new int[lookupMax];
+            }
+            else if (mtp)
+            {
+                // One draft means two rows: the fed token and the draft.
+                if (_runRows is null || _runRows.Length < 2 * logitsTensor.Shape[1])
+                    _runRows = new float[2 * logitsTensor.Shape[1]];
+                _runDraft ??= new int[1];
             }
 
 
@@ -338,6 +382,8 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
                     // Entries now sit at positions they were not computed for;
                     // nothing about the cache is a prefix of any prompt any more.
                     _cacheTokens = null;
+                    // The MTP head's cache also holds positions that just moved.
+                    if (mtp) ResetMtpState();
                 }
 
                 if (runLen > 0)
@@ -345,15 +391,34 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
                     // The draft already in the cache: no forward, the next row is ready.
                     if (runNext < runLen && nextId == _runDraft![runNext])
                     {
+                        int acceptedRow = runNext;
                         runNext++;
                         _position++;
+                        if (mtp && runLen == 1)
+                        {
+                            // The trunk has now fed the draft token, so the head must
+                            // record it too: its cache has to mirror the token stream,
+                            // or the next draft attends through a hole. The hidden
+                            // state for that entry is the row before it.
+                            FeedMtpHidden(_mtpHidden!, nextId, runPos + 1 + acceptedRow);
+                            AdoptMtpHidden(_mtpHiddenRow1!);
+                            _mtpAccepted++;
+                            _mtpDirty = false;
+                        }
                         continue;
                     }
+
                     // A different token drops the unverified rows; after the last row the run
                     // simply ends (every draft held, nextId is the extra token).
                     if (runNext < runLen)
                         RollBackRun(runCacheLen + 1 + runNext, runPos + 1 + runNext);
-                    drafter!.Record(runLen, runNext);
+                    if (mtp && runLen == 1)
+                    {
+                        // Row `runNext` is the last token the trunk actually kept.
+                        AdoptMtpHidden(runNext >= 1 ? _mtpHiddenRow1! : _mtpHidden!);
+                        _mtpDirty = false;
+                    }
+                    if (drafter is not null) drafter.Record(runLen, runNext);
                     runLen = 0;
                 }
 
@@ -375,6 +440,21 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
                     if (room > 0) m = drafter.Propose(lookupContext!, _runDraft.AsSpan(0, room));
                     lookupForwards++;
                 }
+                else if (mtp && _mtpReady)
+                {
+                    int room = Math.Min(maxPosition - newPos - 1, cache0.MaxSeqLen - cache0.Length - 2);
+                    if (room >= 1 && step + 1 < maxNewTokens)
+                    {
+                        int draft = ProposeMtpDraft(nextId, newPos);
+                        if (draft >= 0)
+                        {
+                            _runDraft![0] = draft;
+                            m = 1;
+                            _mtpDrafted++;
+                            _mtpDirty = true;
+                        }
+                    }
+                }
 
                 if (m == 0)
                 {
@@ -382,6 +462,7 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
                     stepInput.Data[0] = nextId;
                     logitsTensor = _model.ForwardLastLogits(stepInput, _caches, newPos, _workspace);
                     _cacheTokens?.Add(nextId);
+                    if (mtp) CaptureMtpHidden();
                 }
                 else
                 {
@@ -396,6 +477,7 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
                     runNext = 0;
                     _cacheTokens?.Add(nextId);
                     _cacheTokens?.AddRange(_runDraft.AsSpan(0, m));
+                    if (mtp) CaptureMtpHiddenRows(m);
                 }
                 _position++;
             }
@@ -418,12 +500,130 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
             {
                 if (runNext < runLen)
                     RollBackRun(runCacheLen + 1 + runNext, runPos + 1 + runNext);
-                drafter!.Record(runLen, runNext);
+                if (drafter is not null) drafter.Record(runLen, runNext);
             }
             if (drafter is not null)
                 PromptLookupStats = new PromptLookupStats(lookupForwards, drafter.Drafted, drafter.Accepted);
+            if (mtp)
+            {
+                // A draft proposed but never verified leaves the head's cache one
+                // token ahead of the trunk; drop it rather than reuse it.
+                if (_mtpDirty) ResetMtpState();
+                MtpStats = (_mtpDrafted, _mtpAccepted);
+            }
             logitsTensor?.Dispose();
         }
+    }
+
+    private void EnsureMtpCache()
+    {
+        if (_mtpCache is not null) return;
+        var cfg = _model.Config;
+        int length = _caches.Length > 0 ? _caches[0].MaxSeqLen : cfg.MaxSeqLen;
+        _mtpCache = cfg.IsMla
+            ? new MlaKvCache(1, length, cfg.KvLoraRank + cfg.MlaRopeHeadDim)
+            : new KVCache(1, cfg.NumKvHeads, length, cfg.HeadDim);
+    }
+
+    /// <summary>
+    /// Forgets the draft head's history. Called whenever the trunk's positions
+    /// change under it (reset, truncate, sliding-window trim) and after a draft
+    /// that never reached the trunk.
+    /// </summary>
+    private void ResetMtpState()
+    {
+        _mtpCache?.Reset();
+        _mtpReady = false;
+        _mtpDirty = false;
+    }
+
+    private void AdoptMtpHidden(float[] hidden)
+    {
+        _mtpReady = false;
+        int n = _model.Config.HiddenDim;
+        if (_mtpHidden is null) _mtpHidden = new float[n];
+        hidden.AsSpan(0, n).CopyTo(_mtpHidden);
+        _mtpReady = true;
+    }
+
+    /// <summary>Stores the hidden state of the single token just fed.</summary>
+    private void CaptureMtpHidden()
+    {
+        var normed = _model.LastNormed;
+        if (normed is null) { _mtpReady = false; return; }
+        int n = _model.Config.HiddenDim;
+        if (_mtpHidden is null) _mtpHidden = new float[n];
+        normed.Data[..n].CopyTo(_mtpHidden);
+        _mtpReady = true;
+        _mtpDirty = false;
+    }
+
+    /// <summary>Stores the hidden state of every row of a verification forward.</summary>
+    private void CaptureMtpHiddenRows(int m)
+    {
+        if (m != 1) { _mtpReady = false; return; }
+        int n = _model.Config.HiddenDim;
+        if (_mtpHidden is null) _mtpHidden = new float[n];
+        if (_mtpHiddenRow1 is null) _mtpHiddenRow1 = new float[n];
+
+        using (var row0 = _model.GetNormedHiddenRow(0))
+        using (var row1 = _model.GetNormedHiddenRow(1))
+        {
+            if (row0 is null || row1 is null) { _mtpReady = false; return; }
+            row0.Data[..n].CopyTo(_mtpHidden);
+            row1.Data[..n].CopyTo(_mtpHiddenRow1);
+        }
+
+        _mtpReady = true;
+        _mtpDirty = false;
+    }
+
+    /// <summary>
+    /// Asks the MTP head for the token after <paramref name="token"/>. The head
+    /// appends that token to its own cache, which is safe because the token is
+    /// already committed to the trunk at this point.
+    /// </summary>
+    private int ProposeMtpDraft(int token, int position)
+    {
+        if (!_mtpReady || _mtpHidden is null || _mtpCache is null) return -1;
+
+        var cfg = _model.Config;
+        int hidden = cfg.HiddenDim;
+        _mtpHiddenTensor ??= new Tensor<float>(1, 1, hidden);
+        _mtpHidden.AsSpan(0, hidden).CopyTo(_mtpHiddenTensor.Data);
+
+        using var ids = new Tensor<int>(1, 1);
+        ids.Data[0] = token;
+        using var logits = _model.ForwardMtpLastLogits(_mtpHiddenTensor, ids, _mtpCache, position);
+        return ArgMax(logits.Data[..cfg.VocabSize]);
+    }
+
+    /// <summary>
+    /// Appends <paramref name="token"/> to the head's cache without using the
+    /// logits. An accepted draft was fed to the trunk, so the head must see it too
+    /// — otherwise the next draft attends over a stream with that token missing.
+    /// </summary>
+    private void FeedMtpHidden(float[] hidden, int token, int position)
+    {
+        if (_mtpCache is null) return;
+
+        var cfg = _model.Config;
+        int n = cfg.HiddenDim;
+        _mtpHiddenTensor ??= new Tensor<float>(1, 1, n);
+        hidden.AsSpan(0, n).CopyTo(_mtpHiddenTensor.Data);
+
+        using var ids = new Tensor<int>(1, 1);
+        ids.Data[0] = token;
+        using var _ = _model.ForwardMtpLastLogits(_mtpHiddenTensor, ids, _mtpCache, position);
+    }
+
+    private static int ArgMax(ReadOnlySpan<float> values)
+    {
+        int best = 0;
+        float max = values[0];
+        for (int i = 1; i < values.Length; i++)
+            if (values[i] > max) { max = values[i]; best = i; }
+        return best;
     }
 
     /// <summary>Drops the unverified draft rows of a prompt-lookup run.</summary>
@@ -464,6 +664,7 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
             _caches[i].Reset();
         _cacheTokens = [];
         _position = 0;
+        ResetMtpState();
     }
 
     public IReadOnlyList<int>? CacheTokens => _cacheTokens;
@@ -475,12 +676,16 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
         if (_cacheTokens is not null && _cacheTokens.Count > length)
             _cacheTokens.RemoveRange(length, _cacheTokens.Count - length);
         _position = length;
+        // The head's cache cannot be rewound to an arbitrary trunk prefix without
+        // replaying it; start it fresh on the next turn.
+        ResetMtpState();
     }
 
     public void SetCacheTokens(IReadOnlyList<int> tokens)
     {
         _cacheTokens = [.. tokens];
         _position = tokens.Count;
+        ResetMtpState();
     }
 
     /// <summary>KV-cache fill as a fraction of maximum capacity.</summary>
@@ -513,8 +718,11 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
         if (!disposing) return;
         for (int i = 0; i < _caches.Length; i++)
             _caches[i].Dispose();
+        _mtpCache?.Dispose();
+        _mtpHiddenTensor?.Dispose();
         _workspace.Dispose();
     }
 
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, nameof(StandardGenerator<>));
 }
+

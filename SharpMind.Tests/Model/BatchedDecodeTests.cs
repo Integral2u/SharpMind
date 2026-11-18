@@ -259,6 +259,50 @@ public sealed class BatchedDecodeTests
     }
 
     /// <summary>
+    /// A longer forward must reproduce the shorter one for the rows they share:
+    /// row 0 of a two-token pass has seen exactly the cache a one-token pass sees.
+    /// Speculative verification depends on this — the draft row must not leak into
+    /// the row that samples the real token.
+    /// </summary>
+    [Fact]
+    public void LongerPass_ReproducesEarlierRowLogits()
+    {
+        const int len = 4;
+        int[] prompt = Prompt(len, 600);
+        int next = 7, draft = 11;
+
+        using var model = BuildModel();
+
+        var shortCaches = BuildCaches(1);
+        using (var promptTensor = new Tensor<int>(1, len))
+        {
+            for (int t = 0; t < len; t++) promptTensor.Data[t] = prompt[t];
+            using var _ = model.ForwardLastLogits(promptTensor, shortCaches, 0, null);
+        }
+
+        using var one = new Tensor<int>(1, 1);
+        one.Data[0] = next;
+        using var expected = model.ForwardLastLogits(one, shortCaches, len, null);
+
+        var longCaches = BuildCaches(1);
+        using (var promptTensor = new Tensor<int>(1, len))
+        {
+            for (int t = 0; t < len; t++) promptTensor.Data[t] = prompt[t];
+            using var _ = model.ForwardLastLogits(promptTensor, longCaches, 0, null);
+        }
+
+        using var two = new Tensor<int>(1, 2);
+        two.Data[0] = next;
+        two.Data[1] = draft;
+        using var both = model.Forward(two, longCaches, len, null);
+
+        var want = Row(expected, 0);
+        var got = Row(both, 0);
+        for (int v = 0; v < want.Length; v++)
+            Assert.Equal(want[v], got[v], 3);
+    }
+
+    /// <summary>
     /// Same property for Multi-head Latent Attention, whose decode path absorbs
     /// <c>kv_b</c> into the query and reads one latent per cached position. Rows
     /// at different lengths must not share a position or a latent count.

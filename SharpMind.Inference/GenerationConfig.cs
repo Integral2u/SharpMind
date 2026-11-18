@@ -58,6 +58,17 @@ public sealed record GenerationConfig
     /// <summary>Upper bound for <see cref="PromptLookupDraft"/>.</summary>
     public const int MaxPromptLookupDraft = 16;
 
+    /// <summary>
+    /// Draft one token per step with the model's MTP (NextN) head and verify it
+    /// in a two-token forward. A draft is only accepted when the trunk's own
+    /// sample equals it, so the emitted tokens are always the trunk's. Requires a
+    /// model that carries an MTP block and trunk caches that can rewind a rejected
+    /// draft (attention-only, e.g. DeepSeek V3 MLA); hybrid recurrent models fall
+    /// back until their snapshot-and-replay round is wired. Takes precedence over
+    /// <see cref="PromptLookupDraft"/>.
+    /// </summary>
+    public bool MtpDraft { get; init; }
+
     // Streaming
 
     /// <summary>
