@@ -50,6 +50,8 @@ public sealed class BatchedGenerator : IDisposable, IAsyncDisposable
     private readonly int _vocab;
     private readonly int _seqLen;
     private readonly int _maxPosition;
+    /// <summary>Chunk size actually used; bounded by the workspace's prefill budget.</summary>
+    private readonly int _maxChunkLength;
     private readonly int[] _rowSlots;
     private readonly BatchedSequence[] _rowSeqs;
     private readonly List<BatchedSequence> _pending = [];
@@ -93,6 +95,9 @@ public sealed class BatchedGenerator : IDisposable, IAsyncDisposable
         _seqLen = ModelConfig.ComputeMaxCacheLength(config, _options.MaxSeqLen);
         _maxPosition = config.MaxPosition;
         _vocab = config.VocabSize;
+        // The workspace budgets for min(MaxSeqLen, 128) prefill tokens; a larger
+        // chunk would overflow its bump allocator.
+        _maxChunkLength = Math.Max(1, Math.Min(_options.MaxChunkLength, Math.Min(_seqLen, 128)));
 
         var builder = cacheBuilder ?? new KVCacherBuilder();
         _caches = new IKVCache[config.NumLayers];
@@ -349,7 +354,7 @@ public sealed class BatchedGenerator : IDisposable, IAsyncDisposable
 
         int remaining = seq.PromptTokens.Length - seq.PromptFed;
         int room = _seqLen - _caches[0].LengthForRow(seq.Slot);
-        int len = Math.Min(Math.Min(_options.MaxChunkLength, remaining), room);
+        int len = Math.Min(Math.Min(_maxChunkLength, remaining), room);
         if (len <= 0) { Finish(seq, BatchFinishReason.ContextFull); return; }
 
         bool last = len == remaining;

@@ -39,14 +39,15 @@ public sealed record BatchedGeneratorOptions
 
     /// <summary>
     /// Cache capacity per row, in tokens. Null uses
-    /// <see cref="ModelConfig.ComputeMaxCacheLength"/> for the model.
+    /// <see cref="SharpMind.Model.Config.ModelConfig.ComputeMaxCacheLength"/>
+    /// for the model.
     /// </summary>
     public int? MaxSeqLen { get; init; }
 
     /// <summary>
-    /// Prompt tokens fed per prefill forward. The workspace is sized for
-    /// <see cref="Prefill.MaxChunkLength"/>; a larger value needs a larger
-    /// workspace, so the default is the same bound.
+    /// Prompt tokens fed per prefill forward. The generator's workspace budgets
+    /// for <c>min(MaxSeqLen, 128)</c> tokens, so the value is clamped to that
+    /// bound rather than overflowing the allocator.
     /// </summary>
     public int MaxChunkLength { get; init; } = Prefill.MaxChunkLength;
 
