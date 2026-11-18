@@ -168,8 +168,9 @@ public sealed class SlidingWindowSizingTests : IClassFixture<SlidingWindowSizing
         // When keep >= CurrentPosition, TrimToLast is a no-op.
         // When keep < CurrentPosition, TrimToLast retains exactly 'keep' entries.
         var cache = new KVCache(1, 4, 16, 32);
-        var k = new Tensor<float>(1, 4, 32);
-        var v = new Tensor<float>(1, 4, 32);
+        // [batch, seqLen, numKvHeads, headDim]: four tokens of four 32-wide heads.
+        using var k = new Tensor<float>(1, 4, 4, 32);
+        using var v = new Tensor<float>(1, 4, 4, 32);
         cache.Update(k, v, 4, 32);
         Assert.Equal(4, cache.Length);
 
