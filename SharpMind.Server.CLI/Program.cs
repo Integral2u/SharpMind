@@ -66,6 +66,9 @@ for (int i = 0; i < cliArgs.Length; i++)
             if (int.TryParse(cliArgs[++i], out var batchSize) && batchSize > 0)
                 options.CompletionBatchSize = batchSize;
             break;
+        case "--no-chat-batching":
+            options.BatchChatCompletions = false;
+            break;
         case "--api-key" when i + 1 < cliArgs.Length:
             options.ApiKey = cliArgs[++i];
             break;
@@ -450,6 +453,7 @@ static async Task SpawnServiceProcessAsync(SharpMindServerOptions options, List<
     args += $" --max-concurrent {options.MaxConcurrentGenerations} --max-queued {options.MaxQueuedGenerations}";
     if (options.PrefixCacheMB > 0) args += $" --prefix-cache-mb {options.PrefixCacheMB}";
     args += $" --completion-batch-size {options.CompletionBatchSize}";
+    if (!options.BatchChatCompletions) args += " --no-chat-batching";
     if (!string.IsNullOrEmpty(options.ApiKey)) args += $" --api-key \"{options.ApiKey}\"";
 
     var psi = new ProcessStartInfo
@@ -762,6 +766,10 @@ static void PrintUsage()
       --completion-batch-size <n>
                             /v1/completions sequences decoded together per model;
                             the KV budget is split across the rows (default 8)
+      --no-chat-batching    Give each chat request its own generator and KV cache
+                            instead of sharing the model's batch. Slower under
+                            concurrency, but keeps incremental per-turn KV reuse
+                            and the cross-request prefix cache.
       --api-key <key>       Require this key (Authorization: Bearer or
                             X-Api-Key) for shutdown/model-delete endpoints.
                             Sentinel: also sent by --stop and unload.

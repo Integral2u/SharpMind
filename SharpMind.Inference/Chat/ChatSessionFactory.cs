@@ -12,7 +12,7 @@ namespace SharpMind.Inference.Chat
         public static IChatSession CreateChatSession(
             Type generatorBuilderDef,  // typeof(StandardGeneratorBuilder<>)
             Type cacheBuilder,         // typeof(KVCacherBuilder)
-            Transformer model, Tokenizer tokenizer, ModelMetaData? meta = null, IAgentBuilder? agentBuilder = null, IPromptPreProcessor? preProcessor = null, IPromptPostProcessor? postProcessor = null, IProgress<float>? progress = null, Func<ToolPermissionContext, Task<ToolPermission>>? permissions = null, IChatPromptFormatter? formatter = null, int? seed = null, bool disposeModel = false, int? maxCacheLen = null, IInferenceEngine? engine = null)
+            Transformer model, Tokenizer tokenizer, ModelMetaData? meta = null, IAgentBuilder? agentBuilder = null, IPromptPreProcessor? preProcessor = null, IPromptPostProcessor? postProcessor = null, IProgress<float>? progress = null, Func<ToolPermissionContext, Task<ToolPermission>>? permissions = null, IChatPromptFormatter? formatter = null, int? seed = null, bool disposeModel = false, int? maxCacheLen = null, IInferenceEngine? engine = null, object? generatorFactory = null)
         {
             var closedGen = generatorBuilderDef.IsGenericTypeDefinition
                 ? generatorBuilderDef.MakeGenericType(cacheBuilder)
@@ -22,13 +22,16 @@ namespace SharpMind.Inference.Chat
             // across sessions. This used to be hardcoded true, so ending one chat
             // disposed the shared Transformer and every later session threw
             // ObjectDisposedException — swallowed and shown as an empty reply.
-            return (IChatSession)Activator.CreateInstance(sessionType, [model, tokenizer, meta, agentBuilder, preProcessor, postProcessor, progress, permissions, null, formatter, seed, disposeModel, maxCacheLen, engine, null])!;
+            //
+            // generatorFactory is the closed Func<IGenerator<K>> (batched serving):
+            // the Activator binds it to the session's parameter of that exact type.
+            return (IChatSession)Activator.CreateInstance(sessionType, [model, tokenizer, meta, agentBuilder, preProcessor, postProcessor, progress, permissions, null, formatter, seed, disposeModel, maxCacheLen, engine, null, generatorFactory])!;
         }
         // Compile-time — for known type combos
         public static ChatSession<T, K> CreateChatSession<T, K>(
-            Transformer model, Tokenizer tokenizer, ModelMetaData? meta = null, IAgentBuilder? agentBuilder = null, IPromptPreProcessor? preProcessor = null, IPromptPostProcessor? postProcessor = null, IProgress<float>? progress = null, Func<ToolPermissionContext, Task<ToolPermission>>? permissions = null, IChatPromptFormatter? formatter = null, int? seed = null, bool disposeModel = false, int? maxCacheLen = null, IInferenceEngine? engine = null)
+            Transformer model, Tokenizer tokenizer, ModelMetaData? meta = null, IAgentBuilder? agentBuilder = null, IPromptPreProcessor? preProcessor = null, IPromptPostProcessor? postProcessor = null, IProgress<float>? progress = null, Func<ToolPermissionContext, Task<ToolPermission>>? permissions = null, IChatPromptFormatter? formatter = null, int? seed = null, bool disposeModel = false, int? maxCacheLen = null, IInferenceEngine? engine = null, Func<IGenerator<K>>? generatorFactory = null)
             where K : IKVCacheBuilder, new()
             where T : IGeneratorBuilder<K>, new()
-            => new(model, tokenizer, meta, agentBuilder, preProcessor, postProcessor, progress, permissions, null, formatter, seed, disposeModel, maxCacheLen, engine);
+            => new(model, tokenizer, meta, agentBuilder, preProcessor, postProcessor, progress, permissions, null, formatter, seed, disposeModel, maxCacheLen, engine, null, generatorFactory);
     }
 }

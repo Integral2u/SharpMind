@@ -402,15 +402,24 @@ public sealed class SharpMindService : IAsyncDisposable
             // batched completion generator's forward passes (the transformer keeps
             // activations in instance fields). Held for the whole response — the
             // session prefills while creating, so it is taken before that.
-            ModelLeaseService.Lease modelLease;
-            try
+            //
+            // Batched chat is the exception: its generation runs on the batcher's
+            // scheduler thread, which takes the same lease for each forward pass.
+            // Holding it here as well would deadlock (the scheduler could never
+            // run the step that finishes this request).
+            bool batchedChat = options.BatchChatCompletions;
+            ModelLeaseService.Lease? modelLease = null;
+            if (!batchedChat)
             {
-                modelLease = await modelLeases.AcquireAsync(request.Model, ct);
-            }
-            catch (OperationCanceledException)
-            {
-                modelManager.Release(request.Model);
-                return Results.Json(new { error = new { message = "Request cancelled while waiting for the model", type = "timeout" } }, statusCode: 408);
+                try
+                {
+                    modelLease = await modelLeases.AcquireAsync(request.Model, ct);
+                }
+                catch (OperationCanceledException)
+                {
+                    modelManager.Release(request.Model);
+                    return Results.Json(new { error = new { message = "Request cancelled while waiting for the model", type = "timeout" } }, statusCode: 408);
+                }
             }
 
             IChatSession session;
@@ -422,7 +431,7 @@ public sealed class SharpMindService : IAsyncDisposable
             }
             catch (Exception ex)
             {
-                modelLease.Dispose();
+                modelLease?.Dispose();
                 modelManager.Release(request.Model);
                 return Results.Json(new { error = new { message = $"Failed to create session: {ex.Message}", type = "server_error" } }, statusCode: 500);
             }
@@ -446,8 +455,9 @@ public sealed class SharpMindService : IAsyncDisposable
             finally
             {
                 // Keep this turn's KV for the next turn of the same conversation.
-                // Taken before Dispose: a disposed session cannot snapshot.
-                if (prefixCache.Enabled)
+                // Taken before Dispose: a disposed session cannot snapshot. A
+                // batched session has no KV of its own, so there is nothing to keep.
+                if (prefixCache.Enabled && !batchedChat)
                     prefixCache.Put(request.Model, session.GetSnapshot());
 
                 // The session owns its generator, KV caches and a native-memory
@@ -456,7 +466,7 @@ public sealed class SharpMindService : IAsyncDisposable
                 // Dispose the session before Release: Release may unload the model
                 // at ref count zero, and the session must not outlive it.
                 await session.DisposeAsync();
-                modelLease.Dispose();
+                modelLease?.Dispose();
                 modelManager.Release(request.Model);
             }
         });

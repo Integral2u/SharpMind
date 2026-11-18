@@ -4,6 +4,7 @@ using SharpMind.Inference.Grammar;
 using SharpMind.Model;
 using SharpMind.Model.Format;
 using SharpMind.Tokenization;
+using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -16,6 +17,12 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
 {
     private readonly Tokenizer _tokenizer;
     private IGenerator<K> _generator = null!;
+    /// <summary>
+    /// Creates the session's generators when the host supplies them (batched
+    /// serving). Null means the session builds <typeparamref name="T"/> itself,
+    /// one private generator per session.
+    /// </summary>
+    private readonly Func<IGenerator<K>>? _generatorFactory;
     private readonly Transformer _model;
     private readonly bool _disposeModel;
     private readonly List<ChatMessage> _history = [];
@@ -114,7 +121,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     /// <see cref="ChatStatus.Updating"/> stream entries at the top of the main
     /// generation loop so the UI can display "Prefilling NN.NN%".
     /// </summary>
-    private readonly Queue<double> _prefillProgressQueue = [];
+    private readonly ConcurrentQueue<double> _prefillProgressQueue = new();
 
 
     // Permission gate
@@ -189,7 +196,8 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         bool disposeModel = false,
         int? maxCacheLen = null,
         IInferenceEngine? engine = null,
-        ToolCallFormat? toolCallFormat = null)
+        ToolCallFormat? toolCallFormat = null,
+        Func<IGenerator<K>>? generatorFactory = null)
     {
         ArgumentNullException.ThrowIfNull(tokenizer);
         ArgumentNullException.ThrowIfNull(model);
@@ -202,6 +210,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         _progress = progress;
         _caches = caches;
         _engine = engine;
+        _generatorFactory = generatorFactory;
         _hasEngine = engine is not null;
         _seed = seed;
         _disposeModel = disposeModel;
@@ -234,9 +243,10 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         progress?.Report(0.08f);
 
         progress?.Report(0.10f);
-        _generator = _engine is null
-            ? new T().CreateGenerator(_model, _tokenizer, _addBos, _addEos, _caches, _seed, _maxCacheLen)
-            : new EngineGenerator<K>(_engine, _tokenizer, _addBos, _addEos, _model.Config.NumLayers, _seed);
+        _generator = _generatorFactory?.Invoke()
+            ?? (_engine is null
+                ? new T().CreateGenerator(_model, _tokenizer, _addBos, _addEos, _caches, _seed, _maxCacheLen)
+                : new EngineGenerator<K>(_engine, _tokenizer, _addBos, _addEos, _model.Config.NumLayers, _seed));
         ArgumentNullException.ThrowIfNull(_generator);
         // Chunked-prefill progress: queued on the calling thread during the
         // generator's synchronous prefill phase, then drained into
@@ -298,7 +308,10 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
 
         // Import a restored snapshot instead of re-prefilling what it already holds.
         bool restoredPrefix = false;
-        if (_pendingKvCacheSnapshot is { } cached)
+        // A generator with no cache of its own (the batched adapter) cannot adopt
+        // a snapshot: its cache rows belong to the batch, not this session.
+        bool canRestore = _hasEngine || _caches is not null || _generator!.CacheTokens is not null;
+        if (canRestore && _pendingKvCacheSnapshot is { } cached)
         {
             bool shapeMatches = _hasEngine
                 ? cached.Layers.Count == _model.Config.NumLayers
@@ -2103,8 +2116,8 @@ private void ThrowIfDisposed()
         if (_subAgentGenerator is null || _subAgentCacheLen < wanted)
         {
             _subAgentGenerator?.Dispose();
-            _subAgentGenerator = new T().CreateGenerator(
-                _model, _tokenizer, _addBos, _addEos, caches: null, _seed, wanted);
+            _subAgentGenerator = _generatorFactory?.Invoke()
+                ?? new T().CreateGenerator(_model, _tokenizer, _addBos, _addEos, caches: null, _seed, wanted);
             _subAgentCacheLen = wanted;
         }
 
@@ -3200,9 +3213,8 @@ if (held.Length > 0)
     /// </summary>
     private IEnumerable<ChatStreamEntry> DrainPrefillProgress()
     {
-        while (_prefillProgressQueue.Count > 0)
+        while (_prefillProgressQueue.TryDequeue(out double fraction))
         {
-            double fraction = _prefillProgressQueue.Dequeue();
             yield return new ChatStreamEntry
             {
                 Status = ChatStatus.Updating,

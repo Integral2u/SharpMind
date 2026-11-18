@@ -80,6 +80,9 @@ public sealed class BatchedSequence : IAsyncDisposable
     /// <summary>Marks the cache row free. Called by the scheduler exactly once per removal.</summary>
     internal void MarkReleased() => _released.TrySetResult();
 
+    /// <summary>Fired once per prefill chunk with the fraction of the prompt fed so far (0..1).</summary>
+    public Action<double>? PrefillProgress { get; set; }
+
     // ── Scheduler-owned state ────────────────────────────────────────────────
     // Kept on the sequence so a step can work row-by-row without a side table.
 

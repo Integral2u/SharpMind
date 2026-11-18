@@ -3,6 +3,7 @@ using SharpMind.Inference.Agent;
 using SharpMind.Inference.Chat;
 using SharpMind.Model;
 using SharpMind.Model.Config;
+using SharpMind.Model.Format;
 using SharpMind.Server.Protocol;
 
 namespace SharpMind.Server;
@@ -12,10 +13,11 @@ namespace SharpMind.Server;
 /// completion request. Each request gets its own session (the KV-cache is
 /// rebuilt from the conversation history).
 /// </summary>
-public sealed class SessionFactory(SharpMindServerOptions options, PrefixCache prefixCache)
+public sealed class SessionFactory(SharpMindServerOptions options, PrefixCache prefixCache, BatchService? batches = null)
 {
     private readonly SharpMindServerOptions _options = options;
     private readonly PrefixCache _prefixCache = prefixCache;
+    private readonly BatchService? _batches = batches;
 
     /// <summary>
     /// Build the permission callback from current options. Returns null when
@@ -51,6 +53,21 @@ public sealed class SessionFactory(SharpMindServerOptions options, PrefixCache p
         // them so the model sees their schema, then hand every call back.
         var agentBuilder = OpenAiMapper.CreateToolAgent(request.Tools);
 
+        // Batched chat: the session's generators enqueue into the model's shared
+        // batcher. No per-session cache exists there, so the prefix cache is
+        // bypassed below (a restored snapshot would land in the batcher's rows).
+        Func<IGenerator<KVCacherBuilder>>? generatorFactory = null;
+        BatchedGenerator? batcher = null;
+        if (_options.BatchChatCompletions && _batches is not null)
+        {
+            batcher = _batches.Get(loaded);
+            bool addBos = ModelMetaData.ResolveAddBos(loaded.Meta, loaded.Tokenizer.UseSentencePieceMerge);
+            bool addEos = ModelMetaData.ResolveAddEos(loaded.Meta);
+            int layers = loaded.Model.Config.NumLayers;
+            generatorFactory = () => new BatchedGeneratorAdapter<KVCacherBuilder>(
+                batcher, loaded.Tokenizer, layers, addBos, addEos);
+        }
+
         // Build the session via the standard factory
         var session = ChatSessionFactory.CreateChatSession(
             typeof(StandardGeneratorBuilder<KVCacherBuilder>),
@@ -65,7 +82,8 @@ public sealed class SessionFactory(SharpMindServerOptions options, PrefixCache p
             permissions: BuildPermissionCallback(),
             formatter: null,
             seed: null,
-            maxCacheLen: _options.MaxCacheLen);
+            maxCacheLen: _options.MaxCacheLen,
+            generatorFactory: generatorFactory);
 
         if (agentBuilder is not null)
         {
@@ -91,7 +109,11 @@ public sealed class SessionFactory(SharpMindServerOptions options, PrefixCache p
         // `max_tokens: 1` trimmed to zero and threw "Prompt produced no token
         // IDs"). The two values are not interchangeable: leaving room for the
         // response is already TrimToFitContext's job.
-        session.MaxTokens = ModelConfig.ComputeMaxCacheLength(loaded.Model.Config, _options.MaxCacheLen);
+        //
+        // A batched session is bounded by its row, which already had the memory
+        // budget divided across the batch.
+        session.MaxTokens = batcher?.MaxSequenceLength
+            ?? ModelConfig.ComputeMaxCacheLength(loaded.Model.Config, _options.MaxCacheLen);
 
         // Replay conversation history - all messages EXCEPT the last user
         // message. The last user message is returned separately so the caller
@@ -135,7 +157,9 @@ public sealed class SessionFactory(SharpMindServerOptions options, PrefixCache p
 
         // Restore a cached prefix when this request extends one, then warm up: the
         // session imports the KV the snapshot covers and prefills only the rest.
-        var cached = _prefixCache.Take(loaded.ModelId, replay);
+        // A batched session owns no KV (the batcher owns the rows), so restoring
+        // one would write into another sequence's state; skip it entirely.
+        var cached = batcher is null ? _prefixCache.Take(loaded.ModelId, replay) : null;
         if (cached is not null)
         {
             session.RestorePrefix(cached.Snapshot, desired);

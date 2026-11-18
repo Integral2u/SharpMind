@@ -137,6 +137,9 @@ public sealed class BatchedGenerator : IDisposable, IAsyncDisposable
     /// <summary>Batch width this generator was built for.</summary>
     public int MaxBatch => _options.MaxBatch;
 
+    /// <summary>Tokens one row can hold; the per-request context budget.</summary>
+    public int MaxSequenceLength => _seqLen;
+
     /// <summary>
     /// Optional lease acquired once per forward pass and disposed when the pass
     /// ends. A host that shares one <see cref="Transformer"/> between engines
@@ -394,6 +397,9 @@ public sealed class BatchedGenerator : IDisposable, IAsyncDisposable
         {
             using (AcquireStepGate()) _model.ForwardFill(input, _views, 0, _workspace);
             seq.PromptFed += len;
+            // Fired off the caller's thread (the scheduler's), so a host callback
+            // must be thread-safe. ChatSession queues these on a concurrent queue.
+            seq.PrefillProgress?.Invoke((double)seq.PromptFed / seq.PromptTokens.Length);
             return;
         }
 
