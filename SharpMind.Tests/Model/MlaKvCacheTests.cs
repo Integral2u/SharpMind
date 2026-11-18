@@ -25,8 +25,39 @@ public sealed class MlaKvCacheTests
         return t;
     }
 
-    private static unsafe float At(IKVCache cache, int position, int j)
-        => cache.GetKeyPtr(0, position, 0)[j];
+    /// <summary>
+    /// Reads one cached latent element. Deliberately not through
+    /// <see cref="IKVCache.GetKeyPtr"/>: a raw pointer out of an interface method
+    /// is arbitrary as far as the runtime is concerned, and indexing it in a test
+    /// is exactly the unvalidated pointer arithmetic CodeQL flags. The tensor the
+    /// cache writes into is the same data the pointer would address.
+    /// </summary>
+    private static float At(IKVCache cache, int position, int j)
+    {
+        var mla = Assert.IsType<MlaKvCache>(cache);
+        return mla.Latent.Data[position * mla.LatentDim + j];
+    }
+
+    /// <summary>
+    /// The slot accessor is public and takes caller-supplied indices; it used to
+    /// hand back a pointer for any pair, so an out-of-range position read past the
+    /// latent buffer instead of failing. It now rejects the slot.
+    /// </summary>
+    [Fact]
+    public unsafe void GetKeyPtr_RejectsOutOfRangeSlots()
+    {
+        using var cache = new MlaKvCache(1, 4, Latent);
+        Assert.Throws<ArgumentOutOfRangeException>(() => cache.GetKeyPtr(0, 4, 0));
+        Assert.Throws<ArgumentOutOfRangeException>(() => cache.GetKeyPtr(0, -1, 0));
+        Assert.Throws<ArgumentOutOfRangeException>(() => cache.GetKeyPtr(1, 0, 0));
+        Assert.Throws<ArgumentOutOfRangeException>(() => cache.GetKeyPtr(0, 0, 1));
+
+        // The valid slot still works and addresses the row the cache wrote.
+        using var rows = Rows(1, 7f);
+        cache.Update(rows, rows, 1, Latent);
+        Assert.Equal(7f, cache.GetKeyPtr(0, 0, 0)[0]);
+        Assert.Equal(9f, cache.GetKeyPtr(0, 0, 0)[2]);
+    }
 
     [Fact]
     public void Update_AppendsLatents_InOrder()

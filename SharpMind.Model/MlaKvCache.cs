@@ -22,6 +22,7 @@ namespace SharpMind.Model;
 public sealed class MlaKvCache(int batchSize, int maxSeqLen, int latentDim) : IKVCache
 {
     private readonly Tensor<float> _latent = new(batchSize, maxSeqLen, latentDim);
+    private readonly int _batch = batchSize;
 
     /// <summary>Floats cached per position: <c>kv_lora_rank + rope</c>.</summary>
     public int LatentDim { get; } = latentDim;
@@ -35,12 +36,32 @@ public sealed class MlaKvCache(int batchSize, int maxSeqLen, int latentDim) : IK
     /// <summary>Raw latent rows, [batch, maxSeqLen, latentDim].</summary>
     public Tensor<float> Latent => _latent;
 
-    public unsafe float* GetKeyPtr(int batchIdx, int position, int kvHead) =>
-        _latent.DataPtr + ((long)batchIdx * MaxSeqLen + position) * LatentDim;
+    /// <summary>
+    /// Returns a pointer to position <paramref name="position"/> of
+    /// <paramref name="batchIdx"/>. Both are validated: the caller supplies them
+    /// (they come from loop counters and window math in the attention paths), and
+    /// an out-of-range pair would otherwise read past the latent buffer instead of
+    /// failing. Only one latent head exists, so <paramref name="kvHead"/> must be 0.
+    /// </summary>
+    public unsafe float* GetKeyPtr(int batchIdx, int position, int kvHead)
+    {
+        ValidateSlot(batchIdx, position, kvHead);
+        return _latent.DataPtr + ((long)batchIdx * MaxSeqLen + position) * LatentDim;
+    }
 
     /// <inheritdoc cref="GetKeyPtr"/> — MLA keeps no separate values.
     public unsafe float* GetValuePtr(int batchIdx, int position, int kvHead) =>
         GetKeyPtr(batchIdx, position, kvHead);
+
+    private void ValidateSlot(int batchIdx, int position, int kvHead)
+    {
+        if ((uint)batchIdx >= (uint)_batch)
+            throw new ArgumentOutOfRangeException(nameof(batchIdx), batchIdx, $"Batch index must be in [0, {_batch}).");
+        if ((uint)position >= (uint)MaxSeqLen)
+            throw new ArgumentOutOfRangeException(nameof(position), position, $"Position must be in [0, {MaxSeqLen}).");
+        if (kvHead != 0)
+            throw new ArgumentOutOfRangeException(nameof(kvHead), kvHead, "MLA caches a single latent head.");
+    }
 
     public void Update(Tensor<float> k, Tensor<float> v, int numKvHeads, int headDim)
     {

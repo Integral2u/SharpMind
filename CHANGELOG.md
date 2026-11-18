@@ -152,7 +152,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   512-dot per cached position instead of expanding 4096 values from it — the
   difference between ~65k and ~2M multiply-adds per layer per token.
   `MlaAttentionTests` pins the two forms against each other and against a
-  pointer-free reference implementation. Verified end to end: `DeepSeek-V2-Lite`
+  pointer-free reference implementation. `MlaKvCache`'s slot accessors validate
+  the batch, position and head they address: they hand out pointers from
+  caller-supplied indices, and an out-of-range pair used to read past the latent
+  buffer instead of failing. Verified end to end: `DeepSeek-V2-Lite`
   (27 layers, 64 experts, YaRN 40) reproduces a float reference over the whole
   12-token prompt `User: The capital of France is\n\nAssistant:` to the last
   printed digit (Paris 33.71, According 30.17, The 29.93, There 29.53, You
