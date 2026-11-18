@@ -91,6 +91,10 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
     private bool _mtpDirty;              // drafted before its trunk forward completed
     private bool _mtpDrafting;
     private int _mtpDrafted, _mtpAccepted;
+    /// <summary>Recurrent-cache snapshots taken before the current draft run.</summary>
+    private object?[]? _runSnapshots;
+    /// <summary>The first token fed by the current draft run (the verified one).</summary>
+    private int _runFirstToken;
 
     public StandardGenerator(
         Transformer   model,
@@ -194,11 +198,9 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
         // token on rejection (a rejected draft cannot rewind a recurrence). It also
         // takes precedence over prompt lookup (one draft per step either way).
         bool mtp = genCfg.MtpDraft && _model.Mtp is not null;
-        // A rejected draft must be forgotten by the trunk. Recurrent caches
-        // (short-conv / DeltaNet) cannot rewind, so those models stay on the plain
-        // path until the snapshot-and-replay round is ported from
-        // SpeculativeGenerator.
-        if (mtp && _caches.Any(c => !c.SupportsTruncate)) mtp = false;
+        // Recurrent caches cannot rewind; each draft run snapshots them and a
+        // rejection restores the snapshot and replays the one verified token.
+        bool hasRecurrentCaches = _caches.Any(c => !c.SupportsTruncate);
         if (mtp)
         {
             lookupMax = 0;
@@ -394,6 +396,7 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
                         int acceptedRow = runNext;
                         runNext++;
                         _position++;
+                        _runSnapshots = null;
                         if (mtp && runLen == 1)
                         {
                             // The trunk has now fed the draft token, so the head must
@@ -408,6 +411,36 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
                         continue;
                     }
 
+                    // Rejected draft on a model whose recurrent layers cannot rewind:
+                    // restore their pre-run state and replay the one token the trunk
+                    // actually verified.
+                    if (mtp && runLen == 1 && runNext < runLen && _runSnapshots is not null)
+                    {
+                        for (int i = 0; i < cachesLen; i++)
+                        {
+                            if (_caches[i].SupportsTruncate) _caches[i].Truncate(runCacheLen);
+                            else if (_runSnapshots[i] is { } snapshot) _caches[i].Restore(snapshot);
+                            else _caches[i].Reset();
+                        }
+                        if (_cacheTokens is not null && _cacheTokens.Count > runCacheLen)
+                            _cacheTokens.RemoveRange(runCacheLen, _cacheTokens.Count - runCacheLen);
+
+                        _workspace.Reset();
+                        using var replayInput = _workspace.Rent<int>([1, 1]);
+                        replayInput.Data[0] = _runFirstToken;
+                        logitsTensor?.Dispose();
+                        logitsTensor = _model.ForwardLastLogits(replayInput, _caches, runPos, _workspace);
+                        _cacheTokens?.Add(_runFirstToken);
+                        _position = runPos + 1;
+                        _mtpReady = false;
+                        _mtpDirty = false;
+                        CaptureMtpHidden();
+                        runLen = 0;
+                        _runSnapshots = null;
+                        // Fall through: this iteration still forwards `nextId`, which
+                        // the trunk sampled after the verified first token.
+                    }
+
                     // A different token drops the unverified rows; after the last row the run
                     // simply ends (every draft held, nextId is the extra token).
                     if (runNext < runLen)
@@ -420,6 +453,7 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
                     }
                     if (drafter is not null) drafter.Record(runLen, runNext);
                     runLen = 0;
+                    _runSnapshots = null;
                 }
 
                 Tensor<float>? prevTensor = logitsTensor;
@@ -456,6 +490,16 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
                     }
                 }
 
+                if (m == 1 && mtp && hasRecurrentCaches)
+                {
+                    // Snapshot what cannot rewind, before the run consumes it.
+                    for (int i = 0; i < cachesLen; i++)
+                    {
+                        if (_caches[i].SupportsTruncate) continue;
+                        (_runSnapshots ??= new object?[cachesLen])[i] = _caches[i].Snapshot();
+                    }
+                }
+
                 if (m == 0)
                 {
                     using var stepInput = _workspace.Rent<int>([1, 1]);
@@ -468,6 +512,7 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
                 {
                     runCacheLen = cache0.Length;
                     runPos = newPos;
+                    _runFirstToken = nextId;
                     using var runInput = _workspace.Rent<int>([1, 1 + m]);
                     runInput.Data[0] = nextId;
                     _runDraft.AsSpan(0, m).CopyTo(runInput.Data[1..]);
@@ -498,9 +543,29 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
             // keep only the verified rows, so the next turn's prefix reuse sees what was emitted.
             if (runLen > 0)
             {
-                if (runNext < runLen)
-                    RollBackRun(runCacheLen + 1 + runNext, runPos + 1 + runNext);
-                if (drafter is not null) drafter.Record(runLen, runNext);
+                if (_runSnapshots is not null && runNext < runLen)
+                {
+                    // Stopped inside a run that a recurrence cannot rewind: drop the
+                    // whole run back to the pre-run state and stop vouching for the
+                    // cache contents this turn.
+                    for (int i = 0; i < _caches.Length; i++)
+                    {
+                        if (_caches[i].SupportsTruncate) _caches[i].Truncate(runCacheLen);
+                        else if (_runSnapshots[i] is { } snapshot) _caches[i].Restore(snapshot);
+                        else _caches[i].Reset();
+                    }
+                    _cacheTokens = null;
+                    _position = runCacheLen;
+                    _mtpReady = false;
+                    _mtpDirty = false;
+                }
+                else
+                {
+                    if (runNext < runLen)
+                        RollBackRun(runCacheLen + 1 + runNext, runPos + 1 + runNext);
+                    if (drafter is not null) drafter.Record(runLen, runNext);
+                }
+                _runSnapshots = null;
             }
             if (drafter is not null)
                 PromptLookupStats = new PromptLookupStats(lookupForwards, drafter.Drafted, drafter.Accepted);
