@@ -17,6 +17,7 @@ using System.Text.Json.Nodes;
 //   dotnet run --project tools/GgufSmokeProbe -- run  <file> ["prompt"] [maxTokens=24] [full] [resident] [topk]
 //   dotnet run --project tools/GgufSmokeProbe -- bench <file> ["prompt"] [warmup=16] [measure=64] [full] [resident] [serialmm] [nowide] [reps=3] [ids]
 //   dotnet run --project tools/GgufSmokeProbe -- benchab <file> ["prompt"] [warmup=16] [measure=64] [full] [resident]
+//   dotnet run --project tools/GgufSmokeProbe -- batchbench <file> ["prompt"] [maxBatch=8] [tokens=16] [reps=3]
 //   dotnet run --project tools/GgufSmokeProbe -- widebench [K=896] [N=4864] [iters=200] [chunks=0]
 //   dotnet run --project tools/GgufSmokeProbe -- stages <file> ["prompt"] [warmup=16] [measure=48] [full] [resident] [serialmm] [window N]
 //   dotnet run --project tools/GgufSmokeProbe -- bind <file>
@@ -87,6 +88,9 @@ if (mode == "benchab")
 
 if (mode == "stages")
     return await RunStagesAsync(path, args);
+
+if (mode == "batchbench")
+    return await RunBatchBenchAsync(path, args);
 
 if (mode == "fwd")
     return RunForward(path, args);
@@ -2105,6 +2109,64 @@ static async Task<int> RunInferenceAsync(string path, string[] args)
     {
         Console.WriteLine($"\nFAILED: {ex}");
         return 1;
+    }
+}
+
+// batchbench <file> [prompt] [maxBatch=8] [tokens=16] [reps=3] [measureTokens]
+//
+// Aggregate decode throughput, not per-sequence latency. For each batch width
+// one warm-up run promotes the JIT'd kernels, then `reps` fresh-batcher runs
+// report the decode-only tokens/second (BatchedGenerator.Stats excludes prefill)
+// and the aggregate is min/median across runs. Compare batch 1 against batch N.
+static async Task<int> RunBatchBenchAsync(string path, string[] args)
+{
+    string prompt = args.Length > 2 ? args[2] : "The";
+    int maxBatch = args.Length > 3 && int.TryParse(args[3], out int mb) ? mb : 8;
+    int tokens = args.Length > 4 && int.TryParse(args[4], out int mt) ? mt : 16;
+    int reps = args.Length > 5 && int.TryParse(args[5], out int rp) ? rp : 3;
+    if (maxBatch < 1 || tokens < 1 || reps < 1) { Console.Error.WriteLine("batchbench needs maxBatch, tokens and reps >= 1"); return 2; }
+
+    ModelConfig modelConfig;
+    Tokenizer? tokenizer;
+    var metaHelper = ModelFormatHelpers.GetModelMetaHelperFor(ModelFormat.Gguf);
+    metaHelper.Load(path, null, out _, out modelConfig, out tokenizer);
+    if (tokenizer is null) { Console.Error.WriteLine("no tokenizer"); return 3; }
+
+    var sharpConfig = modelConfig.ForModel();
+    var mapping = sharpConfig.ToJigSawMapping();
+    using var weights = ModelFactory.CreateWeights(
+        modelConfig, sharpConfig, QuantizationFactory.Create(mapping), path,
+        LoadMode.Full, quantizedResident: false, maxParallelLoadDegree: 1);
+    weights.InitializeWeights();
+    using var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
+
+    int[] promptIds = tokenizer.Encode(prompt, addBos: true, addEos: false);
+    var genCfg = new GenerationConfig { MaxNewTokens = tokens, RepetitionPenalty = 1f, Stream = false };
+    Console.WriteLine($"--- batchbench: {Path.GetFileName(path)}  prompt=\"{prompt}\" ({promptIds.Length} tokens)  new={tokens}  reps={reps} ---");
+
+    foreach (int batch in new[] { 1, maxBatch }.Distinct())
+    {
+        await RunOnce(batch); // warm-up: kernel promotion is ~30 invocations.
+
+        var runs = new List<double>(reps);
+        for (int rep = 0; rep < reps; rep++) runs.Add(await RunOnce(batch));
+        runs.Sort();
+
+        double min = runs[0];
+        double median = runs[runs.Count / 2];
+        Console.WriteLine($"batch {batch,2}: {min,7:F3} tok/s (min)  {median,7:F3} tok/s (median)  aggregate over {batch} sequence(s)");
+    }
+
+    return 0;
+
+    async Task<double> RunOnce(int batch)
+    {
+        await using var gen = new BatchedGenerator(model, tokenizer, new BatchedGeneratorOptions { MaxBatch = batch });
+        var seqs = new List<BatchedSequence>(batch);
+        for (int i = 0; i < batch; i++)
+            seqs.Add(await gen.EnqueueTokensAsync(promptIds, SamplingConfig.Greedy, genCfg));
+        await Task.WhenAll(seqs.Select(s => s.WhenCompleted));
+        return gen.Stats.TokensPerSecond;
     }
 }
 

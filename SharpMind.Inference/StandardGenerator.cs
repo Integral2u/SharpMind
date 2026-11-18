@@ -37,13 +37,8 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
     private readonly int[]       _decodeTokenScratch = new int[1];
     /// <summary>Cached scratch buffer for repetition-penalty copy to avoid <see cref="ArrayPool{T}.Rent"/> per token.</summary>
     private float[]?              _penaltyScratch;
-    /// <summary>Pooled distinct-token tracking for the repetition penalty; cleared each decode step.</summary>
-    private HashSet<int>?         _repSeen;
-    /// <summary>Distinct prompt ids, built once per generation for full-context penalties.</summary>
-    private List<int>?            _promptDistinct;
-    /// <summary>Growing distinct generated ids for full-context penalties.</summary>
-    private HashSet<int>?         _generatedDistinct;
-    private int                   _generatedDistinctThrough;
+    /// <summary>Per-generation repetition-penalty bookkeeping.</summary>
+    private readonly RepetitionPenaltyState _penaltyState = new();
     /// <summary>Diagnostic: fired for each generated token ID during the generation loop.</summary>
     public Action<int>? OnTokenGenerated;
 
@@ -211,9 +206,7 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
             int promptLen = promptIds.Length;
 
             _generatedIds = new List<int>(genCfg.MaxNewTokens);
-            _promptDistinct = null;
-            _generatedDistinct = null;
-            _generatedDistinctThrough = 0;
+            _penaltyState.Reset();
             var decodedSoFar = new System.Text.StringBuilder();
             // Incremental detokenizer window (see IncrementalDetokenizer).
             int detokPrefix = 0, detokRead = 0;
@@ -267,8 +260,7 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
                     Span<float> logits = _penaltyScratch.AsSpan(0, vocabSize);
                     logitsSlice.CopyTo(logits);
                     if (repPenalty != 1.0f)
-                        ApplyRepetitionPenalty(logits, promptIds, _generatedIds,
-                            repPenalty, repWindow);
+                        _penaltyState.Apply(logits, promptIds, _generatedIds, repPenalty, repWindow);
                     if (!SamplingHelpers.TrySampleConstrained(logits, sampleCfg, rng, out nextId))
                     {
                         endedOnStop = true;
@@ -505,51 +497,6 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
     public IReadOnlyList<int>? CurrentGeneratedIds => _generatedIds;
 
     // Repetition penalty
-
-    private void ApplyRepetitionPenalty(
-        Span<float> logits,
-        ReadOnlySpan<int> promptIds,
-        List<int> _generatedIds,
-        float penalty,
-        int window)
-    {
-        // Penalize once per DISTINCT token id across the window/context (matching
-        // HF/llama.cpp), NOT once per occurrence. Scaling per occurrence would raise
-        // the penalty to penalty^count for common words, wiping them from the
-        // distribution as generation (and context) grows.
-        _repSeen ??= new HashSet<int>(512);
-        _repSeen.Clear();
-        var seen = _repSeen;
-        if (window > 0)
-        {
-            int promptStart = Math.Max(0, promptIds.Length - window);
-            RepetitionPenalty.Apply(logits, promptIds[promptStart..], penalty, seen);
-            int genStart = Math.Max(0, _generatedIds.Count - window);
-            RepetitionPenalty.Apply(logits, CollectionsMarshal.AsSpan(_generatedIds)[genStart..], penalty, seen);
-            return;
-        }
-
-        // Full-context penalty: only distinct ids matter, so scan the prompt
-        // once per generation and the generated list incrementally instead of
-        // rescanning every occurrence on every token.
-        _promptDistinct ??= Distinct(promptIds);
-        _generatedDistinct ??= new HashSet<int>(_generatedIds.Count);
-        for (; _generatedDistinctThrough < _generatedIds.Count; _generatedDistinctThrough++)
-            _generatedDistinct.Add(_generatedIds[_generatedDistinctThrough]);
-
-        RepetitionPenalty.Apply(logits, CollectionsMarshal.AsSpan(_promptDistinct), penalty, seen);
-        foreach (int id in _generatedDistinct)
-            RepetitionPenalty.ApplyToken(logits, id, penalty, seen);
-
-        static List<int> Distinct(ReadOnlySpan<int> ids)
-        {
-            var set = new HashSet<int>(ids.Length);
-            var list = new List<int>(ids.Length);
-            foreach (int id in ids)
-                if (set.Add(id)) list.Add(id);
-            return list;
-        }
-    }
 
     // Disposal
 
