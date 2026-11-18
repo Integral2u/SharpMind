@@ -451,7 +451,7 @@ public sealed class Transformer : IDisposable
         if (_gemmaEmbeddingScale)
             ScaleEmbedding(_cachedEmbedding, _weights.Config.HiddenDim);
         if (_positionEmbedding is not null)
-            AddPositionEmbeddingInPlace(_cachedEmbedding, positionOffset);
+            AddPositionEmbeddingInPlace(_cachedEmbedding, positionOffset, caches);
         if (_tokenTypeEmbedding is not null)
             AddTokenTypeEmbeddingInPlace(_cachedEmbedding);
 
@@ -590,7 +590,7 @@ public sealed class Transformer : IDisposable
 
         _cachedEmbedding = embeddings;
         if (_positionEmbedding is not null)
-            AddPositionEmbeddingInPlace(_cachedEmbedding, positionOffset);
+            AddPositionEmbeddingInPlace(_cachedEmbedding, positionOffset, caches);
         if (_tokenTypeEmbedding is not null)
             AddTokenTypeEmbeddingInPlace(_cachedEmbedding);
 
@@ -679,7 +679,7 @@ public sealed class Transformer : IDisposable
         if (_gemmaEmbeddingScale)
             ScaleEmbedding(_cachedEmbedding, _weights.Config.HiddenDim);
         if (_positionEmbedding is not null)
-            AddPositionEmbeddingInPlace(_cachedEmbedding, positionOffset);
+            AddPositionEmbeddingInPlace(_cachedEmbedding, positionOffset, caches);
         if (_tokenTypeEmbedding is not null)
             AddTokenTypeEmbeddingInPlace(_cachedEmbedding);
         DecodeProfiler.Mark(DecodeStage.Embed, tEmbed);
@@ -825,7 +825,7 @@ public sealed class Transformer : IDisposable
     /// or past <see cref="ModelConfig.MaxSeqLen"/> are clamped to the last row so
     /// decoding past the trained length degrades gracefully instead of faulting.
     /// </summary>
-    private void AddPositionEmbeddingInPlace(Tensor<float> emb, int positionOffset)
+    private void AddPositionEmbeddingInPlace(Tensor<float> emb, int positionOffset, IKVCache[]? caches = null)
     {
         var pos = _positionEmbedding!;
         int H = _weights.Config.HiddenDim;
@@ -835,13 +835,17 @@ public sealed class Transformer : IDisposable
         var src = pos.Data;
         var dst = emb.Data;
         int embStride = S * H;
+        // A row-positioned cache (batched decode) holds each row at its own
+        // conversation position; without it every row starts at the offset.
+        var rowPositions = caches is { Length: > 0 } ? caches[0] as IRowPositionedKvCache : null;
 
         for (int b = 0; b < batch; b++)
         {
+            int start = rowPositions is not null ? rowPositions.PositionForRow(b) : positionOffset;
             int ptr = b * embStride;
             for (int s = 0; s < S; s++)
             {
-                int p = positionOffset + s;
+                int p = start + s;
                 if (p >= maxPos) p = maxPos - 1;
                 int pBase = p * H;
                 for (int h = 0; h < H; h++)

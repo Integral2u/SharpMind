@@ -10,8 +10,50 @@ public interface IKVCache : IDisposable
     public void Reset();
     public void TrimToLast(int keep);
     public void Truncate(int length);
+    /// <summary>
+    /// Longest cached row. Single-sequence caches use one row, so this is the
+    /// cache length; a batched cache reports its fullest row.
+    /// </summary>
     public int Length { get; }
     public int MaxSeqLen { get; }
+
+    /// <summary>
+    /// Rows this cache stores. One for every single-sequence cache; a batched
+    /// cache reports its batch capacity.
+    /// </summary>
+    public int RowCount => 1;
+
+    /// <summary>
+    /// Cached tokens in one row. Rows of a batched cache advance independently
+    /// (sequences sit at different positions), so attention must ask per row
+    /// instead of using <see cref="Length"/>. Single-row caches return
+    /// <see cref="Length"/>.
+    /// </summary>
+    public int LengthForRow(int row) => Length;
+
+    /// <summary>
+    /// True when <see cref="LengthForRow(int)"/> and <see cref="UpdateRow"/> are
+    /// implemented, i.e. rows may hold different lengths. A batcher must not
+    /// assume ragged rows on a cache that reports false.
+    /// </summary>
+    public bool SupportsRaggedRows => false;
+
+    /// <summary>
+    /// Appends one row's keys and values, whose layout is a slice of the
+    /// <see cref="Update"/> tensors: <c>[seqLen, numKvHeads, headDim]</c>. The
+    /// row is placed at its own current length, so ragged batches keep every
+    /// row correctly addressed. Implemented by the float and latent caches.
+    /// </summary>
+    public void UpdateRow(int row, ReadOnlySpan<float> k, ReadOnlySpan<float> v, int numKvHeads, int headDim)
+        => throw new NotSupportedException($"{GetType().Name} does not support per-row updates.");
+
+    /// <summary>
+    /// Moves one row's cached state to another row and clears the source. A
+    /// continuous batcher uses this to keep its active rows dense when a
+    /// sequence leaves.
+    /// </summary>
+    public void MoveRow(int from, int to)
+        => throw new NotSupportedException($"{GetType().Name} does not support moving rows.");
     public bool IsFull { get; }
     public bool IsContiguous { get; }
     /// <summary>
