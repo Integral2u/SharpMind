@@ -164,6 +164,38 @@ public sealed class BatchedGeneratorTests
         Assert.True(next.Text.Length > 0 || next.GeneratedIds.Count == expectedShort.Length);
     }
 
+    /// <summary>
+    /// A row that a finished sequence leaves behind must be empty for the next
+    /// sequence. Reaping the last active row has nobody to move over it, so a
+    /// missing reset used to leave the row at the old length and the next
+    /// sequence appended after stale positions — plausible logits, wrong answer,
+    /// and eventually a spurious context-full stop.
+    /// </summary>
+    [Fact]
+    public async Task ReusedRow_StartsFromAnEmptyCache()
+    {
+        const int maxNew = 4;
+        int[] firstPrompt = Prompt(9, 1001);
+        int[] secondPrompt = Prompt(6, 1002);
+
+        using var model = BuildModel();
+        var tokenizer = BuildTokenizer();
+
+        int[] expected = await ReferenceAsync(model, tokenizer, secondPrompt, maxNew);
+
+        await using var batch = new BatchedGenerator(model, tokenizer, new BatchedGeneratorOptions { MaxBatch = 1 });
+
+        var first = await batch.EnqueueTokensAsync(firstPrompt, SamplingConfig.Greedy, Gen(maxNew));
+        await first.WhenCompleted.WaitAsync(TimeSpan.FromMinutes(2));
+        Assert.Equal(maxNew, first.GeneratedIds.Count);
+
+        var second = await batch.EnqueueTokensAsync(secondPrompt, SamplingConfig.Greedy, Gen(maxNew));
+        await second.WhenCompleted.WaitAsync(TimeSpan.FromMinutes(2));
+
+        Assert.Equal(expected, second.GeneratedIds);
+        Assert.Equal(BatchFinishReason.MaxTokens, second.FinishReason);
+    }
+
     [Fact]
     public async Task StopTokenIds_StopOnlyTheirOwnSequence()
     {

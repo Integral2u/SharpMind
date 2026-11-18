@@ -60,6 +60,13 @@ public sealed class ModelManager : IDisposable
     private readonly Lock _refLock = new();
     private FileSystemWatcher? _watcher;
 
+    /// <summary>
+    /// Fired after a model has been removed from the loaded set and disposed.
+    /// Subscribers that own derived state for the model (the batched completion
+    /// generator) use it to release it. Raised outside <see cref="_refLock"/>.
+    /// </summary>
+    public event Action<string>? Unloaded;
+
     public ModelManager(SharpMindServerOptions options)
     {
         _options = options;
@@ -154,6 +161,7 @@ public sealed class ModelManager : IDisposable
     /// </summary>
     public void Release(string modelId)
     {
+        bool evicted = false;
         lock (_refLock)
         {
             if (!_loadedModels.TryGetValue(modelId, out var loaded)) return;
@@ -161,8 +169,10 @@ public sealed class ModelManager : IDisposable
             {
                 _loadedModels.TryRemove(modelId, out _);
                 loaded.Dispose();
+                evicted = true;
             }
         }
+        if (evicted) RaiseUnloaded(modelId);
     }
 
     /// <summary>
@@ -186,13 +196,28 @@ public sealed class ModelManager : IDisposable
     /// </summary>
     public bool Unload(string modelId)
     {
+        bool removed;
         lock (_refLock)
         {
             if (!_loadedModels.TryGetValue(modelId, out var loaded)) return false;
             if (loaded.RefCount != 0) return false;
             _loadedModels.TryRemove(modelId, out _);
             loaded.Dispose();
-            return true;
+            removed = true;
+        }
+
+        if (removed) RaiseUnloaded(modelId);
+        return removed;
+    }
+
+    private void RaiseUnloaded(string modelId)
+    {
+        // A subscriber that owns derived state must not be able to break the
+        // unload path (the model is already gone either way).
+        try { Unloaded?.Invoke(modelId); }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"ModelManager.Unloaded handler failed for {modelId}: {ex}");
         }
     }
 
@@ -284,12 +309,19 @@ public sealed class ModelManager : IDisposable
     public void Dispose()
     {
         _watcher?.Dispose();
-        foreach (var loaded in _loadedModels.Values)
+        string[] ids;
+        lock (_refLock)
         {
-            loaded.RefCount = 0;
-            loaded.Dispose();
+            ids = [.. _loadedModels.Keys];
+            foreach (var loaded in _loadedModels.Values)
+            {
+                loaded.RefCount = 0;
+                loaded.Dispose();
+            }
+            _loadedModels.Clear();
         }
-        _loadedModels.Clear();
+
+        foreach (string id in ids) RaiseUnloaded(id);
         _loadLock.Dispose();
     }
 

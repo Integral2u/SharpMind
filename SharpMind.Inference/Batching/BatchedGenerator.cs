@@ -137,6 +137,16 @@ public sealed class BatchedGenerator : IDisposable, IAsyncDisposable
     /// <summary>Batch width this generator was built for.</summary>
     public int MaxBatch => _options.MaxBatch;
 
+    /// <summary>
+    /// Optional lease acquired once per forward pass and disposed when the pass
+    /// ends. A host that shares one <see cref="Transformer"/> between engines
+    /// (chat sessions and this batcher) must serialise access: the transformer
+    /// keeps its activations in instance fields, so two concurrent forwards
+    /// corrupt each other. The gate is what makes batching and chat safe on one
+    /// loaded model — the batcher holds the lease only for the forward itself.
+    /// </summary>
+    public Func<CancellationToken, ValueTask<IDisposable>>? StepGate { get; set; }
+
     /// <summary>Rows currently decoding or prefilling.</summary>
     public int Active => _active.Count;
 
@@ -222,6 +232,7 @@ public sealed class BatchedGenerator : IDisposable, IAsyncDisposable
         catch
         {
             Interlocked.Decrement(ref _outstanding);
+            seq.MarkReleased();
             await seq.DisposeAsync().ConfigureAwait(false);
             throw;
         }
@@ -261,8 +272,8 @@ public sealed class BatchedGenerator : IDisposable, IAsyncDisposable
         finally
         {
             _inbox.Writer.TryComplete(_fatal);
-            foreach (var seq in _active) CancelRemaining(seq);
-            foreach (var seq in _pending) CancelRemaining(seq);
+            foreach (var seq in _active) { CancelRemaining(seq); seq.MarkReleased(); }
+            foreach (var seq in _pending) { CancelRemaining(seq); seq.MarkReleased(); }
             _active.Clear();
             _pending.Clear();
         }
@@ -284,6 +295,7 @@ public sealed class BatchedGenerator : IDisposable, IAsyncDisposable
             if (seq.IsCompleted || seq.AbandonToken.IsCancellationRequested)
             {
                 Finish(seq, BatchFinishReason.Cancelled);
+                seq.MarkReleased();
                 Interlocked.Decrement(ref _outstanding);
                 continue;
             }
@@ -316,12 +328,14 @@ public sealed class BatchedGenerator : IDisposable, IAsyncDisposable
             if (!seq.AbandonToken.IsCancellationRequested && !seq.IsCompleted) continue;
             _pending.RemoveAt(i);
             Finish(seq, BatchFinishReason.Cancelled);
+            seq.MarkReleased();
             Interlocked.Decrement(ref _outstanding);
         }
     }
 
     private void RemoveAt(int index)
     {
+        var removed = _active[index];
         int last = _active.Count - 1;
         if (index != last)
         {
@@ -331,7 +345,15 @@ public sealed class BatchedGenerator : IDisposable, IAsyncDisposable
             moved.Slot = index;
             _active[index] = moved;
         }
+        else
+        {
+            // Nobody moves into this row, so its length must be cleared or the
+            // next sequence admitted here would append after stale positions.
+            for (int i = 0; i < _caches.Length; i++)
+                _caches[i].ClearRow(index);
+        }
         _active.RemoveAt(last);
+        removed.MarkReleased();
         Interlocked.Decrement(ref _outstanding);
         Interlocked.Increment(ref _sequencesCompleted);
     }
@@ -370,15 +392,25 @@ public sealed class BatchedGenerator : IDisposable, IAsyncDisposable
 
         if (!last)
         {
-            _model.ForwardFill(input, _views, 0, _workspace);
+            using (AcquireStepGate()) _model.ForwardFill(input, _views, 0, _workspace);
             seq.PromptFed += len;
             return;
         }
 
-        using var logits = _model.ForwardLastLogits(input, _views, 0, _workspace);
-        seq.PromptFed += len;
-        SampleAndEmit(seq, logits.Data[.._vocab]);
+        Tensor<float> logits;
+        using (AcquireStepGate())
+            logits = _model.ForwardLastLogits(input, _views, 0, _workspace);
+
+        using (logits)
+        {
+            seq.PromptFed += len;
+            SampleAndEmit(seq, logits.Data[.._vocab]);
+        }
     }
+
+    /// <summary>Takes the host's model lease for one forward pass, when one is configured.</summary>
+    private IDisposable? AcquireStepGate()
+        => StepGate?.Invoke(_shutdown.Token).AsTask().GetAwaiter().GetResult();
 
     private void DecodeStep()
     {
@@ -400,18 +432,25 @@ public sealed class BatchedGenerator : IDisposable, IAsyncDisposable
         for (int i = 0; i < count; i++) input.Data[i] = _rowSeqs[i].PendingToken;
 
         var sw = Stopwatch.GetTimestamp();
-        using var logits = _model.ForwardLastLogits(input, _views, 0, _workspace);
-        var data = logits.Data;
+        Tensor<float> logits;
+        using (AcquireStepGate())
+            logits = _model.ForwardLastLogits(input, _views, 0, _workspace);
 
-        for (int i = 0; i < count; i++)
-            SampleAndEmit(_rowSeqs[i], data.Slice(i * _vocab, _vocab));
-
+        // Publish the step's counters before any sequence can complete, so a
+        // caller that awaits a sequence and then reads Stats sees its tokens.
         double seconds = Stopwatch.GetElapsedTime(sw).TotalSeconds;
         Interlocked.Add(ref _steps, 1);
         Interlocked.Add(ref _batchTotal, count);
         Interlocked.Add(ref _decodedTokens, count);
         double total = Volatile.Read(ref _decodeSeconds) + seconds;
         Volatile.Write(ref _decodeSeconds, total);
+
+        using (logits)
+        {
+            var data = logits.Data;
+            for (int i = 0; i < count; i++)
+                SampleAndEmit(_rowSeqs[i], data.Slice(i * _vocab, _vocab));
+        }
     }
 
     private void SampleAndEmit(BatchedSequence seq, ReadOnlySpan<float> logitsRow)

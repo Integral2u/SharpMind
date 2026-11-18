@@ -76,6 +76,14 @@ public sealed class SharpMindServerOptions
     public int PrefixCacheMB { get; set; }
 
     /// <summary>
+    /// How many <c>/v1/completions</c> sequences one model decodes together.
+    /// All requests for a model share a single batcher, so this is the width of
+    /// that batch, not a per-request setting. The per-model KV cache budget is
+    /// divided between the rows. 1 still works but gains nothing.
+    /// </summary>
+    public int CompletionBatchSize { get; set; } = 8;
+
+    /// <summary>
     /// Optional bearer/API key. When set, the destructive operational
     /// endpoints (<c>POST /v1/shutdown</c>, <c>DELETE /v1/models/{model}</c>)
     /// require it (<c>Authorization: Bearer &lt;key&gt;</c> or
@@ -111,6 +119,8 @@ public static class SharpMindServerExtensions
     {
         services.AddSingleton(options);
         services.AddSingleton<ModelManager>();
+        services.AddSingleton<ModelLeaseService>();
+        services.AddSingleton<BatchService>();
         services.AddSingleton(_ => new PrefixCache(options.PrefixCacheMB * 1024L * 1024L));
         services.AddSingleton<SessionFactory>();
         services.AddSingleton(_ => new GenerationGate(

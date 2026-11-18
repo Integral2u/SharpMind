@@ -18,6 +18,7 @@ public sealed class BatchedSequence : IAsyncDisposable
 {
     private readonly Channel<string> _out;
     private readonly TaskCompletionSource _completed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _released = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly CancellationTokenSource _abandon = new();
     private readonly CancellationTokenRegistration _cancellationRegistration;
     private readonly int[] _promptTokens;
@@ -66,7 +67,18 @@ public sealed class BatchedSequence : IAsyncDisposable
     /// <summary>Completes when the sequence ends, whatever the reason.</summary>
     public Task WhenCompleted => _completed.Task;
 
+    /// <summary>
+    /// Completes once the scheduler has dropped this sequence and its cache row
+    /// is free. A host that holds the model for the request's duration can await
+    /// it before releasing the model, so an unload cannot race the batcher's
+    /// last forward pass.
+    /// </summary>
+    public Task WhenReleased => _released.Task;
+
     public bool IsCompleted => _completed.Task.IsCompleted;
+
+    /// <summary>Marks the cache row free. Called by the scheduler exactly once per removal.</summary>
+    internal void MarkReleased() => _released.TrySetResult();
 
     // ── Scheduler-owned state ────────────────────────────────────────────────
     // Kept on the sequence so a step can work row-by-row without a side table.

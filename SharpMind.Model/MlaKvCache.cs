@@ -137,6 +137,15 @@ public sealed class MlaKvCache(int batchSize, int maxSeqLen, int latentDim) : IK
         _maxLength = max;
     }
 
+    /// <summary>Empties one row without touching the others.</summary>
+    public void ClearRow(int row)
+    {
+        if ((uint)row >= (uint)_batch)
+            throw new ArgumentOutOfRangeException(nameof(row), row, $"Row must be in [0, {_batch}).");
+        _rowLengths[row] = 0;
+        RecomputeMax();
+    }
+
     public void Reset()
     {
         Array.Clear(_rowLengths);

@@ -210,6 +210,15 @@ public sealed class KVCache(int batchSize, int numKvHeads, int maxSeqLen, int he
         _maxLength = max;
     }
 
+    /// <summary>Empties one row without touching the others.</summary>
+    public void ClearRow(int row)
+    {
+        if ((uint)row >= (uint)_batchSize)
+            throw new ArgumentOutOfRangeException(nameof(row), row, $"Row must be in [0, {_batchSize}).");
+        _rowLengths[row] = 0;
+        RecomputeMax();
+    }
+
     public object? Snapshot()
     {
         int position = RequireUniformLengths();

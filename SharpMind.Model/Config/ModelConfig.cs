@@ -788,15 +788,23 @@ public sealed record ModelConfig
     /// <param name="config">Model configuration.</param>
     /// <param name="userMaxCacheLen">User-specified cap (from CLI --max-cache-len). Null means no explicit cap.</param>
     /// <param name="headDim">Per-head dimension for KV tensors. Uses config.HeadDim when null.</param>
+    /// <param name="batchSize">
+    /// Rows the cache holds. The memory budget is per process, so a batched cache
+    /// divides it between rows instead of taking the whole single-row budget for
+    /// every row.
+    /// </param>
     /// <returns>The maximum cache length to use for KV cache allocation.</returns>
-    public static int ComputeMaxCacheLength(ModelConfig config, int? userMaxCacheLen = null, int? headDim = null)
+    public static int ComputeMaxCacheLength(
+        ModelConfig config, int? userMaxCacheLen = null, int? headDim = null, int batchSize = 1)
     {
         int effectiveLen = config.EffectiveInferenceCacheLength;
         int hd = headDim ?? config.HeadDim;
+        int rows = Math.Max(1, batchSize);
 
         // Bytes per token position in one layer: keys + values, each float32
         long bytesPerPosition = (long)config.NumKvHeads * hd * sizeof(float) * 2;
-        long totalBytes = bytesPerPosition * effectiveLen * config.NumLayers;
+        long perLayer = bytesPerPosition * config.NumLayers * rows;
+        long totalBytes = perLayer * effectiveLen;
 
         // Use at most 40% of available memory for KV cache (leaves room for
         // model weights, workspace, OS overhead, and other allocations).
@@ -804,8 +812,8 @@ public sealed record ModelConfig
         long budget = (long)(availableBytes * 0.40);
 
         int maxLen = effectiveLen;
-        if (totalBytes > budget && bytesPerPosition > 0)
-            maxLen = (int)Math.Max(1, budget / (bytesPerPosition * config.NumLayers));
+        if (totalBytes > budget && perLayer > 0)
+            maxLen = (int)Math.Max(1, budget / perLayer);
 
         // Clamp to the user-specified cap (if any)
         if (userMaxCacheLen is int userMax && userMax > 0)

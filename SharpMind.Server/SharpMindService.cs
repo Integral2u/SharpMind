@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using SharpMind.Inference;
 using SharpMind.Inference.Chat;
 using SharpMind.Inference.Grammar;
 using SharpMind.Server.Protocol;
@@ -205,26 +206,40 @@ public sealed class SharpMindService : IAsyncDisposable
         var options = app.Services.GetRequiredService<SharpMindServerOptions>();
         var gate = app.Services.GetRequiredService<GenerationGate>();
         var prefixCache = app.Services.GetRequiredService<PrefixCache>();
+        var modelLeases = app.Services.GetRequiredService<ModelLeaseService>();
+        var batchService = app.Services.GetRequiredService<BatchService>();
 
         // Capacity is part of health: a server that is queueing is up, but a
         // caller deciding whether to send work wants to know.
-        app.MapGet("/v1/health", () => Results.Ok(new
+        app.MapGet("/v1/health", () =>
         {
-            status = "ok",
-            generating = gate.Active,
-            queued = gate.Queued,
-            maxGenerating = gate.MaxConcurrent,
-            maxQueued = gate.MaxQueued,
-            prefixCache = new
+            var batch = batchService.Snapshot();
+            return Results.Ok(new
             {
-                enabled = prefixCache.Enabled,
-                entries = prefixCache.Count,
-                bytes = prefixCache.Bytes,
-                hits = prefixCache.Hits,
-                misses = prefixCache.Misses,
-                reusedTokens = prefixCache.ReusedTokens,
-            },
-        }));
+                status = "ok",
+                generating = gate.Active,
+                queued = gate.Queued,
+                maxGenerating = gate.MaxConcurrent,
+                maxQueued = gate.MaxQueued,
+                prefixCache = new
+                {
+                    enabled = prefixCache.Enabled,
+                    entries = prefixCache.Count,
+                    bytes = prefixCache.Bytes,
+                    hits = prefixCache.Hits,
+                    misses = prefixCache.Misses,
+                    reusedTokens = prefixCache.ReusedTokens,
+                },
+                batching = new
+                {
+                    models = batch.Models,
+                    steps = batch.Steps,
+                    tokens = batch.Tokens,
+                    tokensPerSecond = batch.TokensPerSecond,
+                    averageBatchSize = batch.AverageBatchSize,
+                },
+            });
+        });
 
         // Operational extension (not part of the OpenAI spec). Schedules a
         // graceful stop after the response is written, so in-flight requests
@@ -383,6 +398,21 @@ public sealed class SharpMindService : IAsyncDisposable
                 return Results.Json(new { error = new { message = $"Failed to load model: {ex.Message}", type = "server_error" } }, statusCode: 500);
             }
 
+            // One transformer, many engines: chat generation must not overlap the
+            // batched completion generator's forward passes (the transformer keeps
+            // activations in instance fields). Held for the whole response — the
+            // session prefills while creating, so it is taken before that.
+            ModelLeaseService.Lease modelLease;
+            try
+            {
+                modelLease = await modelLeases.AcquireAsync(request.Model, ct);
+            }
+            catch (OperationCanceledException)
+            {
+                modelManager.Release(request.Model);
+                return Results.Json(new { error = new { message = "Request cancelled while waiting for the model", type = "timeout" } }, statusCode: 408);
+            }
+
             IChatSession session;
             string lastUserMessage;
             bool continueFromHistory;
@@ -392,6 +422,7 @@ public sealed class SharpMindService : IAsyncDisposable
             }
             catch (Exception ex)
             {
+                modelLease.Dispose();
                 modelManager.Release(request.Model);
                 return Results.Json(new { error = new { message = $"Failed to create session: {ex.Message}", type = "server_error" } }, statusCode: 500);
             }
@@ -425,9 +456,296 @@ public sealed class SharpMindService : IAsyncDisposable
                 // Dispose the session before Release: Release may unload the model
                 // at ref count zero, and the session must not outlive it.
                 await session.DisposeAsync();
+                modelLease.Dispose();
                 modelManager.Release(request.Model);
             }
         });
+
+        // ── POST /v1/completions — batched, stateless text completions ───────
+        //
+        // Every request for a model feeds the same BatchedGenerator, so N callers
+        // share one forward pass per token instead of N of them. No chat history,
+        // tools or prefix cache: the prompt is tokenised, enqueued and streamed
+        // back. Admission is the batcher's own queue (BatchQueueFullException ->
+        // 429), not the chat GenerationGate, because the batcher bounds memory
+        // by rows rather than by concurrent requests.
+        app.MapPost("/v1/completions", async (CreateCompletionRequest request, HttpContext httpContext) =>
+        {
+            var ct = httpContext.RequestAborted;
+
+            if (string.IsNullOrWhiteSpace(request.Model))
+                return ErrorResult("model is required", 400);
+            if (request.Prompts.Count == 0 || request.Prompts.Any(string.IsNullOrEmpty))
+                return ErrorResult("prompt is required", 400);
+            if (request.Suffix is not null)
+                return ErrorResult("suffix is not supported", 400);
+            if (request.Echo == true)
+                return ErrorResult("echo is not supported", 400);
+
+            int n = Math.Clamp(request.N ?? 1, 1, 8);
+            int totalChoices = request.Prompts.Count * n;
+            if (totalChoices > 32)
+                return ErrorResult("at most 32 completions may be requested at once", 400);
+
+            if (modelManager.GetModelInfo(request.Model) is null)
+                return ErrorResult($"Model '{request.Model}' not found", 404);
+
+            LoadedModel? loaded;
+            try
+            {
+                loaded = await modelManager.LoadAsync(request.Model, CreateProgress(), ct);
+                if (loaded is null)
+                    return ErrorResult($"Failed to load model '{request.Model}'", 500, "server_error");
+            }
+            catch (OperationCanceledException)
+            {
+                return ErrorResult("Model loading timed out", 408, "timeout");
+            }
+            catch (Exception ex)
+            {
+                return ErrorResult($"Failed to load model: {ex.Message}", 500, "server_error");
+            }
+
+            var sequences = new List<(int Index, int PromptTokens, BatchedSequence Sequence)>(totalChoices);
+            try
+            {
+                BatchedGenerator batcher;
+                try
+                {
+                    batcher = batchService.Get(loaded);
+                }
+                catch (Exception ex)
+                {
+                    return ErrorResult($"Failed to start batching: {ex.Message}", 500, "server_error");
+                }
+
+                var (sampling, generation) = OpenAiMapper.ToCompletionOptions(request, loaded.Tokenizer);
+                bool addBos = loaded.Tokenizer.BosId >= 0;
+                int index = 0;
+
+                try
+                {
+                    foreach (string prompt in request.Prompts)
+                    {
+                        int[] promptIds = loaded.Tokenizer.Encode(prompt, addBos, addEos: false);
+                        for (int rep = 0; rep < n; rep++)
+                        {
+                            // n > 1 means independent draws: a pinned seed on the
+                            // request must not turn every choice into a copy.
+                            var choiceSampling = rep == 0
+                                ? sampling
+                                : sampling with { Seed = sampling.Seed + rep };
+
+                            var sequence = await batcher.EnqueueTokensAsync(promptIds, choiceSampling, generation, ct);
+                            sequences.Add((index++, promptIds.Length, sequence));
+                        }
+                    }
+                }
+                catch (ArgumentException ex)
+                {
+                    await DisposeSequencesAsync(sequences);
+                    return ErrorResult(ex.Message, 400);
+                }
+                catch (BatchQueueFullException ex)
+                {
+                    await DisposeSequencesAsync(sequences);
+                    httpContext.Response.Headers.RetryAfter = "1";
+                    return ErrorResult(ex.Message, 429, "rate_limit_error");
+                }
+                catch (OperationCanceledException)
+                {
+                    await DisposeSequencesAsync(sequences);
+                    return Results.Empty;
+                }
+
+                var completionId = $"cmpl-{Guid.NewGuid():N}";
+                long created = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+                int promptTokens = sequences.Sum(s => s.PromptTokens);
+
+                if (request.Stream == true)
+                {
+                    await StreamCompletionsAsync(httpContext, sequences, loaded, completionId, created,
+                        promptTokens, request.StreamOptions, ct);
+                    return Results.Empty;
+                }
+
+                try
+                {
+                    await Task.WhenAll(sequences.Select(s => s.Sequence.WhenCompleted)).WaitAsync(ct);
+                }
+                catch (OperationCanceledException)
+                {
+                    return Results.Empty;
+                }
+                catch (Exception ex)
+                {
+                    return ErrorResult($"Generation failed: {ex.Message}", 500, "server_error");
+                }
+
+                var choices = new List<CompletionChoice>(sequences.Count);
+                int completionTokens = 0;
+                foreach (var (choiceIndex, _, sequence) in sequences)
+                {
+                    completionTokens += sequence.GeneratedIds.Count;
+                    choices.Add(new CompletionChoice
+                    {
+                        Index = choiceIndex,
+                        Text = sequence.Text,
+                        FinishReason = OpenAiMapper.ToCompletionFinishReason(sequence.FinishReason),
+                    });
+                }
+
+                return Results.Ok(new CreateCompletionResponse
+                {
+                    Id = completionId,
+                    Created = created,
+                    Model = loaded.ModelId,
+                    Choices = choices,
+                    Usage = new CompletionUsage
+                    {
+                        PromptTokens = promptTokens,
+                        CompletionTokens = completionTokens,
+                        TotalTokens = promptTokens + completionTokens,
+                    },
+                });
+            }
+            finally
+            {
+                // Already-completed sequences are cheap no-ops; in-flight ones
+                // (client gone, error) release their rows at the next step. Wait
+                // for that before releasing the model, so an unload cannot
+                // dispose the transformer mid-forward.
+                var released = new List<Task>(sequences.Count);
+                foreach (var (_, _, sequence) in sequences)
+                {
+                    await sequence.DisposeAsync();
+                    released.Add(sequence.WhenReleased);
+                }
+                await Task.WhenAll(released);
+                modelManager.Release(request.Model);
+            }
+        });
+    }
+
+    private static IResult ErrorResult(string message, int statusCode, string type = "invalid_request_error")
+        => Results.Json(new { error = new { message, type } }, statusCode: statusCode);
+
+    private static async Task DisposeSequencesAsync(IEnumerable<(int Index, int PromptTokens, BatchedSequence Sequence)> sequences)
+    {
+        var pending = new List<Task>();
+        foreach (var (_, _, sequence) in sequences)
+        {
+            await sequence.DisposeAsync();
+            // The row must be free before the caller releases the model: an
+            // unload between release and the batcher's next step would dispose
+            // the transformer under a forward pass.
+            pending.Add(sequence.WhenReleased);
+        }
+
+        await Task.WhenAll(pending);
+    }
+
+    private static async Task StreamCompletionsAsync(
+        HttpContext httpContext,
+        List<(int Index, int PromptTokens, BatchedSequence Sequence)> sequences,
+        LoadedModel loaded,
+        string completionId,
+        long created,
+        int promptTokens,
+        StreamOptions? streamOptions,
+        CancellationToken ct)
+    {
+        httpContext.Response.ContentType = "text/event-stream; charset=utf-8";
+        httpContext.Response.Headers.CacheControl = "no-cache";
+        httpContext.Response.Headers.Connection = "keep-alive";
+
+        await using var writer = new StreamWriter(httpContext.Response.Body, Encoding.UTF8, leaveOpen: true);
+        var options = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+        using var writeLock = new SemaphoreSlim(1, 1);
+        long completionTokens = 0;
+
+        async Task WriteChunkAsync(CompletionChoice choice)
+        {
+            await writeLock.WaitAsync(ct);
+            try
+            {
+                await WriteSSE(writer, new CreateCompletionStreamResponse
+                {
+                    Id = completionId,
+                    Created = created,
+                    Model = loaded.ModelId,
+                    Choices = [choice],
+                }, options);
+            }
+            finally
+            {
+                writeLock.Release();
+            }
+        }
+
+        try
+        {
+            var writers = sequences.Select(async entry =>
+            {
+                try
+                {
+                    await foreach (string fragment in entry.Sequence.StreamAsync(ct))
+                        await WriteChunkAsync(new CompletionChoice { Index = entry.Index, Text = fragment });
+
+                    Interlocked.Add(ref completionTokens, entry.Sequence.GeneratedIds.Count);
+                    await WriteChunkAsync(new CompletionChoice
+                    {
+                        Index = entry.Index,
+                        Text = "",
+                        FinishReason = OpenAiMapper.ToCompletionFinishReason(entry.Sequence.FinishReason),
+                    });
+                }
+                catch (OperationCanceledException) { }
+                catch (Exception)
+                {
+                    // Bytes may already be on the wire; the final [DONE] closes
+                    // the stream and the per-choice finish chunk is skipped.
+                }
+            });
+
+            await Task.WhenAll(writers);
+
+            if (streamOptions?.IncludeUsage == true)
+            {
+                await writeLock.WaitAsync(ct);
+                try
+                {
+                    await WriteSSE(writer, new CreateCompletionStreamResponse
+                    {
+                        Id = completionId,
+                        Created = created,
+                        Model = loaded.ModelId,
+                        Usage = new CompletionUsage
+                        {
+                            PromptTokens = promptTokens,
+                            CompletionTokens = (int)Interlocked.Read(ref completionTokens),
+                            TotalTokens = promptTokens + (int)Interlocked.Read(ref completionTokens),
+                        },
+                    }, options);
+                }
+                finally
+                {
+                    writeLock.Release();
+                }
+            }
+        }
+        finally
+        {
+            // A client that walked away has nothing to receive; never let the
+            // terminating frame turn into an unhandled response exception.
+            try
+            {
+                await writer.WriteAsync("data: [DONE]\n\n");
+                await writer.FlushAsync(CancellationToken.None);
+            }
+            catch (IOException) { }
+            catch (ObjectDisposedException) { }
+        }
     }
 
     private static bool IsAuthorized(SharpMindServerOptions options, HttpContext httpContext)

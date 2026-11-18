@@ -54,6 +54,15 @@ public interface IKVCache : IDisposable
     /// </summary>
     public void MoveRow(int from, int to)
         => throw new NotSupportedException($"{GetType().Name} does not support moving rows.");
+
+    /// <summary>
+    /// Empties one row, leaving its storage (and every other row) alone. Reaping
+    /// a sequence whose row is the last active one has nobody to move over it,
+    /// so the row must be reset explicitly before it is handed to a new
+    /// sequence — otherwise that sequence appends after stale positions.
+    /// </summary>
+    public void ClearRow(int row)
+        => throw new NotSupportedException($"{GetType().Name} does not support clearing rows.");
     public bool IsFull { get; }
     public bool IsContiguous { get; }
     /// <summary>
