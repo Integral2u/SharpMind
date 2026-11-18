@@ -33,8 +33,11 @@ namespace SharpMind.Inference;
 ///
 /// Per-request output is a stream of decoded fragments plus
 /// <see cref="BatchedSequence.Text"/>/<see cref="BatchedSequence.FinishReason"/>.
-/// Greedy sampling produces the same tokens as running each request through
-/// <see cref="StandardGenerator{T}"/> alone.
+/// For a dense model, greedy sampling produces exactly the tokens each request
+/// would get from <see cref="StandardGenerator{T}"/> alone (pinned by test).
+/// A routed (MoE) model evaluates the same experts with the same weights, but
+/// grouping several rows into one matmul can round differently in the last bit,
+/// so a near-tie in the logits may break the other way.
 /// </summary>
 public sealed class BatchedGenerator : IDisposable, IAsyncDisposable
 {
