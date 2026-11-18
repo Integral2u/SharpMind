@@ -137,7 +137,7 @@ public sealed class BatchedGenerator : IDisposable, IAsyncDisposable
     /// <summary>Rows currently decoding or prefilling.</summary>
     public int Active => _active.Count;
 
-    /// <summary>Requests admitted into the batch so far.</summary>
+    /// <summary>Requests that have finished and released their row.</summary>
     public long SequencesCompleted => Interlocked.Read(ref _sequencesCompleted);
 
     private long _sequencesCompleted;
@@ -288,7 +288,6 @@ public sealed class BatchedGenerator : IDisposable, IAsyncDisposable
             seq.Slot = _active.Count;
             seq.State = SequenceState.Prefilling;
             seq.PromptFed = 0;
-            seq.Position = 0;
             _active.Add(seq);
         }
     }
@@ -370,13 +369,11 @@ public sealed class BatchedGenerator : IDisposable, IAsyncDisposable
         {
             _model.ForwardFill(input, _views, 0, _workspace);
             seq.PromptFed += len;
-            seq.Position = _caches[0].LengthForRow(seq.Slot);
             return;
         }
 
         using var logits = _model.ForwardLastLogits(input, _views, 0, _workspace);
         seq.PromptFed += len;
-        seq.Position = _caches[0].LengthForRow(seq.Slot);
         SampleAndEmit(seq, logits.Data[.._vocab]);
     }
 

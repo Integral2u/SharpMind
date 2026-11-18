@@ -75,7 +75,6 @@ public sealed class BatchedSequence : IAsyncDisposable
     internal SequenceState State { get; set; }
     internal int PromptFed { get; set; }
     internal int PendingToken { get; set; }
-    internal int Position { get; set; }
     internal bool Stream => Generation.Stream;
     internal bool EndedOnStop { get; set; }
     internal readonly List<int> Generated = [];
