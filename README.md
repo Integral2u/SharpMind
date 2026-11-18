@@ -663,6 +663,7 @@ you> /stop                    # shut down the service and exit
 |---|---|---|
 | `GET` | `/v1/health` | Returns `{"status":"ok"}` when the service is up. |
 | `POST` | `/v1/chat/completions` | OpenAI-compatible chat completion (streaming and non-streaming). |
+| `POST` | `/v1/completions` | OpenAI-compatible text completion. Batched: every request for a model shares one generator. |
 | `GET` | `/v1/models` | List all `.gguf` models found on disk. |
 | `GET` | `/v1/models/loaded` | List models currently loaded in memory. |
 | `GET` | `/v1/models/{model}` | Get info for a specific model. |
@@ -703,6 +704,7 @@ print(response.choices[0].message.content)
 - **Lazy loading** — models are loaded on first request (or at startup with `--model`). The `ModelManager` scans the models directory at startup and reports available models immediately; weights are loaded on demand.
 - **Ref-counted caching** — each `/v1/chat/completions` request increments the model's ref count; when the response completes, the ref count decrements. Models stay resident until explicitly unloaded (`DELETE /v1/models/{model}`) or the service stops.
 - **Session-per-request** — each chat completion creates a fresh `IChatSession`. Conversation history from the `messages` array is replayed via `AddMessage` before generation.
+- **Batched completions** — `/v1/completions` is stateless: every request for a model feeds one shared `BatchedGenerator`, so N callers advance one token per forward pass instead of N. `--completion-batch-size` sets the batch width; the KV memory budget is divided across its rows. Chat and completions take a per-model lease around the transformer (a whole response for chat, one forward pass for the batcher), because a transformer cannot serve two overlapping forwards.
 - **Permission gating** — `--no-files` and `--no-network` restrict tool calls at the session level. The flags are forwarded from the CLI to the service process.
 - **Streaming** — uses `text/event-stream` (SSE) with the standard `data: {...}` / `data: [DONE]` framing. Prefill progress and other status-only entries are filtered out; only actual token content is streamed to the client.
 
