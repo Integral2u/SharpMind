@@ -17,6 +17,7 @@ public sealed class Transformer : IDisposable
     private readonly NormLayer _finalNorm;
     private readonly VisionEncoder? _visionEncoder;
     private readonly AudioEncoder? _audioEncoder;
+    private readonly MtpHead? _mtpHead;
     private bool _disposed;
 
     // Gemma-4 per-layer-embedding builder; null for every other architecture.
@@ -65,7 +66,8 @@ public sealed class Transformer : IDisposable
         bool gemmaEmbeddingScale = false,
         VisionEncoder? visionEncoder = null,
         AudioEncoder? audioEncoder = null,
-        PerLayerInputs? perLayerInputs = null)
+        PerLayerInputs? perLayerInputs = null,
+        MtpHead? mtpHead = null)
     {
         ArgumentNullException.ThrowIfNull(weights);
         ArgumentNullException.ThrowIfNull(embedding);
@@ -80,6 +82,7 @@ public sealed class Transformer : IDisposable
         _visionEncoder = visionEncoder;
         _audioEncoder = audioEncoder;
         _perLayerInputs = perLayerInputs;
+        _mtpHead = mtpHead;
         bool untied = weights.HasLmHead;
         var rawW = untied ? _weights.RawLmHead : _weights.RawEmbedding;
         var rawDtype = untied ? _weights.RawLmHeadDtype : _weights.RawEmbeddingDtype;
@@ -211,6 +214,13 @@ public sealed class Transformer : IDisposable
     public VisionEncoder? VisionEncoder => _visionEncoder;
     /// <summary>Audio encoder for mel-spectrogram inputs, or null when the model is text-only.</summary>
     public AudioEncoder? AudioEncoder => _audioEncoder;
+
+    /// <summary>
+    /// The model's MTP draft head, or null when the file carries none. It drafts
+    /// the token after the next one; a speculative loop verifies drafts with the
+    /// main model. See <see cref="MtpHead"/>.
+    /// </summary>
+    public MtpHead? Mtp => _mtpHead;
 
     /// <summary>
     /// Returns the distinct quantization dtypes used across the model's weight
@@ -738,6 +748,43 @@ public sealed class Transformer : IDisposable
         }
     }
 
+    /// <summary>
+    /// One MTP draft step: given the trunk's final-normed hidden state and the
+    /// token being extended, returns the vocabulary logits for the following
+    /// token. Inputs are <c>[Batch, 1]</c>; the head's own <paramref name="cache"/>
+    /// must advance in step with the accepted tokens. Mirrors llama.cpp's MTP
+    /// graph: hnorm/enorm, concat, eh_proj, one full-attention block, shared head
+    /// norm, LM head.
+    /// </summary>
+    public Tensor<float> ForwardMtpLastLogits(
+        Tensor<float> trunkHidden,
+        Tensor<int> tokenIds,
+        IKVCache cache,
+        int position,
+        Core.Memory.IWorkspace? workspace = null)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(trunkHidden);
+        ArgumentNullException.ThrowIfNull(tokenIds);
+        ArgumentNullException.ThrowIfNull(cache);
+        if (_mtpHead is null)
+            throw new InvalidOperationException("This model has no MTP head.");
+
+        int batch = tokenIds.Shape.Rows;
+        if (tokenIds.Shape.Cols != 1 || trunkHidden.Shape[0] != batch || trunkHidden.Shape[1] != 1)
+            throw new ArgumentException("MTP drafts one token per row; expected [Batch, 1].");
+
+        int hidden = _weights.Config.HiddenDim;
+        int vocab = _weights.Config.VocabSize;
+
+        using var embedding = _embedding.Forward(tokenIds, workspace);
+        var normed = _mtpHead.Forward(trunkHidden, embedding, cache, position, workspace);
+        using var flat = normed.Reshape(batch, hidden);
+        var logits = _logitOps.Project(flat, batch, hidden, vocab, workspace);
+        ApplyFinalLogitSoftcap(logits);
+        return logits;
+    }
+
     /// <summary>Approximate total parameter count.</summary>
     public long ParameterCount
     {
@@ -778,6 +825,7 @@ public sealed class Transformer : IDisposable
         _visionEncoder?.Dispose();
         _audioEncoder?.Dispose();
         _perLayerInputs?.Dispose();
+        _mtpHead?.Dispose();
         // The Transformer borrows its TransformerWeights: CreateTransformer
         // never transfers ownership, so one weights instance can legitimately
         // back several transformers built and disposed over its lifetime (the

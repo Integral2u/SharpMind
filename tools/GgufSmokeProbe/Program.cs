@@ -18,6 +18,7 @@ using System.Text.Json.Nodes;
 //   dotnet run --project tools/GgufSmokeProbe -- bench <file> ["prompt"] [warmup=16] [measure=64] [full] [resident] [serialmm] [nowide] [reps=3] [ids]
 //   dotnet run --project tools/GgufSmokeProbe -- benchab <file> ["prompt"] [warmup=16] [measure=64] [full] [resident]
 //   dotnet run --project tools/GgufSmokeProbe -- batchbench <file> ["prompt"] [maxBatch=8] [tokens=16] [reps=3]
+//   dotnet run --project tools/GgufSmokeProbe -- mtpcheck <file> ["prompt"] [steps=64]
 //   dotnet run --project tools/GgufSmokeProbe -- widebench [K=896] [N=4864] [iters=200] [chunks=0]
 //   dotnet run --project tools/GgufSmokeProbe -- stages <file> ["prompt"] [warmup=16] [measure=48] [full] [resident] [serialmm] [window N]
 //   dotnet run --project tools/GgufSmokeProbe -- bind <file>
@@ -91,6 +92,9 @@ if (mode == "stages")
 
 if (mode == "batchbench")
     return await RunBatchBenchAsync(path, args);
+
+if (mode == "mtpcheck")
+    return await RunMtpCheckAsync(path, args);
 
 if (mode == "fwd")
     return RunForward(path, args);
@@ -2167,6 +2171,123 @@ static async Task<int> RunBatchBenchAsync(string path, string[] args)
             seqs.Add(await gen.EnqueueTokensAsync(promptIds, SamplingConfig.Greedy, genCfg));
         await Task.WhenAll(seqs.Select(s => s.WhenCompleted));
         return gen.Stats.TokensPerSecond;
+    }
+}
+
+// mtpcheck <file> ["prompt"] [steps=64]
+//
+// Drives the MTP draft head one token at a time and reports how often its top-1
+// agrees with the token the trunk actually chose. A correct head on a real MTP
+// model accepts roughly 60-80% of one-token drafts; a broken one is near zero.
+static async Task<int> RunMtpCheckAsync(string path, string[] args)
+{
+    await Task.CompletedTask;
+    string prompt = args.Length > 2 ? args[2] : "The capital of France is";
+    int steps = args.Length > 3 && int.TryParse(args[3], out int st) ? Math.Max(1, st) : 64;
+
+    ModelMetaData meta;
+    ModelConfig modelConfig;
+    Tokenizer? tokenizer;
+    var metaHelper = ModelFormatHelpers.GetModelMetaHelperFor(ModelFormat.Gguf);
+    metaHelper.Load(path, null, out meta, out modelConfig, out tokenizer);
+    if (tokenizer is null) { Console.Error.WriteLine("no tokenizer"); return 3; }
+
+    var sharpConfig = modelConfig.ForModel();
+    var mapping = sharpConfig.ToJigSawMapping();
+    using var weights = ModelFactory.CreateWeights(
+        modelConfig, sharpConfig, QuantizationFactory.Create(mapping), path,
+        LoadMode.Full, quantizedResident: false, maxParallelLoadDegree: 1);
+    weights.InitializeWeights();
+    using var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
+
+    if (model.Mtp is null)
+    {
+        Console.WriteLine($"NO MTP HEAD: {Path.GetFileName(path)} declares nextn_predict_layers={modelConfig.NextnPredictLayers}");
+        return 4;
+    }
+
+    Console.WriteLine($"--- mtpcheck: {Path.GetFileName(path)}  trunk={modelConfig.NumLayers} nextn={modelConfig.NextnPredictLayers}  steps={steps} ---");
+
+    int maxLen = Math.Min(modelConfig.MaxPosition, 512);
+    var caches = new IKVCache[modelConfig.NumLayers];
+    for (int i = 0; i < caches.Length; i++)
+        caches[i] = modelConfig.IsShortConvLayer(i)
+            ? new ShortConvCache(modelConfig.ShortConvCacheLength - 1, modelConfig.HiddenDim, 1, maxLen)
+            : modelConfig.IsRecurrentLayer(i)
+                ? new DeltaNetCache(modelConfig.SsmConvKernel, modelConfig.SsmConvDim,
+                    modelConfig.SsmTimeStepRank, modelConfig.SsmStateSize,
+                    modelConfig.SsmValueHeadDim, 1, maxLen)
+                : modelConfig.IsMla
+                    ? new MlaKvCache(1, maxLen, modelConfig.KvLoraRank + modelConfig.MlaRopeHeadDim)
+                    : new KVCache(1, modelConfig.NumKvHeads, maxLen, modelConfig.HeadDimForLayer(i));
+
+    using var mtpCache = modelConfig.IsMla
+        ? (IKVCache)new MlaKvCache(1, maxLen, modelConfig.KvLoraRank + modelConfig.MlaRopeHeadDim)
+        : new KVCache(1, modelConfig.NumKvHeads, maxLen, modelConfig.HeadDim);
+
+    int[] promptIds = tokenizer.Encode(prompt, addBos: true, addEos: false);
+    int position = 0;
+    int top1 = 0, top5 = 0, total = 0;
+
+    int[] Argmax(ReadOnlySpan<float> logits, int k)
+    {
+        var idx = Enumerable.Range(0, logits.Length).ToArray();
+        var vals = logits.ToArray();
+        Array.Sort(idx, (a, b) => vals[b].CompareTo(vals[a]));
+        return idx[..Math.Min(k, idx.Length)];
+    }
+
+    Tensor<float>? trunkLogits = null;
+    try
+    {
+        foreach (int id in promptIds)
+        {
+            using var token = Token(id);
+            trunkLogits?.Dispose();
+            trunkLogits = model.ForwardLastLogits(token, caches, position, null);
+            position++;
+        }
+
+        // One draft step looks at (h for the token just fed, the token the trunk
+        // chose next) and predicts the token after it. After the draft, the trunk
+        // is advanced by that chosen token, which becomes the ground truth.
+        for (int step = 0; step < steps; step++)
+        {
+            var h = model.LastNormed!;
+            int chosen = Argmax(trunkLogits!.Data[..modelConfig.VocabSize], 1)[0];
+
+            Tensor<float> draft;
+            using (var chosenToken = Token(chosen))
+                draft = model.ForwardMtpLastLogits(h, chosenToken, mtpCache, position, null);
+            var draftTop = Argmax(draft.Data[..modelConfig.VocabSize], 5);
+            draft.Dispose();
+
+            trunkLogits.Dispose();
+            using (var nextToken = Token(chosen))
+                trunkLogits = model.ForwardLastLogits(nextToken, caches, position, null);
+            position++;
+
+            int actual = Argmax(trunkLogits.Data[..modelConfig.VocabSize], 1)[0];
+            total++;
+            if (draftTop[0] == actual) top1++;
+            if (draftTop.Contains(actual)) top5++;
+        }
+    }
+    finally
+    {
+        trunkLogits?.Dispose();
+        foreach (var c in caches) c.Dispose();
+    }
+
+    Console.WriteLine($"draft acceptance: top1 {top1}/{total} ({(total > 0 ? 100.0 * top1 / total : 0):F1}%), " +
+                      $"top5 {top5}/{total} ({(total > 0 ? 100.0 * top5 / total : 0):F1}%)");
+    return 0;
+
+    static Tensor<int> Token(int id)
+    {
+        var t = new Tensor<int>(1, 1);
+        t.Data[0] = id;
+        return t;
     }
 }
 

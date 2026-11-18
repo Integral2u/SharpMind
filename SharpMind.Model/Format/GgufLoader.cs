@@ -305,6 +305,21 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
 
         numLayers = (int)meta.GetLong($"{arch}.block_count", numLayers);
 
+        // MTP draft blocks sit at the end of the stack and are counted by
+        // block_count, but llama.cpp runs only block_count - nextn in the main
+        // pass (llama_hparams::n_layer() = n_layer_all - n_layer_nextn). Keeping
+        // them in NumLayers ran an extra layer and mismatched every logit.
+        int nextnPredictLayers = (int)meta.GetLong($"{arch}.nextn_predict_layers", 0);
+        if (nextnPredictLayers < 0 || nextnPredictLayers >= numLayers)
+        {
+            if (nextnPredictLayers != 0)
+                throw new InvalidDataException(
+                    $"'{arch}.nextn_predict_layers' is {nextnPredictLayers}, which leaves no trunk layers " +
+                    $"out of block_count {numLayers}.");
+            nextnPredictLayers = 0;
+        }
+        numLayers -= nextnPredictLayers;
+
         float ropeTheta = meta.GetFloat($"{arch}.rope.freq_base",
                           meta.GetFloat("rope_theta",
                           meta.GetFloat("rope.freq_base", 10_000f)));
@@ -534,6 +549,7 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
             VocabSize = vocabSize,
             HiddenDim = hiddenDim,
             NumLayers = numLayers,
+            NextnPredictLayers = nextnPredictLayers,
             NumHeads = numHeads,
             NumKvHeads = numKvHeads,
             LayerKvHeads = layerKvHeads,

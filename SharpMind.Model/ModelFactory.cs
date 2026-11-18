@@ -170,8 +170,8 @@ public static class ModelFactory
         // a streaming load silently dropped them and diverged from the full
         // load. Allocate placeholders so SetWeights can push the bias alone.
         bool denseFfn = sharpConfig.Ffn == FfnKind.Dense;
-        var blocks = new TransformerWeights.BlockWeights[config.NumLayers];
-        for (int i = 0; i < config.NumLayers; i++)
+        var blocks = new TransformerWeights.BlockWeights[config.NumLayersTotal];
+        for (int i = 0; i < config.NumLayersTotal; i++)
         {
             // Attention shapes are per-layer (gemma4 uses 256 on SWA layers and
             // 512 on full layers), so the bias placeholders must match the layer.
@@ -225,9 +225,9 @@ public static class ModelFactory
         int ffnDim = config.FfnDim;
         int wf1Dim = sharpConfig.Ffn == FfnKind.Gated ? 2 * ffnDim : ffnDim;
         bool layerNorm = sharpConfig.Norm == NormKind.LayerNorm;
-        var blocks = new TransformerWeights.BlockWeights[config.NumLayers];
+        var blocks = new TransformerWeights.BlockWeights[config.NumLayersTotal];
 
-        for (int i = 0; i < config.NumLayers; i++)
+        for (int i = 0; i < config.NumLayersTotal; i++)
         {
             // Attention shapes are per-layer (gemma4: 256 on SWA layers, 512 on
             // full layers), so a single global head dim mis-sizes the F32 planes
@@ -236,8 +236,8 @@ public static class ModelFactory
             int qDim = config.NumHeads * headDim;
             // A dense leading block in a routed file is gated (DeepSeek's block 0),
             // so its fused gate‖up plane is twice the dense width even though the
-            // model's FFN kind is MoE.
-            int blockFf1Dim = config.IsDenseFfnLayer(i) ? 2 * ffnDim : wf1Dim;
+            // model's FFN kind is MoE. MTP blocks are always dense gated too.
+            int blockFf1Dim = config.IsDenseFfnLayer(i) || config.IsMtpLayer(i) ? 2 * ffnDim : wf1Dim;
             // Recurrent layers never build an AttentionLayer, so their unused
             // Wq placeholder does not need the doubled gated width.
             int qProjDim = config.IsRecurrentLayer(i) ? qDim : config.AttentionQProjDimForLayer(i);
@@ -393,7 +393,8 @@ public static class ModelFactory
         }
 
         var (visionEncoder, audioEncoder) = BuildEncoders(weights.Config);
-        var transformer = new Transformer(weights, embedding, arch, finalNorm, qOps, fullMapping, gemmaEmbeddingScale: gemmaScale, visionEncoder: visionEncoder, audioEncoder: audioEncoder, perLayerInputs: perLayerInputs);
+        var mtpHead = CreateMtpHead(weights, sharpConfig, mapping);
+        var transformer = new Transformer(weights, embedding, arch, finalNorm, qOps, fullMapping, gemmaEmbeddingScale: gemmaScale, visionEncoder: visionEncoder, audioEncoder: audioEncoder, perLayerInputs: perLayerInputs, mtpHead: mtpHead);
 
         // Streaming reloads a layer's raw buffers every token, and the Q8_0 wide repack is
         // keyed on the raw array instance, so it would rebuild several MiB of pinned LOH per
@@ -410,6 +411,51 @@ public static class ModelFactory
         if (optimizeMemory)
             transformer.FreeFloatWeights();
         return transformer;         
+    }
+
+    /// <summary>
+    /// Builds the multi-token-prediction draft head from the MTP block's weights,
+    /// or null when the model has none. One block is supported, which is what
+    /// current DeepSeek V3-style and Qwen3.5 files ship
+    /// (<c>nextn_predict_layers = 1</c>).
+    /// </summary>
+    internal static MtpHead? CreateMtpHead(
+        TransformerWeights weights, SharpMindConfig sharpConfig, Dictionary<string, string>? mapping = null)
+    {
+        var config = weights.Config;
+        if (config.NextnPredictLayers <= 0) return null;
+        if (config.NextnPredictLayers > 1)
+            throw new NotSupportedException(
+                $"Only one MTP block is supported; the file declares {config.NextnPredictLayers}.");
+
+        int layer = config.NumLayers;
+        if (layer >= weights.Blocks.Length)
+            throw new InvalidDataException("MTP layer is missing from the allocated blocks.");
+
+        var blockWeights = weights.Blocks[layer];
+        if (blockWeights.MtpEhProj is null || blockWeights.MtpHnorm is null || blockWeights.MtpEnorm is null)
+            throw new InvalidDataException(
+                "MTP block is missing nextn.eh_proj / nextn.enorm / nextn.hnorm; the file cannot draft.");
+
+        sharpConfig = sharpConfig with { Ffn = ResolveFfnKind(config, sharpConfig.Ffn) };
+        var fullMapping = mapping ?? sharpConfig.ToJigSawMapping();
+        var acts = ActivationFactory.Create(sharpConfig, fullMapping);
+        var qOps = QuantizationFactory.Create(fullMapping);
+        var normOps = NormOpsFactory.Create(sharpConfig, mapping);
+
+        int hidden = config.HiddenDim;
+        float eps = config.NormEps;
+
+        var block = BuildBlock(layer, weights, sharpConfig, mapping, acts, qOps, normOps, sharpConfig.UseHooks);
+        var hnorm = BuildNorm(hidden, sharpConfig, normOps, eps, blockWeights.MtpHnorm, null);
+        var enorm = BuildNorm(hidden, sharpConfig, normOps, eps, blockWeights.MtpEnorm, null);
+        var headNorm = BuildNorm(hidden, sharpConfig, normOps, eps,
+            blockWeights.MtpSharedHeadNorm ?? weights.FinalNormWeight, null);
+        var ehProj = LinearLayerFactory.Create(
+            "mtp_eh_proj", 2 * hidden, hidden, bias: false,
+            blockWeights.MtpEhProj, null, QuantDType.F32, mapping);
+
+        return new MtpHead(block, hnorm, enorm, ehProj, headNorm, hidden);
     }
 
     /// <summary>
@@ -454,7 +500,7 @@ public static class ModelFactory
         return (vision, audio);
     }
 
-    private static TransformerBlock BuildBlock(
+    internal static TransformerBlock BuildBlock(
         int layerIdx,
         TransformerWeights weights,
         SharpMindConfig sharpConfig,
@@ -568,7 +614,7 @@ public static class ModelFactory
         };
     }
 
-    private static NormLayer BuildNorm(int dim, SharpMindConfig sharpConfig, NormOps normOps, float eps, Tensor<float>? w, Tensor<float>? b) => sharpConfig.Norm switch
+    internal static NormLayer BuildNorm(int dim, SharpMindConfig sharpConfig, NormOps normOps, float eps, Tensor<float>? w, Tensor<float>? b) => sharpConfig.Norm switch
     {
         NormKind.RMSNorm => new RmsNormLayer(dim, eps, w, b),
         NormKind.LayerNorm => new LayerNormLayer(dim, eps, w, b, normOps),
