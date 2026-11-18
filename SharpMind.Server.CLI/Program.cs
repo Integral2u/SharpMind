@@ -62,6 +62,10 @@ for (int i = 0; i < cliArgs.Length; i++)
             if (int.TryParse(cliArgs[++i], out var prefixCacheMb) && prefixCacheMb >= 0)
                 options.PrefixCacheMB = prefixCacheMb;
             break;
+        case "--completion-batch-size" when i + 1 < cliArgs.Length:
+            if (int.TryParse(cliArgs[++i], out var batchSize) && batchSize > 0)
+                options.CompletionBatchSize = batchSize;
+            break;
         case "--api-key" when i + 1 < cliArgs.Length:
             options.ApiKey = cliArgs[++i];
             break;
@@ -445,6 +449,7 @@ static async Task SpawnServiceProcessAsync(SharpMindServerOptions options, List<
     if (options.MaxCacheLen is int maxCacheLen) args += $" --max-cache-len {maxCacheLen}";
     args += $" --max-concurrent {options.MaxConcurrentGenerations} --max-queued {options.MaxQueuedGenerations}";
     if (options.PrefixCacheMB > 0) args += $" --prefix-cache-mb {options.PrefixCacheMB}";
+    args += $" --completion-batch-size {options.CompletionBatchSize}";
     if (!string.IsNullOrEmpty(options.ApiKey)) args += $" --api-key \"{options.ApiKey}\"";
 
     var psi = new ProcessStartInfo
@@ -754,6 +759,9 @@ static void PrintUsage()
       --prefix-cache-mb <n> Keep up to n MB of finished-request KV so the next
                             turn of a conversation prefills only what is new
                             (default 0 = off)
+      --completion-batch-size <n>
+                            /v1/completions sequences decoded together per model;
+                            the KV budget is split across the rows (default 8)
       --api-key <key>       Require this key (Authorization: Bearer or
                             X-Api-Key) for shutdown/model-delete endpoints.
                             Sentinel: also sent by --stop and unload.
