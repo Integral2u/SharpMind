@@ -328,7 +328,13 @@ namespace SharpMind.Model.Layers.Attention;
         }
         if (name.Contains("attn_kv_b", StringComparison.OrdinalIgnoreCase))
         {
-            if (!isBias) Wv.LoadWeightTransposed(data);
+            // MLA reads kv_b a head at a time (absorb, expand, value readout), so
+            // it is stored head-major rather than as the plain [in, out] matrix.
+            if (isBias) return;
+            if (!Config.IsMla)
+                throw new NotSupportedException(
+                    "attn_kv_b is a Multi-head Latent Attention tensor, but this model is not MLA.");
+            MlaKvBLayout.Pack(data, _kvLoraRank, Config.NumHeads, Wv.OutFeatures / Config.NumHeads, Wv.Weight.Data);
             return;
         }
         if (name.Contains("attn_gate", StringComparison.OrdinalIgnoreCase))
@@ -878,6 +884,7 @@ namespace SharpMind.Model.Layers.Attention;
         float[] probs = sw.Rent(rows + 8);
         float[] qAbs = sw.Rent(kvLora);
         float[] outLatent = sw.Rent(kvLora);
+        var tAttn = DecodeProfiler.Begin();
         try
         {
             fixed (float* probsPtr = probs)
@@ -933,6 +940,7 @@ namespace SharpMind.Model.Layers.Attention;
             sw.Return(qAbs);
             sw.Return(outLatent);
         }
+        DecodeProfiler.Mark(DecodeStage.Scores, tAttn);
 
         var tOut = DecodeProfiler.Begin();
         var result = Wo.Forward(output, workspace);

@@ -2,6 +2,7 @@ using SharpMind.Core.Memory;
 using SharpMind.Core.Quantization;
 using SharpMind.Core.Tensors;
 using SharpMind.Model.Config;
+using SharpMind.Model.Layers.Attention;
 using static SharpMind.Model.TransformerWeights;
 
 namespace SharpMind.Model.Format;
@@ -607,9 +608,21 @@ public abstract class ModelLoaderBase(
                     int colOff = isFfnUp ? ggufOut : 0;
                     if (colOff == 0) floatTarget.Data.Clear();
                     int targetOut = floatTarget.Shape[1];
-                    for (int i = 0; i < ggufIn; i++)
-                        for (int o = 0; o < ggufOut; o++)
-                            floatTarget.Data[i * targetOut + colOff + o] = buffer[o * ggufIn + i];
+                    // MLA's kv_b is consumed a head at a time, so it is stored
+                    // head-major instead of as a plain [in, out] matrix; see
+                    // MlaKvBLayout. Same element count, no extra memory.
+                    if (colOff == 0 && weights.Config.IsMla
+                        && info.Name.Contains("attn_kv_b", StringComparison.OrdinalIgnoreCase))
+                    {
+                        int heads = weights.Config.NumHeads;
+                        MlaKvBLayout.Pack(buffer.AsSpan(0, count), ggufIn, heads, targetOut / heads, floatTarget.Data);
+                    }
+                    else
+                    {
+                        for (int i = 0; i < ggufIn; i++)
+                            for (int o = 0; o < ggufOut; o++)
+                                floatTarget.Data[i * targetOut + colOff + o] = buffer[o * ggufIn + i];
+                    }
                 }
                 else
                 {

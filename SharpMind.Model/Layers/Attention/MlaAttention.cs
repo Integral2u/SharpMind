@@ -1,3 +1,6 @@
+using System.Numerics;
+using System.Runtime.CompilerServices;
+
 namespace SharpMind.Model.Layers.Attention;
 
 /// <summary>
@@ -10,13 +13,27 @@ namespace SharpMind.Model.Layers.Attention;
 /// latent to <c>heads × (nope ‖ v)</c> — one fused matrix holding both the key
 /// and the value of every head.</para>
 ///
+/// <para><b>Layout.</b> <paramref name="w"/> is stored head-major:
+/// <c>w[(h * kvLora + j) * headStride + r]</c>, where
+/// <c>headStride = nope + vDim</c>. Every kernel here walks one head at a time,
+/// and this layout makes each of those walks sequential; see
+/// <see cref="MlaKvBLayout"/> for the packing and the measured difference.</para>
+///
 /// <para><b>Why two forms.</b> Expanding K/V costs <c>rows × kvLora ×
 /// heads(nope+v)</c>; absorbing costs <c>rows × kvLora</c> for the scores plus
 /// <c>kvLora × vDim</c> to read the values back out, per head. Prefill has many
 /// query rows sharing one expansion, so expanding wins; decode has one query row
 /// over the whole cache, so absorbing wins by an order of magnitude (≈2M
-/// multiply-adds per layer per token against ≈65k once the query is absorbed).
-/// llama.cpp makes the same split.</para>
+/// multiply-adds per layer per token against ≈65k). llama.cpp makes the same
+/// split.</para>
+///
+/// <para><b>Why hand-vectorised.</b> These loops are dot products and scaled
+/// adds over contiguous floats. The C# JIT will not vectorise a floating-point
+/// reduction (it may not reorder the adds), so the naturally written
+/// <c>sum += a[i] * b[i]</c> runs on one FMA dependency chain: 0.22 GMAC/s here
+/// against 0.56 with <see cref="Vector{T}"/>, and 1.29 once the matrix is also
+/// packed head-major. <see cref="Vector{T}"/> is 8-wide on AVX2 and 4-wide on
+/// Arm64 NEON from the same source, so no per-tier variants are needed.</para>
 /// </summary>
 internal static unsafe class MlaAttention
 {
@@ -26,10 +43,6 @@ internal static unsafe class MlaAttention
     /// <paramref name="len"/>, <paramref name="outLatent"/> scratch of
     /// <paramref name="kvLora"/>, and <paramref name="output"/> is
     /// <paramref name="heads"/> × <paramref name="vDim"/>.
-    ///
-    /// <para><paramref name="w"/> is row-major <c>[kvLora, heads × (nope +
-    /// vDim)]</c> — the loader transposes to [in, out], so column
-    /// <c>h*(nope+vDim) + j</c> is head h's j-th output.</para>
     /// </summary>
     public static void Decode(
         float* qNope, float* qRope, float* qAbs,
@@ -38,30 +51,23 @@ internal static unsafe class MlaAttention
         float* probs, float* outLatent, float* output)
     {
         int headStride = nope + vDim;
-        int outStride = heads * headStride;
         int latentStride = kvLora + ropeDim;
 
         for (int h = 0; h < heads; h++)
         {
             float* qn = qNope + (long)h * nope;
             float* qr = qRope + (long)h * ropeDim;
+            float* wh = w + (long)h * kvLora * headStride;
 
             // q_abs = W_k_b[h]ᵀ · q_nope: the key projection folded into the
             // query, so a score against a cached latent is one kvLora-dot.
             for (int j = 0; j < kvLora; j++)
-            {
-                float* wRow = w + (long)j * outStride + h * headStride;
-                float sum = 0;
-                for (int i = 0; i < nope; i++) sum += qn[i] * wRow[i];
-                qAbs[j] = sum;
-            }
+                qAbs[j] = Dot(qn, wh + (long)j * headStride, nope);
 
             for (int t = 0; t < len; t++)
             {
                 float* row = latents + (long)t * latentStride;
-                float s = 0;
-                for (int j = 0; j < kvLora; j++) s += qAbs[j] * row[j];
-                for (int r = 0; r < ropeDim; r++) s += qr[r] * row[kvLora + r];
+                float s = Dot(qAbs, row, kvLora) + Dot(qr, row + kvLora, ropeDim);
                 probs[t] = s * scale;
             }
 
@@ -73,17 +79,16 @@ internal static unsafe class MlaAttention
             {
                 float p = probs[t];
                 if (p == 0f) continue;
-                float* row = latents + (long)t * latentStride;
-                for (int j = 0; j < kvLora; j++) outLatent[j] += p * row[j];
+                Saxpy(outLatent, latents + (long)t * latentStride, p, kvLora);
             }
 
             float* outHead = output + (long)h * vDim;
-            for (int r = 0; r < vDim; r++)
+            for (int r = 0; r < vDim; r++) outHead[r] = 0;
+            for (int j = 0; j < kvLora; j++)
             {
-                float sum = 0;
-                for (int j = 0; j < kvLora; j++)
-                    sum += outLatent[j] * w[(long)j * outStride + h * headStride + nope + r];
-                outHead[r] = sum;
+                float l = outLatent[j];
+                if (l == 0f) continue;
+                Saxpy(outHead, wh + (long)j * headStride + nope, l, vDim);
             }
         }
     }
@@ -117,25 +122,19 @@ internal static unsafe class MlaAttention
                 {
                     float* k = kv + (long)t * kvStride + h * headStride;
                     float* lat = latents + (long)t * latentStride;
-                    float sum = 0;
-                    for (int i = 0; i < nope; i++) sum += qn[i] * k[i];
-                    for (int r = 0; r < ropeDim; r++) sum += qr[r] * lat[kvLora + r];
+                    float sum = Dot(qn, k, nope) + Dot(qr, lat + kvLora, ropeDim);
                     probs[t] = sum * scale;
                 }
 
                 Softmax(probs, q + 1);
 
                 float* outHead = output + ((long)s * heads + h) * vDim;
-                for (int v = 0; v < vDim; v++)
+                for (int v = 0; v < vDim; v++) outHead[v] = 0;
+                for (int t = 0; t <= q; t++)
                 {
-                    float sum = 0;
-                    for (int t = 0; t <= q; t++)
-                    {
-                        float p = probs[t];
-                        if (p == 0f) continue;
-                        sum += p * kv[(long)t * kvStride + h * headStride + nope + v];
-                    }
-                    outHead[v] = sum;
+                    float p = probs[t];
+                    if (p == 0f) continue;
+                    Saxpy(outHead, kv + (long)t * kvStride + h * headStride + nope, p, vDim);
                 }
             }
         }
@@ -163,25 +162,73 @@ internal static unsafe class MlaAttention
 
     /// <summary>
     /// Expands <paramref name="rows"/> latents through kv_b into
-    /// <paramref name="dst"/> <c>[rows, heads × (nope + vDim)]</c> — the same
-    /// product <c>Wv.Forward</c> computes, over a raw latent buffer.
+    /// <paramref name="dst"/> <c>[rows, heads × (nope + vDim)]</c> — one scaled
+    /// add over a head's contiguous 256-wide row per latent element, so each
+    /// input row is streamed exactly once.
     /// </summary>
     public static void Expand(
         float* latents, int rows, float* w, int kvLora,
         int heads, int nope, int vDim, int ropeDim, float* dst)
     {
-        int outStride = heads * (nope + vDim);
+        int headStride = nope + vDim;
         int latentStride = kvLora + ropeDim;
+        int outStride = heads * headStride;
+
         for (int t = 0; t < rows; t++)
         {
             float* lat = latents + (long)t * latentStride;
             float* outRow = dst + (long)t * outStride;
-            for (int o = 0; o < outStride; o++)
+            for (int h = 0; h < heads; h++)
             {
-                float sum = 0;
-                for (int j = 0; j < kvLora; j++) sum += lat[j] * w[(long)j * outStride + o];
-                outRow[o] = sum;
+                float* o = outRow + (long)h * headStride;
+                float* wh = w + (long)h * kvLora * headStride;
+                for (int r = 0; r < headStride; r++) o[r] = 0;
+                for (int j = 0; j < kvLora; j++)
+                {
+                    float l = lat[j];
+                    if (l == 0f) continue;
+                    Saxpy(o, wh + (long)j * headStride, l, headStride);
+                }
             }
         }
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static Vector<float> Load(float* p, int width) => new(new ReadOnlySpan<float>(p, width));
+
+    /// <summary>Dot product over contiguous floats, two vector accumulators.</summary>
+    internal static float Dot(float* a, float* b, int n)
+    {
+        int width = Vector<float>.Count;
+        var acc0 = Vector<float>.Zero;
+        var acc1 = Vector<float>.Zero;
+        int i = 0;
+        for (; i + 2 * width <= n; i += 2 * width)
+        {
+            acc0 += Load(a + i, width) * Load(b + i, width);
+            acc1 += Load(a + i + width, width) * Load(b + i + width, width);
+        }
+        for (; i + width <= n; i += width)
+            acc0 += Load(a + i, width) * Load(b + i, width);
+
+        var total = acc0 + acc1;
+        float sum = 0f;
+        for (int k = 0; k < width; k++) sum += total[k];
+        for (; i < n; i++) sum += a[i] * b[i];
+        return sum;
+    }
+
+    /// <summary><c>dst += s * src</c> over contiguous floats.</summary>
+    internal static void Saxpy(float* dst, float* src, float s, int n)
+    {
+        int width = Vector<float>.Count;
+        var sv = new Vector<float>(s);
+        int i = 0;
+        for (; i + width <= n; i += width)
+        {
+            var v = Load(dst + i, width) + sv * Load(src + i, width);
+            v.CopyTo(new Span<float>(dst + i, width));
+        }
+        for (; i < n; i++) dst[i] += s * src[i];
     }
 }

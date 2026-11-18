@@ -20,6 +20,7 @@ public unsafe class MlaAttentionTests
     private const int VDim = 2;
     private const int KvLora = 4;
     private const int Rows = 3;
+    private const int HeadStride = Nope + VDim;
 
     private static float[] Random(int n, int seed)
     {
@@ -27,6 +28,21 @@ public unsafe class MlaAttentionTests
         var a = new float[n];
         for (int i = 0; i < n; i++) a[i] = (float)(rng.NextDouble() * 2 - 1);
         return a;
+    }
+
+    /// <summary>
+    /// Reorders the plain <c>[kvLora, heads * headStride]</c> matrix the reference
+    /// indexes into the head-major blocks the kernels read.
+    /// </summary>
+    private static float[] Packed(float[] plain)
+    {
+        int outStride = Heads * HeadStride;
+        var packed = new float[plain.Length];
+        for (int h = 0; h < Heads; h++)
+            for (int j = 0; j < KvLora; j++)
+                for (int r = 0; r < HeadStride; r++)
+                    packed[(h * KvLora + j) * HeadStride + r] = plain[j * outStride + h * HeadStride + r];
+        return packed;
     }
 
     /// <summary>
@@ -100,12 +116,13 @@ public unsafe class MlaAttentionTests
 
         var expected = ReferenceDecode(qNope, qRope, latents, w, scale);
 
+        var packed = Packed(w);
         var qAbs = new float[KvLora];
         var probs = new float[Rows];
         var outLatent = new float[KvLora];
         var actual = new float[Heads * VDim];
 
-        fixed (float* pqN = qNope, pqR = qRope, pl = latents, pw = w,
+        fixed (float* pqN = qNope, pqR = qRope, pl = latents, pw = packed,
                pa = qAbs, pp = probs, po = outLatent, pOut = actual)
         {
             MlaAttention.Decode(pqN, pqR, pa, pl, Rows, pw,
@@ -125,6 +142,7 @@ public unsafe class MlaAttentionTests
         var w = Random(KvLora * Heads * (Nope + VDim), 24);
         const float scale = 0.7f;
 
+        var packed = Packed(w);
         var decoded = new float[Heads * VDim];
         var qAbs = new float[KvLora];
         var probs = new float[Rows];
@@ -132,7 +150,7 @@ public unsafe class MlaAttentionTests
         var kv = new float[Rows * Heads * (Nope + VDim)];
         var prefilled = new float[Heads * VDim];
 
-        fixed (float* pqN = qNope, pqR = qRope, pl = latents, pw = w,
+        fixed (float* pqN = qNope, pqR = qRope, pl = latents, pw = packed,
                pa = qAbs, pp = probs, po = outLatent, pkv = kv,
                pD = decoded, pP = prefilled)
         {
@@ -163,5 +181,42 @@ public unsafe class MlaAttentionTests
         Assert.Equal(1.0, sum, 6);
         Assert.True(values[1] > values[0] && values[0] > values[2]);
         Assert.Equal(0f, values[3], 6);
+    }
+
+    /// <summary>
+    /// The loader hands kv_b over in GGUF order (<c>[out][in]</c>); the kernels
+    /// read head-major blocks. A mistake here still produces plausible numbers,
+    /// so the permutation is pinned element by element.
+    /// </summary>
+    [Fact]
+    public void Pack_MovesGgufOrderIntoHeadMajorBlocks()
+    {
+        var src = Random(KvLora * Heads * HeadStride, 31);
+        var dst = new float[src.Length];
+
+        MlaKvBLayout.Pack(src, KvLora, Heads, HeadStride, dst);
+
+        for (int h = 0; h < Heads; h++)
+            for (int j = 0; j < KvLora; j++)
+                for (int r = 0; r < HeadStride; r++)
+                    Assert.Equal(src[(h * HeadStride + r) * KvLora + j], dst[(h * KvLora + j) * HeadStride + r]);
+    }
+
+    /// <summary>Packed and plain data must describe the same matrix.</summary>
+    [Fact]
+    public void Pack_AgreesWithTheReferencePermutation()
+    {
+        var plain = Random(KvLora * Heads * HeadStride, 32);
+
+        // Pack() takes GGUF order, so feed it the transpose of the plain matrix.
+        var ggufOrder = new float[plain.Length];
+        for (int j = 0; j < KvLora; j++)
+            for (int o = 0; o < Heads * HeadStride; o++)
+                ggufOrder[o * KvLora + j] = plain[j * Heads * HeadStride + o];
+
+        var packed = new float[plain.Length];
+        MlaKvBLayout.Pack(ggufOrder, KvLora, Heads, HeadStride, packed);
+
+        Assert.Equal(Packed(plain), packed);
     }
 }

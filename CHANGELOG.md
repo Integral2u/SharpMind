@@ -159,6 +159,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   29.47), and llama.cpp's own top-5 ordering for the same prompt — its logits
   differ by up to 1.1 on the runner-ups because it multiplies a Q2_K file's
   weights by activations requantised to q8_K, which the reference does not.
+  `attn_kv_b` is stored head-major (`[head][kvLora][nope | vDim]`) instead of
+  as the plain `[kvLora, heads × (nope + vDim)]` matrix: every MLA kernel walks
+  one head at a time, and in the plain layout a head's 256 columns are 4096
+  floats from the next row, so each dot is a handful of cache lines at a 16 KB
+  stride. Same element count, no extra memory. The loops are hand-vectorised
+  with `Vector<float>` (8 lanes on AVX2, 4 on NEON, one source) because the JIT
+  will not vectorise a floating-point reduction: isolated, the absorbed-decode
+  loop goes from 0.22 to 1.29 GMAC/s (0.9 to 5.2 GB/s), and in situ
+  `AttnBranch` falls from 32.3 to 13.8 ms per layer-step (5-token context,
+  back-to-back runs; the FFN term, 84-92% of decode, moved 14% the other way on
+  machine noise alone). Peak memory is unchanged and `stages` now reports the
+  MLA kernel separately from the projections.
 - **DeepSeek V3 routing knobs** - `{arch}.expert_gating_func` (1 = softmax,
   2 = sigmoid), `{arch}.expert_weights_scale` (Moonlight 2.446) and the
   `ffn_exp_probs_b` selection bias. All three are metadata-only: a missed key
