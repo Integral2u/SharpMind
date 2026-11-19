@@ -40,6 +40,17 @@ public sealed class InterceptingNetworkHandler : DelegatingHandler
         _currentArgs = [];
     }
 
+    /// <summary>
+    /// Starts gating HTTP for one tool call. A host that runs its own tool loop
+    /// can call this around a tool invocation so the same handler is gated there
+    /// too. Pair every call with <see cref="EndToolIo"/>.
+    /// </summary>
+    public void BeginToolIo(string toolName, JsonObject args, IoPermissionCheck check) =>
+        Activate(toolName, args, check);
+
+    /// <summary>Stops gating HTTP.</summary>
+    public void EndToolIo() => Deactivate();
+
     // HttpMessageHandler override
 
     protected override async Task<HttpResponseMessage> SendAsync(

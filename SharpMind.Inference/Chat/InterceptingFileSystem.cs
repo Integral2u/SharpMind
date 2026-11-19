@@ -42,6 +42,18 @@ public sealed class InterceptingFileSystem : IFileSystem
         _currentArgs = [];
     }
 
+    /// <summary>
+    /// Starts gating IO for one tool call. The chat session uses this around its
+    /// own dispatch; a host that runs its own tool loop (a remote provider, for
+    /// example) can call it around a tool invocation so plugins are gated there
+    /// too. Pair every call with <see cref="EndToolIo"/>.
+    /// </summary>
+    public void BeginToolIo(string toolName, JsonObject args, IoPermissionCheck check) =>
+        Activate(toolName, args, check);
+
+    /// <summary>Stops gating IO.</summary>
+    public void EndToolIo() => Deactivate();
+
     // Gate helper
 
     /// <summary>

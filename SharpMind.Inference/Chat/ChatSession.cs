@@ -198,7 +198,9 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         int? maxCacheLen = null,
         IInferenceEngine? engine = null,
         ToolCallFormat? toolCallFormat = null,
-        Func<IGenerator<K>>? generatorFactory = null)
+        Func<IGenerator<K>>? generatorFactory = null,
+        InterceptingFileSystem? fileSystem = null,
+        InterceptingNetworkHandler? networkHandler = null)
     {
         ArgumentNullException.ThrowIfNull(tokenizer);
         ArgumentNullException.ThrowIfNull(model);
@@ -226,8 +228,8 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         _maxCacheLen = maxCacheLen;
         _hasPermissionPolicy = permissions is not null;
         PermissionCallback = permissions ?? new Func<ToolPermissionContext, Task<ToolPermission>>(async (ctx) => { await Task.CompletedTask; return ToolPermission.Never; });
-        _fileSystem = new InterceptingFileSystem();
-        _networkHandler = new InterceptingNetworkHandler();
+        _fileSystem = fileSystem ?? new InterceptingFileSystem();
+        _networkHandler = networkHandler ?? new InterceptingNetworkHandler();
     }
 
     /// <inheritdoc />
