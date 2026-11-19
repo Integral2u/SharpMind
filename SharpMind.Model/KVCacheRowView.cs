@@ -30,7 +30,9 @@ public sealed class KVCacheRowView(IKVCache parent) : IRowPositionedKvCache
 {
     private readonly IKVCache _parent = parent;
     private int[] _rows = [];
+    private int[] _positions = [];
     private int _count;
+    private bool _explicitPositions;
 
     /// <summary>Maps view rows 0..<paramref name="rows"/>.Length-1 onto parent rows.</summary>
     public void SetRows(ReadOnlySpan<int> rows)
@@ -38,6 +40,22 @@ public sealed class KVCacheRowView(IKVCache parent) : IRowPositionedKvCache
         if (_rows.Length < rows.Length) _rows = new int[rows.Length];
         rows.CopyTo(_rows);
         _count = rows.Length;
+        _explicitPositions = false;
+    }
+
+    /// <summary>
+    /// Supplies an absolute position per view row. A draft head whose cache only
+    /// covers generated tokens needs this: its storage is append-ordered, but the
+    /// rotary position is the trunk's position for that token.
+    /// </summary>
+    public void SetPositions(ReadOnlySpan<int> positions)
+    {
+        if (positions.Length != _count)
+            throw new InvalidOperationException(
+                $"Position view has {positions.Length} row(s) but the cache view maps {_count}.");
+        if (_positions.Length < positions.Length) _positions = new int[positions.Length];
+        positions.CopyTo(_positions);
+        _explicitPositions = true;
     }
 
     public int Count => _count;
@@ -67,7 +85,7 @@ public sealed class KVCacheRowView(IKVCache parent) : IRowPositionedKvCache
     public int LengthForRow(int row) => _parent.LengthForRow(_rows[row]);
 
     /// <summary>Rows are dense from position 0 and are never trimmed while in a view.</summary>
-    public int PositionForRow(int row) => LengthForRow(row);
+    public int PositionForRow(int row) => _explicitPositions ? _positions[row] : LengthForRow(row);
 
     public unsafe float* GetKeyPtr(int batchIdx, int position, int kvHead)
         => _parent.GetKeyPtr(_rows[batchIdx], position, kvHead);
@@ -105,6 +123,9 @@ public sealed class KVCacheRowView(IKVCache parent) : IRowPositionedKvCache
 
     public void UpdateRow(int row, ReadOnlySpan<float> k, ReadOnlySpan<float> v, int numKvHeads, int headDim)
         => _parent.UpdateRow(_rows[row], k, v, numKvHeads, headDim);
+
+    public void TruncateRow(int row, int length)
+        => _parent.TruncateRow(_rows[row], length);
 
     public void Reset() => throw OwnsNoStorage(nameof(Reset));
     public void TrimToLast(int keep) => throw OwnsNoStorage(nameof(TrimToLast));

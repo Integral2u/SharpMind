@@ -420,7 +420,8 @@ public static class ModelFactory
     /// (<c>nextn_predict_layers = 1</c>).
     /// </summary>
     internal static MtpHead? CreateMtpHead(
-        TransformerWeights weights, SharpMindConfig sharpConfig, Dictionary<string, string>? mapping = null)
+        TransformerWeights weights, SharpMindConfig sharpConfig, Dictionary<string, string>? mapping = null,
+        bool floatLayers = false)
     {
         var config = weights.Config;
         if (config.NextnPredictLayers <= 0) return null;
@@ -446,7 +447,7 @@ public static class ModelFactory
         int hidden = config.HiddenDim;
         float eps = config.NormEps;
 
-        var block = BuildBlock(layer, weights, sharpConfig, mapping, acts, qOps, normOps, sharpConfig.UseHooks);
+        var block = BuildBlock(layer, weights, sharpConfig, mapping, acts, qOps, normOps, sharpConfig.UseHooks, floatLayers);
         var hnorm = BuildNorm(hidden, sharpConfig, normOps, eps, blockWeights.MtpHnorm, null);
         var enorm = BuildNorm(hidden, sharpConfig, normOps, eps, blockWeights.MtpEnorm, null);
         var headNorm = BuildNorm(hidden, sharpConfig, normOps, eps,
@@ -489,7 +490,8 @@ public static class ModelFactory
 
         bool gemmaScale = sharpConfig.Activation == ActivationKind.GELU && sharpConfig.Gate == GateKind.GeGLU;
         var (visionEncoder, audioEncoder) = BuildEncoders(weights.Config);
-        return new Transformer(weights, embedding, arch, finalNorm, qOps, fullMapping, gemmaEmbeddingScale: gemmaScale, visionEncoder: visionEncoder, audioEncoder: audioEncoder);
+        var mtpHead = CreateMtpHead(weights, sharpConfig, mapping: null, floatLayers: true);
+        return new Transformer(weights, embedding, arch, finalNorm, qOps, fullMapping, gemmaEmbeddingScale: gemmaScale, visionEncoder: visionEncoder, audioEncoder: audioEncoder, mtpHead: mtpHead);
     }
 
     /// <summary>Builds the multimodal encoders declared by the model config (null when absent).</summary>

@@ -2035,7 +2035,17 @@ static async Task<int> RunInferenceAsync(string path, string[] args)
             // probe's GenerationConfig default is 1.1. "nopenalty" zeroes it so a
             // greedy run is comparable to llama.cpp token-for-token.
             bool noPenalty = args.Any(a => a.Equals("nopenalty", StringComparison.OrdinalIgnoreCase));
-            bool mtpMode = args.Any(a => a.Equals("mtp", StringComparison.OrdinalIgnoreCase));
+            bool mtpMode = false;
+            int mtpTokens = 1;
+            foreach (string a in args)
+            {
+                if (!a.StartsWith("mtp", StringComparison.OrdinalIgnoreCase)) continue;
+                mtpMode = true;
+                ReadOnlySpan<char> suffix = a.AsSpan(3);
+                if (suffix.StartsWith("=")) suffix = suffix[1..];
+                if (int.TryParse(suffix, out int mt) && mt > 0)
+                    mtpTokens = Math.Clamp(mt, 1, GenerationConfig.MaxMtpDraftTokens);
+            }
             var rawBuilder = new StandardGeneratorBuilder<KVCacherBuilder>();
             var rawGen = rawBuilder.CreateGenerator(model, tokenizer, addBos, addEos: false, caches: null);
             var rawSample = new SamplingConfig { Temperature = 0f, TopK = 1 };
@@ -2045,13 +2055,14 @@ static async Task<int> RunInferenceAsync(string path, string[] args)
                 Stream = true,
                 RepetitionPenalty = noPenalty ? 1.0f : new GenerationConfig().RepetitionPenalty,
                 MtpDraft = mtpMode,
+                MtpDraftTokens = mtpTokens,
             };
             var rawSb = new System.Text.StringBuilder();
             var rawSw = System.Diagnostics.Stopwatch.StartNew();
             await foreach (var frag in rawGen.GenerateAsync(prompt, rawSample, rawGenCfg))
                 rawSb.Append(frag);
             rawSw.Stop();
-            Console.WriteLine($"RAW addBos={addBos} mtp={mtpMode}:{rawSb}");
+            Console.WriteLine($"RAW addBos={addBos} mtp={(mtpMode ? mtpTokens : 0)}:{rawSb}");
             if (rawGen.CurrentGeneratedIds is { Count: > 0 } generated)
                 Console.WriteLine($"IDS {string.Join(',', generated)}");
             if (rawGen is StandardGenerator<KVCacherBuilder> std)

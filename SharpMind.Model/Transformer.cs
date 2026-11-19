@@ -749,14 +749,20 @@ public sealed class Transformer : IDisposable
     }
 
     /// <summary>
-    /// One MTP draft step: given the trunk's final-normed hidden state and the
-    /// token being extended, returns the vocabulary logits for the following
+    /// One MTP draft step: given the trunk's (or the previous draft step's)
+    /// final-normed hidden state and the token being extended, returns the
+    /// head-normed hidden state and the vocabulary logits for the following
     /// token. Inputs are <c>[Batch, 1]</c>; the head's own <paramref name="cache"/>
     /// must advance in step with the accepted tokens. Mirrors llama.cpp's MTP
     /// graph: hnorm/enorm, concat, eh_proj, one full-attention block, shared head
     /// norm, LM head.
+    ///
+    /// The returned <c>Hidden</c> is the head's output for the token being
+    /// extended (after <c>shared_head_norm</c>). A multi-token draft chain feeds
+    /// it back as the next step's <c>trunkHidden</c>, which is how the MTP head
+    /// predicts further ahead. Callers own both tensors.
     /// </summary>
-    public Tensor<float> ForwardMtpLastLogits(
+    public (Tensor<float> Hidden, Tensor<float> Logits) ForwardMtp(
         Tensor<float> trunkHidden,
         Tensor<int> tokenIds,
         IKVCache cache,
@@ -782,6 +788,49 @@ public sealed class Transformer : IDisposable
         using var flat = normed.Reshape(batch, hidden);
         var logits = _logitOps.Project(flat, batch, hidden, vocab, workspace);
         ApplyFinalLogitSoftcap(logits);
+        return (normed, logits);
+    }
+
+    /// <summary>
+    /// Runs one MTP draft block and returns only its head-normed hidden state.
+    /// Used to append an accepted draft to the head's cache without paying for a
+    /// full-vocabulary LM-head projection.
+    /// </summary>
+    public Tensor<float> ForwardMtpHidden(
+        Tensor<float> trunkHidden,
+        Tensor<int> tokenIds,
+        IKVCache cache,
+        int position,
+        Core.Memory.IWorkspace? workspace = null)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(trunkHidden);
+        ArgumentNullException.ThrowIfNull(tokenIds);
+        ArgumentNullException.ThrowIfNull(cache);
+        if (_mtpHead is null)
+            throw new InvalidOperationException("This model has no MTP head.");
+
+        int batch = tokenIds.Shape.Rows;
+        if (tokenIds.Shape.Cols != 1 || trunkHidden.Shape[0] != batch || trunkHidden.Shape[1] != 1)
+            throw new ArgumentException("MTP drafts one token per row; expected [Batch, 1].");
+
+        using var embedding = _embedding.Forward(tokenIds, workspace);
+        return _mtpHead.Forward(trunkHidden, embedding, cache, position, workspace);
+    }
+
+    /// <summary>
+    /// One MTP draft step that returns only the logits for the following token.
+    /// See <see cref="ForwardMtp"/> when the chain continues past this step.
+    /// </summary>
+    public Tensor<float> ForwardMtpLastLogits(
+        Tensor<float> trunkHidden,
+        Tensor<int> tokenIds,
+        IKVCache cache,
+        int position,
+        Core.Memory.IWorkspace? workspace = null)
+    {
+        var (hidden, logits) = ForwardMtp(trunkHidden, tokenIds, cache, position, workspace);
+        hidden.Dispose();
         return logits;
     }
 

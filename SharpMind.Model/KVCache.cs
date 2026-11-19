@@ -64,6 +64,16 @@ public sealed class KVCache(int batchSize, int numKvHeads, int maxSeqLen, int he
         RecomputeMax();
     }
 
+    /// <summary>Drops trailing entries from one row only.</summary>
+    public void TruncateRow(int row, int length)
+    {
+        if ((uint)row >= (uint)_batchSize)
+            throw new ArgumentOutOfRangeException(nameof(row), row, $"Row must be in [0, {_batchSize}).");
+        if (length < 0) length = 0;
+        if (_rowLengths[row] > length) _rowLengths[row] = length;
+        RecomputeMax();
+    }
+
     public void TrimToLast(int keep)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(keep);

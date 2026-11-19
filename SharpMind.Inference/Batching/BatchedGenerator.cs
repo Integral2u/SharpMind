@@ -46,6 +46,9 @@ public sealed class BatchedGenerator : IDisposable, IAsyncDisposable
     private readonly BatchedGeneratorOptions _options;
     private readonly IKVCache[] _caches;
     private readonly KVCacheRowView[] _views;
+    private readonly IKVCache? _mtpCache;
+    private readonly KVCacheRowView? _mtpView;
+    private readonly int _mtpMaxTokens;
     private readonly IWorkspace _workspace;
     private readonly Channel<BatchedSequence> _inbox;
     private readonly CancellationTokenSource _shutdown = new();
@@ -116,6 +119,20 @@ public sealed class BatchedGenerator : IDisposable, IAsyncDisposable
                     $"{builder.GetType().Name} produced {cache.GetType().Name}.");
             _caches[i] = cache;
             _views[i] = new KVCacheRowView(cache);
+        }
+
+        if (model.Mtp is not null)
+        {
+            var mtpCache = config.IsMla
+                ? builder.CreateMlaKvCache(_options.MaxBatch, _seqLen, config.KvLoraRank + config.MlaRopeHeadDim)
+                : builder.CreateKVCache(_options.MaxBatch, config.NumKvHeads, _seqLen, config.HeadDim);
+            if (!mtpCache.SupportsRaggedRows)
+                throw new NotSupportedException(
+                    $"BatchedGenerator needs a per-row MTP cache; " +
+                    $"{builder.GetType().Name} produced {mtpCache.GetType().Name}.");
+            _mtpCache = mtpCache;
+            _mtpView = new KVCacheRowView(mtpCache);
+            _mtpMaxTokens = GenerationConfig.MaxMtpDraftTokens;
         }
 
         _workspace = MemoryHelpers.CreateWorkspace(Workspace.CalculateRequiredSize(
@@ -306,6 +323,8 @@ public sealed class BatchedGenerator : IDisposable, IAsyncDisposable
             seq.Slot = _active.Count;
             seq.State = SequenceState.Prefilling;
             seq.PromptFed = 0;
+            seq.MtpReady = false;
+            _mtpCache?.ClearRow(seq.Slot);
             _active.Add(seq);
         }
     }
@@ -344,6 +363,7 @@ public sealed class BatchedGenerator : IDisposable, IAsyncDisposable
         {
             for (int i = 0; i < _caches.Length; i++)
                 _caches[i].MoveRow(last, index);
+            _mtpCache?.MoveRow(last, index);
             var moved = _active[last];
             moved.Slot = index;
             _active[index] = moved;
@@ -354,6 +374,7 @@ public sealed class BatchedGenerator : IDisposable, IAsyncDisposable
             // next sequence admitted here would append after stale positions.
             for (int i = 0; i < _caches.Length; i++)
                 _caches[i].ClearRow(index);
+            _mtpCache?.ClearRow(index);
         }
         _active.RemoveAt(last);
         removed.MarkReleased();
@@ -410,6 +431,8 @@ public sealed class BatchedGenerator : IDisposable, IAsyncDisposable
         using (logits)
         {
             seq.PromptFed += len;
+            if (_mtpCache is not null)
+                CaptureMtpHiddenAfterPrefill(seq, len);
             SampleAndEmit(seq, logits.Data[.._vocab]);
         }
     }
@@ -431,6 +454,12 @@ public sealed class BatchedGenerator : IDisposable, IAsyncDisposable
         }
         if (count == 0) return;
 
+        if (_mtpCache is not null && TryDecodeMtp(count)) return;
+        NormalDecodeStep(count);
+    }
+
+    private void NormalDecodeStep(int count)
+    {
         for (int i = 0; i < _views.Length; i++) _views[i].SetRows(_rowSlots.AsSpan(0, count));
 
         _workspace.Reset();
@@ -453,16 +482,332 @@ public sealed class BatchedGenerator : IDisposable, IAsyncDisposable
 
         using (logits)
         {
+            if (_mtpCache is not null)
+                CaptureMtpHiddenAfterDecode(count);
+
             var data = logits.Data;
             for (int i = 0; i < count; i++)
                 SampleAndEmit(_rowSeqs[i], data.Slice(i * _vocab, _vocab));
         }
     }
 
+    /// <summary>
+    /// One batched MTP round: chain drafts for every active row, verify them in a
+    /// single <c>[count, 1+k]</c> forward, then accept/reject per row. Returns
+    /// false when any row cannot draft this step, so the caller falls back to the
+    /// ordinary one-token decode.
+    /// </summary>
+    private bool TryDecodeMtp(int count)
+    {
+        var cfg = _model.Config;
+        int hidden = cfg.HiddenDim;
+        int k = int.MaxValue;
+
+        for (int i = 0; i < count; i++)
+        {
+            var seq = _rowSeqs[i];
+            if (!seq.Generation.MtpDraft || !seq.MtpReady || seq.MtpHidden is null)
+                return false;
+            if (_mtpCache is null || _mtpView is null) return false;
+
+            int trunkLen = _caches[0].LengthForRow(seq.Slot);
+            int mtpLen = _mtpCache.LengthForRow(seq.Slot);
+            int room = Math.Min(Math.Clamp(seq.Generation.MtpDraftTokens, 1, _mtpMaxTokens),
+                Math.Min(seq.Generation.MaxNewTokens - seq.Generated.Count - 1,
+                    Math.Min(_maxPosition - trunkLen - 1,
+                        Math.Min(_seqLen - trunkLen - 2, _seqLen - mtpLen - 1))));
+            if (room < 1) return false;
+            if (room < k) k = room;
+        }
+
+        if (k < 1) return false;
+
+        for (int i = 0; i < count; i++)
+        {
+            var seq = _rowSeqs[i];
+            seq.MtpTrunkLenBeforeRun = _caches[0].LengthForRow(seq.Slot);
+            seq.MtpLenBeforeRun = _mtpCache!.LengthForRow(seq.Slot);
+            seq.MtpDraftCount = k;
+            if (seq.MtpDrafts is null || seq.MtpDrafts.Length < k) seq.MtpDrafts = new int[k];
+            if (seq.MtpChainHidden is null || seq.MtpChainHidden.Length < hidden)
+                seq.MtpChainHidden = new float[hidden];
+            seq.MtpDrafted += k;
+        }
+
+        _mtpView!.SetRows(_rowSlots.AsSpan(0, count));
+        Span<int> positions = count <= 64 ? stackalloc int[count] : new int[count];
+
+        using var hTensor = new Tensor<float>(count, 1, hidden);
+        using var idsTensor = new Tensor<int>(count, 1);
+
+        // Chain k draft steps. Each step feeds the previous step's head-normed
+        // hidden with the token it predicted, exactly like the single-sequence
+        // round; the view supplies each row's trunk position for RoPE while the
+        // head cache itself stays append-ordered.
+        for (int step = 0; step < k; step++)
+        {
+            for (int i = 0; i < count; i++)
+            {
+                var seq = _rowSeqs[i];
+                var source = step == 0 ? seq.MtpHidden! : seq.MtpChainHidden!;
+                source.AsSpan(0, hidden).CopyTo(hTensor.Data.Slice(i * hidden, hidden));
+                idsTensor.Data[i] = step == 0 ? seq.PendingToken : seq.MtpDrafts![step - 1];
+                positions[i] = seq.MtpTrunkLenBeforeRun + step;
+            }
+
+            _mtpView.SetPositions(positions);
+            _workspace.Reset();
+            Tensor<float> nextHidden;
+            Tensor<float> logits;
+            using (AcquireStepGate())
+                (nextHidden, logits) = _model.ForwardMtp(hTensor, idsTensor, _mtpView, 0, _workspace);
+            try
+            {
+                for (int i = 0; i < count; i++)
+                {
+                    var seq = _rowSeqs[i];
+                    int draft = ArgMax(logits.Data.Slice(i * _vocab, _vocab));
+                    seq.MtpDrafts![step] = draft;
+                    nextHidden.Data.Slice(i * hidden, hidden).CopyTo(seq.MtpChainHidden!);
+                }
+            }
+            finally
+            {
+                nextHidden.Dispose();
+                logits.Dispose();
+            }
+
+            Interlocked.Add(ref _steps, 1);
+        }
+
+        // One verification forward covers every row's pending token and drafts.
+        _workspace.Reset();
+        using var runInput = _workspace.Rent<int>([count, 1 + k]);
+        for (int i = 0; i < count; i++)
+        {
+            var seq = _rowSeqs[i];
+            int offset = i * (1 + k);
+            runInput.Data[offset] = seq.PendingToken;
+            for (int j = 0; j < k; j++)
+                runInput.Data[offset + 1 + j] = seq.MtpDrafts![j];
+        }
+
+        for (int i = 0; i < _views.Length; i++) _views[i].SetRows(_rowSlots.AsSpan(0, count));
+
+        var sw = Stopwatch.GetTimestamp();
+        Tensor<float> allLogits;
+        using (AcquireStepGate())
+            allLogits = _model.Forward(runInput, _views, 0, _workspace);
+
+        double seconds = Stopwatch.GetElapsedTime(sw).TotalSeconds;
+        Interlocked.Add(ref _steps, 1);
+        Interlocked.Add(ref _batchTotal, count);
+        double total = Volatile.Read(ref _decodeSeconds) + seconds;
+        Volatile.Write(ref _decodeSeconds, total);
+
+        int emitted = 0;
+        using (allLogits)
+        {
+            for (int i = 0; i < count; i++)
+                CaptureMtpRunRows(_rowSeqs[i], i * (1 + k), k);
+
+            for (int i = 0; i < count; i++)
+            {
+                var seq = _rowSeqs[i];
+                int trunkLen = seq.MtpTrunkLenBeforeRun;
+                int mtpLen = seq.MtpLenBeforeRun;
+                int runNext = 0;
+                bool stopped = false;
+
+                for (; runNext <= k; runNext++)
+                {
+                    int offset = (i * (1 + k) + runNext) * _vocab;
+                    int nextId = Sample(seq, allLogits.Data.Slice(offset, _vocab));
+                    if (TryEmitToken(seq, nextId)) { stopped = true; break; }
+                    emitted++;
+
+                    if (seq.AbandonToken.IsCancellationRequested)
+                    {
+                        Finish(seq, BatchFinishReason.Cancelled);
+                        stopped = true;
+                        break;
+                    }
+
+                    if (runNext < k)
+                    {
+                        if (nextId == seq.MtpDrafts![runNext])
+                        {
+                            seq.MtpAccepted++;
+                            if (runNext == k - 1)
+                            {
+                                // The chain only predicted the last draft; feed it
+                                // to the head now that the trunk kept it.
+                                FeedLastMtpDraft(seq, trunkLen, k);
+                                AdoptMtpHiddenRow(seq, k);
+                            }
+                            continue;
+                        }
+
+                        // Rejected: keep the verified prefix and forward the
+                        // sampled token on the next step.
+                        TruncateTrunkRow(seq, trunkLen + 1 + runNext);
+                        _mtpCache!.TruncateRow(seq.Slot, mtpLen + 1 + runNext);
+                        AdoptMtpHiddenRow(seq, runNext);
+                        seq.PendingToken = nextId;
+                        seq.State = SequenceState.Decoding;
+                        break;
+                    }
+
+                    // All drafts held; this is the extra token after the run.
+                    seq.PendingToken = nextId;
+                    seq.State = SequenceState.Decoding;
+                }
+
+                if (stopped)
+                {
+                    int keep = Math.Min(runNext, k);
+                    TruncateTrunkRow(seq, trunkLen + 1 + keep);
+                    _mtpCache!.TruncateRow(seq.Slot, mtpLen + 1 + keep);
+                    AdoptMtpHiddenRow(seq, keep);
+                }
+            }
+        }
+
+        Interlocked.Add(ref _decodedTokens, emitted);
+        return true;
+    }
+
+    private void CaptureMtpHiddenAfterDecode(int count)
+    {
+        if (count == 1)
+        {
+            CaptureMtpHiddenFromLastNormed(_rowSeqs[0]);
+            return;
+        }
+
+        for (int i = 0; i < count; i++)
+            CaptureMtpHiddenRow(_rowSeqs[i], i);
+    }
+
+    private void CaptureMtpHiddenAfterPrefill(BatchedSequence seq, int fed)
+    {
+        if (fed == 1)
+        {
+            CaptureMtpHiddenFromLastNormed(seq);
+            return;
+        }
+
+        CaptureMtpHiddenRow(seq, fed - 1);
+    }
+
+    private void CaptureMtpHiddenFromLastNormed(BatchedSequence seq)
+    {
+        var normed = _model.LastNormed;
+        if (normed is null) { seq.MtpReady = false; return; }
+        int n = _model.Config.HiddenDim;
+        seq.MtpHidden ??= new float[n];
+        normed.Data[..n].CopyTo(seq.MtpHidden);
+        seq.MtpReady = true;
+    }
+
+    private void CaptureMtpHiddenRow(BatchedSequence seq, int row)
+    {
+        int n = _model.Config.HiddenDim;
+        seq.MtpHidden ??= new float[n];
+        using var normed = _model.GetNormedHiddenRow(row);
+        if (normed is null) { seq.MtpReady = false; return; }
+        normed.Data[..n].CopyTo(seq.MtpHidden);
+        seq.MtpReady = true;
+    }
+
+    private void CaptureMtpRunRows(BatchedSequence seq, int firstRow, int k)
+    {
+        int n = _model.Config.HiddenDim;
+        int rows = k + 1;
+        if (seq.MtpRunHidden is null || seq.MtpRunHidden.Length < rows * n)
+            seq.MtpRunHidden = new float[rows * n];
+
+        for (int r = 0; r < rows; r++)
+        {
+            using var normed = _model.GetNormedHiddenRow(firstRow + r);
+            if (normed is null) { seq.MtpReady = false; return; }
+            normed.Data[..n].CopyTo(seq.MtpRunHidden.AsSpan(r * n, n));
+        }
+    }
+
+    private void AdoptMtpHiddenRow(BatchedSequence seq, int row)
+    {
+        int n = _model.Config.HiddenDim;
+        if (seq.MtpRunHidden is null || row < 0 || (long)(row + 1) * n > seq.MtpRunHidden.Length)
+        {
+            seq.MtpReady = false;
+            return;
+        }
+
+        seq.MtpHidden ??= new float[n];
+        seq.MtpRunHidden.AsSpan(row * n, n).CopyTo(seq.MtpHidden);
+        seq.MtpReady = true;
+    }
+
+    private void TruncateTrunkRow(BatchedSequence seq, int length)
+    {
+        for (int i = 0; i < _caches.Length; i++)
+            _caches[i].TruncateRow(seq.Slot, length);
+    }
+
+    private void FeedLastMtpDraft(BatchedSequence seq, int trunkLen, int k)
+    {
+        if (_mtpCache is null || _mtpView is null || seq.MtpChainHidden is null || seq.MtpDrafts is null)
+            return;
+
+        int n = _model.Config.HiddenDim;
+        using var hidden = new Tensor<float>(1, 1, n);
+        seq.MtpChainHidden.AsSpan(0, n).CopyTo(hidden.Data);
+        using var ids = new Tensor<int>(1, 1);
+        ids.Data[0] = seq.MtpDrafts[k - 1];
+
+        _mtpView.SetRows([seq.Slot]);
+        _mtpView.SetPositions([trunkLen + k]);
+        using (AcquireStepGate())
+            _model.ForwardMtpHidden(hidden, ids, _mtpView, 0, null).Dispose();
+    }
+
+    private static int ArgMax(ReadOnlySpan<float> values)
+    {
+        int best = 0;
+        float max = values[0];
+        for (int i = 1; i < values.Length; i++)
+            if (values[i] > max) { max = values[i]; best = i; }
+        return best;
+    }
+
     private void SampleAndEmit(BatchedSequence seq, ReadOnlySpan<float> logitsRow)
     {
         int nextId = Sample(seq, logitsRow);
-        if (nextId < 0) { Finish(seq, BatchFinishReason.GrammarExhausted); return; }
+        if (TryEmitToken(seq, nextId)) return;
+
+        int rowLength = _caches[0].LengthForRow(seq.Slot);
+        if (rowLength >= Math.Min(_seqLen, _maxPosition) || seq.AbandonToken.IsCancellationRequested)
+        {
+            Finish(seq, seq.AbandonToken.IsCancellationRequested
+                ? BatchFinishReason.Cancelled
+                : BatchFinishReason.ContextFull);
+            return;
+        }
+
+        seq.PendingToken = nextId;
+        seq.State = SequenceState.Decoding;
+    }
+
+    /// <summary>
+    /// Appends a sampled token to the sequence and streams its text. Returns true
+    /// when the sequence ended at this token (stop token/string, max length,
+    /// grammar exhaustion), so the caller must not use it as the next pending
+    /// token.
+    /// </summary>
+    private bool TryEmitToken(BatchedSequence seq, int nextId)
+    {
+        if (nextId < 0) { Finish(seq, BatchFinishReason.GrammarExhausted); return true; }
 
         var gen = seq.Generation;
         seq.Generated.Add(nextId);
@@ -509,31 +854,21 @@ public sealed class BatchedGenerator : IDisposable, IAsyncDisposable
         {
             seq.EndedOnStop = true;
             Finish(seq, BatchFinishReason.StopToken);
-            return;
+            return true;
         }
         if (hitStop)
         {
             seq.EndedOnStop = true;
             Finish(seq, BatchFinishReason.StopString);
-            return;
+            return true;
         }
         if (seq.Generated.Count >= gen.MaxNewTokens)
         {
             Finish(seq, BatchFinishReason.MaxTokens);
-            return;
+            return true;
         }
 
-        int rowLength = _caches[0].LengthForRow(seq.Slot);
-        if (rowLength >= Math.Min(_seqLen, _maxPosition) || seq.AbandonToken.IsCancellationRequested)
-        {
-            Finish(seq, seq.AbandonToken.IsCancellationRequested
-                ? BatchFinishReason.Cancelled
-                : BatchFinishReason.ContextFull);
-            return;
-        }
-
-        seq.PendingToken = nextId;
-        seq.State = SequenceState.Decoding;
+        return false;
     }
 
     /// <summary>Samples one token, applying the repetition penalty and grammar exactly as the streaming generator does.</summary>
@@ -608,6 +943,7 @@ public sealed class BatchedGenerator : IDisposable, IAsyncDisposable
         catch (OperationCanceledException) { }
 
         for (int i = 0; i < _caches.Length; i++) _caches[i].Dispose();
+        _mtpCache?.Dispose();
         _workspace.Dispose();
         _shutdown.Dispose();
     }

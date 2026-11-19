@@ -80,17 +80,20 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
     public (int Drafted, int Accepted) MtpStats { get; private set; }
 
     // ── MTP (NextN) drafting ────────────────────────────────────────────────
-    // One token of lookahead from the model's draft head. The head's cache only
-    // ever holds tokens that were actually fed to the trunk (it is written for
-    // the token being extended), so a rejected draft rewinds the trunk only.
+    // A chain of up to MtpDraftTokens lookahead tokens from the model's draft
+    // head. The head's cache only ever holds tokens that were actually fed to the
+    // trunk plus the drafts of the round in flight, so a rejected draft truncates
+    // it back to the verified prefix.
     private IKVCache? _mtpCache;
-    private float[]?  _mtpHidden;        // h of the last fed token
-    private float[]?  _mtpHiddenRow1;    // h of the run's second row while a draft is in flight
+    private float[]?  _mtpHidden;        // trunk h of the last verified token
+    private float[]?  _mtpChainHidden;   // head h after the last chain step (feeds the last draft)
+    private float[]?  _mtpRunHidden;     // trunk h rows [0..m] of the verification run
     private Tensor<float>? _mtpHiddenTensor;
     private bool _mtpReady;              // _mtpHidden belongs to the token before the next one
     private bool _mtpDirty;              // drafted before its trunk forward completed
-    private bool _mtpDrafting;
     private int _mtpDrafted, _mtpAccepted;
+    /// <summary>MTP head cache length before the current draft chain.</summary>
+    private int _mtpRunCacheLen;
     /// <summary>Recurrent-cache snapshots taken before the current draft run.</summary>
     private object?[]? _runSnapshots;
     /// <summary>The first token fed by the current draft run (the verified one).</summary>
@@ -195,11 +198,12 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
 
         // MTP drafting needs the head. Models with recurrent layers are handled by
         // snapshotting their state around each draft run and replaying the verified
-        // token on rejection (a rejected draft cannot rewind a recurrence). It also
-        // takes precedence over prompt lookup (one draft per step either way).
+        // tokens on rejection (a rejected draft cannot rewind a recurrence). It also
+        // takes precedence over prompt lookup (one draft source per step).
         bool mtp = genCfg.MtpDraft && _model.Mtp is not null;
+        int mtpMax = mtp ? Math.Clamp(genCfg.MtpDraftTokens, 1, GenerationConfig.MaxMtpDraftTokens) : 0;
         // Recurrent caches cannot rewind; each draft run snapshots them and a
-        // rejection restores the snapshot and replays the one verified token.
+        // rejection restores the snapshot and replays the verified tokens.
         bool hasRecurrentCaches = _caches.Any(c => !c.SupportsTruncate);
         if (mtp)
         {
@@ -241,10 +245,10 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
             }
             else if (mtp)
             {
-                // One draft means two rows: the fed token and the draft.
-                if (_runRows is null || _runRows.Length < 2 * logitsTensor.Shape[1])
-                    _runRows = new float[2 * logitsTensor.Shape[1]];
-                _runDraft ??= new int[1];
+                // One verification forward covers the fed token plus every draft.
+                if (_runRows is null || _runRows.Length < (1 + mtpMax) * logitsTensor.Shape[1])
+                    _runRows = new float[(1 + mtpMax) * logitsTensor.Shape[1]];
+                if (_runDraft is null || _runDraft.Length < mtpMax) _runDraft = new int[mtpMax];
             }
 
 
@@ -393,28 +397,29 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
                     // The draft already in the cache: no forward, the next row is ready.
                     if (runNext < runLen && nextId == _runDraft![runNext])
                     {
-                        int acceptedRow = runNext;
                         runNext++;
                         _position++;
-                        _runSnapshots = null;
-                        if (mtp && runLen == 1)
+                        if (mtp)
                         {
-                            // The trunk has now fed the draft token, so the head must
-                            // record it too: its cache has to mirror the token stream,
-                            // or the next draft attends through a hole. The hidden
-                            // state for that entry is the row before it.
-                            FeedMtpHidden(_mtpHidden!, nextId, runPos + 1 + acceptedRow);
-                            AdoptMtpHidden(_mtpHiddenRow1!);
                             _mtpAccepted++;
-                            _mtpDirty = false;
+                            if (runNext == runLen)
+                            {
+                                // Every draft was accepted. The chain stopped one
+                                // token short: its last step only predicted the last
+                                // draft, so feed that token now with the chain's
+                                // hidden state and mirror the trunk's cache.
+                                FeedMtpHidden(_mtpChainHidden!, nextId, runPos + runLen);
+                                AdoptMtpHiddenRow(runLen);
+                                _mtpDirty = false;
+                                _runSnapshots = null;
+                            }
                         }
                         continue;
                     }
 
                     // Rejected draft on a model whose recurrent layers cannot rewind:
-                    // restore their pre-run state and replay the one token the trunk
-                    // actually verified.
-                    if (mtp && runLen == 1 && runNext < runLen && _runSnapshots is not null)
+                    // restore their pre-run state and replay every verified token.
+                    if (mtp && runNext < runLen && _runSnapshots is not null)
                     {
                         for (int i = 0; i < cachesLen; i++)
                         {
@@ -425,30 +430,36 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
                         if (_cacheTokens is not null && _cacheTokens.Count > runCacheLen)
                             _cacheTokens.RemoveRange(runCacheLen, _cacheTokens.Count - runCacheLen);
 
+                        int replayLen = 1 + runNext;
                         _workspace.Reset();
-                        using var replayInput = _workspace.Rent<int>([1, 1]);
+                        using var replayInput = _workspace.Rent<int>([1, replayLen]);
                         replayInput.Data[0] = _runFirstToken;
+                        _runDraft.AsSpan(0, runNext).CopyTo(replayInput.Data[1..]);
                         logitsTensor?.Dispose();
                         logitsTensor = _model.ForwardLastLogits(replayInput, _caches, runPos, _workspace);
                         _cacheTokens?.Add(_runFirstToken);
-                        _position = runPos + 1;
-                        _mtpReady = false;
+                        _cacheTokens?.AddRange(_runDraft.AsSpan(0, runNext));
+                        _position = runPos + replayLen;
+                        // The head's cache holds the whole chain; keep the tokens
+                        // the trunk actually verified.
+                        TruncateMtpCache(_mtpRunCacheLen + replayLen);
+                        AdoptMtpHiddenRow(runNext);
                         _mtpDirty = false;
-                        CaptureMtpHidden();
                         runLen = 0;
                         _runSnapshots = null;
                         // Fall through: this iteration still forwards `nextId`, which
-                        // the trunk sampled after the verified first token.
+                        // the trunk sampled after the last verified token.
                     }
 
                     // A different token drops the unverified rows; after the last row the run
                     // simply ends (every draft held, nextId is the extra token).
                     if (runNext < runLen)
                         RollBackRun(runCacheLen + 1 + runNext, runPos + 1 + runNext);
-                    if (mtp && runLen == 1)
+                    if (mtp && runNext < runLen)
                     {
-                        // Row `runNext` is the last token the trunk actually kept.
-                        AdoptMtpHidden(runNext >= 1 ? _mtpHiddenRow1! : _mtpHidden!);
+                        // Keep the verified prefix in the head's cache too.
+                        TruncateMtpCache(_mtpRunCacheLen + 1 + runNext);
+                        AdoptMtpHiddenRow(runNext);
                         _mtpDirty = false;
                     }
                     if (drafter is not null) drafter.Record(runLen, runNext);
@@ -476,21 +487,24 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
                 }
                 else if (mtp && _mtpReady)
                 {
-                    int room = Math.Min(maxPosition - newPos - 1, cache0.MaxSeqLen - cache0.Length - 2);
-                    if (room >= 1 && step + 1 < maxNewTokens)
+                    int room = Math.Min(Math.Min(mtpMax, maxNewTokens - 1 - step),
+                                        Math.Min(maxPosition - newPos - 1, cache0.MaxSeqLen - cache0.Length - 2));
+                    if (_mtpCache is not null)
+                        room = Math.Min(room, _mtpCache.MaxSeqLen - _mtpCache.Length - 1);
+                    if (room >= 1)
                     {
-                        int draft = ProposeMtpDraft(nextId, newPos);
-                        if (draft >= 0)
+                        _mtpRunCacheLen = _mtpCache!.Length;
+                        int proposed = ProposeMtpDrafts(nextId, newPos, _runDraft.AsSpan(0, room));
+                        if (proposed > 0)
                         {
-                            _runDraft![0] = draft;
-                            m = 1;
-                            _mtpDrafted++;
+                            m = proposed;
+                            _mtpDrafted += proposed;
                             _mtpDirty = true;
                         }
                     }
                 }
 
-                if (m == 1 && mtp && hasRecurrentCaches)
+                if (m > 0 && mtp && hasRecurrentCaches)
                 {
                     // Snapshot what cannot rewind, before the run consumes it.
                     for (int i = 0; i < cachesLen; i++)
@@ -556,13 +570,26 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
                     }
                     _cacheTokens = null;
                     _position = runCacheLen;
-                    _mtpReady = false;
-                    _mtpDirty = false;
+                    if (mtp)
+                    {
+                        // The trunk kept nothing from the run; so does the head.
+                        TruncateMtpCache(_mtpRunCacheLen);
+                        _mtpReady = false;
+                        _mtpDirty = false;
+                    }
                 }
                 else
                 {
                     if (runNext < runLen)
+                    {
                         RollBackRun(runCacheLen + 1 + runNext, runPos + 1 + runNext);
+                        if (mtp)
+                        {
+                            TruncateMtpCache(_mtpRunCacheLen + 1 + runNext);
+                            AdoptMtpHiddenRow(runNext);
+                            _mtpDirty = false;
+                        }
+                    }
                     if (drafter is not null) drafter.Record(runLen, runNext);
                 }
                 _runSnapshots = null;
@@ -602,12 +629,13 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
         _mtpDirty = false;
     }
 
-    private void AdoptMtpHidden(float[] hidden)
+    private void AdoptMtpHiddenRow(int row)
     {
         _mtpReady = false;
         int n = _model.Config.HiddenDim;
-        if (_mtpHidden is null) _mtpHidden = new float[n];
-        hidden.AsSpan(0, n).CopyTo(_mtpHidden);
+        if (_mtpRunHidden is null || row < 0 || (long)(row + 1) * n > _mtpRunHidden.Length) return;
+        if (_mtpHidden is null || _mtpHidden.Length < n) _mtpHidden = new float[n];
+        _mtpRunHidden.AsSpan(row * n, n).CopyTo(_mtpHidden);
         _mtpReady = true;
     }
 
@@ -626,46 +654,74 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
     /// <summary>Stores the hidden state of every row of a verification forward.</summary>
     private void CaptureMtpHiddenRows(int m)
     {
-        if (m != 1) { _mtpReady = false; return; }
         int n = _model.Config.HiddenDim;
-        if (_mtpHidden is null) _mtpHidden = new float[n];
-        if (_mtpHiddenRow1 is null) _mtpHiddenRow1 = new float[n];
+        int rows = m + 1;
+        if (_mtpRunHidden is null || _mtpRunHidden.Length < rows * n)
+            _mtpRunHidden = new float[rows * n];
 
-        using (var row0 = _model.GetNormedHiddenRow(0))
-        using (var row1 = _model.GetNormedHiddenRow(1))
+        for (int i = 0; i < rows; i++)
         {
-            if (row0 is null || row1 is null) { _mtpReady = false; return; }
-            row0.Data[..n].CopyTo(_mtpHidden);
-            row1.Data[..n].CopyTo(_mtpHiddenRow1);
+            using var row = _model.GetNormedHiddenRow(i);
+            if (row is null) { _mtpReady = false; return; }
+            row.Data[..n].CopyTo(_mtpRunHidden.AsSpan(i * n, n));
         }
 
-        _mtpReady = true;
-        _mtpDirty = false;
+        // The rows are only adopted when the run resolves; until then no draft
+        // may be built from them.
+        _mtpReady = false;
     }
 
     /// <summary>
-    /// Asks the MTP head for the token after <paramref name="token"/>. The head
-    /// appends that token to its own cache, which is safe because the token is
-    /// already committed to the trunk at this point.
+    /// Asks the MTP head for a chain of draft tokens after <paramref name="token"/>.
+    /// Each step feeds the previous step's head-normed hidden state and the token
+    /// it predicted, so one verification forward covers the whole chain. The head
+    /// appends every fed token to its own cache; a rejected chain is truncated back
+    /// to the verified prefix by the caller.
     /// </summary>
-    private int ProposeMtpDraft(int token, int position)
+    /// <returns>The number of drafts written to <paramref name="drafts"/>.</returns>
+    private int ProposeMtpDrafts(int token, int position, Span<int> drafts)
     {
-        if (!_mtpReady || _mtpHidden is null || _mtpCache is null) return -1;
+        if (!_mtpReady || _mtpHidden is null || _mtpCache is null || drafts.Length == 0) return 0;
 
         var cfg = _model.Config;
         int hidden = cfg.HiddenDim;
+        int vocab = cfg.VocabSize;
         _mtpHiddenTensor ??= new Tensor<float>(1, 1, hidden);
+        _mtpChainHidden ??= new float[hidden];
+
         _mtpHidden.AsSpan(0, hidden).CopyTo(_mtpHiddenTensor.Data);
 
         using var ids = new Tensor<int>(1, 1);
-        ids.Data[0] = token;
-        using var logits = _model.ForwardMtpLastLogits(_mtpHiddenTensor, ids, _mtpCache, position);
-        return ArgMax(logits.Data[..cfg.VocabSize]);
+        int count = 0;
+        for (int j = 0; j < drafts.Length; j++)
+        {
+            ids.Data[0] = token;
+            var (nextHidden, logits) = _model.ForwardMtp(
+                _mtpHiddenTensor, ids, _mtpCache, position + j);
+            try
+            {
+                int draft = ArgMax(logits.Data[..vocab]);
+                drafts[j] = draft;
+                count++;
+
+                // The head's hidden for `token` is the next step's input.
+                nextHidden.Data[..hidden].CopyTo(_mtpChainHidden);
+                token = draft;
+                _mtpChainHidden.AsSpan(0, hidden).CopyTo(_mtpHiddenTensor.Data);
+            }
+            finally
+            {
+                nextHidden.Dispose();
+                logits.Dispose();
+            }
+        }
+
+        return count;
     }
 
     /// <summary>
-    /// Appends <paramref name="token"/> to the head's cache without using the
-    /// logits. An accepted draft was fed to the trunk, so the head must see it too
+    /// Appends <paramref name="token"/> to the head's cache without projecting the
+    /// LM head. An accepted draft was fed to the trunk, so the head must see it too
     /// — otherwise the next draft attends over a stream with that token missing.
     /// </summary>
     private void FeedMtpHidden(float[] hidden, int token, int position)
@@ -679,7 +735,15 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
 
         using var ids = new Tensor<int>(1, 1);
         ids.Data[0] = token;
-        using var _ = _model.ForwardMtpLastLogits(_mtpHiddenTensor, ids, _mtpCache, position);
+        using var _ = _model.ForwardMtpHidden(_mtpHiddenTensor, ids, _mtpCache, position);
+    }
+
+    /// <summary>Drops the head's unverified chain entries, keeping a verified prefix.</summary>
+    private void TruncateMtpCache(int length)
+    {
+        if (_mtpCache is null) return;
+        length = Math.Clamp(length, 0, _mtpCache.Length);
+        if (_mtpCache.Length > length) _mtpCache.Truncate(length);
     }
 
     private static int ArgMax(ReadOnlySpan<float> values)

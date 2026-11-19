@@ -104,6 +104,23 @@ public sealed class BatchedSequence : IAsyncDisposable
     internal SamplingConfig Sampling { get; }
     internal GenerationConfig Generation { get; }
 
+    // ── MTP draft state ──────────────────────────────────────────────────────
+    // The head keeps its own cache row; these buffers hold the trunk hidden of
+    // the last verified token and the chain hidden that feeds the last draft.
+    internal float[]? MtpHidden;
+    internal float[]? MtpChainHidden;
+    internal float[]? MtpRunHidden;
+    internal int[]? MtpDrafts;
+    internal int MtpDraftCount;
+    internal int MtpTrunkLenBeforeRun;
+    internal int MtpLenBeforeRun;
+    internal bool MtpReady;
+    internal int MtpDrafted;
+    internal int MtpAccepted;
+
+    /// <summary>MTP drafts proposed/accepted for this sequence (zero when it was off).</summary>
+    public (int Drafted, int Accepted) MtpStats => (MtpDrafted, MtpAccepted);
+
     /// <summary>Cancels when the caller cancels the enqueue token or disposes this handle.</summary>
     internal CancellationToken AbandonToken { get; }
 

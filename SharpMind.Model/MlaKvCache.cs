@@ -159,6 +159,16 @@ public sealed class MlaKvCache(int batchSize, int maxSeqLen, int latentDim) : IK
         RecomputeMax();
     }
 
+    /// <summary>Drops trailing entries from one row only.</summary>
+    public void TruncateRow(int row, int length)
+    {
+        if ((uint)row >= (uint)_batch)
+            throw new ArgumentOutOfRangeException(nameof(row), row, $"Row must be in [0, {_batch}).");
+        if (length < 0) length = 0;
+        if (_rowLengths[row] > length) _rowLengths[row] = length;
+        RecomputeMax();
+    }
+
     public void TrimToLast(int keep)
     {
         unsafe

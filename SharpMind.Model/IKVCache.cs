@@ -48,6 +48,14 @@ public interface IKVCache : IDisposable
         => throw new NotSupportedException($"{GetType().Name} does not support per-row updates.");
 
     /// <summary>
+    /// Drops trailing entries from one row while leaving the other rows alone. A
+    /// continuous batcher needs this when one sequence rejects speculative drafts:
+    /// its row must rewind to the verified prefix without touching its neighbours.
+    /// </summary>
+    public void TruncateRow(int row, int length)
+        => throw new NotSupportedException($"{GetType().Name} does not support per-row truncation.");
+
+    /// <summary>
     /// Moves one row's cached state to another row and clears the source. A
     /// continuous batcher uses this to keep its active rows dense when a
     /// sequence leaves.
