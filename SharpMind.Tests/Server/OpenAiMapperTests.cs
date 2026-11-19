@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.IO.Abstractions;
 using SharpMind.Inference;
 using SharpMind.Inference.Chat;
 using SharpMind.Inference.Chat.PromptFormatters;
@@ -495,6 +496,10 @@ public class OpenAiMapperTests
     private sealed class FakeTestSession : IChatSession
     {
         public Action<double>? PrefillProgress { get; set; }
+
+        public IFileSystem FileSystem { get; } = new FileSystem();
+
+        public HttpMessageHandler NetworkHandler { get; } = new HttpClientHandler();
         public int MaxTokens { get; set; }
         public int MaxNewTokens { get; set; }
         public float Temperature { get; set; }

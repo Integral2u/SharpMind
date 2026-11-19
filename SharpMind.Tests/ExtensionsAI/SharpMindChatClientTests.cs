@@ -1,6 +1,7 @@
 using Microsoft.Extensions.AI;
 using SharpMind.Extensions.AI;
 using SharpMind.Inference.Chat;
+using System.IO.Abstractions;
 
 namespace SharpMind.Tests.ExtensionsAI;
 
@@ -238,6 +239,10 @@ public sealed class SharpMindChatClientTests
     private sealed class FakeChatSession : SmIChatSession
     {
         public Action<double>? PrefillProgress { get; set; }
+
+        public IFileSystem FileSystem { get; } = new FileSystem();
+
+        public HttpMessageHandler NetworkHandler { get; } = new HttpClientHandler();
         private readonly string _responseText;
         private readonly System.Text.Json.Nodes.JsonObject? _toolCall;
         public bool Disposed;

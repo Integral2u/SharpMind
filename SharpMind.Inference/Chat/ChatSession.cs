@@ -5,6 +5,7 @@ using SharpMind.Model;
 using SharpMind.Model.Format;
 using SharpMind.Tokenization;
 using System.Collections.Concurrent;
+using System.IO.Abstractions;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -228,6 +229,14 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         _fileSystem = new InterceptingFileSystem();
         _networkHandler = new InterceptingNetworkHandler();
     }
+
+    /// <inheritdoc />
+    public IFileSystem FileSystem => _fileSystem
+        ?? throw new InvalidOperationException("The file-system gate is not available.");
+
+    /// <inheritdoc />
+    public HttpMessageHandler NetworkHandler => _networkHandler
+        ?? throw new InvalidOperationException("The network gate is not available.");
 
     public void InitializeChat(IProgress<float>? progress = null)
     {

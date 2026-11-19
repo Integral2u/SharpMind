@@ -1,6 +1,7 @@
 using Microsoft.Extensions.AI;
 using SharpMind.Extensions.AI;
 using SharpMind.Inference.Chat;
+using System.IO.Abstractions;
 
 namespace SharpMind.Tests.ExtensionsAI;
 
@@ -125,6 +126,10 @@ public sealed class ChatMessageConverterTests
     private sealed class FakeChatSession : SmIChatSession
     {
         public Action<double>? PrefillProgress { get; set; }
+
+        public IFileSystem FileSystem { get; } = new FileSystem();
+
+        public HttpMessageHandler NetworkHandler { get; } = new HttpClientHandler();
         public int MaxTokens { get; set; }
         public int MaxNewTokens { get; set; }
         public float Temperature { get; set; }
