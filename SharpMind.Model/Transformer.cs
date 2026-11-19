@@ -270,6 +270,31 @@ public sealed class Transformer : IDisposable
         return row;
     }
 
+    /// <summary>
+    /// Returns the final-normed hidden states of every row in the last forward,
+    /// shaped <c>[Batch, SeqLen, Hidden]</c>. Unlike
+    /// <see cref="GetNormedHiddenRow"/>, this keeps the whole chunk in one tensor
+    /// so an MTP head can fill its cache over a prompt in a single block pass.
+    /// The single-token decode path normalises its cached hidden in place, so that
+    /// case is copied as-is rather than normalised twice.
+    /// </summary>
+    public Tensor<float> GetNormedHiddenStates(Core.Memory.IWorkspace? workspace = null)
+    {
+        ThrowIfDisposed();
+        var hidden = _cachedHidden;
+        if (hidden is null)
+            throw new InvalidOperationException("No cached hidden state from the last forward.");
+
+        if (ReferenceEquals(_lastNormed, hidden))
+        {
+            var copy = new Tensor<float>(hidden.Shape);
+            hidden.Data.CopyTo(copy.Data);
+            return copy;
+        }
+
+        return _finalNorm.Forward(hidden, workspace);
+    }
+
     public bool SetRawWeight(string name, byte[] rawData, QuantDType dtype)
     {
         var (target, block, rawField) = _weights.ResolveTarget(name);
@@ -816,6 +841,38 @@ public sealed class Transformer : IDisposable
 
         using var embedding = _embedding.Forward(tokenIds, workspace);
         return _mtpHead.Forward(trunkHidden, embedding, cache, position, workspace);
+    }
+
+    /// <summary>
+    /// Fills the MTP head's cache over a chunk without producing logits or hidden
+    /// states. <paramref name="trunkHidden"/> is the final-normed trunk hidden
+    /// shifted one token left (the first row is the previous token's hidden) and
+    /// <paramref name="tokenIds"/> is the chunk itself; both are
+    /// <c>[Batch, SeqLen, ...]</c>. This is how a prompt prefills the draft head's
+    /// attention cache.
+    /// </summary>
+    public void ForwardMtpFill(
+        Tensor<float> trunkHidden,
+        Tensor<int> tokenIds,
+        IKVCache cache,
+        int position,
+        Core.Memory.IWorkspace? workspace = null)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(trunkHidden);
+        ArgumentNullException.ThrowIfNull(tokenIds);
+        ArgumentNullException.ThrowIfNull(cache);
+        if (_mtpHead is null)
+            throw new InvalidOperationException("This model has no MTP head.");
+
+        int batch = tokenIds.Shape.Rows;
+        int seqLen = tokenIds.Shape.Cols;
+        if (trunkHidden.Shape[0] != batch || trunkHidden.Shape[1] != seqLen)
+            throw new ArgumentException(
+                "MTP fill expects trunkHidden and tokenIds to share [Batch, SeqLen].");
+
+        using var embedding = _embedding.Forward(tokenIds, workspace);
+        _mtpHead.ForwardFill(trunkHidden, embedding, cache, position, workspace);
     }
 
     /// <summary>

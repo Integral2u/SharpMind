@@ -324,6 +324,7 @@ public sealed class BatchedGenerator : IDisposable, IAsyncDisposable
             seq.State = SequenceState.Prefilling;
             seq.PromptFed = 0;
             seq.MtpReady = false;
+            seq.MtpPrefillPrev = null;
             _mtpCache?.ClearRow(seq.Slot);
             _active.Add(seq);
         }
@@ -406,6 +407,8 @@ public sealed class BatchedGenerator : IDisposable, IAsyncDisposable
         if (len <= 0) { Finish(seq, BatchFinishReason.ContextFull); return; }
 
         bool last = len == remaining;
+        int startPosition = _caches[0].LengthForRow(seq.Slot);
+        bool mtpPrefill = _mtpCache is not null && seq.Generation.MtpDraft;
 
         _rowSlots[0] = seq.Slot;
         for (int i = 0; i < _views.Length; i++) _views[i].SetRows(_rowSlots.AsSpan(0, 1));
@@ -417,6 +420,7 @@ public sealed class BatchedGenerator : IDisposable, IAsyncDisposable
         if (!last)
         {
             using (AcquireStepGate()) _model.ForwardFill(input, _views, 0, _workspace);
+            if (mtpPrefill) FeedMtpPrefillChunk(seq, input, startPosition);
             seq.PromptFed += len;
             // Fired off the caller's thread (the scheduler's), so a host callback
             // must be thread-safe. ChatSession queues these on a concurrent queue.
@@ -430,9 +434,8 @@ public sealed class BatchedGenerator : IDisposable, IAsyncDisposable
 
         using (logits)
         {
+            if (mtpPrefill) FeedMtpPrefillChunk(seq, input, startPosition);
             seq.PromptFed += len;
-            if (_mtpCache is not null)
-                CaptureMtpHiddenAfterPrefill(seq, len);
             SampleAndEmit(seq, logits.Data[.._vocab]);
         }
     }
@@ -689,15 +692,37 @@ public sealed class BatchedGenerator : IDisposable, IAsyncDisposable
             CaptureMtpHiddenRow(_rowSeqs[i], i);
     }
 
-    private void CaptureMtpHiddenAfterPrefill(BatchedSequence seq, int fed)
+    private void FeedMtpPrefillChunk(BatchedSequence seq, Tensor<int> tokens, int position)
     {
-        if (fed == 1)
+        if (_mtpCache is null || _mtpView is null) { seq.MtpReady = false; return; }
+
+        int n = _model.Config.HiddenDim;
+        int len = tokens.Shape.Cols;
+        using var hidden = _model.GetNormedHiddenStates();
+        if (hidden.Shape[0] != 1 || hidden.Shape[1] != len || hidden.Shape[2] != n)
         {
-            CaptureMtpHiddenFromLastNormed(seq);
+            seq.MtpReady = false;
             return;
         }
 
-        CaptureMtpHiddenRow(seq, fed - 1);
+        // The head input is the trunk hidden shifted one token left: the first
+        // row pairs the chunk's first token with the previous chunk's last
+        // hidden (zero for a fresh sequence).
+        seq.MtpPrefillPrev ??= new float[n];
+        using var mtpInput = new Tensor<float>(1, len, n);
+        seq.MtpPrefillPrev.AsSpan(0, n).CopyTo(mtpInput.Data.Slice(0, n));
+        for (int s = 1; s < len; s++)
+            hidden.Data.Slice((s - 1) * n, n).CopyTo(mtpInput.Data.Slice(s * n, n));
+
+        _mtpView.SetRows([seq.Slot]);
+        _mtpView.SetPositions([position]);
+        using (AcquireStepGate())
+            _model.ForwardMtpFill(mtpInput, tokens, _mtpView, 0, null);
+
+        hidden.Data.Slice((len - 1) * n, n).CopyTo(seq.MtpPrefillPrev);
+        seq.MtpHidden ??= new float[n];
+        hidden.Data.Slice((len - 1) * n, n).CopyTo(seq.MtpHidden);
+        seq.MtpReady = true;
     }
 
     private void CaptureMtpHiddenFromLastNormed(BatchedSequence seq)

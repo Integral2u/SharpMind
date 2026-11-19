@@ -88,6 +88,7 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
     private float[]?  _mtpHidden;        // trunk h of the last verified token
     private float[]?  _mtpChainHidden;   // head h after the last chain step (feeds the last draft)
     private float[]?  _mtpRunHidden;     // trunk h rows [0..m] of the verification run
+    private float[]?  _mtpPrefillPrev;   // trunk h of the previous prompt chunk for head prefill
     private Tensor<float>? _mtpHiddenTensor;
     private bool _mtpReady;              // _mtpHidden belongs to the token before the next one
     private bool _mtpDirty;              // drafted before its trunk forward completed
@@ -233,10 +234,30 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
             // invalidate prefix tracking up-front.
             if (_cacheTokens is not null && _caches[0].Length + promptIds.Length > _caches[0].MaxSeqLen)
                 _cacheTokens = null;
+
+            // Fill the draft head's cache over the prompt in the same chunk pass.
+            // Its attention then sees the prompt instead of starting at the first
+            // generated token. Skip it when the prompt cannot fit the head cache;
+            // the round still works, it just drafts from the generated tokens only.
+            Action<int, int, int>? mtpChunk = null;
+            bool mtpPrefilled = false;
+            if (mtp && _mtpCache is not null &&
+                (long)posOffset + promptIds.Length <= _mtpCache.MaxSeqLen)
+            {
+                int h = _model.Config.HiddenDim;
+                _mtpPrefillPrev ??= new float[h];
+                Array.Clear(_mtpPrefillPrev);
+                mtpChunk = (start, len, position) => FeedMtpPrefillChunk(promptIds, start, len, position);
+                mtpPrefilled = true;
+            }
+
             logitsTensor = Prefill.ForwardLastLogitsChunked(
-                _model, _caches, promptIds, _workspace, PrefillProgress, startPosition: posOffset);
+                _model, _caches, promptIds, _workspace, PrefillProgress, startPosition: posOffset,
+                chunkCompleted: mtpChunk);
             _position = posOffset + promptIds.Length;
             _cacheTokens?.AddRange(promptIds);
+            if (mtpPrefilled)
+                AdoptMtpHidden(_mtpPrefillPrev!);
             if (drafter is not null)
             {
                 int rows = (lookupMax + 1) * logitsTensor.Shape[1];
@@ -627,6 +648,44 @@ public sealed class StandardGenerator<T> : IGenerator<T> where T : IKVCacheBuild
         _mtpCache?.Reset();
         _mtpReady = false;
         _mtpDirty = false;
+    }
+
+    private void AdoptMtpHidden(float[] hidden)
+    {
+        _mtpReady = false;
+        int n = _model.Config.HiddenDim;
+        if (hidden.Length < n) return;
+        if (_mtpHidden is null || _mtpHidden.Length < n) _mtpHidden = new float[n];
+        hidden.AsSpan(0, n).CopyTo(_mtpHidden);
+        _mtpReady = true;
+    }
+
+    /// <summary>
+    /// Feeds one prompt chunk through the draft head's block, appending its keys
+    /// and values to the head's cache. The head input is the trunk hidden shifted
+    /// one token left: row 0 is the previous chunk's last hidden (zero at the very
+    /// first token), row t > 0 is the hidden of token t-1. Only the block runs;
+    /// no hidden output or vocabulary projection is needed.
+    /// </summary>
+    private void FeedMtpPrefillChunk(int[] promptIds, int start, int len, int position)
+    {
+        if (_mtpCache is null || _mtpPrefillPrev is null) return;
+
+        int n = _model.Config.HiddenDim;
+        using var hidden = _model.GetNormedHiddenStates();
+        if (hidden.Shape[0] != 1 || hidden.Shape[1] != len || hidden.Shape[2] != n)
+            return;
+
+        using var mtpInput = new Tensor<float>(1, len, n);
+        _mtpPrefillPrev.AsSpan(0, n).CopyTo(mtpInput.Data.Slice(0, n));
+        for (int s = 1; s < len; s++)
+            hidden.Data.Slice((s - 1) * n, n).CopyTo(mtpInput.Data.Slice(s * n, n));
+
+        using var ids = new Tensor<int>(1, len);
+        promptIds.AsSpan(start, len).CopyTo(ids.Data);
+
+        _model.ForwardMtpFill(mtpInput, ids, _mtpCache, position);
+        hidden.Data.Slice((len - 1) * n, n).CopyTo(_mtpPrefillPrev);
     }
 
     private void AdoptMtpHiddenRow(int row)

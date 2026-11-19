@@ -110,6 +110,7 @@ public sealed class BatchedSequence : IAsyncDisposable
     internal float[]? MtpHidden;
     internal float[]? MtpChainHidden;
     internal float[]? MtpRunHidden;
+    internal float[]? MtpPrefillPrev;
     internal int[]? MtpDrafts;
     internal int MtpDraftCount;
     internal int MtpTrunkLenBeforeRun;

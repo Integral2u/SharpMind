@@ -69,11 +69,12 @@ public sealed record GenerationConfig
     public bool MtpDraft { get; init; }
 
     /// <summary>
-    /// Longest MTP draft chain tried per verification forward. Defaults to 1
-    /// (the one-token round); capped at <see cref="MaxMtpDraftTokens"/>. Only used
-    /// when <see cref="MtpDraft"/> is true.
+    /// Longest MTP draft chain tried per verification forward. Defaults to 4;
+    /// capped at <see cref="MaxMtpDraftTokens"/>. Only used when
+    /// <see cref="MtpDraft"/> is true. With the prompt's draft-head cache filled
+    /// during prefill, chains of 2–4 accept far more often than a single draft.
     /// </summary>
-    public int MtpDraftTokens { get; init; } = 1;
+    public int MtpDraftTokens { get; init; } = 4;
 
     /// <summary>Upper bound for <see cref="MtpDraftTokens"/>.</summary>
     public const int MaxMtpDraftTokens = 8;

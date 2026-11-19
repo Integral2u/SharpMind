@@ -47,7 +47,7 @@ public sealed class MtpDraftTests
             NumHeads = 4,
             NumKvHeads = 2,
             FfnDim = 32,
-            MaxSeqLen = 64,
+            MaxSeqLen = 180,
             NextnPredictLayers = 1,
         };
         var sharpConfig = SharpMindConfig.Gpt with { Hardware = HardwareTier.Scalar, Ffn = FfnKind.Gated };
@@ -77,7 +77,7 @@ public sealed class MtpDraftTests
         Transformer model, int[] prompt, bool mtp, int mtpTokens = 1, int maxNewTokens = 24)
     {
         var generator = new StandardGenerator<KVCacherBuilder>(
-            model, Tokenizer, addBos: false, addEos: false, seed: 1, maxCacheLen: 64);
+            model, Tokenizer, addBos: false, addEos: false, seed: 1, maxCacheLen: 180);
         var sampling = new SamplingConfig { Temperature = 0f, TopK = 1, TopP = 1f };
         var generation = new GenerationConfig
         {
@@ -131,6 +131,32 @@ public sealed class MtpDraftTests
         var run = await Generate(model, prompt, mtp: true, mtpTokens: 10_000);
         Assert.Equal(24, run.Ids.Length);
         Assert.True(run.Mtp.Drafted > 0);
+    }
+
+    [Fact]
+    public async Task PrefillFillsTheDraftHead_FirstSampledTokenHasADraft()
+    {
+        using var model = BuildModel(zero: true);
+        int[] prompt = [3, 4, 5];
+
+        // Two tokens is enough: the first is sampled from the prefill logits,
+        // and a ready head can draft for the second without an intermediate
+        // normal forward.
+        var run = await Generate(model, prompt, mtp: true, mtpTokens: 2, maxNewTokens: 2);
+        Assert.True(run.Mtp.Drafted > 0, "the prefill did not fill the draft head");
+    }
+
+    [Fact]
+    public async Task MultiChunkPrefill_FillsTheDraftHeadAndKeepsTheOutput()
+    {
+        using var model = BuildModel(zero: true);
+        int[] prompt = [.. Enumerable.Range(0, 70).Select(i => 3 + i % 20)];
+
+        var baseline = await Generate(model, prompt, mtp: false, maxNewTokens: 4);
+        var drafted = await Generate(model, prompt, mtp: true, mtpTokens: 2, maxNewTokens: 4);
+
+        Assert.Equal(baseline.Ids, drafted.Ids);
+        Assert.True(drafted.Mtp.Drafted > 0);
     }
 
     private static async Task<Run[]> GenerateBatched(
