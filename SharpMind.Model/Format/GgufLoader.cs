@@ -260,23 +260,6 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
                 "This file is a multimodal projector (mmproj), not a chat model. " +
                 "Select the backbone GGUF instead and pair the projector with it.");
 
-        // Multi-head Latent Attention (DeepSeek V2/V3, Kimi, GLM's MLA variants)
-        // fuses the projections into q_a/q_b and kv_a/kv_b. Those names contain
-        // the plain "attn_q"/"attn_k" substrings the attention layer unpacks by,
-        // so such a file would load with its sub-projections written into the
-        // wrong weights and answer from garbage. Refuse it by tensor, not by
-        // architecture name, until MLA has a real implementation.
-        string? mlaTensor = meta.Tensors
-            .Select(t => t.Name)
-            .FirstOrDefault(n => n.EndsWith(".attn_kv_a_mqa.weight", StringComparison.Ordinal));
-        if (mlaTensor != null)
-            throw new NotSupportedException(
-                $"Tensor '{mlaTensor}' makes this a Multi-head Latent Attention (MLA) model: its " +
-                "attention weights are projected through attn_q_a/attn_q_b and attn_kv_a_mqa/attn_kv_b, " +
-                "which SharpMind does not implement yet. Loading it as plain attention would produce " +
-                "garbage; convert the model to a standard-attention architecture (or run a dense " +
-                "distill such as DeepSeek-R1-Distill) and try again.");
-
         int vocabSize = 32000, hiddenDim = 1536, numLayers = 28;
         int numHeads = 12, numKvHeads = 12, ffnDim = 6144, maxSeqLen = 2048;
 
@@ -398,6 +381,38 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
         float yarnLogMul = meta.GetFloat($"{arch}.rope.scaling.yarn_log_multiplier", float.NaN);
         float? ropeYarnLogMultiplier = float.IsNaN(yarnLogMul) ? null : yarnLogMul;
 
+        // MLA: one compressed KV latent per token instead of a key and a value
+        // per head. 0 for every standard-attention model.
+        long rawKvLoraRank = meta.GetLong($"{arch}.attention.kv_lora_rank", -1);
+        int kvLoraRank = rawKvLoraRank > 0 ? (int)rawKvLoraRank : 0;
+
+        // DeepSeek V2/V3 keep their first block dense while the rest route.
+        long rawLeadingDense = meta.GetLong($"{arch}.leading_dense_block_count", -1);
+        int leadingDenseLayers = rawLeadingDense > 0 ? (int)rawLeadingDense : 0;
+        // Multi-head Latent Attention (DeepSeek V2/V3, Kimi, Moonlight). Supported
+        // for the fused layout llama.cpp converts: attn_kv_a_mqa → norm →
+        // (kv_lora_rank | rope) and attn_kv_b holding k_nope ‖ v per head. The
+        // newer split conversion (attn_k_b + attn_v_b) is a different binding and
+        // must fail loudly rather than read the wrong tensor, and a file with no
+        // kv_lora_rank cannot be sized at all.
+        string? mlaKvA = meta.Tensors
+            .Select(t => t.Name)
+            .FirstOrDefault(n => n.EndsWith(".attn_kv_a_mqa.weight", StringComparison.Ordinal));
+        if (mlaKvA != null)
+        {
+            if (meta.Tensors.Any(t => t.Name.EndsWith(".attn_k_b.weight", StringComparison.Ordinal)))
+                throw new NotSupportedException(
+                    $"Tensor '{mlaKvA}' makes this a Multi-head Latent Attention (MLA) model in the " +
+                    "split k_b/v_b layout, which SharpMind does not bind. Re-convert it with a " +
+                    "llama.cpp that writes the fused attn_kv_b tensor.");
+            if (kvLoraRank == 0)
+                throw new NotSupportedException(
+                    $"Tensor '{mlaKvA}' makes this a Multi-head Latent Attention (MLA) model, but the " +
+                    $"file carries no {arch}.attention.kv_lora_rank, so the compressed KV width is " +
+                    "unknown and the model cannot be sized.");
+        }
+
+
         long rawTie = meta.GetLong($"{arch}.tie_word_embeddings", -1);
         bool? tieWordEmbeddings = rawTie >= 0 ? (rawTie != 0) : null;
 
@@ -416,6 +431,25 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
         if (rawNormW >= 0)
             normTopKProb = rawNormW != 0;
 
+        // expert_gating_func: 1 = softmax, 2 = sigmoid (DeepSeek V3 / Moonlight).
+        // llama.cpp treats the absent key as softmax for DeepSeek V2/V2.5; any
+        // other value is a gating function this engine does not implement, and
+        // silently falling back to softmax would route every token wrong.
+        MoEGatingFunc expertGating = MoEGatingFunc.Softmax;
+        long rawGating = meta.GetLong($"{arch}.expert_gating_func", 0);
+        if (rawGating is 0 or (long)MoEGatingFunc.Softmax)
+            expertGating = MoEGatingFunc.Softmax;
+        else if (rawGating == (long)MoEGatingFunc.Sigmoid)
+            expertGating = MoEGatingFunc.Sigmoid;
+        else
+            throw new NotSupportedException(
+                $"{arch}.expert_gating_func = {rawGating} is not implemented; supported values are " +
+                $"{nameof(MoEGatingFunc.Softmax)} (1) and {nameof(MoEGatingFunc.Sigmoid)} (2).");
+
+        // DeepSeek V3 scales the routed branch after renormalising (Moonlight:
+        // 2.446). llama.cpp ignores 0 and 1.
+        float expertWeightsScale = (float)meta.GetFloat($"{arch}.expert_weights_scale", 0f);
+
         // Qwen1.5-MoE sizes the routed experts and the shared expert separately:
         // feed_forward_length (5632) is the SHARED expert, while the routed
         // experts are expert_feed_forward_length (1408) wide. Falling back to
@@ -425,6 +459,14 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
         int expertFfnDim = rawExpertFfn > 0 ? (int)rawExpertFfn : 0;
         long rawSharedFfn = meta.GetLong($"{arch}.expert_shared_feed_forward_length", -1);
         int sharedExpertFfnDim = rawSharedFfn > 0 ? (int)rawSharedFfn : 0;
+
+        // DeepSeek-V2/V3 write only the *count* of shared experts and convert
+        // them fused: n_shared 1408-wide experts become one 2816-wide tensor
+        // (ffn_gate_shexp is [hidden, 2816]). The single-shared-expert FFN path
+        // then needs the fused width, not one expert's.
+        long rawSharedCount = meta.GetLong($"{arch}.expert_shared_count", -1);
+        if (sharedExpertFfnDim == 0 && rawSharedCount > 0 && expertFfnDim > 0)
+            sharedExpertFfnDim = (int)rawSharedCount * expertFfnDim;
 
         long rawSlidingWindow = meta.GetLong($"{arch}.attention.sliding_window", -1);
         int slidingWindowSize = rawSlidingWindow > 0 ? (int)rawSlidingWindow : 0;
@@ -529,6 +571,8 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
             RopeLowFreqFactor = ropeLowFreqFactor,
             RopeHighFreqFactor = ropeHighFreqFactor,
             RopeYarnLogMultiplier = ropeYarnLogMultiplier,
+            KvLoraRank = kvLoraRank,
+            LeadingDenseLayers = leadingDenseLayers,
             TieWordEmbeddings = tieWordEmbeddings,
             NormTypeOverride = normTypeOverride,
             NumExperts = expertCount,
@@ -539,6 +583,12 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
             HasRoutedExperts = TransformerWeights.IsMoEGguf(meta.Tensors),
             ExpertFfnDim = expertFfnDim,
             SharedExpertFfnDim = sharedExpertFfnDim,
+            HasSharedExpertGate = meta.Tensors.Any(t =>
+                t.Name.Contains("gate_inp_shexp", StringComparison.OrdinalIgnoreCase)),
+            HasRouterBias = meta.Tensors.Any(t =>
+                t.Name.Contains("exp_probs_b", StringComparison.OrdinalIgnoreCase)),
+            ExpertGating = expertGating,
+            ExpertWeightsScale = expertWeightsScale,
             SlidingWindowSize = slidingWindowSize,
             SlidingWindowPattern = slidingWindowPattern,
             SwaLayers = swaLayers,

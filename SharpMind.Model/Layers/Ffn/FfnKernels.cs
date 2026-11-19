@@ -3,6 +3,7 @@ using System.Threading.Tasks;
 using SharpMind.Core.Activations;
 using SharpMind.Core.Memory;
 using SharpMind.Core.Tensors;
+using SharpMind.Model.Config;
 
 namespace SharpMind.Model.Layers.Ffn;
 
@@ -102,7 +103,10 @@ public static class FfnKernels
         ActivationOps acts,
         SharpMind.Core.Memory.IWorkspace? workspace = null,
         bool normTopKProb = false,
-        IExpertResidencyHost? residency = null)
+        IExpertResidencyHost? residency = null,
+        Tensor<float>? routerBias = null,
+        MoEGatingFunc gating = MoEGatingFunc.Softmax,
+        float weightScale = 0f)
     {
         int batch = x.ElementCount / x.Shape[^1];
         int hidden = x.Shape[^1];
@@ -116,7 +120,14 @@ public static class FfnKernels
         using var routerInput = x.Rank > 2 ? x.Reshape(batch, hidden) : null;
         using var logits = router.Forward(routerInput ?? x, workspace);
         var tRoute = DecodeProfiler.Begin();
-        using var probs = SoftmaxOverExperts(logits, workspace);
+        using var probs = gating == MoEGatingFunc.Sigmoid
+            ? SigmoidOverExperts(logits, workspace)
+            : SoftmaxOverExperts(logits, workspace);
+        // DeepSeek V3 shifts the top-k choice with a per-expert bias but takes the
+        // weight from the unbiased probability (llama.cpp build_moe_ffn keeps
+        // `probs` untouched and adds the bias to a separate `selection_probs`).
+        using var selection = routerBias is null ? null : AddRowBias(probs, routerBias, workspace);
+        var selectionProbs = selection ?? probs;
         DecodeProfiler.Mark(DecodeStage.Route, tRoute);
 
         // Residency path: select all tokens up front so the union can be loaded once, then
@@ -130,7 +141,7 @@ public static class FfnKernels
             var union = new HashSet<int>();
             for (int t = 0; t < batch; t++)
             {
-                using var tokenLogits = Tensor<float>.From(logits.RowSpan(t), logits.Shape.Cols);
+                using var tokenLogits = Tensor<float>.From(selectionProbs.RowSpan(t), selectionProbs.Shape.Cols);
                 int[] topKIdx = ArgTopK(tokenLogits, topK);
                 precomputedTopK[t] = topKIdx;
                 float weightSum = 0f;
@@ -171,7 +182,7 @@ public static class FfnKernels
             else
             {
                 // Get top-k expert indices
-                using var tokenLogits = Tensor<float>.From(logits.RowSpan(t), logits.Shape.Cols);
+                using var tokenLogits = Tensor<float>.From(selectionProbs.RowSpan(t), selectionProbs.Shape.Cols);
                 var tRouteInner = DecodeProfiler.Begin();
                 topKIdx = ArgTopK(tokenLogits, topK);
 
@@ -191,10 +202,15 @@ public static class FfnKernels
                 DecodeProfiler.Mark(DecodeStage.Route, tRouteInner);
             }
 
+            // llama.cpp applies w_scale after renormalising and skips both 0 and 1
+            // (DeepSeek V2 writes 1, Moonlight 2.446).
+            float scaleW = weightScale is > 0f and not 1f ? weightScale : 1f;
+
             foreach (int expertIdx in topKIdx)
             {
                 float weight = normTopKProb ? probs.RowSpan(t)[expertIdx] / weightSum
                                             : probs.RowSpan(t)[expertIdx];
+                weight *= scaleW;
                 // Gated uses ws for all intermediates — no heap allocs
                 using var expertOut = Gated(tokenInput, wGate[expertIdx],
                                              wUp[expertIdx], wDown[expertIdx], acts, ws);
@@ -218,6 +234,53 @@ public static class FfnKernels
             System.Threading.Tasks.Parallel.For(0, batch, ProcessToken);
         }
 
+        return result;
+    }
+
+    /// <summary>
+    /// Per-expert sigmoid (DeepSeek V3's <c>expert_gating_func = 2</c>), with no
+    /// cross-expert normalisation: the selected top-k are renormalised later only
+    /// when the file asks for it.
+    /// </summary>
+    public static Tensor<float> SigmoidOverExperts(Tensor<float> logits, SharpMind.Core.Memory.IWorkspace? workspace = null)
+    {
+        Span<int> dims = stackalloc int[logits.Rank];
+        logits.Shape.CopyDims(dims);
+        Tensor<float> result = workspace != null
+            ? workspace.Rent<float>(dims)
+            : new Tensor<float>(logits.Shape);
+        for (int i = 0; i < logits.Shape.Rows; i++)
+        {
+            var src = logits.RowSpan(i);
+            var dst = result.RowSpan(i);
+            for (int j = 0; j < src.Length; j++) dst[j] = 1f / (1f + MathF.Exp(-src[j]));
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Adds a per-expert vector to every row, producing the tensor the top-k
+    /// selection runs on when the file carries a router selection bias.
+    /// </summary>
+    public static Tensor<float> AddRowBias(
+        Tensor<float> probs, Tensor<float> bias, SharpMind.Core.Memory.IWorkspace? workspace = null)
+    {
+        if (bias.ElementCount != probs.Shape.Cols)
+            throw new ArgumentException(
+                $"Router bias has {bias.ElementCount} entries but the router produced {probs.Shape.Cols} experts.",
+                nameof(bias));
+        Span<int> dims = stackalloc int[probs.Rank];
+        probs.Shape.CopyDims(dims);
+        Tensor<float> result = workspace != null
+            ? workspace.Rent<float>(dims)
+            : new Tensor<float>(probs.Shape);
+        var biasData = bias.Data;
+        for (int i = 0; i < probs.Shape.Rows; i++)
+        {
+            var src = probs.RowSpan(i);
+            var dst = result.RowSpan(i);
+            for (int j = 0; j < src.Length; j++) dst[j] = src[j] + biasData[j];
+        }
         return result;
     }
 

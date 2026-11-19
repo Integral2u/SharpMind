@@ -75,7 +75,10 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
                     ? new DeltaNetCache(model.Config.SsmConvKernel, model.Config.SsmConvDim,
                         model.Config.SsmTimeStepRank, model.Config.SsmStateSize,
                         model.Config.SsmValueHeadDim, 1, maxSeqLen)
-                    : new T().CreateKVCache(1, numKvHeads, maxSeqLen, model.Config.HeadDimForLayer(i));
+                    : model.Config.IsMla
+                        ? new T().CreateMlaKvCache(1, maxSeqLen,
+                            model.Config.KvLoraRank + model.Config.MlaRopeHeadDim)
+                        : new T().CreateKVCache(1, numKvHeads, maxSeqLen, model.Config.HeadDimForLayer(i));
     }
 
     _workspace = MemoryHelpers.CreateWorkspace(Workspace.CalculateRequiredSize(model.Config.HiddenDim, model.Config.FfnDim, model.Config.VocabSize, model.Config.NumLayers, model.Config.MaxSeqLen));

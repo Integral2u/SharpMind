@@ -95,26 +95,41 @@ public sealed class RoPE : PositionalEncoder
         string.Equals(scalingType, "yarn", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
-    /// The YaRN attention factor llama.cpp applies to the rope tables
-    /// (llama-context.cpp, "when YARN is applied with yarn_ext_factor != 0"):
-    /// <c>get_mscale(f, mscale) / get_mscale(f, mscale_all) / (1 + 0.1 ln f)</c>,
-    /// with <c>get_mscale(s, m) = 0.1 m ln s + 1</c> for s &gt; 1. DeepSeek-V2
-    /// writes <c>mscale = mscale_all_dim = 0.0707</c>, which makes the ratio 1.
+    /// The YaRN attention factor that ends up in the rope tables. llama.cpp
+    /// builds it in two steps that cancel: llama-context.cpp sets
+    /// <c>yarn_attn_factor = get_mscale(f, mscale) / get_mscale(f, mscale_all)</c>
+    /// and then divides by <c>(1 + 0.1 ln f)</c> "to cancel this factor" because
+    /// ggml's <c>rope_yarn</c> multiplies the tables back by
+    /// <c>(1 + 0.1 ln(1/freq_scale))</c> when <c>ext_factor != 0</c>. SharpMind
+    /// folds the whole rotation into one frequency table and has no second
+    /// multiply, so the table factor is just the ratio.
+    ///
+    /// <para>For DeepSeek-V2 the file writes <c>mscale = mscale_all_dim =
+    /// 0.0707</c> (llama.cpp's [TAG_DEEPSEEK2_YARN_LOG_MUL_FIX] reads it as
+    /// 0.707 and uses it for both), so the ratio is 1 and the tables are plain
+    /// cos/sin. The <c>mscale²</c> temperature then lives entirely in MLA's
+    /// kq_scale pre-scale, as llama.cpp's deepseek2 graph does it. Dividing here
+    /// as well left every rope dim at 0.7305 of its weight — 0.5336 of the score
+    /// — invisible at one token, wrong from a handful of positions on.</para>
+    ///
+    /// <para>Returns the ratio times the file's <c>rope.scaling.attn_factor</c>
+    /// (HuggingFace's <c>mscale</c>), which SharpMind does not read yet and
+    /// which is 1 in every DeepSeek file.</para>
     /// </summary>
     internal static float YarnMscale(float factor, float logMultiplier)
     {
         static float GetMscale(float scale, float mscale) =>
             scale <= 1f ? 1f : 0.1f * mscale * MathF.Log(scale) + 1f;
 
-        float mscaleAll = logMultiplier == 0f ? 1f : logMultiplier;
+        if (logMultiplier == 0f)
+            return GetMscale(factor, 1f);
+
+        float mscaleAll = logMultiplier;
         // llama.cpp's [TAG_DEEPSEEK2_YARN_LOG_MUL_FIX]: DeepSeek-V2's 0.707 is
         // both mscale and mscale_all_dim, so the ratio collapses to 1.
-        float mscale = logMultiplier != 0f && logMultiplier != 1f ? logMultiplier : 1f;
+        float mscale = logMultiplier != 1f ? logMultiplier : 1f;
 
-        float attn = logMultiplier == 0f
-            ? GetMscale(factor, 1f)
-            : GetMscale(factor, mscale) / GetMscale(factor, mscaleAll);
-        return attn * (1f / (1f + 0.1f * MathF.Log(factor)));
+        return GetMscale(factor, mscale) / GetMscale(factor, mscaleAll);
     }
 
     /// <summary>

@@ -233,6 +233,27 @@ public sealed record ModelConfig
     public bool NormTopKProb { get; init; }
 
     /// <summary>
+    /// How the router logits become expert probabilities. GGUF key:
+    /// {arch}.expert_gating_func (1 = softmax, 2 = sigmoid); absent means
+    /// softmax, which is llama.cpp's default for DeepSeek V2 and V2.5 files.
+    /// </summary>
+    public MoEGatingFunc ExpertGating { get; init; } = MoEGatingFunc.Softmax;
+
+    /// <summary>
+    /// Multiplier applied to the routed experts' combined weight after
+    /// renormalisation. GGUF key: {arch}.expert_weights_scale (DeepSeek V2
+    /// writes 1, Moonlight 2.446). llama.cpp skips both 0 and 1.
+    /// </summary>
+    public float ExpertWeightsScale { get; init; }
+
+    /// <summary>
+    /// True when the file carries a per-expert router selection bias
+    /// (<c>ffn_exp_probs_b</c>, DeepSeek V3). It shifts which experts are
+    /// selected only — the weights come from the unbiased probabilities.
+    /// </summary>
+    public bool HasRouterBias { get; init; }
+
+    /// <summary>
     /// Width of a single routed expert's FFN. GGUF key:
     /// {arch}.expert_feed_forward_length. 0 means "same as <see cref="FfnDim"/>".
     /// </summary>
@@ -313,6 +334,48 @@ public sealed record ModelConfig
     /// meaningful when <see cref="RopeScalingType"/> is "yarn".
     /// </summary>
     public float? RopeYarnLogMultiplier { get; init; }
+
+    // Multi-head Latent Attention (DeepSeek V2/V3, Kimi, Moonlight)
+
+    /// <summary>
+    /// Compressed KV width ({arch}.attention.kv_lora_rank). Zero for every
+    /// standard-attention model; a positive value means MLA, where each token
+    /// caches one <c>kv_lora_rank + qk_rope_head_dim</c> latent instead of a
+    /// key and a value per head.
+    /// </summary>
+    public int KvLoraRank { get; init; }
+
+    /// <summary>True when the model uses Multi-head Latent Attention.</summary>
+    public bool IsMla => KvLoraRank > 0;
+
+    /// <summary>
+    /// Number of leading blocks whose FFN is dense even though the file is MoE
+    /// ({arch}.leading_dense_block_count). DeepSeek V2/V3 keep block 0 dense and
+    /// route every later block; binding block 0's ffn_gate as the router writes a
+    /// 10944-wide tensor into a 64-wide one.
+    /// </summary>
+    public int LeadingDenseLayers { get; init; }
+
+    /// <summary>
+    /// True when the file carries a sigmoid gate on the shared expert
+    /// (<c>ffn_gate_inp_shexp</c>, Qwen1.5-MoE). DeepSeek's shared experts are
+    /// added ungated, and inventing a gate layer for them multiplies the branch
+    /// by sigmoid(0) = 0.5.
+    /// </summary>
+    public bool HasSharedExpertGate { get; init; }
+
+    /// <summary>True when this block's FFN is dense despite the file being MoE.</summary>
+    public bool IsDenseFfnLayer(int layerIndex) => layerIndex < LeadingDenseLayers;
+
+    /// <summary>
+    /// Width of the rotary slice MLA keeps outside the latent
+    /// (<c>{arch}.rope.dimension_count</c>, 64 in DeepSeek V2/V3). MLA splits a
+    /// head into a nope part and this rope part, and only the rope part rotates.
+    /// </summary>
+    public int MlaRopeHeadDim => RopeDimForLayer(0);
+
+    /// <summary>Width of the non-rotary part of an MLA head.</summary>
+    public int MlaNopeHeadDim => HeadDim - MlaRopeHeadDim;
 
     /// <summary>Pre-computed RoPE frequencies from GGUF (rope_freqs.weight), if present.</summary>
     public float[]? PrecomputedRopeFreqs { get; init; }

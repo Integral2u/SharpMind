@@ -181,9 +181,36 @@ public class MoeGgufExpertBindingTests
         Assert.Null(weights.ResolveTarget("blk.0.ffn_gate_inp_shexp.weight").rawField);
     }
 
+    /// <summary>
+    /// DeepSeek V3's <c>ffn_exp_probs_b</c> is a rank-1 [NumExperts] bias that
+    /// shifts the top-k choice. It lands in WRouterBias, which the training
+    /// exporter also uses for a plain <c>ffn_gate.bias</c>, so the MoE-only guard
+    /// keeps a dense block's gate bias out of it.
+    /// </summary>
     [Fact]
-    public void ResolveTarget_RouterUsesFloatPathAndIsNotBoundToGatedFfn()
+    public void ResolveTarget_RouterSelectionBiasBindsToWRouterBias()
     {
+        var weights = WeightsFor(MoEConfig());
+        weights.IsMoE = true;
+
+        var target = weights.ResolveFloatTarget("blk.0.exp_probs_b.bias");
+        Assert.NotNull(target);
+        Assert.Equal(NumExperts, target!.ElementCount);
+        Assert.Same(target, weights.Blocks[0].WRouterBias);
+
+        // The loader only calls ResolveFloatTarget when ResolveTarget names the
+        // block; without that the bias stays zero and the routing silently drops it.
+        var (_, block, rawField) = weights.ResolveTarget("blk.0.exp_probs_b.bias");
+        Assert.NotNull(block);
+        Assert.Null(rawField);
+
+        // A non-MoE block has no router, so the name must not create one.
+        var dense = WeightsFor(MoEConfig());
+        Assert.Null(dense.ResolveFloatTarget("blk.0.exp_probs_b.bias"));
+    }
+
+    [Fact]
+    public void ResolveTarget_RouterUsesFloatPathAndIsNotBoundToGatedFfn()    {
         var weights = WeightsFor(MoEConfig());
         weights.IsMoE = true;
         weights.IsMoE = true;

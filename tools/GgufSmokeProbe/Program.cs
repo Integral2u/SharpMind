@@ -1266,7 +1266,7 @@ static int RunCompare(string pathA, string[] args)
     }
     catch (Exception ex)
     {
-        Console.WriteLine($"cmp FAILED: {ex.GetType().Name}: {ex.Message}");
+        Console.WriteLine($"cmp FAILED: {ex}");
         return 1;
     }
 }
@@ -1460,7 +1460,7 @@ static async Task<int> RunToolProbeAsync(string path, string[] args)
     }
     catch (Exception ex)
     {
-        Console.WriteLine($"toolprobe FAILED: {ex.GetType().Name}: {ex.Message}");
+        Console.WriteLine($"toolprobe FAILED: {ex}");
         Console.WriteLine(ex.StackTrace);
         return 1;
     }
@@ -1511,7 +1511,7 @@ static int RunMeta(string path)
     }
     catch (Exception ex)
     {
-        Console.WriteLine($"FAILED: {ex.GetType().Name}: {ex.Message}");
+        Console.WriteLine($"FAILED: {ex}");
         return 1;
     }
 }
@@ -1540,7 +1540,7 @@ static int RunDump(string path, string[] args)
     }
     catch (Exception ex)
     {
-        Console.WriteLine($"FAILED: {ex.GetType().Name}: {ex.Message}");
+        Console.WriteLine($"FAILED: {ex}");
         return 1;
     }
 }
@@ -1683,7 +1683,7 @@ static int RunForward(string path, string[] args)
     }
     catch (Exception ex)
     {
-        Console.WriteLine($"forward FAILED: {ex.GetType().Name}: {ex.Message}");
+        Console.WriteLine($"forward FAILED: {ex}");
         Console.WriteLine(ex.StackTrace);
         return 1;
     }
@@ -1745,7 +1745,7 @@ static int RunForwardMulti(string path, string[] args)
     }
     catch (Exception ex)
     {
-        Console.WriteLine($"fwdmulti FAILED: {ex.GetType().Name}: {ex.Message}");
+        Console.WriteLine($"fwdmulti FAILED: {ex}");
         return 1;
     }
 }
@@ -1788,7 +1788,7 @@ static int RunLoadOne(string path, string[] args)
     }
     catch (Exception ex)
     {
-        Console.WriteLine($"load FAILED: {ex.GetType().Name}: {ex.Message}");
+        Console.WriteLine($"load FAILED: {ex}");
         return 1;
     }
 }
@@ -1852,7 +1852,7 @@ static int RunBenchLoad(string path, string[] args)
     }
     catch (Exception ex)
     {
-        Console.WriteLine($"benchload FAILED: {ex.GetType().Name}: {ex.Message}");
+        Console.WriteLine($"benchload FAILED: {ex}");
         return 1;
     }
 }
@@ -2103,7 +2103,7 @@ static async Task<int> RunInferenceAsync(string path, string[] args)
     }
     catch (Exception ex)
     {
-        Console.WriteLine($"\nFAILED: {ex.GetType().Name}: {ex.Message}");
+        Console.WriteLine($"\nFAILED: {ex}");
         return 1;
     }
 }
@@ -2265,7 +2265,7 @@ static async Task<int> RunBenchAsync(string path, string[] args)
     }
     catch (Exception ex)
     {
-        Console.WriteLine($"\nFAILED: {ex.GetType().Name}: {ex.Message}");
+        Console.WriteLine($"\nFAILED: {ex}");
         return 1;
     }
     finally
@@ -2564,7 +2564,7 @@ static async Task<int> RunStagesAsync(string path, string[] args)
     }
     catch (Exception ex)
     {
-        Console.WriteLine($"\nFAILED: {ex.GetType().Name}: {ex.Message}");
+        Console.WriteLine($"\nFAILED: {ex}");
         return 1;
     }
 }

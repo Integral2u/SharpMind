@@ -82,4 +82,77 @@ public sealed class FileDerivedFfnTests
             if (File.Exists(path)) File.Delete(path);
         }
     }
+
+    /// <summary>
+    /// DeepSeek V3 / Moonlight routing knobs. All three are metadata-only: a
+    /// missed key does not fail, it routes every token by the V2 rule and
+    /// quietly degrades the output (wrong gate, unnormalised weights, a missing
+    /// 2.4x branch scale), so the parse is pinned here.
+    /// </summary>
+    [Fact]
+    public void GgufLoader_ReadsExpertGatingWeightsScaleAndSelectionBias()
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"FileDerivedFfn_{Guid.NewGuid():N}.gguf");
+        try
+        {
+            var bias = new GgufTensor
+            {
+                Name = "blk.0.exp_probs_b.bias",
+                Shape = [64],
+                Dtype = QuantDType.F32,
+                GetBytes = () => new byte[64 * 4],
+            };
+            GgufWriter.Write(
+                path,
+                [
+                    new GgufKvPair { Key = "general.architecture", Value = "deepseek2" },
+                    new GgufKvPair { Key = "deepseek2.expert_count", Value = 64 },
+                    new GgufKvPair { Key = "deepseek2.expert_used_count", Value = 6 },
+                    new GgufKvPair { Key = "deepseek2.expert_gating_func", Value = 2 },
+                    new GgufKvPair { Key = "deepseek2.expert_weights_norm", Value = true },
+                    new GgufKvPair { Key = "deepseek2.expert_weights_scale", Value = 2.446f },
+                ],
+                [bias]);
+
+            var config = GgufLoader.LoadConfig(GgufLoader.LoadMeta(path));
+
+            Assert.NotNull(config);
+            Assert.Equal(MoEGatingFunc.Sigmoid, config!.ExpertGating);
+            Assert.True(config.NormTopKProb);
+            Assert.Equal(2.446f, config.ExpertWeightsScale, 4);
+            Assert.True(config.HasRouterBias);
+        }
+        finally
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    /// <summary>
+    /// A gating function this engine does not implement (ggml also defines
+    /// softmax-weight and sqrt-softplus variants) must fail loudly: falling back
+    /// to softmax would keep the model running and answering wrong.
+    /// </summary>
+    [Fact]
+    public void GgufLoader_RejectsAnUnknownExpertGatingFunc()
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"FileDerivedFfn_{Guid.NewGuid():N}.gguf");
+        try
+        {
+            GgufWriter.Write(
+                path,
+                [
+                    new GgufKvPair { Key = "general.architecture", Value = "deepseek2" },
+                    new GgufKvPair { Key = "deepseek2.expert_gating_func", Value = 3 },
+                ],
+                []);
+
+            var ex = Assert.Throws<NotSupportedException>(() => GgufLoader.LoadConfig(GgufLoader.LoadMeta(path)));
+            Assert.Contains("expert_gating_func", ex.Message);
+        }
+        finally
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
 }

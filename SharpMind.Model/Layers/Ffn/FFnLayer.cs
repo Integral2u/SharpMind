@@ -148,6 +148,15 @@ public abstract class FfnLayer : IDisposable
     /// <summary>Scalar sigmoid gate applied to the shared branch's output. Null when absent.</summary>
     protected readonly LinearLayer? SharedGateInp;
 
+    /// <summary>
+    /// Per-expert router selection bias (DeepSeek V3's <c>ffn_exp_probs_b</c>).
+    /// It changes which experts are picked, never the weights. Null when absent.
+    /// </summary>
+    protected readonly Tensor<float>? RouterBias;
+
+    /// <summary>Per-expert router selection bias as the layer sees it, or null.</summary>
+    public Tensor<float>? RouterBiasWeights => RouterBias;
+
     /// <summary>Always-on shared expert gate projection. Null for models without one.</summary>
     public LinearLayer? SharedExpertGateLayer => SharedGate;
 
@@ -215,6 +224,12 @@ public abstract class FfnLayer : IDisposable
                         null, null,
                         DtypeFromMeta(weights, $"RawWdownExp_{i}", weights?.QuantDtypeWdownExp?.GetValueOrDefault(i) ?? QuantDType.F32), mapping))];
 
+                // DeepSeek V3's router selection bias (ffn_exp_probs_b). Allocated
+                // up front, like attn_gate, so the loader has a target even when the
+                // block was built before its tensors were read.
+                if (config.HasRouterBias && weights is not null)
+                    RouterBias = weights.WRouterBias ??= new Tensor<float>(config.NumExperts);
+
                 // Always-on shared expert. Its width is its own dimension, not the
                 // routed experts'. SharedGateInp is the [1, HiddenDim] sigmoid gate
                 // HF applies to the shared branch's output.
@@ -230,9 +245,14 @@ public abstract class FfnLayer : IDisposable
                     SharedDown = LinearLayerFactory.Create("shared_expert_down_proj", sharedFfn, config.HiddenDim, true,
                         null, null,
                         DtypeFromMeta(weights, "RawWSharedDown", weights?.QuantDtypeSharedDown ?? QuantDType.F32), mapping);
-                    SharedGateInp = LinearLayerFactory.Create("shared_expert_gate_inp", config.HiddenDim, 1, false,
-                        null, null,
-                        DtypeFromMeta(weights, "RawWSharedGateInp", QuantDType.F32), mapping);
+                    // Only when the file actually carries the gate. Creating it
+                    // unconditionally gave every ungated shared expert (DeepSeek)
+                    // an all-zero [HiddenDim, 1] row, so the branch was scaled by
+                    // sigmoid(0) = 0.5 in all 26 MoE layers.
+                    if (config.HasSharedExpertGate)
+                        SharedGateInp = LinearLayerFactory.Create("shared_expert_gate_inp", config.HiddenDim, 1, false,
+                            null, null,
+                            DtypeFromMeta(weights, "RawWSharedGateInp", QuantDType.F32), mapping);
                 }
                 break;
         }

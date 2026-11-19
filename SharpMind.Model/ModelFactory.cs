@@ -207,7 +207,14 @@ public static class ModelFactory
                 // LFM3 per-head attention gate: a 2D float tensor that the loader fills.
                 // Streaming used to leave this null, so the gate layer fell back to a
                 // one-column placeholder and the first forward threw.
-                AttnGate = config.HeadGatedAttention ? new Tensor<float>(config.HiddenDim, config.NumHeads) : null
+                AttnGate = config.HeadGatedAttention ? new Tensor<float>(config.HiddenDim, config.NumHeads) : null,
+                // MLA's kv_b must stay a matrix: the absorbed decode reads it and
+                // prefill expands through it, and neither goes through Wv.Forward's
+                // raw path. 8.4 MB per layer for DeepSeek-V2-Lite.
+                Wv = config.IsMla
+                    ? new Tensor<float>(config.KvLoraRank,
+                        config.NumHeads * (config.MlaNopeHeadDim + config.ValueDim))
+                    : null
             };
         }
         return blocks;
@@ -227,23 +234,35 @@ public static class ModelFactory
             // on the full-load path.
             int headDim = config.HeadDimForLayer(i);
             int qDim = config.NumHeads * headDim;
+            // A dense leading block in a routed file is gated (DeepSeek's block 0),
+            // so its fused gate‖up plane is twice the dense width even though the
+            // model's FFN kind is MoE.
+            int blockFf1Dim = config.IsDenseFfnLayer(i) ? 2 * ffnDim : wf1Dim;
             // Recurrent layers never build an AttentionLayer, so their unused
             // Wq placeholder does not need the doubled gated width.
             int qProjDim = config.IsRecurrentLayer(i) ? qDim : config.AttentionQProjDimForLayer(i);
             int kvDim = config.NumKvHeads * headDim;
 
+            // MLA: kv_a (hidden → latent+rope) in the K slot, kv_b (latent →
+            // heads × (nope‖v)) in the V slot, and the output projection reads
+            // the value width rather than the q/k head width.
+            int wKOut = config.IsMla ? config.KvLoraRank + config.MlaRopeHeadDim : kvDim;
+            int wVIn = config.IsMla ? config.KvLoraRank : config.HiddenDim;
+            int wVOut = config.IsMla ? config.NumHeads * (config.MlaNopeHeadDim + config.ValueDim) : kvDim;
+            int wOIn = config.IsMla ? config.NumHeads * config.ValueDim : qDim;
+
             var block = new TransformerWeights.BlockWeights(
                 new Tensor<float>(config.HiddenDim, qProjDim),      // Wq (query + optional gate)
-                new Tensor<float>(config.HiddenDim, kvDim),          // Wk
-                new Tensor<float>(config.HiddenDim, kvDim),          // Wv
-                new Tensor<float>(qDim, config.HiddenDim),           // Wo
+                new Tensor<float>(config.HiddenDim, wKOut),          // Wk (MLA: kv_a)
+                new Tensor<float>(wVIn, wVOut),                      // Wv (MLA: kv_b)
+                new Tensor<float>(wOIn, config.HiddenDim),           // Wo
                 new Tensor<float>(qProjDim),                          // WqB
                 new Tensor<float>(kvDim),                            // WkB
                 new Tensor<float>(kvDim),                            // WvB
                 new Tensor<float>(config.HiddenDim),                  // WoB
-                new Tensor<float>(config.HiddenDim, wf1Dim),         // Wf1
+                new Tensor<float>(config.HiddenDim, blockFf1Dim),         // Wf1
                 new Tensor<float>(ffnDim, config.HiddenDim),         // Wf2
-                new Tensor<float>(wf1Dim),                            // Wf1B
+                new Tensor<float>(blockFf1Dim),                            // Wf1B
                 new Tensor<float>(config.HiddenDim),                  // Wf2B
                 Tensor<float>.Ones(config.HiddenDim),                 // Norm1W
                 layerNorm ? new Tensor<float>(config.HiddenDim) : null, // Norm1B
@@ -261,6 +280,8 @@ public static class ModelFactory
             {
                 LayerIndex = i,
             };
+            if (config.IsMla)
+                block.KvANormW = new Tensor<float>(config.KvLoraRank);
 
             if (config.IsRecurrentLayer(i))
             {
@@ -532,6 +553,12 @@ public static class ModelFactory
         Dictionary<string, string>? cfg = null)
     {
         var blockWeights = weights.Blocks[layerIdx];
+        // A routed file can keep a dense leading block (DeepSeek V2/V3: block 0
+        // is an ordinary SwiGLU FFN, everything after it routes). The dense
+        // layers of those families are gated, so build that rather than a router
+        // for a block that has no `ffn_gate_inp`.
+        if (weights.Config.IsDenseFfnLayer(layerIdx))
+            return new GatedFfnLayer(weights.Config, acts, qOps, blockWeights, cfg);
         return sharpConfig.Ffn switch
         {
             FfnKind.Dense => new DenseFfnLayer(weights.Config, acts, qOps, blockWeights, cfg),
