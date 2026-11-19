@@ -14,6 +14,10 @@ namespace SharpMind.Tests.Model;
 /// plausible logits. These pin the property that matters — a batch of N rows must
 /// give exactly the answers N single-row passes give, for both a prompt prefill
 /// and the per-token decode step that follows it.
+///
+/// The ragged variants are the ones a real batcher needs: sequences arrive with
+/// different prompt lengths, so rows sit at different cache positions, and both
+/// the attention window and the rotary positions must be taken per row.
 /// </summary>
 public sealed class BatchedDecodeTests
 {
@@ -53,6 +57,14 @@ public sealed class BatchedDecodeTests
         int vocab = logits.Shape[^1];
         long offset = (long)row * vocab;
         return [.. logits.Data[(int)offset..(int)(offset + vocab)]];
+    }
+
+    private static KVCacheRowView[] Views(IKVCache[] caches) =>
+        [.. caches.Select(c => new KVCacheRowView(c))];
+
+    private static void MapRows(KVCacheRowView[] views, params int[] rows)
+    {
+        foreach (var view in views) view.SetRows(rows);
     }
 
     /// <summary>
@@ -140,5 +152,233 @@ public sealed class BatchedDecodeTests
             for (int v = 0; v < want.Length; v++)
                 Assert.Equal(want[v], got[v], 4);
         }
+    }
+
+    /// <summary>
+    /// Real batched decode: every sequence is at a different position because
+    /// the prompts differ in length. The cache must keep a length per row, and
+    /// RoPE must be applied per row. A single shared position would rotate row
+    /// 3's token as if it sat at row 0's position and still produce plausible
+    /// floating-point noise, so this compares against per-sequence answers.
+    /// </summary>
+    [Fact]
+    public void RaggedBatchedDecode_MatchesPerSequenceDecode()
+    {
+        int[] lengths = [3, 5, 7, 2];
+        int[][] prompts = [.. lengths.Select((len, i) => Prompt(len, 400 + i))];
+        int[] nextTokens = [.. Enumerable.Range(0, Batch).Select(i => Prompt(1, 500 + i)[0])];
+
+        using var model = BuildModel();
+        var caches = BuildCaches(Batch);
+        var views = Views(caches);
+
+        // Prefill one sequence at a time into its own slot.
+        for (int b = 0; b < Batch; b++)
+        {
+            MapRows(views, b);
+
+            using var prompt = new Tensor<int>(1, lengths[b]);
+            for (int t = 0; t < lengths[b]; t++) prompt.Data[t] = prompts[b][t];
+            using var _ = model.ForwardLastLogits(prompt, views, 0, null);
+        }
+
+        for (int b = 0; b < Batch; b++)
+            Assert.Equal(lengths[b], caches[0].LengthForRow(b));
+
+        // One batched step over rows sitting at four different positions.
+        MapRows(views, 0, 1, 2, 3);
+
+        using var step = new Tensor<int>(Batch, 1);
+        for (int b = 0; b < Batch; b++) step.Data[b] = nextTokens[b];
+        using var batchLogits = model.ForwardLastLogits(step, views, 0, null);
+
+        for (int b = 0; b < Batch; b++)
+        {
+            var single = BuildCaches(1);
+            using var prompt = new Tensor<int>(1, lengths[b]);
+            for (int t = 0; t < lengths[b]; t++) prompt.Data[t] = prompts[b][t];
+            using (var _ = model.ForwardLastLogits(prompt, single, 0, null)) { }
+
+            using var one = new Tensor<int>(1, 1);
+            one.Data[0] = nextTokens[b];
+            using var expected = model.ForwardLastLogits(one, single, lengths[b], null);
+
+            var want = Row(expected, 0);
+            var got = Row(batchLogits, b);
+            for (int v = 0; v < want.Length; v++)
+                Assert.Equal(want[v], got[v], 4);
+
+            foreach (var cache in single) cache.Dispose();
+        }
+
+        for (int b = 0; b < Batch; b++)
+            Assert.Equal(lengths[b] + 1, caches[0].LengthForRow(b));
+
+        foreach (var cache in caches) cache.Dispose();
+    }
+
+    /// <summary>
+    /// Prefill a chunk after a cached prefix in one row while the other rows sit
+    /// elsewhere: the chunk must land right after that row's own history, and
+    /// only that row may advance.
+    /// </summary>
+    [Fact]
+    public void RaggedChunkInOneRow_LeavesOtherRowsUntouched()
+    {
+        using var model = BuildModel();
+        var caches = BuildCaches(Batch);
+        var views = Views(caches);
+
+        MapRows(views, 1);
+        using (var first = new Tensor<int>(1, 2))
+        {
+            first.Data[0] = 5; first.Data[1] = 9;
+            using var _ = model.ForwardLastLogits(first, views, 0, null);
+        }
+        Assert.Equal(2, caches[0].LengthForRow(1));
+        Assert.Equal(0, caches[0].LengthForRow(0));
+
+        MapRows(views, 1);
+        using (var more = new Tensor<int>(1, 3))
+        {
+            more.Data[0] = 4; more.Data[1] = 6; more.Data[2] = 8;
+            using var _ = model.ForwardLastLogits(more, views, 2, null);
+        }
+
+        Assert.Equal(5, caches[0].LengthForRow(1));
+        Assert.Equal(0, caches[0].LengthForRow(0));
+        Assert.Equal(0, caches[0].LengthForRow(2));
+        Assert.Equal(0, caches[0].LengthForRow(3));
+
+        // A row that moves must take its own state with it.
+        foreach (var cache in caches) cache.MoveRow(1, 3);
+        Assert.Equal(0, caches[0].LengthForRow(1));
+        Assert.Equal(5, caches[0].LengthForRow(3));
+
+        foreach (var cache in caches) cache.Dispose();
+    }
+
+    /// <summary>
+    /// A longer forward must reproduce the shorter one for the rows they share:
+    /// row 0 of a two-token pass has seen exactly the cache a one-token pass sees.
+    /// Speculative verification depends on this — the draft row must not leak into
+    /// the row that samples the real token.
+    /// </summary>
+    [Fact]
+    public void LongerPass_ReproducesEarlierRowLogits()
+    {
+        const int len = 4;
+        int[] prompt = Prompt(len, 600);
+        int next = 7, draft = 11;
+
+        using var model = BuildModel();
+
+        var shortCaches = BuildCaches(1);
+        using (var promptTensor = new Tensor<int>(1, len))
+        {
+            for (int t = 0; t < len; t++) promptTensor.Data[t] = prompt[t];
+            using var _ = model.ForwardLastLogits(promptTensor, shortCaches, 0, null);
+        }
+
+        using var one = new Tensor<int>(1, 1);
+        one.Data[0] = next;
+        using var expected = model.ForwardLastLogits(one, shortCaches, len, null);
+
+        var longCaches = BuildCaches(1);
+        using (var promptTensor = new Tensor<int>(1, len))
+        {
+            for (int t = 0; t < len; t++) promptTensor.Data[t] = prompt[t];
+            using var _ = model.ForwardLastLogits(promptTensor, longCaches, 0, null);
+        }
+
+        using var two = new Tensor<int>(1, 2);
+        two.Data[0] = next;
+        two.Data[1] = draft;
+        using var both = model.Forward(two, longCaches, len, null);
+
+        var want = Row(expected, 0);
+        var got = Row(both, 0);
+        for (int v = 0; v < want.Length; v++)
+            Assert.Equal(want[v], got[v], 3);
+    }
+
+    /// <summary>
+    /// Same property for Multi-head Latent Attention, whose decode path absorbs
+    /// <c>kv_b</c> into the query and reads one latent per cached position. Rows
+    /// at different lengths must not share a position or a latent count.
+    /// </summary>
+    [Fact]
+    public void RaggedMlaBatch_MatchesPerSequenceMlaDecode()
+    {
+        var cfg = new ModelConfig
+        {
+            VocabSize = 64,
+            HiddenDim = 32,
+            NumLayers = 2,
+            NumHeads = 4,
+            NumKvHeads = 1,
+            FfnDim = 64,
+            MaxSeqLen = 64,
+            KvLoraRank = 4,
+            RopeDim = 2,
+            ValueLength = 4,
+        };
+        Assert.True(cfg.IsMla);
+
+        var sharpConfig = SharpMindConfig.Gpt with { Hardware = HardwareTier.Scalar };
+        var weights = ModelFactory.CreateForTraining(cfg, sharpConfig);
+        WeightInitializer.InitializeRandomly(weights, 777);
+        // The latent RMS norm keeps its allocated zeros; ones are the neutral weight.
+        foreach (var block in weights.Blocks) block.KvANormW?.Data.Fill(1f);
+
+        using var model = ModelFactory.CreateTrainingTransformer(weights, sharpConfig);
+        int latentDim = cfg.KvLoraRank + cfg.MlaRopeHeadDim;
+
+        IKVCache[] Caches(int rows) =>
+            [.. Enumerable.Range(0, cfg.NumLayers).Select(_ => (IKVCache)new MlaKvCache(rows, cfg.MaxSeqLen, latentDim))];
+
+        int[] lengths = [3, 5, 7];
+        int[][] prompts = [.. lengths.Select((len, i) => Prompt(len, 800 + i))];
+        int[] nextTokens = [3, 17, 41];
+
+        var caches = Caches(3);
+        var views = Views(caches);
+
+        for (int b = 0; b < 3; b++)
+        {
+            MapRows(views, b);
+            using var prompt = new Tensor<int>(1, lengths[b]);
+            for (int t = 0; t < lengths[b]; t++) prompt.Data[t] = prompts[b][t];
+            using var _ = model.ForwardLastLogits(prompt, views, 0, null);
+        }
+
+        for (int b = 0; b < 3; b++)
+            Assert.Equal(lengths[b], caches[0].LengthForRow(b));
+
+        MapRows(views, 0, 1, 2);
+        using var step = new Tensor<int>(3, 1);
+        for (int b = 0; b < 3; b++) step.Data[b] = nextTokens[b];
+        using var batchLogits = model.ForwardLastLogits(step, views, 0, null);
+
+        for (int b = 0; b < 3; b++)
+        {
+            var single = Caches(1);
+            using var prompt = new Tensor<int>(1, lengths[b]);
+            for (int t = 0; t < lengths[b]; t++) prompt.Data[t] = prompts[b][t];
+            using (var _ = model.ForwardLastLogits(prompt, single, 0, null)) { }
+
+            using var one = new Tensor<int>(1, 1);
+            one.Data[0] = nextTokens[b];
+            using var expected = model.ForwardLastLogits(one, single, lengths[b], null);
+
+            var want = Row(expected, 0);
+            var got = Row(batchLogits, b);
+            for (int v = 0; v < want.Length; v++)
+                Assert.Equal(want[v], got[v], 4);
+
+            foreach (var cache in single) cache.Dispose();
+        }
+
+        foreach (var cache in caches) cache.Dispose();
     }
 }

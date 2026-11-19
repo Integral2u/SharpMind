@@ -308,6 +308,16 @@ public abstract class TransformerWeights : IDisposable
                 if (name.Contains("attn_k_norm", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
                 // Gemma-4 per-layer-embedding block tensors (F32, float path).
                 if (name.Contains("inp_gate", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
+                // MTP head tensors are float (eh_proj is read as a matrix) and must
+                // be matched before the generic ".proj.weight" rule below.
+                if (name.Contains("nextn.", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (name.Contains("shared_head_head", StringComparison.OrdinalIgnoreCase) ||
+                        name.Contains("embed_tokens", StringComparison.OrdinalIgnoreCase))
+                        throw new NotSupportedException(
+                            $"'{name}' is a separate MTP head tensor; only a shared output head is supported.");
+                    return (null, block, null);
+                }
                 if (name.Contains(".proj.weight", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
                 if (name.Contains("layer_output_scale", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
                 if (name.Contains("post_norm", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
@@ -433,6 +443,21 @@ public abstract class TransformerWeights : IDisposable
             // planes: its ffn_* tensors are the ordinary gated FFN. Every MoE
             // branch below keys off this, not off IsMoE alone.
             bool moeLayer = IsMoE && !Config.IsDenseFfnLayer(bIdx);
+
+            // MTP head tensors are float-only (see ResolveTarget): eh_proj is read
+            // as a matrix, the norms are vectors.
+            if (name.Contains("nextn.", StringComparison.OrdinalIgnoreCase))
+            {
+                if (name.Contains("eh_proj", StringComparison.OrdinalIgnoreCase))
+                    return b.MtpEhProj ??= new Tensor<float>(2 * Config.HiddenDim, Config.HiddenDim);
+                if (name.Contains("enorm", StringComparison.OrdinalIgnoreCase))
+                    return b.MtpEnorm ??= new Tensor<float>(Config.HiddenDim);
+                if (name.Contains("hnorm", StringComparison.OrdinalIgnoreCase))
+                    return b.MtpHnorm ??= new Tensor<float>(Config.HiddenDim);
+                if (name.Contains("shared_head_norm", StringComparison.OrdinalIgnoreCase))
+                    return b.MtpSharedHeadNorm ??= new Tensor<float>(Config.HiddenDim);
+                return null;
+            }
 
             if (Config.IsRecurrentLayer(bIdx) && !name.Contains("bias", StringComparison.OrdinalIgnoreCase))
             {
@@ -799,6 +824,15 @@ else
         /// models such as Gemma-3 use a different theta for windowed layers).
         /// </summary>
         public int LayerIndex { get; init; }
+
+        // MTP (multi-token prediction / NextN) draft-head tensors on the MTP
+        // block. The block's own attention and FFN planes bind through the normal
+        // fields; these are the head's mode-mixing tensors. Kept float: eh_proj
+        // is read as a matrix, the norms are vectors.
+        public Tensor<float>? MtpEhProj { get; set; }
+        public Tensor<float>? MtpEnorm { get; set; }
+        public Tensor<float>? MtpHnorm { get; set; }
+        public Tensor<float>? MtpSharedHeadNorm { get; set; }
 
         // Attention float tensors (nullable — Full mode populates all; Cached mode populates on demand)
         public Tensor<float>? Wq { get; set; }

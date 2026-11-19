@@ -417,9 +417,32 @@ namespace SharpMind.Model.Layers.Attention;
         SharpMindConfig.ValMqaFlashScalar, NS + "." + nameof(AttentionKernels.ScaledDotProductFlashScalar))]
     public abstract unsafe void ScaledDotProduct(float* q, float* k, float* v, float* o, int seqLen, int kvLen, int headDim, float scale, bool causal, int qStride, int oStride, float alibiSlope, int windowSize);
 
-    public Tensor<float> Forward( Tensor<float> x, int positionOffset = 0, bool causal = true, IKVCache? cache = null, Core.Memory.IWorkspace? workspace = null, int windowSize = 0)
+    /// <summary>
+    /// Applies the positional encoding to a <c>[Batch, SeqLen, Heads, HeadDim]</c>
+    /// tensor. A row-positioned cache (batched decode) supplies one start
+    /// position per row; otherwise the single <paramref name="positionOffset"/>
+    /// applies to every row, which is the uniform prefill/decode case.
+    /// </summary>
+    private void ApplyPositions(Tensor<float> x, int positionOffset, IKVCache? cache)
+        => ApplyPositions(PositionalEncoder, x, positionOffset, cache);
+
+    private static void ApplyPositions(PositionalEncoder encoder, Tensor<float> x, int positionOffset, IKVCache? cache)
     {
-        ThrowIfDisposed();
+        if (cache is IRowPositionedKvCache rows && x.Shape[0] > 0)
+        {
+            int batch = x.Shape[0];
+            Span<int> positions = batch <= 64 ? stackalloc int[batch] : new int[batch];
+            for (int b = 0; b < batch; b++)
+                positions[b] = rows.PositionForRow(b);
+            encoder.ApplyBatched(x, positions);
+            return;
+        }
+
+        encoder.ApplyBatched(x, positionOffset);
+    }
+
+    public Tensor<float> Forward( Tensor<float> x, int positionOffset = 0, bool causal = true, IKVCache? cache = null, Core.Memory.IWorkspace? workspace = null, int windowSize = 0)
+    {        ThrowIfDisposed();
         if (Config.IsMla)
             return ForwardMla(x, positionOffset, causal, cache, workspace);
         int batch = x.Shape[0];
@@ -472,8 +495,8 @@ namespace SharpMind.Model.Layers.Attention;
         using var qr = qForAttn.Reshape(batch, seqLen, numH, headDim);
         using var kr = kForAttn.Reshape(batch, seqLen, numKv, headDim);
         var tRope = DecodeProfiler.Begin();
-        PositionalEncoder.ApplyBatched(qr, positionOffset);
-        PositionalEncoder.ApplyBatched(kr, positionOffset);
+        ApplyPositions(qr, positionOffset, cache);
+        ApplyPositions(kr, positionOffset, cache);
         DecodeProfiler.Mark(DecodeStage.Rope, tRope);
 
         // Use the (possibly normed) K and V for cache storage. A KV-sharing
@@ -547,6 +570,11 @@ namespace SharpMind.Model.Layers.Attention;
                     if (qr is null) throw new NullReferenceException($"[DoUnit u={u}] qr is null");
                     if (output is null) throw new NullReferenceException($"[DoUnit u={u}] output is null");
 
+                    // Per-row cache length: batched decodes mix sequences at
+                    // different positions, and each row attends over exactly its
+                    // own history. Single-row caches report their one length.
+                    int kvLen = cache != null ? cache.LengthForRow(b) : seqLen;
+
                     // Per-head pointers into the query and output buffers.
                     float AlibiFor(int h) => PositionalEncoder is AlibiEncoder alibi ? alibi.Slopes[h] : 0f;
 
@@ -559,7 +587,7 @@ namespace SharpMind.Model.Layers.Attention;
                             float* pQ = qr.DataPtr + (long)(b * seqLen * numH + h) * headDim;
                             float* pO = output.DataPtr + (long)(b * seqLen * qDim + h * headDim);
                             ScaledDotProductForQuantized(cache.QuantKind, pQ, qK, qV,
-                                pO, seqLen, effectiveKvLen, headDim, scale, causal, qStride, oStride, AlibiFor(h), windowSize);
+                                pO, seqLen, kvLen, headDim, scale, causal, qStride, oStride, AlibiFor(h), windowSize);
                         }
                     }
                     else if (cache is { IsContiguous: true })
@@ -572,7 +600,7 @@ namespace SharpMind.Model.Layers.Attention;
                         {
                             float* pQ = qr.DataPtr + (long)(b * seqLen * numH + h) * headDim;
                             float* pO = output.DataPtr + (long)(b * seqLen * qDim + h * headDim);
-                            ScaledDotProduct(pQ, pK, pV, pO, seqLen, effectiveKvLen, headDim, scale, causal, qStride, oStride, AlibiFor(h), windowSize);
+                            ScaledDotProduct(pQ, pK, pV, pO, seqLen, kvLen, headDim, scale, causal, qStride, oStride, AlibiFor(h), windowSize);
                         }
                     }
                     else
@@ -583,7 +611,7 @@ namespace SharpMind.Model.Layers.Attention;
 
                         if (cache != null)
                         {
-                            for (int s = 0; s < effectiveKvLen; s++)
+                            for (int s = 0; s < kvLen; s++)
                             {
                                 float* srcK = cache.GetKeyPtr(b, s, kvHead);
                                 float* srcV = cache.GetValuePtr(b, s, kvHead);
@@ -593,7 +621,7 @@ namespace SharpMind.Model.Layers.Attention;
                         }
                         else
                         {
-                            for (int s = 0; s < effectiveKvLen; s++)
+                            for (int s = 0; s < kvLen; s++)
                             {
                                 float* srcK = kr.DataPtr + (long)((b * seqLen + s) * numKv + kvHead) * headDim;
                                 float* srcV = vForAttn.DataPtr + (long)(b * seqLen * kvDim + s * kvDim + kvHead * headDim);
@@ -606,7 +634,7 @@ namespace SharpMind.Model.Layers.Attention;
                         {
                             float* pQ = qr.DataPtr + (long)(b * seqLen * numH + h) * headDim;
                             float* pO = output.DataPtr + (long)(b * seqLen * qDim + h * headDim);
-                            ScaledDotProduct(pQ, pK, pV, pO, seqLen, effectiveKvLen, headDim, scale, causal, qStride, oStride, AlibiFor(h), windowSize);
+                            ScaledDotProduct(pQ, pK, pV, pO, seqLen, kvLen, headDim, scale, causal, qStride, oStride, AlibiFor(h), windowSize);
                         }
                     }
                 }
@@ -833,8 +861,8 @@ namespace SharpMind.Model.Layers.Attention;
 
         var tRope = DecodeProfiler.Begin();
         using (var kRopeView = kRope.Reshape(batch, seqLen, 1, rope))
-            _mlaRope!.ApplyBatched(kRopeView, positionOffset);
-        _mlaRope.ApplyBatched(qRope, positionOffset);
+            ApplyPositions(_mlaRope!, kRopeView, positionOffset, cache);
+        ApplyPositions(_mlaRope!, qRope, positionOffset, cache);
         DecodeProfiler.Mark(DecodeStage.Rope, tRope);
 
         // Cache the latent: normed 512-wide part followed by the rotated 64-wide
@@ -855,29 +883,11 @@ namespace SharpMind.Model.Layers.Attention;
         if (cache != null && Config.HasOwnKv(LayerIndex))
             cache.Update(latent, latent, 1, latentDim);
 
-        // Every position the queries may attend to, as latents: the cache when
-        // one exists (it now includes this batch), otherwise this batch.
+        // Every position the queries may attend to, as latents. With a cache
+        // each row's history sits contiguously at that row's slot, so read it
+        // in place — ragged rows cost nothing extra, and each row reports its
+        // own length. Without a cache this batch is all there is.
         int rows = cache?.Length ?? seqLen;
-        bool ownLatents = cache is not MlaKvCache || rows == seqLen;
-        using var latentsAll = ownLatents ? null : new Tensor<float>(batch, rows, latentDim);
-        float* latentsPtr;
-        if (ownLatents)
-        {
-            latentsPtr = latent.DataPtr;
-        }
-        else
-        {
-            var mlaCache = (MlaKvCache)cache!;
-            for (int b = 0; b < batch; b++)
-            {
-                Buffer.MemoryCopy(
-                    mlaCache.GetKeyPtr(b, 0, 0),
-                    latentsAll!.DataPtr + (long)b * rows * latentDim,
-                    (long)rows * latentDim * sizeof(float),
-                    (long)rows * latentDim * sizeof(float));
-            }
-            latentsPtr = latentsAll!.DataPtr;
-        }
 
         using var output = new Tensor<float>(batch, seqLen, heads * vDim);
         var sw = System.Buffers.ArrayPool<float>.Shared;
@@ -893,17 +903,29 @@ namespace SharpMind.Model.Layers.Attention;
             {
                 float* w = Wv.Weight.DataPtr;
 
+                float* LatentsFor(int b, out int rowsB)
+                {
+                    if (cache is null)
+                    {
+                        rowsB = seqLen;
+                        return latent.DataPtr + (long)b * seqLen * latentDim;
+                    }
+                    rowsB = cache.LengthForRow(b);
+                    return cache.GetKeyPtr(b, 0, 0);
+                }
+
                 if (seqLen == 1)
                 {
                     // Decode: absorb kv_b into the query. One 512-dot per cached
                     // position instead of expanding 4096 values from it.
                     for (int b = 0; b < batch; b++)
                     {
+                        float* latentsB = LatentsFor(b, out int rowsB);
                         MlaAttention.Decode(
                             qNope.DataPtr + (long)b * heads * nope,
                             qRope.DataPtr + (long)b * heads * rope,
                             qAbsPtr,
-                            latentsPtr + (long)b * rows * latentDim, rows, w,
+                            latentsB, rowsB, w,
                             kvLora, heads, nope, vDim, rope, scale,
                             probsPtr, outLatentPtr,
                             output.DataPtr + (long)b * heads * vDim);
@@ -916,18 +938,20 @@ namespace SharpMind.Model.Layers.Attention;
                     using var kv = new Tensor<float>(batch, rows, heads * (nope + vDim));
                     for (int b = 0; b < batch; b++)
                     {
+                        float* latentsB = LatentsFor(b, out int rowsB);
+                        float* kvB = kv.DataPtr + (long)b * rows * heads * (nope + vDim);
                         MlaAttention.Expand(
-                            latentsPtr + (long)b * rows * latentDim, rows, w,
+                            latentsB, rowsB, w,
                             kvLora, heads, nope, vDim, rope,
-                            kv.DataPtr + (long)b * rows * heads * (nope + vDim));
+                            kvB);
 
                         MlaAttention.Prefill(
                             qNope.DataPtr + (long)b * seqLen * heads * nope,
                             qRope.DataPtr + (long)b * seqLen * heads * rope,
                             seqLen,
-                            latentsPtr + (long)b * rows * latentDim,
-                            kv.DataPtr + (long)b * rows * heads * (nope + vDim),
-                            rows, kvLora, heads, nope, vDim, rope, scale,
+                            latentsB,
+                            kvB,
+                            rowsB, kvLora, heads, nope, vDim, rope, scale,
                             probsPtr,
                             output.DataPtr + (long)b * seqLen * heads * vDim);
                     }

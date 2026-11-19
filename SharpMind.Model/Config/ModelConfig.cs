@@ -160,13 +160,35 @@ public sealed record ModelConfig
     /// <summary>True for the Qwen3.5 hybrid Gated DeltaNet + full-attention decoder.</summary>
     public bool IsQwen35 => Architecture?.StartsWith("qwen35", StringComparison.OrdinalIgnoreCase) == true;
 
+    /// <summary>
+    /// Extra multi-token-prediction (MTP) blocks at the end of the stack
+    /// (<c>{arch}.nextn_predict_layers</c>). llama.cpp reads <c>block_count</c>
+    /// as <c>n_layer_all</c> and runs only <c>n_layer_all - nextn</c> layers in
+    /// the main pass; the extra blocks are the MTP draft heads.
+    /// <see cref="NumLayers"/> is that trunk count, so MTP blocks are not part
+    /// of the normal forward.
+    /// </summary>
+    public int NextnPredictLayers { get; init; }
+
+    /// <summary>Trunk layers plus MTP blocks (the GGUF's <c>block_count</c>).</summary>
+    public int NumLayersTotal => NumLayers + NextnPredictLayers;
+
+    /// <summary>True when the index is an MTP draft block rather than a trunk layer.</summary>
+    public bool IsMtpLayer(int layerIndex) =>
+        layerIndex >= NumLayers && layerIndex < NumLayersTotal;
+
     /// <summary>True when the model carries Qwen3.5 Gated DeltaNet metadata and can build recurrent layers.</summary>
     public bool HasDeltaNet =>
         IsQwen35 && SsmConvKernel > 1 && SsmInnerSize > 0 && SsmStateSize > 0 &&
         SsmTimeStepRank > 0 && SsmGroupCount > 0;
 
-    /// <summary>True when the given block is a Gated DeltaNet (linear-attention) layer.</summary>
+    /// <summary>
+    /// True when the given block is a Gated DeltaNet (linear-attention) layer.
+    /// MTP blocks are dense attention-only even when they would land on a
+    /// recurrent slot of the pattern, matching llama.cpp's flagging.
+    /// </summary>
     public bool IsRecurrentLayer(int layerIndex) =>
+        layerIndex < NumLayers &&
         HasDeltaNet && ((layerIndex + 1) % (FullAttentionInterval ?? 4) != 0);
 
     /// <summary>True when the given block is a full softmax-attention layer.</summary>
@@ -661,6 +683,11 @@ public sealed record ModelConfig
 
     public void Validate()
     {
+        if (NextnPredictLayers < 0)
+            throw new InvalidOperationException($"NextnPredictLayers must be >= 0 (was {NextnPredictLayers}).");
+        if (NextnPredictLayers >= NumLayers)
+            throw new InvalidOperationException(
+                $"NextnPredictLayers ({NextnPredictLayers}) must be smaller than the trunk layer count ({NumLayers}).");
         if (VocabSize <= 0) throw new InvalidOperationException("VocabSize must be > 0.");
         if (HiddenDim <= 0) throw new InvalidOperationException("HiddenDim must be > 0.");
         if (NumLayers <= 0) throw new InvalidOperationException("NumLayers must be > 0.");
@@ -788,15 +815,23 @@ public sealed record ModelConfig
     /// <param name="config">Model configuration.</param>
     /// <param name="userMaxCacheLen">User-specified cap (from CLI --max-cache-len). Null means no explicit cap.</param>
     /// <param name="headDim">Per-head dimension for KV tensors. Uses config.HeadDim when null.</param>
+    /// <param name="batchSize">
+    /// Rows the cache holds. The memory budget is per process, so a batched cache
+    /// divides it between rows instead of taking the whole single-row budget for
+    /// every row.
+    /// </param>
     /// <returns>The maximum cache length to use for KV cache allocation.</returns>
-    public static int ComputeMaxCacheLength(ModelConfig config, int? userMaxCacheLen = null, int? headDim = null)
+    public static int ComputeMaxCacheLength(
+        ModelConfig config, int? userMaxCacheLen = null, int? headDim = null, int batchSize = 1)
     {
         int effectiveLen = config.EffectiveInferenceCacheLength;
         int hd = headDim ?? config.HeadDim;
+        int rows = Math.Max(1, batchSize);
 
         // Bytes per token position in one layer: keys + values, each float32
         long bytesPerPosition = (long)config.NumKvHeads * hd * sizeof(float) * 2;
-        long totalBytes = bytesPerPosition * effectiveLen * config.NumLayers;
+        long perLayer = bytesPerPosition * config.NumLayers * rows;
+        long totalBytes = perLayer * effectiveLen;
 
         // Use at most 40% of available memory for KV cache (leaves room for
         // model weights, workspace, OS overhead, and other allocations).
@@ -804,8 +839,8 @@ public sealed record ModelConfig
         long budget = (long)(availableBytes * 0.40);
 
         int maxLen = effectiveLen;
-        if (totalBytes > budget && bytesPerPosition > 0)
-            maxLen = (int)Math.Max(1, budget / (bytesPerPosition * config.NumLayers));
+        if (totalBytes > budget && perLayer > 0)
+            maxLen = (int)Math.Max(1, budget / perLayer);
 
         // Clamp to the user-specified cap (if any)
         if (userMaxCacheLen is int userMax && userMax > 0)

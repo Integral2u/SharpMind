@@ -17,6 +17,7 @@ public sealed class Transformer : IDisposable
     private readonly NormLayer _finalNorm;
     private readonly VisionEncoder? _visionEncoder;
     private readonly AudioEncoder? _audioEncoder;
+    private readonly MtpHead? _mtpHead;
     private bool _disposed;
 
     // Gemma-4 per-layer-embedding builder; null for every other architecture.
@@ -65,7 +66,8 @@ public sealed class Transformer : IDisposable
         bool gemmaEmbeddingScale = false,
         VisionEncoder? visionEncoder = null,
         AudioEncoder? audioEncoder = null,
-        PerLayerInputs? perLayerInputs = null)
+        PerLayerInputs? perLayerInputs = null,
+        MtpHead? mtpHead = null)
     {
         ArgumentNullException.ThrowIfNull(weights);
         ArgumentNullException.ThrowIfNull(embedding);
@@ -80,6 +82,7 @@ public sealed class Transformer : IDisposable
         _visionEncoder = visionEncoder;
         _audioEncoder = audioEncoder;
         _perLayerInputs = perLayerInputs;
+        _mtpHead = mtpHead;
         bool untied = weights.HasLmHead;
         var rawW = untied ? _weights.RawLmHead : _weights.RawEmbedding;
         var rawDtype = untied ? _weights.RawLmHeadDtype : _weights.RawEmbeddingDtype;
@@ -213,6 +216,13 @@ public sealed class Transformer : IDisposable
     public AudioEncoder? AudioEncoder => _audioEncoder;
 
     /// <summary>
+    /// The model's MTP draft head, or null when the file carries none. It drafts
+    /// the token after the next one; a speculative loop verifies drafts with the
+    /// main model. See <see cref="MtpHead"/>.
+    /// </summary>
+    public MtpHead? Mtp => _mtpHead;
+
+    /// <summary>
     /// Returns the distinct quantization dtypes used across the model's weight
     /// tensors (file storage dtypes, or F32 when tensors are resident as floats).
     /// Sorted by enum value; see <see cref="TransformerWeights.GetUsedQuantizations"/>.
@@ -258,6 +268,31 @@ public sealed class Transformer : IDisposable
         _lastCachedHiddenSnapshot.Data.Slice(positionIndex * hiddenDim, hiddenDim).CopyTo(row.Data);
         _finalNorm.ForwardInPlace(row);
         return row;
+    }
+
+    /// <summary>
+    /// Returns the final-normed hidden states of every row in the last forward,
+    /// shaped <c>[Batch, SeqLen, Hidden]</c>. Unlike
+    /// <see cref="GetNormedHiddenRow"/>, this keeps the whole chunk in one tensor
+    /// so an MTP head can fill its cache over a prompt in a single block pass.
+    /// The single-token decode path normalises its cached hidden in place, so that
+    /// case is copied as-is rather than normalised twice.
+    /// </summary>
+    public Tensor<float> GetNormedHiddenStates(Core.Memory.IWorkspace? workspace = null)
+    {
+        ThrowIfDisposed();
+        var hidden = _cachedHidden;
+        if (hidden is null)
+            throw new InvalidOperationException("No cached hidden state from the last forward.");
+
+        if (ReferenceEquals(_lastNormed, hidden))
+        {
+            var copy = new Tensor<float>(hidden.Shape);
+            hidden.Data.CopyTo(copy.Data);
+            return copy;
+        }
+
+        return _finalNorm.Forward(hidden, workspace);
     }
 
     public bool SetRawWeight(string name, byte[] rawData, QuantDType dtype)
@@ -451,7 +486,7 @@ public sealed class Transformer : IDisposable
         if (_gemmaEmbeddingScale)
             ScaleEmbedding(_cachedEmbedding, _weights.Config.HiddenDim);
         if (_positionEmbedding is not null)
-            AddPositionEmbeddingInPlace(_cachedEmbedding, positionOffset);
+            AddPositionEmbeddingInPlace(_cachedEmbedding, positionOffset, caches);
         if (_tokenTypeEmbedding is not null)
             AddTokenTypeEmbeddingInPlace(_cachedEmbedding);
 
@@ -590,7 +625,7 @@ public sealed class Transformer : IDisposable
 
         _cachedEmbedding = embeddings;
         if (_positionEmbedding is not null)
-            AddPositionEmbeddingInPlace(_cachedEmbedding, positionOffset);
+            AddPositionEmbeddingInPlace(_cachedEmbedding, positionOffset, caches);
         if (_tokenTypeEmbedding is not null)
             AddTokenTypeEmbeddingInPlace(_cachedEmbedding);
 
@@ -679,7 +714,7 @@ public sealed class Transformer : IDisposable
         if (_gemmaEmbeddingScale)
             ScaleEmbedding(_cachedEmbedding, _weights.Config.HiddenDim);
         if (_positionEmbedding is not null)
-            AddPositionEmbeddingInPlace(_cachedEmbedding, positionOffset);
+            AddPositionEmbeddingInPlace(_cachedEmbedding, positionOffset, caches);
         if (_tokenTypeEmbedding is not null)
             AddTokenTypeEmbeddingInPlace(_cachedEmbedding);
         DecodeProfiler.Mark(DecodeStage.Embed, tEmbed);
@@ -738,6 +773,124 @@ public sealed class Transformer : IDisposable
         }
     }
 
+    /// <summary>
+    /// One MTP draft step: given the trunk's (or the previous draft step's)
+    /// final-normed hidden state and the token being extended, returns the
+    /// head-normed hidden state and the vocabulary logits for the following
+    /// token. Inputs are <c>[Batch, 1]</c>; the head's own <paramref name="cache"/>
+    /// must advance in step with the accepted tokens. Mirrors llama.cpp's MTP
+    /// graph: hnorm/enorm, concat, eh_proj, one full-attention block, shared head
+    /// norm, LM head.
+    ///
+    /// The returned <c>Hidden</c> is the head's output for the token being
+    /// extended (after <c>shared_head_norm</c>). A multi-token draft chain feeds
+    /// it back as the next step's <c>trunkHidden</c>, which is how the MTP head
+    /// predicts further ahead. Callers own both tensors.
+    /// </summary>
+    public (Tensor<float> Hidden, Tensor<float> Logits) ForwardMtp(
+        Tensor<float> trunkHidden,
+        Tensor<int> tokenIds,
+        IKVCache cache,
+        int position,
+        Core.Memory.IWorkspace? workspace = null)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(trunkHidden);
+        ArgumentNullException.ThrowIfNull(tokenIds);
+        ArgumentNullException.ThrowIfNull(cache);
+        if (_mtpHead is null)
+            throw new InvalidOperationException("This model has no MTP head.");
+
+        int batch = tokenIds.Shape.Rows;
+        if (tokenIds.Shape.Cols != 1 || trunkHidden.Shape[0] != batch || trunkHidden.Shape[1] != 1)
+            throw new ArgumentException("MTP drafts one token per row; expected [Batch, 1].");
+
+        int hidden = _weights.Config.HiddenDim;
+        int vocab = _weights.Config.VocabSize;
+
+        using var embedding = _embedding.Forward(tokenIds, workspace);
+        var normed = _mtpHead.Forward(trunkHidden, embedding, cache, position, workspace);
+        using var flat = normed.Reshape(batch, hidden);
+        var logits = _logitOps.Project(flat, batch, hidden, vocab, workspace);
+        ApplyFinalLogitSoftcap(logits);
+        return (normed, logits);
+    }
+
+    /// <summary>
+    /// Runs one MTP draft block and returns only its head-normed hidden state.
+    /// Used to append an accepted draft to the head's cache without paying for a
+    /// full-vocabulary LM-head projection.
+    /// </summary>
+    public Tensor<float> ForwardMtpHidden(
+        Tensor<float> trunkHidden,
+        Tensor<int> tokenIds,
+        IKVCache cache,
+        int position,
+        Core.Memory.IWorkspace? workspace = null)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(trunkHidden);
+        ArgumentNullException.ThrowIfNull(tokenIds);
+        ArgumentNullException.ThrowIfNull(cache);
+        if (_mtpHead is null)
+            throw new InvalidOperationException("This model has no MTP head.");
+
+        int batch = tokenIds.Shape.Rows;
+        if (tokenIds.Shape.Cols != 1 || trunkHidden.Shape[0] != batch || trunkHidden.Shape[1] != 1)
+            throw new ArgumentException("MTP drafts one token per row; expected [Batch, 1].");
+
+        using var embedding = _embedding.Forward(tokenIds, workspace);
+        return _mtpHead.Forward(trunkHidden, embedding, cache, position, workspace);
+    }
+
+    /// <summary>
+    /// Fills the MTP head's cache over a chunk without producing logits or hidden
+    /// states. <paramref name="trunkHidden"/> is the final-normed trunk hidden
+    /// shifted one token left (the first row is the previous token's hidden) and
+    /// <paramref name="tokenIds"/> is the chunk itself; both are
+    /// <c>[Batch, SeqLen, ...]</c>. This is how a prompt prefills the draft head's
+    /// attention cache.
+    /// </summary>
+    public void ForwardMtpFill(
+        Tensor<float> trunkHidden,
+        Tensor<int> tokenIds,
+        IKVCache cache,
+        int position,
+        Core.Memory.IWorkspace? workspace = null)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(trunkHidden);
+        ArgumentNullException.ThrowIfNull(tokenIds);
+        ArgumentNullException.ThrowIfNull(cache);
+        if (_mtpHead is null)
+            throw new InvalidOperationException("This model has no MTP head.");
+
+        int batch = tokenIds.Shape.Rows;
+        int seqLen = tokenIds.Shape.Cols;
+        if (trunkHidden.Shape[0] != batch || trunkHidden.Shape[1] != seqLen)
+            throw new ArgumentException(
+                "MTP fill expects trunkHidden and tokenIds to share [Batch, SeqLen].");
+
+        using var embedding = _embedding.Forward(tokenIds, workspace);
+        _mtpHead.ForwardFill(trunkHidden, embedding, cache, position, workspace);
+    }
+
+    /// <summary>
+    /// One MTP draft step that returns only the logits for the following token.
+    /// See <see cref="ForwardMtp"/> when the chain continues past this step.
+    /// </summary>
+    public Tensor<float> ForwardMtpLastLogits(
+        Tensor<float> trunkHidden,
+        Tensor<int> tokenIds,
+        IKVCache cache,
+        int position,
+        Core.Memory.IWorkspace? workspace = null)
+    {
+        var (hidden, logits) = ForwardMtp(trunkHidden, tokenIds, cache, position, workspace);
+        hidden.Dispose();
+        return logits;
+    }
+
     /// <summary>Approximate total parameter count.</summary>
     public long ParameterCount
     {
@@ -778,6 +931,7 @@ public sealed class Transformer : IDisposable
         _visionEncoder?.Dispose();
         _audioEncoder?.Dispose();
         _perLayerInputs?.Dispose();
+        _mtpHead?.Dispose();
         // The Transformer borrows its TransformerWeights: CreateTransformer
         // never transfers ownership, so one weights instance can legitimately
         // back several transformers built and disposed over its lifetime (the
@@ -825,7 +979,7 @@ public sealed class Transformer : IDisposable
     /// or past <see cref="ModelConfig.MaxSeqLen"/> are clamped to the last row so
     /// decoding past the trained length degrades gracefully instead of faulting.
     /// </summary>
-    private void AddPositionEmbeddingInPlace(Tensor<float> emb, int positionOffset)
+    private void AddPositionEmbeddingInPlace(Tensor<float> emb, int positionOffset, IKVCache[]? caches = null)
     {
         var pos = _positionEmbedding!;
         int H = _weights.Config.HiddenDim;
@@ -835,13 +989,17 @@ public sealed class Transformer : IDisposable
         var src = pos.Data;
         var dst = emb.Data;
         int embStride = S * H;
+        // A row-positioned cache (batched decode) holds each row at its own
+        // conversation position; without it every row starts at the offset.
+        var rowPositions = caches is { Length: > 0 } ? caches[0] as IRowPositionedKvCache : null;
 
         for (int b = 0; b < batch; b++)
         {
+            int start = rowPositions is not null ? rowPositions.PositionForRow(b) : positionOffset;
             int ptr = b * embStride;
             for (int s = 0; s < S; s++)
             {
-                int p = positionOffset + s;
+                int p = start + s;
                 if (p >= maxPos) p = maxPos - 1;
                 int pBase = p * H;
                 for (int h = 0; h < H; h++)

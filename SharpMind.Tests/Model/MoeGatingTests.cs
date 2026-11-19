@@ -193,6 +193,64 @@ public class MoeGatingTests
         Assert.Equal(Route(), Route(scale: scale), 6);
     }
 
+    /// <summary>
+    /// Batched MoE groups tokens per expert and runs one matmul per expert.
+    /// That changes how the rows flow through the weights, not what they compute:
+    /// each row must still match the single-token path, which reads one GEMV per
+    /// (token, expert) pair. Tokens here share experts, so the grouped path
+    /// really does see m &gt; 1.
+    /// </summary>
+    [Fact]
+    public void GroupedBatch_MatchesPerTokenRouting()
+    {
+        const int batch = 6;
+        var mapping = new Dictionary<string, string>();
+        var router = LinearLayerFactory.Create(
+            "router", Hidden, Experts, true, new Tensor<float>(Hidden, Experts), null, QuantDType.F32, mapping);
+        // Token e_i prefers expert i, so six tokens over four experts make
+        // expert 0 see both token 0 and token 4.
+        var rw = router.Weight;
+        for (int i = 0; i < rw.ElementCount; i++) rw.Data[i] = 0f;
+        for (int i = 0; i < Hidden; i++) rw.Data[i * Experts + i] = 4f;
+
+        var gate = new LinearLayer[Experts];
+        var up = new LinearLayer[Experts];
+        var down = new LinearLayer[Experts];
+        for (int e = 0; e < Experts; e++)
+        {
+            gate[e] = LinearLayerFactory.Create($"g{e}", Hidden, Ffn, true, new Tensor<float>(Hidden, Ffn), null, QuantDType.F32, mapping);
+            up[e] = LinearLayerFactory.Create($"u{e}", Hidden, Ffn, true, new Tensor<float>(Hidden, Ffn), null, QuantDType.F32, mapping);
+            down[e] = LinearLayerFactory.Create($"d{e}", Ffn, Hidden, true, new Tensor<float>(Ffn, Hidden), null, QuantDType.F32, mapping);
+            Fill(gate[e].Weight, 0.5f + 0.25f * e);
+            Fill(up[e].Weight, 1f - 0.125f * e);
+            Fill(down[e].Weight, 0.75f + 0.5f * e);
+        }
+
+        using var x = new Tensor<float>(batch, Hidden);
+        for (int t = 0; t < batch; t++)
+        {
+            x.Data[t * Hidden + t % Hidden] = 1f;
+            x.Data[t * Hidden + (t + 1) % Hidden] = 0.25f;
+        }
+
+        var acts = ActivationFactory.Create(SharpMindConfig.ForModel(4, 4, "deepseek2"));
+
+        using var grouped = FfnKernels.MoE(
+            x, router, gate, up, down, TopK, acts, workspace: null, normTopKProb: true);
+
+        for (int t = 0; t < batch; t++)
+        {
+            using var row = new Tensor<float>(1, Hidden);
+            x.RowSpan(t).CopyTo(row.Data);
+
+            using var single = FfnKernels.MoE(
+                row, router, gate, up, down, TopK, acts, workspace: null, normTopKProb: true);
+
+            for (int i = 0; i < Hidden; i++)
+                Assert.Equal(single.Data[i], grouped.Data[t * Hidden + i], 4);
+        }
+    }
+
     /// <summary>Builds a MoE layer with a block the router bias can be allocated on.</summary>
     private sealed class NoOpLoader : SharpMind.Model.Format.IModelLoader
     {

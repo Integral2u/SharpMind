@@ -18,19 +18,28 @@ namespace SharpMind.Model;
 /// <see cref="GetKeyPtr"/> returns; there is no separate value tensor, so
 /// <see cref="GetValuePtr"/> hands back the same row. Callers that need values
 /// (nothing does for MLA) must project them from the latent.
+///
+/// Like <see cref="KVCache"/>, every row tracks its own length so a batched
+/// decode can hold sequences at different positions.
 /// </summary>
 public sealed class MlaKvCache(int batchSize, int maxSeqLen, int latentDim) : IKVCache
 {
     private readonly Tensor<float> _latent = new(batchSize, maxSeqLen, latentDim);
     private readonly int _batch = batchSize;
+    private readonly int[] _rowLengths = new int[batchSize];
+    private int _maxLength;
 
     /// <summary>Floats cached per position: <c>kv_lora_rank + rope</c>.</summary>
     public int LatentDim { get; } = latentDim;
 
-    public int CurrentPosition { get; private set; }
+    /// <summary>Longest row; equals the cache length for every single-sequence use.</summary>
+    public int CurrentPosition => _maxLength;
     public int MaxSeqLen { get; } = maxSeqLen;
-    public int Length => CurrentPosition;
-    public bool IsFull => CurrentPosition >= MaxSeqLen;
+    public int Length => _maxLength;
+    public int RowCount => _batch;
+    public bool SupportsRaggedRows => true;
+    public int LengthForRow(int row) => _rowLengths[row];
+    public bool IsFull => _maxLength >= MaxSeqLen;
     public bool IsContiguous => true;
 
     /// <summary>Raw latent rows, [batch, maxSeqLen, latentDim].</summary>
@@ -67,58 +76,127 @@ public sealed class MlaKvCache(int batchSize, int maxSeqLen, int latentDim) : IK
     {
         int batch = k.Shape[0];
         int seqLen = k.Shape[1];
-
-        if (CurrentPosition + seqLen > MaxSeqLen)
+        if (batch > _batch)
             throw new InvalidOperationException(
-                $"MlaKvCache overflow: position {CurrentPosition} + seqLen {seqLen} exceeds capacity {MaxSeqLen}.");
+                $"MlaKvCache holds {_batch} row(s) but the update carries {batch}.");
+
+        for (int b = 0; b < batch; b++)
+            UpdateRow(b, k.Data.Slice(b * seqLen * LatentDim, seqLen * LatentDim),
+                         v.Data.Slice(b * seqLen * LatentDim, seqLen * LatentDim),
+                         numKvHeads, headDim);
+    }
+
+    /// <summary>Appends one row's <c>[seqLen, latentDim]</c> latent block at that row's own length.</summary>
+    public unsafe void UpdateRow(int row, ReadOnlySpan<float> k, ReadOnlySpan<float> v, int numKvHeads, int headDim)
+    {
+        if ((uint)row >= (uint)_batch)
+            throw new ArgumentOutOfRangeException(nameof(row), row, $"Row must be in [0, {_batch}).");
         if (headDim != LatentDim || numKvHeads != 1)
             throw new InvalidOperationException(
                 $"MlaKvCache takes one latent head of {LatentDim} floats; got {numKvHeads} head(s) of {headDim}.");
 
-        unsafe
+        int position = _rowLengths[row];
+        int seqLen = k.Length / LatentDim;
+        if (position + seqLen > MaxSeqLen)
+            throw new InvalidOperationException(
+                $"MlaKvCache overflow: row {row} at position {position} + seqLen {seqLen} exceeds capacity {MaxSeqLen}.");
+
+        fixed (float* src = k)
         {
             long rowBytes = (long)seqLen * LatentDim * sizeof(float);
-            long dstCapBytes = (long)(MaxSeqLen - CurrentPosition) * LatentDim * sizeof(float);
-            for (int b = 0; b < batch; b++)
-            {
-                float* src = k.DataPtr + (long)b * seqLen * LatentDim;
-                float* dst = _latent.DataPtr + ((long)b * MaxSeqLen + CurrentPosition) * LatentDim;
-                Buffer.MemoryCopy(src, dst, dstCapBytes, rowBytes);
-            }
+            long dstCapBytes = (long)(MaxSeqLen - position) * LatentDim * sizeof(float);
+            float* dst = _latent.DataPtr + ((long)row * MaxSeqLen + position) * LatentDim;
+            Buffer.MemoryCopy(src, dst, dstCapBytes, rowBytes);
         }
 
-        CurrentPosition += seqLen;
+        _rowLengths[row] = position + seqLen;
+        if (_rowLengths[row] > _maxLength) _maxLength = _rowLengths[row];
     }
 
-    public void Reset() => CurrentPosition = 0;
+    /// <summary>Copies one row's latent onto another row and clears the source.</summary>
+    public unsafe void MoveRow(int from, int to)
+    {
+        if ((uint)from >= (uint)_batch || (uint)to >= (uint)_batch)
+            throw new ArgumentOutOfRangeException(nameof(from), "Row index outside the cache.");
+        if (from == to) return;
 
-    public void Truncate(int length) => CurrentPosition = Math.Min(length, CurrentPosition);
+        long rowFloats = (long)MaxSeqLen * LatentDim;
+        long rowBytes = rowFloats * sizeof(float);
+        Buffer.MemoryCopy(_latent.DataPtr + (long)from * rowFloats,
+                          _latent.DataPtr + (long)to * rowFloats, rowBytes, rowBytes);
+        _rowLengths[to] = _rowLengths[from];
+        _rowLengths[from] = 0;
+        RecomputeMax();
+    }
+
+    private void RecomputeMax()
+    {
+        int max = 0;
+        foreach (int length in _rowLengths)
+            if (length > max) max = length;
+        _maxLength = max;
+    }
+
+    /// <summary>Empties one row without touching the others.</summary>
+    public void ClearRow(int row)
+    {
+        if ((uint)row >= (uint)_batch)
+            throw new ArgumentOutOfRangeException(nameof(row), row, $"Row must be in [0, {_batch}).");
+        _rowLengths[row] = 0;
+        RecomputeMax();
+    }
+
+    public void Reset()
+    {
+        Array.Clear(_rowLengths);
+        _maxLength = 0;
+    }
+
+    public void Truncate(int length)
+    {
+        for (int b = 0; b < _batch; b++)
+            if (_rowLengths[b] > length) _rowLengths[b] = length;
+        RecomputeMax();
+    }
+
+    /// <summary>Drops trailing entries from one row only.</summary>
+    public void TruncateRow(int row, int length)
+    {
+        if ((uint)row >= (uint)_batch)
+            throw new ArgumentOutOfRangeException(nameof(row), row, $"Row must be in [0, {_batch}).");
+        if (length < 0) length = 0;
+        if (_rowLengths[row] > length) _rowLengths[row] = length;
+        RecomputeMax();
+    }
 
     public void TrimToLast(int keep)
     {
-        if (keep >= CurrentPosition) return;
-        if (keep <= 0) { CurrentPosition = 0; return; }
-
         unsafe
         {
-            int start = CurrentPosition - keep;
-            for (int b = 0; b < _latent.Shape[0]; b++)
+            for (int b = 0; b < _batch; b++)
             {
+                int length = _rowLengths[b];
+                if (keep >= length) continue;
+                if (keep <= 0) { _rowLengths[b] = 0; continue; }
+
+                int start = length - keep;
                 float* rowBase = _latent.DataPtr + (long)b * MaxSeqLen * LatentDim;
                 Buffer.MemoryCopy(rowBase + (long)start * LatentDim, rowBase,
                     (long)MaxSeqLen * LatentDim * sizeof(float),
                     (long)keep * LatentDim * sizeof(float));
+                _rowLengths[b] = keep;
             }
         }
-        CurrentPosition = keep;
+        RecomputeMax();
     }
 
     /// <summary>Snapshot as <c>(position, latent rows)</c>, the tag-2 form the session writer understands.</summary>
     public object? Snapshot()
     {
-        if (CurrentPosition == 0) return null;
+        int position = RequireUniformLengths();
+        if (position == 0) return null;
         int batch = _latent.Shape[0];
-        var data = new float[(long)batch * CurrentPosition * LatentDim];
+        var data = new float[(long)batch * position * LatentDim];
         unsafe
         {
             fixed (float* dst = data)
@@ -127,18 +205,18 @@ public sealed class MlaKvCache(int batchSize, int maxSeqLen, int latentDim) : IK
                 {
                     Buffer.MemoryCopy(
                         _latent.DataPtr + (long)b * MaxSeqLen * LatentDim,
-                        dst + (long)b * CurrentPosition * LatentDim,
-                        (long)CurrentPosition * LatentDim * sizeof(float),
-                        (long)CurrentPosition * LatentDim * sizeof(float));
+                        dst + (long)b * position * LatentDim,
+                        (long)position * LatentDim * sizeof(float),
+                        (long)position * LatentDim * sizeof(float));
                 }
             }
         }
-        return (CurrentPosition, data);
+        return (position, data);
     }
 
     public void Restore(object? snapshot)
     {
-        if (snapshot is null) { CurrentPosition = 0; return; }
+        if (snapshot is null) { Reset(); return; }
         var (position, data) = ((int, float[]))snapshot;
         int batch = _latent.Shape[0];
         long rows = (long)batch * position * LatentDim;
@@ -159,7 +237,20 @@ public sealed class MlaKvCache(int batchSize, int maxSeqLen, int latentDim) : IK
                 }
             }
         }
-        CurrentPosition = position;
+        Array.Fill(_rowLengths, position);
+        _maxLength = position;
+    }
+
+    /// <summary>See <see cref="KVCache"/>: the snapshot format stores one position for every row.</summary>
+    private int RequireUniformLengths()
+    {
+        int position = _rowLengths.Length > 0 ? _rowLengths[0] : 0;
+        for (int b = 1; b < _batch; b++)
+            if (_rowLengths[b] != position)
+                throw new InvalidOperationException(
+                    "Cannot snapshot an MlaKvCache whose rows hold different lengths; " +
+                    "the snapshot format stores one position per cache.");
+        return position;
     }
 
     public void Dispose() => _latent.Dispose();

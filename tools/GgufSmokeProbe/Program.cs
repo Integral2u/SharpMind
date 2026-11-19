@@ -17,6 +17,8 @@ using System.Text.Json.Nodes;
 //   dotnet run --project tools/GgufSmokeProbe -- run  <file> ["prompt"] [maxTokens=24] [full] [resident] [topk]
 //   dotnet run --project tools/GgufSmokeProbe -- bench <file> ["prompt"] [warmup=16] [measure=64] [full] [resident] [serialmm] [nowide] [reps=3] [ids]
 //   dotnet run --project tools/GgufSmokeProbe -- benchab <file> ["prompt"] [warmup=16] [measure=64] [full] [resident]
+//   dotnet run --project tools/GgufSmokeProbe -- batchbench <file> ["prompt"] [maxBatch=8] [tokens=16] [reps=3]
+//   dotnet run --project tools/GgufSmokeProbe -- mtpcheck <file> ["prompt"] [steps=64]
 //   dotnet run --project tools/GgufSmokeProbe -- widebench [K=896] [N=4864] [iters=200] [chunks=0]
 //   dotnet run --project tools/GgufSmokeProbe -- stages <file> ["prompt"] [warmup=16] [measure=48] [full] [resident] [serialmm] [window N]
 //   dotnet run --project tools/GgufSmokeProbe -- bind <file>
@@ -87,6 +89,15 @@ if (mode == "benchab")
 
 if (mode == "stages")
     return await RunStagesAsync(path, args);
+
+if (mode == "batchbench")
+    return await RunBatchBenchAsync(path, args);
+
+if (mode == "mtpcheck")
+    return await RunMtpCheckAsync(path, args);
+
+if (mode == "rowcheck")
+    return await RunRowCheckAsync(path, args);
 
 if (mode == "fwd")
     return RunForward(path, args);
@@ -2024,6 +2035,17 @@ static async Task<int> RunInferenceAsync(string path, string[] args)
             // probe's GenerationConfig default is 1.1. "nopenalty" zeroes it so a
             // greedy run is comparable to llama.cpp token-for-token.
             bool noPenalty = args.Any(a => a.Equals("nopenalty", StringComparison.OrdinalIgnoreCase));
+            bool mtpMode = false;
+            int mtpTokens = 1;
+            foreach (string a in args)
+            {
+                if (!a.StartsWith("mtp", StringComparison.OrdinalIgnoreCase)) continue;
+                mtpMode = true;
+                ReadOnlySpan<char> suffix = a.AsSpan(3);
+                if (suffix.StartsWith("=")) suffix = suffix[1..];
+                if (int.TryParse(suffix, out int mt) && mt > 0)
+                    mtpTokens = Math.Clamp(mt, 1, GenerationConfig.MaxMtpDraftTokens);
+            }
             var rawBuilder = new StandardGeneratorBuilder<KVCacherBuilder>();
             var rawGen = rawBuilder.CreateGenerator(model, tokenizer, addBos, addEos: false, caches: null);
             var rawSample = new SamplingConfig { Temperature = 0f, TopK = 1 };
@@ -2032,13 +2054,19 @@ static async Task<int> RunInferenceAsync(string path, string[] args)
                 MaxNewTokens = maxTokens,
                 Stream = true,
                 RepetitionPenalty = noPenalty ? 1.0f : new GenerationConfig().RepetitionPenalty,
+                MtpDraft = mtpMode,
+                MtpDraftTokens = mtpTokens,
             };
             var rawSb = new System.Text.StringBuilder();
             var rawSw = System.Diagnostics.Stopwatch.StartNew();
             await foreach (var frag in rawGen.GenerateAsync(prompt, rawSample, rawGenCfg))
                 rawSb.Append(frag);
             rawSw.Stop();
-            Console.WriteLine($"RAW addBos={addBos}:{rawSb}");
+            Console.WriteLine($"RAW addBos={addBos} mtp={(mtpMode ? mtpTokens : 0)}:{rawSb}");
+            if (rawGen.CurrentGeneratedIds is { Count: > 0 } generated)
+                Console.WriteLine($"IDS {string.Join(',', generated)}");
+            if (rawGen is StandardGenerator<KVCacherBuilder> std)
+                Console.WriteLine($"MTP drafts {std.MtpStats.Drafted} accepted {std.MtpStats.Accepted}");
             Console.WriteLine($"OK  raw generated {rawSb.Length} chars in {rawSw.Elapsed.TotalSeconds:F1}s");
             GeneratorDiagnostics.DumpTopLogits = false;
             return rawSb.Length > 0 ? 0 : 4;
@@ -2106,6 +2134,253 @@ static async Task<int> RunInferenceAsync(string path, string[] args)
         Console.WriteLine($"\nFAILED: {ex}");
         return 1;
     }
+}
+
+// batchbench <file> [prompt] [maxBatch=8] [tokens=16] [reps=3] [measureTokens]
+//
+// Aggregate decode throughput, not per-sequence latency. For each batch width
+// one warm-up run promotes the JIT'd kernels, then `reps` fresh-batcher runs
+// report the decode-only tokens/second (BatchedGenerator.Stats excludes prefill)
+// and the aggregate is min/median across runs. Compare batch 1 against batch N.
+static async Task<int> RunBatchBenchAsync(string path, string[] args)
+{
+    string prompt = args.Length > 2 ? args[2] : "The";
+    int maxBatch = args.Length > 3 && int.TryParse(args[3], out int mb) ? mb : 8;
+    int tokens = args.Length > 4 && int.TryParse(args[4], out int mt) ? mt : 16;
+    int reps = args.Length > 5 && int.TryParse(args[5], out int rp) ? rp : 3;
+    if (maxBatch < 1 || tokens < 1 || reps < 1) { Console.Error.WriteLine("batchbench needs maxBatch, tokens and reps >= 1"); return 2; }
+
+    ModelConfig modelConfig;
+    Tokenizer? tokenizer;
+    var metaHelper = ModelFormatHelpers.GetModelMetaHelperFor(ModelFormat.Gguf);
+    metaHelper.Load(path, null, out _, out modelConfig, out tokenizer);
+    if (tokenizer is null) { Console.Error.WriteLine("no tokenizer"); return 3; }
+
+    var sharpConfig = modelConfig.ForModel();
+    var mapping = sharpConfig.ToJigSawMapping();
+    using var weights = ModelFactory.CreateWeights(
+        modelConfig, sharpConfig, QuantizationFactory.Create(mapping), path,
+        LoadMode.Full, quantizedResident: false, maxParallelLoadDegree: 1);
+    weights.InitializeWeights();
+    using var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
+
+    int[] promptIds = tokenizer.Encode(prompt, addBos: true, addEos: false);
+    var genCfg = new GenerationConfig { MaxNewTokens = tokens, RepetitionPenalty = 1f, Stream = false };
+    Console.WriteLine($"--- batchbench: {Path.GetFileName(path)}  prompt=\"{prompt}\" ({promptIds.Length} tokens)  new={tokens}  reps={reps} ---");
+
+    foreach (int batch in new[] { 1, maxBatch }.Distinct())
+    {
+        await RunOnce(batch); // warm-up: kernel promotion is ~30 invocations.
+
+        var runs = new List<double>(reps);
+        for (int rep = 0; rep < reps; rep++) runs.Add(await RunOnce(batch));
+        runs.Sort();
+
+        double min = runs[0];
+        double median = runs[runs.Count / 2];
+        Console.WriteLine($"batch {batch,2}: {min,7:F3} tok/s (min)  {median,7:F3} tok/s (median)  aggregate over {batch} sequence(s)");
+    }
+
+    return 0;
+
+    async Task<double> RunOnce(int batch)
+    {
+        await using var gen = new BatchedGenerator(model, tokenizer, new BatchedGeneratorOptions { MaxBatch = batch });
+        var seqs = new List<BatchedSequence>(batch);
+        for (int i = 0; i < batch; i++)
+            seqs.Add(await gen.EnqueueTokensAsync(promptIds, SamplingConfig.Greedy, genCfg));
+        await Task.WhenAll(seqs.Select(s => s.WhenCompleted));
+        return gen.Stats.TokensPerSecond;
+    }
+}
+
+// mtpcheck <file> ["prompt"] [steps=64]
+//
+// Drives the MTP draft head one token at a time and reports how often its top-1
+// agrees with the token the trunk actually chose. A correct head on a real MTP
+// model accepts roughly 60-80% of one-token drafts; a broken one is near zero.
+static async Task<int> RunMtpCheckAsync(string path, string[] args)
+{
+    await Task.CompletedTask;
+    string prompt = args.Length > 2 ? args[2] : "The capital of France is";
+    int steps = args.Length > 3 && int.TryParse(args[3], out int st) ? Math.Max(1, st) : 64;
+
+    ModelMetaData meta;
+    ModelConfig modelConfig;
+    Tokenizer? tokenizer;
+    var metaHelper = ModelFormatHelpers.GetModelMetaHelperFor(ModelFormat.Gguf);
+    metaHelper.Load(path, null, out meta, out modelConfig, out tokenizer);
+    if (tokenizer is null) { Console.Error.WriteLine("no tokenizer"); return 3; }
+
+    var sharpConfig = modelConfig.ForModel();
+    var mapping = sharpConfig.ToJigSawMapping();
+    using var weights = ModelFactory.CreateWeights(
+        modelConfig, sharpConfig, QuantizationFactory.Create(mapping), path,
+        LoadMode.Full, quantizedResident: false, maxParallelLoadDegree: 1);
+    weights.InitializeWeights();
+    using var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
+
+    if (model.Mtp is null)
+    {
+        Console.WriteLine($"NO MTP HEAD: {Path.GetFileName(path)} declares nextn_predict_layers={modelConfig.NextnPredictLayers}");
+        return 4;
+    }
+
+    Console.WriteLine($"--- mtpcheck: {Path.GetFileName(path)}  trunk={modelConfig.NumLayers} nextn={modelConfig.NextnPredictLayers}  steps={steps} ---");
+
+    int maxLen = Math.Min(modelConfig.MaxPosition, 512);
+    var caches = new IKVCache[modelConfig.NumLayers];
+    for (int i = 0; i < caches.Length; i++)
+        caches[i] = modelConfig.IsShortConvLayer(i)
+            ? new ShortConvCache(modelConfig.ShortConvCacheLength - 1, modelConfig.HiddenDim, 1, maxLen)
+            : modelConfig.IsRecurrentLayer(i)
+                ? new DeltaNetCache(modelConfig.SsmConvKernel, modelConfig.SsmConvDim,
+                    modelConfig.SsmTimeStepRank, modelConfig.SsmStateSize,
+                    modelConfig.SsmValueHeadDim, 1, maxLen)
+                : modelConfig.IsMla
+                    ? new MlaKvCache(1, maxLen, modelConfig.KvLoraRank + modelConfig.MlaRopeHeadDim)
+                    : new KVCache(1, modelConfig.NumKvHeads, maxLen, modelConfig.HeadDimForLayer(i));
+
+    using var mtpCache = modelConfig.IsMla
+        ? (IKVCache)new MlaKvCache(1, maxLen, modelConfig.KvLoraRank + modelConfig.MlaRopeHeadDim)
+        : new KVCache(1, modelConfig.NumKvHeads, maxLen, modelConfig.HeadDim);
+
+    int[] promptIds = tokenizer.Encode(prompt, addBos: true, addEos: false);
+    int position = 0;
+    int top1 = 0, top5 = 0, total = 0;
+
+    int[] Argmax(ReadOnlySpan<float> logits, int k)
+    {
+        var idx = Enumerable.Range(0, logits.Length).ToArray();
+        var vals = logits.ToArray();
+        Array.Sort(idx, (a, b) => vals[b].CompareTo(vals[a]));
+        return idx[..Math.Min(k, idx.Length)];
+    }
+
+    Tensor<float>? trunkLogits = null;
+    try
+    {
+        foreach (int id in promptIds)
+        {
+            using var token = Token(id);
+            trunkLogits?.Dispose();
+            trunkLogits = model.ForwardLastLogits(token, caches, position, null);
+            position++;
+        }
+
+        // One draft step looks at (h for the token just fed, the token the trunk
+        // chose next) and predicts the token after it. After the draft, the trunk
+        // is advanced by that chosen token, which becomes the ground truth.
+        for (int step = 0; step < steps; step++)
+        {
+            var h = model.LastNormed!;
+            int chosen = Argmax(trunkLogits!.Data[..modelConfig.VocabSize], 1)[0];
+
+            Tensor<float> draft;
+            using (var chosenToken = Token(chosen))
+                draft = model.ForwardMtpLastLogits(h, chosenToken, mtpCache, position, null);
+            var draftTop = Argmax(draft.Data[..modelConfig.VocabSize], 5);
+            draft.Dispose();
+
+            trunkLogits.Dispose();
+            using (var nextToken = Token(chosen))
+                trunkLogits = model.ForwardLastLogits(nextToken, caches, position, null);
+            position++;
+
+            int actual = Argmax(trunkLogits.Data[..modelConfig.VocabSize], 1)[0];
+            total++;
+            if (draftTop[0] == actual) top1++;
+            if (draftTop.Contains(actual)) top5++;
+        }
+    }
+    finally
+    {
+        trunkLogits?.Dispose();
+        foreach (var c in caches) c.Dispose();
+    }
+
+    Console.WriteLine($"draft acceptance: top1 {top1}/{total} ({(total > 0 ? 100.0 * top1 / total : 0):F1}%), " +
+                      $"top5 {top5}/{total} ({(total > 0 ? 100.0 * top5 / total : 0):F1}%)");
+    return 0;
+
+    static Tensor<int> Token(int id)
+    {
+        var t = new Tensor<int>(1, 1);
+        t.Data[0] = id;
+        return t;
+    }
+}
+
+// rowcheck <file> ["prompt"] [draftToken=7]
+//
+// Does a two-token forward reproduce the one-token forward's first-row logits?
+// Speculative verification depends on it: the draft row must not change the row
+// that samples the real token.
+static async Task<int> RunRowCheckAsync(string path, string[] args)
+{
+    await Task.CompletedTask;
+    string prompt = args.Length > 2 ? args[2] : "The capital of France is";
+    int draft = args.Length > 3 && int.TryParse(args[3], out int d) ? d : 7;
+
+    ModelFormatHelpers.GetModelMetaHelperFor(ModelFormat.Gguf).Load(path, null, out _, out var modelConfig, out var tokenizer);
+    if (tokenizer is null) return 3;
+    var sharpConfig = modelConfig.ForModel();
+    var mapping = sharpConfig.ToJigSawMapping();
+    using var weights = ModelFactory.CreateWeights(modelConfig, sharpConfig, QuantizationFactory.Create(mapping), path,
+        LoadMode.Full, quantizedResident: false, maxParallelLoadDegree: 1);
+    weights.InitializeWeights();
+    using var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
+
+    int[] promptIds = tokenizer.Encode(prompt, addBos: true, addEos: false);
+    int p = promptIds.Length;
+    int next = 11751 % modelConfig.VocabSize;
+
+    IKVCache[] Caches()
+    {
+        var c = new IKVCache[modelConfig.NumLayers];
+        for (int i = 0; i < c.Length; i++)
+            c[i] = modelConfig.IsShortConvLayer(i)
+                ? new ShortConvCache(modelConfig.ShortConvCacheLength - 1, modelConfig.HiddenDim, 1, 64)
+                : modelConfig.IsRecurrentLayer(i)
+                    ? new DeltaNetCache(modelConfig.SsmConvKernel, modelConfig.SsmConvDim,
+                        modelConfig.SsmTimeStepRank, modelConfig.SsmStateSize, modelConfig.SsmValueHeadDim, 1, 64)
+                    : new KVCache(1, modelConfig.NumKvHeads, 64, modelConfig.HeadDimForLayer(i));
+        return c;
+    }
+
+    using var one = new Tensor<int>(1, p);
+    for (int i = 0; i < p; i++) one.Data[i] = promptIds[i];
+
+    var a = Caches();
+    using (var _ = model.ForwardLastLogits(one, a, 0, null)) { }
+    using var nextTensor = new Tensor<int>(1, 1);
+    nextTensor.Data[0] = next;
+    using var single = model.ForwardLastLogits(nextTensor, a, p, null);
+
+    var b = Caches();
+    using (var _ = model.ForwardLastLogits(one, b, 0, null)) { }
+    using var pair = new Tensor<int>(1, 2);
+    pair.Data[0] = next;
+    pair.Data[1] = draft;
+    using var both = model.Forward(pair, b, p, null);
+
+    var l1 = single.Data[..modelConfig.VocabSize].ToArray();
+    var l2 = both.Data[..modelConfig.VocabSize].ToArray();
+    float maxDiff = 0;
+    for (int i = 0; i < l1.Length; i++) maxDiff = MathF.Max(maxDiff, MathF.Abs(l1[i] - l2[i]));
+
+    float[] Top(float[] v)
+    {
+        var idx = Enumerable.Range(0, v.Length).OrderByDescending(i => v[i]).Take(5).ToArray();
+        return [.. idx.Select(i => (float)i)];
+    }
+
+    Console.WriteLine($"rowcheck: one-token max={l1.Max():F3} top={string.Join(',', Top(l1))}");
+    Console.WriteLine($"rowcheck: two-token max={l2.Max():F3} top={string.Join(',', Top(l2))}");
+    Console.WriteLine($"rowcheck: max abs diff {maxDiff:F6}");
+    foreach (var c in a) c.Dispose();
+    foreach (var c in b) c.Dispose();
+    return 0;
 }
 
 // bench <file> [prompt] [warmup=16] [measure=64] [full] [resident] [serialmm] [nowide] [reps=3] [ids]

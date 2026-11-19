@@ -26,6 +26,8 @@ public sealed class OptionsView : View
     private readonly RadioGroup hwRadio;
     private readonly CheckBox parallelCheck;
     private readonly CheckBox promptLookupCheck;
+    private readonly CheckBox mtpCheck;
+    private readonly TextField mtpTokensField;
     /// <summary>Draft length when the box is ticked: 6 measured best on Qwen 0.6B-7B code edits.</summary>
     private const int PromptLookupDraftWhenOn = 6;
     private readonly TextField topKField;
@@ -257,6 +259,36 @@ public sealed class OptionsView : View
         _formContent.Add(promptLookupCheck);
         row++;
 
+        mtpCheck = new CheckBox("MTP drafting (model's own draft head, same output)",
+            options.Generation.MtpDraft) { X = 1, Y = row };
+        mtpCheck.Toggled += (_) =>
+        {
+            // Only write a real change; programmatic refreshes must not clobber
+            // a draft length loaded from the options file.
+            if (mtpCheck.Checked != _options.Generation.MtpDraft)
+                _options.Generation = _options.Generation with { MtpDraft = mtpCheck.Checked };
+        };
+        _formContent.Add(mtpCheck);
+        row++;
+
+        AddLabel("MTP draft tokens (1-8):");
+        mtpTokensField = new TextField((ustring)options.Generation.MtpDraftTokens.ToString())
+        {
+            X = 30,
+            Y = row,
+            Width = 10,
+        };
+        mtpTokensField.TextChanged += (_) =>
+        {
+            if (int.TryParse(mtpTokensField.Text.ToString(), out var v))
+                _options.Generation = _options.Generation with
+                {
+                    MtpDraftTokens = Math.Clamp(v, 1, GenerationConfig.MaxMtpDraftTokens),
+                };
+        };
+        _formContent.Add(mtpTokensField);
+        row++;
+
         AddLabel("Max context tokens (0 = full):");
         maxContextTokensField = new TextField((ustring)(options.MaxTokens?.ToString() ?? "0")) { X = 30, Y = row, Width = 10 };
         maxContextTokensField.TextChanged += (_) =>
@@ -472,6 +504,8 @@ public sealed class OptionsView : View
         repetitionWindowField.Text = (ustring)_options.Generation.RepetitionWindow.ToString("F2");
         maxTokensField.Text = (ustring)_options.Generation.MaxNewTokens.ToString();
         promptLookupCheck.Checked = _options.Generation.PromptLookupDraft > 0;
+        mtpCheck.Checked = _options.Generation.MtpDraft;
+        mtpTokensField.Text = (ustring)_options.Generation.MtpDraftTokens.ToString();
         maxContextTokensField.Text = (ustring)(_options.MaxTokens?.ToString() ?? "0");
         residentExpertsField.Text = (ustring)_options.DesiredResidentExperts.ToString();
         residentWindowField.Text = (ustring)_options.ResidentWindow.ToString();

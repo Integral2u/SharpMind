@@ -48,6 +48,12 @@ public static class Prefill
     /// token. Omit it when the cache holds the full conversation prefix; pass the
     /// tracked position when sliding-window trimming has made cache length diverge
     /// from the absolute position.
+    ///
+    /// <paramref name="chunkCompleted"/> runs after each chunk's forward while the
+    /// model's hidden states for that chunk are still valid. It receives the
+    /// chunk's start (relative to <paramref name="promptIds"/>), length, and
+    /// absolute position. A draft head uses it to fill its cache over the prompt
+    /// without re-reading the trunk.
     /// </summary>
     public static Tensor<float> ForwardLastLogitsChunked(
         Transformer model,
@@ -55,7 +61,8 @@ public static class Prefill
         int[] promptIds,
         Core.Memory.IWorkspace workspace,
         Action<double>? progress = null,
-        int? startPosition = null)
+        int? startPosition = null,
+        Action<int, int, int>? chunkCompleted = null)
     {
         if (promptIds.Length == 0)
             throw new ArgumentException("Prompt produced no token IDs; cannot prefill.", nameof(promptIds));
@@ -78,7 +85,17 @@ public static class Prefill
         if (promptIds.Length <= MaxChunkLength && caches[0].Length + promptIds.Length <= caches[0].MaxSeqLen)
         {
             workspace.Reset();
-            return RunChunk(model, caches, promptIds, 0, promptIds.Length, project: true, workspace, position)!;
+            var result = RunChunk(model, caches, promptIds, 0, promptIds.Length, project: true, workspace, position)!;
+            try
+            {
+                chunkCompleted?.Invoke(0, promptIds.Length, position);
+                return result;
+            }
+            catch
+            {
+                result.Dispose();
+                throw;
+            }
         }
 
         Tensor<float>? logits = null;
@@ -109,6 +126,7 @@ public static class Prefill
                 workspace.Reset();
                 bool last = start + len >= promptIds.Length;
                 logits = RunChunk(model, caches, promptIds, start, len, project: last, workspace, position + start);
+                chunkCompleted?.Invoke(start, len, position + start);
                 processed += len;
                 progress?.Invoke((double)processed / promptIds.Length);
             }

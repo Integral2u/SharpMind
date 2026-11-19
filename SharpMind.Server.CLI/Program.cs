@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
+using SharpMind.Inference;
 using SharpMind.Server;
 
 // ── Parse args (shared by both modes) ─────────────────────────────────
@@ -62,8 +63,25 @@ for (int i = 0; i < cliArgs.Length; i++)
             if (int.TryParse(cliArgs[++i], out var prefixCacheMb) && prefixCacheMb >= 0)
                 options.PrefixCacheMB = prefixCacheMb;
             break;
+        case "--completion-batch-size" when i + 1 < cliArgs.Length:
+            if (int.TryParse(cliArgs[++i], out var batchSize) && batchSize > 0)
+                options.CompletionBatchSize = batchSize;
+            break;
+        case "--no-chat-batching":
+            options.BatchChatCompletions = false;
+            break;
         case "--api-key" when i + 1 < cliArgs.Length:
             options.ApiKey = cliArgs[++i];
+            break;
+        case "--mtp":
+            options.MtpDraft = true;
+            break;
+        case "--mtp-tokens" when i + 1 < cliArgs.Length:
+            if (int.TryParse(cliArgs[++i], out var mtpTokens))
+            {
+                options.MtpDraft = true;
+                options.MtpDraftTokens = Math.Clamp(mtpTokens, 1, GenerationConfig.MaxMtpDraftTokens);
+            }
             break;
         case "--help" or "-h":
             if (!serviceMode) PrintUsage();
@@ -445,6 +463,8 @@ static async Task SpawnServiceProcessAsync(SharpMindServerOptions options, List<
     if (options.MaxCacheLen is int maxCacheLen) args += $" --max-cache-len {maxCacheLen}";
     args += $" --max-concurrent {options.MaxConcurrentGenerations} --max-queued {options.MaxQueuedGenerations}";
     if (options.PrefixCacheMB > 0) args += $" --prefix-cache-mb {options.PrefixCacheMB}";
+    args += $" --completion-batch-size {options.CompletionBatchSize}";
+    if (!options.BatchChatCompletions) args += " --no-chat-batching";
     if (!string.IsNullOrEmpty(options.ApiKey)) args += $" --api-key \"{options.ApiKey}\"";
 
     var psi = new ProcessStartInfo
@@ -754,9 +774,20 @@ static void PrintUsage()
       --prefix-cache-mb <n> Keep up to n MB of finished-request KV so the next
                             turn of a conversation prefills only what is new
                             (default 0 = off)
+      --completion-batch-size <n>
+                            /v1/completions sequences decoded together per model;
+                            the KV budget is split across the rows (default 8)
+      --no-chat-batching    Give each chat request its own generator and KV cache
+                            instead of sharing the model's batch. Slower under
+                            concurrency, but keeps incremental per-turn KV reuse
+                            and the cross-request prefix cache.
       --api-key <key>       Require this key (Authorization: Bearer or
                             X-Api-Key) for shutdown/model-delete endpoints.
                             Sentinel: also sent by --stop and unload.
+      --mtp                 Use the model's MTP (NextN) draft head for chat and
+                            completion requests. No effect without an MTP head.
+      --mtp-tokens <n>      MTP draft chain length, 1-8 (implies --mtp).
+                            Default 4.
       -h, --help            Show this help message
     """);
 }

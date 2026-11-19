@@ -101,6 +101,21 @@ public sealed class CreateChatCompletionRequest
     [JsonPropertyName("seed")]
     public int? Seed { get; set; }
 
+    /// <summary>
+    /// SharpMind extension: use the model's MTP (NextN) draft head for this
+    /// request. Null keeps the server default. Ignored when the model has no
+    /// MTP head.
+    /// </summary>
+    [JsonPropertyName("mtp")]
+    public bool? Mtp { get; set; }
+
+    /// <summary>
+    /// SharpMind extension: MTP draft chain length, 1..8. Null keeps the server
+    /// default. Implies <see cref="Mtp"/> when set.
+    /// </summary>
+    [JsonPropertyName("mtp_tokens")]
+    public int? MtpTokens { get; set; }
+
     [JsonPropertyName("user")]
     public string? User { get; set; }
 }
@@ -235,6 +250,137 @@ public sealed class ChatCompletionStreamDelta
     [JsonPropertyName("tool_calls")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public List<ChatCompletionToolCall>? ToolCalls { get; set; }
+}
+
+// ── POST /v1/completions — Request ───────────────────────────────────────
+
+public sealed class CreateCompletionRequest
+{
+    [JsonPropertyName("model")]
+    public string Model { get; set; } = "";
+
+    /// <summary>
+    /// One prompt or a list of prompts. OpenAI also accepts token arrays; those
+    /// are rejected because a completion request has no tokenizer-independent
+    /// way to report usage for them here.
+    /// </summary>
+    [JsonPropertyName("prompt")]
+    [JsonConverter(typeof(CompletionPromptJsonConverter))]
+    public List<string> Prompts { get; set; } = [];
+
+    [JsonPropertyName("max_tokens")]
+    public int? MaxTokens { get; set; }
+
+    [JsonPropertyName("temperature")]
+    public float? Temperature { get; set; }
+
+    [JsonPropertyName("top_p")]
+    public float? TopP { get; set; }
+
+    [JsonPropertyName("stop")]
+    public OneOrMany<string>? Stop { get; set; }
+
+    [JsonPropertyName("n")]
+    public int? N { get; set; }
+
+    [JsonPropertyName("stream")]
+    public bool? Stream { get; set; }
+
+    [JsonPropertyName("stream_options")]
+    public StreamOptions? StreamOptions { get; set; }
+
+    [JsonPropertyName("seed")]
+    public int? Seed { get; set; }
+
+    [JsonPropertyName("frequency_penalty")]
+    public float? FrequencyPenalty { get; set; }
+
+    [JsonPropertyName("presence_penalty")]
+    public float? PresencePenalty { get; set; }
+
+    [JsonPropertyName("echo")]
+    public bool? Echo { get; set; }
+
+    [JsonPropertyName("suffix")]
+    public string? Suffix { get; set; }
+
+    /// <summary>
+    /// SharpMind extension: use the model's MTP (NextN) draft head for this
+    /// request. Null keeps the server default. Ignored when the model has no
+    /// MTP head.
+    /// </summary>
+    [JsonPropertyName("mtp")]
+    public bool? Mtp { get; set; }
+
+    /// <summary>
+    /// SharpMind extension: MTP draft chain length, 1..8. Null keeps the server
+    /// default. Implies <see cref="Mtp"/> when set.
+    /// </summary>
+    [JsonPropertyName("mtp_tokens")]
+    public int? MtpTokens { get; set; }
+
+    [JsonPropertyName("user")]
+    public string? User { get; set; }
+}
+
+// ── POST /v1/completions — Response ──────────────────────────────────────
+
+public sealed class CreateCompletionResponse
+{
+    [JsonPropertyName("id")]
+    public string Id { get; set; } = "";
+
+    [JsonPropertyName("object")]
+    public string Object { get; set; } = "text_completion";
+
+    [JsonPropertyName("created")]
+    public long Created { get; set; }
+
+    [JsonPropertyName("model")]
+    public string Model { get; set; } = "";
+
+    [JsonPropertyName("choices")]
+    public List<CompletionChoice> Choices { get; set; } = [];
+
+    [JsonPropertyName("usage")]
+    public CompletionUsage? Usage { get; set; }
+}
+
+public sealed class CompletionChoice
+{
+    [JsonPropertyName("text")]
+    public string Text { get; set; } = "";
+
+    [JsonPropertyName("index")]
+    public int Index { get; set; }
+
+    [JsonPropertyName("logprobs")]
+    public object? Logprobs { get; set; }
+
+    [JsonPropertyName("finish_reason")]
+    public string? FinishReason { get; set; }
+}
+
+/// <summary>Streaming chunk. OpenAI uses the same shape for both modes.</summary>
+public sealed class CreateCompletionStreamResponse
+{
+    [JsonPropertyName("id")]
+    public string Id { get; set; } = "";
+
+    [JsonPropertyName("object")]
+    public string Object { get; set; } = "text_completion";
+
+    [JsonPropertyName("created")]
+    public long Created { get; set; }
+
+    [JsonPropertyName("model")]
+    public string Model { get; set; } = "";
+
+    [JsonPropertyName("choices")]
+    public List<CompletionChoice> Choices { get; set; } = [];
+
+    [JsonPropertyName("usage")]
+    public CompletionUsage? Usage { get; set; }
 }
 
 // ── Shared types ─────────────────────────────────────────────────────────
@@ -377,4 +523,34 @@ internal sealed class OneOrManyJsonConverter : JsonConverter<OneOrMany<string>>
         else
             JsonSerializer.Serialize(writer, value.Values, options);
     }
+}
+
+/// <summary>
+/// Reads a completion prompt: a string or an array of strings. Token-id arrays
+/// are rejected rather than silently reinterpreted.
+/// </summary>
+internal sealed class CompletionPromptJsonConverter : JsonConverter<List<string>>
+{
+    public override List<string> Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions? options)
+    {
+        if (reader.TokenType == JsonTokenType.String)
+            return [reader.GetString()!];
+
+        if (reader.TokenType == JsonTokenType.StartArray)
+        {
+            var list = new List<string>();
+            while (reader.Read() && reader.TokenType != JsonTokenType.EndArray)
+            {
+                if (reader.TokenType != JsonTokenType.String)
+                    throw new JsonException("prompt arrays must contain strings (token-id prompts are not supported).");
+                list.Add(reader.GetString()!);
+            }
+            return list;
+        }
+
+        throw new JsonException("prompt must be a string or an array of strings.");
+    }
+
+    public override void Write(Utf8JsonWriter writer, List<string> value, JsonSerializerOptions? options)
+        => JsonSerializer.Serialize(writer, value, options);
 }

@@ -58,6 +58,27 @@ public sealed record GenerationConfig
     /// <summary>Upper bound for <see cref="PromptLookupDraft"/>.</summary>
     public const int MaxPromptLookupDraft = 16;
 
+    /// <summary>
+    /// Draft with the model's MTP (NextN) head and verify the drafts in one
+    /// forward. A draft is only accepted when the trunk's own sample equals it,
+    /// so the emitted tokens are always the trunk's. <see cref="MtpDraftTokens"/>
+    /// sets how many tokens each round proposes. Requires a model that carries an
+    /// MTP block; recurrent trunk caches are snapshotted and replayed on a
+    /// rejection. Takes precedence over <see cref="PromptLookupDraft"/>.
+    /// </summary>
+    public bool MtpDraft { get; init; }
+
+    /// <summary>
+    /// Longest MTP draft chain tried per verification forward. Defaults to 4;
+    /// capped at <see cref="MaxMtpDraftTokens"/>. Only used when
+    /// <see cref="MtpDraft"/> is true. With the prompt's draft-head cache filled
+    /// during prefill, chains of 2–4 accept far more often than a single draft.
+    /// </summary>
+    public int MtpDraftTokens { get; init; } = 4;
+
+    /// <summary>Upper bound for <see cref="MtpDraftTokens"/>.</summary>
+    public const int MaxMtpDraftTokens = 8;
+
     // Streaming
 
     /// <summary>

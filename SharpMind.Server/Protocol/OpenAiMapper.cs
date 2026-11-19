@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using SharpMind.Inference;
 using SharpMind.Inference.Agent;
 using SharpMind.Inference.Chat;
 using SharpMind.Inference.Grammar;
@@ -150,16 +151,68 @@ public static class OpenAiMapper
         if (request.Stop?.Values is { Count: > 0 } stopValues)
             session.StopStrings = [.. stopValues];
 
+        if (request.Mtp is { } mtp)
+            session.MtpDraft = mtp;
+        if (request.MtpTokens is { } mtpTokens)
+        {
+            session.MtpDraft = true;
+            session.MtpDraftTokens = Math.Clamp(mtpTokens, 1, GenerationConfig.MaxMtpDraftTokens);
+        }
+
         session.Grammar = ResolveGrammar(request);
     }
+
+    /// <summary>
+    /// Map a text-completion request onto the batched generator's sampling and
+    /// stopping settings. The end-of-generation ids come from the tokenizer so
+    /// the model's own EOS and turn-end tokens stop it, matching the chat path.
+    /// </summary>
+    public static (SamplingConfig Sampling, GenerationConfig Generation) ToCompletionOptions(
+        CreateCompletionRequest request, Tokenization.Tokenizer tokenizer, int defaultMaxTokens = 16)
+    {
+        var generation = new GenerationConfig
+        {
+            MaxNewTokens = Math.Max(1, request.MaxTokens ?? defaultMaxTokens),
+            StopTokenIds = tokenizer.GetEndOfGenerationIds(),
+            StopStrings = request.Stop?.Values is { Count: > 0 } stop ? [.. stop] : [],
+            // OpenAI exposes frequency/presence penalties, not a repetition
+            // penalty. The chat path maps frequency the same way, so one request
+            // means the same thing on both endpoints.
+            RepetitionPenalty = request.FrequencyPenalty is { } frequency
+                ? 1f + Math.Clamp(frequency, -2f, 2f)
+                : 1f,
+            Stream = request.Stream == true,
+            MtpDraft = request.Mtp ?? request.MtpTokens is not null,
+            MtpDraftTokens = request.MtpTokens is { } mtpTokens
+                ? Math.Clamp(mtpTokens, 1, GenerationConfig.MaxMtpDraftTokens)
+                : GenerationConfig.Default.MtpDraftTokens,
+        };
+
+        var sampling = new SamplingConfig
+        {
+            Temperature = Math.Clamp(request.Temperature ?? 1f, 0f, 2f),
+            TopP = Math.Clamp(request.TopP ?? 1f, 0f, 1f),
+            Seed = request.Seed,
+        };
+
+        return (sampling, generation);
+    }
+
+    /// <summary>OpenAI's finish_reason for a batched sequence's stop.</summary>
+    public static string ToCompletionFinishReason(BatchFinishReason reason) => reason switch
+    {
+        BatchFinishReason.MaxTokens => "length",
+        BatchFinishReason.ContextFull => "length",
+        BatchFinishReason.Error => "error",
+        _ => "stop",
+    };
 
     /// <summary>
     /// Resolve <paramref name="request"/>.ResponseFormat into a GBNF grammar
     /// that forces the completion to be well-formed JSON. Returns null when no
     /// response_format is present. Throws <see cref="JsonSchemaException"/> for
     /// a malformed or unsupported format so the caller can reply 400.
-    /// </summary>
-    /// <remarks>
+    /// </summary>    /// <remarks>
     /// <c>{"type":"json_object"}</c> maps to
     /// <see cref="JsonSchemaGrammar.AnyJson"/>; <c>{"type":"json_schema"}</c>
     /// maps to <see cref="JsonSchemaGrammar.FromSchema(JsonElement)"/> using the

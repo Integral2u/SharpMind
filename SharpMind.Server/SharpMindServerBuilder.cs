@@ -55,6 +55,10 @@ public sealed class SharpMindServerOptions
     /// workspace, and the CPU kernels already use every core, so the default is
     /// one. Raise it only when the model is small enough that decode leaves
     /// cores idle.
+    ///
+    /// With <see cref="BatchChatCompletions"/> the gate is widened to at least
+    /// <see cref="CompletionBatchSize"/>: those requests share one forward pass
+    /// and the batcher's row count is the real bound.
     /// </summary>
     public int MaxConcurrentGenerations { get; set; } = 1;
 
@@ -76,6 +80,23 @@ public sealed class SharpMindServerOptions
     public int PrefixCacheMB { get; set; }
 
     /// <summary>
+    /// How many <c>/v1/completions</c> sequences one model decodes together.
+    /// All requests for a model share a single batcher, so this is the width of
+    /// that batch, not a per-request setting. The per-model KV cache budget is
+    /// divided between the rows. 1 still works but gains nothing.
+    /// </summary>
+    public int CompletionBatchSize { get; set; } = 8;
+
+    /// <summary>
+    /// Run <c>/v1/chat/completions</c> through the same per-model batcher as
+    /// completions. Concurrent chat requests then share forward passes instead
+    /// of each owning a generator. The trade is per-session KV reuse: a batched
+    /// session prefills its whole prompt every turn (no incremental cache, no
+    /// cross-request prefix cache) because the batcher owns the rows.
+    /// </summary>
+    public bool BatchChatCompletions { get; set; } = true;
+
+    /// <summary>
     /// Optional bearer/API key. When set, the destructive operational
     /// endpoints (<c>POST /v1/shutdown</c>, <c>DELETE /v1/models/{model}</c>)
     /// require it (<c>Authorization: Bearer &lt;key&gt;</c> or
@@ -83,6 +104,19 @@ public sealed class SharpMindServerOptions
     /// Set via --api-key CLI flag.
     /// </summary>
     public string ApiKey { get; set; } = "";
+
+    /// <summary>
+    /// Enable MTP (NextN) speculative drafting for chat and completion requests.
+    /// Only models that carry an MTP head draft; everything else ignores it.
+    /// Set via <c>--mtp</c>.
+    /// </summary>
+    public bool MtpDraft { get; set; }
+
+    /// <summary>
+    /// Longest MTP draft chain per verification forward, 1..8. Requires
+    /// <see cref="MtpDraft"/>. Set via <c>--mtp-tokens</c>.
+    /// </summary>
+    public int MtpDraftTokens { get; set; } = 4;
 }
 
 /// <summary>
@@ -111,10 +145,18 @@ public static class SharpMindServerExtensions
     {
         services.AddSingleton(options);
         services.AddSingleton<ModelManager>();
+        services.AddSingleton<ModelLeaseService>();
+        services.AddSingleton<BatchService>();
         services.AddSingleton(_ => new PrefixCache(options.PrefixCacheMB * 1024L * 1024L));
         services.AddSingleton<SessionFactory>();
+        // Batched chat bounds itself by the batcher's row count, so the admission
+        // gate must be wide enough to let a full batch in at once. With chat
+        // batching off this is the old per-request concurrency cap.
+        int concurrency = options.BatchChatCompletions
+            ? Math.Max(options.MaxConcurrentGenerations, options.CompletionBatchSize)
+            : options.MaxConcurrentGenerations;
         services.AddSingleton(_ => new GenerationGate(
-            options.MaxConcurrentGenerations, options.MaxQueuedGenerations));
+            concurrency, options.MaxQueuedGenerations));
         return services;
     }
 }

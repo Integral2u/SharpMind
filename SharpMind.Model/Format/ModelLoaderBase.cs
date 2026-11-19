@@ -80,7 +80,15 @@ public abstract class ModelLoaderBase(
             if (traceLoad)
                 Console.Error.WriteLine($"load: {info.Name} {info.Dtype} [{string.Join(",", info.Shape)}]");
             progress?.Report((float)loaded / total);
-            LoadSingleTensor(weights, meta, stream, info);
+            try
+            {
+                LoadSingleTensor(weights, meta, stream, info);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                throw new InvalidDataException(
+                    $"Failed to load tensor '{info.Name}' ({info.Dtype} [{string.Join(',', info.Shape)}]): {ex.Message}", ex);
+            }
             loaded++;
         }
         progress?.Report(1f);
