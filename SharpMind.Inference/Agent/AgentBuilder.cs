@@ -28,6 +28,12 @@ namespace SharpMind.Inference.Agent
         public IReadOnlyList<IPromptPostProcessor> PluginPostProcessors { get; set; } = [];
         public HashSet<string> DisabledTools { get; set; } = [];
 
+    /// <summary>
+    /// Optional host gate consulted before a tool call is dispatched. Null means
+    /// no filter; the engine itself never sets one.
+    /// </summary>
+    public IToolCallFilter? ToolCallFilter { get; set; }
+
         public IReadOnlyList<string> RegisteredToolNames => [.. ToolMethods.Keys, .. _delegateTools.Keys];
 
         /// <summary>Problems found while registering tools (for example overloads), for the host to show or log.</summary>
@@ -662,10 +668,22 @@ namespace SharpMind.Inference.Agent
                 var toolName = toolCall["tool"]?.GetValue<string>()
                     ?? throw new ArgumentException("Missing required field: 'tool'.");
 
+                var toolArguments = toolCall["arguments"]?.AsObject() ?? [];
+
+                // Optional host gate. It sees the call before any tool code runs,
+                // so a blocked call never reaches a delegate or a reflected method.
+                if (ToolCallFilter is not null)
+                {
+                    string? refusal = await ToolCallFilter
+                        .ReviewAsync(toolName, toolArguments, cancellationToken);
+                    if (!string.IsNullOrWhiteSpace(refusal))
+                        return Error(refusal, "blocked_by_filter");
+                }
+
                 // Delegate-based tool (added via WithTool(name, desc, schema, fn))
                 if (_delegateTools.TryGetValue(toolName, out var delegateEntry))
                 {
-                    var delegateArgs = toolCall["arguments"]?.AsObject() ?? [];
+                    var delegateArgs = toolArguments;
                     var result = await delegateEntry.Execute(delegateArgs);
                     return Success(result);
                 }
@@ -679,7 +697,7 @@ namespace SharpMind.Inference.Agent
                         ClosestToolName(toolName));
                 }
 
-                var reflectionArgs = toolCall["arguments"]?.AsObject() ?? [];
+                var reflectionArgs = toolArguments;
                 var invokeArgs = BindArguments(entry.Method, reflectionArgs, out var ignored, cancellationToken);
 
                 var raw = entry.Method.Invoke(entry.Instance, invokeArgs)
