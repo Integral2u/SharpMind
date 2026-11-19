@@ -97,6 +97,8 @@ public sealed class SessionFactory(SharpMindServerOptions options, PrefixCache p
 
         // Map OpenAI params -> session properties
         OpenAiMapper.ApplyToSession(request, session);
+        session.MtpDraft = request.Mtp ?? (request.MtpTokens is not null || _options.MtpDraft);
+        if (request.MtpTokens is null) session.MtpDraftTokens = _options.MtpDraftTokens;
 
         // Set context window.
         //

@@ -530,6 +530,13 @@ public sealed class SharpMindService : IAsyncDisposable
                 }
 
                 var (sampling, generation) = OpenAiMapper.ToCompletionOptions(request, loaded.Tokenizer);
+                generation = generation with
+                {
+                    MtpDraft = request.Mtp ?? (request.MtpTokens is not null || Options.MtpDraft),
+                    MtpDraftTokens = request.MtpTokens is { } mtpTokens
+                        ? Math.Clamp(mtpTokens, 1, GenerationConfig.MaxMtpDraftTokens)
+                        : Options.MtpDraftTokens,
+                };
                 bool addBos = loaded.Tokenizer.BosId >= 0;
                 int index = 0;
 

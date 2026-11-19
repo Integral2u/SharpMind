@@ -1,4 +1,5 @@
 using System.Text.Json;
+using SharpMind.Inference;
 using SharpMind.Inference.Chat;
 using SharpMind.Inference.Chat.PromptFormatters;
 using SharpMind.Inference.Grammar;
@@ -298,6 +299,46 @@ public class OpenAiMapperTests
         Assert.Equal("STOP", session.StopStrings![0]);
     }
 
+    // ── MTP extension ──────────────────────────────────────────────────
+
+    [Fact]
+    public void ApplyToSession_SetsMtpExtensionAndClampsTheChain()
+    {
+        var session = new FakeTestSession();
+        var request = new CreateChatCompletionRequest { Mtp = true, MtpTokens = 99 };
+
+        OpenAiMapper.ApplyToSession(request, session);
+
+        Assert.True(session.MtpDraft);
+        Assert.Equal(GenerationConfig.MaxMtpDraftTokens, session.MtpDraftTokens);
+    }
+
+    [Fact]
+    public void ToCompletionOptions_CarriesMtpExtension()
+    {
+        var request = new CreateCompletionRequest { Mtp = true, MtpTokens = 2 };
+
+        var (_, generation) = OpenAiMapper.ToCompletionOptions(request, TestTokenizer());
+
+        Assert.True(generation.MtpDraft);
+        Assert.Equal(2, generation.MtpDraftTokens);
+    }
+
+    [Fact]
+    public void ChatRequest_ParsesMtpExtension()
+    {
+        var request = JsonSerializer.Deserialize<CreateChatCompletionRequest>(
+            """{"model":"m","messages":[],"mtp":true,"mtp_tokens":2}""");
+
+        Assert.NotNull(request);
+        Assert.True(request!.Mtp);
+        Assert.Equal(2, request.MtpTokens);
+    }
+
+    private static Tokenizer TestTokenizer()
+        => Tokenizer.FromGguf(["[UNK]", "[BOS]", "[EOS]", "a", "b"], merges: null,
+            tokenTypes: null, bosId: 1, eosId: 2, tokenizerModel: "gpt2");
+
     // ── ResolveGrammar (response_format) ──────────────────────────────
 
     private static JsonElement Element(string json)
@@ -461,6 +502,9 @@ public class OpenAiMapperTests
         public float TopP { get; set; }
         public float RepetitionPenalty { get; set; }
         public int RepetitionWindow { get; set; }
+        public int PromptLookupDraft { get; set; }
+        public bool MtpDraft { get; set; }
+        public int MtpDraftTokens { get; set; } = GenerationConfig.Default.MtpDraftTokens;
         public int MaxToolCallsPerTurn { get; set; }
         public IReadOnlyList<int>? StopTokenIds { get; set; }
         public IReadOnlyList<string>? StopStrings { get; set; }

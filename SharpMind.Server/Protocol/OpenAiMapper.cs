@@ -151,6 +151,14 @@ public static class OpenAiMapper
         if (request.Stop?.Values is { Count: > 0 } stopValues)
             session.StopStrings = [.. stopValues];
 
+        if (request.Mtp is { } mtp)
+            session.MtpDraft = mtp;
+        if (request.MtpTokens is { } mtpTokens)
+        {
+            session.MtpDraft = true;
+            session.MtpDraftTokens = Math.Clamp(mtpTokens, 1, GenerationConfig.MaxMtpDraftTokens);
+        }
+
         session.Grammar = ResolveGrammar(request);
     }
 
@@ -174,6 +182,10 @@ public static class OpenAiMapper
                 ? 1f + Math.Clamp(frequency, -2f, 2f)
                 : 1f,
             Stream = request.Stream == true,
+            MtpDraft = request.Mtp ?? request.MtpTokens is not null,
+            MtpDraftTokens = request.MtpTokens is { } mtpTokens
+                ? Math.Clamp(mtpTokens, 1, GenerationConfig.MaxMtpDraftTokens)
+                : GenerationConfig.Default.MtpDraftTokens,
         };
 
         var sampling = new SamplingConfig

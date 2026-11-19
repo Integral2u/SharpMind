@@ -104,6 +104,19 @@ public sealed class SharpMindServerOptions
     /// Set via --api-key CLI flag.
     /// </summary>
     public string ApiKey { get; set; } = "";
+
+    /// <summary>
+    /// Enable MTP (NextN) speculative drafting for chat and completion requests.
+    /// Only models that carry an MTP head draft; everything else ignores it.
+    /// Set via <c>--mtp</c>.
+    /// </summary>
+    public bool MtpDraft { get; set; }
+
+    /// <summary>
+    /// Longest MTP draft chain per verification forward, 1..8. Requires
+    /// <see cref="MtpDraft"/>. Set via <c>--mtp-tokens</c>.
+    /// </summary>
+    public int MtpDraftTokens { get; set; } = 4;
 }
 
 /// <summary>

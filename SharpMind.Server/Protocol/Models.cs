@@ -101,6 +101,21 @@ public sealed class CreateChatCompletionRequest
     [JsonPropertyName("seed")]
     public int? Seed { get; set; }
 
+    /// <summary>
+    /// SharpMind extension: use the model's MTP (NextN) draft head for this
+    /// request. Null keeps the server default. Ignored when the model has no
+    /// MTP head.
+    /// </summary>
+    [JsonPropertyName("mtp")]
+    public bool? Mtp { get; set; }
+
+    /// <summary>
+    /// SharpMind extension: MTP draft chain length, 1..8. Null keeps the server
+    /// default. Implies <see cref="Mtp"/> when set.
+    /// </summary>
+    [JsonPropertyName("mtp_tokens")]
+    public int? MtpTokens { get; set; }
+
     [JsonPropertyName("user")]
     public string? User { get; set; }
 }
@@ -288,6 +303,21 @@ public sealed class CreateCompletionRequest
 
     [JsonPropertyName("suffix")]
     public string? Suffix { get; set; }
+
+    /// <summary>
+    /// SharpMind extension: use the model's MTP (NextN) draft head for this
+    /// request. Null keeps the server default. Ignored when the model has no
+    /// MTP head.
+    /// </summary>
+    [JsonPropertyName("mtp")]
+    public bool? Mtp { get; set; }
+
+    /// <summary>
+    /// SharpMind extension: MTP draft chain length, 1..8. Null keeps the server
+    /// default. Implies <see cref="Mtp"/> when set.
+    /// </summary>
+    [JsonPropertyName("mtp_tokens")]
+    public int? MtpTokens { get; set; }
 
     [JsonPropertyName("user")]
     public string? User { get; set; }

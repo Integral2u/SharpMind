@@ -58,6 +58,26 @@ public interface IChatSession : IAsyncDisposable
         get => 0;
         set { }
     }
+
+    /// <summary>
+    /// MTP (NextN) drafting for replies. See <see cref="GenerationConfig.MtpDraft"/>.
+    /// Off unless the loaded model carries an MTP head.
+    /// </summary>
+    public bool MtpDraft
+    {
+        get => false;
+        set { }
+    }
+
+    /// <summary>
+    /// Longest MTP draft chain per verification forward, 1..<see cref="GenerationConfig.MaxMtpDraftTokens"/>.
+    /// See <see cref="GenerationConfig.MtpDraftTokens"/>.
+    /// </summary>
+    public int MtpDraftTokens
+    {
+        get => GenerationConfig.Default.MtpDraftTokens;
+        set { }
+    }
     public IReadOnlyList<int>? StopTokenIds { get; set; }
     public IReadOnlyList<string>? StopStrings { get; set; }
 
@@ -79,11 +99,11 @@ public interface IChatSession : IAsyncDisposable
     }
 
     /// <summary>
-    /// Applies the generation values this session exposes — max new tokens and
-    /// the repetition penalty/window — from <paramref name="config"/>. Stop
-    /// tokens and strings are applied only when the config supplies them, so an
-    /// otherwise-empty config leaves the session's existing stops (and its EOS
-    /// default) untouched.
+    /// Applies the generation values this session exposes — max new tokens, the
+    /// repetition penalty/window, prompt-lookup and MTP drafting — from
+    /// <paramref name="config"/>. Stop tokens and strings are applied only when
+    /// the config supplies them, so an otherwise-empty config leaves the
+    /// session's existing stops (and its EOS default) untouched.
     /// </summary>
     public void SetGenerationConfig(GenerationConfig config)
     {
@@ -92,6 +112,8 @@ public interface IChatSession : IAsyncDisposable
         RepetitionPenalty = config.RepetitionPenalty;
         RepetitionWindow = config.RepetitionWindow;
         PromptLookupDraft = config.PromptLookupDraft;
+        MtpDraft = config.MtpDraft;
+        MtpDraftTokens = config.MtpDraftTokens;
         if (config.StopTokenIds.Count > 0)
             StopTokenIds = config.StopTokenIds;
         if (config.StopStrings.Count > 0)

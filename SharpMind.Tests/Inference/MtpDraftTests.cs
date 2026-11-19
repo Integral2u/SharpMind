@@ -41,7 +41,7 @@ public sealed class MtpDraftTests
     {
         var config = new ModelConfig
         {
-            VocabSize = 32,
+            VocabSize = 259,
             HiddenDim = 16,
             NumLayers = 2,
             NumHeads = 4,
@@ -157,6 +157,31 @@ public sealed class MtpDraftTests
 
         Assert.Equal(baseline.Ids, drafted.Ids);
         Assert.True(drafted.Mtp.Drafted > 0);
+    }
+
+    [Fact]
+    public async Task ChatSession_ReplyUsesTheSessionsMtpSetting()
+    {
+        using var model = BuildModel(zero: true);
+        var session = new SharpMind.Inference.Chat.ChatSession<StandardGeneratorBuilder<KVCacherBuilder>, KVCacherBuilder>(
+            model, Tokenizer, formatter: new SharpMind.Inference.Chat.PromptFormatters.SimpleFormatter())
+        {
+            Temperature = 0f,
+        };
+        session.InitializeChat();
+        // The setting arrives the way the CUI and server pass it: through SetGenerationConfig.
+        session.SetGenerationConfig(new GenerationConfig
+        {
+            MaxNewTokens = 12,
+            RepetitionPenalty = 1f,
+            MtpDraft = true,
+            MtpDraftTokens = 2,
+        });
+
+        await foreach (var _ in session.GetResponseStreamAsync("abab abab abab abab abab")) { }
+
+        var stats = Assert.IsType<StandardGenerator<KVCacherBuilder>>(session.Generator).MtpStats;
+        Assert.True(stats.Drafted > 0, "the session did not enable MTP drafting");
     }
 
     private static async Task<Run[]> GenerateBatched(

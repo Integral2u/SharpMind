@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
+using SharpMind.Inference;
 using SharpMind.Server;
 
 // ── Parse args (shared by both modes) ─────────────────────────────────
@@ -71,6 +72,16 @@ for (int i = 0; i < cliArgs.Length; i++)
             break;
         case "--api-key" when i + 1 < cliArgs.Length:
             options.ApiKey = cliArgs[++i];
+            break;
+        case "--mtp":
+            options.MtpDraft = true;
+            break;
+        case "--mtp-tokens" when i + 1 < cliArgs.Length:
+            if (int.TryParse(cliArgs[++i], out var mtpTokens))
+            {
+                options.MtpDraft = true;
+                options.MtpDraftTokens = Math.Clamp(mtpTokens, 1, GenerationConfig.MaxMtpDraftTokens);
+            }
             break;
         case "--help" or "-h":
             if (!serviceMode) PrintUsage();
@@ -773,6 +784,10 @@ static void PrintUsage()
       --api-key <key>       Require this key (Authorization: Bearer or
                             X-Api-Key) for shutdown/model-delete endpoints.
                             Sentinel: also sent by --stop and unload.
+      --mtp                 Use the model's MTP (NextN) draft head for chat and
+                            completion requests. No effect without an MTP head.
+      --mtp-tokens <n>      MTP draft chain length, 1-8 (implies --mtp).
+                            Default 4.
       -h, --help            Show this help message
     """);
 }

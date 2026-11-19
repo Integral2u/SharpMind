@@ -482,6 +482,19 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     /// summary generations do not use it.
     /// </summary>
     public int PromptLookupDraft { get; set; }
+    /// <summary>
+    /// MTP (NextN) drafting for replies (see <see cref="GenerationConfig.MtpDraft"/>):
+    /// verifies a drafted chain in one forward. Off by default and ignored by
+    /// models without an MTP head. Takes precedence over
+    /// <see cref="PromptLookupDraft"/> when both are enabled.
+    /// </summary>
+    public bool MtpDraft { get; set; }
+    /// <summary>
+    /// Longest MTP draft chain per verification forward, clamped to
+    /// 1..<see cref="GenerationConfig.MaxMtpDraftTokens"/>. Only used when
+    /// <see cref="MtpDraft"/> is true.
+    /// </summary>
+    public int MtpDraftTokens { get; set; } = GenerationConfig.Default.MtpDraftTokens;
     /// <summary>Token IDs that stop generation. Defaults to EOS if not set.</summary>
     public IReadOnlyList<int>? StopTokenIds { get; set; }
     /// <summary>Text strings that stop generation when matched in the decoded output.</summary>
@@ -614,6 +627,8 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         RepetitionPenalty = config.RepetitionPenalty;
         RepetitionWindow = config.RepetitionWindow;
         PromptLookupDraft = config.PromptLookupDraft;
+        MtpDraft = config.MtpDraft;
+        MtpDraftTokens = config.MtpDraftTokens;
         if (config.StopTokenIds.Count > 0)
             StopTokenIds = config.StopTokenIds;
         if (config.StopStrings.Count > 0)
@@ -2517,6 +2532,8 @@ private void ThrowIfDisposed()
                 StopStrings = MergeStopStrings(_formatter?.DefaultStopStrings, StopStrings),
                 SlidingWindowSize = 0,
                 PromptLookupDraft = PromptLookupDraft,
+                MtpDraft = MtpDraft,
+                MtpDraftTokens = MtpDraftTokens,
                 Stream = true,
             };
 
