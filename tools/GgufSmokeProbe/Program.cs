@@ -2388,17 +2388,19 @@ static async Task<int> RunRowCheckAsync(string path, string[] args)
     return 0;
 }
 
-// medusacheck <file> ["prompt"] [tokens=16] [samples=16] [steps=4]
+// medusacheck <file> ["prompt"] [tokens=16] [samples=16] [steps=4] [heads=FILE]
 //
 // Compares random versus self-calibrated Medusa heads on the same model. Medusa
 // can only change throughput, so all three runs must emit the same greedy ids;
-// the interesting numbers are draft acceptance and forwards per token.
+// the interesting numbers are draft acceptance and forwards per token. Passing a
+// head file calibrates and saves it on the first run, then loads it after that.
 static async Task<int> RunMedusaCheckAsync(string path, string[] args)
 {
     string prompt = args.Length > 2 ? args[2] : "The capital of France is";
     int tokens = args.Length > 3 && int.TryParse(args[3], out int t) ? Math.Max(1, t) : 16;
     int samples = args.Length > 4 && int.TryParse(args[4], out int s) ? Math.Max(1, s) : 16;
     int steps = args.Length > 5 && int.TryParse(args[5], out int st) ? Math.Max(1, st) : 4;
+    string? headFile = args.Length > 6 && !string.IsNullOrWhiteSpace(args[6]) ? args[6] : null;
 
     ModelFormatHelpers.GetModelMetaHelperFor(ModelFormat.Gguf)
         .Load(path, null, out _, out var modelConfig, out var tokenizer);
@@ -2430,8 +2432,8 @@ static async Task<int> RunMedusaCheckAsync(string path, string[] args)
         return generator.CurrentGeneratedIds!.ToArray();
     }
 
-    async Task<(int[] Ids, MedusaStats Stats, MedusaCalibrationResult? Calibration)> RunMedusaAsync(
-        bool calibrate)
+    async Task<(int[] Ids, MedusaStats Stats, MedusaCalibrationResult? Calibration, MedusaHeadLoadResult? Load)>
+        RunMedusaAsync(bool calibrate)
     {
         var builder = new MedusaGeneratorBuilder<KVCacherBuilder>
         {
@@ -2440,12 +2442,14 @@ static async Task<int> RunMedusaCheckAsync(string path, string[] args)
             CalibrationPrompt = calibrate ? prompt : null,
             CalibrationSteps = steps,
             CalibrationLearningRate = 0.02f,
+            MedusaHeadsPath = calibrate ? headFile : null,
+            CalibrationFingerprint = calibrate ? Path.GetFileName(path) : null,
         };
         using var generator = builder.CreateGenerator(
             model, tokenizer, addBos: true, addEos: false, caches: null, seed: 1);
         int[] ids = await RunAsync(generator);
         var medusa = (MedusaGenerator<KVCacherBuilder>)generator;
-        return (ids, medusa.Stats, medusa.Calibration);
+        return (ids, medusa.Stats, medusa.Calibration, builder.LastHeadLoad);
     }
 
     using var standard = new StandardGeneratorBuilder<KVCacherBuilder>()
@@ -2456,7 +2460,8 @@ static async Task<int> RunMedusaCheckAsync(string path, string[] args)
     var calibrated = await RunMedusaAsync(calibrate: true);
 
     Console.WriteLine($"medusacheck: {Path.GetFileName(path)} prompt=\"{prompt}\" " +
-                      $"promptTokens={promptIds.Length} tokens={tokens} samples={samples} steps={steps}");
+                      $"promptTokens={promptIds.Length} tokens={tokens} samples={samples} steps={steps}" +
+                      (headFile is null ? "" : $" heads={Path.GetFileName(headFile)}"));
     Console.WriteLine($"  standard   ids={string.Join(',', standardIds)}");
     Console.WriteLine($"  random     ids={string.Join(',', random.Ids)} " +
                       $"accept={random.Stats.DraftAcceptanceRate:P1} " +
@@ -2465,7 +2470,8 @@ static async Task<int> RunMedusaCheckAsync(string path, string[] args)
     Console.WriteLine($"  calibrated ids={string.Join(',', calibrated.Ids)} " +
                       $"accept={calibrated.Stats.DraftAcceptanceRate:P1} " +
                       $"fwd/token={calibrated.Stats.ForwardsPerToken:F2} " +
-                      $"rounds={calibrated.Stats.Rounds} loss={loss}");
+                      $"rounds={calibrated.Stats.Rounds} loss={loss} " +
+                      $"heads={calibrated.Load}");
     Console.WriteLine($"  random matches standard:     {random.Ids.SequenceEqual(standardIds)}");
     Console.WriteLine($"  calibrated matches standard: {calibrated.Ids.SequenceEqual(standardIds)}");
     return 0;

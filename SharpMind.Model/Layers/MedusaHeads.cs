@@ -10,6 +10,27 @@ namespace SharpMind.Model.Layers;
 /// <param name="FinalLoss">Average cross-entropy over the last epoch, or 0 when nothing was trained.</param>
 public readonly record struct MedusaCalibrationResult(int Samples, int Steps, float FinalLoss);
 
+/// <summary>Which half of a Medusa calibration pass is running.</summary>
+public enum MedusaCalibrationPhase
+{
+    /// <summary>Greedy continuation is being generated to build the training set.</summary>
+    Collecting,
+
+    /// <summary>Gradients are being accumulated and the heads updated.</summary>
+    Training,
+}
+
+/// <summary>Progress of a Medusa self-calibration pass.</summary>
+/// <param name="Phase">Current phase.</param>
+/// <param name="Completed">Steps finished in this phase.</param>
+/// <param name="Total">Steps in this phase.</param>
+/// <param name="Loss">Average loss of the last finished epoch, or null while collecting.</param>
+public readonly record struct MedusaCalibrationProgress(
+    MedusaCalibrationPhase Phase,
+    int Completed,
+    int Total,
+    float? Loss);
+
 public sealed class MedusaHeads : IDisposable
 {
     private readonly int _numHeads;
@@ -56,6 +77,8 @@ public sealed class MedusaHeads : IDisposable
     }
 
     public int NumHeads => _numHeads;
+    public int HiddenDim => _hiddenDim;
+    public int VocabSize => _vocabSize;
     public bool IsTrained { get; private set; }
 
     /// <summary>Result of the last <see cref="SelfCalibrate"/> call, or null when never calibrated.</summary>
@@ -64,6 +87,56 @@ public sealed class MedusaHeads : IDisposable
     /// <summary>Access head weights for training.</summary>
     public Tensor<float> GetHeadWeight(int head) => _headWeights[head];
     public Tensor<float> GetHeadBias(int head) => _headBiases[head];
+
+    /// <summary>
+    /// Replaces the random heads with a set loaded by <see cref="MedusaHeadFile"/>.
+    /// Shapes and an optional fingerprint are checked, so heads trained against a
+    /// different model fail loudly instead of quietly drafting nonsense.
+    /// </summary>
+    /// <exception cref="InvalidDataException">The snapshot does not match this head set.</exception>
+    public void LoadWeights(MedusaHeadSnapshot snapshot, string? expectedFingerprint = null)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+
+        if (snapshot.NumHeads != _numHeads
+            || snapshot.HiddenDim != _hiddenDim
+            || snapshot.VocabSize != _vocabSize)
+        {
+            throw new InvalidDataException(
+                $"Medusa head file is {snapshot.NumHeads} heads / {snapshot.HiddenDim} hidden / " +
+                $"{snapshot.VocabSize} vocab, but the model needs {_numHeads} / {_hiddenDim} / {_vocabSize}.");
+        }
+
+        if (expectedFingerprint is not null
+            && !string.Equals(expectedFingerprint, snapshot.Fingerprint, StringComparison.Ordinal))
+        {
+            throw new InvalidDataException(
+                $"Medusa head file fingerprint '{snapshot.Fingerprint}' does not match '{expectedFingerprint}'.");
+        }
+
+        if (snapshot.Weights.Length != _numHeads || snapshot.Biases.Length != _numHeads)
+            throw new InvalidDataException("Medusa head file has the wrong number of weight arrays.");
+
+        // Validate every tensor before copying any, so a bad file cannot leave
+        // the head set half old and half new.
+        for (int h = 0; h < _numHeads; h++)
+        {
+            if (snapshot.Weights[h].Length != _hiddenDim * _hiddenDim
+                || snapshot.Biases[h].Length != _hiddenDim)
+            {
+                throw new InvalidDataException($"Medusa head {h} has the wrong tensor length.");
+            }
+        }
+
+        for (int h = 0; h < _numHeads; h++)
+        {
+            snapshot.Weights[h].CopyTo(_headWeights[h].Data);
+            snapshot.Biases[h].CopyTo(_headBiases[h].Data);
+        }
+
+        IsTrained = snapshot.IsTrained;
+        LastCalibration = snapshot.Calibration;
+    }
 
     /// <summary>
     /// Given a normed hidden state vector [1, HiddenDim], predicts draft tokens
@@ -192,8 +265,11 @@ public sealed class MedusaHeads : IDisposable
     /// </summary>
     /// <returns>Average cross-entropy over the final epoch.</returns>
     public float Calibrate(Tensor<float> hiddenStates, int[][] targetTokens,
-        float learningRate = 0.01f, int steps = 50)
+        float learningRate = 0.01f, int steps = 50,
+        CancellationToken cancellationToken = default,
+        IProgress<MedusaCalibrationProgress>? progress = null)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         int numSamples = hiddenStates.Shape.Rows;
         if (numSamples == 0 || targetTokens.Length == 0 || steps <= 0)
         {
@@ -236,6 +312,7 @@ public sealed class MedusaHeads : IDisposable
 
         for (int step = 0; step < steps; step++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             Array.Clear(lossAccum);
             for (int h = 0; h < k; h++)
             {
@@ -245,6 +322,7 @@ public sealed class MedusaHeads : IDisposable
 
             for (int s = 0; s < numSamples; s++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 var hRow = hiddenStates.RowSpan(s);
 
                 for (int head = 0; head < k; head++)
@@ -349,6 +427,8 @@ public sealed class MedusaHeads : IDisposable
 
             finalLoss = lossAccum.Sum() / (k * numSamples);
             System.Diagnostics.Debug.WriteLine($"[Medusa] Step {step + 1}/{steps}, avg loss: {finalLoss:F4}");
+            progress?.Report(new MedusaCalibrationProgress(
+                MedusaCalibrationPhase.Training, step + 1, steps, finalLoss));
         }
 
         IsTrained = true;
@@ -375,10 +455,18 @@ public sealed class MedusaHeads : IDisposable
     /// Prompt/context tokens to start from. Null starts at token 0, which is fine
     /// for tests but a real prompt makes the heads match the text they will draft.
     /// </param>
+    /// <param name="cancellationToken">Stops collection or training between steps.</param>
+    /// <param name="progress">
+    /// Optional sink for collection and per-epoch training progress. Reported from
+    /// the calling thread; do not block in the handler.
+    /// </param>
     /// <returns>The sample count, epoch count, and final training loss.</returns>
     public MedusaCalibrationResult SelfCalibrate(Transformer model, int numSamples = 50,
-        int trainingSteps = 30, float learningRate = 0.01f, IReadOnlyList<int>? seedTokens = null)
+        int trainingSteps = 30, float learningRate = 0.01f, IReadOnlyList<int>? seedTokens = null,
+        CancellationToken cancellationToken = default,
+        IProgress<MedusaCalibrationProgress>? progress = null)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (_numHeads == 0 || numSamples <= 0 || trainingSteps <= 0)
         {
             var skipped = new MedusaCalibrationResult(
@@ -436,6 +524,7 @@ public sealed class MedusaHeads : IDisposable
             // and therefore the K-head targets; hidden states are collected in
             // a second pass so they match generation exactly.
             var generated = new int[totalSteps];
+            cancellationToken.ThrowIfCancellationRequested();
             workspace.Reset();
             using (var seedInput = workspace.Rent<int>([1, seedLen]))
             {
@@ -443,9 +532,12 @@ public sealed class MedusaHeads : IDisposable
                 using var seedLogits = model.ForwardLastLogits(seedInput, caches, 0, workspace);
                 generated[0] = ArgMax(seedLogits.Data[.._vocabSize]);
             }
+            progress?.Report(new MedusaCalibrationProgress(
+                MedusaCalibrationPhase.Collecting, 1, totalSteps, null));
 
             for (int step = 1; step < totalSteps; step++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 workspace.Reset();
                 using var input = workspace.Rent<int>([1, 1]);
                 input.Data[0] = generated[step - 1];
@@ -453,12 +545,15 @@ public sealed class MedusaHeads : IDisposable
                 using var logits = model.ForwardLastLogits(
                     input, caches, seedLen + step - 1, workspace);
                 generated[step] = ArgMax(logits.Data[.._vocabSize]);
+                progress?.Report(new MedusaCalibrationProgress(
+                    MedusaCalibrationPhase.Collecting, step + 1, totalSteps, null));
             }
 
             // Replay the full seed + continuation through the blocks in one pass.
             // ForwardFill leaves the pre-norm hidden state; applying the final
             // norm here matches MedusaGenerator.RefillNormedHidden, which is
             // what the heads see while drafting.
+            cancellationToken.ThrowIfCancellationRequested();
             for (int i = 0; i < caches.Length; i++) caches[i].Reset();
             workspace.Reset();
             using (var replay = new Tensor<int>(1, sequenceLen))
@@ -471,6 +566,7 @@ public sealed class MedusaHeads : IDisposable
 
             for (int step = 0; step < numSamples; step++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 using var row = model.GetNormedHiddenRow(seedLen - 1 + step)
                     ?? throw new InvalidOperationException("Medusa calibration lost the hidden state.");
                 row.Data[.._hiddenDim].CopyTo(hiddenStates.RowSpan(step));
@@ -484,7 +580,8 @@ public sealed class MedusaHeads : IDisposable
                     targetTokens[P][i] = generated[P + i + 1];
 
             // Train the heads on the collected data.
-            float finalLoss = Calibrate(hiddenStates, targetTokens, learningRate, trainingSteps);
+            float finalLoss = Calibrate(hiddenStates, targetTokens, learningRate, trainingSteps,
+                cancellationToken, progress);
 
             var result = new MedusaCalibrationResult(numSamples, trainingSteps, finalLoss);
             LastCalibration = result;

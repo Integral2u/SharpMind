@@ -19,6 +19,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   trunk forwards, and forwards per token. Output remains identical to plain
   greedy decoding; only throughput changes.
 
+- **Medusa head persistence** - set `MedusaGeneratorBuilder.MedusaHeadsPath` to
+  load calibrated heads from a sidecar file, or to calibrate once and save the
+  result there. The format is a small binary container with a JSON header, so a
+  session no longer retrains heads on every `CreateGenerator` call. Dims and an
+  optional `CalibrationFingerprint` are checked on load; a stale file is
+  recalibrated when samples are configured and otherwise fails loudly.
+  `LastHeadLoad` reports `Loaded`, `Calibrated`, or `Skipped`.
+
+- **Medusa calibration progress and cancellation** - `SelfCalibrate` and
+  `Calibrate` accept a `CancellationToken` and an
+  `IProgress<MedusaCalibrationProgress>`, and the builder exposes
+  `CalibrationCancellationToken` / `CalibrationProgress`. Progress reports the
+  greedy-collection phase and then one update per training epoch with its loss,
+  so a host UI can show movement and cancel cleanly.
+
 ## [1.1.2.0] - 2026-11-15
 
 ### Added
