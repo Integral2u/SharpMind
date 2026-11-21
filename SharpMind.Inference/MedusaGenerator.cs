@@ -65,10 +65,40 @@ using SharpMind.Model.Layers;
 
 namespace SharpMind.Inference;
 
+/// <summary>Per-generation Medusa acceptance counters.</summary>
+/// <param name="Rounds">Verification rounds run.</param>
+/// <param name="DraftTokensProposed">Head-predicted tokens offered for verification (token0 excluded).</param>
+/// <param name="DraftTokensAccepted">Head-predicted tokens the trunk agreed with.</param>
+/// <param name="BonusTokens">Extra tokens emitted after a fully accepted round.</param>
+/// <param name="DecodeForwards">Trunk forwards after prefill, including replays and bonus steps.</param>
+/// <param name="GeneratedTokens">Tokens emitted by this generation.</param>
+public readonly record struct MedusaStats(
+    int Rounds,
+    int DraftTokensProposed,
+    int DraftTokensAccepted,
+    int BonusTokens,
+    int DecodeForwards,
+    int GeneratedTokens)
+{
+    /// <summary>Accepted head predictions divided by proposed head predictions.</summary>
+    public double DraftAcceptanceRate =>
+        DraftTokensProposed == 0 ? 0 : (double)DraftTokensAccepted / DraftTokensProposed;
+
+    /// <summary>Trunk forwards per emitted token; lower is better.</summary>
+    public double ForwardsPerToken =>
+        GeneratedTokens == 0 ? 0 : (double)DecodeForwards / GeneratedTokens;
+}
+
 public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder, new()
 {
     public string Name { get; init; } = "Medusa";
     public IReadOnlyList<IKVCache> Caches => _caches;
+
+    /// <summary>Acceptance and forward counters for the last generation.</summary>
+    public MedusaStats Stats { get; private set; }
+
+    /// <summary>Calibration result of the heads, or null when they were not calibrated.</summary>
+    public MedusaCalibrationResult? Calibration => _medusaHeads.LastCalibration;
     private readonly Transformer _model;
     private readonly Tokenization.Tokenizer _tokenizer;
     private readonly IKVCache[] _caches;
@@ -99,8 +129,6 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
     private bool _disposed;
     private readonly bool _addBos;
     private readonly bool _addEos;
-
-    private const int DefaultNumHeads = 3;
 
     /// <summary>
     /// Optional progress callback for the chunked prefill phase: invoked once per
@@ -161,7 +189,7 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
 
         _defaultRng = seed.HasValue ? new Random(seed.Value) : Random.Shared;
         _normedHiddenScratch = new float[model.Config.HiddenDim];
-        _draftScratch = new int[DefaultNumHeads + 1];
+        _draftScratch = new int[medusaHeads.NumHeads + 1];
         _position = _caches[0].Length;
         _cacheTokens = _caches[0].Length == 0 ? [] : null;
         foreach (var cache in _caches)
@@ -205,6 +233,7 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
     {
         await Task.CompletedTask;
         ThrowIfDisposed();
+        Stats = default;
 
         var sampleCfg = sampling ?? SamplingConfig.Greedy;
         var genCfg = generation ?? GenerationConfig.Default;
@@ -264,13 +293,16 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
                 ReadOnlySpan<float> curLogits = logitsTensor.Data[..vocabSize];
                 GeneratorDiagnostics.PrintTopLogits(_tokenizer, generatedIds.Count, curLogits);
 
-                // Use the slots that are left: fewer heads when the context tail is
-                // short. A bonus step is only attempted when one more slot remains.
+                // Use the slots that are left: fewer heads when the context tail or
+                // the token budget is short. A bonus step only runs when both the
+                // context and MaxNewTokens have room for one more token.
                 int remaining = maxPosition - _position;
-                if (remaining <= 0) break;
-                int roundDrafts = Math.Min(draftLen, remaining);
+                int canEmit = genCfg.MaxNewTokens - generatedIds.Count;
+                if (remaining <= 0 || canEmit <= 0) break;
+                int roundDrafts = Math.Min(draftLen, Math.Min(remaining, canEmit));
                 int roundHeads = roundDrafts - 1;
-                bool bonusCanFit = _position + roundDrafts < maxPosition;
+                bool bonusCanFit = _position + roundDrafts < maxPosition
+                    && generatedIds.Count + roundDrafts < genCfg.MaxNewTokens;
                 int cacheSlots = roundDrafts + (bonusCanFit ? 1 : 0);
 
                 // 1. Greedy sample: the LM head's best guess for the next token.
@@ -392,12 +424,21 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
                     }
                 }
 
+                Stats = Stats with
+                {
+                    Rounds = Stats.Rounds + 1,
+                    DraftTokensProposed = Stats.DraftTokensProposed + roundHeads,
+                    DraftTokensAccepted = Stats.DraftTokensAccepted + Math.Max(0, accepted - 1),
+                    DecodeForwards = Stats.DecodeForwards + 1,
+                };
+
                 // 6. Emit accepted tokens one-by-one (needed for streaming).
                 bool stopHit = false;
                 for (int i = 0; i < accepted; i++)
                 {
                     int tid = _draftScratch[i];
                     generatedIds.Add(tid);
+                    Stats = Stats with { GeneratedTokens = Stats.GeneratedTokens + 1 };
                     OnTokenGenerated?.Invoke(tid);
                     rateTracker.RecordToken();
                     TimeToFirstToken = rateTracker.TimeToFirstToken;
@@ -485,6 +526,12 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
                             SamplingConfig.Greedy, rng);
                     }
                     generatedIds.Add(bonus);
+                    Stats = Stats with
+                    {
+                        BonusTokens = Stats.BonusTokens + 1,
+                        DecodeForwards = Stats.DecodeForwards + 1,
+                        GeneratedTokens = Stats.GeneratedTokens + 1,
+                    };
                     OnTokenGenerated?.Invoke(bonus);
                     rateTracker.RecordToken();
                     TimeToFirstToken = rateTracker.TimeToFirstToken;
@@ -569,6 +616,7 @@ public sealed class MedusaGenerator<T> : IGenerator<T> where T : IKVCacheBuilder
                             using var replayInput = _workspace.Rent<int>([1, accepted]);
                             _draftScratch.AsSpan(0, accepted).CopyTo(replayInput.Data);
                             _model.ForwardFill(replayInput, _caches, _position, _workspace);
+                            Stats = Stats with { DecodeForwards = Stats.DecodeForwards + 1 };
                             _position += accepted;
                         }
                         replayed = true;

@@ -6,6 +6,7 @@ using SharpMind.Inference.Chat;
 using SharpMind.Model;
 using SharpMind.Model.Config;
 using SharpMind.Model.Format;
+using SharpMind.Model.Layers;
 using SharpMind.Tokenization;
 using System.Text.Json.Nodes;
 
@@ -19,6 +20,7 @@ using System.Text.Json.Nodes;
 //   dotnet run --project tools/GgufSmokeProbe -- benchab <file> ["prompt"] [warmup=16] [measure=64] [full] [resident]
 //   dotnet run --project tools/GgufSmokeProbe -- batchbench <file> ["prompt"] [maxBatch=8] [tokens=16] [reps=3]
 //   dotnet run --project tools/GgufSmokeProbe -- mtpcheck <file> ["prompt"] [steps=64]
+//   dotnet run --project tools/GgufSmokeProbe -- medusacheck <file> ["prompt"] [tokens=16] [samples=16] [steps=4]
 //   dotnet run --project tools/GgufSmokeProbe -- widebench [K=896] [N=4864] [iters=200] [chunks=0]
 //   dotnet run --project tools/GgufSmokeProbe -- stages <file> ["prompt"] [warmup=16] [measure=48] [full] [resident] [serialmm] [window N]
 //   dotnet run --project tools/GgufSmokeProbe -- bind <file>
@@ -98,6 +100,9 @@ if (mode == "mtpcheck")
 
 if (mode == "rowcheck")
     return await RunRowCheckAsync(path, args);
+
+if (mode == "medusacheck")
+    return await RunMedusaCheckAsync(path, args);
 
 if (mode == "fwd")
     return RunForward(path, args);
@@ -2380,6 +2385,89 @@ static async Task<int> RunRowCheckAsync(string path, string[] args)
     Console.WriteLine($"rowcheck: max abs diff {maxDiff:F6}");
     foreach (var c in a) c.Dispose();
     foreach (var c in b) c.Dispose();
+    return 0;
+}
+
+// medusacheck <file> ["prompt"] [tokens=16] [samples=16] [steps=4]
+//
+// Compares random versus self-calibrated Medusa heads on the same model. Medusa
+// can only change throughput, so all three runs must emit the same greedy ids;
+// the interesting numbers are draft acceptance and forwards per token.
+static async Task<int> RunMedusaCheckAsync(string path, string[] args)
+{
+    string prompt = args.Length > 2 ? args[2] : "The capital of France is";
+    int tokens = args.Length > 3 && int.TryParse(args[3], out int t) ? Math.Max(1, t) : 16;
+    int samples = args.Length > 4 && int.TryParse(args[4], out int s) ? Math.Max(1, s) : 16;
+    int steps = args.Length > 5 && int.TryParse(args[5], out int st) ? Math.Max(1, st) : 4;
+
+    ModelFormatHelpers.GetModelMetaHelperFor(ModelFormat.Gguf)
+        .Load(path, null, out _, out var modelConfig, out var tokenizer);
+    if (tokenizer is null) { Console.Error.WriteLine("no tokenizer"); return 3; }
+
+    var sharpConfig = modelConfig.ForModel();
+    var mapping = sharpConfig.ToJigSawMapping();
+    using var weights = ModelFactory.CreateWeights(
+        modelConfig, sharpConfig, QuantizationFactory.Create(mapping), path,
+        LoadMode.Full, quantizedResident: false, maxParallelLoadDegree: 1);
+    weights.InitializeWeights();
+    using var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
+
+    int[] promptIds = tokenizer.Encode(prompt, addBos: true, addEos: false);
+
+    var genCfg = new GenerationConfig
+    {
+        MaxNewTokens = tokens,
+        RepetitionPenalty = 1f,
+        Stream = false,
+    };
+
+    async Task<int[]> RunAsync(IGenerator<KVCacherBuilder> generator)
+    {
+        await foreach (var _ in generator.GenerateFromTokensAsync(
+                           promptIds, SamplingConfig.Greedy, genCfg))
+        {
+        }
+        return generator.CurrentGeneratedIds!.ToArray();
+    }
+
+    async Task<(int[] Ids, MedusaStats Stats, MedusaCalibrationResult? Calibration)> RunMedusaAsync(
+        bool calibrate)
+    {
+        var builder = new MedusaGeneratorBuilder<KVCacherBuilder>
+        {
+            NumHeads = 3,
+            CalibrationSamples = calibrate ? samples : 0,
+            CalibrationPrompt = calibrate ? prompt : null,
+            CalibrationSteps = steps,
+            CalibrationLearningRate = 0.02f,
+        };
+        using var generator = builder.CreateGenerator(
+            model, tokenizer, addBos: true, addEos: false, caches: null, seed: 1);
+        int[] ids = await RunAsync(generator);
+        var medusa = (MedusaGenerator<KVCacherBuilder>)generator;
+        return (ids, medusa.Stats, medusa.Calibration);
+    }
+
+    using var standard = new StandardGeneratorBuilder<KVCacherBuilder>()
+        .CreateGenerator(model, tokenizer, addBos: true, addEos: false, caches: null, seed: 1);
+    int[] standardIds = await RunAsync(standard);
+
+    var random = await RunMedusaAsync(calibrate: false);
+    var calibrated = await RunMedusaAsync(calibrate: true);
+
+    Console.WriteLine($"medusacheck: {Path.GetFileName(path)} prompt=\"{prompt}\" " +
+                      $"promptTokens={promptIds.Length} tokens={tokens} samples={samples} steps={steps}");
+    Console.WriteLine($"  standard   ids={string.Join(',', standardIds)}");
+    Console.WriteLine($"  random     ids={string.Join(',', random.Ids)} " +
+                      $"accept={random.Stats.DraftAcceptanceRate:P1} " +
+                      $"fwd/token={random.Stats.ForwardsPerToken:F2} rounds={random.Stats.Rounds}");
+    string loss = calibrated.Calibration is { } c ? c.FinalLoss.ToString("F4") : "n/a";
+    Console.WriteLine($"  calibrated ids={string.Join(',', calibrated.Ids)} " +
+                      $"accept={calibrated.Stats.DraftAcceptanceRate:P1} " +
+                      $"fwd/token={calibrated.Stats.ForwardsPerToken:F2} " +
+                      $"rounds={calibrated.Stats.Rounds} loss={loss}");
+    Console.WriteLine($"  random matches standard:     {random.Ids.SequenceEqual(standardIds)}");
+    Console.WriteLine($"  calibrated matches standard: {calibrated.Ids.SequenceEqual(standardIds)}");
     return 0;
 }
 

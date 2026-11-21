@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **Medusa head calibration** - `MedusaGeneratorBuilder` can self-calibrate its
+  draft heads on the model's own greedy continuation before decoding. Set
+  `CalibrationSamples`, `CalibrationSteps`, `CalibrationLearningRate`, and
+  optionally `CalibrationPrompt`; `LastCalibration` / `MedusaGenerator.Calibration`
+  report the final loss. Calibration now collects pre-norm hidden states and
+  applies the final norm once, matching the state the heads see while drafting,
+  and trains head i against offset i+2 because the LM head already supplies
+  token0. `MedusaGenerator.Stats` reports rounds, draft acceptance, bonus tokens,
+  trunk forwards, and forwards per token. Output remains identical to plain
+  greedy decoding; only throughput changes.
+
 ## [1.1.2.0] - 2026-11-15
 
 ### Added

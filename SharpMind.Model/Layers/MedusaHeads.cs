@@ -4,6 +4,12 @@ using SharpMind.Core.Tensors;
 
 namespace SharpMind.Model.Layers;
 
+/// <summary>Outcome of a Medusa self-calibration pass.</summary>
+/// <param name="Samples">Number of greedy samples collected from the model.</param>
+/// <param name="Steps">Number of SGD epochs run over those samples.</param>
+/// <param name="FinalLoss">Average cross-entropy over the last epoch, or 0 when nothing was trained.</param>
+public readonly record struct MedusaCalibrationResult(int Samples, int Steps, float FinalLoss);
+
 public sealed class MedusaHeads : IDisposable
 {
     private readonly int _numHeads;
@@ -51,6 +57,9 @@ public sealed class MedusaHeads : IDisposable
 
     public int NumHeads => _numHeads;
     public bool IsTrained { get; private set; }
+
+    /// <summary>Result of the last <see cref="SelfCalibrate"/> call, or null when never calibrated.</summary>
+    public MedusaCalibrationResult? LastCalibration { get; private set; }
 
     /// <summary>Access head weights for training.</summary>
     public Tensor<float> GetHeadWeight(int head) => _headWeights[head];
@@ -181,26 +190,58 @@ public sealed class MedusaHeads : IDisposable
     ///   learningRate - SGD step size
     ///   steps - number of training epochs over the data
     /// </summary>
-    public void Calibrate(Tensor<float> hiddenStates, int[][] targetTokens,
+    /// <returns>Average cross-entropy over the final epoch.</returns>
+    public float Calibrate(Tensor<float> hiddenStates, int[][] targetTokens,
         float learningRate = 0.01f, int steps = 50)
     {
         int numSamples = hiddenStates.Shape.Rows;
+        if (numSamples == 0 || targetTokens.Length == 0 || steps <= 0)
+        {
+            IsTrained = true;
+            return 0f;
+        }
+
         int targetLen = targetTokens[0].Length;
         int k = Math.Min(_numHeads, targetLen);
+        if (k == 0)
+        {
+            IsTrained = true;
+            return 0f;
+        }
 
         var lossAccum = new float[k];
         var preAct = new float[_hiddenDim];
         var hPrime = new float[_hiddenDim];
         var dHPrime = new float[_hiddenDim];
+        var gradW = new float[k][];
+        var gradB = new float[k][];
+        for (int h = 0; h < k; h++)
+        {
+            gradW[h] = new float[_hiddenDim * _hiddenDim];
+            gradB[h] = new float[_hiddenDim];
+        }
+
         if (_logitBuffer == null || _logitBuffer.Length != _vocabSize)
             _logitBuffer = new float[_vocabSize];
 
         bool useQ8 = _rawEmbedding != null && _rawDtype == QuantDType.Q8_0 && _qOps != null;
         var lmData = _lmHeadWeight.Data;
+        float finalLoss = 0f;
+
+        // The cross-entropy gradient through the LM head is large for a random
+        // head (it scales with the vocabulary), so an unclipped per-sample SGD
+        // step diverges within a few epochs. Accumulate one epoch, clip the
+        // gradient norm, and apply one averaged update per epoch.
+        const float MaxGradientNorm = 1f;
 
         for (int step = 0; step < steps; step++)
         {
             Array.Clear(lossAccum);
+            for (int h = 0; h < k; h++)
+            {
+                Array.Clear(gradW[h]);
+                Array.Clear(gradB[h]);
+            }
 
             for (int s = 0; s < numSamples; s++)
             {
@@ -229,8 +270,7 @@ public sealed class MedusaHeads : IDisposable
                     }
                     else
                     {
-                        int v = 0;
-                        for (; v < _vocabSize; v++)
+                        for (int v = 0; v < _vocabSize; v++)
                         {
                             double sum = 0;
                             var row = lmData.Slice(v * _hiddenDim, _hiddenDim);
@@ -269,38 +309,60 @@ public sealed class MedusaHeads : IDisposable
                             dHPrime[i] += (float)(d * row[i]);
                     }
 
-                    // SiLU backward + weight update (using saved preAct, no recomputation)
+                    // SiLU backward, accumulate the outer product for this head.
+                    var gw = gradW[head];
+                    var gb = gradB[head];
                     for (int i = 0; i < _hiddenDim; i++)
                     {
                         float sig = 1.0f / (1.0f + MathF.Exp(-preAct[i]));
                         float siluGrad = sig + preAct[i] * sig * (1.0f - sig);
-                        float lrDo = learningRate * dHPrime[i] * siluGrad;
+                        float g = dHPrime[i] * siluGrad;
 
+                        gb[i] += g;
                         for (int j = 0; j < _hiddenDim; j++)
-                            w.Data[j * _hiddenDim + i] -= lrDo * hRow[j];
-                        b.Data[i] -= lrDo;
+                            gw[j * _hiddenDim + i] += g * hRow[j];
                     }
                 }
             }
 
-            if (step % 10 == 9)
+            for (int head = 0; head < k; head++)
             {
-                float avgLoss = lossAccum.Sum() / (k * numSamples);
-                System.Diagnostics.Debug.WriteLine($"[Medusa] Step {step + 1}/{steps}, avg loss: {avgLoss:F4}");
+                var w = _headWeights[head];
+                var b = _headBiases[head];
+                var gw = gradW[head];
+                var gb = gradB[head];
+
+                double normSq = 0;
+                for (int idx = 0; idx < gw.Length; idx++) normSq += gw[idx] * (double)gw[idx];
+                for (int i = 0; i < gb.Length; i++) normSq += gb[i] * (double)gb[i];
+
+                float clip = normSq > MaxGradientNorm * MaxGradientNorm
+                    ? MaxGradientNorm / MathF.Sqrt((float)normSq)
+                    : 1f;
+                float scale = learningRate * clip;
+
+                for (int idx = 0; idx < gw.Length; idx++)
+                    w.Data[idx] -= scale * gw[idx];
+                for (int i = 0; i < gb.Length; i++)
+                    b.Data[i] -= scale * gb[i];
             }
+
+            finalLoss = lossAccum.Sum() / (k * numSamples);
+            System.Diagnostics.Debug.WriteLine($"[Medusa] Step {step + 1}/{steps}, avg loss: {finalLoss:F4}");
         }
 
         IsTrained = true;
+        return finalLoss;
     }
 
     /// <summary>
     /// Self-calibration: collects training data from the model's own greedy
     /// outputs, then trains the heads via <see cref="Calibrate"/>.
     ///
-    /// Runs <paramref name="numSamples"/> single-token forward steps on the
-    /// model, saves the normed hidden state and the greedy next token at each
-    /// step.  The K subsequent tokens become the K-head training targets for
-    /// that step (head i must predict the token at offset i+1).
+    /// Starts from <paramref name="seedTokens"/> (or token 0), runs a greedy
+    /// continuation, then replays the whole sequence through the blocks and
+    /// saves the normed hidden state at each sample position. The LM head
+    /// supplies offset 1 (token0), so head i is trained to predict offset i+2.
     ///
     /// Temporary workspace and KV caches are created internally and disposed
     /// when the method returns.  The model's own caches are NOT modified.
@@ -309,19 +371,33 @@ public sealed class MedusaHeads : IDisposable
     /// <param name="numSamples">Number of training samples to collect (default 50).</param>
     /// <param name="trainingSteps">SGD epochs over the collected data (default 30).</param>
     /// <param name="learningRate">SGD step size (default 0.01).</param>
-    public void SelfCalibrate(Transformer model, int numSamples = 50,
-        int trainingSteps = 30, float learningRate = 0.01f)
+    /// <param name="seedTokens">
+    /// Prompt/context tokens to start from. Null starts at token 0, which is fine
+    /// for tests but a real prompt makes the heads match the text they will draft.
+    /// </param>
+    /// <returns>The sample count, epoch count, and final training loss.</returns>
+    public MedusaCalibrationResult SelfCalibrate(Transformer model, int numSamples = 50,
+        int trainingSteps = 30, float learningRate = 0.01f, IReadOnlyList<int>? seedTokens = null)
     {
-        if (_numHeads == 0) return;
+        if (_numHeads == 0 || numSamples <= 0 || trainingSteps <= 0)
+        {
+            var skipped = new MedusaCalibrationResult(
+                Math.Max(0, numSamples), Math.Max(0, trainingSteps), 0f);
+            LastCalibration = skipped;
+            return skipped;
+        }
+
         int K = _numHeads;
         int totalSteps = numSamples + K; // K extra for valid K-head targets
+        int seedLen = seedTokens is { Count: > 0 } ? seedTokens.Count : 1;
+        int sequenceLen = seedLen + totalSteps;
 
-        // Create workspace sized for a single decode step × totalSteps horizon.
+        // Create workspace sized for the seed plus the generated continuation.
         using var workspace = new Workspace(
             Workspace.CalculateRequiredSize(
                 model.Config.HiddenDim, model.Config.FfnDim,
                 model.Config.VocabSize, model.Config.NumLayers,
-                totalSteps));
+                sequenceLen));
 
         // Create independent KV caches so the model's own cache is untouched.
         var caches = new IKVCache[model.Config.NumLayers];
@@ -329,62 +405,90 @@ public sealed class MedusaHeads : IDisposable
         {
             for (int i = 0; i < caches.Length; i++)
                 caches[i] = model.Config.IsShortConvLayer(i)
-                    ? new ShortConvCache(model.Config.ShortConvCacheLength - 1, model.Config.HiddenDim, 1, totalSteps)
+                    ? new ShortConvCache(model.Config.ShortConvCacheLength - 1, model.Config.HiddenDim, 1, sequenceLen)
                     : model.Config.IsRecurrentLayer(i)
                         ? new DeltaNetCache(model.Config.SsmConvKernel, model.Config.SsmConvDim,
                             model.Config.SsmTimeStepRank, model.Config.SsmStateSize,
-                            model.Config.SsmValueHeadDim, 1, totalSteps)
-                        : new KVCache(1, model.Config.NumKvHeads, totalSteps, model.Config.HeadDimForLayer(i));
+                            model.Config.SsmValueHeadDim, 1, sequenceLen)
+                        : new KVCache(1, model.Config.NumKvHeads, sequenceLen, model.Config.HeadDimForLayer(i));
 
             // Storage: one hidden vector per sample, K target token IDs per sample.
-            var hiddenStates = new Tensor<float>(numSamples, _hiddenDim);
+            using var hiddenStates = new Tensor<float>(numSamples, _hiddenDim);
             var targetTokens = new int[numSamples][];
             for (int i = 0; i < numSamples; i++)
                 targetTokens[i] = new int[K];
 
-            // Greedy autoregressive generation.
-            // Each step processes one token, caches the key/value, and saves
-            // the normed hidden state and the greedy next-token ID.
+            var seed = new int[seedLen];
+            if (seedTokens is { Count: > 0 })
+                for (int i = 0; i < seedLen; i++) seed[i] = seedTokens[i];
+            else
+                seed[0] = 0;
+
+            static int ArgMax(ReadOnlySpan<float> values)
+            {
+                int best = 0;
+                for (int i = 1; i < values.Length; i++)
+                    if (values[i] > values[best]) best = i;
+                return best;
+            }
+
+            // Greedy continuation after the seed. This fixes the token sequence
+            // and therefore the K-head targets; hidden states are collected in
+            // a second pass so they match generation exactly.
             var generated = new int[totalSteps];
-            for (int step = 0; step < totalSteps; step++)
+            workspace.Reset();
+            using (var seedInput = workspace.Rent<int>([1, seedLen]))
+            {
+                for (int i = 0; i < seedLen; i++) seedInput.Data[i] = seed[i];
+                using var seedLogits = model.ForwardLastLogits(seedInput, caches, 0, workspace);
+                generated[0] = ArgMax(seedLogits.Data[.._vocabSize]);
+            }
+
+            for (int step = 1; step < totalSteps; step++)
             {
                 workspace.Reset();
                 using var input = workspace.Rent<int>([1, 1]);
-                input.Data[0] = step == 0 ? 0 : generated[step - 1];
+                input.Data[0] = generated[step - 1];
 
                 using var logits = model.ForwardLastLogits(
-                    input, caches, step, workspace);
-
-                // ArgMax for greedy token
-                float bestVal = logits.Data[0];
-                int bestIdx = 0;
-                for (int v = 1; v < _vocabSize; v++)
-                {
-                    if (logits.Data[v] <= bestVal) continue;
-                    bestVal = logits.Data[v];
-                    bestIdx = v;
-                }
-                generated[step] = bestIdx;
-
-                // Save the normed hidden state for this position.
-                // After single-token ForwardLastLogits, _cachedHidden is
-                // [1, 1, H] and already final-normed (ForwardInPlace path).
-                if (step < numSamples)
-                {
-                    var ch = model.LastCachedHidden;
-                    ch?.Data[.._hiddenDim].CopyTo(hiddenStates.RowSpan(step));
-                }
+                    input, caches, seedLen + step - 1, workspace);
+                generated[step] = ArgMax(logits.Data[.._vocabSize]);
             }
 
-            // Fill target tokens: for position P, head i must predict the
-            // token at offset i+1 ahead, which is generated[P + i].
+            // Replay the full seed + continuation through the blocks in one pass.
+            // ForwardFill leaves the pre-norm hidden state; applying the final
+            // norm here matches MedusaGenerator.RefillNormedHidden, which is
+            // what the heads see while drafting.
+            for (int i = 0; i < caches.Length; i++) caches[i].Reset();
+            workspace.Reset();
+            using (var replay = new Tensor<int>(1, sequenceLen))
+            {
+                for (int i = 0; i < seedLen; i++) replay.Data[i] = seed[i];
+                for (int step = 0; step < totalSteps; step++)
+                    replay.Data[seedLen + step] = generated[step];
+                model.ForwardFill(replay, caches, 0, workspace);
+            }
+
+            for (int step = 0; step < numSamples; step++)
+            {
+                using var row = model.GetNormedHiddenRow(seedLen - 1 + step)
+                    ?? throw new InvalidOperationException("Medusa calibration lost the hidden state.");
+                row.Data[.._hiddenDim].CopyTo(hiddenStates.RowSpan(step));
+            }
+
+            // Fill target tokens. At position P the LM head already supplies
+            // offset 1 (token0), so head i must predict offset i+2:
+            // generated[P + i + 1].
             for (int P = 0; P < numSamples; P++)
                 for (int i = 0; i < K; i++)
-                    targetTokens[P][i] = generated[P + i];
+                    targetTokens[P][i] = generated[P + i + 1];
 
             // Train the heads on the collected data.
-            Calibrate(hiddenStates, targetTokens, learningRate, trainingSteps);
-            hiddenStates.Dispose();
+            float finalLoss = Calibrate(hiddenStates, targetTokens, learningRate, trainingSteps);
+
+            var result = new MedusaCalibrationResult(numSamples, trainingSteps, finalLoss);
+            LastCalibration = result;
+            return result;
         }
         finally
         {
