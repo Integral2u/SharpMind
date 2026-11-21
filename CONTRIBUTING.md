@@ -38,7 +38,7 @@ CI fails on the UTF-8-decoded-as-Windows-1252 signatures (`U+00E2`, `U+00C3`, `U
 
 ## Branch and release workflow
 
-See [docs/contributing/workflow.md](docs/contributing/workflow.md) for the shared
+See [docs/contributing/workflow.md](docs/contributing/workflow.md) for the
 local-first branch, push, release and hotfix rules. In short: work on
 `release/x.y.z` or a short-lived branch off it, commit locally, push for backups
 or for gates that cannot run locally, and merge to `master` only at release time

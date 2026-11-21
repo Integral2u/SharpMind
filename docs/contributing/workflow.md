@@ -1,8 +1,11 @@
 # Branch and release workflow
 
-This is the shared workflow for SharpMind and SharpMind Studio. It is deliberately
-local-first: commits are cheap, pushes are checkpoints, and `master` is the
-release-grade line.
+This is SharpMind's workflow. SharpMind Studio follows the same rules in its own
+repository, with its own released line (`main`), version and changelog; see the
+[Studio workflow](https://github.com/Integral2u/SharpMindStudio/blob/main/docs/contributing/workflow.md).
+
+The workflow here is deliberately local-first: commits are cheap, pushes are
+checkpoints, and `master` is the release-grade line.
 
 ## Principles
 
@@ -148,13 +151,10 @@ current cycle does not diverge.
 
 ## SharpMind Studio
 
-SharpMind Studio follows the same branch, commit and push rules, with its own
-version and changelog.
-
-- If Studio consumes SharpMind packages, pin a published version.
-- Bump the package pin only after SharpMind's version is final.
-- Test against the local SharpMind build before changing the pin.
-- Coordinate API changes: land the SharpMind side first, then update Studio.
+Studio keeps the matching rules in its own repository:
+[SharpMindStudio workflow](https://github.com/Integral2u/SharpMindStudio/blob/main/docs/contributing/workflow.md).
+It has its own released line (`main`), version and changelog. Land engine API
+changes here first, then update Studio.
 
 ## CI triggers
 
