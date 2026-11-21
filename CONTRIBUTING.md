@@ -36,7 +36,18 @@ CI fails on the UTF-8-decoded-as-Windows-1252 signatures (`U+00E2`, `U+00C3`, `U
 
 `SharpMind.GPU` is loaded as an optional accelerator plugin. It must keep working when the device or CUDA libraries are absent, and the host must fail loudly rather than silently falling back when a GPU run was requested explicitly. See the GPU tests and `README.md` for the current contract.
 
+## Branch and release workflow
+
+See [docs/contributing/workflow.md](docs/contributing/workflow.md) for the shared
+local-first branch, push, release and hotfix rules. In short: work on
+`release/x.y.z` or a short-lived branch off it, commit locally, push for backups
+or for gates that cannot run locally, and merge to `master` only at release time
+or for an urgent fix.
+
 ## Pull requests
+
+PRs are optional. Open one when you need the full CI matrix or CodeQL before
+merge, when you want a review record, or when branch protection requires it.
 
 - Explain the user-visible effect and the test evidence.
 - Do not commit models, datasets, benchmark artifacts, keys or build output.
