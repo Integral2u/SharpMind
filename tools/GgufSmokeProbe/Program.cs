@@ -23,6 +23,7 @@ using System.Text.Json.Nodes;
 //   dotnet run --project tools/GgufSmokeProbe -- medusacheck <file> ["prompt"] [tokens=16] [samples=16] [steps=4]
 //   dotnet run --project tools/GgufSmokeProbe -- genbench <file> ["prompt"] [warmup=8] [measure=32] [heads=FILE] [samples=16] [steps=8]
 //   dotnet run --project tools/GgufSmokeProbe -- widebench [K=896] [N=4864] [iters=200] [chunks=0]
+//   dotnet run --project tools/GgufSmokeProbe -- q4kwidebench [K=2048] [N=4864] [iters=200] [chunks=0]
 //   dotnet run --project tools/GgufSmokeProbe -- stages <file> ["prompt"] [warmup=16] [measure=48] [full] [resident] [serialmm] [window N]
 //   dotnet run --project tools/GgufSmokeProbe -- bind <file>
 //   dotnet run --project tools/GgufSmokeProbe -- cmp  <fileA> <fileB> <tensor>
@@ -59,9 +60,12 @@ if (args.Length > 0 && args[0] == "kbench")
 if (args.Length > 0 && args[0] == "widebench")
     return RunWideKernelBench(args);
 
+if (args.Length > 0 && args[0] == "q4kwidebench")
+    return RunQ4KWideBench(args);
+
 if (args.Length < 2)
 {
-    Console.Error.WriteLine("usage: meta <file>   |   dump <file> [pattern]   |   bind <file>   |   fwd <file> [full] [resident]   |   fwdmulti <file> <promptfile> [single|...]   |   ref <file> [prompt]   |   run <file> [prompt] [maxTokens] [full] [resident] [topk] [serialmm]   |   bench <file> [prompt] [warmup] [measure] [full] [resident] [serialmm] [nowide] [reps=N] [ids]   |   benchab <file> [prompt] [warmup] [measure] [full] [resident]   |   stages <file> [prompt] [warmup] [measure] [full] [resident] [serialmm]   |   widebench [K] [N] [iters]   |   kbench <q2k|q3k|q4k|q5k|q6k|q8k|q4_0|q4_1|iq4nl|mxfp4|iq4xs|iq2xxs|iq2xs|iq3xxs|iq2s|iq3s|q5_0|q5_1|q8_0|q8_1|f32> [K] [N] [iters] [fma|avx2|scalar|arm64]");
+    Console.Error.WriteLine("usage: meta <file>   |   dump <file> [pattern]   |   bind <file>   |   fwd <file> [full] [resident]   |   fwdmulti <file> <promptfile> [single|...]   |   ref <file> [prompt]   |   run <file> [prompt] [maxTokens] [full] [resident] [topk] [serialmm]   |   bench <file> [prompt] [warmup] [measure] [full] [resident] [serialmm] [nowide] [reps=N] [ids]   |   benchab <file> [prompt] [warmup] [measure] [full] [resident]   |   stages <file> [prompt] [warmup] [measure] [full] [resident] [serialmm]   |   widebench [K] [N] [iters]   |   q4kwidebench [K] [N] [iters] [chunks]   |   kbench <q2k|q3k|q4k|q5k|q6k|q8k|q4_0|q4_1|iq4nl|mxfp4|iq4xs|iq2xxs|iq2xs|iq3xxs|iq2s|iq3s|q5_0|q5_1|q8_0|q8_1|f32> [K] [N] [iters] [fma|avx2|scalar|arm64]");
     return 2;
 }
 
@@ -3166,6 +3170,76 @@ static unsafe int RunWideKernelBench(string[] args)
         System.Runtime.InteropServices.NativeMemory.AlignedFree(input);
         System.Runtime.InteropServices.NativeMemory.AlignedFree(output);
     }
+}
+
+// q4kwidebench [K=2048] [N=4864] [iters=200] [chunks=0]
+//
+// Exercises the Q4_K wide decode path against the production Q4_K FMA kernel.
+// Warmup runs past tiered-JIT promotion so a short run is not measuring tier-0.
+static unsafe int RunQ4KWideBench(string[] args)
+{
+    int K = args.Length > 1 && int.TryParse(args[1], out int kv) ? kv : 2048;
+    int N = args.Length > 2 && int.TryParse(args[2], out int nv) ? nv : 4864;
+    int iters = args.Length > 3 && int.TryParse(args[3], out int iv) ? iv : 200;
+    int chunks = args.Length > 4 && int.TryParse(args[4], out int cv) ? cv : 0;
+
+    if (K <= 0 || K % 256 != 0 || N < 8 || iters <= 0 || chunks < 0)
+    {
+        Console.Error.WriteLine("q4kwidebench needs K>0 (multiple of 256), N>=8, iters>0, chunks>=0");
+        return 2;
+    }
+
+    long wBytes = (long)N * (K / 256) * 144;
+    if (wBytes > Array.MaxLength) { Console.Error.WriteLine("q4kwidebench weights too large"); return 2; }
+
+    byte[] raw = new byte[wBytes];
+    for (long off = 0; off < wBytes; off += 144)
+    {
+        raw[off] = 0x00; raw[off + 1] = 0x3C; // d = 1.0
+        raw[off + 2] = 0x00; raw[off + 3] = 0x3C; // dmin = 1.0
+        for (int i = 4; i < 144; i++) raw[off + i] = (byte)((i * 37) & 0xFF);
+    }
+
+    var wide = Q4KWideWeights.TryCreate(raw, K, N);
+    if (wide is null) { Console.Error.WriteLine("q4kwidebench: repack refused the shape"); return 2; }
+
+    var input = new float[K];
+    for (int i = 0; i < K; i++) input[i] = (i % 7 - 3) * 0.1f;
+    var output = new float[N];
+
+    int oldChunks = Q4KWideWeights.ParallelChunkOverride;
+    Q4KWideWeights.ParallelChunkOverride = chunks;
+    try
+    {
+        fixed (float* pIn = input)
+        fixed (float* pOut = output)
+        fixed (byte* pRaw = raw)
+        {
+            for (int i = 0; i < 20; i++) wide.MatMul(pIn, pOut, 1);
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            for (int i = 0; i < iters; i++) wide.MatMul(pIn, pOut, 1);
+            sw.Stop();
+            double wideGmac = (double)iters * K * N / 1e9 / sw.Elapsed.TotalSeconds;
+
+            for (int i = 0; i < 20; i++)
+                QuantizationKernels.QuantizedMatMulQ4K_Parallel_FMA(pIn, pRaw, pOut, 1, K, N);
+            sw.Restart();
+            for (int i = 0; i < iters; i++)
+                QuantizationKernels.QuantizedMatMulQ4K_Parallel_FMA(pIn, pRaw, pOut, 1, K, N);
+            sw.Stop();
+            double fmaGmac = (double)iters * K * N / 1e9 / sw.Elapsed.TotalSeconds;
+
+            Console.WriteLine($"KIND=q4kwide K={K} N={N} wbytes={wBytes} iters={iters} " +
+                              $"chunks={(chunks == 0 ? "auto" : chunks.ToString())} cores={Environment.ProcessorCount}");
+            Console.WriteLine($"  wide {wideGmac:F3} GMAC/s   ({(wideGmac / Math.Max(fmaGmac, 1e-9)):F2}x Q4_K FMA)");
+            Console.WriteLine($"  fma  {fmaGmac:F3} GMAC/s");
+        }
+    }
+    finally
+    {
+        Q4KWideWeights.ParallelChunkOverride = oldChunks;
+    }
+    return 0;
 }
 
 // kbench <kind> [K=2048] [N=1408] [iters=50] [fma|avx2|scalar|arm64]

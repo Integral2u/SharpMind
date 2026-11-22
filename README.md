@@ -282,6 +282,8 @@ Measured end to end on `Qwen1.5-MoE-A2.7B-Q2_K` — 48 tokens of greedy decoding
 
 `kbench` covers every vec-dot above - `kbench <kind> [K] [N] [iters] [fma|avx2|scalar|arm64]` with the kinds listed in the usage line - so any new kernel can be ranked against this table the same way. (`arm64` selects the NEON kernels where they exist - Q4_K, Q6_K and Q8_0 - and the scalar kernels for every kind that does not have one yet, which is the baseline the next NEON kernel will be compared against.)
 
+**Q4_K wide repack.** `Q4KWideWeights` groups eight output rows and evaluates each 32-value sub-block as `scale * Σ(v*q) - bias * Σq` against int8 activations, with the 4-bit nibbles left packed. It reuses the Q8 wide group layout; only the per-row scale/min floats and the nibble decode are added. On a Ryzen 3 2200U (`Qwen3.5-2B-Q4_K_M`, 16 greedy tokens) decode moved **1.24 → 1.69 tok/s**, and the isolated kernel **0.77 → 2.73 GMAC/s** (`q4kwidebench 2048 4864`). The repack grows a Q4_K tensor by about 1.33x because the scale/min pairs become floats (~0.4 GB for this 2B), and rows past a full group of eight, or a K that is not a multiple of 256, keep the old kernel. The same model's LM head is Q6_K and is now roughly a third of decode time, so a Q6_K wide kernel is the next lever.
+
 The same harness is dispatchable on both CI architectures: the manual `Bench` workflow runs it on `ubuntu-latest` (`fma`/`avx2`/`scalar`) and `ubuntu-24.04-arm` (`arm64`/`scalar`) with identical shapes and records the table in the run summary. Hosted runners are different CPUs, so compare ratios within a runner - AVX2 over scalar on x64, NEON over scalar on Arm64 - rather than absolute GMAC/s between them.
 
 ### Decoding strategy

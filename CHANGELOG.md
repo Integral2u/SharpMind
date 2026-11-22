@@ -27,6 +27,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   recalibrated when samples are configured and otherwise fails loudly.
   `LastHeadLoad` reports `Loaded`, `Calibrated`, or `Skipped`.
 
+- **Q4_K wide integer matmul** - `Q4KWideWeights` repacks eight output rows per
+  group and dots packed 4-bit weights against int8 activations:
+  `scale * Σ(v*q) - bias * Σq` per 32-value sub-block. It reuses the Q8 wide
+  layout, so decode gets the same integer `vpmaddubsw`/`vpmaddwd` path without
+  requantizing the file; only the scale/min floats grow the tensor (about 1.33x).
+  On `Qwen3.5-2B-Q4_K_M` decode moved 1.24 -> 1.69 tok/s and the isolated kernel
+  0.77 -> 2.73 GMAC/s. The LM head on that model is Q6_K and stays on the old
+  path. `GgufSmokeProbe q4kwidebench` measures the kernel against the Q4_K FMA
+  baseline.
+
 - **Host builder configuration** - `ChatSession` and `ChatSessionFactory` accept
   an `IGeneratorBuilderConfigurator` that runs before the builder creates a
   generator, for both the main and sub-agent paths. Studio uses it to pass Medusa

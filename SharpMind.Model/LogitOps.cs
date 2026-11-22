@@ -14,6 +14,7 @@ public abstract class LogitOps(Tensor<float>? projectionWeight, byte[]? rawWeigh
     protected readonly Tensor<float>? ProjectionWeight = projectionWeight;
     protected readonly byte[]? RawWeight = rawWeight;
     private readonly Q8_0WideWeights.Cache _wide = new();
+    private readonly Q4KWideWeights.Cache _wideQ4K = new();
 
     /// <summary>Set by <see cref="LogitOpsFactory"/> when the selected kernel is the parallel FMA Q8_0 one.</summary>
     public bool WideAllowed { get; internal set; }
@@ -304,20 +305,34 @@ public abstract class LogitOps(Tensor<float>? projectionWeight, byte[]? rawWeigh
                 {
                     fixed (float* pInput = input.Data)
                     {
-                        if (WideAllowed && Q8_0WideWeights.Enabled && RawWeight != null &&
-                            _wide.Get(RawWeight, K, N) is { } wide &&
-                            wide.InFeatures == K && wide.OutFeatures == N)
+                        bool projected = false;
+                        if (WideAllowed && RawWeight != null)
                         {
-                            wide.MatMul(pInput, pOutput, M);
+                            if (RawDtype is QuantDType.Q8_0 && Q8_0WideWeights.Enabled &&
+                                _wide.Get(RawWeight, K, N) is { } wide &&
+                                wide.InFeatures == K && wide.OutFeatures == N)
+                            {
+                                wide.MatMul(pInput, pOutput, M);
+                                projected = true;
+                            }
+                            else if (RawDtype is QuantDType.Q4_K or QuantDType.Q4_K_S or QuantDType.Q4_K_M &&
+                                     Q4KWideWeights.Enabled &&
+                                     _wideQ4K.Get(RawWeight, K, N) is { } wide4 &&
+                                     wide4.InFeatures == K && wide4.OutFeatures == N)
+                            {
+                                wide4.MatMul(pInput, pOutput, M);
+                                projected = true;
+                            }
                         }
-                        else if (RawWeight != null)
+
+                        if (!projected && RawWeight != null)
                         {
                             fixed (byte* pRaw = RawWeight)
                             {
                                 ProjectFn(pInput, pRaw, pOutput, M, K, N);
                             }
                         }
-                        else
+                        else if (!projected)
                         {
                             ProjectFn(pInput, (byte*)ProjectionWeight!.DataPtr, pOutput, M, K, N);
                         }

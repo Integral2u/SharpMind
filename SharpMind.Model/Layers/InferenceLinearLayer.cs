@@ -25,15 +25,20 @@ public abstract class InferenceLinearLayer : LinearLayer
     public bool RowPaddedKQuant { get; private set; }
 
     private readonly Q8_0WideWeights.Cache _wide = new();
+    private readonly Q4KWideWeights.Cache _wideQ4K = new();
 
     /// <summary>
-    /// Set by <see cref="LinearLayerFactory"/> when the selected kernel is the parallel FMA Q8_0 one,
-    /// which <see cref="Q8_0WideWeights"/> stands in for; serial or lower-tier selections keep their kernel.
+    /// Set by <see cref="LinearLayerFactory"/> when the selected kernel has a wide
+    /// stand-in (the parallel FMA Q8_0 or Q4_K kernel); serial or lower-tier
+    /// selections keep their kernel.
     /// </summary>
     public bool WideAllowed { get; internal set; }
 
     /// <summary>Whether the repacked wide copy (and its raw source) is currently cached.</summary>
     internal bool HasCachedWide => _wide.HasSlot;
+
+    /// <summary>Whether a Q4_K repack is currently cached.</summary>
+    internal bool HasCachedQ4KWide => _wideQ4K.HasSlot;
 
     /// <summary>
     /// Turns the Q8_0 wide stand-in off for this layer and drops any repack. Streaming reloads
@@ -45,6 +50,7 @@ public abstract class InferenceLinearLayer : LinearLayer
     {
         WideAllowed = false;
         _wide.Clear();
+        _wideQ4K.Clear();
     }
 
     protected InferenceLinearLayer(string name, int inFeatures, int outFeatures, bool bias, Tensor<float>? weight, Tensor<float>? biasTensor, QuantDType quantDType)
@@ -338,10 +344,10 @@ public abstract class InferenceLinearLayer : LinearLayer
         {
             if (RawQuantizedData is not null)
             {
-                if (!RowPaddedKQuant && WideAllowed && Q8_0WideWeights.Enabled &&
-                    _wide.Get(RawQuantizedData, InFeatures, OutFeatures) is { } wide)
+                if (!RowPaddedKQuant && WideAllowed &&
+                    TryWide(RawQuantizedData, flat, result, m))
                 {
-                    wide.MatMul(flat.DataPtr, result.DataPtr, m);
+                    // The repacked integer kernel handled the whole tile.
                 }
                 else if (RowPaddedKQuant)
                 {
@@ -423,6 +429,31 @@ public abstract class InferenceLinearLayer : LinearLayer
         return result;
     }
 
+    /// <summary>
+    /// Runs the repacked integer kernel for this layer's dtype, if one exists and
+    /// its shape is supported. The raw bytes stay the fallback for tail rows and
+    /// for shapes the repack refuses.
+    /// </summary>
+    private unsafe bool TryWide(byte[] raw, Tensor<float> flat, Tensor<float> result, int m)
+    {
+        if (QuantDtype == QuantDType.Q8_0 && Q8_0WideWeights.Enabled &&
+            _wide.Get(raw, InFeatures, OutFeatures) is { } q8)
+        {
+            q8.MatMul(flat.DataPtr, result.DataPtr, m);
+            return true;
+        }
+
+        if (QuantDtype is QuantDType.Q4_K or QuantDType.Q4_K_S or QuantDType.Q4_K_M &&
+            Q4KWideWeights.Enabled &&
+            _wideQ4K.Get(raw, InFeatures, OutFeatures) is { } q4)
+        {
+            q4.MatMul(flat.DataPtr, result.DataPtr, m);
+            return true;
+        }
+
+        return false;
+    }
+
 public override void FreeFloatWeight()
     {
         // F32/F16 tensors (e.g. MoE router `ffn_gate_inp`, Qwen shared-expert
@@ -438,6 +469,7 @@ public override void FreeFloatWeight()
         // every layer's weights at once - more than a full load. The next reload installs
         // a fresh raw array and rebuilds. See Q8_0WideWeights.Cache.Clear.
         _wide.Clear();
+        _wideQ4K.Clear();
         if (_ownsWeight)
             _weight.Dispose();
         _weight = new Tensor<float>(InFeatures, 1);
@@ -447,6 +479,7 @@ public override void FreeFloatWeight()
     protected override void OnDispose()
     {
         _wide.Clear();
+        _wideQ4K.Clear();
         base.OnDispose();
     }
 
