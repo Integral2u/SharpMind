@@ -37,6 +37,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   path. `GgufSmokeProbe q4kwidebench` measures the kernel against the Q4_K FMA
   baseline.
 
+- **Q6_K wide integer matmul** - `Q6KWideWeights` widens the 6-bit values to
+  bytes in the same eight-row group layout and evaluates each 16-value sub-block
+  as `scale * (Σ(q6*q) - 32*Σq)` against int8 activations. This targets the
+  vocabulary head, which is Q6_K on many quantised files. On
+  `Qwen3.5-2B-Q4_K_M` the LM head fell from ~32% of decode to ~8%, and the model
+  moved from 1.69 to 4.23 tok/s, matching its all-Q8_0 file (4.32) at Q4_K's
+  smaller footprint. The isolated kernel measures 0.98 -> 4.04 GMAC/s; the
+  repack is about 1.5x the raw tensor. `GgufSmokeProbe q6kwidebench` measures it
+  against the Q6_K FMA baseline.
+
 - **Host builder configuration** - `ChatSession` and `ChatSessionFactory` accept
   an `IGeneratorBuilderConfigurator` that runs before the builder creates a
   generator, for both the main and sub-agent paths. Studio uses it to pass Medusa

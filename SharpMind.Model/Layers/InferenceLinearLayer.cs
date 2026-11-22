@@ -26,6 +26,7 @@ public abstract class InferenceLinearLayer : LinearLayer
 
     private readonly Q8_0WideWeights.Cache _wide = new();
     private readonly Q4KWideWeights.Cache _wideQ4K = new();
+    private readonly Q6KWideWeights.Cache _wideQ6K = new();
 
     /// <summary>
     /// Set by <see cref="LinearLayerFactory"/> when the selected kernel has a wide
@@ -40,6 +41,9 @@ public abstract class InferenceLinearLayer : LinearLayer
     /// <summary>Whether a Q4_K repack is currently cached.</summary>
     internal bool HasCachedQ4KWide => _wideQ4K.HasSlot;
 
+    /// <summary>Whether a Q6_K repack is currently cached.</summary>
+    internal bool HasCachedQ6KWide => _wideQ6K.HasSlot;
+
     /// <summary>
     /// Turns the Q8_0 wide stand-in off for this layer and drops any repack. Streaming reloads
     /// raw buffers every token; the wide copy is rebuilt per reload (the Cache is keyed on the
@@ -51,6 +55,7 @@ public abstract class InferenceLinearLayer : LinearLayer
         WideAllowed = false;
         _wide.Clear();
         _wideQ4K.Clear();
+        _wideQ6K.Clear();
     }
 
     protected InferenceLinearLayer(string name, int inFeatures, int outFeatures, bool bias, Tensor<float>? weight, Tensor<float>? biasTensor, QuantDType quantDType)
@@ -451,6 +456,14 @@ public abstract class InferenceLinearLayer : LinearLayer
             return true;
         }
 
+        if (QuantDtype is QuantDType.Q6_K or QuantDType.Q6_K_S &&
+            Q6KWideWeights.Enabled &&
+            _wideQ6K.Get(raw, InFeatures, OutFeatures) is { } q6)
+        {
+            q6.MatMul(flat.DataPtr, result.DataPtr, m);
+            return true;
+        }
+
         return false;
     }
 
@@ -470,6 +483,7 @@ public override void FreeFloatWeight()
         // a fresh raw array and rebuilds. See Q8_0WideWeights.Cache.Clear.
         _wide.Clear();
         _wideQ4K.Clear();
+        _wideQ6K.Clear();
         if (_ownsWeight)
             _weight.Dispose();
         _weight = new Tensor<float>(InFeatures, 1);
@@ -480,6 +494,7 @@ public override void FreeFloatWeight()
     {
         _wide.Clear();
         _wideQ4K.Clear();
+        _wideQ6K.Clear();
         base.OnDispose();
     }
 

@@ -49,7 +49,8 @@ public static class LogitOpsFactory
     private static LogitOps WithCompound(LogitOps ops, string compound, QuantDType? rawDtype)
     {
         ops.WideAllowed = compound == Layers.LinearLayerFactory.Q8_0WideCompound
-            || compound == Layers.LinearLayerFactory.Q4_KWideCompound;
+            || compound == Layers.LinearLayerFactory.Q4_KWideCompound
+            || compound == Layers.LinearLayerFactory.Q6_KWideCompound;
         ops.RawDtype = rawDtype;
         return ops;
     }
