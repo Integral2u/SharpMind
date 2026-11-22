@@ -24,6 +24,11 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
     /// one private generator per session.
     /// </summary>
     private readonly Func<IGenerator<K>>? _generatorFactory;
+    /// <summary>
+    /// Optional hook that configures the builder (for example Medusa calibration
+    /// or head-file options) before it creates a generator.
+    /// </summary>
+    private readonly IGeneratorBuilderConfigurator? _configureBuilder;
     private readonly Transformer _model;
     private readonly bool _disposeModel;
     private readonly List<ChatMessage> _history = [];
@@ -200,7 +205,8 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         ToolCallFormat? toolCallFormat = null,
         Func<IGenerator<K>>? generatorFactory = null,
         InterceptingFileSystem? fileSystem = null,
-        InterceptingNetworkHandler? networkHandler = null)
+        InterceptingNetworkHandler? networkHandler = null,
+        IGeneratorBuilderConfigurator? configureBuilder = null)
     {
         ArgumentNullException.ThrowIfNull(tokenizer);
         ArgumentNullException.ThrowIfNull(model);
@@ -214,6 +220,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         _caches = caches;
         _engine = engine;
         _generatorFactory = generatorFactory;
+        _configureBuilder = configureBuilder;
         _hasEngine = engine is not null;
         _seed = seed;
         _disposeModel = disposeModel;
@@ -256,7 +263,7 @@ public sealed class ChatSession<T, K> : IChatSession where K : IKVCacheBuilder, 
         progress?.Report(0.10f);
         _generator = _generatorFactory?.Invoke()
             ?? (_engine is null
-                ? new T().CreateGenerator(_model, _tokenizer, _addBos, _addEos, _caches, _seed, _maxCacheLen)
+                ? CreateBuilderGenerator(_caches, _maxCacheLen)
                 : new EngineGenerator<K>(_engine, _tokenizer, _addBos, _addEos, _model.Config.NumLayers, _seed));
         ArgumentNullException.ThrowIfNull(_generator);
         // Chunked-prefill progress: queued on the calling thread during the
@@ -2133,6 +2140,14 @@ private void ThrowIfDisposed()
     /// so delegation cannot evict the parent conversation. Recreated only when a
     /// later task needs more room.
     /// </summary>
+    private IGenerator<K> CreateBuilderGenerator(IKVCache[]? caches, int? maxCacheLen)
+    {
+        var builder = new T();
+        _configureBuilder?.Configure(builder);
+        return builder.CreateGenerator(
+            _model, _tokenizer, _addBos, _addEos, caches, _seed, maxCacheLen);
+    }
+
     private IGenerator<K> SubAgentGenerator(int promptTokens, int maxNewTokens)
     {
         int wanted = Math.Max(2048, promptTokens + maxNewTokens + 64);
@@ -2143,7 +2158,7 @@ private void ThrowIfDisposed()
         {
             _subAgentGenerator?.Dispose();
             _subAgentGenerator = _generatorFactory?.Invoke()
-                ?? new T().CreateGenerator(_model, _tokenizer, _addBos, _addEos, caches: null, _seed, wanted);
+                ?? CreateBuilderGenerator(caches: null, wanted);
             _subAgentCacheLen = wanted;
         }
 

@@ -12,7 +12,7 @@ namespace SharpMind.Inference.Chat
         public static IChatSession CreateChatSession(
             Type generatorBuilderDef,  // typeof(StandardGeneratorBuilder<>)
             Type cacheBuilder,         // typeof(KVCacherBuilder)
-            Transformer model, Tokenizer tokenizer, ModelMetaData? meta = null, IAgentBuilder? agentBuilder = null, IPromptPreProcessor? preProcessor = null, IPromptPostProcessor? postProcessor = null, IProgress<float>? progress = null, Func<ToolPermissionContext, Task<ToolPermission>>? permissions = null, IChatPromptFormatter? formatter = null, int? seed = null, bool disposeModel = false, int? maxCacheLen = null, IInferenceEngine? engine = null, object? generatorFactory = null, InterceptingFileSystem? fileSystem = null, InterceptingNetworkHandler? networkHandler = null)
+            Transformer model, Tokenizer tokenizer, ModelMetaData? meta = null, IAgentBuilder? agentBuilder = null, IPromptPreProcessor? preProcessor = null, IPromptPostProcessor? postProcessor = null, IProgress<float>? progress = null, Func<ToolPermissionContext, Task<ToolPermission>>? permissions = null, IChatPromptFormatter? formatter = null, int? seed = null, bool disposeModel = false, int? maxCacheLen = null, IInferenceEngine? engine = null, object? generatorFactory = null, InterceptingFileSystem? fileSystem = null, InterceptingNetworkHandler? networkHandler = null, IGeneratorBuilderConfigurator? configureBuilder = null)
         {
             var closedGen = generatorBuilderDef.IsGenericTypeDefinition
                 ? generatorBuilderDef.MakeGenericType(cacheBuilder)
@@ -25,13 +25,13 @@ namespace SharpMind.Inference.Chat
             //
             // generatorFactory is the closed Func<IGenerator<K>> (batched serving):
             // the Activator binds it to the session's parameter of that exact type.
-            return (IChatSession)Activator.CreateInstance(sessionType, [model, tokenizer, meta, agentBuilder, preProcessor, postProcessor, progress, permissions, null, formatter, seed, disposeModel, maxCacheLen, engine, null, generatorFactory, fileSystem, networkHandler])!;
+            return (IChatSession)Activator.CreateInstance(sessionType, [model, tokenizer, meta, agentBuilder, preProcessor, postProcessor, progress, permissions, null, formatter, seed, disposeModel, maxCacheLen, engine, null, generatorFactory, fileSystem, networkHandler, configureBuilder])!;
         }
         // Compile-time — for known type combos
         public static ChatSession<T, K> CreateChatSession<T, K>(
-            Transformer model, Tokenizer tokenizer, ModelMetaData? meta = null, IAgentBuilder? agentBuilder = null, IPromptPreProcessor? preProcessor = null, IPromptPostProcessor? postProcessor = null, IProgress<float>? progress = null, Func<ToolPermissionContext, Task<ToolPermission>>? permissions = null, IChatPromptFormatter? formatter = null, int? seed = null, bool disposeModel = false, int? maxCacheLen = null, IInferenceEngine? engine = null, Func<IGenerator<K>>? generatorFactory = null, InterceptingFileSystem? fileSystem = null, InterceptingNetworkHandler? networkHandler = null)
+            Transformer model, Tokenizer tokenizer, ModelMetaData? meta = null, IAgentBuilder? agentBuilder = null, IPromptPreProcessor? preProcessor = null, IPromptPostProcessor? postProcessor = null, IProgress<float>? progress = null, Func<ToolPermissionContext, Task<ToolPermission>>? permissions = null, IChatPromptFormatter? formatter = null, int? seed = null, bool disposeModel = false, int? maxCacheLen = null, IInferenceEngine? engine = null, Func<IGenerator<K>>? generatorFactory = null, InterceptingFileSystem? fileSystem = null, InterceptingNetworkHandler? networkHandler = null, IGeneratorBuilderConfigurator? configureBuilder = null)
             where K : IKVCacheBuilder, new()
             where T : IGeneratorBuilder<K>, new()
-            => new(model, tokenizer, meta, agentBuilder, preProcessor, postProcessor, progress, permissions, null, formatter, seed, disposeModel, maxCacheLen, engine, null, generatorFactory, fileSystem, networkHandler);
+            => new(model, tokenizer, meta, agentBuilder, preProcessor, postProcessor, progress, permissions, null, formatter, seed, disposeModel, maxCacheLen, engine, null, generatorFactory, fileSystem, networkHandler, configureBuilder);
     }
 }

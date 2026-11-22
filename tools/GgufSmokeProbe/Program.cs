@@ -2582,7 +2582,7 @@ static async Task<int> RunGenBenchAsync(string path, string[] args)
             $"{extra} ids={match}");
     }
 
-    await WarmAsync(new StandardGeneratorBuilder<KVCacherBuilder>(), Math.Max(16, warmup));
+    await WarmAsync(new StandardGeneratorBuilder<KVCacherBuilder>(), Math.Max(32, warmup));
     var standard = await RunAsync(new StandardGeneratorBuilder<KVCacherBuilder>(), baseCfg);
 
     Console.WriteLine($"genbench: {Path.GetFileName(path)} prompt=\"{prompt}\" " +
@@ -2592,7 +2592,7 @@ static async Task<int> RunGenBenchAsync(string path, string[] args)
 
     try
     {
-        await WarmAsync(new StandardGeneratorBuilder<Int8KVCacherBuilder>(), Math.Max(16, warmup));
+        await WarmAsync(new StandardGeneratorBuilder<Int8KVCacherBuilder>(), Math.Max(32, warmup));
         var int8 = await RunAsync(new StandardGeneratorBuilder<Int8KVCacherBuilder>(), baseCfg);
         Print("standard+int8", int8, standard.Ids);
         if (!int8.Ids.SequenceEqual(standard.Ids))
@@ -2606,7 +2606,7 @@ static async Task<int> RunGenBenchAsync(string path, string[] args)
     if (modelConfig.NextnPredictLayers > 0)
     {
         var mtpCfg = baseCfg with { MtpDraft = true, MtpDraftTokens = 4 };
-        await WarmAsync(new StandardGeneratorBuilder<KVCacherBuilder>(), Math.Max(16, warmup), mtpCfg);
+        await WarmAsync(new StandardGeneratorBuilder<KVCacherBuilder>(), Math.Max(32, warmup), mtpCfg);
         var mtp = await RunAsync(new StandardGeneratorBuilder<KVCacherBuilder>(), mtpCfg);
         Print("standard+mtp", mtp, standard.Ids);
     }

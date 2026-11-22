@@ -27,6 +27,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   recalibrated when samples are configured and otherwise fails loudly.
   `LastHeadLoad` reports `Loaded`, `Calibrated`, or `Skipped`.
 
+- **Host builder configuration** - `ChatSession` and `ChatSessionFactory` accept
+  an `IGeneratorBuilderConfigurator` that runs before the builder creates a
+  generator, for both the main and sub-agent paths. Studio uses it to pass Medusa
+  head count, calibration settings and sidecar path without coupling the session
+  to a specific builder type.
+
 - **Generator/cache benchmark** - `GgufSmokeProbe genbench` compares
   `Standard`, `Standard+MTP`, `Speculative` and calibrated `Medusa` across the
   float and int8 KV caches on one model load. It reports wall-clock tokens per
