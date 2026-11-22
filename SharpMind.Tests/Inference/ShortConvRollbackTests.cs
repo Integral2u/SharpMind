@@ -84,7 +84,7 @@ public sealed class ShortConvRollbackTests
     private static int[] Prompt() => [100, 101, 102]; // "abc"
 
     [Fact]
-    public async Task SpeculativeRejection_ReplaysShortConvStateLikeGreedy()
+    public async Task Speculative_MatchesStandardUnderSampling_OnShortConv()
     {
         using var model = BuildModel();
         using var standard = new StandardGenerator<KVCacherBuilder>(model, Tokenizer,
@@ -92,13 +92,20 @@ public sealed class ShortConvRollbackTests
         using var speculative = new SpeculativeGenerator<KVCacherBuilder>(model, Tokenizer,
             addBos: false, addEos: false, seed: 1);
 
-        string expected = await Generate(standard, Prompt(),
-            new SamplingConfig { Temperature = 0f, Constraint = LettersConstraint() });
-
-        // TopK=2 makes the draft differ from greedy often enough to reject, while
-        // accepted drafts are still exactly the greedy token.
-        string actual = await Generate(speculative, Prompt(),
-            new SamplingConfig { Temperature = 1f, TopK = 2, Constraint = LettersConstraint() });
+        // SpeculativeGenerator now delegates to StandardGenerator. Sampling on a
+        // short-conv trunk must still match token for token.
+        string expected = await Generate(standard, Prompt(), new SamplingConfig
+        {
+            Temperature = 1f,
+            TopK = 2,
+            Constraint = LettersConstraint(),
+        });
+        string actual = await Generate(speculative, Prompt(), new SamplingConfig
+        {
+            Temperature = 1f,
+            TopK = 2,
+            Constraint = LettersConstraint(),
+        });
 
         Assert.Equal(MaxNewTokens, expected.Length);
         Assert.Equal(expected, actual);

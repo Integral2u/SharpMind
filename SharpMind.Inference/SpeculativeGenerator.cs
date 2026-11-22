@@ -1,46 +1,29 @@
 using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
-using SharpMind.Core.Memory;
-using SharpMind.Core.Tensors;
 using SharpMind.Model;
-using SharpMind.Model.Config;
 
 namespace SharpMind.Inference;
 
+/// <summary>
+/// Compatibility name for SharpMind's multi-token decoder.
+///
+/// This class used to run a self-draft loop that sampled a draft from the same
+/// logits as the trunk, accepted it only when it matched the greedy token, and
+/// emitted the greedy token otherwise. That made it standard decoding under
+/// greedy sampling (one forward per token, plus snapshot overhead) and silently
+/// forced greedy decoding under temperature/top-p.
+///
+/// It now delegates to <see cref="StandardGenerator{T}"/>, which performs real
+/// sampling and does multi-token drafting through the model's MTP head or
+/// prompt-lookup drafting when <see cref="GenerationConfig"/> enables them.
+/// Kept as a separate type so existing builders, samples, and saved profiles
+/// keep working; new code should use <see cref="StandardGenerator{T}"/>.
+/// </summary>
 public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBuilder, new()
 {
-    public string Name { get; init; } = "Speculative";
-    public IReadOnlyList<IKVCache> Caches => _caches;
-    private readonly Transformer _model;
-    private readonly Tokenization.Tokenizer _tokenizer;
-    private readonly IKVCache[] _caches;
-    private readonly Random _defaultRng;
-    private readonly IWorkspace? _workspace;
-    /// <summary>Absolute position of the next token; diverges from cache length after a trim.</summary>
-    private int _position;
-    /// <summary>Token ids resident in the caches, when the generator can vouch for them.</summary>
-    private List<int>? _cacheTokens;
-    /// <summary>Ids emitted by the current generation.</summary>
-    private List<int>? _generatedIds;
-    private readonly int[] _decodeTokenScratch = new int[1];
-    private float[]? _penaltyScratch;
-    /// <summary>Pooled distinct-token tracking for the repetition penalty; cleared each decode step.</summary>
-    private HashSet<int>? _repSeen;
+    private readonly StandardGenerator<T> _inner;
     private bool _disposed;
 
-    private const int DefaultMaxDraftTokens = 4;
-    private readonly bool _addBos;
-    private readonly bool _addEos;
-
-    /// <summary>
-    /// Optional progress callback for the chunked prefill phase: invoked once per
-    /// chunk with the overall fraction (0..1) of the prompt prefilled so far.
-    /// See <see cref="Prefill.ForwardLastLogitsChunked"/>.
-    /// </summary>
-    public Action<double>? PrefillProgress { get; set; }
-
-    /// <summary>Invoked once for every token appended to <see cref="CurrentGeneratedIds"/>.</summary>
-    public Action<int>? OnTokenGenerated;
+    public string Name { get; init; } = "Speculative";
 
     public SpeculativeGenerator(
         Transformer model,
@@ -50,442 +33,68 @@ public sealed class SpeculativeGenerator<T> : IGenerator<T> where T : IKVCacheBu
         int? seed = null,
         int? maxCacheLen = null)
     {
-        ArgumentNullException.ThrowIfNull(model);
-        ArgumentNullException.ThrowIfNull(tokenizer);
-        _addBos = addBos;
-        _addEos = addEos;
-        _model = model;
-        _tokenizer = tokenizer;
-
-        if (caches != null)
-        {
-            _caches = caches;
-        }
-        else
-        {
-            int numLayers = model.Config.NumLayers;
-            int maxSeqLen = ModelConfig.ComputeMaxCacheLength(model.Config, maxCacheLen);
-            int numKvHeads = model.Config.NumKvHeads;
-
-        _caches = new IKVCache[numLayers];
-        for (int i = 0; i < numLayers; i++)
-            _caches[i] = model.Config.IsShortConvLayer(i)
-                ? new ShortConvCache(model.Config.ShortConvCacheLength - 1, model.Config.HiddenDim, 1, maxSeqLen)
-                : model.Config.IsRecurrentLayer(i)
-                    ? new DeltaNetCache(model.Config.SsmConvKernel, model.Config.SsmConvDim,
-                        model.Config.SsmTimeStepRank, model.Config.SsmStateSize,
-                        model.Config.SsmValueHeadDim, 1, maxSeqLen)
-                    : model.Config.IsMla
-                        ? new T().CreateMlaKvCache(1, maxSeqLen,
-                            model.Config.KvLoraRank + model.Config.MlaRopeHeadDim)
-                        : new T().CreateKVCache(1, numKvHeads, maxSeqLen, model.Config.HeadDimForLayer(i));
+        _inner = new StandardGenerator<T>(
+            model, tokenizer, addBos, addEos, caches, seed, maxCacheLen);
     }
 
-    _workspace = MemoryHelpers.CreateWorkspace(Workspace.CalculateRequiredSize(model.Config.HiddenDim, model.Config.FfnDim, model.Config.VocabSize, model.Config.NumLayers, model.Config.MaxSeqLen));
-    _defaultRng = seed.HasValue ? new Random(seed.Value) : Random.Shared;
-    _position = _caches[0].Length;
-    _cacheTokens = _caches[0].Length == 0 ? [] : null;
-}
+    /// <summary>Fired once for every generated token id.</summary>
+    public Action<int>? OnTokenGenerated
+    {
+        get => _inner.OnTokenGenerated;
+        set => _inner.OnTokenGenerated = value;
+    }
 
-    public async IAsyncEnumerable<string> GenerateAsync(
+    /// <summary>MTP drafts proposed/accepted in the last generation.</summary>
+    public (int Drafted, int Accepted) MtpStats => _inner.MtpStats;
+
+    /// <summary>Prompt-lookup drafts proposed/accepted in the last generation.</summary>
+    public PromptLookupStats PromptLookupStats => _inner.PromptLookupStats;
+
+    public IReadOnlyList<IKVCache> Caches => _inner.Caches;
+
+    public Action<double>? PrefillProgress
+    {
+        get => _inner.PrefillProgress;
+        set => _inner.PrefillProgress = value;
+    }
+
+    public IAsyncEnumerable<string> GenerateAsync(
         string prompt,
         SamplingConfig? sampling = null,
         GenerationConfig? generation = null,
-        [EnumeratorCancellation] CancellationToken cancellationToken = default)
-    {
-        int[] promptIds = _tokenizer.Encode(prompt, _addBos, _addEos);
-        if (promptIds.Length == 0)
-            throw new InvalidOperationException("Prompt produced no token IDs; cannot generate.");
-        await foreach (var fragment in GenerateCoreAsync(promptIds, sampling, generation, DefaultMaxDraftTokens, cancellationToken))
-            yield return fragment;
-    }
+        CancellationToken cancellationToken = default) =>
+        _inner.GenerateAsync(prompt, sampling, generation, cancellationToken);
 
-
-    public async IAsyncEnumerable<string> GenerateFromTokensAsync(
+    public IAsyncEnumerable<string> GenerateFromTokensAsync(
         int[] promptIds,
         SamplingConfig? sampling = null,
         GenerationConfig? generation = null,
-        [EnumeratorCancellation] CancellationToken cancellationToken = default)
-    {
-        if (promptIds.Length == 0)
-            throw new InvalidOperationException("Prompt produced no token IDs; cannot generate.");
-        await foreach (var fragment in GenerateCoreAsync(promptIds, sampling, generation, DefaultMaxDraftTokens, cancellationToken))
-            yield return fragment;
-    }
+        CancellationToken cancellationToken = default) =>
+        _inner.GenerateFromTokensAsync(promptIds, sampling, generation, cancellationToken);
 
-    private async IAsyncEnumerable<string> GenerateCoreAsync(
-        int[] promptIds,
-        SamplingConfig? sampling,
-        GenerationConfig? generation,
-        int maxDraftTokens,
-        [EnumeratorCancellation] CancellationToken cancellationToken)
-    {
-        await Task.CompletedTask;
-        ThrowIfDisposed();
+    public void ResetCache() => _inner.ResetCache();
 
-        var sampleCfg = sampling ?? SamplingConfig.Greedy;
-        var genCfg = generation ?? GenerationConfig.Default;
-        sampleCfg.Constraint?.Reset();
-        var constraint = sampleCfg.Constraint;
-        bool grammarDead = false;
+    public void TruncateCache(int length) => _inner.TruncateCache(length);
 
-        var rateTracker = new TokenRateTracker(windowSize: 10);
-        rateTracker.Start();
+    public void SetCacheTokens(IReadOnlyList<int> tokens) => _inner.SetCacheTokens(tokens);
 
-        int posOffset = _position;
-        // Someone else moved the cache, or the prompt overflows its window: stop
-        // vouching for what is resident.
-        if (_cacheTokens is not null && _cacheTokens.Count != _caches[0].Length) _cacheTokens = null;
-        if (_cacheTokens is not null && _caches[0].Length + promptIds.Length > _caches[0].MaxSeqLen)
-            _cacheTokens = null;
-        Tensor<float>? logitsTensor = Prefill.ForwardLastLogitsChunked(
-            _model, _caches, promptIds, _workspace!, PrefillProgress, startPosition: posOffset);
-        _cacheTokens?.AddRange(promptIds);
+    public IReadOnlyList<int>? CacheTokens => _inner.CacheTokens;
 
-        try
-        {
-            int vocabSize = logitsTensor.Shape[1];
-            int promptLen = promptIds.Length;
+    public IReadOnlyList<int>? CurrentGeneratedIds => _inner.CurrentGeneratedIds;
 
-            var generatedIds = _generatedIds = new List<int>(genCfg.MaxNewTokens);
-            var decodedSoFar = new System.Text.StringBuilder();
-            var rng = sampleCfg.Seed.HasValue
-                ? new Random(sampleCfg.Seed.Value)
-                : _defaultRng;
+    public float CacheFillRatio => _inner.CacheFillRatio;
 
-            _position = posOffset + promptLen;
-            int maxPosition = _model.Config.MaxPosition;
+    public float? TokensPerSecond => _inner.TokensPerSecond;
 
-            while (generatedIds.Count < genCfg.MaxNewTokens)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
+    public float? CumulativeTokensPerSecond => _inner.CumulativeTokensPerSecond;
 
-                ReadOnlySpan<float> logitsSlice = logitsTensor.Data[..vocabSize];
-                GeneratorDiagnostics.PrintTopLogits(_tokenizer, generatedIds.Count, logitsSlice);
-
-                if (maxDraftTokens < 1) break;
-
-                // Use the slots that are left. A full draft count is capped by the
-                // context boundary; the bonus is only forwarded when one slot remains.
-                int remaining = maxPosition - _position;
-                if (remaining <= 0) break;
-                int roundDrafts = Math.Min(maxDraftTokens, remaining);
-                bool bonusCanFit = _position + roundDrafts < maxPosition;
-                int cacheSlots = roundDrafts + (bonusCanFit ? 1 : 0);
-
-                // Keep trim at round boundaries: a snapshot taken before the trim restores a
-                // coherent prefix, and the round is guaranteed room for every draft plus the
-                // bonus token. Trimming mid-round would move rows beneath the snapshots.
-                if (_caches[0].Length + cacheSlots > _caches[0].MaxSeqLen)
-                {
-                    int keep = genCfg is { SlidingWindowSize: > 0 }
-                        ? genCfg.SlidingWindowSize
-                        : _caches[0].MaxSeqLen / 2;
-                    keep = Math.Min(keep, Math.Max(1, _caches[0].MaxSeqLen - cacheSlots));
-                    if (keep >= _caches[0].MaxSeqLen)
-                        keep = Math.Max(1, _caches[0].MaxSeqLen / 2);
-                    for (int i = 0; i < _caches.Length; i++)
-                        _caches[i].TrimToLast(keep);
-                    // Early rows are gone; resident ids are no longer a prompt prefix.
-                    _cacheTokens = null;
-                }
-
-                int posBefore = _position;
-                object?[]? snapshots = null;
-                if (roundDrafts > 0)
-                {
-                    snapshots = new object?[_caches.Length];
-                    for (int i = 0; i < _caches.Length; i++)
-                        snapshots[i] = _caches[i].Snapshot();
-                }
-
-                if (_penaltyScratch is null || _penaltyScratch.Length < vocabSize)
-                    _penaltyScratch = new float[vocabSize];
-                logitsTensor.Data[..vocabSize].CopyTo(_penaltyScratch.AsSpan(0, vocabSize));
-
-                int tokensAccepted = 0;
-                bool roundDone = false;
-
-                for (int di = 0; di < roundDrafts && !roundDone && generatedIds.Count < genCfg.MaxNewTokens; di++)
-                {
-                    Span<float> curLogits = _penaltyScratch.AsSpan(0, vocabSize);
-
-                    if (genCfg.RepetitionPenalty != 1.0f)
-                        ApplyRepetitionPenalty(curLogits, promptIds, generatedIds,
-                            genCfg.RepetitionPenalty, genCfg.RepetitionWindow);
-
-                    // Mask before both samples: a token the grammar forbids must
-                    // never be the greedy correction either.
-                    if (constraint is not null)
-                    {
-                        constraint.Apply(curLogits);
-                        if (constraint.IsDead)
-                        {
-                            grammarDead = true;
-                            break;
-                        }
-                    }
-
-                    // greedyChoice and draftToken come from the SAME logits
-                    int greedyChoice = Sampler.Sample(curLogits, SamplingConfig.Greedy, rng);
-                    int draftToken = Sampler.Sample(curLogits, sampleCfg, rng);
-
-                    if (draftToken == greedyChoice)
-                    {
-                        constraint?.Accept(draftToken);
-                        // Accept draft: forward it to update cache and get next logits
-                        _decodeTokenScratch[0] = draftToken;
-                        Tensor<float>? prevTensor = logitsTensor;
-                        logitsTensor = null;
-                        _workspace?.Reset();
-                        using var stepInput = _workspace != null 
-                            ? _workspace.Rent<int>([1, 1]) 
-                            : Tensor<int>.From(_decodeTokenScratch.AsSpan(0, 1), 1, 1);
-                        if (_workspace != null) stepInput.Data[0] = draftToken;
-                        logitsTensor = _model.ForwardLastLogits(stepInput, _caches, _position, _workspace);
-                        _position++;
-                        _cacheTokens?.Add(draftToken);
-                        prevTensor?.Dispose();
-
-                        generatedIds.Add(draftToken);
-                        OnTokenGenerated?.Invoke(draftToken);
-                        rateTracker.RecordToken();
-                        TimeToFirstToken = rateTracker.TimeToFirstToken;
-                        TokensPerSecond = rateTracker.RollingTokensPerSecond;
-                        CumulativeTokensPerSecond = rateTracker.CumulativeTokensPerSecond;
-                        tokensAccepted++;
-
-                        string fragment = _tokenizer.Decode(_decodeTokenScratch.AsSpan(0, 1), skipSpecials: true).Replace("\uFFFD", "");
-                        decodedSoFar.Append(fragment);
-
-                        bool hitStop = false;
-                        int stopAt = int.MaxValue;
-                        foreach (string stop in genCfg.StopStrings)
-                        {
-                            int idx = StringBuilderIndexOf(decodedSoFar, stop);
-                            if (idx >= 0)
-                            {
-                                hitStop = true;
-                                if (idx < stopAt) stopAt = idx;
-                            }
-                        }
-
-                        if (hitStop)
-                        {
-                            int fragStart = decodedSoFar.Length - fragment.Length;
-                            int keep = Math.Clamp(stopAt - fragStart, 0, fragment.Length);
-                            fragment = keep < fragment.Length ? fragment[..keep] : fragment;
-                            decodedSoFar.Length = fragStart + keep;
-                        }
-
-                        if (genCfg.Stream && fragment.Length > 0)
-                            yield return fragment;
-
-                        if (hitStop || genCfg.StopTokenIds.Contains(draftToken))
-                        { roundDone = true; break; }
-
-                        logitsTensor.Data[..vocabSize].CopyTo(_penaltyScratch.AsSpan(0, vocabSize));
-
-                        // Trim happens at the next round's boundary, after this round's
-                        // snapshot is no longer needed.
-                    }
-                    else
-                    {
-                        // Reject: restore cache and emit the model's greedy choice
-                        if (snapshots != null)
-                        {
-                            for (int i = 0; i < _caches.Length; i++)
-                                _caches[i].Restore(snapshots[i]);
-                        }
-                        _position = posBefore;
-
-                        // The restore also discarded this round's accepted tokens, whose KV
-                        // rows are needed by the correction step and the next round. Replay
-                        // them in one batch so short-conv state is rebuilt as well.
-                        if (tokensAccepted > 0)
-                        {
-                            _workspace!.Reset();
-                            using var replayInput = _workspace.Rent<int>([1, tokensAccepted]);
-                            CollectionsMarshal.AsSpan(generatedIds)[^tokensAccepted..]
-                                .CopyTo(replayInput.Data);
-                            _model.ForwardFill(replayInput, _caches, _position, _workspace);
-                            _position += tokensAccepted;
-                        }
-
-                        int correctionToken = greedyChoice;
-                        constraint?.Accept(correctionToken);
-                        generatedIds.Add(correctionToken);
-                        OnTokenGenerated?.Invoke(correctionToken);
-                        rateTracker.RecordToken();
-                        TimeToFirstToken = rateTracker.TimeToFirstToken;
-                        TokensPerSecond = rateTracker.RollingTokensPerSecond;
-                        CumulativeTokensPerSecond = rateTracker.CumulativeTokensPerSecond;
-
-                        _decodeTokenScratch[0] = correctionToken;
-                        string corrFragment = _tokenizer.Decode(_decodeTokenScratch.AsSpan(0, 1), skipSpecials: true).Replace("\uFFFD", "");
-                        decodedSoFar.Append(corrFragment);
-
-                        if (genCfg.Stream && corrFragment.Length > 0)
-                            yield return corrFragment;
-
-                        // Forward correction token to get next logits
-                        Tensor<float>? prevTensor = logitsTensor;
-                        logitsTensor = null;
-                        _workspace?.Reset();
-                        using var corrInput = _workspace != null 
-                            ? _workspace.Rent<int>([1, 1]) 
-                            : Tensor<int>.From(_decodeTokenScratch.AsSpan(0, 1), 1, 1);
-                        if (_workspace != null) corrInput.Data[0] = correctionToken;
-                        logitsTensor = _model.ForwardLastLogits(corrInput, _caches, _position, _workspace);
-                        _position++;
-                        _cacheTokens?.Add(correctionToken);
-                        prevTensor?.Dispose();
-                        logitsTensor.Data[..vocabSize].CopyTo(_penaltyScratch.AsSpan(0, vocabSize));
-
-                        roundDone = true;
-
-                        if (genCfg.StopTokenIds.Contains(correctionToken))
-                            break;
-                    }
-                }
-
-                // If the inner loop stopped on a stop token, end generation entirely.
-                if (generatedIds.Count > 0 && genCfg.StopTokenIds.Contains(generatedIds[^1]))
-                    break;
-
-                if (grammarDead)
-                    break;
-
-                if (!roundDone && tokensAccepted == roundDrafts)
-                {
-                    // No room left for a bonus token at the context boundary.
-                    if (_position >= maxPosition) break;
-
-                    // All drafts accepted: emit the bonus token (greedy sample from last logits)
-                    Span<float> bonusLogits = _penaltyScratch.AsSpan(0, vocabSize);
-                    if (constraint is not null)
-                    {
-                        constraint.Apply(bonusLogits);
-                        if (constraint.IsDead)
-                            break;
-                    }
-                    int bonusToken = Sampler.Sample(bonusLogits, SamplingConfig.Greedy, rng);
-                    constraint?.Accept(bonusToken);
-                    generatedIds.Add(bonusToken);
-                    OnTokenGenerated?.Invoke(bonusToken);
-                    rateTracker.RecordToken();
-                    TimeToFirstToken = rateTracker.TimeToFirstToken;
-                    TokensPerSecond = rateTracker.RollingTokensPerSecond;
-                    CumulativeTokensPerSecond = rateTracker.CumulativeTokensPerSecond;
-
-                    _decodeTokenScratch[0] = bonusToken;
-                    string bonusFragment = _tokenizer.Decode(_decodeTokenScratch.AsSpan(0, 1), skipSpecials: true).Replace("\uFFFD", "");
-                    decodedSoFar.Append(bonusFragment);
-
-                    if (genCfg.Stream && bonusFragment.Length > 0)
-                        yield return bonusFragment;
-
-                    if (genCfg.StopTokenIds.Contains(bonusToken))
-                        break;
-
-                    Tensor<float>? bonusPrev = logitsTensor;
-                    logitsTensor = null;
-                    _workspace?.Reset();
-                    using var bonusInput = _workspace != null 
-                        ? _workspace.Rent<int>([1, 1]) 
-                        : Tensor<int>.From(_decodeTokenScratch.AsSpan(0, 1), 1, 1);
-                    if (_workspace != null) bonusInput.Data[0] = bonusToken;
-                    logitsTensor = _model.ForwardLastLogits(bonusInput, _caches, _position, _workspace);
-                    _position++;
-                    _cacheTokens?.Add(bonusToken);
-                    bonusPrev?.Dispose();
-                }
-            }
-
-            if (!genCfg.Stream && decodedSoFar.Length > 0)
-                yield return _tokenizer.Decode(CollectionsMarshal.AsSpan(generatedIds), skipSpecials: true).Replace("\uFFFD", "");
-        }
-        finally
-        {
-            logitsTensor?.Dispose();
-        }
-    }
-
-    private static int StringBuilderIndexOf(System.Text.StringBuilder sb, ReadOnlySpan<char> value)
-    {
-        if (value.IsEmpty) return 0;
-        if (sb.Length < value.Length) return -1;
-        for (int i = 0; i <= sb.Length - value.Length; i++)
-        {
-            bool match = true;
-            for (int j = 0; j < value.Length; j++)
-            {
-                if (sb[i + j] != value[j]) { match = false; break; }
-            }
-            if (match) return i;
-        }
-        return -1;
-    }
-
-    private void ApplyRepetitionPenalty(
-        Span<float> logits,
-        int[] promptIds,
-        List<int> generatedIds,
-        float penalty,
-        int window)
-    {
-        if (penalty == 1.0f) return;
-        // Once per DISTINCT id across prompt + generated (windowed), matching the
-        // StandardGenerator / HF reference. The previous code only scaled negative
-        // logits per occurrence, so repeated likely tokens were never suppressed.
-        _repSeen ??= new HashSet<int>(512);
-        _repSeen.Clear();
-        var seen = _repSeen;
-        int genStart = Math.Max(0, generatedIds.Count - (window > 0 ? window : generatedIds.Count));
-        RepetitionPenalty.Apply(logits, promptIds, penalty, seen);
-        RepetitionPenalty.Apply(logits, CollectionsMarshal.AsSpan(generatedIds)[genStart..], penalty, seen);
-    }
-
-    public void ResetCache()
-    {
-        for (int i = 0; i < _caches.Length; i++)
-            _caches[i].Reset();
-        _position = 0;
-        _cacheTokens = [];
-    }
-
-    public void TruncateCache(int length)
-    {
-        for (int i = 0; i < _caches.Length; i++)
-            _caches[i].Truncate(length);
-        if (_cacheTokens is not null && _cacheTokens.Count > length)
-            _cacheTokens.RemoveRange(length, _cacheTokens.Count - length);
-        _position = length;
-    }
-
-    public IReadOnlyList<int>? CacheTokens => _cacheTokens;
-    public IReadOnlyList<int>? CurrentGeneratedIds => _generatedIds;
-
-    public void SetCacheTokens(IReadOnlyList<int> tokens)
-    {
-        _cacheTokens = [.. tokens];
-        _position = tokens.Count;
-    }
-
-    public float CacheFillRatio => (float)_caches[0].Length / _caches[0].MaxSeqLen;
-
-    public float? TokensPerSecond { get; private set; }
-    public float? CumulativeTokensPerSecond { get; private set; }
-    public float? TimeToFirstToken { get; private set; }
+    public float? TimeToFirstToken => _inner.TimeToFirstToken;
 
     public void Dispose()
     {
         if (_disposed) return;
         _disposed = true;
-        _workspace?.Dispose();
-        for (int i = 0; i < _caches.Length; i++)
-            _caches[i].Dispose();
+        _inner.Dispose();
+        GC.SuppressFinalize(this);
     }
-
-    private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, nameof(SpeculativeGenerator<>));
 }

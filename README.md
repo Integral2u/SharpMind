@@ -291,7 +291,7 @@ The same harness is dispatchable on both CI architectures: the manual `Bench` wo
 | Generator | tok/s | Note |
 |---|---|---|
 | `Standard` | 25.2 – 29.2 | Baseline |
-| `Speculative` | 28.7 – 30.8 | Roughly +10% here; how much more depends on the draft model and the accept rate |
+| `Speculative` | 28.7 – 30.8 | Compatibility alias for `StandardGenerator`; real multi-token decoding comes from MTP or prompt lookup |
 | `Medusa` | 6.2 – 6.5 | This run used random heads. Set `CalibrationSamples` and `CalibrationPrompt` on `MedusaGeneratorBuilder` before decoding; see [Decoding strategies](#decoding-strategies) |
 
 The KV-cache strategy moves throughput by less than ±10% here — choose it for memory footprint and concurrent sequences, not speed.
@@ -404,12 +404,12 @@ SharpMind ships three interchangeable generators behind a common `IGenerator<T>`
 | Generator | Idea | Where |
 |---|---|---|
 | `StandardGenerator` | Classic one-token-per-forward-pass autoregressive decoding. | `SharpMind.Inference/StandardGenerator.cs` |
-| `SpeculativeGenerator<T>` | A small draft model proposes several tokens ahead; the target model verifies them in a single batched forward pass. | `SharpMind.Inference/SpeculativeGenerator.cs` |
+| `SpeculativeGenerator<T>` | Compatibility alias for `StandardGenerator<T>`, kept so saved profiles and samples keep working. | `SharpMind.Inference/SpeculativeGenerator.cs` |
 | `MedusaGenerator<T>` | K extra "draft heads" attached to one hidden state each predict a token at a future offset; all K+1 candidates are verified in one forward pass — no separate draft model needed. | `SharpMind.Inference/MedusaGenerator.cs` |
 
 **Medusa in more detail**, since it's the more novel of the two: each decoding round, the LM head's own greedy pick becomes `token₀`, and K trained head projections from the *same* hidden state produce `token₁ … token_K`. That draft of length K+1 is run through the model as one batch. Verification then walks the draft left to right — `token₀` is always accepted (it's the model's own choice), and each subsequent token is accepted only if the model's forward pass agrees with the head's guess; the walk stops at the first disagreement. If every token in the draft is accepted, a bonus token is generated for free before the next round starts. On partial acceptance, the KV cache is trimmed back to the last accepted position so generation is bit-for-bit identical to plain greedy decoding — Medusa can only change throughput, never correctness. In the ideal case, with K=3 well-calibrated heads, this gives up to a ~2.5× reduction in forward passes per token. Heads start random; set `MedusaGeneratorBuilder.CalibrationSamples` (and optionally `CalibrationPrompt`) to train them on the model's own greedy continuation before decoding. `MedusaGeneratorBuilder.LastCalibration` and `MedusaGenerator.Calibration` return the calibration loss, and `MedusaGenerator.Stats` reports draft acceptance and forwards per token. Calibration accepts a `CancellationToken` and `IProgress<MedusaCalibrationProgress>` through the builder. Set `MedusaHeadsPath` to persist the trained heads in a sidecar file: the next builder loads them instead of retraining, and `LastHeadLoad` says whether they were loaded or calibrated.
 
-Speculative decoding follows the more familiar draft-and-verify pattern with an independent draft model, defaulting to 4 draft tokens per round, and shares the same accept/rollback discipline over the KV cache.
+Multi-token drafting lives in `StandardGenerator`: set `GenerationConfig.MtpDraft` to use the model's MTP (NextN) head, or `PromptLookupDraft` to copy candidate continuations from the prompt. Both verify a whole draft in one forward and keep the output identical to plain greedy decoding. `SpeculativeGenerator` delegates to the same implementation; it is a compatibility name, not a separate algorithm.
 
 ### KV-cache strategies
 

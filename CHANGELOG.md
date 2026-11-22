@@ -27,12 +27,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   recalibrated when samples are configured and otherwise fails loudly.
   `LastHeadLoad` reports `Loaded`, `Calibrated`, or `Skipped`.
 
+- **Generator/cache benchmark** - `GgufSmokeProbe genbench` compares
+  `Standard`, `Standard+MTP`, `Speculative` and calibrated `Medusa` across the
+  float and int8 KV caches on one model load. It reports wall-clock tokens per
+  second after a warmed measurement window, drafts accepted, forwards per token,
+  and whether each run's ids match the standard baseline.
+
 - **Medusa calibration progress and cancellation** - `SelfCalibrate` and
   `Calibrate` accept a `CancellationToken` and an
   `IProgress<MedusaCalibrationProgress>`, and the builder exposes
   `CalibrationCancellationToken` / `CalibrationProgress`. Progress reports the
   greedy-collection phase and then one update per training epoch with its loss,
   so a host UI can show movement and cancel cleanly.
+
+### Fixed
+
+- **Speculative decoding silently forced greedy output** - `SpeculativeGenerator`
+  sampled its draft from the same logits as the trunk and accepted it only when
+  it matched the greedy token, emitting the greedy token otherwise. Under
+  greedy sampling that was standard decoding plus snapshot overhead; under
+  temperature/top-p it ignored the sampler entirely. The type now delegates to
+  `StandardGenerator`, so sampling, MTP drafting, prompt-lookup drafting and
+  cache bookkeeping all behave like the standard path. Kept as a compatibility
+  alias for existing builders, samples and saved profiles.
 
 ## [1.1.2.0] - 2026-11-15
 

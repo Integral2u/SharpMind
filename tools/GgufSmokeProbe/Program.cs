@@ -21,6 +21,7 @@ using System.Text.Json.Nodes;
 //   dotnet run --project tools/GgufSmokeProbe -- batchbench <file> ["prompt"] [maxBatch=8] [tokens=16] [reps=3]
 //   dotnet run --project tools/GgufSmokeProbe -- mtpcheck <file> ["prompt"] [steps=64]
 //   dotnet run --project tools/GgufSmokeProbe -- medusacheck <file> ["prompt"] [tokens=16] [samples=16] [steps=4]
+//   dotnet run --project tools/GgufSmokeProbe -- genbench <file> ["prompt"] [warmup=8] [measure=32] [heads=FILE] [samples=16] [steps=8]
 //   dotnet run --project tools/GgufSmokeProbe -- widebench [K=896] [N=4864] [iters=200] [chunks=0]
 //   dotnet run --project tools/GgufSmokeProbe -- stages <file> ["prompt"] [warmup=16] [measure=48] [full] [resident] [serialmm] [window N]
 //   dotnet run --project tools/GgufSmokeProbe -- bind <file>
@@ -103,6 +104,9 @@ if (mode == "rowcheck")
 
 if (mode == "medusacheck")
     return await RunMedusaCheckAsync(path, args);
+
+if (mode == "genbench")
+    return await RunGenBenchAsync(path, args);
 
 if (mode == "fwd")
     return RunForward(path, args);
@@ -2474,6 +2478,168 @@ static async Task<int> RunMedusaCheckAsync(string path, string[] args)
                       $"heads={calibrated.Load}");
     Console.WriteLine($"  random matches standard:     {random.Ids.SequenceEqual(standardIds)}");
     Console.WriteLine($"  calibrated matches standard: {calibrated.Ids.SequenceEqual(standardIds)}");
+    return 0;
+}
+
+// genbench <file> ["prompt"] [warmup=8] [measure=32] [heads=FILE] [samples=16] [steps=8]
+//
+// Wall-clock comparison of the decoding paths on one model load. Unlike the
+// per-fragment numbers a streaming host sees, the reported rate starts after
+// warmup and divides accepted tokens by elapsed time. Every run uses the same
+// prompt and seed, so the ids must match Standard exactly.
+static async Task<int> RunGenBenchAsync(string path, string[] args)
+{
+    string prompt = args.Length > 2 ? args[2] : "The capital of France is";
+    int warmup = args.Length > 3 && int.TryParse(args[3], out int w) ? Math.Max(1, w) : 8;
+    int measure = args.Length > 4 && int.TryParse(args[4], out int m) ? Math.Max(1, m) : 32;
+    string? headFile = args.Length > 5 && !string.IsNullOrWhiteSpace(args[5]) ? args[5] : null;
+    int samples = args.Length > 6 && int.TryParse(args[6], out int s) ? Math.Max(1, s) : 16;
+    int steps = args.Length > 7 && int.TryParse(args[7], out int st) ? Math.Max(1, st) : 8;
+
+    ModelFormatHelpers.GetModelMetaHelperFor(ModelFormat.Gguf)
+        .Load(path, null, out _, out var modelConfig, out var tokenizer);
+    if (tokenizer is null) { Console.Error.WriteLine("no tokenizer"); return 3; }
+
+    var sharpConfig = modelConfig.ForModel();
+    var mapping = sharpConfig.ToJigSawMapping();
+    using var weights = ModelFactory.CreateWeights(
+        modelConfig, sharpConfig, QuantizationFactory.Create(mapping), path,
+        LoadMode.Full, quantizedResident: false, maxParallelLoadDegree: 1);
+    weights.InitializeWeights();
+    using var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
+
+    int[] promptIds = tokenizer.Encode(prompt, addBos: true, addEos: false);
+    var baseCfg = new GenerationConfig
+    {
+        MaxNewTokens = warmup + measure,
+        RepetitionPenalty = 1f,
+        Stream = true,
+    };
+
+    // The first run of a decode loop pays tier-0 JIT and can read 2-3x slower
+    // than the same code after promotion. Warm each distinct path before timing.
+    async Task WarmAsync<TCache>(IGeneratorBuilder<TCache> builder, int tokens,
+        GenerationConfig? genCfg = null)
+        where TCache : IKVCacheBuilder, new()
+    {
+        using var generator = builder.CreateGenerator(
+            model, tokenizer, addBos: true, addEos: false, caches: null, seed: 1);
+        var cfg = (genCfg ?? baseCfg) with { MaxNewTokens = tokens };
+        int seen = 0;
+        await foreach (var _ in generator.GenerateFromTokensAsync(
+                           promptIds, SamplingConfig.Greedy, cfg))
+        {
+            if (++seen >= tokens) break;
+        }
+    }
+
+    async Task<(int[] Ids, int Tokens, double Tps, double MsPerToken,
+        (int Drafted, int Accepted) Mtp, MedusaStats? Medusa)>
+        RunAsync<TCache>(IGeneratorBuilder<TCache> builder, GenerationConfig genCfg)
+        where TCache : IKVCacheBuilder, new()
+    {
+        using var generator = builder.CreateGenerator(
+            model, tokenizer, addBos: true, addEos: false, caches: null, seed: 1);
+
+        int consumed = 0;
+        long start = 0;
+        await foreach (var _ in generator.GenerateFromTokensAsync(
+                           promptIds, SamplingConfig.Greedy, genCfg))
+        {
+            consumed++;
+            if (consumed == warmup) start = System.Diagnostics.Stopwatch.GetTimestamp();
+            if (consumed >= warmup + measure) break;
+        }
+
+        long end = System.Diagnostics.Stopwatch.GetTimestamp();
+        int tokens = Math.Max(0, consumed - warmup);
+        double ms = start == 0 ? 0 : (end - start) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+        double tps = ms > 0 ? tokens / (ms / 1000.0) : 0;
+        double msPerToken = tokens > 0 && ms > 0 ? ms / tokens : 0;
+
+        var mtp = generator switch
+        {
+            StandardGenerator<TCache> standard => standard.MtpStats,
+            SpeculativeGenerator<TCache> speculative => speculative.MtpStats,
+            _ => (0, 0),
+        };
+        MedusaStats? medusa = generator is MedusaGenerator<TCache> medusaGenerator
+            ? medusaGenerator.Stats
+            : null;
+
+        return (generator.CurrentGeneratedIds?.ToArray() ?? [], tokens, tps, msPerToken, mtp, medusa);
+    }
+
+    void Print(string name, (int[] Ids, int Tokens, double Tps, double MsPerToken,
+        (int Drafted, int Accepted) Mtp, MedusaStats? Medusa) run, int[]? baseline)
+    {
+        string match = baseline is null ? "base" : run.Ids.SequenceEqual(baseline) ? "match" : "DIFF";
+        string extra = run.Medusa is { } medusa
+            ? $"accept={medusa.DraftAcceptanceRate:P1} fwd/tok={medusa.ForwardsPerToken:F2}"
+            : $"mtp={run.Mtp.Drafted}/{run.Mtp.Accepted}";
+        Console.WriteLine(
+            $"  {name,-16} tokens={run.Tokens,3} tps={run.Tps,7:F2} ms/tok={run.MsPerToken,8:F1} " +
+            $"{extra} ids={match}");
+    }
+
+    await WarmAsync(new StandardGeneratorBuilder<KVCacherBuilder>(), Math.Max(16, warmup));
+    var standard = await RunAsync(new StandardGeneratorBuilder<KVCacherBuilder>(), baseCfg);
+
+    Console.WriteLine($"genbench: {Path.GetFileName(path)} prompt=\"{prompt}\" " +
+                      $"promptTokens={promptIds.Length} warmup={warmup} measure={measure}" +
+                      (headFile is null ? "" : $" heads={Path.GetFileName(headFile)}"));
+    Print("standard+kv", standard, null);
+
+    try
+    {
+        await WarmAsync(new StandardGeneratorBuilder<Int8KVCacherBuilder>(), Math.Max(16, warmup));
+        var int8 = await RunAsync(new StandardGeneratorBuilder<Int8KVCacherBuilder>(), baseCfg);
+        Print("standard+int8", int8, standard.Ids);
+        if (!int8.Ids.SequenceEqual(standard.Ids))
+            Console.WriteLine("                   (int8 KV is lossy; ids may diverge)");
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"  standard+int8    unsupported: {ex.GetType().Name}: {ex.Message}");
+    }
+
+    if (modelConfig.NextnPredictLayers > 0)
+    {
+        var mtpCfg = baseCfg with { MtpDraft = true, MtpDraftTokens = 4 };
+        await WarmAsync(new StandardGeneratorBuilder<KVCacherBuilder>(), Math.Max(16, warmup), mtpCfg);
+        var mtp = await RunAsync(new StandardGeneratorBuilder<KVCacherBuilder>(), mtpCfg);
+        Print("standard+mtp", mtp, standard.Ids);
+    }
+    else
+    {
+        Console.WriteLine("  standard+mtp     skipped (model has no MTP head)");
+    }
+
+    var speculative = await RunAsync(new SpeculativeGeneratorBuilder<KVCacherBuilder>(), baseCfg);
+    Print("speculative+kv", speculative, standard.Ids);
+
+    if (headFile is not null)
+    {
+        bool exists = File.Exists(headFile);
+        var medusaBuilder = new MedusaGeneratorBuilder<KVCacherBuilder>
+        {
+            NumHeads = 3,
+            CalibrationSamples = exists ? 0 : samples,
+            CalibrationPrompt = exists ? null : prompt,
+            CalibrationSteps = steps,
+            CalibrationLearningRate = 0.02f,
+            MedusaHeadsPath = headFile,
+            CalibrationFingerprint = Path.GetFileName(path),
+        };
+        await WarmAsync(medusaBuilder, Math.Max(8, warmup));
+        var medusa = await RunAsync(medusaBuilder, baseCfg);
+        Print($"medusa+{(exists ? "load" : "cal")}", medusa, standard.Ids);
+    }
+    else
+    {
+        Console.WriteLine("  medusa           skipped (pass a head file to load or calibrate)");
+    }
+
     return 0;
 }
 
