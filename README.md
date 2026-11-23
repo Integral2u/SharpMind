@@ -23,14 +23,14 @@ SharpMind is an end-to-end LLM stack written entirely in C#, with no dependency 
 
 It ships as a set of composable libraries plus **SharpMind Studio**, the desktop and web front end intended to replace the terminal client (`SharpMind.CUI`). The CUI remains available for terminal-only workflows.
 
-Live video example on [YouTube](https://youtu.be/I3FpbZac8Ro)
+Watch the SharpMind Studio playlist on [YouTube](https://www.youtube.com/playlist?list=PLcjsJKYG3RwU)
 
 | | |
 |---|---|
 | **[Live in-browser demo](https://integral2u.github.io/SharpMind/)** | **CUI Chat View** |
 | ![Live in-browser view](<SharpMind.Core/Live OnlineView.PNG>) | ![Options view](<SharpMind.Core/CUI ChatView.PNG>) |
-| **Model & session welcome view** | **[SharpMind Studio](https://integral2u.github.io/SharpMindStudio/)** |
-| ![Welcome screen](<SharpMind.Core/CUI WelcomeScreen.PNG>) | [![SharpMind Studio](<SharpMind.Core/Studio ChatView.png>)](https://integral2u.github.io/SharpMindStudio/) |
+| **Model & session welcome view** | **[SharpMind Studio](https://www.integral2u.com/)** |
+| ![Welcome screen](<SharpMind.Core/CUI WelcomeScreen.PNG>) | [![SharpMind Studio](<SharpMind.Core/Studio ChatView.png>)](https://www.integral2u.com/) |
 
 ---
 
@@ -63,9 +63,9 @@ to replace the CUI for everyday use: chat, instruction tuning and LoRA fine-tuni
 Data Factory, HuggingFace model downloads, Work projects, and local or cloud GPU
 compute hosts.
 
-- **Live site and guides:** <https://integral2u.github.io/SharpMindStudio/>
-- **Download the Windows installer:**
-  <https://github.com/Integral2u/SharpMindStudio/releases/latest/download/SharpMind.Studio.Setup.msi.zip>
+- **Live site and guides:** <https://www.integral2u.com/>
+- **Install from the Microsoft Store:** <https://apps.microsoft.com/detail/9n792cx03gtv>
+- **Direct downloads:** [MSI](https://github.com/Integral2u/SharpMindStudio/releases/latest/download/SharpMind.Studio.Setup.msi.zip) or [ZIP](https://github.com/Integral2u/SharpMindStudio/releases/latest/download/SharpMindStudio.zip)
 - **Source:** <https://github.com/Integral2u/SharpMindStudio>
 
 The terminal `SharpMind.CUI` remains available below for terminal-only workflows.
