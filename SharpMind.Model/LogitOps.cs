@@ -16,6 +16,8 @@ public abstract class LogitOps(Tensor<float>? projectionWeight, byte[]? rawWeigh
     private readonly Q8_0WideWeights.Cache _wide = new();
     private readonly Q4KWideWeights.Cache _wideQ4K = new();
     private readonly Q6KWideWeights.Cache _wideQ6K = new();
+    private WideByteWeights? _wideByte;
+    private bool _wideByteTried;
 
     /// <summary>Set by <see cref="LogitOpsFactory"/> when the selected kernel is the parallel FMA Q8_0 one.</summary>
     public bool WideAllowed { get; internal set; }
@@ -331,6 +333,23 @@ public abstract class LogitOps(Tensor<float>? projectionWeight, byte[]? rawWeigh
                             {
                                 wide6.MatMul(pInput, pOutput, M);
                                 projected = true;
+                            }
+                            else if (RawDtype is { } byteDtype &&
+                                     WideByteWeights.Enabled &&
+                                     WideByteWeights.IsSupported(byteDtype))
+                            {
+                                if (!_wideByteTried)
+                                {
+                                    _wideByte = WideByteWeights.TryCreate(
+                                        RawWeight, K, N, byteDtype);
+                                    _wideByteTried = true;
+                                }
+
+                                if (_wideByte is { } wideByte)
+                                {
+                                    wideByte.MatMul(pInput, pOutput, M);
+                                    projected = true;
+                                }
                             }
                         }
 

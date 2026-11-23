@@ -27,6 +27,8 @@ public abstract class InferenceLinearLayer : LinearLayer
     private readonly Q8_0WideWeights.Cache _wide = new();
     private readonly Q4KWideWeights.Cache _wideQ4K = new();
     private readonly Q6KWideWeights.Cache _wideQ6K = new();
+    private WideByteWeights? _wideByte;
+    private bool _wideByteTried;
 
     /// <summary>
     /// Set by <see cref="LinearLayerFactory"/> when the selected kernel has a wide
@@ -44,6 +46,9 @@ public abstract class InferenceLinearLayer : LinearLayer
     /// <summary>Whether a Q6_K repack is currently cached.</summary>
     internal bool HasCachedQ6KWide => _wideQ6K.HasSlot;
 
+    /// <summary>Whether the generic byte repack is currently cached.</summary>
+    internal bool HasCachedWideByte => _wideByte is not null;
+
     /// <summary>
     /// Turns the Q8_0 wide stand-in off for this layer and drops any repack. Streaming reloads
     /// raw buffers every token; the wide copy is rebuilt per reload (the Cache is keyed on the
@@ -56,6 +61,8 @@ public abstract class InferenceLinearLayer : LinearLayer
         _wide.Clear();
         _wideQ4K.Clear();
         _wideQ6K.Clear();
+        _wideByte = null;
+        _wideByteTried = true;
     }
 
     protected InferenceLinearLayer(string name, int inFeatures, int outFeatures, bool bias, Tensor<float>? weight, Tensor<float>? biasTensor, QuantDType quantDType)
@@ -464,6 +471,22 @@ public abstract class InferenceLinearLayer : LinearLayer
             return true;
         }
 
+        if (WideByteWeights.Enabled && WideByteWeights.IsSupported(QuantDtype))
+        {
+            if (!_wideByteTried)
+            {
+                _wideByte = WideByteWeights.TryCreate(
+                    raw, InFeatures, OutFeatures, QuantDtype);
+                _wideByteTried = true;
+            }
+
+            if (_wideByte is { } wideByte)
+            {
+                wideByte.MatMul(flat.DataPtr, result.DataPtr, m);
+                return true;
+            }
+        }
+
         return false;
     }
 
@@ -484,6 +507,7 @@ public override void FreeFloatWeight()
         _wide.Clear();
         _wideQ4K.Clear();
         _wideQ6K.Clear();
+        _wideByte = null;
         if (_ownsWeight)
             _weight.Dispose();
         _weight = new Tensor<float>(InFeatures, 1);
@@ -495,6 +519,7 @@ public override void FreeFloatWeight()
         _wide.Clear();
         _wideQ4K.Clear();
         _wideQ6K.Clear();
+        _wideByte = null;
         base.OnDispose();
     }
 
@@ -529,5 +554,7 @@ public override void FreeFloatWeight()
         }
 
         RawQuantizedData = rawData;
+        _wideByte = null;
+        _wideByteTried = false;
     }
 }

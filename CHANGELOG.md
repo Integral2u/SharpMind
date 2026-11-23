@@ -47,6 +47,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   repack is about 1.5x the raw tensor. `GgufSmokeProbe q6kwidebench` measures it
   against the Q6_K FMA baseline.
 
+- **Wide-byte matmul for the remaining block formats** - `WideByteWeights`
+  normalises Q4_0, Q4_1, Q5_0, Q5_1, Q5_K, Q2_K, Q3_K, IQ4_NL, IQ4_XS,
+  IQ2_XXS/IQ2_XS/IQ2_S, IQ3_XXS/IQ3_S and MXFP4 into eight-row groups with a
+  float scale/bias per sub-block and signed int8 values. `WideByteOps` is
+  assembled by JigSawDotNet once per mapping, so the hot loop has no ISA check,
+  format branch, or sub-block-size branch. On `Qwen3-0.6B`: Q4_0 0.70 -> 8.63,
+  Q4_1 0.93 -> 8.21, Q2_K 1.82 -> 8.47, Q5_K_M 2.66 -> 9.01, Q3_K_M 3.42 ->
+  7.2-9.3, IQ2_XXS 0.46 -> 4.35 and IQ3_XXS 0.39 -> 4.35 tok/s. The byte repack
+  costs about 1.8x for Q4_0/Q4_1 and 2.5-3x for Q2_K/IQ;
+  `WideByteWeights.MaxRepackBytes` (4 GB default) refuses a repack that would
+  not fit, leaving the layer on its old kernel. Q4_K and Q6_K keep their
+  dedicated kernels.
+
 - **Host builder configuration** - `ChatSession` and `ChatSessionFactory` accept
   an `IGeneratorBuilderConfigurator` that runs before the builder creates a
   generator, for both the main and sub-agent paths. Studio uses it to pass Medusa

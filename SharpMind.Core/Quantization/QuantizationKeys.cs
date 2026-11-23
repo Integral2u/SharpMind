@@ -99,6 +99,9 @@ public static class QuantizationKeys
     public const string KeyQuantizedMatMulTQ2_0 = "qmatmul_tq2_0";
     public const string KeyQuantizedMatMulQ1_0 = "qmatmul_q1_0";
 
+    public const string KeyWideByte16 = "widebyte16";
+    public const string KeyWideByte32 = "widebyte32";
+
     public const string KeyHSum256 = "hsum256";
     public const string KeyHalfToFloat = "halftofloat";
     public const string KeyFloatToHalf = "floattohalf";

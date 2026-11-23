@@ -286,6 +286,24 @@ Measured end to end on `Qwen1.5-MoE-A2.7B-Q2_K` — 48 tokens of greedy decoding
 
 On a Ryzen 3 2200U (`Qwen3.5-2B-Q4_K_M`, greedy, 32 measured tokens) decode moved **1.24 → 4.23 tok/s**, essentially matching the same model's all-Q8_0 file at **4.32 tok/s** while holding Q4_K's 1.24 GB weights. The isolated kernels measure **0.77 → 2.73 GMAC/s** for Q4_K and **0.98 → 4.04 GMAC/s** for Q6_K (`q4kwidebench` / `q6kwidebench 2048 4864`); the model's Q6_K LM head fell from ~32% of decode to ~8%. The repack grows a Q4_K tensor about 1.33x and a Q6_K tensor about 1.5x (roughly 1 GB extra for this 2B), and rows past a full group of eight, or a K that is not a multiple of 256, keep the old kernel.
 
+**The remaining block formats share one wide kernel.** `WideByteWeights` normalises Q4_0, Q4_1, Q5_0, Q5_1, Q5_K, Q2_K, Q3_K, IQ4_NL, IQ4_XS, IQ2_XXS/IQ2_XS/IQ2_S, IQ3_XXS/IQ3_S and MXFP4 into eight-row groups with a float scale/bias per sub-block and signed int8 values. `WideByteOps` is assembled by JigSawDotNet once per mapping (`widebyte16/32_fma` or `_scalar`), so the hot loop has no ISA check, format branch, or sub-block-size branch. The repack runs once at load; formats with a non-linear table are decoded to their grid value during that pass.
+
+`Qwen3-0.6B`, greedy, 32 measured tokens, same prompt:
+
+| Quant | Before | After |
+|---|---:|---:|
+| Q6_K (dedicated kernel) | 10.49 | 10.49 |
+| Q8_0 (dedicated kernel) | 9.37 | 9.37 |
+| Q5_K_M | 2.66 | **9.01** |
+| Q4_0 | 0.70 | **8.63** |
+| Q2_K | 1.82 | **8.47** |
+| Q4_1 | 0.93 | **8.21** |
+| Q3_K_M | 3.42 | **7.2-9.3** |
+| UD-IQ2_XXS | 0.46 | **4.35** |
+| UD-IQ3_XXS | 0.39 | **4.35** |
+
+Q4_K and Q6_K keep their dedicated packed/byte kernels. The byte repack costs roughly 1.8x for Q4_0/Q4_1 and 2.5-3x for Q2_K/IQ; `WideByteWeights.MaxRepackBytes` (4 GB by default) refuses a model whose repack would not fit, leaving that layer on the old kernel. Raise it when memory allows, or lower it on a smaller box.
+
 The same harness is dispatchable on both CI architectures: the manual `Bench` workflow runs it on `ubuntu-latest` (`fma`/`avx2`/`scalar`) and `ubuntu-24.04-arm` (`arm64`/`scalar`) with identical shapes and records the table in the run summary. Hosted runners are different CPUs, so compare ratios within a runner - AVX2 over scalar on x64, NEON over scalar on Arm64 - rather than absolute GMAC/s between them.
 
 ### Decoding strategy

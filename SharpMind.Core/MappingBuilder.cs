@@ -1,3 +1,5 @@
+using SharpMind.Core.Quantization;
+
 namespace SharpMind.Core;
 
 public class MappingBuilder(HardwareTier hardware = HardwareTier.Auto)
@@ -136,6 +138,9 @@ public class MappingBuilder(HardwareTier hardware = HardwareTier.Auto)
         _mapping["qmatmul_iq3_xxs"] = $"qmatmul_iq3_xxs{qmmSuffix}";
         _mapping["qmatmul_iq2_s"] = $"qmatmul_iq2_s{qmmSuffix}";
         _mapping["qmatmul_iq3_s"] = $"qmatmul_iq3_s{qmmSuffix}";
+        _mapping[QuantizationKeys.KeyWideByte16] = $"widebyte16{QuantHwSuffix()}";
+        _mapping[QuantizationKeys.KeyWideByte32] = $"widebyte32{QuantHwSuffix()}";
+
         _mapping["qmatmul_f32"] = $"qmatmul_f32{qmmSuffix}";
         _mapping["qmatmul_f16"] = $"qmatmul_f16{qmmSuffix}";
         _mapping["qmatmul_bf16"] = $"qmatmul_bf16{qmmSuffix}";

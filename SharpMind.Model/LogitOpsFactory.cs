@@ -50,7 +50,22 @@ public static class LogitOpsFactory
     {
         ops.WideAllowed = compound == Layers.LinearLayerFactory.Q8_0WideCompound
             || compound == Layers.LinearLayerFactory.Q4_KWideCompound
-            || compound == Layers.LinearLayerFactory.Q6_KWideCompound;
+            || compound == Layers.LinearLayerFactory.Q6_KWideCompound
+            || compound == "q4_0_parallel_fma"
+            || compound == "q4_1_parallel_fma"
+            || compound == "q5_0_parallel_fma"
+            || compound == "q5_1_parallel_fma"
+            || compound == "q4_nl_parallel_fma"
+            || compound == "q5k_parallel_fma"
+            || compound == "q2k_parallel_fma"
+            || compound == "q3k_parallel_fma"
+            || compound == "iq4_xs_parallel_fma"
+            || compound == "iq3_xxs_parallel_fma"
+            || compound == "iq2_xxs_parallel_fma"
+            || compound == "iq2_xs_parallel_fma"
+            || compound == "iq2_s_parallel_fma"
+            || compound == "iq3_s_parallel_fma"
+            || compound == "mxfp4_parallel_fma";
         ops.RawDtype = rawDtype;
         return ops;
     }
