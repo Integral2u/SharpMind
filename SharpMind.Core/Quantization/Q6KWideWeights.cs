@@ -21,7 +21,7 @@ namespace SharpMind.Core.Quantization;
 /// where q6 is the unsigned 0..63 weight and q the signed activation. The
 /// repack is about 1.5x the raw Q6_K tensor because the values become bytes.
 /// </summary>
-public sealed unsafe class Q6KWideWeights
+public sealed unsafe class Q6KWideWeights : IDisposable
 {
     public const int RowsPerGroup = 8;
     private const int QBlock = 16;
@@ -44,8 +44,10 @@ public sealed unsafe class Q6KWideWeights
     private readonly byte* _p;
     private readonly int _blocks;
     private readonly int _groups;
+    private readonly long _repackBytes;
+    private int _disposed;
 
-    public byte[] Source { get; }
+    public byte[]? Source { get; }
     public int InFeatures { get; }
     public int OutFeatures { get; }
 
@@ -54,15 +56,26 @@ public sealed unsafe class Q6KWideWeights
         inFeatures >= SuperBlock && inFeatures % SuperBlock == 0 &&
         outFeatures >= RowsPerGroup;
 
-    public static Q6KWideWeights? TryCreate(byte[]? raw, int inFeatures, int outFeatures)
+    public static Q6KWideWeights? TryCreate(byte[]? raw, int inFeatures, int outFeatures,
+        bool keepSource = true)
     {
         if (raw is null || !IsSupported(inFeatures, outFeatures)) return null;
 
         int blocks = inFeatures / SuperBlock;
         long expected = (long)outFeatures * blocks * RawBlockBytes;
         if (expected != raw.Length) return null;
-        if ((long)(outFeatures / RowsPerGroup) * blocks * BlockBytes > Array.MaxLength) return null;
-        return new Q6KWideWeights(raw, inFeatures, outFeatures);
+        long bytes = (long)(outFeatures / RowsPerGroup) * blocks * BlockBytes;
+        if (bytes > Array.MaxLength || !WideRepackBudget.TryReserve(bytes)) return null;
+
+        try
+        {
+            return new Q6KWideWeights(raw, inFeatures, outFeatures, keepSource, bytes);
+        }
+        catch
+        {
+            WideRepackBudget.Release(bytes);
+            throw;
+        }
     }
 
     public sealed class Cache
@@ -84,14 +97,22 @@ public sealed unsafe class Q6KWideWeights
             {
                 slot = _slot;
                 if (slot is null || !ReferenceEquals(slot.Source, raw))
+                {
+                    slot?.Wide?.Dispose();
                     _slot = slot = new Slot(raw, TryCreate(raw, inFeatures, outFeatures));
+                }
                 return slot.Wide;
             }
         }
 
         public void Clear()
         {
-            lock (_lock) _slot = null;
+            lock (_lock)
+            {
+                var slot = _slot;
+                _slot = null;
+                slot?.Wide?.Dispose();
+            }
         }
 
         internal bool HasSlot
@@ -100,11 +121,13 @@ public sealed unsafe class Q6KWideWeights
         }
     }
 
-    private Q6KWideWeights(byte[] raw, int inFeatures, int outFeatures)
+    private Q6KWideWeights(byte[] raw, int inFeatures, int outFeatures,
+        bool keepSource, long repackBytes)
     {
-        Source = raw;
+        Source = keepSource ? raw : null;
         InFeatures = inFeatures;
         OutFeatures = outFeatures;
+        _repackBytes = repackBytes;
         _blocks = inFeatures / SuperBlock;
         _groups = outFeatures / RowsPerGroup;
         _data = GC.AllocateUninitializedArray<byte>(_groups * _blocks * BlockBytes, pinned: true);
@@ -253,7 +276,10 @@ public sealed unsafe class Q6KWideWeights
         int tailStart = _groups * RowsPerGroup;
         if (tailStart < n)
         {
-            fixed (byte* pRaw = Source)
+            byte[] source = Source
+                ?? throw new InvalidOperationException(
+                    "Q6_K wide weights were created without their raw source but still have tail rows.");
+            fixed (byte* pRaw = source)
             {
                 for (int row = tailStart; row < n; row++)
                     for (int p = 0; p < m; p++)
@@ -358,5 +384,11 @@ public sealed unsafe class Q6KWideWeights
             Sse2.PackSignedSaturate(ia.GetLower(), ia.GetUpper()),
             Sse2.PackSignedSaturate(ib.GetLower(), ib.GetUpper()));
         Sse2.Store(q, bytes);
+    }
+
+    public void Dispose()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+        WideRepackBudget.Release(_repackBytes);
     }
 }

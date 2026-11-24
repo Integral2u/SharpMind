@@ -302,7 +302,7 @@ On a Ryzen 3 2200U (`Qwen3.5-2B-Q4_K_M`, greedy, 32 measured tokens) decode move
 | UD-IQ2_XXS | 0.46 | **4.35** |
 | UD-IQ3_XXS | 0.39 | **4.35** |
 
-Q4_K and Q6_K keep their dedicated packed/byte kernels. The byte repack costs roughly 1.8x for Q4_0/Q4_1 and 2.5-3x for Q2_K/IQ; `WideByteWeights.MaxRepackBytes` (4 GB by default) refuses a model whose repack would not fit, leaving that layer on the old kernel. Raise it when memory allows, or lower it on a smaller box.
+Q4_K and Q6_K keep their dedicated packed/byte kernels. The byte repack costs roughly 1.8x for Q4_0/Q4_1 and 2.5-3x for Q2_K/IQ. Every wide kernel draws from one process-wide budget, `WideRepackBudget.MaxBytes` (4 GB by default), so repacks cannot accumulate past it: a layer whose copy would exceed the remaining budget stays on its old kernel. Raise it when the box has free RAM for raw + repack + KV, or lower it on a smaller machine. After a complete repack (`N` a multiple of eight and a block-aligned `K`) the layer drops its own raw reference and runs from the repacked copy alone; a full-resident `TransformerWeights` still owns the model's raw bytes for reload/reuse, so its peak remains raw + repack. Tail rows always keep the raw tensor.
 
 The same harness is dispatchable on both CI architectures: the manual `Bench` workflow runs it on `ubuntu-latest` (`fma`/`avx2`/`scalar`) and `ubuntu-24.04-arm` (`arm64`/`scalar`) with identical shapes and records the table in the run summary. Hosted runners are different CPUs, so compare ratios within a runner - AVX2 over scalar on x64, NEON over scalar on Arm64 - rather than absolute GMAC/s between them.
 

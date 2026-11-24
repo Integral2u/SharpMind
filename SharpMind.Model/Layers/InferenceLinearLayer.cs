@@ -27,7 +27,14 @@ public abstract class InferenceLinearLayer : LinearLayer
     private readonly Q8_0WideWeights.Cache _wide = new();
     private readonly Q4KWideWeights.Cache _wideQ4K = new();
     private readonly Q6KWideWeights.Cache _wideQ6K = new();
+    private Q8_0WideWeights? _wideDirect;
+    private Q4KWideWeights? _wideQ4KDirect;
+    private Q6KWideWeights? _wideQ6KDirect;
     private WideByteWeights? _wideByte;
+    private bool _wideOnly;
+    private bool _wideQ8Tried;
+    private bool _wideQ4KTried;
+    private bool _wideQ6KTried;
     private bool _wideByteTried;
 
     /// <summary>
@@ -38,13 +45,13 @@ public abstract class InferenceLinearLayer : LinearLayer
     public bool WideAllowed { get; internal set; }
 
     /// <summary>Whether the repacked wide copy (and its raw source) is currently cached.</summary>
-    internal bool HasCachedWide => _wide.HasSlot;
+    internal bool HasCachedWide => _wideDirect is not null || _wide.HasSlot;
 
     /// <summary>Whether a Q4_K repack is currently cached.</summary>
-    internal bool HasCachedQ4KWide => _wideQ4K.HasSlot;
+    internal bool HasCachedQ4KWide => _wideQ4KDirect is not null || _wideQ4K.HasSlot;
 
     /// <summary>Whether a Q6_K repack is currently cached.</summary>
-    internal bool HasCachedQ6KWide => _wideQ6K.HasSlot;
+    internal bool HasCachedQ6KWide => _wideQ6KDirect is not null || _wideQ6K.HasSlot;
 
     /// <summary>Whether the generic byte repack is currently cached.</summary>
     internal bool HasCachedWideByte => _wideByte is not null;
@@ -58,11 +65,27 @@ public abstract class InferenceLinearLayer : LinearLayer
     internal void SuppressWide()
     {
         WideAllowed = false;
+        DisposeWideInstances();
+    }
+
+    private void DisposeWideInstances()
+    {
+        _wideDirect?.Dispose();
+        _wideQ4KDirect?.Dispose();
+        _wideQ6KDirect?.Dispose();
+        _wideByte?.Dispose();
+        _wideDirect = null;
+        _wideQ4KDirect = null;
+        _wideQ6KDirect = null;
+        _wideByte = null;
+        _wideOnly = false;
+        _wideQ8Tried = false;
+        _wideQ4KTried = false;
+        _wideQ6KTried = false;
+        _wideByteTried = false;
         _wide.Clear();
         _wideQ4K.Clear();
         _wideQ6K.Clear();
-        _wideByte = null;
-        _wideByteTried = true;
     }
 
     protected InferenceLinearLayer(string name, int inFeatures, int outFeatures, bool bias, Tensor<float>? weight, Tensor<float>? biasTensor, QuantDType quantDType)
@@ -354,7 +377,11 @@ public abstract class InferenceLinearLayer : LinearLayer
         var tKernel = DecodeProfiler.Begin();
         try
         {
-            if (RawQuantizedData is not null)
+            if (_wideOnly)
+            {
+                RunWideOnly(flat, result, m);
+            }
+            else if (RawQuantizedData is not null)
             {
                 if (!RowPaddedKQuant && WideAllowed &&
                     TryWide(RawQuantizedData, flat, result, m))
@@ -448,27 +475,79 @@ public abstract class InferenceLinearLayer : LinearLayer
     /// </summary>
     private unsafe bool TryWide(byte[] raw, Tensor<float> flat, Tensor<float> result, int m)
     {
-        if (QuantDtype == QuantDType.Q8_0 && Q8_0WideWeights.Enabled &&
-            _wide.Get(raw, InFeatures, OutFeatures) is { } q8)
+        // Every wide kernel groups eight output rows, so the repack covers all rows
+        // only when N is a multiple of eight; otherwise the raw tensor serves the tail.
+        bool completeGroups = OutFeatures % 8 == 0;
+
+        if (QuantDtype == QuantDType.Q8_0 && Q8_0WideWeights.Enabled)
         {
-            q8.MatMul(flat.DataPtr, result.DataPtr, m);
-            return true;
+            if (!_wideQ8Tried)
+            {
+                _wideQ8Tried = true;
+                if (completeGroups)
+                    _wideDirect = Q8_0WideWeights.TryCreate(
+                        raw, InFeatures, OutFeatures, keepSource: false);
+            }
+            if (_wideDirect is { } directQ8)
+            {
+                directQ8.MatMul(flat.DataPtr, result.DataPtr, m);
+                _wideOnly = true;
+                RawQuantizedData = null;
+                return true;
+            }
+            if (_wide.Get(raw, InFeatures, OutFeatures) is { } q8)
+            {
+                q8.MatMul(flat.DataPtr, result.DataPtr, m);
+                return true;
+            }
         }
 
         if (QuantDtype is QuantDType.Q4_K or QuantDType.Q4_K_S or QuantDType.Q4_K_M &&
-            Q4KWideWeights.Enabled &&
-            _wideQ4K.Get(raw, InFeatures, OutFeatures) is { } q4)
+            Q4KWideWeights.Enabled)
         {
-            q4.MatMul(flat.DataPtr, result.DataPtr, m);
-            return true;
+            if (!_wideQ4KTried)
+            {
+                _wideQ4KTried = true;
+                if (completeGroups)
+                    _wideQ4KDirect = Q4KWideWeights.TryCreate(
+                        raw, InFeatures, OutFeatures, keepSource: false);
+            }
+            if (_wideQ4KDirect is { } directQ4)
+            {
+                directQ4.MatMul(flat.DataPtr, result.DataPtr, m);
+                _wideOnly = true;
+                RawQuantizedData = null;
+                return true;
+            }
+            if (_wideQ4K.Get(raw, InFeatures, OutFeatures) is { } q4)
+            {
+                q4.MatMul(flat.DataPtr, result.DataPtr, m);
+                return true;
+            }
         }
 
         if (QuantDtype is QuantDType.Q6_K or QuantDType.Q6_K_S &&
-            Q6KWideWeights.Enabled &&
-            _wideQ6K.Get(raw, InFeatures, OutFeatures) is { } q6)
+            Q6KWideWeights.Enabled)
         {
-            q6.MatMul(flat.DataPtr, result.DataPtr, m);
-            return true;
+            if (!_wideQ6KTried)
+            {
+                _wideQ6KTried = true;
+                if (completeGroups)
+                    _wideQ6KDirect = Q6KWideWeights.TryCreate(
+                        raw, InFeatures, OutFeatures, keepSource: false);
+            }
+            if (_wideQ6KDirect is { } directQ6)
+            {
+                directQ6.MatMul(flat.DataPtr, result.DataPtr, m);
+                _wideOnly = true;
+                RawQuantizedData = null;
+                return true;
+            }
+            if (_wideQ6K.Get(raw, InFeatures, OutFeatures) is { } q6)
+            {
+                q6.MatMul(flat.DataPtr, result.DataPtr, m);
+                return true;
+            }
         }
 
         if (WideByteWeights.Enabled && WideByteWeights.IsSupported(QuantDtype))
@@ -483,6 +562,8 @@ public abstract class InferenceLinearLayer : LinearLayer
             if (_wideByte is { } wideByte)
             {
                 wideByte.MatMul(flat.DataPtr, result.DataPtr, m);
+                _wideOnly = true;
+                RawQuantizedData = null;
                 return true;
             }
         }
@@ -490,8 +571,47 @@ public abstract class InferenceLinearLayer : LinearLayer
         return false;
     }
 
+    private unsafe void RunWideOnly(Tensor<float> flat, Tensor<float> result, int m)
+    {
+        if (_wideDirect is { } q8)
+        {
+            q8.MatMul(flat.DataPtr, result.DataPtr, m);
+            return;
+        }
+        if (_wideQ4KDirect is { } q4)
+        {
+            q4.MatMul(flat.DataPtr, result.DataPtr, m);
+            return;
+        }
+        if (_wideQ6KDirect is { } q6)
+        {
+            q6.MatMul(flat.DataPtr, result.DataPtr, m);
+            return;
+        }
+        if (_wideByte is { } wideByte)
+        {
+            wideByte.MatMul(flat.DataPtr, result.DataPtr, m);
+            return;
+        }
+        throw new InvalidOperationException(
+            $"[{Name}] wide-only path has no repacked weights.");
+    }
+
 public override void FreeFloatWeight()
     {
+        // A wide-only layer released its raw bytes after a complete repack, so the
+        // repack is now its only copy. Streaming still has to drop it here, or the
+        // freed layer keeps its whole weight payload (and the global budget) alive.
+        if (_wideOnly)
+        {
+            DisposeWideInstances();
+            if (_ownsWeight)
+                _weight.Dispose();
+            _weight = new Tensor<float>(InFeatures, 1);
+            _ownsWeight = true;
+            return;
+        }
+
         // F32/F16 tensors (e.g. MoE router `ffn_gate_inp`, Qwen shared-expert
         // `ffn_gate_inp_shexp`) have no raw quantized payload — the float tensor IS the
         // only copy. Freeing it left the layer holding an InFeatures-sized placeholder,
@@ -504,10 +624,7 @@ public override void FreeFloatWeight()
         // wider repack) stayed rooted in the cache, so a streaming load ended up holding
         // every layer's weights at once - more than a full load. The next reload installs
         // a fresh raw array and rebuilds. See Q8_0WideWeights.Cache.Clear.
-        _wide.Clear();
-        _wideQ4K.Clear();
-        _wideQ6K.Clear();
-        _wideByte = null;
+        DisposeWideInstances();
         if (_ownsWeight)
             _weight.Dispose();
         _weight = new Tensor<float>(InFeatures, 1);
@@ -516,10 +633,7 @@ public override void FreeFloatWeight()
 
     protected override void OnDispose()
     {
-        _wide.Clear();
-        _wideQ4K.Clear();
-        _wideQ6K.Clear();
-        _wideByte = null;
+        DisposeWideInstances();
         base.OnDispose();
     }
 
@@ -554,7 +668,6 @@ public override void FreeFloatWeight()
         }
 
         RawQuantizedData = rawData;
-        _wideByte = null;
-        _wideByteTried = false;
+        DisposeWideInstances();
     }
 }

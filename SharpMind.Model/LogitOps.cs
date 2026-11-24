@@ -7,7 +7,7 @@ using SharpMind.Core.Tensors;
 namespace SharpMind.Model;
 
 /// <param name="projectionWeight">The float weight, read only when <paramref name="rawWeight"/> is null.</param>
-public abstract class LogitOps(Tensor<float>? projectionWeight, byte[]? rawWeight)
+public abstract class LogitOps(Tensor<float>? projectionWeight, byte[]? rawWeight) : IDisposable
 {
     private const string QKernels = $"{nameof(SharpMind)}.{nameof(Core)}.{nameof(SharpMind.Core.Quantization)}.{nameof(QuantizationKernels)}";
 
@@ -18,6 +18,7 @@ public abstract class LogitOps(Tensor<float>? projectionWeight, byte[]? rawWeigh
     private readonly Q6KWideWeights.Cache _wideQ6K = new();
     private WideByteWeights? _wideByte;
     private bool _wideByteTried;
+    private bool _disposed;
 
     /// <summary>Set by <see cref="LogitOpsFactory"/> when the selected kernel is the parallel FMA Q8_0 one.</summary>
     public bool WideAllowed { get; internal set; }
@@ -375,5 +376,21 @@ public abstract class LogitOps(Tensor<float>? projectionWeight, byte[]? rawWeigh
 
         DecodeProfiler.Mark(DecodeStage.LmHead, tLmHead);
         return result;
+    }
+
+    /// <summary>
+    /// Releases the wide copies the head cached and returns their bytes to the
+    /// process-wide repack budget. The raw/float weights are borrowed, not owned.
+    /// </summary>
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        _wideByte?.Dispose();
+        _wideByte = null;
+        _wide.Clear();
+        _wideQ4K.Clear();
+        _wideQ6K.Clear();
+        GC.SuppressFinalize(this);
     }
 }

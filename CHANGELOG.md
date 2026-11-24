@@ -55,10 +55,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   format branch, or sub-block-size branch. On `Qwen3-0.6B`: Q4_0 0.70 -> 8.63,
   Q4_1 0.93 -> 8.21, Q2_K 1.82 -> 8.47, Q5_K_M 2.66 -> 9.01, Q3_K_M 3.42 ->
   7.2-9.3, IQ2_XXS 0.46 -> 4.35 and IQ3_XXS 0.39 -> 4.35 tok/s. The byte repack
-  costs about 1.8x for Q4_0/Q4_1 and 2.5-3x for Q2_K/IQ;
-  `WideByteWeights.MaxRepackBytes` (4 GB default) refuses a repack that would
-  not fit, leaving the layer on its old kernel. Q4_K and Q6_K keep their
-  dedicated kernels.
+  costs about 1.8x for Q4_0/Q4_1 and 2.5-3x for Q2_K/IQ. All wide kernels draw
+  from one process-wide budget (see the next entry), so a repack is refused only
+  when the aggregate would exceed it. Q4_K and Q6_K keep their dedicated kernels.
+
+- **Process-wide wide-repack budget and raw-free layers** - `WideRepackBudget`
+  now accounts for every live Q8_0, Q4_K, Q6_K and byte repack, making
+  `WideByteWeights.MaxRepackBytes` (4 GB default) a real aggregate limit instead
+  of a per-layer cap. A layer whose repack would exceed the remaining budget
+  keeps its old kernel, and disposing the layer, clearing a cache, or replacing
+  its raw tensor returns the bytes. When a repack covers every row (`N % 8 == 0`
+  with a block-aligned `K`), the layer drops its own raw reference and runs from
+  the repacked copy alone; tail rows keep the raw tensor. `LogitOps` and
+  `Transformer` release their wide caches on disposal. Pinned by
+  `WideRepackBudgetTests`.
 
 - **Host builder configuration** - `ChatSession` and `ChatSessionFactory` accept
   an `IGeneratorBuilderConfigurator` that runs before the builder creates a

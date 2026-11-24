@@ -932,6 +932,7 @@ public sealed class Transformer : IDisposable
         _audioEncoder?.Dispose();
         _perLayerInputs?.Dispose();
         _mtpHead?.Dispose();
+        _logitOps.Dispose();
         // The Transformer borrows its TransformerWeights: CreateTransformer
         // never transfers ownership, so one weights instance can legitimately
         // back several transformers built and disposed over its lifetime (the

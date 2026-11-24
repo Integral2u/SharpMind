@@ -24,7 +24,7 @@ namespace SharpMind.Core.Quantization;
 /// Technique from pulsarforge (MIT, github.com/siris9476/pulsarforge: repack_q80_group8_wide,
 /// vecdot_q80_wide_group).
 /// </summary>
-public sealed unsafe class Q8_0WideWeights
+public sealed unsafe class Q8_0WideWeights : IDisposable
 {
     public const int RowsPerGroup = 8;
     private const int QBlock = 32;
@@ -64,9 +64,11 @@ public sealed unsafe class Q8_0WideWeights
     private readonly byte* _p;
     private readonly int _blocks;
     private readonly int _groups;
+    private readonly long _repackBytes;
+    private int _disposed;
 
-    /// <summary>The raw Q8_0 tensor this was built from; also serves rows past the last full group.</summary>
-    public byte[] Source { get; }
+    /// <summary>The raw Q8_0 tensor, retained only when rows past the last group need it.</summary>
+    public byte[]? Source { get; }
     public int InFeatures { get; }
     public int OutFeatures { get; }
 
@@ -75,12 +77,23 @@ public sealed unsafe class Q8_0WideWeights
         inFeatures >= QBlock && inFeatures % QBlock == 0 && outFeatures >= RowsPerGroup;
 
     /// <summary>Repacks <paramref name="raw"/> ([outFeatures, inFeatures] Q8_0), or returns null where unsupported.</summary>
-    public static Q8_0WideWeights? TryCreate(byte[]? raw, int inFeatures, int outFeatures)
+    public static Q8_0WideWeights? TryCreate(byte[]? raw, int inFeatures, int outFeatures,
+        bool keepSource = true)
     {
         if (raw is null || !IsSupported(inFeatures, outFeatures)) return null;
         if ((long)outFeatures * (inFeatures / QBlock) * RawBlockBytes != raw.Length) return null;
-        if ((long)(outFeatures / RowsPerGroup) * (inFeatures / QBlock) * BlockBytes > Array.MaxLength) return null;
-        return new Q8_0WideWeights(raw, inFeatures, outFeatures);
+        long bytes = (long)(outFeatures / RowsPerGroup) * (inFeatures / QBlock) * BlockBytes;
+        if (bytes > Array.MaxLength || !WideRepackBudget.TryReserve(bytes)) return null;
+
+        try
+        {
+            return new Q8_0WideWeights(raw, inFeatures, outFeatures, keepSource, bytes);
+        }
+        catch
+        {
+            WideRepackBudget.Release(bytes);
+            throw;
+        }
     }
 
     /// <summary>
@@ -109,7 +122,10 @@ public sealed unsafe class Q8_0WideWeights
             {
                 slot = _slot;
                 if (slot is null || !ReferenceEquals(slot.Source, raw))
+                {
+                    slot?.Wide?.Dispose();
                     _slot = slot = new Slot(raw, TryCreate(raw, inFeatures, outFeatures));
+                }
                 return slot.Wide;
             }
         }
@@ -122,7 +138,12 @@ public sealed unsafe class Q8_0WideWeights
         /// </summary>
         public void Clear()
         {
-            lock (_lock) _slot = null;
+            lock (_lock)
+            {
+                var slot = _slot;
+                _slot = null;
+                slot?.Wide?.Dispose();
+            }
         }
 
         internal bool HasSlot
@@ -131,11 +152,13 @@ public sealed unsafe class Q8_0WideWeights
         }
     }
 
-    private Q8_0WideWeights(byte[] raw, int inFeatures, int outFeatures)
+    private Q8_0WideWeights(byte[] raw, int inFeatures, int outFeatures,
+        bool keepSource, long repackBytes)
     {
-        Source = raw;
+        Source = keepSource ? raw : null;
         InFeatures = inFeatures;
         OutFeatures = outFeatures;
+        _repackBytes = repackBytes;
         _blocks = inFeatures / QBlock;
         _groups = outFeatures / RowsPerGroup;
         _data = GC.AllocateUninitializedArray<byte>(_groups * _blocks * BlockBytes, pinned: true);
@@ -228,7 +251,10 @@ public sealed unsafe class Q8_0WideWeights
         int tailStart = _groups * RowsPerGroup;
         if (tailStart < n)
         {
-            fixed (byte* pRaw = Source)
+            byte[] source = Source
+                ?? throw new InvalidOperationException(
+                    "Q8_0 wide weights were created without their raw source but still have tail rows.");
+            fixed (byte* pRaw = source)
             {
                 for (int row = tailStart; row < n; row++)
                     for (int p = 0; p < m; p++)
@@ -365,5 +391,11 @@ public sealed unsafe class Q8_0WideWeights
             Sse2.PackSignedSaturate(ia.GetLower(), ia.GetUpper()),
             Sse2.PackSignedSaturate(ib.GetLower(), ib.GetUpper()));
         Sse2.Store(q, bytes);
+    }
+
+    public void Dispose()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+        WideRepackBudget.Release(_repackBytes);
     }
 }

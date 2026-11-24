@@ -11,14 +11,17 @@ namespace SharpMind.Core.Quantization;
 /// signed int8 values. The repack is load-time only; the decode branch on the
 /// format happens here, never in the matmul loop.
 /// </summary>
-public sealed unsafe class WideByteWeights
+public sealed unsafe class WideByteWeights : IDisposable
 {
     public const int RowsPerGroup = 8;
     private const int ScaleBytes = 8 * sizeof(float) * 2;
-    private const long DefaultBudget = 4L << 30;
 
-    /// <summary>Refuse a repack larger than this; the layer then keeps its old kernel.</summary>
-    public static long MaxRepackBytes { get; set; } = DefaultBudget;
+    /// <summary>Total repack bytes across all live layers; the layer falls back when it would exceed this.</summary>
+    public static long MaxRepackBytes
+    {
+        get => WideRepackBudget.MaxBytes;
+        set => WideRepackBudget.MaxBytes = value;
+    }
 
     public static bool Enabled { get; set; } = true;
 
@@ -29,7 +32,9 @@ public sealed unsafe class WideByteWeights
     private readonly int _blocks;
     private readonly int _subBlocks;
     private readonly int _valuesPerSub;
+    private readonly long _repackBytes;
     private readonly WideMatMulFn _matMul;
+    private int _disposed;
 
     private delegate void WideMatMulFn(
         byte* data, int from, int to, int blocks, int subBlocks,
@@ -58,16 +63,25 @@ public sealed unsafe class WideByteWeights
 
         long repackBytes = (long)(outFeatures / RowsPerGroup) * blocks * subBlocks
             * (ScaleBytes + RowsPerGroup * valuesPerSub);
-        if (repackBytes > MaxRepackBytes || repackBytes > Array.MaxLength)
+        if (repackBytes > Array.MaxLength || !WideRepackBudget.TryReserve(repackBytes))
             return null;
 
-        return new WideByteWeights(raw, inFeatures, outFeatures, dtype,
-            blocks, subBlocks, valuesPerSub);
+        try
+        {
+            return new WideByteWeights(raw, inFeatures, outFeatures, dtype,
+                blocks, subBlocks, valuesPerSub, repackBytes);
+        }
+        catch
+        {
+            WideRepackBudget.Release(repackBytes);
+            throw;
+        }
     }
 
     private WideByteWeights(byte[] raw, int inFeatures, int outFeatures, QuantDType dtype,
-        int blocks, int subBlocks, int valuesPerSub)
+        int blocks, int subBlocks, int valuesPerSub, long repackBytes)
     {
+        _repackBytes = repackBytes;
         InFeatures = inFeatures;
         OutFeatures = outFeatures;
         Dtype = dtype;
@@ -496,6 +510,12 @@ public sealed unsafe class WideByteWeights
 
     private static float Half(byte* p)
         => (float)BitConverter.UInt16BitsToHalf(Unsafe.ReadUnaligned<ushort>(p));
+
+    public void Dispose()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+        WideRepackBudget.Release(_repackBytes);
+    }
 
     private static int RawBlockBytes(QuantDType dtype) => dtype switch
     {
