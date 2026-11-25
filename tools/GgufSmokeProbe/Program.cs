@@ -24,6 +24,7 @@ using System.Text.Json.Nodes;
 //   dotnet run --project tools/GgufSmokeProbe -- genbench <file> ["prompt"] [warmup=8] [measure=32] [heads=FILE] [samples=16] [steps=8]
 //   dotnet run --project tools/GgufSmokeProbe -- widebench [K=896] [N=4864] [iters=200] [chunks=0]
 //   dotnet run --project tools/GgufSmokeProbe -- q4kwidebench [K=2048] [N=4864] [iters=200] [chunks=0]
+//   dotnet run --project tools/GgufSmokeProbe -- widebytebench [q4_0|q2_k] [K=2048] [N=4864] [iters=2000] [chunks=1] [nopair]
 //   dotnet run --project tools/GgufSmokeProbe -- stages <file> ["prompt"] [warmup=16] [measure=48] [full] [resident] [serialmm] [window N]
 //   dotnet run --project tools/GgufSmokeProbe -- bind <file>
 //   dotnet run --project tools/GgufSmokeProbe -- cmp  <fileA> <fileB> <tensor>
@@ -66,9 +67,12 @@ if (args.Length > 0 && args[0] == "q4kwidebench")
 if (args.Length > 0 && args[0] == "q6kwidebench")
     return RunKQuantWideBench(args, q6: true);
 
+if (args.Length > 0 && args[0] == "widebytebench")
+    return RunWideByteBench(args);
+
 if (args.Length < 2)
 {
-    Console.Error.WriteLine("usage: meta <file>   |   dump <file> [pattern]   |   bind <file>   |   fwd <file> [full] [resident]   |   fwdmulti <file> <promptfile> [single|...]   |   ref <file> [prompt]   |   run <file> [prompt] [maxTokens] [full] [resident] [topk] [serialmm]   |   bench <file> [prompt] [warmup] [measure] [full] [resident] [serialmm] [nowide] [reps=N] [ids]   |   benchab <file> [prompt] [warmup] [measure] [full] [resident]   |   stages <file> [prompt] [warmup] [measure] [full] [resident] [serialmm]   |   widebench [K] [N] [iters]   |   q4kwidebench|q6kwidebench [K] [N] [iters] [chunks]   |   kbench <q2k|q3k|q4k|q5k|q6k|q8k|q4_0|q4_1|iq4nl|mxfp4|iq4xs|iq2xxs|iq2xs|iq3xxs|iq2s|iq3s|q5_0|q5_1|q8_0|q8_1|f32> [K] [N] [iters] [fma|avx2|scalar|arm64]");
+    Console.Error.WriteLine("usage: meta <file>   |   dump <file> [pattern]   |   bind <file>   |   fwd <file> [full] [resident]   |   fwdmulti <file> <promptfile> [single|...]   |   ref <file> [prompt]   |   run <file> [prompt] [maxTokens] [full] [resident] [topk] [serialmm]   |   bench <file> [prompt] [warmup] [measure] [full] [resident] [serialmm] [nowide] [reps=N] [ids]   |   benchab <file> [prompt] [warmup] [measure] [full] [resident]   |   stages <file> [prompt] [warmup] [measure] [full] [resident] [serialmm]   |   widebench [K] [N] [iters]   |   q4kwidebench|q6kwidebench [K] [N] [iters] [chunks]   |   widebytebench [q4_0|q2_k] [K] [N] [iters] [chunks] [nopair]   |   kbench <q2k|q3k|q4k|q5k|q6k|q8k|q4_0|q4_1|iq4nl|mxfp4|iq4xs|iq2xxs|iq2xs|iq3xxs|iq2s|iq3s|q5_0|q5_1|q8_0|q8_1|f32> [K] [N] [iters] [fma|avx2|scalar|arm64]");
     return 2;
 }
 
@@ -3270,6 +3274,99 @@ static unsafe int RunKQuantWideBench(string[] args, bool q6)
     {
         if (q6) Q6KWideWeights.ParallelChunkOverride = oldChunks;
         else Q4KWideWeights.ParallelChunkOverride = oldChunks;
+    }
+    return 0;
+}
+
+// widebytebench [q4_0|q2_k] [K=2048] [N=4864] [iters=2000] [chunks=1] [nopair]
+//
+// Exercises the generic WideByteWeights kernel. The pair flag chooses the
+// two-group microkernel or the original single-group body.
+static unsafe int RunWideByteBench(string[] args)
+{
+    string name = (args.Length > 1 ? args[1] : "q4_0").ToLowerInvariant();
+    bool q2 = name == "q2_k";
+    if (!q2 && name != "q4_0")
+    {
+        Console.Error.WriteLine("widebytebench dtype must be q4_0 or q2_k");
+        return 2;
+    }
+
+    QuantDType dtype = q2 ? QuantDType.Q2_K : QuantDType.Q4_0;
+    int K = args.Length > 2 && int.TryParse(args[2], out int kv) ? kv : 2048;
+    int N = args.Length > 3 && int.TryParse(args[3], out int nv) ? nv : 4864;
+    int iters = args.Length > 4 && int.TryParse(args[4], out int iv) ? iv : 2000;
+    int chunks = args.Length > 5 && int.TryParse(args[5], out int cv) ? cv : 1;
+    bool noPair = args.Length > 6 &&
+        args[6].Equals("nopair", StringComparison.OrdinalIgnoreCase);
+    int blockSize = q2 ? 256 : 32;
+    int blockBytes = q2 ? 84 : 18;
+
+    if (K <= 0 || K % blockSize != 0 || N < 8 || iters <= 0 || chunks < 0)
+    {
+        Console.Error.WriteLine(
+            $"widebytebench needs K>0 (multiple of {blockSize}), N>=8, iters>0, chunks>=0");
+        return 2;
+    }
+
+    long wBytes = (long)N * (K / blockSize) * blockBytes;
+    if (wBytes > Array.MaxLength)
+    {
+        Console.Error.WriteLine("widebytebench weights too large");
+        return 2;
+    }
+
+    byte[] raw = new byte[wBytes];
+    for (long off = 0; off < wBytes; off += blockBytes)
+    {
+        if (q2)
+        {
+            raw[off + 80] = 0x00; raw[off + 81] = 0x3C; // d = 1.0
+            raw[off + 82] = 0x00; raw[off + 83] = 0x00; // dmin = 0
+            for (int i = 0; i < 80; i++) raw[off + i] = (byte)((i * 37) & 0xFF);
+        }
+        else
+        {
+            raw[off] = 0x00; raw[off + 1] = 0x3C; // d = 1.0
+            for (int i = 2; i < 18; i++) raw[off + i] = (byte)((i * 37) & 0xFF);
+        }
+    }
+
+    var wide = WideByteWeights.TryCreate(raw, K, N, dtype);
+    if (wide is null)
+    {
+        Console.Error.WriteLine("widebytebench: repack refused the shape");
+        return 2;
+    }
+
+    var input = new float[K];
+    for (int i = 0; i < K; i++) input[i] = (i % 7 - 3) * 0.1f;
+    var output = new float[N];
+
+    int oldChunks = WideByteWeights.ParallelChunkOverride;
+    bool oldPair = WideByteKernels.UsePairKernel;
+    WideByteWeights.ParallelChunkOverride = chunks;
+    WideByteKernels.UsePairKernel = !noPair;
+    try
+    {
+        fixed (float* pIn = input)
+        fixed (float* pOut = output)
+        {
+            for (int i = 0; i < 20; i++) wide.MatMul(pIn, pOut, 1);
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            for (int i = 0; i < iters; i++) wide.MatMul(pIn, pOut, 1);
+            sw.Stop();
+            double gmac = (double)iters * K * N / 1e9 / sw.Elapsed.TotalSeconds;
+            Console.WriteLine(
+                $"KIND=widebyte_{name} K={K} N={N} wbytes={wBytes} iters={iters} " +
+                $"chunks={chunks} pair={!noPair} cores={Environment.ProcessorCount}");
+            Console.WriteLine($"  wide {gmac:F3} GMAC/s");
+        }
+    }
+    finally
+    {
+        WideByteWeights.ParallelChunkOverride = oldChunks;
+        WideByteKernels.UsePairKernel = oldPair;
     }
     return 0;
 }

@@ -25,6 +25,9 @@ public sealed unsafe class WideByteWeights : IDisposable
 
     public static bool Enabled { get; set; } = true;
 
+    /// <summary>Diagnostic A/B knob; 0 uses the production chunk heuristic.</summary>
+    public static int ParallelChunkOverride { get; set; }
+
     private readonly byte[] _data;
     private readonly byte* _p;
     private readonly WideByteOps _ops;
@@ -610,7 +613,9 @@ public sealed unsafe class WideByteWeights : IDisposable
                             s32 + (long)row * blocks32);
                 }
 
-                int chunks = Math.Min(_groups, Environment.ProcessorCount * 2);
+                int chunks = ParallelChunkOverride > 0
+                    ? Math.Min(_groups, ParallelChunkOverride)
+                    : Math.Min(_groups, Environment.ProcessorCount * 2);
                 if (chunks <= 1)
                 {
                     Dispatch(0, _groups, q, d32, s16, s32, output, m, n);

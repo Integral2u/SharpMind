@@ -95,6 +95,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   ~1e-3 relative, which the random-block reference tests account for. The
   process-wide budget and raw-eviction peaks shrink with the repack.
 
+- **Pair-group microkernel for the generic byte repack** - the 16- and 32-value
+  `WideByteKernels` now process two eight-row groups against one activation
+  block, sharing the activation decode and `d`/sum lookups. Measured with the new
+  `GgufSmokeProbe widebytebench` on the 2200U (`chunks=1`), Q2_K moved about
+  3.42 -> 3.82 GMAC/s (~12%) and Q4_0 about 3.76 -> 4.00 (~6%). The same pairing
+  was tried for the packed Q4_K/Q6_K kernels and reverted: the extra live
+  registers spilled and measured about 30-45% slower (Q6_K ~7.75 -> 5.20, Q4_K
+  ~8.25 -> 4.69 GMAC/s). `widebytebench ... nopair` keeps the A/B switch.
+
 - **Host builder configuration** - `ChatSession` and `ChatSessionFactory` accept
   an `IGeneratorBuilderConfigurator` that runs before the builder creates a
   generator, for both the main and sub-agent paths. Studio uses it to pass Medusa

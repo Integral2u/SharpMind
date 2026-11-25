@@ -46,6 +46,9 @@ public static unsafe class WideByteKernels
 {
     private const int ScaleBytes = 8 * sizeof(ushort) * 2;
 
+    /// <summary>Diagnostic A/B knob for the two-group microkernel; production keeps it on.</summary>
+    public static bool UsePairKernel { get; set; } = true;
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static Vector256<float> LoadScales(byte* p)
         => QuantizationKernels.WidenHalf8((ushort*)p);
@@ -59,16 +62,50 @@ public static unsafe class WideByteKernels
         byte* data, int fromGroup, int toGroup, int blocks, int subBlocks,
         sbyte* activation, float* activationScale, int* activationSum16, int* activationSum32,
         float* output, int m, int n)
-        => MatMul16Fma(data, fromGroup, toGroup, blocks, subBlocks,
-            activation, activationScale, activationSum16, output, m, n);
+    {
+        const int V = 16;
+        long groupBytes = (long)blocks * subBlocks * (ScaleBytes + 8 * V);
+        if (!UsePairKernel)
+        {
+            MatMul16Fma(data, fromGroup, toGroup, blocks, subBlocks,
+                activation, activationScale, activationSum16, output, m, n);
+            return;
+        }
+
+        int g = fromGroup;
+        for (; g + 1 < toGroup; g += 2)
+            MatMul16FmaPair(data + (long)g * groupBytes, data + (long)(g + 1) * groupBytes,
+                blocks, subBlocks, activation, activationScale, activationSum16,
+                output + (long)g * 8, m, n);
+        if (g < toGroup)
+            MatMul16Fma(data + (long)g * groupBytes, 0, 1, blocks, subBlocks,
+                activation, activationScale, activationSum16, output + (long)g * 8, m, n);
+    }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void MatMul32_Fma(
         byte* data, int fromGroup, int toGroup, int blocks, int subBlocks,
         sbyte* activation, float* activationScale, int* activationSum16, int* activationSum32,
         float* output, int m, int n)
-        => MatMul32Fma(data, fromGroup, toGroup, blocks, subBlocks,
-            activation, activationScale, activationSum32, output, m, n);
+    {
+        const int V = 32;
+        long groupBytes = (long)blocks * subBlocks * (ScaleBytes + 8 * V);
+        if (!UsePairKernel)
+        {
+            MatMul32Fma(data, fromGroup, toGroup, blocks, subBlocks,
+                activation, activationScale, activationSum32, output, m, n);
+            return;
+        }
+
+        int g = fromGroup;
+        for (; g + 1 < toGroup; g += 2)
+            MatMul32FmaPair(data + (long)g * groupBytes, data + (long)(g + 1) * groupBytes,
+                blocks, subBlocks, activation, activationScale, activationSum32,
+                output + (long)g * 8, m, n);
+        if (g < toGroup)
+            MatMul32Fma(data + (long)g * groupBytes, 0, 1, blocks, subBlocks,
+                activation, activationScale, activationSum32, output + (long)g * 8, m, n);
+    }
 
     public static void MatMul16_Scalar(
         byte* data, int fromGroup, int toGroup, int blocks, int subBlocks,
@@ -205,6 +242,154 @@ public static unsafe class WideByteKernels
 
                 Avx.Store(outRow, acc);
             }
+        }
+    }
+
+    /// <summary>
+    /// Two row groups against one activation block for the 16-value layout. One
+    /// accumulator per group shares the activation decode and the d/sum lookups;
+    /// each row keeps the same sub-block accumulation order as the single path.
+    /// </summary>
+    private static unsafe void MatMul16FmaPair(
+        byte* group0, byte* group1, int blocks, int subBlocks,
+        sbyte* activation, float* activationScale, int* activationSum,
+        float* output, int m, int n)
+    {
+        const int V = 16;
+        const int SubBlockBytes = ScaleBytes + 8 * V;
+        int blockValues = subBlocks * V;
+        var ones = Vector256.Create((short)1);
+
+        for (int p = 0; p < m; p++)
+        {
+            sbyte* act = activation + (long)p * blocks * blockValues;
+            float* dq = activationScale + (long)p * blocks * (blockValues / 32);
+            int* sums = activationSum + (long)p * blocks * (blockValues / 16);
+            float* out0 = output + (long)p * n;
+            var acc0 = Vector256<float>.Zero;
+            var acc1 = Vector256<float>.Zero;
+
+            for (int b = 0; b < blocks; b++)
+            {
+                byte* block0 = group0 + (long)b * subBlocks * SubBlockBytes;
+                byte* block1 = group1 + (long)b * subBlocks * SubBlockBytes;
+                sbyte* blockAct = act + (long)b * blockValues;
+                float* blockDq = dq + (long)b * (blockValues / 32);
+                int* blockSum = sums + (long)b * (blockValues / 16);
+
+                for (int s = 0; s < subBlocks; s++)
+                {
+                    byte* sub0 = block0 + (long)s * SubBlockBytes;
+                    byte* sub1 = block1 + (long)s * SubBlockBytes;
+                    ushort* scales0 = (ushort*)sub0;
+                    ushort* biases0 = scales0 + 8;
+                    ushort* scales1 = (ushort*)sub1;
+                    ushort* biases1 = scales1 + 8;
+                    byte* values0 = sub0 + ScaleBytes;
+                    byte* values1 = sub1 + ScaleBytes;
+                    sbyte* subAct = blockAct + (long)s * V;
+                    float d = blockDq[s >> 1];
+                    int sum = blockSum[s];
+
+                    var dot0 = Vector256<int>.Zero;
+                    var dot1 = Vector256<int>.Zero;
+                    for (int t = 0; t < V; t += 4)
+                    {
+                        var vq = Vector256.Create(
+                            Unsafe.ReadUnaligned<int>(subAct + t)).AsByte().AsSByte();
+                        var v0 = Avx.LoadVector256(values0 + t * 8).AsSByte();
+                        var v1 = Avx.LoadVector256(values1 + t * 8).AsSByte();
+                        dot0 = Avx2.Add(dot0, Avx2.MultiplyAddAdjacent(
+                            Avx2.MultiplyAddAdjacent(Avx2.Abs(v0), Avx2.Sign(vq, v0)), ones));
+                        dot1 = Avx2.Add(dot1, Avx2.MultiplyAddAdjacent(
+                            Avx2.MultiplyAddAdjacent(Avx2.Abs(v1), Avx2.Sign(vq, v1)), ones));
+                    }
+
+                    var scale0 = Avx.Multiply(LoadScales((byte*)scales0), Vector256.Create(d));
+                    var scale1 = Avx.Multiply(LoadScales((byte*)scales1), Vector256.Create(d));
+                    var bias0 = Avx.Multiply(LoadScales((byte*)biases0), Vector256.Create(d * sum));
+                    var bias1 = Avx.Multiply(LoadScales((byte*)biases1), Vector256.Create(d * sum));
+                    acc0 = Fma.MultiplyAdd(scale0, Avx.ConvertToVector256Single(dot0), acc0);
+                    acc1 = Fma.MultiplyAdd(scale1, Avx.ConvertToVector256Single(dot1), acc1);
+                    acc0 = Avx.Subtract(acc0, bias0);
+                    acc1 = Avx.Subtract(acc1, bias1);
+                }
+            }
+
+            Avx.Store(out0, acc0);
+            Avx.Store(out0 + 8, acc1);
+        }
+    }
+
+    /// <summary>Two row groups for the 32-value layout; same structure as the 16-value pair.</summary>
+    private static unsafe void MatMul32FmaPair(
+        byte* group0, byte* group1, int blocks, int subBlocks,
+        sbyte* activation, float* activationScale, int* activationSum,
+        float* output, int m, int n)
+    {
+        const int V = 32;
+        const int SubBlockBytes = ScaleBytes + 8 * V;
+        int blockValues = subBlocks * V;
+        var ones = Vector256.Create((short)1);
+
+        for (int p = 0; p < m; p++)
+        {
+            sbyte* act = activation + (long)p * blocks * blockValues;
+            float* dq = activationScale + (long)p * blocks * (blockValues / 32);
+            int* sums = activationSum + (long)p * blocks * (blockValues / 32);
+            float* out0 = output + (long)p * n;
+            var acc0 = Vector256<float>.Zero;
+            var acc1 = Vector256<float>.Zero;
+
+            for (int b = 0; b < blocks; b++)
+            {
+                byte* block0 = group0 + (long)b * subBlocks * SubBlockBytes;
+                byte* block1 = group1 + (long)b * subBlocks * SubBlockBytes;
+                sbyte* blockAct = act + (long)b * blockValues;
+                float* blockDq = dq + (long)b * (blockValues / 32);
+                int* blockSum = sums + (long)b * (blockValues / 32);
+
+                for (int s = 0; s < subBlocks; s++)
+                {
+                    byte* sub0 = block0 + (long)s * SubBlockBytes;
+                    byte* sub1 = block1 + (long)s * SubBlockBytes;
+                    ushort* scales0 = (ushort*)sub0;
+                    ushort* biases0 = scales0 + 8;
+                    ushort* scales1 = (ushort*)sub1;
+                    ushort* biases1 = scales1 + 8;
+                    byte* values0 = sub0 + ScaleBytes;
+                    byte* values1 = sub1 + ScaleBytes;
+                    sbyte* subAct = blockAct + (long)s * V;
+                    float d = blockDq[s];
+                    int sum = blockSum[s];
+
+                    var dot0 = Vector256<int>.Zero;
+                    var dot1 = Vector256<int>.Zero;
+                    for (int t = 0; t < V; t += 4)
+                    {
+                        var vq = Vector256.Create(
+                            Unsafe.ReadUnaligned<int>(subAct + t)).AsByte().AsSByte();
+                        var v0 = Avx.LoadVector256(values0 + t * 8).AsSByte();
+                        var v1 = Avx.LoadVector256(values1 + t * 8).AsSByte();
+                        dot0 = Avx2.Add(dot0, Avx2.MultiplyAddAdjacent(
+                            Avx2.MultiplyAddAdjacent(Avx2.Abs(v0), Avx2.Sign(vq, v0)), ones));
+                        dot1 = Avx2.Add(dot1, Avx2.MultiplyAddAdjacent(
+                            Avx2.MultiplyAddAdjacent(Avx2.Abs(v1), Avx2.Sign(vq, v1)), ones));
+                    }
+
+                    var scale0 = Avx.Multiply(LoadScales((byte*)scales0), Vector256.Create(d));
+                    var scale1 = Avx.Multiply(LoadScales((byte*)scales1), Vector256.Create(d));
+                    var bias0 = Avx.Multiply(LoadScales((byte*)biases0), Vector256.Create(d * sum));
+                    var bias1 = Avx.Multiply(LoadScales((byte*)biases1), Vector256.Create(d * sum));
+                    acc0 = Fma.MultiplyAdd(scale0, Avx.ConvertToVector256Single(dot0), acc0);
+                    acc1 = Fma.MultiplyAdd(scale1, Avx.ConvertToVector256Single(dot1), acc1);
+                    acc0 = Avx.Subtract(acc0, bias0);
+                    acc1 = Avx.Subtract(acc1, bias1);
+                }
+            }
+
+            Avx.Store(out0, acc0);
+            Avx.Store(out0 + 8, acc1);
         }
     }
 
