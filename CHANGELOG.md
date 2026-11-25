@@ -104,6 +104,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   registers spilled and measured about 30-45% slower (Q6_K ~7.75 -> 5.20, Q4_K
   ~8.25 -> 4.69 GMAC/s). `widebytebench ... nopair` keeps the A/B switch.
 
+- **Opt-in byte kernel for Q4_K** - `WideByteWeights.UseForQ4K = true` routes
+  Q4_K/Q4_K_S/Q4_K_M through the generic byte kernel; Q4_K was added to the
+  byte repack's format table (256-value blocks, 32-value sub-blocks, the same
+  `scale * dot - bias * sum` arithmetic). The byte copy is about 2.0x raw
+  versus the packed ~1.11x, so this is opt-in and the process-wide budget can
+  refuse it, falling back to the packed copy. `InferenceLinearLayer` and
+  `LogitOps` both honor the flag, and the two paths agree within the wide-kernel
+  reference tolerance. Isolated `widebytebench q4_k` and `q4kwidebench` runs are
+  close on the 2200U, so measure on the target machine before enabling.
+
 - **Host builder configuration** - `ChatSession` and `ChatSessionFactory` accept
   an `IGeneratorBuilderConfigurator` that runs before the builder creates a
   generator, for both the main and sub-agent paths. Studio uses it to pass Medusa

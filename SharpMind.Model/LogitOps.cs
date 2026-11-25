@@ -310,6 +310,9 @@ public abstract class LogitOps(Tensor<float>? projectionWeight, byte[]? rawWeigh
                     fixed (float* pInput = input.Data)
                     {
                         bool projected = false;
+                        bool q4kByte = RawDtype is QuantDType.Q4_K or QuantDType.Q4_K_S or
+                                QuantDType.Q4_K_M &&
+                            WideByteWeights.Allowed(RawDtype!.Value);
                         if (WideAllowed && RawWeight != null)
                         {
                             if (RawDtype is QuantDType.Q8_0 && Q8_0WideWeights.Enabled &&
@@ -317,6 +320,11 @@ public abstract class LogitOps(Tensor<float>? projectionWeight, byte[]? rawWeigh
                                 wide.InFeatures == K && wide.OutFeatures == N)
                             {
                                 wide.MatMul(pInput, pOutput, M);
+                                projected = true;
+                            }
+                            else if (q4kByte &&
+                                     TryWideByte(pInput, pOutput, M, K, N, RawDtype!.Value))
+                            {
                                 projected = true;
                             }
                             else if (RawDtype is QuantDType.Q4_K or QuantDType.Q4_K_S or QuantDType.Q4_K_M &&
@@ -336,21 +344,10 @@ public abstract class LogitOps(Tensor<float>? projectionWeight, byte[]? rawWeigh
                                 projected = true;
                             }
                             else if (RawDtype is { } byteDtype &&
-                                     WideByteWeights.Enabled &&
-                                     WideByteWeights.IsSupported(byteDtype))
+                                     WideByteWeights.Allowed(byteDtype) &&
+                                     TryWideByte(pInput, pOutput, M, K, N, byteDtype))
                             {
-                                if (!_wideByteTried)
-                                {
-                                    _wideByte = WideByteWeights.TryCreate(
-                                        RawWeight, K, N, byteDtype);
-                                    _wideByteTried = true;
-                                }
-
-                                if (_wideByte is { } wideByte)
-                                {
-                                    wideByte.MatMul(pInput, pOutput, M);
-                                    projected = true;
-                                }
+                                projected = true;
                             }
                         }
 
@@ -376,6 +373,21 @@ public abstract class LogitOps(Tensor<float>? projectionWeight, byte[]? rawWeigh
 
         DecodeProfiler.Mark(DecodeStage.LmHead, tLmHead);
         return result;
+    }
+
+    private unsafe bool TryWideByte(float* input, float* output, int M, int K, int N,
+        QuantDType dtype)
+    {
+        if (RawWeight is null) return false;
+        if (!_wideByteTried)
+        {
+            _wideByte = WideByteWeights.TryCreate(RawWeight, K, N, dtype);
+            _wideByteTried = true;
+        }
+
+        if (_wideByte is not { } wide) return false;
+        wide.MatMul(input, output, M);
+        return true;
     }
 
     /// <summary>

@@ -504,6 +504,24 @@ public abstract class InferenceLinearLayer : LinearLayer
         if (QuantDtype is QuantDType.Q4_K or QuantDType.Q4_K_S or QuantDType.Q4_K_M &&
             Q4KWideWeights.Enabled)
         {
+            // Opt-in byte mode runs Q4_K through the generic kernel. It is tried
+            // first so a budget refusal falls through to the smaller packed copy.
+            if (WideByteWeights.Allowed(QuantDtype))
+            {
+                if (!_wideByteTried)
+                {
+                    _wideByte = WideByteWeights.TryCreate(
+                        raw, InFeatures, OutFeatures, QuantDtype);
+                    _wideByteTried = true;
+                }
+                if (_wideByte is { } q4Byte)
+                {
+                    q4Byte.MatMul(flat.DataPtr, result.DataPtr, m);
+                    MarkWideOnly(raw);
+                    return true;
+                }
+            }
+
             if (!_wideQ4KTried)
             {
                 _wideQ4KTried = true;
@@ -547,7 +565,7 @@ public abstract class InferenceLinearLayer : LinearLayer
             }
         }
 
-        if (WideByteWeights.Enabled && WideByteWeights.IsSupported(QuantDtype))
+        if (WideByteWeights.Allowed(QuantDtype))
         {
             if (!_wideByteTried)
             {

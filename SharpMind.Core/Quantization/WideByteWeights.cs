@@ -25,6 +25,14 @@ public sealed unsafe class WideByteWeights : IDisposable
 
     public static bool Enabled { get; set; } = true;
 
+    /// <summary>
+    /// Opt-in: run Q4_K through the generic byte kernel instead of the packed
+    /// kernel. The byte repack is about 1.8x the packed copy (2.0x raw), so this
+    /// trades memory for the wider kernel; the global budget still applies.
+    /// Set it before the first forward; an already wide-only layer keeps its copy.
+    /// </summary>
+    public static bool UseForQ4K { get; set; }
+
     /// <summary>Diagnostic A/B knob; 0 uses the production chunk heuristic.</summary>
     public static int ParallelChunkOverride { get; set; }
 
@@ -49,6 +57,16 @@ public sealed unsafe class WideByteWeights : IDisposable
     public QuantDType Dtype { get; }
 
     public static bool IsSupported(QuantDType dtype) => Describe(dtype, out _, out _, out _, out _);
+
+    /// <summary>
+    /// True when the generic byte kernel may handle this dtype. Q4_K is opt-in
+    /// because its byte repack is about 1.8x the packed copy.
+    /// </summary>
+    public static bool Allowed(QuantDType dtype) =>
+        Enabled && IsSupported(dtype) && (UseForQ4K || !IsQ4K(dtype));
+
+    private static bool IsQ4K(QuantDType dtype) =>
+        dtype is QuantDType.Q4_K or QuantDType.Q4_K_S or QuantDType.Q4_K_M;
 
     public static WideByteWeights? TryCreate(byte[]? raw, int inFeatures, int outFeatures, QuantDType dtype)
     {
@@ -142,6 +160,12 @@ public sealed unsafe class WideByteWeights : IDisposable
     private static void Decode(QuantDType dtype, byte* block, int sub, int valuesPerSub,
         int row, float* scales, float* biases, byte* values)
     {
+        if (IsQ4K(dtype))
+        {
+            DecodeQ4K(block, sub, row, scales, biases, values);
+            return;
+        }
+
         if (valuesPerSub == 32 && sub == 0 &&
             dtype is QuantDType.Q4_0 or QuantDType.Q4_1 or QuantDType.Q5_0
                 or QuantDType.Q5_1 or QuantDType.IQ4_NL)
@@ -252,6 +276,25 @@ public sealed unsafe class WideByteWeights : IDisposable
         }
 
         throw new NotSupportedException($"{dtype} is not repacked yet.");
+    }
+
+    private static unsafe void DecodeQ4K(byte* block, int sub, int row,
+        float* scales, float* biases, byte* values)
+    {
+        float d = Half(block);
+        float dmin = Half(block + 2);
+        byte* sc = block + 4;
+        byte* qs = block + 16;
+        int scale = QuantizationKernels.GetScaleMinK4_Scale_Scalar(sub, sc);
+        int min = QuantizationKernels.GetScaleMinK4_Min_Scalar(sub, sc);
+        scales[row] = d * scale;
+        biases[row] = dmin * min;
+
+        int chunk = sub / 2;
+        int shift = (sub % 2) * 4;
+        byte* chunkQs = qs + chunk * 32;
+        for (int i = 0; i < 32; i++)
+            Write(values, row, i, (chunkQs[i] >> shift) & 0x0F);
     }
 
     private static unsafe void DecodeQ5K(byte* block, int sub, int row,
@@ -531,6 +574,7 @@ public sealed unsafe class WideByteWeights : IDisposable
         QuantDType.Q5_0 => 22,
         QuantDType.Q5_1 => 24,
         QuantDType.IQ4_NL => 18,
+        QuantDType.Q4_K or QuantDType.Q4_K_S or QuantDType.Q4_K_M => 144,
         QuantDType.Q5_K => 176,
         QuantDType.Q2_K => 84,
         QuantDType.Q3_K => 110,
@@ -551,6 +595,7 @@ public sealed unsafe class WideByteWeights : IDisposable
         {
             QuantDType.Q4_0 or QuantDType.Q4_1 or QuantDType.Q5_0 or QuantDType.Q5_1
                 or QuantDType.IQ4_NL or QuantDType.MXFP4 => (32, 32, 1),
+            QuantDType.Q4_K or QuantDType.Q4_K_S or QuantDType.Q4_K_M => (256, 32, 8),
             QuantDType.Q2_K or QuantDType.Q3_K
                 or QuantDType.IQ2_XS or QuantDType.IQ2_S => (256, 16, 16),
             QuantDType.Q5_K or QuantDType.IQ4_XS or QuantDType.IQ3_XXS
