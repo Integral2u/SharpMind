@@ -14,7 +14,7 @@ namespace SharpMind.Core.Quantization;
 public sealed unsafe class WideByteWeights : IDisposable
 {
     public const int RowsPerGroup = 8;
-    private const int ScaleBytes = 8 * sizeof(float) * 2;
+    private const int ScaleBytes = 8 * sizeof(ushort) * 2;
 
     /// <summary>Total repack bytes across all live layers; the layer falls back when it would exceed this.</summary>
     public static long MaxRepackBytes
@@ -117,6 +117,8 @@ public sealed unsafe class WideByteWeights : IDisposable
     {
         int subBlockBytes = ScaleBytes + RowsPerGroup * valuesPerSub;
         int rawBlockBytes = RawBlockBytes(dtype);
+        float* rowScales = stackalloc float[RowsPerGroup];
+        float* rowBiases = stackalloc float[RowsPerGroup];
 
         for (int row = 0; row < RowsPerGroup; row++)
         {
@@ -124,10 +126,12 @@ public sealed unsafe class WideByteWeights : IDisposable
             for (int s = 0; s < subBlocks; s++)
             {
                 byte* sub = dst + s * subBlockBytes;
-                float* scales = (float*)sub;
-                float* biases = scales + 8;
+                ushort* scales = (ushort*)sub;
+                ushort* biases = scales + RowsPerGroup;
                 byte* values = sub + ScaleBytes;
-                Decode(dtype, src, s, valuesPerSub, row, scales, biases, values);
+                Decode(dtype, src, s, valuesPerSub, row, rowScales, rowBiases, values);
+                scales[row] = BitConverter.HalfToUInt16Bits((Half)rowScales[row]);
+                biases[row] = BitConverter.HalfToUInt16Bits((Half)rowBiases[row]);
             }
         }
     }

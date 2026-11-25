@@ -7,7 +7,7 @@ namespace SharpMind.Core.Quantization;
 
 /// <summary>
 /// Integer matmul over a repacked byte stream. Every block format is normalised
-/// during repack to eight output rows, a float scale and bias per sub-block, and
+/// during repack to eight output rows, a Half scale and bias per sub-block, and
 /// signed int8 values. The hot loop therefore has no format branch, no ISA
 /// check, and no sub-block-size branch: JigSawDotNet selects the FMA/scalar body
 /// once, and <see cref="MatMul16"/> or <see cref="MatMul32"/> is chosen once when
@@ -44,7 +44,15 @@ public abstract unsafe class WideByteOps
 /// <summary>Concrete FMA and scalar bodies selected by <see cref="WideByteOps"/>.</summary>
 public static unsafe class WideByteKernels
 {
-    private const int ScaleBytes = 8 * sizeof(float) * 2;
+    private const int ScaleBytes = 8 * sizeof(ushort) * 2;
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static Vector256<float> LoadScales(byte* p)
+        => QuantizationKernels.WidenHalf8((ushort*)p);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static float HalfToFloat(ushort value)
+        => QuantizationKernels.HalfToFloat_F16C(value);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void MatMul16_Fma(
@@ -108,8 +116,8 @@ public static unsafe class WideByteKernels
                     for (int s = 0; s < subBlocks; s++)
                     {
                         byte* sub = blockData + (long)s * SubBlockBytes;
-                        float* scales = (float*)sub;
-                        float* biases = scales + 8;
+                        ushort* scales = (ushort*)sub;
+                        ushort* biases = scales + 8;
                         byte* values = sub + ScaleBytes;
                         sbyte* subAct = blockAct + (long)s * V;
                         float d = blockDq[s >> 1];
@@ -125,8 +133,8 @@ public static unsafe class WideByteKernels
                                 Avx2.MultiplyAddAdjacent(Avx2.Abs(v), Avx2.Sign(vq, v)), ones));
                         }
 
-                        var scale = Avx.Multiply(Avx.LoadVector256(scales), Vector256.Create(d));
-                        var bias = Avx.Multiply(Avx.LoadVector256(biases),
+                        var scale = Avx.Multiply(LoadScales((byte*)scales), Vector256.Create(d));
+                        var bias = Avx.Multiply(LoadScales((byte*)biases),
                             Vector256.Create(d * sum));
                         acc = Fma.MultiplyAdd(scale, Avx.ConvertToVector256Single(dot), acc);
                         acc = Avx.Subtract(acc, bias);
@@ -170,8 +178,8 @@ public static unsafe class WideByteKernels
                     for (int s = 0; s < subBlocks; s++)
                     {
                         byte* sub = blockData + (long)s * SubBlockBytes;
-                        float* scales = (float*)sub;
-                        float* biases = scales + 8;
+                        ushort* scales = (ushort*)sub;
+                        ushort* biases = scales + 8;
                         byte* values = sub + ScaleBytes;
                         sbyte* subAct = blockAct + (long)s * V;
                         float d = blockDq[s];
@@ -187,8 +195,8 @@ public static unsafe class WideByteKernels
                                 Avx2.MultiplyAddAdjacent(Avx2.Abs(v), Avx2.Sign(vq, v)), ones));
                         }
 
-                        var scale = Avx.Multiply(Avx.LoadVector256(scales), Vector256.Create(d));
-                        var bias = Avx.Multiply(Avx.LoadVector256(biases),
+                        var scale = Avx.Multiply(LoadScales((byte*)scales), Vector256.Create(d));
+                        var bias = Avx.Multiply(LoadScales((byte*)biases),
                             Vector256.Create(d * sum));
                         acc = Fma.MultiplyAdd(scale, Avx.ConvertToVector256Single(dot), acc);
                         acc = Avx.Subtract(acc, bias);
@@ -235,8 +243,8 @@ public static unsafe class WideByteKernels
                         for (int s = 0; s < subBlocks; s++)
                         {
                             byte* sub = blockData + (long)s * subBlockBytes;
-                            float* scales = (float*)sub;
-                            float* biases = scales + 8;
+                            ushort* scales = (ushort*)sub;
+                            ushort* biases = scales + 8;
                             byte* values = sub + ScaleBytes;
                             sbyte* subAct = blockAct + (long)s * valuesPerSub;
                             float d = blockDq[s >> subScaleShift];
@@ -248,7 +256,8 @@ public static unsafe class WideByteKernels
                                 int at = (t / 4) * 32 + row * 4 + (t % 4);
                                 dot += (sbyte)values[at] * subAct[t];
                             }
-                            acc += scales[row] * d * dot - biases[row] * d * sum;
+                            acc += HalfToFloat(scales[row]) * d * dot
+                                - HalfToFloat(biases[row]) * d * sum;
                         }
                     }
                     outRow[row] = acc;

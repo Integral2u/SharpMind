@@ -19,8 +19,8 @@ namespace SharpMind.Core.Quantization;
 ///
 /// with <c>v</c> the unsigned 4-bit weight and <c>q</c> the signed int8
 /// activation. Nibbles stay packed: a quartet of four values is two bytes per
-/// row, so the quant payload is unchanged. The float scale/min pairs are the
-/// only growth (about 1.33x the raw Q4_K tensor).
+/// row, so the quant payload is unchanged. The Half scale/min pairs are the
+/// only growth (about 1.11x the raw Q4_K tensor).
 ///
 /// Technique extends pulsarforge's Q8_0 group-8 repack (MIT,
 /// github.com/siris9476/pulsarforge).
@@ -33,7 +33,7 @@ public sealed unsafe class Q4KWideWeights : IDisposable
     private const int RawBlockBytes = 144;
     private const int SubBlocks = SuperBlock / QBlock;
     private const int QuartetsPerSubBlock = QBlock / 4;
-    private const int ScaleBytes = RowsPerGroup * sizeof(float) * 2;
+    private const int ScaleBytes = RowsPerGroup * sizeof(ushort) * 2;
     private const int QuantBytes = QuartetsPerSubBlock * RowsPerGroup * 2;
     private const int SubBlockBytes = ScaleBytes + QuantBytes;
     private const int BlockBytes = SubBlocks * SubBlockBytes;
@@ -167,8 +167,8 @@ public sealed unsafe class Q4KWideWeights : IDisposable
             int chunk = sub / 2;
             int shift = (sub % 2) * 4;
             byte* subDst = dst + sub * SubBlockBytes;
-            float* scales = (float*)subDst;
-            float* biases = scales + RowsPerGroup;
+            ushort* scales = (ushort*)subDst;
+            ushort* biases = scales + RowsPerGroup;
             byte* quants = subDst + ScaleBytes;
 
             for (int row = 0; row < RowsPerGroup; row++)
@@ -178,8 +178,10 @@ public sealed unsafe class Q4KWideWeights : IDisposable
                 float dmin = (float)BitConverter.UInt16BitsToHalf(Unsafe.ReadUnaligned<ushort>(src + 2));
                 byte* scaleBytes = src + 4;
                 byte* qs = src + 16;
-                scales[row] = d * QuantizationKernels.GetScaleMinK4_Scale_Scalar(sub, scaleBytes);
-                biases[row] = dmin * QuantizationKernels.GetScaleMinK4_Min_Scalar(sub, scaleBytes);
+                scales[row] = BitConverter.HalfToUInt16Bits(
+                    (Half)(d * QuantizationKernels.GetScaleMinK4_Scale_Scalar(sub, scaleBytes)));
+                biases[row] = BitConverter.HalfToUInt16Bits(
+                    (Half)(dmin * QuantizationKernels.GetScaleMinK4_Min_Scalar(sub, scaleBytes)));
 
                 byte* rowQuants = quants + row * 2;
                 byte* chunkQs = qs + chunk * QBlock;
@@ -314,8 +316,8 @@ public sealed unsafe class Q4KWideWeights : IDisposable
             for (int sub = 0; sub < SubBlocks; sub++)
             {
                 byte* subW = w + sub * SubBlockBytes;
-                float* scales = (float*)subW;
-                float* biases = scales + RowsPerGroup;
+                ushort* scales = (ushort*)subW;
+                ushort* biases = scales + RowsPerGroup;
                 byte* quants = subW + ScaleBytes;
                 sbyte* subQ = q + sub * QBlock;
                 int qSum = sums[sub];
@@ -341,10 +343,12 @@ public sealed unsafe class Q4KWideWeights : IDisposable
                         Sse2.MultiplyAddAdjacent(Ssse3.MultiplyAddAdjacent(rows47, vq), ones));
                 }
 
-                var scale0 = Sse2.Multiply(Sse2.LoadVector128(scales), Vector128.Create(d));
-                var scale1 = Sse2.Multiply(Sse2.LoadVector128(scales + 4), Vector128.Create(d));
-                var bias0 = Sse2.Multiply(Sse2.LoadVector128(biases), Vector128.Create(d * qSum));
-                var bias1 = Sse2.Multiply(Sse2.LoadVector128(biases + 4), Vector128.Create(d * qSum));
+                var scale8 = QuantizationKernels.WidenHalf8(scales);
+                var bias8 = QuantizationKernels.WidenHalf8(biases);
+                var scale0 = Sse2.Multiply(scale8.GetLower(), Vector128.Create(d));
+                var scale1 = Sse2.Multiply(scale8.GetUpper(), Vector128.Create(d));
+                var bias0 = Sse2.Multiply(bias8.GetLower(), Vector128.Create(d * qSum));
+                var bias1 = Sse2.Multiply(bias8.GetUpper(), Vector128.Create(d * qSum));
 
                 acc0 = Fma.MultiplyAdd(scale0, Sse2.ConvertToVector128Single(dot0), acc0);
                 acc0 = Sse2.Subtract(acc0, bias0);

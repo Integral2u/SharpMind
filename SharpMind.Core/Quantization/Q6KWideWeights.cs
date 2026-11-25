@@ -19,7 +19,8 @@ namespace SharpMind.Core.Quantization;
 ///   scale * (Σ(q6*q) - 32*Σq)
 ///
 /// where q6 is the unsigned 0..63 weight and q the signed activation. The
-/// repack is about 1.5x the raw Q6_K tensor because the values become bytes.
+/// repack is about 1.37x the raw Q6_K tensor because the values become bytes
+/// and the per-row scale is stored as Half.
 /// </summary>
 public sealed unsafe class Q6KWideWeights : IDisposable
 {
@@ -29,7 +30,7 @@ public sealed unsafe class Q6KWideWeights : IDisposable
     private const int RawBlockBytes = 210;
     private const int SubBlocks = SuperBlock / QBlock;
     private const int QuartetsPerSubBlock = QBlock / 4;
-    private const int ScaleBytes = RowsPerGroup * sizeof(float);
+    private const int ScaleBytes = RowsPerGroup * sizeof(ushort);
     private const int QuantBytes = QuartetsPerSubBlock * RowsPerGroup * 4;
     private const int SubBlockBytes = ScaleBytes + QuantBytes;
     private const int BlockBytes = SubBlocks * SubBlockBytes;
@@ -200,8 +201,8 @@ public sealed unsafe class Q6KWideWeights : IDisposable
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void SetScale(byte* dst, int sub, int row, float d, int scale)
     {
-        float* scales = (float*)(dst + sub * SubBlockBytes);
-        scales[row] = d * scale;
+        ushort* scales = (ushort*)(dst + sub * SubBlockBytes);
+        scales[row] = BitConverter.HalfToUInt16Bits((Half)(d * scale));
     }
 
     public void MatMul(float* input, float* output, int m)
@@ -307,6 +308,10 @@ public sealed unsafe class Q6KWideWeights : IDisposable
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static Vector256<float> LoadScales(ushort* p)
+        => QuantizationKernels.WidenHalf8(p);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void GroupDot(byte* w, int blocks, sbyte* q, float* dq, int* sums, float* out8)
     {
         var acc = Vector256<float>.Zero;
@@ -317,7 +322,7 @@ public sealed unsafe class Q6KWideWeights : IDisposable
             for (int sub = 0; sub < SubBlocks; sub++)
             {
                 byte* subW = w + sub * SubBlockBytes;
-                float* scales = (float*)subW;
+                ushort* scales = (ushort*)subW;
                 byte* quants = subW + ScaleBytes;
                 sbyte* subQ = q + sub * QBlock;
                 int qSum = sums[sub];
@@ -333,7 +338,7 @@ public sealed unsafe class Q6KWideWeights : IDisposable
                         Avx2.MultiplyAddAdjacent(Avx2.MultiplyAddAdjacent(v, vq), ones));
                 }
 
-                var scale = Avx.Multiply(Avx.LoadVector256(scales), Vector256.Create(d));
+                var scale = Avx.Multiply(LoadScales(scales), Vector256.Create(d));
                 var bias = Avx.Multiply(scale, Vector256.Create(32f * qSum));
                 acc = Fma.MultiplyAdd(scale, Avx.ConvertToVector256Single(dot), acc);
                 acc = Avx.Subtract(acc, bias);

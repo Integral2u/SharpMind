@@ -57,8 +57,13 @@ public sealed class WideByteWeightsTests
                 float got = actual[p * n + row];
                 string at = $"{dtype} K={k} N={n} M={m} [{p},{row}]";
                 Assert.False(float.IsNaN(got), $"{at}: unwritten");
+                double tolerance = HalfExactScale(dtype)
+                    ? 1e-3 * Math.Max(1, Math.Abs(expected)) + 0.05
+                    : 2.5e-2 * Math.Max(1, Math.Abs(expected)) + 2.5;
                 Assert.True(
-                    Math.Abs(got - expected) <= 1e-4 * Math.Max(1, Math.Abs(expected)) + 1e-2,
+                    // Product-based K/IQ scales are rounded to Half; random blocks
+                    // stress cancellation, so they need the wider absolute floor.
+                    Math.Abs(got - expected) <= tolerance,
                     $"{at}: wide={got}, reference={expected}");
             }
         }
@@ -152,8 +157,13 @@ public sealed class WideByteWeightsTests
         for (int i = 0; i < actual.Length; i++)
         {
             Assert.False(float.IsNaN(actual[i]), $"{dtype} [{i}]: unwritten");
+            float tolerance = HalfExactScale(dtype)
+                ? 1e-3f * Math.Max(1f, Math.Abs(expected[i])) + 0.05f
+                : 1e-2f * Math.Max(1f, Math.Abs(expected[i])) + 0.01f * k;
             Assert.True(
-                Math.Abs(actual[i] - expected[i]) <= 1e-3f * Math.Max(1f, Math.Abs(expected[i])) + 0.05f,
+                // Product-based K/IQ scales are rounded to Half; the absolute
+                // floor grows with K because cancellation amplifies the error.
+                Math.Abs(actual[i] - expected[i]) <= tolerance,
                 $"{dtype} [{i}]: wide={actual[i]}, scalar={expected[i]}");
         }
     }
@@ -201,6 +211,15 @@ public sealed class WideByteWeightsTests
             wide.MatMul(pIn, pRef, 1);
         Assert.Equal(reference, projected.Data.ToArray());
     }
+
+    /// <summary>
+    /// Formats whose repacked scale/bias is the raw fp16 value (or an exact
+    /// power-of-two multiple), so storing it as Half loses no precision. The
+    /// K/IQ scales are fp16 × integer and round to half.
+    /// </summary>
+    private static bool HalfExactScale(QuantDType dtype) => dtype is
+        QuantDType.Q4_0 or QuantDType.Q4_1 or QuantDType.Q5_0 or QuantDType.Q5_1
+        or QuantDType.IQ4_NL or QuantDType.MXFP4;
 
     private static byte[] RandomRaw(QuantDType dtype, int k, int n, Random rng)
     {

@@ -9,8 +9,8 @@ namespace SharpMind.Core.Quantization;
 /// <summary>
 /// Q8_0 weights repacked for an integer matmul whose tile is eight output rows wide.
 ///
-/// Every 32-column block of eight consecutive rows is stored as 288 bytes: the eight row scales
-/// as float32, then the block's eight quartets (four columns each) with the eight rows' four
+/// Every 32-column block of eight consecutive rows is stored as 272 bytes: the eight row scales
+/// as Half, then the block's eight quartets (four columns each) with the eight rows' four
 /// bytes side by side. One 256-bit load therefore holds four columns of eight rows. Broadcasting
 /// the activation quartet to all eight lanes, abs/sign + maddubs + madd yields the eight rows'
 /// dot products over those four columns: one sign pair per 32 products, where a sign transfer
@@ -29,7 +29,8 @@ public sealed unsafe class Q8_0WideWeights : IDisposable
     public const int RowsPerGroup = 8;
     private const int QBlock = 32;
     private const int RawBlockBytes = 34;
-    private const int BlockBytes = RowsPerGroup * sizeof(float) + QBlock * RowsPerGroup;
+    private const int ScaleBytes = RowsPerGroup * sizeof(ushort);
+    private const int BlockBytes = ScaleBytes + QBlock * RowsPerGroup;
     private const long MinParallelWork = 65_536;
 
     // Vocabulary-sized heads have enough pair groups that the two-group kernel's
@@ -177,9 +178,9 @@ public sealed unsafe class Q8_0WideWeights : IDisposable
                     for (int i = 0; i < RowsPerGroup; i++)
                     {
                         byte* blk = (byte*)src + ((long)(g * RowsPerGroup + i) * blocks + b) * RawBlockBytes;
-                        ((float*)d)[i] = (float)BitConverter.UInt16BitsToHalf(Unsafe.ReadUnaligned<ushort>(blk));
+                        ((ushort*)d)[i] = Unsafe.ReadUnaligned<ushort>(blk);
                         for (int t = 0; t < RowsPerGroup; t++)
-                            Unsafe.CopyBlockUnaligned(d + 32 + t * 32 + i * 4, blk + 2 + t * 4, 4);
+                            Unsafe.CopyBlockUnaligned(d + ScaleBytes + t * 32 + i * 4, blk + 2 + t * 4, 4);
                     }
                 }
             });
@@ -293,6 +294,10 @@ public sealed unsafe class Q8_0WideWeights : IDisposable
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static Vector256<float> LoadScales(byte* p)
+        => QuantizationKernels.WidenHalf8((ushort*)p);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void GroupDot(byte* w, int blocks, sbyte* q, float* d, float* out8)
     {
         var acc = Vector256<float>.Zero;
@@ -300,7 +305,7 @@ public sealed unsafe class Q8_0WideWeights : IDisposable
         for (int b = 0; b < blocks; b++, w += BlockBytes, q += QBlock)
         {
             var dot = Vector256<int>.Zero;
-            sbyte* wq = (sbyte*)w + 32;
+            sbyte* wq = (sbyte*)w + ScaleBytes;
             for (int t = 0; t < QBlock; t += 4)
             {
                 var vw = Avx.LoadVector256(wq + t * 8);
@@ -308,7 +313,7 @@ public sealed unsafe class Q8_0WideWeights : IDisposable
                 var pairsum = Avx2.MultiplyAddAdjacent(Avx2.Abs(vw), Avx2.Sign(vx, vw));
                 dot = Avx2.Add(dot, Avx2.MultiplyAddAdjacent(pairsum, ones));
             }
-            var scale = Avx.Multiply(Avx.LoadVector256((float*)w), Vector256.Create(d[b]));
+            var scale = Avx.Multiply(LoadScales(w), Vector256.Create(d[b]));
             acc = Fma.MultiplyAdd(scale, Avx.ConvertToVector256Single(dot), acc);
         }
         Avx.Store(out8, acc);
@@ -332,8 +337,8 @@ public sealed unsafe class Q8_0WideWeights : IDisposable
         {
             var dot0 = Vector256<int>.Zero;
             var dot1 = Vector256<int>.Zero;
-            sbyte* wq0 = (sbyte*)w0 + 32;
-            sbyte* wq1 = (sbyte*)w1 + 32;
+            sbyte* wq0 = (sbyte*)w0 + ScaleBytes;
+            sbyte* wq1 = (sbyte*)w1 + ScaleBytes;
             for (int t = 0; t < QBlock; t += 4)
             {
                 var vx = Vector256.Create(Unsafe.ReadUnaligned<int>(q + t)).AsSByte();
@@ -346,8 +351,8 @@ public sealed unsafe class Q8_0WideWeights : IDisposable
             }
 
             var vd = Vector256.Create(d[b]);
-            var scale0 = Avx.Multiply(Avx.LoadVector256((float*)w0), vd);
-            var scale1 = Avx.Multiply(Avx.LoadVector256((float*)w1), vd);
+            var scale0 = Avx.Multiply(LoadScales(w0), vd);
+            var scale1 = Avx.Multiply(LoadScales(w1), vd);
             acc0 = Fma.MultiplyAdd(scale0, Avx.ConvertToVector256Single(dot0), acc0);
             acc1 = Fma.MultiplyAdd(scale1, Avx.ConvertToVector256Single(dot1), acc1);
         }

@@ -294,7 +294,8 @@ public sealed class Q4KWideWeightsTests
                         dot += v * q[qBase + i];
                         sumQ += q[qBase + i];
                     }
-                    sum += dq[b * 8 + sub] * (d * sc * dot - dmin * mn * sumQ);
+                    sum += dq[b * 8 + sub] *
+                        ((float)(Half)(d * sc) * dot - (float)(Half)(dmin * mn) * sumQ);
                 }
             }
         }

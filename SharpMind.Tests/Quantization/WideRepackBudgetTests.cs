@@ -20,7 +20,7 @@ public sealed class WideRepackBudgetTests
 {
     private const int SuperBlock = 256;
     private const int RawBlockBytes = 144;
-    private const long Q4KBlockBytes = 1536; // eight rows × eight 32-value sub-blocks × 192 B
+    private const long Q4KBlockBytes = 1280; // eight rows × eight sub-blocks × (32 B half metadata + 128 B quants)
 
     [Fact]
     public void BudgetRefusesBeyondTheCapAndReleaseAllowsRetry()
@@ -142,6 +142,52 @@ public sealed class WideRepackBudgetTests
                 Assert.Equal(first, output.Data.ToArray());
 
             layer.Dispose();
+            Assert.Equal(0, WideRepackBudget.AllocatedBytes);
+        }
+        finally
+        {
+            WideRepackBudget.MaxBytes = original;
+            WideRepackBudget.ResetForTests();
+        }
+    }
+
+    [Fact]
+    public void HalfMetadataShrinksTheRepackedBlocks()
+    {
+        long original = WideRepackBudget.MaxBytes;
+        WideRepackBudget.ResetForTests();
+        try
+        {
+            if (Q8_0WideWeights.IsSupported(32, 8))
+            {
+                var raw = new byte[8 * 34];
+                new Random(71).NextBytes(raw);
+                var wide = Q8_0WideWeights.TryCreate(raw, 32, 8);
+                Assert.NotNull(wide);
+                Assert.Equal(272, WideRepackBudget.AllocatedBytes); // 8 half scales + 8×32 values
+                wide!.Dispose();
+            }
+
+            if (Q6KWideWeights.IsSupported(256, 8))
+            {
+                var raw = new byte[8 * 210];
+                new Random(72).NextBytes(raw);
+                var wide = Q6KWideWeights.TryCreate(raw, 256, 8);
+                Assert.NotNull(wide);
+                Assert.Equal(2304, WideRepackBudget.AllocatedBytes); // 16 × (16 + 8×16)
+                wide!.Dispose();
+            }
+
+            if (WideByteWeights.IsSupported(QuantDType.Q4_0))
+            {
+                var raw = new byte[8 * 18];
+                new Random(73).NextBytes(raw);
+                var wide = WideByteWeights.TryCreate(raw, 32, 8, QuantDType.Q4_0);
+                Assert.NotNull(wide);
+                Assert.Equal(288, WideRepackBudget.AllocatedBytes); // 8 half scales + 8 half biases + 8×32
+                wide!.Dispose();
+            }
+
             Assert.Equal(0, WideRepackBudget.AllocatedBytes);
         }
         finally

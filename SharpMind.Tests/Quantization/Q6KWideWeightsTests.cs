@@ -57,7 +57,7 @@ public sealed class Q6KWideWeightsTests
                 string at = $"K={k} N={n} M={m} [{p},{row}]";
                 Assert.False(float.IsNaN(got), $"{at}: unwritten");
                 Assert.True(
-                    Math.Abs(got - expected) <= 1e-4 * Math.Max(1, Math.Abs(expected)) + 1e-2,
+                    Math.Abs(got - expected) <= 2e-4 * Math.Max(1, Math.Abs(expected)) + 2e-2,
                     $"{at}: wide={got}, reference={expected}");
             }
         }
@@ -270,7 +270,8 @@ public sealed class Q6KWideWeightsTests
     private static double Term(int[] q, float[] dq, int index, int scale, float d, int value)
     {
         int activation = q[index];
-        return dq[index / 32] * d * scale * (value * activation - 32 * activation);
+        float weight = (float)(Half)(d * scale);
+        return dq[index / 32] * weight * (value * activation - 32 * activation);
     }
 
     private static unsafe ushort UnsafeReadUInt16(byte* p)

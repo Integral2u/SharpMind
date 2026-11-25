@@ -31,7 +31,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   group and dots packed 4-bit weights against int8 activations:
   `scale * Σ(v*q) - bias * Σq` per 32-value sub-block. It reuses the Q8 wide
   layout, so decode gets the same integer `vpmaddubsw`/`vpmaddwd` path without
-  requantizing the file; only the scale/min floats grow the tensor (about 1.33x).
+  requantizing the file; the scale/min metadata is stored as `Half` and grows the
+  tensor about 1.11x.
   On `Qwen3.5-2B-Q4_K_M` decode moved 1.24 -> 1.69 tok/s and the isolated kernel
   0.77 -> 2.73 GMAC/s. The LM head on that model is Q6_K and stays on the old
   path. `GgufSmokeProbe q4kwidebench` measures the kernel against the Q4_K FMA
@@ -44,18 +45,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   `Qwen3.5-2B-Q4_K_M` the LM head fell from ~32% of decode to ~8%, and the model
   moved from 1.69 to 4.23 tok/s, matching its all-Q8_0 file (4.32) at Q4_K's
   smaller footprint. The isolated kernel measures 0.98 -> 4.04 GMAC/s; the
-  repack is about 1.5x the raw tensor. `GgufSmokeProbe q6kwidebench` measures it
+  repack is about 1.37x the raw tensor. `GgufSmokeProbe q6kwidebench` measures it
   against the Q6_K FMA baseline.
 
 - **Wide-byte matmul for the remaining block formats** - `WideByteWeights`
   normalises Q4_0, Q4_1, Q5_0, Q5_1, Q5_K, Q2_K, Q3_K, IQ4_NL, IQ4_XS,
   IQ2_XXS/IQ2_XS/IQ2_S, IQ3_XXS/IQ3_S and MXFP4 into eight-row groups with a
-  float scale/bias per sub-block and signed int8 values. `WideByteOps` is
+  half scale/bias per sub-block and signed int8 values. `WideByteOps` is
   assembled by JigSawDotNet once per mapping, so the hot loop has no ISA check,
   format branch, or sub-block-size branch. On `Qwen3-0.6B`: Q4_0 0.70 -> 8.63,
   Q4_1 0.93 -> 8.21, Q2_K 1.82 -> 8.47, Q5_K_M 2.66 -> 9.01, Q3_K_M 3.42 ->
   7.2-9.3, IQ2_XXS 0.46 -> 4.35 and IQ3_XXS 0.39 -> 4.35 tok/s. The byte repack
-  costs about 1.8x for Q4_0/Q4_1 and 2.5-3x for Q2_K/IQ. All wide kernels draw
+  costs about 1.5-2x for the 32-value formats (Q4_0/Q4_1/Q5_0/Q5_1/IQ4_NL) and
+  2.9-3.8x for Q2_K/Q3_K, less for the IQ formats. All wide kernels draw
   from one process-wide budget (see the next entry), so a repack is refused only
   when the aggregate would exceed it. Q4_K and Q6_K keep their dedicated kernels.
 
@@ -81,6 +83,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   the LM head/embedding stay raw because GPU and Medusa read them. Pinned by
   `ReleaseRawAfterRepack_DropsBlockRawAndKeepsWorking` and the
   `ReleaseRawSource` tests in `WideRepackBudgetTests`.
+
+- **Half-precision scale/bias in the wide repacks** - every repack now stores
+  its per-row scale (and bias, where used) as `Half` instead of `float32` and
+  widens eight at a time with `QuantizationKernels.WidenHalf8` in the assembled
+  kernel. Q4_K drops from ~1.33x to ~1.11x raw, Q6_K from ~1.52x to ~1.37x, and
+  Q8_0 from ~1.06x to parity with its raw tensor. The byte repack drops from 1.25
+  to 1.125 B/value for the 32-value formats and from 1.5 to 1.25 B/value for the
+  16-value K/IQ formats. Formats whose scale is the raw fp16 value (Q4_0/Q4_1/
+  Q5_0/Q5_1/IQ4_NL/MXFP4) are bit-exact; product-based K/IQ scales round at
+  ~1e-3 relative, which the random-block reference tests account for. The
+  process-wide budget and raw-eviction peaks shrink with the repack.
 
 - **Host builder configuration** - `ChatSession` and `ChatSessionFactory` accept
   an `IGeneratorBuilderConfigurator` that runs before the builder creates a
