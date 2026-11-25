@@ -59,6 +59,13 @@ public abstract class LinearLayer : IDisposable
     public virtual void SetRawWeight(byte[]? rawData) { }
 
     /// <summary>
+    /// Invoked with the raw tensor when a complete wide repack makes it
+    /// redundant. The binder points this at the owning block so the block can
+    /// drop its reference too; layers that do not repack leave it unused.
+    /// </summary>
+    internal virtual Action<byte[]>? RawReleaseCallback { get; set; }
+
+    /// <summary>
     /// Enables/disables quantization-aware training for this layer. Base
     /// implementation is a no-op: only <see cref="TrainingLinearLayer"/>
     /// (and equips) fake-quantize their forward pass. A null or

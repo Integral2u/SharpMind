@@ -266,16 +266,20 @@ namespace SharpMind.Model.Layers.Attention;
         if (weights.Wq != null) Wq.ReplaceWeights(weights.Wq, weights.WqBias);
         else if (weights.WqBias != null) Wq.ReplaceBias(weights.WqBias);
         Wq.SetRawWeight(weights.RawWq);
+        Wq.RawReleaseCallback = weights.ReleaseRawSource;
         if (weights.Wk != null) Wk.ReplaceWeights(weights.Wk, Config.IsMla ? null : weights.WkBias);
         else if (!Config.IsMla && weights.WkBias != null) Wk.ReplaceBias(weights.WkBias);
         Wk.SetRawWeight(weights.RawWk);
+        Wk.RawReleaseCallback = weights.ReleaseRawSource;
         if (weights.Wv != null) Wv.ReplaceWeights(weights.Wv, Config.IsMla ? null : weights.WvBias);
         else if (!Config.IsMla && weights.WvBias != null) Wv.ReplaceBias(weights.WvBias);
         Wv.SetRawWeight(weights.RawWv);
+        Wv.RawReleaseCallback = weights.ReleaseRawSource;
 
         if (weights.Wo != null) Wo.ReplaceWeights(weights.Wo, Config.IsMla ? null : weights.WoBias);
         else if (!Config.IsMla && weights.WoBias != null) Wo.ReplaceBias(weights.WoBias);
         Wo.SetRawWeight(weights.RawWo);
+        Wo.RawReleaseCallback = weights.ReleaseRawSource;
 
         // Per-head Q/K normalization (Qwen3)
         if (weights.QNormW != null)

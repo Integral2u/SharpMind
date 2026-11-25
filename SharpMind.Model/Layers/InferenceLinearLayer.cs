@@ -491,8 +491,7 @@ public abstract class InferenceLinearLayer : LinearLayer
             if (_wideDirect is { } directQ8)
             {
                 directQ8.MatMul(flat.DataPtr, result.DataPtr, m);
-                _wideOnly = true;
-                RawQuantizedData = null;
+                MarkWideOnly(raw);
                 return true;
             }
             if (_wide.Get(raw, InFeatures, OutFeatures) is { } q8)
@@ -515,8 +514,7 @@ public abstract class InferenceLinearLayer : LinearLayer
             if (_wideQ4KDirect is { } directQ4)
             {
                 directQ4.MatMul(flat.DataPtr, result.DataPtr, m);
-                _wideOnly = true;
-                RawQuantizedData = null;
+                MarkWideOnly(raw);
                 return true;
             }
             if (_wideQ4K.Get(raw, InFeatures, OutFeatures) is { } q4)
@@ -539,8 +537,7 @@ public abstract class InferenceLinearLayer : LinearLayer
             if (_wideQ6KDirect is { } directQ6)
             {
                 directQ6.MatMul(flat.DataPtr, result.DataPtr, m);
-                _wideOnly = true;
-                RawQuantizedData = null;
+                MarkWideOnly(raw);
                 return true;
             }
             if (_wideQ6K.Get(raw, InFeatures, OutFeatures) is { } q6)
@@ -562,8 +559,7 @@ public abstract class InferenceLinearLayer : LinearLayer
             if (_wideByte is { } wideByte)
             {
                 wideByte.MatMul(flat.DataPtr, result.DataPtr, m);
-                _wideOnly = true;
-                RawQuantizedData = null;
+                MarkWideOnly(raw);
                 return true;
             }
         }
@@ -595,6 +591,17 @@ public abstract class InferenceLinearLayer : LinearLayer
         }
         throw new InvalidOperationException(
             $"[{Name}] wide-only path has no repacked weights.");
+    }
+
+    /// <summary>
+    /// The repack covers every row, so the layer can run from it alone. Drop the
+    /// raw reference and let the binder release the owning block's reference too.
+    /// </summary>
+    private void MarkWideOnly(byte[] raw)
+    {
+        _wideOnly = true;
+        RawQuantizedData = null;
+        RawReleaseCallback?.Invoke(raw);
     }
 
 public override void FreeFloatWeight()

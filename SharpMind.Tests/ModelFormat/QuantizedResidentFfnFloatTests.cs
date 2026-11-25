@@ -251,6 +251,48 @@ public sealed class QuantizedResidentFfnFloatTests : IDisposable
         Assert.Same(bias, block.WqBias);
     }
 
+    [Fact]
+    public void ReleaseRawAfterRepack_DropsBlockRawAndKeepsWorking()
+    {
+        if (!Q8_0WideWeights.IsSupported(Cfg().HiddenDim, Cfg().HiddenDim)) return;
+
+        string path = ExportGatedModel(QuantDType.Q8_0);
+        SmmLoader.Load(path, null, out _, out var config, out _);
+        var wide = SharpMindConfig.Qwen with { Hardware = HardwareTier.FMA, Parallel = true };
+        var qOps = QuantizationFactory.Create(wide.ResolvedHardware);
+        using var weights = ModelFactory.CreateWeights(
+            config, wide, qOps, path, LoadMode.Full, quantizedResident: true);
+        weights.InitializeWeights();
+        weights.ReleaseRawAfterRepack = true;
+        using var model = ModelFactory.CreateTransformer(weights, wide);
+
+        using var tokens = new Tensor<int>(1, 5);
+        int[] ids = [3, 17, 42, 8, 63];
+        ids.CopyTo(tokens.Data);
+
+        using (model.Forward(tokens))
+        {
+        }
+
+        Assert.True(weights.RawEvicted);
+        Assert.All(weights.Blocks, b =>
+        {
+            Assert.Null(b.RawWq);
+            Assert.Null(b.RawWk);
+            Assert.Null(b.RawWv);
+            Assert.Null(b.RawWo);
+            Assert.Null(b.RawWgate);
+            Assert.Null(b.RawWup);
+            Assert.Null(b.RawWf2);
+        });
+
+        using var again = model.Forward(tokens);
+        Assert.Equal(5 * Cfg().VocabSize, again.ElementCount);
+
+        // Eviction is irreversible; a second transformer must fail loudly.
+        Assert.Throws<InvalidOperationException>(() => ModelFactory.CreateTransformer(weights, wide));
+    }
+
     private string ExportGatedModel(QuantDType dtype, bool withPostNorms = false)
     {
         string path = Path.Combine(_temp.Path, $"gated-{dtype}-{Guid.NewGuid():N}.smm");

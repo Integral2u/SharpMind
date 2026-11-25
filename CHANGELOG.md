@@ -70,6 +70,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   `Transformer` release their wide caches on disposal. Pinned by
   `WideRepackBudgetTests`.
 
+- **Opt-in raw eviction after a complete wide repack** - set
+  `TransformerWeights.ReleaseRawAfterRepack = true` before building the
+  transformer and a fully repacked attention, FFN, short-conv, DeltaNet or MoE
+  tensor drops the block's raw bytes as well, so the resident peak becomes the
+  repack instead of raw + repack (about 1.24 GB on `Qwen3.5-2B-Q4_K_M` and
+  4.5 GB on Gemma-4-E4B Q4_0). The eviction is irreversible: building a second
+  transformer from the same weights throws and the weights must be reloaded.
+  Streaming is unaffected because its raw buffers are pooled across unloads, and
+  the LM head/embedding stay raw because GPU and Medusa read them. Pinned by
+  `ReleaseRawAfterRepack_DropsBlockRawAndKeepsWorking` and the
+  `ReleaseRawSource` tests in `WideRepackBudgetTests`.
+
 - **Host builder configuration** - `ChatSession` and `ChatSessionFactory` accept
   an `IGeneratorBuilderConfigurator` that runs before the builder creates a
   generator, for both the main and sub-agent paths. Studio uses it to pass Medusa

@@ -311,6 +311,16 @@ public static class ModelFactory
         ArgumentNullException.ThrowIfNull(weights);
         ArgumentNullException.ThrowIfNull(sharpConfig);
 
+        // ReleaseRawAfterRepack is irreversible: once a layer has dropped the raw
+        // bytes it repacked, a second transformer built from the same weights would
+        // have no fallback for any layer whose repack breaks. Fail here rather than
+        // deep inside the first forward.
+        if (weights.RawEvicted)
+            throw new InvalidOperationException(
+                "This weights instance released raw quantized bytes after a complete wide " +
+                "repack (ReleaseRawAfterRepack). Reload the weights before building another " +
+                "transformer.");
+
         // Same reconciliation as the loaders: a transformer built from routed
         // weights gets MoE layers even if the caller's preset says otherwise.
         sharpConfig = sharpConfig with { Ffn = ResolveFfnKind(weights.Config, sharpConfig.Ffn) };

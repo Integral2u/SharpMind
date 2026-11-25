@@ -184,6 +184,97 @@ public sealed class WideRepackBudgetTests
         }
     }
 
+    [Fact]
+    public unsafe void CompleteRepackReleasesTheOwningBlockRaw()
+    {
+        const int k = 256, n = 16;
+        if (!Q4KWideWeights.IsSupported(k, n)) return;
+
+        long original = WideRepackBudget.MaxBytes;
+        WideRepackBudget.ResetForTests();
+        try
+        {
+            var block = new TransformerWeights.BlockWeights
+            {
+                CanReleaseRawAfterRepack = true,
+            };
+            block.RawWq = RandomQ4K(k, n, new Random(61));
+            block.RawWk = RandomQ4K(k, n, new Random(62));
+
+            var mapping = SharpMindConfig.Gpt.ToJigSawMapping(parallel: true);
+            var layer = (InferenceLinearLayer)LinearLayerFactory.Create(
+                "q4", k, n, false, null, null, QuantDType.Q4_K, mapping);
+            layer.RawReleaseCallback = block.ReleaseRawSource;
+            layer.SetRawWeight(block.RawWq);
+
+            var input = RandomInput(k, new Random(63));
+            using var inputTensor = new Tensor<float>(1, k);
+            input.CopyTo(inputTensor.Data);
+
+            float[] first;
+            using (var output = layer.Forward(inputTensor))
+                first = output.Data.ToArray();
+
+            Assert.Null(block.RawWq);
+            Assert.NotNull(block.RawWk);
+            Assert.True(block.RawWasReleased);
+            Assert.Null(layer.RawQuantizedData);
+
+            using (var output = layer.Forward(inputTensor))
+                Assert.Equal(first, output.Data.ToArray());
+
+            layer.Dispose();
+            Assert.Equal(0, WideRepackBudget.AllocatedBytes);
+        }
+        finally
+        {
+            WideRepackBudget.MaxBytes = original;
+            WideRepackBudget.ResetForTests();
+        }
+    }
+
+    [Fact]
+    public void RawReleaseRespectsTheOptInAndStreamingGuard()
+    {
+        var raw = RandomQ4K(SuperBlock, 8, new Random(64));
+        var block = new TransformerWeights.BlockWeights();
+        block.RawWq = raw;
+
+        block.ReleaseRawSource(raw);
+        Assert.Same(raw, block.RawWq);
+        Assert.False(block.RawWasReleased);
+
+        block.CanReleaseRawAfterRepack = true;
+        block.BufferAllocator = _ => new byte[1];
+        block.ReleaseRawSource(raw);
+        Assert.Same(raw, block.RawWq);
+        Assert.False(block.RawWasReleased);
+
+        block.BufferAllocator = null;
+        block.ReleaseRawSource(raw);
+        Assert.Null(block.RawWq);
+        Assert.True(block.RawWasReleased);
+    }
+
+    [Fact]
+    public void RawReleaseRemovesOnlyTheMatchingExpertPlane()
+    {
+        var plane3 = RandomQ4K(SuperBlock, 8, new Random(65));
+        var plane4 = RandomQ4K(SuperBlock, 8, new Random(66));
+        var block = new TransformerWeights.BlockWeights
+        {
+            CanReleaseRawAfterRepack = true,
+            RawWgateExp = new() { [3] = plane3, [4] = plane4 },
+        };
+
+        block.ReleaseRawSource(plane3);
+
+        Assert.False(block.RawWgateExp.ContainsKey(3));
+        Assert.True(block.RawWgateExp.ContainsKey(4));
+        Assert.Same(plane4, block.RawWgateExp[4]);
+        Assert.True(block.RawWasReleased);
+    }
+
     private static byte[] RandomQ4K(int k, int n, Random rng)
     {
         int blocks = k / SuperBlock;

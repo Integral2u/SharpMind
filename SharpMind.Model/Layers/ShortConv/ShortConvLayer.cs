@@ -109,8 +109,10 @@ public sealed class ShortConvLayer : IDisposable
         ThrowIfDisposed();
         if (weights.WScIn != null) _wIn.ReplaceWeights(weights.WScIn, null);
         _wIn.SetRawWeight(weights.RawWScIn);
+        _wIn.RawReleaseCallback = weights.ReleaseRawSource;
         if (weights.WScOut != null) _wOut.ReplaceWeights(weights.WScOut, null);
         _wOut.SetRawWeight(weights.RawWScOut);
+        _wOut.RawReleaseCallback = weights.ReleaseRawSource;
         if (weights.WScConv is not null)
         {
             if (_ownsKernel) _kernel.Dispose();

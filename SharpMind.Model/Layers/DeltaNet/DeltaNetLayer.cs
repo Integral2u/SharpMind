@@ -140,14 +140,17 @@ public sealed class DeltaNetLayer : IDisposable
         ThrowIfDisposed();
         if (weights.Wqkv != null) _wqkv.ReplaceWeights(weights.Wqkv, null);
         _wqkv.SetRawWeight(weights.RawWqkvFull);
+        _wqkv.RawReleaseCallback = weights.ReleaseRawSource;
         if (weights.WGate != null) _wgate.ReplaceWeights(weights.WGate, null);
         _wgate.SetRawWeight(weights.RawWGate);
+        _wgate.RawReleaseCallback = weights.ReleaseRawSource;
         if (weights.WAlpha != null) _walpha.ReplaceWeights(weights.WAlpha, null);
         _walpha.SetRawWeight(null);
         if (weights.WBeta != null) _wbeta.ReplaceWeights(weights.WBeta, null);
         _wbeta.SetRawWeight(null);
         if (weights.WOut != null) _wout.ReplaceWeights(weights.WOut, null);
         _wout.SetRawWeight(weights.RawWOut);
+        _wout.RawReleaseCallback = weights.ReleaseRawSource;
 
         ReplaceSmall(ref _convKernel, ref _ownsConvKernel, weights.WConv);
         ReplaceSmall(ref _ssmA, ref _ownsSsmA, weights.SsmA);

@@ -300,7 +300,9 @@ public abstract class FfnLayer : IDisposable
             if (weights.Wf2 != null) W2.ReplaceWeights(weights.Wf2, weights.Wf2Bias);
             else if (weights.Wf2Bias != null) W2.LoadBias(weights.Wf2Bias.Data);
             W1.SetRawWeight(weights.RawWup);
+            W1.RawReleaseCallback = weights.ReleaseRawSource;
             W2.SetRawWeight(weights.RawWf2);
+            W2.RawReleaseCallback = weights.ReleaseRawSource;
         }
         else if (WGated is not null && WDown is not null)
         {
@@ -312,24 +314,35 @@ public abstract class FfnLayer : IDisposable
                 Buffer.BlockCopy(weights.RawWgate, 0, fused, 0, weights.RawWgate.Length);
                 Buffer.BlockCopy(weights.RawWup, 0, fused, weights.RawWgate.Length, weights.RawWup.Length);
                 WGated.SetRawWeight(fused);
+                // The fused copy is layer-owned, so the block must drop the two
+                // source tensors when the layer's complete repack retires them.
+                WGated.RawReleaseCallback = _ =>
+                {
+                    if (weights.RawWgate is { } gate) weights.ReleaseRawSource(gate);
+                    if (weights.RawWup is { } up) weights.ReleaseRawSource(up);
+                };
             }
             else if (weights.RawWup != null)
             {
                 WGated.SetRawWeight(weights.RawWup);
+                WGated.RawReleaseCallback = weights.ReleaseRawSource;
             }
             else if (weights.RawWgate != null)
             {
                 // Fused gate+up stored under the gate name (e.g. "ffn_gate_up"):
                 // RawWgate already holds the full [HiddenDim, 2*FfnDim] tensor.
                 WGated.SetRawWeight(weights.RawWgate);
+                WGated.RawReleaseCallback = weights.ReleaseRawSource;
             }
             else
             {
                 WGated.SetRawWeight(null);
+                WGated.RawReleaseCallback = null;
             }
             if (weights.Wf2 != null) WDown.ReplaceWeights(weights.Wf2, weights.Wf2Bias);
             else if (weights.Wf2Bias != null) WDown.LoadBias(weights.Wf2Bias.Data);
             WDown.SetRawWeight(weights.RawWf2);
+            WDown.RawReleaseCallback = weights.ReleaseRawSource;
         }
         else if (Router is not null && ExpertGate is not null)
         {
@@ -339,9 +352,13 @@ public abstract class FfnLayer : IDisposable
             if (weights.WRouter is not null)
                 Router.ReplaceWeights(weights.WRouter, weights.WRouterBias);
             Router.SetRawWeight(weights.RawRouter);
+            Router.RawReleaseCallback = weights.ReleaseRawSource;
 
             for (int expIdx = 0; expIdx < ExpertGate.Length; expIdx++)
             {
+                ExpertGate[expIdx].RawReleaseCallback = weights.ReleaseRawSource;
+                ExpertUp![expIdx].RawReleaseCallback = weights.ReleaseRawSource;
+                ExpertDown![expIdx].RawReleaseCallback = weights.ReleaseRawSource;
                 if (weights.WgateExp is not null && weights.WgateExp.TryGetValue(expIdx, out var gateW))
                 {
                     Tensor<float>? gateB = weights.WgateExpBias is not null && weights.WgateExpBias.TryGetValue(expIdx, out var gb) ? gb : null;
@@ -387,12 +404,15 @@ public abstract class FfnLayer : IDisposable
 
         if (weights.WSharedGate is not null) SharedGate.ReplaceWeights(weights.WSharedGate, weights.WSharedGateBias);
         SharedGate.SetRawWeight(weights.RawWSharedGate);
+        SharedGate.RawReleaseCallback = weights.ReleaseRawSource;
 
         if (weights.WSharedUp is not null) SharedUp.ReplaceWeights(weights.WSharedUp, weights.WSharedUpBias);
         SharedUp.SetRawWeight(weights.RawWSharedUp);
+        SharedUp.RawReleaseCallback = weights.ReleaseRawSource;
 
         if (weights.WSharedDown is not null) SharedDown.ReplaceWeights(weights.WSharedDown, weights.WSharedDownBias);
         SharedDown.SetRawWeight(weights.RawWSharedDown);
+        SharedDown.RawReleaseCallback = weights.ReleaseRawSource;
 
         if (SharedGateInp is not null && weights.SharedGateInp is not null)
             SharedGateInp.ReplaceWeights(weights.SharedGateInp, null);

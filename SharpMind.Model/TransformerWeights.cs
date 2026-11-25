@@ -80,6 +80,37 @@ public abstract class TransformerWeights : IDisposable
     // Per-block weights (Attention, FFN, Norms)
     public BlockWeights[] Blocks { get; }
 
+    private bool _releaseRawAfterRepack;
+
+    /// <summary>
+    /// When true, a layer that fully repacks a quantized tensor lets its owning
+    /// block drop the raw bytes, so the resident peak becomes the repack instead
+    /// of raw + repack. Opt-in because the eviction is irreversible: this weights
+    /// instance cannot back a second transformer afterwards. Streaming ignores it
+    /// (pooled raw buffers must round-trip through unload).
+    /// </summary>
+    public bool ReleaseRawAfterRepack
+    {
+        get => _releaseRawAfterRepack;
+        set
+        {
+            _releaseRawAfterRepack = value;
+            foreach (var block in Blocks)
+                block.CanReleaseRawAfterRepack = value;
+        }
+    }
+
+    /// <summary>True after any block dropped raw bytes under <see cref="ReleaseRawAfterRepack"/>.</summary>
+    public bool RawEvicted
+    {
+        get
+        {
+            foreach (var block in Blocks)
+                if (block.RawWasReleased) return true;
+            return false;
+        }
+    }
+
     // GGUF metadata
     public Format.ModelMetaData? GgufMeta { get; set; }
     public string? GgufPath { get; set; }
@@ -114,6 +145,8 @@ public abstract class TransformerWeights : IDisposable
         FinalNormWeight = finalNormW;
         FinalNormBias = finalNormB;
         Blocks = blocks;
+        foreach (var block in blocks)
+            block.CanReleaseRawAfterRepack = _releaseRawAfterRepack;
         Loader = loader;
         PositionEmbedding = positionEmbedding;
         TokenTypeEmbedding = tokenTypeEmbedding;
@@ -1075,6 +1108,68 @@ else
                 foreach (var buf in RawWupExp.Values) if (buf is not null) yield return buf;
             if (RawWdownExp is not null)
                 foreach (var buf in RawWdownExp.Values) if (buf is not null) yield return buf;
+        }
+
+        /// <summary>
+        /// Set by <see cref="TransformerWeights.ReleaseRawAfterRepack"/>. When true, a
+        /// layer that fully repacked a tensor may drop this block's raw reference.
+        /// Streaming never sets it: its block fields are snapshotted at unload and
+        /// returned to the buffer pool, so dropping them here would leak pooled buffers.
+        /// </summary>
+        internal bool CanReleaseRawAfterRepack { get; set; }
+
+        /// <summary>True after this block dropped at least one raw tensor to a repack.</summary>
+        internal bool RawWasReleased { get; private set; }
+
+        /// <summary>
+        /// Drops the block's reference to <paramref name="raw"/> after a complete wide
+        /// repack. Only the field (or expert-dictionary entry) holding that exact array
+        /// is cleared; a shared array stays alive through the other layer that holds it.
+        /// </summary>
+        internal void ReleaseRawSource(byte[] raw)
+        {
+            if (!CanReleaseRawAfterRepack || BufferAllocator is not null) return;
+
+            bool released = false;
+            if (ReferenceEquals(RawWq, raw)) { RawWq = null; released = true; }
+            if (ReferenceEquals(RawWk, raw)) { RawWk = null; released = true; }
+            if (ReferenceEquals(RawWv, raw)) { RawWv = null; released = true; }
+            if (ReferenceEquals(RawWo, raw)) { RawWo = null; released = true; }
+            if (ReferenceEquals(RawWgate, raw)) { RawWgate = null; released = true; }
+            if (ReferenceEquals(RawWup, raw)) { RawWup = null; released = true; }
+            if (ReferenceEquals(RawWf1, raw)) { RawWf1 = null; released = true; }
+            if (ReferenceEquals(RawWf2, raw)) { RawWf2 = null; released = true; }
+            if (ReferenceEquals(RawWScIn, raw)) { RawWScIn = null; released = true; }
+            if (ReferenceEquals(RawWScOut, raw)) { RawWScOut = null; released = true; }
+            if (ReferenceEquals(RawWqkvFull, raw)) { RawWqkvFull = null; released = true; }
+            if (ReferenceEquals(RawWGate, raw)) { RawWGate = null; released = true; }
+            if (ReferenceEquals(RawWAlpha, raw)) { RawWAlpha = null; released = true; }
+            if (ReferenceEquals(RawWBeta, raw)) { RawWBeta = null; released = true; }
+            if (ReferenceEquals(RawWOut, raw)) { RawWOut = null; released = true; }
+            if (ReferenceEquals(RawRouter, raw)) { RawRouter = null; released = true; }
+            if (ReferenceEquals(RawWSharedGate, raw)) { RawWSharedGate = null; released = true; }
+            if (ReferenceEquals(RawWSharedUp, raw)) { RawWSharedUp = null; released = true; }
+            if (ReferenceEquals(RawWSharedDown, raw)) { RawWSharedDown = null; released = true; }
+            if (ReferenceEquals(RawWSharedGateInp, raw)) { RawWSharedGateInp = null; released = true; }
+
+            released |= RemoveRawReference(RawWgateExp, raw);
+            released |= RemoveRawReference(RawWupExp, raw);
+            released |= RemoveRawReference(RawWdownExp, raw);
+
+            if (released) RawWasReleased = true;
+        }
+
+        private static bool RemoveRawReference(Dictionary<int, byte[]>? raw, byte[] source)
+        {
+            if (raw is null || raw.Count == 0) return false;
+
+            List<int>? remove = null;
+            foreach (var (key, value) in raw)
+                if (ReferenceEquals(value, source)) (remove ??= []).Add(key);
+
+            if (remove is null) return false;
+            foreach (int key in remove) raw.Remove(key);
+            return true;
         }
 
         public BlockWeights(
