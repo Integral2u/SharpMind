@@ -111,8 +111,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   versus the packed ~1.11x, so this is opt-in and the process-wide budget can
   refuse it, falling back to the packed copy. `InferenceLinearLayer` and
   `LogitOps` both honor the flag, and the two paths agree within the wide-kernel
-  reference tolerance. Isolated `widebytebench q4_k` and `q4kwidebench` runs are
-  close on the 2200U, so measure on the target machine before enabling.
+  reference tolerance. `GgufSmokeProbe bench ... q4kbyte` on the 2200U measured
+  `Qwen3.5-2B-Q4_K_M` at ~3.62 tok/s packed versus ~4.3-5.1 tok/s byte, while
+  `Qwen3-0.6B-Q4_K_M` (7.96 vs 7.63) and a 3B Q4_K file (3.79 vs 3.79) were
+  neutral, so it stays opt-in per model.
 
 - **Quickselect top-p sampler** - `Sampler.ApplyTopP` no longer sorts the whole
   candidate list per token. A three-way quickselect finds the nucleus threshold
@@ -128,7 +130,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   `TransformerWeights.ReleaseRawAfterRepack` set first, the raw copies are
   dropped during prebuild rather than during the first forward. Tail rows and
   budget-refused layers keep their existing lazy/old-path behavior. Progress is
-  reported per block and once for the head.
+  reported per block and once for the head. `GgufSmokeProbe ttft <model>
+  [prompt] prebuild` measures the prebuild and remaining first-token time; on
+  `Qwen3.5-2B-Q4_K_M` the 2200U moved ~23.5 s of lazy repack work into prebuild
+  and left an ~11.0 s first token (the lazy total was ~33.2 s).
 
 - **Host builder configuration** - `ChatSession` and `ChatSessionFactory` accept
   an `IGeneratorBuilderConfigurator` that runs before the builder creates a

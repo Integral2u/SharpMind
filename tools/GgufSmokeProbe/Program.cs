@@ -16,7 +16,7 @@ using System.Text.Json.Nodes;
 //
 //   dotnet run --project tools/GgufSmokeProbe -- meta <file>
 //   dotnet run --project tools/GgufSmokeProbe -- run  <file> ["prompt"] [maxTokens=24] [full] [resident] [topk]
-//   dotnet run --project tools/GgufSmokeProbe -- bench <file> ["prompt"] [warmup=16] [measure=64] [full] [resident] [serialmm] [nowide] [reps=3] [ids]
+//   dotnet run --project tools/GgufSmokeProbe -- bench <file> ["prompt"] [warmup=16] [measure=64] [full] [resident] [serialmm] [nowide] [q4kbyte] [reps=3] [ids]
 //   dotnet run --project tools/GgufSmokeProbe -- benchab <file> ["prompt"] [warmup=16] [measure=64] [full] [resident]
 //   dotnet run --project tools/GgufSmokeProbe -- batchbench <file> ["prompt"] [maxBatch=8] [tokens=16] [reps=3]
 //   dotnet run --project tools/GgufSmokeProbe -- mtpcheck <file> ["prompt"] [steps=64]
@@ -73,7 +73,7 @@ if (args.Length > 0 && args[0] == "widebytebench")
 
 if (args.Length < 2)
 {
-    Console.Error.WriteLine("usage: meta <file>   |   dump <file> [pattern]   |   bind <file>   |   fwd <file> [full] [resident]   |   fwdmulti <file> <promptfile> [single|...]   |   ref <file> [prompt]   |   run <file> [prompt] [maxTokens] [full] [resident] [topk] [serialmm]   |   bench <file> [prompt] [warmup] [measure] [full] [resident] [serialmm] [nowide] [reps=N] [ids]   |   benchab <file> [prompt] [warmup] [measure] [full] [resident]   |   stages <file> [prompt] [warmup] [measure] [full] [resident] [serialmm]   |   ttft <file> [prompt] [prebuild] [streaming] [resident] [serialmm]   |   widebench [K] [N] [iters]   |   q4kwidebench|q6kwidebench [K] [N] [iters] [chunks]   |   widebytebench [q4_0|q2_k|q4_k] [K] [N] [iters] [chunks] [nopair]   |   kbench <q2k|q3k|q4k|q5k|q6k|q8k|q4_0|q4_1|iq4nl|mxfp4|iq4xs|iq2xxs|iq2xs|iq3xxs|iq2s|iq3s|q5_0|q5_1|q8_0|q8_1|f32> [K] [N] [iters] [fma|avx2|scalar|arm64]");
+    Console.Error.WriteLine("usage: meta <file>   |   dump <file> [pattern]   |   bind <file>   |   fwd <file> [full] [resident]   |   fwdmulti <file> <promptfile> [single|...]   |   ref <file> [prompt]   |   run <file> [prompt] [maxTokens] [full] [resident] [topk] [serialmm]   |   bench <file> [prompt] [warmup] [measure] [full] [resident] [serialmm] [nowide] [q4kbyte] [reps=N] [ids]   |   benchab <file> [prompt] [warmup] [measure] [full] [resident]   |   stages <file> [prompt] [warmup] [measure] [full] [resident] [serialmm]   |   ttft <file> [prompt] [prebuild] [streaming] [resident] [serialmm]   |   widebench [K] [N] [iters]   |   q4kwidebench|q6kwidebench [K] [N] [iters] [chunks]   |   widebytebench [q4_0|q2_k|q4_k] [K] [N] [iters] [chunks] [nopair]   |   kbench <q2k|q3k|q4k|q5k|q6k|q8k|q4_0|q4_1|iq4nl|mxfp4|iq4xs|iq2xxs|iq2xs|iq3xxs|iq2s|iq3s|q5_0|q5_1|q8_0|q8_1|f32> [K] [N] [iters] [fma|avx2|scalar|arm64]");
     return 2;
 }
 
@@ -2658,7 +2658,7 @@ static async Task<int> RunGenBenchAsync(string path, string[] args)
     return 0;
 }
 
-// bench <file> [prompt] [warmup=16] [measure=64] [full] [resident] [serialmm] [nowide] [reps=3] [ids]
+// bench <file> [prompt] [warmup=16] [measure=64] [full] [resident] [serialmm] [nowide] [q4kbyte] [reps=3] [ids]
 //
 // Profiler-off decode throughput. Each repetition gets a fresh KV cache and runs
 // the same greedy raw generation; the reported window starts after `warmup` and
@@ -2681,6 +2681,7 @@ static async Task<int> RunBenchAsync(string path, string[] args)
     bool resident = args.Any(a => a.Equals("resident", StringComparison.OrdinalIgnoreCase));
     bool serialMm = args.Any(a => a.Equals("serialmm", StringComparison.OrdinalIgnoreCase));
     bool noWide = args.Any(a => a.Equals("nowide", StringComparison.OrdinalIgnoreCase));
+    bool q4kByte = args.Any(a => a.Equals("q4kbyte", StringComparison.OrdinalIgnoreCase));
     bool printIds = args.Any(a => a.Equals("ids", StringComparison.OrdinalIgnoreCase));
     int reps = 3;
     int chunkOverride = 0;
@@ -2718,10 +2719,12 @@ static async Task<int> RunBenchAsync(string path, string[] args)
 
     bool oldWide = Q8_0WideWeights.Enabled;
     int oldChunks = Q8_0WideWeights.ParallelChunkOverride;
+    bool oldQ4KByte = WideByteWeights.UseForQ4K;
     try
     {
         if (noWide) Q8_0WideWeights.Enabled = false;
         Q8_0WideWeights.ParallelChunkOverride = chunkOverride;
+        WideByteWeights.UseForQ4K = q4kByte;
 
         var sharpConfig = modelConfig.ForModel();
         var mapping = sharpConfig.ToJigSawMapping(null, serialMm ? false : null);
@@ -2801,7 +2804,7 @@ static async Task<int> RunBenchAsync(string path, string[] args)
         Console.WriteLine($"BENCH median {medTps:F2} tok/s  {medMs:F2} ms/tok  {medAlloc} B/tok  " +
                           $"reps={results.Count} warmup={warmup} measure={measure} " +
                           $"mode={(full ? "Full" : "Streaming")} resident={resident} " +
-                          $"serialmm={serialMm} nowide={noWide} " +
+                          $"serialmm={serialMm} nowide={noWide} q4kbyte={q4kByte} " +
                           $"chunks={(chunkOverride == 0 ? "auto" : chunkOverride)} cores={Environment.ProcessorCount}");
         Console.WriteLine($"OUT: {results[0].Text}");
         if (printIds)
@@ -2822,6 +2825,7 @@ static async Task<int> RunBenchAsync(string path, string[] args)
     {
         Q8_0WideWeights.Enabled = oldWide;
         Q8_0WideWeights.ParallelChunkOverride = oldChunks;
+        WideByteWeights.UseForQ4K = oldQ4KByte;
     }
 }
 
