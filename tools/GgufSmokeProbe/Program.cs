@@ -90,6 +90,9 @@ if (mode == "meta")
 if (mode == "tok")
     return RunTokenizer(path, args);
 
+if (mode == "attnres")
+    return RunAttnRes(path, args);
+
 if (mode == "dump")
     return RunDump(path, args);
 
@@ -1500,6 +1503,64 @@ static async Task<int> RunToolProbeAsync(string path, string[] args)
     {
         Console.WriteLine($"toolprobe FAILED: {ex}");
         Console.WriteLine(ex.StackTrace);
+        return 1;
+    }
+}
+
+// attnres <file> [rows=2]
+static int RunAttnRes(string path, string[] args)
+{
+    int rows = args.Length > 2 && int.TryParse(args[2], out int r) ? Math.Max(1, r) : 2;
+    try
+    {
+        var metaHelper = ModelFormatHelpers.GetModelMetaHelperFor(ModelFormat.Gguf);
+        metaHelper.Load(path, null, out _, out var config, out _);
+        var sharpConfig = config.ForModel();
+        var mapping = sharpConfig.ToJigSawMapping();
+        using var weights = ModelFactory.CreateWeights(
+            config, sharpConfig, QuantizationFactory.Create(mapping), path,
+            LoadMode.Full, quantizedResident: true, maxParallelLoadDegree: 1);
+        weights.InitializeWeights();
+        using var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
+
+        int hidden = config.HiddenDim;
+        using var embeddings = new Tensor<float>(rows, hidden);
+        for (int i = 0; i < embeddings.Data.Length; i++)
+            embeddings.Data[i] = ((i % 7) - 3) * 0.01f;
+
+        var builder = new KVCacherBuilder();
+        var caches = new IKVCache[config.NumLayers];
+        for (int i = 0; i < caches.Length; i++)
+            caches[i] = config.IsRecurrentLayer(i)
+                ? new DeltaNetCache(config.SsmConvKernel, config.SsmConvDim,
+                    config.SsmTimeStepRank, config.SsmStateSize,
+                    config.SsmValueHeadDim, 1, config.MaxSeqLen)
+                : builder.CreateKVCache(1, config.NumKvHeads, config.MaxSeqLen,
+                    config.HeadDimForLayer(i));
+
+        try
+        {
+            using var output = model.ForwardAttnResHidden(embeddings, caches, 0);
+            double sum = 0, max = 0, sumsq = 0;
+            foreach (float v in output.Data)
+            {
+                sum += v;
+                sumsq += v * v;
+                max = Math.Max(max, Math.Abs(v));
+            }
+            Console.WriteLine(
+                $"ATTNRES rows={rows} out={output.ElementCount} sum={sum:F4} " +
+                $"rms={Math.Sqrt(sumsq / output.ElementCount):F4} max={max:F4}");
+            return 0;
+        }
+        finally
+        {
+            foreach (var cache in caches) cache.Dispose();
+        }
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"ATTNRES FAILED: {ex}");
         return 1;
     }
 }

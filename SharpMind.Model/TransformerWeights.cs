@@ -613,6 +613,9 @@ else
                 }
                 if (name.Contains("attn_q_norm", StringComparison.OrdinalIgnoreCase))
                 {
+                    if (Config.UsesFullAttnRes)
+                        return b.AttnQScale ??= new Tensor<float>(
+                            Config.HeadDimForLayer(bIdx), Config.NumHeads);
                     b.QNormW ??= new Tensor<float>(Config.HeadDimForLayer(bIdx));
                     return b.QNormW;
                 }
@@ -943,6 +946,9 @@ else
         // Full AttnRes route queries for this layer (zonos3).
         public Tensor<float>? AttnResScore { get; set; }       // [HiddenDim]
         public Tensor<float>? FfnResScore { get; set; }        // [HiddenDim]
+
+        /// <summary>Per-head Q scale for ZONOS3's weightless QK norm: [headDim, heads].</summary>
+        public Tensor<float>? AttnQScale { get; set; }
         // LFM2 short-conv (no-attention) float tensors
         public Tensor<float>? WScIn { get; set; }   // [HiddenDim, 3*HiddenDim]
         public Tensor<float>? WScOut { get; set; }  // [HiddenDim, HiddenDim]
@@ -1249,6 +1255,7 @@ else
             PerLayerInpGate?.Dispose(); PerLayerProj?.Dispose();
             PerLayerPostNorm?.Dispose(); OutScale?.Dispose();
             AttnResScore?.Dispose(); FfnResScore?.Dispose();
+            AttnQScale?.Dispose();
             WScIn?.Dispose(); WScOut?.Dispose(); WScConv?.Dispose();
             Wqkv?.Dispose(); WGate?.Dispose(); WAlpha?.Dispose(); WBeta?.Dispose(); WOut?.Dispose();
         AttnGate?.Dispose();

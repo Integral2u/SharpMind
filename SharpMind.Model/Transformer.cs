@@ -317,6 +317,133 @@ public sealed class Transformer : IDisposable
         return _finalNorm.Forward(hidden, workspace);
     }
 
+    /// <summary>
+    /// Full AttnRes forward (ZONOS3): consumes an already embedded
+    /// <c>[rows, hidden]</c> frame tensor, routes the source bank with the
+    /// per-layer queries, and returns the final-normed hidden state for the
+    /// codebook head.
+    /// </summary>
+    public Tensor<float> ForwardAttnResHidden(
+        Tensor<float> embeddings, IKVCache[] caches, int positionOffset = 0,
+        Core.Memory.IWorkspace? workspace = null)
+    {
+        ThrowIfDisposed();
+        if (_blocks is null)
+            throw new InvalidOperationException("This model has no decoder blocks.");
+        if (embeddings.Rank != 2 || embeddings.Shape[1] != Config.HiddenDim)
+            throw new ArgumentException(
+                $"Expected [rows, {Config.HiddenDim}] embeddings.", nameof(embeddings));
+        if (caches.Length < _blocks.Length)
+            throw new ArgumentException(
+                $"Need {_blocks.Length} caches, got {caches.Length}.", nameof(caches));
+
+        int rows = embeddings.Shape[0];
+        int hidden = Config.HiddenDim;
+        var bank = new List<Tensor<float>>(2 * _blocks.Length + 1)
+        {
+            WeightlessRmsNorm(embeddings, Config.NormEps),
+        };
+        try
+        {
+            for (int i = 0; i < _blocks.Length; i++)
+            {
+                var weights = _weights.Blocks[i];
+                if (weights.AttnResScore is null || weights.FfnResScore is null)
+                    throw new InvalidOperationException(
+                        $"Block {i} is missing an AttnRes query; this forward is for Full AttnRes models only.");
+
+                using (var attnIn = AttnResRoute(
+                    bank, weights.AttnResScore, Config.NormEps, rows, hidden))
+                {
+                    bank.Add(_blocks[i].ForwardAttnResAttention(
+                        attnIn, caches[i], positionOffset, workspace, 0));
+                }
+
+                using (var ffnIn = AttnResRoute(
+                    bank, weights.FfnResScore, Config.NormEps, rows, hidden))
+                {
+                    bank.Add(_blocks[i].ForwardAttnResFfn(ffnIn, workspace));
+                }
+            }
+
+            if (_weights.OutputResScore is null)
+                throw new InvalidOperationException("Full AttnRes model is missing its output query.");
+
+            using var finalIn = AttnResRoute(
+                bank, _weights.OutputResScore, Config.NormEps, rows, hidden);
+            return _finalNorm.Forward(finalIn, workspace);
+        }
+        finally
+        {
+            foreach (var source in bank)
+                source.Dispose();
+        }
+    }
+
+    private static Tensor<float> WeightlessRmsNorm(Tensor<float> x, float eps)
+    {
+        int hidden = x.Shape[^1];
+        int rows = x.ElementCount / hidden;
+        var result = new Tensor<float>(x.Shape);
+        for (int r = 0; r < rows; r++)
+        {
+            var src = x.RowSpan(r);
+            var dst = result.RowSpan(r);
+            double sum = 0;
+            for (int i = 0; i < hidden; i++) sum += src[i] * src[i];
+            float inv = (float)(1.0 / Math.Sqrt(sum / hidden + eps));
+            for (int i = 0; i < hidden; i++) dst[i] = src[i] * inv;
+        }
+        return result;
+    }
+
+    private static Tensor<float> AttnResRoute(
+        List<Tensor<float>> bank, Tensor<float> query, float eps, int rows, int hidden)
+    {
+        int sources = bank.Count;
+        var scores = new float[rows * sources];
+        var queryData = query.Data;
+        for (int s = 0; s < sources; s++)
+        {
+            var source = bank[s];
+            for (int r = 0; r < rows; r++)
+            {
+                var row = source.RowSpan(r);
+                double sum = 0;
+                for (int i = 0; i < hidden; i++) sum += row[i] * row[i];
+                float inv = (float)(1.0 / Math.Sqrt(sum / hidden + eps));
+                double dot = 0;
+                for (int i = 0; i < hidden; i++) dot += row[i] * inv * queryData[i];
+                scores[r * sources + s] = (float)dot;
+            }
+        }
+
+        var result = new Tensor<float>(rows, hidden);
+        for (int r = 0; r < rows; r++)
+        {
+            int at = r * sources;
+            float max = float.NegativeInfinity;
+            for (int s = 0; s < sources; s++) max = MathF.Max(max, scores[at + s]);
+            float total = 0;
+            for (int s = 0; s < sources; s++)
+            {
+                float weight = MathF.Exp(scores[at + s] - max);
+                scores[at + s] = weight;
+                total += weight;
+            }
+
+            float normalise = 1f / total;
+            var dst = result.RowSpan(r);
+            for (int s = 0; s < sources; s++)
+            {
+                float weight = scores[at + s] * normalise;
+                var source = bank[s].RowSpan(r);
+                for (int i = 0; i < hidden; i++) dst[i] += weight * source[i];
+            }
+        }
+        return result;
+    }
+
     public bool SetRawWeight(string name, byte[] rawData, QuantDType dtype)
     {
         var (target, block, rawField) = _weights.ResolveTarget(name);

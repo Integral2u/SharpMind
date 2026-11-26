@@ -77,6 +77,37 @@ public abstract class TransformerBlock : IDisposable
 
     public abstract Tensor<float> Forward(Tensor<float> x, IKVCache? cache, int positionOffset, bool causal, IWorkspace? workspace, int windowSize, Tensor<float>? perLayerInputs);
 
+    /// <summary>
+    /// Full AttnRes branch passes: the caller has already routed the bank into
+    /// the attention and FFN inputs, so these apply each pre-norm and branch
+    /// without the usual residual add.
+    /// </summary>
+    internal Tensor<float> ForwardAttnResAttention(
+        Tensor<float> attnInput, IKVCache? cache, int positionOffset,
+        IWorkspace? workspace, int windowSize)
+    {
+        int rows = attnInput.Shape[0];
+        int hidden = attnInput.Shape[1];
+        using var input3 = attnInput.Reshape(1, rows, hidden);
+        using var normed = _norm1.Forward(input3, workspace);
+        using var branch = FirstBranch(normed, cache, positionOffset, causal: true, workspace, windowSize);
+        var output = new Tensor<float>(rows, hidden);
+        branch.Data.CopyTo(output.Data);
+        return output;
+    }
+
+    internal Tensor<float> ForwardAttnResFfn(Tensor<float> ffnInput, IWorkspace? workspace)
+    {
+        using var normed = _norm2.Forward(ffnInput, workspace);
+        var branch = _ffn.ApplyFfn(normed, workspace);
+        if (branch.Rank == 2) return branch;
+        int hidden = branch.Shape[^1];
+        var output = new Tensor<float>(branch.ElementCount / hidden, hidden);
+        branch.Data.CopyTo(output.Data);
+        branch.Dispose();
+        return output;
+    }
+
     public Tensor<float> Forward(Tensor<float> x, IKVCache? cache, int positionOffset = 0, bool causal = true, IWorkspace? workspace = null, int windowSize = 0)
         => Forward(x, cache, positionOffset, causal, workspace, windowSize, null);
 

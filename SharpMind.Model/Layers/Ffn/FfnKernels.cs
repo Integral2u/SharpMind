@@ -94,6 +94,98 @@ public static class FfnKernels
         return ret;
     }
 
+    /// <summary>Per-row weightless RMS norm over the last dimension.</summary>
+    public static Tensor<float> RmsNormRows(Tensor<float> x, float eps)
+    {
+        int hidden = x.Shape[^1];
+        int rows = x.ElementCount / hidden;
+        var result = new Tensor<float>(x.Shape);
+        var src = x.Data;
+        var dst = result.Data;
+        for (int r = 0; r < rows; r++)
+        {
+            int at = r * hidden;
+            double sum = 0;
+            for (int i = 0; i < hidden; i++) sum += src[at + i] * src[at + i];
+            float inv = (float)(1.0 / Math.Sqrt(sum / hidden + eps));
+            for (int i = 0; i < hidden; i++) dst[at + i] = src[at + i] * inv;
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// ZONOS3's SOFTMAX_WEIGHT router: select top-k on logits + bias, then
+    /// softmax only the selected logits. The router reads <paramref name="routerInput"/>
+    /// (weightless-RMS-normalized hidden) while experts read <paramref name="expertInput"/>.
+    /// </summary>
+    public static Tensor<float> MoESoftmaxWeight(
+        Tensor<float> x,
+        Tensor<float>? routerInput,
+        LinearLayer router,
+        LinearLayer[] wGate,
+        LinearLayer[] wUp,
+        LinearLayer[] wDown,
+        int topK,
+        ActivationOps acts,
+        SharpMind.Core.Memory.IWorkspace? workspace = null,
+        Tensor<float>? routerBias = null,
+        Tensor<float>? expertInput = null)
+    {
+        if (x.Rank != 2)
+            throw new ArgumentException("SOFTMAX_WEIGHT routing expects a 2D [tokens, hidden] input.", nameof(x));
+
+        int routerHidden = x.Shape[^1];
+        int tokens = x.ElementCount / routerHidden;
+        int expertHidden = expertInput?.Shape[^1] ?? routerHidden;
+        var result = new Tensor<float>(tokens, expertHidden);
+
+        using var logits = router.Forward(routerInput ?? x, workspace);
+        using var biased = routerBias is null ? null : AddRowBias(logits, routerBias, workspace);
+        var selection = biased ?? logits;
+
+        var ws = t_MoEWorkspace.Value!;
+        for (int t = 0; t < tokens; t++)
+        {
+            ws.Reset();
+            using var tokenSelection = Tensor<float>.From(
+                selection.RowSpan(t), selection.Shape.Cols);
+            int[] choices = ArgTopK(tokenSelection, topK);
+
+            ReadOnlySpan<float> logitRow = logits.RowSpan(t);
+            Span<float> weights = topK <= 64 ? stackalloc float[topK] : new float[topK];
+            float max = float.NegativeInfinity;
+            foreach (int expert in choices) max = MathF.Max(max, logitRow[expert]);
+            float sum = 0;
+            for (int j = 0; j < choices.Length; j++)
+            {
+                float weight = MathF.Exp(logitRow[choices[j]] - max);
+                weights[j] = weight;
+                sum += weight;
+            }
+            float normalise = 1f / sum;
+
+            var tokenInput = ws.Rent<float>([expertHidden]);
+            (expertInput ?? x).RowSpan(t).CopyTo(tokenInput.Data);
+            var tokenOut = ws.Rent<float>([expertHidden]);
+            tokenOut.Data.Clear();
+
+            for (int j = 0; j < choices.Length; j++)
+            {
+                int expert = choices[j];
+                float weight = weights[j] * normalise;
+                using var expertOut = Gated(tokenInput, wGate[expert],
+                    wUp[expert], wDown[expert], acts, ws);
+                var dst = tokenOut.Data;
+                var src = expertOut.Data;
+                for (int i = 0; i < expertHidden; i++)
+                    dst[i] += src[i] * weight;
+            }
+
+            tokenOut.Data.CopyTo(result.RowSpan(t));
+        }
+        return result;
+    }
+
     /// <summary>
     /// MoE FFN forward: routes each token to top-k experts, computes their
     /// gated FFN outputs, and combines with softmax-normalised router weights.

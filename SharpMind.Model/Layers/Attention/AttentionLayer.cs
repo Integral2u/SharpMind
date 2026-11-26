@@ -38,6 +38,7 @@ namespace SharpMind.Model.Layers.Attention;
         private NormLayer? _qNorm;
         private NormLayer? _kNorm;
         private NormLayer? _vNorm;
+        private Tensor<float>? _qScale;
         private readonly bool _gatedOutput;
         private readonly LinearLayer? _headGate;
         private bool _disposed;
@@ -142,6 +143,7 @@ namespace SharpMind.Model.Layers.Attention;
         int qDim = config.NumHeads * HeadDim;
         int kvDim = config.NumKvHeads * HeadDim;
         _gatedOutput = config.GatedAttentionOutput;
+        _qScale = weights?.AttnQScale;
         int qProjDim = _gatedOutput ? 2 * qDim : qDim;
 
         // MLA reuses the K/V slots for its two projections (see the field block).
@@ -282,6 +284,7 @@ namespace SharpMind.Model.Layers.Attention;
         Wo.RawReleaseCallback = weights.ReleaseRawSource;
 
         // Per-head Q/K normalization (Qwen3)
+        _qScale = weights.AttnQScale ?? _qScale;
         if (weights.QNormW != null)
         {
             _qNorm?.Dispose();
@@ -487,14 +490,27 @@ namespace SharpMind.Model.Layers.Attention;
         // Forward always allocates a new tensor; using var disposes it at scope exit.
         // The normed tensor is 2D [totalHeads, headDim]; reshape at use sites below.
         // DEBUG: ForceBypassQKNorm skips normalization to isolate norm-related issues.
+        // ZONOS3's QK norm is weightless; Q additionally carries a per-head
+        // scale from attn_q_norm [headDim, heads].
+        Tensor<float>? qScaled = null;
+        Tensor<float>? kScaled = null;
+        if (_qScale is not null)
+        {
+            qScaled = RmsNormHeads(q, numH, headDim, 1e-6f);
+            ApplyHeadScaleInPlace(qScaled, _qScale, numH, headDim);
+            kScaled = RmsNormHeads(k, numKv, headDim, 1e-6f);
+        }
+        using var qScaledOwner = qScaled;
+        using var kScaledOwner = kScaled;
+
         using var qNormInput = _qNorm is null ? null : q.Reshape(batch * seqLen * numH, headDim);
         using var kNormInput = _kNorm is null ? null : k.Reshape(batch * seqLen * numKv, headDim);
         using var qNormed = _qNorm?.Forward(qNormInput!, workspace);
         using var kNormed = _kNorm?.Forward(kNormInput!, workspace);
 
         // Use normed tensors where available, fall back to raw projections
-        var qForAttn = (Tensor<float>?)qNormed ?? q;
-        var kForAttn = (Tensor<float>?)kNormed ?? k;
+        var qForAttn = (Tensor<float>?)qScaled ?? qNormed ?? q;
+        var kForAttn = (Tensor<float>?)kScaled ?? kNormed ?? k;
 
         using var qr = qForAttn.Reshape(batch, seqLen, numH, headDim);
         using var kr = kForAttn.Reshape(batch, seqLen, numKv, headDim);
@@ -976,6 +992,48 @@ namespace SharpMind.Model.Layers.Attention;
         return result;
     }
 
+
+    private static Tensor<float> RmsNormHeads(
+        Tensor<float> x, int heads, int headDim, float eps)
+    {
+        int width = heads * headDim;
+        int rows = x.ElementCount / width;
+        var result = new Tensor<float>(x.Shape);
+        var src = x.Data;
+        var dst = result.Data;
+        for (int r = 0; r < rows; r++)
+        {
+            int row = r * width;
+            for (int h = 0; h < heads; h++)
+            {
+                int at = row + h * headDim;
+                double sum = 0;
+                for (int d = 0; d < headDim; d++) sum += src[at + d] * src[at + d];
+                float inv = (float)(1.0 / Math.Sqrt(sum / headDim + eps));
+                for (int d = 0; d < headDim; d++) dst[at + d] = src[at + d] * inv;
+            }
+        }
+        return result;
+    }
+
+    private static void ApplyHeadScaleInPlace(
+        Tensor<float> x, Tensor<float> scale, int heads, int headDim)
+    {
+        int width = heads * headDim;
+        int rows = x.ElementCount / width;
+        var data = x.Data;
+        var s = scale.Data;
+        for (int r = 0; r < rows; r++)
+        {
+            int row = r * width;
+            for (int h = 0; h < heads; h++)
+            {
+                int at = row + h * headDim;
+                for (int d = 0; d < headDim; d++)
+                    data[at + d] *= s[d * heads + h];
+            }
+        }
+    }
 
     public IEnumerable<Parameter> Parameters()
     {
