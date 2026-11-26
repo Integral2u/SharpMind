@@ -115,18 +115,20 @@ public static class FfnKernels
         IExpertResidencyHost? residency = null,
         Tensor<float>? routerBias = null,
         MoEGatingFunc gating = MoEGatingFunc.Softmax,
-        float weightScale = 0f)
+        float weightScale = 0f,
+        Tensor<float>? expertInput = null)
     {
         int batch = x.ElementCount / x.Shape[^1];
-        int hidden = x.Shape[^1];
-        Span<int> dims = stackalloc int[x.Rank];
-        x.Shape.CopyDims(dims);
+        int hidden = expertInput?.Shape[^1] ?? x.Shape[^1];
+        TensorShape resultShape = expertInput?.Shape ?? x.Shape;
+        Span<int> dims = stackalloc int[resultShape.Rank];
+        resultShape.CopyDims(dims);
         Tensor<float> result = workspace != null
             ? workspace.Rent<float>(dims)
-            : new Tensor<float>(x.Shape);
+            : new Tensor<float>(resultShape);
 
-        // Router logits: [batch, numExperts]
-        using var routerInput = x.Rank > 2 ? x.Reshape(batch, hidden) : null;
+        // Router logits: [batch, numExperts], always from the hidden state.
+        using var routerInput = x.Rank > 2 ? x.Reshape(batch, x.Shape[^1]) : null;
         using var logits = router.Forward(routerInput ?? x, workspace);
         var tRoute = DecodeProfiler.Begin();
         using var probs = gating == MoEGatingFunc.Sigmoid
@@ -168,7 +170,7 @@ public static class FfnKernels
                 residency.EnsureExpertsLoaded(union.ToArray());
             }
 
-            return MoEByExpert(x, result, probs, topIdxAll, weightSumAll, wGate, wUp, wDown,
+            return MoEByExpert(expertInput ?? x, result, probs, topIdxAll, weightSumAll, wGate, wUp, wDown,
                 acts, normTopKProb, weightScale, hidden, batch);
         }
 
@@ -208,7 +210,7 @@ public static class FfnKernels
 
             // Allocate token input/output from workspace (zero-copy row + zeroed output)
             var tokenInput = ws.Rent<float>([hidden]);
-            x.RowSpan(t).CopyTo(tokenInput.Data);
+            (expertInput ?? x).RowSpan(t).CopyTo(tokenInput.Data);
 
             var tokenOut = ws.Rent<float>([hidden]);
             tokenOut.Data.Clear();

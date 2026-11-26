@@ -18,8 +18,23 @@ public sealed class MoEFfnLayer(ModelConfig config, ActivationOps acts, Quantiza
 
     public override Tensor<float> ApplyFfn(Tensor<float> x, SharpMind.Core.Memory.IWorkspace? workspace = null)
     {
-        var routed = FfnKernels.MoE(x, Router!, ExpertGate!, ExpertUp!, ExpertDown!, Config.TopKExperts, Acts, workspace,
-            Config.NormTopKProb, ExpertResidency, RouterBias, Config.ExpertGating, Config.ExpertWeightsScale);
+        Tensor<float> routed;
+        if (LatentDown is not null && LatentUp is not null)
+        {
+            using var latent = LatentDown.Forward(x, workspace);
+            using var latentRouted = FfnKernels.MoE(
+                x, Router!, ExpertGate!, ExpertUp!, ExpertDown!, Config.TopKExperts, Acts, workspace,
+                Config.NormTopKProb, ExpertResidency, RouterBias, Config.ExpertGating,
+                Config.ExpertWeightsScale, expertInput: latent);
+            routed = LatentUp.Forward(latentRouted, workspace);
+        }
+        else
+        {
+            routed = FfnKernels.MoE(
+                x, Router!, ExpertGate!, ExpertUp!, ExpertDown!, Config.TopKExperts, Acts, workspace,
+                Config.NormTopKProb, ExpertResidency, RouterBias, Config.ExpertGating,
+                Config.ExpertWeightsScale);
+        }
 
         if (SharedGate is null || SharedUp is null || SharedDown is null)
             return routed;

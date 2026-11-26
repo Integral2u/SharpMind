@@ -32,6 +32,10 @@ public abstract class FfnLayer : IDisposable
     public readonly LinearLayer? WGated; // [HiddenDim, 2*FfnDim] — fused gate+up
     public readonly LinearLayer? WDown;  // [HiddenDim, FfnDim]
 
+    // Latent MoE bottleneck (ZONOS3): hidden -> latent -> experts -> latent -> hidden
+    public readonly LinearLayer? LatentDown;
+    public readonly LinearLayer? LatentUp;
+
     /// <summary>Activation ops the FFN was assembled with — for recording forward passes.</summary>
     public ActivationOps Activation => Acts;
 
@@ -96,6 +100,19 @@ public abstract class FfnLayer : IDisposable
     public bool SetRawWeight(string name, byte[] rawData, QuantDType _)
     {
         if (name.Contains("bias", StringComparison.OrdinalIgnoreCase)) return false;
+
+        if (LatentDown is not null &&
+            name.Contains("ffn_latent_down", StringComparison.OrdinalIgnoreCase))
+        {
+            LatentDown.SetRawWeight(rawData);
+            return true;
+        }
+        if (LatentUp is not null &&
+            name.Contains("ffn_latent_up", StringComparison.OrdinalIgnoreCase))
+        {
+            LatentUp.SetRawWeight(rawData);
+            return true;
+        }
 
         // MoE expert tensors: blk.{L}.ffn_gate.exps.{E}.weight or fused per-expert names
         bool isExpertName = ExpertGate is not null && (
@@ -176,6 +193,8 @@ public abstract class FfnLayer : IDisposable
         Config = config;
         Acts = acts;
         _qOps = qOps;
+        LatentDown = null;
+        LatentUp = null;
 
         switch (kind)
         {
@@ -211,16 +230,30 @@ public abstract class FfnLayer : IDisposable
                 // Routed experts can be narrower than the block FFN (Qwen1.5-MoE:
                 // experts 1408 wide, shared expert / FfnDim 5632).
                 int expertFfn = config.ResolvedExpertFfnDim;
+                int expertInput = config.ExpertInputDim;
+                if (config.MoeLatentSize > 0)
+                {
+                    LatentDown = LinearLayerFactory.Create("ffn_latent_down",
+                        config.HiddenDim, config.MoeLatentSize, false,
+                        weights?.WLatentDown, null,
+                        DtypeFromMeta(weights, "RawWLatentDown",
+                            weights?.QuantDtypeWLatentDown ?? QuantDType.F32), mapping);
+                    LatentUp = LinearLayerFactory.Create("ffn_latent_up",
+                        config.MoeLatentSize, config.HiddenDim, false,
+                        weights?.WLatentUp, null,
+                        DtypeFromMeta(weights, "RawWLatentUp",
+                            weights?.QuantDtypeWLatentUp ?? QuantDType.F32), mapping);
+                }
                 ExpertGate = [.. Enumerable.Range(0, config.NumExperts).Select(i =>
-                    LinearLayerFactory.Create($"expert_{i}_gate_proj", config.HiddenDim, expertFfn, true,
+                    LinearLayerFactory.Create($"expert_{i}_gate_proj", expertInput, expertFfn, true,
                         null, null,
                         DtypeFromMeta(weights, $"RawWgateExp_{i}", weights?.QuantDtypeWgateExp?.GetValueOrDefault(i) ?? QuantDType.F32), mapping))];
                 ExpertUp = [.. Enumerable.Range(0, config.NumExperts).Select(i =>
-                    LinearLayerFactory.Create($"expert_{i}_up_proj", config.HiddenDim, expertFfn, true,
+                    LinearLayerFactory.Create($"expert_{i}_up_proj", expertInput, expertFfn, true,
                         null, null,
                         DtypeFromMeta(weights, $"RawWupExp_{i}", weights?.QuantDtypeWupExp?.GetValueOrDefault(i) ?? QuantDType.F32), mapping))];
                 ExpertDown = [.. Enumerable.Range(0, config.NumExperts).Select(i =>
-                    LinearLayerFactory.Create($"expert_{i}_down_proj", expertFfn, config.HiddenDim, true,
+                    LinearLayerFactory.Create($"expert_{i}_down_proj", expertFfn, expertInput, true,
                         null, null,
                         DtypeFromMeta(weights, $"RawWdownExp_{i}", weights?.QuantDtypeWdownExp?.GetValueOrDefault(i) ?? QuantDType.F32), mapping))];
 
@@ -353,6 +386,16 @@ public abstract class FfnLayer : IDisposable
                 Router.ReplaceWeights(weights.WRouter, weights.WRouterBias);
             Router.SetRawWeight(weights.RawRouter);
             Router.RawReleaseCallback = weights.ReleaseRawSource;
+            if (LatentDown is not null)
+            {
+                LatentDown.SetRawWeight(weights.RawWLatentDown);
+                LatentDown.RawReleaseCallback = weights.ReleaseRawSource;
+            }
+            if (LatentUp is not null)
+            {
+                LatentUp.SetRawWeight(weights.RawWLatentUp);
+                LatentUp.RawReleaseCallback = weights.ReleaseRawSource;
+            }
 
             for (int expIdx = 0; expIdx < ExpertGate.Length; expIdx++)
             {
@@ -451,6 +494,7 @@ public abstract class FfnLayer : IDisposable
     {
         Suppress(W1); Suppress(W2); Suppress(WGated); Suppress(WDown);
         Suppress(Router); Suppress(SharedGate); Suppress(SharedUp); Suppress(SharedDown); Suppress(SharedGateInp);
+        Suppress(LatentDown); Suppress(LatentUp);
         if (ExpertGate is not null) foreach (var l in ExpertGate) Suppress(l);
         if (ExpertUp is not null) foreach (var l in ExpertUp) Suppress(l);
         if (ExpertDown is not null) foreach (var l in ExpertDown) Suppress(l);
@@ -468,6 +512,7 @@ public abstract class FfnLayer : IDisposable
         Prebuild(W1); Prebuild(W2); Prebuild(WGated); Prebuild(WDown);
         Prebuild(Router); Prebuild(SharedGate); Prebuild(SharedUp); Prebuild(SharedDown);
         Prebuild(SharedGateInp);
+        Prebuild(LatentDown); Prebuild(LatentUp);
         if (ExpertGate is not null) foreach (var l in ExpertGate) Prebuild(l);
         if (ExpertUp is not null) foreach (var l in ExpertUp) Prebuild(l);
         if (ExpertDown is not null) foreach (var l in ExpertDown) Prebuild(l);
@@ -488,6 +533,8 @@ public abstract class FfnLayer : IDisposable
             WDown.FreeFloatWeight();
         }
         Router?.FreeFloatWeight();
+        LatentDown?.FreeFloatWeight();
+        LatentUp?.FreeFloatWeight();
         SharedGate?.FreeFloatWeight();
         SharedUp?.FreeFloatWeight();
         SharedDown?.FreeFloatWeight();
@@ -514,6 +561,8 @@ public abstract class FfnLayer : IDisposable
             W1?.Dispose(); W2?.Dispose();
             WGated?.Dispose(); WDown?.Dispose();
             Router?.Dispose();
+            LatentDown?.Dispose();
+            LatentUp?.Dispose();
             SharedGate?.Dispose();
             SharedUp?.Dispose();
             SharedDown?.Dispose();

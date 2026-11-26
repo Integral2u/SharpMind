@@ -438,6 +438,8 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
         int expertCount = rawExpertCount > 0 ? (int)rawExpertCount : 8;
         long rawTopK = meta.GetLong($"{arch}.expert_used_count", -1);
         int topKExperts = rawTopK > 0 ? (int)rawTopK : 2;
+        long rawMoeLatent = meta.GetLong($"{arch}.moe_latent_size", -1);
+        int moeLatentSize = rawMoeLatent > 0 ? (int)rawMoeLatent : 0;
 
         // Read expert_weights_norm if present (deepseek2/exaone-moe). Missing key
         // means false for qwen2moe/olmoe semantics; keep default false unless explicitly set.
@@ -460,6 +462,11 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
             throw new NotSupportedException(
                 $"{arch}.expert_gating_func = {rawGating} is not implemented; supported values are " +
                 $"{nameof(MoEGatingFunc.Softmax)} (1) and {nameof(MoEGatingFunc.Sigmoid)} (2).");
+
+        // ZONOS3's router selects top-k on logits + bias, then softmaxes only the
+        // selected logits (llama.cpp SOFTMAX_WEIGHT).
+        if (arch.StartsWith("zonos3", StringComparison.OrdinalIgnoreCase))
+            expertGating = MoEGatingFunc.SoftmaxWeight;
 
         // DeepSeek V3 scales the routed branch after renormalising (Moonlight:
         // 2.446). llama.cpp ignores 0 and 1.
@@ -576,7 +583,8 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
             SsmGroupCount = ssmGroupCount,
             FullAttentionInterval = fullAttentionInterval,
             GatedAttentionOutput = isQwen35,
-            HeadGatedAttention = arch.StartsWith("lfm3", StringComparison.OrdinalIgnoreCase),
+            HeadGatedAttention = arch.StartsWith("lfm3", StringComparison.OrdinalIgnoreCase) ||
+                arch.StartsWith("zonos3", StringComparison.OrdinalIgnoreCase),
             RmsNormValue = arch.StartsWith("gemma4", StringComparison.OrdinalIgnoreCase),
             FinalLogitSoftcap = finalLogitSoftcap,
             HeadDimOverride = headDimOverride,
@@ -593,6 +601,7 @@ public sealed class GgufLoader(QuantizationOps qOps, string path, ModelConfig co
             NormTypeOverride = normTypeOverride,
             NumExperts = expertCount,
             TopKExperts = topKExperts,
+            MoeLatentSize = moeLatentSize,
             // Routed experts are a property of the file, not of the arch string:
             // the tensor directory is the authority, and the preset table is only
             // a hint (see ModelFactory.ResolveFfnKind).

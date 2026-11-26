@@ -87,6 +87,9 @@ if (!File.Exists(path)) { Console.Error.WriteLine($"file not found: {path}"); re
 if (mode == "meta")
     return RunMeta(path);
 
+if (mode == "tok")
+    return RunTokenizer(path, args);
+
 if (mode == "dump")
     return RunDump(path, args);
 
@@ -1497,6 +1500,55 @@ static async Task<int> RunToolProbeAsync(string path, string[] args)
     {
         Console.WriteLine($"toolprobe FAILED: {ex}");
         Console.WriteLine(ex.StackTrace);
+        return 1;
+    }
+}
+
+// tok <file> ["prompt"] [token-pattern]
+static int RunTokenizer(string path, string[] args)
+{
+    string prompt = args.Length > 2 ? args[2] : "Hello";
+    string pattern = args.Length > 3 ? args[3] : "";
+    try
+    {
+        var metaHelper = ModelFormatHelpers.GetModelMetaHelperFor(ModelFormat.Gguf);
+        metaHelper.Load(path, null, out _, out _, out var tokenizer);
+        if (tokenizer is null)
+        {
+            Console.WriteLine("OK  no tokenizer in file");
+            return 0;
+        }
+
+        Console.WriteLine(
+            $"TOK pre={tokenizer.GgufPreTokenizer ?? "-"} model={tokenizer.GgufTokenizerModel ?? "-"} " +
+            $"vocab={tokenizer.VocabSize} sp={tokenizer.UseSentencePieceMerge} " +
+            $"bos={tokenizer.BosId} eos={tokenizer.EosId}");
+
+        int[] ids = tokenizer.Encode(prompt, addBos: true, addEos: false);
+        Console.WriteLine($"encode \"{prompt}\" -> {ids.Length} ids: {string.Join(',', ids.Take(64))}");
+        if (ids.Length > 0)
+        {
+            foreach (int id in ids.Take(64))
+                Console.Write($"[{id}]={tokenizer.IdToToken(id)} ");
+            Console.WriteLine();
+        }
+
+        if (pattern.Length > 0)
+        {
+            int shown = 0;
+            for (int id = 0; id < tokenizer.VocabSize && shown < 40; id++)
+            {
+                string token = tokenizer.IdToToken(id);
+                if (!token.Contains(pattern, StringComparison.OrdinalIgnoreCase)) continue;
+                Console.WriteLine($"  {id}: {token}");
+                shown++;
+            }
+        }
+        return 0;
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"FAILED: {ex}");
         return 1;
     }
 }

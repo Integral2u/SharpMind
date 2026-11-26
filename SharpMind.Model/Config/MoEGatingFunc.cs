@@ -17,4 +17,10 @@ public enum MoEGatingFunc
     None = 0,
     Softmax = 1,
     Sigmoid = 2,
+
+    /// <summary>
+    /// Select the top-k on <c>logits + bias</c>, then softmax over the selected
+    /// logits only (llama.cpp's SOFTMAX_WEIGHT; ZONOS3).
+    /// </summary>
+    SoftmaxWeight = 3,
 }

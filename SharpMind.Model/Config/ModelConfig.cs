@@ -160,6 +160,12 @@ public sealed record ModelConfig
     /// <summary>True for the Qwen3.5 hybrid Gated DeltaNet + full-attention decoder.</summary>
     public bool IsQwen35 => Architecture?.StartsWith("qwen35", StringComparison.OrdinalIgnoreCase) == true;
 
+    /// <summary>True for ZONOS3's Full AttnRes residual bank.</summary>
+    public bool UsesFullAttnRes => Architecture?.StartsWith("zonos3", StringComparison.OrdinalIgnoreCase) == true;
+
+    /// <summary>The MoE router reads a weightless RMS-normalized hidden state.</summary>
+    public bool RouterInputNorm => UsesFullAttnRes;
+
     /// <summary>
     /// Extra multi-token-prediction (MTP) blocks at the end of the stack
     /// (<c>{arch}.nextn_predict_layers</c>). llama.cpp reads <c>block_count</c>
@@ -177,9 +183,9 @@ public sealed record ModelConfig
     public bool IsMtpLayer(int layerIndex) =>
         layerIndex >= NumLayers && layerIndex < NumLayersTotal;
 
-    /// <summary>True when the model carries Qwen3.5 Gated DeltaNet metadata and can build recurrent layers.</summary>
+    /// <summary>True when the model carries Gated DeltaNet metadata and can build recurrent layers.</summary>
     public bool HasDeltaNet =>
-        IsQwen35 && SsmConvKernel > 1 && SsmInnerSize > 0 && SsmStateSize > 0 &&
+        SsmConvKernel > 1 && SsmInnerSize > 0 && SsmStateSize > 0 &&
         SsmTimeStepRank > 0 && SsmGroupCount > 0;
 
     /// <summary>
@@ -234,6 +240,15 @@ public sealed record ModelConfig
 
     /// <summary>Number of experts activated per token (top-k routing).</summary>
     public int TopKExperts { get; init; } = 2;
+
+    /// <summary>
+    /// Width of the latent bottleneck around a routed MoE
+    /// ({arch}.moe_latent_size). 0 = experts operate on the hidden state.
+    /// </summary>
+    public int MoeLatentSize { get; init; }
+
+    /// <summary>Expert input/output width: the latent size when present, else hidden.</summary>
+    public int ExpertInputDim => MoeLatentSize > 0 ? MoeLatentSize : HiddenDim;
 
     /// <summary>
     /// Whether the top-k router weights are renormalised to sum to 1 before the

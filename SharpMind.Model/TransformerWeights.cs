@@ -45,6 +45,9 @@ public abstract class TransformerWeights : IDisposable
     public Tensor<float> FinalNormWeight { get; }
     public Tensor<float>? FinalNormBias { get; }
 
+    /// <summary>Full AttnRes query for the final bank route (zonos3).</summary>
+    public Tensor<float>? OutputResScore { get; set; }
+
     /// <summary>
     /// GPT-2 style learned positional embeddings [MaxSeqLen, HiddenDim]. Present
     /// only when <see cref="ModelConfig.PositionalEncoding"/> is
@@ -172,6 +175,7 @@ public abstract class TransformerWeights : IDisposable
             _lmHeadFactory = null;
             FinalNormWeight.Dispose();
             FinalNormBias?.Dispose();
+            OutputResScore?.Dispose();
             PositionEmbedding?.Dispose();
             TokenTypeEmbedding?.Dispose();
             foreach (var block in Blocks) block.Dispose();
@@ -272,6 +276,10 @@ public abstract class TransformerWeights : IDisposable
         // BERT per-layer post-norms (attn_output_norm / layer_output_norm) contain
         // "output_norm" but belong to a block, not the global final norm — route
         // them to the per-layer branch below.
+        if (name.Contains("output_res_score", StringComparison.OrdinalIgnoreCase))
+            return (OutputResScore ??= new Tensor<float>(Config.HiddenDim), null, null);
+        if (name.Contains("output_res_score", StringComparison.OrdinalIgnoreCase))
+            return (OutputResScore ??= new Tensor<float>(Config.HiddenDim), null, null);
         bool isBertLayerNorm = name.Contains("attn_output_norm", StringComparison.OrdinalIgnoreCase)
             || name.Contains("layer_output_norm", StringComparison.OrdinalIgnoreCase);
         if ((name.Contains("output_norm", StringComparison.OrdinalIgnoreCase)
@@ -335,6 +343,8 @@ public abstract class TransformerWeights : IDisposable
             }
             else
             {
+                if (name.Contains("attn_res_score", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
+                if (name.Contains("ffn_res_score", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
                 if (name.Contains("post_attention_norm", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
                 if (name.Contains("post_ffw_norm", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
                 if (name.Contains("attn_q_norm", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
@@ -366,6 +376,9 @@ public abstract class TransformerWeights : IDisposable
                 // because the absorbed decode reads it as a matrix.
                 if (name.Contains("attn_kv_a_mqa", StringComparison.OrdinalIgnoreCase)) return (null, block, "RawWk");
                 if (name.Contains("attn_kv_b", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
+                // Per-head attention gate (LFM3/ZONOS3, F32 or quantized). The
+                // float target maps to BlockWeights.AttnGate.
+                if (name.Contains("attn_gate", StringComparison.OrdinalIgnoreCase)) return (null, block, null);
                 if (name.Contains("attn_q", StringComparison.OrdinalIgnoreCase) || name.Contains("q_proj", StringComparison.OrdinalIgnoreCase)) return (null, block, "RawWq");
                 if (name.Contains("attn_k", StringComparison.OrdinalIgnoreCase) || name.Contains("k_proj", StringComparison.OrdinalIgnoreCase)) return (null, block, "RawWk");
                 if (name.Contains("attn_v", StringComparison.OrdinalIgnoreCase) || name.Contains("v_proj", StringComparison.OrdinalIgnoreCase)) return (null, block, "RawWv");
@@ -391,6 +404,13 @@ public abstract class TransformerWeights : IDisposable
                         return (null, block, "RawWSharedDown");
                     return (null, block, null);
                 }
+
+                // Latent bottleneck around a routed MoE (ZONOS3). These are not
+                // expert planes; match them before the ffn_gate/up/down checks.
+                if (moeLayer && name.Contains("ffn_latent_down", StringComparison.OrdinalIgnoreCase))
+                    return (null, block, "RawWLatentDown");
+                if (moeLayer && name.Contains("ffn_latent_up", StringComparison.OrdinalIgnoreCase))
+                    return (null, block, "RawWLatentUp");
 
                 bool isMoEExpert = moeLayer && (
                     name.Contains(".exps.", StringComparison.OrdinalIgnoreCase) ||
@@ -457,6 +477,8 @@ public abstract class TransformerWeights : IDisposable
             && !name.Contains("per_layer", StringComparison.OrdinalIgnoreCase)) return EmbeddingWeight;
         if (name.Contains("position_embd", StringComparison.OrdinalIgnoreCase)) return PositionEmbedding;
         if (name.Contains("token_types", StringComparison.OrdinalIgnoreCase)) return TokenTypeEmbedding;
+        if (name.Contains("output_res_score", StringComparison.OrdinalIgnoreCase))
+            return OutputResScore ??= new Tensor<float>(Config.HiddenDim);
         bool isBertLayerNorm = name.Contains("attn_output_norm", StringComparison.OrdinalIgnoreCase)
             || name.Contains("layer_output_norm", StringComparison.OrdinalIgnoreCase);
         if ((name.Contains("output_norm", StringComparison.OrdinalIgnoreCase)
@@ -511,12 +533,18 @@ public abstract class TransformerWeights : IDisposable
                 if (name.Contains("ssm_a", StringComparison.OrdinalIgnoreCase))
                     return b.SsmA ??= new Tensor<float>(Config.SsmTimeStepRank);
                 if (name.Contains("attn_qkv", StringComparison.OrdinalIgnoreCase)) return b.Wqkv;
-                if (name.Contains("attn_gate", StringComparison.OrdinalIgnoreCase))
-                {
-                    if (!Config.HeadGatedAttention) return b.WGate;
-                    return b.AttnGate ??= new Tensor<float>(Config.HiddenDim, Config.NumHeads);
-                }
+                if (name.Contains("attn_gate", StringComparison.OrdinalIgnoreCase)) return b.WGate;
             }
+
+            // Per-head attention gate on a full-attention layer (LFM3/ZONOS3).
+            if (Config.HeadGatedAttention &&
+                name.Contains("attn_gate", StringComparison.OrdinalIgnoreCase))
+                return b.AttnGate ??= new Tensor<float>(Config.HiddenDim, Config.NumHeads);
+
+            if (name.Contains("attn_res_score", StringComparison.OrdinalIgnoreCase))
+                return b.AttnResScore ??= new Tensor<float>(Config.HiddenDim);
+            if (name.Contains("ffn_res_score", StringComparison.OrdinalIgnoreCase))
+                return b.FfnResScore ??= new Tensor<float>(Config.HiddenDim);
 
             // Qwen3.5's post_attention_norm is the pre-FFN norm, not Gemma-3's
             // post-attention norm applied before the residual add.
@@ -763,6 +791,8 @@ else
             case "RawWup": block.RawWup = data; block.QuantDtypeWup = dtype; break;
             case "RawWf1": block.RawWf1 = data; block.QuantDtypeWf1 = dtype; break;
             case "RawWf2": block.RawWf2 = data; block.QuantDtypeWf2 = dtype; break;
+            case "RawWLatentDown": block.RawWLatentDown = data; block.QuantDtypeWLatentDown = dtype; break;
+            case "RawWLatentUp": block.RawWLatentUp = data; block.QuantDtypeWLatentUp = dtype; break;
             case "RawWScIn": block.RawWScIn = data; block.QuantDtypeWScIn = dtype; break;
             case "RawWScOut": block.RawWScOut = data; block.QuantDtypeWScOut = dtype; break;
             case "RawWqkvFull": block.RawWqkvFull = data; block.QuantDtypeWqkv = dtype; break;
@@ -910,6 +940,9 @@ else
         public Tensor<float>? PerLayerPostNorm { get; set; }  // [HiddenDim]
         public Tensor<float>? OutScale { get; set; }          // [1] layer output scale
 
+        // Full AttnRes route queries for this layer (zonos3).
+        public Tensor<float>? AttnResScore { get; set; }       // [HiddenDim]
+        public Tensor<float>? FfnResScore { get; set; }        // [HiddenDim]
         // LFM2 short-conv (no-attention) float tensors
         public Tensor<float>? WScIn { get; set; }   // [HiddenDim, 3*HiddenDim]
         public Tensor<float>? WScOut { get; set; }  // [HiddenDim, HiddenDim]
@@ -936,6 +969,14 @@ else
         public byte[]? RawWup { get; set; }
         public byte[]? RawWf1 { get; set; }
         public byte[]? RawWf2 { get; set; }
+
+        // Latent bottleneck around a routed MoE (ZONOS3-style)
+        public byte[]? RawWLatentDown { get; set; }
+        public byte[]? RawWLatentUp { get; set; }
+        public Tensor<float>? WLatentDown { get; set; }
+        public Tensor<float>? WLatentUp { get; set; }
+        public QuantDType? QuantDtypeWLatentDown { get; set; }
+        public QuantDType? QuantDtypeWLatentUp { get; set; }
 
         // LFM2 short-conv (no-attention) quantized projections
         public byte[]? RawWScIn { get; set; }
@@ -1090,6 +1131,8 @@ else
             if (RawWup is not null) yield return RawWup;
             if (RawWf1 is not null) yield return RawWf1;
             if (RawWf2 is not null) yield return RawWf2;
+            if (RawWLatentDown is not null) yield return RawWLatentDown;
+            if (RawWLatentUp is not null) yield return RawWLatentUp;
             if (RawWScIn is not null) yield return RawWScIn;
             if (RawWScOut is not null) yield return RawWScOut;
             if (RawWqkvFull is not null) yield return RawWqkvFull;
@@ -1139,6 +1182,8 @@ else
             if (ReferenceEquals(RawWup, raw)) { RawWup = null; released = true; }
             if (ReferenceEquals(RawWf1, raw)) { RawWf1 = null; released = true; }
             if (ReferenceEquals(RawWf2, raw)) { RawWf2 = null; released = true; }
+            if (ReferenceEquals(RawWLatentDown, raw)) { RawWLatentDown = null; released = true; }
+            if (ReferenceEquals(RawWLatentUp, raw)) { RawWLatentUp = null; released = true; }
             if (ReferenceEquals(RawWScIn, raw)) { RawWScIn = null; released = true; }
             if (ReferenceEquals(RawWScOut, raw)) { RawWScOut = null; released = true; }
             if (ReferenceEquals(RawWqkvFull, raw)) { RawWqkvFull = null; released = true; }
@@ -1197,11 +1242,13 @@ else
             Wq?.Dispose(); Wk?.Dispose(); Wv?.Dispose(); Wo?.Dispose();
             WqBias?.Dispose(); WkBias?.Dispose(); WvBias?.Dispose(); WoBias?.Dispose();
             Wf1?.Dispose(); Wf2?.Dispose(); Wf1Bias?.Dispose(); Wf2Bias?.Dispose();
+            WLatentDown?.Dispose(); WLatentUp?.Dispose();
             Norm1W?.Dispose(); Norm1B?.Dispose(); Norm2W?.Dispose(); Norm2B?.Dispose();
             QNormW?.Dispose(); KNormW?.Dispose();
             PostNorm1W?.Dispose(); PostNorm2W?.Dispose();
             PerLayerInpGate?.Dispose(); PerLayerProj?.Dispose();
             PerLayerPostNorm?.Dispose(); OutScale?.Dispose();
+            AttnResScore?.Dispose(); FfnResScore?.Dispose();
             WScIn?.Dispose(); WScOut?.Dispose(); WScConv?.Dispose();
             Wqkv?.Dispose(); WGate?.Dispose(); WAlpha?.Dispose(); WBeta?.Dispose(); WOut?.Dispose();
         AttnGate?.Dispose();
@@ -1220,6 +1267,7 @@ else
             // (now-unreachable) blocks delays reclamation until a compaction.
             RawWq = null; RawWk = null; RawWv = null; RawWo = null;
             RawWgate = null; RawWup = null; RawWf1 = null; RawWf2 = null;
+            RawWLatentDown = null; RawWLatentUp = null;
             RawWScIn = null; RawWScOut = null;
             RawWqkvFull = null; RawWGate = null; RawWAlpha = null; RawWBeta = null; RawWOut = null;
             RawRouter = null;
@@ -1251,6 +1299,8 @@ else
             Wo?.Dispose(); Wo = null;
             Wf1?.Dispose(); Wf1 = null;
             Wf2?.Dispose(); Wf2 = null;
+            WLatentDown?.Dispose(); WLatentDown = null;
+            WLatentUp?.Dispose(); WLatentUp = null;
             WScIn?.Dispose(); WScIn = null;
             WScOut?.Dispose(); WScOut = null;
             Wqkv?.Dispose(); Wqkv = null;
@@ -1265,10 +1315,12 @@ else
 
             RawWq = null; RawWk = null; RawWv = null; RawWo = null;
             RawWgate = null; RawWup = null; RawWf1 = null; RawWf2 = null;
+            RawWLatentDown = null; RawWLatentUp = null;
             RawWScIn = null; RawWScOut = null;
             RawWqkvFull = null; RawWGate = null; RawWAlpha = null; RawWBeta = null; RawWOut = null;
             QuantDtypeWq = null; QuantDtypeWk = null; QuantDtypeWv = null; QuantDtypeWo = null;
             QuantDtypeWgate = null; QuantDtypeWup = null; QuantDtypeWf1 = null; QuantDtypeWf2 = null;
+            QuantDtypeWLatentDown = null; QuantDtypeWLatentUp = null;
             QuantDtypeWScIn = null; QuantDtypeWScOut = null;
             QuantDtypeWqkv = null; QuantDtypeWGate = null; QuantDtypeWAlpha = null; QuantDtypeWBeta = null; QuantDtypeWOut = null;
             RawWgateExp = null; RawWupExp = null; RawWdownExp = null;
