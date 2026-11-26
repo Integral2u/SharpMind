@@ -26,6 +26,7 @@ using System.Text.Json.Nodes;
 //   dotnet run --project tools/GgufSmokeProbe -- q4kwidebench [K=2048] [N=4864] [iters=200] [chunks=0]
 //   dotnet run --project tools/GgufSmokeProbe -- widebytebench [q4_0|q2_k] [K=2048] [N=4864] [iters=2000] [chunks=1] [nopair]
 //   dotnet run --project tools/GgufSmokeProbe -- stages <file> ["prompt"] [warmup=16] [measure=48] [full] [resident] [serialmm] [window N]
+//   dotnet run --project tools/GgufSmokeProbe -- ttft <file> ["prompt"] [prebuild] [streaming] [resident] [serialmm]
 //   dotnet run --project tools/GgufSmokeProbe -- bind <file>
 //   dotnet run --project tools/GgufSmokeProbe -- cmp  <fileA> <fileB> <tensor>
 //   dotnet run --project tools/GgufSmokeProbe -- ref  <file> [prompt | @promptfile]
@@ -72,7 +73,7 @@ if (args.Length > 0 && args[0] == "widebytebench")
 
 if (args.Length < 2)
 {
-    Console.Error.WriteLine("usage: meta <file>   |   dump <file> [pattern]   |   bind <file>   |   fwd <file> [full] [resident]   |   fwdmulti <file> <promptfile> [single|...]   |   ref <file> [prompt]   |   run <file> [prompt] [maxTokens] [full] [resident] [topk] [serialmm]   |   bench <file> [prompt] [warmup] [measure] [full] [resident] [serialmm] [nowide] [reps=N] [ids]   |   benchab <file> [prompt] [warmup] [measure] [full] [resident]   |   stages <file> [prompt] [warmup] [measure] [full] [resident] [serialmm]   |   widebench [K] [N] [iters]   |   q4kwidebench|q6kwidebench [K] [N] [iters] [chunks]   |   widebytebench [q4_0|q2_k|q4_k] [K] [N] [iters] [chunks] [nopair]   |   kbench <q2k|q3k|q4k|q5k|q6k|q8k|q4_0|q4_1|iq4nl|mxfp4|iq4xs|iq2xxs|iq2xs|iq3xxs|iq2s|iq3s|q5_0|q5_1|q8_0|q8_1|f32> [K] [N] [iters] [fma|avx2|scalar|arm64]");
+    Console.Error.WriteLine("usage: meta <file>   |   dump <file> [pattern]   |   bind <file>   |   fwd <file> [full] [resident]   |   fwdmulti <file> <promptfile> [single|...]   |   ref <file> [prompt]   |   run <file> [prompt] [maxTokens] [full] [resident] [topk] [serialmm]   |   bench <file> [prompt] [warmup] [measure] [full] [resident] [serialmm] [nowide] [reps=N] [ids]   |   benchab <file> [prompt] [warmup] [measure] [full] [resident]   |   stages <file> [prompt] [warmup] [measure] [full] [resident] [serialmm]   |   ttft <file> [prompt] [prebuild] [streaming] [resident] [serialmm]   |   widebench [K] [N] [iters]   |   q4kwidebench|q6kwidebench [K] [N] [iters] [chunks]   |   widebytebench [q4_0|q2_k|q4_k] [K] [N] [iters] [chunks] [nopair]   |   kbench <q2k|q3k|q4k|q5k|q6k|q8k|q4_0|q4_1|iq4nl|mxfp4|iq4xs|iq2xxs|iq2xs|iq3xxs|iq2s|iq3s|q5_0|q5_1|q8_0|q8_1|f32> [K] [N] [iters] [fma|avx2|scalar|arm64]");
     return 2;
 }
 
@@ -103,6 +104,9 @@ if (mode == "benchab")
 
 if (mode == "stages")
     return await RunStagesAsync(path, args);
+
+if (mode == "ttft")
+    return await RunTtftAsync(path, args);
 
 if (mode == "batchbench")
     return await RunBatchBenchAsync(path, args);
@@ -3115,7 +3119,96 @@ static async Task<int> RunStagesAsync(string path, string[] args)
     }
 }
 
-// widebench [K=896] [N=4864] [iters=200]
+// ttft <file> ["prompt"] [prebuild] [streaming] [resident] [serialmm]
+//
+// Times the first generated fragment after model load, optionally after
+// Transformer.PrebuildWideRepacks. With `prebuild` it also sets
+// ReleaseRawAfterRepack so the block raw bytes are dropped during prebuild.
+static async Task<int> RunTtftAsync(string path, string[] args)
+{
+    string prompt = args.Length > 2 ? args[2] : "The capital of France is";
+    if (prompt.Length > 1 && prompt[0] == '@')
+    {
+        string pf = prompt[1..];
+        if (File.Exists(pf)) prompt = File.ReadAllText(pf);
+    }
+
+    bool prebuild = args.Any(a => a.Equals("prebuild", StringComparison.OrdinalIgnoreCase));
+    bool full = !args.Any(a => a.Equals("streaming", StringComparison.OrdinalIgnoreCase));
+    bool resident = args.Any(a => a.Equals("resident", StringComparison.OrdinalIgnoreCase));
+    bool serialMm = args.Any(a => a.Equals("serialmm", StringComparison.OrdinalIgnoreCase));
+
+    ModelMetaData meta;
+    ModelConfig modelConfig;
+    Tokenizer? tokenizer;
+    try
+    {
+        var metaHelper = ModelFormatHelpers.GetModelMetaHelperFor(ModelFormat.Gguf);
+        metaHelper.Load(path, null, out meta, out modelConfig, out tokenizer);
+    }
+    catch (NotSupportedException ex)
+    {
+        Console.WriteLine($"UNSUPPORTED (loud fail): {ex.Message}");
+        return 3;
+    }
+
+    if (tokenizer == null)
+    {
+        Console.WriteLine("OK  meta/config loaded; no tokenizer in file (embedding-only model?) -> verification stops here.");
+        return 0;
+    }
+
+    try
+    {
+        var sharpConfig = modelConfig.ForModel();
+        var mapping = sharpConfig.ToJigSawMapping(null, serialMm ? false : null);
+        using var weights = ModelFactory.CreateWeights(
+            modelConfig, sharpConfig, QuantizationFactory.Create(mapping), path,
+            full ? LoadMode.Full : LoadMode.Streaming, quantizedResident: resident);
+        weights.InitializeWeights();
+
+        if (prebuild) weights.ReleaseRawAfterRepack = true;
+        using var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
+
+        double prebuildMs = 0;
+        if (prebuild)
+        {
+            var pb = System.Diagnostics.Stopwatch.StartNew();
+            model.PrebuildWideRepacks();
+            pb.Stop();
+            prebuildMs = pb.Elapsed.TotalMilliseconds;
+        }
+
+        using var gen = new StandardGeneratorBuilder<KVCacherBuilder>()
+            .CreateGenerator(model, tokenizer, addBos: true, addEos: false, caches: null);
+        var sample = new SamplingConfig { Temperature = 0f, TopK = 1 };
+        var genCfg = new GenerationConfig { MaxNewTokens = 1, Stream = true };
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        await using var enumerator = gen.GenerateAsync(prompt, sample, genCfg).GetAsyncEnumerator();
+        bool produced = await enumerator.MoveNextAsync();
+        sw.Stop();
+
+        Console.WriteLine(
+            $"TTFT {Path.GetFileName(path)}  prompt=\"{prompt}\"  " +
+            $"mode={(full ? "Full" : "Streaming")} resident={resident} " +
+            $"prebuild={prebuild} prebuildMs={prebuildMs:F1} " +
+            $"ttftMs={sw.Elapsed.TotalMilliseconds:F1} produced={produced} " +
+            $"rawEvicted={weights.RawEvicted} cores={Environment.ProcessorCount}");
+        return produced ? 0 : 4;
+    }
+    catch (NotSupportedException ex)
+    {
+        Console.WriteLine($"\nUNSUPPORTED (loud fail): {ex.Message}");
+        return 3;
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"\nFAILED: {ex}");
+        return 1;
+    }
+}
+
 //
 // Exercises the production Q8_0 wide decode path (scratch + chunk scheduling)
 // without a model. Short kbench-style runs are dominated by timer noise, so this
