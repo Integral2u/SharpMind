@@ -461,6 +461,20 @@ public abstract class FfnLayer : IDisposable
         if (layer is InferenceLinearLayer inference) inference.SuppressWide();
     }
 
+    /// <summary>Builds every lazy wide repack ahead of the first forward. Mirrors
+    /// <see cref="SuppressWide"/>' enumeration.</summary>
+    internal void PrebuildWide()
+    {
+        Prebuild(W1); Prebuild(W2); Prebuild(WGated); Prebuild(WDown);
+        Prebuild(Router); Prebuild(SharedGate); Prebuild(SharedUp); Prebuild(SharedDown);
+        Prebuild(SharedGateInp);
+        if (ExpertGate is not null) foreach (var l in ExpertGate) Prebuild(l);
+        if (ExpertUp is not null) foreach (var l in ExpertUp) Prebuild(l);
+        if (ExpertDown is not null) foreach (var l in ExpertDown) Prebuild(l);
+    }
+
+    private static void Prebuild(LinearLayer? layer) => layer?.PrebuildWide();
+
     public void FreeFloatWeights()
     {
         if (W1 is not null && W2 is not null)

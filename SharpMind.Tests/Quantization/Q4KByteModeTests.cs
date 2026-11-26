@@ -148,6 +148,54 @@ public sealed class Q4KByteModeTests
         }
     }
 
+    [Fact]
+    public unsafe void PrebuildWideBuildsWithoutAForward()
+    {
+        const int k = 256, n = 16;
+        if (!Q4KWideWeights.IsSupported(k, n)) return;
+
+        bool original = WideByteWeights.UseForQ4K;
+        long budget = WideRepackBudget.MaxBytes;
+        WideRepackBudget.ResetForTests();
+        try
+        {
+            WideByteWeights.UseForQ4K = false;
+            var block = new TransformerWeights.BlockWeights
+            {
+                CanReleaseRawAfterRepack = true,
+            };
+            block.RawWq = RandomQ4K(k, n, new Random(4201));
+
+            var mapping = SharpMindConfig.Gpt.ToJigSawMapping(parallel: true);
+            var layer = (InferenceLinearLayer)LinearLayerFactory.Create(
+                "q4", k, n, false, null, null, QuantDType.Q4_K, mapping);
+            layer.RawReleaseCallback = block.ReleaseRawSource;
+            layer.SetRawWeight(block.RawWq);
+
+            layer.PrebuildWide();
+
+            Assert.True(layer.HasCachedQ4KWide);
+            Assert.False(layer.HasCachedWideByte);
+            Assert.Null(layer.RawQuantizedData);
+            Assert.Null(block.RawWq);
+
+            var input = RandomInput(k, new Random(4202));
+            using var inputTensor = new Tensor<float>(1, k);
+            input.CopyTo(inputTensor.Data);
+            using (var output = layer.Forward(inputTensor))
+                Assert.Equal(n, output.ElementCount);
+
+            layer.Dispose();
+            Assert.Equal(0, WideRepackBudget.AllocatedBytes);
+        }
+        finally
+        {
+            WideByteWeights.UseForQ4K = original;
+            WideRepackBudget.MaxBytes = budget;
+            WideRepackBudget.ResetForTests();
+        }
+    }
+
     private static byte[] RandomQ4K(int k, int n, Random rng)
     {
         int blocks = k / SuperBlock;

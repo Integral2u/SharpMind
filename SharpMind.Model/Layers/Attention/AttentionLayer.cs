@@ -988,6 +988,14 @@ namespace SharpMind.Model.Layers.Attention;
         if (_kvANorm != null) foreach (var p in _kvANorm.Parameters()) yield return p;
     }
 
+    internal void PrebuildWide()
+    {
+        Wq.PrebuildWide();
+        Wk.PrebuildWide();
+        Wv.PrebuildWide();
+        Wo.PrebuildWide();
+    }
+
     public void FreeFloatWeights()
     {
         Wq.FreeFloatWeight();

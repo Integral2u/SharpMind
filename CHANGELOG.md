@@ -114,6 +114,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   reference tolerance. Isolated `widebytebench q4_k` and `q4kwidebench` runs are
   close on the 2200U, so measure on the target machine before enabling.
 
+- **Quickselect top-p sampler** - `Sampler.ApplyTopP` no longer sorts the whole
+  candidate list per token. A three-way quickselect finds the nucleus threshold
+  in expected O(V) and zeroes only tokens below it, keeping the threshold's ties.
+  Chat's default `TopK=0, TopP=0.9` path was the one paying the full sort;
+  greedy and top-k-bounded sampling are unchanged. The extra per-call index
+  rental was removed. Pinned by the large-vocabulary
+  `TopP_ExcludesEverythingBelowTheReferenceThreshold` test.
+
+- **Wide-repack prebuild for TTFT** - `Transformer.PrebuildWideRepacks(progress)`
+  builds every layer's wide repack and the LM head's before the first token, so
+  prefill no longer pays the lazy repack cost. With
+  `TransformerWeights.ReleaseRawAfterRepack` set first, the raw copies are
+  dropped during prebuild rather than during the first forward. Tail rows and
+  budget-refused layers keep their existing lazy/old-path behavior. Progress is
+  reported per block and once for the head.
+
 - **Host builder configuration** - `ChatSession` and `ChatSessionFactory` accept
   an `IGeneratorBuilderConfigurator` that runs before the builder creates a
   generator, for both the main and sub-agent paths. Studio uses it to pass Medusa

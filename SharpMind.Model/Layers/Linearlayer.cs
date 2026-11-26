@@ -59,6 +59,12 @@ public abstract class LinearLayer : IDisposable
     public virtual void SetRawWeight(byte[]? rawData) { }
 
     /// <summary>
+    /// Builds any lazy inference repack without running a forward. No-op for
+    /// layers that do not own a wide repack.
+    /// </summary>
+    internal virtual void PrebuildWide() { }
+
+    /// <summary>
     /// Invoked with the raw tensor when a complete wide repack makes it
     /// redundant. The binder points this at the owning block so the block can
     /// drop its reference too; layers that do not repack leave it unused.

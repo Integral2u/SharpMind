@@ -196,6 +196,12 @@ public sealed class ShortConvLayer : IDisposable
         _wOut.EnableQuantAwareTraining(target);
     }
 
+    internal void PrebuildWide()
+    {
+        _wIn.PrebuildWide();
+        _wOut.PrebuildWide();
+    }
+
     public void FreeFloatWeights()
     {
         _wIn.FreeFloatWeight();

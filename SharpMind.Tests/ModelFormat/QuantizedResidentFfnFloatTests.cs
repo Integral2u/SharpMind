@@ -270,9 +270,7 @@ public sealed class QuantizedResidentFfnFloatTests : IDisposable
         int[] ids = [3, 17, 42, 8, 63];
         ids.CopyTo(tokens.Data);
 
-        using (model.Forward(tokens))
-        {
-        }
+        model.PrebuildWideRepacks();
 
         Assert.True(weights.RawEvicted);
         Assert.All(weights.Blocks, b =>
@@ -285,6 +283,10 @@ public sealed class QuantizedResidentFfnFloatTests : IDisposable
             Assert.Null(b.RawWup);
             Assert.Null(b.RawWf2);
         });
+
+        using (model.Forward(tokens))
+        {
+        }
 
         using var again = model.Forward(tokens);
         Assert.Equal(5 * Cfg().VocabSize, again.ElementCount);

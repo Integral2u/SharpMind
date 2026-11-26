@@ -390,6 +390,47 @@ public abstract class LogitOps(Tensor<float>? projectionWeight, byte[]? rawWeigh
         return true;
     }
 
+    /// <summary>Builds the head's wide repack before the first token.</summary>
+    internal void PrebuildWide(int K, int N)
+    {
+        if (!WideAllowed || RawWeight is null || RawDtype is not { } dtype) return;
+
+        if (dtype == QuantDType.Q8_0 && Q8_0WideWeights.Enabled)
+        {
+            _wide.Get(RawWeight, K, N);
+            return;
+        }
+
+        if (dtype is QuantDType.Q4_K or QuantDType.Q4_K_S or QuantDType.Q4_K_M &&
+            Q4KWideWeights.Enabled)
+        {
+            if (WideByteWeights.Allowed(dtype))
+            {
+                if (_wideByte is null && !_wideByteTried)
+                {
+                    _wideByte = WideByteWeights.TryCreate(RawWeight, K, N, dtype);
+                    _wideByteTried = true;
+                }
+                if (_wideByte is not null) return;
+            }
+            _wideQ4K.Get(RawWeight, K, N);
+            return;
+        }
+
+        if (dtype is QuantDType.Q6_K or QuantDType.Q6_K_S &&
+            Q6KWideWeights.Enabled)
+        {
+            _wideQ6K.Get(RawWeight, K, N);
+            return;
+        }
+
+        if (WideByteWeights.Allowed(dtype) && _wideByte is null && !_wideByteTried)
+        {
+            _wideByte = WideByteWeights.TryCreate(RawWeight, K, N, dtype);
+            _wideByteTried = true;
+        }
+    }
+
     /// <summary>
     /// Releases the wide copies the head cached and returns their bytes to the
     /// process-wide repack budget. The raw/float weights are borrowed, not owned.

@@ -389,6 +389,13 @@ public sealed class DeltaNetLayer : IDisposable
         _wout.EnableQuantAwareTraining(target);
     }
 
+    internal void PrebuildWide()
+    {
+        _wqkv.PrebuildWide();
+        _wgate.PrebuildWide();
+        _wout.PrebuildWide();
+    }
+
     public void FreeFloatWeights()
     {
         _wqkv.FreeFloatWeight();

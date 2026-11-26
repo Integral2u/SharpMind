@@ -65,6 +65,44 @@ public sealed class SamplerTests
     }
 
     [Fact]
+    public void TopP_ExcludesEverythingBelowTheReferenceThreshold()
+    {
+        var data = new Random(77);
+        var logits = new float[256];
+        for (int i = 0; i < logits.Length; i++)
+            logits[i] = (float)(data.NextDouble() * 8);
+
+        float max = logits.Max();
+        var probs = new double[logits.Length];
+        double sum = 0;
+        for (int i = 0; i < probs.Length; i++)
+        {
+            probs[i] = Math.Exp(logits[i] - max);
+            sum += probs[i];
+        }
+        for (int i = 0; i < probs.Length; i++) probs[i] /= sum;
+
+        const float p = 0.8f;
+        double cumulative = 0;
+        double threshold = 0;
+        foreach (int i in Enumerable.Range(0, probs.Length)
+                     .OrderByDescending(i => probs[i]))
+        {
+            cumulative += probs[i];
+            threshold = probs[i];
+            if (cumulative >= p) break;
+        }
+
+        var nucleus = Enumerable.Range(0, probs.Length)
+            .Where(i => probs[i] >= threshold - 1e-4)
+            .ToHashSet();
+
+        var config = new SamplingConfig { Temperature = 1f, TopK = 0, TopP = p };
+        for (int seed = 0; seed < 500; seed++)
+            Assert.Contains(Sampler.Sample(logits, config, new Random(seed)), nucleus);
+    }
+
+    [Fact]
     public void NonFiniteLogit_CollapsesToTokenZero()
     {
         var logits = new float[] { 0.1f, float.NaN, 0.3f };

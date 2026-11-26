@@ -300,6 +300,15 @@ public abstract class TransformerBlock : IDisposable
         _ffn.SuppressWide();
     }
 
+    /// <summary>Builds the lazy wide repacks for this block before the first forward.</summary>
+    internal void PrebuildWide()
+    {
+        _attention?.PrebuildWide();
+        _shortConv?.PrebuildWide();
+        _deltaNet?.PrebuildWide();
+        _ffn.PrebuildWide();
+    }
+
     public void Dispose()
     {
         Dispose(true);

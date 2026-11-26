@@ -622,6 +622,81 @@ public abstract class InferenceLinearLayer : LinearLayer
         RawReleaseCallback?.Invoke(raw);
     }
 
+    /// <summary>
+    /// Builds the wide repack ahead of the first token so prefill does not pay
+    /// for it. Only complete eight-row groups are built here; tail rows stay lazy.
+    /// </summary>
+    internal override void PrebuildWide()
+    {
+        if (!WideAllowed || RawQuantizedData is not { } raw) return;
+
+        bool completeGroups = OutFeatures % 8 == 0;
+
+        if (QuantDtype == QuantDType.Q8_0 && Q8_0WideWeights.Enabled)
+        {
+            if (completeGroups && _wideDirect is null)
+                _wideDirect = Q8_0WideWeights.TryCreate(
+                    raw, InFeatures, OutFeatures, keepSource: false);
+            if (_wideDirect is not null)
+            {
+                MarkWideOnly(raw);
+                return;
+            }
+            _wide.Get(raw, InFeatures, OutFeatures);
+            return;
+        }
+
+        if (QuantDtype is QuantDType.Q4_K or QuantDType.Q4_K_S or QuantDType.Q4_K_M &&
+            Q4KWideWeights.Enabled)
+        {
+            if (WideByteWeights.Allowed(QuantDtype))
+            {
+                if (_wideByte is null)
+                    _wideByte = WideByteWeights.TryCreate(
+                        raw, InFeatures, OutFeatures, QuantDtype);
+                if (_wideByte is not null)
+                {
+                    MarkWideOnly(raw);
+                    return;
+                }
+            }
+
+            if (completeGroups && _wideQ4KDirect is null)
+                _wideQ4KDirect = Q4KWideWeights.TryCreate(
+                    raw, InFeatures, OutFeatures, keepSource: false);
+            if (_wideQ4KDirect is not null)
+            {
+                MarkWideOnly(raw);
+                return;
+            }
+            _wideQ4K.Get(raw, InFeatures, OutFeatures);
+            return;
+        }
+
+        if (QuantDtype is QuantDType.Q6_K or QuantDType.Q6_K_S &&
+            Q6KWideWeights.Enabled)
+        {
+            if (completeGroups && _wideQ6KDirect is null)
+                _wideQ6KDirect = Q6KWideWeights.TryCreate(
+                    raw, InFeatures, OutFeatures, keepSource: false);
+            if (_wideQ6KDirect is not null)
+            {
+                MarkWideOnly(raw);
+                return;
+            }
+            _wideQ6K.Get(raw, InFeatures, OutFeatures);
+            return;
+        }
+
+        if (WideByteWeights.Allowed(QuantDtype))
+        {
+            if (_wideByte is null)
+                _wideByte = WideByteWeights.TryCreate(
+                    raw, InFeatures, OutFeatures, QuantDtype);
+            if (_wideByte is not null) MarkWideOnly(raw);
+        }
+    }
+
 public override void FreeFloatWeight()
     {
         // A wide-only layer released its raw bytes after a complete repack, so the

@@ -57,7 +57,7 @@ public static class Sampler
             SoftmaxInPlace(probs);
 
             if (config.MinP > 0f) ApplyMinP(probs, config.MinP);
-            if (config.TopP < 1.0f) ApplyTopP(probs, default, config.TopP);
+            if (config.TopP < 1.0f) ApplyTopP(probs, config.TopP);
 
             Normalise(probs);
 
@@ -178,66 +178,96 @@ public static class Sampler
     // Top-p (nucleus)
 
     /// <summary>
-    /// Zeroes tokens outside the nucleus: sorts the non-zero entries ascending,
-    /// then keeps the largest until their running sum reaches p. Operates on
-    /// whatever distribution it is given, so callers pass the renormalised
-    /// candidates. No per-call GC allocations — uses ArrayPool.
+    /// Zeroes tokens outside the nucleus. The threshold is found with a three-way
+    /// quickselect over the non-zero probabilities, so the vocabulary is not fully
+    /// sorted per token. Tokens with probability at or above the threshold stay.
     /// </summary>
-    private static void ApplyTopP(Span<float> probs, ReadOnlySpan<int> survivors, float p)
+    private static void ApplyTopP(Span<float> probs, float p)
     {
         if (p <= 0f || probs.Length == 0) return;
 
-        int cap = survivors.IsEmpty ? probs.Length : survivors.Length;
-        float[] rentedVals = MemoryHelpers.RentArray<float>(cap);
-        int[] rentedIdxs = MemoryHelpers.RentArray<int>(cap);
+        float[] rentedVals = MemoryHelpers.RentArray<float>(probs.Length);
         try
         {
-            Span<float> vals = rentedVals.AsSpan(0, cap);
-            Span<int> idxs = rentedIdxs.AsSpan(0, cap);
-            int count;
-
-            if (!survivors.IsEmpty)
+            Span<float> vals = rentedVals.AsSpan(0, probs.Length);
+            int count = 0;
+            for (int i = 0; i < probs.Length; i++)
             {
-                count = survivors.Length;
-                for (int i = 0; i < count; i++)
-                {
-                    vals[i] = probs[survivors[i]];
-                    idxs[i] = survivors[i];
-                }
-            }
-            else
-            {
-                count = 0;
-                for (int i = 0; i < probs.Length; i++)
-                {
-                    float v = probs[i];
-                    if (v > 0f) { vals[count] = v; idxs[count] = i; count++; }
-                }
+                float v = probs[i];
+                if (v > 0f) vals[count++] = v;
             }
 
             if (count == 0) return;
 
-            // Sort ascending by value, then traverse descending (largest first)
-            vals[..count].Sort(idxs[..count]);
+            float threshold = NucleusThreshold(vals[..count], p);
+            if (threshold <= 0f) return;
 
-            float cumulative = 0f;
-            for (int i = count - 1; i >= 0; i--)
-            {
-                cumulative += vals[i];
-                if (cumulative >= p)
-                {
-                    // Zero everything below this threshold
-                    for (int j = i - 1; j >= 0; j--)
-                        probs[idxs[j]] = 0f;
-                    break;
-                }
-            }
+            for (int i = 0; i < probs.Length; i++)
+                if (probs[i] < threshold) probs[i] = 0f;
         }
         finally
         {
             MemoryHelpers.ReturnArray(rentedVals);
-            MemoryHelpers.ReturnArray(rentedIdxs);
         }
+    }
+
+    /// <summary>
+    /// Returns the probability threshold of the top-p nucleus. Values strictly
+    /// above the threshold sum to less than <paramref name="p"/>; including the
+    /// threshold's ties reaches or exceeds it. Expected O(n), worst O(n²), with
+    /// no allocations and no full sort.
+    /// </summary>
+    private static float NucleusThreshold(Span<float> vals, float p)
+    {
+        int lo = 0, hi = vals.Length - 1;
+        float remaining = p;
+
+        while (lo <= hi)
+        {
+            float pivot = vals[lo + (hi - lo) / 2];
+            int lt = lo, i = lo, gt = hi;
+            while (i <= gt)
+            {
+                float v = vals[i];
+                if (v > pivot)
+                {
+                    (vals[lt], vals[i]) = (vals[i], vals[lt]);
+                    lt++;
+                    i++;
+                }
+                else if (v < pivot)
+                {
+                    (vals[i], vals[gt]) = (vals[gt], vals[i]);
+                    gt--;
+                }
+                else
+                {
+                    i++;
+                }
+            }
+
+            // [lo..lt) > pivot, [lt..gt] == pivot, (gt..hi] < pivot.
+            float high = 0f;
+            for (int j = lo; j < lt; j++) high += vals[j];
+            float equal = 0f;
+            for (int j = lt; j <= gt; j++) equal += vals[j];
+
+            if (high >= remaining)
+            {
+                hi = lt - 1;
+            }
+            else if (high + equal >= remaining)
+            {
+                return pivot;
+            }
+            else
+            {
+                remaining -= high + equal;
+                lo = gt + 1;
+            }
+        }
+
+        return 0f;
     }
 
     // Min-p

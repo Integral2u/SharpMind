@@ -145,6 +145,28 @@ public sealed class Transformer : IDisposable
         }
     }
 
+    /// <summary>
+    /// Builds every layer's wide repack before the first forward, so prefill does
+    /// not pay for the lazy repacks. Call after load, and after setting
+    /// <see cref="TransformerWeights.ReleaseRawAfterRepack"/> if raw eviction is
+    /// wanted. Progress is reported once per block, then once for the LM head.
+    /// </summary>
+    public void PrebuildWideRepacks(IProgress<float>? progress = null)
+    {
+        ThrowIfDisposed();
+        if (_blocks is null) return;
+
+        int total = _blocks.Length + 1;
+        for (int i = 0; i < _blocks.Length; i++)
+        {
+            _blocks[i].PrebuildWide();
+            progress?.Report((i + 1) / (float)total);
+        }
+
+        _logitOps.PrebuildWide(Config.HiddenDim, Config.VocabSize);
+        progress?.Report(1f);
+    }
+
     /// <summary>Sets an activation hook on all blocks in the model.</summary>
     /// <summary>
     /// Skips the given transformer blocks during every subsequent forward. The residual

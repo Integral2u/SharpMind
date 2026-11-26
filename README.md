@@ -306,6 +306,10 @@ Q4_K and Q6_K keep their dedicated packed/byte kernels by default. Setting `Wide
 
 The same harness is dispatchable on both CI architectures: the manual `Bench` workflow runs it on `ubuntu-latest` (`fma`/`avx2`/`scalar`) and `ubuntu-24.04-arm` (`arm64`/`scalar`) with identical shapes and records the table in the run summary. Hosted runners are different CPUs, so compare ratios within a runner - AVX2 over scalar on x64, NEON over scalar on Arm64 - rather than absolute GMAC/s between them.
 
+`Transformer.PrebuildWideRepacks(progress)` builds every layer's wide repack and the LM head's before the first token, moving the lazy repack cost out of prefill/TTFT. Call it after load; when `ReleaseRawAfterRepack` is set first, the raw copies are released during prebuild. `GgufSmokeProbe stages` measures the remaining first-token latency.
+
+The sampler's top-p filter finds the nucleus threshold with a three-way quickselect instead of sorting the vocabulary, so Chat's `TopK=0, TopP=0.9` path no longer pays an O(V log V) sort per token. Greedy and top-k sampling are unchanged.
+
 ### Decoding strategy
 
 `qwen2-0.5b-instruct-q8_0`, prompt "what is the capital of america", across all four KV-cache strategies:
