@@ -16,10 +16,12 @@ namespace SharpMind.Model.Audio;
 /// host and disposes it separately. It owns the projector reader, the codebook tables and
 /// the ZAC decoder.
 /// </summary>
-public sealed class Zonos3TtsRuntime : IDisposable
+public sealed class Zonos3TtsRuntime : ITtsRuntime
 {
     public const int SampleRate = ZacCodecDecoder.SampleRate;
     public const int SamplesPerFrame = ZacCodecDecoder.SamplesPerFrame;
+
+    int ITtsRuntime.SampleRate => SampleRate;
 
     /// <summary>The release's default predefined voice.</summary>
     public const string DefaultVoice = "Savannah_en-American_F_1";

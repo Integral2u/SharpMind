@@ -15,9 +15,11 @@ namespace SharpMind.Model.Audio;
 /// host and disposes it separately. It owns the projector reader, the depth decoder and
 /// the codec decoder.
 /// </summary>
-public sealed class Lfm3TtsRuntime : IDisposable
+public sealed class Lfm3TtsRuntime : ITtsRuntime
 {
     public const int SampleRate = LiquidCodecDecoder.SampleRate;
+
+    int ITtsRuntime.SampleRate => SampleRate;
 
     /// <summary>Codec frames per second: 1920 samples per frame at 24 kHz.</summary>
     public const double FramesPerSecond = 12.5;
