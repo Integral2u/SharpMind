@@ -128,6 +128,7 @@ public sealed class ZacCodecDecoder : IDisposable
         }
 
         // 3. MOSS stages with patch upsampling.
+        EnsureRope(frameCount * HeadFramesPerFrame);
         int framesPerColumn = 1;
         int width = LatentDim;
         float[] x = latent;
@@ -279,28 +280,26 @@ public sealed class ZacCodecDecoder : IDisposable
         return x;
     }
 
-    private static void Rope(float[] qkv, int rows, int dim, int heads, int qOffset)
+    private void Rope(float[] qkv, int rows, int dim, int heads, int qOffset)
     {
-        Span<float> cos = stackalloc float[AttentionHeadDim / 2];
-        Span<float> sin = stackalloc float[AttentionHeadDim / 2];
+        int width = AttentionHeadDim / 2;
+        var cos = _ropeCos!;
+        var sin = _ropeSin!;
         for (int t = 0; t < rows; t++)
         {
-            for (int p = 0; p < AttentionHeadDim / 2; p++)
-            {
-                double angle = t * Math.Pow(10000.0, -2.0 * p / AttentionHeadDim);
-                cos[p] = (float)Math.Cos(angle);
-                sin[p] = (float)Math.Sin(angle);
-            }
+            int table = t * width;
             for (int h = 0; h < heads; h++)
             {
                 int at = t * (3 * dim) + qOffset + h * AttentionHeadDim;
-                for (int p = 0; p < AttentionHeadDim / 2; p++)
+                for (int p = 0; p < width; p++)
                 {
                     int i = at + 2 * p;
                     float a = qkv[i];
                     float b = qkv[i + 1];
-                    qkv[i] = a * cos[p] - b * sin[p];
-                    qkv[i + 1] = a * sin[p] + b * cos[p];
+                    float c = cos[table + p];
+                    float s = sin[table + p];
+                    qkv[i] = a * c - b * s;
+                    qkv[i + 1] = a * s + b * c;
                 }
             }
         }
@@ -504,6 +503,25 @@ public sealed class ZacCodecDecoder : IDisposable
 
     private Complex[][]? _spectrumCache;
     private double[][]? _frameCache;
+    private float[]? _ropeCos;
+    private float[]? _ropeSin;
+
+    private void EnsureRope(int rows)
+    {
+        if (_ropeCos is not null && _ropeCos.Length >= rows * (AttentionHeadDim / 2)) return;
+        int width = AttentionHeadDim / 2;
+        _ropeCos = new float[rows * width];
+        _ropeSin = new float[rows * width];
+        for (int t = 0; t < rows; t++)
+        {
+            for (int p = 0; p < width; p++)
+            {
+                double angle = t * Math.Pow(10000.0, -2.0 * p / AttentionHeadDim);
+                _ropeCos[t * width + p] = (float)Math.Cos(angle);
+                _ropeSin[t * width + p] = (float)Math.Sin(angle);
+            }
+        }
+    }
 
     /// <summary>Pre-allocates the per-branch iSTFT scratch (call once per Decode).</summary>
     private void EnsureScratch()

@@ -122,6 +122,22 @@ public sealed class Zonos3TtsRuntime : ITtsRuntime
     /// <summary>Predefined voice names carried by the projector.</summary>
     public IReadOnlyCollection<string> Voices => _voices.Keys;
 
+    /// <summary>
+    /// Lists the predefined voices in a ZONOS3 projector, default voice first. Reads only
+    /// the GGUF tensor table, so a host can populate a picker without loading the weights.
+    /// </summary>
+    public static IReadOnlyList<string> ListVoices(string projectorPath)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(projectorPath);
+        using var reader = new GgufTensorReader(projectorPath);
+        return reader.TensorNames
+            .Where(name => name.StartsWith("voice.", StringComparison.Ordinal))
+            .Select(name => name["voice.".Length..])
+            .OrderBy(name => name == DefaultVoice ? 0 : 1)
+            .ThenBy(name => name, StringComparer.Ordinal)
+            .ToArray();
+    }
+
     /// <summary>True when the projector carries the ZONOS3 codebook head and the ZAC decoder.</summary>
     public static bool IsTtsProjector(string path)
     {
