@@ -180,6 +180,9 @@ if (mode == "asr-runtime")
 if (mode == "tts-runtime")
     return await RunTtsRuntimeAsync(path, args);
 
+if (mode == "zonos3-tts")
+    return RunZonos3Tts(path, args);
+
 if (mode == "tts-logits")
     return await RunTtsLogitsAsync(path, args);
 
@@ -713,6 +716,73 @@ static async Task<int> RunLayerImportanceAsync(string path, string[] args)
             Console.WriteLine($"{step.Layers.Length,7}  {string.Join(",", step.Layers),-32} {step.Loss,10:F4} {step.DeltaLoss,+8:F4}");
     }
     return 0;
+}
+
+// `zonos3-tts <backbone> <mmproj> <text> <out.wav> [voice] [maxFrames] [seed] [temperature]`
+static int RunZonos3Tts(string backbonePath, string[] args)
+{
+    if (args.Length < 5)
+    {
+        Console.Error.WriteLine("usage: zonos3-tts <backbone.gguf> <mmproj.gguf> <text> <out.wav> [voice] [maxFrames] [seed] [temperature]");
+        return 2;
+    }
+
+    string mmprojPath = Path.GetFullPath(args[2]);
+    string text = args[3];
+    string wavPath = Path.GetFullPath(args[4]);
+    string voice = args.Length > 5 ? args[5] : SharpMind.Model.Audio.Zonos3TtsRuntime.DefaultVoice;
+    int maxFrames = args.Length > 6 && int.TryParse(args[6], out int mf) ? mf : 512;
+    int? seed = args.Length > 7 && int.TryParse(args[7], out int sd) ? sd : 1234;
+    float temperature = args.Length > 8 && float.TryParse(args[8], out float tp) ? tp : 0.75f;
+
+    try
+    {
+        var metaHelper = ModelFormatHelpers.GetModelMetaHelperFor(ModelFormat.Gguf);
+        metaHelper.Load(backbonePath, null, out _, out var config, out var tokenizer);
+        if (tokenizer is null) { Console.Error.WriteLine("no tokenizer"); return 3; }
+
+        var sharpConfig = config.ForModel();
+        var mapping = sharpConfig.ToJigSawMapping();
+        using var weights = ModelFactory.CreateWeights(
+            config, sharpConfig, QuantizationFactory.Create(mapping), backbonePath,
+            LoadMode.Full, quantizedResident: false, maxParallelLoadDegree: 1);
+        weights.InitializeWeights();
+        using var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
+
+        var frameWatch = System.Diagnostics.Stopwatch.StartNew();
+        using var runtime = new SharpMind.Model.Audio.Zonos3TtsRuntime(model, tokenizer, config, mmprojPath)
+        {
+            Voice = voice,
+            MaxFrames = maxFrames,
+            Seed = seed,
+            Temperature = temperature,
+            FrameSampled = (index, codes) => Console.WriteLine(
+                $"frame {index,3} ({frameWatch.Elapsed.TotalSeconds,6:F1}s): {string.Join(",", codes)}"),
+            EndOfSpeech = (index, codes) => Console.WriteLine(
+                $"EOS at frame {index} ({frameWatch.Elapsed.TotalSeconds:F1}s): {string.Join(",", codes)}"),
+        };
+
+        Console.WriteLine($"voices: {string.Join(", ", runtime.Voices)}");
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        float[] audio = runtime.Synthesize(text);
+        watch.Stop();
+        if (audio.Length == 0)
+        {
+            Console.WriteLine($"ZONOS3-TTS: no audio ({watch.Elapsed.TotalSeconds:F1}s)");
+            return 4;
+        }
+
+        SharpMind.Model.Audio.WavFile.Write(wavPath, audio, SharpMind.Model.Audio.Zonos3TtsRuntime.SampleRate);
+        double seconds = (double)audio.Length / SharpMind.Model.Audio.Zonos3TtsRuntime.SampleRate;
+        Console.WriteLine(
+            $"ZONOS3-TTS ({watch.Elapsed.TotalSeconds:F1}s): {seconds:F2}s, {audio.Length} samples -> {wavPath}");
+        return 0;
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"ZONOS3-TTS FAILED: {ex}");
+        return 1;
+    }
 }
 
 // `tts-logits <backbone> <mmproj> <text>` prints the hidden state and the first depth pass,

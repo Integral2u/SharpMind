@@ -526,8 +526,11 @@ namespace SharpMind.Model.Layers.Attention;
         if (cache != null && Config.HasOwnKv(LayerIndex))
         {
             var tKv = DecodeProfiler.Begin();
-            using var kCache = kNormed?.Reshape(batch, seqLen, kvDim);
-            cache.Update(kCache ?? k, vForAttn, numKv, headDim);
+            // The weightless QK norm (ZONOS3) is applied in kScaled, so the cache must
+            // hold that tensor: caching the raw K would skip the per-head norm on every
+            // subsequent step and make the prefill keys inconsistent with the queries.
+            using var kCache = kScaled is null ? kNormed?.Reshape(batch, seqLen, kvDim) : null;
+            cache.Update(kScaled ?? (Tensor<float>?)kCache ?? k, vForAttn, numKv, headDim);
             DecodeProfiler.Mark(DecodeStage.Kv, tKv);
         }
 
@@ -1030,7 +1033,7 @@ namespace SharpMind.Model.Layers.Attention;
             {
                 int at = row + h * headDim;
                 for (int d = 0; d < headDim; d++)
-                    data[at + d] *= s[d * heads + h];
+                    data[at + d] *= s[h * headDim + d];
             }
         }
     }
