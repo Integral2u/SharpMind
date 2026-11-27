@@ -45,7 +45,18 @@ public static class TtsProjector
         return candidates
             .Where(predicate)
             .OrderByDescending(path => Path.GetFileName(path).Contains(stem, StringComparison.OrdinalIgnoreCase))
+            .ThenByDescending(PrecisionRank)
             .ThenBy(path => path, StringComparer.OrdinalIgnoreCase)
             .FirstOrDefault();
+    }
+
+    /// <summary>Full-precision projector files win when both F32 and F16 copies are present.</summary>
+    private static int PrecisionRank(string path)
+    {
+        string name = Path.GetFileName(path);
+        if (name.Contains("F32", StringComparison.OrdinalIgnoreCase)) return 3;
+        if (name.Contains("BF16", StringComparison.OrdinalIgnoreCase)) return 2;
+        if (name.Contains("F16", StringComparison.OrdinalIgnoreCase)) return 1;
+        return 0;
     }
 }

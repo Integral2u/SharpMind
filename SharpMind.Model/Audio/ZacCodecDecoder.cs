@@ -63,7 +63,7 @@ public sealed class ZacCodecDecoder : IDisposable
         _semOutW = reader.ReadFloat32("a.gen.wav.sem.out.weight");
         _semOutB = reader.ReadFloat32("a.gen.wav.sem.out.bias");
         _resTable = reader.ReadFloat32("a.gen.wav.res.table");
-        _resBias = reader.ReadFloat32("a.gen.wav.res.bias");
+        _resBias = CollapseResidualBias(reader.ReadFloat32("a.gen.wav.res.bias"));
 
         _stages = new Stage[5];
         for (int s = 0; s < _stages.Length; s++)
@@ -95,6 +95,25 @@ public sealed class ZacCodecDecoder : IDisposable
         {
             return false;
         }
+    }
+
+    /// <summary>
+    /// Normalizes the two residual-bias layouts in the wild. The compact conversion stores
+    /// the nine per-codebook biases already summed (<c>[1024]</c>); the llama.cpp conversion
+    /// stores the columns separately (<c>[1024, 9]</c>). A complete frame adds every
+    /// codebook's bias exactly once, so summing the columns is equivalent.
+    /// </summary>
+    internal static float[] CollapseResidualBias(float[] raw)
+    {
+        if (raw.Length == LatentDim) return raw;
+        if (raw.Length == 0 || raw.Length % LatentDim != 0)
+            throw new InvalidDataException($"Unexpected residual bias size {raw.Length}.");
+        var sum = new float[LatentDim];
+        int planes = raw.Length / LatentDim;
+        for (int c = 0; c < planes; c++)
+            for (int d = 0; d < LatentDim; d++)
+                sum[d] += raw[c * LatentDim + d];
+        return sum;
     }
 
     /// <summary>

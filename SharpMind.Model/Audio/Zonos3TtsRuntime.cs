@@ -160,6 +160,12 @@ public sealed class Zonos3TtsRuntime : ITtsRuntime
         if (MaxFrames <= 0) return [];
         if (!_voices.TryGetValue(Voice, out float[]? voiceRow))
             throw new InvalidOperationException($"The projector has no voice '{Voice}'.");
+        if (voiceRow.Length == 0 || voiceRow.Length % Hidden != 0)
+            throw new InvalidDataException($"Voice '{Voice}' has an unexpected size {voiceRow.Length}.");
+        // A projector may store the voice as the reference-code prefix (many rows, the
+        // llama.cpp conversion) or as one speaker-embedding row (the compact conversion).
+        // Both are inserted verbatim as the prompt prefix.
+        int voiceRows = voiceRow.Length / Hidden;
 
         int voiceId = ResolveToken("<|loudness_unk|>");
         int fmaxId = ResolveToken("<|fmax_unk|>");
@@ -169,7 +175,7 @@ public sealed class Zonos3TtsRuntime : ITtsRuntime
 
         int[] condition = [voiceId, fmaxId, rateId];
         int tokenCount = condition.Length + textIds.Length;
-        int rows = 1 + tokenCount + PrefillFrames;
+        int rows = voiceRows + tokenCount + PrefillFrames;
 
         using var prompt = new Tensor<float>(rows, Hidden);
         voiceRow.AsSpan().CopyTo(prompt.Data);
@@ -183,7 +189,7 @@ public sealed class Zonos3TtsRuntime : ITtsRuntime
             if (tokenEmbeddings.ElementCount != (long)tokenCount * Hidden)
                 throw new InvalidDataException("Unexpected token embedding shape.");
             tokenEmbeddings.Data[..((int)tokenCount * Hidden)]
-                .CopyTo(prompt.Data.Slice(Hidden));
+                .CopyTo(prompt.Data.Slice(voiceRows * Hidden));
         }
 
         var frame = new int[Codebooks];
@@ -191,7 +197,7 @@ public sealed class Zonos3TtsRuntime : ITtsRuntime
         {
             Array.Fill(frame, Pad);
             for (int cb = 0; cb <= k; cb++) frame[cb] = SilenceFrame[cb];
-            _codebook.EmbedFrame(frame, prompt.Data.Slice((1 + tokenCount + k) * Hidden, Hidden));
+            _codebook.EmbedFrame(frame, prompt.Data.Slice((voiceRows + tokenCount + k) * Hidden, Hidden));
         }
 
         int maxSeq = rows + Math.Max(1, MaxFrames) + 8;
