@@ -1033,7 +1033,7 @@ namespace SharpMind.Model.Layers.Attention;
             {
                 int at = row + h * headDim;
                 for (int d = 0; d < headDim; d++)
-                    data[at + d] *= s[h * headDim + d];
+                    data[at + d] *= s[d * heads + h];
             }
         }
     }

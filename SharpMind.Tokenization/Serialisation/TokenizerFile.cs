@@ -177,6 +177,7 @@ public static class TokenizerFile
     {
         Gpt2PreTokeniser => "gpt2",
         Cl100kPreTokeniser => "cl100k",
+        SuperBpePreTokeniser => "zonos3",
         WhitespacePreTokeniser => "whitespace",
         SequentialRegexPreTokeniser s => s.Name,
         _ => pt.GetType().Name.ToLowerInvariant()

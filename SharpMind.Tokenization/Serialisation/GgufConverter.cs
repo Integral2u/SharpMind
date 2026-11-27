@@ -198,6 +198,8 @@ public static class GgufConverter
 
         if (arch.StartsWith("qwen35"))
             return new Cl100kPreTokeniser(Cl100kVariant.Qwen35);
+        if (arch.StartsWith("zonos3"))
+            return new SuperBpePreTokeniser();
         // Mistral 3 / Ministral use "tekken" (no llama.cpp-verified port here yet); its single-digit
         // rule makes Qwen2 the closest of the patterns we have.
         if (arch.Contains("qwen") || arch is "mistral3" or "ministral")
@@ -224,6 +226,7 @@ public static class GgufConverter
         "qwen2" or "deepseek-r1-qwen" or "kormo" or "f2llmv2" or "stablelm2" or "hunyuan" or "solar-open"
             => new Cl100kPreTokeniser(Cl100kVariant.Qwen2),
         "qwen35" => new Cl100kPreTokeniser(Cl100kVariant.Qwen35),
+        "zonos3" => new SuperBpePreTokeniser(),
         "llama3" or "llama-v3" or "llama-bpe" or "falcon3" or "falcon-h1" or "pixtral" or "midm-2.0"
             or "lfm2" or "jina-v5-nano"
             => new Cl100kPreTokeniser(Cl100kVariant.Llama3),

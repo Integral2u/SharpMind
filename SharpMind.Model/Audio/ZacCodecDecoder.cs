@@ -233,7 +233,7 @@ public sealed class ZacCodecDecoder : IDisposable
                 for (int k = 0; k < kernel; k++)
                 {
                     int src = t - (kernel - 1) + k;
-                    if (src >= 0) acc += block.DwW[k * channels + c] * x[src * channels + c];
+                    if (src >= 0) acc += block.DwW[c * kernel + k] * x[src * channels + c];
                 }
                 h[rowBase + c] = acc + block.DwB[c];
             }

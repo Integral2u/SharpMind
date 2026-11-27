@@ -93,6 +93,18 @@ if (mode == "tok")
 if (mode == "attnres")
     return RunAttnRes(path, args);
 
+if (mode == "attnrescheck")
+    return RunAttnResCheck(path, args);
+
+if (mode == "padcheck")
+    return RunPadCheck(path, args);
+
+if (mode == "zacdecode")
+    return RunZacDecode(path, args);
+
+if (mode == "qscalecheck")
+    return RunQScaleCheck(path, args);
+
 if (mode == "dump")
     return RunDump(path, args);
 
@@ -1573,6 +1585,259 @@ static async Task<int> RunToolProbeAsync(string path, string[] args)
     {
         Console.WriteLine($"toolprobe FAILED: {ex}");
         Console.WriteLine(ex.StackTrace);
+        return 1;
+    }
+}
+
+// padcheck <backbone> <mmproj>
+// Compares the backbone's text_vocab row with the sum of the ten audio-pad embeddings.
+// The reference sums the no-text embedding into every voice/silence row, so this must be
+// zero (the token_embd row then equals the pad sum) for the runtime's audio-only rows.
+static int RunPadCheck(string backbonePath, string[] args)
+{
+    if (args.Length < 3) { Console.Error.WriteLine("usage: padcheck <backbone.gguf> <mmproj.gguf>"); return 2; }
+    try
+    {
+        const int hidden = 1024;
+        const int vocab = 4098;
+        const int codebooks = 10;
+        const int padCode = 4097;
+        const int textVocab = 8196;
+
+        using var readerB = new SharpMind.Model.Format.GgufTensorReader(backbonePath);
+        using var readerM = new SharpMind.Model.Format.GgufTensorReader(Path.GetFullPath(args[2]));
+        float[] text = readerB.ReadFloat32("token_embd.weight");
+        float[] audio = readerM.ReadFloat32("a.gen.code.out_embd.weight");
+
+        var pad = new float[hidden];
+        for (int cb = 0; cb < codebooks; cb++)
+        {
+            int row = cb * vocab + padCode;
+            for (int d = 0; d < hidden; d++) pad[d] += audio[row * hidden + d];
+        }
+
+        static (double Rms, double Max) Stats(ReadOnlySpan<float> x)
+        {
+            double sq = 0, max = 0;
+            foreach (float v in x) { sq += v * (double)v; max = Math.Max(max, Math.Abs(v)); }
+            return (Math.Sqrt(sq / x.Length), max);
+        }
+
+        var textRow = text.AsSpan(textVocab * hidden, hidden);
+        var padStats = Stats(pad);
+        var textStats = Stats(textRow);
+        double diffSq = 0, diffMax = 0;
+        for (int d = 0; d < hidden; d++)
+        {
+            double diff = textRow[d] - pad[d];
+            diffSq += diff * diff;
+            diffMax = Math.Max(diffMax, Math.Abs(diff));
+        }
+        Console.WriteLine(
+            $"PADCHECK text_vocab_row rms={textStats.Rms:F6} max={textStats.Max:F6} " +
+            $"pad_sum rms={padStats.Rms:F6} max={padStats.Max:F6} " +
+            $"diff_rms={Math.Sqrt(diffSq / hidden):F6} diff_max={diffMax:F6}");
+        return 0;
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"PADCHECK FAILED: {ex}");
+        return 1;
+    }
+}
+
+// zacdecode <mmproj.gguf> <codes.npy> <out.wav>
+// Decodes frame-major reference codes with the native ZAC decoder.
+static int RunZacDecode(string mmprojPath, string[] args)
+{
+    if (args.Length < 4) { Console.Error.WriteLine("usage: zacdecode <mmproj.gguf> <codes.npy> <out.wav>"); return 2; }
+    try
+    {
+        string npy = args[2];
+        string outPath = Path.GetFullPath(args[3]);
+        using var stream = File.OpenRead(npy);
+        using var reader = new BinaryReader(stream);
+        byte[] magic = reader.ReadBytes(6);
+        if (magic.Length != 6 || magic[0] != 0x93) throw new InvalidDataException("not an npy file");
+        int major = reader.ReadByte();
+        reader.ReadByte();
+        int headerLen = major == 1 ? reader.ReadUInt16() : (int)reader.ReadUInt32();
+        string header = System.Text.Encoding.ASCII.GetString(reader.ReadBytes(headerLen));
+        long dataOffset = (10L + headerLen + 63) / 64 * 64;
+        stream.Position = dataOffset;
+
+        bool int64 = header.Contains("<i8", StringComparison.Ordinal);
+        int cols = 10;
+        var shapeStart = header.IndexOf('(');
+        var shapeEnd = header.IndexOf(')', shapeStart + 1);
+        string shapeText = header[(shapeStart + 1)..shapeEnd];
+        string[] parts = shapeText.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        int rows = int.Parse(parts[0]);
+        if (parts.Length > 1) cols = int.Parse(parts[1]);
+        int count = rows * cols;
+        var codes = new int[count];
+        for (int i = 0; i < count; i++)
+            codes[i] = int64 ? checked((int)reader.ReadInt64()) : reader.ReadInt32();
+
+        using var gguf = new SharpMind.Model.Format.GgufTensorReader(Path.GetFullPath(mmprojPath));
+        using var decoder = new SharpMind.Model.Audio.ZacCodecDecoder(gguf);
+        float[] audio = decoder.Decode(codes, rows);
+        SharpMind.Model.Audio.WavFile.Write(outPath, audio, SharpMind.Model.Audio.ZacCodecDecoder.SampleRate);
+        double rms = 0, peak = 0;
+        foreach (float v in audio) { rms += v * (double)v; peak = Math.Max(peak, Math.Abs(v)); }
+        Console.WriteLine(
+            $"ZACDECODE frames={rows} samples={audio.Length} " +
+            $"seconds={(double)audio.Length / SharpMind.Model.Audio.ZacCodecDecoder.SampleRate:F2} " +
+            $"rms={Math.Sqrt(rms / Math.Max(1, audio.Length)):F4} peak={peak:F4} -> {outPath}");
+        return 0;
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"ZACDECODE FAILED: {ex}");
+        return 1;
+    }
+}
+
+// qscalecheck <file>
+// Shows how attn_q_norm landed in the loaded AttnQScale tensor: the converter expands the
+// per-head temperature, so one axis is constant per head. The GDN/attention forward must
+// read the axis that carries the head value.
+static int RunQScaleCheck(string path, string[] args)
+{
+    try
+    {
+        var metaHelper = ModelFormatHelpers.GetModelMetaHelperFor(ModelFormat.Gguf);
+        metaHelper.Load(path, null, out _, out var config, out _);
+        var sharpConfig = config.ForModel();
+        var mapping = sharpConfig.ToJigSawMapping();
+        using var weights = ModelFactory.CreateWeights(
+            config, sharpConfig, QuantizationFactory.Create(mapping), path,
+            LoadMode.Full, quantizedResident: true, maxParallelLoadDegree: 1);
+        weights.InitializeWeights();
+
+        int heads = config.NumHeads;
+        foreach (int layer in new[] { 3, 7 })
+        {
+            var scale = weights.Blocks[layer].AttnQScale;
+            if (scale is null) { Console.WriteLine($"layer {layer}: no AttnQScale"); continue; }
+            int headDim = config.HeadDimForLayer(layer);
+            var data = scale.Data;
+            double varRow = 0, varCol = 0;
+            // row-major [d*heads+h] (what the forward uses), column-major [h*headDim+d]
+            for (int h = 0; h < heads; h++)
+            {
+                double meanA = 0, meanB = 0;
+                for (int d = 0; d < headDim; d++) { meanA += data[d * heads + h]; meanB += data[h * headDim + d]; }
+                meanA /= headDim; meanB /= headDim;
+                for (int d = 0; d < headDim; d++)
+                {
+                    double a = data[d * heads + h] - meanA;
+                    double b = data[h * headDim + d] - meanB;
+                    varRow += a * a;
+                    varCol += b * b;
+                }
+            }
+            Console.WriteLine(
+                $"layer {layer} shape=[{scale.Shape[0]},{scale.Shape[1]}] " +
+                $"var[d*heads+h]={varRow / (heads * headDim):G6} " +
+                $"var[h*headDim+d]={varCol / (heads * headDim):G6} " +
+                $"first16={string.Join(',', data[..Math.Min(16, data.Length)].ToArray().Select(v => v.ToString("G4")))}");
+        }
+        return 0;
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"QSCALECHECK FAILED: {ex}");
+        return 1;
+    }
+}
+
+// attnrescheck <file> [rows=200]
+// Compares one batch prefill with the same rows fed one at a time: a causal model must
+// produce the same final hidden state either way.
+static int RunAttnResCheck(string path, string[] args)
+{
+    int rows = args.Length > 2 && int.TryParse(args[2], out int r) ? Math.Max(2, r) : 200;
+    try
+    {
+        var metaHelper = ModelFormatHelpers.GetModelMetaHelperFor(ModelFormat.Gguf);
+        metaHelper.Load(path, null, out _, out var config, out _);
+        var sharpConfig = config.ForModel();
+        var mapping = sharpConfig.ToJigSawMapping();
+        using var weights = ModelFactory.CreateWeights(
+            config, sharpConfig, QuantizationFactory.Create(mapping), path,
+            LoadMode.Full, quantizedResident: true, maxParallelLoadDegree: 1);
+        weights.InitializeWeights();
+        using var model = ModelFactory.CreateTransformer(weights, sharpConfig, mapping);
+
+        int hidden = config.HiddenDim;
+        using var embeddings = new Tensor<float>(rows, hidden);
+        for (int i = 0; i < embeddings.Data.Length; i++)
+            embeddings.Data[i] = ((i * 37 % 101) - 50) * 0.02f;
+
+        var builder = new KVCacherBuilder();
+        IKVCache[] NewCaches()
+        {
+            var caches = new IKVCache[config.NumLayers];
+            for (int i = 0; i < caches.Length; i++)
+                caches[i] = config.IsRecurrentLayer(i)
+                    ? new DeltaNetCache(config.SsmConvKernel, config.SsmConvDim,
+                        config.SsmTimeStepRank, config.SsmStateSize,
+                        config.SsmValueHeadDim, 1, config.MaxSeqLen)
+                    : builder.CreateKVCache(1, config.NumKvHeads, config.MaxSeqLen,
+                        config.HeadDimForLayer(i));
+            return caches;
+        }
+
+        var batchLast = new float[hidden];
+        var batchCaches = NewCaches();
+        try
+        {
+            using var output = model.ForwardAttnResHidden(embeddings, batchCaches, 0);
+            output.Data.Slice((rows - 1) * hidden, hidden).CopyTo(batchLast);
+        }
+        finally
+        {
+            foreach (var cache in batchCaches)
+                if (cache is IDisposable disposable) disposable.Dispose();
+        }
+
+        var seqLast = new float[hidden];
+        var seqCaches = NewCaches();
+        try
+        {
+            for (int i = 0; i < rows; i++)
+            {
+                using var row = new Tensor<float>(1, hidden);
+                embeddings.Data.Slice(i * hidden, hidden).CopyTo(row.Data);
+                using var output = model.ForwardAttnResHidden(row, seqCaches, i);
+                if (i == rows - 1) output.Data[..hidden].CopyTo(seqLast);
+            }
+        }
+        finally
+        {
+            foreach (var cache in seqCaches)
+                if (cache is IDisposable disposable) disposable.Dispose();
+        }
+
+        double diffSq = 0, batchSq = 0, seqSq = 0, maxDiff = 0;
+        for (int i = 0; i < hidden; i++)
+        {
+            double d = batchLast[i] - seqLast[i];
+            diffSq += d * d;
+            batchSq += batchLast[i] * batchLast[i];
+            seqSq += seqLast[i] * seqLast[i];
+            maxDiff = Math.Max(maxDiff, Math.Abs(d));
+        }
+        Console.WriteLine(
+            $"ATTNRESCHECK rows={rows} rmsDiff={Math.Sqrt(diffSq / hidden):G6} " +
+            $"maxDiff={maxDiff:G6} batchRms={Math.Sqrt(batchSq / hidden):G6} " +
+            $"seqRms={Math.Sqrt(seqSq / hidden):G6}");
+        return 0;
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"ATTNRESCHECK FAILED: {ex}");
         return 1;
     }
 }
