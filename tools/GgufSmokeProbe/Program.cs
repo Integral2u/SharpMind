@@ -105,6 +105,9 @@ if (mode == "zacdecode")
 if (mode == "qscalecheck")
     return RunQScaleCheck(path, args);
 
+if (mode == "ttsfind")
+    return RunTtsFind(path, args);
+
 if (mode == "dump")
     return RunDump(path, args);
 
@@ -1748,6 +1751,32 @@ static int RunQScaleCheck(string path, string[] args)
     catch (Exception ex)
     {
         Console.WriteLine($"QSCALECHECK FAILED: {ex}");
+        return 1;
+    }
+}
+
+// ttsfind <backbone.gguf> <zonos3|lfm3>
+// Mirrors Studio's architecture-aware projector selection against the real model folder.
+static int RunTtsFind(string modelPath, string[] args)
+{
+    try
+    {
+        string kind = args.Length > 2 ? args[2].ToLowerInvariant() : "zonos3";
+        bool zonos = kind.StartsWith("zonos", StringComparison.Ordinal);
+        string? projector = zonos
+            ? SharpMind.Model.Audio.TtsProjector.Find(
+                modelPath, SharpMind.Model.Audio.Zonos3TtsRuntime.IsTtsProjector)
+            : SharpMind.Model.Audio.TtsProjector.Find(
+                modelPath, SharpMind.Model.Audio.Lfm3TtsRuntime.IsTtsProjector);
+        Console.WriteLine($"TTSFIND {kind}: {projector ?? "<none>"}");
+        if (projector is not null && zonos)
+            Console.WriteLine("voices: " + string.Join(", ",
+                SharpMind.Model.Audio.Zonos3TtsRuntime.ListVoices(projector)));
+        return 0;
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"TTSFIND FAILED: {ex}");
         return 1;
     }
 }
